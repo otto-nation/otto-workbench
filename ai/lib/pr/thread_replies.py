@@ -48,6 +48,11 @@ APPLIED_REPLY_PREFIX = "Applied"
 ADDRESSED_REPLY_PREFIX = "Already addressed"
 DISMISSED_REPLY_PREFIX = "Suggestion reviewed and determined to be inapplicable"
 DEFERRED_REPLY_PREFIX = "Deferred:"
+# A thread handed to a person rather than put off. Separate from the deferral
+# opening because the two say different things to the reviewer reading them:
+# one is "not now", the other is "this needs you", and filing the second under
+# the first misdescribes what was decided.
+NEEDS_HUMAN_REPLY_PREFIX = "Needs a person:"
 # Every opening line a generated reply can have. Ordered by nothing — this is a
 # membership test, used to tell our own template apart from a reply someone
 # rewrote by hand.
@@ -56,14 +61,17 @@ GENERATED_REPLY_PREFIXES = (
     ADDRESSED_REPLY_PREFIX,
     DISMISSED_REPLY_PREFIX,
     DEFERRED_REPLY_PREFIX,
+    NEEDS_HUMAN_REPLY_PREFIX,
 )
-# The subset that says the thread was handled. DEFERRED_REPLY_PREFIX is
-# deliberately absent: it says the opposite, and counting it would make every
-# thread reconcile itself on the second --finish. Derived rather than listed,
-# so a fifth generated opening joins this set instead of silently missing it.
+# The subset that says the thread was handled. The deferral and needs-a-person
+# openings are deliberately absent: both say the opposite, and counting either
+# would make the thread reconcile itself on the second --finish. Derived rather
+# than listed, so a new generated opening joins this set instead of silently
+# missing it.
+_UNHANDLED_REPLY_PREFIXES = (DEFERRED_REPLY_PREFIX, NEEDS_HUMAN_REPLY_PREFIX)
 HANDLED_REPLY_PREFIXES = tuple(
     prefix for prefix in GENERATED_REPLY_PREFIXES
-    if prefix != DEFERRED_REPLY_PREFIX
+    if prefix not in _UNHANDLED_REPLY_PREFIXES
 )
 # The words a person opens a reply with when they are reporting the thread
 # handled, for the reply nothing generated — written during a skill pass, or by
@@ -542,16 +550,32 @@ def post_deferred_replies(
     issue_url: str,
     wt_path: Path | None = None,
     host: str = "",
+    outcomes: dict[str, FixOutcome] | None = None,
 ) -> int:
-    """Post replies to deferred threads linking the tracking issue."""
+    """Post replies to held threads linking the tracking issue.
+
+    `outcomes` says which outcome each entry carries, by id. A `CommentItem`
+    does not hold one — it is built *from* an outcome — so the caller that
+    selected these threads is the only thing that knows whether a given entry
+    was deferred or handed to a person, and the two take different openings.
+    Absent, every reply reads as a deferral, which is what it was before
+    anything but deferrals could be filed.
+    """
     issue_ref = f"[{issue_id}]({issue_url})" if issue_url else issue_id
     head_sha = git_client.head_sha(short=True, cwd=wt_path) if wt_path else ""
 
     def body_fn(entry: CommentItem) -> str:
-        parts = [f"{DEFERRED_REPLY_PREFIX} {entry.summary}",
-                 f"Tracked in {issue_ref}."]
-        # A deferral says the code still stands as the reviewer found it, which
-        # is a claim about the tree like any other — pin it.
+        # The opening follows the outcome. A thread handed to a person is not a
+        # thread put off, and one reply template for both would tell the
+        # reviewer the wrong thing about half of them.
+        prefix = (
+            NEEDS_HUMAN_REPLY_PREFIX
+            if (outcomes or {}).get(entry.id) is FixOutcome.NEEDS_HUMAN
+            else DEFERRED_REPLY_PREFIX
+        )
+        parts = [f"{prefix} {entry.summary}", f"Tracked in {issue_ref}."]
+        # Both outcomes say the code still stands as the reviewer found it,
+        # which is a claim about the tree like any other — pin it.
         link = permalinks.code_link(entry, repo, head_sha, wt_path, host=host)
         if link:
             parts.append(f"Unchanged at {link}.")

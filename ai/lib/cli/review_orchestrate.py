@@ -38,6 +38,7 @@ from review import prompt_sections as _rpsec
 from review import registry as _rreg
 from agent import session as _ra
 from review import pipeline as _rpl
+from review import finding_issue
 from review import fix as _rfx
 from review import gc as _rgc
 from review import paths as _rpath
@@ -342,6 +343,30 @@ def _choose_pipeline(
     return pipeline, scale, line_threshold, file_threshold
 
 
+def _file_open_findings(args, job, trail) -> None:
+    """File the findings the pass left open, for the ones `--track` named.
+
+    After `run_fix_pass`, which is what writes them to the sidecar. Nothing is
+    filed without a `--track`, and `create_issue` drafts without `--post`, so
+    the default of both flags is to record the findings and file nothing.
+
+    A `--track` id naming no open finding is reported by `file_and_link` and
+    does not stop the run: the review itself succeeded, and the pipeline's exit
+    status is about the review.
+    """
+    # Read defensively: `--fix` has other callers that build their own args, and
+    # a review that files nothing is the correct behaviour for all of them.
+    if getattr(args, "track_all", False):
+        track = finding_issue.TRACK_ALL
+    else:
+        track = frozenset(getattr(args, "track", ()) or ())
+    if not track:
+        finding_issue.report_unfiled(Path(job.artifact_dir), track)
+        return
+    with trail.span("file_findings"):
+        finding_issue.file_and_link(Path(job.artifact_dir), job, track, trail)
+
+
 def _run_phases(trail, args, job) -> Pipeline:
     """Every phase of one run, in order, returning the pipeline it chose.
 
@@ -406,6 +431,7 @@ def _run_phases(trail, args, job) -> Pipeline:
         trail.decision("fix_pass", "running fix pass", reason="--fix flag set and review file exists")
         with trail.span("fix_pass"):
             run_fix_pass(job, trail)
+        _file_open_findings(args, job, trail)
     elif args.fix:
         trail.decision("fix_pass", "skipping fix pass", reason="review file not found")
 
@@ -544,6 +570,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--post", action="store_true",
                         help="Let the fix pass push its commit; without it the "
                              "push is drafted")
+    parser.add_argument("--track", action="append", default=[], metavar="FINDING_ID",
+                        help="File this open finding on a tracking issue "
+                             "(repeatable). Deferral is a per-finding decision, "
+                             "so nothing is filed unless told which findings")
+    parser.add_argument("--track-all", action="store_true",
+                        help="File every finding the fix pass left open. Only "
+                             "for a set the user has actually reviewed")
     parser.add_argument("--generated", action="store_true",
                         help="Include tier3-generated files (skipped by default)")
     parser.add_argument("--recover-sha", default="",

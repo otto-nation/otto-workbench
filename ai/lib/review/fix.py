@@ -73,7 +73,7 @@ from review.static_analysis import (
     STATIC_ID_RE, CheckerResult, StaticViolation, all_violations,
 )
 from review.retry import _has_output
-from review.types import Finding, ReviewJob, severity_by_key
+from review.types import Finding, OpenFinding, ReviewJob, severity_by_key
 from core.trail import Trail
 
 # The two outcomes that leave a finding open. A deferral is a finding the agent
@@ -406,6 +406,17 @@ def _block(lines: list[str], heading: str, entries: list[tuple[str, str]]) -> No
         return
     lines.append(heading)
     lines.extend(f"  - [{item_id}] {text}" for item_id, text in entries)
+
+
+def _location_of(finding: Finding | None) -> str:
+    """Where a finding pointed, for a reader choosing what to file.
+
+    The id it is stored beside is a position in one rendering, so the location
+    is what still identifies the finding after the next review renumbers.
+    """
+    if finding is None or not finding.path:
+        return ""
+    return f"{finding.path}:{finding.line}" if finding.line else finding.path
 
 
 def _describe_finding(finding: Finding) -> str:
@@ -752,6 +763,37 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         text = _apply_outcomes(review_file.read_text(), run.outcomes)
         review_file.write_text(_apply_static_outcomes(text, run.outcomes))
         self._persist_static_declines(run.outcomes)
+        self._persist_open_findings(run.outcomes)
+
+    def _persist_open_findings(self, outcomes: list[ItemOutcome]) -> None:
+        """Record which findings this pass left open, so they can be filed later.
+
+        The document cannot answer this. A deferral writes no annotation at all,
+        so a finding the pass never reached reads exactly like one it never had
+        — and `pr review --track` runs in a later process, after these outcomes
+        have gone. Same reason `_persist_static_declines` exists one method up,
+        for the same kind of verdict the deliverable cannot carry.
+
+        Replaced rather than accumulated: a later pass reads the same findings
+        again, and an entry kept from an earlier round would offer to file work
+        that has since been fixed.
+        """
+        described = self._descriptions()
+        still_open = tuple(
+            OpenFinding(
+                id=o.id,
+                outcome=str(o.outcome),
+                summary=described.get(o.id, ""),
+                location=_location_of(self.findings.get(o.id)),
+                reason=o.reason,
+            )
+            for o in outcomes
+            if o.outcome in _STILL_OPEN and o.id in self.findings
+        )
+        review_dir = Path(self.job.artifact_dir)
+        write_review_meta(
+            review_dir, replace(read_review_meta(review_dir), open_findings=still_open),
+        )
 
     def _persist_static_declines(self, outcomes: list[ItemOutcome]) -> None:
         """Keep this pass's static declines where the next round can read them.

@@ -69,16 +69,28 @@ class TrackAll(frozenset):
 TRACK_ALL = TrackAll()
 
 
+# The outcomes that leave a thread for someone to pick up. A deferral is a
+# thread the pass put off and a needs-a-person is one it read and handed on;
+# both end the cycle with work outstanding and nothing in the tracker, which is
+# what filing exists to fix.
+#
+# DECLINED is deliberately absent. A decline is a judgement that the suggestion
+# is not work — `run_fix_pass` drops declined findings from its work set on the
+# same reasoning — so filing one would reopen as a backlog entry the thing the
+# review just closed.
+FILABLE_OUTCOMES = (FixOutcome.DEFERRED, FixOutcome.NEEDS_HUMAN)
+
+
 def deferred_outcomes(state: pr_state.PRState) -> list:
-    """Every outcome the fix pass deferred, whatever became of it since.
+    """Every outcome that left a thread outstanding, whatever became of it since.
 
     One reading of the record for the three questions asked of it — which
     threads to validate `--track` against, which to file, and which to report
     as unfiled. Spelled out at each site instead, the filter is three copies of
-    one rule about what `DEFERRED` means, and the one that drifts is the one
-    whose surface nobody was looking at.
+    one rule about what is filable, and the one that drifts is the one whose
+    surface nobody was looking at.
     """
-    return [o for o in state.fix.fix.items if o.outcome == FixOutcome.DEFERRED]
+    return [o for o in state.fix.fix.items if o.outcome in FILABLE_OUTCOMES]
 
 
 def validate_track(state: pr_state.PRState, track) -> bool:
@@ -103,7 +115,7 @@ def validate_track(state: pr_state.PRState, track) -> bool:
     unknown = set(track) - {o.id for o in deferred_outcomes(state)}
     if not unknown:
         return True
-    log.error(f"--track named threads that are not deferred: {sorted(unknown)}")
+    log.error(f"--track named threads that are not outstanding: {sorted(unknown)}")
     return False
 
 
@@ -173,6 +185,10 @@ def finalize_deferred(
         thread_replies.post_deferred_replies(
             deferred, threads_by_id, ctx.repo, ctx.pr_number,
             issue.id, issue.url, ctx.require_worktree(), ctx.host,
+            # A CommentItem is built from an outcome and does not carry one, so
+            # the reply templates cannot tell a deferral from a thread handed to
+            # a person without being told.
+            outcomes={o.id: o.outcome for o in deferred_outcomes(state)},
         )
 
     state.fix.deferred_issue_id = issue.id

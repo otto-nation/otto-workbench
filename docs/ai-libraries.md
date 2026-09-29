@@ -1984,6 +1984,26 @@ summary comment that renders the same deferral as a row
 (`pr.summary_render`) — see `finalize_deferred` for the one ordering
 dependency between that surface and this one.
 
+### review/finding_issue.py
+
+Filing a tracker issue for the findings a review left unresolved.
+
+The threads half of this has existed for a while: `pr comments --finish --track`
+files one tracking issue for the review comments a fix pass deferred. Findings
+had no path to a tracker at all — the outcome was annotated on the review
+markdown, which lives under `~/.local/state/workbench/reviews/` on one machine,
+and named in a commit message, which is not a tracker. Both are gone the moment
+the branch merges.
+
+Selection is the threads convention rather than a second one: nothing is filed
+unless `--track` names it or `--track-all` is passed, and nothing is published
+unless the publishing gate is open. Filing posts under the operator's name and
+a deferral is a per-finding judgement, so neither is a sensible default.
+
+What it does not do is decide *which* findings are filable. That is
+`ReviewMeta.open_findings`, written by the fix pass, because a deferred finding
+leaves no trace on the document to read back.
+
 ### review/issue.py
 
 Issue tracking integration for claude-review.

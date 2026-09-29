@@ -3,15 +3,24 @@
  *
  * index.ts imports `isToolCallEventType` from the Pi SDK as a value, so it can
  * only be loaded from somewhere the SDK resolves — inside a Pi session. This
- * file imports nothing, which is what lets tests/pi_extensions.bats run it under
- * plain `node` and assert the shapes it does and does not match.
+ * file imports only ../_shared, which imports nothing, so
+ * tests/pi_extensions.bats can still run it under plain `node`.
  *
  * What counts as a piped test run here is meant to match
  * ai/claude/bin/claude-bash-guard decision for decision: same runners, same
  * filters, same pipefail exemption. Two guards enforcing one rule that disagree
  * about a given command are worse than one guard, because which answer you get
  * depends on which harness you happen to be in.
+ *
+ * Splitting is the shared scan rather than a regex over the raw line, and that
+ * is what closed the largest class of disagreement between the two harnesses:
+ * a `|` inside quotes was read as a pipe, so `pytest tests/ | grep -q 'a|b'`
+ * looked like a pipeline ending in `b'` instead of in `grep` and was allowed,
+ * while Claude — which deletes quoted spans before splitting — refused it.
  */
+
+import { splitStatements } from "../_shared/statements.ts";
+import { tokenize } from "../_shared/tokenize.ts";
 
 /**
  * The commands whose exit status is the thing a caller is reading.
@@ -72,9 +81,6 @@ const FILTERS = [
   "uniq",
 ];
 
-/** Opens a heredoc, capturing the `-` that allows an indented terminator and the marker. */
-const HEREDOC_OPEN = /<<(-?)\s*['"]?([A-Za-z_][A-Za-z0-9_]*)/;
-
 /**
  * Whether the command turns on `pipefail` before the pipe runs.
  *
@@ -86,41 +92,26 @@ const HEREDOC_OPEN = /<<(-?)\s*['"]?([A-Za-z_][A-Za-z0-9_]*)/;
  * `set -[a-zA-Z]*o pipefail` covers both the long form and a bundled short
  * flag (`set -eo pipefail`), since the letters before the required `o` are
  * unconstrained and `-o` alone is the zero-letter case of the same pattern.
- */
-function hasPipefail(command: string): boolean {
-  return /\bset\s+-[a-zA-Z]*o\s+pipefail\b/.test(command);
-}
-
-/**
- * Every line of `command`, with heredoc bodies dropped.
  *
- * A heredoc body is content being written to a file, not commands, so a piped
- * `pytest` inside one is not an invocation — writing a script for someone else
- * to run is not the agent piping a suite. Claude's guard skips those lines too,
- * and this is the same rule.
- *
- * Only `<<-` lets the terminator be indented. Accepting indentation for a plain
- * `<<` would end the body early on a body line that happens to be the marker
- * word, and scan the rest of it as commands.
+ * Read from the scanned tokens rather than from the raw text, so a `pipefail`
+ * that only ever appears inside quotes does not exempt anything:
+ * `echo 'set -o pipefail'; pytest | tail` prints a string and sets nothing, and
+ * a regex over the raw command exempted it here while Claude still refused it.
+ * A statement's text carries its quotes, so matching that would repeat the bug
+ * one level down.
  */
-function lines(command: string): string[] {
-  const found: string[] = [];
-  let terminator: RegExp | null = null;
-
-  for (const line of command.split("\n")) {
-    if (terminator) {
-      if (terminator.test(line)) terminator = null;
-      continue;
-    }
-    found.push(line);
-
-    const open = HEREDOC_OPEN.exec(line);
-    if (open) {
-      const indentable = open[1] ? "\\s*" : "";
-      terminator = new RegExp(`^${indentable}${open[2]}\\s*$`);
+function setsPipefail(statement: string): boolean {
+  const words = tokenize(statement).filter((t) => !t.operator && !t.quoted);
+  for (let i = 0; i + 2 < words.length; i++) {
+    if (
+      words[i].value === "set" &&
+      /^-[a-zA-Z]*o$/.test(words[i + 1].value) &&
+      words[i + 2].value === "pipefail"
+    ) {
+      return true;
     }
   }
-  return found;
+  return false;
 }
 
 /** The last path segment of a token, so `bin/local/run-tests` reads as `run-tests`. */
@@ -183,22 +174,28 @@ function isFilter(stage: string): boolean {
  * status. Splitting naively on `|` would read it as a pipe into `| echo`.
  */
 export function pipedRunner(command: string): string | null {
-  if (hasPipefail(command)) return null;
+  const split = splitStatements(command);
+  if (split.some((s) => setsPipefail(s.text))) return null;
 
-  for (const line of lines(command)) {
-    // Statement separators first: each is its own pipeline.
-    for (const statement of line.split(/;|&&|\|\|/)) {
-      const stages = statement.split("|");
-      if (stages.length < 2) continue;
+  // A run of statements joined by `|` is one pipeline. Regrouped from the
+  // shared scan's flag rather than by re-splitting on `|`, which would cut a
+  // quoted one and read the wrong stage as last.
+  let stages: string[] = [];
+  for (const statement of split) {
+    stages.push(statement.text);
+    if (statement.pipedIntoNext) continue;
+
+    if (stages.length >= 2 && isFilter(stages[stages.length - 1])) {
       // The last stage decides: an intermediate filter still leaves the final
       // status to whatever ends the pipeline, and it is the end that `$?` reads.
-      if (!isFilter(stages[stages.length - 1])) continue;
-      const runner = stages.find(invokesRunner);
-      if (runner === undefined) continue;
-      const tokens = runner.trim().split(/\s+/).filter(Boolean);
-      const named = tokens.find((t) => !t.includes("="));
-      return named === undefined ? null : basename(named);
+      const runner = stages.slice(0, -1).find(invokesRunner);
+      if (runner !== undefined) {
+        const tokens = runner.trim().split(/\s+/).filter(Boolean);
+        const named = tokens.find((t) => !t.includes("="));
+        return named === undefined ? null : basename(named);
+      }
     }
+    stages = [];
   }
   return null;
 }

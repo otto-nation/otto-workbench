@@ -758,21 +758,12 @@ pytest tests/ -q | tail -6'
   [ "$output" = true ]
 }
 
-@test "test-pipe-guard: the two harnesses share one runner list" {
-  # Claude's hook and this extension enforce the same rule for different
-  # harnesses. Two lists that drift apart are one rule with two meanings, and
-  # nothing else in either tree would report it.
-  local pi_list claude_list
-  pi_list=$(sed -n '/^export const TEST_RUNNERS = \[/,/^\];/p' \
-    "$REPO_ROOT/ai/pi/extensions/test-pipe-guard/detect.ts" |
-    grep -oE '"[a-z-]+"' | tr -d '"' | sort | tr '\n' ' ')
-  claude_list=$(grep -oE "^TEST_RUNNERS='[^']+'" \
-    "$REPO_ROOT/ai/claude/bin/claude-bash-guard" |
-    sed -E "s/^TEST_RUNNERS='([^']+)'/\1/" | tr '|' '\n' | sort | tr '\n' ' ')
-  [ -n "$pi_list" ]
-  [ -n "$claude_list" ]
-  [ "$pi_list" = "$claude_list" ]
-}
+# The runner-list grep that stood here compared the two TEST_RUNNERS literals as
+# text. It was deleted rather than extended: the harness-agreement vectors below
+# cover every runner in the list by asking what each implementation *answers*,
+# and a list comparison passes while the two engines disagree about a command —
+# which is what they did, on 46 of a 4138-command corpus, with byte-identical
+# lists on both sides.
 
 # _claude_guard COMMAND — prints "blocked" or "allowed" for the Claude hook.
 #
@@ -788,6 +779,137 @@ _claude_guard() {
   else
     echo blocked
   fi
+}
+
+# _shared_rule_verdict COMMAND — which shared rule the Claude hook fired on,
+# or "allowed".
+#
+# Classified by the block message rather than by exit status, because the hook
+# enforces twelve Claude-only rules alongside the shared ones: `bash -c 'sleep
+# 300'` blocks on the sh -c wrapper, not on the sleep, and a status-only
+# comparison would read that as the sleep rules disagreeing. A command blocked
+# by the wrong rule is a divergence too, and only the message shows it.
+_shared_rule_verdict() {
+  local payload message
+  payload=$(_json_command_payload "$1")
+  # The status is discarded on purpose here: what rule fired is the question,
+  # and _claude_guard above already covers blocked-vs-allowed on its own status.
+  message=$(printf '%s' "$payload" | "$REPO_ROOT/ai/claude/bin/claude-bash-guard" 2>&1 || true)
+  case "$message" in
+    *"is a wait for something"*) echo sleep ;;
+    *"Backgrounding with"*) echo background ;;
+    *"Piping a test suite"*) echo test-pipe ;;
+    *"task pr:create"*) echo pr-create ;;
+    *"self-review has open findings"*) echo issue-defer ;;
+    *"BLOCKED:"*) echo claude-only ;;
+    *) echo allowed ;;
+  esac
+}
+
+# _pi_shared_verdict RULE COMMAND — the Pi predicate for RULE, as the same
+# vocabulary _shared_rule_verdict prints.
+_pi_shared_verdict() {
+  local rule="$1" predicate module
+  case "$rule" in
+    sleep) module=sleep-guard; predicate=isWaitingSleep ;;
+    background) module=background-guard; predicate=isDetachedBackground ;;
+    test-pipe) module=test-pipe-guard; predicate=isPipedTestRun ;;
+    pr-create) module=pr-create-guard; predicate=isPrCreate ;;
+    # A typo in a vector's rule name would otherwise reach node as an empty
+    # module path and fail as an import error, which reads as a guard bug.
+    *) echo "unknown rule: $rule"; return 1 ;;
+  esac
+  run node --input-type=module -e "
+    const m = await import('$REPO_ROOT/ai/pi/extensions/$module/detect.ts');
+    console.log(m.$predicate(process.argv[1]) ? '$rule' : 'allowed');
+  " "$2"
+  echo "$output"
+}
+
+# _agree RULE COMMAND — fail unless both harnesses answer RULE for COMMAND.
+#
+# A Claude-only rule firing first is accepted as agreement only when Pi also
+# declines to fire: the shared rule is then not the one under test.
+_agree() {
+  local rule="$1" cmd="$2" claude pi
+  claude=$(_shared_rule_verdict "$cmd")
+  pi=$(_pi_shared_verdict "$rule" "$cmd")
+  if [ "$claude" = claude-only ] && [ "$pi" = allowed ]; then
+    return 0
+  fi
+  [ "$claude" = "$pi" ] || {
+    echo "harness disagreement on: $cmd"
+    echo "  claude=$claude  pi=$pi  (rule under test: $rule)"
+    return 1
+  }
+}
+
+@test "shared rules: the two harnesses answer the same on a quoting corpus" {
+  # The vectors that were answered differently before the two engines shared a
+  # statement scan. Each is a case where one harness read a quoted character as
+  # syntax and the other did not; the regexes and the runner lists were
+  # byte-identical on both sides throughout, which is why the literal greps
+  # that used to stand in for this test reported agreement.
+  local cmd
+
+  # A quoted `|` in the last stage. Splitting the raw text made `grep -q 'a|b'`
+  # read as a stage named `b'`, so the pipeline looked like it ended somewhere
+  # other than a filter.
+  for cmd in \
+    "pytest tests/ | grep -q 'a|b'" \
+    'pytest tests/ | grep -q "a|b"' \
+    "bats tests/x.bats | grep 'a|b'" \
+    "npm run test | grep 'x|y'"; do
+    _agree test-pipe "$cmd"
+  done
+
+  # A quoted command name. Deleting the span left no command; keeping it left
+  # the runner visible.
+  _agree test-pipe "'pytest' tests/ | tail -1"
+  _agree test-pipe 'pytest tests/ | "tail" -1'
+
+  # pipefail inside quotes sets nothing, so it must not exempt the pipe.
+  _agree test-pipe "echo 'set -o pipefail'; pytest tests/ | tail -1"
+  _agree test-pipe 'echo "set -o pipefail"; pytest tests/ | tail -1'
+
+  # An unpaired apostrophe. Two sed passes re-paired it with a later quote and
+  # deleted the real command between them. The scan cannot find the span's end
+  # either, so it reports the command as unparsed and both harnesses fall back
+  # to scanning the text — a quote nobody can close must not turn an operator
+  # after it into content, which would be a guard that silently stopped working.
+  _agree sleep "echo it's fine; sleep 300"
+  _agree sleep "true && echo it's; sleep 300"
+  _agree background "echo it's; npm run dev "'&'
+  # The fallback still has to say which separator it cut on. Reporting every
+  # piece as unpiped let a suite piped into a filter pass whenever the filter's
+  # own pattern held an apostrophe.
+  _agree test-pipe "pytest tests/ | grep 'it's'"
+
+  # A quoted command name is still the command: `'foo' sleep 300` runs foo with
+  # two arguments, so neither harness reads it as a sleep.
+  _agree sleep "'foo' sleep 300"
+  _agree sleep "foo; 'x' sleep 300"
+
+  # A redirect's `&` is not a backgrounding `&`, and must not split a statement.
+  _agree background 'pytest tests/ > out.txt 2>&1'
+  _agree sleep 'pytest tests/ > out.txt 2>&1 && sleep 300'
+
+  # `|&` is a pipe — bash's shorthand for `2>&1 |` — and neither harness listed
+  # it, so a suite piped through one read as having no pipe at all. It is also
+  # not a backgrounding `&`, which is the other way to get this wrong.
+  _agree test-pipe 'pytest tests/ |& tail'
+  _agree test-pipe 'go test ./... |& head -20'
+  _agree test-pipe 'ls |& tail'
+  # Not a backgrounding `&`. Tested on a command no other rule claims, so the
+  # answer is this rule's rather than whichever one the hook reaches first.
+  _agree background 'ls |& tail'
+
+  # gh pr create, the sixth shared rule. Claude matched the raw substring, so
+  # these two were refused by one harness and ignored by the other.
+  _agree pr-create 'gh pr create --draft'
+  _agree pr-create 'echo gh pr create'
+  _agree pr-create "grep 'gh pr create' notes.md"
+  _agree pr-create 'cd /tmp && gh pr create'
 }
 
 @test "test-pipe-guard: the two harnesses agree on example commands, not just word lists" {

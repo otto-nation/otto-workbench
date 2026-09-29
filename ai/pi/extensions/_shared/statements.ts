@@ -24,13 +24,38 @@
  * extension directory is symlinked into ~/.pi/agent/extensions.
  */
 
-import { span, tokenize, type Token } from "./tokenize.ts";
+import { hasUnparsed, span, tokenize, type Token } from "./tokenize.ts";
 
 /** Opens a heredoc, capturing the `-` that allows an indented terminator and the marker. */
 const HEREDOC_OPEN = /<<(-?)\s*['"]?([A-Za-z_][A-Za-z0-9_]*)/;
 
-/** The operators that end a statement, as the tokenizer spells them. */
-const STATEMENT_SEPARATORS = new Set([";", "&&", "||", "|", "&", ";;"]);
+/**
+ * The operators that end a statement, as the tokenizer spells them.
+ *
+ * `|&` is a pipe like `|`, not a backgrounding `&`: it pipes stdout *and*
+ * stderr, and bash documents it as shorthand for `2>&1 |`. It was missing here
+ * and from the Claude guard, so `pytest tests/ |& tail` — a suite whose status
+ * a filter discards — was read as having no pipe at all.
+ */
+const STATEMENT_SEPARATORS = new Set([";", "&&", "||", "|", "|&", "&", ";;"]);
+
+/**
+ * One statement, and whether its output feeds the next one.
+ *
+ * `|` ends a statement like the other separators do, so a pipeline arrives as
+ * several statements rather than one. A caller that needs the pipeline back —
+ * the test-pipe rule, which asks what the *last* stage is — regroups on this
+ * flag instead of re-splitting the text on `|`, because re-splitting would cut
+ * a `|` inside quotes: `pytest tests/ | grep -q 'a|b'` would read as ending in
+ * `b'` rather than in `grep`, and a suite piped into a filter would pass.
+ *
+ * A record rather than a pair, so a caller reads `stage.pipedIntoNext` instead
+ * of learning which element of a tuple means what.
+ */
+export interface Statement {
+  text: string;
+  pipedIntoNext: boolean;
+}
 
 /**
  * Split one line on the control operators that end a statement — `;`, `&&`,
@@ -45,19 +70,56 @@ const STATEMENT_SEPARATORS = new Set([";", "&&", "||", "|", "&", ";;"]);
  * that statement whole while still splitting on every other occurrence of
  * the separators.
  */
-function splitOnControlOperators(line: string): string[] {
-  const parts: string[] = [];
+/**
+ * The separators, for the fallback split below, capturing the run that split so
+ * the caller can still tell a pipe from a `;`.
+ *
+ * Spelled as a character class rather than reusing STATEMENT_SEPARATORS because
+ * this one cuts raw text the tokenizer could not read.
+ */
+const SEPARATOR_RUN = /([;&|]+)/;
+
+function splitOnControlOperators(line: string): Statement[] {
+  const parts: Statement[] = [];
   let current: Token[] = [];
 
   // Sliced from the line rather than rejoined from `raw`: joining with spaces
   // reshapes the text every downstream rule is written against, turning
   // `2>&1` into `2 > & 1`.
-  const flush = () => {
-    parts.push(span(line, current));
+  const flush = (separator: string) => {
+    parts.push({
+      text: span(line, current),
+      pipedIntoNext: separator === "|" || separator === "|&",
+    });
     current = [];
   };
 
   const tokens = tokenize(line);
+
+  // An unterminated quote means the scan could not find where the span ends, so
+  // everything after it was taken as one word and any separator inside it was
+  // never seen. Treating that as a single statement is how a guard silently
+  // stops working: `echo it's; npm run dev &` really does background a shell,
+  // and one apostrophe earlier in the line would hide it. Falling back to a
+  // split on the separator characters over-splits a genuine quoted argument,
+  // which costs at most one refusal of a command that was already unparseable.
+  if (hasUnparsed(tokens)) {
+    // `split` with one capture group yields text, separator, text, … so the odd
+    // entries say what ended each statement. A run containing `|` is a pipe:
+    // dropping that made `pytest tests/ | grep 'it's'` — a suite piped into a
+    // filter, with an apostrophe in the pattern — read as two unrelated
+    // statements and pass.
+    const parts = line.split(SEPARATOR_RUN);
+    const fallback: Statement[] = [];
+    for (let i = 0; i < parts.length; i += 2) {
+      fallback.push({
+        text: parts[i],
+        pipedIntoNext: (parts[i + 1] ?? "").includes("|"),
+      });
+    }
+    return fallback;
+  }
+
   for (let i = 0; i < tokens.length; i++) {
     const tok = tokens[i];
 
@@ -72,12 +134,13 @@ function splitOnControlOperators(line: string): string[] {
         current.push(tok);
         continue;
       }
-      flush();
+      flush(tok.value);
       continue;
     }
     current.push(tok);
   }
-  flush();
+  // Nothing follows the last statement on a line, so it feeds nothing.
+  flush("");
   return parts;
 }
 
@@ -99,7 +162,18 @@ function splitOnControlOperators(line: string): string[] {
  * guard that only read the first statement would miss the one that matters.
  */
 export function statements(command: string): string[] {
-  const found: string[] = [];
+  return splitStatements(command).map((statement) => statement.text);
+}
+
+/**
+ * Every statement in `command` with its pipe flag, for the callers that need to
+ * see a pipeline as a pipeline.
+ *
+ * The same walk `statements()` reports; that one is the common view and this is
+ * the full one, so the two cannot disagree about where a statement ends.
+ */
+export function splitStatements(command: string): Statement[] {
+  const found: Statement[] = [];
   let terminator: RegExp | null = null;
 
   for (const line of command.split("\n")) {

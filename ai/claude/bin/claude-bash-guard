@@ -91,6 +91,24 @@ BUILD_STYLE_RUNNERS='go|cargo|npm|pnpm|yarn'
 
 STATUS_FILTERS='tail|head|grep|egrep|rg|sed|awk|wc|tee|cut|sort|uniq'
 
+# stage_command_name STAGE_TOKEN — set _STAGE_NAME to the command a token
+# names, with surrounding quotes and any leading path removed.
+#
+# Quoting a command name does not stop it being the command: `'pytest' tests/`
+# runs pytest. Stripping the quotes is what keeps this in step with basename()
+# in ai/pi/extensions/test-pipe-guard/detect.ts, which reads the token the same
+# way — the two disagreed about exactly this shape.
+#
+# Assigns to a global for the reason _scan_operator_at does: a command
+# substitution is a subshell, and this runs per pipeline stage on a hook that
+# runs on every Bash call.
+stage_command_name() {
+  local token="$1"
+  token="${token#[\'\"]}"
+  token="${token%[\'\"]}"
+  _STAGE_NAME="${token##*/}"
+}
+
 # stage_invokes_runner STAGE — true when STAGE runs one of TEST_RUNNERS with
 # the subcommand that makes it a test run rather than a build/format/lint:
 # `go test`/`cargo test` directly, and `npm`/`pnpm`/`yarn` also via
@@ -108,7 +126,8 @@ stage_invokes_runner() {
   done
   (( i < ${#tokens[@]} )) || return 1
   tok="${tokens[$i]}"
-  name="${tok##*/}"
+  stage_command_name "$tok"
+  name="$_STAGE_NAME"
   [[ "|$TEST_RUNNERS|" == *"|$name|"* ]] || return 1
   [[ "|$BUILD_STYLE_RUNNERS|" == *"|$name|"* ]] || return 0
   rest=("${tokens[@]:$((i + 1))}")
@@ -127,24 +146,45 @@ stage_invokes_runner() {
   return 1
 }
 
-# statement_pipes_a_test STATEMENT — true when STATEMENT is a pipeline whose
-# last stage is a filter and whose earlier stages include a test runner.
+# pipeline_pipes_a_test FIRST LAST — true when the stages SCAN_STATEMENTS[FIRST]
+# through [LAST] form a pipeline whose last stage is a filter and whose earlier
+# stages include a test runner.
 #
 # Any earlier stage, not only the one before the first pipe: that is what
 # catches `cat f | pytest tests/ | tail -5`, where the runner is not leading,
 # and `pytest tests/ | jq . | tail -5`, where the filter is not the segment
 # right after the runner.
-statement_pipes_a_test() {
-  local statement="$1" k
-  local -a stages
-  [[ "$statement" == *"|"* ]] || return 1
-  IFS='|' read -ra stages <<<"$statement"
-  (( ${#stages[@]} >= 2 )) || return 1
-  stage_is_filter "${stages[-1]}" || return 1
-  for ((k = 0; k < ${#stages[@]} - 1; k++)); do
-    if stage_invokes_runner "${stages[$k]}"; then
+#
+# Takes indices into the scan rather than a string to re-split. Splitting a
+# statement on `|` here would split one inside quotes too, and
+# `pytest tests/ | grep -q 'a|b'` would read as a pipeline ending in `b'`
+# rather than in `grep` — a runner piped into a filter, passed.
+pipeline_pipes_a_test() {
+  local -i first="$1" last="$2" k
+  (( last > first )) || return 1
+  stage_is_filter "${SCAN_STATEMENTS[$last]}" || return 1
+  for ((k = first; k < last; k++)); do
+    if stage_invokes_runner "${SCAN_STATEMENTS[$k]}"; then
       return 0
     fi
+  done
+  return 1
+}
+
+# any_pipeline_pipes_a_test — true when any pipeline in the scan pipes a test
+# runner into a filter.
+#
+# SCAN_PIPED says which statements feed the next one, so a run of them is one
+# pipeline. `||` is a fallback rather than a pipe — `pytest ... || echo failed`
+# reports the suite's own status — and it ends a run here like `;` and `&&` do.
+any_pipeline_pipes_a_test() {
+  local -i idx start=0
+  for ((idx = 0; idx < ${#SCAN_STATEMENTS[@]}; idx++)); do
+    (( SCAN_PIPED[idx] )) && continue
+    if pipeline_pipes_a_test "$start" "$idx"; then
+      return 0
+    fi
+    start=$((idx + 1))
   done
   return 1
 }
@@ -157,10 +197,26 @@ stage_is_filter() {
   local -a tokens
   read -ra tokens <<<"$stage"
   (( ${#tokens[@]} > 0 )) || return 1
-  name="${tokens[0]##*/}"
-  [[ "|$STATUS_FILTERS|" == *"|$name|"* ]]
+  stage_command_name "${tokens[0]}"
+  [[ "|$STATUS_FILTERS|" == *"|$_STAGE_NAME|"* ]]
 }
 
+# The one fork left on the hot path, and it stays.
+#
+# A bash-native extractor was measured at 0.27 ms against jq's 5.7 ms, and
+# refused: pulling `.tool_input.command` out of the payload is JSON string
+# decoding, not a pattern match. It has to find `command` under `tool_input`
+# rather than the first `command` anywhere in the payload, respect a `\\`
+# before a `\"`, and unescape `\n \t \" \\ \/ \uXXXX`. The obvious tool for the
+# last part is `printf '%b'`, and it is wrong in a way that changes verdicts: a
+# command holding the two literal characters `\` and `n` — `grep '\n' file` —
+# arrives here as `\\n`, and a `%b` pass turns it into a real newline, splitting
+# one statement into two and changing which rules match. A vector table cannot
+# cover a decoder's input space, and the failure direction is silent.
+#
+# Not a ceiling: there is no threshold at which the substitution becomes sound,
+# and 5.7 ms does not buy a decoder.
+#
 # Fail open: a malformed payload must not block every Bash call.
 cmd=$(jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
 [[ -n "$cmd" ]] || exit 0
@@ -175,55 +231,325 @@ cmd=$(jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
 # `; ` so the statement-anchored rules below treat a new line as the new
 # statement it is — and so a lone `cd <dir>`, the sanctioned form, still has no
 # separator to match on.
-re_heredoc="<<(-?)[[:space:]]*['\"]?([A-Za-z_][A-Za-z0-9_]*)"
-scannable=""
-marker=""
-marker_re=""
-while IFS= read -r line; do
-  if [[ -n "$marker" && "$line" =~ $marker_re ]]; then
-    marker=""
-    continue
-  fi
-  if [[ -n "$marker" ]]; then
-    continue
-  fi
-  scannable+="${scannable:+; }$line"
-  if [[ "$line" =~ $re_heredoc ]]; then
-    # Only `<<-` lets the terminator be indented. Accepting indentation for a
-    # plain `<<` would end the heredoc early on a body line that happens to be
-    # the marker word, and scan the rest of the body as commands.
-    marker="${BASH_REMATCH[2]}"
-    marker_re="^${BASH_REMATCH[1]:+[[:space:]]*}${marker}[[:space:]]*$"
-  fi
-done < <(printf '%s\n' "$cmd")
+#
+# One walk produces all four results, in process. What it replaced was three
+# `sed` passes over the whole command plus a `sed -E` and a `tr` inside two
+# separate loops — six forks on a hook that runs on every Bash call, and two
+# different answers to what a statement is.
+#
+# The scan is the bash counterpart of ai/pi/extensions/_shared/tokenize.ts and
+# _shared/statements.ts, and it is a port rather than a parallel invention:
+# tests/pi_extensions.bats runs a command corpus through both and requires the
+# same statements out of each. Quoting is the whole reason it exists. A `;`
+# inside quotes is an argument and a `>` inside quotes is a filename, and the
+# sed passes could see neither — `bash -c 'rm -rf x; echo done'` was cut into
+# fragments that matched no rule at all.
 
-# ceiling: quoted spans are stripped with two sed passes, which mis-handle
-# escaped quotes and embedded apostrophes, in both directions. An unpaired
-# apostrophe re-pairs with a later quote, so `echo it's; cd /x && ls 'q'` strips
-# the real cd away and is not blocked; an escaped quote ends a span early, so
-# `echo "say \"{a,b}\" now"` strips to `echo {a,b}\` and is blocked as brace
-# expansion. Both outcomes cost at most one permission prompt — these rules
-# steer command style, they are not a security boundary. Upgrade to a real
-# tokenizer if either misfire shows up on a command worth running.
-stripped=$(printf '%s' "$scannable" | sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g')
+# Longest match first, so `>>` is not read as two `>` and `&&` is not read as
+# two `&`. Redirects lead because `&>` has to win over the bare `&`.
+_SCAN_OPERATORS=('>>' '&>>' '&>' '>|' '>' '<<<' '<<' '<' ';;' '&&' '||' '|&' ';' '|' '&' '(' ')')
 
-# A second variant that strips only single-quoted spans. A `$VAR` survives
-# double quotes and expands, so the expansion rule below has to see inside
-# them; every other rule wants both kinds of quote gone.
-sq_stripped=$(printf '%s' "$scannable" | sed -e "s/'[^']*'//g")
+# A single literal backslash, named so the comparisons below read as comparisons
+# rather than as an escape someone has to decode.
+_SCAN_BACKSLASH=$'\\'
 
-# A third variant that replaces each quoted span with a placeholder instead of
-# deleting it. The redirect rule below captures the token after `>`, and a
-# quoted destination would otherwise leave nothing there to capture — turning a
-# blockable write into a silent pass.
-placeheld=$(printf '%s' "$scannable" | sed -e "s/'[^']*'/QUOTEDARG/g" -e 's/"[^"]*"/QUOTEDARG/g')
+# The operators that end a statement, as the scan spells them. Kept in step
+# with STATEMENT_SEPARATORS in ai/pi/extensions/_shared/statements.ts.
+# `|&` is a pipe like `|`, not a backgrounding `&`: it pipes stdout and stderr
+# both, and bash documents it as shorthand for `2>&1 |`. Neither harness listed
+# it, so `pytest tests/ |& tail` read as having no pipe at all.
+_scan_is_separator() {
+  case "$1" in
+    ';' | '&&' | '||' | '|' | '|&' | '&' | ';;') return 0 ;;
+  esac
+  return 1
+}
+
+# Sets _SCAN_OP to the operator at the head of $1, or returns 1.
+#
+# Assigns to a global rather than printing its answer: a command substitution
+# here is a subshell fork per character scanned, which costs an order of
+# magnitude more than the five forks this whole scan removes.
+_scan_operator_at() {
+  local scan_rest="$1" candidate
+  for candidate in "${_SCAN_OPERATORS[@]}"; do
+    if [[ "$scan_rest" == "$candidate"* ]]; then
+      _SCAN_OP="$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Scan one line, appending to the three text accumulators and to
+# SCAN_STATEMENTS.
+#
+# Runs of ordinary characters are consumed with a single parameter expansion
+# rather than a character at a time. Bash indexes a string by walking it, so a
+# per-character loop is quadratic in the command length: stepping cost 137 ms on
+# an 812-character command, and chunking holds it flat at ~3 ms.
+# _scan_take_single REST — consume a single-quoted span at the head of REST.
+#
+# Single quotes take no escapes, so the first following quote closes. An
+# unterminated one takes the rest of the line as content, which is what stops
+# the apostrophe in `echo it's` from re-pairing with a later quote and deleting
+# the real command between them.
+_scan_take_single() {
+  local scan_rest="$1" content
+  if [[ "${scan_rest:1}" != *"'"* ]]; then
+    # An unbalanced quote means the command's real shape is unknown. Taking the
+    # remainder as inert content would hide a real operator inside it —
+    # `echo it's; npm run dev &` does background a shell — so the text is kept
+    # in the scanned copies and only the statement split stops here. Reported
+    # the way tokenize.ts reports it, via Token.unparsed.
+    _SCAN_LINE_UNPARSED=1
+    _scan_st+="$scan_rest"
+    _scan_sq+="$scan_rest"
+    _scan_ph+="$scan_rest"
+    _scan_stmt+="$scan_rest"
+    _SCAN_TAKEN=${#scan_rest}
+    return 0
+  fi
+  content="${scan_rest:1}"
+  content="${content%%\'*}"
+  _scan_ph+="QUOTEDARG"
+  _scan_stmt+="'$content'"
+  _SCAN_TAKEN=$((${#content} + 2))
+}
+
+# _scan_double_close REST — set _SCAN_CLOSE to the index of the quote closing
+# the double quote at the head of REST, or -1.
+#
+# A plain search stops at the first quote, which inside double quotes is wrong:
+# `"a\"b"` ends at the last one, not at the escaped one in the middle.
+_scan_double_close() {
+  local scan_rest="$1"
+  local -i probe=1
+  _SCAN_CLOSE=-1
+  while ((probe < ${#scan_rest})); do
+    if [[ "${scan_rest:$probe:1}" == "$_SCAN_BACKSLASH" ]]; then
+      ((probe += 2))
+      continue
+    fi
+    if [[ "${scan_rest:$probe:1}" == '"' ]]; then
+      _SCAN_CLOSE=$probe
+      return 0
+    fi
+    ((probe++))
+  done
+}
+
+# _scan_take_double REST — consume a double-quoted span at the head of REST.
+#
+# The span survives into sq_stripped: a `$VAR` expands inside double quotes, so
+# the expansion rule has to see in here. Every other rule wants it gone.
+_scan_take_double() {
+  local scan_rest="$1" content
+  _scan_double_close "$scan_rest"
+  if ((_SCAN_CLOSE == -1)); then
+    # Unbalanced, as in _scan_take_single: keep the text rather than blanking a
+    # span whose end this scan cannot find.
+    _SCAN_LINE_UNPARSED=1
+    _scan_st+="$scan_rest"
+    _scan_sq+="$scan_rest"
+    _scan_ph+="$scan_rest"
+    _scan_stmt+="$scan_rest"
+    _SCAN_TAKEN=${#scan_rest}
+    return 0
+  fi
+  content="${scan_rest:0:$((_SCAN_CLOSE + 1))}"
+  _scan_sq+="$content"
+  _scan_ph+="QUOTEDARG"
+  _scan_stmt+="$content"
+  _SCAN_TAKEN=$((_SCAN_CLOSE + 1))
+}
+
+# _scan_take_escape REST — consume a backslash escape at the head of REST.
+# An escaped character is content, including an escaped quote.
+_scan_take_escape() {
+  local scan_rest="$1" content
+  if ((${#scan_rest} == 1)); then
+    _scan_st+="$_SCAN_BACKSLASH"
+    _scan_sq+="$_SCAN_BACKSLASH"
+    _scan_ph+="$_SCAN_BACKSLASH"
+    _scan_stmt+="$_SCAN_BACKSLASH"
+    _SCAN_TAKEN=1
+    return 0
+  fi
+  content="${scan_rest:1:1}"
+  _scan_st+="$content"
+  _scan_sq+="${scan_rest:0:2}"
+  _scan_ph+="$content"
+  _scan_stmt+="${scan_rest:0:2}"
+  _SCAN_TAKEN=2
+}
+
+# _scan_take_operator OP PREV_OP — consume the operator OP, ending the current
+# statement when it separates one.
+_scan_take_operator() {
+  local op="$1" prev_op="$2"
+  if _scan_is_separator "$op" && ! { [[ "$op" == '&' ]] && [[ "$prev_op" == *'>'* ]]; }; then
+    # An `&` belonging to a redirect is not a separator: `2>&1` would otherwise
+    # shatter the statement it sits inside into fragments.
+    SCAN_STATEMENTS+=("$_scan_stmt")
+    # Whether this statement feeds the next one. `|` is a statement separator
+    # like the others, so a pipeline arrives here as several statements; this is
+    # what lets the test-pipe rule put one back together without splitting on a
+    # `|` that sits inside quotes.
+    if [[ "$op" == '|' || "$op" == '|&' ]]; then
+      SCAN_PIPED+=(1)
+    else
+      SCAN_PIPED+=(0)
+    fi
+    _scan_stmt=""
+  else
+    _scan_stmt+="$op"
+  fi
+  _scan_st+="$op"
+  _scan_sq+="$op"
+  _scan_ph+="$op"
+  _SCAN_TAKEN=${#op}
+}
+
+_scan_line() {
+  local scan_rest="$1"
+  local prev_op="" head ch
+  local -i line_first=${#SCAN_STATEMENTS[@]}
+  _scan_stmt=""
+
+  while [[ -n "$scan_rest" ]]; do
+    # Everything up to the next character that could mean something is content.
+    head="${scan_rest%%[\'\"\\;\&\|\<\>\(\)]*}"
+    if [[ -n "$head" ]]; then
+      _scan_st+="$head"
+      _scan_sq+="$head"
+      _scan_ph+="$head"
+      _scan_stmt+="$head"
+      scan_rest="${scan_rest:${#head}}"
+      # A redirect's `&` is only attached across whitespace-free text, so any
+      # non-space content between the two clears the pairing.
+      [[ "$head" == *[![:space:]]* ]] && prev_op=""
+      [[ -n "$scan_rest" ]] || break
+    fi
+
+    ch="${scan_rest:0:1}"
+    case "$ch" in
+      "'") _scan_take_single "$scan_rest"; prev_op="" ;;
+      '"') _scan_take_double "$scan_rest"; prev_op="" ;;
+      "$_SCAN_BACKSLASH") _scan_take_escape "$scan_rest"; prev_op="" ;;
+      *)
+        if _scan_operator_at "$scan_rest"; then
+          _scan_take_operator "$_SCAN_OP" "$prev_op"
+          prev_op="$_SCAN_OP"
+        else
+          _scan_st+="$ch"
+          _scan_sq+="$ch"
+          _scan_ph+="$ch"
+          _scan_stmt+="$ch"
+          _SCAN_TAKEN=1
+        fi ;;
+    esac
+    scan_rest="${scan_rest:$_SCAN_TAKEN}"
+  done
+
+  SCAN_STATEMENTS+=("$_scan_stmt")
+  SCAN_PIPED+=(0)
+
+  (( _SCAN_LINE_UNPARSED )) || return 0
+  # An unterminated quote means the scan could not find where the span ends, so
+  # everything after it was taken as one word and any separator inside it was
+  # never seen. Treating that as a single statement is how a guard silently
+  # stops working: `echo it's; npm run dev &` really does background a shell,
+  # and one apostrophe earlier in the line would hide it. Falling back to a
+  # split on the separator characters over-splits a genuine quoted argument,
+  # which costs at most one refusal of a command that was already unparseable.
+  #
+  # Mirrors the same fallback in ai/pi/extensions/_shared/statements.ts, and the
+  # corpus test in tests/pi_extensions.bats requires the two to agree.
+  SCAN_STATEMENTS=("${SCAN_STATEMENTS[@]:0:$line_first}")
+  SCAN_PIPED=("${SCAN_PIPED[@]:0:$line_first}")
+  # Walked rather than split on IFS, because the separator run has to be read as
+  # well as cut on: a run holding `|` is a pipe, and dropping that made
+  # `pytest tests/ | grep 'it's'` — a suite piped into a filter, with an
+  # apostrophe in the pattern — read as two unrelated statements and pass.
+  local fallback_rest="$1" piece run
+  while [[ -n "$fallback_rest" ]]; do
+    piece="${fallback_rest%%[;\&\|]*}"
+    fallback_rest="${fallback_rest:${#piece}}"
+    run=""
+    while [[ -n "$fallback_rest" && "${fallback_rest:0:1}" == [\;\&\|] ]]; do
+      run+="${fallback_rest:0:1}"
+      fallback_rest="${fallback_rest:1}"
+    done
+    SCAN_STATEMENTS+=("$piece")
+    if [[ "$run" == *'|'* ]]; then
+      SCAN_PIPED+=(1)
+    else
+      SCAN_PIPED+=(0)
+    fi
+  done
+}
+
+# _scan COMMAND — set stripped / sq_stripped / placeheld / SCAN_STATEMENTS.
+_scan() {
+  local line marker="" marker_re="" first=1
+  local re_heredoc="<<(-?)[[:space:]]*['\"]?([A-Za-z_][A-Za-z0-9_]*)"
+  _scan_st=""
+  _scan_sq=""
+  _scan_ph=""
+  SCAN_STATEMENTS=()
+  SCAN_PIPED=()
+
+  while IFS= read -r line; do
+    if [[ -n "$marker" && "$line" =~ $marker_re ]]; then
+      marker=""
+      continue
+    fi
+    [[ -n "$marker" ]] && continue
+
+    if ((first)); then
+      first=0
+    else
+      _scan_st+="; "
+      _scan_sq+="; "
+      _scan_ph+="; "
+    fi
+    _SCAN_LINE_UNPARSED=0
+    _scan_line "$line"
+
+    if [[ "$line" =~ $re_heredoc ]]; then
+      # Only `<<-` lets the terminator be indented. Accepting indentation for a
+      # plain `<<` would end the heredoc early on a body line that happens to be
+      # the marker word, and scan the rest of the body as commands.
+      marker="${BASH_REMATCH[2]}"
+      marker_re="^${BASH_REMATCH[1]:+[[:space:]]*}${marker}[[:space:]]*$"
+    fi
+  done < <(printf '%s\n' "$1")
+
+  stripped="$_scan_st"
+  sq_stripped="$_scan_sq"
+  placeheld="$_scan_ph"
+}
+
+_scan "$cmd"
 
 # ── Whole-command rules ──────────────────────────────────────────────────────
 # These scan the command as written. Order is by specificity: the first rule to
 # match is the message Claude sees, so a narrow rule earns its place above a
 # broad one.
 
-if [[ "$cmd" == *"gh pr create"* ]]; then
+# Unlike most rules in this file, this one is not about a permission prompt:
+# `task pr:create` resolves the repo's PR template and checks the body against
+# its sections, appends a closing ref per --closes, assigns the PR, and pushes
+# first. That is coding policy and it holds under any harness, so Pi enforces it
+# too — ai/pi/extensions/pr-create-guard/ is the same rule, and
+# tests/pi_extensions.bats holds the two to one set of answers.
+#
+# Statement-anchored rather than a substring of $cmd. Matching the raw command
+# refused `echo gh pr create` and any grep whose pattern contained the phrase,
+# neither of which opens a PR.
+re_pr_create='(^|[;&|][[:space:]]*)gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$)'
+if [[ "$stripped" =~ $re_pr_create ]]; then
   block 'Use task pr:create instead of gh pr create — it auto-loads the repo PR template. See git-operations.md § PR Creation.'
 fi
 
@@ -270,21 +596,7 @@ fi
 # runner is a non-leading stage) and `pytest tests/ | jq . | tail -5` (the
 # filter is not the segment right after the runner).
 if ! [[ "$stripped" =~ set[[:space:]]+-[a-zA-Z]*o[[:space:]]+pipefail ]]; then
-  piped_test_found=""
-  while IFS= read -r statement; do
-    statement_pipes_a_test "$statement" || continue
-    piped_test_found=1
-    break
-  # `||` is a fallback rather than a pipe — `pytest ... || echo failed` already
-  # reports the suite's own status — so it is split away here alongside `;` and
-  # `&&`, before the remaining `|` characters are read as pipes.
-  #
-  # The trailing newline printf adds is load-bearing, the same way it is for
-  # the sleep rule below: read discards a final line with no terminator, so
-  # without it a single-statement command is never scanned at all.
-  done < <(printf '%s\n' "$stripped" | sed -E 's/(&&|\|\||;)/\n/g')
-
-  if [[ -n "$piped_test_found" ]]; then
+  if any_pipeline_pipes_a_test; then
     block 'Piping a test suite into a filter reports the filter'"'"'s exit status, not the suite'"'"'s — false | tail -1 exits 0, so a failing run reads as a pass and a $? read after the pipe is the filter status. Redirect to a file and read the status, then grep the file: pytest ... > /tmp/out.txt 2>&1; echo $?. set -o pipefail is accepted where a pipe is genuinely wanted. See testing.md § Reading a Suite Result.'
   fi
 fi
@@ -399,15 +711,11 @@ fi
 # would otherwise abort the arithmetic with "value too great for base" and let the
 # command through on an error message rather than a decision.
 re_sleep='^[[:space:]]*sleep[[:space:]]+([0-9]+)([[:space:]]|$)'
-while IFS= read -r statement; do
+for statement in "${SCAN_STATEMENTS[@]}"; do
   [[ "$statement" =~ $re_sleep ]] || continue
   (( 10#${BASH_REMATCH[1]} >= SLEEP_WAIT_THRESHOLD_SECONDS )) || continue
   block "A sleep of ${BASH_REMATCH[1]}s is a wait for something that reports its own completion. A background job reports when it finishes and CI is reported when it lands — do nothing and wait, or do other work in the meantime. Start long-running work with run_in_background and read its output when it is done, rather than sleeping beside it. See general.md § Waiting on Background Work."
-#
-# The trailing newline printf adds is load-bearing: `read` discards a final line
-# with no terminator, so without it the last statement is never scanned — and a
-# command that is a single `sleep 300` is entirely last statement.
-done < <(printf '%s\n' "$stripped" | tr ';&|' '\n\n\n')
+done
 
 # Below the rules above because it matches a wider range of commands than any of
 # them — a `$VAR` in a compound cd or an env -C should get that rule's message.

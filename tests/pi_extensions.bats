@@ -868,11 +868,30 @@ _agree() {
   # `claude-only` and the bare `BLOCKED:` fallback are excluded: they are what
   # the classifier answers when no shared phrase matched, so they name no
   # message of their own.
-  phrases=$(sed -n '/^_shared_rule_verdict()/,/^}/p' "$BATS_TEST_FILENAME" \
+  local case_block arm_count phrase_count
+  case_block=$(sed -n '/^_shared_rule_verdict()/,/^}/p' "$BATS_TEST_FILENAME")
+  phrases=$(printf '%s\n' "$case_block" \
     | sed -n 's/^[[:space:]]*\*"\(.*\)"\*).*$/\1/p' \
     | grep -v '^BLOCKED:$')
   [ -n "$phrases" ]
   [ "$(printf '%s\n' "$phrases" | wc -l | tr -d ' ')" -ge 5 ]
+
+  # Tie the extraction to the shape of the `case` block itself: every arm ends
+  # in `;;`, and exactly two of them (the `BLOCKED:` fallback and the bare
+  # `*)` default) name no phrase of their own. If a future arm is reformatted
+  # — wrapped onto two lines, single-quoted, indented differently — the sed
+  # above stops matching it, `phrases` silently shrinks by one, but the
+  # `-ge 5` check above would not notice as long as five still matched. This
+  # count comparison catches exactly that: it fails the moment a real arm's
+  # phrase goes uncaptured, rather than only when the whole list gets short.
+  arm_count=$(printf '%s\n' "$case_block" | grep -cE ';;[[:space:]]*$')
+  phrase_count=$(printf '%s\n' "$phrases" | wc -l | tr -d ' ')
+  [ "$phrase_count" -eq "$((arm_count - 2))" ] || {
+    echo "case block has $arm_count arms but only $phrase_count phrases were" \
+      "extracted (expected $((arm_count - 2)), i.e. all arms but the two" \
+      "fallbacks) — a reformatted arm's phrase went uncaptured"
+    return 1
+  }
 
   while IFS= read -r phrase; do
     [ -n "$phrase" ] || continue

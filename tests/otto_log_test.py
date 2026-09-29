@@ -451,6 +451,14 @@ class TestStatsAggregation:
         )
         assert _by_group(rows)["fix"].calls == 2
 
+    def test_the_turn_grouping_is_one_the_cli_accepts(self):
+        # `stats_columns` compares `--by` against this literal, so a value
+        # missing from STATS_GROUPINGS is unreachable and the turn columns
+        # would never render — silently, since every other grouping is
+        # supposed to omit them. Held here rather than by a module-level
+        # `assert`, which `python -O` removes.
+        assert otto_log._TURN_GROUPING in otto_log.STATS_GROUPINGS
+
     def test_phase_is_a_grouping_the_cli_will_accept(self):
         # `aggregate_usage` groups by whatever key it is handed, so the test
         # above passed before `phase` was a choice anyone could pass — the

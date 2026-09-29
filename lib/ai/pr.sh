@@ -11,8 +11,8 @@
 # ```
 #
 # State set by its functions: `BRANCH`, `DEFAULT_BRANCH`, `SKIP_ISSUE`,
-# `PR_BASE`, `PR_ISSUE`, `PR_CLOSES`, `PR_TEMPLATE`, `PR_TEMPLATE_PATH`,
-# `PR_HAS_TEMPLATE`, `PR_TITLE`, `PR_DESCRIPTION`.
+# `PR_BASE`, `PR_ISSUE`, `PR_CLOSES`, `PR_NO_VERIFY`, `PR_TEMPLATE`,
+# `PR_TEMPLATE_PATH`, `PR_HAS_TEMPLATE`, `PR_TITLE`, `PR_DESCRIPTION`.
 
 # WORKBENCH_ROOT comes from ai/core.sh, which this file requires be sourced
 # first (see the header above). _pr_load_template asks git for the repo root,
@@ -27,11 +27,17 @@
 # because a second "Push failed" would say it worse and say it twice.
 _push_verified() {
   local branch="$1"; shift
+  local gate=()
+  # PR_NO_VERIFY is the operator's answer to a pre-push gate they have already
+  # read — a flake, or a failure the branch did not cause. Passed through here
+  # rather than by exporting GIT_* or editing hooks, so it is visible in the
+  # invocation that used it and dies with that invocation.
+  [[ "${PR_NO_VERIFY:-false}" == true ]] && gate=(--no-verify)
   # No PYTHONPATH here: push.py puts ai/lib on sys.path itself, because an
   # exported one does not reach every interpreter this runs under — a mise shim
   # assigns the workspace's own value over it before exec'ing python.
   python3 "$WORKBENCH_ROOT/ai/lib/git/push.py" \
-    --cwd . --branch "$branch" --remote "$GIT_REMOTE" "$@"
+    --cwd . --branch "$branch" --remote "$GIT_REMOTE" "${gate[@]}" "$@"
 }
 
 # push_branch BRANCH
@@ -214,6 +220,8 @@ parse_pr_flags() {
   # shellcheck disable=SC2034  # PR_BODY_OVERRIDE read by generate_pr_content
   PR_BODY_OVERRIDE=""
   PR_ISSUE_OVERRIDE=""
+  # shellcheck disable=SC2034  # PR_NO_VERIFY read by _push_verified
+  PR_NO_VERIFY=false
   # shellcheck disable=SC2034  # PR_CLOSES read by _pr_append_issue_link
   PR_CLOSES=()
 
@@ -236,6 +244,10 @@ parse_pr_flags() {
       # suppress an issue prompt that no longer exists.
       --no-issue) SKIP_ISSUE=true ;;
       --draft)    PR_DRAFT=true ;;
+      # The pre-push gate, skipped. For a gate failure already understood — a
+      # flake, or one the branch did not cause. It does not skip the review:
+      # `pr review --self --fix` is a separate step and still owes its run.
+      --no-verify) PR_NO_VERIFY=true ;;
       --issue)    expect_flag="$arg" ;;
       --base|--title|--body|--body-file|--closes) expect_flag="$arg" ;;
       *) printf "✗ Unknown flag: %s\n" "$arg"; return 1 ;;

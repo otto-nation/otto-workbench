@@ -160,6 +160,20 @@ class Sample:
     def pids(self) -> frozenset[int]:
         return frozenset(self.cpu_by_pid)
 
+    @property
+    def readable(self) -> bool:
+        """Whether this sample measured anything at all.
+
+        False means `ps` failed or was killed by its own bound, not that the
+        tree is idle: the root process is always in a successful reading, so
+        an empty one cannot have come from a live run. The distinction is the
+        difference between a stall and a blind watchdog, and treating the two
+        alike would let a failure of the instrument end a healthy run — the
+        one false positive the design cannot argue its way out of, because it
+        is not about the workload at all.
+        """
+        return bool(self.cpu_by_pid)
+
     def cpu_over(self, pids: Container[int]) -> float:
         """Total CPU across the members of this sample that are in *pids*."""
         return sum(cpu for pid, cpu in self.cpu_by_pid.items() if pid in pids)
@@ -218,7 +232,10 @@ def sample_subtree(root_pid: int) -> Sample:
     """What `root_pid` and everything under it have used, right now.
 
     The root is included: it is the Pi process, and a tool implemented in
-    process rather than as a child burns its CPU there.
+    process rather than as a child burns its CPU there. That also makes an
+    empty result unambiguous — a live run always has at least its own process
+    in the tree, so nothing to report means the reading failed rather than
+    that nothing is running. `Sample.readable` is what callers check.
     """
     rows = _ps_rows()
     children: dict[int, list[int]] = {}
@@ -374,6 +391,12 @@ class StallWatch:
             if self._state()[0] != generation:
                 return False
             current = sample_subtree(self.root_pid)
+            # An unreadable pair is no evidence either way, and a watchdog
+            # with no evidence must not be the thing that ends a run. Declining
+            # here only costs a confirm window: the gap is still open, so the
+            # next poll starts a fresh one.
+            if not (previous.readable and current.readable):
+                return False
             if shows_work(previous, current, baseline, self.root_pid):
                 return False
             previous = current

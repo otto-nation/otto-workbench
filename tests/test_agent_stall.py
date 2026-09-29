@@ -95,6 +95,47 @@ class TestShowsWork:
         assert stall.shows_work(before, after, frozenset({1, 99})) is False
 
 
+class TestAnUnreadableSample:
+    """A watchdog that cannot see must not be the thing that ends a run.
+
+    `ps` failing looks exactly like an idle tree if the two are not told
+    apart: no pids, no CPU, no churn. That would make the detector's own
+    instrument a source of false aborts — the one false positive the CPU
+    reading cannot argue away, because it is not about the workload.
+    """
+
+    def test_an_empty_sample_is_marked_unreadable(self):
+        assert Sample(cpu_by_pid={}).readable is False
+
+    def test_a_sample_holding_the_root_is_readable(self):
+        # A live run always has at least the Pi process in its own tree, so
+        # this is what makes the empty case unambiguous rather than merely
+        # unusual.
+        assert Sample(cpu_by_pid={1: 0.0}).readable is True
+
+    def test_a_failed_reading_does_not_end_the_run(self, fast_watch, monkeypatch):
+        recorder = _Recorder()
+        monkeypatch.setattr(
+            stall, "sample_subtree", lambda _root: Sample(cpu_by_pid={}),
+        )
+        watch = StallWatch(root_pid=1, send=recorder)
+        watch.start()
+        try:
+            watch.arm("bash")
+            time.sleep(1.0)
+        finally:
+            watch.stop()
+        assert recorder.types == []
+        assert watch.aborted_reason == ""
+
+    def test_ps_failing_reads_as_unreadable_rather_than_as_idle(self, monkeypatch):
+        # Driven through `_ps_rows` rather than by stubbing `sample_subtree`,
+        # so the path from a failed command to an unreadable sample is the
+        # one under test.
+        monkeypatch.setattr(stall, "_ps_rows", lambda: [])
+        assert stall.sample_subtree(1).readable is False
+
+
 class TestSampleSubtree:
     """CPU is attributed by walking PPID, because PGID cannot see the child.
 

@@ -141,7 +141,7 @@ _validate_output_schema() {
   # skill's reader has no reason to know exists.
   if [[ "$tool_name" == pr\ * ]]; then
     local subcommand="${tool_name#pr }"
-    if ! schema_out=$(WORKBENCH_DIR="$WORKBENCH_DIR" python3 -c '
+    if ! schema_out=$(python3 -c '
 import json, sys
 sys.path.insert(0, sys.argv[1] + "/ai/lib")
 from cli.schema import subcommand_schema

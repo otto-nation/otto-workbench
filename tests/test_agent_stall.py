@@ -39,6 +39,18 @@ class TestParseTime:
     def test_hours_are_read_when_present(self):
         assert stall._parse_time("1:00:00.00") == pytest.approx(3600.0)
 
+    def test_the_procps_spelling_reads_the_same(self):
+        # Linux `ps` writes HH:MM:SS with no fractional part and zero-padded
+        # fields. Both platforms run this code, and a parser that read only
+        # the BSD spelling would report every Linux process as idle — which
+        # is a stall verdict, not a missing feature.
+        assert stall._parse_time("01:02:03") == pytest.approx(3723.0)
+        assert stall._parse_time("00:00:00") == 0.0
+
+    def test_a_process_past_an_hour_is_not_truncated(self):
+        # BSD keeps counting minutes rather than rolling into an hours field.
+        assert stall._parse_time("117:02.75") == pytest.approx(7022.75)
+
     def test_an_unreadable_field_is_zero_rather_than_an_exception(self):
         # The watchdog thread declining to act is the right failure; taking
         # down the run it is watching over a format surprise is not.

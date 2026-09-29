@@ -194,6 +194,11 @@ exotic one: a `pytest` whose output has not yet filled its 8KB buffer, a
 
 A gap is therefore grounds for suspicion and never for a verdict.
 
+What makes the gap meaningful at all is that Pi has no heartbeat: there is no
+`setInterval` in either its RPC layer or its agent loop, so nothing arrives on
+the stream that the run did not do. A gap is silence about work, not a dropped
+keepalive.
+
 ## What separates them
 
 Two measurements over the Pi process's descendants, either of which is

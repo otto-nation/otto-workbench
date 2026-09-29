@@ -1,4 +1,4 @@
-"""The argv `review.invoke` builds, and the guards around the spawn.
+"""The argv `review.invoke` builds, and the guards around the in-process call.
 
 These assert the whole command line rather than one flag at a time. The seven
 tests this replaces each poked a single flag, so a flag dropped from the middle
@@ -11,7 +11,6 @@ under test stays the same.
 
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -139,14 +138,15 @@ def test_disprove_is_forwarded_only_when_explicitly_true(tmp_path):
     assert "--disprove" in review_invoke.build_argv(_request(tmp_path, disprove=True))
 
 
-# ── the guards around the spawn ──────────────────────────────────────────────
+# ── the guards around the in-process call ───────────────────────────────────
 
 
 def _spawn(monkeypatch, returncode):
-    def _run(argv, *a, **kw):
-        return SimpleNamespace(returncode=returncode)
+    def _run(handler, argv, *a, **kw):
+        assert handler == "cli.review_orchestrate:main"
+        return returncode
 
-    monkeypatch.setattr(review_invoke.subprocess, "run", _run)
+    monkeypatch.setattr(review_invoke.publishing, "call_entry_point", _run)
 
 
 def test_a_nonzero_return_code_stops_the_run(tmp_path, monkeypatch):

@@ -6,20 +6,25 @@ an argv resolves rather than a constant — could not be stated anywhere a
 library module could read it. `cli.registry` imports `need_for` from here for
 exactly that reason.
 
-Still spawning: `--post` and `--repair` run `review-post` and `review-rebuild`
-as child processes, exactly as the binary did. #909 T7 commit 4 makes them
-calls.
+`--post` and `--repair` call `review-post` and `review-rebuild` in this
+process, through `core.publishing.call_entry_point` — the seam itself rather
+than `cli.dispatch`, which wraps it. These two build their own argv and want
+only the call, and reaching for the dispatcher would close a cycle:
+`cli.registry` imports this module for the one need an argv resolves.
 
-Each handler is *given* the directory to spawn from rather than deriving one,
-matching `review.publish.post`. Under `WORKBENCH_AI_LIB_DIR` this module sits
-in the pinned checkout while the entry point does not, so a path derived here
-would spawn a different tree's delegates than `ai/bin/pr` does.
+Both used to be spawns; `--repair` also used to capture the rebuild's stdout
+and grep it for a `REVIEW_SUMMARY:` marker, which `cli.review_rebuild` has
+never written — the domain is synced from the file the rebuild produced
+instead.
+
+Handlers still take `bin_dir`. Nothing in this module spawns any more, but the
+four share one signature and `summary` never needed it either; the parameter
+is the mode-handler contract rather than a path any of them uses today.
 """
 
 # doc-group: cli
 
 import json
-import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -28,59 +33,13 @@ from cli import needs
 from cli.needs import NONE as _NONE
 from cli.needs import Need, ReviewMode
 from core import log
-from core import timeouts
+from core import publishing
 from pr import context as pr_context
 from pr.review_sync import sync_review_domain
 from pr.target import display_repo
 from review import listing as review_listing
 from review.paths import find_review_file, review_file_path
-from review.summary import ReviewSummaryReport, build_review_summary, json_summary
-
-
-def parse_review_summary(output: str) -> dict | None:
-    """Extract REVIEW_SUMMARY:{json} from claude-review output."""
-    prefix = "REVIEW_SUMMARY:"
-    lines = [l for l in output.splitlines() if l.startswith(prefix)]
-    if not lines:
-        return None
-    try:
-        return json.loads(lines[0][len(prefix):])
-    except (json.JSONDecodeError, TypeError):
-        return None
-
-
-def update_review_state_from_output(output: str,
-                                    ctx: pr_context.ResolvedContext) -> None:
-    """Parse REVIEW_SUMMARY from output and update pr_state.
-
-    review-rebuild does not emit the marker today, so this is a no-op on that
-    path. The marker protocol itself should be deleted once the JSON-marker
-    protocol it implements is retired.
-    """
-    summary_data = parse_review_summary(output)
-    if not summary_data:
-        return
-    sync_review_domain(ctx, ReviewSummaryReport(
-        repo=summary_data.get("repo", ""),
-        pr_number=summary_data.get("pr_number"),
-        head_sha=summary_data.get("head_sha"),
-        head_ref=summary_data.get("head_ref"),
-        base_ref=summary_data.get("base_ref"),
-        review_type=summary_data.get("review_type"),
-        review_file=summary_data.get("review_file", ""),
-        review_content=summary_data.get("review_content"),
-        findings=summary_data.get("findings") or {},
-        verdict=summary_data.get("verdict", ""),
-        status=summary_data.get("status", ""),
-        failure_detail=summary_data.get("failure_detail", ""),
-        recoverable=summary_data.get("recoverable"),
-        cost_usd=summary_data.get("cost_usd", 0.0),
-        input_tokens=summary_data.get("input_tokens", 0),
-        output_tokens=summary_data.get("output_tokens", 0),
-        cache_read_tokens=summary_data.get("cache_read_tokens", 0),
-        cache_write_tokens=summary_data.get("cache_write_tokens", 0),
-        duration_ms=summary_data.get("duration_ms", 0),
-    ))
+from review.summary import build_review_summary, json_summary
 
 
 def post(argv: list[str], ctx: pr_context.ResolvedContext, *,
@@ -98,18 +57,18 @@ def post(argv: list[str], ctx: pr_context.ResolvedContext, *,
         log.dim("Run: pr review")
         return 1
 
-    cmd = [str(bin_dir / "review-post"), "--pr", pr_num, "--review-file", str(review)]
+    post_argv = ["--pr", pr_num, "--review-file", str(review)]
     # What this run is publishing for. The review file is found by PR number
     # while the run lock keys on the branch, so naming the branch is what lets
     # review-post tell this run's review from one written by a run the lock
     # never made contend with it.
     if ctx.branch:
-        cmd += ["--expect-ref", ctx.branch]
+        post_argv += ["--expect-ref", ctx.branch]
     if "--submit" in argv:
-        cmd.append("--submit")
+        post_argv.append("--submit")
         argv = [a for a in argv if a != "--submit"]
-    cmd += argv
-    return subprocess.run(cmd, timeout=timeouts.UNBOUNDED).returncode
+    post_argv += argv
+    return publishing.call_entry_point("cli.review_post:main", post_argv)
 
 
 def repair(argv: list[str], ctx: pr_context.ResolvedContext, *,
@@ -131,16 +90,23 @@ def repair(argv: list[str], ctx: pr_context.ResolvedContext, *,
         log.error(f"No review directory found: {review_dir}")
         return 1
 
-    cmd = [str(bin_dir / "review-rebuild"), "--review-dir", str(review_dir), "--pr", pr_num]
-    cmd += argv
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeouts.UNBOUNDED)
-    if result.stderr:
-        print(result.stderr, file=sys.stderr, end="")
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.returncode == 0:
-        update_review_state_from_output(result.stdout, ctx)
-    return result.returncode
+    rc = publishing.call_entry_point(
+        "cli.review_rebuild:main",
+        ["--review-dir", str(review_dir), "--pr", pr_num] + list(argv),
+    )
+    if rc != 0:
+        return rc
+
+    # The rebuild writes `review.md` and says nothing on stdout. This used to
+    # capture its output and grep it for a `REVIEW_SUMMARY:` marker — a
+    # protocol whose only writer was `claude-review`, so on this path it
+    # parsed a string nothing emitted and silently updated nothing. The
+    # domain is synced from the file the rebuild just wrote instead, which is
+    # the same thing `repair` does above when a review file already exists.
+    review = find_review_file(ctx.repo, pr_num)
+    if review:
+        sync_review_domain(ctx, build_review_summary(ctx.repo, pr_num, str(review)))
+    return 0
 
 
 def summary(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:

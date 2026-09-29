@@ -8,10 +8,8 @@ run 'pr <command> --help' to see each script's flags.
 
 import argparse
 import contextlib
-import importlib
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -26,6 +24,7 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
     _AI_LIB_DIR = pinned_ai_lib_dir()
 sys.path.insert(0, str(_AI_LIB_DIR))
 
+from cli import dispatch
 from cli import review_modes
 from cli.needs import Need
 from cli.pr_commands import (
@@ -34,117 +33,19 @@ from cli.pr_commands import (
     cmd_fix,
     cmd_gc,
     cmd_status,
-    target_flags,
 )
-from cli.registry import COMMANDS, CommandSpec, need_for
+from cli.registry import COMMANDS, need_for
 from pr import context as pr_context
 from pr import state as pr_state
 from pr import sync as pr_sync
 from pr import push_intent
 from core import log
 from core import proc
-from core import timeouts
+from core import publishing
 from config import workbench_projects
 from core import run_lock
 from review import listing as review_listing
-from core import tool_parser
 from core.trail import Trail, add_trail_args
-
-
-def _run_delegate(spec: CommandSpec, argv: list[str],
-                  ctx: pr_context.ResolvedContext, *,
-                  original_pr: str | None = None,
-                  original_branch: str | None = None) -> int:
-    """Build and run a backing-script command with context injection.
-
-    Forwards exactly one of --pr or --branch (never both) so the
-    delegate's pr_context.resolve() doesn't hit the mutual-exclusivity
-    check.  Priority: explicit --pr > resolved PR number > explicit
-    --branch > auto-detected branch.  PR number is preferred over branch
-    because it's a stable identifier that avoids a redundant gh API call
-    in the delegate — and prevents mismatched --repo-dir/--branch when
-    the worktree is on a different branch than the target.
-    """
-    cmd = [str(BIN_DIR / spec.script)]
-    if ctx.worktree_root:
-        cmd += ["--repo-dir", str(ctx.worktree_root)]
-    cmd += target_flags(ctx, original_pr=original_pr,
-                        original_branch=original_branch)
-    cmd += list(argv)
-    return subprocess.run(cmd, timeout=timeouts.UNBOUNDED).returncode
-
-
-# ── Helpers ─────────────────────────────────────────────────────────────────
-
-
-def _split_argv(argv: list[str]) -> tuple[list[str], list[str]]:
-    """Split argv into (positionals, flags)."""
-    positionals = [a for a in argv if not a.startswith("-")]
-    flags = [a for a in argv if a.startswith("-")]
-    return positionals, flags
-
-
-# The parser factory that answers "which of this command's options consume a
-# following token", per subcommand. Not a CommandSpec field: the three
-# scriptless commands have no delegate parser at all — their parser is one of
-# this binary's own subparsers — so a field would be filled for five entries
-# and structurally empty for three, which is the two-meanings-in-one-field
-# shape the handler seam was careful to avoid.
-_PARSER_FACTORIES = {
-    "ci": "cli.ci_check:build_parser",
-    "review": "cli.claude_review:build_parser",
-    "comments": "cli.review_threads:build_parser",
-    "rebase": "cli.pr_rebase:build_parser",
-    "describe": "cli.pr_describe:build_parser",
-}
-
-
-def _delegate_value_flags(spec: CommandSpec) -> frozenset[str]:
-    """Which of *spec*'s delegate's options consume a following value.
-
-    The delegate's own parser is the single source of truth, and it is an
-    import away. This used to spawn the delegate to ask the same question
-    through a pipe; `core.tool_parser`'s module docstring carries what that
-    cost and why it is gone.
-
-    Imported here rather than at module scope: `pr --help` must load no
-    delegate (test_pr_help_imports_no_delegate), and all five together cost
-    +48-61 ms on an 83 ms base. Only the one command being dispatched is
-    loaded, and dispatch is about to import it anyway.
-
-    An import that fails is left to propagate. A delegate whose module will
-    not import cannot run either, and degrading here would misclassify the
-    target and then fail dispatch two lines later — two confusing errors in
-    place of one honest traceback.
-
-    Commands with no delegate answer empty, which is the arity-blind scan
-    `_positional_index` degrades to.
-    """
-    factory = _PARSER_FACTORIES.get(spec.name)
-    if factory is None:
-        return frozenset()
-    module_name, attr = factory.split(":", 1)
-    parser = getattr(importlib.import_module(module_name), attr)()
-    return frozenset(tool_parser.value_taking_options(parser))
-
-
-def _positional_index(extra: list[str], value_flags: frozenset[str]) -> int:
-    """Index in *extra* of the first bare positional, or -1 if there is none.
-
-    Options are skipped, and so is the token after an option that takes a
-    value — that token is the flag's argument, not the command's target.
-    The ``--flag=value`` form carries its own value and skips nothing.
-    """
-    consumed = False
-    for i, token in enumerate(extra):
-        if consumed:
-            consumed = False
-            continue
-        if token.startswith("-"):
-            consumed = token in value_flags
-            continue
-        return i
-    return -1
 
 
 def _is_pr_target(target: str | None) -> bool:
@@ -159,10 +60,8 @@ def _is_pr_target(target: str | None) -> bool:
 
 
 
-# `cmd_review` and `cmd_comments` stay here: they call `_run_delegate`, which
-# this commit does not move. Their CommandSpec.handler is None until T7
-# commit 4c fills it. `cmd_status` / `cmd_fix` / `cmd_create` / `cmd_gc`
-# live in `cli.pr_commands`.
+# `cmd_review` and `cmd_comments` stay here; see `cli.pr_commands`'s module
+# docstring for why (and for which four subcommands moved there instead).
 
 def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
                original_pr: str | None = None,
@@ -183,16 +82,24 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
                            bin_dir=BIN_DIR, schema_version=schema_version)
 
     has_self = "--self" in argv
-    positionals, _ = _split_argv(argv)
+    positionals, _ = dispatch.split_argv(argv)
     has_pr_target = (
         any(_is_pr_target(p) for p in positionals)
         or _is_pr_target(original_pr)
         or ctx.pr_number is not None
     )
     inject = ["--self"] if not has_self and not has_pr_target and not positionals else []
-    return _run_delegate(COMMANDS["review"], inject + list(argv), ctx,
-                         original_pr=original_pr,
-                         original_branch=original_branch)
+    return publishing.call_entry_point(
+        "cli.claude_review:main",
+        dispatch.delegate_argv(COMMANDS["review"], inject + list(argv), ctx,
+                               original_pr=original_pr,
+                               original_branch=original_branch),
+        # `pr` installed the identical handler at its own entry point, and
+        # `signal.signal` neither chains nor restores — a second install
+        # would replace the one that reports the interrupt for the whole
+        # invocation with one that reports it for the review alone.
+        install_signal_handler=False,
+    )
 
 
 def _invocation(command: str, argv: list[str]) -> str:
@@ -230,9 +137,12 @@ def cmd_comments(argv: list[str], ctx: pr_context.ResolvedContext, *,
                  original_branch: str | None = None,
                  **_kw) -> int:
     """Delegate to review-threads, routing --triage, --fix, --settle and --finish flags."""
-    return _run_delegate(COMMANDS["comments"], list(argv), ctx,
-                         original_pr=original_pr,
-                         original_branch=original_branch)
+    return publishing.call_entry_point(
+        "cli.review_threads:main",
+        dispatch.delegate_argv(COMMANDS["comments"], list(argv), ctx,
+                               original_pr=original_pr,
+                               original_branch=original_branch),
+    )
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
@@ -391,19 +301,24 @@ def _dispatch(args, ctx: pr_context.ResolvedContext, extra: list[str], global_ar
             data={"subcommand": args.command},
         )
 
-        handler = _CUSTOM.get(args.command)
-        if handler:
-            return handler(extra, ctx,
-                           trail=trail,
-                           bin_dir=BIN_DIR,
-                           original_pr=original_pr,
-                           original_branch=original_branch,
-                           schema_version=global_args.schema_version)
-        assert COMMANDS[args.command].script, \
-            f"pr: command {args.command!r} has no handler and no script — register it in _CUSTOM or give its CommandSpec a script"
-        return _run_delegate(COMMANDS[args.command], extra, ctx,
-                             original_pr=original_pr,
-                             original_branch=original_branch)
+        local = _CUSTOM.get(args.command)
+        if local:
+            return local(extra, ctx,
+                         trail=trail,
+                         bin_dir=BIN_DIR,
+                         original_pr=original_pr,
+                         original_branch=original_branch,
+                         schema_version=global_args.schema_version)
+        spec = COMMANDS[args.command]
+        assert spec.handler, \
+            (f"pr: command {args.command!r} has no handler and no wrapper — "
+             f"register it in _CUSTOM or give its CommandSpec a handler")
+        return publishing.call_entry_point(
+            spec.handler,
+            dispatch.delegate_argv(spec, extra, ctx,
+                                   original_pr=original_pr,
+                                   original_branch=original_branch),
+        )
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
         raise
@@ -474,9 +389,12 @@ def main():
         log.warn(f"could not reconcile recorded pushes: {exc}")
 
     spec = COMMANDS[args.command]
+    # The delegate's own parser prints its own help, in this process. It is
+    # asked for the parser rather than run with `--help`, because a delegate
+    # `main` does more than parse before argparse ever sees the flag.
     if {"-h", "--help"} & set(extra) and spec.script:
-        cmd = [str(BIN_DIR / spec.script), "--help"]
-        sys.exit(subprocess.run(cmd, timeout=timeouts.LOCAL).returncode)
+        dispatch.print_delegate_help(spec)
+        sys.exit(0)
 
     original_pr = getattr(args, "pr", None)
     original_branch = getattr(args, "branch", None)
@@ -489,7 +407,7 @@ def main():
     ambiguous = (original_pr is None and original_branch is None
                  and spec.takes_target)
     if ambiguous and any(not a.startswith("-") for a in extra):
-        idx = _positional_index(extra, _delegate_value_flags(spec))
+        idx = dispatch.positional_index(extra, dispatch.delegate_value_flags(spec))
         if idx >= 0:
             original_pr, original_branch = pr_context.classify_target(extra[idx])
             extra.pop(idx)

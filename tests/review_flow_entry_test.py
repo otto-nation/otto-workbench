@@ -86,8 +86,8 @@ def test_main_parses_json_summary_as_a_flag_not_a_target(cr, reviews_dir, monkey
     """`--json-summary 42` reviews PR 42; it does not review a PR named --json-summary."""
     seen = {}
 
-    def _capture(args, ctx, generator_version):
-        seen.update(args=args)
+    def _capture(args, argv, ctx, generator_version):
+        seen.update(args=args, argv=argv)
         return review_run.ReviewOutcome("owner/repo", "42", Path("/dev/null"))
 
     def _classify(c):
@@ -104,6 +104,9 @@ def test_main_parses_json_summary_as_a_flag_not_a_target(cr, reviews_dir, monkey
 
     assert seen["target"] == "42"
     assert seen["args"].json_summary is True
+    # The argv the flow records is the one `main` was handed, not `sys.argv`
+    # — which under `pr fix` is the parent's.
+    assert seen["argv"] == ["--json-summary", "42"]
 
 
 @pytest.mark.parametrize("argv,reason", [
@@ -206,7 +209,7 @@ def test_the_pr_path_runs_its_whole_spine_in_one_go(cr, tmp_path, monkeypatch):
     _stub_pr_edges(cr, monkeypatch, tmp_path, tape, review_file)
     monkeypatch.setattr(cr, "review_file_path", lambda *a, **kw: review_file)
 
-    cr._run_review(_pr_args(), make_ctx(target_dir=tmp_path / "t"), "test 1.0")
+    cr._run_review(_pr_args(), [], make_ctx(target_dir=tmp_path / "t"), "test 1.0")
 
     assert tape == ["orchestrate", "print_summary", "domain_write"], (
         "the PR path orchestrates, reports, then records — composed, not per-frame"
@@ -242,6 +245,7 @@ def test_the_pr_url_the_run_reports_names_the_repos_forge(
 
     cr._run_review(
         _pr_args(),
+        [],
         make_ctx(repo="acme/widget", pr_number=42, host=host,
                  target_dir=tmp_path / "t"),
         "test 1.0",
@@ -267,7 +271,7 @@ def test_a_failed_orchestration_is_not_recorded_on_the_pr_path(
     monkeypatch.setattr(cr, "review_file_path", lambda *a, **kw: review_file)
 
     with pytest.raises(SystemExit):
-        cr._run_review(_pr_args(), make_ctx(target_dir=tmp_path / "t"), "test 1.0")
+        cr._run_review(_pr_args(), [], make_ctx(target_dir=tmp_path / "t"), "test 1.0")
 
     assert "domain_write" not in tape, "a failed review is not a review to record"
 
@@ -291,7 +295,7 @@ def test_the_pr_path_records_the_domain_even_when_the_operator_declines_to_post(
                         lambda *a, **kw: tape.append("posted"))
     monkeypatch.setattr(review_run.prompt, "ask", lambda *a, **kw: "")
 
-    cr._run_review(_pr_args(no_post=False), make_ctx(target_dir=tmp_path / "t"), "test 1.0")
+    cr._run_review(_pr_args(no_post=False), [], make_ctx(target_dir=tmp_path / "t"), "test 1.0")
 
     assert "posted" not in tape, "declining the prompt must not post"
     assert "domain_write" in tape, "but the review still happened and is recorded"

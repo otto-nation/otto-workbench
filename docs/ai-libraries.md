@@ -625,20 +625,29 @@ it can afford to carry.
 
 Running review-orchestrate and reporting what it did.
 
-The argv both review flows build, the spawn, and the two guards that decide a
+The argv both review flows build, the call, and the two guards that decide a
 run failed. One module because the flows differ in how they *reach* this point
 — which worktree, which checks, which prompts — and not at all in what happens
 once they are here.
 
-It is also the whole of the process boundary. #909's tranche 4 replaces the
-spawn with an in-process call, and when it does, this file is what it rewrites:
-nothing above it names `review-orchestrate`, constructs argv, or knows that a
-review is produced by a subprocess at all.
+This was the whole of the process boundary, and it is now an in-process call
+through `core.publishing.call_entry_point`. Nothing above this module names
+`review-orchestrate` or constructs its argv, which is what made the
+conversion a change to one function body.
 
-The boundary is not incidental. `--post` on that argv does not mean "publish
-this review" — it tells the orchestrate process that its fix pass may push,
-because `core.publishing`'s gate is process-wide and has no `disable()`. Today
-a subprocess is what scopes it to one run.
+The call goes through layer 1 rather than through `cli.dispatch`, which is
+what `pr` uses for the same purpose: this is layer 6 and cannot import layer
+8. That constraint is why the seam lives in `core.publishing` at all.
+
+The argv survives the spawn. Orchestration takes about thirty flags, and they
+are the contract `review_invoke_test.py` pins one at a time; handing over a
+list that its own parser reads keeps that surface, and keeps `ai/bin/review-
+orchestrate` a genuine equal of this path rather than a second entry point
+drifting from it.
+
+`--post` on that argv still does not mean "publish this review" — it tells the
+orchestration that its fix pass may push. The gate it opens used to be scoped
+by this being a subprocess; `publishing.call_entry_point` scopes it now.
 
 ### review/outcome.py
 
@@ -1343,13 +1352,21 @@ people the moment it lands, and a wrong one has to be retracted in front of the
 reviewer. So the default is to draft: callers print what they would have sent and
 report failure, and nothing leaves the machine until the entrypoint opts in.
 
-One flag owns this for the whole process. Modules that write externally
-(`pr.comments`, `review.issue`) ask here rather than carrying their own switch.
+One flag owns this. Modules that write externally (`pr.comments`,
+`review.issue`) ask here rather than carrying their own switch.
+
+The decision is scoped to a **run**, not to the process. `pr fix` runs a
+review, a CI pass and a describe pass in one process, so the dispatch seam
+wraps each handler in `scope()` and whatever that handler opened closes again
+on the way out — what one pass was told to publish is not an authorisation for
+the next. Until in-process dispatch landed, the subprocess boundary was doing
+that scoping by accident, and there was no way to close the gate at all.
 
 A hold overrides it. Some things a run learns mid-way — an unanswered question
 about whether the work should exist at all — mean nothing more should leave the
-machine, whatever the entrypoint was told. `hold` closes the gate for good, so
-the two only ever compose in the safe direction.
+machine, whatever the entrypoint was told. `hold` closes the gate for good and
+is not restored when a run exits, so the two only ever compose in the safe
+direction at both scopes.
 
 What that means at the CLI: `pr comments` writes nothing outward unless you
 pass `--post`. Replies, the fix summary, thread resolutions, deferral tracking
@@ -1363,9 +1380,11 @@ thing by it. Both commit what their agent fixed and both draft the push without
 it, so `--post` reads as "publish what this run produces" wherever it appears
 next to a fix pass — as against `pr review --post` on its own, which publishes
 the review already on disk. The review fix pass runs inside
-`review-orchestrate`, a subprocess spawned before any posting decision would
+`review-orchestrate`, which is reached before any posting decision would
 otherwise be made, so `claude-review` forwards the flag to it rather than
-opening a gate the pass would never see.
+opening a gate the pass would never see. That forwarding predates in-process
+dispatch and survives it: the flag is how the pass learns, and `scope()` is
+what keeps the answer from outliving the run.
 
 A hand-written `pr comments --reply <id> --body-file <path>` is no exception: it
 drafts the body and reports the draft, and only `--post` sends it.
@@ -3485,10 +3504,12 @@ than read the file, call ``is_held``.
 
 ``claude-review`` (both its PR and its ``--self`` paths), ``ci-check``,
 ``review-threads``, ``pr-rebase`` and ``pr-describe`` take the lock themselves,
-so invoking any of them directly is guarded too. When ``pr`` launched them they
-resolve the same target, compute the same key, find it in
-``WORKBENCH_RUN_LOCK`` and pass through as a no-op instead of deadlocking
-against the lock their own parent holds.
+so invoking any of them directly is guarded too. When ``pr`` dispatches to one
+it resolves the same target, computes the same key, finds it in
+``WORKBENCH_RUN_LOCK`` and passes through as a no-op instead of deadlocking
+against the lock its own caller holds. That holds whether the delegate is a
+child process or an in-process call — the marker is process environment, and
+re-claiming a lock this process already holds is a no-op by construction.
 
 That list is exhaustive, not an example. ``review-post`` and ``review-rebuild``
 are the remaining delegates and take no lock of their own, for a reason that is
@@ -3757,11 +3778,14 @@ one file per month. ``otto-log recent --repo <org/repo>`` narrows it to one
 repo; ``otto-log query --pr <n>`` finds every record for one PR, including the
 terminal ``pr_outcome`` event ``pr gc`` writes when the PR merges or closes.
 
-One user command is several processes: ``pr review`` spawns ``claude-review``,
-which spawns ``review-orchestrate``, and each opens its own trail with its own
+One user command is several runs: ``pr review`` calls ``claude-review``,
+which calls ``review-orchestrate``, and each opens its own trail with its own
 ``invocation``. They are tied together by ``root`` — the invocation of the
-outermost recorded run, carried down the process tree in ``TRAIL_ROOT_ENV`` and
-recorded on every event a descendant writes. ``otto-log show <root>`` renders
+outermost recorded run, carried in ``TRAIL_ROOT_ENV`` and recorded on every
+event a descendant writes. The variable is process environment, which is what
+lets the correlation survive whether the descendant is a child process or an
+in-process call: the root is published before a nested ``Trail.start`` reads
+it either way. ``otto-log show <root>`` renders
 the whole command as one timeline and ``otto-log query --root <id>`` selects it,
 while ``--invocation`` still addresses one process on its own.
 
@@ -4730,6 +4754,41 @@ Usage:
   claude-review --self [<pr_url_or_number>]
   claude-review [--self] --recover [<pr_url_or_number>]
 
+### cli/dispatch.py
+
+Call a `pr` subcommand's handler in this process.
+
+`pr` used to run its delegates as child processes: build an argv, spawn
+`ai/bin/<script>`, read the returncode. This module is what replaced the
+spawn, and its job is to keep the two properties the process boundary was
+providing for free — because those were load-bearing, and nothing else was
+holding them.
+
+**However a handler ends, the caller gets an int.** A child that called
+`sys.exit` was still just a returncode to its parent. In-process, that same
+`sys.exit` is a `SystemExit` unwinding through `pr` itself: a review that
+exits 0 because the operator declined a prompt would take the whole of
+`pr fix` with it, skipping the CI and describe passes and reporting success.
+
+**What a handler publishes is scoped to that handler.** `publishing` is a
+process global. Five entry points call `enable()` when their own `--post`
+says so, and as separate processes that was the end of it. In one process,
+`pr fix`'s review pass opening the gate would leave it open for the describe
+pass, which would then edit the PR body nobody asked it to post.
+
+Both are enforced by `core.publishing.call_entry_point`, which every caller
+invokes directly — there is deliberately no `dispatch.call` alias. Two names
+for one seam means a test has to know which one its subject reached for, and
+a patch on the wrong one passes while testing nothing. The machinery is at
+layer 1 because `review.invoke` needs it too and cannot import this package.
+
+What lives here is the argv side: which flags a delegate is told to resolve,
+and how a bare token in its argv is classified before anyone knows what the
+delegate's flags mean.
+
+Neither property is the delegate's to maintain. A handler that forgets either
+is still correct, and a new one cannot reintroduce the leak by omission.
+
 ### cli/needs.py
 
 What a `pr` subcommand needs of dispatch before its handler runs.
@@ -4752,19 +4811,14 @@ importable module, so `CommandSpec.handler` could not name them. They live
 here so the field means one thing across the nine: a `"<module>:<attr>"`
 string that importlib can resolve, or None.
 
-Still spawning. `cmd_fix` runs `claude-review`, `ci-check` and `pr-describe`
-as child processes, and `cmd_create` still shells out to `task pr:create`.
-#909 T7 commit 4c turns those into calls; this module is the seam that makes
-the four importable without changing how they run.
+`cmd_fix`'s three passes are in-process calls through `cli.dispatch`.
+`cmd_create` is the one surviving spawn in this module and stays one: it runs
+`task pr:create`, which is a Taskfile target and not a Python delegate.
 
-Each spawn is *given* the directory to run from rather than deriving one from
-`__file__`. Under `WORKBENCH_AI_LIB_DIR` this module resolves inside the
-pinned checkout while the entry point's own BIN_DIR does not, so a path
-derived here would spawn a different tree's delegates than `ai/bin/pr` does.
-Matches `cli.review_modes` and `review.publish.post`.
-
-`cmd_review` and `cmd_comments` stay in the binary: they call `_run_delegate`,
-which this commit does not move. Their `CommandSpec.handler` is None until 4c.
+`cmd_review` and `cmd_comments` stay in `ai/bin/pr`. Both are argv shaping
+ahead of a delegate the registry already names — `--self` injection, mode
+routing — rather than commands in their own right, which is why the registry
+points `review` and `comments` at the delegates themselves.
 
 ### cli/pr_describe.py
 
@@ -4833,11 +4887,16 @@ it is a user-visible change, not a cosmetic one.
 
 `handler` is a `"<module>:<attr>"` string resolved by importlib at dispatch,
 not a callable: an eager import would pull every delegate into `pr --help`.
-Seven of the nine name an importable function today. `review` and `comments`
-are None — their wrappers (`cmd_review`, `cmd_comments`) still live in
-`ai/bin/pr` and call `_run_delegate`, which this commit does not move. Filling
-those two is T7 commit 4c; an honest None beats a string that would resolve
-to the wrong callable.
+All nine name an importable function, resolved and called through
+`core.publishing.call_entry_point` — by `cli.dispatch` for most of them, and
+directly by `ai/bin/pr`'s `cmd_review`/`cmd_comments` and by
+`cli.review_modes`'s `post`/`repair` for the rest.
+
+`script` outlives the spawn it used to name. Nothing in `pr` runs it any
+more — dispatch imports `handler` instead — but MCP still executes the shim
+by path, so the field is the declaration of which `ai/bin` name that is. The
+command/domain/phase join in `tests/test_cli_join.py` is what keeps it from
+going stale now that no `pr` code path would notice if it did.
 
 ### cli/review_modes.py
 
@@ -4849,14 +4908,20 @@ an argv resolves rather than a constant — could not be stated anywhere a
 library module could read it. `cli.registry` imports `need_for` from here for
 exactly that reason.
 
-Still spawning: `--post` and `--repair` run `review-post` and `review-rebuild`
-as child processes, exactly as the binary did. #909 T7 commit 4 makes them
-calls.
+`--post` and `--repair` call `review-post` and `review-rebuild` in this
+process, through `core.publishing.call_entry_point` — the seam itself rather
+than `cli.dispatch`, which wraps it. These two build their own argv and want
+only the call, and reaching for the dispatcher would close a cycle:
+`cli.registry` imports this module for the one need an argv resolves.
 
-Each handler is *given* the directory to spawn from rather than deriving one,
-matching `review.publish.post`. Under `WORKBENCH_AI_LIB_DIR` this module sits
-in the pinned checkout while the entry point does not, so a path derived here
-would spawn a different tree's delegates than `ai/bin/pr` does.
+Both used to be spawns; `--repair` also used to capture the rebuild's stdout
+and grep it for a `REVIEW_SUMMARY:` marker, which `cli.review_rebuild` has
+never written — the domain is synced from the file the rebuild produced
+instead.
+
+Handlers still take `bin_dir`. Nothing in this module spawns any more, but the
+four share one signature and `summary` never needed it either; the parameter
+is the mode-handler contract rather than a path any of them uses today.
 
 ### cli/review_orchestrate.py
 

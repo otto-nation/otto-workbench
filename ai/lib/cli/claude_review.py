@@ -26,6 +26,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import sys
 from dataclasses import replace
@@ -110,12 +111,18 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _flags(args, generator_version: str) -> review_run.ReviewFlags:
-    """The parsed argv as the value the flows read."""
+def _flags(args, argv: list[str], generator_version: str) -> review_run.ReviewFlags:
+    """The parsed argv as the value the flows read.
+
+    *argv* is the list `main` was given, not `sys.argv`. Called in-process
+    from `pr fix`, `sys.argv` is the *parent's* — so the command recorded
+    against the review, and the one a run lock reports to whoever it turns
+    away, read `pr fix --post` for a review that was never invoked that way.
+    """
     return review_run.ReviewFlags(
         bin_dir=BIN_DIR,
         generator_version=generator_version,
-        command=" ".join([SCRIPT] + sys.argv[1:]),
+        command=" ".join([SCRIPT] + argv),
         base=args.base or "",
         issue_link=args.issue or "",
         max_parallel=args.max_parallel,
@@ -151,7 +158,7 @@ def _emit_json_summary(fd: int | None, outcome: review_run.ReviewOutcome) -> Non
     os.write(fd, (summary + "\n").encode())
 
 
-def _run_review(args, ctx: pr_context.ResolvedContext,
+def _run_review(args, argv: list[str], ctx: pr_context.ResolvedContext,
                 generator_version: str) -> review_run.ReviewOutcome:
     """Review the PR *ctx* names.
 
@@ -172,7 +179,7 @@ def _run_review(args, ctx: pr_context.ResolvedContext,
 
     try:
         return review_run.run_pr_review(
-            ctx, _flags(args, generator_version), review_file, trail=trail)
+            ctx, _flags(args, argv, generator_version), review_file, trail=trail)
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
         raise
@@ -180,7 +187,8 @@ def _run_review(args, ctx: pr_context.ResolvedContext,
         trail.finish()
 
 
-def _run_self_review(args, generator_version: str = "") -> review_run.ReviewOutcome:
+def _run_self_review(args, argv: list[str],
+                     generator_version: str = "") -> review_run.ReviewOutcome:
     """Review a local checkout.
 
     Resolution lives here rather than in `review.run` because acquiring the
@@ -258,19 +266,20 @@ def _run_self_review(args, generator_version: str = "") -> review_run.ReviewOutc
 
     run_lock.claim_for_process(
         ctx.target_dir,
-        command=" ".join([SCRIPT] + sys.argv[1:]),
+        command=" ".join([SCRIPT] + argv),
         started=pr_state.now_iso(),
         worktree=reviewed_tree,
     )
 
     return _run_self_review_body(
-        ctx, pr_number, args, generator_version, repo, is_pr, is_branch,
+        ctx, pr_number, args, argv, generator_version, repo, is_pr, is_branch,
         pr_input, wt_path, recover, repo_dir,
     )
 
 
 def _run_self_review_body(
-    ctx: pr_context.ResolvedContext, pr_number: str, args, generator_version: str,
+    ctx: pr_context.ResolvedContext, pr_number: str, args, argv: list[str],
+    generator_version: str,
     repo: str, is_pr: bool, is_branch: bool, pr_input: str, wt_path: str, recover: bool,
     repo_dir: str,
 ) -> review_run.ReviewOutcome:
@@ -303,7 +312,7 @@ def _run_self_review_body(
     if is_pr or is_branch:
         run_lock.claim_for_process(
             ctx.target_dir,
-            command=" ".join([SCRIPT] + sys.argv[1:]),
+            command=" ".join([SCRIPT] + argv),
             started=pr_state.now_iso(),
             worktree=Path(wt_path),
         )
@@ -325,7 +334,7 @@ def _run_self_review_body(
 
     try:
         return review_run.run_self_review(
-            ctx, _flags(args, generator_version), review_dir, wt_path,
+            ctx, _flags(args, argv, generator_version), review_dir, wt_path,
             recover_head_sha=recover_head_sha, trail=trail,
         )
     except Exception as exc:
@@ -359,18 +368,54 @@ def main(argv: list[str] | None = None, *,
     if install_signal_handler:
         proc.install_interrupt_handler(log.interrupted)
 
+    argv = list(sys.argv[1:] if argv is None else argv)
     parsed = build_parser().parse_args(argv)
 
     if parsed.version:
         print(version_of(SCRIPT))
         return 0
 
-    # JSON summary: save real stdout, redirect stdout to stderr
-    json_stdout_fd = None
-    if parsed.json_summary:
-        json_stdout_fd = os.dup(sys.stdout.fileno())
-        os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
-        sys.stdout = os.fdopen(sys.stdout.fileno(), "w", closefd=False)
+    with _json_summary_stdout(parsed.json_summary) as json_stdout_fd:
+        return _main_body(parsed, argv, json_stdout_fd, version_of)
+
+
+@contextlib.contextmanager
+def _json_summary_stdout(json_summary_wanted: bool):
+    """Give the run a stdout the summary alone reaches, and put it back after.
+
+    Under `--json-summary` the only thing on stdout is the summary line, so
+    every log this run would have printed there is redirected to stderr and
+    the real stdout is saved for `_emit_json_summary` to write to.
+
+    Restoring is what makes this in-process-safe. As a subprocess the fd table
+    died with the child; in one process, a `dup2` that is never undone leaves
+    `pr`'s own stdout pointing at stderr for the whole rest of the invocation,
+    so `pr fix`'s describe pass and `pr status`'s state dump would write their
+    stdout to stderr and a consumer reading the JSON would get nothing.
+    """
+    if not json_summary_wanted:
+        yield None
+        return
+
+    real_stdout_fd = os.dup(sys.stdout.fileno())
+    saved_stdout = sys.stdout
+    os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+    sys.stdout = os.fdopen(sys.stdout.fileno(), "w", closefd=False)
+    try:
+        yield real_stdout_fd
+    finally:
+        # Order matters: flush what the run wrote to the redirected wrapper
+        # before the descriptor under it is pointed back, or that output
+        # lands on the caller's stdout as though it were the summary.
+        sys.stdout.flush()
+        os.dup2(real_stdout_fd, sys.stdout.fileno())
+        sys.stdout = saved_stdout
+        os.close(real_stdout_fd)
+
+
+def _main_body(parsed, argv: list[str], json_stdout_fd: int | None,
+               version_of: Callable[[str], str]) -> int:
+    """The run itself, with stdout already arranged for the summary."""
 
     if not parsed.repo_dir and os.environ.get("REPO_DIR"):
         parsed.repo_dir = os.environ["REPO_DIR"]
@@ -407,10 +452,8 @@ def main(argv: list[str] | None = None, *,
     generator_version = version_of(SCRIPT).splitlines()[-1] or "unknown"
 
     if parsed.self_review:
-        outcome = _run_self_review(parsed, generator_version)
+        outcome = _run_self_review(parsed, argv, generator_version)
         _emit_json_summary(json_stdout_fd, outcome)
-        if json_stdout_fd is not None:
-            os.close(json_stdout_fd)
         return 0
 
     command = parsed.positional[0] if parsed.positional else ""
@@ -433,11 +476,9 @@ def main(argv: list[str] | None = None, *,
     # same target, so it passes through this claim rather than contending.
     run_lock.claim_for_process(
         ctx.target_dir,
-        command=" ".join([SCRIPT] + sys.argv[1:]),
+        command=" ".join([SCRIPT] + argv),
         started=pr_state.now_iso(),
     )
-    outcome = _run_review(parsed, ctx, generator_version)
+    outcome = _run_review(parsed, argv, ctx, generator_version)
     _emit_json_summary(json_stdout_fd, outcome)
-    if json_stdout_fd is not None:
-        os.close(json_stdout_fd)
     return 0

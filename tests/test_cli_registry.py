@@ -100,17 +100,16 @@ def test_only_create_takes_no_target():
 # import-and-callable check below is what keeps them honest until commit 8's
 # join check.
 #
-# `review` and `comments` are None on purpose. Their wrappers still live in
-# `ai/bin/pr` and call `_run_delegate`; pointing at `cli.claude_review:main`
-# / `cli.review_threads:main` would name the wrong callable. Filling those
-# two is T7 commit 4c.
+# `review` and `comments` name the delegates, not `ai/bin/pr`'s `cmd_review` /
+# `cmd_comments`. Those two are the entry point's argv shaping — `--self`
+# injection, mode routing — ahead of the callable named here.
 
 _HANDLERS = {
     "create":   "cli.pr_commands:cmd_create",
     "status":   "cli.pr_commands:cmd_status",
     "ci":       "cli.ci_check:main",
-    "review":   None,
-    "comments": None,
+    "review":   "cli.claude_review:main",
+    "comments": "cli.review_threads:main",
     "fix":      "cli.pr_commands:cmd_fix",
     "rebase":   "cli.pr_rebase:main",
     "describe": "cli.pr_describe:main",
@@ -123,13 +122,8 @@ def test_every_command_declares_the_pinned_handler():
 
 
 def test_every_handler_path_resolves_to_a_callable():
-    """The strings are the contract; importing them is the only check they exist.
-
-    Skips the two Nones — those wrappers are still binary-local.
-    """
+    """The strings are the contract; importing them is the only check they exist."""
     for name, path in _HANDLERS.items():
-        if path is None:
-            continue
         module_name, attr = path.split(":", 1)
         module = importlib.import_module(module_name)
         assert callable(getattr(module, attr)), f"{name}: {path}"
@@ -331,11 +325,13 @@ def test_pr_help_imports_no_delegate():
     )
     loaded = {m for m in out.stdout.strip().split(",") if m}
     assert loaded, "the probe loaded no cli module at all — it did not run `pr`"
-    # `cli.pr_commands` is the four internal handlers, imported by the binary
-    # the same way `cli.review_modes` is — not a delegate. A delegate showing
-    # up here (`cli.ci_check`, `cli.claude_review`, …) is the regression.
+    # `cli.pr_commands` is the four internal handlers and `cli.dispatch` is the
+    # seam that calls a handler — both imported by the binary the same way
+    # `cli.review_modes` is, and neither a delegate. A delegate showing up here
+    # (`cli.ci_check`, `cli.claude_review`, …) is the regression: those are
+    # what `handler` keeps as a string so that dispatch, not import, pays.
     assert loaded <= {"cli.needs", "cli.registry", "cli.review_modes",
-                      "cli.pr_commands"}, loaded
+                      "cli.pr_commands", "cli.dispatch"}, loaded
 
 
 # ── process-level state belongs to the process ────────────────────────────

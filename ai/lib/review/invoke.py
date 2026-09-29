@@ -1,33 +1,41 @@
 """Running review-orchestrate and reporting what it did.
 
-The argv both review flows build, the spawn, and the two guards that decide a
+The argv both review flows build, the call, and the two guards that decide a
 run failed. One module because the flows differ in how they *reach* this point
 — which worktree, which checks, which prompts — and not at all in what happens
 once they are here.
 
-It is also the whole of the process boundary. #909's tranche 4 replaces the
-spawn with an in-process call, and when it does, this file is what it rewrites:
-nothing above it names `review-orchestrate`, constructs argv, or knows that a
-review is produced by a subprocess at all.
+This was the whole of the process boundary, and it is now an in-process call
+through `core.publishing.call_entry_point`. Nothing above this module names
+`review-orchestrate` or constructs its argv, which is what made the
+conversion a change to one function body.
 
-The boundary is not incidental. `--post` on that argv does not mean "publish
-this review" — it tells the orchestrate process that its fix pass may push,
-because `core.publishing`'s gate is process-wide and has no `disable()`. Today
-a subprocess is what scopes it to one run.
+The call goes through layer 1 rather than through `cli.dispatch`, which is
+what `pr` uses for the same purpose: this is layer 6 and cannot import layer
+8. That constraint is why the seam lives in `core.publishing` at all.
+
+The argv survives the spawn. Orchestration takes about thirty flags, and they
+are the contract `review_invoke_test.py` pins one at a time; handing over a
+list that its own parser reads keeps that surface, and keeps `ai/bin/review-
+orchestrate` a genuine equal of this path rather than a second entry point
+drifting from it.
+
+`--post` on that argv still does not mean "publish this review" — it tells the
+orchestration that its fix pass may push. The gate it opens used to be scoped
+by this being a subprocess; `publishing.call_entry_point` scopes it now.
 """
 
 # doc-group: pipeline
 
 from __future__ import annotations
 
-import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from core import log
-from core import timeouts
+from core import publishing
 from core.phases import Phase
 from agent.registry import phase_skip_argv
 
@@ -150,13 +158,17 @@ def run(request: OrchestrateRequest) -> int:
 
     Exits, via `fail`, when the pipeline reports failure or produces no review:
     both mean there is nothing downstream to display, summarise or record. The
-    wall clock covers the spawn alone, so the figure in the summary is time the
+    wall clock covers the run alone, so the figure in the summary is time the
     pipeline spent rather than time the operator spent answering prompts.
+
+    `build_argv` still produces the leading script path, which is what the
+    goldens assert and what `ai/bin/review-orchestrate` is invoked as. The
+    call takes everything after it.
     """
     argv = build_argv(request)
 
     wall_start = time.monotonic()
-    rc = subprocess.run(argv, timeout=timeouts.UNBOUNDED).returncode
+    rc = publishing.call_entry_point("cli.review_orchestrate:main", argv[1:])
     wall_ms = int((time.monotonic() - wall_start) * 1000)
 
     if rc != 0:

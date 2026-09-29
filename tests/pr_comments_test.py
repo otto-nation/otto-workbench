@@ -657,6 +657,106 @@ class TestPublishingGate:
         assert len(calls) == 1
 
 
+class TestTheGateIsScopedToOneRun:
+    """What one entry point may publish is not an authorisation for the next.
+
+    `pr fix` runs a review, a CI pass and a describe pass in one process.
+    Until in-process dispatch, each was a subprocess and the gate died with
+    it; now `call_entry_point` is the only thing between a `--post` on the
+    first pass and an unasked-for PR body edit by the third.
+    """
+
+    def test_a_run_that_opens_the_gate_leaves_it_shut(self):
+        publishing.call_entry_point(
+            "fake_entry_points:opens_the_gate", [])
+        assert publishing.enabled() is False
+
+    def test_the_next_run_does_not_inherit_the_open_gate(self):
+        """The failure this exists to catch, stated as two runs in a row."""
+        publishing.call_entry_point(
+            "fake_entry_points:opens_the_gate", [])
+        seen = publishing.call_entry_point(
+            "fake_entry_points:reports_the_gate", [])
+        assert seen == 0, "the second run saw a gate the first one opened"
+
+    def test_a_run_nested_in_an_open_one_restores_rather_than_closes(self):
+        """Restores the previous value, so an outer --post survives its child."""
+        publishing.enable()
+        publishing.call_entry_point("fake_entry_points:reports_the_gate", [])
+        assert publishing.enabled() is True
+
+    def test_a_hold_is_not_restored_when_the_run_ends(self):
+        """A hold outlives the run that reached it, unlike an enable.
+
+        The asymmetry is the point: an enable is an instruction the caller
+        gave, a hold is something the run *learned*, and an outer pass must
+        not resume publishing because an inner one finished.
+        """
+        publishing.enable()
+        publishing.call_entry_point("fake_entry_points:holds_the_gate", [])
+        assert publishing.held() == "a question this run could not answer"
+        assert publishing.enabled() is False
+
+    def test_the_gate_is_restored_even_when_the_run_raises(self):
+        with pytest.raises(RuntimeError):
+            publishing.call_entry_point(
+                "fake_entry_points:opens_the_gate_then_raises", [])
+        assert publishing.enabled() is False
+
+
+class TestHoweverARunEndsTheCallerGetsAnInt:
+    """A spawn turned any ending into a returncode. This is what replaced it.
+
+    The case that matters is `sys.exit(0)`: a review pass ending on a declined
+    prompt would otherwise unwind through `pr fix` itself, skipping the CI and
+    describe passes and exiting 0 — reporting success for work never done.
+    """
+
+    def test_a_returned_code_is_the_code(self):
+        assert publishing.call_entry_point(
+            "fake_entry_points:returns_three", []) == 3
+
+    def test_a_run_that_exits_zero_does_not_end_its_caller(self):
+        after = []
+        assert publishing.call_entry_point(
+            "fake_entry_points:exits_zero", []) == 0
+        after.append("reached")
+        assert after == ["reached"], "sys.exit(0) unwound past the seam"
+
+    def test_a_run_that_exits_non_zero_reports_that_code(self):
+        """`EXIT_SUPERSEDED` arrives this way: `review.preflight` exits 4."""
+        assert publishing.call_entry_point(
+            "fake_entry_points:exits_four", []) == 4
+
+    def test_a_bare_exit_is_success(self):
+        assert publishing.call_entry_point(
+            "fake_entry_points:exits_bare", []) == 0
+
+    def test_returning_nothing_is_success(self):
+        assert publishing.call_entry_point(
+            "fake_entry_points:returns_none", []) == 0
+
+    def test_exiting_with_a_message_prints_it_and_fails(self, capsys):
+        rc = publishing.call_entry_point(
+            "fake_entry_points:exits_with_a_message", [])
+        assert rc == 1
+        assert "could not read the review" in capsys.readouterr().err
+
+    def test_a_keyboard_interrupt_is_left_to_the_entry_point(self):
+        """Not caught here: the signal handler reports it once, for the whole
+        invocation, and swallowing it would report an interrupt as an exit."""
+        with pytest.raises(KeyboardInterrupt):
+            publishing.call_entry_point(
+                "fake_entry_points:interrupted", [])
+
+    def test_the_argv_and_kwargs_reach_the_entry_point(self):
+        assert publishing.call_entry_point(
+            "fake_entry_points:echoes_argv", ["--self", "--fix"]) == 2
+        assert publishing.call_entry_point(
+            "fake_entry_points:requires_a_kwarg", [],
+            install_signal_handler=False) == 0
+
+
 class TestPublishingHold:
     """A hold outranks --post, and nothing reopens it."""
 

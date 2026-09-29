@@ -609,10 +609,16 @@ class PreflightData:
     delta_diff: str = ""
     delta_commit_log: str = ""
     delta_files: list[str] = field(default_factory=list)
-    delta_lines: int = 0
-    # Whether `delta_files` and `delta_lines` are the author's work or merely
-    # everything in the range — which decides whether either can be acted on.
-    # Only the ancestry walk in `review.collect` reports `ATTRIBUTED`.
+    # Review effort, with deletions weighted below additions by
+    # `git.numstat.weighted_lines`. This is what sizes the run.
+    delta_weighted_lines: int = 0
+    # What the delta actually contains. Reported rather than acted on: the
+    # trail's line count has to keep meaning the same thing across runs from
+    # before and after the weighting, or no two of them compare.
+    delta_raw_lines: int = 0
+    # Whether `delta_files` and the two line counts are the author's work or
+    # merely everything in the range — which decides whether any can be acted
+    # on. Only the ancestry walk in `review.collect` reports `ATTRIBUTED`.
     delta_attribution: DeltaAttribution = DeltaAttribution.NONE
 
     @property

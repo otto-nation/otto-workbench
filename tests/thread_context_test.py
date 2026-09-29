@@ -159,6 +159,7 @@ class TestAFileLevelThread:
         assert out.startswith("--- a.py (diff) ---\n")
         assert out.endswith("\n---")
 
+    # passes-at-base: the cited-line path is untouched; this holds it against the new branch
     def test_a_cited_line_still_wins_over_the_diff(self, branch):
         """The line window is the better context where there is a line."""
         threads = [ReportThread(id="t1", file="a.py", line=1)]
@@ -173,6 +174,7 @@ class TestAFileLevelThread:
         out = thread_context.gather_code_context(threads, branch)
         assert "c1" in out and "c5" in out
 
+    # passes-at-base: a missing file was skipped before and must still be
     def test_a_file_level_thread_on_a_missing_file_is_still_skipped(self, branch):
         threads = [ReportThread(id="t1", file="gone.py", line=None)]
         assert thread_context.gather_code_context(threads, branch) == ""

@@ -129,6 +129,21 @@ def _file_level_context(file_path: str, repo_dir: Path) -> str:
     return f"--- {file_path} (head) ---\n{head}\n---" if head else ""
 
 
+def _context_block(thread: ReportThread, repo_dir: Path) -> str:
+    """One thread's labelled block, or empty where there is nothing to read.
+
+    The two framings are chosen here rather than in the loop below so that
+    each reader stays one level deep: a cited line gets the window around it,
+    and a file-level thread gets the file.
+    """
+    if not thread.line:
+        return _file_level_context(thread.file, repo_dir)
+    snippet, start, end = _window(thread.file, int(thread.line), repo_dir)
+    if not snippet:
+        return ""
+    return f"--- {thread.file}:{start}-{end} ---\n{snippet}\n---"
+
+
 def gather_code_context(threads: list[ReportThread], repo_dir: Path) -> str:
     """The source around every thread's location, one labelled block each.
 
@@ -139,17 +154,8 @@ def gather_code_context(threads: list[ReportThread], repo_dir: Path) -> str:
     A thread with no line is read against the file rather than dropped; see
     `_file_level_context` for why an empty section is worse than a wide one.
     """
-    snippets = []
-    for thread in threads:
-        if not thread.line:
-            block = _file_level_context(thread.file, repo_dir)
-            if block:
-                snippets.append(block)
-            continue
-        snippet, start, end = _window(thread.file, int(thread.line), repo_dir)
-        if snippet:
-            snippets.append(f"--- {thread.file}:{start}-{end} ---\n{snippet}\n---")
-    return "\n".join(snippets)
+    blocks = (_context_block(t, repo_dir) for t in threads)
+    return "\n".join(b for b in blocks if b)
 
 
 def diff_context_for_file(

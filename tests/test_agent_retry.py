@@ -281,6 +281,7 @@ class TestRetryBlankResponse:
         assert calls[1] == "FIX THIS: PROMPT"
         assert agent_retry.BLANK_RESPONSE_HINT not in calls[1]
 
+    # passes-at-base: asserts the behaviour this change was careful not to break
     def test_the_marker_hint_is_what_a_caller_gets_by_default(self):
         """The four marker callers must be unaffected by the new parameter."""
         calls = []

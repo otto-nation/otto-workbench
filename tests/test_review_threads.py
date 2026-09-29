@@ -5852,6 +5852,7 @@ class TestTriagePromptStatesItsOwnLimits:
         assert "no code context was available" in prompt
         assert str(Verification.NEEDS_DISCUSSION) in prompt
 
+    # passes-at-base: the with-context path is unchanged; this pins that it stayed so
     def test_with_code_the_evidence_requirement_stands(self):
         prompt = triage_prompt.build_triage_prompt([], "some code")
         assert "no code context was available" not in prompt

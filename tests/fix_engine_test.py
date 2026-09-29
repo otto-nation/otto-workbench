@@ -1796,13 +1796,16 @@ class TestTheAgentCanWriteTheFileItIsToldToAnswer:
         adapter = StubAdapter(tmp_path)
         assert adapter.verify_tracking_path(1).parent in adapter.add_dirs()
 
+    # passes-at-base: the worktree was always granted; this holds it through the change
     def test_the_worktree_is_still_granted(self, tmp_path):
         """The grant is additive: the agent still edits the code under review."""
         adapter = StubAdapter(tmp_path)
         assert adapter.workdir in adapter.add_dirs()
 
-    def test_no_directory_is_granted_twice(self, tmp_path):
-        """An adapter siting artifacts inside its worktree grants one entry."""
+    # passes-at-base: base granted the worktree alone, so one entry was the answer
+    # there too. Verified to fail when the dedup is removed from the new grant.
+    def test_an_adapter_keeping_both_in_one_place_grants_one_entry(self, tmp_path):
+        """Equal paths, not nested ones — nesting would never reach the dedup."""
         adapter = StubAdapter(tmp_path)
-        adapter.artifacts = adapter.workdir / "inside"
-        assert len(adapter.add_dirs()) == len(set(adapter.add_dirs()))
+        adapter.artifacts = adapter.workdir
+        assert adapter.add_dirs() == [adapter.workdir]

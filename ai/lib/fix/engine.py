@@ -34,6 +34,7 @@ be a fix pass asserting something outward nobody approved.
 
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
@@ -47,7 +48,7 @@ from fix import scope as fix_scope
 from fix import tracking as fix_tracking
 from git import client as git_client
 from git import land
-from core import log
+from core import log, session_lock
 from agent.diagnosis import Diagnosis
 from agent.registry import PHASES
 from core.phases import Effort, Phase
@@ -62,6 +63,16 @@ from fix.gate import VerifyFn
 # directory that sweeps a pass's leavings has to name the file, and one spelling
 # of it is what keeps the sweep and the write from drifting apart.
 TRACKING_FILENAME = "fix-tracking.md"
+
+# Proceed even though an interactive session holds the worktree. For a
+# scheduled pass deliberately aimed at a tree whose session is known stale;
+# named in the refusal so the operator does not have to find it here.
+_LOCK_OVERRIDE_ENV = "WORKBENCH_SESSION_LOCK_OVERRIDE"
+
+
+def _lock_override() -> bool:
+    """Whether the operator has asked to commit past a held worktree."""
+    return os.environ.get(_LOCK_OVERRIDE_ENV, "") not in ("", "0")
 
 # The gate's own checklists, published for the same reason: a review's sweep
 # removes every chunk file by this glob, and a gate running inside a review
@@ -777,6 +788,29 @@ def run(
             f"could not read the state of {adapter.workdir} — skipping fix pass"
         )
         return FixRun()
+    foreign = session_lock.held_by_others(adapter.workdir)
+    if foreign and not _lock_override():
+        # Refused before the agent runs. This is the observable the dirty-tree
+        # comment below says is missing: a held record is a session declaring
+        # it is editing here, where a dirty worktree is equally the normal
+        # state of a self-review or a pre-push repair. Named rather than
+        # inferred, so the operator is told who to wait for instead of being
+        # left to work it out from a moved HEAD.
+        holder = foreign[0]
+        log.error(
+            f"refusing to commit into {adapter.workdir}: {holder.describe()} "
+            "is editing this worktree"
+        )
+        log.info(
+            "wait for that session to finish, run this from the branch's own "
+            f"worktree, or set {_LOCK_OVERRIDE_ENV}=1 to proceed anyway"
+        )
+        tinfo(trail, "session_lock_refused",
+              f"{len(foreign)} interactive session(s) editing the worktree",
+              data={"holders": [h.describe() for h in foreign],
+                    "workdir": str(adapter.workdir)})
+        return FixRun()
+
     if dirty_before:
         # Recorded, not refused. A pass that commits into a tree somebody else
         # is editing moves HEAD under them, which is how a fix pass came to

@@ -39,6 +39,10 @@
           {
             "type": "command",
             "command": "bash $HOME/.local/bin/claude-edit-guard"
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.local/bin/claude-session-lock --refresh"
           }
         ]
       }
@@ -70,6 +74,10 @@
           {
             "type": "command",
             "command": "python3 $HOME/.local/bin/reuse-session-start 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.local/bin/claude-session-lock --acquire"
           }
         ]
       }
@@ -131,6 +139,17 @@
           {
             "type": "command",
             "command": "find $HOME/.claude/logs -name '*.log' -mtime +7 -delete 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.local/bin/claude-session-lock --release"
           }
         ]
       }

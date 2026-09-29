@@ -27,6 +27,7 @@ from typing import get_type_hints
 # names has to be bound in this module's namespace — an unused-looking import
 # here is a registry entry.
 from pr.comments_fix import FixSummary
+from pr.follow_ups import FollowUpDomain
 from pr.domains import (
     CIDomain,
     CommentsSummary,
@@ -146,6 +147,7 @@ class PRState:
     fix: FixSummary = field(default_factory=FixSummary)
     rebase: RebaseSummary = field(default_factory=RebaseSummary)
     push: PushDomain = field(default_factory=PushDomain)
+    follow_ups: FollowUpDomain = field(default_factory=FollowUpDomain)
     describe: DescribeSummary = field(default_factory=DescribeSummary)
     supersession: SupersessionDomain = field(default_factory=SupersessionDomain)
     pending_comments: list[PendingComment] = field(default_factory=list)
@@ -234,6 +236,14 @@ def terminal_summary(state: PRState, closure: PRClosure) -> dict:
     The closure's ``ended_at`` comes from GitHub rather than from the clock —
     the scheduled maintenance sweep is what usually runs gc, so the event's own
     ``ts`` says when that sweep noticed, up to a cycle after the merge.
+
+    The follow-ups are carried whole rather than counted. "What did that branch
+    defer?" is a question about merged work, and after `pr gc` removes the
+    target directory this event is the only place left that can answer it — a
+    count would say that something was deferred without saying what. Written
+    through ``serde.to_dict`` rather than ``dataclasses.asdict`` because the
+    entries hold enums, and the emit path's own comment names an unserialisable
+    payload as the failure a later change here could introduce.
     """
     return {
         "outcome": closure.state.value,
@@ -243,6 +253,7 @@ def terminal_summary(state: PRState, closure: PRClosure) -> dict:
         "verdict": state.review.verdict,
         "finding_counts": dict(state.review.finding_counts),
         "rebase_conflicts": state.rebase.conflicts_resolved,
+        "follow_ups": [_serde_to_dict(e) for e in state.follow_ups.entries],
     }
 
 

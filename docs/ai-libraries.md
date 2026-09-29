@@ -2405,6 +2405,28 @@ only from the delta applied here. A second save would write the fix record
 against a tally that had not moved, and `pr status` would report threads still
 open that GitHub has already closed.
 
+### pr/follow_ups.py
+
+What this branch deferred, and whether a reviewer can see it.
+
+A follow-up filed while working on a branch is the one artifact of that work
+that outlives it: the branch merges, the review file is reclaimed, and the issue
+stays open. Until now nothing recorded that a filing happened — `PRState.fix`
+carries three fields for the single aggregate issue the comment pass files, and
+a follow-up filed by a self-review, a CI pass, or by hand left no trace at all.
+The trail saw the subprocess, never the intent.
+
+So this is a ledger rather than a counter: each entry records what was filed,
+which run filed it, what the branch looked like at the time, why the work was
+deferred instead of done, and whether it has reached the PR description. The
+last of those is what a reviewer actually depends on, and it is the only field
+anything else writes after the entry is created.
+
+Keyed on the branch, not the PR, because `pr/target.py` keys its directory on
+`(repo-key, branch-slug)` with no network call — which means entries accrue from
+the moment work starts, including before a PR exists. That is when a self-review
+files the most.
+
 ### pr/history_rewrite.py
 
 Keeping a recorded commit true after the branch is rewritten under it.

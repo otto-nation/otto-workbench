@@ -116,6 +116,7 @@ class CiFixTask:
             model=opts.model or "",
             task="eval-ci-fix",
             repo="eval/corpus",
+            rules_home=opts.rules_home,
         ))
 
         post_code, post_output = run_verify(repo_dir, manifest, opts.timeout)
@@ -123,7 +124,7 @@ class CiFixTask:
         return RunArtifacts(
             exit_code=rc,
             usage=usage,
-            outcome=outcome_for(rc, usage),
+            outcome=outcome_for(usage),
             temp_dirs=[repo_dir, log_dir],
             data={
                 "fixed": post_code == 0,

@@ -5,11 +5,13 @@ Task-agnostic: what a run *is* and how it is scored belongs to the task
 of a score, the statistics over repeated runs, and the baseline diff — the parts
 every task shares.
 
-`eval-models --compare` diffs a run against the baselines in `eval/results/` and
-exits `2` on a regression. The gate is deliberately narrow, because a gate that
-flaps gets disabled: token growth, quality drops and false positives fail past
-the thresholds declared below, the cache-read ratio fails below its floor, and
-cost and duration are reported but never gated.
+`eval-models --compare` diffs a run against the baselines in `eval/results/`
+that were recorded on the same backend, and exits `2` on a regression. A run
+whose backend has no file yet is a new baseline, not a failure. The gate is
+deliberately narrow, because a gate that flaps gets disabled: token growth,
+quality drops and false positives fail past the thresholds declared below, the
+cache-read ratio fails below its floor, and cost and duration are reported but
+never gated.
 
 Tokens are gated and cost is not because tokens are what a change controls; the
 dollar figure also moves with model prices, and duration moves with machine
@@ -25,6 +27,11 @@ A run that never executed is not a measurement. `RunOutcome` records that, and
 `aggregate_runs` averages only the measured runs — an invocation that died before
 the agent did any work would otherwise land as recall 0, indistinguishable from a
 genuine miss and averaged into the figure a baseline is written from.
+
+The high-water ratchet (`eval.floors`) is a separate gate from the previous-file
+diff: it compares a run against the best value ever recorded, not the last one.
+`--save-baselines` refuses a write that would lower a floor, and the committed
+`eval/results/floors.json` is the document `validate-eval-floors` holds.
 """
 
 # doc-group: eval
@@ -56,6 +63,7 @@ class ScoringResult:
     entry_name: str
     model: str
     run_index: int
+    condition: str = "full"
     matches: list = field(default_factory=list)
     false_positive_ids: list[str] = field(default_factory=list)
     recall: float = 0.0
@@ -167,15 +175,17 @@ def incomplete_entries(output: dict) -> list[tuple[str, str, int, int]]:
 
 
 def format_summary_table(
-    all_results: dict[tuple[str, str], list[ScoringResult]],
+    all_results: dict[tuple, list[ScoringResult]],
 ) -> str:
     header = (
-        "| Entry | Model | Runs | Recall | Precision | Sev.Acc | FP | Cost | Duration |"
+        "| Entry | Model | Condition | Runs | Recall | Precision | Sev.Acc | FP | Cost | Duration |"
     )
-    sep = "|---|---|---|---|---|---|---|---|---|"
+    sep = "|---|---|---|---|---|---|---|---|---|---|"
     rows = [header, sep]
 
-    for (entry, model), results in sorted(all_results.items()):
+    for key, results in sorted(all_results.items()):
+        entry, model, *rest = key
+        condition = rest[0] if rest else "full"
         agg = aggregate_runs(results)
         # The census sits next to the numbers it produced: an entry averaged
         # from one surviving run of three should not read like a three-run mean.
@@ -187,7 +197,7 @@ def format_summary_table(
         if agg["precision_std"] > 0:
             prec_s += f" ±{agg['precision_std']:.0%}"
         rows.append(
-            f"| {entry} | {model} "
+            f"| {entry} | {model} | {condition} "
             f"| {runs_s} "
             f"| {recall_s} "
             f"| {prec_s} "
@@ -204,6 +214,8 @@ def format_summary_table(
 # run census. Earlier baselines still load: a field they never recorded is
 # ungated and unchecked, not failing.
 SCHEMA_VERSION = 3
+# Session --output nests condition under model. Baselines stay SCHEMA_VERSION.
+SESSION_SCHEMA_VERSION = 4
 _SUPPORTED_SCHEMA_VERSIONS = (1, 2, 3)
 
 _ENTRY_METRIC_KEYS = {"recall_mean", "precision_mean"}
@@ -282,6 +294,11 @@ def validate_baseline_schema(data: object) -> list[str]:
     elif not isinstance(data["model"], str) or not data["model"]:
         errors.append("model must be a non-empty string")
 
+    if "backend" not in data:
+        errors.append("missing required field: backend")
+    elif data["backend"] not in ("claude", "pi"):
+        errors.append("backend must be 'claude' or 'pi'")
+
     if "entries" not in data:
         errors.append("missing required field: entries")
     elif not isinstance(data["entries"], dict):
@@ -299,6 +316,34 @@ def validate_baseline_schema(data: object) -> list[str]:
 # baseline it collapsed from is not the interesting number.
 TOKEN_REGRESSION_RATIO = 0.15
 CACHE_READ_FLOOR = 0.60
+
+# Single-run noise on a 3-run mean is ±1/3. Two -0.222 decay steps sum to
+# -0.444, which clears that floor; one step does not. 1e-9 keeps a drop of
+# exactly one run's quantum from false-firing on float representation of 1/3.
+# At n=1 the quantum is 1.0, so a collapse to 0.0 is "within tolerance".
+# Callers must not size a gate from this at n<2 — the floors comparison
+# refuses that session rather than reporting that floors hold.
+MIN_RECALL_TOLERANCE_RUNS = 2
+
+
+def entry_recall_tolerance(runs_per_entry: int) -> float:
+    if runs_per_entry < MIN_RECALL_TOLERANCE_RUNS:
+        raise ValueError(
+            "entry_recall_tolerance needs runs_per_entry >= "
+            f"{MIN_RECALL_TOLERANCE_RUNS}; at 1 run the quantum is 1.0 "
+            "and a collapse to 0.0 is within tolerance",
+        )
+    return 1.0 / runs_per_entry + 1e-9
+
+
+# Same 1/3 quantum, rounded up so a 0.333 severity drop is still noise.
+ENTRY_SEVERITY_TOLERANCE = 0.34
+# Replaces the 0.5 that sat below one run's quantum (0.333) and therefore
+# gated noise. 1.5 is a bit over four runs flipping on a 3-run mean.
+ENTRY_FALSE_POSITIVE_TOLERANCE = 1.5
+# Mean recall / precision over the floored set. One noisy entry of 12 is
+# 0.222/12 ≈ 0.019; two decay steps on one entry are 0.444/12 ≈ 0.037.
+AGGREGATE_TOLERANCE = 0.03
 
 _RELATIVE_TOKEN_METRICS = ("billed_input_mean", "output_tokens_mean")
 _DISPLAY_METRICS = ("cost_mean", "duration_mean_ms")
@@ -353,7 +398,7 @@ def _gate_quality_metrics(base: dict, cur: dict, threshold: float) -> dict[str, 
     }
     metrics["false_positive_mean"] = _compare_metric(
         base.get("false_positive_mean", 0.0), cur.get("false_positive_mean", 0.0),
-        0.5, higher_is_better=False,
+        ENTRY_FALSE_POSITIVE_TOLERANCE, higher_is_better=False,
     )
     return metrics
 
@@ -524,3 +569,99 @@ def format_comparison_table(comparison: dict) -> str:
         rows.append(f"| {entry} | {model} | - | - | - | - | not run | - |")
 
     return "\n".join(rows)
+
+
+def format_ab_table(
+    results: dict[tuple, list[ScoringResult]],
+) -> str:
+    """Per-arm means and the trimmed-minus-full delta.
+
+    An arm that never produced a measurement is named `unmeasured` rather than
+    scored as zero, and the pair is not differenced — a missing arm is not a
+    cheaper arm.
+    """
+    header = (
+        "| Entry | Model | Arm | Runs | Pass | billed_input | output_tokens |"
+    )
+    sep = "|---|---|---|---|---|---|---|"
+    rows = [header, sep]
+    for (entry, model), arms in sorted(_ab_groups(results).items()):
+        aggs = {cond: aggregate_runs(runs) for cond, runs in arms.items()}
+        rows.extend(
+            _format_ab_arm_row(entry, model, cond, aggs[cond])
+            for cond in sorted(aggs)
+        )
+        if _ab_delta_ready(aggs):
+            rows.append(_format_ab_delta_row(entry, model, aggs))
+    return "\n".join(rows)
+
+
+def _ab_groups(
+    results: dict[tuple, list[ScoringResult]],
+) -> dict[tuple[str, str], dict[str, list[ScoringResult]]]:
+    groups: dict[tuple[str, str], dict[str, list[ScoringResult]]] = {}
+    for key, runs in results.items():
+        entry, model, *rest = key
+        condition = rest[0] if rest else "full"
+        groups.setdefault((entry, model), {})[condition] = runs
+    return groups
+
+
+def _ab_delta_ready(aggs: dict[str, dict]) -> bool:
+    full = aggs.get("full")
+    trimmed = aggs.get("trimmed")
+    if full is None or trimmed is None:
+        return False
+    return full["runs_measured"] > 0 and trimmed["runs_measured"] > 0
+
+
+def _format_ab_arm_row(entry: str, model: str, cond: str, agg: dict) -> str:
+    runs_s = f"{agg['runs_measured']}/{agg['runs_attempted']}"
+    if agg["runs_measured"] == 0:
+        metrics = "unmeasured | unmeasured | unmeasured"
+    else:
+        metrics = (
+            f"{agg['recall_mean']:.0%} "
+            f"| {agg['billed_input_mean']:.0f} "
+            f"| {agg['output_tokens_mean']:.0f}"
+        )
+    return f"| {entry} | {model} | {cond} | {runs_s} | {metrics} |"
+
+
+def _format_ab_delta_row(entry: str, model: str, aggs: dict[str, dict]) -> str:
+    full, trimmed = aggs["full"], aggs["trimmed"]
+    pass_d = trimmed["recall_mean"] - full["recall_mean"]
+    billed_d = trimmed["billed_input_mean"] - full["billed_input_mean"]
+    out_d = trimmed["output_tokens_mean"] - full["output_tokens_mean"]
+    return (
+        f"| {entry} | {model} | delta "
+        f"| - | {pass_d:+.0%} | {billed_d:+.0f} | {out_d:+.0f} |"
+    )
+
+
+# Floor ratchet names live in eval.floors so this file stays under the code-line
+# cap. Imported lazily so eval.floors can read the constants above without a
+# circular import at module load.
+_FLOOR_EXPORTS = frozenset({
+    "FloorAccept",
+    "FloorBreach",
+    "FloorComparison",
+    "FloorRecord",
+    "FloorSet",
+    "apply_accept_regressions",
+    "baseline_stem",
+    "compare_against_floors",
+    "format_floor_breaches",
+    "load_floors",
+    "parse_accept_regression",
+    "raise_floors",
+    "validate_floors_document",
+    "write_floors",
+})
+
+
+def __getattr__(name: str):
+    if name not in _FLOOR_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from eval import floors as _floors
+    return getattr(_floors, name)

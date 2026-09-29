@@ -1,0 +1,7 @@
+{
+  "name": "ci-fix-mktemp-trap",
+  "task": "ci-fix",
+  "verify": ["bash", "verify.sh"],
+  "failure_summary": "prepare.sh cleans its mktemp directory with a trailing rm, so an early exit leaks the scratch dir",
+  "tags": ["ci-fix", "traps", "bash"]
+}

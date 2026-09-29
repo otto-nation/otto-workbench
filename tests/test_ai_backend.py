@@ -227,6 +227,7 @@ class TestAgentInvocation:
         assert inv.repo is None
         assert inv.pr is None
         assert inv.env is None
+        assert inv.rules_home == ""
 
     def test_is_frozen(self):
         import dataclasses

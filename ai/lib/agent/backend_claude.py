@@ -311,6 +311,29 @@ def _unwrap_prompt_output(stdout: str) -> tuple[str, ai_usage.SessionUsage | Non
     return (reply if isinstance(reply, str) else stdout), usage
 
 
+def _spawn_env(inv: AgentInvocation) -> dict[str, str]:
+    """The subprocess environment, with this run's operator rule prefix applied.
+
+    ``rules_home`` is backend-neutral; this backend maps it to
+    ``CLAUDE_CONFIG_DIR``. Empty means inherit whatever the operator already
+    has — no key is written. The path must be absolute: the CLI rejects a
+    relative ``CLAUDE_CONFIG_DIR`` outright.
+
+    Not applied inside ``agent_env``: that helper is backend-blind and shared.
+    A Claude key there would be the same layering mistake one level up.
+    """
+    env = agent_env(inv)
+    if not inv.rules_home:
+        return env
+    home = Path(inv.rules_home).expanduser()
+    if not home.is_absolute():
+        raise ValueError(
+            f"AgentInvocation.rules_home must be absolute; got {inv.rules_home!r}"
+        )
+    env["CLAUDE_CONFIG_DIR"] = str(home)
+    return env
+
+
 def invoke_agent(inv: AgentInvocation) -> int:
     """Full agent with JSONL streaming to session log. Returns exit code."""
     cmd = _build_agent_cmd(inv)
@@ -321,7 +344,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
         stderr=subprocess.PIPE,
         text=True,
         cwd=inv.cwd,
-        env=agent_env(inv),
+        env=_spawn_env(inv),
     )
     _send_stdin(proc, inv.prompt)
     stream_progress(proc, inv.session_log, label=inv.label)
@@ -340,7 +363,7 @@ def invoke_fix(inv: AgentInvocation) -> int:
         stderr=sys.stderr,
         text=True,
         cwd=inv.cwd,
-        env=agent_env(inv),
+        env=_spawn_env(inv),
     )
     _send_stdin(proc, inv.prompt)
     _stream_fix_output(proc, inv.session_log)

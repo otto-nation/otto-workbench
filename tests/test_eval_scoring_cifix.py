@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -22,8 +23,8 @@ if str(LIB_DIR) not in sys.path:
 from eval import scoring_cifix as eval_scoring_cifix
 from agent.usage import SessionUsage
 from eval.scoring_cifix import CiFixTask, run_verify, verify_command
-from eval.scoring import RunOutcome
-from eval.task import RunArtifacts, RunOptions, get_task
+from eval.scoring import RunOutcome, ScoringResult, aggregate_runs
+from eval.task import RunArtifacts, RunOptions, get_task, outcome_for
 
 CORPUS = REPO_ROOT / "eval" / "corpus"
 
@@ -124,6 +125,22 @@ def _case(tmp_path: Path, verify_body: str, task: str = "ci-fix") -> Path:
     return case_dir
 
 
+def _run_cifix_case(opts: RunOptions) -> RunArtifacts:
+    """Drive a ci-fix run far enough that invoke_fix is called.
+
+    There is no shared harness helper for this; existing tests inline
+    `CiFixTask().run(case_dir, RunOptions(...))`. The fixture fails
+    pre-verify so the agent is reached. Temp dirs are cleaned before return.
+    """
+    case_root = Path(tempfile.mkdtemp(prefix="eval-cifix-case-"))
+    try:
+        artifacts = CiFixTask().run(_case(case_root, "exit 1\n"), opts)
+        _rm(artifacts)
+        return artifacts
+    finally:
+        shutil.rmtree(case_root, ignore_errors=True)
+
+
 class TestCiFixTaskRun:
     def test_skips_the_agent_when_the_fixture_already_passes(self, tmp_path, monkeypatch):
         """A fixture that does not fail proves nothing — it must not cost money."""
@@ -158,8 +175,15 @@ class TestCiFixTaskRun:
         _rm(artifacts)
 
     def test_reports_still_failing_when_the_agent_does_nothing(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix",
-                            lambda *a, **kw: 0)
+        def fake_fix(inv):
+            Path(inv.session_log).write_text(json.dumps({
+                "type": "result",
+                "total_cost_usd": 0.05,
+                "usage": {"input_tokens": 40, "output_tokens": 8},
+            }) + "\n")
+            return 0
+
+        monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix", fake_fix)
         case_dir = _case(tmp_path, "test -f fixed\n")
 
         artifacts = CiFixTask().run(case_dir, RunOptions(timeout=VERIFY_TIMEOUT))
@@ -262,3 +286,85 @@ class TestCiFixOutcome:
     def test_the_outcome_reaches_the_score(self):
         artifacts = RunArtifacts(data={"fixed": False}, outcome=RunOutcome.NOT_RUN)
         assert CiFixTask().score(artifacts, {}).outcome is RunOutcome.NOT_RUN
+
+
+class TestConditionReachesAgent:
+    """A ci-fix run serves the agent a backend-neutral rules_home."""
+
+    def test_the_condition_reaches_the_agent_as_an_absolute_rules_home(
+            self, tmp_path, monkeypatch):
+        seen = {}
+
+        def fake_invoke_fix(inv):
+            seen["rules_home"] = inv.rules_home
+            seen["env"] = inv.env
+            return 0
+
+        monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix",
+                            fake_invoke_fix)
+        opts = RunOptions(condition="trimmed",
+                          rules_home=str(tmp_path / "cc-trimmed"))
+        _run_cifix_case(opts)
+
+        assert seen["rules_home"] == str(tmp_path / "cc-trimmed")
+        assert Path(seen["rules_home"]).is_absolute()
+        assert seen["env"] is None
+
+    def test_the_agent_env_is_complete_because_a_partial_one_strips_path_and_home(
+            self, tmp_path, monkeypatch):
+        """Eval no longer builds env: a partial mapping was the layering defect.
+
+        Completeness (PATH, HOME unchanged) is asserted at the Claude backend,
+        where the mapping now lives.
+        """
+        seen = {}
+
+        def fake_invoke_fix(inv):
+            seen["env"] = inv.env
+            seen["rules_home"] = inv.rules_home
+            return 0
+
+        monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix",
+                            fake_invoke_fix)
+        opts = RunOptions(condition="trimmed", rules_home=str(tmp_path / "cc"))
+        _run_cifix_case(opts)
+
+        assert seen["env"] is None
+        assert seen["rules_home"] == str(tmp_path / "cc")
+
+    def test_no_config_dir_leaves_the_env_inherited_as_it_is_today(self, monkeypatch):
+        seen = {}
+
+        def fake_invoke_fix(inv):
+            seen["env"] = inv.env
+            seen["rules_home"] = inv.rules_home
+            return 0
+
+        monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix",
+                            fake_invoke_fix)
+        _run_cifix_case(RunOptions())
+        assert seen["env"] is None
+        assert seen["rules_home"] == ""
+
+
+class TestZeroTokenGuard:
+    """A CLI that declines to start must not average in as a 0% score."""
+
+    def test_a_run_that_billed_nothing_and_exited_zero_is_not_a_measurement(self):
+        """The CLAUDE_CONFIG_DIR arm's worst failure: the CLI declines to start,
+        prints a notice, bills nothing and exits 0. Averaged in as a zero it would
+        read as a real arm scoring 0% rather than as an arm that never ran."""
+        usage = SessionUsage(cost=0.0, duration_ms=1200)
+        assert outcome_for(usage) is RunOutcome.NOT_RUN
+
+    def test_an_unmeasured_run_is_excluded_from_the_arm_mean(self):
+        good = ScoringResult(entry_name="e", model="m", run_index=0, recall=1.0,
+                             billed_input=40000, outcome=RunOutcome.MEASURED)
+        dead = ScoringResult(entry_name="e", model="m", run_index=1, recall=0.0,
+                             billed_input=0, outcome=RunOutcome.NOT_RUN)
+        agg = aggregate_runs([good, dead])
+        assert agg["recall_mean"] == 1.0, (
+            "a run that never happened is not a 0% score")
+        assert agg["billed_input_mean"] == 40000
+        assert agg["runs_measured"] == 1
+        assert agg["runs_attempted"] == 2

@@ -532,6 +532,7 @@ class TestGuardEnv:
 
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
     def test_the_worktree_is_the_invocation_cwd(self, monkeypatch, tmp_path, entry_point):
+        monkeypatch.delenv("REVIEW_WORKTREE_DIR", raising=False)
         seen = {}
         monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
         getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
@@ -542,6 +543,7 @@ class TestGuardEnv:
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
     def test_add_dirs_reach_the_guard(self, monkeypatch, tmp_path, entry_point):
         """The artifact dir is outside the worktree, and must still be writable."""
+        monkeypatch.delenv("REVIEW_ALLOWED_DIRS", raising=False)
         artifact = tmp_path / "reviews" / "pr-42"
         worktree = tmp_path / "wt"
         seen = {}
@@ -557,6 +559,7 @@ class TestGuardEnv:
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
     def test_no_add_dirs_leaves_the_list_unset(self, monkeypatch, tmp_path, entry_point):
         """An empty value would split to [''] and allow a relative path anywhere."""
+        monkeypatch.delenv("REVIEW_ALLOWED_DIRS", raising=False)
         seen = {}
         monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
         getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
@@ -1984,3 +1987,154 @@ class TestAskForDeliverableOnAgentEnd:
         assert len(self._prompts(proc)) == 1
         assert result.stop_reason == "completed"
         assert result.error is None
+
+
+def _arm(tmp_path, name="arm", body="# general\nKeep this.\n"):
+    home = tmp_path / name
+    (home / "rules").mkdir(parents=True)
+    (home / "rules" / "general.md").write_text(body)
+    return home
+
+
+class TestRulesHomeIsANoop:
+    """Pi does not map ``rules_home`` to a config-dir env var."""
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_rules_home_does_not_set_pi_coding_agent_dir(
+            self, monkeypatch, tmp_path, entry_point):
+        monkeypatch.delenv("PI_CODING_AGENT_DIR", raising=False)
+        monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+        seen = {}
+        monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
+        getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path),
+            session_log=str(tmp_path / "s.jsonl"),
+            rules_home=str(_arm(tmp_path)),
+        ))
+        assert "PI_CODING_AGENT_DIR" not in seen["env"]
+        assert "CLAUDE_CONFIG_DIR" not in seen["env"]
+
+
+class TestRulesHomePrefix:
+    """``rules_home`` is injected as ``--append-system-prompt``, or omitted when empty."""
+
+    def test_empty_rules_home_argv_is_byte_identical_to_today(self):
+        fix = ai_backend_pi._build_fix_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        agent = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        empty_fix = ai_backend_pi._build_fix_cmd(
+            ai_backend_pi.AgentInvocation(prompt="", rules_home=""),
+        )
+        empty_agent = ai_backend_pi._build_agent_cmd(
+            ai_backend_pi.AgentInvocation(prompt="", rules_home=""),
+        )
+        assert fix == empty_fix
+        assert agent == empty_agent
+        assert fix == [
+            "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
+            "--tools", ai_backend_pi.PI_FIX_TOOLS,
+            "--no-context-files", "--no-skills",
+        ]
+        assert "--append-system-prompt" not in agent
+        assert agent == [
+            "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
+            "--tools", ai_backend_pi.PI_AGENT_TOOLS,
+            "--no-context-files", "--no-skills",
+        ]
+
+    def test_rules_home_is_appended_as_a_file_and_keeps_bare_flags(self, tmp_path):
+        home = _arm(tmp_path)
+        cmd = ai_backend_pi._build_fix_cmd(
+            ai_backend_pi.AgentInvocation(prompt="", rules_home=str(home)),
+        )
+        assert "--no-context-files" in cmd
+        assert "--no-skills" in cmd
+        assert "--append-system-prompt" in cmd
+        blob = Path(cmd[cmd.index("--append-system-prompt") + 1])
+        assert blob.is_file()
+        text = blob.read_text()
+        assert "Keep this." in text
+        assert "general.md" in text
+
+    def test_missing_rules_home_fails_loudly(self, tmp_path):
+        from agent.rule_prefix import RulePrefixError
+        with pytest.raises(RulePrefixError, match="rules/"):
+            ai_backend_pi._build_fix_cmd(
+                ai_backend_pi.AgentInvocation(
+                    prompt="", rules_home=str(tmp_path / "missing"),
+                ),
+            )
+
+    def test_relative_rules_home_is_rejected(self, tmp_path):
+        from agent.rule_prefix import RulePrefixError
+        with pytest.raises(RulePrefixError, match="absolute"):
+            ai_backend_pi._build_fix_cmd(
+                ai_backend_pi.AgentInvocation(
+                    prompt="", rules_home="relative/arm",
+                ),
+            )
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_prefix_file_exists_at_spawn_with_the_rule_text(
+            self, monkeypatch, tmp_path, entry_point):
+        seen = {}
+
+        def popen(cmd, **kwargs):
+            path = Path(cmd[cmd.index("--append-system-prompt") + 1])
+            seen["readable"] = path.is_file()
+            seen["text"] = path.read_text()
+            return _recording_popen({})(cmd, **kwargs)
+
+        monkeypatch.setattr(subprocess, "Popen", popen)
+        getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path),
+            session_log=str(tmp_path / "s.jsonl"),
+            rules_home=str(_arm(tmp_path)),
+        ))
+        assert seen["readable"] is True
+        assert "Keep this." in seen["text"]
+        assert "general.md" in seen["text"]
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_no_prefix_file_remains_after_invoke(
+            self, monkeypatch, tmp_path, entry_point):
+        seen = {}
+        inner = _recording_popen(seen)
+
+        def popen(cmd, **kwargs):
+            seen["path"] = cmd[cmd.index("--append-system-prompt") + 1]
+            return inner(cmd, **kwargs)
+
+        monkeypatch.setattr(subprocess, "Popen", popen)
+        getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path),
+            session_log=str(tmp_path / "s.jsonl"),
+            rules_home=str(_arm(tmp_path)),
+        ))
+        assert seen["path"]
+        assert not Path(seen["path"]).exists()
+
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_exception_between_materialize_and_spawn_still_removes_the_file(
+            self, monkeypatch, tmp_path, entry_point):
+        captured = {}
+        real = ai_backend_pi.materialize_rule_prefix
+
+        def wrapping(home):
+            path = real(home)
+            captured["path"] = path
+            return path
+
+        monkeypatch.setattr(ai_backend_pi, "materialize_rule_prefix", wrapping)
+
+        def boom(*_a, **_k):
+            raise RuntimeError("between materialize and spawn")
+
+        monkeypatch.setattr(ai_backend_pi, "_spawn_env", boom)
+        with pytest.raises(RuntimeError, match="between materialize and spawn"):
+            getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+                prompt="p", cwd=str(tmp_path),
+                session_log=str(tmp_path / "s.jsonl"),
+                rules_home=str(_arm(tmp_path)),
+            ))
+        assert captured["path"]
+        assert not Path(captured["path"]).exists()

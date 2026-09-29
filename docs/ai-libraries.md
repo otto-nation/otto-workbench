@@ -2659,6 +2659,23 @@ Gaps vs Claude Code CLI:
   --add-dir        Not available; directories passed in prompt text
   --agent          Not available; use --append-system-prompt with agent file contents
 
+### agent/rule_prefix.py
+
+Assemble a Pi system-prompt prefix from a seeded ``rules_home``.
+
+Pi has no ``CLAUDE_CONFIG_DIR`` equivalent that relocates *only* the operator
+rule prefix: ``PI_CODING_AGENT_DIR`` also moves settings, sessions and
+extensions (the Vertex provider and the ``gh_*`` tools). The eval therefore
+keeps ``--no-context-files`` — so the operator's ~39k ``AGENTS.md`` does not
+load — and injects the arm with ``--append-system-prompt``.
+
+The files to inject are ``rules_home/rules/*.md``, concatenated the way
+``step_pi_guidelines`` builds ``~/.pi/agent/AGENTS.md``: YAML frontmatter is
+stripped, a ``paths:`` scope is dropped (Pi has no path-conditional context),
+and a ``harness:`` list that omits ``pi`` is dropped. Empty ``rules_home`` is
+the caller's problem; a *set* but unreadable or empty home is an error, never
+a silent empty prompt.
+
 ### agent/token_count.py
 
 Exact input-token counts for a prompt, where the platform can give them.
@@ -2734,6 +2751,39 @@ reads both. Anything else in this module stays behind the preflight.
 
 The eval harness: fixture tasks, the scorers that grade each task's output, and the aggregation the CI ratchet gates on.
 
+### eval/conditions.py
+
+The two rule prefixes an A/B run compares, and the trees they are served from.
+
+The prefix under test is the 27 files installed at ``~/.claude/rules/`` — the
+merge of repo defaults, generated files and operator overrides — not the 18 in
+``ai/guidelines/rules/``. A trim set written against the repo sources would
+leave the five generated files identical in both arms and quietly shrink the
+contrast the experiment exists to measure.
+
+Membership is explicit on both sides rather than "kept is everything not
+dropped": a rule added later would otherwise join the kept arm silently and
+change what the two conditions mean without anyone editing this file.
+
+### eval/floors.py
+
+High-water ratchet for committed eval baselines.
+
+A predecessor-relative gate cannot catch slow decay: one run flipping on a
+3-run mean is ±0.333, and each observed decay step was -0.222. Any threshold
+that is noise-safe misses the decay; any threshold that catches it false-fires.
+This module compares against the best value ever recorded. Two -0.222 steps
+sum to -0.444, which clears the 0.334 noise floor.
+
+`eval-models --save-baselines` and `bin/local/validate-eval-floors` both call
+the functions here. An entry in a baseline with no floor record fails — deleting
+a key must not defeat the gate. A floor record whose entry or metric is missing
+from the baseline also fails: the gate walks the floors, not the current file.
+`--save-baselines` still writes a first floor for a name the on-disk baseline
+does not yet carry, and for a new backend with no file; the validator then
+holds that floor. `floors.json` is the high-water across committed history of
+each lineage; `seed_floors` folds historical baselines and never drops `best`.
+
 ### eval/rules_canary.py
 
 Does `--add-dir` still bring the operator's coding rules with it.
@@ -2786,11 +2836,13 @@ Task-agnostic: what a run *is* and how it is scored belongs to the task
 of a score, the statistics over repeated runs, and the baseline diff — the parts
 every task shares.
 
-`eval-models --compare` diffs a run against the baselines in `eval/results/` and
-exits `2` on a regression. The gate is deliberately narrow, because a gate that
-flaps gets disabled: token growth, quality drops and false positives fail past
-the thresholds declared below, the cache-read ratio fails below its floor, and
-cost and duration are reported but never gated.
+`eval-models --compare` diffs a run against the baselines in `eval/results/`
+that were recorded on the same backend, and exits `2` on a regression. A run
+whose backend has no file yet is a new baseline, not a failure. The gate is
+deliberately narrow, because a gate that flaps gets disabled: token growth,
+quality drops and false positives fail past the thresholds declared below, the
+cache-read ratio fails below its floor, and cost and duration are reported but
+never gated.
 
 Tokens are gated and cost is not because tokens are what a change controls; the
 dollar figure also moves with model prices, and duration moves with machine
@@ -2806,6 +2858,11 @@ A run that never executed is not a measurement. `RunOutcome` records that, and
 `aggregate_runs` averages only the measured runs — an invocation that died before
 the agent did any work would otherwise land as recall 0, indistinguishable from a
 genuine miss and averaged into the figure a baseline is written from.
+
+The high-water ratchet (`eval.floors`) is a separate gate from the previous-file
+diff: it compares a run against the best value ever recorded, not the last one.
+`--save-baselines` refuses a write that would lower a floor, and the committed
+`eval/results/floors.json` is the document `validate-eval-floors` holds.
 
 ### eval/scoring_cifix.py
 
@@ -2944,7 +3001,9 @@ A run reports a `RunOutcome`, and only `MEASURED` is a number. An invocation
 that died before the agent did any work produces empty artifacts, which score as
 recall 0 and are indistinguishable in the results from a genuine miss — one bad
 backend window then replaces a good baseline with zeros. `outcome_for` names that
-case from the two things it always shows: a non-zero exit and no usage at all.
+case from the usage: nothing billed, regardless of exit code. A non-zero exit
+with no spend is a dead backend; an exit 0 with no spend is the CLI refusing to
+start.
 
 Task implementations live in `eval_scoring_<task>.py` and are resolved lazily so
 that adding a task does not make every other task's dependencies load.

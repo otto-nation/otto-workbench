@@ -27,7 +27,9 @@ A run reports a `RunOutcome`, and only `MEASURED` is a number. An invocation
 that died before the agent did any work produces empty artifacts, which score as
 recall 0 and are indistinguishable in the results from a genuine miss — one bad
 backend window then replaces a good baseline with zeros. `outcome_for` names that
-case from the two things it always shows: a non-zero exit and no usage at all.
+case from the usage: nothing billed, regardless of exit code. A non-zero exit
+with no spend is a dead backend; an exit 0 with no spend is the CLI refusing to
+start.
 
 Task implementations live in `eval_scoring_<task>.py` and are resolved lazily so
 that adding a task does not make every other task's dependencies load.
@@ -82,20 +84,24 @@ class RunOptions:
     effort: str = "low"
     timeout: int = EVAL_CASE_BUDGET
     verbose: bool = False
+    # Which rule prefix this run is served. Inert for review and skill tasks:
+    # only ci-fix invokes a fix agent, so only ci-fix reads it.
+    condition: str = "full"
+    # Where this run's operator rule prefix is served from, empty to inherit
+    # the operator's own. Backend-neutral: the agent layer maps it.
+    rules_home: str = ""
 
 
-def outcome_for(exit_code: int, usage: SessionUsage) -> RunOutcome:
-    """Classify a completed invocation from its exit code and what it spent.
+def outcome_for(usage: SessionUsage) -> RunOutcome:
+    """Classify a completed invocation from what it spent.
 
-    Both conditions are needed. A non-zero exit alone is ordinary: an agent that
-    ran, worked, and gave up still exited non-zero and its findings are a real
-    result. Zero usage alone is ordinary too — a cached or stubbed path can cost
-    nothing. Together they say the process produced nothing at all, which is the
-    signature the poisoned baseline was found by: `$0.00` and about four seconds
-    across half the runs in a pass.
+    Work is usage. An agent that ran, worked, and gave up still spent tokens
+    or money, and that is a real result even when it exits non-zero. Zero
+    usage is an invocation that never did any work: a dead backend, or the
+    CLI refusing to start, printing a notice, billing nothing and exiting 0.
+    Averaging that in as a zero score is how a fake-green arm poisons a
+    baseline. Exit code is not consulted: a zero-token exit-0 run is NOT_RUN.
     """
-    if exit_code == 0:
-        return RunOutcome.MEASURED
     if usage.cost > 0 or usage.total_tokens > 0:
         return RunOutcome.MEASURED
     return RunOutcome.NOT_RUN

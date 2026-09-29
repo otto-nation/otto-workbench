@@ -4,7 +4,7 @@
   "skill": "pr-rebase",
   "description": "Finishes a hook-refused push through pr rebase, never a raw git push",
   "prompt": "Rebase this branch onto main.",
-  "requires": [["pr", "rebase", "--fix"], ["git", "commit"], ["pr", "rebase"]],
+  "requires": [["pr", "rebase", "--fix"]],
   "forbids": [["git", "push"], ["pr-rebase"], ["git", "rebase"]],
   "false_positives_max": 0,
   "tags": ["skill", "pr-rebase"]

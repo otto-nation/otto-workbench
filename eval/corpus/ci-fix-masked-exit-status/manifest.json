@@ -1,0 +1,7 @@
+{
+  "name": "ci-fix-masked-exit-status",
+  "task": "ci-fix",
+  "verify": ["bash", "verify.sh"],
+  "failure_summary": "run_ci.sh ends with echo EXIT=$?, so a failing suite is reported as success",
+  "tags": ["ci-fix", "exit-status", "testing"]
+}

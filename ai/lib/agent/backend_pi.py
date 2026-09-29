@@ -61,6 +61,11 @@ from core import log
 from core import timeouts
 from core.proc import _kill_group
 from agent.backend import AgentInvocation, agent_env
+from agent.rule_prefix import (
+    TEMP_PREFIX,
+    materialize as materialize_rule_prefix,
+    release as release_rule_prefix,
+)
 from agent.backend_events import (
     _log_stderr_on_failure, parse_pi_cost, parse_pi_event, pi_prompt_result,
     pi_tool_signature, pi_wrote_output,
@@ -143,6 +148,20 @@ def _guard_env(inv: AgentInvocation) -> dict[str, str]:
     return env
 
 
+def _spawn_env(inv: AgentInvocation) -> dict[str, str]:
+    """The subprocess environment. ``rules_home`` is not an env mapping here.
+
+    The operator rule prefix is injected on the argv as
+    ``--append-system-prompt`` (see ``_rule_prefix_flags``), keeping
+    ``--no-context-files``. ``PI_CODING_AGENT_DIR`` is the wrong mapping: it
+    relocates settings, sessions and extensions/ (Vertex provider, gh_*
+    tools) rather than the operator rule prefix.
+    """
+    if REVIEW_EXTENSION.is_file():
+        return _guard_env(inv)
+    return agent_env(inv)
+
+
 def _read_agent_prompt(agent: str) -> str | None:
     """Read an agent's system prompt from ~/.claude/agents/<name>.md."""
     agent_file = AGENTS_DIR / f"{agent}.md"
@@ -166,6 +185,33 @@ def _resolve_skill_path(agent: str) -> Path | None:
     if AGENT_PROTOCOL_PLACEHOLDER in skill_file.read_text():
         return None
     return skill_file
+
+
+def _rule_prefix_flags(inv: AgentInvocation) -> list[str]:
+    """``--append-system-prompt`` of the arm, or nothing when ``rules_home`` is empty.
+
+    Empty is byte-identical to an invocation with no prefix: no flag, no temp file.
+    A *set* home is materialised to a file because Pi treats an existing path
+    as file contents, and the blob is too large for the text form.
+    """
+    if not inv.rules_home:
+        return []
+    return ["--append-system-prompt", materialize_rule_prefix(inv.rules_home)]
+
+
+def _release_rule_prefix(cmd: list[str]) -> None:
+    """Unlink the ``pi-rules-`` path passed as ``--append-system-prompt``.
+
+    Called after the child has started (or when spawn never happens) so Pi
+    still sees a real file at parse time. Idempotent with the ``atexit``
+    registration in ``materialize``.
+    """
+    for i, arg in enumerate(cmd[:-1]):
+        if arg != "--append-system-prompt":
+            continue
+        path = cmd[i + 1]
+        if Path(path).name.startswith(TEMP_PREFIX):
+            release_rule_prefix(path)
 
 
 # ── Command builders ──────────────────────────────────────────────────────────
@@ -202,6 +248,7 @@ def _build_agent_cmd(inv: AgentInvocation, extension: str | None = None) -> list
         "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
         "--tools", PI_AGENT_TOOLS, *BARE_FLAGS,
     ]
+    cmd += _rule_prefix_flags(inv)
     if inv.agent:
         skill_path = _resolve_skill_path(inv.agent)
         if skill_path:
@@ -242,6 +289,7 @@ def _build_fix_cmd(inv: AgentInvocation, extension: str | None = None) -> list[s
         "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
         "--tools", PI_FIX_TOOLS, *BARE_FLAGS,
     ]
+    cmd += _rule_prefix_flags(inv)
     if inv.provider:
         cmd += ["--provider", inv.provider]
     if inv.model:
@@ -973,17 +1021,19 @@ def invoke_agent(inv: AgentInvocation) -> int:
     """
     ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
     cmd = _build_agent_cmd(inv, extension=ext)
-    spawn = dict(
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        cwd=inv.cwd,
-        env=_guard_env(inv) if ext else agent_env(inv),
-    )
-
-    with _rpc_process(cmd, **spawn) as proc:
-        return _drive_agent(inv, proc)
+    try:
+        spawn = dict(
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=inv.cwd,
+            env=_spawn_env(inv),
+        )
+        with _rpc_process(cmd, **spawn) as proc:
+            return _drive_agent(inv, proc)
+    finally:
+        _release_rule_prefix(cmd)
 
 
 def _drive_agent(inv: AgentInvocation, proc: subprocess.Popen) -> int:
@@ -1044,17 +1094,19 @@ def invoke_fix(inv: AgentInvocation) -> int:
     """
     ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
     cmd = _build_fix_cmd(inv, extension=ext)
-    spawn = dict(
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        cwd=inv.cwd,
-        env=_guard_env(inv) if ext else agent_env(inv),
-    )
-
-    with _rpc_process(cmd, **spawn) as proc:
-        return _drive_fix(inv, proc)
+    try:
+        spawn = dict(
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=inv.cwd,
+            env=_spawn_env(inv),
+        )
+        with _rpc_process(cmd, **spawn) as proc:
+            return _drive_fix(inv, proc)
+    finally:
+        _release_rule_prefix(cmd)
 
 
 def _drive_fix(inv: AgentInvocation, proc: subprocess.Popen) -> int:

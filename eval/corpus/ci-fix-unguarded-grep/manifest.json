@@ -1,0 +1,7 @@
+{
+  "name": "ci-fix-unguarded-grep",
+  "task": "ci-fix",
+  "verify": ["bash", "verify.sh"],
+  "failure_summary": "scan.sh runs bare grep under set -e, so a file with no matches exits the script instead of reporting a zero count",
+  "tags": ["ci-fix", "errexit", "bash"]
+}

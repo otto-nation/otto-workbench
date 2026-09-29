@@ -3,7 +3,7 @@ title: AI Automation
 description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 ---
 
-<!-- doc-budget: 482 -->
+<!-- doc-budget: 492 -->
 
 # AI Automation
 
@@ -107,11 +107,21 @@ and in CI from the moment it lands until a baseline records it. That baseline ha
 to come from a run over the whole corpus: `--save-baselines` rebuilds each
 model's file wholesale from the entries of the run it is handed, so
 `--entry <new-case> --save-baselines` writes a file holding that one entry and
-drops every other. There is no filtered top-up.
+drops every other. There is no filtered top-up. A name the on-disk baseline
+does not yet carry, or a first run under a new backend, is a first floor —
+`--save-baselines` records it; `validate-eval-floors` still fails an unfloored
+entry on disk. Retire a case by deleting it from `eval/corpus/`, every
+`{backend}-{model}.json`, and every stem in `floors.json` together: a floor
+with no baseline is dropped, a baseline with no floor is unfloored, a corpus
+case with no baseline fails `validate-eval-baselines`. Partial deletion fails
+by design.
 
-`--compare` diffs a run against those baselines and exits `2` on a regression;
-`--save-baselines` exits `3` without writing when a run never executed. Which
-metrics gate, and why a dead run is not a score, are on
+`--compare` diffs a run against same-backend `{backend}-{model}.json` files
+and exits `2` on a regression; `--save-baselines` records the served model and
+exits `3` when unresolved or a run never executed; `--seed-floors` rebuilds a
+missing `floors.json` from this run's scores, not git history (`best` is the
+current values — a decayed run collapses the high-water mark) and warns when
+it reseeds. Which metrics gate, and why a dead run is not a score, are on
 [`eval/scoring.py`](ai-libraries.md#evalscoringpy). The
 [`Eval` workflow](../.github/workflows/eval.yml) runs this weekly and on demand
 — not a pull-request check: each run spends real money on real model calls, and

@@ -115,6 +115,7 @@ _check_corpus_coverage() {
 if [[ -d "$RESULTS_DIR" ]]; then
   for baseline in "$RESULTS_DIR"/*.json; do
     [[ -f "$baseline" ]] || continue
+    [[ "$(basename "$baseline")" == "floors.json" ]] && continue
     BASELINES=$(( BASELINES + 1 ))
     _validate_baseline_file "$baseline"
   done

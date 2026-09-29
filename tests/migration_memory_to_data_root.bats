@@ -17,8 +17,6 @@ setup() {
   export PROJECTS_REGISTRY_FILE="$TMPDIR/state/projects.registry"
   mkdir -p "$HOME/.claude/projects" "$TMPDIR/state" "$TMPDIR/data"
 
-
-
   REPO_DIR="$TMPDIR/repo"
   mkdir -p "$REPO_DIR"
   git -C "$REPO_DIR" init --quiet

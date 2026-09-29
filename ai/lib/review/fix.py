@@ -371,9 +371,11 @@ def _fixed_entry(described: str, outcome: ItemOutcome) -> str:
     """One `Fixed:` entry: what was fixed, and the caveat when one is owed.
 
     The description is left intact; `_block` wraps it to the commit-body limit.
-    `verify_detail` is agent prose with no length contract, so an unbreakable
-    token is still clipped to a continuation's budget — wrapping cannot split a
-    token that is already longer than the line.
+    `verify_detail` is agent prose with no length contract, so a token longer
+    than a continuation's budget is clipped here rather than left to `_block`:
+    `textwrap.fill` would still split it across lines, but the clip is what
+    keeps one unverifiable token from carrying more of the caveat's budget
+    than a continuation line has room for.
     """
     described = described or outcome.file or outcome.id
     detail = _unverified_detail(outcome)

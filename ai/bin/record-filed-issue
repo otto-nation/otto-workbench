@@ -102,14 +102,16 @@ import os
 import sys
 from pathlib import Path
 
-ai_lib_dir = Path(sys.argv[3])
-bin_dir = ai_lib_dir.parent / "bin"
+# The stanza every ai/bin entry point carries, spelled identically — the
+# duplication is the design (it has to answer before ai/lib is importable) and
+# tests/ai_lib_pin.bats holds every carrier to one text.
+_AI_LIB_DIR = Path(sys.argv[3])
 if os.environ.get("WORKBENCH_AI_LIB_DIR"):
-    sys.path.insert(0, str(bin_dir))
+    sys.path.insert(0, str(_AI_LIB_DIR.parent / "bin"))
     from _libdir import pinned_ai_lib_dir
     del sys.path[0]
-    ai_lib_dir = pinned_ai_lib_dir()
-sys.path.insert(0, str(ai_lib_dir))
+    _AI_LIB_DIR = pinned_ai_lib_dir()
+sys.path.insert(0, str(_AI_LIB_DIR))
 
 try:
     from config.workbench_config import IssueProvider

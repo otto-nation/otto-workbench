@@ -53,7 +53,6 @@ from core import log
 from core import module_proxy
 from pr import state as pr_state
 from core import proc
-from core import publishing
 
 from pr import target as pr_target
 from pr.context import detect_repo
@@ -71,6 +70,8 @@ from core.tool_parser import enum_arg
 # means two things. `abbrev` is pure formatting of a sha already in hand.
 from git import numstat
 from git.client import abbrev
+# Same collision: `core.publishing.run` is not `core.proc.run`.
+from core.publishing import run as publishing_run
 from review.budget import UnknownModelWindow, prompt_budget_bytes
 from review.collect import collect_preflight_data
 from review.outcome import write_unchanged_review
@@ -98,7 +99,6 @@ _SUBMODULES = (
     _ad, _ai, _aph, _au, _rpmt, _rprior, _rpsec, _rreg, _ra, _rpl, _rfi, _rfx, _rgc,
     _rpath, _rph, _rstp, _rout, _rrt, _rst, _rt,
     ai_backend, log, module_proxy, numstat, pr_state, pr_target, proc,
-    publishing,
 )
 
 module_proxy.install(__name__, _SUBMODULES)
@@ -586,31 +586,29 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     # Before anything runs. `claude-review` decides whether this run may publish
-    # and forwards the answer here, because the gate is per-process and the fix
-    # pass lives in this one.
-    if args.post:
-        publishing.enable()
+    # and forwards the answer here, because the fix pass lives in this process
+    # and must see the same gate.
+    with publishing_run(post=args.post):
+        if args.mode == Mode.PR and not args.pr:
+            log.error("--pr is required in pr mode")
+            return 1
 
-    if args.mode == Mode.PR and not args.pr:
-        log.error("--pr is required in pr mode")
-        return 1
+        repo = args.repo or detect_repo(cwd=args.repo_dir)
 
-    repo = args.repo or detect_repo(cwd=args.repo_dir)
+        session_log = args.session_log or review_artifact_path(args.review_file, FILENAME_SESSION)
 
-    session_log = args.session_log or review_artifact_path(args.review_file, FILENAME_SESSION)
+        trail = Trail.start(
+            script=SCRIPT,
+            context={"repo": repo, "pr": args.pr, "mode": args.mode},
+            debug=args.debug,
+        )
 
-    trail = Trail.start(
-        script=SCRIPT,
-        context={"repo": repo, "pr": args.pr, "mode": args.mode},
-        debug=args.debug,
-    )
-
-    try:
-        return _run_orchestrate(trail, args, repo, session_log)
-    except KeyboardInterrupt:
-        return proc.INTERRUPT_RETURNCODE
-    except Exception as exc:
-        trail.error("unexpected_error", str(exc))
-        raise
-    finally:
-        trail.finish()
+        try:
+            return _run_orchestrate(trail, args, repo, session_log)
+        except KeyboardInterrupt:
+            return proc.INTERRUPT_RETURNCODE
+        except Exception as exc:
+            trail.error("unexpected_error", str(exc))
+            raise
+        finally:
+            trail.finish()

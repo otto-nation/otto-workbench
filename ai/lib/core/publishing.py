@@ -5,21 +5,22 @@ people the moment it lands, and a wrong one has to be retracted in front of the
 reviewer. So the default is to draft: callers print what they would have sent and
 report failure, and nothing leaves the machine until the entrypoint opts in.
 
-One flag owns this. Modules that write externally (`pr.comments`,
-`review.issue`) ask here rather than carrying their own switch.
+`run` owns this for one invocation. Modules that write externally
+(`pr.comments`, `review.issue`) ask here rather than carrying their own switch.
+Nested `run` calls save and restore, so an inner command cannot inherit an
+outer gate it did not open, and cannot close one it did not own.
 
-The decision is scoped to a **run**, not to the process. `pr fix` runs a
-review, a CI pass and a describe pass in one process, so the dispatch seam
-wraps each handler in `scope()` and whatever that handler opened closes again
-on the way out — what one pass was told to publish is not an authorisation for
-the next. Until in-process dispatch landed, the subprocess boundary was doing
-that scoping by accident, and there was no way to close the gate at all.
+`pr fix` runs a review, a CI pass and a describe pass in one process, so the
+dispatch seam wraps each handler in `scope()` and whatever that handler opened
+closes again on the way out — what one pass was told to publish is not an
+authorisation for the next.
 
 A hold overrides it. Some things a run learns mid-way — an unanswered question
 about whether the work should exist at all — mean nothing more should leave the
-machine, whatever the entrypoint was told. `hold` closes the gate for good and
-is not restored when a run exits, so the two only ever compose in the safe
-direction at both scopes.
+machine, whatever the entrypoint was told. `hold` closes the gate for the rest
+of that run, so the two only ever compose in the safe direction at both scopes.
+The next `run` starts clean: both the flag and the hold reset, or a hold would
+outrank a `--post` nobody in that invocation asked to refuse.
 
 What that means at the CLI: `pr comments` writes nothing outward unless you
 pass `--post`. Replies, the fix summary, thread resolutions, deferral tracking
@@ -87,6 +88,7 @@ from __future__ import annotations
 import contextlib
 import importlib
 from collections.abc import Iterator
+from contextlib import contextmanager
 
 from core import log
 
@@ -94,11 +96,30 @@ _enabled = False
 _held = ""
 
 
+@contextmanager
+def run(*, post: bool = False):
+    """Scope the gate to this invocation.
+
+    `post=True` is `--post`. Both `_enabled` and `_held` are restored on exit,
+    including when this `run` is nested inside another: an inner reset must
+    not close the outer invocation's gate, and an inner `--post` must not
+    leave the outer one open.
+    """
+    global _enabled, _held
+    prev_e, prev_h = _enabled, _held
+    _enabled, _held = post, ""
+    try:
+        yield
+    finally:
+        _enabled, _held = prev_e, prev_h
+
+
 def enable() -> None:
-    """Let external writes through for the rest of the enclosing `scope()`.
+    """Let external writes through for the rest of the current run, or the
+    enclosing `scope()` if one is open.
 
     An entry point calls this when its own flags say the run may publish. What
-    bounds it is the `scope()` its caller opened, not this call.
+    bounds it is the `run` or `scope()` its caller opened, not this call.
     """
     global _enabled
     _enabled = True
@@ -138,12 +159,14 @@ def scope() -> Iterator[None]:
 
 
 def hold(reason: str) -> None:
-    """Close the gate for the rest of the process, whatever `--post` asked for.
+    """Close the gate for the rest of the run, whatever `--post` asked for.
 
-    Monotonic: the first reason sticks and nothing reopens the gate. What
-    justifies a hold is a question no later stage of the same run can answer,
-    so a run that reopened its own gate would be answering it itself.
-    `scope()` does not restore it either, for the same reason one scope up.
+    Monotonic within a run: the first reason sticks and nothing reopens the
+    gate. What justifies a hold is a question no later stage of the same run
+    can answer, so a run that reopened its own gate would be answering it
+    itself. `scope()` does not restore it either, for the same reason one
+    scope up. The next `run` starts with a clear hold; leaking one would
+    refuse a `--post` that invocation never saw.
     """
     global _held
     if _held:

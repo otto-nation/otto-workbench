@@ -452,20 +452,19 @@ def main(argv: list[str] | None = None) -> int:
     # After the lock and before the work, matching every other gated command.
     # `--dry-run` is a narrower request than a draft — it prints the revision
     # and writes no state — so it stays its own flag rather than folding in.
-    if args.post:
-        publishing.enable()
-    elif not args.dry_run:
-        log.info("Draft mode — the PR body is not edited. "
-                 "Re-run with --post to apply it.")
+    with publishing.run(post=args.post):
+        if not args.post and not args.dry_run:
+            log.info("Draft mode — the PR body is not edited. "
+                     "Re-run with --post to apply it.")
 
-    trail = Trail.start(
-        script=SCRIPT,
-        context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},
-        debug=args.debug,
-    )
-    try:
-        return run_describe(
-            ctx, force=args.force, dry_run=args.dry_run, trail=trail,
+        trail = Trail.start(
+            script=SCRIPT,
+            context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},
+            debug=args.debug,
         )
-    finally:
-        trail.finish()
+        try:
+            return run_describe(
+                ctx, force=args.force, dry_run=args.dry_run, trail=trail,
+            )
+        finally:
+            trail.finish()

@@ -320,44 +320,42 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     # Before anything runs, so no code path can push ahead of the decision.
-    if args.post:
-        publishing.enable()
+    with publishing.run(post=args.post):
+        ctx = pr_context.resolve(
+            pr=args.pr, branch=args.branch, repo_dir=args.repo_dir,
+        )
 
-    ctx = pr_context.resolve(
-        pr=args.pr, branch=args.branch, repo_dir=args.repo_dir,
-    )
+        # --fix rebases and commits in this checkout, in this process, so the tree
+        # is locked alongside the target. Not required here: the dashboard path
+        # reads GitHub and needs no worktree at all, and a bare-repo run of it is
+        # legitimate. None means the target lock alone, which is what it had.
+        worktree = ctx.worktree_root if args.fix and ctx.worktree_root else None
 
-    # --fix rebases and commits in this checkout, in this process, so the tree
-    # is locked alongside the target. Not required here: the dashboard path
-    # reads GitHub and needs no worktree at all, and a bare-repo run of it is
-    # legitimate. None means the target lock alone, which is what it had.
-    worktree = ctx.worktree_root if args.fix and ctx.worktree_root else None
+        # A no-op when pr launched us — we resolve the same target and find its key
+        # already in WORKBENCH_RUN_LOCK.
+        # Acquired before Trail.start so contention costs no trail artifacts.
+        run_lock.claim_for_process(
+            ctx.target_dir,
+            command=" ".join([SCRIPT] + argv),
+            started=pr_state.now_iso(),
+            worktree=worktree,
+        )
 
-    # A no-op when pr launched us — we resolve the same target and find its key
-    # already in WORKBENCH_RUN_LOCK.
-    # Acquired before Trail.start so contention costs no trail artifacts.
-    run_lock.claim_for_process(
-        ctx.target_dir,
-        command=" ".join([SCRIPT] + argv),
-        started=pr_state.now_iso(),
-        worktree=worktree,
-    )
-
-    trail = Trail.start(
-        script=SCRIPT,
-        context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},
-        debug=args.debug,
-    )
-    try:
-        report = _run_ci_wait(trail, args, ctx) if args.wait else _run_ci(trail, args, ctx)
-        return _run_fix(trail, report, ctx) if args.fix else 0
-    except ci_runs.RunUnavailable as exc:
-        # Expected: there is no run to report on. Trailed where it was raised,
-        # so it is the exit code that is left to decide.
-        log.error(str(exc))
-        return 1
-    except Exception as exc:
-        trail.error("unexpected_error", str(exc))
-        raise
-    finally:
-        trail.finish()
+        trail = Trail.start(
+            script=SCRIPT,
+            context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},
+            debug=args.debug,
+        )
+        try:
+            report = _run_ci_wait(trail, args, ctx) if args.wait else _run_ci(trail, args, ctx)
+            return _run_fix(trail, report, ctx) if args.fix else 0
+        except ci_runs.RunUnavailable as exc:
+            # Expected: there is no run to report on. Trailed where it was raised,
+            # so it is the exit code that is left to decide.
+            log.error(str(exc))
+            return 1
+        except Exception as exc:
+            trail.error("unexpected_error", str(exc))
+            raise
+        finally:
+            trail.finish()

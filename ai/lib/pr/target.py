@@ -348,12 +348,8 @@ def _key_for(canonical: str, host: str = "") -> str:
     # one machine keys repos, a collision needs no more, and the readable part
     # still leads the directory name.
     #
-    # A public host contributes nothing to the hashed string — not the empty
-    # string, not a separator — so the pre-host digest survives byte for byte.
-    # A separator added unconditionally would rekey every target on every
-    # machine for no gain. The newline is a byte no folded hostname can
-    # contain, so "ghe.acme.com" + "acme/widget" cannot be spelled by any other
-    # (host, canonical) pair.
+    # The hashed-string rule itself is stated once, in the docstring above; this
+    # is just that rule.
     hashed = canonical if is_public_github(host) else f"{fold_case(host.strip())}\n{canonical}"
     digest = hashlib.sha256(hashed.encode("utf-8")).hexdigest()[:8]
     # ceiling-permanent: the readable prefix is truncated at 64 characters, so

@@ -177,8 +177,13 @@ for target in sorted(p for p in root.iterdir() if p.is_dir()):
         with run_lock.acquire(target, "migration:target-key", pr_state.now_iso()):
             target.rename(destination)
     except run_lock.LockBusy:
+        # Not `break`: a lock held on one target says nothing about any other, so
+        # stopping here would leave every alphabetically-later target unmoved
+        # for no reason tied to its own state. The tally still carries LOCK_BUSY,
+        # so the migration as a whole still reports DEFERRED and retries this
+        # target next sync.
         print(f"LOCK_BUSY\t{target.name}\tanother run holds this target")
-        break
+        continue
     except OSError as exc:
         print(f"FAILED\t{target.name}\t{exc}")
         sys.exit(1)

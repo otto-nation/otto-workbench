@@ -168,6 +168,54 @@ PY
   [ -d "$STATE/pr/${old}-main" ]
 }
 
+@test "a lock held on one target does not block a later one from rekeying" {
+  # A busy lock says nothing about any other target's lock, so an
+  # alphabetically-earlier target stuck on LOCK_BUSY must not stop a
+  # later one in the same sync from being rekeyed.
+  local repo="$TMPDIR/repo" repo_pub="$TMPDIR/pub"
+  _init_repo "$repo" "git@ghe.acme.com:acme/widget.git" "ghe.acme.com"
+  _init_repo "$repo_pub" "git@ghe.acme.com:acme/widget.git"
+  local old; old="$(_key_for_repo "$repo_pub")"
+  local new; new="$(_key_for_repo "$repo")"
+
+  # Two distinct source directories, named so the busy one sorts first.
+  local busy_repo="$TMPDIR/repo-a" busy_repo_pub="$TMPDIR/pub-a"
+  _init_repo "$busy_repo" "git@ghe.acme.com:acme/aaa.git" "ghe.acme.com"
+  _init_repo "$busy_repo_pub" "git@ghe.acme.com:acme/aaa.git"
+  local busy_old; busy_old="$(_key_for_repo "$busy_repo_pub")"
+
+  local busy_dir; busy_dir="$(_seed_target "${busy_old}-main" "$busy_repo")"
+  _seed_target "${old}-main" "$repo"
+
+  # busy_old must sort before old for the loop to reach it first.
+  [[ "${busy_old}-main" < "${old}-main" ]]
+
+  # Hold the first target's lock from another process for the migration's
+  # lifetime.
+  python3 - "$REPO_ROOT" "$busy_dir" <<'PY' &
+import sys, time
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / "ai" / "lib"))
+from core import run_lock
+from pr import state as pr_state
+with run_lock.acquire(Path(sys.argv[2]), "test:holder", pr_state.now_iso()):
+    print("held", flush=True)
+    time.sleep(10)
+PY
+  local holder=$!
+  local waited=0
+  while [[ ! -f "$busy_dir/run.lock" && "$waited" -lt 50 ]]; do sleep 0.1; waited=$((waited + 1)); done
+
+  _run_migration
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+
+  [ "$status" -eq 4 ]
+  [ -d "$STATE/pr/${busy_old}-main" ]
+  [ -d "$STATE/pr/${new}-main" ]
+  [ ! -d "$STATE/pr/${old}-main" ]
+}
+
 @test "a target whose worktree is gone is counted and named" {
   # The host lives only in the checkout's config, so a deleted worktree cannot
   # have its key recomputed. A stated limitation — say so rather than pass over

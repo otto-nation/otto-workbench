@@ -271,25 +271,52 @@ _migration_fn_reads_arg() {
 # filler between the test and the return — a bare `then`, a blank, a comment —
 # and is dropped by the first statement that is neither.
 #
-# ceiling: four guard shapes are recognised — `[[ -f x ]] || return`,
-# `[[ ! -f x ]] && return`, and a `return` under `if [[ ! -f x ]]` with `then`
-# either on the test line or on its own. A return reached through an `else`, or
-# from under a condition combining a path test with something else, reads as
-# not-absent and is left alone. Upgrade when a migration needs one of those
-# shapes to defer, rather than restructuring its guard into one of the four.
+# ceiling: five guard shapes are recognised — `[[ -f x ]] || return`,
+# `[[ ! -f x ]] && return`, a `return` under `if [[ ! -f x ]]` with `then`
+# either on the test line or on its own, and a `_migration_lock_busy` call in
+# any of those positions. A return reached through an `else`, or from under a
+# condition combining a path test with something else, reads as not-absent and
+# is left alone. Upgrade when a migration needs one of those shapes to defer,
+# rather than restructuring its guard into one of the five.
+#
+# The lock probe joined the list because a migration that renames a live target
+# directory has to defer on a target another process is holding, and "busy"
+# resolves later for exactly the reason an absent path does — the run ends and
+# the next sync takes the lock. Skipping it as a NOOP instead would be silently
+# incomplete on a machine that always has a `pr` run in flight, and a recorded
+# NOOP is never retried. It is a *named helper* rather than a general predicate
+# so that the set of things allowed to defer stays enumerable here, which is
+# what stops a migration deferring on a condition that never resolves.
 _migration_returns() {
   awk -v fn="$2" "$_AWK_LINE_HELPERS"'
     function path_test(line) { return (line ~ /\[\[[^]]*-[efdLsr][ \t]/) }
+    # The lock probe is true when the target is *busy*, which is the opposite
+    # polarity to a path test: `[[ -f x ]]` is true when the target is present,
+    # so an absent-target guard negates it, while `_migration_lock_busy` needs
+    # no negation to mean "not ready yet". Kept as its own predicate rather than
+    # folded into path_test, where the shared `negated` logic would read it
+    # backwards and accept a defer on the ready branch.
+    function lock_test(line) { return (line ~ /_migration_lock_busy[ \t("$]/) }
     function negated(line,   head) {
       head = line
       sub(/-[efdLsr][ \t].*$/, "", head)
       return (head ~ /![ \t]*$/)
     }
     function absent_here(line) {
+      # A busy lock resolves later exactly as an absent path does, and reads
+      # true in the position a negated path test reads true, so it answers
+      # "not ready" wherever it appears — as an `if` condition, or short-circuit
+      # with `&&`. A `!`-negated lock probe is the ready branch and is refused.
+      if (lock_test(line)) return negated_call(line) ? 0 : 1
       if (!path_test(line)) return -1
       if (line ~ /\]\][ \t]*\|\|/) return negated(line) ? 0 : 1
       if (line ~ /\]\][ \t]*&&/) return negated(line) ? 1 : 0
       return -1
+    }
+    function negated_call(line,   head) {
+      head = line
+      sub(/_migration_lock_busy.*$/, "", head)
+      return (head ~ /![ \t]*$/)
     }
     function ret_value(line,   v) {
       v = line
@@ -306,6 +333,13 @@ _migration_returns() {
         if (a < 0) a = (pending >= 0) ? pending : 0
         printf "%d\t%d\t%s\n", NR, a, ret_value(t)
         pending = -1
+        return
+      }
+      # An `if` opening a multi-line guard. A lock probe carries its own
+      # polarity (true means not-ready), so it is read through absent_here;
+      # a path test is not-ready only when negated.
+      if (t ~ /^[ \t]*(if|elif)[ \t]/ && lock_test(t)) {
+        pending = absent_here(t)
         return
       }
       if (t ~ /^[ \t]*(if|elif)[ \t]/ && path_test(t) && absent_here(t) < 0) {

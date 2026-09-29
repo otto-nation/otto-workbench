@@ -471,6 +471,24 @@ def test_repo_identity_host_does_not_disturb_the_key(tmp_path):
     assert pr_target.repo_identity_from_origin(str(ghe)).host == "ghe.acme.com"
 
 
+def test_repo_identity_host_reads_the_recorded_spelling_not_the_rewrite(tmp_path):
+    """`host` comes from the same `config --get` read `_origin_url` uses for the
+    key, so an `insteadOf` rewrite changes the rendered host exactly as it
+    changes the key's canonical form — see `_origin_url`'s own docstring. A
+    reader expecting `remote get-url`'s rewritten spelling here would get the
+    machine-local alias instead once one is configured.
+    """
+    repo = _git_repo(tmp_path / "wt", "https://ghe.acme.com/acme/widget.git")
+    run_checked([
+        "git", "-C", str(repo), "config",
+        "url.git@ghebox:.insteadOf", "https://ghe.acme.com/",
+    ])
+    assert run_checked(["git", "-C", str(repo), "remote", "get-url", "origin"]).stdout.strip() \
+        == "git@ghebox:acme/widget.git"
+    identity = pr_target.repo_identity_from_origin(str(repo))
+    assert identity.host == "ghe.acme.com"
+
+
 def test_repo_identity_is_none_without_an_origin(tmp_path):
     path = tmp_path / "wt"
     path.mkdir()

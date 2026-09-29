@@ -35,8 +35,17 @@ rule that is hard to restate is itself a defect:
     codepoint alone.** That is the **canonical form**; when it is empty there is
     no key — return ``None``. The key is ``slug(canonical)``, truncated to 64
     characters and stripped of trailing ``-``, then ``-``, then the first 8 hex
-    characters of ``sha256(canonical.encode("utf-8")).hexdigest()``. When the
-    readable part is empty, the key is the digest alone.
+    characters of ``sha256(hashed.encode("utf-8")).hexdigest()``, where
+    ``hashed`` is the canonical form alone when the repo declares no forge
+    instance or declares ``github.com``, and ``fold(declared) + "\n" +
+    canonical`` otherwise. When the readable part is empty, the key is the
+    digest alone.
+
+    The declared instance is ``github.host`` from ``.workbench.yml``, **not**
+    anything parsed from the remote URL — see the fourth property below. It is
+    folded by the same A–Z rule and stripped of whitespace and a trailing
+    ``/``. The readable part never carries it: only the digest does, so a
+    declared target's directory reads the same to a human.
 
 ``slug(s)``, used above and again for the branch, is the whole of its own rule:
 
@@ -47,7 +56,7 @@ rule that is hard to restate is itself a defect:
     where this gives ``feat-v1.2``: two directories for one target, which
     under-locks every branch with a dot in its name.
 
-Three properties of that rule a mirror has to reproduce exactly, because a run
+Four properties of that rule a mirror has to reproduce exactly, because a run
 that disagrees about any of them looks in a directory nobody writes:
 
 * **A remote is hosted per its scheme, never per its authority.** ``file`` is
@@ -64,6 +73,20 @@ that disagrees about any of them looks in a directory nobody writes:
   whose strip uncovers a trailing slash a pass that ran only first would leave
   behind. Normalizing once, on either side, gives one of those two spellings its
   own directory and its own lock.
+* **The forge instance is declared, never inferred.** Two repos sharing a path
+  on two instances are distinguished only when a repo says which instance it is
+  on; an undeclared repo keys exactly as it did before the key knew about
+  forges, which is what makes every existing directory stay put. A mirror must
+  **not** try to recover the instance from the remote URL, however tempting the
+  string looks. The host in a URL is a *spelling*: one repo is routinely
+  spelled as an ssh alias (``ghebox:acme/widget``), as a dotted alias
+  (``github.com-work``, indistinguishable from a hostname), and through a
+  ``url.*.insteadOf`` rewrite — all of which must reach one key, and none of
+  which a lexical rule separates from a genuinely different host. Resolving an
+  alias through ``ssh -G`` is not the escape hatch either: ``Match exec`` runs
+  during ``-G``, so the key would depend on arbitrary shell in a dotfile. For
+  the same reason the URL is read with ``config --get remote.origin.url``
+  rather than ``remote get-url``, which applies ``insteadOf``.
 * **The fold is codepoint arithmetic, not a call to a language's lowercase.**
   Repo paths are case-insensitive on GitHub and GitLab, so two differently-cased
   remotes are one repo; git refs are case-sensitive, so ``feat/A`` and ``feat/a``
@@ -110,6 +133,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from git import client as git_client
+from config import workbench_config
 from core import workbench_paths
 
 TARGETS_DIR = "pr"
@@ -286,7 +310,7 @@ def _canonical(url: str) -> str:
     return fold_case(path)
 
 
-def _key_for(canonical: str) -> str:
+def _key_for(canonical: str, host: str = "") -> str:
     """A canonical form as one path component naming the repo.
 
     A readable prefix and a digest of the canonical form. The digest is what
@@ -308,11 +332,26 @@ def _key_for(canonical: str) -> str:
 
     Takes the canonical form rather than the URL so that a caller wanting both
     names pays for one ``_canonical`` — see ``repo_identity_from_origin``.
+
+    *host* is the **declared** instance from ``_key_host``, never a host parsed
+    out of the remote URL. Public github.com and the empty host are one bucket,
+    so a machine that declares nothing keys exactly as it did before this
+    parameter existed.
+
+    The host joins the hashed string, never the canonical form and never the
+    readable prefix: the canonical form is ``label``, which reaches ``gh
+    --repo``, the API and the review directories, and none of those may grow a
+    host. So a declared target's directory still reads the same to a human and
+    differs only in its digest.
     """
     # 8 hex characters is 32 bits of the canonical form's SHA-256: at the scale
     # one machine keys repos, a collision needs no more, and the readable part
     # still leads the directory name.
-    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:8]
+    #
+    # The hashed-string rule itself is stated once, in the docstring above; this
+    # is just that rule.
+    hashed = canonical if is_public_github(host) else f"{fold_case(host.strip())}\n{canonical}"
+    digest = hashlib.sha256(hashed.encode("utf-8")).hexdigest()[:8]
     # ceiling-permanent: the readable prefix is truncated at 64 characters, so
     # two long paths can share it. Harmless — the digest still separates them —
     # and the note is here so nobody "fixes" the truncation. What the cap buys
@@ -384,15 +423,68 @@ def display_repo(repo: str, host: str = "") -> str:
     return repo if is_public_github(host) else f"{host.strip().rstrip('/')}/{repo}"
 
 
-def _repo_key(url: str) -> str | None:
+def _key_host(cwd: str | None = None) -> str:
+    """The forge instance this checkout declares, folded, or ``""``.
+
+    The third answer about a repo's forge, and the only one that reaches the
+    key. ``_remote_host`` reads a *spelling* out of the remote URL and is for
+    rendering links; this reads a *declaration* out of ``.workbench.yml`` and is
+    for identity. Kept apart on the same principle ``_remote_host`` already
+    states about itself — a change to either must not move the other.
+
+    Declared rather than parsed because which instance a checkout belongs to is
+    not recoverable from the URL, and every lexical rule that tries either
+    over-splits or under-separates:
+
+    * An ssh alias is opaque. ``ghebox:acme/widget`` and
+      ``https://ghe.acme.com/acme/widget`` are one clone, and only ssh config
+      knows it — so a rule reading the URL gives them two keys, two locks and
+      two ledgers.
+    * A dotted alias defeats the obvious refinement. ``github.com-work`` is the
+      standard multi-account convention and looks exactly like a hostname, so
+      "only bucket on dotted authorities" splits one public-GitHub repo in two.
+    * ``url.*.insteadOf`` rewrites the URL underneath both.
+
+    Resolving an alias with ``ssh -G`` was designed and refused. ``Match exec``
+    runs during ``-G`` and overrides the alias, so the key of a directory
+    holding a non-reconstructible ledger would be a function of arbitrary shell
+    in a dotfile; ``git/steps.sh`` also writes a ``Hostname ssh.github.com``
+    block for ``github.ssh_over_443``, which would rekey every target on the
+    machine when a *network transport* flag is toggled. It is also unreproducible
+    by the TypeScript mirror the module docstring requires, which cannot shell
+    out to ssh or reimplement ``Match``/``Include``/``CanonicalizeHostname``.
+
+    Empty is the default and means public GitHub, so a machine that declares
+    nothing keys exactly as it did before this existed.
+    """
+    # load_config_or_default, not load_config: key derivation runs from the
+    # statusline on every prompt, and a typo in config.yml must degrade to the
+    # default key rather than raise where nobody can act on it.
+    cfg = workbench_config.load_config_or_default(cwd)
+    return fold_case(cfg.github.host.strip().rstrip("/"))
+
+
+def _repo_key(url: str, host: str = "") -> str | None:
     """An origin URL as one path component naming the repo, or None."""
     canonical = _canonical(url)
-    return _key_for(canonical) if canonical else None
+    return _key_for(canonical, host) if canonical else None
 
 
 def _origin_url(cwd: str | None) -> str | None:
-    """The ``origin`` remote's URL as git records it, or None if it has none."""
-    return git_client.out("remote", "get-url", "origin", cwd=cwd) or None
+    """The ``origin`` remote's URL as git records it, or None if it has none.
+
+    ``config --get remote.origin.url`` rather than ``remote get-url``: the
+    latter applies ``url.<base>.insteadOf`` rewriting, so the key would be a
+    function of a machine-local git setting. With
+    ``url."git@ghebox:".insteadOf "https://ghe.acme.com/"`` configured, one
+    clone whose recorded remote is ``https://ghe.acme.com/acme/widget.git``
+    reports as ``git@ghebox:acme/widget.git`` — two machines, two canonical
+    forms, two keys, and the second one is an alias nothing else can resolve.
+
+    The recorded value is what every other reader of this repo's config sees,
+    and it is the one a mirror can reproduce without knowing the rewrite rules.
+    """
+    return git_client.out("config", "--get", "remote.origin.url", cwd=cwd) or None
 
 
 @dataclass(frozen=True)
@@ -440,13 +532,23 @@ def repo_identity_from_origin(cwd: str | None = None) -> RepoIdentity | None:
 
     Not ``gh repo view``: the key must be derivable without the network, and two
     sources for one component is how the two derivations drift apart.
+
+    ``host`` is parsed from the same ``config --get`` read the key is derived
+    from — see ``_origin_url`` — so on a machine with a ``url.*.insteadOf``
+    rewrite configured, a rendered link now names the recorded remote's host
+    rather than the rewritten spelling ``remote get-url`` used to hand it.
     """
     url = _origin_url(cwd)
     canonical = _canonical(url) if url else ""
     if not canonical:
         return None
+    # Two different hosts, deliberately. `key` takes the declared instance,
+    # which is identity; `host` takes the URL's spelling, which is what renders
+    # a link. See `_key_host`.
     return RepoIdentity(
-        label=canonical, key=_key_for(canonical), host=_remote_host(url or ""),
+        label=canonical,
+        key=_key_for(canonical, _key_host(cwd)),
+        host=_remote_host(url or ""),
     )
 
 

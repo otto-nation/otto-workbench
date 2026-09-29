@@ -181,12 +181,15 @@ Every key any of them accepts:
 | `issues.base_url` | string | — |
 | `issues.labels` | list of string | `[follow-up]` |
 | `github.ssh_over_443` | boolean | `false` |
+| `github.host` | string | — |
 | `rebase.regenerate` | list of string | `[]` |
 | `wiki.dir` | string | `wiki` |
 | `wiki.link` | boolean | `false` |
 | `wiki.root` | string | — |
 
 `<phase>` is one of: `single`, `holistic`, `scout`, `group`, `synthesis`, `disprove`, `fix`, `fix_verify`, `comments_fix`, `comments_verify`, `comments_triage`, `ci_fix`, `rebase`, `prepush_fix`, `describe`
+
+`github.host` may only be written at container, project scope: it describes which GitHub instance this repo is served by, which is a fact about the repo rather than the machine — a machine-wide value would key every other repo on this instance too.
 
 `github.ssh_over_443` may only be written at global scope: it describes the network this machine is on, never the repo, and a repo's .workbench.yml is read by everyone who clones it.
 

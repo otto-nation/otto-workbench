@@ -210,6 +210,9 @@
       "properties": {
         "ssh_over_443": {
           "type": "boolean"
+        },
+        "host": {
+          "type": "string"
         }
       }
     },

@@ -1805,9 +1805,20 @@ def test_a_pre_fold_state_file_still_owes_the_closeout_it_owed():
     assert debt.reply_count == 3
 
 
+
+def _readiness_state():
+    """A state to hand `readiness`, which is judging one."""
+    return pr_state.new_state(
+        repo="owner/repo",
+        branch="branch",
+        pr_number=1,
+        head_sha="abc1234",
+        worktree_root="/tmp/wt",
+    )
+
 def test_a_pre_fold_state_file_still_blocks_the_merge_it_blocked():
     """`pr comments --finish` — readiness reads the same undelivered closeout."""
-    answer = _loaded_pre_fold().readiness()
+    answer = _loaded_pre_fold().readiness(_readiness_state())
     assert answer.blockers == (
         f"closeout not delivered (run: {CLOSEOUT_COMMAND})",
     )

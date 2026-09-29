@@ -29,11 +29,17 @@ issue it had accumulated rather than resuming from an empty one.
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace as dataclass_replace
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from pr.domains import Domain, Readiness
 from pr.fix import FixOutcome
 from core.serde import from_dict as _serde_from_dict
+
+if TYPE_CHECKING:
+    # Only under the type checker, as in pr.domains: pr.state imports this
+    # module and nothing here imports it back. This file has no
+    # `from __future__ import annotations`, so the annotation below is quoted.
+    from pr.state import PRState
 
 
 # The one command that drains the queue. Spelled once so the status line, the
@@ -324,7 +330,7 @@ class FixSummary(Domain):
     # a PR whose closeout was delivered yesterday.
     ages: ClassVar[bool] = False
 
-    def readiness(self) -> Readiness:
+    def readiness(self, state: "PRState") -> Readiness:
         # A summary or reply queue the fix pass rendered and never sent. The PR
         # reads as un-reviewed until --finish drains it, so merging leaves
         # reviewers with no record of the work.

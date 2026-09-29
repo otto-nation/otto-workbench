@@ -79,7 +79,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace as dataclass_replace
 from enum import Enum, StrEnum
 from pathlib import Path
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 # get_type_hints(CIDomain) resolves its `runs` annotation against the namespace
 # of the module CIDomain is defined in, so RunState must be bound here;
@@ -91,6 +91,14 @@ from core import log
 from git import client as git_client
 from pr.comments_state import ThreadState
 from pr.fix import FixRecord
+
+if TYPE_CHECKING:
+    # Only under the type checker. `readiness` is handed the state it is
+    # judging, and pr.state imports this module — a runtime import here would
+    # be the cycle its header says does not exist. Safe because the annotation
+    # is on a method: `get_type_hints` is only ever called on the domain
+    # *classes*, to resolve their fields, and never on a signature.
+    from pr.state import PRState
 
 
 @dataclass(frozen=True)
@@ -212,12 +220,20 @@ class Domain:
         mine = self.verdict_sha()
         return bool(mine) and bool(head_sha) and mine == head_sha
 
-    def readiness(self) -> Readiness:
+    def readiness(self, state: "PRState") -> Readiness:
         """This domain's answer to whether the PR may merge.
 
         Defaulting to "nothing to say" is what lets a domain that has no bearing
         on merging — a description, a supersession verdict — take part in the
         fold without contributing a blocker nobody asked for.
+
+        Takes the whole state rather than the one fact a domain wants from it.
+        A rule can need something no domain owns — whether a PR exists at all is
+        ``identity.pr_number``, which lives on the envelope — and the
+        alternative is for each domain to persist its own copy at write time,
+        which duplicates the envelope's field and goes stale the moment the
+        world moves after the last write. Most domains ignore the argument;
+        that is cheaper than widening this signature a second time.
         """
         return Readiness()
 
@@ -263,7 +279,7 @@ class CIDomain(Domain):
             lines.append(f"  run #{self.last_run_number}")
         return lines
 
-    def readiness(self) -> Readiness:
+    def readiness(self, state: "PRState") -> Readiness:
         if not self.updated_at:
             return Readiness(unchecked=("CI",))
         if self.conclusion != "success":
@@ -441,7 +457,7 @@ class ReviewSummary(Domain):
             lines.append("  recover: pr review --recover")
         return lines
 
-    def readiness(self) -> Readiness:
+    def readiness(self, state: "PRState") -> Readiness:
         if not self.updated_at:
             return Readiness(unchecked=("review",))
         blockers = []
@@ -545,7 +561,7 @@ class CommentsSummary(Domain):
             lines.append(f"  blocking: {', '.join(self.blocking_reviewers)}")
         return lines
 
-    def readiness(self) -> Readiness:
+    def readiness(self, state: "PRState") -> Readiness:
         if not self.updated_at:
             return Readiness(unchecked=("comments",))
         blockers = []
@@ -667,7 +683,7 @@ class PushDomain(Domain):
             return ["**Push**: up to date"]
         return [f"**Push**: {self.ahead} commit(s) not pushed"]
 
-    def readiness(self) -> Readiness:
+    def readiness(self, state: "PRState") -> Readiness:
         # An unobserved push domain blocks nothing rather than reading as "not
         # pushed": every surface that cares refreshes it first, so an empty one
         # means nobody asked, not that the branch is behind.

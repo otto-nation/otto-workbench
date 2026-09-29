@@ -436,7 +436,7 @@ def merge_readiness(state: PRState) -> Readiness:
     blockers: list[str] = []
     unchecked: list[str] = []
     for domain in domains_of(state):
-        answer = domain.readiness()
+        answer = domain.readiness(state)
         blockers.extend(answer.blockers)
         unchecked.extend(answer.unchecked)
         if type(domain).readiness is Domain.readiness or not domain.ages:

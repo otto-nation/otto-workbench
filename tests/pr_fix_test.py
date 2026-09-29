@@ -167,13 +167,24 @@ def test_an_empty_round_leaves_the_prior_record_alone():
 # ── Domain carries one ────────────────────────────────────────────────────
 
 
+
+def _readiness_state():
+    """A state to hand `readiness`, which is judging one."""
+    return pr_state.new_state(
+        repo="owner/repo",
+        branch="branch",
+        pr_number=1,
+        head_sha="abc1234",
+        worktree_root="/tmp/wt",
+    )
+
 def test_every_domain_starts_with_an_empty_record():
     assert pr_domains.Domain().fix == pr_fix.FixRecord()
 
 
 def test_a_domain_that_never_fixes_anything_says_nothing():
     assert pr_domains.Domain(updated_at="t").render_status() == []
-    assert pr_domains.Domain(updated_at="t").readiness() == pr_domains.Readiness()
+    assert pr_domains.Domain(updated_at="t").readiness(_readiness_state()) == pr_domains.Readiness()
 
 
 def test_a_domain_write_folds_the_record_rather_than_replacing_it():

@@ -62,7 +62,7 @@ from review.document import (
     SECTION_STATIC_ANALYSIS, SECTION_VERDICT, set_section,
 )
 from review.paths import (
-    FILENAME_SESSION, review_artifact_path, stamp_reviewed,
+    FILENAME_SESSION, read_review_meta, review_artifact_path, stamp_reviewed,
 )
 from core.tool_parser import enum_arg
 # The function rather than the module: `git.client` binds `run` and `ok`, which
@@ -83,7 +83,7 @@ from review.pipeline import (
     run_multi_phase, run_single_agent,
 )
 from review.static_analysis import (
-    format_static_analysis, run_static_analysis,
+    added_lines, format_static_analysis, run_static_analysis,
 )
 from agent import backend as ai_backend
 
@@ -158,15 +158,54 @@ def _budgets_are_derivable(phase_models, trail) -> bool:
     return True
 
 
-def _inject_static_analysis_section(review_file: str, pr_files: list[dict], wt_path: str) -> dict | None:
-    review_path = Path(review_file)
+def _inject_static_analysis_section(job: ReviewJob) -> dict | None:
+    """Write the `## Static Analysis` section, and hand the results to the job.
+
+    The results go on the job because the fix pass runs next and needs the same
+    list: these violations are work it can take, and re-deriving them there
+    would measure a tree the section has already described.
+
+    Not reached on the no-op re-review path, which returns above — and that
+    stays consistent rather than leaving a gap. No agent runs there, the fix
+    pass is never called, and `_carried_findings` drops `## Static Analysis`
+    from the document it carries forward, so the section and the empty
+    `job.static_results` agree: this run measured nothing and claims nothing.
+    The next run with a real delta writes both.
+    """
+    review_path = Path(job.review_file)
     if not review_path.is_file():
         return None
-    changed_files = [f["path"] for f in pr_files]
-    results = run_static_analysis(changed_files, wt_path)
-    section = format_static_analysis(results)
+    changed_files = [f["path"] for f in job.pr.files]
+    # Against the PR or stack base, the same ref `job.pr.files` was collected
+    # over, so the lines and the file list describe one branch. A base that
+    # does not resolve gives None, which reports every violation and offers
+    # none of them as work.
+    base = f"origin/{job.pr.base}" if job.pr.base else ""
+    if not base:
+        # No PR/stack base on this job shape (see `fix.py`'s `pr.base or
+        # "HEAD"`) — falling back to unscoped, whole-file analysis. Logged
+        # here because `_static_items` only reports the fallback once a
+        # violation exists to report it about, and by then the reason base
+        # resolution was skipped is gone.
+        log.warn("Static analysis: no base to diff against, scanning whole files")
+    try:
+        added = added_lines(job.wt_path, base) if base else None
+        results = run_static_analysis(changed_files, job.wt_path, added)
+    except Exception as exc:
+        # A checker is a reporting step that now runs over every changed file
+        # in full, and `_CHECKERS` is a registry built to be extended. An
+        # exception here used to reach `main` and take the whole run with it:
+        # the review was already written and the agents already paid for, and
+        # the run would end with no verdict stamped and no fix pass. A
+        # violation nobody hears about is a worse report; it is not a worse
+        # review.
+        log.warn(f"Static analysis failed, skipping the section: {exc}")
+        return None
+    declined = read_review_meta(Path(job.artifact_dir)).static_declined
+    section = format_static_analysis(results, declined)
     if not section:
         return None
+    job.static_results = results
     review_path.write_text(set_section(
         review_path.read_text(), SECTION_STATIC_ANALYSIS, section, before=SECTION_VERDICT,
     ))
@@ -242,25 +281,36 @@ def _review_scale(job) -> ReviewScale:
     return ReviewScale(job.pr.changed_files, job.pr.total_lines, "pr")
 
 
-def _pipeline_thresholds(job) -> tuple[int, int]:
+def _pipeline_thresholds(job, explicit_effort: Effort | None = None) -> tuple[int, int]:
     """Line and file counts that push this job onto the multi-phase path.
 
     A self-review uses ``review.self_effort`` for these two numbers only —
     phase skips, thinking, and budgets still follow ``job.effort``. Unset,
     that key takes low's thresholds so a small local diff stays on the
     single-agent path without dropping disprove.
+
+    ``explicit_effort`` is ``--effort`` when the caller passed one, and it wins
+    here as it does everywhere else: the precedence is ``CLI flag > env >
+    project > container > global``, and this branch used to read the config key
+    alone. That made the flag look like it worked and silently not — it moved
+    every budget while leaving the path decision on the config's value, so a
+    diff too big for one agent stayed on the single-agent path and the run
+    burned its turns without writing. The config key is still the default; it
+    is no longer the only answer.
     """
     preset = EFFORT_PRESETS[job.effort]
     if job.mode != Mode.SELF:
         return preset.multi_phase_line_threshold, preset.multi_phase_file_threshold
-    self_effort = job.config.review.self_effort or Effort.LOW
+    self_effort = explicit_effort or job.config.review.self_effort or Effort.LOW
     chosen = EFFORT_PRESETS[self_effort]
     return chosen.multi_phase_line_threshold, chosen.multi_phase_file_threshold
 
 
-def _choose_pipeline(job) -> tuple[Pipeline, ReviewScale, int, int]:
+def _choose_pipeline(
+    job, explicit_effort: Effort | None = None,
+) -> tuple[Pipeline, ReviewScale, int, int]:
     """Which pipeline this job runs, and the numbers that chose it."""
-    line_threshold, file_threshold = _pipeline_thresholds(job)
+    line_threshold, file_threshold = _pipeline_thresholds(job, explicit_effort)
     scale = _review_scale(job)
     is_large = scale.lines > line_threshold or scale.files > file_threshold
     pipeline = Pipeline.MULTI if is_large else Pipeline.SINGLE
@@ -288,7 +338,7 @@ def _run_phases(trail, args, job) -> Pipeline:
         write_unchanged_review(job)
         return Pipeline.SINGLE
 
-    pipeline, scale, line_threshold, file_threshold = _choose_pipeline(job)
+    pipeline, scale, line_threshold, file_threshold = _choose_pipeline(job, args.effort)
 
     trail.decision(
         "select_pipeline",
@@ -316,7 +366,7 @@ def _run_phases(trail, args, job) -> Pipeline:
         detail = f"checked={v['findings_checked']} passed={v['findings_passed']} dropped={v['findings_dropped']}"
         trail.info("evidence_verification", detail, data=v)
 
-    sa_summary = _inject_static_analysis_section(job.review_file, job.pr.files, job.wt_path)
+    sa_summary = _inject_static_analysis_section(job)
     if sa_summary is not None:
         detail = f"checkers={sa_summary['checkers_run']} files={sa_summary['files_checked']} violations={sa_summary['violations']}"
         trail.info("static_analysis", detail, data=sa_summary)

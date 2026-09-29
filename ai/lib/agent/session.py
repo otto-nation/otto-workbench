@@ -20,7 +20,9 @@ from pathlib import Path
 
 from core import log
 from agent.diagnosis import Diagnosis, DiagnosisKind
-from agent.backend_events import PI_RPC_EVENT_TYPES, is_write_tool, pi_wrote_output
+from agent.backend_events import (
+    PI_RPC_EVENT_TYPES, is_write_tool, pi_run_error, pi_wrote_output,
+)
 
 CONSECUTIVE_FAIL_THRESHOLD = 3
 
@@ -77,20 +79,42 @@ def _parse_session_cost(log_path: str) -> float:
     return sum(r.get("total_cost_usd", 0.0) for r in results)
 
 
-def _diagnose_result_type(result: dict) -> Diagnosis:
+def _diagnose_error_detail(detail: str) -> Diagnosis:
+    """One backend error's text as a diagnosis, transient or not."""
+    kind = (
+        DiagnosisKind.TRANSIENT
+        if _detail_is_transient(detail)
+        else DiagnosisKind.AGENT_ERROR
+    )
+    return Diagnosis(kind, detail=detail)
+
+
+def _diagnose_result_type(result: dict, records: list[dict] | None = None) -> Diagnosis:
+    """Why this run ended, from its `result` record and the stream around it.
+
+    `records` is the whole log, and it is read because the `result` record is
+    not always the one holding the failure. Pi reports a failed API call on
+    `agent_end` while `result` still says `subtype=success, is_error=False` —
+    so a reader of `result` alone calls a transport fault a completed run,
+    blames the agent for not writing, and skips the retry that would have
+    cleared it. Omitted, the reader is the old `result`-only one.
+
+    Checked only where `result` itself claims success. A `result` that reports
+    its own error is the better-attributed of the two, and `max_turns` is a
+    verdict about the run rather than a fault in it — an aborted last turn is
+    how the cap *looks* from the envelope, so reading the envelope first there
+    would relabel every truncated run as a crash.
+    """
     subtype = result.get("subtype", "")
     if "max_turns" in subtype:
         return Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=result.get("num_turns"))
     if result.get("is_error"):
         errors = result.get("errors", [])
         detail = errors[0] if errors else result.get("result", result.get("error", "unknown"))
-        detail = str(detail)
-        kind = (
-            DiagnosisKind.TRANSIENT
-            if _detail_is_transient(detail)
-            else DiagnosisKind.AGENT_ERROR
-        )
-        return Diagnosis(kind, detail=detail)
+        return _diagnose_error_detail(str(detail))
+    stream_error = pi_run_error(records or [])
+    if stream_error:
+        return _diagnose_error_detail(stream_error)
     return Diagnosis(DiagnosisKind.COMPLETED, detail=subtype)
 
 
@@ -172,7 +196,7 @@ def diagnose_missing_output(log_path: str, output_path: str = "") -> Diagnosis:
         if _has_quota_retry(records):
             return Diagnosis(DiagnosisKind.QUOTA_EXHAUSTED)
         return Diagnosis(DiagnosisKind.NO_RESULT_RECORD)
-    diagnosis = _diagnose_result_type(results[-1])
+    diagnosis = _diagnose_result_type(results[-1], records)
     # An agent that ran to its own conclusion without ever calling a write tool
     # was thrashing, not working — say so instead of reporting a bare turn
     # count. An agent that called no tool at all (a one-turn refusal, say) is

@@ -140,6 +140,14 @@ def _build_mechanical_fallback(
     # line a reader acts on without opening the failures table below it.
     failed = len(pipeline_state.groups_failed) if pipeline_state else 0
     partial = failed > 0 and failed < group_count
+    # `None` says "every dispatched group reported", and only a run where none
+    # failed may say it. The earlier test was `partial`, which is false both
+    # when nothing failed and when *everything* did — so a run whose every
+    # group died claimed the full scope: "No findings across 13 files in 3
+    # groups", over 13 files nothing read. An empty tally has two causes and
+    # the summary derives from the tally alone, so the count cannot tell them
+    # apart; the scope is the only place the difference can be stated.
+    reported = group_count - failed
     body = build_mechanical_body(
         merged_content,
         group_count=group_count,
@@ -147,7 +155,7 @@ def _build_mechanical_fallback(
         include_verdict=states_verdict(job.mode),
         verdict=PARTIAL_VERDICT if partial else "",
         file_count=job.pr.changed_files,
-        groups_reported=group_count - failed if partial else None,
+        groups_reported=None if failed == 0 else reported,
     )
     if pipeline_state:
         body = set_failures_section(body, pipeline_state)

@@ -65,8 +65,13 @@ from git import client as git_client
 from core.phases import Phase
 from pr.fix import UNVERIFIED_NOTE_INLINE, FixOutcome, ItemOutcome
 from review.paths import phase_log_path, read_review_meta, write_review_meta
-from review.document import ReviewDocument, is_skipped
+from review.document import (
+    SECTION_STATIC_ANALYSIS, ReviewDocument, is_skipped, section_span,
+)
 from review.grammar import FINDING_ID_RE
+from review.static_analysis import (
+    STATIC_ID_RE, CheckerResult, StaticViolation, all_violations,
+)
 from review.retry import _has_output
 from review.types import Finding, ReviewJob, severity_by_key
 from core.trail import Trail
@@ -80,6 +85,56 @@ _STILL_OPEN = (FixOutcome.DEFERRED, FixOutcome.NEEDS_HUMAN)
 # A deferral with no reason on a truncated pass is work the agent never reached,
 # not a decline of auto-fix. Named so a reader of the commit body can tell.
 _NOT_REACHED = "not reached (turn limit)"
+
+# How many static violations one pass will take. Without a cap, a section that
+# runs to hundreds of lines on a large diff — nesting alone does, which is why
+# it renders collapsed — would spend the whole turn budget on mechanical edits
+# and starve the findings beside it.
+#
+# Above the phase's own turns-per-item arithmetic, deliberately. `Phase.FIX`
+# scales five turns an item to a cap of eighty, so a chunk of sixteen is what
+# gets the full rate and twenty does not. A violation is cheaper than a finding
+# by roughly that margin: the fix is a known shape (flatten the control flow)
+# against a located line, with no premise to disprove first and no reviewer
+# claim to weigh — which is most of what the five turns buy a finding. Sixteen
+# would be the number if these cost what findings cost.
+#
+# The ones past the cap stay in the section unticked and unannotated, which is
+# what the document should say about work nothing answered. A later round picks
+# them up: the section is regenerated each review, and by then the fixed ones
+# are gone.
+#
+# ceiling: a fixed cap rather than a share of the remaining turn budget, and one
+# whose margin over sixteen is reasoned rather than measured. Upgrade when a
+# pass is regularly truncating with findings unread — that is the cap competing
+# with the findings for turns, which is the thing it exists to prevent.
+_MAX_STATIC_ITEMS = 20
+
+# The trailing half of a static item's section heading in the tracking file,
+# where a finding carries its severity. These have no severity — a violation is
+# not a reviewer's claim about importance — so the label says what the item is
+# instead.
+_STATIC_LABEL = "Static analysis"
+
+
+def _static_body(violation: StaticViolation) -> str:
+    """What the agent is shown for one violation.
+
+    The measurement, and then the thing the template cannot say generically:
+    that this claim is not a reviewer's opinion to be disproved. The fix
+    template spends a section telling the agent to try to falsify its item's
+    premise, which is right for a finding and wrong here — the depth was
+    counted, and an agent invited to argue with it produces a decline instead of
+    an early return.
+    """
+    where = f"{violation.context} " if violation.context else ""
+    return (
+        f"{violation.message} {where}".strip() + ".\n\n"
+        "Measured by the nesting checker, not claimed by a reviewer: the depth "
+        "is counted from the code and is not in question. Fix it by flattening "
+        "the control flow — an early return, a guard clause, or an extracted "
+        "helper — rather than by arguing the count."
+    )
 
 
 # The footer a pass gets when it claims no fixes and commits changes anyway.
@@ -105,16 +160,17 @@ def _skip_reason(outcome: ItemOutcome, truncated: bool) -> str:
     return "no auto-fix"
 
 
-def _summary(outcomes: list[ItemOutcome], findings: dict[str, Finding],
+def _summary(outcomes: list[ItemOutcome], described: dict[str, str],
              changed: set[str] | None = None, *,
              stop: Diagnosis | None = None) -> str:
     """What the pass did, for the commit message and the operator's terminal.
 
     Three blocks, because the three answers are worth telling apart: a fix is
     work done, a skip is work the next round should pick up, and a decline is
-    work nobody is going to do. `findings` is what the ids were rendered from —
-    the tracking file records no description of its own, so the one line a fix
-    is reported under comes from the finding it answered.
+    work nobody is going to do. `described` is the one line each id is reported
+    under, by id — the tracking file records no description of its own, and the
+    pass has two streams of work whose descriptions are read off different
+    types, so the caller resolves them and this takes the result.
 
     `changed` is what the pass is about to commit, and it is here because this
     text is the only account of the pass most people read. The blocks describe
@@ -130,7 +186,7 @@ def _summary(outcomes: list[ItemOutcome], findings: dict[str, Finding],
     if _truncated(stop):
         lines.append(f"Pass truncated: {stop.message}")
     _block(lines, "Fixed:", [
-        (o.id, _fixed_entry(findings.get(o.id), o))
+        (o.id, _fixed_entry(described.get(o.id, ""), o))
         for o in outcomes if o.outcome.counts_as_fixed
     ])
     _block(lines, "Skipped:", [
@@ -276,8 +332,10 @@ def _escape_annotation(detail: str) -> str:
     return " ".join(detail.replace("*(", "* (").split())
 
 
-def _fixed_line(line: str, outcome: ItemOutcome) -> str:
-    """The finding line a landed fix leaves behind: ticked, and hedged if owed.
+def _fixed_line(
+    line: str, outcome: ItemOutcome, pattern: re.Pattern[str] = FINDING_ID_RE,
+) -> str:
+    """The declaration a landed fix leaves behind: ticked, and hedged if owed.
 
     The tick and the caveat are one decision rather than two, so they are made
     in one place — a caller that ticked the box and then asked separately
@@ -291,12 +349,18 @@ def _fixed_line(line: str, outcome: ItemOutcome) -> str:
     compound once per round on a finding that also never leaves `open_findings`.
     An already-hedged line is left alone for the same reason, which is what a
     synthesis pass carrying the annotation forward needs.
+
+    `pattern` is how the caller's own declaration is spelled, and its group(1)
+    must be the box. A static violation is declared differently from a finding
+    and would not match the default — the tick would silently be a no-op, which
+    is the failure this parameter exists to prevent rather than a default worth
+    falling back to.
     """
     # The box the declaration carries, not the first `- [ ]` anywhere on the
     # line: a finding quoting the empty box in its own prose — a review of a
     # template does — would otherwise have that quotation ticked instead, which
     # corrupts the prose and annotates a finding that stays open.
-    box = FINDING_ID_RE.match(line.strip())
+    box = pattern.match(line.strip())
     if not (box and box.group(1) == " "):
         return line
     ticked = line.replace("- [ ]", "- [x]", 1)
@@ -307,12 +371,12 @@ def _fixed_line(line: str, outcome: ItemOutcome) -> str:
     return _annotated(ticked, f"*({caveat})*")
 
 
-def _fixed_entry(finding: Finding | None, outcome: ItemOutcome) -> str:
+def _fixed_entry(described: str, outcome: ItemOutcome) -> str:
     """One `Fixed:` entry: what was fixed, and the caveat when one is owed.
 
     Both halves are clipped, because either can overrun the line on its own: a
-    finding's first line runs to `_DESCRIBE_MAX`, and `verify_detail` is agent
-    prose with no length contract at all.
+    description runs to `_DESCRIBE_MAX`, and `verify_detail` is agent prose with
+    no length contract at all.
 
     The description gives way first. A truncated description still names the
     finding — the id beside it is what a reader looks the finding up by — while a
@@ -320,7 +384,7 @@ def _fixed_entry(finding: Finding | None, outcome: ItemOutcome) -> str:
     the caveat is the part that changes what the reader does next. So the detail
     is clipped only once the description has given up everything it can.
     """
-    described = _describe(finding, outcome)
+    described = described or outcome.file or outcome.id
     detail = _unverified_detail(outcome)
     prefix = len(f"  - [{outcome.id}] ")
     if detail is None:
@@ -344,16 +408,13 @@ def _block(lines: list[str], heading: str, entries: list[tuple[str, str]]) -> No
     lines.extend(f"  - [{item_id}] {text}" for item_id, text in entries)
 
 
-def _describe(finding: Finding | None, outcome: ItemOutcome) -> str:
+def _describe_finding(finding: Finding) -> str:
     """The one line a fixed finding is reported under.
 
     Its first body line, truncated, and its path when the body is empty. An id
-    the review no longer holds has no description to report, so the line names
-    the location the tracking file recorded for it — or, failing that, nothing
-    but the id.
+    no description is built for — one the review no longer holds — falls back in
+    `_fixed_entry` to the location the tracking file recorded, or to the id.
     """
-    if finding is None:
-        return outcome.file or outcome.id
     if finding.body:
         return _clip(finding.body.split("\n", 1)[0], _DESCRIBE_MAX)
     return finding.path
@@ -427,6 +488,57 @@ def _apply_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:
     return "\n".join(lines)
 
 
+def _apply_static_outcomes(text: str, outcomes: list[ItemOutcome]) -> str:
+    """The `## Static Analysis` section with each violation rewritten to its outcome.
+
+    The same three spellings `_apply_outcomes` writes on a finding, for the same
+    reason: without this the section still describes the tree the review
+    measured, and a reader opening the PR after a fix pass sees a violation
+    reported live at a line where it no longer exists.
+
+    Scoped to the section's own span, which is the whole of what makes the
+    rewrite safe. A declaration is matched by its shape, and that shape appears
+    outside the section too: a finding quoting an `SA` line — a review of this
+    repo does, because the tests and the docstrings here contain them verbatim
+    — is a line this would otherwise match. Unscoped, the first match in the
+    document won: the quotation inside a finding's body was ticked and the
+    violation it was quoting stayed open, so one pass corrupted a finding and
+    reported its own fix as undone.
+
+    A violation past `_MAX_STATIC_ITEMS` has no outcome and is left exactly as
+    rendered, which is what the document should say about work nothing answered.
+
+    An already-ticked line is skipped. Nothing re-runs a pass over one review
+    file today, but the finding side guards the same case, and the failure if it
+    ever happens is a second annotation on a line that already carries one.
+    """
+    span = section_span(text, SECTION_STATIC_ANALYSIS)
+    if span is None:
+        return text
+    head, body, tail = text[:span.start], span.body_of(text), text[span.end:]
+    by_id = {o.id: o for o in outcomes}
+    written: set[str] = set()
+    lines = body.split("\n")
+    for n, line in enumerate(lines):
+        match = STATIC_ID_RE.match(line.strip())
+        if not match:
+            continue
+        violation_id = match.group(2)
+        outcome = by_id.get(violation_id)
+        if outcome is None or violation_id in written:
+            continue
+        written.add(violation_id)
+        if match.group(1) == "x":
+            continue
+        if outcome.outcome.counts_as_fixed:
+            lines[n] = _fixed_line(line, outcome, STATIC_ID_RE)
+            continue
+        note = _annotation(outcome)
+        if note:
+            lines[n] = _annotated(line, note)
+    return head + "\n".join(lines) + tail
+
+
 def _bullet_paths(paths: set[str]) -> str:
     """A prompt-ready list of paths, or `(none)` when the set is empty."""
     if not paths:
@@ -457,7 +569,10 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
     action = "applying review findings"
     item_noun = "finding"
 
-    def __init__(self, job: ReviewJob, findings: list[Finding]) -> None:
+    def __init__(
+        self, job: ReviewJob, findings: list[Finding],
+        violations: list[StaticViolation] | None = None,
+    ) -> None:
         self.job = job
         self.workdir = Path(job.wt_path)
         self.artifacts = Path(job.artifact_dir)
@@ -468,6 +583,28 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         self.effort = job.effort
         self.model = job.model
         self.findings = {f.id: f for f in findings}
+        violations = violations or []
+        violation_ids = [v.id for v in violations]
+        duplicate_ids = {
+            vid for vid in violation_ids if violation_ids.count(vid) > 1
+        }
+        if duplicate_ids:
+            # `run_static_analysis` renumbers globally on every call, so this
+            # cannot happen through the documented path today. It is here for
+            # the hand-built list this constructor does not otherwise refuse:
+            # the dict below silently keeps the last of a duplicate id and drops
+            # the rest, and a dropped violation is a fix the operator cannot
+            # find unless something says so.
+            #
+            # The empty id counts. Two violations both carrying `""` collapse
+            # exactly as two `SA1`s do, and an unaddressable violation is the
+            # worse of the two to lose quietly — excluding it would have made
+            # the guard silent on the case it is least able to explain.
+            log.warn(
+                f"Duplicate static violation ids {sorted(duplicate_ids)} — "
+                "keeping the last of each, dropping the rest"
+            )
+        self.violations = {v.id: v for v in violations}
         self.changed: set[str] | None = None
         self.summary = ""
 
@@ -491,13 +628,28 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         return [self.workdir, self.artifacts]
 
     def items(self) -> list[fix_types.FixItem]:
-        return [
+        """The findings and the static violations, as one work set.
+
+        Findings first, because the template tells the agent to work in severity
+        order and a violation has no severity to sort into. The two streams keep
+        their own id spellings, which is what lets `record` tell them apart
+        afterwards without carrying a flag through the engine.
+        """
+        items = [
             fix_types.FixItem(
                 id=f.id, file=f.path, line=f.line or 0,
                 label=severity_by_key(f.severity).section, body=f.body,
             )
             for f in self.findings.values()
         ]
+        items.extend(
+            fix_types.FixItem(
+                id=v.id, file=v.file, line=v.line,
+                label=_STATIC_LABEL, body=_static_body(v),
+            )
+            for v in self.violations.values()
+        )
+        return items
 
     def _branch_files(self) -> set[str]:
         """The files this branch changed against the PR or stack base.
@@ -509,8 +661,16 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         return {f["path"] for f in self.job.pr.files if f.get("path")}
 
     def _anchor_files(self) -> set[str]:
-        """The files the findings point at, in scope even off the branch."""
-        return {f.path for f in self.findings.values() if f.path}
+        """The files the work points at, in scope even off the branch.
+
+        The violations are computed from `job.pr.files`, so their paths are
+        already in `_branch_files` and add nothing here in the ordinary case.
+        They are included anyway rather than assumed: the assumption is a
+        property of a call two modules away, and if it ever stops holding the
+        symptom is an agent told its own work set is out of scope.
+        """
+        paths = {f.path for f in self.findings.values() if f.path}
+        return paths | {v.file for v in self.violations.values() if v.file}
 
     def _allowed_paths(self) -> set[str]:
         return fix_scope.commit_allowed(self._branch_files(), self._anchor_files())
@@ -558,7 +718,9 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
                 changed - keep, keep, self.workdir,
             )
         self.changed = changed
-        self.summary = _summary(outcomes, self.findings, changed, stop=self.stop)
+        self.summary = _summary(
+            outcomes, self._descriptions(), changed, stop=self.stop,
+        )
         fixed = sum(1 for o in outcomes if o.outcome.counts_as_fixed)
         skipped = sum(1 for o in outcomes if o.outcome in _STILL_OPEN)
         message = "fix: self-review findings"
@@ -587,9 +749,54 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
             for line in self.summary.splitlines():
                 print(f"  {line}", file=sys.stderr)
         review_file = Path(self.job.review_file)
-        review_file.write_text(
-            _apply_outcomes(review_file.read_text(), run.outcomes),
+        text = _apply_outcomes(review_file.read_text(), run.outcomes)
+        review_file.write_text(_apply_static_outcomes(text, run.outcomes))
+        self._persist_static_declines(run.outcomes)
+
+    def _persist_static_declines(self, outcomes: list[ItemOutcome]) -> None:
+        """Keep this pass's static declines where the next round can read them.
+
+        The annotation on the document does not survive: the section is a fresh
+        render of a fresh scan every review. So an adjudication that lives only
+        there is one the next round cannot see, and the violation goes back to
+        the agent — every round, for the life of the branch, because nothing
+        about the code changed to stop it being reported.
+
+        Declines only. A skip is work still owed and belongs back in the next
+        round's list; a fix removes the violation from the next scan by
+        fixing it, so neither needs recording. What has to persist is the one
+        verdict that says "this will keep being reported and that is correct".
+
+        Accumulated rather than replaced, so a round that declines nothing does
+        not retract what an earlier round decided.
+        """
+        settled = {
+            self.violations[o.id].site: o.reason or "declined by an earlier pass"
+            for o in outcomes
+            if o.outcome is FixOutcome.DECLINED and o.id in self.violations
+        }
+        if not settled:
+            return
+        review_dir = Path(self.job.artifact_dir)
+        meta = read_review_meta(review_dir)
+        write_review_meta(review_dir, replace(
+            meta, static_declined={**meta.static_declined, **settled},
+        ))
+
+    def _descriptions(self) -> dict[str, str]:
+        """The one line each item is reported under, by id.
+
+        Built from both streams here rather than read off either inside
+        `_summary`, which would otherwise need to know there are two and which
+        id belongs to which.
+        """
+        described = {
+            f.id: _describe_finding(f) for f in self.findings.values()
+        }
+        described.update(
+            (v.id, v.describe()) for v in self.violations.values()
         )
+        return described
 
 
 def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> None:
@@ -613,15 +820,94 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> None:
     # A declined finding is not work: it was considered and rejected, so it is
     # out of the work set and out of the turn budget it would otherwise buy.
     findings = [f for f in doc.open_findings if not f.declined]
-    if not findings:
+    review_dir = Path(job.artifact_dir)
+    violations = _static_items(
+        job.static_results, read_review_meta(review_dir).static_declined,
+    )
+    if not findings and not violations:
         log.info("No findings left to fix — skipping fix pass")
         _report_unpushed(job)
         return
 
     run = fix_engine.run(
-        ReviewFixAdapter(job, findings), trail=trail, verify=fix_verify.run,
+        ReviewFixAdapter(job, findings, violations),
+        trail=trail, verify=fix_verify.run,
     )
     _record_commit(job, run)
+
+
+def _static_items(
+    results: list[CheckerResult], declined: dict[str, str] | None = None,
+) -> list[StaticViolation]:
+    """The violations this pass will take, capped and in reading order.
+
+    `declined` is what an earlier round adjudicated, by site — those are not
+    work. The section is rebuilt from a fresh scan every review, so a decline
+    written onto the document is gone by the next run; without reading it back
+    from the sidecar, a violation declined against a `ceiling:` comment is
+    re-presented to the agent every round for the life of the branch.
+
+    Only from a result scoped to the lines the branch added. An unscoped result
+    measured whole files, so its violations include depth the branch inherited
+    — reporting that is fair, and handing it to an agent is instructing it to
+    flatten code the branch never touched. `fix.scope` cannot refuse those
+    edits, because the file they land in *is* a branch file, so the refusal has
+    to be here. The section still reports them; nobody is asked to fix them.
+
+    A violation with no id never went through `run_static_analysis` and so is
+    not addressable — it renders without a checkbox, and an outcome against it
+    would have no line to be written back to.
+    """
+    unscoped = [r for r in results if r.violations and not r.scoped_to_added]
+    if unscoped:
+        log.warn(
+            "Static analysis: "
+            f"{', '.join(r.name for r in unscoped)} measured whole files — "
+            "reporting those violations but not fixing them, since the branch "
+            "did not necessarily add the lines they sit on."
+        )
+    scoped = [r for r in results if r.scoped_to_added]
+    settled = declined or {}
+    addressable = _one_per_site(
+        v for v in all_violations(scoped) if v.id and v.site not in settled
+    )
+    taken = addressable[:_MAX_STATIC_ITEMS]
+    if len(addressable) > len(taken):
+        log.info(
+            f"Static analysis: taking {len(taken)} of {len(addressable)} "
+            f"violations this pass — the rest stay open for the next review."
+        )
+    return taken
+
+
+def _one_per_site(violations) -> list[StaticViolation]:
+    """The first violation at each `(file, function)`, in reading order.
+
+    A nesting checker reports every line past the limit, so one over-deep
+    function arrives as four or five violations that one early return answers.
+    Handed over whole they cost four items of a twenty-item cap, four boxes the
+    agent must tick for one edit, and — worse — a guaranteed false
+    contradiction at the gate: `fix.reconcile` attributes by path, so several
+    items anchored in one file make every deferral among them look like a
+    deferral with an edit behind it. `fix/reconcile.py` names that as its
+    upgrade trigger, for a domain that batches several items in one file. This
+    is that domain, so it does not batch them.
+
+    The shallowest line at a site is the one kept, because it is where the
+    flattening has to start; the deeper lines below it are the same defect seen
+    further in. The rest stay in the section, unticked — honest, since nothing
+    answered them individually, and the next review re-measures the file and
+    finds them gone if the fix worked.
+    """
+    seen: set[tuple[str, str]] = set()
+    kept: list[StaticViolation] = []
+    for violation in violations:
+        site = (violation.file, violation.context)
+        if site in seen:
+            continue
+        seen.add(site)
+        kept.append(violation)
+    return kept
 
 
 def _report_unpushed(job: ReviewJob) -> None:

@@ -826,6 +826,30 @@ class TestBuildMechanicalFallback:
         assert "in 3 groups" in result.body
         assert " of 3 groups" not in result.body
 
+    def test_a_run_where_every_group_failed_claims_nothing(self, ro, tmp_path):
+        """The worst case, and the one the partial guard did not cover.
+
+        `partial` was `failed > 0 and failed < group_count`, false both when
+        nothing failed and when everything did — so a run whose every group
+        died took the full-coverage wording and shipped "No findings across 13
+        files in 3 groups" over 13 files nothing read. Observed on this branch:
+        three groups hit the turn cap, and the review reported a clean read of
+        all of them above a failures table listing all three.
+        """
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+        from review.state import PipelineState
+
+        state = PipelineState(group_names=["a", "b", "c"])
+        for n in range(3):
+            state.groups_failed[n] = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=15)
+        result = ro._build_mechanical_fallback(
+            self._partial_job(ro, tmp_path), 3, "", pipeline_state=state,
+        )
+
+        assert "in 0 of 3 groups" in result.body
+        assert "No findings" not in result.body
+        assert "No group reported" in result.body
+
 
 # ── 33. _write_clean_review ─────────────────────────────────────────────────
 
@@ -1751,6 +1775,71 @@ class TestRetryFailedGroups:
         result = ro._retry_failed_groups([failure], groups, job, 1, "", None)
         assert result == [failure]
 
+    def test_every_group_out_of_turns_is_still_retried(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        """The breaker is for a broken machine, not for a large diff.
+
+        Turn exhaustion is the one shared reason a retry answers: it comes back
+        at the escalated ceiling rather than the budget that just ran out. A
+        big branch makes every group run out at once, which tripped the breaker
+        on `len(reasons) == 1` and skipped the retry that would have worked —
+        observed as three groups at `max_turns(15)`, no retry, and a review
+        shipped with every group unread.
+        """
+        from pathlib import Path
+
+        from review import phases as review_phases
+
+        job = self._make_job(ro, tmp_path)
+        groups = [
+            ro.Group(name=f"grp-{c}", files=[f"{c}.go"], lines=100)
+            for c in "abc"
+        ]
+        retried = []
+
+        def mock_invoke(inv, **kwargs):
+            retried.append(inv.label)
+            # Each group writes its own artifact, as the real phase does: one
+            # shared path would leave groups 2 and 3 with no output and the
+            # assertion would read a harness bug as a retry that failed.
+            for n in range(1, 4):
+                Path(str(tmp_path / f"group-{n}.md")).write_text(
+                    "## Must fix\n- **[M1]** **`a.go:1`** — issue\n",
+                )
+            Path(inv.session_log).write_text("")
+            return 0
+
+        monkeypatch.setattr(review_phases, "run_agent", mock_invoke)
+        monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **kw: "p")
+        monkeypatch.setattr(review_phases, "_validate_group_output", lambda *a: None)
+
+        failed = [
+            ro.GroupFailure(g.name, _max_turns_16(ro)) for g in groups
+        ]
+        result = ro._retry_failed_groups(failed, groups, job, 3, "", None)
+
+        assert len(retried) == 3, "the breaker skipped a retry that would work"
+        assert result == []
+
+    # passes-at-base: the breaker's real case, which this change preserves
+    def test_every_group_failing_the_same_systemic_way_still_trips_it(
+        self, ro, tmp_path,
+    ):
+        """A missing model is not fixed by asking again with more turns."""
+        job = self._make_job(ro, tmp_path)
+        groups = [
+            ro.Group(name=f"grp-{c}", files=[f"{c}.go"], lines=100)
+            for c in "abc"
+        ]
+        failed = [
+            ro.GroupFailure(g.name, ro.Diagnosis(
+                ro.DiagnosisKind.TRANSIENT, detail="ECONNREFUSED"))
+            for g in groups
+        ]
+        result = ro._retry_failed_groups(failed, groups, job, 3, "", None)
+        assert result == failed
+
     def test_non_retryable_preserved(self, ro, tmp_path):
         job = self._make_job(ro, tmp_path)
         groups = [ro.Group(name="grp-a", files=["a.go"], lines=100)]
@@ -2454,31 +2543,90 @@ class TestFetchMetadataSelfMode:
 
 
 class TestStaticAnalysisIntegration:
+    DEEP = (
+        "#!/bin/bash\n"
+        "func() {\n"
+        "  if true; then\n"
+        "    for x in a; do\n"
+        "      while true; do\n"
+        "        echo deep\n"
+        "      done\n"
+        "    done\n"
+        "  fi\n"
+        "}\n"
+    )
+
+    def _job(self, tmp_path, review_file, changed_files):
+        """A job in the two fields the injector reads, plus the one it writes."""
+        job = MagicMock()
+        job.review_file = str(review_file)
+        job.wt_path = str(tmp_path)
+        job.pr.files = changed_files
+        job.static_results = []
+        return job
+
     def test_static_analysis_injected_into_review(self, ro, tmp_path):
         review_file = tmp_path / "review.md"
         review_file.write_text("## Summary\nLooks good.\n\n## Verdict\nApprove")
-
-        deep_script = tmp_path / "deep.sh"
-        deep_script.write_text(
-            "#!/bin/bash\n"
-            "func() {\n"
-            "  if true; then\n"
-            "    for x in a; do\n"
-            "      while true; do\n"
-            "        echo deep\n"
-            "      done\n"
-            "    done\n"
-            "  fi\n"
-            "}\n"
-        )
+        (tmp_path / "deep.sh").write_text(self.DEEP)
 
         changed_files = [{"path": "deep.sh", "additions": 10, "deletions": 0}]
-        ro._inject_static_analysis_section(str(review_file), changed_files, str(tmp_path))
+        ro._inject_static_analysis_section(
+            self._job(tmp_path, review_file, changed_files),
+        )
 
         result = review_file.read_text()
         assert "## Static Analysis" in result
         assert "Nesting depth" in result
         assert result.index("## Static Analysis") < result.index("## Verdict")
+
+    def test_the_violations_reach_the_job_the_fix_pass_reads(self, ro, tmp_path):
+        """The fix pass takes its work from here rather than re-running the checkers.
+
+        Re-deriving them there would measure a tree this section has already
+        described, so the two could disagree about what is wrong with the code.
+        """
+        review_file = tmp_path / "review.md"
+        review_file.write_text("## Summary\nLooks good.\n\n## Verdict\nApprove")
+        (tmp_path / "deep.sh").write_text(self.DEEP)
+
+        changed_files = [{"path": "deep.sh", "additions": 10, "deletions": 0}]
+        job = self._job(tmp_path, review_file, changed_files)
+        ro._inject_static_analysis_section(job)
+
+        violations = [v for r in job.static_results for v in r.violations]
+        assert violations, "the deep script's violation did not reach the job"
+        assert all(v.id for v in violations), "a violation with no id is unaddressable"
+        # The same ids the section declares, or the fix pass's outcomes have no
+        # line to be written back to.
+        for violation in violations:
+            assert f"**[{violation.id}]**" in review_file.read_text()
+
+    def test_a_failing_checker_does_not_take_the_review_with_it(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        """A reporting step must not destroy a review that is already written.
+
+        The section is injected after every agent has run and been paid for.
+        An exception here reached `main`, so the run ended with no verdict
+        stamped, no JSON result, and no fix pass — over a review that was
+        finished and on disk.
+        """
+        review_file = tmp_path / "review.md"
+        original = "## Summary\nLooks good.\n\n## Verdict\nApprove"
+        review_file.write_text(original)
+        (tmp_path / "deep.sh").write_text(self.DEEP)
+
+        def _boom(*_a, **_k):
+            raise RuntimeError("checker exploded")
+
+        monkeypatch.setattr(ro, "run_static_analysis", _boom)
+        changed_files = [{"path": "deep.sh", "additions": 10, "deletions": 0}]
+        job = self._job(tmp_path, review_file, changed_files)
+
+        assert ro._inject_static_analysis_section(job) is None
+        assert review_file.read_text() == original
+        assert job.static_results == []
 
     def test_static_analysis_skipped_when_no_applicable_files(self, ro, tmp_path):
         review_file = tmp_path / "review.md"
@@ -2486,9 +2634,11 @@ class TestStaticAnalysisIntegration:
         review_file.write_text(original)
 
         changed_files = [{"path": "README.md", "additions": 5, "deletions": 0}]
-        ro._inject_static_analysis_section(str(review_file), changed_files, str(tmp_path))
+        job = self._job(tmp_path, review_file, changed_files)
+        ro._inject_static_analysis_section(job)
 
         assert review_file.read_text() == original
+        assert job.static_results == []
 
     def test_static_analysis_clean_files(self, ro, tmp_path):
         review_file = tmp_path / "review.md"
@@ -2498,11 +2648,30 @@ class TestStaticAnalysisIntegration:
         clean_script.write_text("#!/bin/bash\necho hello\n")
 
         changed_files = [{"path": "clean.sh", "additions": 2, "deletions": 0}]
-        ro._inject_static_analysis_section(str(review_file), changed_files, str(tmp_path))
+        ro._inject_static_analysis_section(
+            self._job(tmp_path, review_file, changed_files),
+        )
 
         result = review_file.read_text()
         assert "## Static Analysis" in result
         assert "All checks passed" in result
+
+    def test_no_base_logs_why_analysis_is_unscoped(self, ro, tmp_path, capsys):
+        """An empty `job.pr.base` falls back to whole-file analysis silently
+        except for this line — without it there is nothing to read at the point
+        base resolution was skipped, only `_static_items`'s later, violation-
+        gated warning."""
+        review_file = tmp_path / "review.md"
+        review_file.write_text("## Summary\nLooks good.\n\n## Verdict\nApprove")
+        (tmp_path / "clean.sh").write_text("#!/bin/bash\necho hello\n")
+
+        job = self._job(
+            tmp_path, review_file, [{"path": "clean.sh", "additions": 2, "deletions": 0}],
+        )
+        job.pr.base = ""
+        ro._inject_static_analysis_section(job)
+
+        assert "no base to diff against" in capsys.readouterr().err
 
 
 class TestPipelineStateFailureRoundTrip:
@@ -3200,3 +3369,44 @@ class TestSelfReviewPipeline:
         assert pr_pipeline is ro.Pipeline.MULTI
         assert self_pipeline is ro.Pipeline.SINGLE
         assert _should_disprove(self_job) is True
+
+    def test_an_explicit_effort_moves_the_self_review_threshold(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        """`--effort` wins here as it does everywhere else in the chain.
+
+        It used to set every budget and leave this decision on the config key,
+        so a diff too large for one agent stayed single-agent and the run spent
+        its turns reading without ever writing the review. The flag looked like
+        it worked and did not.
+        """
+        from core.phases import Effort
+
+        monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(tmp_path / "config"))
+        (tmp_path / "config").mkdir()
+        # 681 lines: over medium's 500, under low's 1000 — the band where the
+        # two presets disagree, which is the only place the flag can show.
+        job = self._job(ro, tmp_path, ro.Mode.SELF)
+
+        default_pipeline, *_ = ro._choose_pipeline(job)
+        flagged_pipeline, *_ = ro._choose_pipeline(job, Effort.MEDIUM)
+
+        assert default_pipeline is ro.Pipeline.SINGLE
+        assert flagged_pipeline is ro.Pipeline.MULTI
+
+    # passes-at-base: the config key was already the value this reads
+    def test_the_config_key_still_answers_when_no_flag_is_passed(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        """The flag is an override, not a replacement for `review.self_effort`."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "config.yml").write_text(
+            "review:\n  self_effort: medium\n",
+        )
+        monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(config_dir))
+        job = self._job(ro, tmp_path, ro.Mode.SELF)
+
+        pipeline, *_ = ro._choose_pipeline(job)
+
+        assert pipeline is ro.Pipeline.MULTI

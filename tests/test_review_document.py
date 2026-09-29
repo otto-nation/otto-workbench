@@ -1378,6 +1378,41 @@ class TestBuildMechanicalBody:
         )
         assert "across 3 files in 2 groups" in result
 
+    def test_a_run_where_every_group_failed_does_not_claim_no_findings(self):
+        """Nothing reported is not nothing found, and the tally cannot tell.
+
+        Both are zero, so a summary derived from the tally alone says "No
+        findings" over source no agent opened — the one sentence a reader acts
+        on before reaching the failures table underneath it. Observed: a review
+        reporting "No findings across 13 files in 3 groups" for a run whose
+        every group hit its turn cap without writing.
+        """
+        result = build_mechanical_body(
+            "", group_count=3, summary_note="Synthesis failed.",
+            file_count=13, groups_reported=0,
+        )
+        assert "No findings" not in result
+        assert "No group reported" in result
+        assert "0 of 3 groups" in result
+
+    # passes-at-base: the partial case already worked; this bounds the new branch
+    def test_a_partly_failed_run_still_reports_its_findings(self):
+        """Some groups reported, so the findings are real — the scope narrows."""
+        result = build_mechanical_body(
+            self._must_fix_content(), group_count=3, summary_note="note",
+            file_count=13, groups_reported=2,
+        )
+        assert "1 finding across 13 files in 2 of 3 groups" in result
+
+    # passes-at-base: the full-coverage case, which this change preserves
+    def test_a_clean_run_still_reads_as_clean(self):
+        """The honest empty tally must keep its plain sentence."""
+        result = build_mechanical_body(
+            "## Must fix\n_none._\n", group_count=3, summary_note="note",
+            file_count=13,
+        )
+        assert "No findings across 13 files in 3 groups" in result
+
     def test_the_prior_findings_ledger_does_not_inflate_the_count(self):
         """The ledger reports the last review, so its lines are not findings
         this one declares — counting them said `2 findings` where there is one."""

@@ -108,9 +108,14 @@ def _preflight(**overrides) -> PreflightData:
 
 
 def _args(**overrides) -> SimpleNamespace:
+    # `effort` is `--effort`, which argparse defaults to None when unpassed.
+    # Present here because `_run_phases` reads it for the pipeline decision: a
+    # namespace missing a field the real parser always supplies is a double
+    # that has drifted from its subject, and the run fails on the attribute
+    # rather than on anything the test is about.
     defaults = {
         "max_parallel": 2, "max_cost": 20.0, "max_groups": None,
-        "disprove": None, "fix": False,
+        "disprove": None, "fix": False, "effort": None,
     }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)

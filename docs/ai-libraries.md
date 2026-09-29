@@ -915,6 +915,22 @@ Runs machine-checkable tools against changed files and formats violations
 for inclusion in review output. Each checker is a plain function with the
 signature: (changed_files: list[str], wt_path: str) -> CheckerResult | None.
 
+A violation is work, not just a note. Each one carries an `SA<n>` id and a
+checkbox, which is what lets the fix pass take them as items and write back
+what it did about each, in the same spellings a finding gets: a ticked box, a
+`*(skipped — …)*`, a `*(declined — …)*`, or the line left alone for work the
+pass never reached. `review.fix` owns that side; what lives here is the
+spelling both ends read.
+
+Those spellings do not survive a round on their own. This section is a fresh
+render of a fresh scan every review, so what one pass wrote onto it is gone by
+the next — which is right for a fix (the violation is gone too) and wrong for a
+decline, whose whole point is that the depth stays and is deliberate. A decline
+is therefore kept in the review's sidecar, as `ReviewMeta.static_declined`,
+keyed by `StaticViolation.site` rather than by the `SA<n>` id that renumbers.
+`format_static_analysis` takes that mapping back and re-renders the annotation,
+so the verdict a reader sees outlives the render it was written on.
+
 ### review/steps.py
 
 One function per phase of a multi-phase review.

@@ -204,6 +204,13 @@ def build_mechanical_body(
     counts = ReviewDocument(body=merged_content).open_counts
     total = sum(counts.values())
     count_summary = f"{total} finding{plural(total)}" if total else "No findings"
+    # Nothing reported is not the same as nothing found, and the tally cannot
+    # tell them apart: both are zero. Saying "No findings" for a run where
+    # every group died is the review claiming a clean read of source no agent
+    # opened — the one sentence a reader acts on before reaching the failures
+    # table underneath it.
+    if groups_reported == 0 and group_count:
+        count_summary = "No group reported"
     # A run that grouped nothing states no scope. `group_count` of 0 is the path
     # that never reached the group phase at all, where "across 120 files in 0
     # groups" would report a surface this run did not look at.

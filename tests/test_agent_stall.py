@@ -375,6 +375,33 @@ class TestStallWatch:
             watch.stop()
         assert recorder.types.count("abort") == 1
 
+    def test_a_channel_that_raises_does_not_kill_the_watchdog(
+        self, fast_watch, monkeypatch,
+    ):
+        # Writing to a child that has already gone raises, and the run being
+        # watched is by definition in a bad state when this fires. An
+        # unhandled exception on the watchdog thread would end it silently
+        # and leave every later tool call in the run unwatched — worse than
+        # the stall it was reporting, and invisible.
+        monkeypatch.setattr(
+            stall, "sample_subtree", lambda _root: Sample(cpu_by_pid={1: 0.0}),
+        )
+
+        def dead_pipe(_command):
+            raise BrokenPipeError("child is gone")
+
+        watch = StallWatch(root_pid=1, send=dead_pipe)
+        watch.start()
+        try:
+            watch.arm("bash")
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline and not watch.aborted_reason:
+                time.sleep(0.02)
+            assert watch.aborted_reason, "the stall was never reached"
+            assert watch._thread.is_alive()
+        finally:
+            watch.stop()
+
     def test_the_abort_is_followed_by_the_salvage_prompt(
         self, fast_watch, monkeypatch,
     ):

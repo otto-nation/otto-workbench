@@ -443,5 +443,20 @@ class StallWatch:
             self.aborted_reason = template.format(tool=tool, seconds=seconds)
             reason = self.aborted_reason
         log.warn(f"{self.prefix}stalled: {tool} idle {seconds:.0f}s — aborting")
-        self.send({"type": "abort"})
-        self.send({"type": "follow_up", "message": reason})
+        # A send that raises must not take the thread down with it. The
+        # channel's own writer answers a dead pipe with False, but this is a
+        # caller-supplied callable and the run it is watching is already in a
+        # bad state — an unhandled exception here would kill the watchdog
+        # silently and leave every later tool call in the run unwatched, which
+        # is a worse outcome than the stall it was reporting.
+        #
+        # The follow_up is attempted even when the abort failed: they travel
+        # the same pipe, so a failure of one is near-certain to repeat, but
+        # the salvage prompt is the half that saves the agent's findings and
+        # skipping it on a guess is not worth the round trip saved.
+        for command in ({"type": "abort"},
+                        {"type": "follow_up", "message": reason}):
+            try:
+                self.send(command)
+            except Exception as exc:  # noqa: BLE001 - see above
+                log.warn(f"{self.prefix}could not deliver {command['type']}: {exc}")

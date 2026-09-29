@@ -284,6 +284,41 @@ def test_format_usage_model_usage_tokens(cr, tmp_path):
 # ── json_summary ──────────────────────────────────────────────────────────────
 
 
+def test_json_summary_leaves_stdout_where_it_found_it(cr, capfd):
+    """The redirect is undone, so a later pass in the same process can print.
+
+    Under `--json-summary` stdout carries the summary alone, so the run's own
+    logs are pointed at stderr for the duration. As a subprocess the fd table
+    died with the child and nothing had to be undone; in one process, `pr fix`
+    runs describe after review and `pr status` dumps JSON — both would write
+    their stdout to stderr, and a consumer reading the JSON would get nothing.
+    """
+    with cr._json_summary_stdout(True) as fd:
+        assert fd is not None
+        print("a log line from inside the run")
+
+    print("the next pass's stdout")
+    captured = capfd.readouterr()
+    assert "the next pass's stdout" in captured.out
+    assert "a log line from inside the run" not in captured.out
+
+
+def test_json_summary_restores_stdout_when_the_run_raises(cr, capfd):
+    with pytest.raises(RuntimeError):
+        with cr._json_summary_stdout(True):
+            raise RuntimeError("the run failed mid-review")
+
+    print("the next pass's stdout")
+    assert "the next pass's stdout" in capfd.readouterr().out
+
+
+def test_no_json_summary_leaves_stdout_alone(cr, capfd):
+    with cr._json_summary_stdout(False) as fd:
+        assert fd is None
+        print("an ordinary run prints to stdout")
+    assert "an ordinary run prints to stdout" in capfd.readouterr().out
+
+
 def test_json_summary_with_findings(cr, tmp_path):
     review = tmp_path / "review.md"
     review.write_text(
@@ -1859,7 +1894,7 @@ def test_the_generator_version_comes_from_the_injected_resolver(cr, reviews_dir,
     """
     seen = {}
     monkeypatch.setattr(cr, "_run_self_review",
-                        lambda args, gv: seen.setdefault("gv", gv))
+                        lambda args, argv, gv: seen.setdefault("gv", gv))
 
     cr.main(["--self"], version_string=lambda name: f"{name} 9.9.9\nworkbench 1.0 (abc)")
 
@@ -1947,7 +1982,7 @@ def test_self_review_recover_reads_head_after_worktree_switch(
         model=None, repo_dir="", fix=False, effort="medium", max_groups=None,
         generated=False, recover=True, debug=False, base="",
         post=False, push=False, no_post=False, submit=False,
-    ), "test 1.0")
+    ), [], "test 1.0")
 
     assert body.call_args.kwargs["recover_head_sha"] == "fresh11"
 
@@ -2333,11 +2368,17 @@ def test_self_review_takes_the_run_lock(cr, tmp_path, reviews_dir, monkeypatch):
     target = tmp_path / "pr" / "target"
     _stub_self_review(cr, monkeypatch, target, reviews_dir)
 
-    cr._run_self_review(_self_review_args(), "test 1.0")
+    cr._run_self_review(_self_review_args(), ["--self", "--fix"], "test 1.0")
 
     record = json.loads((target / run_lock.LOCK_FILE).read_text())
     assert record["command"].startswith("claude-review")
     assert record["started"]
+    # The argv the flow was handed, not `sys.argv`. Called in-process from
+    # `pr fix`, `sys.argv` is the *parent's*, so a lock that read it would
+    # tell whoever it turns away that `pr fix` holds the lock — naming a
+    # command the operator can neither find nor wait on.
+    assert record["command"] == "claude-review --self --fix"
+    assert "pytest" not in record["command"]
 
     # A fresh run, with none of our bookkeeping inherited, must be turned away.
     # Both the marker and the registry entry go: either alone would pass it
@@ -2362,7 +2403,7 @@ def test_self_review_passes_through_the_lock_pr_already_holds(
     _stub_self_review(cr, monkeypatch, target, reviews_dir)
 
     with run_lock.acquire(target, command="pr review --self --fix", started="t"):
-        cr._run_self_review(_self_review_args(), "test 1.0")
+        cr._run_self_review(_self_review_args(), [], "test 1.0")
         # Passed through: the parent's ownership record is untouched.
         record = json.loads((target / run_lock.LOCK_FILE).read_text())
         assert record["command"] == "pr review --self --fix"
@@ -2408,7 +2449,7 @@ def test_self_review_on_a_branch_locks_the_worktree_it_switches_to(
         model=None, repo_dir="", fix=False, effort="medium", max_groups=None,
         generated=False, recover=False, debug=False, base="",
         post=False, push=False, no_post=False, submit=False,
-    ), "test 1.0")
+    ), [], "test 1.0")
 
     # First claim is at entry with no checkout named (the launch tree is not
     # what gets written to). Second is after the switch, on the real one.
@@ -2454,7 +2495,7 @@ def test_self_review_on_a_branch_already_checked_out_still_locks_it(
         model=None, repo_dir="", fix=False, effort="medium", max_groups=None,
         generated=False, recover=False, debug=False, base="",
         post=False, push=False, no_post=False, submit=False,
-    ), "test 1.0")
+    ), [], "test 1.0")
 
     # First claim is at entry with no checkout named. Second still fires after
     # the no-op switch, naming the tree that is already checked out.
@@ -2528,7 +2569,7 @@ def test_self_review_resolves_locally(cr, tmp_path, reviews_dir, monkeypatch):
     monkeypatch.setattr(cr.review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "_run_self_review_body", MagicMock())
 
-    cr._run_self_review(_self_review_args())
+    cr._run_self_review(_self_review_args(), [])
 
     assert seen["depth"] is cr.pr_context.ContextDepth.LOCAL
 
@@ -2553,7 +2594,7 @@ def test_self_review_still_finds_an_open_pr(cr, tmp_path, reviews_dir, monkeypat
     monkeypatch.setattr(cr.review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "_run_self_review_body", body)
 
-    cr._run_self_review(_self_review_args())
+    cr._run_self_review(_self_review_args(), [])
 
     # pr_number is the second positional of _run_self_review_body.
     assert body.call_args.args[1] == "2973"
@@ -2579,7 +2620,7 @@ def test_self_review_carries_the_open_prs_base_into_the_run(
     monkeypatch.setattr(cr.review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "_run_self_review_body", body)
 
-    cr._run_self_review(_self_review_args())
+    cr._run_self_review(_self_review_args(), [])
 
     # ctx is the first positional of _run_self_review_body.
     assert body.call_args.args[0].base == "feat/parent"
@@ -2601,7 +2642,7 @@ def test_self_review_proceeds_when_no_pr_can_be_named(cr, tmp_path, reviews_dir,
     monkeypatch.setattr(cr.review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "_run_self_review_body", body)
 
-    cr._run_self_review(_self_review_args())
+    cr._run_self_review(_self_review_args(), [])
 
     assert body.call_args.args[1] == ""
 

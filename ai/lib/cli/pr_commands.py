@@ -5,19 +5,14 @@ importable module, so `CommandSpec.handler` could not name them. They live
 here so the field means one thing across the nine: a `"<module>:<attr>"`
 string that importlib can resolve, or None.
 
-Still spawning. `cmd_fix` runs `claude-review`, `ci-check` and `pr-describe`
-as child processes, and `cmd_create` still shells out to `task pr:create`.
-#909 T7 commit 4c turns those into calls; this module is the seam that makes
-the four importable without changing how they run.
+`cmd_fix`'s three passes are in-process calls through `cli.dispatch`.
+`cmd_create` is the one surviving spawn in this module and stays one: it runs
+`task pr:create`, which is a Taskfile target and not a Python delegate.
 
-Each spawn is *given* the directory to run from rather than deriving one from
-`__file__`. Under `WORKBENCH_AI_LIB_DIR` this module resolves inside the
-pinned checkout while the entry point's own BIN_DIR does not, so a path
-derived here would spawn a different tree's delegates than `ai/bin/pr` does.
-Matches `cli.review_modes` and `review.publish.post`.
-
-`cmd_review` and `cmd_comments` stay in the binary: they call `_run_delegate`,
-which this commit does not move. Their `CommandSpec.handler` is None until 4c.
+`cmd_review` and `cmd_comments` stay in `ai/bin/pr`. Both are argv shaping
+ahead of a delegate the registry already names — `--self` injection, mode
+routing — rather than commands in their own right, which is why the registry
+points `review` and `comments` at the delegates themselves.
 """
 
 # doc-group: cli
@@ -27,8 +22,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from cli import dispatch
 from cli.registry import COMMANDS
 from core import log
+from core import publishing
 from core import timeouts
 from core.trail import Trail
 from gh import budget as gh_budget
@@ -54,53 +51,19 @@ from review import gc as review_gc
 EXIT_BUDGET_EXHAUSTED = 75
 
 
-def target_flags(ctx: pr_context.ResolvedContext, *,
-                 original_pr: str | None = None,
-                 original_branch: str | None = None) -> list[str]:
-    """The one target flag a child is told to resolve, in priority order.
-
-    Shared by every spawn rather than written out at each: a child that
-    resolves a different target than its parent computes a different lock key
-    and takes a second lock on the same checkout, which is the contention the
-    run lock exists to prevent. Naming the target is what keeps the two
-    agreeing, so there is one owner of what that name is.
-
-    Public rather than underscore-prefixed: `ai/bin/pr._run_delegate` imports
-    this rather than keeping a second copy, so it has two legitimate callers
-    in two modules and the leading underscore stopped describing anything.
-    The two spawn sites (the binary's general dispatch, and `cmd_fix` below)
-    have to inject the same flags; splitting them into two functions that
-    merely look alike would drop the adjacency that was enforcing that.
-    """
-    if original_pr is not None:
-        return ["--pr", str(original_pr)]
-    if ctx.pr_number is not None:
-        return ["--pr", str(ctx.pr_number)]
-    if original_branch is not None:
-        return ["--branch", original_branch]
-    if ctx.branch:
-        return ["--branch", ctx.branch]
-    return []
-
-
-def _spawn(script: str, argv: list[str], ctx: pr_context.ResolvedContext, *,
-           bin_dir: Path,
-           original_pr: str | None = None,
-           original_branch: str | None = None) -> int:
-    """Spawn a backing script with the same flag injection as the binary.
-
-    Still a subprocess. The binary's `_run_delegate` is the one every
-    delegating command uses; this copy exists so `cmd_fix` can spawn
-    `ci-check` and `pr-describe` without importing the binary. Both inject
-    `--repo-dir` and `target_flags`. Commit 4c deletes the spawn.
-    """
-    cmd = [str(bin_dir / script)]
-    if ctx.worktree_root:
-        cmd += ["--repo-dir", str(ctx.worktree_root)]
-    cmd += target_flags(ctx, original_pr=original_pr,
-                        original_branch=original_branch)
-    cmd += list(argv)
-    return subprocess.run(cmd, timeout=timeouts.UNBOUNDED).returncode
+def _run_pass(command: str, argv: list[str], ctx: pr_context.ResolvedContext, *,
+              original_pr: str | None = None,
+              original_branch: str | None = None,
+              **kwargs) -> int:
+    """Run one of `pr fix`'s passes in this process, and return its code."""
+    spec = COMMANDS[command]
+    return publishing.call_entry_point(
+        spec.handler,
+        dispatch.delegate_argv(spec, argv, ctx,
+                               original_pr=original_pr,
+                               original_branch=original_branch),
+        **kwargs,
+    )
 
 
 def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
@@ -204,9 +167,15 @@ def _worth_running(domain: pr_domains.Domain, head_sha: str, *,
     return True
 
 
-def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, *,
-            bin_dir: Path, **_kw) -> int:
-    """Run fix passes for CI, review, and comments."""
+def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
+    """Run fix passes for CI, review, and comments.
+
+    Three passes in one process. Each goes through `cli.dispatch`, which is
+    what keeps them from leaking into each other: the review pass opening the
+    publishing gate is not an authorisation for the describe pass to edit the
+    PR body, and a pass that ends by calling `sys.exit` ends itself rather
+    than the two after it.
+    """
     wt = ctx.require_worktree()
     state = pr_state.load_state(ctx.target_dir)
     if not state:
@@ -230,28 +199,33 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, *,
                       has_work=review_findings > 0, name="Review"):
         log.info(f"Fixing {review_findings} review finding(s)..." if review_findings
                  else "Reviewing...")
-        review_args = [str(bin_dir / "claude-review"), "--self", "--fix"]
-        review_args += ["--repo-dir", str(wt)]
-        # Named, not left to the child to re-derive: without a target it
-        # resolves the worktree's current branch, which is not always the one
-        # this run locked, and the two then hold separate locks on one checkout.
-        review_args += target_flags(
-            ctx,
+        # `--repo-dir` names the tree explicitly rather than letting the pass
+        # re-derive one: without a target it resolves the worktree's current
+        # branch, which is not always the one this run locked, and the two
+        # then take separate locks on one checkout.
+        rc = _run_pass(
+            "review", ["--self", "--fix", "--repo-dir", str(wt)] + list(argv), ctx,
             original_pr=_kw.get("original_pr"),
             original_branch=_kw.get("original_branch"),
+            # This process already has the handler `pr` installed; see
+            # `cli.claude_review.main`.
+            install_signal_handler=False,
         )
-        review_args += list(argv)
-        r = subprocess.run(review_args, timeout=timeouts.UNBOUNDED)
-        if r.returncode == supersession.EXIT_SUPERSEDED:
+        if rc == supersession.EXIT_SUPERSEDED:
             # Every remaining pass acts on the same branch, so a refusal that
             # says "this branch may not be worth working on" answers for all of
             # them. Continuing would spend the CI fix pass on the question the
             # review just declined to spend on.
+            #
+            # Reached in-process because `cli.dispatch` turns the pass's
+            # `sys.exit(EXIT_SUPERSEDED)` back into a returncode. As a
+            # subprocess the kernel did that; without the seam this branch
+            # would be dead code and the refusal would end `pr fix` silently.
             log.error("Stopping — the review refused this branch as superseded.")
             log.dim(f"Resolve it, or re-run with {supersession.OVERRIDE_FLAG} "
                     f"to override.")
             return supersession.EXIT_SUPERSEDED
-        if r.returncode != 0:
+        if rc != 0:
             exit_code = 1
 
     ci_fixable = 0
@@ -266,9 +240,8 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, *,
         # the work about to be done.
         log.info(f"Fixing {ci_fixable} CI failure(s)..." if ci_fixable > 0
                  else "Checking CI...")
-        rc = _spawn(
-            COMMANDS["ci"].script, ["--fix"] + list(argv), ctx,
-            bin_dir=bin_dir,
+        rc = _run_pass(
+            "ci", ["--fix"] + list(argv), ctx,
             original_pr=_kw.get("original_pr"),
             original_branch=_kw.get("original_branch"),
         )
@@ -296,10 +269,9 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, *,
     # its commits and post its replies and then draft the description alone.
     log.blank()
     describe_argv = ["--post"] if "--post" in argv else []
-    if _spawn(COMMANDS["describe"].script, describe_argv, ctx,
-              bin_dir=bin_dir,
-              original_pr=_kw.get("original_pr"),
-              original_branch=_kw.get("original_branch")) != 0:
+    if _run_pass("describe", describe_argv, ctx,
+                 original_pr=_kw.get("original_pr"),
+                 original_branch=_kw.get("original_branch")) != 0:
         exit_code = 1
 
     return exit_code

@@ -48,10 +48,12 @@ than read the file, call ``is_held``.
 
 ``claude-review`` (both its PR and its ``--self`` paths), ``ci-check``,
 ``review-threads``, ``pr-rebase`` and ``pr-describe`` take the lock themselves,
-so invoking any of them directly is guarded too. When ``pr`` launched them they
-resolve the same target, compute the same key, find it in
-``WORKBENCH_RUN_LOCK`` and pass through as a no-op instead of deadlocking
-against the lock their own parent holds.
+so invoking any of them directly is guarded too. When ``pr`` dispatches to one
+it resolves the same target, computes the same key, finds it in
+``WORKBENCH_RUN_LOCK`` and passes through as a no-op instead of deadlocking
+against the lock its own caller holds. That holds whether the delegate is a
+child process or an in-process call — the marker is process environment, and
+re-claiming a lock this process already holds is a no-op by construction.
 
 That list is exhaustive, not an example. ``review-post`` and ``review-rebuild``
 are the remaining delegates and take no lock of their own, for a reason that is

@@ -264,13 +264,18 @@ def test_submit_pending_survives_an_unreadable_post_tracking_file(
 
 
 def _post_argv(monkeypatch, tmp_path, **kw):
-    """Run the real `post` and return the argv it would have spawned."""
+    """Run the real `post` and return the argv it hands review-post."""
     seen = {}
-    monkeypatch.setattr(
-        review_publish.subprocess, "run",
-        lambda argv, **_: seen.setdefault("argv", list(argv)))
+
+    def _call(handler, argv, **_):
+        seen["handler"] = handler
+        seen["argv"] = list(argv)
+        return 0
+
+    monkeypatch.setattr(review_publish.publishing, "call_entry_point", _call)
     review_publish.post("42", str(tmp_path / "review.md"), False,
                         bin_dir=tmp_path, **kw)
+    assert seen["handler"] == "cli.review_post:main"
     return seen["argv"]
 
 

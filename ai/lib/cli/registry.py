@@ -15,11 +15,13 @@ it is a user-visible change, not a cosmetic one.
 
 `handler` is a `"<module>:<attr>"` string resolved by importlib at dispatch,
 not a callable: an eager import would pull every delegate into `pr --help`.
-Seven of the nine name an importable function today. `review` and `comments`
-are None — their wrappers (`cmd_review`, `cmd_comments`) still live in
-`ai/bin/pr` and call `_run_delegate`, which this commit does not move. Filling
-those two is T7 commit 4c; an honest None beats a string that would resolve
-to the wrong callable.
+All nine name an importable function, and `cli.dispatch` is what calls them.
+
+`script` outlives the spawn it used to name. Nothing in `pr` runs it any
+more — dispatch imports `handler` instead — but MCP still executes the shim
+by path, so the field is the declaration of which `ai/bin` name that is. The
+command/domain/phase join in `tests/test_cli_join.py` is what keeps it from
+going stale now that no `pr` code path would notice if it did.
 """
 
 # doc-group: cli
@@ -100,17 +102,16 @@ _SPECS: tuple[CommandSpec, ...] = (
     # owns the table the resolver reads, so this is an ordinary import rather
     # than something the entry point has to supply from above.
     #
-    # handler is None: `cmd_review` still lives in `ai/bin/pr` and calls
-    # `_run_delegate`. Pointing at `cli.claude_review:main` would skip the
-    # --self injection and the mode-flag routing. Filling this is T7 commit 4c.
+    # The handler is the delegate, not `ai/bin/pr`'s `cmd_review` wrapper:
+    # `--self` injection and mode-flag routing are the entry point's argv
+    # shaping, and a consumer reading this field wants the callable that
+    # performs the command.
     CommandSpec("review",   "Run code review",
                 review_modes.need_for,                  script="claude-review",
-                handler=None),
-    # handler is None: `cmd_comments` still lives in `ai/bin/pr` and calls
-    # `_run_delegate`. Filling this is T7 commit 4c.
+                handler="cli.claude_review:main"),
     CommandSpec("comments", "Fetch and manage PR review threads",
                 Need(REMOTE, update=True,  lock=True),  script="review-threads",
-                handler=None),
+                handler="cli.review_threads:main"),
     CommandSpec("fix",      "Fix CI + review + comments",
                 Need(REMOTE, update=True,  lock=True),
                 handler="cli.pr_commands:cmd_fix"),

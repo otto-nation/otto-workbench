@@ -3,11 +3,9 @@
 These ran through `pr_cli_test.py`'s script shim until the table and its four
 handlers moved out of `ai/bin/pr` in #909's T7 commit 3a. They are here now
 because the module is importable: a mode handler can be called directly, with
-no binary in the way and no subprocess unless the handler's own job is to spawn
-one.
+no binary in the way.
 """
 
-import subprocess
 import sys
 from pathlib import Path
 from unittest import mock
@@ -120,74 +118,48 @@ def test_a_mode_without_a_pr_number_fails_cleanly():
     finder.assert_not_called()
 
 
-# ── the handler spawns from the directory it was given ───────────────────
+# ── the handler calls the delegate in-process ───────────────────────────
 
 
-def test_post_spawns_from_the_bin_dir_it_was_given(tmp_path):
-    """The spawn path comes from the caller, never from this module's own file.
-
-    Under WORKBENCH_AI_LIB_DIR `cli/` resolves inside the pinned checkout while
-    the entry point's BIN_DIR does not, so a path derived here would run a
-    different tree's `review-post` than `ai/bin/pr` does today.
-    """
-    with mock.patch("cli.review_modes.find_review_file",
-                    return_value=tmp_path / "review.md"), \
-         mock.patch("subprocess.run",
-                    return_value=subprocess.CompletedProcess([], 0)) as run:
+def test_post_calls_review_post_in_process(tmp_path):
+    """`--post` runs review-post in this process, not as a child of bin_dir."""
+    review = tmp_path / "review.md"
+    with mock.patch("cli.review_modes.find_review_file", return_value=review), \
+         mock.patch("core.publishing.call_entry_point", return_value=0) as call:
         rc = review_modes.post([], make_ctx(), bin_dir=tmp_path)
     assert rc == 0
-    assert run.call_args[0][0][0] == str(tmp_path / "review-post")
+    assert call.call_args[0][0] == "cli.review_post:main"
+    argv = call.call_args[0][1]
+    assert "--pr" in argv
+    assert argv[argv.index("--pr") + 1] == "42"
+    assert "--review-file" in argv
+    assert argv[argv.index("--review-file") + 1] == str(review)
 
 
-def test_repair_spawns_rebuild_from_the_bin_dir_it_was_given(tmp_path):
-    """The same contract on the other spawning mode."""
+def test_repair_calls_rebuild_in_process(tmp_path):
+    """The same contract on the other former-spawn mode."""
     review_dir = tmp_path / "reviews" / "owner-repo-42"
     review_dir.mkdir(parents=True)
     with mock.patch("cli.review_modes.find_review_file", return_value=None), \
          mock.patch("cli.review_modes.review_file_path",
                     return_value=review_dir / "review.md"), \
-         mock.patch("subprocess.run",
-                    return_value=subprocess.CompletedProcess([], 0, "", "")) as run:
+         mock.patch("core.publishing.call_entry_point", return_value=0) as call:
         rc = review_modes.repair([], make_ctx(), bin_dir=tmp_path)
     assert rc == 0
-    assert run.call_args[0][0][0] == str(tmp_path / "review-rebuild")
+    assert call.call_args[0][0] == "cli.review_rebuild:main"
+    argv = call.call_args[0][1]
+    assert "--review-dir" in argv
+    assert argv[argv.index("--review-dir") + 1] == str(review_dir)
+    assert "--pr" in argv
+    assert argv[argv.index("--pr") + 1] == "42"
 
 
 def test_post_names_the_branch_it_is_publishing_for(tmp_path):
     """--expect-ref is how review-post tells this run's review from another's."""
     with mock.patch("cli.review_modes.find_review_file",
                     return_value=tmp_path / "review.md"), \
-         mock.patch("subprocess.run",
-                    return_value=subprocess.CompletedProcess([], 0)) as run:
+         mock.patch("core.publishing.call_entry_point", return_value=0) as call:
         review_modes.post([], make_ctx(branch="feat/x"), bin_dir=tmp_path)
-    cmd = run.call_args[0][0]
+    cmd = call.call_args[0][1]
     assert "--expect-ref" in cmd
     assert cmd[cmd.index("--expect-ref") + 1] == "feat/x"
-
-
-# ── the marker parser ────────────────────────────────────────────────────
-
-
-def test_the_marker_is_parsed_off_its_own_line():
-    """REVIEW_SUMMARY:{json} is read from output that also carries prose."""
-    out = 'noise\nREVIEW_SUMMARY:{"repo":"owner/repo","verdict":"ok"}\nmore\n'
-    assert review_modes.parse_review_summary(out) == {
-        "repo": "owner/repo", "verdict": "ok",
-    }
-
-
-def test_output_without_the_marker_parses_to_nothing():
-    """review-rebuild emits no marker, and that is not an error."""
-    assert review_modes.parse_review_summary("just prose\n") is None
-
-
-def test_a_malformed_marker_parses_to_nothing():
-    """A truncated payload is not worth a traceback on the caller's path."""
-    assert review_modes.parse_review_summary("REVIEW_SUMMARY:{not json") is None
-
-
-def test_an_unparsed_marker_writes_no_domain():
-    """The no-op path really is one: nothing reaches the state writer."""
-    with mock.patch("cli.review_modes.sync_review_domain") as sync:
-        review_modes.update_review_state_from_output("no marker", make_ctx())
-    sync.assert_not_called()

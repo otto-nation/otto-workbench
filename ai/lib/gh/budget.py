@@ -357,11 +357,13 @@ def arm(said: str, resource: Resource | None) -> None:
 def _export() -> None:
     """Publish the table to the environment children inherit. Caller holds the lock.
 
-    `pr` delegates to `claude-review`, which spawns `review-orchestrate`, and
-    each is a fresh interpreter with its own empty table. Passing the latch
-    down the tree is what stops the grandchild re-learning a refusal its parent
-    already met — and `latched` is where the child takes it up, so that holds
-    for every delegate rather than only for one that remembered to ask.
+    `pr` delegates to `claude-review`, which reaches `review-orchestrate`.
+    A delegate invoked as its own process is a fresh interpreter with an empty
+    table, and passing the latch down is what stops it re-learning a refusal
+    its parent already met — `latched` is where it is taken up, so that holds
+    for every delegate rather than only for one that remembered to ask. An
+    in-process delegate shares the table outright and needs no handover, so
+    the export is the weaker of the two paths rather than the only one.
 
     Format is `resource:expires:reset:user_id`, space separated. Expiry and
     reset are both carried because they are different facts: expiry always has

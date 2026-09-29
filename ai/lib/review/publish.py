@@ -16,13 +16,12 @@ lets both flows share a single `print_summary` call.
 from __future__ import annotations
 
 import json
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 from core import log
 from core import prompt
-from core import timeouts
+from core import publishing
 from core.serde import load_file as serde_load_file, to_dict as serde_to_dict
 from gh import client as gh_client
 from pr.state import PostTracking
@@ -53,29 +52,28 @@ _HINT_POST = "Post to GitHub:  pr review --post"
 
 def post(pr_number: str, review_file: str, submit: bool, *, bin_dir: Path,
          branch: str = "") -> None:
-    """Hand the review to review-post.
+    """Hand the review to review-post, in this process.
 
-    A spawn rather than a call for the same reason as the orchestrate one, and
-    it is #909 tranche 4 that closes both. Worth noting that the return code is
-    deliberately ignored: `review-post` exits 1 on a chunk failure having
-    already posted earlier chunks, and the review on disk is the deliverable
-    either way.
+    The exit code is deliberately ignored, and that predates the call:
+    `review-post` fails on a chunk having already posted the earlier ones, and
+    the review on disk is the deliverable either way.
 
     `branch`, when known, is passed through as `--expect-ref` so review-post
     can tell this run's review from one written by a run the lock never made
-    contend with it — see `ai/bin/pr`'s `_review_post` for the sibling call
-    site this mirrors.
+    contend with it — `cli.review_modes.post` is the sibling call site this
+    mirrors.
+
+    `bin_dir` is unused here now and kept, because it is not this function's
+    to drop: it arrives from `ReviewFlags`, where `review.invoke` still needs
+    it to build the orchestrate argv, and `land` passes the same value to
+    both. Removing it from one leaf does not remove the field.
     """
-    post_args = [
-        str(bin_dir / "review-post"),
-        "--pr", pr_number,
-        "--review-file", review_file,
-    ]
+    post_args = ["--pr", pr_number, "--review-file", review_file]
     if submit:
         post_args.append("--submit")
     if branch:
         post_args += ["--expect-ref", branch]
-    subprocess.run(post_args, check=False, timeout=timeouts.UNBOUNDED)
+    publishing.call_entry_point("cli.review_post:main", post_args)
 
 
 def submit_pending(repo: str, pr_number: str, review_file: str) -> bool:

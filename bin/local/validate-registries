@@ -157,6 +157,27 @@ _check_no_duplicates() {
       _fail "$(basename "$file"): duplicate tool name: $name"
     done <<< "$dupes"
   fi
+
+  # Tracked for the cross-registry check below, but only for the registries
+  # that name executables. A name is unique per file by the check above; two
+  # *files* claiming one is a separate question, and was nobody's until the
+  # MCP probe went. Discovery keys on the name, keeps whichever entry it
+  # reached first and logs the other, so a collision decides which tool a
+  # client gets by registry order.
+  #
+  # `bindir` only. A brew stack and an env-alias file describe different
+  # kinds of thing and legitimately share a name — `linear` is a brew
+  # formula and an auth alias today — and neither is a script the server can
+  # offer, so comparing across those namespaces reports a collision that
+  # cannot happen.
+  local validation
+  validation=$(reg_get "$file" meta validation)
+  if [[ "$validation" == "bindir" ]]; then
+    local name
+    while IFS= read -r name; do
+      [[ -n "$name" ]] && ALL_TOOL_NAMES+=("$name:${file#"$REPO_ROOT/"}")
+    done < <(_tool_names "$file")
+  fi
 }
 
 # _check_permission_seq FILE INDEX NAME
@@ -592,6 +613,27 @@ _check_cross_registry_dupes() {
   done
 }
 
+# _check_cross_registry_tool_dupes — one tool name may be claimed by one file.
+#
+# The per-file check cannot see this, and the MCP server cannot refuse it: it
+# discovers in a thread that also serves re-discovery, so raising would either
+# take the server down or freeze the tool list for the session. It keeps the
+# first entry it reached and logs the rest — which leaves *which* tool a
+# client reaches decided by registry order. This is the only place that can
+# be an error rather than a log line.
+_check_cross_registry_tool_dupes() {
+  local -A name_sources=()
+  local entry name source
+  for entry in "${ALL_TOOL_NAMES[@]}"; do
+    name="${entry%%:*}"
+    source="${entry#*:}"
+    if [[ -n "${name_sources[$name]:-}" && "${name_sources[$name]}" != "$source" ]]; then
+      _fail "tool '$name' registered in multiple registries: ${name_sources[$name]} and $source"
+    fi
+    name_sources[$name]="$source"
+  done
+}
+
 # Cross-registry model-default check: exactly one env entry may claim
 # model-default, since it is what a harness resolves defaultModel from.
 #
@@ -616,6 +658,7 @@ main() {
   REGISTRIES_CHECKED=0
   declare -a ALL_ENV_VARS=()   # "VAR_NAME:source_file" pairs for cross-registry dupe check
   declare -a ALL_MODEL_DEFAULTS=()  # same shape, for the single-model-default check
+  declare -a ALL_TOOL_NAMES=()      # same shape, for the cross-registry tool-name check
 
   if ! command -v yq >/dev/null 2>&1; then
     err "yq not found — run: brew install yq"
@@ -667,6 +710,9 @@ main() {
 
   if [[ "${#ALL_ENV_VARS[@]}" -gt 0 ]]; then
     _check_cross_registry_dupes
+  fi
+  if [[ "${#ALL_TOOL_NAMES[@]}" -gt 0 ]]; then
+    _check_cross_registry_tool_dupes
   fi
   _check_single_model_default
 

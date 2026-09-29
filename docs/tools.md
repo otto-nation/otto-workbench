@@ -865,21 +865,26 @@ otherwise render into. A script's own `--tool-schema` description is written for
 
 `bin/local/validate-registries` is what holds the registries to shape statically, before
 anything reads them here: required fields, no unknown fields, and no two entries in one
-file sharing a name. That last check is per file — it does not compare names across
-registries, so two scripts registered in different `registry.yml` files under the same
-name pass it clean. It also does not confirm that a tool's schema imports cleanly —
-nothing does, at build time — but a schema that will not import now fails the scan at
-startup and is logged, where a probe that would not answer used to leave the tool silently
-absent.
+file sharing a name, and — across the `bindir` registries, the ones that name
+executables — no two files claiming the same name either. It does not confirm that a
+tool's schema imports cleanly; nothing does at build time, but a schema that will not
+import now fails the scan at startup and is logged, where a probe that would not answer
+used to leave the tool silently absent.
 
-**Two scripts, one name.** Discovery keys on the name a script's schema answers with, not
-on its filename or registry entry, so two entries — in the same file or in two different
-ones, since only the same-file case is caught above — can in principle claim one tool
-name. A cross-file collision is a runtime-only finding: at runtime the first the scan
-reached (in sorted registry order) wins and the other is logged at error level naming both
-paths, rather than raising: doing so would run in the re-discovery thread as well as at
-startup, where one ambiguity would either take the server down or stop re-discovery for
-the session — first-wins leaves a working tool working.
+**Two scripts, one name.** Discovery keys on the name a schema answers with, not on a
+filename, so two entries could claim one tool. At runtime the first the scan reached in
+registry order wins and the other is logged at error level naming both paths. It is not
+raised: discovery runs in the thread that also serves re-discovery, so one ambiguity
+would either take the server down or freeze the tool list for the session, and first-wins
+leaves a working tool working.
+
+Which means the build is the only place a collision can be an error rather than a log
+line, and `validate-registries` is where that happens — both within a file and across
+them. The cross-file half arrived with registry-driven discovery: the deleted
+`validate-tool-schema` had compared names across every candidate it probed, and nothing
+replaced that until the check above. Only `bindir` registries are compared, because a
+brew stack and an env alias describe different kinds of thing and legitimately share a
+name — `linear` is both today — and neither is a script the server can offer.
 
 **How a tool call is run.** A call still spawns the script — `pr`, the one tool offered —
 through a spawn helper that gives the child two things `subprocess.run` does not. Its

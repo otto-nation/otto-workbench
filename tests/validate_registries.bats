@@ -641,6 +641,78 @@ EOF
   [[ "$output" == *"defined in multiple registries"* ]]
 }
 
+@test "fails on one tool name registered in two bindir registries" {
+  # The MCP server cannot refuse this: it discovers in the thread that also
+  # serves re-discovery, so it keeps the first entry and logs the rest —
+  # which leaves registry order deciding which tool a client reaches.
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "A"
+  validation: bindir
+  source: bin
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: hidden
+    description: "one"
+  - name: othertool
+    permission: false
+    visibility: hidden
+    description: "and the other file, so the reverse check passes"
+EOF
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "B"
+  validation: bindir
+  source: bin
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: hidden
+    description: "the same name, from a second registry"
+  - name: othertool
+    permission: false
+    visibility: hidden
+    description: "and the other file, so the reverse check passes"
+EOF
+
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"registered in multiple registries"* ]]
+}
+
+# passes-at-base: guards the new check's scope, so it asserts an absence the base also has
+@test "a name shared by a brew stack and an env alias is not a collision" {
+  # `linear` is a brew formula and an auth alias on the live tree. Neither is
+  # a script the server can offer, so comparing across those namespaces would
+  # report a collision that cannot happen.
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "A"
+  validation: none
+
+tools:
+  - name: shared
+    permission: false
+    description: "a brew formula"
+EOF
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "B"
+  validation: none
+
+tools:
+  - name: shared
+    permission: false
+    description: "something else entirely"
+EOF
+
+  run main
+  [[ "$output" != *"registered in multiple registries"* ]]
+}
+
 @test "fails when install_check true with empty tools and no install_check_command" {
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
 meta:

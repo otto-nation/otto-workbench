@@ -20,7 +20,6 @@ sys.path.insert(0, str(_AI_LIB_DIR))
 
 from cli.pr import main  # noqa: E402
 
-# `bin_dir` is this checkout's, not one `cli/pr.py` derives: under
-# WORKBENCH_AI_LIB_DIR the library resolves inside the pinned tree while the
-# delegates a run should reach are the ones beside this file.
+# Why bin_dir is passed rather than derived by cli/pr.py itself: see that
+# module's docstring.
 sys.exit(main(sys.argv[1:], bin_dir=BIN_DIR))

@@ -120,7 +120,7 @@ _validate_skill_agent() {
 
 _validate_output_schema() {
   local skill_file="$1" display="$2"
-  local has_os tool_name tool_script schema_out subcommand
+  local has_os tool_name tool_script schema_out
   has_os=$(awk 'NR==1 && /^---$/ { in_fm=1; next } in_fm && /^---$/ { exit } in_fm && /^output_schema:/ { print "yes"; exit }' "$skill_file")
   [[ "$has_os" == "yes" ]] || return 0
 
@@ -171,7 +171,11 @@ a pr subcommand reports one only when its delegate's parser is a ToolParser"
   fi
 
   # Exit 0 alone proves nothing — a script that ignores unknown flags also exits 0.
-  # Keys mirror REQUIRED_SCHEMA_KEYS in ai/claude/mcps/server.py.
+  # The two keys are the whole of what a schema document must carry: a name to
+  # be cited by and an input contract to be called against. The MCP server used
+  # to hold the same pair as REQUIRED_SCHEMA_KEYS, checking what a probe
+  # printed; it builds the document itself now, so this is the only place left
+  # that reads one it did not write.
   if jq -e 'has("name") and has("input_schema")' <<< "$schema_out" > /dev/null 2>&1; then
     _pass "$display: output_schema tool '$tool_name' supports --tool-schema"
   else

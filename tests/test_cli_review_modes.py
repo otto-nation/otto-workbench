@@ -35,8 +35,6 @@ def test_the_binary_routes_through_this_table():
     of the "declarations that must agree" the registry commit collapses, and
     it would agree right up until someone added a mode.
     """
-    from conftest import load_script
-
     from cli import pr as pr_cli
     sentinel = mock.Mock(return_value=0)
     patched = dict(review_modes.MODES)
@@ -49,8 +47,6 @@ def test_the_binary_routes_through_this_table():
 
 def test_the_exclusivity_check_reads_this_table_too():
     """A flag is a mode because this table says so, wherever it is checked."""
-    from conftest import load_script
-
     from cli import pr as pr_cli
     with mock.patch.dict(review_modes.MODES,
                          {"--summary": ReviewMode(), "--list": ReviewMode()},

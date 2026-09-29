@@ -707,76 +707,33 @@ stdio. Registered in `~/.claude.json` as `otto-workbench` by `otto-workbench ai 
 otto-mcp-server
 ```
 
-A script is discovered when it is executable, its name starts with neither `.` nor `_`,
-and it answers `--tool-schema` with JSON carrying at least `name` and `input_schema`.
-Scripts built on `ToolParser`
-([`ai/lib/core/tool_parser.py`](../ai/lib/core/tool_parser.py)) inherit the flag for free.
+A script is offered when its registry entry declares `visibility: full` or `brief`; a
+`hidden` entry, or a script no registry names at all, is never offered. The schema comes
+from importing the tool rather than running it — `pr`, the one tool offered today, publishes
+its schema as `cli.schema.tool_schema()` — so discovery is a registry read plus an import,
+not a scan. Scripts built on `ToolParser`
+([`ai/lib/core/tool_parser.py`](../ai/lib/core/tool_parser.py)) can still answer their own
+`--tool-schema` flag on the command line, for a reader rather than for MCP.
 
-**Where it looks.** The workbench's own script directories, and nothing else. They are
-derived from the component layout rather than listed — the root `bin/`, plus every
-`<component>/bin` and `<component>/<sub>/bin` in the checkout. That is the same two-level
-glob [`lib/components.sh`](../lib/components.sh) uses for `steps.sh` and `migrations`, so
-a new component tier such as `editors/zed/bin/` is scanned the moment it exists. Note it
-scans the checkout, not the `~/.local/bin` those scripts are symlinked into: discovery
-probes a candidate by running it, and `~/.local/bin` also holds everything else you have
-installed.
+**Where it looks.** The component registries — see [Registries](registries.md) — the same
+files that document every workbench script for a reader and, for `full` entries, for the
+rule layers Claude loads. `ai/lib/config/tool_registry.py` maps each registered script's
+path to its entry; the MCP server reads that mapping rather than globbing `bin/`
+directories or running anything to find out what exists.
 
 **There is no configuration file.** The server hosts the workbench's own tools, so what
-to scan is a fact about the checkout — there is nothing to hand-author and nothing to keep
-in sync. An earlier design read `tool_dirs` and `plugin_dirs` from
+to offer is a fact about the checkout's registries — there is nothing to hand-author and
+nothing to keep in sync. An earlier design read `tool_dirs` and `plugin_dirs` from
 `~/.config/workbench/mcp-tools.json` to let outside directories register tools; no setup
 step ever wrote that file, no machine was found holding one, and the keys were removed
-rather than carried into `config.yml`. Adding a tool means putting a `--tool-schema`
-script in a component's `bin/` and registering it, as below.
+rather than carried into `config.yml`. Adding a tool means registering it in a component's
+`registry.yml`, as below; the schema comes from whatever `_tool_schema` in
+`ai/claude/mcps/server.py` imports for it.
 
-Discovery reads each candidate's source before running it, and only executes the ones
-carrying a protocol marker — a script that ignores unknown flags would otherwise do its
-real work when probed. Scripts that mention the flag in prose without implementing it
-must word around the literal to stay out of the probe path.
-
-Carrying a marker is a claim to be a tool, so a candidate that then fails to answer — a
-non-zero exit, malformed JSON, or a schema missing `name` or `input_schema` — is logged at
-warning level on stderr with the reason. A tool you added that never appears in an MCP
-client is explained there. Executables with no marker are not tools and are skipped
-without comment.
-
-**How a script is run.** Both the probe and a tool call go through one spawn helper, which
-gives the child two things `subprocess.run` does not. Its stdin is closed rather than
-inherited: the server's own stdin *is* the stdio JSON-RPC stream the client writes requests
-into, so a script that reads a single byte takes that byte out of the transport and the
-session dies on a parse error naming no tool. The probe is the likeliest reader — a script
-that does not recognise `--tool-schema` falls through to its real work, and that work may
-read stdin.
-
-The child also gets a session of its own, so an expired bound `SIGKILL`s the whole process
-group instead of the one process. A tool spawns agents — `pr review` is the case — and
-signalling only the direct child leaves them running against the account with nothing
-holding a handle to them. There is no grace window before the kill: the budget has already
-expired, and a TERM-then-KILL ladder would double the worst case on a call that is already
-late.
-
-**A probe that never answers is a different finding.** The probe prints a schema the
-script already holds, so it belongs in the `QUICK` tier of
-[`ai/lib/core/timeouts.py`](../ai/lib/core/timeouts.py) and a breach is a wedged process or a machine
-with nothing left to schedule — not a broken tool. It is logged at error level and worded
-that way, because the two want different people to look at them. The bound used to be a
-2-second local constant, which is under the cost of starting a Python interpreter on a
-loaded machine; a probe that outran it dropped the tool for the whole session, since
-re-discovery only runs when the scanned directories change.
-
-Two things pay for the more generous bound. Candidates are probed concurrently, so what a
-client waits for at startup is one probe rather than one per tool, and a probe that ran out
-of time is tried once more — only the ones that timed out, and all of them together, so the
-retry costs one more bound for the round rather than one per tool. Results are reported in
-path order whatever order they finish in, so two scans of the same tree agree.
-
-**What a client is offered.** Carrying the marker makes a script probeable, not public.
-The registries decide who sees it: an entry with `visibility: full` or `brief` is offered,
-one with `visibility: hidden` is not, and a script no registry entry names is not either.
-The filter runs before the probe, so a script a client will never see is also never run at
-startup. Today only `pr` is offered — `ci-check`, `pr-describe`, and `pr-rebase` are
-registered hidden because they are what `pr ci`, `pr describe`, and `pr rebase` run, and
-offering them beside `pr` asks a client to choose between a tool and its own internals.
+**What a client is offered.** Today only `pr` is offered — `ci-check`, `pr-describe`, and
+`pr-rebase` are registered hidden because they are what `pr ci`, `pr describe`, and
+`pr rebase` run, and offering them beside `pr` asks a client to choose between a tool and
+its own internals.
 
 The description a client reads is the registry's, not the script's: the registries own tool
 documentation, and a `full` entry's `when_to_use` and `usage` lines are appended to it —
@@ -784,37 +741,38 @@ they answer a caller's real questions, and a client has no access to the rule fi
 otherwise render into. A script's own `--tool-schema` description is written for its
 `--help` and has already drifted shorter.
 
-Those warnings belong to whichever MCP client spawned the server, so the same claims are
-checked at build time by `bin/local/validate-tool-schema`. It imports this discovery —
-the directories, the candidate filter, the probing round itself, and the registry lookup —
-and fails when a candidate in the checkout cannot answer or no registry entry names it,
-rather than leaving the tool to vanish at runtime. Visibility is not checked: a `hidden`
-entry is a decision somebody made, and the probe has to cover the script anyway because
-`pr` runs it.
+`bin/local/validate-registries` is what holds the registries to shape statically, before
+anything reads them here: required fields, no unknown fields, and no two entries in one
+file sharing a name. It does not confirm that a tool's schema imports cleanly — nothing
+does, at build time — but a schema that will not import now fails the scan at startup and
+is logged, where a probe that would not answer used to leave the tool silently absent.
 
-**Two scripts, one name.** Discovery keys on the name a script answers with, not on its
-filename, so two scripts can claim one tool. At runtime the first the scan reached wins and
-the other is logged at error level naming both paths. Raising instead would run in the
+**Two scripts, one name.** Discovery keys on the name a script's schema answers with, not
+on its filename or registry entry, so two entries can in principle claim one tool name. At
+runtime the first the scan reached (in sorted registry order) wins and the other is logged
+at error level naming both paths, rather than raising: doing so would run in the
 re-discovery thread as well as at startup, where one ambiguity would either take the server
-down or stop re-discovery for the session — first-wins leaves a working tool working. Which
-of the two a client actually reaches is then decided by directory order, so
-`bin/local/validate-tool-schema` fails the build on a collision. That is the only place it
-can be an error rather than a log line.
+down or stop re-discovery for the session — first-wins leaves a working tool working.
 
-It carries the same split. A probe that ran out of time is counted and reported apart from
-the broken ones and points at the runner's load rather than at the script — on an
-oversubscribed build runner that is what actually happened, and reporting it as a tool that
-"cannot answer `--tool-schema`" sent readers after a script that was fine. It still fails
-the run: a tool nobody could verify is a tool that may not reach a client.
+**How a tool call is run.** A call still spawns the script — `pr`, the one tool offered —
+through a spawn helper that gives the child two things `subprocess.run` does not. Its
+stdin is closed rather than inherited: the server's own stdin *is* the stdio JSON-RPC
+stream the client writes requests into, so a script that reads a single byte takes that
+byte out of the transport and the session dies on a parse error naming no tool. The child
+also gets a session of its own, so an expired bound `SIGKILL`s the whole process group
+instead of the one process — a tool spawns agents (`pr review` is the case), and signalling
+only the direct child leaves them running against the account with nothing holding a
+handle to them. There is no grace window before the kill: the budget has already expired,
+and a TERM-then-KILL ladder would double the worst case on a call that is already late.
 
 **Staying current without a restart.** The client owns this process — it spawns the server
 over stdio and nothing outside can restart it — so a tool added, re-signatured, or
 registered differently after startup would otherwise stay invisible until the next client
-session. Every couple of seconds the server fingerprints what discovery reads: the scanned
-directories, every file in them (modification time, size, and mode, since `chmod +x` is the
-whole of what turns a file into a candidate), and every `registry.yml`. Nothing is executed
-and no source is read, so a poll that finds nothing costs one `stat` per file; the interval
-is a bound on staleness rather than a cost to trade against.
+session. Every couple of seconds the server fingerprints what discovery reads: every
+`registry.yml`, plus the two modules the schema is built from
+(`ai/lib/cli/schema.py` and `ai/lib/cli/registry.py`). Nothing is executed and no other
+source is read, so a poll that finds nothing costs one `stat` per watched file; the
+interval is a bound on staleness rather than a cost to trade against.
 
 The baseline every poll compares against is stamped before the startup scan, not after it,
 and travels with the tool set that scan produced. A baseline taken later would already hold
@@ -831,9 +789,9 @@ sent before the client's first request, since a notification arriving mid-handsh
 a client is entitled to reject.
 
 A tool that was working and now is not is logged at error level with the reason it stopped
-answering — its script is gone, it exited non-zero, or its registry entry no longer offers
-it. A silent disappearance from `tools/list` is the failure this exists to prevent: the
-client shows one fewer tool and says nothing about why.
+answering — its script is gone, or its registry entry no longer offers it. A silent
+disappearance from `tools/list` is the failure this exists to prevent: the client shows one
+fewer tool and says nothing about why.
 
 **What a call returns.** Stdout that parses as JSON comes back as the text content of the
 result, so a client sees the tool's own output rather than a rendering of it. A tool whose

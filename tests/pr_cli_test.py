@@ -16,7 +16,7 @@ import pytest
 
 # `reviews_dir` is not imported — pytest discovers conftest fixtures itself,
 # and importing one shadows the fixture with a plain function.
-from conftest import (assert_no_worktree_exit, command_spec, load_script,
+from conftest import (assert_no_worktree_exit, command_spec,
                       make_ctx, seed_review)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent

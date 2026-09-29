@@ -60,12 +60,6 @@ from config.tool_registry import RegistryEntry, load_registry_entries, registry_
 # drives agents for minutes. Same carve-out as `eval.task.EVAL_CASE_BUDGET`.
 TOOL_CALL_BUDGET = 300
 
-TOOL_SCHEMA_FLAG = "--tool-schema"
-
-# Keys every tool-schema document must carry. bin/local/validate-skills asserts
-# the same pair against declared output_schema tools.
-REQUIRED_SCHEMA_KEYS = ("name", "input_schema")
-
 # How much of a tool's output an error message quotes back. Enough to recognise
 # a usage line or a stack trace, short enough not to bury the sentence above it.
 ERROR_EXCERPT_CHARS = 500
@@ -141,7 +135,9 @@ def _described(schema: dict, entry: RegistryEntry) -> dict:
 
     The registry is where a tool's description is maintained and where the
     `when_to_use` and `usage` a caller actually needs are written, so it wins
-    over whatever the schema carries.
+    over whatever description the schema carries. Everything else in the
+    schema — `input_schema`, `output_schema`, `ok_exit_codes` — passes through
+    unchanged; only the one key is registry-driven.
     """
     return {**schema, "description": entry.tool_description}
 

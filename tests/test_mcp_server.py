@@ -801,7 +801,7 @@ class TestLostTools:
         this is the other one.
         """
         script = tmp_path / "pr"
-        script.write_text("#!/usr/bin/env python3\n")
+        script.touch()
         before = {"pr": {"name": "pr", "_script": str(script)}}
 
         with caplog.at_level(logging.ERROR, logger="otto-mcp"):

@@ -645,8 +645,13 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         return Path(phase_log_path(self.job.review_file, self.verify_phase, chunk))
 
     def add_dirs(self) -> list[Path]:
-        """The worktree, and the review directory the tracking file sits in."""
-        return [self.workdir, self.artifacts]
+        """The worktree, and the review directory the tracking file sits in.
+
+        Both come from the base grant now; this override remains only as the
+        place to say that a review's artifacts directory is the review file's
+        own, not a scratch dir.
+        """
+        return super().add_dirs()
 
     def items(self) -> list[fix_types.FixItem]:
         """The findings and the static violations, as one work set.

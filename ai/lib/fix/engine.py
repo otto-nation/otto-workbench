@@ -311,8 +311,26 @@ class FixAdapter(ABC):
         """
 
     def add_dirs(self) -> list[Path]:
-        """The directories the agent may read. The worktree alone, by default."""
-        return [self.workdir]
+        """The directories the agent may reach: the worktree and the artifacts.
+
+        The artifacts directory is not optional and is not a read. The engine
+        writes the empty checklist there and then judges the pass on whether
+        the agent ticked it — `produced` is `checked(tracking_path) > 0` — so
+        an agent that cannot write it cannot succeed, whatever it does to the
+        code. It sits outside the worktree on purpose, to keep it out of the
+        commit, which is exactly what puts it outside the default grant.
+
+        Granted here rather than by each adapter because the base class is
+        what sites the tracking file: `tracking_path`, `session_log` and the
+        verify chunks are all derived from `artifacts` a few lines above. An
+        override that forgets it produces an agent looping against a guard,
+        which is what the comments pass did for twenty turns.
+
+        An adapter widening this should extend the result rather than replace
+        it. Order is preserved and duplicates dropped, so siting artifacts
+        inside the worktree grants one entry rather than two.
+        """
+        return list(dict.fromkeys([self.workdir, self.artifacts]))
 
     def after_verify(self, outcomes: list[ItemOutcome]) -> None:
         """A domain's last word before the commit is landed and pushed.

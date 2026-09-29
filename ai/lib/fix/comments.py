@@ -136,8 +136,14 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         return comment_checklist.find_and_update_main_worktree(self.workdir)
 
     def add_dirs(self) -> list[Path]:
-        """The branch worktree, plus the default-branch one when it exists."""
-        return [self.workdir] + ([self.main_wt] if self.main_wt else [])
+        """The base grant, plus the default-branch worktree when there is one.
+
+        Extends rather than replaces: the base grant carries the artifacts
+        directory the tracking file lives in, and listing only the worktrees
+        here is what left this pass unable to write the one file it is judged
+        on.
+        """
+        return super().add_dirs() + ([self.main_wt] if self.main_wt else [])
 
     def items(self) -> list[fix_types.FixItem]:
         return comment_checklist.fix_items(

@@ -1764,3 +1764,45 @@ def test_an_unset_override_does_not_count_as_set(
 
     assert inv.call_count == 0
     assert landed.call_count == 0
+
+
+class TestTheAgentCanWriteTheFileItIsToldToAnswer:
+    """The tracking file is the pass's product and sits outside the worktree.
+
+    The engine writes the empty checklist from the parent process, then asks
+    the agent to tick it — `produced` is literally `checked(tracking_path) > 0`.
+    But the agent's writable set is `add_dirs()`, and an adapter that grants
+    only its worktree leaves the one file the pass is judged on unwritable.
+
+    Under Pi the guard refuses it outright; a comments pass spent twenty turns
+    trying `write`, `edit`, a heredoc, a Python writer and a shell redirect
+    against a path `os.access` reported as writable, then went looking through
+    the machine for whatever was blocking it. Nothing in the pass could have
+    succeeded, and the run committed with every box unticked.
+    """
+
+    def test_the_stub_grants_the_directory_its_tracking_file_is_in(self, tmp_path):
+        adapter = StubAdapter(tmp_path)
+        assert adapter.tracking_path.parent in adapter.add_dirs()
+
+    def test_the_default_grant_covers_the_artifacts_it_is_given(self, tmp_path):
+        """The base class owns `artifacts`, so it owns granting it."""
+        adapter = StubAdapter(tmp_path)
+        adapter.artifacts = tmp_path / "somewhere-else"
+        assert adapter.artifacts in adapter.add_dirs()
+
+    def test_a_verify_chunk_is_writable_too(self, tmp_path):
+        """The gate answers on its own file in the same directory."""
+        adapter = StubAdapter(tmp_path)
+        assert adapter.verify_tracking_path(1).parent in adapter.add_dirs()
+
+    def test_the_worktree_is_still_granted(self, tmp_path):
+        """The grant is additive: the agent still edits the code under review."""
+        adapter = StubAdapter(tmp_path)
+        assert adapter.workdir in adapter.add_dirs()
+
+    def test_no_directory_is_granted_twice(self, tmp_path):
+        """An adapter siting artifacts inside its worktree grants one entry."""
+        adapter = StubAdapter(tmp_path)
+        adapter.artifacts = adapter.workdir / "inside"
+        assert len(adapter.add_dirs()) == len(set(adapter.add_dirs()))

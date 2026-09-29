@@ -561,7 +561,7 @@ class SkillTask:
         return RunArtifacts(
             exit_code=rc,
             usage=usage,
-            outcome=outcome_for(rc, usage),
+            outcome=outcome_for(usage),
             temp_dirs=[repo_dir, str(work_dir)],
             data={
                 "matches": matches,

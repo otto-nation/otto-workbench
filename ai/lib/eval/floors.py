@@ -31,6 +31,7 @@ from eval.scoring import (
     CACHE_READ_FLOOR,
     ENTRY_FALSE_POSITIVE_TOLERANCE,
     ENTRY_SEVERITY_TOLERANCE,
+    MIN_RECALL_TOLERANCE_RUNS,
     TOKEN_REGRESSION_RATIO,
     entry_recall_tolerance,
 )
@@ -89,12 +90,17 @@ class FloorComparison:
     unfloored_entries: tuple[str, ...]
     dropped_entries: tuple[str, ...]
     missing_metrics: tuple[tuple[str, str], ...]
+    # Set when runs_per_entry is below MIN_RECALL_TOLERANCE_RUNS. The
+    # 1/n recall quantum is then the full [0, 1] interval, so a collapse
+    # would pass; the comparison refuses instead of reporting floors hold.
+    insufficient_runs: int | None = None
 
     @property
     def ok(self) -> bool:
         return not (
             self.breaches or self.aggregate_breaches or self.unfloored_entries
             or self.dropped_entries or self.missing_metrics
+            or self.insufficient_runs is not None
         )
 
     def blocks_save(self, prior_entries: Container[str]) -> bool:
@@ -107,6 +113,7 @@ class FloorComparison:
         if (
             self.breaches or self.aggregate_breaches
             or self.dropped_entries or self.missing_metrics
+            or self.insufficient_runs is not None
         ):
             return True
         return any(name in prior_entries for name in self.unfloored_entries)
@@ -286,9 +293,35 @@ def _number_field_errors(loc: str, rec: dict, field: str) -> list[str]:
     return []
 
 
+def parse_runs_per_entry(doc: object) -> int:
+    """Positive integer ``runs_per_entry`` from a baseline or eval output.
+
+    Missing, non-integer, or non-positive is an error — never defaulted.
+    Defaulting to 1 would size the recall quantum to [0, 1] and pass a
+    collapse. ``1`` parses (eval-models' default) but is below
+    ``MIN_RECALL_TOLERANCE_RUNS``; ``compare_against_floors`` then refuses.
+    """
+    if not isinstance(doc, dict):
+        raise ValueError("baseline must be a JSON object")
+    if "runs_per_entry" not in doc:
+        raise ValueError("missing runs_per_entry")
+    raw = doc["runs_per_entry"]
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+        raise ValueError(
+            f"runs_per_entry must be a positive integer, got {raw!r}",
+        )
+    return raw
+
+
 def compare_against_floors(
     floors: FloorSet, baseline: dict, runs_per_entry: int,
 ) -> FloorComparison:
+    if runs_per_entry < MIN_RECALL_TOLERANCE_RUNS:
+        return FloorComparison(
+            breaches=(), aggregate_breaches=(), stale_reasons=(),
+            unfloored_entries=(), dropped_entries=(), missing_metrics=(),
+            insufficient_runs=runs_per_entry,
+        )
     stem = baseline_stem(str(baseline.get("backend", "")), str(baseline.get("model", "")))
     model = str(baseline.get("model", ""))
     entries = baseline.get("entries") or {}
@@ -641,7 +674,10 @@ def save_floor_gate_messages(
         floors = apply_accept_regressions(floors, accepts, output)
     lines: list[str] = []
     code = 0
-    runs = int(output.get("runs_per_entry") or 1)
+    try:
+        runs = parse_runs_per_entry(output)
+    except ValueError as exc:
+        return 2, (str(exc),)
     for baseline in baselines_from_output(output):
         comparison = compare_against_floors(floors, baseline, runs)
         try:
@@ -682,6 +718,12 @@ def format_floor_breaches(
     floors and are left out — they are not regressions.
     """
     lines: list[str] = []
+    if comparison.insufficient_runs is not None:
+        lines.append(
+            f"  refused: runs_per_entry={comparison.insufficient_runs} "
+            f"(need >= {MIN_RECALL_TOLERANCE_RUNS}; "
+            f"one-run recall quantum is [0, 1])",
+        )
     for breach in comparison.breaches + comparison.aggregate_breaches:
         lines.append(
             f"  {breach.entry} / {breach.model}: {breach.metric} "

@@ -28,7 +28,7 @@ from eval.floors import (
     seed_floors,
     validate_floors_document,
 )
-from eval.scoring import entry_recall_tolerance
+from eval.scoring import MIN_RECALL_TOLERANCE_RUNS, entry_recall_tolerance
 
 VALIDATOR = REPO_ROOT / "bin" / "local" / "validate-eval-floors"
 STEM = "claude-sonnet"
@@ -115,6 +115,21 @@ class TestCompareAgainstFloors:
         drop_past = _baseline_with_fillers("case", 0.79)
         assert compare_against_floors(floors, drop_past, 3).ok
         assert not compare_against_floors(floors, drop_past, 5).ok
+
+    def test_single_run_refuses_a_recall_collapse(self):
+        """1/n at n=1 is 1.0; a drop to 0.0 would pass if the gate ran."""
+        result = compare_against_floors(
+            _floors_with_fillers(INCIDENT_ENTRY, 1.0),
+            _baseline_with_fillers(INCIDENT_ENTRY, 0.0),
+            1,
+        )
+        assert not result.ok
+        assert result.insufficient_runs == 1
+        assert result.breaches == ()
+        text = format_floor_breaches(result)
+        assert "refused" in text
+        assert "runs_per_entry=1" in text
+        assert str(MIN_RECALL_TOLERANCE_RUNS) in text
 
     def test_aggregate_drop_over_twelve_entries_fails(self):
         names = [f"e{i:02d}" for i in range(12)]
@@ -376,6 +391,31 @@ class TestSaveBaselinesRefusesRegression:
         output = {
             "backend": "claude", "effort": "low", "runs_per_entry": 3,
             "entries": {INCIDENT_ENTRY: {"sonnet": _complete_metrics(0.556)}},
+        }
+        code = em._run_post_eval(_save_args(results), output, tmp_path)
+        assert code != 0
+        assert path.read_text() == original
+
+    def test_single_run_save_refuses_a_recall_collapse(self, em, tmp_path):
+        results = tmp_path / "results"
+        results.mkdir()
+        baseline = em._baseline_document(
+            "sonnet", "low", 1,
+            {INCIDENT_ENTRY: _complete_metrics(0.0)},
+            "claude",
+        )
+        path = results / "claude-sonnet.json"
+        original = json.dumps(baseline, indent=2) + "\n"
+        path.write_text(original)
+        (results / "floors.json").write_text(json.dumps({
+            "schema_version": 1,
+            "backends": {STEM: {INCIDENT_ENTRY: {
+                "recall_mean": {"floor": 1.0, "best": 1.0},
+            }}},
+        }) + "\n")
+        output = {
+            "backend": "claude", "effort": "low", "runs_per_entry": 1,
+            "entries": {INCIDENT_ENTRY: {"sonnet": _complete_metrics(0.0)}},
         }
         code = em._run_post_eval(_save_args(results), output, tmp_path)
         assert code != 0
@@ -745,3 +785,58 @@ class TestValidateEvalFloors:
         )
         assert proc.returncode == 1
         assert "orphan" in proc.stderr
+
+    def test_single_run_baseline_refuses_rather_than_holding(self, tmp_path):
+        _write_validator_fixture(tmp_path, current=0.0)
+        baseline = json.loads((tmp_path / "claude-sonnet.json").read_text())
+        baseline["runs_per_entry"] = 1
+        (tmp_path / "claude-sonnet.json").write_text(
+            json.dumps(baseline) + "\n",
+        )
+        proc = subprocess.run(
+            [str(VALIDATOR), str(tmp_path)],
+            capture_output=True, text=True, check=False,
+        )
+        assert proc.returncode == 1
+        combined = proc.stdout + proc.stderr
+        assert "refused" in proc.stderr
+        assert "runs_per_entry=1" in proc.stderr
+        assert "floors hold" not in combined
+        assert "Traceback" not in combined
+
+    def test_non_numeric_runs_per_entry_is_a_clean_failure(self, tmp_path):
+        _write_validator_fixture(tmp_path, current=1.0)
+        baseline = json.loads((tmp_path / "claude-sonnet.json").read_text())
+        baseline["runs_per_entry"] = "three"
+        (tmp_path / "claude-sonnet.json").write_text(
+            json.dumps(baseline) + "\n",
+        )
+        proc = subprocess.run(
+            [str(VALIDATOR), str(tmp_path)],
+            capture_output=True, text=True, check=False,
+        )
+        assert proc.returncode == 1
+        combined = proc.stdout + proc.stderr
+        assert "Traceback" not in combined
+        assert proc.stderr.startswith("✗")
+        assert "claude-sonnet.json" in proc.stderr
+        assert "runs_per_entry" in proc.stderr
+        assert "three" in proc.stderr
+
+    def test_non_positive_runs_per_entry_is_a_clean_failure(self, tmp_path):
+        _write_validator_fixture(tmp_path, current=1.0)
+        baseline = json.loads((tmp_path / "claude-sonnet.json").read_text())
+        baseline["runs_per_entry"] = 0
+        (tmp_path / "claude-sonnet.json").write_text(
+            json.dumps(baseline) + "\n",
+        )
+        proc = subprocess.run(
+            [str(VALIDATOR), str(tmp_path)],
+            capture_output=True, text=True, check=False,
+        )
+        assert proc.returncode == 1
+        combined = proc.stdout + proc.stderr
+        assert "Traceback" not in combined
+        assert proc.stderr.startswith("✗")
+        assert "claude-sonnet.json" in proc.stderr
+        assert "runs_per_entry" in proc.stderr

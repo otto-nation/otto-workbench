@@ -320,7 +320,19 @@ CACHE_READ_FLOOR = 0.60
 # Single-run noise on a 3-run mean is ±1/3. Two -0.222 decay steps sum to
 # -0.444, which clears that floor; one step does not. 1e-9 keeps a drop of
 # exactly one run's quantum from false-firing on float representation of 1/3.
+# At n=1 the quantum is 1.0, so a collapse to 0.0 is "within tolerance".
+# Callers must not size a gate from this at n<2 — the floors comparison
+# refuses that session rather than reporting that floors hold.
+MIN_RECALL_TOLERANCE_RUNS = 2
+
+
 def entry_recall_tolerance(runs_per_entry: int) -> float:
+    if runs_per_entry < MIN_RECALL_TOLERANCE_RUNS:
+        raise ValueError(
+            "entry_recall_tolerance needs runs_per_entry >= "
+            f"{MIN_RECALL_TOLERANCE_RUNS}; at 1 run the quantum is 1.0 "
+            "and a collapse to 0.0 is within tolerance",
+        )
     return 1.0 / runs_per_entry + 1e-9
 
 

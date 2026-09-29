@@ -282,30 +282,31 @@ class TestOutcomeFor:
     """Classifying an invocation that produced nothing (#1001).
 
     The poisoned baseline was found by three cases reading `$0.00 / 4s` at
-    once. Both halves of that signature are needed: an exit code alone cannot
-    tell a dead invocation from an agent that worked and gave up.
+    once. Usage is what classifies: an exit code is not consulted, so a
+    zero-token exit-0 run is NOT_RUN rather than a 0% score.
     """
 
     def test_a_clean_exit_is_measured(self):
         assert eval_task.outcome_for(
-            0, SessionUsage(input_tokens=80)) is eval_scoring.RunOutcome.MEASURED
+            SessionUsage(input_tokens=80)) is eval_scoring.RunOutcome.MEASURED
 
     def test_a_non_zero_exit_that_spent_money_is_measured(self):
         """An agent that ran, worked, and failed produced a real result."""
-        assert eval_task.outcome_for(1, SessionUsage(cost=0.31)) is eval_scoring.RunOutcome.MEASURED
+        assert eval_task.outcome_for(
+            SessionUsage(cost=0.31)) is eval_scoring.RunOutcome.MEASURED
 
     def test_a_non_zero_exit_that_burned_tokens_is_measured(self):
         """A run can do real work and still report no cost — a stubbed or free model."""
         assert eval_task.outcome_for(
-            1, SessionUsage(input_tokens=900)) is eval_scoring.RunOutcome.MEASURED
+            SessionUsage(input_tokens=900)) is eval_scoring.RunOutcome.MEASURED
 
     def test_a_non_zero_exit_with_nothing_spent_never_ran(self):
-        assert eval_task.outcome_for(1, SessionUsage()) is eval_scoring.RunOutcome.NOT_RUN
+        assert eval_task.outcome_for(SessionUsage()) is eval_scoring.RunOutcome.NOT_RUN
 
     def test_cache_reads_alone_count_as_work(self):
         """total_tokens covers the cache fields; billed_input alone would miss them."""
         assert eval_task.outcome_for(
-            1, SessionUsage(cache_read_tokens=4000)) is eval_scoring.RunOutcome.MEASURED
+            SessionUsage(cache_read_tokens=4000)) is eval_scoring.RunOutcome.MEASURED
 
     def test_artifacts_default_to_measured(self):
         """A task that never classifies keeps today's behaviour."""

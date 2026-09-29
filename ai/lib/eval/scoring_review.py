@@ -230,7 +230,7 @@ class ReviewTask:
             usage=usage,
             temp_dirs=[repo_dir, artifact_dir],
             data={"findings": findings, "summary": f"findings: {len(findings)}"},
-            outcome=outcome_for(exit_code, usage),
+            outcome=outcome_for(usage),
         )
 
     def score(self, artifacts: RunArtifacts, manifest: dict) -> ScoringResult:

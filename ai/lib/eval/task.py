@@ -92,15 +92,15 @@ class RunOptions:
     rules_home: str = ""
 
 
-def outcome_for(exit_code: int, usage: SessionUsage) -> RunOutcome:
-    """Classify a completed invocation from its exit code and what it spent.
+def outcome_for(usage: SessionUsage) -> RunOutcome:
+    """Classify a completed invocation from what it spent.
 
-    Work is usage, not the exit code. An agent that ran, worked, and gave up
-    still spent tokens or money, and that is a real result even when it exits
-    non-zero. Zero usage is an invocation that never did any work: a dead
-    backend, or the CLI refusing to start, printing a notice, billing nothing
-    and exiting 0. Averaging that in as a zero score is how a fake-green arm
-    poisons a baseline.
+    Work is usage. An agent that ran, worked, and gave up still spent tokens
+    or money, and that is a real result even when it exits non-zero. Zero
+    usage is an invocation that never did any work: a dead backend, or the
+    CLI refusing to start, printing a notice, billing nothing and exiting 0.
+    Averaging that in as a zero score is how a fake-green arm poisons a
+    baseline. Exit code is not consulted: a zero-token exit-0 run is NOT_RUN.
     """
     if usage.cost > 0 or usage.total_tokens > 0:
         return RunOutcome.MEASURED

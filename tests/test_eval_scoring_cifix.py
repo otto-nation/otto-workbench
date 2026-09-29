@@ -355,7 +355,7 @@ class TestZeroTokenGuard:
         prints a notice, bills nothing and exits 0. Averaged in as a zero it would
         read as a real arm scoring 0% rather than as an arm that never ran."""
         usage = SessionUsage(cost=0.0, duration_ms=1200)
-        assert outcome_for(0, usage) is RunOutcome.NOT_RUN
+        assert outcome_for(usage) is RunOutcome.NOT_RUN
 
     def test_an_unmeasured_run_is_excluded_from_the_arm_mean(self):
         good = ScoringResult(entry_name="e", model="m", run_index=0, recall=1.0,

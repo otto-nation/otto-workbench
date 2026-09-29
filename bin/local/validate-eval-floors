@@ -26,6 +26,7 @@ from eval.floors import (  # noqa: E402
     format_floor_breaches,
     iter_baseline_paths,
     load_floors,
+    parse_runs_per_entry,
     validate_floors_document,
 )
 
@@ -42,7 +43,11 @@ def _check_baseline(floors, path: Path, quiet: bool) -> int:
     except (json.JSONDecodeError, OSError) as exc:
         print(f"✗ {path.name}: {exc}", file=sys.stderr)
         return 1
-    runs = int(baseline.get("runs_per_entry") or 1)
+    try:
+        runs = parse_runs_per_entry(baseline)
+    except ValueError as exc:
+        print(f"✗ {path.name}: {exc}", file=sys.stderr)
+        return 1
     comparison = compare_against_floors(floors, baseline, runs)
     if comparison.stale_reasons and not quiet:
         print(f"  stale markers in {path.name}:")

@@ -189,9 +189,29 @@ def _persist(wt: Path, ctx: pr_context.ResolvedContext,
     pr_state.save_state(ctx.target_dir, state)
 
 
+@dataclasses.dataclass(frozen=True)
+class Projection:
+    """What the follow-up projection did, and what it read while doing it.
+
+    A type rather than a tuple: two pieces of business data, and the caller
+    reads `result.body` instead of learning which element of a pair is which.
+
+    `title`/`body` are what the PR holds *after* this pass — the revision
+    prompt that runs next needs the current body, and reusing this read is what
+    keeps the projection to one `gh pr view` rather than two.
+    """
+
+    moved: bool = False
+    title: str = ""
+    body: str = ""
+    # False when the body could not be read at all, which is different from
+    # reading an empty one.
+    fetched: bool = False
+
+
 def project_follow_ups(
     ctx: pr_context.ResolvedContext, state, *, trail: Trail | None = None,
-) -> tuple[bool, tuple[str, str] | None]:
+) -> Projection:
     """Put the branch's follow-ups in the PR body.
 
     Its own pass, ahead of the HEAD gate below, because a follow-up is filed
@@ -202,39 +222,33 @@ def project_follow_ups(
     Cheap enough to run unconditionally: one `gh pr view` and, only when the
     rendered block differs from what is already there, one `gh pr edit`. No AI
     call, which is what the HEAD gate exists to protect.
-
-    Returns `(moved, fetched)` — whether state moved, and the `(title, body)`
-    pair this pass read (the body reflecting whatever it wrote, if it wrote).
-    `run_describe` goes on to fetch the body itself for the revision prompt;
-    handing that fetch back here means it can reuse this one instead of
-    issuing a second `gh pr view` on every run that has follow-ups to project.
     """
     entries = state.follow_ups.entries if state else []
     if not entries:
-        return False, None
+        return Projection()
 
     fetched = _fetch_pr_body(ctx.repo, ctx.pr_number)
     if fetched is None:
         log.warn("could not read the PR body — leaving the follow-ups unprojected")
-        return False, None
+        return Projection()
     title, body = fetched
 
     projected = pr_follow_ups.project(body, entries)
     if projected.strip() == body.strip():
         # Already there. Still mark the entries, because an earlier run may have
         # written the block and failed before recording that it had.
-        return _mark_projected(state, entries), fetched
+        return Projection(_mark_projected(state, entries), title, body, True)
 
     if not _apply_body(ctx.repo, ctx.pr_number, projected):
         # Draft mode, or a write that failed. Either way the body does not hold
         # them, so the flags stay off and readiness keeps saying so.
-        return False, fetched
+        return Projection(False, title, body, True)
 
     log.info(f"Projected {len(entries)} follow-up(s) into the PR description")
     if trail:
         trail.info("describe", f"projected {len(entries)} follow-up(s)",
                    data={"pr": ctx.pr_number})
-    return _mark_projected(state, entries), (title, projected)
+    return Projection(_mark_projected(state, entries), title, projected, True)
 
 
 def _mark_projected(state, entries) -> bool:
@@ -270,10 +284,10 @@ def run_describe(
 
     # Ahead of the HEAD gate: see project_follow_ups. Skipped on a dry run,
     # which must not write to GitHub.
-    fetched = None
+    projection = Projection()
     if state and not dry_run:
-        moved, fetched = project_follow_ups(ctx, state, trail=trail)
-        if moved:
+        projection = project_follow_ups(ctx, state, trail=trail)
+        if projection.moved:
             pr_state.save_state(ctx.target_dir, state)
 
     last_sha = state.describe.head_sha if state else ""
@@ -283,10 +297,12 @@ def run_describe(
         return 0
 
     template = pr_template.load(wt_path)
-    # Reuse project_follow_ups's read when it made one, rather than asking gh
-    # for the same body twice.
-    if fetched is None:
-        fetched = _fetch_pr_body(ctx.repo, ctx.pr_number)
+    # Reuse the projection's read when it made one, rather than asking gh for
+    # the same body twice.
+    fetched = (
+        (projection.title, projection.body) if projection.fetched
+        else _fetch_pr_body(ctx.repo, ctx.pr_number)
+    )
     if fetched is None:
         if trail:
             trail.error("describe", "could not read the PR body",

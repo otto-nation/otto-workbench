@@ -301,9 +301,9 @@ def test_an_id_less_entry_is_not_marked_projected(worktree):
     with mock.patch.object(pr_describe_cli, "_fetch_pr_body",
                            return_value=("t", "body")), \
          mock.patch.object(pr_describe_cli, "_apply_body", return_value=True):
-        moved, _ = pr_describe_cli.project_follow_ups(ctx, state)
+        projection = pr_describe_cli.project_follow_ups(ctx, state)
 
-    assert moved is False
+    assert projection.moved is False
     assert state.follow_ups.entries[0].in_pr_body is False
 
 

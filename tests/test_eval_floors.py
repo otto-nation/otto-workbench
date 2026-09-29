@@ -20,8 +20,11 @@ from eval.floors import (
     FloorRecord,
     FloorSet,
     compare_against_floors,
+    format_floor_breaches,
+    load_prior_entry_names,
     parse_accept_regression,
     raise_floors,
+    save_floor_gate_messages,
     seed_floors,
     validate_floors_document,
 )
@@ -155,6 +158,22 @@ class TestCompareAgainstFloors:
         assert not result.blocks_save(frozenset({"kept"}))
         assert result.blocks_save(frozenset({"kept", "new-case"}))
 
+    def test_new_case_is_not_rendered_as_a_regression(self):
+        result = compare_against_floors(
+            _floors("kept", 1.0),
+            _baseline("kept", 0.556, extra_entries={
+                "new-case": {"recall_mean": 1.0, "precision_mean": 1.0},
+            }),
+            3,
+        )
+        assert result.blocks_save(frozenset({"kept"}))
+        text = format_floor_breaches(result, frozenset({"kept"}))
+        assert "kept / sonnet:" in text
+        assert "current=0.556" in text
+        assert "new-case" not in text
+        assert "no floor record" not in text
+        assert "new-case: no floor record" in format_floor_breaches(result)
+
     def test_deleting_a_decayed_recall_mean_still_breaches(self):
         baseline = _baseline(INCIDENT_ENTRY, 0.556)
         del baseline["entries"][INCIDENT_ENTRY]["recall_mean"]
@@ -193,6 +212,13 @@ class TestCompareAgainstFloors:
         )
         assert not result.ok
         assert INCIDENT_ENTRY in result.dropped_entries
+
+
+class TestLoadPriorEntryNames:
+    def test_corrupt_file_raises_rather_than_returning_empty(self, tmp_path):
+        (tmp_path / "claude-sonnet.json").write_text("{partial\n")
+        with pytest.raises(ValueError, match="unreadable baseline"):
+            load_prior_entry_names(tmp_path, "claude", "sonnet")
 
 
 class TestFloorDocumentGrammar:
@@ -479,6 +505,62 @@ class TestSaveBaselinesRefusesRegression:
         assert path.read_text() == original
         floors = json.loads((results / "floors.json").read_text())
         assert "orphan" not in floors["backends"][STEM]
+
+    def test_corrupt_on_disk_baseline_refuses_save(self, em, tmp_path):
+        results = tmp_path / "results"
+        results.mkdir()
+        path = results / "claude-sonnet.json"
+        original = "{partial\n"
+        path.write_text(original)
+        (results / "floors.json").write_text(json.dumps({
+            "schema_version": 1,
+            "backends": {STEM: {INCIDENT_ENTRY: {
+                "recall_mean": {"floor": 1.0, "best": 1.0},
+            }}},
+        }) + "\n")
+        output = {
+            "backend": "claude", "effort": "low", "runs_per_entry": 3,
+            "entries": {
+                INCIDENT_ENTRY: {"sonnet": _complete_metrics(1.0)},
+                "new-case": {"sonnet": _complete_metrics(1.0)},
+            },
+        }
+        code = em._run_post_eval(_save_args(results), output, tmp_path)
+        assert code != 0
+        assert path.read_text() == original
+        floors = json.loads((results / "floors.json").read_text())
+        assert "new-case" not in floors["backends"][STEM]
+
+    def test_save_messages_partition_first_floors_from_regressions(self, tmp_path):
+        results = tmp_path / "results"
+        results.mkdir()
+        kept = _complete_metrics(1.0)
+        (results / "claude-sonnet.json").write_text(json.dumps({
+            "backend": "claude", "model": "sonnet",
+            "entries": {INCIDENT_ENTRY: kept},
+        }) + "\n")
+        (results / "floors.json").write_text(json.dumps({
+            "schema_version": 1,
+            "backends": {STEM: {INCIDENT_ENTRY: {
+                "recall_mean": {"floor": 1.0, "best": 1.0},
+            }}},
+        }) + "\n")
+        output = {
+            "backend": "claude", "effort": "low", "runs_per_entry": 3,
+            "entries": {
+                INCIDENT_ENTRY: {"sonnet": _complete_metrics(0.556)},
+                "new-case": {"sonnet": kept},
+            },
+        }
+        code, lines = save_floor_gate_messages(results, output, [])
+        text = "\n".join(lines)
+        assert code == 2
+        assert "floor regressions:" in text
+        regress, _, rest = text.partition("establishing first floors:")
+        assert rest, text
+        assert "new-case" not in regress
+        assert "current=0.556" in regress
+        assert "new-case" in rest
 
     def test_seed_floors_prints_a_warning_when_it_reseeds(
         self, em, tmp_path, capsys,

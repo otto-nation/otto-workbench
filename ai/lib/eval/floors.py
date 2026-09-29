@@ -554,11 +554,25 @@ def load_prior_entry_names(
 
     A missing file is a new backend (or first save): no names. Distinguishes
     a new corpus case from a floor deleted under an existing entry.
+
+    A file that cannot be read raises ValueError. Treating it as empty would
+    classify every existing entry as a new case and let a save through.
     """
     path = Path(results_dir) / f"{baseline_stem(backend, model)}.json"
     if not path.is_file():
         return frozenset()
-    data = json.loads(path.read_text())
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        raise ValueError(
+            f"unreadable baseline {path.name}: {exc}; "
+            "refusing to treat existing entries as new cases",
+        ) from exc
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"unreadable baseline {path.name}: expected object, got "
+            f"{type(data).__name__}; refusing to treat existing entries as new cases",
+        )
     return frozenset(data.get("entries") or {})
 
 
@@ -615,7 +629,8 @@ def save_floor_gate_messages(
 
     Unfloored names absent from the on-disk baseline are first floors and
     do not refuse the save; `ratchet_floors` writes them. Unfloored names
-    already on disk are a deleted floor and still refuse.
+    already on disk are a deleted floor and still refuse. An unreadable
+    on-disk baseline is unknown, not empty, and refuses the save.
     """
     directory = Path(results_dir)
     path = floors_path(directory)
@@ -629,13 +644,18 @@ def save_floor_gate_messages(
     runs = int(output.get("runs_per_entry") or 1)
     for baseline in baselines_from_output(output):
         comparison = compare_against_floors(floors, baseline, runs)
-        prior = load_prior_entry_names(
-            directory,
-            str(baseline.get("backend", "")),
-            str(baseline.get("model", "")),
-        )
+        try:
+            prior = load_prior_entry_names(
+                directory,
+                str(baseline.get("backend", "")),
+                str(baseline.get("model", "")),
+            )
+        except ValueError as exc:
+            lines.append(str(exc))
+            code = 2
+            continue
         blocking = comparison.blocks_save(prior)
-        printed = format_floor_breaches(comparison)
+        printed = format_floor_breaches(comparison, prior)
         if comparison.stale_reasons:
             lines.append("floor notices:")
             lines.append(printed)
@@ -643,18 +663,24 @@ def save_floor_gate_messages(
             lines.append("floor regressions:")
             lines.append(printed)
             code = 2
-            continue
         first = tuple(
             name for name in comparison.unfloored_entries if name not in prior
         )
-        if not first:
-            continue
-        lines.append("establishing first floors:")
-        lines.extend(f"  {name}" for name in first)
+        if first:
+            lines.append("establishing first floors:")
+            lines.extend(f"  {name}" for name in first)
     return code, tuple(lines)
 
 
-def format_floor_breaches(comparison: FloorComparison) -> str:
+def format_floor_breaches(
+    comparison: FloorComparison,
+    prior_entries: Container[str] | None = None,
+) -> str:
+    """Render comparison failures. Validator callers omit *prior_entries*.
+
+    When *prior_entries* is given, unfloored names absent from it are first
+    floors and are left out — they are not regressions.
+    """
     lines: list[str] = []
     for breach in comparison.breaches + comparison.aggregate_breaches:
         lines.append(
@@ -663,6 +689,8 @@ def format_floor_breaches(comparison: FloorComparison) -> str:
             f"std={breach.std:g} tolerance={breach.tolerance:g}",
         )
     for name in comparison.unfloored_entries:
+        if prior_entries is not None and name not in prior_entries:
+            continue
         lines.append(f"  {name}: no floor record")
     for name in comparison.dropped_entries:
         lines.append(f"  {name}: dropped from baseline")

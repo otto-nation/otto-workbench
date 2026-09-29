@@ -532,6 +532,7 @@ class TestGuardEnv:
 
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
     def test_the_worktree_is_the_invocation_cwd(self, monkeypatch, tmp_path, entry_point):
+        monkeypatch.delenv("REVIEW_WORKTREE_DIR", raising=False)
         seen = {}
         monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
         getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
@@ -542,6 +543,7 @@ class TestGuardEnv:
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
     def test_add_dirs_reach_the_guard(self, monkeypatch, tmp_path, entry_point):
         """The artifact dir is outside the worktree, and must still be writable."""
+        monkeypatch.delenv("REVIEW_ALLOWED_DIRS", raising=False)
         artifact = tmp_path / "reviews" / "pr-42"
         worktree = tmp_path / "wt"
         seen = {}
@@ -557,6 +559,7 @@ class TestGuardEnv:
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
     def test_no_add_dirs_leaves_the_list_unset(self, monkeypatch, tmp_path, entry_point):
         """An empty value would split to [''] and allow a relative path anywhere."""
+        monkeypatch.delenv("REVIEW_ALLOWED_DIRS", raising=False)
         seen = {}
         monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
         getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(

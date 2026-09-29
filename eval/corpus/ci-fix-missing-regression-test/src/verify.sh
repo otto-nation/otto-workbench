@@ -12,7 +12,7 @@ fail() {
   exit 1
 }
 
-cd "$here"
+cd "$here" || exit
 cp "$here/bounds.py" "$work_root/bounds.py.bak"
 
 env -u PYTEST_CURRENT_TEST -u PYTEST_ADDOPTS pytest test_in_range.py > "$work_root/before.txt" 2>&1

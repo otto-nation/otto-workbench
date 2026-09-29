@@ -14,7 +14,7 @@ fail() {
 
 export MKTEMP_LOG="$work_root/created"
 : > "$MKTEMP_LOG"
-PATH="$here/stubs/record:/usr/bin:/bin"
+export PATH="$here/stubs/record:/usr/bin:/bin"
 
 out=$(bash "$here/prepare.sh") || fail "prepare.sh failed on the success path"
 [[ "$out" == "ready" ]] || fail "prepare.sh did not print the marker on success"

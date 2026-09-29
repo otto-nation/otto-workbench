@@ -13,7 +13,7 @@ fail() {
 }
 
 cp "$here/run_ci.sh" "$here/suite.sh" "$work_root/"
-cd "$work_root"
+cd "$work_root" || exit
 
 SUITE_EXIT=1 bash ./run_ci.sh > wrap.out 2>&1
 rc=$?

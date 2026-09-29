@@ -216,12 +216,13 @@ def call_entry_point(handler: str, argv: list[str], **kwargs) -> int:
 
 
 def exit_code_of(value: object) -> int:
-    """An exit code from whatever an entry point returned or exited with.
+    """Turn an entry point's return value (or `SystemExit.code`) into a returncode.
 
-    CPython's own rule for the argument to `sys.exit`, which is the rule a
-    caller reading a returncode was already getting: None is success, an int
-    is itself, and anything else is a message printed to stderr with a
-    failing status.
+    `None` means success and returns 0. An `int` is already a returncode and
+    is returned as-is. Anything else is logged to stderr and reported as a
+    failing status (1) — the same rule CPython applies to the argument of
+    `sys.exit`, so a caller of this function sees the same behaviour it
+    would have gotten from an uncaught `SystemExit`.
     """
     if value is None:
         return 0

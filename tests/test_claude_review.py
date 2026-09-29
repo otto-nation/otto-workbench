@@ -284,6 +284,9 @@ def test_format_usage_model_usage_tokens(cr, tmp_path):
 # ── json_summary ──────────────────────────────────────────────────────────────
 
 
+_FD_PROBE_RANGE = 256  # comfortably above what a test process opens
+
+
 def _open_fd_count() -> int:
     """How many descriptors this process holds open.
 
@@ -293,7 +296,7 @@ def _open_fd_count() -> int:
     """
     import fcntl
     open_fds = 0
-    for fd in range(256):
+    for fd in range(_FD_PROBE_RANGE):
         try:
             fcntl.fcntl(fd, fcntl.F_GETFD)
         except OSError:

@@ -46,6 +46,7 @@ from cli.schema import (
     EXIT_USAGE,
     checked_schema_version,
     schema_contracts,
+    subcommand_schema,
     tool_schema,
 )
 from pr import context as pr_context
@@ -282,10 +283,19 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
 
     # Before the interrupt handler and before any parse: the MCP server runs
-    # `ai/bin/pr --tool-schema` to discover the tool, and that probe must not
+    # `ai/bin/pr --tool-schema` to discover the tool, and that must not
     # resolve a context or take a lock to answer a question about syntax.
+    #
+    # A subcommand named ahead of the flag answers for itself. `pr ci
+    # --tool-schema` reports `CIDomain` where `pr --tool-schema` reports the
+    # union, which declares no output schema at all because eight of the nine
+    # print prose. Without this the two documents are reachable by one string
+    # and the narrower one by none, so a skill cannot cite the contract it
+    # depends on.
     if "--tool-schema" in argv:
-        json.dump(tool_schema(), sys.stdout, indent=2)
+        named = next((a for a in argv if not a.startswith("-")), "")
+        doc = subcommand_schema(named) if named else None
+        json.dump(doc or tool_schema(), sys.stdout, indent=2)
         sys.stdout.write("\n")
         return 0
 

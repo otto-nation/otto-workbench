@@ -120,7 +120,7 @@ Diagnose and fix GitHub Actions CI failures with run-aware progression tracking:
 ```
 /ci-failures [<pr_number_or_run_id_or_branch>]
 ```
-**Output schema:** `ci-check --tool-schema` (MCP tool: `ci-check`)
+**Output schema:** `pr ci --tool-schema`
 **Trigger:** Use when user asks about CI failures, broken builds, failing checks, or wants to fix CI on their PR branch; CI checks fail after a push; user asks why CI is red.
 **Skip:** Do not use for code review (use code-review or pr review instead); do not use for addressing PR review comments (use pr-comments instead).
 
@@ -177,7 +177,7 @@ AI-assisted rebase onto the branch's base with conflict resolution and force pus
 ```
 /pr-rebase [branch] [--no-fix] [--no-push] [--force] [--onto|--base <ref>]
 ```
-**Output schema:** `pr-rebase --tool-schema` (MCP tool: `pr-rebase`)
+**Output schema:** `pr rebase --tool-schema`
 **Trigger:** Use when user asks to rebase a branch, resolve rebase conflicts, update a branch against its base, or fix merge conflicts during rebase.
 **Skip:** Do not use for simple git pull --rebase with no conflicts. Do not use for commit rewording (use task commit:reword instead).
 

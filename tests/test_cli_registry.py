@@ -7,6 +7,7 @@ it, and whether it takes a target are all readable without executing anything.
 """
 
 import importlib
+import json
 import subprocess
 import sys
 import ast
@@ -201,6 +202,48 @@ def test_a_delegate_reports_its_own_output_contract(command):
     assert "output_schema" in doc
     assert doc["output_schema"]["type"] == "object"
     assert doc["output_schema"]["properties"], "an empty contract is not a contract"
+
+
+def test_a_named_subcommand_answers_the_flag_for_itself(tmp_path):
+    """`pr ci --tool-schema` is the string the skill docs tell a reader to run.
+
+    Without this the narrower document is reachable by no invocation at all:
+    the flag is read before dispatch, so `pr ci --tool-schema` used to return
+    the union — a schema with no `output_schema`, for a command that has one.
+    """
+    out = subprocess.run(
+        [str(BIN_DIR / "pr"), "ci", "--tool-schema"],
+        capture_output=True, text=True, timeout=timeouts.QUICK, check=True,
+    )
+    doc = json.loads(out.stdout)
+    assert doc["name"] == "pr ci"
+    assert doc["output_schema"]["properties"], "the subcommand's contract is missing"
+
+
+def test_the_bare_flag_still_answers_for_the_whole_command(tmp_path):
+    """MCP discovery reads this one, and a subcommand must not shadow it."""
+    out = subprocess.run(
+        [str(BIN_DIR / "pr"), "--tool-schema"],
+        capture_output=True, text=True, timeout=timeouts.QUICK, check=True,
+    )
+    doc = json.loads(out.stdout)
+    assert doc["name"] == "pr"
+    assert "output_schema" not in doc
+    assert doc["input_schema"]["properties"]["command"]["enum"] == _DISPLAY_ORDER
+
+
+def test_a_command_with_no_contract_falls_back_to_the_union():
+    """`pr status --tool-schema` answers rather than failing.
+
+    `status` reports no subcommand schema, and a consumer that asked for one
+    is better served the union than an error: the flag is a discovery
+    protocol, and refusing mid-handshake is the failure it exists to avoid.
+    """
+    out = subprocess.run(
+        [str(BIN_DIR / "pr"), "status", "--tool-schema"],
+        capture_output=True, text=True, timeout=timeouts.QUICK, check=True,
+    )
+    assert json.loads(out.stdout)["name"] == "pr"
 
 
 def test_the_union_schema_still_declares_no_output_contract():

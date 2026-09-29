@@ -120,7 +120,7 @@ _validate_skill_agent() {
 
 _validate_output_schema() {
   local skill_file="$1" display="$2"
-  local has_os tool_name tool_script schema_out
+  local has_os tool_name tool_script schema_out subcommand
   has_os=$(awk 'NR==1 && /^---$/ { in_fm=1; next } in_fm && /^---$/ { exit } in_fm && /^output_schema:/ { print "yes"; exit }' "$skill_file")
   [[ "$has_os" == "yes" ]] || return 0
 
@@ -135,18 +135,39 @@ _validate_output_schema() {
     return
   fi
 
-  tool_script="$WORKBENCH_DIR/ai/bin/$tool_name"
-  if [[ ! -x "$tool_script" ]]; then
-    tool_script="$WORKBENCH_DIR/ai/claude/bin/$tool_name"
-  fi
-  if [[ ! -x "$tool_script" ]]; then
-    _fail "$display: output_schema tool '$tool_name' not found in ai/bin/ or ai/claude/bin/"
-    return
-  fi
+  # A `pr` subcommand answers from the registry, in one interpreter, rather
+  # than by running anything. That is what lets a skill name the invocation a
+  # user types — `pr ci` — instead of `ai/bin/ci-check`, which is a shim the
+  # skill's reader has no reason to know exists.
+  if [[ "$tool_name" == pr\ * ]]; then
+    local subcommand="${tool_name#pr }"
+    if ! schema_out=$(WORKBENCH_DIR="$WORKBENCH_DIR" python3 -c '
+import json, sys
+sys.path.insert(0, sys.argv[1] + "/ai/lib")
+from cli.schema import subcommand_schema
+doc = subcommand_schema(sys.argv[2])
+if doc is None:
+    sys.exit(1)
+json.dump(doc, sys.stdout)
+' "$WORKBENCH_DIR" "$subcommand" 2>/dev/null); then
+      _fail "$display: output_schema tool '$tool_name' declares no schema — \
+a pr subcommand reports one only when its delegate's parser is a ToolParser"
+      return
+    fi
+  else
+    tool_script="$WORKBENCH_DIR/ai/bin/$tool_name"
+    if [[ ! -x "$tool_script" ]]; then
+      tool_script="$WORKBENCH_DIR/ai/claude/bin/$tool_name"
+    fi
+    if [[ ! -x "$tool_script" ]]; then
+      _fail "$display: output_schema tool '$tool_name' not found in ai/bin/ or ai/claude/bin/"
+      return
+    fi
 
-  if ! schema_out=$("$tool_script" --tool-schema 2>/dev/null); then
-    _fail "$display: output_schema tool '$tool_name' does not support --tool-schema"
-    return
+    if ! schema_out=$("$tool_script" --tool-schema 2>/dev/null); then
+      _fail "$display: output_schema tool '$tool_name' does not support --tool-schema"
+      return
+    fi
   fi
 
   # Exit 0 alone proves nothing — a script that ignores unknown flags also exits 0.

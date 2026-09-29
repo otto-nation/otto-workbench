@@ -267,6 +267,13 @@ class TestRetryBlankResponse:
 # because a kind that nobody classified silently defaults to "give up".
 _RETRY_POLICY = {
     DiagnosisKind.MAX_TURNS: (True, agent_retry.RETRY_HINT, DEFAULT_RETRY_CEILING),
+    # Retryable on the same reading as MAX_TURNS, but with neither of its two
+    # concessions. The hint tells an agent it ran out of turns and to write
+    # first, which is false here and would push a run that had plenty of
+    # budget into rushing; and the raised ceiling answers exhaustion, which a
+    # stalled run did not suffer — it spent nothing, so its own budget is
+    # already what it needs.
+    DiagnosisKind.STALLED: (True, "", _TURNS),
     DiagnosisKind.COMPLETED: (False, "", _TURNS),
     DiagnosisKind.AGENT_ERROR: (False, "", _TURNS),
     DiagnosisKind.TRANSIENT: (True, "", _TURNS),

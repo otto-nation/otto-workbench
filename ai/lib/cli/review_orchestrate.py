@@ -96,7 +96,8 @@ SCRIPT = "review-orchestrate"
 _SUBMODULES = (
     _ad, _ai, _aph, _au, _rpmt, _rprior, _rpsec, _rreg, _ra, _rpl, _rfx, _rgc,
     _rpath, _rph, _rstp, _rout, _rrt, _rst, _rt,
-    ai_backend, log, module_proxy, pr_state, pr_target, proc, publishing,
+    ai_backend, log, module_proxy, numstat, pr_state, pr_target, proc,
+    publishing,
 )
 
 module_proxy.install(__name__, _SUBMODULES)

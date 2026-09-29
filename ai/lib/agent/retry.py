@@ -35,8 +35,16 @@ from agent.session import diagnose_missing_output, try_recover_output
 # Kinds a second attempt could plausibly clear. Turn exhaustion and a run that
 # never called a write tool are the two the hints address directly; the rest are
 # faults in the run's surroundings rather than in the run itself.
+#
+# A stall belongs here on the same reading: the run was ended by the watch
+# rather than by anything it had spent, so a second attempt has its full budget
+# and the wedged call is usually not reproduced. It is also the strictly worse
+# outcome of the two endings that produce no file, and treating the worse one
+# as final while retrying the better one is the asymmetry this set exists to
+# avoid.
 _RETRYABLE_KINDS = frozenset({
     DiagnosisKind.MAX_TURNS,
+    DiagnosisKind.STALLED,
     DiagnosisKind.NO_RESULT_RECORD,
     DiagnosisKind.NO_SESSION_LOG,
     DiagnosisKind.TRANSIENT,

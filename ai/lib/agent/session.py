@@ -108,6 +108,11 @@ def _diagnose_result_type(result: dict, records: list[dict] | None = None) -> Di
     subtype = result.get("subtype", "")
     if "max_turns" in subtype:
         return Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=result.get("num_turns"))
+    # Beside max_turns and above the error check for the same reason it is: a
+    # stall is a verdict the harness reached about the run, and the aborted
+    # last turn it leaves behind would otherwise read as a crash in it.
+    if "stalled" in subtype:
+        return Diagnosis(DiagnosisKind.STALLED, num_turns=result.get("num_turns"))
     if result.get("is_error"):
         errors = result.get("errors", [])
         detail = errors[0] if errors else result.get("result", result.get("error", "unknown"))

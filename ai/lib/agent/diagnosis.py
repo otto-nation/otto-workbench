@@ -28,6 +28,12 @@ class DiagnosisKind(StrEnum):
     """
 
     MAX_TURNS = "max_turns"
+    # A tool call that stopped doing anything, ended by the stall watch rather
+    # than by a cap. Its own kind because the decision it drives differs from
+    # every neighbour: unlike MAX_TURNS the run had budget left, and unlike
+    # COMPLETED it did not end on its own terms, so a second attempt is worth
+    # making. `agent.stall` says how one is told from a slow run.
+    STALLED = "stalled"
     COMPLETED = "completed"
     AGENT_ERROR = "agent_error"
     TRANSIENT = "transient"
@@ -76,6 +82,7 @@ _AGENT_ERROR_PREFIX = "agent error:"
 _NON_RECOVERABLE_ERROR_MARKERS = ("permission denied", "prompt is too long")
 
 _DIAGNOSIS_MESSAGES = {
+    DiagnosisKind.STALLED: "stalled (no output and no CPU)",
     DiagnosisKind.QUOTA_EXHAUSTED: "quota exhausted (429)",
     DiagnosisKind.NO_SESSION_LOG: "no session log found",
     DiagnosisKind.NO_RESULT_RECORD: "no result record in session log",

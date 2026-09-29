@@ -826,6 +826,30 @@ class TestBuildMechanicalFallback:
         assert "in 3 groups" in result.body
         assert " of 3 groups" not in result.body
 
+    def test_a_run_where_every_group_failed_claims_nothing(self, ro, tmp_path):
+        """The worst case, and the one the partial guard did not cover.
+
+        `partial` was `failed > 0 and failed < group_count`, false both when
+        nothing failed and when everything did — so a run whose every group
+        died took the full-coverage wording and shipped "No findings across 13
+        files in 3 groups" over 13 files nothing read. Observed on this branch:
+        three groups hit the turn cap, and the review reported a clean read of
+        all of them above a failures table listing all three.
+        """
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+        from review.state import PipelineState
+
+        state = PipelineState(group_names=["a", "b", "c"])
+        for n in range(3):
+            state.groups_failed[n] = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=15)
+        result = ro._build_mechanical_fallback(
+            self._partial_job(ro, tmp_path), 3, "", pipeline_state=state,
+        )
+
+        assert "in 0 of 3 groups" in result.body
+        assert "No findings" not in result.body
+        assert "No group reported" in result.body
+
 
 # ── 33. _write_clean_review ─────────────────────────────────────────────────
 

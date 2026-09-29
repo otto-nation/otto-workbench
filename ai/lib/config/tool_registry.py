@@ -93,10 +93,11 @@ class RegistryEntry:
 def load_registry_entries(root: Path | str) -> dict[Path, RegistryEntry]:
     """Map every registered script under *root* to what its registry says.
 
-    Keys are resolved absolute paths, so a caller holding a script path can ask
-    about it directly. A script with no key here is registered nowhere, which
-    the MCP server treats the same as hidden and
-    ``bin/local/validate-tool-schema`` treats as a build failure.
+    Keys are resolved absolute paths, so a caller holding a script path can
+    ask about it directly. A script with no key here is registered nowhere,
+    and the MCP server offers only what this mapping names — discovery reads
+    it rather than scanning directories, so an unregistered script is not a
+    tool by construction rather than by a filter applied afterwards.
     """
     base = Path(root)
     entries: dict[Path, RegistryEntry] = {}
@@ -121,9 +122,10 @@ def _bindir_entries(base: Path, path: Path) -> dict[Path, RegistryEntry]:
 
     A registry that will not parse, or that is not shaped like one, names
     nothing. Its scripts are then unregistered rather than taking the whole
-    mapping down with them — every other component keeps its tools, and the two
-    callers each say so in their own terms: the server logs the skip per
-    script, and ``bin/local/validate-tool-schema`` fails the build.
+    mapping down with them — every other component keeps its tools, and the
+    server logs the skip per script. ``bin/local/validate-registries`` is
+    what fails the build on a malformed one, statically, before anything
+    reads it here.
     """
     try:
         document = read_yaml(path)

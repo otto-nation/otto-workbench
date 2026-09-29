@@ -35,6 +35,12 @@ from cli.pr_commands import (
     cmd_status,
 )
 from cli.registry import COMMANDS, need_for
+from cli.schema import (
+    EXIT_USAGE,
+    checked_schema_version,
+    schema_contracts,
+    tool_schema,
+)
 from pr import context as pr_context
 from pr import state as pr_state
 from pr import sync as pr_sync
@@ -113,25 +119,6 @@ def _invocation(command: str, argv: list[str]) -> str:
     return " ".join(filter(None, [SCRIPT, command, *modes[:1]]))
 
 
-def _schema_contracts() -> list[str]:
-    """Every invocation that serves a versioned document, as a user types it.
-
-    Derived from the mode table so the error naming them cannot list an
-    invocation that no longer serves one. `review` is the only command with
-    modes today; a second one gets a branch here rather than a second table.
-    """
-    return [f"pr review {flag}" for flag, mode in review_modes.MODES.items()
-            if mode.schema_versions]
-
-
-def _served_schema_versions(command: str, argv: list[str]) -> tuple[int, ...]:
-    """The row-schema versions *command* can serve for this argv, if any."""
-    if command != "review":
-        return ()
-    modes = review_modes.flags_given(argv)
-    return review_modes.MODES[modes[0]].schema_versions if modes else ()
-
-
 def cmd_comments(argv: list[str], ctx: pr_context.ResolvedContext, *,
                  original_pr: str | None = None,
                  original_branch: str | None = None,
@@ -185,7 +172,7 @@ def _build_usage() -> str:
         f"  {name:<{max_name + 2}}{spec.help}"
         for name, spec in COMMANDS.items()
     )
-    contracts = ", ".join(_schema_contracts())
+    contracts = ", ".join(schema_contracts())
     versions = ", ".join(str(v) for v in review_listing.SCHEMA_VERSIONS)
     return f"""\
 pr — PR lifecycle management
@@ -205,61 +192,6 @@ Contract flags:
                       human table. Honored by {contracts}; serving {versions}.
 
 Run 'pr <command> -h' for details on a specific command."""
-
-
-def _tool_schema() -> dict:
-    """Build --tool-schema output for the pr command.
-
-    No ``output_schema``. One of the nine subcommands prints a ``PRState``
-    document, and not even that one before a state file exists — so declaring
-    the schema for every invocation made the MCP server reject the other eight
-    for printing no JSON object. Per-subcommand output schemas are the real
-    fix and belong to #909; until then the honest contract is none.
-    """
-    return {
-        "name": SCRIPT,
-        "description": "Unified PR lifecycle CLI — CI, review, comments, rebase",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "enum": list(COMMANDS),
-                    "description": "Subcommand to run",
-                },
-                "repo_dir": {"type": "string", "description": "Git worktree directory", "x-context": True},
-                "branch": {"type": "string", "description": "Branch name", "x-context": True},
-                "pr": {"type": "string", "description": "PR number or URL", "x-context": True},
-            },
-            "required": ["command"],
-        },
-    }
-
-
-# argparse's own exit code for a usage error: the caller asked for something in
-# terms this build cannot answer in. Distinct from 1, so a consumer can tell
-# "we cannot answer that" from "the command ran and failed".
-EXIT_USAGE = 2
-
-
-def _checked_schema_version(value: str, command: str, argv: list[str]) -> int:
-    """The declared schema version, or exit naming what this build does serve.
-
-    Checked on every call, so a consumer whose vendored version this build has
-    dropped fails at the handshake rather than on the first field that moved
-    under it. Never ignored: silently serving a human table to a caller that
-    asked for a contract is the failure the whole change exists to remove.
-    """
-    served = _served_schema_versions(command, argv)
-    if not served:
-        log.error(f"{SCRIPT}: --schema-version is served by "
-                  f"{', '.join(_schema_contracts())}, not by this command")
-        sys.exit(EXIT_USAGE)
-    if value not in {str(v) for v in served}:
-        log.error(f"{SCRIPT}: unsupported --schema-version {value!r} — "
-                  f"this build serves {', '.join(str(v) for v in served)}")
-        sys.exit(EXIT_USAGE)
-    return int(value)
 
 
 def _reject_a_target_that_resolves_to_nothing(
@@ -328,7 +260,7 @@ def _dispatch(args, ctx: pr_context.ResolvedContext, extra: list[str], global_ar
 
 def main():
     if "--tool-schema" in sys.argv:
-        json.dump(_tool_schema(), sys.stdout, indent=2)
+        json.dump(tool_schema(), sys.stdout, indent=2)
         sys.stdout.write("\n")
         sys.exit(0)
 
@@ -413,7 +345,7 @@ def main():
             extra.pop(idx)
 
     if global_args.schema_version is not None:
-        global_args.schema_version = _checked_schema_version(
+        global_args.schema_version = checked_schema_version(
             global_args.schema_version, args.command, extra,
         )
 

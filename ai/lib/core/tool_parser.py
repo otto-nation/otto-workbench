@@ -105,13 +105,20 @@ class ToolParser(ArgumentParser):
             args = sys.argv[1:]
 
         if "--tool-schema" in args:
-            json.dump(self._build_schema(), sys.stdout, indent=2)
+            json.dump(self.build_schema(), sys.stdout, indent=2)
             sys.stdout.write("\n")
             sys.exit(0)
 
         return super().parse_args(args, namespace)
 
-    def _build_schema(self) -> dict:
+    def build_schema(self) -> dict:
+        """This parser's tool-schema document.
+
+        Public because the flag is not the only way to ask any more:
+        `cli.schema.subcommand_schema` imports the delegate's parser and
+        reads it in-process, which is how `pr ci` reports the `CIDomain`
+        contract that `pr --tool-schema` cannot carry for all nine at once.
+        """
         schema: dict = {
             "name": self.prog or "",
             "description": self.description or "",

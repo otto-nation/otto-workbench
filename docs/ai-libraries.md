@@ -5219,6 +5219,35 @@ Usage:
   review-threads --settle THREAD_ID [--as fixed|dismissed|already_addressed]
   review-threads --finish
 
+### cli/schema.py
+
+What `pr` tells a machine consumer about itself.
+
+Three related documents, all of them derived rather than written down twice:
+
+* the **tool schema** an MCP client reads to know what `pr` accepts;
+* the **schema contracts** — which invocations serve a versioned document
+  rather than a human table;
+* the **per-subcommand schema**, which is a delegate's own parser answering
+  for itself.
+
+That last one is the part D2 specified and nothing built. `pr --tool-schema`
+answers for the whole command and has no `output_schema`, because one of the
+nine subcommands prints a `PRState` document and the other eight print prose
+— declaring one schema for all nine made the MCP server reject the eight. So
+the honest per-command contract is the delegate's, and `subcommand_schema`
+is how a consumer asks for it.
+
+A consumer that wants the union asks `pr --tool-schema`; one that wants to
+know what `pr ci` returns asks for that subcommand by name. Neither is a
+second declaration: the enum comes from `cli.registry.COMMANDS`, the output
+schema from the delegate's own `ToolParser`, and a subcommand that grows a
+flag says so in both without anyone editing this module.
+
+`SCRIPT` is the literal `"pr"` rather than anything derived from `__file__`.
+This module is `schema.py`, and a tool name taken from its own filename would
+advertise the wrong command.
+
 ### cli/wiki.py
 
 Mechanical operations over a compiled knowledge base.

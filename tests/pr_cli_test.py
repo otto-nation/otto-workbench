@@ -30,6 +30,7 @@ pr_cli = load_script("pr_cli", BIN_DIR / "pr")
 from cli import dispatch  # noqa: E402
 from cli import pr_commands  # noqa: E402
 from cli import registry  # noqa: E402
+from cli import schema  # noqa: E402
 from core import proc  # noqa: E402
 from core import publishing  # noqa: E402
 from core import run_lock  # noqa: E402
@@ -1153,7 +1154,7 @@ def test_delegate_value_flags_answers_from_the_delegates_own_parser():
 
 def test_every_command_with_a_delegate_has_a_parser_factory():
     """A delegate `pr` cannot read arity from misclassifies its own target."""
-    assert (set(dispatch._PARSER_FACTORIES)
+    assert (set(dispatch.PARSER_FACTORIES)
             == {name for name, spec in registry.COMMANDS.items() if spec.script})
 
 
@@ -1167,11 +1168,11 @@ def test_a_parser_factory_takes_no_arguments(command):
     `pr`'s positional scan rather than from the delegate that owns it. Nothing
     else makes this contract structural.
 
-    Parametrized over the registry rather than over `_PARSER_FACTORIES`, whose
+    Parametrized over the registry rather than over `PARSER_FACTORIES`, whose
     absence at the merge base would fail collection for this whole file and
     take every other test's base result with it.
     """
-    factory = dispatch._PARSER_FACTORIES.get(command)
+    factory = dispatch.PARSER_FACTORIES.get(command)
     if factory is None:
         pytest.skip(f"{command} has no delegate parser")
     module_name, attr = factory.split(":", 1)
@@ -1393,7 +1394,7 @@ def test_a_command_with_no_delegate_declares_no_value_taking_flag(command):
         f"{command} has no delegate to read arity from — the value would be classified "
         f"as the command's target and dropped from the forwarded argv. Either give "
         f"{command} takes_target=False if it takes no positional target, or give it "
-        f"a delegate whose build_parser is registered in _PARSER_FACTORIES."
+        f"a delegate whose build_parser is registered in PARSER_FACTORIES."
     )
 
 
@@ -1923,11 +1924,11 @@ def test_a_command_serving_no_document_refuses_the_handshake(capsys):
 def test_the_schema_contracts_are_read_off_the_mode_table():
     """An error naming an invocation that no longer serves a document is worse
     than no error at all."""
-    assert pr_cli._schema_contracts() == ["pr review --list"]
-    assert pr_cli._served_schema_versions("review", ["--list"]) == \
+    assert schema.schema_contracts() == ["pr review --list"]
+    assert schema.served_schema_versions("review", ["--list"]) == \
         pr_cli.review_listing.SCHEMA_VERSIONS
-    assert pr_cli._served_schema_versions("review", ["--summary"]) == ()
-    assert pr_cli._served_schema_versions("status", []) == ()
+    assert schema.served_schema_versions("review", ["--summary"]) == ()
+    assert schema.served_schema_versions("status", []) == ()
 
 
 # ── push reconciliation ─────────────────────────────────────────────────────

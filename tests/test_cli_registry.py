@@ -24,6 +24,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from cli import registry  # noqa: E402
+from cli import schema  # noqa: E402
 from cli.needs import LOCAL, NONE, REMOTE, Need  # noqa: E402
 from cli.registry import COMMANDS, CommandSpec, need_for, validate_needs  # noqa: E402
 from core import timeouts, tool_parser  # noqa: E402
@@ -167,12 +168,71 @@ def test_the_declaration_order_is_the_display_order():
     assert [s.name for s in registry._SPECS] == declared
     assert list(COMMANDS) == declared
     assert list(tool_parser.subparsers(pr_cli._build_parser())) == declared
-    assert pr_cli._tool_schema()["input_schema"]["properties"]["command"]["enum"] \
+    assert schema.tool_schema()["input_schema"]["properties"]["command"]["enum"] \
         == declared
     usage = pr_cli._build_usage().splitlines()
     body = usage[usage.index("Commands:") + 1:]
     helped = [line.split()[0] for line in body[:len(declared)]]
     assert helped == declared
+
+
+# ── the per-subcommand schema ─────────────────────────────────────────────
+
+
+# The three delegates whose parser is a `ToolParser` and therefore declares an
+# output contract. Pinned as literals rather than derived from
+# `PARSER_FACTORIES`: deriving the expectation from the thing under test is
+# how a schema test passes while reporting nothing, and these three are the
+# reason `subcommand_schema` exists.
+_COMMANDS_WITH_AN_OUTPUT_CONTRACT = ("ci", "rebase", "describe")
+
+
+@pytest.mark.parametrize("command", _COMMANDS_WITH_AN_OUTPUT_CONTRACT)
+def test_a_delegate_reports_its_own_output_contract(command):
+    """`pr ci` answers with CIDomain, which `pr --tool-schema` cannot carry.
+
+    The union schema declares no `output_schema` at all: one subcommand
+    prints a document and eight print prose, so one declaration for all nine
+    made the MCP server reject the eight. This is the per-command answer, and
+    it is what lets a skill cite `pr ci` rather than `ai/bin/ci-check`.
+    """
+    doc = schema.subcommand_schema(command)
+
+    assert doc is not None, f"{command} declares a ToolParser but reported nothing"
+    assert doc["name"] == f"pr {command}", (
+        "the document names the invocation a user types, not the backing script"
+    )
+    assert "output_schema" in doc
+    assert doc["output_schema"]["type"] == "object"
+    assert doc["output_schema"]["properties"], "an empty contract is not a contract"
+
+
+def test_the_union_schema_still_declares_no_output_contract():
+    """Adding the per-command answer must not put a false one on the union."""
+    assert "output_schema" not in schema.tool_schema()
+
+
+def test_rebase_carries_the_exit_codes_that_are_not_failures():
+    """A refusal and a conflict are answers, and a consumer must not read
+    either as the command having broken."""
+    assert schema.subcommand_schema("rebase")["ok_exit_codes"] == [3, 4]
+
+
+@pytest.mark.parametrize("command", ["status", "fix", "create", "gc"])
+def test_a_command_pr_runs_itself_reports_no_subcommand_schema(command):
+    """No delegate parser, so nothing to report — the union already answered."""
+    assert schema.subcommand_schema(command) is None
+
+
+@pytest.mark.parametrize("command", ["review", "comments"])
+def test_a_delegate_without_a_declared_contract_reports_nothing(command):
+    """Honest silence beats an advertised contract the command does not keep.
+
+    Both have a delegate parser, but a plain `ArgumentParser`: they print
+    prose, not a document. Reporting a schema for them would be the same
+    overclaim the union schema avoids by declaring none.
+    """
+    assert schema.subcommand_schema(command) is None
 
 
 # ── declared dispatch needs ───────────────────────────────────────────────
@@ -331,7 +391,7 @@ def test_pr_help_imports_no_delegate():
     # (`cli.ci_check`, `cli.claude_review`, …) is the regression: those are
     # what `handler` keeps as a string so that dispatch, not import, pays.
     assert loaded <= {"cli.needs", "cli.registry", "cli.review_modes",
-                      "cli.pr_commands", "cli.dispatch"}, loaded
+                      "cli.pr_commands", "cli.dispatch", "cli.schema"}, loaded
 
 
 # ── process-level state belongs to the process ────────────────────────────

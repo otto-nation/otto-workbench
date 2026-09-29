@@ -54,7 +54,7 @@ from pr import context as pr_context
 # `review`'s handler is the wrapper that injects `--self` and routes the mode
 # flags, and it lives in a different module than the parser whose arity is
 # being asked about.
-_PARSER_FACTORIES = {
+PARSER_FACTORIES = {
     "ci": "cli.ci_check:build_parser",
     "review": "cli.claude_review:build_parser",
     "comments": "cli.review_threads:build_parser",
@@ -116,7 +116,7 @@ def delegate_value_flags(spec: CommandSpec) -> frozenset[str]:
     Commands with no delegate answer empty, which is the arity-blind scan
     `positional_index` degrades to.
     """
-    factory = _PARSER_FACTORIES.get(spec.name)
+    factory = PARSER_FACTORIES.get(spec.name)
     if factory is None:
         return frozenset()
     return frozenset(tool_parser.value_taking_options(resolve(factory)()))
@@ -155,7 +155,7 @@ def print_delegate_help(spec: CommandSpec) -> None:
     excluded by its caller: those declare their own flags, so argparse
     answers for them.
     """
-    factory = _PARSER_FACTORIES.get(spec.name)
+    factory = PARSER_FACTORIES.get(spec.name)
     if factory is None:
         return
     resolve(factory)().print_help()

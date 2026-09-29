@@ -312,6 +312,27 @@ def test_json_summary_restores_stdout_when_the_run_raises(cr, capfd):
     assert "the next pass's stdout" in capfd.readouterr().out
 
 
+def test_json_summary_stdout_survives_a_second_use_in_the_same_process(cr, capfd):
+    """`pr fix` runs review, then describe, in one process; both may redirect.
+
+    A single `dup2`/restore cycle is not enough evidence that the real fd is
+    unharmed by the first use: a bug that restored the wrong descriptor, or
+    consumed the saved one, would still pass the single-cycle tests above and
+    only show up once a second pass tried the same redirect.
+    """
+    with cr._json_summary_stdout(True):
+        print("review pass log line")
+
+    with cr._json_summary_stdout(True):
+        print("describe pass log line")
+
+    print("stdout after both passes")
+    captured = capfd.readouterr()
+    assert "stdout after both passes" in captured.out
+    assert "review pass log line" not in captured.out
+    assert "describe pass log line" not in captured.out
+
+
 def test_no_json_summary_leaves_stdout_alone(cr, capfd):
     with cr._json_summary_stdout(False) as fd:
         assert fd is None

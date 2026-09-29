@@ -93,9 +93,10 @@ def _run_main(*argv):
     mock_trail = MagicMock()
     # The old `pr_cli.subprocess.run` patch replaced the process-wide
     # `subprocess.run` (pr_cli imported the module), so git against the
-    # symbolic `/wt` worktree never ran. A missing-cwd answer here makes
-    # `update_to_remote` skip without swallowing the call that tests of the
-    # fetch axis still need to observe.
+    # symbolic `/wt` worktree never ran. Patching the branch check directly so
+    # `update_to_remote` treats the checkout as being on the wrong branch and
+    # returns early, without swallowing the call that tests of the fetch axis
+    # still need to observe.
     with patch("sys.argv", ["pr"] + list(argv)), \
          patch("pr_cli.Trail.start", return_value=mock_trail), \
          patch("pr.sync.git_topology.current_branch_quiet", return_value=None):
@@ -191,7 +192,8 @@ def test_run_delegate_returns_exit_code():
 
     The seam's own endings — `sys.exit`, a bare return, a message — are
     covered against real modules in `pr_comments_test.py`; this is the one
-    assertion that `dispatch.call` is wired to it at all.
+    assertion that `dispatch.delegate_argv`'s result is what reaches
+    `publishing.call_entry_point` at all.
     """
     ns = SimpleNamespace(main=lambda argv, **kw: 3)
     with patch("core.publishing.importlib.import_module", return_value=ns):
@@ -845,9 +847,9 @@ _SCRIPT_HANDLERS = {
 def _calls_containing(mock_call, script: str) -> list[list[str]]:
     """Argv lists for in-process calls of this former script.
 
-    Matched on the handler string `dispatch.call` received, not a suffix scan
-    across every argument: a --repo-dir whose path happened to end in a script
-    name would otherwise pass for an invocation of that script.
+    Matched on the handler string `publishing.call_entry_point` received, not a
+    suffix scan across every argument: a --repo-dir whose path happened to end
+    in a script name would otherwise pass for an invocation of that script.
     """
     handler = _SCRIPT_HANDLERS[script]
     return [

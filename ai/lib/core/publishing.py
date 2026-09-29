@@ -180,15 +180,17 @@ def call_entry_point(handler: str, argv: list[str], **kwargs) -> int:
     properties the process boundary was providing for free. Both were
     load-bearing and neither had another owner.
 
-    **However the callee ends, the caller gets an int.** A child that called
-    `sys.exit` was still just a returncode to its parent. In one process that
-    same call is a `SystemExit` unwinding through the caller: `pr fix`'s
-    review pass exiting 0 because the operator declined a prompt would take
-    the CI and describe passes with it and report success. `SystemExit` is
-    caught and converted by CPython's own rule — None is 0, an int is itself,
-    anything else prints and is 1. There are about thirty `sys.exit` sites
-    under `review/` and `pr/`, several of them legitimate for a library; one
-    guarantee here beats thirty conversions that a thirty-first would undo.
+    **However the callee *exits* — cleanly or via `sys.exit` — the caller gets
+    an int.** A child that called `sys.exit` was still just a returncode to its
+    parent. In one process that same call is a `SystemExit` unwinding through
+    the caller: `pr fix`'s review pass exiting 0 because the operator declined
+    a prompt would take the CI and describe passes with it and report success.
+    `SystemExit` is caught and converted by CPython's own rule — None is 0, an
+    int is itself, anything else prints and is 1. There are about thirty
+    `sys.exit` sites under `review/` and `pr/`, several of them legitimate for
+    a library; one guarantee here beats thirty conversions that a thirty-first
+    would undo. An arbitrary uncaught exception is not `sys.exit` and is not
+    converted: it propagates, same as it would with no seam here at all.
 
     **What the callee publishes is scoped to the callee**, via `scope()`.
 
@@ -224,6 +226,9 @@ def exit_code_of(value: object) -> int:
     if value is None:
         return 0
     if isinstance(value, int):
+        # `bool` is an `int` subclass, so `sys.exit(True)` and `sys.exit(False)`
+        # land here too and return 1 and 0 respectively — the same values
+        # CPython itself would use, so this is intentional rather than a gap.
         return value
     log.error(str(value))
     return 1

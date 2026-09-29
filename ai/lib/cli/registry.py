@@ -15,7 +15,10 @@ it is a user-visible change, not a cosmetic one.
 
 `handler` is a `"<module>:<attr>"` string resolved by importlib at dispatch,
 not a callable: an eager import would pull every delegate into `pr --help`.
-All nine name an importable function, and `cli.dispatch` is what calls them.
+All nine name an importable function, resolved and called through
+`core.publishing.call_entry_point` — by `cli.dispatch` for most of them, and
+directly by `ai/bin/pr`'s `cmd_review`/`cmd_comments` and by
+`cli.review_modes`'s `post`/`repair` for the rest.
 
 `script` outlives the spawn it used to name. Nothing in `pr` runs it any
 more — dispatch imports `handler` instead — but MCP still executes the shim

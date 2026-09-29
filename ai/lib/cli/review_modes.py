@@ -10,10 +10,12 @@ exactly that reason.
 process, through `core.publishing.call_entry_point` — the seam itself rather
 than `cli.dispatch`, which wraps it. These two build their own argv and want
 only the call, and reaching for the dispatcher would close a cycle:
-`cli.registry` imports this module for the one need an argv resolves. Both used to be spawns; `--repair` also used
-to capture the rebuild's stdout and grep it for a `REVIEW_SUMMARY:` marker,
-which `cli.review_rebuild` has never written — the domain is synced from the
-file the rebuild produced instead.
+`cli.registry` imports this module for the one need an argv resolves.
+
+Both used to be spawns; `--repair` also used to capture the rebuild's stdout
+and grep it for a `REVIEW_SUMMARY:` marker, which `cli.review_rebuild` has
+never written — the domain is synced from the file the rebuild produced
+instead.
 
 Handlers still take `bin_dir`. Nothing in this module spawns any more, but the
 four share one signature and `summary` never needed it either; the parameter

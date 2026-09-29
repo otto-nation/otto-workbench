@@ -60,10 +60,8 @@ def _is_pr_target(target: str | None) -> bool:
 
 
 
-# `cmd_review` and `cmd_comments` stay here rather than moving to
-# `cli.pr_commands`: both are `ai/bin/pr`'s own argv shaping ahead of a
-# delegate the registry already names, not commands in their own right.
-# `cmd_status` / `cmd_fix` / `cmd_create` / `cmd_gc` are the four that are.
+# `cmd_review` and `cmd_comments` stay here; see `cli.pr_commands`'s module
+# docstring for why (and for which four subcommands moved there instead).
 
 def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
                original_pr: str | None = None,

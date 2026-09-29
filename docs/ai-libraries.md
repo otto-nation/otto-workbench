@@ -4887,7 +4887,10 @@ it is a user-visible change, not a cosmetic one.
 
 `handler` is a `"<module>:<attr>"` string resolved by importlib at dispatch,
 not a callable: an eager import would pull every delegate into `pr --help`.
-All nine name an importable function, and `cli.dispatch` is what calls them.
+All nine name an importable function, resolved and called through
+`core.publishing.call_entry_point` — by `cli.dispatch` for most of them, and
+directly by `ai/bin/pr`'s `cmd_review`/`cmd_comments` and by
+`cli.review_modes`'s `post`/`repair` for the rest.
 
 `script` outlives the spawn it used to name. Nothing in `pr` runs it any
 more — dispatch imports `handler` instead — but MCP still executes the shim
@@ -4909,10 +4912,12 @@ exactly that reason.
 process, through `core.publishing.call_entry_point` — the seam itself rather
 than `cli.dispatch`, which wraps it. These two build their own argv and want
 only the call, and reaching for the dispatcher would close a cycle:
-`cli.registry` imports this module for the one need an argv resolves. Both used to be spawns; `--repair` also used
-to capture the rebuild's stdout and grep it for a `REVIEW_SUMMARY:` marker,
-which `cli.review_rebuild` has never written — the domain is synced from the
-file the rebuild produced instead.
+`cli.registry` imports this module for the one need an argv resolves.
+
+Both used to be spawns; `--repair` also used to capture the rebuild's stdout
+and grep it for a `REVIEW_SUMMARY:` marker, which `cli.review_rebuild` has
+never written — the domain is synced from the file the rebuild produced
+instead.
 
 Handlers still take `bin_dir`. Nothing in this module spawns any more, but the
 four share one signature and `summary` never needed it either; the parameter

@@ -63,6 +63,8 @@ def opens_the_gate(argv, **kwargs) -> int:
 
 
 def opens_the_gate_then_raises(argv, **kwargs) -> int:
+    # Stands in for a bug in any real handler: `scope()` must restore the gate
+    # on an uncaught exception, not just on a clean return or `sys.exit`.
     publishing.enable()
     raise RuntimeError("the run failed after opening the gate")
 

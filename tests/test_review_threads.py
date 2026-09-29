@@ -8560,7 +8560,31 @@ class TestTriageThrashGuard:
         assert rc == 0
         assert result is not None
         assert len(prompts) == 2
-        assert prompts[1].startswith(agent_retry.BLANK_RESPONSE_HINT)
+        assert prompts[1].startswith(agent_retry.JSON_RESPONSE_HINT)
+
+    def test_the_retry_corrects_json_rather_than_markers(self, tmp_path):
+        """The marker hint named a format this prompt never asks for.
+
+        Triage requests a bare JSON object. Told to "emit the requested
+        markers", a second attempt is being corrected about something it was
+        never asked to do, and fails the way the first did.
+        """
+        report = PRReport(threads=[ReportThread(id="t1", reviewer="kgn")])
+        prompts = []
+
+        def prompt(text, **kw):
+            prompts.append(text)
+            return ("I'll read the file first.", 0) if len(prompts) == 1 else (
+                '{"threads": []}', 0)
+
+        with (
+            patch.object(triage.agent_invoke.ai_backend, "prompt", side_effect=prompt),
+            patch.object(thread_context, "branch_commit_log", return_value=""),
+        ):
+            triage.run_triage(report, tmp_path, {})
+
+        assert "JSON" in prompts[1]
+        assert "markers" not in prompts[1].replace(prompts[0], "")
 
     def test_non_json_triage_output_is_kept_whole(self, tmp_path):
         """The old record kept a 500-character preview and no way to the rest."""

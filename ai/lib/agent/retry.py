@@ -123,6 +123,19 @@ BLANK_RESPONSE_HINT = (
     "them.\n\n"
 )
 
+# The same correction for a caller whose answer is a bare JSON object rather
+# than a marker-wrapped block. Kept apart rather than folded into the wording
+# above: four of the five callers of `retry_blank_response` do wrap their
+# answer in markers, so a hint generalised to cover both tells each of them
+# about a format it does not use.
+JSON_RESPONSE_HINT = (
+    "IMPORTANT: A previous attempt replied with prose instead of JSON, and "
+    "nothing could be parsed from it. You have no tools and no second turn: "
+    "there is no file to open and no command to run, so a reply that announces "
+    "one produces nothing. Answer from what is in this prompt, and emit the "
+    "JSON object alone — no preamble, no explanation, no code fence.\n\n"
+)
+
 
 def has_output(path: str) -> bool:
     """Check if a file exists and has content (not just pre-created empty)."""
@@ -321,6 +334,7 @@ def retry_blank_response(
     *,
     label: str,
     usable: Callable[[str], bool],
+    hint: str = BLANK_RESPONSE_HINT,
 ) -> tuple[str, int]:
     """Give a stateless prompt one more attempt when its answer will not parse.
 
@@ -329,9 +343,15 @@ def retry_blank_response(
     as-is: the backend already reported why, and the same call would reproduce
     it.  There is no session log here, so an unusable answer is the only signal
     that the agent spent a turn without doing the job.
+
+    `hint` is what the second attempt is told it got wrong, and defaults to the
+    marker wording the majority of callers want.  A retry is only worth a turn
+    if it corrects the actual mistake: telling a caller that asked for a bare
+    JSON object to "emit the requested markers" names a format its prompt never
+    mentioned, and the second attempt fails the way the first did.
     """
     response, rc = call(prompt)
     if rc != 0 or usable(response):
         return response, rc
     log.warn(f"{label} returned an unparseable response — retrying once")
-    return call(BLANK_RESPONSE_HINT + prompt)
+    return call(hint + prompt)

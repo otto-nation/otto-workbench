@@ -22,6 +22,7 @@ import re
 from pathlib import Path
 
 from agent import invoke as agent_invoke
+from agent import retry as agent_retry
 from core import log
 from core import proc
 from core.phases import Phase
@@ -167,6 +168,9 @@ def run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
         Phase.COMMENTS_TRIAGE, prompt,
         cwd=repo_dir, usable=parses_as_json, task="comment-triage",
         repo=ctx_args.get("repo"), pr=str(pr_number) if pr_number else None,
+        # This prompt asks for a bare JSON object, so the default retry hint —
+        # which asks for markers — would name a format it never mentioned.
+        retry_hint=agent_retry.JSON_RESPONSE_HINT,
     )
     if answer.exit_code != 0:
         if trail:

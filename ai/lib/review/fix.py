@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import re
 import sys
+import textwrap
 from dataclasses import replace
 from pathlib import Path
 
@@ -220,13 +221,8 @@ def _unverified_detail(outcome: ItemOutcome) -> str | None:
 # What one summary line may run to. `lib/conventions.sh` sets
 # COMMIT_BODY_MAX_LEN to 100 and these lines land in a commit body, where
 # nothing on this path enforces it — a fix pass is not going to have its own
-# commit rejected by a hook it never runs.
+# commit rejected by a hook it never runs. `_block` wraps to this width.
 _SUMMARY_LINE_MAX = 100
-
-# Where a description is clipped before the budget above is applied. Kept as a
-# cap of its own so an unhedged line reads the way it always has: the whole-line
-# budget only bites once a caveat is there to compete with it.
-_DESCRIBE_MAX = 80
 
 
 def _clip(text: str, limit: int) -> str:
@@ -374,38 +370,49 @@ def _fixed_line(
 def _fixed_entry(described: str, outcome: ItemOutcome) -> str:
     """One `Fixed:` entry: what was fixed, and the caveat when one is owed.
 
-    Both halves are clipped, because either can overrun the line on its own: a
-    description runs to `_DESCRIBE_MAX`, and `verify_detail` is agent prose with
-    no length contract at all.
-
-    The description gives way first. A truncated description still names the
-    finding — the id beside it is what a reader looks the finding up by — while a
-    caveat cut short is a claim about verification that stops mid-sentence, and
-    the caveat is the part that changes what the reader does next. So the detail
-    is clipped only once the description has given up everything it can.
+    The description is left intact; `_block` wraps it to the commit-body limit.
+    `verify_detail` is agent prose with no length contract, so an unbreakable
+    token is still clipped to a continuation's budget — wrapping cannot split a
+    token that is already longer than the line.
     """
     described = described or outcome.file or outcome.id
     detail = _unverified_detail(outcome)
-    prefix = len(f"  - [{outcome.id}] ")
     if detail is None:
-        return _clip(described, max(_SUMMARY_LINE_MAX - prefix, 0))
-
-    scaffolding = len(f" ({UNVERIFIED_NOTE_INLINE} — )") if detail else len(f" ({UNVERIFIED_NOTE_INLINE})")
-    room = max(_SUMMARY_LINE_MAX - prefix - scaffolding, 0)
-    # The description keeps at most half the room, so a long one cannot starve
-    # the caveat; anything it leaves unused goes to the detail.
-    described = _clip(described, room // 2)
-    detail = _clip(detail, max(room - len(described), 0))
-    caveat = f" ({UNVERIFIED_NOTE_INLINE} — {detail})" if detail else f" ({UNVERIFIED_NOTE_INLINE})"
+        return described
+    if detail:
+        prefix = len(f"  - [{outcome.id}] ")
+        room = max(_SUMMARY_LINE_MAX - prefix, 0)
+        longest = max((len(tok) for tok in detail.split()), default=0)
+        if longest > room:
+            detail = _clip(detail, room)
+    caveat = (
+        f" ({UNVERIFIED_NOTE_INLINE} — {detail})"
+        if detail else f" ({UNVERIFIED_NOTE_INLINE})"
+    )
     return described + caveat
 
 
 def _block(lines: list[str], heading: str, entries: list[tuple[str, str]]) -> None:
-    """Append one heading and its entries, or nothing when there are none."""
+    """Append one heading and its entries, or nothing when there are none.
+
+    Each bullet wraps to `_SUMMARY_LINE_MAX` with a hanging indent matching
+    the `  - [id] ` prefix, so a long description continues under the text
+    rather than being clipped mid-word. Skipped and declined entries share
+    this path, so they wrap the same way as a fix.
+    """
     if not entries:
         return
     lines.append(heading)
-    lines.extend(f"  - [{item_id}] {text}" for item_id, text in entries)
+    for item_id, text in entries:
+        prefix = f"  - [{item_id}] "
+        wrapped = textwrap.fill(
+            text,
+            width=_SUMMARY_LINE_MAX,
+            initial_indent=prefix,
+            subsequent_indent=" " * len(prefix),
+            break_on_hyphens=False,
+        )
+        lines.extend(wrapped.splitlines())
 
 
 def _location_of(finding: Finding | None) -> str:
@@ -420,14 +427,15 @@ def _location_of(finding: Finding | None) -> str:
 
 
 def _describe_finding(finding: Finding) -> str:
-    """The one line a fixed finding is reported under.
+    """The first body line a fixed finding is reported under.
 
-    Its first body line, truncated, and its path when the body is empty. An id
-    no description is built for — one the review no longer holds — falls back in
+    Its first body line, and its path when the body is empty. An id no
+    description is built for — one the review no longer holds — falls back in
     `_fixed_entry` to the location the tracking file recorded, or to the id.
+    Wrapping to the commit-body limit happens in `_block`.
     """
     if finding.body:
-        return _clip(finding.body.split("\n", 1)[0], _DESCRIBE_MAX)
+        return finding.body.split("\n", 1)[0]
     return finding.path
 
 

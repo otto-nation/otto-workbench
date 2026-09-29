@@ -284,6 +284,24 @@ def test_format_usage_model_usage_tokens(cr, tmp_path):
 # ── json_summary ──────────────────────────────────────────────────────────────
 
 
+def _open_fd_count() -> int:
+    """How many descriptors this process holds open.
+
+    `resource.getrlimit` is not it — the interest is in what is *used*, not
+    what is permitted. Probing each descriptor is portable where `/proc/self/fd`
+    is not, and the range is small enough that the cost does not matter.
+    """
+    import fcntl
+    open_fds = 0
+    for fd in range(256):
+        try:
+            fcntl.fcntl(fd, fcntl.F_GETFD)
+        except OSError:
+            continue
+        open_fds += 1
+    return open_fds
+
+
 def test_json_summary_leaves_stdout_where_it_found_it(cr, capfd):
     """The redirect is undone, so a later pass in the same process can print.
 
@@ -315,11 +333,16 @@ def test_json_summary_restores_stdout_when_the_run_raises(cr, capfd):
 def test_json_summary_stdout_survives_a_second_use_in_the_same_process(cr, capfd):
     """`pr fix` runs review, then describe, in one process; both may redirect.
 
-    A single `dup2`/restore cycle is not enough evidence that the real fd is
-    unharmed by the first use: a bug that restored the wrong descriptor, or
-    consumed the saved one, would still pass the single-cycle tests above and
-    only show up once a second pass tried the same redirect.
+    Two cycles rather than one, and the descriptor count either side, because
+    the two ways this breaks are not both visible in the output. Restoring
+    the wrong descriptor shows up as misdirected text, which the single-cycle
+    tests above already catch. *Leaking* the saved one does not show up in
+    the output at all — every assertion about what landed where still holds,
+    and a run only fails once it has exhausted the process's descriptors,
+    which is a hang or an OSError somewhere unrelated much later.
     """
+    before = _open_fd_count()
+
     with cr._json_summary_stdout(True):
         print("review pass log line")
 
@@ -331,6 +354,10 @@ def test_json_summary_stdout_survives_a_second_use_in_the_same_process(cr, capfd
     assert "stdout after both passes" in captured.out
     assert "review pass log line" not in captured.out
     assert "describe pass log line" not in captured.out
+    assert _open_fd_count() == before, (
+        "the saved stdout descriptor was not closed — a pass that redirects "
+        "leaks one per invocation, which nothing in the output reveals"
+    )
 
 
 def test_no_json_summary_leaves_stdout_alone(cr, capfd):

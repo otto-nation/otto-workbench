@@ -859,6 +859,16 @@ def _consume_events(
         # arms the watch, and anything that ends the call disarms it. Stamped
         # before the parsers below so a line that none of them claims still
         # counts as liveness.
+        # One arm/disarm pair is enough because Pi executes a turn's tool
+        # calls in a sequential `await` loop, so only one is ever in flight.
+        # Were they concurrent, an `end` for the first would disarm the watch
+        # while a second was still wedged.
+        #
+        # `tool_execution_end` is emitted only once the tool has resolved, so
+        # a wedged call never reaches it and the watch stays armed — which is
+        # what stops this being a detector that can only fire on runs that
+        # were going to finish anyway. `turn_end` and `agent_end` are here for
+        # the paths that skip it, such as a batch failed before execution.
         watch.stamp()
         if event_type == "tool_execution_start":
             watch.arm(pi_tool_signature(data) or "")

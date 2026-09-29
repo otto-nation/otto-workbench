@@ -647,9 +647,21 @@ def _retry_failed_groups(
 
     # Circuit breaker: if all groups failed with the same reason, the cause is
     # systemic (wrong credentials, model unavailable) — retries won't help.
+    #
+    # Turn exhaustion is the exception, and it has to be: it is the one shared
+    # reason a retry genuinely answers, because `_retry_turns` comes back with
+    # the escalated ceiling rather than the budget that just ran out. A large
+    # branch makes every group run out at once — that is the diff being big,
+    # not the machine being broken — and tripping the breaker there skips the
+    # one retry that would have worked. Observed: three groups at
+    # `max_turns(15)`, no retry attempted, and a review shipped with every
+    # group unread.
     if len(failed_groups) >= CONSECUTIVE_FAIL_THRESHOLD:
         reasons = {f.diagnosis for f in failed_groups if not _was_skipped(f)}
-        if len(reasons) == 1:
+        systemic = len(reasons) == 1 and not any(
+            r.kind is DiagnosisKind.MAX_TURNS for r in reasons
+        )
+        if systemic:
             reason = reasons.pop()
             log.warn(f"All {len(failed_groups)} groups failed with same error ({reason.message}) — skipping retries")
             return failed_groups

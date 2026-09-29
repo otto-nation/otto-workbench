@@ -1775,6 +1775,71 @@ class TestRetryFailedGroups:
         result = ro._retry_failed_groups([failure], groups, job, 1, "", None)
         assert result == [failure]
 
+    def test_every_group_out_of_turns_is_still_retried(
+        self, ro, tmp_path, monkeypatch,
+    ):
+        """The breaker is for a broken machine, not for a large diff.
+
+        Turn exhaustion is the one shared reason a retry answers: it comes back
+        at the escalated ceiling rather than the budget that just ran out. A
+        big branch makes every group run out at once, which tripped the breaker
+        on `len(reasons) == 1` and skipped the retry that would have worked —
+        observed as three groups at `max_turns(15)`, no retry, and a review
+        shipped with every group unread.
+        """
+        from pathlib import Path
+
+        from review import phases as review_phases
+
+        job = self._make_job(ro, tmp_path)
+        groups = [
+            ro.Group(name=f"grp-{c}", files=[f"{c}.go"], lines=100)
+            for c in "abc"
+        ]
+        retried = []
+
+        def mock_invoke(inv, **kwargs):
+            retried.append(inv.label)
+            # Each group writes its own artifact, as the real phase does: one
+            # shared path would leave groups 2 and 3 with no output and the
+            # assertion would read a harness bug as a retry that failed.
+            for n in range(1, 4):
+                Path(str(tmp_path / f"group-{n}.md")).write_text(
+                    "## Must fix\n- **[M1]** **`a.go:1`** — issue\n",
+                )
+            Path(inv.session_log).write_text("")
+            return 0
+
+        monkeypatch.setattr(review_phases, "run_agent", mock_invoke)
+        monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **kw: "p")
+        monkeypatch.setattr(review_phases, "_validate_group_output", lambda *a: None)
+
+        failed = [
+            ro.GroupFailure(g.name, _max_turns_16(ro)) for g in groups
+        ]
+        result = ro._retry_failed_groups(failed, groups, job, 3, "", None)
+
+        assert len(retried) == 3, "the breaker skipped a retry that would work"
+        assert result == []
+
+    # passes-at-base: the breaker's real case, which this change preserves
+    def test_every_group_failing_the_same_systemic_way_still_trips_it(
+        self, ro, tmp_path,
+    ):
+        """A missing model is not fixed by asking again with more turns."""
+        job = self._make_job(ro, tmp_path)
+        groups = [
+            ro.Group(name=f"grp-{c}", files=[f"{c}.go"], lines=100)
+            for c in "abc"
+        ]
+        failed = [
+            ro.GroupFailure(g.name, ro.Diagnosis(
+                ro.DiagnosisKind.TRANSIENT, detail="ECONNREFUSED"))
+            for g in groups
+        ]
+        result = ro._retry_failed_groups(failed, groups, job, 3, "", None)
+        assert result == failed
+
     def test_non_retryable_preserved(self, ro, tmp_path):
         job = self._make_job(ro, tmp_path)
         groups = [ro.Group(name="grp-a", files=["a.go"], lines=100)]

@@ -858,6 +858,9 @@ _agree() {
   messages=$(grep -hE '^[[:space:]]*block ' \
     "$REPO_ROOT/ai/claude/bin/claude-bash-guard")
   [ -n "$messages" ]
+  # This list has to grow by hand alongside _shared_rule_verdict's `case` above
+  # whenever a new shared rule joins it — nothing else enforces that they move
+  # together.
   for phrase in \
     'is a wait for something' \
     'Backgrounding with' \

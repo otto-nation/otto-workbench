@@ -17,6 +17,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from conftest import readiness_state
 from pr import domains as pr_domains
 from pr import state as pr_state
 from pr.ci_failures import RunState
@@ -28,22 +29,6 @@ from core.proc import CmdResult
 _REBASE_RUN = "2026-06-20T00:00:00Z"
 
 
-def _state(pr_number=1):
-    """A state to hand `readiness`, which is judging one.
-
-    Most domains ignore it; the ones that do not ask whether a PR exists, so
-    the number is the only field worth varying and it defaults to "there is
-    one" — the case a domain reporting a blocker is usually about.
-    """
-    return pr_state.new_state(
-        repo="owner/repo",
-        branch="branch",
-        pr_number=pr_number,
-        head_sha="abc1234",
-        worktree_root="/tmp/wt",
-    )
-
-
 # ── The protocol ──────────────────────────────────────────────────────────
 
 
@@ -51,7 +36,7 @@ def test_a_domain_that_declares_nothing_says_nothing():
     """The default is silence, so a domain opts in to both by overriding."""
     d = pr_domains.Domain(updated_at="t")
     assert d.render_status() == []
-    assert d.readiness(_state()) == pr_domains.Readiness()
+    assert d.readiness(readiness_state()) == pr_domains.Readiness()
 
 
 @pytest.mark.parametrize("name,cls", sorted(pr_state._domains().items()))
@@ -72,7 +57,7 @@ def test_every_domain_is_handed_the_state_it_is_judging(name, cls):
             seen["pr_number"] = state.identity.pr_number
             return pr_domains.Readiness()
 
-    state = _state(pr_number=4321)
+    state = readiness_state(pr_number=4321)
     setattr(state, name, _Probe())
     pr_state.merge_readiness(state)
     assert seen == {"pr_number": 4321}
@@ -86,7 +71,7 @@ def test_an_unwritten_domain_blocks_nothing(name, cls):
     answers them the same way: it cannot have measured anything wrong, so the
     only thing it may contribute is an unchecked entry.
     """
-    answer = cls().readiness(_state())
+    answer = cls().readiness(readiness_state())
     assert answer.blockers == ()
     cls().render_status()
 
@@ -155,23 +140,23 @@ def test_ci_render_with_run_number():
 
 
 def test_ci_readiness_unchecked():
-    assert pr_domains.CIDomain().readiness(_state()).unchecked == ("CI",)
+    assert pr_domains.CIDomain().readiness(readiness_state()).unchecked == ("CI",)
 
 
 def test_ci_readiness_failing():
     ci = pr_domains.CIDomain(conclusion="failure", updated_at="t")
-    assert ci.readiness(_state()).blockers == ("CI failing",)
+    assert ci.readiness(readiness_state()).blockers == ("CI failing",)
 
 
 def test_ci_readiness_green():
     ci = pr_domains.CIDomain(conclusion="success", updated_at="t")
-    assert ci.readiness(_state()) == pr_domains.Readiness()
+    assert ci.readiness(readiness_state()) == pr_domains.Readiness()
 
 
 def test_ci_readiness_treats_a_non_success_conclusion_as_failing():
     """Cancelled and timed_out are not success, and neither may merge."""
     ci = pr_domains.CIDomain(conclusion="cancelled", updated_at="t")
-    assert ci.readiness(_state()).blockers == ("CI failing",)
+    assert ci.readiness(readiness_state()).blockers == ("CI failing",)
 
 
 # ── ReviewSummary ─────────────────────────────────────────────────────────
@@ -296,17 +281,17 @@ def test_review_render_complete_no_recover_hint():
 
 
 def test_review_readiness_unchecked():
-    assert pr_domains.ReviewSummary().readiness(_state()).unchecked == ("review",)
+    assert pr_domains.ReviewSummary().readiness(readiness_state()).unchecked == ("review",)
 
 
 def test_review_readiness_must_fix_findings():
     rev = pr_domains.ReviewSummary(finding_counts={"M": 2, "S": 1}, updated_at="t")
-    assert rev.readiness(_state()).blockers == ("must-fix findings",)
+    assert rev.readiness(readiness_state()).blockers == ("must-fix findings",)
 
 
 def test_review_readiness_ignores_non_blocking_findings():
     rev = pr_domains.ReviewSummary(finding_counts={"S": 3, "N": 1}, updated_at="t")
-    assert rev.readiness(_state()) == pr_domains.Readiness()
+    assert rev.readiness(readiness_state()) == pr_domains.Readiness()
 
 
 @pytest.mark.parametrize("status", [
@@ -315,7 +300,7 @@ def test_review_readiness_ignores_non_blocking_findings():
 def test_review_readiness_incomplete_run(status):
     """A run that did not finish has not cleared the PR, whatever it found."""
     rev = pr_domains.ReviewSummary(status=status, updated_at="t")
-    assert rev.readiness(_state()).blockers == ("review incomplete",)
+    assert rev.readiness(readiness_state()).blockers == ("review incomplete",)
 
 
 def test_review_readiness_reports_findings_and_incompleteness_together():
@@ -323,7 +308,7 @@ def test_review_readiness_reports_findings_and_incompleteness_together():
         finding_counts={"M": 1}, status=pr_domains.ReviewStatus.PARTIAL.value,
         updated_at="t",
     )
-    assert rev.readiness(_state()).blockers == ("must-fix findings", "review incomplete")
+    assert rev.readiness(readiness_state()).blockers == ("must-fix findings", "review incomplete")
 
 
 # ── CommentsSummary ───────────────────────────────────────────────────────
@@ -350,17 +335,17 @@ def test_comments_render_with_blocking_reviewers():
 
 
 def test_comments_readiness_unchecked():
-    assert pr_domains.CommentsSummary().readiness(_state()).unchecked == ("comments",)
+    assert pr_domains.CommentsSummary().readiness(readiness_state()).unchecked == ("comments",)
 
 
 def test_comments_readiness_blocking_reviewers():
     c = pr_domains.CommentsSummary(blocking_reviewers=["alice"], updated_at="t")
-    assert c.readiness(_state()).blockers == ("blocking reviewers",)
+    assert c.readiness(readiness_state()).blockers == ("blocking reviewers",)
 
 
 def test_comments_readiness_clean():
     c = pr_domains.CommentsSummary(total_threads=3, updated_at="t")
-    assert c.readiness(_state()) == pr_domains.Readiness()
+    assert c.readiness(readiness_state()) == pr_domains.Readiness()
 
 
 # ── CommentsSummary.move_to_resolved ──────────────────────────────────────
@@ -657,21 +642,21 @@ def test_push_says_nothing_until_it_is_observed():
 
 
 def test_push_readiness_up_to_date():
-    assert pr_domains.PushDomain(ahead=0, updated_at="t").readiness(_state()) == pr_domains.Readiness()
+    assert pr_domains.PushDomain(ahead=0, updated_at="t").readiness(readiness_state()) == pr_domains.Readiness()
 
 
 def test_push_readiness_counts_unpushed_commits():
     push = pr_domains.PushDomain(ahead=2, updated_at="t")
-    assert push.readiness(_state()).blockers == ("2 unpushed commit(s)",)
+    assert push.readiness(readiness_state()).blockers == ("2 unpushed commit(s)",)
 
 
 def test_push_readiness_branch_never_pushed():
     push = pr_domains.PushDomain(ahead=None, updated_at="t")
-    assert push.readiness(_state()).blockers == ("branch not pushed",)
+    assert push.readiness(readiness_state()).blockers == ("branch not pushed",)
 
 
 def test_push_readiness_unobserved_blocks_nothing():
-    assert pr_domains.PushDomain().readiness(_state()) == pr_domains.Readiness()
+    assert pr_domains.PushDomain().readiness(readiness_state()) == pr_domains.Readiness()
 
 
 # ── Which commit a verdict is about ─────────────────────────────────────────

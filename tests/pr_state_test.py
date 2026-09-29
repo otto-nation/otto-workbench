@@ -14,6 +14,7 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest
 
+from conftest import readiness_state
 from pr import state as pr_state
 from git.land import CommitStatus
 from pr.comments_fix import CLOSEOUT_COMMAND, FixSummary
@@ -1806,19 +1807,9 @@ def test_a_pre_fold_state_file_still_owes_the_closeout_it_owed():
 
 
 
-def _readiness_state():
-    """A state to hand `readiness`, which is judging one."""
-    return pr_state.new_state(
-        repo="owner/repo",
-        branch="branch",
-        pr_number=1,
-        head_sha="abc1234",
-        worktree_root="/tmp/wt",
-    )
-
 def test_a_pre_fold_state_file_still_blocks_the_merge_it_blocked():
     """`pr comments --finish` — readiness reads the same undelivered closeout."""
-    answer = _loaded_pre_fold().readiness(_readiness_state())
+    answer = _loaded_pre_fold().readiness(readiness_state())
     assert answer.blockers == (
         f"closeout not delivered (run: {CLOSEOUT_COMMAND})",
     )

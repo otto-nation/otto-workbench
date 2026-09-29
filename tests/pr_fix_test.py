@@ -16,6 +16,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from git import land
+from conftest import readiness_state
 from pr import domains as pr_domains
 from pr import fix as pr_fix
 from pr import state as pr_state

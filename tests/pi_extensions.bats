@@ -844,6 +844,34 @@ _agree() {
   }
 }
 
+@test "shared rules: every classifier substring still appears in a block message" {
+  # _shared_rule_verdict tells the rules apart by a substring of the message the
+  # guard prints. Reword a block and that substring stops matching, the verdict
+  # falls through to `claude-only`, and `_agree` treats the whole case as "a
+  # Claude-only rule fired" — which is the one branch that passes without
+  # comparing anything. The corpus test would go green while comparing nothing,
+  # so the substrings are pinned here rather than only where they are read.
+  # Read from the `block` calls rather than from the file: every one of these
+  # phrases also appears in a comment explaining the rule, so a file-wide grep
+  # keeps passing after the message itself is reworded.
+  local messages phrase
+  messages=$(grep -hE '^[[:space:]]*block ' \
+    "$REPO_ROOT/ai/claude/bin/claude-bash-guard")
+  [ -n "$messages" ]
+  for phrase in \
+    'is a wait for something' \
+    'Backgrounding with' \
+    'Piping a test suite' \
+    'task pr:create' \
+    'self-review has open findings'; do
+    printf '%s' "$messages" | grep -qF "$phrase" || {
+      echo "no block message in claude-bash-guard contains: $phrase"
+      echo "_shared_rule_verdict classifies on it, and would silently stop"
+      return 1
+    }
+  done
+}
+
 @test "shared rules: the two harnesses answer the same on a quoting corpus" {
   # The vectors that were answered differently before the two engines shared a
   # statement scan. Each is a case where one harness read a quoted character as

@@ -27,11 +27,13 @@ from __future__ import annotations
 
 
 from config import workbench_config
+from config.workbench_config import IssueProvider
 from core import log
 from core import markdown
 from core import publishing
 from core.trail import Trail
 from pr import context as pr_context
+from pr import follow_ups as pr_follow_ups
 from pr import permalinks
 from pr import state as pr_state
 from pr import target as pr_target
@@ -67,16 +69,28 @@ class TrackAll(frozenset):
 TRACK_ALL = TrackAll()
 
 
+# The outcomes that leave a thread for someone to pick up. A deferral is a
+# thread the pass put off and a needs-a-person is one it read and handed on;
+# both end the cycle with work outstanding and nothing in the tracker, which is
+# what filing exists to fix.
+#
+# DECLINED is deliberately absent. A decline is a judgement that the suggestion
+# is not work — `run_fix_pass` drops declined findings from its work set on the
+# same reasoning — so filing one would reopen as a backlog entry the thing the
+# review just closed.
+FILABLE_OUTCOMES = (FixOutcome.DEFERRED, FixOutcome.NEEDS_HUMAN)
+
+
 def deferred_outcomes(state: pr_state.PRState) -> list:
-    """Every outcome the fix pass deferred, whatever became of it since.
+    """Every outcome that left a thread outstanding, whatever became of it since.
 
     One reading of the record for the three questions asked of it — which
     threads to validate `--track` against, which to file, and which to report
     as unfiled. Spelled out at each site instead, the filter is three copies of
-    one rule about what `DEFERRED` means, and the one that drifts is the one
-    whose surface nobody was looking at.
+    one rule about what is filable, and the one that drifts is the one whose
+    surface nobody was looking at.
     """
-    return [o for o in state.fix.fix.items if o.outcome == FixOutcome.DEFERRED]
+    return [o for o in state.fix.fix.items if o.outcome in FILABLE_OUTCOMES]
 
 
 def validate_track(state: pr_state.PRState, track) -> bool:
@@ -101,7 +115,7 @@ def validate_track(state: pr_state.PRState, track) -> bool:
     unknown = set(track) - {o.id for o in deferred_outcomes(state)}
     if not unknown:
         return True
-    log.error(f"--track named threads that are not deferred: {sorted(unknown)}")
+    log.error(f"--track named threads that are not outstanding: {sorted(unknown)}")
     return False
 
 
@@ -171,6 +185,10 @@ def finalize_deferred(
         thread_replies.post_deferred_replies(
             deferred, threads_by_id, ctx.repo, ctx.pr_number,
             issue.id, issue.url, ctx.require_worktree(), ctx.host,
+            # A CommentItem is built from an outcome and does not carry one, so
+            # the reply templates cannot tell a deferral from a thread handed to
+            # a person without being told.
+            outcomes={o.id: o.outcome for o in deferred_outcomes(state)},
         )
 
     state.fix.deferred_issue_id = issue.id
@@ -180,7 +198,61 @@ def finalize_deferred(
     # reads the trail to decide whether a PR is safe to merge — they read
     # `pr status`, which reads this.
     state.fix.deferred_issue_pending = result.owed
+
+    if issue.id:
+        _record_in_ledger(state, ctx, issue, len(deferred), trail)
     return True
+
+
+def _record_in_ledger(
+    state: pr_state.PRState,
+    ctx: pr_context.ResolvedContext,
+    issue,
+    thread_count: int,
+    trail: Trail | None,
+) -> None:
+    """Record the tracking issue in the branch's follow-up ledger.
+
+    Beside the three `state.fix.deferred_issue_*` writes rather than instead of
+    them: those have cycle-scoped merge semantics `FixSummary.merge_into` builds
+    by hand, and they are what stops a second deferred round opening a duplicate
+    issue. The ledger is the record of what this branch deferred; those three
+    are the dedupe key for one aggregate issue. Neither is derived from the
+    other, so both are written.
+
+    Both trail ids are recorded. This runs inside `pr comments --finish`, which
+    is usually a subprocess of something else, so the leaf invocation alone will
+    not correlate the filing back to the command a person ran.
+    """
+    # str(), because `worktree_root` is legitimately None for a bare repo and
+    # `load_issue_provider` resolves config relative to a path. A missing
+    # worktree falls back to the machine-wide scope, which is the same answer
+    # the filing itself just used.
+    wt = str(ctx.worktree_root) if ctx.worktree_root else None
+    provider = review_issue.load_issue_provider(wt).name
+    try:
+        ref = pr_follow_ups.IssueRef(
+            provider=IssueProvider(provider), id=issue.id, url=issue.url,
+        )
+    except ValueError:
+        # An unconfigured or unknown tracker filed nothing we can name. The
+        # issue exists either way, so the omission is reported rather than
+        # raised past a filing that already happened.
+        log.warn(f"not recording follow-up {issue.id}: unknown provider {provider!r}")
+        return
+    entry = pr_follow_ups.FollowUp(
+        ref=ref,
+        title=f"deferred review comments — PR #{ctx.pr_number}",
+        source=pr_follow_ups.FollowUpSource.PR_COMMENTS,
+        filed_at=pr_state.now_iso(),
+        head_sha=state.identity.head_sha,
+        invocation=trail.invocation if trail else "",
+        trail_root=trail.root if trail else "",
+        reason=f"{thread_count} review thread(s) deferred rather than fixed",
+    )
+    pr_state.apply(state, pr_follow_ups.FollowUpDomain(
+        entries=[entry], updated_at=pr_state.now_iso(),
+    ))
 
 
 def report_unfiled_deferrals(state: pr_state.PRState, track) -> None:

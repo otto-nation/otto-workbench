@@ -16,6 +16,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from git import land
+from conftest import readiness_state
 from pr import domains as pr_domains
 from pr import fix as pr_fix
 from pr import state as pr_state
@@ -173,7 +174,7 @@ def test_every_domain_starts_with_an_empty_record():
 
 def test_a_domain_that_never_fixes_anything_says_nothing():
     assert pr_domains.Domain(updated_at="t").render_status() == []
-    assert pr_domains.Domain(updated_at="t").readiness() == pr_domains.Readiness()
+    assert pr_domains.Domain(updated_at="t").readiness(readiness_state()) == pr_domains.Readiness()
 
 
 def test_a_domain_write_folds_the_record_rather_than_replacing_it():

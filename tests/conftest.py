@@ -1426,3 +1426,28 @@ def command_spec(**overrides):
                   need=Need(REMOTE, update=False, lock=False))
     fields.update(overrides)
     return CommandSpec(**fields)
+
+
+def readiness_state(pr_number=1):
+    """A `PRState` to hand `Domain.readiness`, which is judging one.
+
+    Here rather than in any one suite: four of them exercise `readiness`, and
+    the constructor is the same in each — `new_state` requires its identity in
+    full, so a test interested only in whether a PR exists would otherwise
+    restate every other field. Sharing it from conftest means a change to
+    `new_state`'s signature lands once.
+
+    `pr_number` is the field domains actually read; it defaults to "there is a
+    PR", the case a domain reporting a blocker is usually about.
+    """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    from pr import state as pr_state
+
+    return pr_state.new_state(
+        repo="owner/repo",
+        branch="branch",
+        pr_number=pr_number,
+        head_sha="abc1234",
+        worktree_root="/tmp/wt",
+    )

@@ -690,6 +690,13 @@ def prune_merged_targets(targets_dir: Path | None = None,
         # — `_branch_is_finished`, which asks whether every PR opened from the
         # branch has ended — rather than an age cutoff.
         #
+        # The follow-up ledger makes these targets worth slightly more than the
+        # bookkeeping they used to hold: entries accrue from the first filing,
+        # before a PR exists, so an abandoned branch keeps the record of what it
+        # deferred. That is a reason to leave them rather than a new cost — the
+        # issues are filed and open either way, and the tracker is where anyone
+        # would look for them.
+        #
         # Not the branch-no-longer-on-the-remote check this comment used to
         # suggest: a branch that was never pushed and a branch that was merged
         # and deleted both have no remote ref, and the first is live work.

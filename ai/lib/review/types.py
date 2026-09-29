@@ -297,6 +297,28 @@ class GroupSkip(StrEnum):
 
 
 @dataclass(frozen=True)
+class OpenFinding:
+    """A finding a fix pass left open, recorded so it can be filed later.
+
+    `id` is the review document's `M1`/`S3`, which is a position in one
+    rendering — a later review renumbers. That is why `location` and `summary`
+    are carried too: they are what a person reads when choosing what to file,
+    and the id alone would name a different finding on the next run.
+
+    `outcome` is the fix pass's own vocabulary (`pr.fix.FixOutcome`) as a plain
+    string, for the reason `fix_commit_status` is one: naming the enum here
+    would make the sidecar's schema depend on a module it otherwise knows
+    nothing about.
+    """
+
+    id: str = ""
+    outcome: str = ""
+    summary: str = ""
+    location: str = ""
+    reason: str = ""
+
+
+@dataclass(frozen=True)
 class ReviewMeta:
     """Everything `meta.json` records about a review — the whole file, typed.
 
@@ -362,6 +384,20 @@ class ReviewMeta:
     # Keyed on the site hash rather than the `SA<n>` id, which is a position in
     # one rendering and names a different violation in the next.
     static_declined: dict[str, str] = field(default_factory=dict)
+    # Findings the last fix pass left open, and why — the outcome the document
+    # cannot keep, for the same reason `static_declined` is here.
+    #
+    # A deferred finding is written back as nothing at all: `_annotation` spells
+    # `declined` and `skipped`, and a deferral leaves the line exactly as it
+    # was. So on disk a finding the pass never reached is byte-identical to one
+    # it never had, which makes "what did this run leave open, and why" a
+    # question the review file cannot answer. Filing a follow-up for one needs
+    # that answer after the pass has exited, so it is recorded here.
+    #
+    # Replaced rather than accumulated, unlike `static_declined`: a later pass
+    # reads the same findings again and its verdict supersedes: an entry kept
+    # from an earlier round would offer to file work that has since been fixed.
+    open_findings: tuple["OpenFinding", ...] = ()
 
     @property
     def unpushed_fix_commit(self) -> str:

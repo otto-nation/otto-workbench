@@ -64,14 +64,14 @@ ALL_COMMANDS = frozenset({
     "fix", "rebase", "describe", "gc",
 })
 
-# Nine PRState domain fields. COMMENTS owns three of them; push and
+# Ten PRState domain fields. COMMENTS owns three of them; push, follow_ups and
 # supersession have state and no subcommand.
 PRSTATE_DOMAINS = frozenset({
     "ci", "review", "comments", "triage", "fix",
-    "rebase", "push", "describe", "supersession",
+    "rebase", "push", "follow_ups", "describe", "supersession",
 })
 COMMENTS_EXTRA_FIELDS = frozenset({"triage", "fix"})
-STATE_WITHOUT_COMMAND = frozenset({"push", "supersession"})
+STATE_WITHOUT_COMMAND = frozenset({"push", "follow_ups", "supersession"})
 
 
 # ── 1. every CommandSpec.script names a real executable ───────────────────
@@ -156,12 +156,14 @@ def test_every_phase_domain_has_at_least_one_phase():
 
 # passes-at-base: pins the join this change does not alter; the three declarations already agree at base
 def test_prstate_fields_cover_every_phase_domain_and_the_measured_rest():
-    """Five PhaseDomain members, nine PRState fields. The gap is not drift.
+    """Five PhaseDomain members, ten PRState fields. The gap is not drift.
 
-    COMMENTS owns three fields (`comments`, `triage`, `fix`). `push` and
-    `supersession` have state and no subcommand. The remaining four domains
-    are 1:1 with a field of the same name. Adding a tenth field without
-    updating this partition is the failure `_validate_needs` never covered.
+    COMMENTS owns three fields (`comments`, `triage`, `fix`). `push`,
+    `follow_ups` and `supersession` have state and no subcommand — the ledger
+    is written by whichever pass files a follow-up rather than by one of its
+    own. The remaining four domains are 1:1 with a field of the same name.
+    Adding an eleventh field without updating this partition is the failure
+    `_validate_needs` never covered.
     """
     assert set(_domains()) == PRSTATE_DOMAINS
     assert set(_domains()) - {d.value for d in PhaseDomain} \

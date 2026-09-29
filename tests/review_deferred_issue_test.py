@@ -419,6 +419,25 @@ class TestDeferredOutcomes:
         state.fix.fix.items.append(ItemOutcome(id="t3", outcome=FixOutcome.FIXED))
         assert [o.id for o in deferred_issue.deferred_outcomes(state)] == ["t1", "t2"]
 
+    def test_a_thread_handed_to_a_person_is_filable(self):
+        """It ends the cycle with work outstanding and nothing in the tracker,
+        which is the case filing exists for."""
+        state = _state("t1")
+        state.fix.fix.items.append(
+            ItemOutcome(id="t2", outcome=FixOutcome.NEEDS_HUMAN))
+        assert [o.id for o in deferred_issue.deferred_outcomes(state)] == ["t1", "t2"]
+
+    # passes-at-base: DECLINED was excluded before this change too. Pinned
+    # because widening past DEFERRED is what makes it a decision rather than an
+    # accident of the old filter naming one outcome.
+    def test_a_declined_thread_is_not_filable(self):
+        """A decline says the suggestion is not work. Filing it would reopen as
+        a backlog entry the thing the review just closed."""
+        state = _state("t1")
+        state.fix.fix.items.append(
+            ItemOutcome(id="t2", outcome=FixOutcome.DECLINED))
+        assert [o.id for o in deferred_issue.deferred_outcomes(state)] == ["t1"]
+
     def test_an_empty_record_yields_nothing(self):
         state = PRState(identity=_identity())
         assert deferred_issue.deferred_outcomes(state) == []

@@ -2091,3 +2091,251 @@ _parse_list() {
     "$REPO_ROOT/ai/pi/extensions/job-poll-guard/index.ts"
   [ "$status" -eq 0 ]
 }
+
+# ── issue-capture ────────────────────────────────────────────────────────────
+#
+# The recording half of the filing rule. Its refusing half is issue-defer-guard
+# above; both harnesses have both, and ai/bin/record-filed-issue is the one
+# writer they share.
+
+# _captures COMMAND — prints true or false for isIssueFiling(COMMAND).
+_captures() {
+  run node --input-type=module -e "
+    const { isIssueFiling } = await import('$REPO_ROOT/ai/pi/extensions/issue-capture/detect.ts');
+    console.log(isIssueFiling(process.argv[1]));
+  " "$1"
+}
+
+@test "issue-capture: a filing is recognised, a mention of one is not" {
+  _captures 'gh issue create --title x'
+  [ "$output" = true ]
+  _captures 'cd /x && gh issue create'
+  [ "$output" = true ]
+  _captures 'echo gh issue create'
+  [ "$output" = false ]
+  _captures 'gh issue list'
+  [ "$output" = false ]
+}
+
+@test "issue-capture: the two harnesses recognise the same filings" {
+  # The Claude side is the same regex in the recorder and in the PreToolUse
+  # guard. A command one harness records and the other does not is a filing
+  # that reaches the ledger from one seat and not the other.
+  local cmd
+  for cmd in \
+    'gh issue create --title x' \
+    'echo gh issue create' \
+    'gh issue list'; do
+    _captures "$cmd"
+    local pi="$output"
+    _files_issue "$cmd"
+    [ "$pi" = "$output" ] || {
+      echo "capture and defer-guard disagree on: $cmd"
+      echo "  issue-capture=$pi  issue-defer-guard=$output"
+      return 1
+    }
+  done
+}
+
+@test "issue-capture: the bash regex and both TS matchers agree on the same commands" {
+  # The two TS matchers are checked against each other above. The bash side
+  # reached from Claude's PostToolUse hook (record-filed-issue's own
+  # re_issue_create) and the PreToolUse guard (claude-bash-guard's copy of the
+  # same variable) is a third, independent implementation of "is this a filing",
+  # kept in sync with the other two only by a code comment — a bash-vs-TS drift
+  # here is exactly the three-way drift this epic's guards used to suffer from,
+  # and none of the tests above would catch it.
+  local re_bash
+  re_bash=$(grep -m1 "^re_issue_create=" "$REPO_ROOT/ai/bin/record-filed-issue")
+  local re_guard
+  re_guard=$(grep -m1 "^re_issue_create=" "$REPO_ROOT/ai/claude/bin/claude-bash-guard")
+  [ "$re_bash" = "$re_guard" ]
+
+  local cmd
+  for cmd in \
+    'gh issue create --title x' \
+    'cd /x && gh issue create' \
+    'echo gh issue create' \
+    'gh issue list'; do
+    # Sourced from the script rather than restated: a copy here would be a
+    # fourth spelling, and the test would pass while the three real ones drift.
+    # Unwrapped into a local of this test's own naming rather than eval'd into
+    # the script's variable name, which shellcheck cannot see being assigned.
+    local pattern="${re_bash#re_issue_create=}"
+    pattern="${pattern#\'}"
+    pattern="${pattern%\'}"
+    local bash_result=false
+    [[ "$cmd" =~ $pattern ]] && bash_result=true
+
+    _captures "$cmd"
+    local pi="$output"
+    [ "$bash_result" = "$pi" ] || {
+      echo "bash re_issue_create and issue-capture disagree on: $cmd"
+      echo "  bash=$bash_result  issue-capture=$pi"
+      return 1
+    }
+  done
+}
+
+@test "issue-capture: an ambiguous response records nothing rather than a guess" {
+  # `gh issue create && gh issue view 5` prints two URLs, and picking one by
+  # position records whichever the chain ended with — attributing someone
+  # else's issue to this filing. A ledger entry pointing at the wrong issue is
+  # worse than a missing one: it reads as a record somebody checked.
+  #
+  # The ledger is seeded first, and the assertion is that it still holds only
+  # the seeded entry. Asserting "no state file" would pass on an empty sandbox
+  # whatever the recorder did, which is no assertion at all.
+  local sandbox="$BATS_TEST_TMPDIR/amb"
+  mkdir -p "$sandbox/repo" "$sandbox/state"
+  git -C "$sandbox/repo" init -q -b feat/amb
+  git -C "$sandbox/repo" remote add origin git@github.com:otto-nation/otto-workbench.git
+  git -C "$sandbox/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+
+  run env WORKBENCH_STATE_DIR="$sandbox/state" python3 -c '
+import sys
+sys.path.insert(0, sys.argv[1] + "/ai/lib")
+from pathlib import Path
+from pr import state as s, target as t
+d = t.target_dir_for_checkout(Path(sys.argv[2]))
+d.mkdir(parents=True, exist_ok=True)
+s.save_state(d, s.new_state(repo="otto-nation/otto-workbench", branch="feat/amb",
+                            pr_number=1, head_sha="abc", worktree_root=sys.argv[2]))
+print(d)
+' "$REPO_ROOT" "$sandbox/repo"
+  [ "$status" -eq 0 ]
+  local target="$output"
+
+  local payload
+  payload=$(python3 -c '
+import json
+print(json.dumps({
+    "tool_input": {"command": "gh issue create --title x && gh issue view 5"},
+    "tool_response": {"stdout": "https://github.com/o/r/issues/99\nhttps://github.com/o/r/issues/5\n"},
+}))')
+
+  run env WORKBENCH_STATE_DIR="$sandbox/state" \
+    bash -c "cd '$sandbox/repo' && printf '%s' '$payload' | '$REPO_ROOT/ai/bin/record-filed-issue'"
+  [ "$status" -eq 0 ]
+
+  # The seeded ledger is untouched: no entry, rather than an entry naming 5.
+  run python3 -c '
+import sys
+sys.path.insert(0, sys.argv[1] + "/ai/lib")
+from pathlib import Path
+from pr import state as s
+st = s.load_state(Path(sys.argv[2]))
+print(",".join(e.ref.id for e in st.follow_ups.entries))
+' "$REPO_ROOT" "$target"
+  [ "$output" = "" ]
+}
+
+@test "issue-capture: the url is read from what gh printed, or nothing is" {
+  run node --input-type=module -e "
+    const m = await import('$REPO_ROOT/ai/pi/extensions/issue-capture/detect.ts');
+    console.log(JSON.stringify([
+      m.filedIssueUrl('https://github.com/o/r/issues/12'),
+      m.filedIssueUrl('error: could not create issue'),
+      m.issueIdFrom('https://github.com/o/r/issues/12'),
+    ]));
+  "
+  [ "$output" = '["https://github.com/o/r/issues/12",null,"12"]' ]
+}
+
+@test "issue-capture: detect.ts imports no SDK" {
+  # Same contract as the other predicates: bats loads this under bare node.
+  #
+  # Matched on `import` lines rather than anywhere in the file. The older twins
+  # of this test grep the whole text, which also fires on a header comment that
+  # merely explains why the SDK is absent — a file cannot document the rule it
+  # obeys without failing the check for it.
+  run grep -nE '^\s*import .*(@earendil-works/pi-coding-agent|isToolCallEventType)' \
+    "$REPO_ROOT/ai/pi/extensions/issue-capture/detect.ts"
+  [ "$status" -ne 0 ]
+}
+
+@test "issue-capture: the recorder is handed its payload on stdin" {
+  # `execFile` has no `input` option. Passing one leaves the recorder blocked on
+  # a stdin that never closes and the hook hangs — which is not a crash, so
+  # nothing reports it: the filing simply never reaches the ledger. Asserted on
+  # the wiring because the failure is invisible in the extension's own output.
+  local index="$REPO_ROOT/ai/pi/extensions/issue-capture/index.ts"
+  grep -q 'child.stdin?.end(' "$index"
+  run grep -nE 'execFile\([^)]*\binput:' "$index"
+  [ "$status" -ne 0 ]
+
+  # And the real shape round-trips: a payload written to stdin reaches a reader
+  # that blocks on `cat`, and the callback fires.
+  run node --input-type=module -e "
+    import { execFile } from 'node:child_process';
+    const child = execFile('bash', ['-c', 'cat'], { timeout: 5000 },
+      (err, stdout) => { console.log(err ? 'ERR' : stdout.trim()); });
+    child.stdin.end('{\"ok\":1}');
+  "
+  [ "$output" = '{"ok":1}' ]
+}
+
+@test "issue-capture: both harnesses write through the one recorder" {
+  # Two copies of "what a ledger entry looks like" would drift the way the
+  # guards did before they shared a scan.
+  grep -q 'record-filed-issue' "$REPO_ROOT/ai/pi/extensions/issue-capture/index.ts"
+  grep -q 'record-filed-issue' "$REPO_ROOT/ai/claude/settings.json"
+}
+
+# ── record-filed-issue ───────────────────────────────────────────────────────
+#
+# The shared writer both harnesses hand a payload to. Exercised directly here
+# (rather than through either extension) because the URL-attribution question
+# below is about the writer's own parsing, not about either hook's wiring.
+
+_record_filed_issue_setup() {
+  RFI_REPO="$TMPDIR/rfi-repo"
+  mkdir -p "$RFI_REPO"
+  git -C "$RFI_REPO" init -q -b main
+  git -C "$RFI_REPO" remote add origin git@github.com:acme/widget.git
+  git -C "$RFI_REPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+
+  RFI_TARGET=$(python3 - "$REPO_ROOT" "$RFI_REPO" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / "ai" / "lib"))
+from pr import target as pr_target
+print(pr_target.target_dir_for_checkout(Path(sys.argv[2])))
+PY
+)
+  mkdir -p "$RFI_TARGET"
+  cat > "$RFI_TARGET/state.json" <<EOF
+{"_version": 1, "identity": {"repo": "acme/widget", "branch": "main", "pr_number": null, "head_sha": "abc123", "worktree_root": "$RFI_REPO"}, "created_at": "2024-01-01T00:00:00Z", "updated_at": "2024-01-01T00:00:00Z"}
+EOF
+}
+
+_rfi_entry_count() {
+  python3 -c "
+import json
+with open('$RFI_TARGET/state.json') as f:
+    d = json.load(f)
+print(len(d.get('follow_ups', {}).get('entries', [])))
+"
+}
+
+@test "record-filed-issue: a single issue URL is recorded" {
+  _record_filed_issue_setup
+  cd "$RFI_REPO"
+  payload='{"tool_input":{"command":"gh issue create --title x"},"tool_response":{"stdout":"https://github.com/acme/widget/issues/42"}}'
+  run bash -c "printf '%s' '$payload' | '$REPO_ROOT/ai/bin/record-filed-issue'"
+  [ "$status" -eq 0 ]
+  [ "$(_rfi_entry_count)" = "1" ]
+  grep -q '"id": "42"' "$RFI_TARGET/state.json"
+}
+
+@test "record-filed-issue: more than one URL-shaped match records nothing rather than guess" {
+  # Nothing here tells the hook which of the two matches this `gh issue
+  # create` actually filed, so it must not guess with `tail -1` and risk
+  # attributing the wrong issue to this filing.
+  _record_filed_issue_setup
+  cd "$RFI_REPO"
+  payload='{"tool_input":{"command":"gh issue create --title x"},"tool_response":{"stdout":"https://github.com/acme/widget/issues/42\nhttps://github.com/acme/widget/issues/99"}}'
+  run bash -c "printf '%s' '$payload' | '$REPO_ROOT/ai/bin/record-filed-issue'"
+  [ "$status" -eq 0 ]
+  [ "$(_rfi_entry_count)" = "0" ]
+}

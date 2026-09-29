@@ -14,9 +14,12 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest
 
+from conftest import readiness_state
 from pr import state as pr_state
 from git.land import CommitStatus
 from pr.comments_fix import CLOSEOUT_COMMAND, FixSummary
+from config.workbench_config import IssueProvider
+from pr.follow_ups import FollowUp, FollowUpDomain, FollowUpSource, IssueRef
 from pr.domains import (
     CIDomain,
     CommentsSummary, DescribeSummary, TriageSummary, RebaseSummary,
@@ -1805,9 +1808,10 @@ def test_a_pre_fold_state_file_still_owes_the_closeout_it_owed():
     assert debt.reply_count == 3
 
 
+
 def test_a_pre_fold_state_file_still_blocks_the_merge_it_blocked():
     """`pr comments --finish` — readiness reads the same undelivered closeout."""
-    answer = _loaded_pre_fold().readiness()
+    answer = _loaded_pre_fold().readiness(readiness_state())
     assert answer.blockers == (
         f"closeout not delivered (run: {CLOSEOUT_COMMAND})",
     )
@@ -1965,7 +1969,32 @@ class TestTerminalSummary:
             "verdict": "Request changes",
             "finding_counts": {"must-fix": 2, "nit": 5},
             "rebase_conflicts": 3,
+            "follow_ups": [],
         }
+
+    def test_the_follow_ups_are_carried_whole_rather_than_counted(self):
+        """After the prune this event is the only record of what was deferred.
+
+        "What follow-ups came out of that PR?" is a question about merged work,
+        and a count answers that something was deferred without saying what.
+        """
+        state = self._state()
+        state.follow_ups = FollowUpDomain(entries=[FollowUp(
+            ref=IssueRef(provider=IssueProvider.GITHUB, id="1455", url="https://x"),
+            title="a deferred thing",
+            source=FollowUpSource.SELF_REVIEW,
+        )], updated_at="t")
+        payload = pr_state.terminal_summary(state, PRClosure(PRCloseState.MERGED))
+        assert payload["follow_ups"] == [{
+            "ref": {"provider": "github", "id": "1455", "url": "https://x"},
+            "title": "a deferred thing",
+            "source": "self_review",
+            "filed_at": "", "head_sha": "", "invocation": "", "trail_root": "",
+            "reason": "", "in_pr_body": False,
+        }]
+        # The emit path catches a TypeError rather than raising it, so an
+        # unserialisable payload would go out as a warning nobody reads.
+        assert json.dumps(payload)
 
     def test_finding_counts_are_copied_not_aliased(self):
         state = self._state()

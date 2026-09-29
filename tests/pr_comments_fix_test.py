@@ -12,8 +12,10 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from conftest import readiness_state
 from pr import comments_fix as pr_comments_fix
 from pr import domains as pr_domains
+from pr import state as pr_state
 from git.land import CommitStatus
 from pr.comments_fix import CLOSEOUT_COMMAND
 from pr.fix import FixOutcome, FixRecord, ItemOutcome
@@ -272,12 +274,13 @@ def test_fix_render_names_the_description_alongside_the_rest():
     )
 
 
+
 def test_fix_render_silent_when_nothing_is_owed():
     assert _closeout_line(_fix_with_closeout().render_status()) is None
 
 
 def test_fix_readiness_blocks_on_undelivered_closeout():
-    answer = _fix_with_closeout(summary_deferred=True).readiness()
+    answer = _fix_with_closeout(summary_deferred=True).readiness(readiness_state())
     assert answer.blockers == (
         f"closeout not delivered (run: {CLOSEOUT_COMMAND})",
     )
@@ -285,14 +288,14 @@ def test_fix_readiness_blocks_on_undelivered_closeout():
 
 def test_fix_readiness_quotes_the_command_that_files_the_tracking_issue():
     """The blocker names a command that drains it, not one that cannot."""
-    answer = _fix_with_closeout(deferred_issue_pending=True).readiness()
+    answer = _fix_with_closeout(deferred_issue_pending=True).readiness(readiness_state())
     assert answer.blockers == (
         f"closeout not delivered (run: {CLOSEOUT_COMMAND} --track-all)",
     )
 
 
 def test_fix_readiness_clean_when_the_closeout_landed():
-    assert _fix_with_closeout().readiness() == pr_domains.Readiness()
+    assert _fix_with_closeout().readiness(readiness_state()) == pr_domains.Readiness()
 
 
 class TestADebtSurvivesTheRoundThatDidNotRaiseIt:

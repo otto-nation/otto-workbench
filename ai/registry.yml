@@ -8,6 +8,11 @@ meta:
   source: ai/bin
 
 tools:
+  - name: record-filed-issue
+    permission: false
+    visibility: hidden
+    description: "Records an issue filed by hand in the branch's follow-up ledger — called by both harnesses' post-execution hooks"
+
   - name: pr
     permission: true
     visibility: full

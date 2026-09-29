@@ -40,14 +40,19 @@ class TestHandledPrefixesTrackTheGeneratedSet:
     one of these. That set was listed by hand in `review-threads`, which meant a
     new generated opening added here was recognised as ours everywhere except
     reconciliation — where the thread would then stay open for the life of the
-    PR. Deriving it makes the omission impossible; these tests pin the one
-    exclusion that is deliberate.
+    PR. Deriving it makes the omission impossible; these tests pin the
+    exclusions that are deliberate.
     """
 
-    def test_the_deferred_opening_is_the_only_one_excluded(self):
+    def test_only_the_openings_that_say_work_remains_are_excluded(self):
+        """Both say the opposite of handled, so counting either would make the
+        thread reconcile itself on the second --finish."""
         assert set(thread_replies.GENERATED_REPLY_PREFIXES) - set(
             thread_replies.HANDLED_REPLY_PREFIXES,
-        ) == {thread_replies.DEFERRED_REPLY_PREFIX}
+        ) == {
+            thread_replies.DEFERRED_REPLY_PREFIX,
+            thread_replies.NEEDS_HUMAN_REPLY_PREFIX,
+        }
 
     def test_every_handled_opening_is_a_generated_one(self):
         assert set(thread_replies.HANDLED_REPLY_PREFIXES) <= set(

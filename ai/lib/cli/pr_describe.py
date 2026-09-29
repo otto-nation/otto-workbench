@@ -18,6 +18,7 @@ Usage:
 
 # doc-group: cli
 
+import dataclasses
 import json
 import sys
 from pathlib import Path
@@ -31,6 +32,7 @@ from core import pr_template
 from core import publishing
 from core import run_lock
 from pr import context as pr_context
+from pr import follow_ups as pr_follow_ups
 from pr import state as pr_state
 from core.phases import Phase
 from pr.domains import DescribeSummary
@@ -187,18 +189,115 @@ def _persist(wt: Path, ctx: pr_context.ResolvedContext,
     pr_state.save_state(ctx.target_dir, state)
 
 
+@dataclasses.dataclass(frozen=True)
+class Projection:
+    """What the follow-up projection did, and what it read while doing it.
+
+    A type rather than a tuple: two pieces of business data, and the caller
+    reads `result.body` instead of learning which element of a pair is which.
+
+    `title`/`body` are what the PR holds *after* this pass — the revision
+    prompt that runs next needs the current body, and reusing this read is what
+    keeps the projection to one `gh pr view` rather than two.
+    """
+
+    moved: bool = False
+    title: str = ""
+    body: str = ""
+    # False when the body could not be read at all, which is different from
+    # reading an empty one.
+    fetched: bool = False
+
+
+def project_follow_ups(
+    ctx: pr_context.ResolvedContext, state, *, trail: Trail | None = None,
+) -> Projection:
+    """Put the branch's follow-ups in the PR body.
+
+    Its own pass, ahead of the HEAD gate below, because a follow-up is filed
+    without a commit far more often than with one: `pr comments --finish` writes
+    state and posts replies and commits nothing at all. Behind the gate the
+    entry would never reach the body, and the reviewer would never see it.
+
+    Cheap enough to run unconditionally: one `gh pr view` and, only when the
+    rendered block differs from what is already there, one `gh pr edit`. No AI
+    call, which is what the HEAD gate exists to protect.
+    """
+    entries = state.follow_ups.entries if state else []
+    if not entries:
+        return Projection()
+
+    fetched = _fetch_pr_body(ctx.repo, ctx.pr_number)
+    if fetched is None:
+        log.warn("could not read the PR body — leaving the follow-ups unprojected")
+        return Projection()
+    title, body = fetched
+
+    projected = pr_follow_ups.project(body, entries)
+    if projected.strip() == body.strip():
+        # Already there. Still mark the entries, because an earlier run may have
+        # written the block and failed before recording that it had.
+        return Projection(_mark_projected(state, entries), title, body, True)
+
+    if not _apply_body(ctx.repo, ctx.pr_number, projected):
+        # Draft mode, or a write that failed. Either way the body does not hold
+        # them, so the flags stay off and readiness keeps saying so.
+        return Projection(False, title, body, True)
+
+    log.info(f"Projected {len(entries)} follow-up(s) into the PR description")
+    if trail:
+        trail.info("describe", f"projected {len(entries)} follow-up(s)",
+                   data={"pr": ctx.pr_number})
+    return Projection(_mark_projected(state, entries), title, projected, True)
+
+
+def _mark_projected(state, entries) -> bool:
+    """Record that these entries have reached the body. Returns whether any moved.
+
+    Filtered to `e.ref.id` first, matching `pr_follow_ups.render_block`'s own
+    filter — an id-less entry is never written into the rendered block, so
+    marking it projected here would tell `readiness()` a reviewer can see an
+    entry that in fact never reached the body.
+    """
+    unmarked = [e for e in entries if e.ref.id and not e.in_pr_body]
+    if not unmarked:
+        return False
+    pr_state.apply(state, pr_follow_ups.FollowUpDomain(
+        entries=[dataclasses.replace(e, in_pr_body=True) for e in unmarked],
+        updated_at=pr_state.now_iso(),
+    ))
+    return True
+
+
 def run_describe(
     ctx: pr_context.ResolvedContext, *,
     force: bool = False, dry_run: bool = False,
     trail: Trail | None = None,
 ) -> int:
-    """Revise the PR description if HEAD moved since the last pass."""
+    """Revise the PR description if HEAD moved since the last pass.
+
+    Callers must hold the target's run lock before calling this: it writes to
+    GitHub (via `project_follow_ups`) and to the state file ahead of the
+    HEAD-gate check below, and neither write is itself serialized. `main`
+    acquires the lock via `run_lock.claim_for_process` before reaching here;
+    a caller that skips `main` (tests, or a future direct caller) must claim
+    it too rather than invoke this concurrently.
+    """
     if not ctx.pr_number:
         log.info("No PR for this branch — nothing to describe")
         return 0
 
     wt_path = ctx.require_worktree()
     state = pr_state.load_state(ctx.target_dir)
+
+    # Ahead of the HEAD gate: see project_follow_ups. Skipped on a dry run,
+    # which must not write to GitHub.
+    projection = Projection()
+    if state and not dry_run:
+        projection = project_follow_ups(ctx, state, trail=trail)
+        if projection.moved:
+            pr_state.save_state(ctx.target_dir, state)
+
     last_sha = state.describe.head_sha if state else ""
     if last_sha and last_sha == ctx.head_sha and not force:
         log.info(
@@ -206,7 +305,12 @@ def run_describe(
         return 0
 
     template = pr_template.load(wt_path)
-    fetched = _fetch_pr_body(ctx.repo, ctx.pr_number)
+    # Reuse the projection's read when it made one, rather than asking gh for
+    # the same body twice.
+    fetched = (
+        (projection.title, projection.body) if projection.fetched
+        else _fetch_pr_body(ctx.repo, ctx.pr_number)
+    )
     if fetched is None:
         if trail:
             trail.error("describe", "could not read the PR body",
@@ -242,6 +346,13 @@ def run_describe(
         return 0
 
     revised = _extract_description(raw)
+    if revised is not None and state:
+        # The AI replaces the body wholesale, so a block it did not reproduce is
+        # a block this pass would have deleted. Re-injected rather than asked
+        # for in the prompt: the prompt already asks for closing keywords
+        # verbatim and `pr_preserve_close_refs` still exists as the backstop for
+        # a one-line ref, so a multi-line block will not survive on instruction.
+        revised = pr_follow_ups.project(revised, state.follow_ups.entries)
     if revised is None:
         # _usable_revision already passed, so this should not happen, but guard
         # against a caller that bypasses agent_invoke.run_prompt and so never

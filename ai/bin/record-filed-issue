@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# Record a hand-filed issue in the branch's follow-up ledger.
+#
+# Called by both harnesses' post-execution hooks — Claude's PostToolUse entry in
+# ai/claude/settings.json, and ai/pi/extensions/issue-capture — because what a
+# ledger entry for a hand-filed issue looks like is one answer, and two copies
+# of it would drift the way the guards did before they shared a scan.
+#
+# An issue filed by `review.issue.create_issue` records itself, with the source,
+# the reason and both trail ids in hand. One filed by hand — `gh issue create`
+# from an agent session — goes through none of that, so without this hook the
+# ledger is a record of what the automation did rather than of what the branch
+# deferred.
+#
+# Post-execution on purpose. The PreToolUse guard that already parses this argv
+# runs *before* the command, when the issue does not exist and has no id, so it
+# can refuse a filing but cannot record one.
+#
+# Cost: the prefilter below is the whole design. Measured against an empty hook
+# on the same payloads, paired to cancel ambient load, this adds ~4.8 ms to a
+# Bash call that files nothing — 13% of what removing the guard's forks saved,
+# against the 87% the work was budgeted at. Everything expensive happens after
+# the `case`.
+#
+# Usage: record-filed-issue   (stdin: {"tool_input":{"command":...},
+#                                      "tool_response":{"stdout":...}})
+
+set -e
+
+usage() {
+  cat <<EOF
+Usage: record-filed-issue
+
+Records an issue filed by hand in the branch's follow-up ledger, so a filing
+that bypassed review.issue.create_issue is still visible to pr status and to
+the PR description. Reads a hook payload on stdin; called by both harnesses.
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+
+payload=$(cat)
+
+# The prefilter, before any parse. The overwhelming majority of Bash calls file
+# nothing, and they must pay bash start-up and one glob — not a jq fork, and
+# certainly not a Python interpreter.
+#
+# Matched against the raw payload rather than the extracted command: extracting
+# is the cost being avoided. A false positive here costs one wasted jq on a
+# command that merely mentions the phrase, which the statement check below then
+# discards.
+case "$payload" in
+  *"issue create"*) ;;
+  *) exit 0 ;;
+esac
+
+# Fail open from here down. A hook that cannot record a filing must not fail the
+# tool call that already succeeded — the issue exists either way, and refusing
+# after the fact would be reporting a failure for work that was done.
+command=$(printf '%s' "$payload" | jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
+[[ -n "$command" ]] || exit 0
+
+# The PostToolUse payload carries tool_response as well as tool_input, which is
+# why the extraction above names its path rather than searching for a key.
+response=$(printf '%s' "$payload" | jq -r '.tool_response.stdout // empty' 2>/dev/null) || exit 0
+
+# `gh issue create` as the command being run, not the phrase in an argument.
+# Kept in step with ISSUE_CREATE in ai/pi/extensions/issue-defer-guard/detect.ts
+# and with re_issue_create in claude-bash-guard, which read the same shape to
+# decide whether to refuse the filing this one records.
+re_issue_create='(^|[;&|][[:space:]]*)gh[[:space:]]+issue[[:space:]]+create([[:space:]]|$)'
+[[ "$command" =~ $re_issue_create ]] || exit 0
+
+# `gh issue create` prints the new issue's URL and nothing else. No URL means
+# the command failed, or printed somewhere this hook cannot see — either way
+# there is no issue to record. More than one URL-shaped match means the
+# output is not what a bare `gh issue create` prints (a chained command, or
+# noise ahead of the real line) and there is no way to tell which one this
+# invocation actually filed, so this records nothing rather than guess with
+# `tail -1` and risk attributing someone else's issue to this filing.
+urls=$(printf '%s' "$response" | grep -oE 'https://[^[:space:]]+/issues/[0-9]+') || exit 0
+[[ -n "$urls" ]] || exit 0
+url_count=$(printf '%s\n' "$urls" | wc -l | tr -d ' ')
+[[ "$url_count" == 1 ]] || exit 0
+url="$urls"
+
+# Where ai/lib is. This hook is installed to ~/.local/bin as a symlink into the
+# checkout, so the entry points' own resolver answers it — spelling a path here
+# would be a second answer to a question ai/bin/_libdir.py already owns, and
+# would ignore WORKBENCH_AI_LIB_DIR.
+hook_path=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0")
+ai_lib_dir="$(cd "$(dirname "$hook_path")/../lib" 2>/dev/null && pwd)" || exit 0
+[[ -d "$ai_lib_dir" ]] || exit 0
+
+exec python3 - "$url" "$command" "$ai_lib_dir" <<'PY'
+"""Record a hand-filed issue in the branch's ledger.
+
+Behind the prefilter, so the interpreter start-up is paid by the handful of
+commands that actually file rather than by every Bash call.
+"""
+import os
+import sys
+from pathlib import Path
+
+# The stanza every ai/bin entry point carries, spelled identically — the
+# duplication is the design (it has to answer before ai/lib is importable) and
+# tests/ai_lib_pin.bats holds every carrier to one text.
+_AI_LIB_DIR = Path(sys.argv[3])
+if os.environ.get("WORKBENCH_AI_LIB_DIR"):
+    sys.path.insert(0, str(_AI_LIB_DIR.parent / "bin"))
+    from _libdir import pinned_ai_lib_dir
+    del sys.path[0]
+    _AI_LIB_DIR = pinned_ai_lib_dir()
+sys.path.insert(0, str(_AI_LIB_DIR))
+
+try:
+    from config.workbench_config import IssueProvider
+    from pr import follow_ups as pr_follow_ups
+    from pr import state as pr_state
+    from pr import target as pr_target
+except Exception:
+    # The hook runs in every repo on the machine, including ones whose checkout
+    # predates the ledger. Nothing to record there.
+    sys.exit(0)
+
+url, command = sys.argv[1], sys.argv[2]
+issue_id = url.rstrip("/").rsplit("/", 1)[-1]
+
+target = pr_target.target_dir_for_checkout(Path.cwd())
+if target is None or not target.exists():
+    # No branch context — "no branch, no ledger entry" is the accepted floor.
+    sys.exit(0)
+
+state = pr_state.load_state(target)
+if state is None:
+    sys.exit(0)
+
+trail_root = os.environ.get("WORKBENCH_TRAIL_ROOT", "")
+entry = pr_follow_ups.FollowUp(
+    ref=pr_follow_ups.IssueRef(provider=IssueProvider.GITHUB, id=issue_id, url=url),
+    # The command is the only description a hand-filed issue has here; the title
+    # lives in argv the shell already consumed.
+    title=f"filed by hand: {command[:120]}",
+    source=pr_follow_ups.FollowUpSource.MANUAL,
+    filed_at=pr_state.now_iso(),
+    head_sha=state.identity.head_sha,
+    # No leaf invocation: this hook is not a trail-recording process. The root
+    # is what correlates it to the command the operator ran, and it is the one
+    # of the two that survives being a subprocess.
+    trail_root=trail_root,
+    reason="filed outside the review pipeline",
+)
+pr_state.apply(state, pr_follow_ups.FollowUpDomain(
+    entries=[entry], updated_at=pr_state.now_iso(),
+))
+pr_state.save_state(target, state)
+PY

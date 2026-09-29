@@ -1776,8 +1776,14 @@ _referenced_home_paths() {
   done < <(_referenced_home_paths)
 }
 
-@test "every bin script referenced by settings exists in ai/claude/bin" {
-  local expected path missing=()
+@test "every bin script referenced by settings is one the workbench installs" {
+  # Both bin dirs that reach LOCAL_BIN_DIR, not just Claude's. A hook may name a
+  # script this harness does not own: the follow-up recorder is called by
+  # Claude's PostToolUse entry and by the Pi extension, so it lives in ai/bin —
+  # one writer for the ledger rather than a copy per harness. What the check is
+  # for is a settings.json naming something nothing installs, which is still
+  # caught either way.
+  local expected path name missing=()
   expected=$(sed -n 's/^LOCAL_BIN_DIR="\(.*\)"$/\1/p' "$REPO_ROOT/lib/constants.sh")
 
   while read -r path; do
@@ -1785,11 +1791,13 @@ _referenced_home_paths() {
       "$expected"/*) ;;
       *) continue ;;
     esac
-    [ -f "$REPO_ROOT/ai/claude/bin/${path##*/}" ] || missing+=("${path##*/}")
+    name="${path##*/}"
+    [ -f "$REPO_ROOT/ai/claude/bin/$name" ] || [ -f "$REPO_ROOT/ai/bin/$name" ] \
+      || missing+=("$name")
   done < <(_referenced_home_paths)
 
   [ ${#missing[@]} -eq 0 ] || {
-    echo "referenced by settings.json but absent from ai/claude/bin: ${missing[*]}"
+    echo "referenced by settings.json but absent from ai/claude/bin and ai/bin: ${missing[*]}"
     return 1
   }
 }

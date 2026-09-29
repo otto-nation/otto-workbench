@@ -854,25 +854,34 @@ _agree() {
   # Read from the `block` calls rather than from the file: every one of these
   # phrases also appears in a comment explaining the rule, so a file-wide grep
   # keeps passing after the message itself is reworded.
-  local messages phrase
+  local messages phrase phrases
   messages=$(grep -hE '^[[:space:]]*block ' \
     "$REPO_ROOT/ai/claude/bin/claude-bash-guard")
   [ -n "$messages" ]
-  # This list has to grow by hand alongside _shared_rule_verdict's `case` above
-  # whenever a new shared rule joins it — nothing else enforces that they move
-  # together.
-  for phrase in \
-    'is a wait for something' \
-    'Backgrounding with' \
-    'Piping a test suite' \
-    'task pr:create' \
-    'self-review has open findings'; do
+
+  # The phrases are read out of _shared_rule_verdict's own `case` rather than
+  # restated here. A hand-kept second list is one a sixth rule joins without —
+  # which is how `pr-create` reached the classifier with nothing pinning its
+  # phrase — and the drift would be invisible, because the untested rule still
+  # classifies correctly until someone rewords its message.
+  #
+  # `claude-only` and the bare `BLOCKED:` fallback are excluded: they are what
+  # the classifier answers when no shared phrase matched, so they name no
+  # message of their own.
+  phrases=$(sed -n '/^_shared_rule_verdict()/,/^}/p' "$BATS_TEST_FILENAME" \
+    | sed -n 's/^[[:space:]]*\*"\(.*\)"\*).*$/\1/p' \
+    | grep -v '^BLOCKED:$')
+  [ -n "$phrases" ]
+  [ "$(printf '%s\n' "$phrases" | wc -l | tr -d ' ')" -ge 5 ]
+
+  while IFS= read -r phrase; do
+    [ -n "$phrase" ] || continue
     printf '%s' "$messages" | grep -qF "$phrase" || {
       echo "no block message in claude-bash-guard contains: $phrase"
       echo "_shared_rule_verdict classifies on it, and would silently stop"
       return 1
     }
-  done
+  done <<< "$phrases"
 }
 
 @test "shared rules: the two harnesses answer the same on a quoting corpus" {

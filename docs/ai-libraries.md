@@ -5011,6 +5011,32 @@ names. The resolvers here still take a table rather than reaching for one:
 `review_modes` would otherwise have to be imported from below it, and taking it
 as an argument is also what lets a test declare a table of its own.
 
+### cli/pr.py
+
+`pr`'s parser, its dispatcher, and the two commands that shape argv.
+
+The entry point, and only the entry point. Every subcommand's work lives
+below this layer: four in `cli.pr_commands`, five behind a `CommandSpec`
+handler the registry names. What is here is the two-pass global parse, the
+usage text, the ordering of resolve/register/fetch/lock, and the routing.
+
+`cmd_review` and `cmd_comments` are here rather than in `cli.pr_commands`
+because neither is a command in its own right: both shape argv ahead of a
+delegate the registry already names — `--self` injection, mode routing — and
+`cli.pr_commands` holds the four that `pr` genuinely performs itself.
+
+`bin_dir` is a parameter, not something this module derives. Under
+`WORKBENCH_AI_LIB_DIR` this file resolves inside the pinned checkout while
+the entry point's own directory does not, so a path built from `__file__`
+here would name a different tree's `ai/bin` than the shim the operator ran.
+`ai/bin/pr` passes its own, matching `cli.review_modes` and
+`review.publish.post`.
+
+`main` returns an int and does not exit, like every other `cli.<name>.main`.
+The shim does the `sys.exit`. `--tool-schema` is answered before anything
+else, because the MCP server executes `ai/bin/pr --tool-schema` to discover
+the tool and must not pay for a context resolution to get it.
+
 ### cli/pr_commands.py
 
 The four `pr` subcommands that used to be defined inside the binary.

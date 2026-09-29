@@ -139,9 +139,7 @@ def test_the_registry_is_the_only_list_of_subcommands():
     The set assertion above hardcodes the nine names and never looks at the
     parser, so a subcommand added directly to `_build_parser` would pass it.
     """
-    from conftest import load_script
-
-    pr_cli = load_script("pr_cli", BIN_DIR / "pr")
+    from cli import pr as pr_cli
     assert set(tool_parser.subparsers(pr_cli._build_parser())) == set(COMMANDS)
 
 
@@ -161,9 +159,7 @@ def test_the_declaration_order_is_the_display_order():
     order a reader expects — create, then inspect, then act — not alphabetical
     and not arbitrary.
     """
-    from conftest import load_script
-
-    pr_cli = load_script("pr_cli", BIN_DIR / "pr")
+    from cli import pr as pr_cli
     declared = _DISPLAY_ORDER
     assert [s.name for s in registry._SPECS] == declared
     assert list(COMMANDS) == declared
@@ -385,12 +381,13 @@ def test_pr_help_imports_no_delegate():
     )
     loaded = {m for m in out.stdout.strip().split(",") if m}
     assert loaded, "the probe loaded no cli module at all — it did not run `pr`"
-    # `cli.pr_commands` is the four internal handlers and `cli.dispatch` is the
-    # seam that calls a handler — both imported by the binary the same way
-    # `cli.review_modes` is, and neither a delegate. A delegate showing up here
-    # (`cli.ci_check`, `cli.claude_review`, …) is the regression: those are
-    # what `handler` keeps as a string so that dispatch, not import, pays.
-    assert loaded <= {"cli.needs", "cli.registry", "cli.review_modes",
+    # `cli.pr` is the entry point the shim imports; `cli.pr_commands` is the
+    # four internal handlers, `cli.dispatch` the seam that calls one, and
+    # `cli.schema` the document `--tool-schema` serves. None is a delegate.
+    # A delegate showing up here (`cli.ci_check`, `cli.claude_review`, …) is
+    # the regression: those are what `handler` keeps as a string so that
+    # dispatch, not import, pays for them.
+    assert loaded <= {"cli.pr", "cli.needs", "cli.registry", "cli.review_modes",
                       "cli.pr_commands", "cli.dispatch", "cli.schema"}, loaded
 
 

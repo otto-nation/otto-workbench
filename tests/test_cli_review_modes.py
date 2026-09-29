@@ -14,6 +14,7 @@ from conftest import make_ctx, seed_review
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
+BIN_DIR = REPO_ROOT / "ai" / "bin"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
@@ -36,12 +37,12 @@ def test_the_binary_routes_through_this_table():
     """
     from conftest import load_script
 
-    pr_cli = load_script("pr_cli", REPO_ROOT / "ai" / "bin" / "pr")
+    from cli import pr as pr_cli
     sentinel = mock.Mock(return_value=0)
     patched = dict(review_modes.MODES)
     patched["--summary"] = ReviewMode(sentinel)
     with mock.patch.dict(review_modes.MODES, patched, clear=True):
-        rc = pr_cli.cmd_review(["--summary"], make_ctx())
+        rc = pr_cli.cmd_review(["--summary"], make_ctx(), bin_dir=BIN_DIR)
     assert rc == 0
     sentinel.assert_called_once()
 
@@ -50,11 +51,11 @@ def test_the_exclusivity_check_reads_this_table_too():
     """A flag is a mode because this table says so, wherever it is checked."""
     from conftest import load_script
 
-    pr_cli = load_script("pr_cli", REPO_ROOT / "ai" / "bin" / "pr")
+    from cli import pr as pr_cli
     with mock.patch.dict(review_modes.MODES,
                          {"--summary": ReviewMode(), "--list": ReviewMode()},
                          clear=True):
-        assert pr_cli.cmd_review(["--summary", "--list"], make_ctx()) == 1
+        assert pr_cli.cmd_review(["--summary", "--list"], make_ctx(), bin_dir=BIN_DIR) == 1
 
 
 def test_every_mode_declares_the_need_it_was_given():

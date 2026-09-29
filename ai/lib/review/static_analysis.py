@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Callable
 
 from review.document import SECTION_STATIC_ANALYSIS
+from core import log
 from core.text import plural
 from git import client as git_client
 
@@ -238,6 +239,12 @@ def added_lines(wt_path: str, base: str) -> AddedLines | None:
         "diff", "--unified=0", f"{base}...HEAD", cwd=wt_path,
     )
     if result.returncode != 0:
+        # The one caller always prefixes `origin/`, so this is normally a
+        # shallow fetch that never brought `base` down — logged here because
+        # the return value collapses that reason into the same None a clean
+        # merge base with no diff never produces, and a caller with only the
+        # None would have nothing to report but "no added-lines scoping".
+        log.warn(f"added_lines: `git diff {base}...HEAD` failed: {result.stderr.strip()}")
         return None
     return _parse_added(result.stdout)
 

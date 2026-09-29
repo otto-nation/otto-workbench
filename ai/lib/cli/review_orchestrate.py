@@ -181,6 +181,13 @@ def _inject_static_analysis_section(job: ReviewJob) -> dict | None:
     # does not resolve gives None, which reports every violation and offers
     # none of them as work.
     base = f"origin/{job.pr.base}" if job.pr.base else ""
+    if not base:
+        # No PR/stack base on this job shape (see `fix.py`'s `pr.base or
+        # "HEAD"`) — falling back to unscoped, whole-file analysis. Logged
+        # here because `_static_items` only reports the fallback once a
+        # violation exists to report it about, and by then the reason base
+        # resolution was skipped is gone.
+        log.warn("Static analysis: no base to diff against, scanning whole files")
     try:
         added = added_lines(job.wt_path, base) if base else None
         results = run_static_analysis(changed_files, job.wt_path, added)

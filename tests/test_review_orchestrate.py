@@ -2656,6 +2656,23 @@ class TestStaticAnalysisIntegration:
         assert "## Static Analysis" in result
         assert "All checks passed" in result
 
+    def test_no_base_logs_why_analysis_is_unscoped(self, ro, tmp_path, capsys):
+        """An empty `job.pr.base` falls back to whole-file analysis silently
+        except for this line — without it there is nothing to read at the point
+        base resolution was skipped, only `_static_items`'s later, violation-
+        gated warning."""
+        review_file = tmp_path / "review.md"
+        review_file.write_text("## Summary\nLooks good.\n\n## Verdict\nApprove")
+        (tmp_path / "clean.sh").write_text("#!/bin/bash\necho hello\n")
+
+        job = self._job(
+            tmp_path, review_file, [{"path": "clean.sh", "additions": 2, "deletions": 0}],
+        )
+        job.pr.base = ""
+        ro._inject_static_analysis_section(job)
+
+        assert "no base to diff against" in capsys.readouterr().err
+
 
 class TestPipelineStateFailureRoundTrip:
     """`groups_failed` survives state.json in both the old and new format."""

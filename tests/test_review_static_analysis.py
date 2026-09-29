@@ -15,6 +15,7 @@ from review.static_analysis import (
     STATIC_ID_RE,
     CheckerResult,
     StaticViolation,
+    added_lines,
     all_violations,
     check_nesting_depth,
     format_static_analysis,
@@ -349,3 +350,14 @@ class TestCheckNestingDepth:
         result = check_nesting_depth(["deep.go"], str(tmp_path))
         assert result is not None
         assert len(result.violations) > 0
+
+
+class TestAddedLinesUnreadableBase:
+    """A base git cannot resolve — a shallow fetch that never brought it down
+    — reports why rather than leaving the caller to guess from a bare None."""
+
+    def test_an_unresolvable_base_logs_the_git_failure(self, tmp_path, capsys):
+        assert added_lines(str(tmp_path), "origin/does-not-exist") is None
+        err = capsys.readouterr().err
+        assert "added_lines" in err
+        assert "origin/does-not-exist" in err

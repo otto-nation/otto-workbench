@@ -788,41 +788,25 @@ class TestStaticViolationsAsWork:
 
         assert "<!-- fix:SA1 -->" in inv.call_args.args[1]
 
-    def test_a_duplicate_violation_id_is_warned_about_not_silently_dropped(
-        self, git_wt, tmp_path, capsys,
+    @pytest.mark.parametrize(
+        "vid", ["SA1", ""], ids=["duplicate-id", "both-empty-id"],
+    )
+    def test_a_repeated_violation_id_is_warned_about_not_silently_dropped(
+        self, git_wt, tmp_path, capsys, vid,
     ):
         """A hand-built list going straight through the constructor, not the
-        documented `run_static_analysis` path, can carry a repeated id. The
-        dict `items()` reads from keeps only the last of the two; this asserts
-        that loss is reported rather than silent.
+        documented `run_static_analysis` path, can carry a repeated id — and an
+        empty id collapses the same way, since two unaddressable violations are
+        also two violations sharing one key. The dict `items()` reads from
+        keeps only the last of the two either way; this asserts that loss is
+        reported rather than silent, for both id shapes.
         """
         job = _make_job(git_wt, tmp_path, "## Must fix\n", files=["src.py"])
         adapter = review_fix.ReviewFixAdapter(
             job, [],
             violations=[
-                _violation("SA1", "src.py", 1, message="first"),
-                _violation("SA1", "src.py", 2, message="second"),
-            ],
-        )
-
-        assert len(adapter.items()) == 1
-        assert "Duplicate static violation ids" in capsys.readouterr().err
-
-    def test_two_violations_with_no_id_are_warned_about_too(
-        self, git_wt, tmp_path, capsys,
-    ):
-        """An empty id collapses exactly as a repeated `SA1` does.
-
-        Excluding it would leave the guard silent on the case it is least able
-        to explain: an unaddressable violation has no line to be written back
-        to either, so losing it quietly is the worse of the two.
-        """
-        job = _make_job(git_wt, tmp_path, "## Must fix\n", files=["src.py"])
-        adapter = review_fix.ReviewFixAdapter(
-            job, [],
-            violations=[
-                _violation("", "src.py", 1, message="first"),
-                _violation("", "src.py", 2, message="second"),
+                _violation(vid, "src.py", 1, message="first"),
+                _violation(vid, "src.py", 2, message="second"),
             ],
         )
 

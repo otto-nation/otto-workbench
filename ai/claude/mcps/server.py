@@ -1,18 +1,21 @@
 """Dynamic MCP server for otto-workbench tools.
 
-Discovers tools by scanning the workbench's own component script directories
-for scripts that support ``--tool-schema``. A candidate is only executed if its
-source carries one of ``DECLARATION_MARKERS`` — probing runs the script, and
-scripts that ignore unknown flags would do their real work instead of
-answering. Any MCP client can connect via stdio transport.
+Tools are read from the component registries — see
+``ai/lib/config/tool_registry.py``. An entry declares the tool, ``visibility``
+decides whether a client sees it, and the schema is built by importing it.
+Any MCP client can connect via stdio transport.
 
-The directories come from the component layout and nothing else. There is no
-configuration file: the server exposes the workbench's own tools, so what to
-scan is a fact about the checkout rather than a question to ask the user.
+Discovery used to be a scan: glob nine ``bin`` directories, read the first
+256 KiB of every executable looking for a ``--tool-schema`` marker, then
+spawn each match under a timeout in an eight-worker pool and parse what it
+printed. Nine directories, four probe subprocesses at startup, to learn one
+thing — that ``pr`` is a tool and what it accepts. That is the last of the
+three cross-process introspection protocols #909 exists to remove, and it is
+gone: the offered set is a registry read and the schema is an import.
 
-Which of them a client is offered comes from the registries — see
-``ai/lib/config/tool_registry.py``. Carrying the marker makes a script probeable, not
-public: a hidden or unregistered one is skipped before it is ever run.
+There is no configuration file. The server exposes the workbench's own
+tools, so what is offered is a fact about the checkout rather than a
+question to ask the user.
 
 The client owns this process, spawning it over stdio, so nothing outside can
 restart it when a tool is added or re-signatured. A poll watches what discovery
@@ -28,7 +31,6 @@ import json
 import logging
 import os
 import re
-import stat
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -52,15 +54,6 @@ from core import proc  # noqa: E402
 from core import timeouts  # noqa: E402
 from config.tool_registry import RegistryEntry, load_registry_entries, registry_files  # noqa: E402
 
-COMPONENT_BIN_GLOBS = ("bin", "*/bin", "*/*/bin")
-
-# A probe prints a schema the script already holds, so it belongs in the QUICK
-# tier and a breach is a wedged process or a machine with nothing left to
-# schedule. This was a local 2.0 for as long as the table was thought to be out
-# of reach here — under the cost of starting a Python interpreter on a loaded
-# machine, and a probe that outran it dropped the tool for the whole session.
-DISCOVERY_TIMEOUT = timeouts.QUICK
-
 # Seconds a tool call gets before the client is told it timed out. Not a tier
 # from `timeouts`: those bound a subprocess that should already have answered,
 # while this is a budget for whichever tool the client asked for — `pr review`
@@ -69,44 +62,9 @@ TOOL_CALL_BUDGET = 300
 
 TOOL_SCHEMA_FLAG = "--tool-schema"
 
-# Candidates are probed together, so the bound above is the wait for all of
-# them rather than for each in turn — which is what lets the bound be generous
-# enough to survive a loaded machine without startup paying per tool.
-#
-# ceiling: one fixed cap for every machine. Make it a function of
-# `os.cpu_count()` if the workbench is ever installed somewhere with fewer
-# cores than this, where the spawns are themselves the contention.
-PROBE_WORKERS = 8
-
-# How many times a candidate is probed before discovery gives up on it this
-# scan. A second try costs one extra bound for the whole round rather than one
-# per tool, because that round is concurrent too, and it is only ever paid when
-# something already went wrong. It is worth paying: re-discovery runs when the
-# scanned directories change, so a tool dropped here is missing until somebody
-# edits the tree rather than until the next poll.
-PROBE_ATTEMPTS = 2
-
 # Keys every tool-schema document must carry. bin/local/validate-skills asserts
 # the same pair against declared output_schema tools.
 REQUIRED_SCHEMA_KEYS = ("name", "input_schema")
-
-# The two ways a script can implement the protocol: parse the flag itself, or
-# inherit it from ai/lib/core/tool_parser.py's ToolParser. A prose mention of the flag
-# also matches — the scan is a cheap filter, not a guarantee, which is why tools
-# that take positional arguments must reject unknown flags on their own.
-DECLARATION_MARKERS = (TOOL_SCHEMA_FLAG.encode(), b"ToolParser")
-
-# A shim over ai/lib/cli/<module>.py, whose markers are in the module rather
-# than in the executable. Anchored at a line start so the import a shim is made
-# of is what matches, not a mention of one in a comment; the tail is open
-# because every shim carries a linter directive after it.
-SHIM_IMPORT = re.compile(rb"^from cli\.(\w+) import main\b", re.MULTILINE)
-
-# Bytes of a candidate read when looking for a marker. Scripts declare the
-# protocol in their imports or argument parsing, well inside this bound.
-# ceiling: a compiled binary carrying a marker past this offset is skipped —
-# raise the cap if a tool dir ever holds one.
-DECLARATION_SCAN_BYTES = 256 * 1024
 
 # How much of a tool's output an error message quotes back. Enough to recognise
 # a usage line or a stack trace, short enough not to bury the sentence above it.
@@ -154,344 +112,83 @@ def _run_script(argv: list[str], timeout: float) -> proc.CmdResult:
 # ── Tool Discovery ────────────────────────────────────────────────────────
 
 
-def discover_tool_dirs(root: Path | None = None) -> list[Path]:
-    """Return the workbench's own script directories.
+def _tool_schema(script: Path) -> dict | None:
+    """The schema *script* declares, read in this process.
 
-    A component keeps its scripts in ``<component>/bin`` and the root ``bin/``
-    holds the workbench's own — so the directories are derived from the layout
-    rather than listed. The glob is the two-level one ``lib/components.sh``
-    uses for ``steps.sh`` and ``migrations``, plus the root, which means a new
-    component tier such as ``editors/zed/bin`` is picked up without editing
-    this file or hand-authoring config.
+    `pr` is the one tool the workbench offers, and the document it serves is
+    now a function in `ai/lib` rather than a string only the binary can
+    print. Reading it directly is what removed the last of #909's three
+    cross-process introspection protocols: discovery used to glob nine
+    directories, byte-grep each executable for a marker, and spawn every
+    match with `--tool-schema` under a timeout, to learn something an import
+    answers.
 
-    This derivation is the whole of where the server looks. An earlier design
-    read the directories from ``~/.config/workbench/mcp-tools.json``, which no
-    setup step, migration or shipped default ever wrote — so discovery resolved
-    to nothing and every install ran a registered server exposing zero tools.
-    The layout is the answer because the server hosts the workbench's own
-    tools; a directory outside the checkout has no tools of this kind in it.
-
-    *root* defaults to the running checkout. ``bin/local/validate-tool-schema``
-    passes one so its tests can point the same derivation at a fixture tree.
+    None for a registered script this server has no schema for. Most
+    registered scripts are not tools — `wt`, `otto-log`, the scans — and a
+    registry entry is not a claim to be one. Returning None rather than
+    raising keeps a component's registry free to list whatever it documents.
     """
-    base = WORKBENCH_DIR if root is None else Path(root)
-    dirs = {d for pattern in COMPONENT_BIN_GLOBS for d in base.glob(pattern) if d.is_dir()}
-    return sorted(dirs)
-
-
-def _is_executable(path: Path) -> bool:
-    try:
-        return path.is_file() and (path.stat().st_mode & stat.S_IXUSR)
-    except OSError:
-        return False
-
-
-def _head_bytes(path: Path) -> bytes:
-    try:
-        with path.open("rb") as f:
-            return f.read(DECLARATION_SCAN_BYTES)
-    except OSError as exc:
-        logger.debug("Cannot read %s: %s", path, exc)
-        return b""
-
-
-def declares_tool_schema(script: Path) -> bool:
-    """True if *script* carries a protocol marker in its source.
-
-    Probing means executing, and a script that ignores unknown flags runs its
-    default action instead of answering — ``build-otto-ai-tools-tarball`` read
-    the flag as a version string and wrote a release archive into the CWD.
-    Reading the source first limits execution to scripts that could respond.
-
-    A shim over ``ai/lib/cli/`` declares by delegation: the parser it answers
-    the probe with is in the module it imports, so the scan follows the import
-    rather than reading the twelve lines that carry no marker.
-    """
-    head = _head_bytes(script)
-    if any(marker in head for marker in DECLARATION_MARKERS):
-        return True
-
-    match = SHIM_IMPORT.search(head)
-    if match is None:
-        return False
-    module = script.resolve().parent.parent / "lib" / "cli" / f"{match.group(1).decode()}.py"
-    return any(marker in _head_bytes(module) for marker in DECLARATION_MARKERS)
-
-
-class ProbeFailure(Enum):
-    """Why a probe did not answer, split by what would put it right.
-
-    A script that exits non-zero, prints something other than JSON, or omits a
-    required key is broken, and its author is who fixes it. One that never
-    answers inside the bound is a wedged process or a machine with nothing left
-    to schedule — far more often a fact about the machine than about the
-    script. Reporting the two the same way sends whoever reads it after the
-    wrong thing, so the distinction travels with the result.
-
-    A candidate with no marker is neither: nothing ran, and most executables in
-    a ``bin/`` are not tools.
-    """
-
-    UNMARKED = "unmarked"
-    TIMED_OUT = "timed out"
-    BROKEN = "broken"
-
-
-@dataclass(frozen=True)
-class ProbeResult:
-    """What ``script --tool-schema`` answered, or why it did not.
-
-    The reason travels with the result rather than going straight to the log,
-    so a caller that is not the server — ``bin/local/validate-tool-schema`` —
-    can report the same failure to whoever broke the script. ``failure`` says
-    which kind of failure it was, so that caller can also decline to call a
-    slow machine a broken tool.
-    """
-
-    script: Path
-    schema: dict | None = None
-    reason: str | None = None
-    failure: ProbeFailure | None = None
-
-    @property
-    def ok(self) -> bool:
-        return self.schema is not None
-
-    @property
-    def timed_out(self) -> bool:
-        return self.failure is ProbeFailure.TIMED_OUT
-
-
-def probe_tool(script: Path) -> ProbeResult:
-    """Run ``script --tool-schema`` and return its schema or a failure reason.
-
-    The marker check is re-applied here rather than left to the caller.
-    ``tool_candidates`` already filters, but probing is execution: a script that
-    ignores unknown flags does its real work instead of answering, and
-    ``build-otto-ai-tools-tarball`` wrote a release archive into the CWD that
-    way. The invariant travels with the function that would break it.
-
-    One probe and one script. ``probe_tools`` is what discovery and the
-    validator call, because it runs the round concurrently and retries the
-    probes that ran out of time.
-    """
-    if not declares_tool_schema(script):
-        return ProbeResult(script, reason="no protocol marker in its source",
-                           failure=ProbeFailure.UNMARKED)
-    try:
-        result = _run_script([str(script), TOOL_SCHEMA_FLAG], DISCOVERY_TIMEOUT)
-        # Before the exit code is read as the script's own: a timeout arrives as
-        # a return code now, and the two failures want different readers.
-        if result.returncode == proc.TIMEOUT_RETURNCODE:
-            return ProbeResult(
-                script, failure=ProbeFailure.TIMED_OUT,
-                reason=f"{TOOL_SCHEMA_FLAG} did not answer within {DISCOVERY_TIMEOUT:g}s")
-        if result.returncode != 0:
-            return ProbeResult(script, failure=ProbeFailure.BROKEN, reason=(
-                f"{TOOL_SCHEMA_FLAG} exited {result.returncode}: "
-                f"{result.stderr.strip() or '(no stderr)'}"
-            ))
-        schema = json.loads(result.stdout)
-        missing = [key for key in REQUIRED_SCHEMA_KEYS if key not in schema]
-        if missing:
-            return ProbeResult(script, failure=ProbeFailure.BROKEN,
-                               reason=f"schema is missing {', '.join(missing)}")
-        schema["_script"] = str(script)
-        return ProbeResult(script, schema=schema)
-    except (json.JSONDecodeError, OSError) as exc:
-        # Name the exception type rather than trusting its str() to say which
-        # of the two it was — docs/tools.md tells readers these are distinct.
-        return ProbeResult(script, reason=f"{type(exc).__name__}: {exc}",
-                           failure=ProbeFailure.BROKEN)
-
-
-def _probe_round(scripts: list[Path]) -> list[ProbeResult]:
-    """Probe every script at once, answering in the order they were given.
-
-    Threads rather than tasks or processes: a probe is a subprocess spawn, so
-    the interpreter is waiting on ``wait4`` for all but a sliver of it.
-    """
-    with ThreadPoolExecutor(max_workers=min(len(scripts), PROBE_WORKERS)) as pool:
-        return list(pool.map(probe_tool, scripts))
-
-
-def probe_tools(scripts: list[Path]) -> list[ProbeResult]:
-    """Probe every script in *scripts*, returning results in the given order.
-
-    The order is the caller's rather than completion's. Discovery and
-    ``bin/local/validate-tool-schema`` both report in path order, and a list
-    that reshuffled under load would make two runs over the same tree disagree
-    about nothing.
-
-    A probe that ran out of time is tried again, up to ``PROBE_ATTEMPTS`` in
-    all. Only the ones that timed out are re-run, and they are re-run together,
-    so the retry costs one more bound for the round rather than one per tool. A
-    script that answered — with a schema or with a mistake in one — is left
-    alone: running it again would cost the same wait to be told the same thing.
-    """
-    if not scripts:
-        return []
-    results = _probe_round(scripts)
-    for _ in range(PROBE_ATTEMPTS - 1):
-        retry = [result.script for result in results if result.timed_out]
-        if not retry:
-            break
-        logger.warning("Probing %d script(s) again, they did not answer in time: %s",
-                       len(retry), ", ".join(str(script) for script in retry))
-        again = {result.script: result for result in _probe_round(retry)}
-        results = [again.get(result.script, result) if result.timed_out else result
-                   for result in results]
-    return results
-
-
-def tool_candidates(d: Path) -> list[Path]:
-    """Return the scripts in *d* that discovery would probe.
-
-    Executable, not hidden or underscore-prefixed, and carrying a protocol
-    marker. This is the whole of "what is a tool here" up to running it, so the
-    validator asks this rather than restating the filter.
-    """
-    try:
-        entries = sorted(d.iterdir())
-    except OSError as exc:
-        logger.warning("Skipping inaccessible directory %s: %s", d, exc)
-        return []
-    return [e for e in entries
-            if _is_executable(e)
-            and not e.name.startswith((".", "_"))
-            and declares_tool_schema(e)]
-
-
-def offered_candidates(d: Path, registry: dict[Path, RegistryEntry]) -> dict[Path, RegistryEntry]:
-    """The scripts in *d* a client may be offered, each with its registry entry.
-
-    The filter runs before ``probe_tool``, so a hidden or unregistered script is
-    never executed. Reversing the two would run every marker-bearing script on
-    every startup to build a list most of them are then dropped from.
-
-    A candidate no registry names is a warning: carrying the marker says it
-    meant to be a tool, and the entry that would offer it is one stanza in the
-    ``registry.yml`` whose ``meta.source`` is this directory. Being hidden is a
-    decision somebody already made, so it is only worth a debug line.
-    """
-    offers: dict[Path, RegistryEntry] = {}
-    for script in tool_candidates(d):
-        entry = registry.get(script.resolve())
-        if entry is None:
-            logger.warning("Skipping %s: it declares %s but no registry entry names it",
-                           script, TOOL_SCHEMA_FLAG)
-        elif entry.offered:
-            offers[script] = entry
-        else:
-            logger.debug("Not offering %s: registry visibility is %s",
-                         script, entry.visibility.value)
-    return offers
+    if script.name != "pr":
+        return None
+    from cli.schema import tool_schema
+    schema = dict(tool_schema())
+    schema["_script"] = str(script)
+    return schema
 
 
 def _described(schema: dict, entry: RegistryEntry) -> dict:
-    """*schema* with the registry's description in place of the script's.
+    """The schema a client sees, described in the registry's words.
 
-    The registries own tool documentation, so the description a client reads is
-    the one a reader of the rules gets — plus the ``when_to_use`` and ``usage``
-    lines a ``full`` entry carries. A script's own line is written for its
-    ``--help`` and has already drifted shorter: ``pr`` answers the probe with
-    "Unified PR lifecycle CLI — CI, review, comments, rebase" and says nothing
-    about when to reach for it.
+    The registry is where a tool's description is maintained and where the
+    `when_to_use` and `usage` a caller actually needs are written, so it wins
+    over whatever the schema carries.
     """
     return {**schema, "description": entry.tool_description}
 
 
-def _offered_scripts(dirs: list[Path],
-                     registry: dict[Path, RegistryEntry]) -> dict[Path, RegistryEntry]:
-    """Every offered candidate under *dirs*, in directory-then-path order."""
-    offers: dict[Path, RegistryEntry] = {}
-    for d in dirs:
-        offers.update(offered_candidates(d, registry))
-    return offers
+def discover_tools(registry: dict[Path, RegistryEntry] | None = None) -> dict[str, dict]:
+    """Every offered tool, as {tool_name: schema_dict}.
 
+    Read from the registry rather than found by scanning: an entry declares
+    the tool, `visibility` decides whether a client sees it, and the schema
+    comes from an import. Nothing is globbed, byte-grepped or spawned.
 
-def _scan_offered(dirs: list[Path], registry: dict[Path, RegistryEntry]) -> list[dict]:
-    """Return tool schemas from the offered scripts under *dirs*.
+    *registry* defaults to the running checkout's entries. Passing it is how
+    a test points discovery at a fixture without writing into the checkout;
+    an empty one offers nothing, which is what an unregistered tree amounts
+    to.
 
-    Every directory's candidates go into one probing round rather than a round
-    per directory, so what a client waits for at startup is one probe and not
-    one per tool.
-
-    A script that carries a marker meant to be a tool, so every way it can then
-    fail to answer is logged. Silence here reads as "no tool here" and leaves
-    nothing to debug — the scan covers every component's ``bin/``, so the
-    author of a broken tool is rarely the person reading these logs.
-    Executables with no marker are not tools and stay quiet.
-
-    A probe that never answered is logged at error level rather than warning,
-    and worded so it does not read as a broken tool: it outlived a bound a
-    script answering from memory cannot plausibly need, which is a wedged
-    process or a machine under load. The two failures want different people to
-    look at them, so they do not share a line.
+    A name two entries both answer to keeps the first and logs the other.
+    `bin/local/validate-registries` is where a collision is meant to be
+    caught — raising here would run in the watcher thread as well as at
+    startup, so one ambiguity would either take the server down or stop
+    re-discovery for the session.
     """
-    offers = _offered_scripts(dirs, registry)
-    schemas = []
-    for result in probe_tools(list(offers)):
-        if result.ok:
-            schemas.append(_described(result.schema, offers[result.script]))
-        elif result.timed_out:
-            logger.error(
-                "Not offering %s this scan: %s, on %d attempts. A probe answers "
-                "with a schema the script already holds, so this is a loaded "
-                "machine or a wedged script rather than a broken tool. Discovery "
-                "runs again when something under the scanned directories changes.",
-                result.script, result.reason, PROBE_ATTEMPTS)
-        else:
-            logger.warning("Skipping %s: %s", result.script, result.reason)
-    return schemas
-
-
-def discover_tools(dirs: list[Path] | None = None,
-                   registry: dict[Path, RegistryEntry] | None = None) -> dict[str, dict]:
-    """Scan directories and return {tool_name: schema_dict}.
-
-    *dirs* defaults to the derived set and *registry* to the running checkout's
-    entries. Passing them is how a test points the scan at a fixture directory
-    without writing scripts into the checkout; an empty *registry* offers
-    nothing, which is what an unregistered tree amounts to.
-
-    A name two scripts both answer with keeps the first the scan reached and
-    logs the other at ERROR. Raising instead would run in the watcher thread as
-    well as at startup, so one ambiguity would either take the server down or
-    stop re-discovery for the session; first-wins leaves a working tool
-    working. The build is where a collision is meant to be caught —
-    ``bin/local/validate-tool-schema`` fails on it.
-    """
-    if dirs is None:
-        dirs = discover_tool_dirs()
     if registry is None:
         registry = load_registry_entries(WORKBENCH_DIR)
-    tools: dict[str, dict] = {}
 
-    for schema in _scan_offered(dirs, registry):
+    tools: dict[str, dict] = {}
+    for script, entry in sorted(registry.items()):
+        if not entry.offered:
+            continue
+        schema = _tool_schema(script)
+        if schema is None:
+            continue
         name = schema["name"]
         if name in tools:
             logger.error(
                 "Duplicate tool name %s: keeping %s, ignoring %s — which one a "
-                "client reaches is decided by scan order, so rename one",
+                "client reaches is decided by registry order, so rename one",
                 name, tools[name]["_script"], schema["_script"])
             continue
-        tools[name] = schema
-        logger.info("Discovered tool: %s (%s)", name, schema["_script"])
+        tools[name] = _described(schema, entry)
+        logger.info("Discovered tool: %s (%s)", name, script)
 
     return tools
 
 
-# ── Re-discovery ──────────────────────────────────────────────────────────
-
-
 def _stamp(path: Path) -> tuple | None:
-    """What a file would have to change for discovery to answer differently.
-
-    Size and modification time cover an edited script and an edited registry.
-    The mode is here because ``chmod +x`` is the whole of what turns a file in
-    a scanned directory into a candidate, and it moves neither of the others.
-    """
+    """What a file would have to change for discovery to answer differently."""
     try:
         st = path.stat()
     except OSError:
@@ -499,29 +196,24 @@ def _stamp(path: Path) -> tuple | None:
     return (st.st_mtime_ns, st.st_size, st.st_mode)
 
 
-def _dir_entries(d: Path) -> list[Path]:
-    try:
-        return sorted(d.iterdir())
-    except OSError:
-        return []
-
-
 def discovery_fingerprint(root: Path | None = None) -> tuple:
     """A comparable value over every input ``discover_tools`` reads.
 
-    Every file in every scanned directory rather than only the candidates:
-    reading each one's source to decide whether it carries a marker is the
-    expensive half of discovery, and a fingerprint that ran it would cost as
-    much as the re-scan it exists to avoid. The directories themselves are
-    stamped too, so a script added or deleted is a change even when the file
-    that appeared is one this stamp would otherwise ignore.
+    Two inputs now, where a scan of nine directories used to be the whole of
+    it: the registry files, which decide what is offered and how it is
+    described, and the modules the schema is built from.
 
-    The registries are inputs as much as the scripts are — an entry going
-    ``hidden`` withdraws a tool without touching a line of its script.
+    Narrowing this was not an optimisation. The old fingerprint stamped every
+    file in every scanned directory because the marker-grep that decided
+    candidacy was too expensive to re-run on a poll — a proxy for the answer
+    rather than the inputs to it. Reading the registry has no such cost, so
+    the fingerprint can name exactly what discovery reads, which is what
+    closes the case it used to miss: a schema that changed without any file
+    in a `bin/` directory being touched.
     """
     base = WORKBENCH_DIR if root is None else Path(root)
-    dirs = discover_tool_dirs(base)
-    watched = [*dirs, *(e for d in dirs for e in _dir_entries(d)), *registry_files(base)]
+    lib = base / "ai" / "lib" / "cli"
+    watched = [*registry_files(base), lib / "schema.py", lib / "registry.py"]
     return tuple(sorted((str(path), _stamp(path)) for path in watched))
 
 
@@ -549,10 +241,22 @@ def discover_with_baseline() -> Discovery:
 
 
 def _why_gone(script: Path) -> str:
-    """Why a tool that used to answer no longer does."""
+    """Why a tool that used to answer no longer does.
+
+    Two answers now, where the probe used to supply a third. A tool was
+    withdrawn because its script went away or because its registry entry
+    stopped offering it — those are the only inputs left, so the reason can
+    be stated rather than re-derived by running the thing.
+
+    The probe's third answer was "it still exists and is still offered but
+    has stopped answering correctly", which a registry read cannot produce:
+    a schema that fails to build raises out of `discover_tools` rather than
+    quietly dropping one tool. That is the better failure — it happens once,
+    at the scan, instead of once per tool at the point somebody notices.
+    """
     if not script.exists():
         return "its script is gone"
-    return probe_tool(script).reason or "its registry entry no longer offers it"
+    return "its registry entry no longer offers it"
 
 
 def _log_lost_tools(before: dict[str, dict], after: dict[str, dict]) -> None:

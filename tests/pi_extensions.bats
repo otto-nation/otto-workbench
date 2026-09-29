@@ -2091,3 +2091,79 @@ _parse_list() {
     "$REPO_ROOT/ai/pi/extensions/job-poll-guard/index.ts"
   [ "$status" -eq 0 ]
 }
+
+# ── issue-capture ────────────────────────────────────────────────────────────
+#
+# The recording half of the filing rule. Its refusing half is issue-defer-guard
+# above; both harnesses have both, and ai/bin/record-filed-issue is the one
+# writer they share.
+
+# _captures COMMAND — prints true or false for isIssueFiling(COMMAND).
+_captures() {
+  run node --input-type=module -e "
+    const { isIssueFiling } = await import('$REPO_ROOT/ai/pi/extensions/issue-capture/detect.ts');
+    console.log(isIssueFiling(process.argv[1]));
+  " "$1"
+}
+
+@test "issue-capture: a filing is recognised, a mention of one is not" {
+  _captures 'gh issue create --title x'
+  [ "$output" = true ]
+  _captures 'cd /x && gh issue create'
+  [ "$output" = true ]
+  _captures 'echo gh issue create'
+  [ "$output" = false ]
+  _captures 'gh issue list'
+  [ "$output" = false ]
+}
+
+@test "issue-capture: the two harnesses recognise the same filings" {
+  # The Claude side is the same regex in the recorder and in the PreToolUse
+  # guard. A command one harness records and the other does not is a filing
+  # that reaches the ledger from one seat and not the other.
+  local cmd
+  for cmd in \
+    'gh issue create --title x' \
+    'echo gh issue create' \
+    'gh issue list'; do
+    _captures "$cmd"
+    local pi="$output"
+    _files_issue "$cmd"
+    [ "$pi" = "$output" ] || {
+      echo "capture and defer-guard disagree on: $cmd"
+      echo "  issue-capture=$pi  issue-defer-guard=$output"
+      return 1
+    }
+  done
+}
+
+@test "issue-capture: the url is read from what gh printed, or nothing is" {
+  run node --input-type=module -e "
+    const m = await import('$REPO_ROOT/ai/pi/extensions/issue-capture/detect.ts');
+    console.log(JSON.stringify([
+      m.filedIssueUrl('https://github.com/o/r/issues/12'),
+      m.filedIssueUrl('error: could not create issue'),
+      m.issueIdFrom('https://github.com/o/r/issues/12'),
+    ]));
+  "
+  [ "$output" = '["https://github.com/o/r/issues/12",null,"12"]' ]
+}
+
+@test "issue-capture: detect.ts imports no SDK" {
+  # Same contract as the other predicates: bats loads this under bare node.
+  #
+  # Matched on `import` lines rather than anywhere in the file. The older twins
+  # of this test grep the whole text, which also fires on a header comment that
+  # merely explains why the SDK is absent — a file cannot document the rule it
+  # obeys without failing the check for it.
+  run grep -nE '^\s*import .*(@earendil-works/pi-coding-agent|isToolCallEventType)' \
+    "$REPO_ROOT/ai/pi/extensions/issue-capture/detect.ts"
+  [ "$status" -ne 0 ]
+}
+
+@test "issue-capture: both harnesses write through the one recorder" {
+  # Two copies of "what a ledger entry looks like" would drift the way the
+  # guards did before they shared a scan.
+  grep -q 'record-filed-issue' "$REPO_ROOT/ai/pi/extensions/issue-capture/index.ts"
+  grep -q 'record-filed-issue' "$REPO_ROOT/ai/claude/settings.json"
+}

@@ -12,6 +12,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 
 | Script | Description |
 |--------|-------------|
+| `record-filed-issue` | Records an issue filed by hand in the branch's follow-up ledger — called by both harnesses' post-execution hooks |
 | `pr` | Unified PR lifecycle CLI — CI failures, code review, and review comments |
 | `claude-review` | Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support |
 | `otto-log` | Query the unified trail root and AI usage across otto-workbench scripts — audit trail plus cost and token stats |

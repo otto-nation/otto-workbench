@@ -2137,6 +2137,95 @@ _captures() {
   done
 }
 
+@test "issue-capture: the bash regex and both TS matchers agree on the same commands" {
+  # The two TS matchers are checked against each other above. The bash side
+  # reached from Claude's PostToolUse hook (record-filed-issue's own
+  # re_issue_create) and the PreToolUse guard (claude-bash-guard's copy of the
+  # same variable) is a third, independent implementation of "is this a filing",
+  # kept in sync with the other two only by a code comment — a bash-vs-TS drift
+  # here is exactly the three-way drift this epic's guards used to suffer from,
+  # and none of the tests above would catch it.
+  local re_bash
+  re_bash=$(grep -m1 "^re_issue_create=" "$REPO_ROOT/ai/bin/record-filed-issue")
+  local re_guard
+  re_guard=$(grep -m1 "^re_issue_create=" "$REPO_ROOT/ai/claude/bin/claude-bash-guard")
+  [ "$re_bash" = "$re_guard" ]
+
+  local cmd
+  for cmd in \
+    'gh issue create --title x' \
+    'cd /x && gh issue create' \
+    'echo gh issue create' \
+    'gh issue list'; do
+    # Sourced from the script rather than restated: a copy here would be a
+    # fourth spelling, and the test would pass while the three real ones drift.
+    eval "$re_bash"
+    local bash_result=false
+    [[ "$cmd" =~ $re_issue_create ]] && bash_result=true
+
+    _captures "$cmd"
+    local pi="$output"
+    [ "$bash_result" = "$pi" ] || {
+      echo "bash re_issue_create and issue-capture disagree on: $cmd"
+      echo "  bash=$bash_result  issue-capture=$pi"
+      return 1
+    }
+  done
+}
+
+@test "issue-capture: an ambiguous response records nothing rather than a guess" {
+  # `gh issue create && gh issue view 5` prints two URLs, and picking one by
+  # position records whichever the chain ended with — attributing someone
+  # else's issue to this filing. A ledger entry pointing at the wrong issue is
+  # worse than a missing one: it reads as a record somebody checked.
+  #
+  # The ledger is seeded first, and the assertion is that it still holds only
+  # the seeded entry. Asserting "no state file" would pass on an empty sandbox
+  # whatever the recorder did, which is no assertion at all.
+  local sandbox="$BATS_TEST_TMPDIR/amb"
+  mkdir -p "$sandbox/repo" "$sandbox/state"
+  git -C "$sandbox/repo" init -q -b feat/amb
+  git -C "$sandbox/repo" remote add origin git@github.com:otto-nation/otto-workbench.git
+  git -C "$sandbox/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+
+  run env WORKBENCH_STATE_DIR="$sandbox/state" python3 -c '
+import sys
+sys.path.insert(0, sys.argv[1] + "/ai/lib")
+from pathlib import Path
+from pr import state as s, target as t
+d = t.target_dir_for_checkout(Path(sys.argv[2]))
+d.mkdir(parents=True, exist_ok=True)
+s.save_state(d, s.new_state(repo="otto-nation/otto-workbench", branch="feat/amb",
+                            pr_number=1, head_sha="abc", worktree_root=sys.argv[2]))
+print(d)
+' "$REPO_ROOT" "$sandbox/repo"
+  [ "$status" -eq 0 ]
+  local target="$output"
+
+  local payload
+  payload=$(python3 -c '
+import json
+print(json.dumps({
+    "tool_input": {"command": "gh issue create --title x && gh issue view 5"},
+    "tool_response": {"stdout": "https://github.com/o/r/issues/99\nhttps://github.com/o/r/issues/5\n"},
+}))')
+
+  run env WORKBENCH_STATE_DIR="$sandbox/state" \
+    bash -c "cd '$sandbox/repo' && printf '%s' '$payload' | '$REPO_ROOT/ai/bin/record-filed-issue'"
+  [ "$status" -eq 0 ]
+
+  # The seeded ledger is untouched: no entry, rather than an entry naming 5.
+  run python3 -c '
+import sys
+sys.path.insert(0, sys.argv[1] + "/ai/lib")
+from pathlib import Path
+from pr import state as s
+st = s.load_state(Path(sys.argv[2]))
+print(",".join(e.ref.id for e in st.follow_ups.entries))
+' "$REPO_ROOT" "$target"
+  [ "$output" = "" ]
+}
+
 @test "issue-capture: the url is read from what gh printed, or nothing is" {
   run node --input-type=module -e "
     const m = await import('$REPO_ROOT/ai/pi/extensions/issue-capture/detect.ts');

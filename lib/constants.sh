@@ -154,10 +154,16 @@ RETRO_CONSUMED_REVIEWS_FILE="$WORKBENCH_STATE_DIR/retro-consumed-reviews.json"
 # from Pi has no directory in Claude's store, and a stamp written there would
 # gate on a directory that never appears.
 #
-# The gates whose stamps sit inside a memory directory keep them there — those
-# are already keyed per repo, and moving every per-project agent artifact out
-# of Claude's tree is its own change.
+# Dream and promote stamps live here too — they are regenerable cooldown
+# state, not authored topic files. Authored memory is under WORKBENCH_MEMORY_DIR.
 GATE_STAMPS_DIR="$WORKBENCH_STATE_DIR/gates"
+
+# Authored per-repo memory topic files. Under the data root because a dream
+# pass writes them from transcripts that then rotate away — there is no
+# producer to re-run. Distinct from GATE_STAMPS_DIR, which holds the
+# regenerable .last-dream / .last-promote stamps. The Python half is
+# workbench_paths.memory_dir(); tests/workbench_roots.bats holds the pair.
+WORKBENCH_MEMORY_DIR="$WORKBENCH_DATA_DIR/memory"
 
 # The retro cooldown, which is one per machine rather than one per repo: a retro
 # is a single sweep over every registered repo's reviews. Unslugged for that

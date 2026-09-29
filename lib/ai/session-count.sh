@@ -159,12 +159,14 @@ _pi_session_slug() {
 # [A-Za-z0-9_], keeping underscores so `feat/add_auth` and `feat/add-auth` stay
 # distinct where Claude's transform would collide them. That makes it a stable,
 # filesystem-safe id for things this repo names itself — the gate stamps under
-# $GATE_STAMPS_DIR, and dream-scan's per-project grouping key.
+# $GATE_STAMPS_DIR, and the slug half of _repo_key. Memory directories add a
+# digest of git_shared_dir so three paths that collide under this transform
+# still get three directories.
 #
 # Addressing a harness's own store needs that harness's transform instead:
-# _pi_session_slug above for Pi, _claude_project_dir below for Claude, which is
-# also where a repo's memory hangs. canonical_slug() in ai/lib/core/sessions.py
-# is the Python half, and tests/sessions_ssot.bats fails when the two drift.
+# _pi_session_slug above for Pi, _claude_project_dir below for Claude.
+# canonical_slug() in ai/lib/core/sessions.py is the Python half, and
+# tests/sessions_ssot.bats fails when the two drift.
 _canonical_slug() {
   local trimmed
   trimmed="${1#/}"
@@ -178,9 +180,9 @@ _canonical_slug() {
 # Claude names that directory for the absolute path of the session's cwd, with
 # every character outside [A-Za-z0-9] replaced by a hyphen — a different
 # transform from _canonical_slug, which is why both exist. This one addresses
-# Claude's own store, which is also where a repo's memory lives; that one names
-# the gate stamps. claude_slug in ai/lib/core/sessions.py is the Python half,
-# held to this by tests/sessions_ssot.bats.
+# Claude's own store; that one names the gate stamps. claude_slug in
+# ai/lib/core/sessions.py is the Python half, held to this by
+# tests/sessions_ssot.bats.
 #
 # ceiling: _encode_slug walks code points, while Claude's transform is a
 # JavaScript regex and so walks UTF-16 code units. They agree across the BMP —
@@ -194,13 +196,37 @@ _claude_project_dir() {
   printf '%s/projects/%s' "$CLAUDE_DIR" "$(_encode_slug "$1" 'A-Za-z0-9')"
 }
 
-# _claude_memory_dir DIR — where the memory for the repo at DIR lives.
+# _repo_key DIR — filesystem-safe directory name for DIR's authored memory.
 #
-# Memory is still kept in Claude's tree whichever harness a session ran in, and
-# moving it out is its own change. Spelled here so the join has one owner:
-# memory_dirs() in ai/lib/core/sessions.py is the Python half.
-_claude_memory_dir() {
-  printf '%s/memory' "$(_claude_project_dir "$1")"
+# `<canonical_slug truncated to 64>-<sha256(git_shared_dir)[:8]>`. The digest
+# is what makes `/Users/x/a-b/c`, `/Users/x/a/b/c` and `/Users/x/a.b/c` three
+# directories rather than one. repo_key() in ai/lib/core/memory.py is the
+# Python half; tests/sessions_ssot.bats fails when the two drift. Non-zero
+# when git cannot name DIR's shared directory — there is then no repo to key.
+_repo_key() {
+  local dir="$1" identity slug digest
+  identity="$(git_shared_dir "$dir")" || return 1
+  # Both halves come off the identity, never off the path the caller passed.
+  # Every worktree of a repo resolves to one shared git dir, and so does the
+  # same repo reached through a symlinked parent — on macOS /tmp and /var are
+  # symlinks, so the as-written and physical spellings of one repo differ. A
+  # slug taken from the argument would vary with the spelling while the digest
+  # stayed fixed, which is the per-cwd keying this store exists to end.
+  slug="$(_canonical_slug "$identity")"
+  slug="${slug:0:64}"
+  digest="$(printf '%s' "$identity" | shasum -a 256 | cut -c1-8)"
+  printf '%s-%s' "$slug" "$digest"
+}
+
+# _memory_dir DIR — where the authored memory for the repo at DIR lives.
+#
+# Under $WORKBENCH_MEMORY_DIR, keyed by repo rather than cwd, whichever harness
+# a session ran in. memory.memory_dir() in ai/lib/core/memory.py is the Python
+# half.
+_memory_dir() {
+  local key
+  key="$(_repo_key "$1")" || return 1
+  printf '%s/%s' "$WORKBENCH_MEMORY_DIR" "$key"
 }
 
 # _session_dirs_for_repo REPO_DIR — every harness directory holding sessions for
@@ -311,12 +337,10 @@ _count_sessions_since() {
 #
 # The sweep the three global gates share. It reads forward from the project
 # registry — repo path, then encode to the directory its memory lives in —
-# rather than globbing `$CLAUDE_DIR/projects/*/memory` and working back.
-# Globbing yields slugs, and neither harness's slug is reversible: Claude maps
-# `-` and `_` alike to a hyphen, so a directory name cannot say which repo it
-# belongs to. A gate that starts from a slug therefore cannot ask the
-# repo-scoped question at all, and is stuck counting the one directory it
-# globbed — which is the bug being fixed here, not a step toward fixing it.
+# rather than globbing `$WORKBENCH_MEMORY_DIR/*` and working back. The key is
+# a truncated slug plus a digest, so a directory name cannot say which repo it
+# belongs to. A gate that starts from a key therefore cannot ask the
+# repo-scoped question at all.
 #
 # A repo with no memory directory is skipped: there is nothing to consolidate
 # and nowhere to record that a pass happened. A memory directory whose repo has
@@ -335,7 +359,7 @@ _memory_repos() {
   while IFS= read -r line; do
     _split_repo_worktree_line "$line" id worktree
     repo_dir="$(project_repo_label "$id")"
-    memory_dir="$(_claude_memory_dir "$repo_dir")"
+    memory_dir="$(_memory_dir "$repo_dir")" || continue
     [[ -d "$memory_dir" ]] || continue
     printf '%s\t%s\n' "$memory_dir" "$repo_dir"
   done < <(project_repo_leaders)

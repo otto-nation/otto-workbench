@@ -98,7 +98,7 @@ make_session() {
 # it — the gates that call it have already. Sourced under the test's own HOME so
 # the path lands in the sandbox.
 memdir_shell() {
-  bash -c '. "$1/lib/constants.sh"; . "$1/lib/ai/session-count.sh" 2>/dev/null; _claude_memory_dir "$2"' \
+  bash -c '. "$1/lib/constants.sh"; . "$1/lib/git_layout.sh"; . "$1/lib/ai/session-count.sh" 2>/dev/null; _memory_dir "$2"' \
     _ "$REPO_ROOT" "$1"
 }
 
@@ -110,7 +110,8 @@ import sys
 sys.path.insert(0, '$REPO_ROOT/ai/lib')
 from pathlib import Path
 from core import sessions
-print(sessions.claude_memory_dir(Path('$HOME'), '$1'), end='')
+from core import memory
+print(memory.memory_dir('$1'), end='')
 "
 }
 
@@ -124,7 +125,8 @@ import sys
 sys.path.insert(0, '$REPO_ROOT/ai/lib')
 from pathlib import Path
 from core import sessions
-for d in sessions.memory_dirs(Path('$HOME')):
+from core import memory
+for d in memory.memory_dirs():
     print(d)
 "
 }
@@ -337,56 +339,71 @@ make_memory() {
 
 # ─── Memory directory: the two languages must agree ─────────────────────────
 
-@test "the directory the shell resolves is one Python sweeps up" {
-  # The shell resolves a repo path forward to its memory directory; Python
-  # globs every memory directory there is. A transform that drifts makes the
-  # gate write a stamp into a directory no scanner reads.
+@test "both languages agree on the memory key for one repo" {
+  # The forward direction the gates use. Both halves slug the repo path and
+  # digest the shared git dir; a drift in either sends the shell and Python to
+  # different directories for one repo, and the stamp lands where no scanner
+  # reads it.
+  local repo="$TMPDIR/keyrepo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  [ "$(memdir_shell "$repo")" = "$(memdir_python "$repo")" ]
+}
+
+@test "every worktree of a repo resolves to one memory directory" {
+  # The bug this store was re-keyed to fix: memory is per repo, and a slug of
+  # the cwd gave each worktree its own. Both worktrees must land on one key.
+  local repo="$TMPDIR/wtrepo" wt="$TMPDIR/wtrepo-two"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" -c user.name=t -c user.email=t@e \
+    commit -q --allow-empty -m init
+  git -C "$repo" worktree add -q "$wt" -b second
+  [ "$(memdir_shell "$repo")" = "$(memdir_shell "$wt")" ]
+}
+
+@test "one repo reached by two spellings gets one memory directory" {
+  # On macOS /tmp and /var are symlinks, so a repo has an as-written and a
+  # physical spelling. Both halves of the key come off the shared git dir for
+  # this reason: a slug taken from the caller's argument varies with the
+  # spelling while the digest holds, which splits one repo's memory in two and
+  # is the per-cwd keying this store exists to end.
+  local repo="$TMPDIR/spellrepo" physical
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  physical="$(cd "$repo" && pwd -P)"
+  [ "$physical" != "$repo" ] || skip "TMPDIR is not behind a symlink here"
+  [ "$(memdir_shell "$repo")" = "$(memdir_shell "$physical")" ]
+  [ "$(memdir_python "$repo")" = "$(memdir_python "$physical")" ]
+}
+
+@test "two repo paths that share a slug get two memory directories" {
+  # canonical_slug maps '-', '/' and '.' all to '-', so these three collide
+  # under the slug alone. The digest of the shared git dir is what keeps them
+  # apart; without it three repos silently merge into one memory directory.
+  local a="$TMPDIR/a-b/c" b="$TMPDIR/a/b/c" c="$TMPDIR/a.b/c"
   local dir
-  dir="$(make_memory /Users/dev/git/repo)"
-  [ "$(memdirs_python)" = "$dir" ]
-}
-
-@test "both languages agree on a repo path holding a dot and an underscore" {
-  # Every character outside [A-Za-z0-9] becomes a hyphen, which a second
-  # transform spelling only `/` gets wrong — that is what made the machine
-  # profile report no memory for a repo whose files were on disk.
-  local dir
-  dir="$(make_memory /Users/dev/git/otto.io/feat_one)"
-  [[ "$dir" == *-Users-dev-git-otto-io-feat-one/memory ]]
-  [ "$(memdirs_python)" = "$dir" ]
-}
-
-@test "a project directory without memory is not swept up" {
-  mkdir -p "$HOME/.claude/projects/-Users-dev-git-repo"
-  [ -z "$(memdirs_python)" ]
-}
-
-@test "no projects root at all is not an error" {
-  [ ! -d "$HOME/.claude/projects" ]
-  [ -z "$(memdirs_python)" ]
-}
-
-@test "both languages agree on the memory directory for a non-ASCII repo path" {
-  # As the slug case above, on the transform that has to find a directory
-  # Claude Code created: one hyphen per character, so the suffix is pinned and
-  # not merely compared across the two halves.
-  local p="/Users/dev/git/café/naïve" got
-  got="$(memdir_shell "$p")"
-  [ "$got" = "$(memdir_python "$p")" ]
-  [[ "$got" == *"/-Users-dev-git-caf--na-ve/memory" ]]
-}
-
-@test "both languages resolve a repo path to the same memory directory" {
-  # The forward direction, which the gates use to find a repo's memory and the
-  # architecture skill uses to read it. A drift here sends the two to different
-  # directories for one repo.
-  local p="/Users/dev/git/otto.io/feat_one"
-  [ "$(memdir_shell "$p")" = "$(memdir_python "$p")" ]
+  mkdir -p "$a" "$b" "$c"
+  local keys=()
+  for dir in "$a" "$b" "$c"; do
+    git -C "$dir" init -q
+    keys+=("$(memdir_shell "$dir")")
+  done
+  [ "${keys[0]}" != "${keys[1]}" ]
+  [ "${keys[1]}" != "${keys[2]}" ]
+  [ "${keys[0]}" != "${keys[2]}" ]
 }
 
 @test "the forward resolver and the sweep meet at the same path" {
-  local dir
-  dir="$(make_memory /Users/dev/git/repo)"
-  [ "$(memdir_python /Users/dev/git/repo)" = "$dir" ]
+  local repo="$TMPDIR/sweeprepo" dir
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  dir="$(memdir_shell "$repo")"
+  mkdir -p "$dir"
   [ "$(memdirs_python)" = "$dir" ]
+}
+
+@test "no memory root at all is not an error" {
+  [ ! -d "$WORKBENCH_DATA_DIR/memory" ]
+  [ -z "$(memdirs_python)" ]
 }

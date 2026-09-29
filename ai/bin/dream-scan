@@ -53,10 +53,7 @@ MAX_TEXT_LENGTH = 500
 TEXT_PREVIEW_LENGTH = 200
 DEFAULT_DAYS = 7
 
-FRONTMATTER_DELIMITER = "---"
-MEMORY_INDEX = "MEMORY.md"
-LAST_DREAM_FILE = ".last-dream"
-TOPIC_GLOB = "*.md"
+LAST_DREAM_STAMP = "last-dream"
 
 DATE_FMT = "%Y-%m-%d"
 DATETIME_FMT = "%Y-%m-%d %H:%M"
@@ -93,10 +90,9 @@ SIGNAL_PATTERNS: dict[str, re.Pattern] = {
 
 SIGNAL_PRIORITY = ["correction", "preference", "decision", "pattern", "review_feedback"]
 
-STALE_DAYS = 90
 
-
-from core import log, sessions
+from config import workbench_projects
+from core import log, memory, sessions, workbench_paths
 
 
 # ── Core functions ───────────────────────────────────────────────────────────
@@ -109,76 +105,60 @@ def classify_signal(text: str) -> str | None:
     return None
 
 
-def parse_frontmatter(path: str | Path) -> dict:
-    path = Path(path)
-    if not path.exists():
-        return {}
-    lines = path.read_text().splitlines()
-    return _parse_frontmatter_lines(lines)
-
-
-def _parse_frontmatter_lines(lines: list[str]) -> dict:
-    try:
-        start = lines.index(FRONTMATTER_DELIMITER) + 1
-        end = lines.index(FRONTMATTER_DELIMITER, start)
-    except ValueError:
-        return {}
-    result: dict[str, str] = {}
-    for line in lines[start:end]:
-        if line.startswith(" ") or ":" not in line:
-            continue
-        key, _, value = line.partition(":")
-        result[key.strip()] = value.strip()
-    return result
+parse_frontmatter = memory.parse_frontmatter
 
 
 # ── Scanning ─────────────────────────────────────────────────────────────────
 
 
-def _read_last_dream(memory_dir: Path) -> str | None:
-    stamp = memory_dir / LAST_DREAM_FILE
-    if not stamp.exists():
-        return None
+def _read_last_dream(repo_path: Path) -> str | None:
+    """When this repo last dreamed, read from the gate stamp.
+
+    The stamp is regenerable state and sits under the gates root with the
+    other cooldowns, rather than among the authored topic files it used to
+    share a directory with.
+    """
+    stamp = memory.gate_stamp_file(repo_path, LAST_DREAM_STAMP)
     try:
         ts = int(stamp.read_text().strip())
-        return datetime.fromtimestamp(ts).strftime(DATETIME_FMT)
     except (ValueError, OSError):
         return None
+    return datetime.fromtimestamp(ts).strftime(DATETIME_FMT)
 
 
-def _scan_topic_file(f: Path, now: datetime) -> dict:
-    fm = parse_frontmatter(f)
-    mtime = datetime.fromtimestamp(f.stat().st_mtime)
-    age_days = (now - mtime).days
+def _topic_row(tf: memory.TopicFile) -> dict:
     return {
-        "filename": f.name,
-        "name": fm.get("name", ""),
-        "description": fm.get("description", ""),
-        "type": fm.get("type", ""),
-        "size": f.stat().st_size,
-        "modified": mtime.strftime(DATE_FMT),
-        "stale": age_days > STALE_DAYS,
-        "age_days": age_days,
+        "filename": tf.filename,
+        "name": tf.name,
+        "description": tf.description,
+        "type": tf.type,
+        "modified": tf.modified,
+        "stale": tf.stale,
+        "age_days": tf.age_days,
     }
 
 
-def scan_memory_state(home: Path) -> list[dict]:
-    now = datetime.now()
+def scan_memory_state() -> list[dict]:
+    """Every registered repo's memory, read forward from the registry.
+
+    Forward rather than by globbing the memory root and working back: the key
+    is a truncated slug plus a digest, so a directory name cannot say which
+    repo it belongs to.
+    """
     states = []
-    for memory_dir in sessions.memory_dirs(home):
-        memory_md = memory_dir / MEMORY_INDEX
-        if not memory_md.exists():
+    for repo_path in workbench_projects.registered():
+        try:
+            directory = memory.memory_dir(repo_path)
+        except ValueError:
             continue
-        topic_files = [
-            _scan_topic_file(f, now)
-            for f in sorted(memory_dir.glob(TOPIC_GLOB))
-            if f.name != MEMORY_INDEX
-        ]
+        state = memory.state_of(directory)
+        if state is None:
+            continue
         states.append({
-            "project_id": memory_dir.parent.name,
-            "line_count": len(memory_md.read_text().splitlines()),
-            "last_dream": _read_last_dream(memory_dir),
-            "topic_files": topic_files,
+            "project_id": state.repo_key,
+            "line_count": state.line_count,
+            "last_dream": _read_last_dream(repo_path),
+            "topic_files": [_topic_row(tf) for tf in state.topic_files],
         })
     return states
 
@@ -376,7 +356,7 @@ def main() -> None:
     # `_` or a `.`. Same reasoning as the branch above: the script that owns the
     # location answers, rather than each skill deriving it again.
     if args.memory_dir is not None:
-        print(sessions.claude_memory_dir(home, args.memory_dir))
+        print(memory.memory_dir(args.memory_dir))
         raise SystemExit(0)
 
     trail = Trail.start(
@@ -389,7 +369,7 @@ def main() -> None:
         log.info(f"Scanning sessions from last {args.days} days")
         log.info(f"Home: {home}")
 
-        memory_states = scan_memory_state(home)
+        memory_states = scan_memory_state()
         log.info(f"Found {len(memory_states)} project(s) with memory")
         trail.info("scan_memories", f"found {len(memory_states)} memory files across {sum(len(s.get('topic_files', [])) for s in memory_states)} topics")
 

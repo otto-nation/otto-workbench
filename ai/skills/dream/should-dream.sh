@@ -31,7 +31,7 @@ threshold_secs=$((DREAM_INTERVAL_HOURS * 3600))
 while IFS=$'\t' read -r memory_dir repo_dir; do
   [[ -n "$memory_dir" ]] || continue
 
-  last_dream="$(_read_stamp "$memory_dir/.last-dream")"
+  last_dream="$(_read_stamp "$(_gate_stamp_file "$repo_dir" 'last-dream')")"
 
   elapsed=$((now - last_dream))
   [[ "$elapsed" -lt "$threshold_secs" ]] && continue

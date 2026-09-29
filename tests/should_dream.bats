@@ -29,12 +29,12 @@ teardown() {
 # An empty LAST_DREAM_TS leaves no stamp, which is the first-run case.
 _make_project() {
   local name="$1" last_dream_ts="$2" num_sessions="$3" session_mtime="${4:-}"
-  local repo memory
+  local repo
   repo="$(gate_repo "$name")"
-  memory="$(gate_memory "$repo")"
+  gate_memory "$repo" >/dev/null
 
   if [ -n "$last_dream_ts" ]; then
-    echo "$last_dream_ts" > "$memory/.last-dream"
+    echo "$last_dream_ts" > "$(gate_stamp "$repo" last-dream)"
   fi
 
   gate_sessions "$(gate_claude_dir "$repo")" "$num_sessions" "$session_mtime"
@@ -187,10 +187,10 @@ _make_project() {
   now=$(date +%s)
   local forty_eight_hours_ago=$((now - 172800))
 
-  local repo memory
+  local repo
   repo="$(gate_repo "pi-only")"
-  memory="$(gate_memory "$repo")"
-  echo "$forty_eight_hours_ago" > "$memory/.last-dream"
+  gate_memory "$repo" >/dev/null
+  echo "$forty_eight_hours_ago" > "$(gate_stamp "$repo" last-dream)"
   gate_sessions "$(gate_pi_dir "$repo")" 6
 
   run "$SHOULD_DREAM"
@@ -202,10 +202,10 @@ _make_project() {
   now=$(date +%s)
   local forty_eight_hours_ago=$((now - 172800))
 
-  local repo memory
+  local repo
   repo="$(gate_repo "spread")"
-  memory="$(gate_memory "$repo")"
-  echo "$forty_eight_hours_ago" > "$memory/.last-dream"
+  gate_memory "$repo" >/dev/null
+  echo "$forty_eight_hours_ago" > "$(gate_stamp "$repo" last-dream)"
 
   # Two sessions in each of three worktrees: under the minimum alone, over it
   # together. Counting any single directory would leave this gate shut.
@@ -227,7 +227,7 @@ _make_project() {
   # slug. Running any workbench command there is what makes it visible.
   local orphan="$TEST_HOME/unregistered"
   mkdir -p "$(gate_claude_dir "$orphan")/memory"
-  echo "$forty_eight_hours_ago" > "$(gate_claude_dir "$orphan")/memory/.last-dream"
+  echo "$forty_eight_hours_ago" > "$(gate_stamp "$orphan" last-dream)"
   gate_sessions "$(gate_claude_dir "$orphan")" 20
 
   run "$SHOULD_DREAM"
@@ -259,8 +259,8 @@ _make_project() {
 
   run "$REPO_ROOT/ai/skills/dream/dream-complete.sh"
   [ "$status" -eq 0 ]
-  [ -f "$(gate_memory "$TEST_HOME/project-a")/.last-dream" ]
-  [ -f "$(gate_memory "$TEST_HOME/project-b")/.last-dream" ]
+  [ -f "$(gate_stamp "$TEST_HOME/project-a" last-dream)" ]
+  [ -f "$(gate_stamp "$TEST_HOME/project-b" last-dream)" ]
 }
 
 @test "dream-complete writes no stamp an unregistered repo would keep" {
@@ -272,7 +272,7 @@ _make_project() {
 
   run "$REPO_ROOT/ai/skills/dream/dream-complete.sh"
   [ "$status" -eq 0 ]
-  [ ! -f "$(gate_claude_dir "$orphan")/memory/.last-dream" ]
+  [ ! -f "$(gate_stamp "$orphan" last-dream)" ]
 }
 
 @test "dream-complete is quiet with nothing registered" {

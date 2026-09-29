@@ -9,8 +9,8 @@
 # a second definition of that set: the gate skips a repo that has left the
 # registry, so a glob would write stamps no gate ever reads back.
 #
-# Usage: dream-complete.sh [--backup <project-slug>] [--root <invocation>]
-#        --backup  Back up a project's memory directory before first dream run.
+# Usage: dream-complete.sh [--backup <repo-path>] [--root <invocation>]
+#        --backup  Back up a repo's memory directory before first dream run.
 #        --root    Trail invocation of the dream-scan this closes, so the close
 #                  is filed under that run rather than as a command of its own.
 #
@@ -42,17 +42,15 @@ done
 
 # ── Safety backup ────────────────────────────────────────────────────────────
 
-# Addressed by raw Claude slug, not by repo path through _memory_repos: this is
-# a manual one-off a person runs before a first dream pass on a project they
-# name directly, not a gate sweep over the registry — so there is no repo path
-# on hand to resolve through, only the slug the operator already has in front
-# of them (e.g. from `ls ~/.claude/projects`).
+# Takes a repo path, not a harness slug. Memory is keyed by repo identity now,
+# so the operator names the repo they are about to dream over and the key is
+# resolved the same way every other consumer resolves it. A path git cannot
+# name a shared directory for has no memory to back up.
 _run_backup() {
-  local slug="$1"
-  local mem_dir="$CLAUDE_DIR/projects/$slug/memory"
+  local repo="$1" mem_dir backup_dir
+  mem_dir="$(_memory_dir "$repo")" || return 0
   [[ -d "$mem_dir" ]] || return 0
-  local backup_dir
-  backup_dir="$CLAUDE_DIR/projects/$slug/memory-backup-$(date +%Y%m%d)"
+  backup_dir="$mem_dir-backup-$(date +%Y%m%d)"
   [[ -d "$backup_dir" ]] && return 0
   cp -r "$mem_dir" "$backup_dir"
 }
@@ -64,9 +62,13 @@ _run_backup() {
 now=$(date +%s)
 projects=0
 
-while IFS=$'\t' read -r mem_dir _repo_dir; do
-  [[ -n "$mem_dir" ]] || continue
-  echo "$now" > "$mem_dir/.last-dream"
+# The stamps live under the gates root beside the other cooldowns, which on a
+# machine that has never closed a gate does not exist yet.
+mkdir -p "$GATE_STAMPS_DIR"
+
+while IFS=$'\t' read -r _mem_dir repo_dir; do
+  [[ -n "$repo_dir" ]] || continue
+  echo "$now" > "$(_gate_stamp_file "$repo_dir" 'last-dream')"
   projects=$((projects + 1))
 done < <(_memory_repos)
 

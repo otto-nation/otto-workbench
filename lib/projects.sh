@@ -436,6 +436,45 @@ project_prune() {
   echo "$dropped"
 }
 
+# memory_orphans — every memory directory whose repo has left the registry, one
+# `<key>\t<file count>` line each.
+#
+# Reports and never deletes. Memory is authored by a dream pass from transcripts
+# that have since rotated away, so an orphan is a thing to reconcile rather than
+# to collect — and a repo that has merely not been visited lately is
+# indistinguishable here from one that is gone, because registration is an
+# observation. Deleting on that evidence would be deleting on a guess.
+#
+# Forward from the registry, as _memory_repos is: the key is a truncated slug
+# plus a digest, so a directory name cannot be decoded back into a repo.
+memory_orphans() {
+  [[ -d "$WORKBENCH_MEMORY_DIR" ]] || return 0
+
+  # `worktree` is written by the nameref split and deliberately not read: the
+  # leader is one checkout of the repo, and what a key is built from is the
+  # repo the memory hangs off.
+  # shellcheck disable=SC2034
+  local line id worktree repo_dir key
+  local -A live=()
+  while IFS= read -r line; do
+    _split_repo_worktree_line "$line" id worktree
+    repo_dir="$(project_repo_label "$id")"
+    [[ -n "$repo_dir" ]] || continue
+    key="$(_repo_key "$repo_dir")" || continue
+    live[$key]=1
+  done < <(project_repo_leaders)
+
+  local dir count
+  for dir in "$WORKBENCH_MEMORY_DIR"/*; do
+    [[ -d "$dir" ]] || continue
+    key="$(basename "$dir")"
+    [[ -n "${live[$key]:-}" ]] && continue
+    count="$(find "$dir" -maxdepth 1 -name '*.md' -type f | wc -l | tr -d ' ')"
+    printf '%s\t%s\n' "$key" "$count"
+  done
+  return 0
+}
+
 # ─── Repo identity ───────────────────────────────────────────────────────────
 
 # project_repo_id DIR — the identity DIR's repository keeps across its worktrees.

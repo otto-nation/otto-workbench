@@ -720,6 +720,18 @@ cmd_projects_prune() {
   local dropped
   dropped="$(project_prune)"
   success "Pruned $dropped entry(s)"
+
+  # Reported, never deleted: memory is authored and has no producer to write it
+  # again, and an unregistered repo may only be one nobody has opened lately.
+  local key count orphans=0
+  while IFS=$'\t' read -r key count; do
+    [[ -n "$key" ]] || continue
+    [[ "$orphans" -eq 0 ]] && warn "Memory with no registered repo:"
+    info "  $key ($count topic file(s))"
+    orphans=$((orphans + 1))
+  done < <(memory_orphans)
+  [[ "$orphans" -gt 0 ]] && info "Left in place under $WORKBENCH_MEMORY_DIR — reconcile by hand"
+  return 0
 }
 
 cmd_projects() {

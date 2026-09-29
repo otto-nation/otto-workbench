@@ -460,11 +460,44 @@ gate_repo() {
 
 # gate_memory REPO_DIR — give REPO_DIR a memory directory, printed. Without one
 # a repo is skipped by every global gate.
+# gate_memory REPO_DIR — the memory directory for the repo at REPO_DIR, created.
+#
+# Resolved through the production helper rather than spelled out here. The key
+# carries a sha256 of the repo's shared git dir, so a second copy of the
+# transform in the fixtures would be a second answer to "which directory is
+# this repo's" — and the digest is exactly the part a hand-rolled copy gets
+# subtly wrong. gate_claude_dir below is spelled out on purpose, because it
+# stands in for a *foreign* transform this repo does not own.
 gate_memory() {
   local mem
-  mem="$(gate_claude_dir "$1")/memory"
+  mem="$(bash -c '
+    . "$1/lib/constants.sh"
+    . "$1/lib/git_layout.sh"
+    . "$1/lib/ai/session-count.sh"
+    _memory_dir "$2"
+  ' _ "$REPO_ROOT" "$1")"
   mkdir -p "$mem"
   printf '%s' "$mem"
+}
+
+# gate_stamp REPO_DIR NAME — the gate cooldown file NAME for the repo at
+# REPO_DIR, with its directory created.
+#
+# The stamps sit under the gates root rather than beside the authored topic
+# files: a cooldown is regenerable state that the next pass rewrites, and the
+# memory it used to share a directory with is not. Resolved through the
+# production helper for the same reason gate_memory is.
+gate_stamp() {
+  local stamp
+  stamp="$(bash -c '
+    . "$1/lib/constants.sh"
+    . "$1/lib/git_layout.sh"
+    . "$1/lib/projects.sh"
+    . "$1/lib/ai/session-count.sh"
+    _gate_stamp_file "$(_gate_repo_dir "$2")" "$3"
+  ' _ "$REPO_ROOT" "$1" "$2")"
+  mkdir -p "$(dirname "$stamp")"
+  printf '%s' "$stamp"
 }
 
 # gate_claude_dir DIR — the ~/.claude/projects directory Claude Code names for

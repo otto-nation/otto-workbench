@@ -467,18 +467,19 @@ step_claude_machine_profile() {
   bash "$generator" --force
 }
 
-# step_claude_backup_memory — copies ~/.claude/projects/*/memory/*.md into ai/memory/.
-# Preserves the slug directory structure so step_claude_restore_memory can reverse it.
+# step_claude_backup_memory — copies $WORKBENCH_MEMORY_DIR/*/*.md into ai/memory/.
+# Preserves the repo-key directory structure so step_claude_restore_memory can
+# reverse it.
 step_claude_backup_memory() {
-  local projects_dir="$CLAUDE_DIR/projects"
+  local projects_dir="$WORKBENCH_MEMORY_DIR"
   local backup_dir="$AI_MEMORY_BACKUP_DIR"
-  [[ -d "$projects_dir" ]] || { skip "No ~/.claude/projects/ — skipping memory backup"; return; }
+  [[ -d "$projects_dir" ]] || { skip "No memory store — skipping memory backup"; return; }
   mkdir -p "$backup_dir"
 
   local slug mem_dir dest count=0
-  for mem_dir in "$projects_dir"/*/memory/; do
+  for mem_dir in "$projects_dir"/*/; do
     [[ -d "$mem_dir" ]] || continue
-    slug=$(basename "$(dirname "$mem_dir")")
+    slug=$(basename "$mem_dir")
     dest="$backup_dir/$slug"
     mkdir -p "$dest"
     local f
@@ -491,8 +492,8 @@ step_claude_backup_memory() {
   [[ "${WORKBENCH_SYNC:-}" != true ]] && success "Memory backed up ($count files → ai/memory/)" || true
 }
 
-# step_claude_restore_memory — copies ai/memory/ back to ~/.claude/projects/*/memory/.
-# Only runs when a project memory directory is absent (new-machine setup guard).
+# step_claude_restore_memory — copies ai/memory/ back to $WORKBENCH_MEMORY_DIR/*/.
+# Only runs when a repo's memory directory is absent (new-machine setup guard).
 step_claude_restore_memory() {
   local backup_dir="$AI_MEMORY_BACKUP_DIR"
   [[ -d "$backup_dir" ]] || { skip "No ai/memory/ backup — skipping restore"; return; }
@@ -501,14 +502,13 @@ step_claude_restore_memory() {
   for slug_dir in "$backup_dir"/*/; do
     [[ -d "$slug_dir" ]] || continue
     slug=$(basename "$slug_dir")
-    # Not every directory under ai/memory/ is a project slug. The retro archive
+    # Not every directory under ai/memory/ is a repo key. The retro archive
     # (ai/memory/retro/) and the machine profile backup (ai/memory/machine/)
-    # live here too, and a project slug is always a path-derived name starting
-    # with '-'. Restoring a non-slug directory would invent
-    # ~/.claude/projects/<name>/memory and fill it with files that are not that
-    # project's memory.
+    # live here too, and a repo key is always a path-derived name starting
+    # with '-'. Restoring a non-key directory would invent a memory directory
+    # and fill it with files that are not any repo's memory.
     [[ "$slug" == -* ]] || continue
-    dest_base="$CLAUDE_DIR/projects/$slug/memory"
+    dest_base="$WORKBENCH_MEMORY_DIR/$slug"
     # Only restore if memory dir is absent or empty — never overwrite existing session learning
     if [[ -d "$dest_base" ]] && [[ -n "$(ls -A "$dest_base" 2>/dev/null)" ]]; then
       skip "Memory for $slug already exists — skipping restore"

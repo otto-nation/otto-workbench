@@ -710,6 +710,63 @@ print(git_layout.container_dir('$TMPDIR/container/main'))
   [ "$output" = "$(dirname "$shared")" ]
 }
 
+@test "bash and Python name the same shared git dir" {
+  # shared_dir is the total Python mirror of git_shared_dir: ordinary clones
+  # answer with their .git, bare-repo worktrees with the container's .git.
+  make_bare_worktree_layout "$TMPDIR/container"
+  make_repo "$TMPDIR/alpha"
+
+  run git_shared_dir "$TMPDIR/container/main"
+  [ "$status" -eq 0 ]
+  local bare_shared="$output"
+
+  run python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/lib')
+import git_layout
+print(git_layout.shared_dir('$TMPDIR/container/main'), end='')
+"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$bare_shared" ]
+
+  run git_shared_dir "$TMPDIR/container/feature"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$bare_shared" ]
+
+  run python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/lib')
+import git_layout
+print(git_layout.shared_dir('$TMPDIR/container/feature'), end='')
+"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$bare_shared" ]
+
+  run git_shared_dir "$TMPDIR/alpha"
+  [ "$status" -eq 0 ]
+  local clone_shared="$output"
+  [ "$clone_shared" = "$TMPDIR/alpha/.git" ]
+
+  run python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/lib')
+import git_layout
+print(git_layout.shared_dir('$TMPDIR/alpha'), end='')
+"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$clone_shared" ]
+
+  mkdir -p "$TMPDIR/plain"
+  run python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/lib')
+import git_layout
+print(git_layout.shared_dir('$TMPDIR/plain'))
+"
+  [ "$status" -eq 0 ]
+  [ "$output" = "None" ]
+}
+
 @test "bash and Python name the same registry file" {
   run python3 -c "
 import sys

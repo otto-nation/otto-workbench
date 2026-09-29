@@ -8,6 +8,10 @@ setup() {
   common_setup
   PROMOTE_SCAN="$REPO_ROOT/ai/bin/promote-scan"
   sandbox_state_dir
+  # The store hangs off the data root and is keyed by repo identity, so the
+  # root and the registry the scan reads forward from are both sandboxed.
+  export WORKBENCH_DATA_DIR="$TMPDIR/data"
+  mkdir -p "$WORKBENCH_STATE_DIR"
 }
 
 teardown() {
@@ -35,11 +39,18 @@ _py_here() {
 }
 
 # Helper: create a memory directory with MEMORY.md and topic files
+# _make_memory_dir REPO_NAME CONTENT [file:content ...] — a registered repo
+# with memory, keyed as production keys it. Sets `dir` for the cases that add
+# topic files to it.
 _make_memory_dir() {
   local project="$1" memory_content="$2"
   shift 2
-  local dir="$TMPDIR/.claude/projects/$project/memory"
-  mkdir -p "$dir"
+  local repo="$TMPDIR/repos/$project"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  printf '%s\t%s\n' "$repo" "$(cd "$repo" && cd "$(git rev-parse --git-common-dir)" && pwd -P)" \
+    >> "$WORKBENCH_STATE_DIR/projects.registry"
+  dir="$(gate_memory "$repo")"
   printf '%s\n' "$memory_content" > "$dir/MEMORY.md"
 
   local arg filename content
@@ -246,7 +257,6 @@ PY
 # ── Memory scanning ──────────────────────────────────────────────────────────
 
 @test "scan: reports memory state with topic files" {
-  local dir="$TMPDIR/.claude/projects/test-proj/memory"
   _make_memory_dir "test-proj" "- [Topic A](topic-a.md) — entry a"
   _make_topic_file "$dir" "topic-a.md" "topic-a" "First topic" "Body of topic A."
 
@@ -262,7 +272,6 @@ PY
 }
 
 @test "scan: includes body content from topic files" {
-  local dir="$TMPDIR/.claude/projects/test-proj/memory"
   _make_memory_dir "test-proj" "- [Topic](topic.md) — entry"
   _make_topic_file "$dir" "topic.md" "my-topic" "desc" "Important rule: always use tabs."
 
@@ -275,7 +284,6 @@ PY
 }
 
 @test "scan: detects stale entries" {
-  local dir="$TMPDIR/.claude/projects/test-proj/memory"
   _make_memory_dir "test-proj" "- [Old](old.md) — stale entry"
   _make_topic_file "$dir" "old.md" "old-topic" "Old content"
   touch -t 202502280000 "$dir/old.md"
@@ -289,25 +297,28 @@ PY
 }
 
 @test "scan: reports last promote timestamp" {
-  local dir="$TMPDIR/.claude/projects/test-proj/memory"
   _make_memory_dir "test-proj" "- [Topic](topic.md) — entry"
   _make_topic_file "$dir" "topic.md" "topic"
-  echo "1717862400" > "$dir/.last-promote"
+  echo "1717862400" > "$(gate_stamp "$TMPDIR/repos/test-proj" last-promote)"
 
   local wb="$TMPDIR/workbench"
   _make_workbench "$wb"
 
   run "$PROMOTE_SCAN" --home "$TMPDIR" --workbench "$wb"
   [[ "$status" -eq 0 ]]
-  [[ "$output" == *"2024"* ]] || [[ "$output" == *"promote"* ]]
+  # Asserted on the rendered date alone: an `|| [[ $output == *promote* ]]`
+  # arm matches the report's own heading and passes whether or not the stamp
+  # was ever found.
+  [[ "$output" == *"2024-06-08"* ]]
 }
 
 @test "scan: handles multiple projects" {
-  local dir1="$TMPDIR/.claude/projects/project-one/memory"
-  local dir2="$TMPDIR/.claude/projects/project-two/memory"
+  local dir1 dir2
   _make_memory_dir "project-one" "- [A](a.md) — entry a"
+  dir1="$dir"
   _make_topic_file "$dir1" "a.md" "topic-a" "First project"
   _make_memory_dir "project-two" "- [B](b.md) — entry b"
+  dir2="$dir"
   _make_topic_file "$dir2" "b.md" "topic-b" "Second project"
 
   local wb="$TMPDIR/workbench"
@@ -315,8 +326,10 @@ PY
 
   run "$PROMOTE_SCAN" --home "$TMPDIR" --workbench "$wb"
   [[ "$status" -eq 0 ]]
-  [[ "$output" == *"project-one"* ]]
-  [[ "$output" == *"project-two"* ]]
+  # Both repos are counted and both their topics are rendered, which is what
+  # "handles multiple" means. The report prints no project id, so asserting on
+  # one would pass on a scan that found a single repo twice.
+  [[ "$output" == *"Found 2 project(s) with memory"* ]]
   [[ "$output" == *"topic-a"* ]]
   [[ "$output" == *"topic-b"* ]]
 }
@@ -440,7 +453,6 @@ PY
 }
 
 @test "scan: full report with all data types" {
-  local dir="$TMPDIR/.claude/projects/test-proj/memory"
   _make_memory_dir "test-proj" "- [Topic](topic.md) — entry"
   _make_topic_file "$dir" "topic.md" "my-topic" "Topic desc" "Topic body."
 

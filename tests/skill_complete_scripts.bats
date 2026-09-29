@@ -15,6 +15,9 @@ setup() {
   # ~/.local/bin they resolve otto-log through. Both come off HOME inside
   # lib/constants.sh, so this is the only way to point them at a sandbox.
   FAKE_HOME="$TMPDIR/home"
+  # The memory store hangs off the data root, so it needs pinning into the
+  # sandbox too — an unset one resolves to the operator's real memory.
+  export WORKBENCH_DATA_DIR="$TMPDIR/data"
   mkdir -p "$FAKE_HOME/.claude/projects" "$FAKE_HOME/.local/bin" "$WORKBENCH_STATE_DIR"
   ln -sf "$OTTO_LOG" "$FAKE_HOME/.local/bin/otto-log"
 }
@@ -58,8 +61,15 @@ _events_under() {
 _memory_project() {
   local repo="$TMPDIR/repos/$1" mem
   mkdir -p "$repo"
-  printf '%s\t%s\n' "$repo" "$repo/.git" >> "$WORKBENCH_STATE_DIR/projects.registry"
-  mem="$FAKE_HOME/.claude/projects/$(printf '%s' "$repo" | tr -c 'A-Za-z0-9' '-')/memory"
+  git -C "$repo" init -q
+  printf '%s\t%s\n' "$repo" "$(cd "$repo" && cd "$(git rev-parse --git-common-dir)" && pwd -P)" \
+    >> "$WORKBENCH_STATE_DIR/projects.registry"
+  mem="$(bash -c '
+    . "$1/lib/constants.sh"
+    . "$1/lib/git_layout.sh"
+    . "$1/lib/ai/session-count.sh"
+    _memory_dir "$2"
+  ' _ "$REPO_ROOT" "$repo")"
   mkdir -p "$mem"
   printf '%s' "$mem"
 }
@@ -141,8 +151,7 @@ _memory_project() {
 
 @test "dream close: still completes when otto-log cannot record" {
   # Every machine until this ships: an installed otto-log with no `record`.
-  local memory
-  memory=$(_memory_project p1)
+  _memory_project p1 >/dev/null
   # Removed first: the sandbox entry is a symlink into the repo, and a redirect
   # onto it writes through the link to the checked-out otto-log itself.
   rm -f "$FAKE_HOME/.local/bin/otto-log"
@@ -152,7 +161,9 @@ _memory_project() {
   _run_complete bash "$DREAM_COMPLETE" --root aaaaaaaaaaaa
 
   [[ "$status" -eq 0 ]]
-  [[ -f "$memory/.last-dream" ]]
+  # The stamp lands under the gates root, not beside the topic files: a
+  # cooldown is regenerable state and the memory it used to sit in is not.
+  [[ -n "$(find "$WORKBENCH_STATE_DIR/gates" -name '*.last-dream' -print -quit)" ]]
 }
 
 @test "dream close: --root without a value is refused" {

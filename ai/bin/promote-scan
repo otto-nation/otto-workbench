@@ -35,10 +35,7 @@ from core.trail import Trail, add_trail_args  # noqa: E402
 # ── Constants ────────────────────────────────────────────────────────────────
 
 SCRIPT = Path(__file__).name
-FRONTMATTER_DELIMITER = "---"
-MEMORY_INDEX = "MEMORY.md"
-LAST_PROMOTE_FILE = ".last-promote"
-TOPIC_GLOB = "*.md"
+LAST_PROMOTE_STAMP = "last-promote"
 
 DEFAULT_WORKBENCH = "~/git/personal/otto-nation/otto-workbench/main"
 WORKBENCH_ENV_VAR = "OTTO_WORKBENCH"
@@ -52,52 +49,19 @@ BIN_REL = Path("bin")
 DATE_FMT = "%Y-%m-%d"
 DATETIME_FMT = "%Y-%m-%d %H:%M"
 
-STALE_DAYS = 90
 
 BODY_PREVIEW_LENGTH = 500
 
 
-from core import log, sessions
+from config import workbench_projects
+from core import log, memory, sessions, workbench_paths
 
 
 # ── Core functions ───────────────────────────────────────────────────────────
 
 
-def parse_frontmatter(path: str | Path) -> dict:
-    path = Path(path)
-    if not path.exists():
-        return {}
-    lines = path.read_text().splitlines()
-    return _parse_frontmatter_lines(lines)
-
-
-def _parse_frontmatter_lines(lines: list[str]) -> dict:
-    try:
-        start = lines.index(FRONTMATTER_DELIMITER) + 1
-        end = lines.index(FRONTMATTER_DELIMITER, start)
-    except ValueError:
-        return {}
-    result: dict[str, str] = {}
-    for line in lines[start:end]:
-        if line.startswith(" ") or ":" not in line:
-            continue
-        key, _, value = line.partition(":")
-        result[key.strip()] = value.strip()
-    return result
-
-
-def read_body(path: Path) -> str:
-    try:
-        lines = path.read_text().splitlines()
-    except OSError:
-        return ""
-    try:
-        start = lines.index(FRONTMATTER_DELIMITER) + 1
-        end = lines.index(FRONTMATTER_DELIMITER, start)
-        body_lines = lines[end + 1 :]
-    except ValueError:
-        body_lines = lines
-    return "\n".join(body_lines).strip()
+parse_frontmatter = memory.parse_frontmatter
+read_body = memory.read_body
 
 
 def first_heading(path: Path) -> str:
@@ -114,57 +78,53 @@ def first_heading(path: Path) -> str:
 # ── Memory scanning ─────────────────────────────────────────────────────────
 
 
-def _read_last_promote(memory_dir: Path) -> str | None:
-    stamp = memory_dir / LAST_PROMOTE_FILE
-    if not stamp.exists():
-        return None
+def _read_last_promote(repo_path: Path) -> str | None:
+    """When this repo last promoted, read from the gate stamp.
+
+    The stamp is regenerable state and sits under the gates root with the
+    other cooldowns, rather than among the authored topic files.
+    """
+    stamp = memory.gate_stamp_file(repo_path, LAST_PROMOTE_STAMP)
     try:
         ts = int(stamp.read_text().strip())
-        return datetime.fromtimestamp(ts).strftime(DATETIME_FMT)
     except (ValueError, OSError):
         return None
+    return datetime.fromtimestamp(ts).strftime(DATETIME_FMT)
 
 
-def _scan_topic_file(f: Path, now: datetime) -> dict | None:
-    try:
-        stat = f.stat()
-    except OSError:
-        return None
-    fm = parse_frontmatter(f)
-    mtime = datetime.fromtimestamp(stat.st_mtime)
-    age_days = (now - mtime).days
-    body = read_body(f)
+def _topic_row(tf: memory.TopicFile) -> dict:
     return {
-        "filename": f.name,
-        "name": fm.get("name", ""),
-        "description": fm.get("description", ""),
-        "type": fm.get("type", ""),
-        "body": body[:BODY_PREVIEW_LENGTH],
-        "modified": mtime.strftime(DATE_FMT),
-        "stale": age_days > STALE_DAYS,
-        "age_days": age_days,
+        "filename": tf.filename,
+        "name": tf.name,
+        "description": tf.description,
+        "type": tf.type,
+        "body": (tf.body or "")[:BODY_PREVIEW_LENGTH],
+        "modified": tf.modified,
+        "stale": tf.stale,
+        "age_days": tf.age_days,
     }
 
 
-def scan_memory_state(home: Path) -> list[dict]:
-    now = datetime.now()
+def scan_memory_state() -> list[dict]:
+    """Every registered repo's memory, read forward from the registry.
+
+    Forward rather than by globbing the memory root: the key is a truncated
+    slug plus a digest, so a directory name cannot say which repo it is.
+    """
     states = []
-    for memory_dir in sessions.memory_dirs(home):
-        memory_md = memory_dir / MEMORY_INDEX
-        if not memory_md.exists():
+    for repo_path in workbench_projects.registered():
+        try:
+            directory = memory.memory_dir(repo_path)
+        except ValueError:
             continue
-        topic_files = [
-            tf
-            for f in sorted(memory_dir.glob(TOPIC_GLOB))
-            if f.name != MEMORY_INDEX
-            for tf in [_scan_topic_file(f, now)]
-            if tf is not None
-        ]
+        state = memory.state_of(directory, with_body=True)
+        if state is None:
+            continue
         states.append({
-            "project_id": memory_dir.parent.name,
-            "line_count": len(memory_md.read_text().splitlines()),
-            "last_promote": _read_last_promote(memory_dir),
-            "topic_files": topic_files,
+            "project_id": state.repo_key,
+            "line_count": state.line_count,
+            "last_promote": _read_last_promote(repo_path),
+            "topic_files": [_topic_row(tf) for tf in state.topic_files],
         })
     return states
 
@@ -176,10 +136,10 @@ def scan_backed_up_memories(workbench: Path) -> list[dict]:
 
     now = datetime.now()
     results = []
-    for f in sorted(memory_dir.glob(TOPIC_GLOB)):
-        tf = _scan_topic_file(f, now)
+    for f in sorted(memory_dir.glob(memory.TOPIC_GLOB)):
+        tf = memory.scan_topic_file(f, now, with_body=True)
         if tf is not None:
-            results.append(tf)
+            results.append(_topic_row(tf))
     return results
 
 
@@ -416,7 +376,7 @@ def main() -> None:
         log.info(f"Home: {home}")
         log.info(f"Workbench: {workbench}")
 
-        memory_states = scan_memory_state(home)
+        memory_states = scan_memory_state()
         log.info(f"Found {len(memory_states)} project(s) with memory")
         trail.info("scan_memories", f"found {len(memory_states)} memory files across {sum(len(s.get('topic_files', [])) for s in memory_states)} topics")
 

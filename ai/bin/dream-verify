@@ -3,7 +3,7 @@
 #
 # Usage: dream-verify
 #
-# Checks across all ~/.claude/projects/*/memory/ directories:
+# Checks across every repo's memory directory under $WORKBENCH_MEMORY_DIR:
 #   1. MEMORY.md under 200 lines
 #   2. All (filename.md) references in MEMORY.md resolve to files
 #   3. No relative dates in topic files
@@ -103,12 +103,12 @@ _check_duplicate_names() {
 
 found_projects=0
 
-for dir in "$CLAUDE_DIR/projects"/*/memory; do
+for dir in "$WORKBENCH_MEMORY_DIR"/*; do
   [[ -d "$dir" ]] || continue
   [[ -f "$dir/MEMORY.md" ]] || continue
   found_projects=$((found_projects + 1))
 
-  project=$(basename "$(dirname "$dir")")
+  project=$(basename "$dir")
 
   _check_line_count "$dir/MEMORY.md" "$project"
   _check_references "$dir/MEMORY.md" "$dir" "$project"

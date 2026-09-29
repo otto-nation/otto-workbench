@@ -2,11 +2,11 @@
 # Tests for step_claude_restore_memory — which directories under ai/memory/ it
 # treats as project memory, and which it must leave alone.
 #
-# ai/memory/ holds more than per-project memory: the retro archive lives at
+# ai/memory/ holds more than per-repo memory: the retro archive lives at
 # ai/memory/retro/ and the machine profile backup at ai/memory/machine/. A
-# restore that walks every subdirectory would invent a ~/.claude/projects/retro
-# and fill it with archived retro reports, which are not any project's memory.
-# A real project slug is a path-derived name and always starts with '-'.
+# restore that walks every subdirectory would invent a memory directory named
+# `retro` and fill it with archived retro reports, which are not any repo's
+# memory. A real repo key is a path-derived name and always starts with '-'.
 bats_require_minimum_version 1.5.0
 
 setup() {
@@ -23,7 +23,8 @@ setup() {
 
   FAKE_WORKBENCH="$TMPDIR/workbench"
   MEMORY="$FAKE_WORKBENCH/ai/memory"
-  PROJECTS="$HOME/.claude/projects"
+  export WORKBENCH_DATA_DIR="$TMPDIR/data"
+  STORE="$WORKBENCH_DATA_DIR/memory"
   mkdir -p "$HOME" "$MEMORY"
 }
 
@@ -42,18 +43,20 @@ _run_restore() {
   run bash -c '
     HOME="$2"
     WORKBENCH_DIR="$3"
+    WORKBENCH_DATA_DIR="$4"
     . "$1/lib/ui.sh"
+    . "$1/lib/constants.sh"
     . "$1/ai/claude/steps.sh"
     step_claude_restore_memory
-  ' _ "$REPO_ROOT" "$HOME" "$FAKE_WORKBENCH"
+  ' _ "$REPO_ROOT" "$HOME" "$FAKE_WORKBENCH" "$WORKBENCH_DATA_DIR"
 }
 
-@test "a project slug is restored into its own memory directory" {
+@test "a repo key is restored into its own memory directory" {
   _backup "-Users-isaacg-git-widget" "notes.md"
 
   _run_restore
   [[ "$status" -eq 0 ]]
-  [[ -f "$PROJECTS/-Users-isaacg-git-widget/memory/notes.md" ]]
+  [[ -f "$STORE/-Users-isaacg-git-widget/notes.md" ]]
 }
 
 @test "the retro archive is not restored as a project" {
@@ -61,7 +64,7 @@ _run_restore() {
 
   _run_restore
   [[ "$status" -eq 0 ]]
-  [[ ! -e "$PROJECTS/retro" ]]
+  [[ ! -e "$STORE/retro" ]]
 }
 
 @test "the machine profile backup is not restored as a project" {
@@ -69,7 +72,7 @@ _run_restore() {
 
   _run_restore
   [[ "$status" -eq 0 ]]
-  [[ ! -e "$PROJECTS/machine" ]]
+  [[ ! -e "$STORE/machine" ]]
 }
 
 @test "a non-slug directory does not stop the slugs beside it from restoring" {
@@ -78,18 +81,18 @@ _run_restore() {
 
   _run_restore
   [[ "$status" -eq 0 ]]
-  [[ -f "$PROJECTS/-Users-isaacg-git-widget/memory/notes.md" ]]
-  [[ ! -e "$PROJECTS/retro" ]]
+  [[ -f "$STORE/-Users-isaacg-git-widget/notes.md" ]]
+  [[ ! -e "$STORE/retro" ]]
 }
 
 @test "existing session memory is never overwritten by a restore" {
   _backup "-Users-isaacg-git-widget" "notes.md"
-  mkdir -p "$PROJECTS/-Users-isaacg-git-widget/memory"
+  mkdir -p "$STORE/-Users-isaacg-git-widget"
   printf 'this session learned something\n' \
-    > "$PROJECTS/-Users-isaacg-git-widget/memory/notes.md"
+    > "$STORE/-Users-isaacg-git-widget/notes.md"
 
   _run_restore
   [[ "$status" -eq 0 ]]
   grep -q "this session learned something" \
-    "$PROJECTS/-Users-isaacg-git-widget/memory/notes.md"
+    "$STORE/-Users-isaacg-git-widget/notes.md"
 }

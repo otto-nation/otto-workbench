@@ -5,15 +5,23 @@ set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 work_root=$(mktemp -d)
-trap 'cp "$work_root/bounds.py.bak" "$here/bounds.py"; rm -rf "$work_root"' EXIT
+trap 'rm -rf "$work_root"' EXIT
 
 fail() {
   echo "verify: $1" >&2
   exit 1
 }
 
-cd "$here" || exit
-cp "$here/bounds.py" "$work_root/bounds.py.bak"
+# The copy is what gets broken, never the tracked fixture. Mutating
+# $here/bounds.py in place and restoring it from the EXIT trap looked
+# equivalent, but an EXIT trap does not run on SIGKILL — which is how a CI
+# harness ends a step that hangs or runs over time, and what an OOM kill does.
+# A run killed between the write and the trap left the planted exclusive-bound
+# bug committed in the working tree, so every later run read a corpus file that
+# no longer matched its manifest. Every sibling fixture already works this way.
+cp "$here/bounds.py" "$work_root/bounds.py"
+cp "$here/test_in_range.py" "$work_root/test_in_range.py"
+cd "$work_root" || exit
 
 env -u PYTEST_CURRENT_TEST -u PYTEST_ADDOPTS pytest test_in_range.py > "$work_root/before.txt" 2>&1
 rc=$?

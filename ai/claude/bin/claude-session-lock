@@ -61,7 +61,12 @@ payload="$(cat 2>/dev/null || true)"
 # sed regex against raw JSON: a sed pattern reads the string's quoted
 # characters literally, so a cwd containing a JSON escape (an embedded
 # backslash) would come out wrong where jq decodes it correctly.
-cwd="$(printf '%s' "$payload" | jq -r '.cwd // empty' 2>/dev/null)"
+#
+# `|| cwd=""` for the same reason the siblings write `|| exit 0`: jq exits 5
+# on input it cannot parse, and under `set -e` that kills the hook instead of
+# falling through to the $PWD default. A malformed payload must leave the
+# session unguarded, not report an error at the top of it.
+cwd="$(printf '%s' "$payload" | jq -r '.cwd // empty' 2>/dev/null)" || cwd=""
 [[ -n "$cwd" ]] || cwd="$PWD"
 [[ -d "$cwd" ]] || exit 0
 

@@ -849,8 +849,8 @@ nothing to keep in sync. An earlier design read `tool_dirs` and `plugin_dirs` fr
 `~/.config/workbench/mcp-tools.json` to let outside directories register tools; no setup
 step ever wrote that file, no machine was found holding one, and the keys were removed
 rather than carried into `config.yml`. Adding a tool means registering it in a component's
-`registry.yml`, as below; the schema comes from whatever `_tool_schema` in
-`ai/claude/mcps/server.py` imports for it.
+`registry.yml`, as below; the schema comes from `_tool_schema()`, the function in
+`ai/claude/mcps/server.py` that imports it.
 
 **What a client is offered.** Today only `pr` is offered — `ci-check`, `pr-describe`, and
 `pr-rebase` are registered hidden because they are what `pr ci`, `pr describe`, and
@@ -865,16 +865,21 @@ otherwise render into. A script's own `--tool-schema` description is written for
 
 `bin/local/validate-registries` is what holds the registries to shape statically, before
 anything reads them here: required fields, no unknown fields, and no two entries in one
-file sharing a name. It does not confirm that a tool's schema imports cleanly — nothing
-does, at build time — but a schema that will not import now fails the scan at startup and
-is logged, where a probe that would not answer used to leave the tool silently absent.
+file sharing a name. That last check is per file — it does not compare names across
+registries, so two scripts registered in different `registry.yml` files under the same
+name pass it clean. It also does not confirm that a tool's schema imports cleanly —
+nothing does, at build time — but a schema that will not import now fails the scan at
+startup and is logged, where a probe that would not answer used to leave the tool silently
+absent.
 
 **Two scripts, one name.** Discovery keys on the name a script's schema answers with, not
-on its filename or registry entry, so two entries can in principle claim one tool name. At
-runtime the first the scan reached (in sorted registry order) wins and the other is logged
-at error level naming both paths, rather than raising: doing so would run in the
-re-discovery thread as well as at startup, where one ambiguity would either take the server
-down or stop re-discovery for the session — first-wins leaves a working tool working.
+on its filename or registry entry, so two entries — in the same file or in two different
+ones, since only the same-file case is caught above — can in principle claim one tool
+name. A cross-file collision is a runtime-only finding: at runtime the first the scan
+reached (in sorted registry order) wins and the other is logged at error level naming both
+paths, rather than raising: doing so would run in the re-discovery thread as well as at
+startup, where one ambiguity would either take the server down or stop re-discovery for
+the session — first-wins leaves a working tool working.
 
 **How a tool call is run.** A call still spawns the script — `pr`, the one tool offered —
 through a spawn helper that gives the child two things `subprocess.run` does not. Its

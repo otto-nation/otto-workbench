@@ -329,6 +329,15 @@ class FixAdapter(ABC):
         An adapter widening this should extend the result rather than replace
         it. Order is preserved and duplicates dropped, so siting artifacts
         inside the worktree grants one entry rather than two.
+
+        `CIFixAdapter` and `PrePushFixAdapter` take neither path — they declare
+        no `add_dirs` of their own — and both site `artifacts` outside the
+        worktree the same way the comments adapter did, so this default was
+        silently carrying the same write-guard fix for them. Noted here rather
+        than left for a future reader to rediscover: it is intentional, not
+        incidental — the hazard this method exists to close is `produced()`
+        checking a file the agent could not reach, and that is exactly as true
+        for a CI or pre-push pass as it was for comments.
         """
         return list(dict.fromkeys([self.workdir, self.artifacts]))
 

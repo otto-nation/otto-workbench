@@ -179,6 +179,20 @@ class TestAFileLevelThread:
         threads = [ReportThread(id="t1", file="gone.py", line=None)]
         assert thread_context.gather_code_context(threads, branch) == ""
 
+    def test_a_file_level_thread_on_a_binary_file_is_not_softened(self, branch):
+        """`_head_window` must fail the same way `_window` does on a binary.
+
+        A binary file with no diff falls through to `_head_window`, which
+        claims to read through the same failure rules as `_window` — a
+        `UnicodeDecodeError` propagating rather than being softened into a
+        snippet of replacement characters. Untested before this: the only
+        file-level regression case was a missing file.
+        """
+        (branch / "bin.py").write_bytes(b"ok\n\xff\xfe\nmore\n")
+        threads = [ReportThread(id="t1", file="bin.py", line=None)]
+        with pytest.raises(UnicodeDecodeError):
+            thread_context.gather_code_context(threads, branch)
+
 
 class TestThreadCommentText:
     def test_comments_are_quoted_under_their_author(self):

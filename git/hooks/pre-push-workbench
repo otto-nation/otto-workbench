@@ -107,11 +107,29 @@ fi
 _step "Scanning for secrets"
 _config_flag=""
 [[ -f "$REPO_ROOT/.gitleaks.toml" ]] && _config_flag="--config $REPO_ROOT/.gitleaks.toml"
+
+# See git/hooks/pre-commit for why the leaks verdict is moved off exit 1:
+# gitleaks uses 1 for both "leaks found" and "could not run", so a shim that
+# refuses to exec is otherwise reported as a secret finding.
+_GITLEAKS_LEAK_EXIT=7
+
+set +e
 # shellcheck disable=SC2086  # word splitting intentional for optional flag
-if _gitleaks_output=$(gitleaks protect --staged $_config_flag 2>&1); then
+_gitleaks_output=$(gitleaks protect --staged --exit-code "$_GITLEAKS_LEAK_EXIT" $_config_flag 2>&1)
+_gitleaks_status=$?
+set -e
+
+if (( _gitleaks_status == 0 )); then
   _pass
-else
+elif (( _gitleaks_status == _GITLEAKS_LEAK_EXIT )); then
   _fail "$_gitleaks_output"
+else
+  _fail "gitleaks could not run (exit $_gitleaks_status) — this is NOT a secret finding.
+The scan never happened, so the push is refused rather than waved through.
+Common cause: gitleaks on PATH is a mise shim and some .mise.toml does not
+parse or is untrusted. Check: command -v gitleaks; mise doctor
+
+$_gitleaks_output"
 fi
 
 # ── Validation ───────────────────────────────────────────────────────────────

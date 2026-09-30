@@ -278,7 +278,7 @@ def test_a_real_head_sha_reaches_the_rollup_short_circuit():
     fetch_checks.assert_called_once_with("owner/repo", "abc123")
 
 
-def test_a_pinned_run_does_not_borrow_the_branch_heads_rollup():
+def test_a_pinned_run_asks_its_rollup_at_its_own_commit():
     """`run_id` names a specific run; the rollup asked about it must be for
     that run's own commit, not whatever the branch head currently is.
 
@@ -289,18 +289,21 @@ def test_a_pinned_run_does_not_borrow_the_branch_heads_rollup():
     pinned run, silently attributing another commit's verdict to it.
     """
     run_data = _run("completed", "success", [])
-    stale_rollup = run_reads.CommitChecks(
-        answered=True, sha="currenthead",
-        external=({"name": "CodeQL", "databaseId": 0, "status": "completed",
-                   "conclusion": "failure", "steps": [],
-                   "_check_source": "check_run"},),
-    )
+    by_sha = {
+        "currenthead": run_reads.CommitChecks(
+            answered=True,
+            external=({"name": "CodeQL", "databaseId": 0, "status": "completed",
+                       "conclusion": "failure", "steps": [],
+                       "_check_source": "check_run"},)),
+        "abc123": run_reads.CommitChecks(answered=True),
+    }
 
     with patch("gh.run_reads.fetch_run_data", return_value=run_data), \
          patch("gh.run_reads.fetch_commit_checks",
-               return_value=stale_rollup) as fetch_checks, \
+               side_effect=lambda repo, sha: by_sha[sha]) as fetch_checks, \
          patch("pr.ci_wait.time.sleep"):
         result = _poll(run_id=555, head_sha="currenthead")
 
-    fetch_checks.assert_not_called()
+    # `_run` builds its payload at abc123 — the commit the pinned run ran on.
+    assert [c.args[1] for c in fetch_checks.call_args_list] == ["abc123"]
     assert result.merged["conclusion"] == "success"

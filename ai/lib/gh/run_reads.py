@@ -306,11 +306,6 @@ class CommitChecks:
     truncated: bool = False
     external: tuple[dict, ...] = ()
     actions: dict[int, tuple[dict, ...]] = field(default_factory=dict)
-    # The commit these checks are for, which is not always the one the caller
-    # asked about: an unpushed HEAD answers nothing and is retried at a commit
-    # GitHub has run. Carried here so the answer names its own subject rather
-    # than the caller pairing it back up with a sha by hand.
-    sha: str = ""
 
     def green_run_ids(self) -> frozenset[int]:
         """Runs the rollup proves need no job payload fetched for them.
@@ -441,10 +436,10 @@ def fetch_commit_checks(repo: str, sha: str) -> CommitChecks:
         after = page.get("endCursor")
 
     if not answered:
-        return CommitChecks(sha=sha)
+        return CommitChecks()
     # Anything short of a clean finish is truncated, which is what withholds a
     # green verdict the pages nobody read could have contradicted.
     return CommitChecks(
         answered=True, truncated=not complete, external=tuple(external),
-        actions={rid: tuple(rows) for rid, rows in actions.items()}, sha=sha,
+        actions={rid: tuple(rows) for rid, rows in actions.items()},
     )

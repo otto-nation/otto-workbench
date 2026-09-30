@@ -237,19 +237,16 @@ def _hold_finished(cache: dict[int, dict], payloads: list[dict], served: dict) -
 
 
 def _commit_checks(
-    repo: str, rows: list[run_reads.RunRow], head_sha: str,
+    repo: str, rows: list[run_reads.RunRow], sha: str,
 ) -> run_reads.CommitChecks:
     """The commit's full check list, asked for at a commit GitHub has heard of.
 
-    `head_sha` is the caller's idea of the branch head, which on a worktree
-    with unpushed commits is a commit the API has never seen — it answers
-    nothing, and reading that as "no checks" is the false green one layer down.
-    The runs themselves name a commit GitHub definitely ran, so an unanswered
-    rollup is retried there before the answer is believed.
+    `sha` is the caller's idea of the branch head, which on a worktree with
+    unpushed commits is a commit the API has never seen — it answers nothing,
+    and reading that as "no checks" is the false green one layer down. The runs
+    themselves name a commit GitHub definitely ran, so an unanswered rollup is
+    retried there before the answer is believed.
     """
-    sha = head_sha or (rows[0].head_sha if rows else "")
-    if not sha:
-        return run_reads.CommitChecks()
     checks = run_reads.fetch_commit_checks(repo, sha)
     if checks.answered or not rows:
         return checks
@@ -257,6 +254,19 @@ def _commit_checks(
     if not ran_sha or ran_sha == sha:
         return checks
     return run_reads.fetch_commit_checks(repo, ran_sha)
+
+
+def _late_checks(repo: str, payloads: list[dict]) -> run_reads.CommitChecks:
+    """The rollup at the commit the runs named, for a caller that could not.
+
+    A run pinned by id arrives with no commit attached, and the caller's own
+    head is the wrong thing to substitute — for a historical run that is a
+    different commit, whose checks belong to something else. So the question
+    waits rather than being asked of the wrong subject: the payload GitHub
+    served names the commit the run actually ran on.
+    """
+    sha = (payloads[0].get("headSha") or "") if payloads else ""
+    return run_reads.fetch_commit_checks(repo, sha) if sha else run_reads.CommitChecks()
 
 
 def fetch_merged(
@@ -274,8 +284,19 @@ def fetch_merged(
     `None` when GitHub served nothing at all: no run payload and no external
     check. A commit whose only checks are external still reports, because a
     repo can have checks without having a workflow.
+
+    `head_sha` may be empty, and a caller that cannot name the commit should
+    leave it so rather than pass one it is unsure of: the runs are then read
+    first and the rollup asked at the commit they name. That costs the chance
+    to skip a green run's payload, which is the right trade against answering
+    for the wrong commit.
     """
-    checks = _commit_checks(repo, rows, head_sha)
+    # Whether the commit can be named up front is the whole branch: named, the
+    # rollup is asked first and can spare a green run its payload; unnamed, the
+    # runs are read first and asked about afterwards. One variable rather than
+    # a field on the answer, so "was it asked" cannot drift from "what it said".
+    sha = head_sha or (rows[0].head_sha if rows else "")
+    checks = _commit_checks(repo, rows, sha) if sha else run_reads.CommitChecks()
     green = checks.green_run_ids()
     held = cache if cache is not None else {}
 
@@ -297,6 +318,9 @@ def fetch_merged(
     if cache is not None:
         _hold_finished(cache, payloads, served)
 
+    if not sha:
+        checks = _late_checks(repo, payloads)
+
     if not payloads:
         if not checks.external:
             return None
@@ -304,7 +328,7 @@ def fetch_merged(
         # run that does not exist would be a lie about where the verdict came
         # from, so the payload claims no run and `_apply_external` writes the
         # conclusion from the checks themselves.
-        payloads = [{"databaseId": 0, "number": 0, "headSha": checks.sha,
+        payloads = [{"databaseId": 0, "number": 0, "headSha": sha,
                      "status": "completed", "conclusion": "success",
                      "jobs": [], "_run_id": 0}]
 

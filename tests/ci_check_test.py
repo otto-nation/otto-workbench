@@ -232,37 +232,66 @@ def test_run_ci_leaves_nothing_to_report_on_to_the_entry_point():
             ci_check._run_ci(MagicMock(), args, make_ctx())
 
 
-def test_run_ci_with_a_pinned_run_does_not_borrow_the_branch_heads_rollup():
-    """`--run <id>` pins a specific run; the rollup asked about it must be for
-    that run's own commit, not whatever the branch currently sits at.
+def test_run_ci_asks_a_pinned_runs_rollup_at_that_runs_own_commit():
+    """`--run <id>` pins a specific run; the rollup must be for that run's
+    commit, not whatever the branch currently sits at.
 
     Regression test for the defect where `ctx.head_sha` (the branch's current
     head) was passed to `fetch_merged` even when `--run` pinned a historical
     run for a different commit — letting an external check answered at the
     *current* head get merged into a report about the pinned run, silently
     attributing another commit's verdict to it.
+
+    Not answered by skipping the rollup for a pinned run: that leaves the
+    defect this whole change exists to fix alive on the `--run` path, where a
+    red external check would report green. The run names its own commit once
+    fetched, so the question waits rather than going unasked.
     """
     run_data = {
         "databaseId": 555, "number": 3, "headSha": "runsha",
         "status": "completed", "conclusion": "success", "jobs": [],
     }
-    stale_rollup = run_reads.CommitChecks(
-        answered=True, sha="currenthead",
-        external=({"name": "CodeQL", "databaseId": 0, "status": "completed",
-                   "conclusion": "failure", "steps": [],
-                   "_check_source": "check_run"},),
-    )
+    by_sha = {
+        "currenthead": run_reads.CommitChecks(
+            answered=True,
+            external=({"name": "CodeQL", "databaseId": 0, "status": "completed",
+                       "conclusion": "failure", "steps": [],
+                       "_check_source": "check_run"},)),
+        "runsha": run_reads.CommitChecks(answered=True),
+    }
     args = _wait_args(run=555)
     ctx = make_ctx(head_sha="currenthead")
 
     with patch("gh.run_reads.fetch_run_data", return_value=run_data), \
          patch("gh.run_reads.fetch_commit_checks",
-               return_value=stale_rollup) as fetch_checks, \
+               side_effect=lambda repo, sha: by_sha[sha]) as fetch_checks, \
          patch("gh.run_reads.commits_behind_main", return_value=0):
         report = ci_check._run_ci(MagicMock(), args, ctx)
 
-    fetch_checks.assert_not_called()
+    assert [c.args[1] for c in fetch_checks.call_args_list] == ["runsha"]
     assert report.conclusion == "success"
+
+
+def test_a_pinned_runs_own_external_failure_is_still_reported():
+    """The point of asking at all — skipping the rollup here would report green."""
+    run_data = {
+        "databaseId": 555, "number": 3, "headSha": "runsha",
+        "status": "completed", "conclusion": "success", "jobs": [],
+    }
+    checks = run_reads.CommitChecks(
+        answered=True,
+        external=({"name": "CodeQL", "databaseId": 0, "status": "completed",
+                   "conclusion": "failure", "steps": [],
+                   "_check_source": "check_run", "_summary": "1 alert"},))
+    args = _wait_args(run=555)
+
+    with patch("gh.run_reads.fetch_run_data", return_value=run_data), \
+         patch("gh.run_reads.fetch_commit_checks", return_value=checks), \
+         patch("gh.run_reads.fetch_annotations", return_value=[]), \
+         patch("gh.run_reads.commits_behind_main", return_value=0):
+        report = ci_check._run_ci(MagicMock(), args, make_ctx(head_sha="currenthead"))
+
+    assert report.conclusion == "failure"
 
 
 def test_main_reports_a_missing_run_and_exits_one(capsys):

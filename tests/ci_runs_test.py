@@ -709,9 +709,8 @@ def test_an_unanswered_rollup_fetches_every_run():
 def test_an_unpushed_head_retries_at_the_commit_the_runs_ran_on():
     """A local HEAD the API never saw answers nothing, which is not `no checks`."""
     external = (_external("CodeQL", "failure"),)
-    answers = {"local": run_reads.CommitChecks(answered=False, sha="local"),
-               "pushed": run_reads.CommitChecks(answered=True, external=external,
-                                                sha="pushed")}
+    answers = {"local": run_reads.CommitChecks(answered=False),
+               "pushed": run_reads.CommitChecks(answered=True, external=external)}
     rows = [run_reads.RunRow(run_id=200, number=5, head_sha="pushed", conclusion="success")]
     with patch("gh.run_reads.fetch_run_data", return_value=dict(_PASSING_RUN)), \
          patch("gh.run_reads.fetch_commit_checks",

@@ -51,8 +51,13 @@ teardown() {
 # (lib/ui.sh, then lib/migrations.sh for MIGRATION_NOOP, then the migration
 # file) and calls its function, registering the repo first so the registry
 # lookup the migration depends on has something to resolve.
+# $1, if given, is a shell snippet run before the exclusion list is set —
+# e.g. "shopt -s nullglob" for a test asserting behaviour under a caller
+# that has already turned it on.
 _run_migration() {
+  local pre_shopt="${1:-}"
   WORKBENCH_DIR="$REPO_ROOT" run bash -c "
+    $pre_shopt
     # The default exclusion list refuses anything under /tmp or
     # /var/folders, which is exactly where the bats sandbox lives.
     PROJECTS_EXCLUDED_PREFIXES=('$TMPDIR/state' '$TMPDIR/data')
@@ -183,16 +188,7 @@ _run_migration() {
   local stray="$HOME/.claude/projects/-private-tmp"
   mkdir -p "$stray/memory"
 
-  WORKBENCH_DIR="$REPO_ROOT" run bash -c "
-    shopt -s nullglob
-    PROJECTS_EXCLUDED_PREFIXES=('$TMPDIR/state' '$TMPDIR/data')
-    . '$REPO_ROOT/lib/ui.sh'
-    . '$REPO_ROOT/lib/migrations.sh'
-    project_register '$REPO_DIR'
-    record_project_repo_ids
-    . '$MIGRATION'
-    migration_20260930_memory_to_data_root
-  "
+  _run_migration "shopt -s nullglob"
 
   [ "$status" -eq 0 ]
   [[ "$output" != *"Could not resolve a repo"* ]]

@@ -39,6 +39,11 @@ setup() {
 }
 
 teardown() {
+  # Before common_teardown, and unconditionally: the unwritable-parent test
+  # below strips write permission from a directory bats then has to remove.
+  # Restoring it only on that test's success path would leave the scratch
+  # tree undeletable on the failure path, which is the path that matters.
+  chmod -R u+w "$HOME/.claude/projects" 2>/dev/null || true
   common_teardown
 }
 
@@ -46,8 +51,13 @@ teardown() {
 # (lib/ui.sh, then lib/migrations.sh for MIGRATION_NOOP, then the migration
 # file) and calls its function, registering the repo first so the registry
 # lookup the migration depends on has something to resolve.
+# $1, if given, is a shell snippet run before the exclusion list is set —
+# e.g. "shopt -s nullglob" for a test asserting behaviour under a caller
+# that has already turned it on.
 _run_migration() {
+  local pre_shopt="${1:-}"
   WORKBENCH_DIR="$REPO_ROOT" run bash -c "
+    $pre_shopt
     # The default exclusion list refuses anything under /tmp or
     # /var/folders, which is exactly where the bats sandbox lives.
     PROJECTS_EXCLUDED_PREFIXES=('$TMPDIR/state' '$TMPDIR/data')
@@ -91,4 +101,113 @@ _run_migration() {
   _run_migration
   [ "$status" -eq 0 ]
   [[ "$output" != *"Could not resolve a repo"* ]]
+}
+
+@test "removes an unresolvable empty memory directory instead of orphaning it" {
+  # A slug no registry entry and no transcript can resolve, holding nothing.
+  # Before the empty check it was reported as an orphan and the migration
+  # returned non-zero, so every later sync retried it and re-warned forever
+  # over memory that does not exist.
+  local stray="$HOME/.claude/projects/-private-tmp"
+  mkdir -p "$stray/memory"
+
+  _run_migration
+
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Could not resolve a repo"* ]]
+  [ ! -d "$stray/memory" ]
+}
+
+@test "reports and retries an empty directory it cannot remove" {
+  # A refused rmdir leaves the directory on disk. Swallowed, a run that
+  # visited only this one returns MIGRATION_NOOP, which the framework records
+  # as applied and never retries — the directory then survives with nothing
+  # left to look at it.
+  # Root ignores the permission bits, so the rmdir would succeed and the test
+  # would assert the opposite of what it is named for. CI runs as a normal
+  # user on ubuntu-24.04; this is for a container that does not.
+  if [[ "$(id -u)" -eq 0 ]]; then
+    skip "root ignores the write bit this test removes"
+  fi
+
+  local stray="$HOME/.claude/projects/-private-tmp"
+  mkdir -p "$stray/memory"
+  # Restored by teardown rather than here — an assertion added between this
+  # line and the restore would otherwise strand an undeletable directory.
+  chmod a-w "$stray"
+
+  _run_migration
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Could not remove empty"* ]]
+  [ -d "$stray/memory" ]
+}
+
+@test "a run that only fails to remove a directory is not recorded as a no-op" {
+  # The counters and the retry flag are separate, and only the counters gated
+  # the early return: a run whose single visit set `unresolved` and counted
+  # nothing answered MIGRATION_NOOP, which lib/migrations.sh records exactly
+  # like work and never asks again. Every other case here seeds a carriable
+  # directory in setup(), so `carried` is never 0 and this branch is
+  # unreachable from them — the baseline has to go for the guard to be tested.
+  if [[ "$(id -u)" -eq 0 ]]; then
+    skip "root ignores the write bit this test removes"
+  fi
+
+  rm -rf "$HOME/.claude/projects/$SLUG"
+
+  local stray="$HOME/.claude/projects/-private-tmp"
+  mkdir -p "$stray/memory"
+  chmod a-w "$stray"
+
+  _run_migration
+
+  # 3 is MIGRATION_NOOP: recorded and never retried, which is the outcome
+  # this guard exists to refuse. 1 is the retry signal.
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Could not remove empty"* ]]
+}
+
+@test "lists a dotfile when reporting an unresolvable directory" {
+  # The listing globs through the dotfile-aware helper, so a directory holding
+  # only stamps is reported with what it holds rather than as holding nothing.
+  local stray="$HOME/.claude/projects/-private-tmp"
+  mkdir -p "$stray/memory"
+  echo 1700000000 > "$stray/memory/.last-dream"
+
+  _run_migration
+
+  [[ "$output" == *"Could not resolve a repo"* ]]
+  [[ "$output" == *"holds .last-dream"* ]]
+}
+
+@test "reads an empty directory as empty under a caller's nullglob" {
+  # With nullglob already on, a glob over an empty directory yields zero
+  # elements rather than the literal pattern. A helper testing for the
+  # unexpanded pattern reads that as non-empty and the directory is orphaned.
+  local stray="$HOME/.claude/projects/-private-tmp"
+  mkdir -p "$stray/memory"
+
+  _run_migration "shopt -s nullglob"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Could not resolve a repo"* ]]
+  [ ! -d "$stray/memory" ]
+}
+
+@test "a directory holding only gate stamps is not empty and is carried" {
+  # The stamps are dotfiles, so a bare glob reads this directory as empty and
+  # the run would rmdir it (or fail to, and miscount) rather than carrying the
+  # cooldown across.
+  rm "$MEM_DIR/topic.md"
+  echo 1700000000 > "$MEM_DIR/.last-dream"
+
+  _run_migration
+  [ "$status" -eq 0 ]
+
+  # Renamed by the carry path, which is what says it was not taken as empty.
+  local migrated=("$HOME/.claude/projects/$SLUG"/memory-migrated-*)
+  [ "${#migrated[@]}" -eq 1 ]
+  [ -f "${migrated[0]}/.last-dream" ]
+  [ ! -d "$MEM_DIR" ]
 }

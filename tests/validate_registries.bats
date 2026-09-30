@@ -683,7 +683,9 @@ EOF
   [[ "$output" == *"registered in multiple registries"* ]]
 }
 
-# passes-at-base: guards the new check's scope, so it asserts an absence the base also has
+# passes-at-base: the base has no cross-file check at all, so its scope is
+# trivially satisfied there. Deleting the `bindir` guard from the check does
+# fail this, which is what it is here to hold.
 @test "a name shared by a brew stack and an env alias is not a collision" {
   # `linear` is a brew formula and an auth alias on the live tree. Neither is
   # a script the server can offer, so comparing across those namespaces would
@@ -696,6 +698,7 @@ meta:
 tools:
   - name: shared
     permission: false
+    visibility: hidden
     description: "a brew formula"
 EOF
   cat > "$TMPDIR/bin/registry.yml" << 'EOF'
@@ -706,10 +709,16 @@ meta:
 tools:
   - name: shared
     permission: false
+    visibility: hidden
     description: "something else entirely"
 EOF
 
   run main
+  # Exit 0, not merely the absence of the message: an absence is also what a
+  # run that died on an unrelated schema error produces, and a fixture missing
+  # a required field reads as this test passing when nothing reached the scope
+  # check at all.
+  [ "$status" -eq 0 ]
   [[ "$output" != *"registered in multiple registries"* ]]
 }
 

@@ -37,6 +37,10 @@ from cli import dispatch
 from cli import review_modes
 from cli.needs import Need
 from cli.pr_commands import (
+    # Re-exported, not used here: the tests read `pr_cli.EXIT_BUDGET_EXHAUSTED`
+    # to bind this module's exit code to the maintenance script's bash
+    # comparison. See the constant's own comment in cli/pr_commands.py.
+    EXIT_BUDGET_EXHAUSTED,  # noqa: F401
     cmd_create,
     cmd_fix,
     cmd_gc,

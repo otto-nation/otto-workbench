@@ -256,7 +256,23 @@ def _commit_checks(
     return run_reads.fetch_commit_checks(repo, ran_sha)
 
 
-def _late_checks(repo: str, payloads: list[dict]) -> run_reads.CommitChecks:
+def _checks_settled(checks: run_reads.CommitChecks) -> bool:
+    """Whether a later poll could not learn anything this rollup does not say now.
+
+    An unanswered rollup might still be answered next time, and an external
+    check that is not yet `completed` might still conclude — either one is
+    worth asking again. Only a rollup that answered and has nothing left
+    in flight is safe to hand back unasked on a later poll.
+    """
+    return checks.answered and all(
+        job.get("status") == "completed" for job in checks.external
+    )
+
+
+def _late_checks(
+    repo: str, payloads: list[dict],
+    cache: dict[str, run_reads.CommitChecks] | None = None,
+) -> run_reads.CommitChecks:
     """The rollup at the commit the runs named, for a caller that could not.
 
     A run pinned by id arrives with no commit attached, and the caller's own
@@ -264,14 +280,30 @@ def _late_checks(repo: str, payloads: list[dict]) -> run_reads.CommitChecks:
     different commit, whose checks belong to something else. So the question
     waits rather than being asked of the wrong subject: the payload GitHub
     served names the commit the run actually ran on.
+
+    `cache` holds a settled rollup across polls, keyed by the commit it
+    answered for. A pinned run's commit does not change between polls, so once
+    its rollup has nothing left in flight (`_checks_settled`), a later poll
+    that already has the Actions payload from `cache`/`held` would otherwise
+    still re-issue this GraphQL query for an answer it already has. An
+    unsettled rollup is never cached: the answer it gives next poll may differ
+    from this one.
     """
     sha = (payloads[0].get("headSha") or "") if payloads else ""
-    return run_reads.fetch_commit_checks(repo, sha) if sha else run_reads.CommitChecks()
+    if not sha:
+        return run_reads.CommitChecks()
+    if cache is not None and sha in cache:
+        return cache[sha]
+    checks = run_reads.fetch_commit_checks(repo, sha)
+    if cache is not None and _checks_settled(checks):
+        cache[sha] = checks
+    return checks
 
 
 def fetch_merged(
     repo: str, rows: list[run_reads.RunRow], *, head_sha: str = "",
     cache: dict[int, dict] | None = None,
+    late_checks_cache: dict[str, run_reads.CommitChecks] | None = None,
 ) -> MergedRun | None:
     """Fold every check on the commit — Actions runs and otherwise — into one payload.
 
@@ -319,7 +351,7 @@ def fetch_merged(
         _hold_finished(cache, payloads, served)
 
     if not sha:
-        checks = _late_checks(repo, payloads)
+        checks = _late_checks(repo, payloads, late_checks_cache)
 
     if not payloads:
         if not checks.external:

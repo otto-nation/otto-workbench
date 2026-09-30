@@ -87,6 +87,7 @@ def poll_until_complete(
     """
     reported_job_ids: set[int] = set()
     settled: dict[int, dict] = {}
+    late_checks: dict[str, run_reads.CommitChecks] = {}
     start_time = time.monotonic()
 
     while True:
@@ -103,7 +104,9 @@ def poll_until_complete(
         # report about a different, pinned run.
         rollup_head_sha = "" if run_id else head_sha
 
-        fetched = ci_runs.fetch_merged(repo, rows, head_sha=rollup_head_sha, cache=settled)
+        fetched = ci_runs.fetch_merged(
+            repo, rows, head_sha=rollup_head_sha, cache=settled, late_checks_cache=late_checks,
+        )
         if fetched is None and not rows:
             trail.warn("no_runs", "no checks found")
             raise ci_runs.RunUnavailable(f"No checks found for branch '{branch}'")

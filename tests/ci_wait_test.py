@@ -305,5 +305,38 @@ def test_a_pinned_run_asks_its_rollup_at_its_own_commit():
         result = _poll(run_id=555, head_sha="currenthead")
 
     # `_run` builds its payload at abc123 — the commit the pinned run ran on.
+    # Never queried at "currenthead": that would be the regression this test
+    # guards against — see the docstring above.
     assert [c.args[1] for c in fetch_checks.call_args_list] == ["abc123"]
     assert result.merged["conclusion"] == "success"
+
+
+def test_a_pinned_runs_settled_rollup_is_not_reasked_next_poll():
+    """A pinned run's rollup never changes commit between polls, so once it has
+    answered with nothing left in flight, a second poll must not re-issue the
+    same `statusCheckRollup` query — it already has the answer.
+
+    Regression test for the gap where `_late_checks` re-fetched the rollup on
+    every poll even once it was settled, because the run's own Actions payload
+    being served from the `settled`/`held` cache carries no signal that the
+    rollup fetched for the same commit could be reused too.
+    """
+    in_progress = _run("in_progress", "", [
+        {"name": "Test", "conclusion": None, "databaseId": 11, "status": "in_progress"},
+    ])
+    done = _run("completed", "success", [
+        {"name": "Test", "conclusion": "success", "databaseId": 11, "status": "completed"},
+    ])
+    run_payloads = iter((in_progress, done))
+    settled_checks = run_reads.CommitChecks(answered=True)
+
+    with patch("gh.run_reads.fetch_run_data", side_effect=lambda repo, rid: next(run_payloads)), \
+         patch("gh.run_reads.fetch_commit_checks",
+               return_value=settled_checks) as fetch_checks, \
+         patch("pr.ci_wait.time.sleep"):
+        result = _poll(run_id=555, head_sha="currenthead")
+
+    # Both polls asked about the run's own commit (abc123), never currenthead,
+    # and only once even though the loop polled twice.
+    assert fetch_checks.call_args_list == [(("owner/repo", "abc123"),)]
+    assert result.merged["status"] == "completed"

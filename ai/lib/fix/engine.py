@@ -45,6 +45,7 @@ from agent import phases as agent_phases
 from agent import retry as agent_retry
 from agent import templates as agent_templates
 from fix import scope as fix_scope
+from fix import suite as fix_suite
 from fix import tracking as fix_tracking
 from git import client as git_client
 from git import land
@@ -55,7 +56,7 @@ from core.phases import Effort, Phase
 from fix.types import FixItem
 from pr.fix import FixOutcome, ItemOutcome
 from core.trail import Trail, tinfo
-from config.workbench_config import WorkbenchConfig
+from config.workbench_config import WorkbenchConfig, load_config_or_default
 from fix import gate as fix_gate
 from fix.gate import VerifyFn
 
@@ -167,6 +168,11 @@ class FixRun:
     batches: int = 0
     max_turns: int = 0
     max_budget: float = 0.0
+    # What the repo's own checks said about the tree this pass committed, for a
+    # caller reporting the pass after the fact. The commit body has it already:
+    # `landing` reads the same result off the adapter before the message is
+    # rendered, which is why it is not carried here for the domain's benefit.
+    suite: fix_suite.SuiteResult = field(default_factory=fix_suite.SuiteResult)
 
 
 class FixAdapter(ABC):
@@ -219,6 +225,18 @@ class FixAdapter(ABC):
     # the cap, else None. The commit body is assembled in `landing`, which runs
     # before `FixRun` exists, so this is how a domain names a truncated pass.
     stop: Diagnosis | None = None
+    # Set by the engine before `landing`, the same way and for the same reason:
+    # what the repo's own checks said about the tree this pass is committing.
+    # A domain that renders a commit body reads it to say so there, which is
+    # the whole point of running the checks before the landing rather than
+    # after — see `fix.suite`. Left at NOT_ATTEMPTED for a pass that never had
+    # anything worth checking, which is what keeps those passes silent.
+    #
+    # A shared instance rather than a `field(default_factory=...)`: this class
+    # is a plain ABC and not a dataclass, so a `field()` here is a `Field`
+    # object sitting where a result should be, and the first attribute read
+    # off it raises. Safe to share because `SuiteResult` is frozen.
+    suite: fix_suite.SuiteResult = fix_suite.SuiteResult()
     # Which phase sizes and prompts the verify gate, for a domain that runs one.
     # Separate from `phase` because the gate is a different agent asking a
     # different question: sizing it as the fix pass gives it the fix pass's
@@ -765,6 +783,34 @@ def _merge_scopes(
     return merged
 
 
+def _verify_suite(
+    adapter: FixAdapter, outcomes: list[ItemOutcome],
+    changed: set[str] | None, trail: Trail | None,
+) -> fix_suite.SuiteResult:
+    """Run the repo's declared checks over the pass's work and apply the verdict.
+
+    The engine's half of `fix.suite`: resolve the command from the worktree's
+    config, run it, and let a red result withdraw the pass's verification
+    claims before `landing` renders a body that would otherwise say those
+    claims held.
+
+    Config is re-read from the worktree rather than taken from `adapter.config`
+    because a pass launched from another directory carries the config of
+    wherever it was launched, and the checks belong to the tree being edited.
+    An adapter that was given one still wins: it is the same file when the two
+    agree, and the caller's explicit choice when they do not.
+    """
+    if not fix_suite.should_run(outcomes, changed):
+        return fix_suite.SuiteResult()
+    config = adapter.config or load_config_or_default(adapter.workdir)
+    result = fix_suite.run(
+        adapter.workdir, config.fix.verify_command,
+        config.fix.verify_timeout, trail,
+    )
+    fix_suite.apply_to(outcomes, result)
+    return result
+
+
 def _stamp(outcomes: list[ItemOutcome], read_sha: str, commit_sha: str) -> None:
     """Anchor each outcome to the tree it was decided in and the commit it landed in.
 
@@ -902,6 +948,13 @@ def run(
     # After the agent and before the commit — the one moment the difference is
     # the agent's work and nothing else's.
     changed = fix_scope.agent_changed(adapter.workdir, dirty_before)
+
+    # Between the agent's edits and the body that describes them. The two
+    # agents above check the pass's claims; this is the only thing that asks
+    # whether the pass broke something no claim mentions, and it has to run
+    # here because `landing` renders the commit message from these outcomes.
+    adapter.suite = _verify_suite(adapter, settled.outcomes, changed, trail)
+
     if changed is None:
         # Reported here rather than by each adapter. Every one of them owes the
         # operator this line — the fixes are loose in the worktree and only
@@ -929,6 +982,7 @@ def run(
         stop=settled.stop,
         head_before=head_before,
         batches=len(batched),
+        suite=adapter.suite,
         max_turns=max_turns,
         max_budget=max((b.max_budget for b in results), default=0.0),
     )

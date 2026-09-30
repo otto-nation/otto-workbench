@@ -1,3 +1,11 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/otto-nation/otto-workbench/main/config.schema.json
 issues:
   provider: github
+fix:
+  # What a fix pass runs against its own edits before it writes the commit body
+  # claiming they worked. `--changed` is the same selection the pre-push hook
+  # makes — select-tests and select-pytest against origin/main, then run-tests
+  # — so this is the gate's own definition of green reached earlier, not a
+  # second one assembled here.
+  verify_command: bin/local/run-tests --changed
+  verify_timeout: 900

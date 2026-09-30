@@ -73,6 +73,31 @@ Therefore, at step 2 above, audit the diff:
    it now, or revert that hunk. Do not take the annotation as a statement that nothing
    happened
 
+### The tally now says what stood behind it
+
+The counts line is no longer a bare claim. Before `landing` renders it, the pass runs the
+command the repo declares in `fix.verify_command` over the tree it is about to commit, and
+the result qualifies the tally in the line itself:
+
+| What the body says | What it means |
+|---|---|
+| `3 fixed, 1 skipped` | The repo's checks ran and came back green |
+| `3 fixed, 1 skipped — but the repo's checks are RED with these changes` | At least one of those fixes is wrong, or a test beside one is stale. The failing output is in the body |
+| `3 fixed, 1 skipped (unverified: no fix.verify_command declared)` | Nothing ran. This is the pre-gate behaviour, and the parenthetical is there so it stops reading like the green case |
+| `3 fixed, 1 skipped (unverified: the repo's checks did not answer)` | The command timed out or could not start. Neither a pass nor a fail |
+
+This closes the *collateral* half of the problem — an edit that breaks something no finding
+named. It does not close the attribution half above: one command over the whole pass cannot
+say which of sixteen items broke the tree, which is why a red run marks every claimed fix
+unverified rather than demoting one of them. Read the diff either way.
+
+A green tally is not a green review. It means the selected checks pass with those edits in
+the tree, which is weaker than every fix being right — that judgement is the verify gate's,
+and it is rendered on the rows, not in the tally.
+
+In a repo with no `fix.verify_command`, everything in this section reduces to the
+parenthetical, and the diff audit is the whole of your protection. Set the key.
+
 A row reading "the gate reached no verdict" or a footer naming files no fix claims is the
 pass telling you where to start. Neither is a finding against the agent: both mean the
 evidence is in the diff and nowhere else.

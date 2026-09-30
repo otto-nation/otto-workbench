@@ -742,6 +742,11 @@ def tinfo(trail: Trail | None, action: str, detail: str, **kwargs) -> None:
         trail.info(action, detail, **kwargs)
 
 
+def twarn(trail: Trail | None, action: str, detail: str, **kwargs) -> None:
+    if trail:
+        trail.warn(action, detail, **kwargs)
+
+
 def tdecision(trail: Trail | None, action: str, detail: str, **kwargs) -> None:
     if trail:
         trail.decision(action, detail, **kwargs)

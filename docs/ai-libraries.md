@@ -4135,6 +4135,56 @@ re-point a root before invoking a subprocess — and an import-time constant
 would capture whichever value happened to be live when the first importer
 loaded this module.
 
+### fix/suite.py
+
+Running the repo's own checks against what a fix pass just edited.
+
+The pipeline had two agents and no runner. One answers findings, the other
+checks those answers — and `verify-fixes.md` says outright that a path nothing
+named covers is *not verified*, not a reason to run everything. So nothing in
+the pass ever asked the question a regression answers to: **did this break
+something nobody named?**
+
+Both of the regressions that motivated this module were that question. A fix
+pass deleted an import its own file never used — correctly, as far as that file
+went — and two tests in another file read it off the module. A second fix
+reworded an error message to name a symbol's new home; the reword was right and
+the test asserting the old wording was not carried with it. Neither is a false
+claim, so neither was reachable by making the claim-checker stricter. One was
+reported ``Fixed [N1]``, the other ``Fixed [N2]``, in a commit whose body said
+``4 fixed, 0 skipped``.
+
+**Why a declared command rather than a hardcoded runner.** `fix.engine` runs in
+every repo the workbench drives, and `bin/local/select-pytest` exists in exactly
+one of them. Hardcoding this repo's selector into the shared engine would invent
+a definition of green for every other repo — the thing `testing.md` forbids. So
+the repo names its own command in `fix.verify_command`, and a repo that names
+nothing gets exactly the pass it got before this module existed, plus a line
+saying nothing ran.
+
+**Why it only ever demotes.** A green run says the selected tests pass with the
+agent's edits in the tree. It does not say any individual fix works — that is
+the verify gate's question, and it is answered per item against a claim. This
+runs once for the whole pass, so its verdict is the batch's and cannot be
+attributed to one item: `ItemOutcome.verified` is set to False on a red run and
+left alone on a green one. Promoting on green would credit every item in the
+batch with evidence that belongs to none of them, which is the path-attribution
+ceiling `fix.reconcile` already documents, walked from the other end.
+
+**Why before the commit and not after.** The commit body is the artifact people
+read, and a body that says ``4 fixed`` over a red suite is the whole defect. So
+this runs between the agent and the landing, and the summary is rendered from
+outcomes it has already touched. Selection is by the committed diff and
+execution is against the worktree, which is what makes that ordering work: the
+agent's edits are uncommitted but they are *in the tree the tests import*, and
+the files it may touch are restricted to the branch's own (`fix.scope`), which
+the committed diff already names.
+
+The command is argv, split with `shlex` and run without a shell. Not a security
+boundary — the agent that just ran had unrestricted bash — but a repo's gate is
+one command, and accepting a shell line would invite the `&&` chain that becomes
+a second definition of green living in a YAML string.
+
 ### gh/budget.py
 
 What we know about this account's GitHub API quota, and what follows from it.

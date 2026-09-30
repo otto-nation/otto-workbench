@@ -148,6 +148,8 @@ REUSE_DEFAULT_KEY = "reuse.default"
 ISSUE_PROVIDER_KEY = "issues.provider"
 ISSUE_TEAM_KEY = "issues.team"
 ISSUE_LABELS_KEY = "issues.labels"
+FIX_VERIFY_COMMAND_KEY = "fix.verify_command"
+FIX_VERIFY_TIMEOUT_KEY = "fix.verify_timeout"
 WIKI_DIR_KEY = "wiki.dir"
 WIKI_ROOT_KEY = "wiki.root"
 WIKI_LINK_KEY = "wiki.link"
@@ -357,6 +359,47 @@ class GitHubConfig:
 
 
 @dataclass(frozen=True)
+class FixConfig:
+    """What a fix pass runs against its own work before it commits it.
+
+    ``verify_command`` is argv — split with ``shlex``, run from the worktree
+    root with no shell — and exit 0 is the only green. It is the repo naming
+    its own checks because ``fix.engine`` drives several repos and the test
+    selector this one uses exists in none of the others; a runner hardcoded in
+    the engine would be a definition of green invented for repos that already
+    have one. Empty is not "run nothing" as a default anybody chose: it is a
+    repo that has not said, and `fix.suite` reports it as such rather than
+    letting an unchecked pass read like a clean one.
+
+    ``verify_timeout`` is seconds, and a timeout is not a failure of the code —
+    a pass whose checks time out records that its checks did not answer, and
+    leaves its claims where the verify gate put them.
+
+    Scoped to the repo. The command names paths inside one checkout, so a
+    machine-wide value would point every other repo at a script it does not
+    have — and the timeout belongs beside the command it bounds, since what is
+    generous for one repo's selected tests is a guillotine for another's.
+    """
+
+    verify_command: str = field(
+        default="",
+        metadata={"scope": ScopeRule(
+            frozenset({CONTAINER_SCOPE, PROJECT_SCOPE}),
+            "it names a command inside one repo's checkout, which a machine-wide"
+            " value would point every other repo at",
+        )},
+    )
+    verify_timeout: int = field(
+        default=900,
+        metadata={"scope": ScopeRule(
+            frozenset({CONTAINER_SCOPE, PROJECT_SCOPE}),
+            "it bounds this repo's own checks, and the budget that is generous"
+            " for one repo's selected tests cuts another's off mid-run",
+        )},
+    )
+
+
+@dataclass(frozen=True)
 class WikiConfig:
     """Where this machine, and this repo, keep compiled knowledge bases.
 
@@ -442,6 +485,7 @@ class WorkbenchConfig:
     issues: IssuesConfig = field(default_factory=IssuesConfig)
     github: GitHubConfig = field(default_factory=GitHubConfig)
     rebase: RebaseConfig = field(default_factory=RebaseConfig)
+    fix: FixConfig = field(default_factory=FixConfig)
     wiki: WikiConfig = field(default_factory=WikiConfig)
 
 

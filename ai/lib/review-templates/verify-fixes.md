@@ -39,8 +39,15 @@ For each fix, in order of what the project affords:
 3. **Run a scoped check, not the project's suite.** A linter or a single test
    file that covers the change. To run a suite, invoke it directly (`pytest
    tests/foo.py`). Do not invoke `bin/local/run-tests`, `validate-all`, or
-   unscoped `pytest`/`bats` — the pre-push gate reproduces those. A path
-   nothing named covers is **not verified**, not a reason to run everything.
+   unscoped `pytest`/`bats` — the pipeline runs the repo's own checks once,
+   after you. A path nothing named covers is **not verified**, not a reason to
+   run everything.
+4. **Ask what else the change reaches.** Your job is the claim in front of you,
+   but a fix that is right about its own file can still be wrong about the
+   repo: a deleted "unused" name another module imports, a reworded message a
+   test asserts on. Where a fix removed or renamed something, grep for the old
+   name. A surviving reference is a **broken** verdict — the fix did not hold
+   up — whatever the finding said.
 
 Judge what the reviewer asked for, not whether the code merely runs.
 

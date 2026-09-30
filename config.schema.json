@@ -227,6 +227,17 @@
         }
       }
     },
+    "fix": {
+      "type": "object",
+      "properties": {
+        "verify_command": {
+          "type": "string"
+        },
+        "verify_timeout": {
+          "type": "integer"
+        }
+      }
+    },
     "wiki": {
       "type": "object",
       "properties": {

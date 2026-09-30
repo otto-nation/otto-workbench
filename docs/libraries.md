@@ -183,11 +183,17 @@ Every key any of them accepts:
 | `github.ssh_over_443` | boolean | `false` |
 | `github.host` | string | — |
 | `rebase.regenerate` | list of string | `[]` |
+| `fix.verify_command` | string | — |
+| `fix.verify_timeout` | integer | `900` |
 | `wiki.dir` | string | `wiki` |
 | `wiki.link` | boolean | `false` |
 | `wiki.root` | string | — |
 
 `<phase>` is one of: `single`, `holistic`, `scout`, `group`, `synthesis`, `disprove`, `fix`, `fix_verify`, `comments_fix`, `comments_verify`, `comments_triage`, `ci_fix`, `rebase`, `prepush_fix`, `describe`
+
+`fix.verify_command` may only be written at container, project scope: it names a command inside one repo's checkout, which a machine-wide value would point every other repo at.
+
+`fix.verify_timeout` may only be written at container, project scope: it bounds this repo's own checks, and the budget that is generous for one repo's selected tests cuts another's off mid-run.
 
 `github.host` may only be written at container, project scope: it describes which GitHub instance this repo is served by, which is a fact about the repo rather than the machine — a machine-wide value would key every other repo on this instance too.
 

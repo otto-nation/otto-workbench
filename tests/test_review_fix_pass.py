@@ -31,6 +31,7 @@ from fix import gate as fix_gate
 from git import land
 from git import push
 from review import document as review_document
+from fix import suite as fix_suite
 from review import fix as review_fix
 from review import grammar as review_grammar
 from review import paths as review_paths
@@ -492,6 +493,79 @@ class TestTheCommitScope:
 
         assert spec.message.startswith("fix: self-review findings")
         assert "1 fixed, 2 skipped" in spec.message
+
+    def test_the_tally_says_so_when_the_repo_s_checks_are_red(
+        self, git_wt, tmp_path,
+    ):
+        """The line that gets quoted is the line that has to carry the caveat.
+
+        `4 fixed, 0 skipped` over a red suite is the sentence this whole
+        mechanism exists to stop being written. A caveat one line further down
+        does not travel into the terminal, the PR body, or the summary
+        somebody writes from memory.
+        """
+        adapter = self._adapter(git_wt, tmp_path)
+        adapter.suite = fix_suite.SuiteResult(
+            status=fix_suite.SuiteStatus.RED, command="bin/local/run-tests --changed",
+            output_tail="E   AttributeError: no attribute 'EXIT_BUDGET_EXHAUSTED'",
+        )
+
+        spec = adapter.landing([_outcome("M1", FixOutcome.FIXED)], {"a.py"})
+
+        assert "1 fixed, 0 skipped" in spec.message
+        assert "RED" in spec.message.splitlines()[2]
+        assert "AttributeError" in spec.message
+
+    def test_the_tally_says_so_when_nothing_was_declared_to_run(
+        self, git_wt, tmp_path,
+    ):
+        adapter = self._adapter(git_wt, tmp_path)
+        adapter.suite = fix_suite.SuiteResult(
+            status=fix_suite.SuiteStatus.NOT_DECLARED)
+
+        spec = adapter.landing([_outcome("M1", FixOutcome.FIXED)], {"a.py"})
+
+        assert "unverified: no fix.verify_command declared" in spec.message
+        assert fix_suite.NOT_DECLARED_NOTE in spec.message
+
+    def test_a_green_run_leaves_the_tally_as_it_was(self, git_wt, tmp_path):
+        """Green means the checks pass, not that each fix is right.
+
+        Spending the tally's words on the weaker claim is how the stronger one
+        stops being read.
+        """
+        adapter = self._adapter(git_wt, tmp_path)
+        adapter.suite = fix_suite.SuiteResult(
+            status=fix_suite.SuiteStatus.GREEN, command="checks", duration_s=12.0)
+
+        spec = adapter.landing([_outcome("M1", FixOutcome.FIXED)], {"a.py"})
+
+        assert "1 fixed, 0 skipped" in spec.message
+        assert "unverified" not in spec.message
+        assert "Checks green" in spec.message
+
+    def test_checks_that_did_not_answer_are_not_reported_as_passing(
+        self, git_wt, tmp_path,
+    ):
+        adapter = self._adapter(git_wt, tmp_path)
+        adapter.suite = fix_suite.SuiteResult(
+            status=fix_suite.SuiteStatus.TIMED_OUT, command="checks", duration_s=900.0)
+
+        spec = adapter.landing([_outcome("M1", FixOutcome.FIXED)], {"a.py"})
+
+        assert "unverified: the repo's checks did not answer" in spec.message
+
+    def test_a_pass_with_nothing_to_check_carries_no_note_at_all(
+        self, git_wt, tmp_path,
+    ):
+        """A caveat on every pass is a caveat read on none of them."""
+        adapter = self._adapter(git_wt, tmp_path)
+
+        spec = adapter.landing([_outcome("M1", FixOutcome.FIXED)], {"a.py"})
+
+        assert "1 fixed, 0 skipped" in spec.message
+        assert "unverified" not in spec.message
+        assert "Checks" not in spec.message
 
     def test_a_pass_that_fixed_nothing_omits_the_count(self, git_wt, tmp_path):
         adapter = self._adapter(git_wt, tmp_path)

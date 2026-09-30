@@ -32,6 +32,8 @@ from core.phases import Phase  # noqa: E402
 from fix.types import FixItem  # noqa: E402
 from git.land import CommitStatus  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
+from fix import suite as fix_suite  # noqa: E402
+from config.workbench_config import FixConfig, WorkbenchConfig  # noqa: E402
 
 
 # ── the stub domain ─────────────────────────────────────────────────────────
@@ -1809,3 +1811,149 @@ class TestTheAgentCanWriteTheFileItIsToldToAnswer:
         adapter = StubAdapter(tmp_path)
         adapter.artifacts = adapter.workdir
         assert adapter.add_dirs() == [adapter.workdir]
+
+
+# ── the repo's own checks, between the agent and the commit ─────────────────
+
+
+class TestVerifySuite:
+    """That the pass runs the repo's checks, and that `landing` sees the result.
+
+    The ordering is the point. Two agents already check the pass's claims; this
+    is the only thing that asks whether the pass broke something no claim
+    mentions, and it has to answer before the commit body is rendered — a body
+    reading `4 fixed, 0 skipped` over a red suite is the defect, not a
+    cosmetic complaint about it.
+    """
+
+    def _configured(self, tmp_path, command):
+        adapter = StubAdapter(tmp_path)
+        adapter.config = WorkbenchConfig(
+            fix=FixConfig(verify_command=command, verify_timeout=30))
+        return adapter
+
+    def _script(self, tmp_path, body):
+        path = tmp_path / "checks"
+        path.write_text(f"#!/usr/bin/env bash\n{body}\n")
+        path.chmod(0o755)
+        return str(path)
+
+    def test_the_declared_command_runs_when_the_pass_claimed_a_fix(
+        self, tmp_path, landed, head, snapshots,
+    ):
+        marker = tmp_path / "ran"
+        adapter = self._configured(
+            tmp_path, self._script(tmp_path, f"touch {marker}; exit 0"))
+        snapshots.side_effect = _reads(set(), {"a.py"})
+
+        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
+            fix_engine.run(adapter)
+
+        assert marker.exists()
+
+    def test_landing_is_handed_the_verdict_before_it_writes_the_body(
+        self, tmp_path, landed, head, snapshots,
+    ):
+        """The adapter reads `self.suite` while assembling its commit message."""
+        adapter = self._configured(
+            tmp_path, self._script(tmp_path, "echo 'E  boom'; exit 1"))
+        snapshots.side_effect = _reads(set(), {"a.py"})
+        seen = {}
+        original = adapter.landing
+
+        def capture(outcomes, changed):
+            seen["status"] = adapter.suite.status
+            seen["verified"] = [o.verified for o in outcomes]
+            return original(outcomes, changed)
+
+        adapter.landing = capture
+        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
+            fix_engine.run(adapter)
+
+        assert seen["status"] is fix_suite.SuiteStatus.RED
+        assert seen["verified"] == [False]
+
+    def test_a_red_run_withdraws_the_claim_before_the_commit(
+        self, tmp_path, landed, head, snapshots,
+    ):
+        adapter = self._configured(
+            tmp_path, self._script(tmp_path, "exit 1"))
+        snapshots.side_effect = _reads(set(), {"a.py"})
+
+        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
+            run = fix_engine.run(adapter)
+
+        assert run.suite.status is fix_suite.SuiteStatus.RED
+        assert run.outcomes[0].outcome is FixOutcome.FIXED
+        assert run.outcomes[0].verified is False
+
+    def test_a_red_run_does_not_stop_the_work_from_landing(
+        self, tmp_path, landed, head, snapshots,
+    ):
+        """The edits are real whatever the checks said; losing them is worse.
+
+        The pass holds its push, so a red result still precedes anything
+        leaving the machine — what it buys is an honest body, not a block.
+        """
+        adapter = self._configured(tmp_path, self._script(tmp_path, "exit 1"))
+        snapshots.side_effect = _reads(set(), {"a.py"})
+
+        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
+            fix_engine.run(adapter)
+
+        assert landed.called
+
+    def test_a_pass_that_claimed_nothing_does_not_pay_for_the_checks(
+        self, tmp_path, landed, head, snapshots,
+    ):
+        """Minutes of test runtime to restate what the last run already said."""
+        marker = tmp_path / "ran"
+        adapter = self._configured(
+            tmp_path, self._script(tmp_path, f"touch {marker}; exit 0"))
+        snapshots.side_effect = _reads(set(), {"a.py"})
+
+        with patch.object(agent_invoke, "run_fix",
+                          _answer(adapter, tick="declined", reason="wrong")):
+            run = fix_engine.run(adapter)
+
+        assert not marker.exists()
+        assert run.suite.status is fix_suite.SuiteStatus.NOT_ATTEMPTED
+
+    def test_a_pass_that_wrote_no_files_does_not_pay_for_the_checks(
+        self, tmp_path, landed, head, snapshots,
+    ):
+        marker = tmp_path / "ran"
+        adapter = self._configured(
+            tmp_path, self._script(tmp_path, f"touch {marker}; exit 0"))
+        snapshots.side_effect = _reads(set(), set())
+
+        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
+            fix_engine.run(adapter)
+
+        assert not marker.exists()
+
+    def test_a_repo_declaring_no_command_says_so_rather_than_passing(
+        self, tmp_path, landed, head, snapshots,
+    ):
+        """The state that let a red suite ship under a clean-looking summary."""
+        adapter = StubAdapter(tmp_path)
+        adapter.config = WorkbenchConfig()
+        snapshots.side_effect = _reads(set(), {"a.py"})
+
+        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
+            run = fix_engine.run(adapter)
+
+        assert run.suite.status is fix_suite.SuiteStatus.NOT_DECLARED
+        assert run.outcomes[0].verified is None
+
+    def test_a_broken_declaration_does_not_take_the_pass_down_with_it(
+        self, tmp_path, landed, head, snapshots,
+    ):
+        adapter = self._configured(tmp_path, str(tmp_path / "does-not-exist"))
+        snapshots.side_effect = _reads(set(), {"a.py"})
+
+        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
+            run = fix_engine.run(adapter)
+
+        assert run.suite.status is fix_suite.SuiteStatus.ERROR
+        assert landed.called

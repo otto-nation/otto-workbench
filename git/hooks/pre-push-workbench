@@ -113,11 +113,18 @@ _config_flag=""
 # refuses to exec is otherwise reported as a secret finding.
 _GITLEAKS_LEAK_EXIT=7
 
-set +e
+# Captured through if/else rather than a bare substitution under `set +e`:
+# this file traps ERR (see the top of the script), and a bare assignment from
+# a failing command fires that trap even with errexit off — so every leak and
+# every scanner error would print "pre-push hook failed" before the real
+# message. A substitution used as an `if` condition is exempt.
 # shellcheck disable=SC2086  # word splitting intentional for optional flag
-_gitleaks_output=$(gitleaks protect --staged --exit-code "$_GITLEAKS_LEAK_EXIT" $_config_flag 2>&1)
-_gitleaks_status=$?
-set -e
+if _gitleaks_output=$(gitleaks protect --staged --verbose --no-color --no-banner \
+  --exit-code "$_GITLEAKS_LEAK_EXIT" $_config_flag 2>&1); then
+  _gitleaks_status=0
+else
+  _gitleaks_status=$?
+fi
 
 if (( _gitleaks_status == 0 )); then
   _pass

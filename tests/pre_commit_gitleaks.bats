@@ -11,8 +11,14 @@
 #
 # gitleaks is stubbed rather than real: the case under test is how the hook
 # reads an exit code, and a stub is the only way to produce an operational
-# failure deterministically. The stub asserts it was passed --exit-code, so a
-# hook that stopped sending it cannot quietly pass these.
+# failure deterministically.
+#
+# The stub honours --exit-code the way the real binary does: asked to simulate
+# leaks it exits with whatever VALUE the hook passed, falling back to gitleaks'
+# default of 1 when the hook passed no flag at all. That is what makes these
+# tests sensitive to the fix rather than to the stub. A hook that dropped the
+# flag, or passed `--exit-code 1` and reinstated the collision, gets 1 back and
+# is caught by the leaks case instead of quietly still passing.
 #
 # A lab of its own each time: GIT_CONFIG_GLOBAL points at a temp gitconfig
 # whose core.hooksPath holds a symlink to this checkout's hook, exactly as
@@ -51,28 +57,57 @@ teardown() {
   common_teardown
 }
 
-# stub_gitleaks EXIT_CODE [STDERR_TEXT] — a gitleaks that exits EXIT_CODE.
+# stub_gitleaks MODE [STDERR_TEXT] — a fake gitleaks.
 #
-# When the hook passes --exit-code N, the stub exits N for the leaks case so
-# the hook's own flag decides the verdict; every other requested code is
-# returned verbatim. A stub invoked WITHOUT --exit-code writes a marker the
-# tests assert on, which is what stops a hook that dropped the flag from
-# passing by luck.
+# MODE is either "leaks", or a literal exit code for the operational cases.
+#
+# "leaks" reproduces the real binary's contract: exit with the VALUE of
+# --exit-code when the caller passed one, else gitleaks' default of 1. So the
+# verdict the hook reads is decided by the flag the hook actually sent, not by
+# the stub — which is what lets the leaks case catch a dropped flag, or a flag
+# set back to 1.
+#
+# It also records its argv and the fact that it ran, so a test can tell
+# "scanner said clean" apart from "scanner never executed".
 stub_gitleaks() {
-  local want="$1" msg="${2:-}"
+  local mode="$1" msg="${2:-}"
   cat > "$TMPDIR/bin/gitleaks" <<EOF
 #!/usr/bin/env bash
-saw_exit_code=no
+touch "$TMPDIR/gitleaks-ran"
+printf '%s\n' "\$@" > "$TMPDIR/gitleaks-argv"
+
+# The real binary's default leaks code; --exit-code overrides it.
+leak_code=1
+prev=""
 for arg in "\$@"; do
-  [[ "\$arg" == "--exit-code" ]] && saw_exit_code=yes
+  [[ "\$prev" == "--exit-code" ]] && leak_code="\$arg"
+  prev="\$arg"
 done
-if [[ "\$saw_exit_code" == no ]]; then
-  echo "STUB-SAW-NO-EXIT-CODE-FLAG"
-fi
+
 [[ -n "$msg" ]] && echo "$msg" >&2
-exit $want
+
+if [[ "$mode" == leaks ]]; then
+  echo "secret detected in file.txt"
+  exit "\$leak_code"
+fi
+exit $mode
 EOF
   chmod +x "$TMPDIR/bin/gitleaks"
+}
+
+# assert_scanner_ran — the hook actually executed gitleaks.
+#
+# Without this a hook that skipped the scan entirely passes the clean case.
+assert_scanner_ran() {
+  [[ -f "$TMPDIR/gitleaks-ran" ]]
+}
+
+# assert_exit_code_flag — the hook passed --exit-code with the value the
+# three-way contract depends on. Asserted in the operational cases too, so the
+# flag is held by more than the single leaks test.
+assert_exit_code_flag() {
+  grep -qx -- "--exit-code" "$TMPDIR/gitleaks-argv"
+  grep -qx -- "7" "$TMPDIR/gitleaks-argv"
 }
 
 # stage_a_file — one staged change, so there is something to commit.
@@ -86,17 +121,31 @@ stage_a_file() {
   stage_a_file
   run git -C "$TMPDIR/wt" commit -m "feat: a clean commit"
   [ "$status" -eq 0 ]
+  # A hook that skipped the scan entirely would also exit 0 here.
+  assert_scanner_ran
+  assert_exit_code_flag
 }
 
 @test "gitleaks reporting leaks refuses the commit and says secrets" {
-  # 7 is the code the hook asks for via --exit-code. The stub returning it is
-  # the leaks verdict.
-  stub_gitleaks 7
+  # The stub exits with whatever --exit-code the hook passed, so this fails if
+  # the hook drops the flag (stub falls back to 1, which the hook then reads as
+  # a scanner failure) or sets it back to 1 (the collision this branch removes).
+  stub_gitleaks leaks
   stage_a_file
   run git -C "$TMPDIR/wt" commit -m "feat: a leaky commit"
   [ "$status" -ne 0 ]
   [[ "$output" == *"found potential secrets"* ]]
-  [[ "$output" != *"STUB-SAW-NO-EXIT-CODE-FLAG"* ]]
+  [[ "$output" != *"could not run"* ]]
+  assert_exit_code_flag
+}
+
+@test "the findings gitleaks printed reach the user on a leak" {
+  # Blocking without saying what matched leaves nothing to act on.
+  stub_gitleaks leaks
+  stage_a_file
+  run git -C "$TMPDIR/wt" commit -m "feat: a leaky commit"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"secret detected in file.txt"* ]]
 }
 
 @test "a gitleaks that cannot run is not reported as a secret finding" {
@@ -112,12 +161,17 @@ stage_a_file() {
   [[ "$output" != *"found potential secrets"* ]]       # but NOT as a leak
   [[ "$output" == *"could not run"* ]]
   [[ "$output" == *"NOT a secret finding"* ]]
+  assert_exit_code_flag
 }
 
-@test "a scanner failure names mise as the likely cause" {
+@test "a scanner failure points at PATH rather than at the diff" {
   # The diagnostic is the point of the branch: the failure that prompted this
   # cost a session because the message pointed at secrets instead of at PATH.
-  stub_gitleaks 1 "mise WARN Error loading settings file"
+  #
+  # The scanner's own message deliberately does NOT mention mise here, so only
+  # the hook's own guidance can satisfy these assertions — a stub that said
+  # "mise ..." would match a *mise* assertion by itself and prove nothing.
+  stub_gitleaks 1 "fatal: boom"
   stage_a_file
   run git -C "$TMPDIR/wt" commit -m "feat: broken shim"
   [ "$status" -ne 0 ]

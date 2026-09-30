@@ -46,7 +46,7 @@ record carries a ``released`` timestamp, written under the flock just before
 it is dropped; a held one has ``released: null``. To ask the kernel rather
 than read the file, call ``is_held``.
 
-``claude-review`` (both its PR and its ``--self`` paths), ``ci-check``,
+``review`` (both its PR and its ``--self`` paths), ``ci-check``,
 ``review-threads``, ``pr-rebase`` and ``pr-describe`` take the lock themselves,
 so invoking any of them directly is guarded too. When ``pr`` dispatches to one
 it resolves the same target, computes the same key, finds it in

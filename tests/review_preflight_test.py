@@ -1,4 +1,4 @@
-"""Unit tests for review.preflight — importable without executing claude-review."""
+"""Unit tests for review.preflight — importable without executing review."""
 
 import json
 import sys

@@ -1,4 +1,4 @@
-"""Issue tracking integration for claude-review."""
+"""Issue tracking integration for review."""
 
 # doc-group: publishing
 

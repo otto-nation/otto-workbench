@@ -303,7 +303,9 @@ def _phase_synthesis(
     )
 
     if is_complete_review(job.review_file):
-        _post_process_review(job)
+        _post_process_review(
+            job, skipped_groups=skipped_groups, total_groups=group_count,
+        )
         diagnosis = None
     else:
         reason = "no output" if not _has_output(job.review_file) else "incomplete output"

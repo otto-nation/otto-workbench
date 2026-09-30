@@ -208,7 +208,7 @@ Commits already made under the bad identity keep it — rewriting them requires 
 
 ## "Cannot determine repository via `gh repo view`"
 
-A `pr`, `claude-review`, `ci-check`, or `review-threads` run could not name the repository it was pointed at. The message quotes what `gh` itself said rather than guessing at a cause, so the rest of the line is the diagnosis:
+A `pr`, `review`, `ci-check`, or `review-threads` run could not name the repository it was pointed at. The message quotes what `gh` itself said rather than guessing at a cause, so the rest of the line is the diagnosis:
 
 ```
 ✗ Cannot determine repository via `gh repo view`: no git remotes found
@@ -240,7 +240,7 @@ Two runs against one PR corrupt each other — they both read-modify-write that 
 
 `pr status` is read-only and never contends — it takes no lock, makes no network call, and creates nothing, so it answers while a review holds the target, and it answers with `gh` logged out. See [what each `pr` command needs before it runs](ai-libraries.md#prcontextpy). `pr gc` prunes target state for merged and closed PRs, skips its own target, and takes each target's lock before touching it — so it will not delete state out from under a running review, and it is safe to run at any time.
 
-`claude-review`, `ci-check`, and `review-threads` take the same lock when you invoke them directly, so `claude-review --self --fix` is guarded too. Launched by `pr` they inherit `WORKBENCH_RUN_LOCK` from it and pass through rather than deadlocking on their own parent's lock. Those three are the whole list — `pr-rebase` and `pr-describe` take no lock of their own, so run them as `pr rebase` and `pr describe` if you want them serialized.
+`review`, `ci-check`, and `review-threads` take the same lock when you invoke them directly, so `review --self --fix` is guarded too. Launched by `pr` they inherit `WORKBENCH_RUN_LOCK` from it and pass through rather than deadlocking on their own parent's lock. Those three are the whole list — `pr-rebase` and `pr-describe` take no lock of their own, so run them as `pr rebase` and `pr describe` if you want them serialized.
 
 The lock is an advisory `flock` on the target's `run.lock`, so the kernel releases it whenever the holder exits — including `kill -9`. There is no stale lock to clear by hand; if the message names a pid that is gone, the next run will take the lock regardless.
 

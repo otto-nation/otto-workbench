@@ -11,7 +11,7 @@ one file per month. ``otto-log recent --repo <org/repo>`` narrows it to one
 repo; ``otto-log query --pr <n>`` finds every record for one PR, including the
 terminal ``pr_outcome`` event ``pr gc`` writes when the PR merges or closes.
 
-One user command is several runs: ``pr review`` calls ``claude-review``,
+One user command is several runs: ``pr review`` calls ``review``,
 which calls ``review-orchestrate``, and each opens its own trail with its own
 ``invocation``. They are tied together by ``root`` — the invocation of the
 outermost recorded run, carried in ``TRAIL_ROOT_ENV`` and recorded on every

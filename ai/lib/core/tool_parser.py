@@ -41,7 +41,7 @@ that protocol and nothing else.
 One constraint comes with a flat list of option strings: every *option* the
 parser declares must consume exactly one value. It cannot express ``nargs='?'``,
 ``'+'``, ``'*'``, or an int above 1, so the function refuses to answer rather
-than report a wrong arity. Positionals are unconstrained (``claude-review``
+than report a wrong arity. Positionals are unconstrained (``review``
 declares ``args`` with ``nargs='*'``).
 
 ``enum_arg`` is here for the same reason from the other side: it is the argparse
@@ -203,7 +203,7 @@ def value_taking_options(parser: ArgumentParser) -> list[str]:
     raises ``ValueError`` instead of being reported as single-valued, which
     would make the caller skip the wrong number of tokens and silently
     misclassify the one after them.  Positionals are exempt because they never
-    appear in the answer — ``claude-review`` declares ``args`` with ``nargs='*'``.
+    appear in the answer — ``review`` declares ``args`` with ``nargs='*'``.
     """
     options = set()
     for action in parser._actions:

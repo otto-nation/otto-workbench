@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Review orchestration for claude-review."""
+"""Review orchestration for review."""
 
 import os
 import sys

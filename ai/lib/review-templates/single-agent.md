@@ -10,7 +10,7 @@ ${env_section}
 ## Output
 ${output_block}
 
-Include this metadata comment after the date line: <!-- generator: ${generator_version} -->
+Write no `<!-- key: value -->` metadata comments. The harness writes the document's metadata header itself once you are done — which commit was reviewed, what it is a delta against, which build produced it — and it knows those facts where you do not.
 Format each finding as a list item: `- **[M1]** **\`<file>:<line>\`** — <finding>`. NEVER use ### headings for findings — downstream counters and posting tools parse the `- **[X1]**` list-item format only.
 Must-fix and should-fix findings must include an evidence block — a blockquoted, fenced code snippet from the referenced file proving the claim.
 A tradeoff the code marks with a `ceiling:` or `ceiling-permanent:` comment is a documented decision, not a defect — do not raise it. Raise it only when the marker's own upgrade trigger has already fired, and say which trigger and what fired it.

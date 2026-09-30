@@ -52,7 +52,7 @@ def echoes_argv(argv, **kwargs) -> int:
 
 
 def requires_a_kwarg(argv, *, install_signal_handler) -> int:
-    # `cli.claude_review.main` takes this, and an in-process caller must pass
+    # `cli.review_entry.main` takes this, and an in-process caller must pass
     # False so it does not replace the handler the entry point installed.
     return 0 if install_signal_handler is False else 1
 

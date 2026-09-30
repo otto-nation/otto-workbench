@@ -5,11 +5,15 @@ package_managers:
   homebrew:
     enabled: true
     tap_repo: "otto-nation/homebrew-tap"
+    # The two formulas this repo actually ships, and the only two under
+    # Formula/. The second entry used to name a per-command formula that was
+    # never written; nothing read it, so it went on naming a file that did not
+    # exist through a rename of the command it was named after.
     formulas:
       otto-workbench:
         formula_path: "Formula/otto-workbench.rb"
-      claude-review:
-        formula_path: "Formula/claude-review.rb"
+      otto-ai-tools:
+        formula_path: "Formula/otto-ai-tools.rb"
 
 # Notification settings (currently disabled)
 notifications:

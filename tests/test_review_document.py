@@ -5,7 +5,8 @@ The header has three writers and only one of them is this module: the pipeline
 and `review-rebuild` render it, and on the synthesis and single-agent paths the
 review agent writes its own from prose in a template. So the header tests come
 in two halves — what `render` and `from_meta` put on disk, and what `parse`,
-`set_status` and `set_head_sha` make of a header they did not write.
+`set_status`, `set_meta` and `stamp_header` make of a header they did not
+write.
 `ReviewDocument` is tested against the same split: what it renders for a
 document being built, and what it makes of one it is handed.
 
@@ -25,9 +26,9 @@ import pytest
 from core.phases import Mode
 from pr.domains import ReviewStatus, ReviewVerdict
 from review.document import (
-    ReviewDocument, ReviewHeader,
-    review_title, section_span, set_head_sha, set_section, set_status,
-    strip_sections,
+    MetaKey, ReviewDocument, ReviewHeader,
+    review_title, section_span, set_meta, set_section, set_status,
+    set_title, stamp_header, strip_sections,
 )
 from review.grammar import (
     FINDING_ID_RE, _extract_body_text, _FIRST_FILE_RE, finding_location,
@@ -215,14 +216,19 @@ class TestSetStatus:
         )
 
 
-class TestSetHeadSha:
+class TestSetMetaOnTheHeadSha:
     """The harness' SHA over whatever the review agent typed.
 
     The marker is the point the next re-review measures its delta from, so
     these cover the ways an agent's header can differ from the harness': a
     wrong SHA, no marker at all, and — the one that matters — a wrong marker
-    the parser would otherwise reach first.
+    the parser would otherwise reach first. One key's worth of cases against
+    the primitive every key goes through.
     """
+
+    @staticmethod
+    def _sha(content: str, head_sha: str) -> str:
+        return set_meta(content, MetaKey.HEAD_SHA, head_sha)
 
     def test_a_wrong_sha_is_replaced(self):
         content = (
@@ -231,13 +237,13 @@ class TestSetHeadSha:
             "<!-- generator: 2.0.0 -->\n"
             "\n## Summary\n"
         )
-        updated = set_head_sha(content, "abc123")
+        updated = self._sha(content, "abc123")
         assert "<!-- head_sha: abc123 -->" in updated
         assert "deadbeef" not in updated
 
     def test_a_header_with_no_marker_gains_one_above_the_generator(self):
         content = "<!-- date: 2026-01-01 -->\n<!-- generator: 2.0.0 -->\n\n## Summary\n"
-        assert set_head_sha(content, "abc123") == (
+        assert self._sha(content, "abc123") == (
             "<!-- date: 2026-01-01 -->\n"
             "<!-- head_sha: abc123 -->\n"
             "<!-- generator: 2.0.0 -->\n"
@@ -246,7 +252,7 @@ class TestSetHeadSha:
 
     def test_a_document_with_neither_gains_one_above_the_first_heading(self):
         content = "# Review: acme/widget#42\n<!-- date: 2026-01-01 -->\n\n## Summary\n"
-        updated = set_head_sha(content, "abc123")
+        updated = self._sha(content, "abc123")
         assert updated.endswith("<!-- head_sha: abc123 -->\n\n## Summary\n")
 
     def test_the_stamped_sha_is_the_one_the_parser_reads(self):
@@ -255,11 +261,11 @@ class TestSetHeadSha:
             "\n## Summary\n"
             "An agent that mentioned <!-- head_sha: cafe --> further down.\n"
         )
-        assert ReviewHeader.parse(set_head_sha(content, "abc123")).head_sha == "abc123"
+        assert ReviewHeader.parse(self._sha(content, "abc123")).head_sha == "abc123"
 
     def test_stamping_a_sha_that_is_already_there_changes_nothing(self):
         content = "<!-- head_sha: abc123 -->\n<!-- generator: 2.0.0 -->\n\n## Summary\n"
-        assert set_head_sha(content, "abc123") == content
+        assert self._sha(content, "abc123") == content
 
     def test_the_keys_the_editor_was_not_told_about_survive(self):
         content = (
@@ -268,7 +274,7 @@ class TestSetHeadSha:
             "<!-- generator: 2.0.0 -->\n"
             "\n## Summary\n"
         )
-        assert "<!-- an_agent_invention: keep me -->" in set_head_sha(content, "abc123")
+        assert "<!-- an_agent_invention: keep me -->" in self._sha(content, "abc123")
 
     def test_a_value_carrying_a_backslash_escape_is_written_literally(self):
         """The SHA is substituted in, not interpreted as a replacement template.
@@ -279,7 +285,186 @@ class TestSetHeadSha:
         corrupt the line it was asked to correct.
         """
         content = "<!-- head_sha: deadbeef -->\n\n## Summary\n"
-        assert r"<!-- head_sha: \1abc -->" in set_head_sha(content, r"\1abc")
+        assert r"<!-- head_sha: \1abc -->" in self._sha(content, r"\1abc")
+
+
+class TestSetMeta:
+    """The primitive under every header edit, on the cases its callers share.
+
+    Where an inserted key *lands* is what these pin. A stamp writes the header
+    one key at a time, so without a canonical position the block would come
+    out ordered by the accident of which keys the agent happened to write — a
+    document that differs from a rendered one in nothing but arrangement.
+    """
+
+    def test_an_inserted_key_takes_its_canonical_position(self):
+        content = "<!-- date: 2026-01-01 -->\n<!-- generator: 2.0.0 -->\n\n## Summary\n"
+        assert set_meta(content, MetaKey.REVIEW_TYPE, "incremental") == (
+            "<!-- date: 2026-01-01 -->\n"
+            "<!-- review_type: incremental -->\n"
+            "<!-- generator: 2.0.0 -->\n"
+            "\n## Summary\n"
+        )
+
+    def test_a_key_after_every_one_present_lands_at_the_end_of_the_block(self):
+        content = "<!-- date: 2026-01-01 -->\n\n## Summary\n"
+        assert set_meta(content, MetaKey.GENERATOR, "2.0.0") == (
+            "<!-- date: 2026-01-01 -->\n"
+            "<!-- generator: 2.0.0 -->\n"
+            "\n## Summary\n"
+        )
+
+    def test_a_key_before_every_one_present_lands_at_the_top(self):
+        content = "<!-- generator: 2.0.0 -->\n\n## Summary\n"
+        assert set_meta(content, MetaKey.DATE, "2026-01-01") == (
+            "<!-- date: 2026-01-01 -->\n"
+            "<!-- generator: 2.0.0 -->\n"
+            "\n## Summary\n"
+        )
+
+    def test_a_marker_quoted_in_the_body_does_not_attract_the_insertion(self):
+        """A finding can quote a metadata comment; this module's own docs do.
+
+        Keyed off the body's marker, the insertion would put a header line
+        inside a finding — where `parse` would still find it, so the document
+        would read correctly and look corrupt.
+        """
+        content = (
+            "<!-- date: 2026-01-01 -->\n"
+            "\n## Summary\n"
+            "The agent wrote <!-- status: completed --> into its prose.\n"
+        )
+        updated = set_meta(content, MetaKey.GENERATOR, "2.0.0")
+        assert updated.startswith(
+            "<!-- date: 2026-01-01 -->\n<!-- generator: 2.0.0 -->\n\n## Summary\n"
+        )
+
+    def test_a_marker_quoted_in_the_body_is_not_edited_in_place_of_the_header(self):
+        """The quotation is prose. Rewriting it is two failures at once.
+
+        The header still does not state the key — so the run's claim is
+        missing — and a finding now says something its author did not write.
+        A whole-document search finds the body's marker first whenever the
+        header has none, which is exactly when the stamp is needed.
+        """
+        content = (
+            "<!-- date: 2026-01-01 -->\n"
+            "\n## Must fix\n"
+            "- **[M1]** `a.py:1` — it writes <!-- status: completed --> too early.\n"
+        )
+
+        updated = set_meta(content, MetaKey.STATUS, "partial")
+
+        assert "it writes <!-- status: completed --> too early." in updated
+        assert ReviewHeader.parse(updated).status is ReviewStatus.PARTIAL
+
+    def test_a_document_that_is_only_a_body_gains_a_header_above_it(self):
+        assert set_meta("## Summary\nbody\n", MetaKey.DATE, "2026-01-01") == (
+            "<!-- date: 2026-01-01 -->\n\n## Summary\nbody\n"
+        )
+
+    def test_a_header_whose_last_marker_ends_the_text_still_gains_a_line(self):
+        assert set_meta("<!-- date: 2026-01-01 -->", MetaKey.GENERATOR, "2.0.0") == (
+            "<!-- date: 2026-01-01 -->\n<!-- generator: 2.0.0 -->\n"
+        )
+
+
+class TestStampHeader:
+    """What the harness writes over an agent's header when the run is done."""
+
+    def test_every_key_the_run_states_is_written(self):
+        content = "# Review: acme/widget#42\n<!-- date: YYYY-MM-DD -->\n\n## Summary\n"
+        header = ReviewHeader(
+            date="2026-01-02", mode=Mode.PR, pr_number=42,
+            head_sha="abc123", head_ref="feat", base_ref="main",
+            review_type=ReviewType.INCREMENTAL, prior_sha="0ld",
+            generator_version="review 9.9.9",
+        )
+
+        stamped = stamp_header(content, header)
+
+        assert ReviewHeader.parse(stamped) == header
+
+    def test_a_placeholder_the_agent_never_filled_is_replaced(self):
+        content = "<!-- date: YYYY-MM-DD -->\n\n## Summary\n"
+
+        stamped = stamp_header(content, ReviewHeader(date="2026-01-02"))
+
+        assert "YYYY-MM-DD" not in stamped
+        assert "<!-- date: 2026-01-02 -->" in stamped
+
+    def test_a_key_the_run_has_nothing_to_say_about_is_left_alone(self):
+        """Stamping is the harness correcting the record, not erasing it.
+
+        A full review states no `prior_sha`, and a header that dropped
+        whatever was there would be making a claim by omission.
+        """
+        content = "<!-- prior_sha: 0ld -->\n<!-- generator: 2.0.0 -->\n\n## Summary\n"
+
+        stamped = stamp_header(content, ReviewHeader(date="2026-01-02"))
+
+        assert "<!-- prior_sha: 0ld -->" in stamped
+
+    def test_the_keys_the_stamp_was_not_told_about_survive(self):
+        content = (
+            "<!-- an_agent_invention: keep me -->\n"
+            "<!-- generator: 2.0.0 -->\n"
+            "\n## Summary\n"
+        )
+
+        stamped = stamp_header(content, ReviewHeader(date="2026-01-02"))
+
+        assert "<!-- an_agent_invention: keep me -->" in stamped
+
+    def test_a_document_with_no_header_gains_the_whole_block(self):
+        content = "# Review: acme/widget#42\n\n## Summary\n"
+        header = ReviewHeader(date="2026-01-02", head_sha="abc123")
+
+        stamped = stamp_header(content, header)
+
+        assert stamped == (
+            "# Review: acme/widget#42\n\n"
+            "<!-- date: 2026-01-02 -->\n"
+            "<!-- head_sha: abc123 -->\n"
+            "<!-- review_type: full -->\n"
+            "\n## Summary\n"
+        )
+
+    def test_a_stamped_header_reads_back_in_the_order_render_writes(self):
+        """One document, however it was assembled.
+
+        A stamp and a render are the two ways a header reaches disk, and a
+        reader diffing two reviews should not see the difference between them.
+        """
+        header = ReviewHeader(
+            date="2026-01-02", mode=Mode.SELF, head_sha="abc123",
+            base_ref="main", generator_version="review 9.9.9",
+        )
+
+        stamped = stamp_header("<!-- head_sha: wrong -->\n\n## Summary\n", header)
+
+        assert stamped == f"{header.render()}\n## Summary\n"
+
+
+class TestSetTitle:
+    def test_the_title_on_disk_is_replaced(self):
+        content = "# Review: guessed/repo#1\n<!-- date: 2026-01-02 -->\n"
+
+        assert set_title(content, "# Review: acme/widget#42") == (
+            "# Review: acme/widget#42\n<!-- date: 2026-01-02 -->\n"
+        )
+
+    def test_a_document_that_opens_with_no_title_gains_one(self):
+        assert set_title("<!-- date: 2026-01-02 -->\n", "# Review: acme/widget#42") == (
+            "# Review: acme/widget#42\n<!-- date: 2026-01-02 -->\n"
+        )
+
+    def test_a_heading_further_down_is_not_mistaken_for_the_title(self):
+        content = "<!-- date: 2026-01-02 -->\n\n## Summary\n# Not a title\n"
+
+        assert set_title(content, "# Review: acme/widget#42").endswith(
+            "## Summary\n# Not a title\n"
+        )
 
 
 class TestReviewTitle:

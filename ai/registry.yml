@@ -20,12 +20,12 @@ tools:
     when_to_use: "Managing PR lifecycle: checking CI status, running reviews, addressing comments, or viewing unified PR status"
     usage: "pr status  |  pr ci [--fix]  |  pr review [--self] [--fix] [--push] [--post] [--repair] [--summary] [--recover]  |  pr review --list [--schema-version N]  |  pr comments [--triage] [--fix] [--finish] [--post]  |  pr comments --settle <id> [--as fixed|dismissed|already_addressed] [--reason <text>] [--commit <sha>]  |  pr fix  |  pr rebase [--fix] [--no-push] [--force] [--abort] [--onto <ref>]  |  pr gc"
 
-  - name: claude-review
+  - name: review
     permission: true
     visibility: full
-    description: "Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support"
-    when_to_use: "Running a structured code review on a PR; supports re-reviews that track resolved vs open findings. Use --self for self-review before PR creation. Use --recover to finish a review whose agents failed — it completes at the commit the run started from, even if the branch has new commits (so it cannot be combined with --fix once HEAD has moved). For multiple PRs, dispatch separate Agent subagents — do not background with &"
-    usage: "claude-review <pr_url_or_number>  |  claude-review --no-post <pr_url_or_number>  |  claude-review --self [<pr_url_or_number>]  |  claude-review [--self] --recover [<pr_url_or_number>]"
+    description: "Run the configured review agent on a PR with local worktree checkout and iterative review support"
+    when_to_use: "Running a structured code review on a PR; supports re-reviews that track resolved vs open findings. Use --self for self-review before PR creation. Use --recover to finish a review whose agents failed — it completes at the commit the run started from, even if the branch has new commits (so it cannot be combined with --fix once HEAD has moved). For multiple PRs, dispatch separate subagents — do not background with &"
+    usage: "review <pr_url_or_number>  |  review --no-post <pr_url_or_number>  |  review --self [<pr_url_or_number>]  |  review [--self] --recover [<pr_url_or_number>]"
 
   - name: otto-log
     permission: true
@@ -97,7 +97,7 @@ tools:
   - name: review-orchestrate
     permission: false
     visibility: hidden
-    description: "Review orchestration engine for claude-review — manages tier classification, file grouping, and review merging"
+    description: "Review orchestration engine for review — manages tier classification, file grouping, and review merging"
 
   - name: review-post
     permission: false

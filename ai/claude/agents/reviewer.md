@@ -258,9 +258,10 @@ When a finding includes a suggested fix, the fix itself must pass the same revie
 
 Use the Write tool to save the review to the output path specified in the prompt. Do NOT print the review to stdout — it must be written as a file.
 
+Write no `<!-- key: value -->` metadata comments. The harness writes the document's metadata header itself once you are done — which commit was reviewed, what it is a delta against, which build produced it — and it knows those facts where you do not.
+
 ```markdown
 # Review: <repo>#<pr_number> — <PR title>
-<!-- date: YYYY-MM-DD -->
 
 ## File Triage
 - `path/to/file.go` — **Tier 2** (application logic)

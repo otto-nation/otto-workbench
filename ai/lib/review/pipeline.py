@@ -1,4 +1,4 @@
-"""Pipeline orchestration for claude-review.
+"""Pipeline orchestration for review.
 
 Drives the single-agent and multi-phase runs end to end: sequencing the phases
 review.steps defines, deciding what a resumed run may skip, consolidating the

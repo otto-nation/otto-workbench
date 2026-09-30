@@ -116,7 +116,7 @@ def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
     )
     inject = ["--self"] if not has_self and not has_pr_target and not positionals else []
     return publishing.call_entry_point(
-        "cli.claude_review:main",
+        "cli.review_entry:main",
         dispatch.delegate_argv(COMMANDS["review"], inject + list(argv), ctx,
                                original_pr=original_pr,
                                original_branch=original_branch),

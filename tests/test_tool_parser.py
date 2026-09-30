@@ -256,7 +256,7 @@ def test_value_taking_options_accepts_an_explicit_nargs_of_one():
 
 
 def test_value_taking_options_still_ignores_multi_value_positionals():
-    """claude-review's `args` positional is nargs='*' and must keep working."""
+    """review's `args` positional is nargs='*' and must keep working."""
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--reply")
     parser.add_argument("args", nargs="*")

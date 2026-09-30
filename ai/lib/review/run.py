@@ -177,7 +177,7 @@ def run_pr_review(
         )
 
         # The checkout lock, taken here rather than beside the target lock in
-        # `claude-review`: this is the first point at which the tree this run
+        # `review`: this is the first point at which the tree this run
         # actually writes to is known. The one claimed at entry is where the
         # operator stood, and the two are routinely different — `setup_pr_worktree`
         # switches to the PR's own worktree and hard-resets it, which is a write
@@ -186,12 +186,12 @@ def run_pr_review(
         # The target lock already stops a second review of this PR. What this
         # adds is the case where the same tree is reached by two runs that do
         # not share a target.
-        # Same command string as the target-lock claim in `claude-review`'s
+        # Same command string as the target-lock claim in `review`'s
         # `main()`, so the two locks report one holder rather than a different
         # command depending on which of the two a contender trips.
         run_lock.claim_for_process(
             ctx.target_dir,
-            command=flags.command or f"claude-review {pr_number}",
+            command=flags.command or f"review {pr_number}",
             started=pr_state.now_iso(),
             worktree=Path(wt_path),
         )

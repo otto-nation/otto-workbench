@@ -1,6 +1,6 @@
 """The machine-readable summary of a finished review, and its human rendering.
 
-`claude-review` prints a `REVIEW_SUMMARY:{json}` line that `pr` and the review
+`review` prints a `REVIEW_SUMMARY:{json}` line that `pr` and the review
 listing parse back, so this is the one place the summary's shape is decided.
 It is the only reader that needs both halves of a review at once — the findings
 document (counts, verdict) and the pipeline state (status, failure detail) —

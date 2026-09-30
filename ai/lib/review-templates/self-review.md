@@ -8,12 +8,12 @@ ${env_section}
 
 ## Review format
 
+Do not write any `<!-- key: value -->` metadata comments. The harness writes the document's metadata header itself once you are done — which commit was reviewed, what it is a delta against, which build produced it — and it knows those facts where you do not.
+
 Write the review as an actionable checklist. Use this exact structure:
 
 ```
 # Self-Review: ${repo} — ${branch_name}
-<!-- date: YYYY-MM-DD -->
-<!-- generator: ${generator_version} -->
 
 ## Summary
 One sentence: what the changes do and overall quality assessment. On a re-review, do not count the prior findings here ("13 of 19 fixed") — the `## Prior findings` ledger is the record of what became of them, and a tally written twice is a tally that can disagree with itself

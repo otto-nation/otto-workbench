@@ -14,12 +14,23 @@ keys wherever they appear and in whatever order, and `set_status` edits the line
 it is asked about rather than re-rendering the block — a field this module was
 never told about survives an edit instead of being dropped by it.
 
-One key is not the agent's to state. `head_sha` records the commit the review
-was written against, and the next re-review measures its delta from it, so a
-value the agent typed from a template is a claim about a run the agent cannot
-see the harness' side of. `set_head_sha` stamps the harness' SHA over whatever
-reached disk, and because `parse` takes the first occurrence of a key, it
-replaces the first marker rather than adding one.
+None of it is the agent's to state. Every key here records something about the
+*run* — which commit it read, what it was a delta against, which tool produced
+it — and the agent can see none of that from inside its own prompt. What it
+typed instead was a template's placeholder: a literal `YYYY-MM-DD` on one path,
+and on every path no `review_type` at all, which `parse` reads back as `full`.
+An incremental review recorded as a full one is not a cosmetic defect: the next
+re-review asks the header what it is a delta against, so the answer decides
+whether that run reads the delta or re-reads the whole PR.
+
+`stamp_header` is the fix and the rule: the harness writes the header over
+whatever reached disk, on every path, after the agent has finished with the
+file. It is an edit and not a re-render, per key, so a marker the agent wrote
+and this module has never heard of survives being stamped — and because `parse`
+takes the first occurrence of a key, it replaces the first marker rather than
+adding a second one below it. `set_status` is the same primitive with one key,
+kept separate because a status is the last thing known about a run and is
+written by a caller holding no other part of the header.
 
 `ReviewDocument` is for a document being *built*: it renders the canonical form
 this module defines. Editing one that is already on disk is a different job and
@@ -104,7 +115,11 @@ class MetaKey(StrEnum):
     """
 
     DATE = "date"
+    MODE = "mode"
+    PR = "pr"
     HEAD_SHA = "head_sha"
+    HEAD_REF = "head_ref"
+    BASE_REF = "base_ref"
     REVIEW_TYPE = "review_type"
     PRIOR_SHA = "prior_sha"
     PRIOR_DATE = "prior_date"
@@ -115,8 +130,22 @@ class MetaKey(StrEnum):
 
 
 _LINE_RE = re.compile(r"<!--\s*([a-z_]+):\s*(.*?)\s*-->")
-_STATUS_RE = re.compile(rf"<!--\s*{MetaKey.STATUS}:[^>]*-->")
-_HEAD_SHA_RE = re.compile(rf"<!--\s*{MetaKey.HEAD_SHA}:[^>]*-->")
+
+# The order a header's keys are written in, which is `MetaKey`'s declaration
+# order and therefore `render`'s. An inserted marker takes its place in it, so
+# a header the harness stamped key by key reads in the same order as one
+# rendered in a single pass — otherwise the two writers produce documents that
+# differ only in the arrangement of a block nobody meant to arrange twice.
+_KEY_ORDER = {key: i for i, key in enumerate(MetaKey)}
+
+# An unrecognised key sorts last. It is the review agent's invention or an
+# older version's, and nothing here knows where it belongs — leaving it at the
+# end keeps it from deciding where a key this module *does* know goes.
+_UNORDERED = len(_KEY_ORDER)
+
+
+def _key_re(key: MetaKey) -> re.Pattern[str]:
+    return re.compile(rf"<!--\s*{key}:[^>]*-->")
 
 
 def _line(key: MetaKey, value: object) -> str:
@@ -135,12 +164,27 @@ def _int(value: str | None) -> int | None:
 class ReviewHeader:
     """What a review document's metadata header states.
 
+    Enough for the document to be read on its own. A review file is opened by
+    a session that has no sidecar in hand and no run to ask — the self-review
+    protocol has an agent read the last review at session start — so what it
+    covers has to be on the page: which branch, against which base, at which
+    commit, and whether the run that wrote it got to the end.
+
     `skipped_groups` and `total_groups` are one line on disk — `2/7` — and are
     written only when the caller has a group count to report.
+
+    What is deliberately absent is any tally of findings. The body declares
+    them and `ReviewDocument.open_counts` counts that declaration; a count in
+    the header would be a second statement of one fact, and the two disagree
+    the moment a fix pass ticks a box without rewriting the header.
     """
 
     date: str = ""
+    mode: Mode | None = None
+    pr_number: int | None = None
     head_sha: str = ""
+    head_ref: str = ""
+    base_ref: str = ""
     review_type: ReviewType = ReviewType.FULL
     prior_sha: str = ""
     prior_date: str = ""
@@ -149,6 +193,32 @@ class ReviewHeader:
     total_groups: int = 0
     status: ReviewStatus | None = None
     generator_version: str = ""
+
+    def _markers(self) -> list[tuple[MetaKey, object | None]]:
+        """Every key this header can state, paired with the value it states.
+
+        A `None` is a key this header has nothing to say about. One list, read
+        both by `render` (which drops those keys) and by `stamp_header` (which
+        leaves whatever is on disk for them alone), so the block a fresh render
+        produces and the block a stamp edits into place carry the same keys in
+        the same order.
+        """
+        ratio = f"{self.skipped_groups}/{self.total_groups}" if self.total_groups else None
+        return [
+            (MetaKey.DATE, self.date or None),
+            (MetaKey.MODE, self.mode.value if self.mode else None),
+            (MetaKey.PR, self.pr_number),
+            (MetaKey.HEAD_SHA, self.head_sha or None),
+            (MetaKey.HEAD_REF, self.head_ref or None),
+            (MetaKey.BASE_REF, self.base_ref or None),
+            (MetaKey.REVIEW_TYPE, self.review_type),
+            (MetaKey.PRIOR_SHA, self.prior_sha or None),
+            (MetaKey.PRIOR_DATE, self.prior_date or None),
+            (MetaKey.DELTA_FILES, self.delta_files),
+            (MetaKey.SKIPPED_GROUPS, ratio),
+            (MetaKey.STATUS, self.status.value if self.status else None),
+            (MetaKey.GENERATOR, self.generator_version or None),
+        ]
 
     def render(self) -> str:
         """The header as it goes at the top of the document, newline-terminated.
@@ -159,19 +229,7 @@ class ReviewHeader:
         an absent one reads back as `full`, which is a claim about the review
         rather than a gap in the record, so it is always written.
         """
-        ratio = f"{self.skipped_groups}/{self.total_groups}" if self.total_groups else None
-        lines: list[tuple[MetaKey, object | None]] = [
-            (MetaKey.DATE, self.date or None),
-            (MetaKey.HEAD_SHA, self.head_sha or None),
-            (MetaKey.REVIEW_TYPE, self.review_type),
-            (MetaKey.PRIOR_SHA, self.prior_sha or None),
-            (MetaKey.PRIOR_DATE, self.prior_date or None),
-            (MetaKey.DELTA_FILES, self.delta_files),
-            (MetaKey.SKIPPED_GROUPS, ratio),
-            (MetaKey.STATUS, self.status.value if self.status else None),
-            (MetaKey.GENERATOR, self.generator_version or None),
-        ]
-        return "".join(f"{_line(k, v)}\n" for k, v in lines if v is not None)
+        return "".join(f"{_line(k, v)}\n" for k, v in self._markers() if v is not None)
 
     @classmethod
     def from_meta(cls, meta: ReviewMeta, **overrides) -> ReviewHeader:
@@ -189,7 +247,11 @@ class ReviewHeader:
         """
         incremental = meta.review_type == ReviewType.INCREMENTAL
         return replace(cls(
+            mode=meta.mode,
+            pr_number=meta.pr_number,
             head_sha=meta.head_sha,
+            head_ref=meta.head_ref,
+            base_ref=meta.base_ref,
             review_type=meta.review_type or ReviewType.FULL,
             prior_sha=meta.prior_sha,
             # A count only an incremental review has: on a full one the sidecar
@@ -217,7 +279,11 @@ class ReviewHeader:
         skipped, _, total = found.get(MetaKey.SKIPPED_GROUPS, "").partition("/")
         return cls(
             date=found.get(MetaKey.DATE, ""),
+            mode=meta_enum(Mode, found.get(MetaKey.MODE)),
+            pr_number=_int(found.get(MetaKey.PR)),
             head_sha=found.get(MetaKey.HEAD_SHA, ""),
+            head_ref=found.get(MetaKey.HEAD_REF, ""),
+            base_ref=found.get(MetaKey.BASE_REF, ""),
             review_type=meta_enum(ReviewType, found.get(MetaKey.REVIEW_TYPE)) or ReviewType.FULL,
             prior_sha=found.get(MetaKey.PRIOR_SHA, ""),
             prior_date=found.get(MetaKey.PRIOR_DATE, ""),
@@ -229,59 +295,131 @@ class ReviewHeader:
         )
 
 
-def set_status(content: str, status: ReviewStatus) -> str:
-    """`content` with its header stating `status`, given one if it stated none.
+# What ends the header block and starts the body: the first section heading.
+# An inserted marker goes above it rather than at the end of the document,
+# because `ReviewHeader.parse` reads the first occurrence of a key and a
+# marker below a section would lose to anything the agent wrote above it.
+_FIRST_SECTION = "## "
 
-    An edit rather than a re-render, because the header on disk may be the
-    review agent's: rendering a fresh block over it would drop whichever keys
-    the agent wrote and this caller does not hold.
 
-    An existing status is replaced rather than left alone — `completed` is
-    written before the disprove gate has had its say and has to become
-    `partial` when the gate fails. A header with no status line takes one above
-    its generator line, and a document with neither takes one above its first
-    section heading.
+def set_meta(content: str, key: MetaKey, value: object) -> str:
+    """`content` with its header stating `key: value`, given the line if it had none.
+
+    The one primitive under every header edit. An edit rather than a
+    re-render, because the header on disk may be the review agent's: rendering
+    a fresh block over it would drop whichever keys the agent wrote and this
+    caller does not hold.
+
+    An existing marker is replaced where it stands, so the header keeps its
+    order and a stamped key does not migrate to the bottom of the block. A key
+    the document does not carry is inserted at its place in `_KEY_ORDER`, and
+    a document with no header at all takes one above its first section
+    heading.
     """
-    line = _line(MetaKey.STATUS, status.value)
-    if _STATUS_RE.search(content):
+    line = _line(key, value)
+    head, body = _split_header(content)
+    pattern = _key_re(key)
+    if pattern.search(head):
         # A function replacement, not a string one: `re.sub` reads backslash
         # escapes in the latter, and the value being written is not this
         # module's to vouch for.
-        return _STATUS_RE.sub(lambda _: line, content, count=1)
-    generator = f"<!-- {MetaKey.GENERATOR}:"
-    if generator in content:
-        return content.replace(generator, f"{line}\n{generator}", 1)
-    return content.replace("## ", f"{line}\n\n## ", 1)
+        return pattern.sub(lambda _: line, head, count=1) + body
+    if (at := _insert_at(head, key)) is None:
+        # No header block to join. The line opens one directly above the body,
+        # which is where `parse` will look for it.
+        return f"{head}{line}\n\n{body}" if body else f"{head}{line}\n"
+    before = head[:at]
+    # A header whose last marker ends the text has no newline to insert after,
+    # so one is supplied. Without it the two markers are concatenated into a
+    # single line, which `_LINE_RE` then reads as one key — the inserted value
+    # would be on the page and invisible to the parser.
+    if before and not before.endswith("\n"):
+        before += "\n"
+    return f"{before}{line}\n{head[at:]}{body}"
 
 
-def set_head_sha(content: str, head_sha: str) -> str:
-    """`content` with its header stating `head_sha`, given one if it stated none.
+def _split_header(content: str) -> tuple[str, str]:
+    """`content` cut into its header block and everything from the first section on.
 
-    The commit a review was written against is the point the next re-review
-    measures its delta from, so the value has to be the one the harness ran on.
-    On the paths that reach a review file without `render` — a single-agent
-    review, a synthesis that completed — the header on disk is the review
-    agent's, and the agent types this marker from a template rather than being
-    handed the SHA. A wrong one there is not visible in the document it
-    appears in: it degrades the *next* run, which either measures from some
-    other commit or gives up and reviews the whole PR again.
-
-    An edit rather than a re-render, for `set_status`' reason: the agent's
-    header may state keys this caller does not hold, and rendering a fresh
-    block over it would drop them.
-
-    The replacement is the first marker in the document, and an inserted one
-    goes in the header block, because `ReviewHeader.parse` reads the first
-    occurrence of a key wherever it appears — a marker appended below a
-    section heading would lose to whatever the agent wrote above it.
+    Every header edit is confined to the first half. A review's prose can
+    quote a metadata comment — a finding about this very module would — and an
+    edit that searched the whole document would rewrite that quotation instead
+    of the header, leaving the header without the key it was asked to state
+    and the finding saying something its author did not write.
     """
-    line = _line(MetaKey.HEAD_SHA, head_sha)
-    if _HEAD_SHA_RE.search(content):
-        return _HEAD_SHA_RE.sub(lambda _: line, content, count=1)
-    generator = f"<!-- {MetaKey.GENERATOR}:"
-    if generator in content:
-        return content.replace(generator, f"{line}\n{generator}", 1)
-    return content.replace("## ", f"{line}\n\n## ", 1)
+    match = re.search(rf"^{re.escape(_FIRST_SECTION)}", content, re.MULTILINE)
+    at = match.start() if match else len(content)
+    return content[:at], content[at:]
+
+
+def _insert_at(head: str, key: MetaKey) -> int | None:
+    """Where a `key` marker goes in the header block `head`, or None when it has none.
+
+    The offset of the first marker that belongs *after* `key`, so the inserted
+    line lands in canonical order; failing that, the line after the last
+    marker, so it lands at the end of the block rather than adrift in the body.
+    """
+    order = _KEY_ORDER[key]
+    end: int | None = None
+    for match in _LINE_RE.finditer(head):
+        if _KEY_ORDER.get(match.group(1), _UNORDERED) > order:
+            return match.start()
+        # Past the marker's own newline, so the inserted line lands as a line
+        # of its own. A header whose last marker ends the string has no
+        # newline to step over, and `set_meta` supplies one.
+        end = match.end()
+        end += 1 if head[end:end + 1] == "\n" else 0
+    return end
+
+
+def set_status(content: str, status: ReviewStatus) -> str:
+    """`content` with its header stating `status`, given one if it stated none.
+
+    An existing status is replaced rather than left alone — `completed` is
+    written before the disprove gate has had its say and has to become
+    `partial` when the gate fails.
+
+    Its own function rather than a `stamp_header` call because the moment is
+    its own: a status is the last thing known about a run and is written after
+    everything else, by a caller holding no other part of the header.
+    """
+    return set_meta(content, MetaKey.STATUS, status.value)
+
+
+def stamp_header(content: str, header: ReviewHeader) -> str:
+    """`content` with every key `header` states written over whatever it said.
+
+    What the harness knows about its own run, put on the page after the agent
+    has finished writing to the file. The agent cannot see any of it — which
+    commit was checked out, what the run is a delta against, which build of
+    the tool is running — so on the paths where the agent writes the document
+    the header is a template's placeholders until this runs over it.
+
+    Per key, and only the keys `header` states. A marker this module has never
+    heard of survives, and so does one the agent wrote for a key this
+    particular run has nothing to say about — stamping is the harness
+    correcting the record, not erasing it.
+    """
+    for key, value in header._markers():
+        if value is not None:
+            content = set_meta(content, key, value)
+    return content
+
+
+def set_title(content: str, title: str) -> str:
+    """`content` opening with `title`, replacing the `# ` line if it has one.
+
+    The title names the repo, the PR and the branch under review, all of which
+    the agent fills from prompt interpolation and none of which it can check.
+    Stamped with the header and for the same reason: `review_title` derives it
+    from the same sidecar, so the document and its sidecar cannot name the
+    review two ways.
+    """
+    lines = content.split("\n")
+    if lines and lines[0].startswith("# "):
+        lines[0] = title
+        return "\n".join(lines)
+    return f"{title}\n{content}"
 
 
 @dataclass(frozen=True)

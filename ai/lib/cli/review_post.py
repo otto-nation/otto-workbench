@@ -1,6 +1,6 @@
 """Post a review file to GitHub as a PR review.
 
-Parses a markdown review file (produced by claude-review), validates
+Parses a markdown review file (produced by `review`), validates
 finding positions against the PR diff, renumbers findings by posted
 location (inline first, then body), and creates a PENDING review via
 the GitHub API. Pass --submit to submit the review immediately.

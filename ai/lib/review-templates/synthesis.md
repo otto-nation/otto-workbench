@@ -15,8 +15,8 @@ ${delta_section}
 ${reviews_section}
 
 ## Task
-1. Write the review header: # Review: ${repo}#${pr_number} — ${pr_title}
-   Include <!-- date: ${today} -->, <!-- head_sha: ${pr_head_sha} -->, and <!-- generator: ${generator_version} --> comments
+1. Write the review title: # Review: ${repo}#${pr_number} — ${pr_title}
+   Write no `<!-- key: value -->` metadata comments. The harness writes the document's metadata header itself once you are done — which commit was reviewed, what it is a delta against, which build produced it — and it knows those facts where you do not
 2. Include the File Triage section from the merged findings above
 3. Write ## Summary — what the change does, overall quality, incorporating the holistic assessment. On a re-review, do not count the prior findings here ("13 of 19 fixed") — the `## Prior findings` ledger is the record of what became of them, and a tally written twice is a tally that can disagree with itself
 4. Include all Must fix / Should fix / Nit / Idioms findings from the merged content (use any IDs — they will be mechanically renumbered after you write the file). Use the format `- **[M1]** **\`<file>:<line>\`** — <finding>` — always wrap file paths in backticks inside bold markers. Keep any `*(declined — reason)*` annotation on the line — it marks a finding already adjudicated. NEVER use ### headings for findings — downstream counters and posting tools parse the `- **[X1]**` list-item format only

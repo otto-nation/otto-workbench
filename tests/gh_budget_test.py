@@ -196,7 +196,7 @@ def test_the_latch_clears_once_the_reset_passes(stub_gh, monkeypatch):
 
 
 def test_a_child_process_inherits_the_latch(stub_gh):
-    """`pr` spawns claude-review, which spawns review-orchestrate.
+    """`pr` spawns review, which spawns review-orchestrate.
 
     Each is a fresh interpreter with an empty table, so without this the
     grandchild pays again for what its parent already learned.

@@ -118,12 +118,12 @@ EOF
 @test "ai/claude tools land in the ai snapshot, not the root one" {
   _shared_snapshot
   run jq -r '.entries[]' "$TMPDIR/ai/claude/public-surface.json"
-  [[ "$output" == *"command:claude-review"* ]]
+  [[ "$output" == *"command:review"* ]]
   [[ "$output" == *"agent:debugger"* ]]
   [[ "$output" == *"skill:pr-comments"* ]]
   [[ "$output" == *"setting:hooks"* ]]
   run jq -r '.entries[]' "$TMPDIR/public-surface.json"
-  [[ "$output" != *"command:claude-review"* ]]
+  [[ "$output" != *"command:review"* ]]
 }
 
 @test "entries are sorted and unique" {

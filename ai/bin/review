@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mechanical operations over a compiled knowledge base."""
+"""Run the configured review agent on a PR with local worktree checkout and iterative review support."""
 
 import os
 import sys
@@ -14,10 +14,6 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
     _AI_LIB_DIR = pinned_ai_lib_dir()
 sys.path.insert(0, str(_AI_LIB_DIR))
 
-# Not `_version`, which is this file's own sibling under ai/bin and is not
-# shipped in the packaged tarball. `core.version` is under the lib/ this file
-# has just put on the path, and it resolves the packaged layout itself.
-from core.version import version_string  # noqa: E402
-from cli.wiki import main_entry  # noqa: E402
+from cli.review_entry import main  # noqa: E402
 
-main_entry(version_string=version_string)
+sys.exit(main(sys.argv[1:]))

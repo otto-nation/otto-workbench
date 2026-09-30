@@ -199,7 +199,7 @@ tar -czf "$TARBALL" -C "$STAGING" "otto-ai-tools-${VERSION}"
 contents=$(tar -tzf "$TARBALL")
 failed=false
 
-for entry in "bin/claude-review" "bin/_libdir.py" "lib/ui.sh" "VERSION"; do
+for entry in "bin/review" "bin/_libdir.py" "lib/ui.sh" "VERSION"; do
   if ! echo "$contents" | grep -q "$entry"; then
     echo "ERROR: tarball missing $entry" >&2
     failed=true

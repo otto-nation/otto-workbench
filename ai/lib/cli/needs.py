@@ -106,7 +106,7 @@ class ReviewMode:
     `--schema-version` gate all read this table rather than each restating the
     set of flags.
 
-    * ``handler`` — what runs locally, or None for a mode `claude-review`
+    * ``handler`` — what runs locally, or None for a mode `review`
       handles. A `None` handler still belongs here: `--recover` collides with
       the others whoever ends up running it.
     * ``need`` — this mode's dispatch need. Defaults to what acting on an

@@ -28,7 +28,7 @@ def _request(tmp_path, **overrides):
         repo=FAKE_REPO, pr_number="42",
         review_file=tmp_path / "review.md", wt_path="/wt",
         target_dir=tmp_path / "state", session_log="/log",
-        bin_dir=Path("/bin"), generator_version="claude-review 1.2.3",
+        bin_dir=Path("/bin"), generator_version="review 1.2.3",
     )
     base.update(overrides)
     return review_invoke.OrchestrateRequest(**base)
@@ -46,7 +46,7 @@ def test_the_pr_review_argv_is_exactly_this(tmp_path):
         "--target-dir", str(tmp_path / "state"),
         "--session-log", "/log",
         "--pr", "42",
-        "--generator-version", "claude-review 1.2.3",
+        "--generator-version", "review 1.2.3",
     ]
 
 
@@ -75,7 +75,7 @@ def test_the_self_review_argv_carries_mode_fix_and_publish(tmp_path):
         "--pr", "42",
         "--mode", "self",
         "--base", "feat/parent",
-        "--generator-version", "claude-review 1.2.3",
+        "--generator-version", "review 1.2.3",
         "--fix",
         "--post",
         "--max-cost", "12.5",

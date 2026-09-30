@@ -131,7 +131,7 @@ def _scan_review_entry(
 
     dir_name = entry.path.name
     repo_key = _review_repo(entry, doc)
-    source = "self-review" if "-self-" in dir_name else "claude-review"
+    source = "self-review" if "-self-" in dir_name else "review"
 
     unmatched = 0
     comments: list[dict] = []

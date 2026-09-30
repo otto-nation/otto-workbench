@@ -262,7 +262,7 @@ SCAN_PHASES: frozenset[Phase] = frozenset({Phase.SCOUT, Phase.HOLISTIC})
 
 # ── Switching a phase off from the command line ──────────────────────────────
 #
-# `claude-review` and `review-orchestrate` both offer the flags and one forwards
+# `review` and `review-orchestrate` both offer the flags and one forwards
 # them to the other, so all three sides are generated from the same registry
 # read: a phase declared `optional` gets its flag, its parse and its argv entry
 # at once, and nothing can offer a flag the pipeline has no path around.

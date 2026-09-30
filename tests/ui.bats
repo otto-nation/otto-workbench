@@ -215,6 +215,25 @@ _select_subdirs() {
   [ ! -L "$TMPDIR/dst/remove.zsh" ]
 }
 
+@test "symlink_dir --prune removes the old link when a source is renamed" {
+  # A rename is a deletion from the pruner's side: the old name is gone from
+  # src, so the link to it is stale and goes, and the new name is linked on the
+  # same pass. Written down because the suite covered only outright deletion,
+  # and a renamed command shipped with a hand-written migration to remove its
+  # symlink — dead code, justified by a comment asserting this case was missed.
+  mkdir -p "$TMPDIR/src" "$TMPDIR/dst"
+  echo "a" > "$TMPDIR/src/oldname.zsh"
+  symlink_dir "$TMPDIR/src" "$TMPDIR/dst" "*.zsh"
+  [ -L "$TMPDIR/dst/oldname.zsh" ]
+
+  mv "$TMPDIR/src/oldname.zsh" "$TMPDIR/src/newname.zsh"
+  symlink_dir "$TMPDIR/src" "$TMPDIR/dst" "*.zsh" --prune
+
+  [ -L "$TMPDIR/dst/newname.zsh" ]
+  [ ! -e "$TMPDIR/dst/oldname.zsh" ]
+  [ ! -L "$TMPDIR/dst/oldname.zsh" ]
+}
+
 @test "symlink_dir --prune keeps valid symlinks pointing into src" {
   mkdir -p "$TMPDIR/src" "$TMPDIR/dst"
   echo "a" > "$TMPDIR/src/file.zsh"

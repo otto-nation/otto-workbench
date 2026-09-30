@@ -8513,6 +8513,26 @@ class TestTriageThrashGuard:
     def test_parses_as_json_rejects_prose(self):
         assert not triage.parses_as_json("I was unable to complete the triage.")
 
+    def test_parses_as_json_rejects_a_json_object_of_the_wrong_shape(self):
+        # Observed live: the agent narrated the tool call it wanted to make and
+        # emitted a JSON object for *that*. extract_json slices first-brace to
+        # last-brace, so it parsed, the retry never fired, and
+        # triage_result_from_dict read the absent "threads" key as [] —
+        # reporting nothing to triage on a PR full of unaddressed feedback.
+        reply = (
+            "Given the instructions, I should check for relevant skills first.\n\n"
+            '{"cmd": "cat -n lib/registries.sh", "description": "Inspect reg_load"}'
+        )
+        assert not triage.parses_as_json(reply)
+
+    def test_parses_as_json_rejects_a_bare_non_object(self):
+        assert not triage.parses_as_json("[]")
+
+    def test_parses_as_json_accepts_comment_items_only(self):
+        # The other half of the contract: a run with no threads but decomposed
+        # comment items is a legitimate answer, not a malformed one.
+        assert triage.parses_as_json('{"comment_items": []}')
+
     def test_unparseable_triage_output_earns_one_retry(self, tmp_path):
         report = PRReport(threads=[ReportThread(id="t1", reviewer="kgn")])
         prompts = []

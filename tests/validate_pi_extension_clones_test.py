@@ -152,6 +152,10 @@ def test_host_below_the_declared_floor_is_flagged(validator, tmp_path):
     assert skew.remedy == 'update the host with: pi update'
 
 
+# Nothing is flagged at base either, because there is no floor check there. What
+# this test holds is the decision, against a future change that starts enforcing
+# the range's upper bound.
+# passes-at-base: guards the caret ceiling staying unenforced, which base also does
 def test_a_host_past_the_declared_caret_is_not_flagged(validator, tmp_path):
     """`^0.87.1` must not be read as refusing 0.99.2 — that pair works today.
 
@@ -166,6 +170,7 @@ def test_a_host_past_the_declared_caret_is_not_flagged(validator, tmp_path):
     assert validator.check_clone(clone, HOST_PAST_THE_CARET) is None
 
 
+# passes-at-base: boundary partner of the test above; an off-by-one fails here, not at base
 def test_a_host_exactly_at_the_floor_is_not_flagged(validator, tmp_path):
     clone = _clone(tmp_path, provider=True, adapter=True,
                    declares={'devDependencies': {'@earendil-works/pi-ai': '^0.87.1'}})

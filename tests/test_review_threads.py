@@ -8539,6 +8539,19 @@ class TestTriageThrashGuard:
         # a list. Requiring the value's shape closes that window.
         assert not triage.parses_as_json('{"threads": "see above"}')
 
+    def test_parses_as_json_accepts_an_explicit_null_beside_a_real_list(self):
+        # `.get(key, fallback)` falls back only on a MISSING key, so writing
+        # this as `parsed.get("threads", parsed.get("comment_items"))` rejects
+        # a reply whose threads key is an explicit null even when the items
+        # key holds a real list. `_lenient_list` exists precisely because the
+        # model "emits the key with an explicit null often enough", so that is
+        # a shape the consumer handles and this predicate must not refuse.
+        assert triage.parses_as_json('{"threads": null, "comment_items": []}')
+        assert triage.parses_as_json('{"threads": [], "comment_items": null}')
+
+    def test_parses_as_json_rejects_both_keys_null(self):
+        assert not triage.parses_as_json('{"threads": null, "comment_items": null}')
+
     def test_unparseable_triage_output_earns_one_retry(self, tmp_path):
         report = PRReport(threads=[ReportThread(id="t1", reviewer="kgn")])
         prompts = []

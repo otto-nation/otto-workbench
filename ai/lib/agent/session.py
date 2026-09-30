@@ -15,6 +15,7 @@ reads the 429 out of the log, and ``agent.invoke`` decides how long to wait.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import replace
 from pathlib import Path
 
@@ -329,12 +330,103 @@ def _pi_write_attempts(records: list[dict], output_path: str) -> list[str]:
     return contents
 
 
+# A fenced block holding the whole document, as a model writes one when it is
+# narrating a tool call rather than making one: ```markdown ... ``` or ``` ... ```.
+_FENCED_DOCUMENT = re.compile(r"```(?:markdown|md)?\n(.*?)```", re.DOTALL)
+
+
+def _narrated_write_contents(records: list[dict]) -> list[str]:
+    """Documents an agent typed into its reply instead of calling a tool with.
+
+    A third lost-write shape, and the one neither other reader sees. The model
+    ends its turn having produced the whole document as assistant text — some
+    runs preface it with the tool call spelled out in prose, others emit XML
+    that looks like a tool call — so the run reaches `agent_end` with the
+    findings present and no tool ever invoked. Both other sources key off a
+    record only a real call writes, so they return nothing and a complete
+    review is discarded.
+
+    Observed against `claude-sonnet-5` on Vertex under `--mode rpc`: three
+    consecutive review runs ended this way, one of them with six such blocks
+    and zero `tool_execution_start` records. It is intermittent rather than
+    deterministic — a fourth run on the same prompt and argv called its tools
+    normally — which is what makes salvage the right answer instead of a
+    prompt change: there is nothing to fix in the input, and the document is
+    sitting in the log.
+
+    Fenced content is preferred, since a model that narrates a write usually
+    puts the document in a block. The bare text is the fallback, which the
+    heading filter in the caller is what makes safe: ordinary commentary does
+    not contain a markdown heading, and a reply that does is the deliverable.
+    """
+    contents = []
+    for record in records:
+        for message in _assistant_messages(record):
+            contents.extend(_text_documents(message))
+    return contents
+
+
+def _text_documents(message: dict) -> list[str]:
+    """Every candidate document in one assistant message's text blocks."""
+    contents = []
+    for block in message.get("content") or []:
+        if not isinstance(block, dict) or block.get("type") != "text":
+            continue
+        text = block.get("text") or ""
+        fenced = _FENCED_DOCUMENT.findall(text)
+        contents.extend(fenced if fenced else [_from_first_heading(text)])
+    return contents
+
+
+def _from_first_heading(text: str) -> str:
+    """`text` from its first markdown heading on, or unchanged when it has none.
+
+    A narrated write is the document with a sentence of preamble in front of
+    it — "I already wrote the file, let me re-issue it" — and often the tool
+    call spelled out as prose. Recovering that verbatim puts the chatter in
+    the review file, where the heading-shaped title is what every later reader
+    and the archive parser key off.
+
+    The document's own title is usually not at the start of a line: a narrated
+    call puts it straight after `write review.md "`, so a line-anchored search
+    skips the title and lands on the first `##` below it, dropping the title
+    and the summary under it. An opening quote is therefore allowed in front
+    of the heading, and the quote itself is not kept.
+
+    Only the leading text is dropped, never a trailing word: an agent that
+    stopped mid-document is a partial review worth keeping, and there is no
+    marker that reliably says where one ends. Text with no heading is returned
+    as-is, and the caller's own heading filter is what then rejects it.
+    """
+    match = re.search(r"""(?:^|["'])(#{1,6} )""", text, re.MULTILINE)
+    return text[match.start(1):] if match else text
+
+
+def _assistant_messages(record: dict) -> list[dict]:
+    """The assistant messages a log record carries, in either shape.
+
+    A `turn_end` holds one under `message`; an `agent_end` holds a list under
+    `messages`, which includes the user turn that prompted it. Only the
+    assistant's own text is a candidate — the user half is the prompt, and it
+    carries headings of its own.
+    """
+    candidates = record.get("messages")
+    if not isinstance(candidates, list):
+        one = record.get("message")
+        candidates = [one] if isinstance(one, dict) else []
+    return [
+        m for m in candidates
+        if isinstance(m, dict) and m.get("role") == "assistant"
+    ]
+
+
 def try_recover_output(log_path: str, output_path: str) -> bool:
     """Salvage a document the agent wrote but that never reached `output_path`.
 
-    Two sources, because the two backends record a lost write differently: a
-    Claude denial carries the content in its `permission_denials` record, and a
-    Pi write carries it in the `tool_execution_start` that announced it.
+    Three sources, because a lost write has three shapes: a Claude denial
+    carries the content in its `permission_denials` record, a Pi write carries
+    it in the `tool_execution_start` that announced it, and a narrated write
+    carries it in assistant text with no tool call at all.
 
     Public because `agent.retry` runs this before writing a run off as
     unproductive — the content is in the log either way.
@@ -342,12 +434,20 @@ def try_recover_output(log_path: str, output_path: str) -> bool:
     The last qualifying candidate wins. An agent refused its first write tries
     again, and the document grows across those attempts rather than shrinking;
     taking the first would recover a draft and discard the review.
+
+    Narrated text is therefore ordered *first*, not last, which is the reverse
+    of how it reads: the scan below runs from the end, so the earliest entry is
+    the weakest claim. A real write attempt is better evidence than a reply
+    that merely looks like one, so narration only wins when neither other
+    source produced a candidate that qualifies.
     """
     if not log_path or not Path(log_path).is_file():
         return False
     records = read_jsonl(log_path)
-    candidates = _collect_denied_contents(records) + _pi_write_attempts(
-        records, output_path,
+    candidates = (
+        _narrated_write_contents(records)
+        + _collect_denied_contents(records)
+        + _pi_write_attempts(records, output_path)
     )
     for content in reversed(candidates):
         if "## " not in content:

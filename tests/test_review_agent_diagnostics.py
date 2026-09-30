@@ -292,6 +292,14 @@ def _pi_result(subtype: str = "error_max_turns", num_turns: int = _TURNS) -> str
     return json.dumps({"type": "result", "subtype": subtype, "num_turns": num_turns})
 
 
+def _pi_text(text: str, *, role: str = "assistant") -> str:
+    """An assistant turn carrying text and no tool call — a narrated write."""
+    return json.dumps({
+        "type": "turn_end",
+        "message": {"role": role, "content": [{"type": "text", "text": text}]},
+    })
+
+
 def _pi_message(stop_reason: str = "", error: str = "") -> dict:
     message = {"role": "assistant", "content": []}
     if stop_reason:
@@ -641,6 +649,88 @@ class TestRecoveringAStrayWriteFromTheLog:
         assert review_agent.try_recover_output(log_path, str(output)) is True
         assert "final" in output.read_text()
         assert "draft" not in output.read_text()
+
+    def test_a_narrated_write_is_recovered(self, tmp_path):
+        """The shape neither other source sees: the document as assistant text.
+
+        Three consecutive review runs ended this way against claude-sonnet-5
+        on Vertex — the model spelled the `write` call out in prose and never
+        called it, so the run reached agent_end with the findings present and
+        no tool_execution_start to read them from.
+        """
+        output = tmp_path / "review.md"
+        output.write_text("")
+        doc = "# Self-Review: repo\n\n## Must fix\n- [ ] **[M1]** `f.sh:1` — x\n"
+        log_path = _write_log(
+            tmp_path,
+            _pi_text('I already wrote the file.\n\nwrite review.md "' + doc + '"'),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is True
+        body = output.read_text()
+        assert "[M1]" in body
+        # The narration is dropped and the document's own title survives: the
+        # title is behind an opening quote, so a line-anchored search for a
+        # heading skips it and takes the `## Must fix` below instead.
+        assert body.startswith("# Self-Review: repo")
+        assert "I already wrote" not in body
+
+    def test_a_fenced_document_is_unwrapped(self, tmp_path):
+        output = tmp_path / "review.md"
+        output.write_text("")
+        log_path = _write_log(
+            tmp_path,
+            _pi_text("Here it is:\n\n```markdown\n## Must fix\n- [M1] x\n```\n"),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is True
+        body = output.read_text()
+        assert "[M1]" in body
+        assert "```" not in body
+        assert "Here it is" not in body
+
+    def test_assistant_chatter_without_a_heading_is_not_recovered(self, tmp_path):
+        """What keeps the text source from inventing a review out of a refusal."""
+        output = tmp_path / "review.md"
+        output.write_text("")
+        log_path = _write_log(
+            tmp_path,
+            _pi_text("I could not complete the review. Please advise."),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is False
+        assert output.read_text() == ""
+
+    def test_the_prompt_is_not_mistaken_for_the_agents_output(self, tmp_path):
+        """The user turn carries every heading the prompt does.
+
+        An agent_end record holds the user message beside the assistant's, so
+        a reader that took any text block would recover the prompt itself and
+        report a review nobody wrote.
+        """
+        output = tmp_path / "review.md"
+        output.write_text("")
+        log_path = _write_log(
+            tmp_path,
+            _pi_text("## Review format\nWrite your findings here.", role="user"),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is False
+        assert output.read_text() == ""
+
+    def test_a_real_write_beats_narrated_text(self, tmp_path):
+        """Narration is the weakest evidence, so it must not outrank a call."""
+        output = tmp_path / "review.md"
+        output.write_text("")
+        log_path = _write_log(
+            tmp_path,
+            _pi_tool("write", path="review.md", content="## Must fix\n- from the tool\n"),
+            _pi_text("## Must fix\n- from the narration\n"),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert "from the tool" in output.read_text()
+        assert "from the narration" not in output.read_text()
 
     def test_a_claude_denial_is_still_recovered(self, tmp_path):
         """The Claude source keeps working alongside the new Pi one."""

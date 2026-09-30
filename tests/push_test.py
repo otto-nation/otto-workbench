@@ -12,6 +12,7 @@ remote ends up holding what it held before. That is the failure the verification
 step exists to catch, reproduced rather than simulated.
 """
 
+import json
 import signal
 import sys
 from pathlib import Path
@@ -1054,6 +1055,19 @@ def test_cli_exits_three_when_the_remote_cannot_be_asked(pushable, monkeypatch):
     assert push.main(["--cwd", str(wt), "--branch", "main"]) == 3
 
 
+def _trail_events() -> list[dict]:
+    """Every record in the sandboxed trail root, not only the last.
+
+    `conftest._last_event` answers for a run whose final event is the subject;
+    these assert that a particular event is *somewhere* in the run, which the
+    last one alone cannot show — `finish` always follows it.
+    """
+    root = workbench_paths.trail_dir()
+    return [json.loads(line)
+            for p in sorted(root.glob("*.jsonl"))
+            for line in p.read_text().splitlines() if line.strip()]
+
+
 _FAILING_GATE = """#!/usr/bin/env bash
 echo "→ Running pytest (203/203 files)..."
 echo "FAILED tests/tree_lock_test.py::test_a_signal_racing_the_spawn"
@@ -1114,6 +1128,30 @@ def test_cli_records_the_branch_it_pushed(pushable):
     push.main(["--cwd", str(wt), "--branch", "main"])
 
     assert _last_event()["context"]["branch"] == "main"
+
+
+def test_cli_records_an_unexpected_exception(pushable, monkeypatch):
+    """`finish` writes one summary with no verdict, so a crash needs its own event.
+
+    Without it the trail of a run that died mid-push reads exactly like the
+    trail of a clean one, which is the wrong-reporting failure a trail exists
+    to prevent.
+    """
+    wt, _ = pushable
+    _commit(wt, "work")
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("the remote fell over")
+
+    monkeypatch.setattr(push, "push", boom)
+
+    with pytest.raises(RuntimeError):
+        push.main(["--cwd", str(wt), "--branch", "main"])
+
+    crashes = [e for e in _trail_events() if e["action"] == "unexpected_error"]
+    assert crashes, "the crash left a trail indistinguishable from a clean run"
+    assert "the remote fell over" in crashes[0]["detail"]
+    assert "RuntimeError" in crashes[0]["data"]["traceback"]
 
 
 def test_script_imports_with_pythonpath_overwritten(tmp_path):

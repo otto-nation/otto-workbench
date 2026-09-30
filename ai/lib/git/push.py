@@ -94,6 +94,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import sys
+import traceback
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -929,6 +930,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                       args=args, trail=trail)
         report(result, ns.cwd)
         return _EXIT_CODES[result.status]
+    except Exception as exc:
+        # `finish` writes one unconditional summary with no verdict in it, so
+        # without this an exception mid-push leaves a trail that reads exactly
+        # like a clean run. Every other entry point records the same event for
+        # the same reason.
+        trail.error("unexpected_error", str(exc),
+                    data={"traceback": traceback.format_exc()})
+        raise
     finally:
         trail.finish()
 

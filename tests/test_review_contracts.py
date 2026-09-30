@@ -1227,10 +1227,16 @@ _NO_UNRUN_EXECUTION_CLAIM = (
 # not run. Templates without that instruction (disprove.md, which writes its
 # verdicts last, after investigating) and those that author no findings
 # (holistic.md, scout.md, fix-*.md, verify-fixes.md) are out of scope.
+#
+# Deliberately two alternatives, not three: an earlier version also matched
+# the bare substring "file FIRST", which is redundant with "do not investigate
+# before that first write" for every template today (both match the same
+# three files) but would pull in a future template on wording coincidence
+# alone — e.g. "Write your file FIRST, then verify" names no ban on
+# investigating first and has no business tripping this guard.
 _WRITE_FIRST_RE = re.compile(
     r"FIRST action must be writing"
     r"|do not investigate before that first write"
-    r"|file FIRST"
 )
 
 
@@ -1255,10 +1261,23 @@ def test_write_first_templates_are_found():
     parametrized assertion pass by having no cases at all.
     """
     found = {path.name for path in _write_first_templates()}
-    assert {
+    assert found == {
         "group.md", "self-review.md", "self-review-synthesis.md",
         "single-agent.md", "synthesis.md",
-    } <= found
+    }, f"unexpected set of write-first templates: {sorted(found)}"
+
+
+def test_write_first_re_does_not_match_on_file_first_wording_alone():
+    """The selector is the write-before-investigate property, not a phrase.
+
+    A future template that writes "Write your file FIRST, then verify" names
+    no ban on investigating before the write and has no business being pulled
+    into this guard's scope by that wording coincidence. Regression for a
+    prior version of `_WRITE_FIRST_RE` that also matched the bare substring
+    "file FIRST", which every current template's real alternative already
+    covers.
+    """
+    assert not _WRITE_FIRST_RE.search("Write your file FIRST, then verify.")
 
 
 @pytest.mark.parametrize(

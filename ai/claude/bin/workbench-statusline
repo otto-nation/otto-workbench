@@ -105,14 +105,14 @@ def main() -> None:
     if reuse:
         pieces.append(reuse)
     try:
-        pr = _pr_piece()
+        pr_piece = _pr_piece()
     except Exception:
         # Same policy as the guarded import above, applied to the whole segment:
         # the status line has nowhere to report a fault, so a broken PR segment
         # blanks itself instead of taking the line — and `reuse:` — down with it.
-        pr = ""
-    if pr:
-        pieces.append(pr)
+        pr_piece = ""
+    if pr_piece:
+        pieces.append(pr_piece)
     if pieces:
         print(" ".join(pieces), end="")
 

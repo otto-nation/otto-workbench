@@ -164,9 +164,9 @@ def _spawn_env(inv: AgentInvocation) -> dict[str, str]:
     return agent_env(inv)
 
 
-def _read_agent_prompt(agent: str) -> str | None:
+def _read_agent_prompt(agent_name: str) -> str | None:
     """Read an agent's system prompt from ~/.claude/agents/<name>.md."""
-    agent_file = AGENTS_DIR / f"{agent}.md"
+    agent_file = AGENTS_DIR / f"{agent_name}.md"
     if agent_file.is_file():
         return agent_file.read_text()
     log.warn(f"agent file not found: {agent_file}")
@@ -176,12 +176,12 @@ def _read_agent_prompt(agent: str) -> str | None:
 AGENT_PROTOCOL_PLACEHOLDER = "AGENT_PROTOCOL_PLACEHOLDER"
 
 
-def _resolve_skill_path(agent: str) -> Path | None:
+def _resolve_skill_path(agent_name: str) -> Path | None:
     """Check if a Pi-format SKILL.md exists for the given agent name.
 
     Returns None if the file is missing or still contains the unresolved placeholder.
     """
-    skill_file = AGENTS_SKILLS_DIR / agent / "SKILL.md"
+    skill_file = AGENTS_SKILLS_DIR / agent_name / "SKILL.md"
     if not skill_file.is_file():
         return None
     if AGENT_PROTOCOL_PLACEHOLDER in skill_file.read_text():

@@ -426,7 +426,7 @@ def main(argv: list[str] | None = None) -> int:
             log.info("Draft mode — nothing is posted to GitHub. Re-run with --post to publish.")
 
         ctx = pr_context.resolve(
-            pr=args.pr, branch=args.branch, repo_dir=args.repo_dir,
+            pr_ref=args.pr, branch=args.branch, repo_dir=args.repo_dir,
         )
         repo = ctx.repo
         pr_number = ctx.pr_number

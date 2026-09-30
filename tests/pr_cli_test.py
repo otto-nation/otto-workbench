@@ -1004,7 +1004,7 @@ def test_reply_id_is_not_eaten_as_the_positional_target(mock_resolve, mock_call)
     assert cmd[cmd.index("--reply") + 1] == _TEST_REPLY_ID
     assert cmd[cmd.index("--body-file") + 1] == _TEST_REPLY_BODY_FILE
     assert "--pr" not in cmd
-    assert mock_resolve.call_args[1]["pr"] is None
+    assert mock_resolve.call_args[1]["pr_ref"] is None
     assert mock_resolve.call_args[1]["branch"] is None
 
 
@@ -1098,7 +1098,7 @@ def test_internal_command_still_classifies_a_positional(mock_resolve, mock_call,
     with _record_arity_reads() as read, \
             patch("cli.pr_commands.pr_state.load_state", return_value=None):
         _run_main("--repo-dir", str(worktree), "fix", _TEST_PR)
-    assert mock_resolve.call_args[1]["pr"] == _TEST_PR
+    assert mock_resolve.call_args[1]["pr_ref"] == _TEST_PR
     assert read == ["fix"], "an internal command is asked, and answers empty"
 
 
@@ -1343,7 +1343,7 @@ def test_create_does_not_resolve_a_flag_value_as_a_target(
     mock_resolve.return_value = make_ctx(pr_number=None, branch=None)
     mock_run.return_value = MagicMock(returncode=0)
     _run_main("create", flag, value)
-    assert mock_resolve.call_args[1]["pr"] is None
+    assert mock_resolve.call_args[1]["pr_ref"] is None
     assert mock_resolve.call_args[1]["branch"] is None
 
 
@@ -1356,7 +1356,7 @@ def test_create_forwards_a_title_that_reads_like_a_pr_number(mock_resolve, mock_
     _run_main("create", "--title", _TEST_PR)
     forwarded = _forwarded_args(mock_run)
     assert forwarded == ["--title", _TEST_PR]
-    assert mock_resolve.call_args[1]["pr"] is None
+    assert mock_resolve.call_args[1]["pr_ref"] is None
 
 
 @patch("cli.pr_commands.subprocess.run")

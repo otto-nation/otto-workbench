@@ -28,9 +28,9 @@ def _write_partial_pipeline(review_dir: Path, head_sha: str = "abc1234") -> None
 
 
 def test_read_review_sha_extracts_the_html_comment(tmp_path):
-    review = tmp_path / "review.md"
-    review.write_text("<!-- head_sha: abcdef0123456789 -->\n# Review\n")
-    assert review_recover.read_review_sha(review) == "abcdef0123456789"
+    review_path = tmp_path / "review.md"
+    review_path.write_text("<!-- head_sha: abcdef0123456789 -->\n# Review\n")
+    assert review_recover.read_review_sha(review_path) == "abcdef0123456789"
 
 
 def test_read_review_sha_missing_file_is_empty(tmp_path):
@@ -38,9 +38,9 @@ def test_read_review_sha_missing_file_is_empty(tmp_path):
 
 
 def test_read_review_sha_without_comment_is_empty(tmp_path):
-    review = tmp_path / "review.md"
-    review.write_text("# Review\n")
-    assert review_recover.read_review_sha(review) == ""
+    review_path = tmp_path / "review.md"
+    review_path.write_text("# Review\n")
+    assert review_recover.read_review_sha(review_path) == ""
 
 
 # ── get_pr_head_sha ───────────────────────────────────────────────────────────
@@ -180,28 +180,28 @@ def test_pin_recover_worktree_exits_when_commit_gone(monkeypatch):
 
 
 def test_should_auto_recover_logs_when_head_matches_a_partial(tmp_path, monkeypatch, capsys):
-    review = tmp_path / "review.md"
-    review.write_text("<!-- head_sha: abc1234 -->\n")
+    review_path = tmp_path / "review.md"
+    review_path.write_text("<!-- head_sha: abc1234 -->\n")
     _write_partial_pipeline(tmp_path)
     monkeypatch.setattr(
         review_recover.gh_client, "pr_view",
         lambda *a, **kw: {"headRefOid": "abc1234"},
     )
 
-    review_recover.should_auto_recover("owner/repo", "1", review)
+    review_recover.should_auto_recover("owner/repo", "1", review_path)
 
     err = capsys.readouterr().err
     assert "Recovering failed review agents" in err
 
 
 def test_should_auto_recover_silent_when_head_moved(tmp_path, monkeypatch, capsys):
-    review = tmp_path / "review.md"
-    review.write_text("<!-- head_sha: abc1234 -->\n")
+    review_path = tmp_path / "review.md"
+    review_path.write_text("<!-- head_sha: abc1234 -->\n")
     monkeypatch.setattr(
         review_recover.gh_client, "pr_view",
         lambda *a, **kw: {"headRefOid": "def5678"},
     )
 
-    review_recover.should_auto_recover("owner/repo", "1", review)
+    review_recover.should_auto_recover("owner/repo", "1", review_path)
 
     assert capsys.readouterr().err == ""

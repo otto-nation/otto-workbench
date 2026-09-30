@@ -229,7 +229,7 @@ class PrePushFixAdapter(fix_engine.FixAdapter):
         self, cwd: str, editable: list[str], check_output: str, *,
         args: Sequence[str],
         rebuilt: Sequence[str] = (),
-        repo: str = "", pr: str = "", branch: str = "",
+        repo: str = "", pr_ref: str = "", branch: str = "",
         trail: Trail | None = None,
     ) -> None:
         self.workdir = Path(cwd)
@@ -243,7 +243,7 @@ class PrePushFixAdapter(fix_engine.FixAdapter):
         self.rebuilt = list(rebuilt)
         self.check_output = check_output
         self.repo = repo
-        self.pr = pr
+        self.pr = pr_ref
         self.branch = branch
         self.trail = trail
 
@@ -392,13 +392,13 @@ def fix_push_failures(
         return _land_rebuild(cwd, generated, args=args, trail=trail)
 
     context = trail.context if trail else {}
-    pr = context.get("pr")
+    pr_ref = context.get("pr")
     adapter = PrePushFixAdapter(
         cwd, editable, truncated,
         args=args,
         rebuilt=_rebuilt_files(generated),
         repo=str(context.get("repo") or ""),
-        pr=str(pr) if pr else "",
+        pr_ref=str(pr_ref) if pr_ref else "",
         branch=str(context.get("branch") or ""),
         trail=trail,
     )

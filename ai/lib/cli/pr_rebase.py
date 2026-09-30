@@ -334,7 +334,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
 
     ctx = pr_context.resolve(
-        repo_dir=args.repo_dir, branch=args.branch, pr=args.pr,
+        repo_dir=args.repo_dir, branch=args.branch, pr_ref=args.pr,
     )
     cwd = str(ctx.require_worktree())
 

@@ -1748,9 +1748,9 @@ class TestBareFlags:
         # --no-extensions would deregister the provider that serves the run and
         # strip every gh_*/web_* tool the agent list grants, leaving a review
         # with no provider and a truncated toolset.
-        agent = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        agent_cmd = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
         fix = ai_backend_pi._build_fix_cmd(ai_backend_pi.AgentInvocation(prompt=""))
-        assert "--no-extensions" not in agent
+        assert "--no-extensions" not in agent_cmd
         assert "--no-extensions" not in fix
 
     def test_explicit_skill_still_passed_alongside_no_skills(self, tmp_path, monkeypatch):
@@ -2168,7 +2168,7 @@ class TestRulesHomePrefix:
 
     def test_empty_rules_home_argv_is_byte_identical_to_today(self):
         fix = ai_backend_pi._build_fix_cmd(ai_backend_pi.AgentInvocation(prompt=""))
-        agent = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        agent_cmd = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
         empty_fix = ai_backend_pi._build_fix_cmd(
             ai_backend_pi.AgentInvocation(prompt="", rules_home=""),
         )
@@ -2176,14 +2176,14 @@ class TestRulesHomePrefix:
             ai_backend_pi.AgentInvocation(prompt="", rules_home=""),
         )
         assert fix == empty_fix
-        assert agent == empty_agent
+        assert agent_cmd == empty_agent
         assert fix == [
             "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
             "--tools", ai_backend_pi.PI_FIX_TOOLS,
             "--no-context-files", "--no-skills",
         ]
-        assert "--append-system-prompt" not in agent
-        assert agent == [
+        assert "--append-system-prompt" not in agent_cmd
+        assert agent_cmd == [
             "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
             "--tools", ai_backend_pi.PI_AGENT_TOOLS,
             "--no-context-files", "--no-skills",

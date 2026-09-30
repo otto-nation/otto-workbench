@@ -216,7 +216,7 @@ Run 'pr <command> -h' for details on a specific command."""
 
 def _reject_a_target_that_resolves_to_nothing(
     command: str, argv: list[str], need: Need,
-    pr: str | None, branch: str | None,
+    pr_arg: str | None, branch: str | None,
 ) -> None:
     """Exit if a command that resolves nothing was handed a target anyway.
 
@@ -226,7 +226,7 @@ def _reject_a_target_that_resolves_to_nothing(
     #123" and would come back with every review on the machine, which is a
     wrong answer that looks exactly like a right one.
     """
-    given = pr or branch
+    given = pr_arg or branch
     if need.depth is not pr_context.ContextDepth.NONE or not given:
         return
     log.error(f"{SCRIPT}: {_invocation(command, argv)} answers from your state "
@@ -402,7 +402,7 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
 
     ctx = pr_context.resolve_at(
         need.depth,
-        pr=original_pr,
+        pr_ref=original_pr,
         branch=original_branch,
         repo_dir=getattr(args, "repo_dir", None),
     )

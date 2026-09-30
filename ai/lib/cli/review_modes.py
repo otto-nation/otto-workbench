@@ -50,14 +50,14 @@ def post(argv: list[str], ctx: pr_context.ResolvedContext, *,
         log.error("Cannot determine PR number")
         return 1
 
-    review = find_review_file(ctx.repo, pr_num)
-    if not review:
+    review_path = find_review_file(ctx.repo, pr_num)
+    if not review_path:
         log.error(
             f"No review file found for {display_repo(ctx.repo, ctx.host)}#{pr_num}")
         log.dim("Run: pr review")
         return 1
 
-    post_argv = ["--pr", pr_num, "--review-file", str(review)]
+    post_argv = ["--pr", pr_num, "--review-file", str(review_path)]
     # What this run is publishing for. The review file is found by PR number
     # while the run lock keys on the branch, so naming the branch is what lets
     # review-post tell this run's review from one written by a run the lock
@@ -79,9 +79,9 @@ def repair(argv: list[str], ctx: pr_context.ResolvedContext, *,
         log.error("Cannot determine PR number")
         return 1
 
-    review = find_review_file(ctx.repo, pr_num)
-    if review:
-        sync_review_domain(ctx, build_review_summary(ctx.repo, pr_num, str(review)))
+    review_path = find_review_file(ctx.repo, pr_num)
+    if review_path:
+        sync_review_domain(ctx, build_review_summary(ctx.repo, pr_num, str(review_path)))
         return 0
 
     log.info("No review file found, trying rebuild...")
@@ -103,9 +103,9 @@ def repair(argv: list[str], ctx: pr_context.ResolvedContext, *,
     # parsed a string nothing emitted and silently updated nothing. The
     # domain is synced from the file the rebuild just wrote instead, which is
     # the same thing `repair` does above when a review file already exists.
-    review = find_review_file(ctx.repo, pr_num)
-    if review:
-        sync_review_domain(ctx, build_review_summary(ctx.repo, pr_num, str(review)))
+    review_path = find_review_file(ctx.repo, pr_num)
+    if review_path:
+        sync_review_domain(ctx, build_review_summary(ctx.repo, pr_num, str(review_path)))
     return 0
 
 
@@ -116,13 +116,13 @@ def summary(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
         log.error("Cannot determine PR number")
         return 1
 
-    review = find_review_file(ctx.repo, pr_num)
-    if not review:
+    review_path = find_review_file(ctx.repo, pr_num)
+    if not review_path:
         log.error(
             f"No review file found for {display_repo(ctx.repo, ctx.host)}#{pr_num}")
         return 1
 
-    print(json_summary(ctx.repo, pr_num, str(review)))
+    print(json_summary(ctx.repo, pr_num, str(review_path)))
     return 0
 
 

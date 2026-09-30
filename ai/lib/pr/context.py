@@ -258,7 +258,7 @@ class ContextDepth(Enum):
 def resolve_at(
     depth: ContextDepth,
     *,
-    pr: str | None = None,
+    pr_ref: str | None = None,
     branch: str | None = None,
     repo_dir: str | None = None,
 ) -> ResolvedContext:
@@ -276,14 +276,14 @@ def resolve_at(
     """
     if depth is ContextDepth.NONE:
         return ResolvedContext.unresolved()
-    if depth is ContextDepth.LOCAL and pr is None:
+    if depth is ContextDepth.LOCAL and pr_ref is None:
         return resolve_local(branch=branch, repo_dir=repo_dir)
-    return resolve(pr=pr, branch=branch, repo_dir=repo_dir)
+    return resolve(pr_ref=pr_ref, branch=branch, repo_dir=repo_dir)
 
 
 def resolve(
     *,
-    pr: str | None = None,
+    pr_ref: str | None = None,
     branch: str | None = None,
     repo_dir: str | None = None,
 ) -> ResolvedContext:
@@ -296,17 +296,17 @@ def resolve(
 
     Raises ValueError if both pr and branch are given.
     """
-    if pr is not None and branch is not None:
+    if pr_ref is not None and branch is not None:
         raise ValueError("--pr and --branch are mutually exclusive")
 
     cwd = repo_dir
 
-    worktree_root, cwd = _resolve_worktree(cwd, pr=pr, branch=branch)
+    worktree_root, cwd = _resolve_worktree(cwd, pr_ref=pr_ref, branch=branch)
 
     repo = detect_repo(cwd)
 
-    if pr:
-        pr_number = _parse_pr_input(pr)
+    if pr_ref:
+        pr_number = _parse_pr_input(pr_ref)
         head = _pr_head(repo, pr_number)
         if not head.resolved:
             # PRHead's contract says an unresolved head carries a reason, but
@@ -331,7 +331,7 @@ def resolve(
         found = _pr_from_current(cwd)
         pr_number, base = found.number, found.base
 
-    if not pr:
+    if not pr_ref:
         head_sha = _head_sha(cwd) if worktree_root else ""
 
     current = git_topology.current_branch_quiet(cwd) if worktree_root else None
@@ -379,7 +379,7 @@ def resolve_local(
     cwd = repo_dir
 
     worktree_root, cwd = _resolve_worktree(
-        cwd, pr=None, branch=branch, create_missing=False,
+        cwd, pr_ref=None, branch=branch, create_missing=False,
     )
 
     branch_name = (
@@ -530,7 +530,7 @@ def _redirect_to_branch_worktree(
 def _resolve_worktree(
     cwd: str | None,
     *,
-    pr: str | None,
+    pr_ref: str | None,
     branch: str | None,
     create_missing: bool = True,
 ) -> tuple[Path | None, str | None]:
@@ -543,7 +543,7 @@ def _resolve_worktree(
     toplevel = _git_toplevel(cwd)
     if toplevel is None:
         return _resolve_non_worktree(
-            cwd, pr=pr, branch=branch, create_missing=create_missing,
+            cwd, pr_ref=pr_ref, branch=branch, create_missing=create_missing,
         )
 
     if branch:
@@ -556,17 +556,17 @@ def _resolve_worktree(
 def _resolve_non_worktree(
     cwd: str | None,
     *,
-    pr: str | None,
+    pr_ref: str | None,
     branch: str | None,
     create_missing: bool = True,
 ) -> tuple[Path | None, str | None]:
     """Handle bare repos and non-git directories."""
     if git_topology.is_bare_repo(cwd):
         return _resolve_bare(
-            cwd, pr=pr, branch=branch, create_missing=create_missing,
+            cwd, pr_ref=pr_ref, branch=branch, create_missing=create_missing,
         )
 
-    if not pr and not branch:
+    if not pr_ref and not branch:
         log.error("Not in a git repository")
         sys.exit(1)
     return None, cwd
@@ -575,7 +575,7 @@ def _resolve_non_worktree(
 def _resolve_bare(
     cwd: str | None,
     *,
-    pr: str | None,
+    pr_ref: str | None,
     branch: str | None,
     create_missing: bool = True,
 ) -> tuple[Path | None, str | None]:
@@ -584,7 +584,7 @@ def _resolve_bare(
           else git_topology.find_bare_repo_worktree(cwd, branch))
     if wt:
         return wt, str(wt)
-    if not pr and not branch:
+    if not pr_ref and not branch:
         log.error("Bare repository — pass --branch or --repo-dir")
         sys.exit(1)
     return None, cwd

@@ -304,10 +304,10 @@ def test_a_squash_merged_branch_the_merge_deleted_is_not_reported(
     wt, sha = merged_and_pruned
     _record_feature(wt, sha)
 
-    with mock.patch.object(branch_landed, "merged_pr") as gh:
+    with mock.patch.object(branch_landed, "merged_pr") as merged_pr:
         push_intent.reconcile()
 
-    gh.assert_not_called()
+    merged_pr.assert_not_called()
     assert capsys.readouterr().err == ""
     assert not push_intent.intents_path().exists()
 
@@ -355,10 +355,10 @@ def test_a_merge_commit_leaves_the_recorded_commit_upstream(pushable, capsys):
     git_in(wt, "fetch", "-q", "--prune", "origin")
     _record_feature(wt, sha)
 
-    with mock.patch.object(branch_landed, "merged_pr") as gh:
+    with mock.patch.object(branch_landed, "merged_pr") as merged_pr:
         push_intent.reconcile()
 
-    gh.assert_not_called()
+    merged_pr.assert_not_called()
     assert capsys.readouterr().err == ""
     assert not push_intent.intents_path().exists()
 

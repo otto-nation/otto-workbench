@@ -365,7 +365,7 @@ def main(argv: list[str] | None = None) -> int:
     # Before anything runs, so no code path can push ahead of the decision.
     with publishing.run(post=args.post):
         ctx = pr_context.resolve(
-            pr=args.pr, branch=args.branch, repo_dir=args.repo_dir,
+            pr_ref=args.pr, branch=args.branch, repo_dir=args.repo_dir,
         )
 
         # --fix rebases and commits in this checkout, in this process, so the tree

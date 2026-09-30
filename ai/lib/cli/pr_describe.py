@@ -423,7 +423,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     ctx = pr_context.resolve(
-        repo_dir=args.repo_dir, branch=args.branch, pr=args.pr,
+        repo_dir=args.repo_dir, branch=args.branch, pr_ref=args.pr,
     )
 
     # A no-op when `pr describe` launched us — same target, same key, already

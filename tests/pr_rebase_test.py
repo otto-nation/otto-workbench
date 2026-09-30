@@ -567,12 +567,12 @@ def test_parse_resolved_content_allows_equals_mid_line():
 def _repo_declaring(commands, *, root, mise_task=False):
     """Stand in for the two sources ``repo_regen.repo_regenerators`` consults."""
     repo_regen.clear_caches()
-    config = workbench_config.WorkbenchConfig(
+    cfg = workbench_config.WorkbenchConfig(
         rebase=workbench_config.RebaseConfig(regenerate=list(commands)),
     )
     try:
         with mock.patch.object(workbench_config, "load_config_or_default",
-                               return_value=config), \
+                               return_value=cfg), \
              mock.patch.object(repo_regen.git_client, "out", return_value=str(root)), \
              mock.patch.object(repo_regen, "mise_has_task", return_value=mise_task):
             yield
@@ -2907,10 +2907,10 @@ def test_git_check_never_asks_the_tracker():
     already been spent before the checkout — where it is the only probe that can
     still answer for a branch `fetch --prune` just dropped.
     """
-    with mock.patch.object(branch_landed, "merged_pr") as gh:
+    with mock.patch.object(branch_landed, "merged_pr") as merged_pr:
         _run_git_check()
 
-    gh.assert_not_called()
+    merged_pr.assert_not_called()
 
 
 def test_git_check_catches_a_squash_merge_by_empty_diff():

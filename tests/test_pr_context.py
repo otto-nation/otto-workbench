@@ -19,7 +19,7 @@ from pr.context import PRHead
 
 def test_pr_and_branch_mutually_exclusive():
     with pytest.raises(ValueError, match="mutually exclusive"):
-        pr_context.resolve(pr="123", branch="feat/foo")
+        pr_context.resolve(pr_ref="123", branch="feat/foo")
 
 
 @patch.object(pr_target, "repo_identity_from_origin",
@@ -31,7 +31,7 @@ def test_pr_and_branch_mutually_exclusive():
 @patch.object(pr_context, "_pr_head", return_value=PRHead(branch="feat/bar", sha="pr-sha"))
 def test_pr_only_resolves(mock_head, mock_sha, mock_repo, mock_current, mock_top,
                           mock_repo_name):
-    ctx = pr_context.resolve(pr="42")
+    ctx = pr_context.resolve(pr_ref="42")
     assert ctx.pr_number == 42
     assert ctx.branch == "feat/bar"
     assert ctx.repo == "owner/repo"
@@ -148,7 +148,7 @@ def test_resolve_sets_current_branch_none_on_detached_head(
     mock_head, mock_sha, mock_repo, mock_quiet, mock_top, mock_repo_name,
 ):
     """current_branch is None when worktree is in detached HEAD."""
-    ctx = pr_context.resolve(pr="42")
+    ctx = pr_context.resolve(pr_ref="42")
     assert ctx.current_branch is None
     assert ctx.branch == "feat/bar"
 
@@ -276,24 +276,24 @@ def test_is_pr_ref_branch_with_numbers():
 
 
 def test_classify_target_number():
-    pr, branch = pr_context.classify_target("42")
-    assert pr == "42"
+    pr_ref, branch = pr_context.classify_target("42")
+    assert pr_ref == "42"
     assert branch is None
 
 
 def test_classify_target_url():
-    pr, branch = pr_context.classify_target("https://github.com/o/r/pull/99")
-    assert pr == "https://github.com/o/r/pull/99"
+    pr_ref, branch = pr_context.classify_target("https://github.com/o/r/pull/99")
+    assert pr_ref == "https://github.com/o/r/pull/99"
     assert branch is None
 
 
 def test_classify_target_branch():
-    pr, branch = pr_context.classify_target("ibarsi/ENG-2239/migration-stream-jsonl")
-    assert pr is None
+    pr_ref, branch = pr_context.classify_target("ibarsi/ENG-2239/migration-stream-jsonl")
+    assert pr_ref is None
     assert branch == "ibarsi/ENG-2239/migration-stream-jsonl"
 
 
 def test_classify_target_simple_branch():
-    pr, branch = pr_context.classify_target("feat-auth")
-    assert pr is None
+    pr_ref, branch = pr_context.classify_target("feat-auth")
+    assert pr_ref is None
     assert branch == "feat-auth"

@@ -177,8 +177,8 @@ def load_issue_provider(wt_path: str | None = None) -> IssueProviderInfo:
     """
     if wt_path:
         adopt_project_review_yml(wt_path)
-    config = workbench_config.load_config_or_default(wt_path)
-    tracker = config.issues
+    cfg = workbench_config.load_config_or_default(wt_path)
+    tracker = cfg.issues
     # str() per scalar: asdict leaves an enum member as the member, and every
     # consumer of a scalar option reads it as a string. A None provider is
     # dropped by the same truthiness filter, so options never carries a "None"

@@ -29,11 +29,11 @@ def _forget_cached_repo_reads():
 @contextlib.contextmanager
 def _repo_declaring(commands, *, root, mise_task=False):
     """Stand in for the two sources ``repo_regenerators`` consults."""
-    config = workbench_config.WorkbenchConfig(
+    cfg = workbench_config.WorkbenchConfig(
         rebase=workbench_config.RebaseConfig(regenerate=list(commands)),
     )
     with mock.patch.object(workbench_config, "load_config_or_default",
-                           return_value=config), \
+                           return_value=cfg), \
          mock.patch.object(git_client, "out", return_value=str(root)), \
          mock.patch.object(repo_regen, "mise_has_task", return_value=mise_task):
         yield

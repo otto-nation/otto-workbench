@@ -451,7 +451,7 @@ def _run_orchestrate(trail, args, repo, session_log) -> int:
     run_ctx = fetch_metadata(
         repo, args.pr, args.mode, args.repo_dir, args.recover_sha, base=args.base,
     )
-    pr, ctx, pr_data = run_ctx.pr, run_ctx.context, run_ctx.data
+    pr_number, ctx, pr_data = run_ctx.pr, run_ctx.context, run_ctx.data
 
     prior_review = ""
     if args.prior_review and Path(args.prior_review).exists():
@@ -469,7 +469,7 @@ def _run_orchestrate(trail, args, repo, session_log) -> int:
     host = origin.host if origin and origin.label == repo else ""
 
     job = ReviewJob(
-        repo=repo, host=host, pr_number=args.pr, pr=pr, ctx=ctx,
+        repo=repo, host=host, pr_number=args.pr, pr=pr_number, ctx=ctx,
         wt_path=args.repo_dir, review_file=args.review_file,
         session_log=session_log,
         issue_link=args.issue, issue_context=args.issue_context,
@@ -489,7 +489,7 @@ def _run_orchestrate(trail, args, repo, session_log) -> int:
 
     if pr_data and args.mode != Mode.SELF:
         viewer = pr_data.viewer_login
-        pr_author = getattr(pr, "author", "")
+        pr_author = getattr(pr_number, "author", "")
         if pr_author and pr_author.lower() == viewer.lower():
             job.viewer_role = ViewerRole.AUTHOR
         elif viewer.lower() in [r.lower() for r in getattr(pr_data, "requested_reviewers", [])]:

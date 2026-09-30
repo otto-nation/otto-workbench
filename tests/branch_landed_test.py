@@ -394,13 +394,13 @@ def test_by_git_answers_none_for_a_ref_it_cannot_resolve(repo):
 
 
 def test_check_spends_no_round_trip_when_git_can_see_it(squashed):
-    with mock.patch.object(branch_landed, "merged_pr") as gh:
+    with mock.patch.object(branch_landed, "merged_pr") as merged_pr:
         verdict = branch_landed.check(
             squashed, target_ref=_TARGET, branch=_BRANCH, rev=_BRANCH,
         )
 
     assert verdict.landed.signal == branch_landed.LandedSignal.EMPTY_DIFF
-    gh.assert_not_called()
+    merged_pr.assert_not_called()
 
 
 def test_check_answered_by_git_is_never_marked_unread(squashed):

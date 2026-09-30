@@ -220,7 +220,7 @@ def _run_self_review(args, argv: list[str],
     # its own when a PR reference is passed alongside.
     ctx = pr_context.resolve_at(
         pr_context.ContextDepth.LOCAL,
-        pr=pr_input if is_pr else None,
+        pr_ref=pr_input if is_pr else None,
         branch=pr_input if is_branch else None,
         repo_dir=wt_path,
     )
@@ -465,7 +465,7 @@ def _main_body(parsed, argv: list[str], json_stdout_fd: int | None) -> int:
         return 1
 
     pr_arg, branch_arg = pr_context.classify_target(command)
-    ctx = pr_context.resolve(pr=pr_arg, branch=branch_arg, repo_dir=parsed.repo_dir)
+    ctx = pr_context.resolve(pr_ref=pr_arg, branch=branch_arg, repo_dir=parsed.repo_dir)
     # A no-op when pr launched us — we resolve the same target and find its key
     # already in WORKBENCH_RUN_LOCK.
     #

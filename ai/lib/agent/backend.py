@@ -85,8 +85,8 @@ def _raw_configured_backend() -> str | None:
             merged = deep_merge(merged, read_yaml(scope.path))
     except ConfigError:
         return None
-    agent = merged.get("agent")
-    return agent.get("backend") if isinstance(agent, dict) else None
+    agent_name = merged.get("agent")
+    return agent_name.get("backend") if isinstance(agent_name, dict) else None
 
 
 def selected_backend() -> Backend | None:

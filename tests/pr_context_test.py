@@ -97,7 +97,7 @@ def test_require_worktree_exits_with_actionable_message(capsys):
 def test_resolve_exits_when_a_prs_head_branch_cannot_be_resolved(monkeypatch, capsys):
     """No borrowing the caller's branch — that is the bug this issue is about."""
     monkeypatch.setattr(pr_context, "_resolve_worktree",
-                        lambda cwd, pr, branch: (Path("/wt"), "/wt"))
+                        lambda cwd, pr_ref, branch: (Path("/wt"), "/wt"))
     monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "deadbeef")
     monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead())
@@ -105,7 +105,7 @@ def test_resolve_exits_when_a_prs_head_branch_cannot_be_resolved(monkeypatch, ca
                         lambda cwd=None: pytest.fail("must not read the caller's branch"))
 
     with pytest.raises(SystemExit) as excinfo:
-        pr_context.resolve(pr="2973")
+        pr_context.resolve(pr_ref="2973")
 
     assert excinfo.value.code == 1
     assert "2973" in capsys.readouterr().err
@@ -114,7 +114,7 @@ def test_resolve_exits_when_a_prs_head_branch_cannot_be_resolved(monkeypatch, ca
 def test_resolve_exits_when_a_prs_head_sha_cannot_be_resolved(monkeypatch, capsys):
     """A branch with no SHA is a partial result too — never stamp the caller's."""
     monkeypatch.setattr(pr_context, "_resolve_worktree",
-                        lambda cwd, pr, branch: (Path("/wt"), "/wt"))
+                        lambda cwd, pr_ref, branch: (Path("/wt"), "/wt"))
     monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "caller-sha")
     monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/x"))
@@ -122,7 +122,7 @@ def test_resolve_exits_when_a_prs_head_sha_cannot_be_resolved(monkeypatch, capsy
                         lambda cwd=None: pytest.fail("must not read the caller's branch"))
 
     with pytest.raises(SystemExit) as excinfo:
-        pr_context.resolve(pr="2973")
+        pr_context.resolve(pr_ref="2973")
 
     assert excinfo.value.code == 1
     assert "2973" in capsys.readouterr().err
@@ -131,7 +131,7 @@ def test_resolve_exits_when_a_prs_head_sha_cannot_be_resolved(monkeypatch, capsy
 def test_resolve_stamps_the_prs_head_sha_not_the_callers(monkeypatch, tmp_path):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(pr_context, "_resolve_worktree",
-                        lambda cwd, pr, branch: (Path("/wt"), "/wt"))
+                        lambda cwd, pr_ref, branch: (Path("/wt"), "/wt"))
     monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "caller-sha")
     monkeypatch.setattr(git_topology, "current_branch_quiet", lambda cwd=None: "other")
@@ -140,7 +140,7 @@ def test_resolve_stamps_the_prs_head_sha_not_the_callers(monkeypatch, tmp_path):
                         lambda cwd=None: pr_target.RepoIdentity(
                             label="acme/widget", key="widget", host="github.com"))
 
-    ctx = pr_context.resolve(pr="2973")
+    ctx = pr_context.resolve(pr_ref="2973")
 
     assert ctx.head_sha == "pr-sha"
     assert ctx.branch == "feat/login"
@@ -150,7 +150,7 @@ def test_resolve_targets_the_pr_not_the_invoking_directory(monkeypatch, tmp_path
     """The whole point: two PRs from one CWD get two target dirs."""
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(pr_context, "_resolve_worktree",
-                        lambda cwd, pr, branch: (Path("/repo-root"), "/repo-root"))
+                        lambda cwd, pr_ref, branch: (Path("/repo-root"), "/repo-root"))
     monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "x")
     monkeypatch.setattr(git_topology, "current_branch_quiet", lambda cwd=None: "main")
@@ -159,9 +159,9 @@ def test_resolve_targets_the_pr_not_the_invoking_directory(monkeypatch, tmp_path
                             label="acme/widget", key="widget", host="github.com"))
 
     monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/a", sha="sha-a"))
-    first = pr_context.resolve(pr="1")
+    first = pr_context.resolve(pr_ref="1")
     monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/b", sha="sha-b"))
-    second = pr_context.resolve(pr="2")
+    second = pr_context.resolve(pr_ref="2")
 
     assert first.target_dir != second.target_dir
     assert first.worktree_root == second.worktree_root
@@ -189,12 +189,12 @@ def test_resolve_targets_the_same_pr_from_any_invoking_directory(monkeypatch, tm
                         lambda repo, branch: pr_context.BranchPR(number=2973))
 
     monkeypatch.setattr(pr_context, "_resolve_worktree",
-                        lambda cwd, pr, branch: (Path("/repo-root"), "/repo-root"))
+                        lambda cwd, pr_ref, branch: (Path("/repo-root"), "/repo-root"))
     from_root = pr_context.resolve(branch="feat/login", repo_dir="/repo-root")
 
     monkeypatch.setattr(
         pr_context, "_resolve_worktree",
-        lambda cwd, pr, branch: (
+        lambda cwd, pr_ref, branch: (
             Path("/repo-root/.worktrees/feat-login"), "/repo-root/.worktrees/feat-login",
         ),
     )
@@ -207,7 +207,7 @@ def test_resolve_targets_the_same_pr_from_any_invoking_directory(monkeypatch, tm
 
 def test_resolve_exits_without_an_origin_remote(monkeypatch, capsys):
     monkeypatch.setattr(pr_context, "_resolve_worktree",
-                        lambda cwd, pr, branch: (Path("/wt"), "/wt"))
+                        lambda cwd, pr_ref, branch: (Path("/wt"), "/wt"))
     monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "x")
     monkeypatch.setattr(git_topology, "current_branch_quiet", lambda cwd=None: "main")
@@ -215,7 +215,7 @@ def test_resolve_exits_without_an_origin_remote(monkeypatch, capsys):
     monkeypatch.setattr(pr_target, "repo_identity_from_origin", lambda cwd=None: None)
 
     with pytest.raises(SystemExit) as excinfo:
-        pr_context.resolve(pr="1")
+        pr_context.resolve(pr_ref="1")
 
     assert excinfo.value.code == 1
     assert "origin" in capsys.readouterr().err
@@ -365,7 +365,7 @@ def test_resolve_at_local_escalates_for_an_explicit_pr(monkeypatch):
                         lambda **kw: pytest.fail("a PR cannot be resolved locally"))
     monkeypatch.setattr(pr_context, "resolve", lambda **kw: make_ctx(pr_number=42))
 
-    ctx = pr_context.resolve_at(pr_context.ContextDepth.LOCAL, pr="42")
+    ctx = pr_context.resolve_at(pr_context.ContextDepth.LOCAL, pr_ref="42")
 
     assert ctx.pr_number == 42
 
@@ -404,7 +404,7 @@ def test_resolve_at_none_is_not_escalated_by_an_explicit_pr(monkeypatch):
                         lambda **kw: pytest.fail("NONE must not escalate"))
 
     assert pr_context.resolve_at(
-        pr_context.ContextDepth.NONE, pr="42",
+        pr_context.ContextDepth.NONE, pr_ref="42",
     ).pr_number is None
 
 
@@ -563,7 +563,7 @@ def test_pr_head_with_a_branch_but_no_sha_is_not_resolved():
 
 def test_resolve_prints_the_reason_gh_could_not_read_the_pr_head(monkeypatch, capsys):
     monkeypatch.setattr(pr_context, "_resolve_worktree",
-                        lambda cwd, pr, branch: (Path("/wt"), "/wt"))
+                        lambda cwd, pr_ref, branch: (Path("/wt"), "/wt"))
     monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "deadbeef")
     monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(
@@ -571,7 +571,7 @@ def test_resolve_prints_the_reason_gh_could_not_read_the_pr_head(monkeypatch, ca
                "server error, retry later: HTTP 503"))
 
     with pytest.raises(SystemExit) as excinfo:
-        pr_context.resolve(pr="2973")
+        pr_context.resolve(pr_ref="2973")
 
     err = capsys.readouterr().err
     assert excinfo.value.code == 1

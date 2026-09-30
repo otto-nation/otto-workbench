@@ -38,13 +38,26 @@ migration_20260930_memory_to_data_root() {
   # now writes the new location.
   [[ -d "$projects_dir" ]] || return "$MIGRATION_NOOP"
 
-  local stamp_date carried=0 merged=0 orphaned=0 unresolved=0
+  local stamp_date carried=0 merged=0 orphaned=0 unresolved=0 empty=0
   stamp_date="$(date +%Y%m%d)"
 
   local mem_dir slug repo_dir key dest
   for mem_dir in "$projects_dir"/*/memory; do
     [[ -d "$mem_dir" ]] || continue
     slug="$(basename "$(dirname "$mem_dir")")"
+
+    # Before resolution, because an empty directory holds nothing to carry and
+    # so cannot be an orphan. The orphan path below returns non-zero so the
+    # next sync retries a directory whose repo might resolve later; an empty
+    # one never gains content — every writer now writes the new location — so
+    # reporting it there fails the migration on every run forever over memory
+    # that does not exist. Removed rather than skipped, so the sweep shrinks:
+    # rmdir refuses a directory that is not empty, which is the guarantee that
+    # this can never take authored memory.
+    if _migration_dir_is_empty "$mem_dir"; then
+      rmdir "$mem_dir" 2>/dev/null && empty=$((empty + 1))
+      continue
+    fi
 
     # Forward from the registry, never by decoding the slug: Claude's transform
     # maps '/', '-' and '.' alike, so a directory name cannot say which repo it
@@ -82,11 +95,12 @@ migration_20260930_memory_to_data_root() {
     carried=$((carried + 1))
   done
 
-  if [[ "$carried" -eq 0 && "$orphaned" -eq 0 ]]; then
+  if [[ "$carried" -eq 0 && "$orphaned" -eq 0 && "$empty" -eq 0 ]]; then
     return "$MIGRATION_NOOP"
   fi
 
-  success "Carried $carried memory directory/directories to $WORKBENCH_MEMORY_DIR"
+  [[ "$empty" -gt 0 ]] && info "Removed $empty empty memory directory/directories"
+  [[ "$carried" -gt 0 ]] && success "Carried $carried memory directory/directories to $WORKBENCH_MEMORY_DIR"
   [[ "$merged" -gt 0 ]] && info "$merged file(s) kept under a slug-qualified name — several worktrees held the same topic"
   [[ "$orphaned" -gt 0 ]] && warn "$orphaned memory directory/directories could not be resolved and were left in place"
 
@@ -121,6 +135,21 @@ _migration_repo_for_slug() {
   candidate="$(_migration_cwd_from_transcripts "$CLAUDE_DIR/projects/$slug")" || return 1
   [[ -n "$candidate" && -d "$candidate" ]] || return 1
   printf '%s' "$candidate"
+}
+
+# _migration_dir_is_empty DIR — true when DIR holds no entries, dotfiles included.
+#
+# The gate stamps are dotfiles, so a glob without dotglob would read a
+# directory holding only .last-dream as empty and rmdir would then refuse it,
+# leaving the counter wrong. Set and restored locally rather than left on: the
+# topic-file loop below globs *.md and must not start matching dotfiles.
+_migration_dir_is_empty() {
+  local dir="$1" entries had_dotglob=0
+  shopt -q dotglob && had_dotglob=1
+  shopt -s dotglob
+  entries=("$dir"/*)
+  [[ "$had_dotglob" -eq 1 ]] || shopt -u dotglob
+  [[ "${#entries[@]}" -eq 1 && ! -e "${entries[0]}" ]]
 }
 
 # _migration_report_orphan MEM_DIR — name an unresolvable directory and its files.

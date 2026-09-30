@@ -92,3 +92,35 @@ _run_migration() {
   [ "$status" -eq 0 ]
   [[ "$output" != *"Could not resolve a repo"* ]]
 }
+
+@test "removes an unresolvable empty memory directory instead of orphaning it" {
+  # A slug no registry entry and no transcript can resolve, holding nothing.
+  # Before the empty check it was reported as an orphan and the migration
+  # returned non-zero, so every later sync retried it and re-warned forever
+  # over memory that does not exist.
+  local stray="$HOME/.claude/projects/-private-tmp"
+  mkdir -p "$stray/memory"
+
+  _run_migration
+
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Could not resolve a repo"* ]]
+  [ ! -d "$stray/memory" ]
+}
+
+@test "a directory holding only gate stamps is not empty and is carried" {
+  # The stamps are dotfiles, so a bare glob reads this directory as empty and
+  # the run would rmdir it (or fail to, and miscount) rather than carrying the
+  # cooldown across.
+  rm "$MEM_DIR/topic.md"
+  echo 1700000000 > "$MEM_DIR/.last-dream"
+
+  _run_migration
+  [ "$status" -eq 0 ]
+
+  # Renamed by the carry path, which is what says it was not taken as empty.
+  local migrated=("$HOME/.claude/projects/$SLUG"/memory-migrated-*)
+  [ "${#migrated[@]}" -eq 1 ]
+  [ -f "${migrated[0]}/.last-dream" ]
+  [ ! -d "$MEM_DIR" ]
+}

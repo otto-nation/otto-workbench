@@ -29,6 +29,13 @@ Both directions of the skew are checked, because both have now happened here:
                            not export, e.g. `getCurrentSystemPrompt`, and every
                            agent dies on turn 1 with a TypeError
 
+The second direction is also checked against what each package *declares*, not
+only against the one symbol pair above. A package names the pi-ai it is built
+against in its own `package.json`, and a host older than that floor cannot
+export everything the package imports — whichever release moved the contract.
+The symbol check knows about pi 0.86 and nothing after it; the declared floor
+costs nothing and covers every contract upstream moves next.
+
 The clone on disk is what is inspected, not a version string committed
 somewhere. A pinned-version test passes while the clone that actually serves
 the run is stale, because the clone is gitignored and CI never sees it — so a
@@ -40,11 +47,13 @@ has nothing to say about a machine that has not installed it.
 """
 
 import argparse
+import itertools
 import json
 import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 _WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
@@ -62,6 +71,26 @@ TRANSCRIPT_CONTRACT_VERSION = (0, 86)
 # Named by the symbol it must resolve rather than by file, since the file is
 # this package's own layout choice; the import is the contract with pi-ai.
 TRANSCRIPT_SYMBOLS = ('getCurrentSystemPrompt', 'getCurrentTools')
+
+# The dependency names a package declares its pi-ai against. Both spellings
+# are the same package — pi resolves the legacy `@mariozechner` specifier to
+# the published `@earendil-works` one, and extension sources still import it
+# under either name — so a package may declare it under either.
+PI_AI_PACKAGES = ('@earendil-works/pi-ai', '@mariozechner/pi-ai')
+
+# Where the declaration is looked for, strongest claim first.
+# `peerDependencies` is the field that means "the host must supply this".
+# `devDependencies` is where a package that needs pi-ai only for its types and
+# its tests puts it — a weaker claim, but it still names the release the code
+# was written against, and the symbols it imports have to exist on the host.
+DEPENDENCY_FIELDS = ('peerDependencies', 'dependencies', 'devDependencies')
+
+# A floor read off a pi-ai range is compared against `pi --version`, which is
+# the pi-coding-agent version. The two packages are released together from one
+# repo at one version — 0.87.1 and 0.99.2 are each published under both names —
+# so the comparison holds. If they ever diverge this check reads the wrong
+# number, which is why the floor is only ever a lower bound: see _range_floor.
+_VERSION_IN_RANGE = re.compile(r'(\d+)\.(\d+)(?:\.(\d+))?')
 
 # Where pi keeps clones: one user-scope root, plus a per-project root inside any
 # repo whose settings declare a package. The project form is what multiplies —
@@ -90,6 +119,77 @@ def installed_pi_version() -> tuple[int, ...] | None:
     if not match:
         return None
     return tuple(int(p) for p in match.groups() if p is not None)
+
+
+def _triple(parts) -> tuple[int, int, int]:
+    """A version as three components, so two of unequal length still compare.
+
+    `0.87` and `0.87.1` are not the same version and must not sort as though
+    the shorter one were larger.
+    """
+    filled = tuple(int(p) for p in parts if p is not None)
+    return filled + (0,) * (3 - len(filled))  # type: ignore[return-value]
+
+
+def _range_floor(spec: str) -> tuple[int, int, int] | None:
+    """The oldest version a semver range admits, or None when it names none.
+
+    Only the lower bound is read, and for two reasons. An upper bound in a
+    range like `^0.87.1` is a *test-time* bound: pi-ai is never installed at
+    runtime — the host injects its own copy through pi's virtual module loader
+    — so a package cannot bound the host it will be loaded into, and reading
+    `^0.87.1` as "refuses 0.99" would fail a machine that demonstrably works.
+    The lower bound is a real claim, because the symbols the package imports
+    have to exist.
+
+    An explicit upper bound is skipped rather than mistaken for a floor:
+    `<0.88.0` admits everything below 0.88, so its number is a ceiling. A `||`
+    union is answered by its first clause, which is the union's floor.
+
+    Anything that is not a version range — `*`, `latest`, `workspace:*`, a git
+    URL — declares no floor, and None is the honest answer rather than a guess.
+    """
+    for clause in spec.split():
+        if clause.startswith('<'):
+            continue
+        match = _VERSION_IN_RANGE.search(clause)
+        if match:
+            return _triple(match.groups())
+    return None
+
+
+def _declared_pi_ai_specs(manifest: dict):
+    """Every pi-ai range a manifest declares, strongest claim first.
+
+    Both dependency field and package name are varied here so the caller is a
+    flat loop over candidate ranges rather than a nest of lookups.
+    """
+    for field, name in itertools.product(DEPENDENCY_FIELDS, PI_AI_PACKAGES):
+        declared = manifest.get(field)
+        if isinstance(declared, dict) and isinstance(declared.get(name), str):
+            yield declared[name]
+
+
+def declared_host_floor(clone: Path) -> tuple[int, int, int] | None:
+    """The oldest pi this clone's own `package.json` says it was built against.
+
+    None when the package declares no pi-ai at all, which is every package of
+    plain skills or tools. Nothing declared is nothing to check — the floor is
+    the package's claim about itself, and this check does not invent one for a
+    package that made none.
+    """
+    try:
+        manifest = json.loads((clone / 'package.json').read_text(errors='replace'))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(manifest, dict):
+        return None
+
+    for spec in _declared_pi_ai_specs(manifest):
+        floor = _range_floor(spec)
+        if floor is not None:
+            return floor
+    return None
 
 
 def _package_clones(root: Path) -> list[Path]:
@@ -165,8 +265,40 @@ def _has_provider_extension(clone: Path) -> bool:
     return False
 
 
-def check_clone(clone: Path, pi_version: tuple[int, ...]) -> str | None:
-    """Return a description of the skew for this clone, or None when it is fine."""
+@dataclass(frozen=True)
+class Skew:
+    """One clone's disagreement with the installed pi, and the cure for it.
+
+    The cure travels with the finding because the two skew directions are
+    cured at opposite ends: a stale clone is fixed by moving the clone, a host
+    below a clone's floor by moving the host. One hardcoded hint would send
+    half of all readers to the wrong command.
+    """
+
+    problem: str
+    remedy: str
+
+
+def _version_str(version: tuple[int, ...]) -> str:
+    return '.'.join(str(part) for part in version)
+
+
+def check_clone(clone: Path, pi_version: tuple[int, ...]) -> Skew | None:
+    """Return the skew between this clone and the installed pi, or None.
+
+    The declared floor is checked for every clone, including one that registers
+    no provider: any package can import a symbol a host too old to have it
+    cannot supply. The transcript checks below are the provider-only ones,
+    since only a provider builds the request whose shape 0.86 changed.
+    """
+    floor = declared_host_floor(clone)
+    if floor is not None and _triple(pi_version) < floor:
+        return Skew(
+            problem=(f'clone declares pi-ai {_version_str(floor)} but the installed pi '
+                     f'is {_version_str(pi_version)}, so it imports symbols this host '
+                     f'does not export and every agent dies on turn 1'),
+            remedy='update the host with: pi update')
+
     if not _has_provider_extension(clone):
         return None
 
@@ -174,13 +306,17 @@ def check_clone(clone: Path, pi_version: tuple[int, ...]) -> str | None:
     clone_has_adapter = _declares_transcript_adapter(clone)
 
     if host_has_transcript and not clone_has_adapter:
-        return ('clone predates the pi 0.86 transcript contract, so this provider '
-                'sends no system prompt and no tool declarations — the model cannot '
-                'call a tool and may report results it never produced')
+        return Skew(
+            problem=('clone predates the pi 0.86 transcript contract, so this provider '
+                     'sends no system prompt and no tool declarations — the model cannot '
+                     'call a tool and may report results it never produced'),
+            remedy='refresh the clone with: pi update --extensions')
     if not host_has_transcript and clone_has_adapter:
-        return ('clone expects the pi 0.86 transcript contract but the installed pi '
-                'is older, so the provider imports symbols its pi-ai does not export '
-                'and every agent dies on turn 1')
+        return Skew(
+            problem=('clone expects the pi 0.86 transcript contract but the installed pi '
+                     'is older, so the provider imports symbols its pi-ai does not export '
+                     'and every agent dies on turn 1'),
+            remedy='update the host with: pi update')
     return None
 
 
@@ -188,10 +324,10 @@ def _clone_sha(clone: Path) -> str:
     return _run(['git', 'rev-parse', '--short', 'HEAD'], cwd=str(clone)) or '?'
 
 
-def _report(scope: str, clone: Path, sha: str, problem: str) -> None:
+def _report(scope: str, clone: Path, sha: str, problem: str, remedy: str) -> None:
     print(f'{RED}✗{NC} {clone} ({scope} scope, {sha})', file=sys.stderr)
     print(f'      {problem}', file=sys.stderr)
-    print(f'    {DIM}refresh with: pi update --extensions{NC}', file=sys.stderr)
+    print(f'    {DIM}{remedy}{NC}', file=sys.stderr)
 
 
 def main() -> None:
@@ -213,7 +349,7 @@ def main() -> None:
     clones = discover_clones()
     if not clones:
         if args.json:
-            print(json.dumps({'pi_version': '.'.join(str(p) for p in pi_version),
+            print(json.dumps({'pi_version': _version_str(pi_version),
                              'clones_checked': 0, 'findings': []}, indent=2))
         elif not args.quiet:
             print(f'{DIM}no pi package clones on this machine{NC}')
@@ -221,23 +357,23 @@ def main() -> None:
 
     findings = []
     for scope, clone in clones:
-        problem = check_clone(clone, pi_version)
+        skew = check_clone(clone, pi_version)
         sha = _clone_sha(clone)
-        if problem is not None:
+        if skew is not None:
             findings.append({'scope': scope, 'path': str(clone), 'sha': sha,
-                             'problem': problem})
+                             'problem': skew.problem, 'remedy': skew.remedy})
         elif not args.quiet and not args.json:
             print(f'  {GREEN}✓{NC} {clone} ({scope}, {sha})')
 
     if args.json:
-        print(json.dumps({'pi_version': '.'.join(str(p) for p in pi_version),
+        print(json.dumps({'pi_version': _version_str(pi_version),
                           'clones_checked': len(clones), 'findings': findings}, indent=2))
         sys.exit(1 if findings else 0)
 
     for f in findings:
-        _report(f['scope'], Path(f['path']), f['sha'], f['problem'])
+        _report(f['scope'], Path(f['path']), f['sha'], f['problem'], f['remedy'])
 
-    version = '.'.join(str(p) for p in pi_version)
+    version = _version_str(pi_version)
     print()
     if not findings:
         print(f'{GREEN}✓{NC} {len(clones)} pi package clones all serve pi {version}')
@@ -245,8 +381,8 @@ def main() -> None:
 
     print(f'{RED}✗{NC} {len(findings)} of {len(clones)} pi package clones cannot serve '
           f'pi {version}', file=sys.stderr)
-    print(f'  {YELLOW}A stale provider clone fails silently — the agent loses its tools '
-          f'and may fabricate their output.{NC}', file=sys.stderr)
+    print(f'  {YELLOW}Host and clone move together or not at all — one of these skews is '
+          f'silent, and a run under it can report work it never did.{NC}', file=sys.stderr)
     sys.exit(1)
 
 

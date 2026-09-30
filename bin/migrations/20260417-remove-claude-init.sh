@@ -7,5 +7,7 @@ migration_20260417_remove_claude_init() {
   if [[ -L "$target" ]]; then
     rm "$target"
     info "Removed claude-init symlink (use 'otto-workbench ai init' instead)"
+  else
+    return "$MIGRATION_NOOP"
   fi
 }

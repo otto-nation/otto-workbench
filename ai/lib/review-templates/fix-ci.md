@@ -12,6 +12,8 @@ ${tracking_content}
 
 ${answer_format}
 
+${execution_claim_guard}
+
 ## What earns each box
 
 - **fixed** — a lint error with a clear fix, a test assertion over an obvious

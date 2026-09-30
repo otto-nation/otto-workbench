@@ -31,6 +31,8 @@ ${tracking_content}
 
 ${answer_format}
 
+${execution_claim_guard}
+
 ## Check the finding before you fix it
 
 A finding is a reviewer's claim about the code, not a fact about it. Some of

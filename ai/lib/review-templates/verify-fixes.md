@@ -104,6 +104,8 @@ change. If it cannot fail, it has established nothing.
 
 ${answer_format}
 
+${execution_claim_guard}
+
 `not verified` is not a criticism of the fix and is a perfectly good answer: a
 path nothing runnable covers, a check that needs credentials or a service that
 is not here, or a test too vacuous to mean anything all earn it.

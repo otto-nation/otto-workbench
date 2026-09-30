@@ -65,6 +65,9 @@ def _run_chunk(
         tracking_content=path.read_text(),
         tracking_file=str(path),
         answer_format=fix_tracking.verify_instructions(_NOUN),
+        execution_claim_guard=agent_templates.build_execution_claim_guard(
+            occasion=agent_templates.ClaimOccasion.FIX_EVIDENCE,
+        ),
         worktree_block=agent_templates.build_worktree_block(str(adapter.workdir)),
         max_turns=str(turns),
     )

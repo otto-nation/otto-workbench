@@ -448,6 +448,9 @@ def _prompt(adapter: FixAdapter, turns: int, *, resume: bool = False) -> str:
         tracking_content=adapter.tracking_path.read_text(),
         tracking_file=str(adapter.tracking_path),
         answer_format=fix_tracking.instructions(adapter.item_noun),
+        execution_claim_guard=agent_templates.build_execution_claim_guard(
+            occasion=agent_templates.ClaimOccasion.FIX_EVIDENCE,
+        ),
         worktree_block=agent_templates.build_worktree_block(str(adapter.workdir)),
         generated_block=agent_templates.GENERATED_BLOCK,
         role_block=agent_templates.ROLE_BLOCK,

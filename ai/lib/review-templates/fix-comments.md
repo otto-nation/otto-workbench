@@ -12,6 +12,8 @@ ${tracking_content}
 
 ${answer_format}
 
+${execution_claim_guard}
+
 ## Check the suggestion before you apply it
 
 A review comment is a reviewer's claim about the code, not a fact about it.

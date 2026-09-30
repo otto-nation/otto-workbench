@@ -87,7 +87,7 @@ def parses_as_json(text: str) -> bool:
         return False
     if not isinstance(parsed, dict):
         return False
-    return "threads" in parsed or "comment_items" in parsed
+    return isinstance(parsed.get("threads", parsed.get("comment_items")), list)
 
 
 def collect_unseen_comments(report: PRReport) -> list[dict]:

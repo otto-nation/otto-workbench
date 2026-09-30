@@ -8533,6 +8533,12 @@ class TestTriageThrashGuard:
         # comment items is a legitimate answer, not a malformed one.
         assert triage.parses_as_json('{"comment_items": []}')
 
+    def test_parses_as_json_rejects_threads_key_of_the_wrong_type(self):
+        # Key membership alone would accept this: a narrated tool call or a
+        # quoted schema can carry a field literally named "threads" that isn't
+        # a list. Requiring the value's shape closes that window.
+        assert not triage.parses_as_json('{"threads": "see above"}')
+
     def test_unparseable_triage_output_earns_one_retry(self, tmp_path):
         report = PRReport(threads=[ReportThread(id="t1", reviewer="kgn")])
         prompts = []

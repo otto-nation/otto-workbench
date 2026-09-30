@@ -27,6 +27,7 @@ from git import client as git_client  # noqa: E402
 from core import proc  # noqa: E402
 from git import push  # noqa: E402
 from core import timeouts  # noqa: E402
+from core import workbench_paths  # noqa: E402
 from core.trail import Trail  # noqa: E402
 
 from conftest import _last_event, git_in, run_checked, seed_repo  # noqa: E402
@@ -1051,6 +1052,68 @@ def test_cli_exits_three_when_the_remote_cannot_be_asked(pushable, monkeypatch):
     _commit(wt, "work")
     monkeypatch.setattr(push, "remote_head", lambda *a, **k: None)
     assert push.main(["--cwd", str(wt), "--branch", "main"]) == 3
+
+
+_FAILING_GATE = """#!/usr/bin/env bash
+echo "→ Running pytest (203/203 files)..."
+echo "FAILED tests/tree_lock_test.py::test_a_signal_racing_the_spawn"
+echo "✗ Pytest failed"
+exit 1
+"""
+
+
+def _refusing_gate(wt: Path) -> None:
+    """Install a pre-push hook that fails the way the workbench gate does."""
+    hook = wt / ".git" / "hooks" / "pre-push"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text(_FAILING_GATE)
+    hook.chmod(0o755)
+
+
+def test_cli_keeps_the_whole_gate_output_when_the_hook_refuses(pushable):
+    """The bash bridge is an entry point, so it opens the trail that keeps it.
+
+    Without one, a gate that ran for half an hour and printed the only copy of
+    a rare test failure leaves a 20-line excerpt on a terminal and nothing on
+    disk — which is how one such failure was lost. Driven through a real
+    refusing hook rather than a stubbed `git_client.run`, because what is under
+    test is that the hook's own words reach the artifact.
+    """
+    wt, _ = pushable
+    _commit(wt, "work")
+    _refusing_gate(wt)
+
+    assert push.main(["--cwd", str(wt), "--branch", "main"]) == 1
+
+    artifacts = sorted(workbench_paths.trail_dir().glob("artifacts/*/*-push.log"))
+    assert len(artifacts) == 1, "the refusal left no artifact to diagnose from"
+    kept = artifacts[0].read_text()
+    assert "test_a_signal_racing_the_spawn" in kept, (
+        "the artifact holds the gate's banner but not the failure under it"
+    )
+    assert "✗ Pytest failed" in kept
+
+
+def test_cli_names_the_artifact_it_wrote(pushable, capsys):
+    """An artifact nobody is told about is one nobody reads."""
+    wt, _ = pushable
+    _commit(wt, "work")
+    _refusing_gate(wt)
+
+    push.main(["--cwd", str(wt), "--branch", "main"])
+
+    assert "full output: " in capsys.readouterr().err
+
+
+def test_cli_records_the_branch_it_pushed(pushable):
+    """`otto-log --repo` filters on context, so an unlabelled trail is unfindable."""
+    wt, _ = pushable
+    _commit(wt, "work")
+    _refusing_gate(wt)
+
+    push.main(["--cwd", str(wt), "--branch", "main"])
+
+    assert _last_event()["context"]["branch"] == "main"
 
 
 def test_script_imports_with_pythonpath_overwritten(tmp_path):

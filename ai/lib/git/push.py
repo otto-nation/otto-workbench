@@ -118,6 +118,12 @@ from core import proc
 from core import publishing
 from core import timeouts
 from core.trail import Trail
+from pr import target
+
+# What the trail this module's `main` opens is filed under. A push from the
+# bash bridge is its own invocation, not a step of whatever spawned it — and
+# when something did spawn it, `Trail.start` roots this under that run anyway.
+SCRIPT = "push"
 
 
 class PushStatus(StrEnum):
@@ -910,9 +916,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = (["-u"] if ns.set_upstream else []) + [ns.remote, ns.branch]
     if ns.no_verify:
         args = ["--no-verify", *args]
-    result = push(ns.cwd, gated=False, branch=ns.branch, remote=ns.remote, args=args)
-    report(result, ns.cwd)
-    return _EXIT_CODES[result.status]
+
+    # `repo_key_from_origin` rather than `gh repo view`: this runs on the far
+    # side of a hook that may have just failed, and a network read to label a
+    # trail is one more thing between the failure and the record of it. None
+    # when origin names no repo, which the query side already handles.
+    trail = Trail.start(
+        script=SCRIPT,
+        context={"repo": target.repo_key_from_origin(ns.cwd), "branch": ns.branch},
+    )
+    try:
+        result = push(ns.cwd, gated=False, branch=ns.branch, remote=ns.remote,
+                      args=args, trail=trail)
+        report(result, ns.cwd)
+        return _EXIT_CODES[result.status]
+    finally:
+        trail.finish()
 
 
 if __name__ == "__main__":

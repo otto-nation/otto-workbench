@@ -35,7 +35,7 @@ it, so `--post` reads as "publish what this run produces" wherever it appears
 next to a fix pass — as against `pr review --post` on its own, which publishes
 the review already on disk. The review fix pass runs inside
 `review-orchestrate`, which is reached before any posting decision would
-otherwise be made, so `claude-review` forwards the flag to it rather than
+otherwise be made, so `review` forwards the flag to it rather than
 opening a gate the pass would never see. That forwarding predates in-process
 dispatch and survives it: the flag is how the pass learns, and `scope()` is
 what keeps the answer from outliving the run.

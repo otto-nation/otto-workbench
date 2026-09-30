@@ -1,4 +1,4 @@
-"""Fix pass for claude-review.
+"""Fix pass for review.
 
 Runs after a review is written and `--fix` is set. `fix_engine` owns the
 pipeline — the batching, the agent, the retry, the commit — and what stays here

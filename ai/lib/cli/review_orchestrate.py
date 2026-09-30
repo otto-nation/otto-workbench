@@ -1,4 +1,4 @@
-"""Review orchestration for claude-review.
+"""Review orchestration for review.
 
 Handles everything between "worktree is ready" and "the review directory holds
 only its deliverable": PR metadata fetching, prompt template rendering, Claude
@@ -8,8 +8,8 @@ static analysis section, and the optional fix pass.
 Phase order is this script's alone, and so is the cleanup that order decides —
 no phase cleans up after itself.
 
-Called by claude-review (bash wrapper) which handles worktree lifecycle,
-archive management, and interactive prompts.
+Called by the `review` entry point, which handles worktree lifecycle, archive
+management, and interactive prompts.
 
 Usage:
   review-orchestrate --pr NUMBER --review-file PATH \
@@ -528,7 +528,7 @@ def _run_orchestrate(trail, args, repo, session_log) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog=SCRIPT, description="Review orchestration for claude-review")
+        prog=SCRIPT, description="Review orchestration for review")
     parser.add_argument("--pr", default="", help="PR number (optional in self mode)")
     parser.add_argument("--review-file", required=True, help="Output review file path")
     parser.add_argument("--repo-dir", "--worktree",
@@ -585,7 +585,7 @@ def main(argv: list[str] | None = None) -> int:
     add_trail_args(parser)
     args = parser.parse_args(argv)
 
-    # Before anything runs. `claude-review` decides whether this run may publish
+    # Before anything runs. `review` decides whether this run may publish
     # and forwards the answer here, because the fix pass lives in this process
     # and must see the same gate.
     with publishing_run(post=args.post):

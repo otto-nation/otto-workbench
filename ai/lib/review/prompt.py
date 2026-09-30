@@ -1,4 +1,4 @@
-"""Prompt construction for claude-review: the byte budget and the render loop.
+"""Prompt construction for review: the byte budget and the render loop.
 
 `PromptBuilder` collects the variables a template is rendered with, and
 `PromptBuilder.fit` is what makes a prompt fit the token budget: it registers
@@ -24,7 +24,6 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, fields
 from enum import StrEnum
-from datetime import date
 from pathlib import Path
 import threading
 
@@ -73,8 +72,6 @@ class CommonSections:
     record and the refusal check, which must all quote the same number.
     """
 
-    today: str
-    generator_version: str
     pr_header: str
     state_context: str
     reviews_section: str
@@ -730,7 +727,7 @@ def _prompt_single(job, common, extra, output):
     b = PromptBuilder(common)
     b.shared(
         "pr_header", "state_context",
-        "reply_threads", "env_section", "issue_section", "generator_version",
+        "reply_threads", "env_section", "issue_section",
         "omitted_guidance", "max_turns",
     )
     _identify_review(b, job, verdict_options=VERDICT_OPTIONS)
@@ -754,12 +751,10 @@ def _prompt_synthesis(job, common, extra, output):
     """
     b = PromptBuilder(common)
     b.shared(
-        "pr_header", "state_context", "reply_threads",
-        "today", "generator_version", "max_turns",
+        "pr_header", "state_context", "reply_threads", "max_turns",
     )
     _identify_review(b, job, pr_title=job.pr.title)
     b.set("repo", job.repo)
-    b.set("pr_head_sha", job.pr.head_sha)
     b.set("wt_path", job.wt_path)
     b.set("prior_section", _build_unaccounted_section(extra.get("unaccounted_prior") or []))
     b.set("group_count", extra["group_count"])
@@ -841,8 +836,6 @@ def _build_common_sections(
     job: ReviewJob, *, max_turns: int, budget_bytes: int,
 ) -> CommonSections:
     return CommonSections(
-        today=date.today().isoformat(),
-        generator_version=job.generator_version,
         pr_header=_build_pr_header(
             job.pr, job.ctx, job.effort, viewer_role=job.viewer_role,
         ),

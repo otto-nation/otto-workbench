@@ -64,7 +64,7 @@ def test_the_delegating_commands_name_their_script():
     backed = {name: spec.script for name, spec in COMMANDS.items() if spec.script}
     assert backed == {
         "ci": "ci-check",
-        "review": "claude-review",
+        "review": "review",
         "comments": "review-threads",
         "rebase": "pr-rebase",
         "describe": "pr-describe",
@@ -110,7 +110,7 @@ _HANDLERS = {
     "create":   "cli.pr_commands:cmd_create",
     "status":   "cli.pr_commands:cmd_status",
     "ci":       "cli.ci_check:main",
-    "review":   "cli.claude_review:main",
+    "review":   "cli.review_entry:main",
     "comments": "cli.review_threads:main",
     "fix":      "cli.pr_commands:cmd_fix",
     "rebase":   "cli.pr_rebase:main",
@@ -427,7 +427,7 @@ def test_pr_help_imports_no_delegate():
     # `cli.pr` is the entry point the shim imports; `cli.pr_commands` is the
     # four internal handlers, `cli.dispatch` the seam that calls one, and
     # `cli.schema` the document `--tool-schema` serves. None is a delegate.
-    # A delegate showing up here (`cli.ci_check`, `cli.claude_review`, …) is
+    # A delegate showing up here (`cli.ci_check`, `cli.review_entry`, …) is
     # the regression: those are what `handler` keeps as a string so that
     # dispatch, not import, pays for them.
     assert loaded <= {"cli.pr", "cli.needs", "cli.registry", "cli.review_modes",

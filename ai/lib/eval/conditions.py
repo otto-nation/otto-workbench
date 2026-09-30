@@ -36,7 +36,7 @@ KEPT_RULES = frozenset({
 DROPPED_RULES = frozenset({
     "git-operations", "git.generated", "self-review", "issue-tracker",
     "issue-tracker.local", "skills", "artifacts", "output", "bash-tool",
-    "rules-authoring", "claude-review-dev", "workbench",
+    "rules-authoring", "review-dev", "workbench",
     "tools.generated", "tools.generated.workbench", "tools.generated.java",
 })
 

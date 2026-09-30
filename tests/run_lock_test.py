@@ -135,7 +135,7 @@ def test_concurrent_acquire_raises_lock_busy(worktree):
 def test_reentrant_acquire_in_same_process_tree(worktree):
     """Delegates inherit LOCK_ENV and must pass straight through."""
     with acquire(worktree, command="pr review", started="t"):
-        with acquire(worktree, command="claude-review", started="t"):
+        with acquire(worktree, command="review", started="t"):
             # The child must not overwrite the parent's ownership record.
             record = json.loads((worktree / LOCK_FILE).read_text())
             assert record["command"] == "pr review"
@@ -199,7 +199,7 @@ def test_claim_for_process_holds_without_a_context_manager(worktree):
 def test_claim_for_process_passes_through_when_pr_already_holds_it(worktree):
     """Launched by pr, a delegate inherits LOCK_ENV and must not deadlock."""
     with acquire(worktree, command="pr review --fix", started="t"):
-        run_lock.claim_for_process(worktree, command="claude-review", started="t")
+        run_lock.claim_for_process(worktree, command="review", started="t")
         # The parent's ownership record has to survive the delegate.
         record = json.loads((worktree / LOCK_FILE).read_text())
         assert record["command"] == "pr review --fix"
@@ -306,7 +306,7 @@ def test_the_marker_follows_a_re_claim_rather_than_the_order_taken(tmp_path):
     """
     first, second = tmp_path / "t-a", tmp_path / "t-b"
 
-    run_lock.claim_for_process(first, command="claude-review", started="t")
+    run_lock.claim_for_process(first, command="review", started="t")
     run_lock.claim_for_process(second, command="ci-check", started="t")
     assert os.environ[LOCK_ENV] == str(second)
 
@@ -327,7 +327,7 @@ def test_a_claim_passes_through_a_lock_this_process_holds_with_no_marker(worktre
     """
     with acquire(worktree, command="pr review --fix", started="t"):
         os.environ.pop(LOCK_ENV, None)
-        run_lock.claim_for_process(worktree, command="claude-review", started="t")
+        run_lock.claim_for_process(worktree, command="review", started="t")
         record = json.loads((worktree / LOCK_FILE).read_text())
         assert record["command"] == "pr review --fix"
 
@@ -344,7 +344,7 @@ def test_a_second_checkout_does_not_displace_the_first(worktree, tmp_path):
     with acquire(tmp_path / "t-one", command="pr fix", started="t",
                  worktree=worktree):
         run_lock.claim_for_process(
-            tmp_path / "t-two", command="claude-review --self", started="t",
+            tmp_path / "t-two", command="review --self", started="t",
             worktree=second,
         )
         run_lock.claim_for_process(
@@ -371,7 +371,7 @@ def test_a_claim_inside_an_acquire_survives_the_block(worktree):
     claims the same target. The block ending must not retract the claim.
     """
     with acquire(worktree, command="pr review --fix", started="t"):
-        run_lock.claim_for_process(worktree, command="claude-review", started="t")
+        run_lock.claim_for_process(worktree, command="review", started="t")
 
     assert run_lock.is_held(worktree)
     assert os.environ[LOCK_ENV] == str(worktree)
@@ -413,7 +413,7 @@ def test_a_pass_through_adds_no_handle(worktree):
     that leaks a descriptor per phase in a long-lived process.
     """
     with acquire(worktree, command="pr review --fix", started="t"):
-        run_lock.claim_for_process(worktree, command="claude-review", started="t")
+        run_lock.claim_for_process(worktree, command="review", started="t")
         run_lock.claim_for_process(worktree, command="ci-check", started="t")
         assert len(run_lock._HELD) == 1
 

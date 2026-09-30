@@ -357,7 +357,7 @@ def arm(said: str, resource: Resource | None) -> None:
 def _export() -> None:
     """Publish the table to the environment children inherit. Caller holds the lock.
 
-    `pr` delegates to `claude-review`, which reaches `review-orchestrate`.
+    `pr` delegates to `review`, which reaches `review-orchestrate`.
     A delegate invoked as its own process is a fresh interpreter with an empty
     table, and passing the latch down is what stops it re-learning a refusal
     its parent already met — `latched` is where it is taken up, so that holds

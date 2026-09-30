@@ -1,4 +1,4 @@
-"""Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support.
+"""Run the configured review agent on a PR with local worktree checkout and iterative review support.
 
 The entry point, and only the entry point: the parser, the flag contradictions,
 the signal handler, the run lock, and the choice of which flow to run. The
@@ -10,15 +10,13 @@ module is the process — `install_signal_handler=False` for an in-process calle
 that has already installed its own, since `signal.signal` overwrites without
 chaining and nothing restores it. The run lock is claimed between resolving the
 self-review target and switching the checkout to it — a resolver that did both
-would take a process-lifetime lock from inside the library. And `version_string`
-lives in `ai/bin`, which nothing under `ai/lib` can import, so the caller passes
-it in.
+would take a process-lifetime lock from inside the library.
 
 Usage:
-  claude-review <pr_url_or_number>
-  claude-review --no-post <pr_url_or_number>
-  claude-review --self [<pr_url_or_number>]
-  claude-review [--self] --recover [<pr_url_or_number>]
+  review <pr_url_or_number>
+  review --no-post <pr_url_or_number>
+  review --self [<pr_url_or_number>]
+  review [--self] --recover [<pr_url_or_number>]
 """
 
 # doc-group: cli
@@ -31,12 +29,11 @@ import os
 import sys
 from dataclasses import replace
 from pathlib import Path
-from typing import Callable
-
 from agent.registry import add_phase_skip_flags, phase_skips
 from core import log
 from core import proc
 from core import run_lock
+from core import version
 from core import workbench_paths
 from core.trail import Trail, add_trail_args
 from pr import context as pr_context
@@ -48,7 +45,7 @@ from review.paths import review_file_path
 from review.pipeline import DEFAULT_MAX_PARALLEL
 from review.summary import json_summary
 
-SCRIPT = "claude-review"
+SCRIPT = "review"
 BIN_DIR = Path(__file__).resolve().parent.parent.parent / "bin"
 
 # The subcommands this binary used to carry, and where each went. Kept as a
@@ -66,7 +63,7 @@ _REMOVED = {
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=SCRIPT,
-        description="Run Claude's reviewer agent on a PR",
+        description="Run the configured review agent on a PR",
         add_help=True,
     )
     parser.add_argument("--no-post", action="store_true")
@@ -218,7 +215,7 @@ def _run_self_review(args, argv: list[str],
     # Reached only when --self was passed, so there is no PR to name and the
     # context resolves from git alone. Invoked through `pr`, the same depth is
     # declared by REVIEW_SELF_NEED; this is the direct-invocation path, and the
-    # two have to agree or `claude-review --self` would still spend the `gh`
+    # two have to agree or `review --self` would still spend the `gh`
     # call `pr review --self` no longer does. resolve_at escalates to REMOTE on
     # its own when a PR reference is passed alongside.
     ctx = pr_context.resolve_at(
@@ -347,21 +344,20 @@ def _run_self_review_body(
 
 
 def main(argv: list[str] | None = None, *,
-         version_string: Callable[[str], str] | None = None,
          install_signal_handler: bool = True) -> int:
     """Parse *argv* and run the review it asks for.
 
-    `version_string` is injected because it resolves the release manifest next
-    to `ai/bin`, which this layer cannot import. The default keeps `--version`
-    answering rather than crashing when a caller does not supply one — a test,
-    or an import that only wants the parser.
+    The version is resolved rather than injected. It used to be a parameter,
+    on the grounds that only `ai/bin` could read the release manifest — which
+    meant the in-process caller, `pr review`, passed nothing and every review
+    it produced recorded `generator: … unknown` while the shim recorded the
+    real build. `core.version` resolves the same manifest from under `ai/lib`,
+    so both entry points now state one answer.
 
     `install_signal_handler` defaults True because the common caller is the
-    `ai/bin/claude-review` shim, for which this is the whole process. An
-    in-process caller that owns its own handler passes False.
+    `ai/bin` shim, for which this is the whole process. An in-process caller
+    that owns its own handler passes False.
     """
-    version_of = version_string or (lambda name: f"{name} unknown")
-
     # Only when this module is the process. `pr review` reaches here having
     # installed the identical handler at its own entry point, and a second
     # install would replace the caller's without chaining or restoring it.
@@ -372,11 +368,11 @@ def main(argv: list[str] | None = None, *,
     parsed = build_parser().parse_args(argv)
 
     if parsed.version:
-        print(version_of(SCRIPT))
+        print(version.version_string(SCRIPT))
         return 0
 
     with _json_summary_stdout(parsed.json_summary) as json_stdout_fd:
-        return _main_body(parsed, argv, json_stdout_fd, version_of)
+        return _main_body(parsed, argv, json_stdout_fd)
 
 
 @contextlib.contextmanager
@@ -413,8 +409,7 @@ def _json_summary_stdout(json_summary_wanted: bool):
         os.close(real_stdout_fd)
 
 
-def _main_body(parsed, argv: list[str], json_stdout_fd: int | None,
-               version_of: Callable[[str], str]) -> int:
+def _main_body(parsed, argv: list[str], json_stdout_fd: int | None) -> int:
     """The run itself, with stdout already arranged for the summary."""
 
     if not parsed.repo_dir and os.environ.get("REPO_DIR"):
@@ -449,7 +444,11 @@ def _main_body(parsed, argv: list[str], json_stdout_fd: int | None,
         log.error("--no-post and --post are mutually exclusive")
         return 1
 
-    generator_version = version_of(SCRIPT).splitlines()[-1] or "unknown"
+    # One line, and the whole of it: the review's `generator:` marker names
+    # the tool and both versions behind it. The earlier form took the last
+    # line of the two-line `--version` output, which dropped the tool's own
+    # version and left the marker naming only the workbench build.
+    generator_version = version.generator(SCRIPT)
 
     if parsed.self_review:
         outcome = _run_self_review(parsed, argv, generator_version)

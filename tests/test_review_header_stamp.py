@@ -1,22 +1,31 @@
-"""The head SHA a finished review states is the harness', not the agent's.
+"""The header a finished review states is the harness', not the agent's.
 
-The marker is the point the next re-review measures its delta from, and a wrong
-one is invisible in the review carrying it: the run that suffers is the next
-one, which either measures from another commit or gives up and reviews the
-whole PR again. So what is pinned here is the value on disk after a run, on the
-two paths where the document's header is the review agent's own — the
+Every key in it records something about the *run* — which commit was read,
+what it is a delta against, which build produced it — and the agent can see
+none of that from inside its own prompt. What it wrote instead was its
+template's placeholder. So what is pinned here is the block on disk after a
+run, on the two paths where the document is the review agent's own: the
 single-agent review and a synthesis that completed.
 
-`set_head_sha` is unit-tested against handwritten headers in the document
-suite. These are the end-to-end half: a scripted agent writes a review whose
-marker is wrong, or absent, and the assertion is on the file the pipeline left
-behind.
+Two of those keys have teeth rather than being cosmetic. `head_sha` is the
+point the next re-review measures its delta from, and a wrong one is invisible
+in the review carrying it — the run that suffers is the next one, which either
+measures from another commit or reviews the whole PR again. `review_type` is
+worse, because its failure mode was *absence*: no template ever asked for it,
+and `ReviewHeader.parse` reads an absent one as `full`, so every agent-written
+incremental review on record claimed to be a full one.
+
+`set_meta` and `stamp_header` are unit-tested against handwritten headers in
+the document suite. These are the end-to-end half: a scripted agent writes a
+review whose header is wrong, or absent, and the assertion is on the file the
+pipeline left behind.
 """
 
 import contextlib
 import io
 import json
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -25,10 +34,12 @@ from conftest import synthetic_review
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+from core.phases import Mode
 from review import phases as review_phases
 from review import pipeline as review_pipeline
 from review import steps as review_steps
 from review.document import ReviewHeader
+from review.types import PreflightData, ReviewType
 
 _HEAD_SHA = "abc1234def5678"
 _AGENTS_SHA = "deadbeefdeadbeef"
@@ -47,8 +58,12 @@ def _review_body(meta: str) -> str:
     return synthetic_review(meta=meta)
 
 
+def _stated(job) -> ReviewHeader:
+    return ReviewHeader.parse(Path(job.review_file).read_text())
+
+
 def _stated_sha(job) -> str:
-    return ReviewHeader.parse(Path(job.review_file).read_text()).head_sha
+    return _stated(job).head_sha
 
 
 @pytest.fixture
@@ -181,6 +196,96 @@ class TestTheStampSurvivesWhatIsWrittenAfterIt:
 
         assert "[M1]" not in Path(job.review_file).read_text()
         assert _stated_sha(job) == _HEAD_SHA
+
+
+class TestTheRestOfTheHeaderIsTheHarnessToo:
+    """Every key, not just the SHA the stamp started life pinning.
+
+    The agent's template asked it for a date and a generator and nothing else,
+    so the keys below were either absent from an agent-written review or were
+    whatever prose the template happened to carry.
+    """
+
+    def test_the_review_states_what_it_was_reviewing(self, job, run_single):
+        run_single(job, _ABSENT)
+
+        header = _stated(job)
+        assert header.mode is Mode.PR
+        assert header.pr_number == 1
+        assert header.head_ref == "feat"
+        assert header.base_ref == "main"
+
+    def test_a_generator_the_agent_invented_is_replaced(self, job, run_single):
+        """The run's own build, over whatever the template interpolated.
+
+        `generator: test` is what the fixture's agent writes — which is also
+        what a template with an unresolved version would write, and for months
+        was literally `claude-review unknown` in production.
+        """
+        job.generator_version = "review 9.9.9"
+
+        run_single(job, _ABSENT)
+
+        assert _stated(job).generator_version == "review 9.9.9"
+
+    def test_a_date_the_agent_typed_is_replaced_with_the_run_s(self, job, run_single):
+        """The single-agent template's placeholder was a literal `YYYY-MM-DD`.
+
+        Nothing interpolated it, so the date on the page was whatever the
+        agent believed the date to be.
+        """
+        run_single(job, "generator: test -->\n<!-- date: YYYY-MM-DD")
+
+        assert _stated(job).date == date.today().isoformat()
+
+
+class TestAnIncrementalReviewSaysSo:
+    """The defect the stamp was widened for.
+
+    No template ever asked the agent for `review_type`, and an absent one
+    parses as `full`. `review.collect` asks the prior review's header what the
+    last run covered, so an incremental review recorded as full is a
+    re-review that starts over.
+    """
+
+    @pytest.fixture
+    def incremental(self, job):
+        job.preflight = PreflightData(
+            diff="", commit_log="", file_contents={}, file_permissions={},
+            claude_md="", architecture_md="",
+            prior_head_sha="0ldc0de", delta_files=["a/one.py"],
+        )
+        job.prior_review = (
+            "# Review: org/repo#1 — t\n<!-- date: 2026-01-01 -->\n\n## Summary\nPrior.\n"
+        )
+        return job
+
+    def test_the_single_agent_document_states_its_review_type(
+        self, incremental, run_single,
+    ):
+        run_single(incremental, _ABSENT)
+
+        assert _stated(incremental).review_type is ReviewType.INCREMENTAL
+
+    def test_it_states_what_it_is_a_delta_against(self, incremental, run_single):
+        run_single(incremental, _ABSENT)
+
+        header = _stated(incremental)
+        assert header.prior_sha == "0ldc0de"
+        assert header.prior_date == "2026-01-01"
+        assert header.delta_files == 1
+
+    def test_a_full_review_states_full_rather_than_staying_silent(
+        self, job, run_single,
+    ):
+        """`full` is a claim about the review, not a gap in the record.
+
+        Without it a reader cannot tell a full review from one written by a
+        version that did not record the key.
+        """
+        run_single(job, _ABSENT)
+
+        assert "<!-- review_type: full -->" in Path(job.review_file).read_text()
 
 
 class TestTheStatedShaAgreesWithTheSidecar:

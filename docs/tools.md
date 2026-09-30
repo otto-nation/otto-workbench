@@ -14,7 +14,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 |--------|-------------|
 | `record-filed-issue` | Records an issue filed by hand in the branch's follow-up ledger — called by both harnesses' post-execution hooks |
 | `pr` | Unified PR lifecycle CLI — CI failures, code review, and review comments |
-| `claude-review` | Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support |
+| `review` | Run the configured review agent on a PR with local worktree checkout and iterative review support |
 | `otto-log` | Query the unified trail root and AI usage across otto-workbench scripts — audit trail plus cost and token stats |
 | `workbench-rules` | Manages this machine's own coding-rule layers — local additions and overrides, for whichever harnesses are installed |
 | `ceiling-scan` | Scan for ceiling: and ceiling-permanent: markers and produce a structured debt ledger |
@@ -28,7 +28,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `ci-check` | Fetch CI run data, classify failures, and output status dashboard |
 | `pr-rebase` | Rebase current branch onto its base with conflict detection and force-push |
 | `pr-describe` | Revise the PR description against the repo's PR template once the branch stops moving |
-| `review-orchestrate` | Review orchestration engine for claude-review — manages tier classification, file grouping, and review merging |
+| `review-orchestrate` | Review orchestration engine for review — manages tier classification, file grouping, and review merging |
 | `review-post` | Deterministic posting of review findings to GitHub as a PENDING PR review |
 | `review-rebuild` | Rebuild review.md from group finding files — recovers from synthesis formatting drift |
 | `review-threads` | Thread lifecycle status for PR review comments — dashboard and JSON report |
@@ -316,21 +316,21 @@ get-secret
 
 Outputs the raw SecretString value to stdout.
 
-### `claude-review`
+### `review`
 
-Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support.
+Run the configured review agent on a PR with local worktree checkout and iterative review support.
 
 ```
-claude-review [<flags>] <pr_url_or_number>
-claude-review gc
-claude-review post <pr_url_or_number>
+review [<flags>] <pr_url_or_number>
+review --self [<pr_url_or_number>]
+review [--self] --recover [<pr_url_or_number>]
 ```
 
-| Command | Description |
-|---------|-------------|
-| `<pr_url_or_number>` | Run review (default) |
-| `gc` | Clean up stale review artifacts |
-| `post <pr_url_or_number>` | Post an existing review file |
+The `gc`, `post`, `rebuild`, `summary` and `threads` subcommands this binary
+once carried have moved to `pr` — `pr gc`, `pr review --post`, `pr review
+--repair`, `pr review --summary` and `pr comments` respectively. Each is still
+recognised here and refused with the command to use instead, rather than being
+read as the name of a branch to review.
 
 | Flag | Description | Default |
 |------|-------------|---------|
@@ -457,7 +457,7 @@ pr [global flags] <command> [flags]
 |---------|-------------|
 | `status` | Show unified dashboard: CI, review, comments, rebase, and push state |
 | `ci [--fix] [--post]` | Fetch and classify CI failures; `--fix` attempts automated repair, `--post` pushes the fix |
-| `review [--self] [--fix] [--push] [--post] [--repair] [--summary]` | Run code review via `claude-review` |
+| `review [--self] [--fix] [--push] [--post] [--repair] [--summary]` | Run code review via `review` |
 | `comments [--triage] [--fix] [--finish] [--track THREAD_ID] [--track-all] [--post] [--reply <id> --body-file <path> --post] [--settle <id> --as <outcome>]` | Fetch and manage PR review threads (see phases below); `--post` publishes (default: drafts) |
 | `fix` | Run fix passes for CI, review, and comments in one step, then revise the description |
 | `rebase [--fix] [--push] [--abort] [--onto <ref>]` | Rebase onto the branch's base — `--onto`, else the PR's base branch, else the branch this one is stacked on, else the repo's default branch |

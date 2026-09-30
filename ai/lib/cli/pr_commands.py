@@ -112,7 +112,7 @@ def _worktree_head(wt: Path, fallback: str) -> str:
 
     The live answer, which two callers need and neither can take from the state
     they were handed. `pr fix` gates the review pass on it because
-    `claude-review --self` reads the worktree while `ctx.head_sha` under `--pr`
+    `review --self` reads the worktree while `ctx.head_sha` under `--pr`
     is the PR's *remote* head (see `review.pipeline._with_local_diff`): asking
     the gate the remote question skips the review after a clean pass followed
     by unpushed commits. `pr status` needs it because `identity.head_sha` is
@@ -142,7 +142,7 @@ def _worth_running(domain: pr_domains.Domain, head_sha: str, *,
 
     * Running a pass that turns out to be unnecessary costs one spawn. Every
       pass re-fetches its own subject — `ci-check` refetches the run,
-      `claude-review` re-reads the tree — so it finds nothing and says so.
+      `review` re-reads the tree — so it finds nothing and says so.
     * *Skipping* a pass that was necessary is silent and permanent. Nothing
       downstream re-checks, and `pr fix` reports success having done nothing.
 
@@ -208,7 +208,7 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
             original_pr=_kw.get("original_pr"),
             original_branch=_kw.get("original_branch"),
             # This process already has the handler `pr` installed; see
-            # `cli.claude_review.main`.
+            # `cli.review_entry.main`.
             install_signal_handler=False,
         )
         if rc == supersession.EXIT_SUPERSEDED:

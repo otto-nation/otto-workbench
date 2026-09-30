@@ -196,7 +196,7 @@ class TestTrailRetention:
 class TestCommandCorrelation:
     """One user command is several processes; `root` is what ties them together.
 
-    `pr review` spawns `claude-review`, which spawns `review-orchestrate`. Each
+    `pr review` spawns `review`, which spawns `review-orchestrate`. Each
     opens its own trail, so each has its own invocation, and only the root says
     they were one command.
     """
@@ -218,17 +218,17 @@ class TestCommandCorrelation:
 
     def test_a_descendant_records_the_root_it_was_spawned_under(self):
         root = Trail.start(script="pr", context={})
-        child = Trail.start(script="claude-review", context={})
+        child = Trail.start(script="review", context={})
         child.info("review", "running")
         assert child.invocation != root.invocation
         assert child.root == root.invocation
         assert _read_events()[-1]["root"] == root.invocation
 
     def test_the_root_survives_the_whole_depth_of_the_tree(self):
-        """`pr` → `claude-review` → `review-orchestrate` is three deep, and the
+        """`pr` → `review` → `review-orchestrate` is three deep, and the
         middle one must pass down the root it inherited rather than its own."""
         root = Trail.start(script="pr", context={})
-        Trail.start(script="claude-review", context={})
+        Trail.start(script="review", context={})
         grandchild = Trail.start(script="review-orchestrate", context={})
         assert grandchild.root == root.invocation
 
@@ -239,12 +239,12 @@ class TestCommandCorrelation:
             import sys
             sys.path.insert(0, {str(LIB_DIR)!r})
             from core.trail import Trail
-            trail = Trail.start(script="claude-review", context={{}})
+            trail = Trail.start(script="review", context={{}})
             trail.info("review", "running")
         """)
         run_checked([sys.executable, "-c", child])
         spawned = _read_events()[-1]
-        assert spawned["script"] == "claude-review"
+        assert spawned["script"] == "review"
         assert spawned["root"] == root.invocation
 
     def test_a_run_launched_by_hand_is_its_own_root(self):

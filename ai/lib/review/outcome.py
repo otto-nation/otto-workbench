@@ -23,7 +23,8 @@ from pr.domains import ReviewStatus
 from review.document import (
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS,
     SECTION_SUMMARY, SECTION_VERDICT,
-    ReviewDocument, ReviewHeader, review_title, set_head_sha, strip_sections,
+    ReviewDocument, ReviewHeader, review_title, set_title, stamp_header,
+    strip_sections,
 )
 from review.paths import write_review_meta
 from review.prompt_sections import _is_incremental
@@ -80,6 +81,38 @@ def _write_review_sidecar(job: ReviewJob):
     write_review_meta(Path(job.artifact_dir), _job_meta(job))
 
 
+def _header(
+    job: ReviewJob, meta: ReviewMeta,
+    skipped_groups: int = 0, total_groups: int = 0,
+    status: ReviewStatus | None = None,
+) -> ReviewHeader:
+    """What this run states about itself, wherever the body came from.
+
+    The one place the pipeline decides a review's header, so the two kinds of
+    path cannot state it differently: `_document` renders this above a body it
+    built, and `_post_process_review` stamps this over a body the review agent
+    wrote. Before they shared it the agent path carried whatever the prompt
+    template had told the agent to type — which named no `review_type`, so
+    every agent-written incremental review read back as a full one.
+    """
+    header = ReviewHeader.from_meta(
+        meta,
+        date=date.today().isoformat(),
+        status=status,
+    )
+    if meta.review_type != ReviewType.INCREMENTAL:
+        return header
+    # The prior review's own header is where its date comes from — a re-review
+    # states what it is a delta against, and only that document knows.
+    prior = ReviewDocument.parse(job.prior_review) if job.prior_review else None
+    return replace(
+        header,
+        prior_date=(prior.header.date if prior else "") or "unknown",
+        skipped_groups=skipped_groups,
+        total_groups=total_groups,
+    )
+
+
 def _document(
     job: ReviewJob, body: str,
     skipped_groups: int = 0, total_groups: int = 0,
@@ -87,28 +120,15 @@ def _document(
 ) -> ReviewDocument:
     """`body` framed as this run's review document.
 
-    The one place the pipeline states a review's title and header. Both come
-    from `_job_meta`, so a document this writes cannot disagree with the sidecar
-    written beside it.
+    Title and header both come from `_job_meta`, so a document this writes
+    cannot disagree with the sidecar written beside it.
     """
     meta = _job_meta(job)
-    header = ReviewHeader.from_meta(
-        meta,
-        date=date.today().isoformat(),
-        status=status,
+    return ReviewDocument(
+        title=review_title(meta),
+        header=_header(job, meta, skipped_groups, total_groups, status),
+        body=body,
     )
-    if meta.review_type == ReviewType.INCREMENTAL:
-        # The prior review's own header is where its date comes from — a
-        # re-review states what it is a delta against, and only that document
-        # knows.
-        prior = ReviewDocument.parse(job.prior_review) if job.prior_review else None
-        header = replace(
-            header,
-            prior_date=(prior.header.date if prior else "") or "unknown",
-            skipped_groups=skipped_groups,
-            total_groups=total_groups,
-        )
-    return ReviewDocument(title=review_title(meta), header=header, body=body)
 
 
 def is_complete_review(review_file: str) -> bool:
@@ -231,22 +251,44 @@ def _carried_findings(prior_review: str) -> str:
     ).strip()
 
 
-def _post_process_review(job: ReviewJob) -> None:
+def _post_process_review(
+    job: ReviewJob, skipped_groups: int = 0, total_groups: int = 0,
+) -> None:
     """The review file finished, for the paths where an agent wrote all of it.
 
     A single-agent review and a completed synthesis are the two paths that
-    reach a review file without `_document` rendering its header, so they are
-    the two where the head SHA on disk is whatever the agent typed. Stamping it
-    here makes `job.pr.head_sha` the value every path records, the same one the
-    sidecar already carries.
+    reach a review file without `_document` rendering its frame, so they are
+    the two where the title and header on disk are whatever the agent typed
+    from its template. Stamping the run's own header over them makes every
+    path record what `_job_meta` says, which is what the sidecar beside it
+    already carries.
+
+    This used to stamp the head SHA alone, on the reasoning that it was the
+    one key the agent could not know. It is not — the agent cannot know any of
+    them. What it wrote for the rest was its template's placeholder text: a
+    literal `YYYY-MM-DD` for the date on the single-agent path, and on both
+    paths no `review_type`, no `prior_sha` and no `base_ref` at all. The
+    missing `review_type` is the one with teeth, because it reads back as
+    `full`: `review.collect` asks the prior review's header what the last run
+    covered, so an incremental review recorded as full is a re-review that
+    re-reads the whole PR.
+
+    The group ratio is the caller's because only the synthesis path has one.
+    It used to be recorded only when synthesis *failed*, since the mechanical
+    fallback rendered a header and the agent did not — so the coverage of a
+    run that worked was the coverage nobody wrote down.
 
     Last, after reconciliation and verification, because both rewrite the file:
     the stamp is only authoritative if nothing writes over it afterwards.
     """
     _reconcile_and_verify(job)
     path = Path(job.review_file)
-    if job.pr.head_sha and path.exists():
-        path.write_text(set_head_sha(path.read_text(), job.pr.head_sha))
+    if not path.exists():
+        return
+    meta = _job_meta(job)
+    content = set_title(path.read_text(), review_title(meta))
+    header = _header(job, meta, skipped_groups=skipped_groups, total_groups=total_groups)
+    path.write_text(stamp_header(content, header))
 
 
 def _post_processed_body(job: ReviewJob, body: str) -> str:

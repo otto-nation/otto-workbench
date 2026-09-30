@@ -1,8 +1,8 @@
 """The only writer of the review domain.
 
-`pr review` and `claude-review` both finish a review and both used to stamp
-`ReviewSummary` themselves — two mappings, two persist paths, and a PR review
-wrote the domain twice. This module is the one writer: it derives the domain
+`pr review` and the `review` entry point it dispatches to both finish a
+review, and both used to stamp `ReviewSummary` themselves — two mappings, two
+persist paths, and a PR review wrote the domain twice. This module is the one writer: it derives the domain
 fields from the typed report and persists them on the target the context names.
 """
 

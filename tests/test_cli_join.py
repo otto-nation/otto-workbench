@@ -48,7 +48,7 @@ PHASE_DOMAINS = frozenset({"review", "comments", "ci", "rebase", "describe"})
 
 DELEGATES = {
     "ci": "ci-check",
-    "review": "claude-review",
+    "review": "review",
     "comments": "review-threads",
     "rebase": "pr-rebase",
     "describe": "pr-describe",

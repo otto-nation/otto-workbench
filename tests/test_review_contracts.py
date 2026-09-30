@@ -1,4 +1,4 @@
-"""Cross-file contract tests for the claude-review system.
+"""Cross-file contract tests for the review system.
 
 Verifies that constants, templates, regex patterns, and CLI interfaces
 stay consistent across agent_registry, agent_templates, review_document,
@@ -213,7 +213,7 @@ def _skip_flag_parser():
 class TestPhaseSkipFlags:
     """`--no-<phase>` is generated, so the two CLIs cannot drift from each other.
 
-    `claude-review` offers the flags, `review-orchestrate` parses them, and the
+    `review` offers the flags, `review-orchestrate` parses them, and the
     first forwards them to the second on argv. All three read the registry.
     """
 
@@ -254,7 +254,7 @@ class TestPhaseSkipFlags:
         generated = sorted(
             f"--no-{p}" for p in REVIEW_PHASES if PHASES[p].optional
         )
-        for script in ("claude-review", "review-orchestrate"):
+        for script in ("review", "review-orchestrate"):
             helped = subprocess.run(
                 [str(REPO_ROOT / "ai" / "bin" / script), "--help"],
                 capture_output=True, text=True, timeout=60,

@@ -610,12 +610,23 @@ keys wherever they appear and in whatever order, and `set_status` edits the line
 it is asked about rather than re-rendering the block — a field this module was
 never told about survives an edit instead of being dropped by it.
 
-One key is not the agent's to state. `head_sha` records the commit the review
-was written against, and the next re-review measures its delta from it, so a
-value the agent typed from a template is a claim about a run the agent cannot
-see the harness' side of. `set_head_sha` stamps the harness' SHA over whatever
-reached disk, and because `parse` takes the first occurrence of a key, it
-replaces the first marker rather than adding one.
+None of it is the agent's to state. Every key here records something about the
+*run* — which commit it read, what it was a delta against, which tool produced
+it — and the agent can see none of that from inside its own prompt. What it
+typed instead was a template's placeholder: a literal `YYYY-MM-DD` on one path,
+and on every path no `review_type` at all, which `parse` reads back as `full`.
+An incremental review recorded as a full one is not a cosmetic defect: the next
+re-review asks the header what it is a delta against, so the answer decides
+whether that run reads the delta or re-reads the whole PR.
+
+`stamp_header` is the fix and the rule: the harness writes the header over
+whatever reached disk, on every path, after the agent has finished with the
+file. It is an edit and not a re-render, per key, so a marker the agent wrote
+and this module has never heard of survives being stamped — and because `parse`
+takes the first occurrence of a key, it replaces the first marker rather than
+adding a second one below it. `set_status` is the same primitive with one key,
+kept separate because a status is the last thing known about a run and is
+written by a caller holding no other part of the header.
 
 `ReviewDocument` is for a document being *built*: it renders the canonical form
 this module defines. Editing one that is already on disk is a different job and
@@ -818,7 +829,7 @@ run is `review.steps`', and writing the result to the review file is
 
 ### review/pipeline.py
 
-Pipeline orchestration for claude-review.
+Pipeline orchestration for review.
 
 Drives the single-agent and multi-phase runs end to end: sequencing the phases
 review.steps defines, deciding what a resumed run may skip, consolidating the
@@ -850,7 +861,7 @@ the one the refusal most has to survive.
 
 ### review/prompt.py
 
-Prompt construction for claude-review: the byte budget and the render loop.
+Prompt construction for review: the byte budget and the render loop.
 
 `PromptBuilder` collects the variables a template is rendered with, and
 `PromptBuilder.fit` is what makes a prompt fit the token budget: it registers
@@ -1091,7 +1102,7 @@ near-duplicate does not.
 
 ### review/fix.py
 
-Fix pass for claude-review.
+Fix pass for review.
 
 Runs after a review is written and `--fix` is set. `fix_engine` owns the
 pipeline — the batching, the agent, the retry, the commit — and what stays here
@@ -1338,7 +1349,7 @@ different places.
 
 The machine-readable summary of a finished review, and its human rendering.
 
-`claude-review` prints a `REVIEW_SUMMARY:{json}` line that `pr` and the review
+`review` prints a `REVIEW_SUMMARY:{json}` line that `pr` and the review
 listing parse back, so this is the one place the summary's shape is decided.
 It is the only reader that needs both halves of a review at once — the findings
 document (counts, verdict) and the pipeline state (status, failure detail) —
@@ -1472,7 +1483,7 @@ it, so `--post` reads as "publish what this run produces" wherever it appears
 next to a fix pass — as against `pr review --post` on its own, which publishes
 the review already on disk. The review fix pass runs inside
 `review-orchestrate`, which is reached before any posting decision would
-otherwise be made, so `claude-review` forwards the flag to it rather than
+otherwise be made, so `review` forwards the flag to it rather than
 opening a gate the pass would never see. That forwarding predates in-process
 dispatch and survives it: the flag is how the pass learns, and `scope()` is
 what keeps the answer from outliving the run.
@@ -2007,7 +2018,7 @@ leaves no trace on the document to read back.
 
 ### review/issue.py
 
-Issue tracking integration for claude-review.
+Issue tracking integration for review.
 
 ### review/listing.py
 
@@ -2475,9 +2486,9 @@ knows about a `PRState` and a `FixRecord`.
 
 The only writer of the review domain.
 
-`pr review` and `claude-review` both finish a review and both used to stamp
-`ReviewSummary` themselves — two mappings, two persist paths, and a PR review
-wrote the domain twice. This module is the one writer: it derives the domain
+`pr review` and the `review` entry point it dispatches to both finish a
+review, and both used to stamp `ReviewSummary` themselves — two mappings, two
+persist paths, and a PR review wrote the domain twice. This module is the one writer: it derives the domain
 fields from the typed report and persists them on the target the context names.
 
 ### pr/state.py
@@ -3659,7 +3670,7 @@ record carries a ``released`` timestamp, written under the flock just before
 it is dropped; a held one has ``released: null``. To ask the kernel rather
 than read the file, call ``is_held``.
 
-``claude-review`` (both its PR and its ``--self`` paths), ``ci-check``,
+``review`` (both its PR and its ``--self`` paths), ``ci-check``,
 ``review-threads``, ``pr-rebase`` and ``pr-describe`` take the lock themselves,
 so invoking any of them directly is guarded too. When ``pr`` dispatches to one
 it resolves the same target, computes the same key, finds it in
@@ -3962,7 +3973,7 @@ that protocol and nothing else.
 One constraint comes with a flat list of option strings: every *option* the
 parser declares must consume exactly one value. It cannot express ``nargs='?'``,
 ``'+'``, ``'*'``, or an int above 1, so the function refuses to answer rather
-than report a wrong arity. Positionals are unconstrained (``claude-review``
+than report a wrong arity. Positionals are unconstrained (``review``
 declares ``args`` with ``nargs='*'``).
 
 ``enum_arg`` is here for the same reason from the other side: it is the argparse
@@ -3984,7 +3995,7 @@ one file per month. ``otto-log recent --repo <org/repo>`` narrows it to one
 repo; ``otto-log query --pr <n>`` finds every record for one PR, including the
 terminal ``pr_outcome`` event ``pr gc`` writes when the PR merges or closes.
 
-One user command is several runs: ``pr review`` calls ``claude-review``,
+One user command is several runs: ``pr review`` calls ``review``,
 which calls ``review-orchestrate``, and each opens its own trail with its own
 ``invocation``. They are tied together by ``root`` — the invocation of the
 outermost recorded run, carried in ``TRAIL_ROOT_ENV`` and recorded on every
@@ -4077,6 +4088,31 @@ Command-line face of the tree validation lock.
 Separate from tree_lock.py so the library stays importable without argparse
 ceremony, and so bash has one file to invoke. See that module for why the lock
 must wrap a child process rather than be claimed and returned from.
+
+### core/version.py
+
+What version of the workbench is running, answered in one place.
+
+This used to live in `ai/bin/_version.py` alone, and nothing under `ai/lib`
+could import it — so every library caller that wanted a version took one by
+injection, and every caller that was not handed one fell back to the literal
+string `unknown`. That fallback is invisible at the call site and permanent on
+disk: a review written through `pr review` recorded `generator: review
+unknown` for months, because the in-process dispatch path had no shim to inject
+from, while the same review written through `ai/bin/review` recorded the real
+version. Two spellings of one fact, decided by which entry point the operator
+happened to use.
+
+Resolution is by layout, so it answers in both places the code runs:
+
+* A checkout has `.github/.release-please-manifest.json` three levels above
+  this file, and a git directory to take a short SHA from.
+* The packaged tarball has neither. It ships a `VERSION` file beside `lib/`,
+  which is what `ai/bin` fell back to reading, and no `.git` at all.
+
+`unknown` survives as the last resort — a version nobody can resolve is still
+better recorded than crashed on — but it is now the answer to "neither layout
+is present", rather than to "no caller passed me anything".
 
 ### core/workbench_paths.py
 
@@ -4936,30 +4972,6 @@ Usage:
   ci-check --repo-dir <path>    # specify worktree directory
   ci-check --fix                # diagnose then invoke AI to fix failures
 
-### cli/claude_review.py
-
-Run Claude's reviewer agent on a PR with local worktree checkout and iterative review support.
-
-The entry point, and only the entry point: the parser, the flag contradictions,
-the signal handler, the run lock, and the choice of which flow to run. The
-review itself is `review.run`'s.
-
-Three things stay here rather than moving down a layer, each for its own reason.
-The signal handler is process-level state, so it is installed only when this
-module is the process — `install_signal_handler=False` for an in-process caller
-that has already installed its own, since `signal.signal` overwrites without
-chaining and nothing restores it. The run lock is claimed between resolving the
-self-review target and switching the checkout to it — a resolver that did both
-would take a process-lifetime lock from inside the library. And `version_string`
-lives in `ai/bin`, which nothing under `ai/lib` can import, so the caller passes
-it in.
-
-Usage:
-  claude-review <pr_url_or_number>
-  claude-review --no-post <pr_url_or_number>
-  claude-review --self [<pr_url_or_number>]
-  claude-review [--self] --recover [<pr_url_or_number>]
-
 ### cli/dispatch.py
 
 Call a `pr` subcommand's handler in this process.
@@ -5132,6 +5144,28 @@ by path, so the field is the declaration of which `ai/bin` name that is. The
 command/domain/phase join in `tests/test_cli_join.py` is what keeps it from
 going stale now that no `pr` code path would notice if it did.
 
+### cli/review_entry.py
+
+Run the configured review agent on a PR with local worktree checkout and iterative review support.
+
+The entry point, and only the entry point: the parser, the flag contradictions,
+the signal handler, the run lock, and the choice of which flow to run. The
+review itself is `review.run`'s.
+
+Three things stay here rather than moving down a layer, each for its own reason.
+The signal handler is process-level state, so it is installed only when this
+module is the process — `install_signal_handler=False` for an in-process caller
+that has already installed its own, since `signal.signal` overwrites without
+chaining and nothing restores it. The run lock is claimed between resolving the
+self-review target and switching the checkout to it — a resolver that did both
+would take a process-lifetime lock from inside the library.
+
+Usage:
+  review <pr_url_or_number>
+  review --no-post <pr_url_or_number>
+  review --self [<pr_url_or_number>]
+  review [--self] --recover [<pr_url_or_number>]
+
 ### cli/review_modes.py
 
 `pr review`'s mutually-exclusive mode flags, and what each one does.
@@ -5159,7 +5193,7 @@ is the mode-handler contract rather than a path any of them uses today.
 
 ### cli/review_orchestrate.py
 
-Review orchestration for claude-review.
+Review orchestration for review.
 
 Handles everything between "worktree is ready" and "the review directory holds
 only its deliverable": PR metadata fetching, prompt template rendering, Claude
@@ -5169,8 +5203,8 @@ static analysis section, and the optional fix pass.
 Phase order is this script's alone, and so is the cleanup that order decides —
 no phase cleans up after itself.
 
-Called by claude-review (bash wrapper) which handles worktree lifecycle,
-archive management, and interactive prompts.
+Called by the `review` entry point, which handles worktree lifecycle, archive
+management, and interactive prompts.
 
 Usage:
   review-orchestrate --pr NUMBER --review-file PATH \
@@ -5200,7 +5234,7 @@ Exit codes:
 
 Post a review file to GitHub as a PR review.
 
-Parses a markdown review file (produced by claude-review), validates
+Parses a markdown review file (produced by review), validates
 finding positions against the PR diff, renumbers findings by posted
 location (inline first, then body), and creates a PENDING review via
 the GitHub API. Pass --submit to submit the review immediately.

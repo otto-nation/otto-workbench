@@ -464,7 +464,7 @@ def pr_number_if_reachable(repo: str, branch: str) -> BranchPR:
     wait on ``gh`` to find a PR it does not display would be a plain regression.
     So the lookup is opt-in, and the caller that wants it says so.
 
-    ``claude-review --self`` is that caller, and it wants both halves. The
+    ``review --self`` is that caller, and it wants both halves. The
     number fetches the reply threads that keep a re-review from repeating
     findings already answered there; the base is what a stacked branch's diff
     is measured against, and without it the review covers the parent's commits

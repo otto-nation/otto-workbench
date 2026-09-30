@@ -58,10 +58,10 @@ teardown() {
   [ "$output" = "$TEST_VERSION" ]
 }
 
-# ── 3. claude-review is valid Python ────────────────────────────────────────
+# ── 3. review is valid Python ────────────────────────────────────────
 
-@test "claude-review parses without Python syntax errors" {
-  run python3 -c "import py_compile; py_compile.compile('$TARBALL_ROOT/bin/claude-review', doraise=True)"
+@test "review parses without Python syntax errors" {
+  run python3 -c "import py_compile; py_compile.compile('$TARBALL_ROOT/bin/review', doraise=True)"
   [ "$status" -eq 0 ]
 }
 
@@ -73,37 +73,37 @@ teardown() {
   # an ImportError the moment a pin is set, instead of on the refusal.
   [ -f "$TARBALL_ROOT/bin/_libdir.py" ]
 
-  WORKBENCH_AI_LIB_DIR=/nonexistent run "$TARBALL_ROOT/bin/claude-review" --help
+  WORKBENCH_AI_LIB_DIR=/nonexistent run "$TARBALL_ROOT/bin/review" --help
   [ "$status" -eq 2 ]
   [[ "$output" == *"WORKBENCH_AI_LIB_DIR"* ]]
   [[ "$output" != *"Traceback"* ]]
 }
 
-# ── 4. claude-review uses Python shebang ─────────────────────────────────────
+# ── 4. review uses Python shebang ─────────────────────────────────────
 
-@test "claude-review has Python shebang" {
-  run head -1 "$TARBALL_ROOT/bin/claude-review"
+@test "review has Python shebang" {
+  run head -1 "$TARBALL_ROOT/bin/review"
   [ "$status" -eq 0 ]
   [[ "$output" == *"python3"* ]]
 }
 
 # ── 5. --help ───────────────────────────────────────────────────────────────
 
-@test "claude-review --help exits 0" {
-  run "$TARBALL_ROOT/bin/claude-review" --help
+@test "review --help exits 0" {
+  run "$TARBALL_ROOT/bin/review" --help
   [ "$status" -eq 0 ]
 }
 
 # ── 6. --version ────────────────────────────────────────────────────────────
 
-@test "claude-review --version exits 0" {
-  run "$TARBALL_ROOT/bin/claude-review" --version
+@test "review --version exits 0" {
+  run "$TARBALL_ROOT/bin/review" --version
   [ "$status" -eq 0 ]
-  [[ "$output" == *"claude-review"* ]]
+  [[ "$output" == *"review"* ]]
 }
 
-@test "claude-review version reads VERSION file in tarball context" {
-  run "$TARBALL_ROOT/bin/claude-review" --version
+@test "review version reads VERSION file in tarball context" {
+  run "$TARBALL_ROOT/bin/review" --version
   [ "$status" -eq 0 ]
   [[ "$output" == *"$TEST_VERSION"* ]]
 }

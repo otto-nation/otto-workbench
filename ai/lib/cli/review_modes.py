@@ -99,7 +99,7 @@ def repair(argv: list[str], ctx: pr_context.ResolvedContext, *,
 
     # The rebuild writes `review.md` and says nothing on stdout. This used to
     # capture its output and grep it for a `REVIEW_SUMMARY:` marker — a
-    # protocol whose only writer was `claude-review`, so on this path it
+    # protocol whose only writer was `review`, so on this path it
     # parsed a string nothing emitted and silently updated nothing. The
     # domain is synced from the file the rebuild just wrote instead, which is
     # the same thing `repair` does above when a review file already exists.

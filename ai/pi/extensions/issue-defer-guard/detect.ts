@@ -66,7 +66,7 @@ export function runGit(args: string[]): string {
 /**
  * True when a self-review for the current branch is sitting on open findings.
  *
- * The directory name is the one ai/lib/cli/claude_review.py builds:
+ * The directory name is the one ai/lib/cli/review_entry.py builds:
  * <repo>-self-<branch with / replaced by ->. The repo half comes from the
  * remote rather than the directory, because every worktree of one repo has its
  * own basename and they all review into the same name.

@@ -56,7 +56,7 @@ from pr import context as pr_context
 # being asked about.
 PARSER_FACTORIES = {
     "ci": "cli.ci_check:build_parser",
-    "review": "cli.claude_review:build_parser",
+    "review": "cli.review_entry:build_parser",
     "comments": "cli.review_threads:build_parser",
     "rebase": "cli.pr_rebase:build_parser",
     "describe": "cli.pr_describe:build_parser",

@@ -671,12 +671,22 @@ class TestDocument:
         )
 
     def test_a_full_review_is_framed_by_what_the_sidecar_records(self, ro, tmp_path):
+        """Enough for the document to be read without its sidecar to hand.
+
+        A review file is opened by a session that has no `meta.json` in front
+        of it, so what the run covered — which branch, against which base, at
+        which commit — is on the page rather than a join away.
+        """
         from datetime import date
         rendered = ro._document(self._job(ro, tmp_path), "## Summary\nbody\n").render()
         assert rendered == (
             "# Review: org/repo#42 — test\n"
             f"<!-- date: {date.today().isoformat()} -->\n"
+            "<!-- mode: pr -->\n"
+            "<!-- pr: 42 -->\n"
             "<!-- head_sha: abc123 -->\n"
+            "<!-- head_ref: feat -->\n"
+            "<!-- base_ref: main -->\n"
             "<!-- review_type: full -->\n"
             "<!-- generator: 1.0.0 -->\n"
             "\n"
@@ -2973,7 +2983,7 @@ class TestInjectFailuresAndStatus:
         review_file = tmp_path / "review.md"
         review_file.write_text(
             "<!-- status: completed -->\n"
-            "<!-- generator: claude-review v1 -->\n"
+            "<!-- generator: review v1 -->\n"
             "\n"
             "## Summary\n\nAll good.\n"
         )
@@ -3001,7 +3011,7 @@ class TestInjectFailuresAndStatus:
 
         review_file = tmp_path / "review.md"
         review_file.write_text(
-            "<!-- generator: claude-review v1 -->\n"
+            "<!-- generator: review v1 -->\n"
             "\n"
             "## Summary\n\nAll good.\n"
         )
@@ -3027,7 +3037,7 @@ class TestInjectFailuresAndStatus:
         review_file = tmp_path / "review.md"
         review_file.write_text(
             "<!-- status: completed -->\n"
-            "<!-- generator: claude-review v1 -->\n"
+            "<!-- generator: review v1 -->\n"
             "\n"
             "## Summary\n\nAll good.\n"
         )
@@ -3279,7 +3289,7 @@ class TestCleanupScope:
         """The result JSON is printed after the sweep, so the sweep must not eat it.
 
         `unlink(missing_ok=True)` only suppresses FileNotFoundError; a
-        read-only filesystem raises. claude-review reads the review it just
+        read-only filesystem raises. review reads the review it just
         paid for out of this JSON, so failing to delete a log cannot be what
         loses it.
         """
@@ -3304,7 +3314,7 @@ class TestCleanupScope:
 class TestThePublishingGate:
     """`--post` is forwarded here because the fix pass lives in this process.
 
-    `claude-review` decides whether a run may publish, but the fix pass runs in
+    `review` decides whether a run may publish, but the fix pass runs in
     this process — today a subprocess, later an in-process call — so a gate
     opened only in the parent would never reach the push the pass makes.
     """

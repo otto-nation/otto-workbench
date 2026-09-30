@@ -1,4 +1,4 @@
-"""Tests for claude-review Python script — helper functions, GC, summary."""
+"""Tests for review Python script — helper functions, GC, summary."""
 
 import json
 import os
@@ -15,6 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
+from core import version
 from core import workbench_paths
 from pr import context as pr_context
 from pr.domains import ReviewStatus, ReviewVerdict
@@ -42,7 +43,7 @@ from conftest import (
     make_ctx, run_checked, supersession_evidence, supersession_verdict,
 )
 
-from cli import claude_review  # noqa: E402
+from cli import review_entry  # noqa: E402
 
 
 @pytest.fixture
@@ -53,7 +54,7 @@ def cr():
     module now, and importing it gives every caller the one module object the
     interpreter already holds.
     """
-    return claude_review
+    return review_entry
 
 
 @pytest.fixture
@@ -1744,7 +1745,7 @@ def test_stamp_reviewed_keeps_the_delta_a_re_review_recorded(cr, reviews_dir):
 
 # ── CLI argument parsing ──────────────────────────────────────────────────────
 #
-# Parsing is covered in review_flow_entry_test.py, against claude-review's own
+# Parsing is covered in review_flow_entry_test.py, against review's own
 # parser. The two tests that stood here built a throwaway ArgumentParser and
 # asserted that argparse works, so every flag they named could have been
 # renamed or dropped with this suite green.
@@ -1937,21 +1938,46 @@ def test_cleaned_on_success_survives_a_sweep_that_cannot_delete(cr, tmp_path, ca
 # ── _generator_version ────────────────────────────────────────────────────────
 
 
-def test_the_generator_version_comes_from_the_injected_resolver(cr, reviews_dir, monkeypatch):
-    """`version_string` lives under ai/bin, so the entry point is handed one.
+def test_the_generator_version_is_resolved_not_injected(cr, reviews_dir, monkeypatch):
+    """Every entry point records the same generator, with no caller's help.
 
-    The default exists so `--version` answers rather than crashing when a
-    caller supplies none — an import that only wants the parser, or a test.
+    It used to be a parameter, and the in-process caller — `pr review`, which
+    is how the command is normally reached — passed nothing. Its reviews all
+    recorded `generator: … unknown` while the `ai/bin` shim recorded the real
+    build: one fact with two spellings, decided by the entry point.
     """
     seen = {}
     monkeypatch.setattr(cr, "_run_self_review",
                         lambda args, argv, gv: seen.setdefault("gv", gv))
+    monkeypatch.setattr(version, "tool_version", lambda: "9.9.9")
+    monkeypatch.setattr(version, "workbench_version", lambda: "1.0 (abc)")
 
-    cr.main(["--self"], version_string=lambda name: f"{name} 9.9.9\nworkbench 1.0 (abc)")
+    cr.main(["--self"])
 
-    assert seen["gv"] == "workbench 1.0 (abc)", (
-        "the flows carry the last line, which names the workbench build"
+    assert seen["gv"] == f"{cr.SCRIPT} 9.9.9 / otto-workbench 1.0 (abc)", (
+        "the marker names the tool and both versions behind it, on one line"
     )
+
+
+def test_the_generator_version_names_the_tool_even_with_no_workbench_manifest(
+    cr, reviews_dir, monkeypatch,
+):
+    """A packaged install has a tool version and no workbench release.
+
+    The earlier form took the *last* line of the two-line `--version` output,
+    so where there was no second line it recorded the tool version and where
+    there was one it recorded the workbench build instead of the tool — the
+    marker named a different thing depending on the layout it ran from.
+    """
+    seen = {}
+    monkeypatch.setattr(cr, "_run_self_review",
+                        lambda args, argv, gv: seen.setdefault("gv", gv))
+    monkeypatch.setattr(version, "tool_version", lambda: "9.9.9")
+    monkeypatch.setattr(version, "workbench_version", lambda: "")
+
+    cr.main(["--self"])
+
+    assert seen["gv"] == f"{cr.SCRIPT} 9.9.9"
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -1975,7 +2001,7 @@ def test_build_parser_does_not_read_the_process_argv(cr, monkeypatch):
     `pr` calls this to read flag arity while classifying its own argv, so a
     factory that inspects `sys.argv` and exits would take `pr` with it.
     """
-    monkeypatch.setattr(sys, "argv", ["claude-review", "--value-flags", "42"])
+    monkeypatch.setattr(sys, "argv", ["review", "--value-flags", "42"])
     assert cr.build_parser().parse_args(["42"]).pr is None
 
 
@@ -2409,7 +2435,7 @@ def _stub_self_review(cr, monkeypatch, target, reviews_dir):
 
 
 def test_self_review_takes_the_run_lock(cr, tmp_path, reviews_dir, monkeypatch):
-    """`claude-review --self --fix` twice must not give two committers on a branch.
+    """`review --self --fix` twice must not give two committers on a branch.
 
     The lock is what stops that, and this branch's docs claim it covers a direct
     `--self` invocation — so a second, unrelated run has to be refused.
@@ -2422,13 +2448,13 @@ def test_self_review_takes_the_run_lock(cr, tmp_path, reviews_dir, monkeypatch):
     cr._run_self_review(_self_review_args(), ["--self", "--fix"], "test 1.0")
 
     record = json.loads((target / run_lock.LOCK_FILE).read_text())
-    assert record["command"].startswith("claude-review")
+    assert record["command"].startswith("review")
     assert record["started"]
     # The argv the flow was handed, not `sys.argv`. Called in-process from
     # `pr fix`, `sys.argv` is the *parent's*, so a lock that read it would
     # tell whoever it turns away that `pr fix` holds the lock — naming a
     # command the operator can neither find nor wait on.
-    assert record["command"] == "claude-review --self --fix"
+    assert record["command"] == "review --self --fix"
     assert "pytest" not in record["command"]
 
     # A fresh run, with none of our bookkeeping inherited, must be turned away.
@@ -2440,7 +2466,7 @@ def test_self_review_takes_the_run_lock(cr, tmp_path, reviews_dir, monkeypatch):
     disowned = run_lock._HELD.pop(str(target / run_lock.LOCK_FILE), None)
     assert disowned is not None
     with pytest.raises(SystemExit) as exc:
-        run_lock.claim_for_process(target, command="claude-review --self", started="t")
+        run_lock.claim_for_process(target, command="review --self", started="t")
     assert exc.value.code == 1
 
 
@@ -2463,7 +2489,7 @@ def test_self_review_passes_through_the_lock_pr_already_holds(
 def test_self_review_on_a_branch_locks_the_worktree_it_switches_to(
     cr, tmp_path, reviews_dir, monkeypatch,
 ):
-    """`claude-review --self <branch>` writes to a different tree than launched from.
+    """`review --self <branch>` writes to a different tree than launched from.
 
     `_run_self_review` leaves the checkout unlocked at entry for this case —
     the switch below hasn't happened yet, so the launch tree isn't the one
@@ -2492,7 +2518,7 @@ def test_self_review_on_a_branch_locks_the_worktree_it_switches_to(
     monkeypatch.setattr(review_run, "run_self_review", MagicMock())
 
     claim = MagicMock()
-    monkeypatch.setattr(claude_review.run_lock, "claim_for_process", claim)
+    monkeypatch.setattr(review_entry.run_lock, "claim_for_process", claim)
 
     cr._run_self_review(SimpleNamespace(
         positional=["feat/x"], issue=None, max_parallel=1, skip_user_verification=True,
@@ -2538,7 +2564,7 @@ def test_self_review_on_a_branch_already_checked_out_still_locks_it(
     monkeypatch.setattr(review_run, "run_self_review", MagicMock())
 
     claim = MagicMock()
-    monkeypatch.setattr(claude_review.run_lock, "claim_for_process", claim)
+    monkeypatch.setattr(review_entry.run_lock, "claim_for_process", claim)
 
     cr._run_self_review(SimpleNamespace(
         positional=["feat/x"], issue=None, max_parallel=1, skip_user_verification=True,
@@ -2776,9 +2802,9 @@ def test_a_pr_review_refuses_a_mistyped_base_too(tmp_path, monkeypatch):
 def test_a_pr_review_checkout_lock_reuses_the_target_locks_command(tmp_path, monkeypatch):
     """The checkout lock and the target lock report the same holder.
 
-    The target lock is claimed in `claude-review`'s `main()` with the full
+    The target lock is claimed in `review`'s `main()` with the full
     invocation (`" ".join([SCRIPT] + sys.argv[1:])`). The checkout lock here
-    used to hardcode `f"claude-review {pr_number}"` instead, so a contender
+    used to hardcode `f"review {pr_number}"` instead, so a contender
     tripping the checkout lock saw a different command than one tripping the
     target lock for the same run. `flags.command` threads the same string
     through to both.
@@ -2806,11 +2832,11 @@ def test_a_pr_review_checkout_lock_reuses_the_target_locks_command(tmp_path, mon
     review_run.run_pr_review(
         ctx,
         review_run.ReviewFlags(bin_dir=Path("/bin"), generator_version="test 1.0",
-                               command="claude-review 42 --fix --push"),
+                               command="review 42 --fix --push"),
         review_file, trail=MagicMock(),
     )
 
-    assert claim.call_args.kwargs["command"] == "claude-review 42 --fix --push"
+    assert claim.call_args.kwargs["command"] == "review 42 --fix --push"
 
 
 def test_a_stacked_self_review_measures_against_its_parent(tmp_path, monkeypatch):

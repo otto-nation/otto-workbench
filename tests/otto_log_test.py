@@ -46,7 +46,7 @@ def _make_command(*scripts: str) -> list[str]:
     """One user command as the process tree it really is; return its invocations.
 
     Each trail is opened while the one before it is still the published root, so
-    the records land exactly as `pr` → `claude-review` → `review-orchestrate`
+    the records land exactly as `pr` → `review` → `review-orchestrate`
     writes them — without paying for three subprocesses per test. The spawn
     itself is covered in `trail_test.py`, which is where that mechanism lives.
 
@@ -69,7 +69,7 @@ def _make_command(*scripts: str) -> list[str]:
 # The command every correlation test is about: what `pr review` really runs.
 # Named once so the three-process shape is a single source of truth rather than
 # a literal repeated down the class.
-_PR_REVIEW = ("pr", "claude-review", "review-orchestrate")
+_PR_REVIEW = ("pr", "review", "review-orchestrate")
 
 
 def _raw_event(**fields) -> dict:
@@ -132,7 +132,7 @@ class TestTrailDiscovery:
 
     def test_every_script_lands_in_the_same_file(self):
         _make_trail("ci-check", [("a", "first")])
-        _make_trail("claude-review", [("b", "second")])
+        _make_trail("review", [("b", "second")])
         assert len(discover_trails()) == 1
 
 
@@ -192,7 +192,7 @@ class TestCommandCorrelation:
         _, child, _ = _make_command(*_PR_REVIEW)
         events = load_events(discover_trails())
         filtered = filter_events(events, invocation=child)
-        assert {e["script"] for e in filtered} == {"claude-review"}
+        assert {e["script"] for e in filtered} == {"review"}
 
     def test_a_record_predating_the_root_field_is_its_own_command(self):
         """Every grouping goes through `_root_of`, so history written before the
@@ -207,14 +207,14 @@ class TestCommandCorrelation:
         otto_log.cmd_show(argparse.Namespace(
             invocation=root, only=False, json=False))
         out = capsys.readouterr().out
-        assert "pr → claude-review → review-orchestrate" in out
+        assert "pr → review → review-orchestrate" in out
         assert "review-orchestrate ran" in out
 
     def test_show_names_who_started_the_run(self, capsys):
         """The question somebody has when they open a trail for a run they did
         not expect. A fix pass wrote into a worktree and there was no process
         left to ask, so the header answers it without a --json detour."""
-        root, _ = _make_command("pr", "claude-review")
+        root, _ = _make_command("pr", "review")
         otto_log.cmd_show(argparse.Namespace(
             invocation=root, only=False, json=False))
         out = capsys.readouterr().out
@@ -246,18 +246,18 @@ class TestCommandCorrelation:
 
     def test_show_reports_the_whole_commands_duration(self, capsys):
         """The root's own finish, not whichever child happened to end first."""
-        root, _ = _make_command("pr", "claude-review")
+        root, _ = _make_command("pr", "review")
         otto_log.cmd_show(argparse.Namespace(
             invocation=root, only=False, json=False))
         header = capsys.readouterr().out.splitlines()[0]
         assert re.search(r"\d+\.\d+s", header)
 
     def test_show_labels_each_event_with_the_script_that_wrote_it(self, capsys):
-        root, _ = _make_command("pr", "claude-review")
+        root, _ = _make_command("pr", "review")
         otto_log.cmd_show(argparse.Namespace(
             invocation=root, only=False, json=False))
         body = capsys.readouterr().out.splitlines()[3:]
-        assert any("claude-review" in line for line in body)
+        assert any("review" in line for line in body)
 
     def test_a_single_process_command_keeps_the_unlabelled_layout(self, capsys):
         """Nothing to tell apart, so the column would be the same on every line."""
@@ -278,7 +278,7 @@ class TestCommandCorrelation:
     def test_only_reports_that_processes_own_duration(self, capsys):
         """The header must not go looking for a finish under the root's ID when
         no event in the narrowed listing carries it."""
-        _, child = _make_command("pr", "claude-review")
+        _, child = _make_command("pr", "review")
         otto_log.cmd_show(argparse.Namespace(
             invocation=child, only=True, json=False))
         header = capsys.readouterr().out.splitlines()[0]
@@ -294,7 +294,7 @@ class TestCommandCorrelation:
         assert rows[0]["script"] == "pr"
 
     def test_list_counts_every_event_in_the_command(self, capsys):
-        root, _ = _make_command("pr", "claude-review")
+        root, _ = _make_command("pr", "review")
         otto_log.cmd_list(argparse.Namespace(
             script=None, since=None, repo=None, json=True))
         row = json.loads(capsys.readouterr().out.splitlines()[0])
@@ -329,14 +329,14 @@ class TestCommandCorrelation:
                         invocation="aaaa", script="pr", action="dispatch"),
             _raw_record(ts=f"{now - timedelta(minutes=5):%Y-%m-%dT%H:%M:%SZ}",
                         invocation="bbbb", root="aaaa",
-                        script="claude-review", action="work"),
+                        script="review", action="work"),
         )
 
         otto_log.cmd_list(argparse.Namespace(
             script=None, since="1h", repo=None, json=True))
         rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
         assert len(rows) == 1
-        assert rows[0]["scripts"] == ["pr", "claude-review"]
+        assert rows[0]["scripts"] == ["pr", "review"]
         assert rows[0]["ts"].startswith(f"{started:%Y-%m-%dT%H}")
 
     def test_list_names_the_command_by_its_outermost_script(self, capsys):

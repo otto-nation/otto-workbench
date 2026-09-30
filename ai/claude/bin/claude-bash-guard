@@ -46,7 +46,7 @@ SLEEP_WAIT_THRESHOLD_SECONDS=10
 # _branch_review_has_open_findings — true when a self-review for the current
 # branch is sitting on unticked findings.
 #
-# The directory name is the one ai/lib/cli/claude_review.py builds:
+# The directory name is the one ai/lib/cli/review_entry.py builds:
 # <repo>-self-<branch with / replaced by ->. Spelled out rather than sourced
 # because this hook runs per Bash call and cannot afford a Python start-up; a
 # rename there makes this find nothing, which fails open.

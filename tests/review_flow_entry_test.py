@@ -41,7 +41,7 @@ from review import run as review_run  # noqa: E402
 from review import worktree as review_worktree  # noqa: E402
 
 
-from cli import claude_review  # noqa: E402
+from cli import review_entry  # noqa: E402
 
 
 @pytest.fixture
@@ -52,13 +52,13 @@ def cr():
     module now, and importing it gives every caller the one module object the
     interpreter already holds.
     """
-    return claude_review
+    return review_entry
 
 
 # ── the real parser ──────────────────────────────────────────────────────────
 #
 # The two argparse tests these replace built a throwaway ArgumentParser and
-# asserted that argparse works. Nothing pointed at claude-review's own parser,
+# asserted that argparse works. Nothing pointed at review's own parser,
 # so every flag below could have been renamed or dropped with the suite green.
 
 

@@ -298,11 +298,11 @@ def test_review_recover_mutually_exclusive_with_post():
 
 
 def test_review_recover_passes_through_to_delegate():
-    """--recover alone is forwarded to claude-review."""
+    """--recover alone is forwarded to review."""
     ctx = make_ctx()
     with patch("core.publishing.call_entry_point", return_value=0) as mock_call:
         pr_cli.cmd_review(["--recover", "42"], ctx, bin_dir=BIN_DIR)
-    assert mock_call.call_args[0][0] == "cli.claude_review:main"
+    assert mock_call.call_args[0][0] == "cli.review_entry:main"
     cmd = mock_call.call_args[0][1]
     assert "--recover" in cmd
 
@@ -522,7 +522,7 @@ def test_cmd_comments_finish_passes_flag(mock_call):
 @patch("core.publishing.call_entry_point", return_value=0)
 def test_cmd_review_does_not_rewrite_domain_after_delegate(
         mock_call, mock_sync, reviews_dir):
-    """claude-review already wrote the domain; pr must not write it again."""
+    """review already wrote the domain; pr must not write it again."""
     mock_call.return_value = 0
     rc = pr_cli.cmd_review(["123"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
     assert rc == 0
@@ -613,7 +613,7 @@ def test_cmd_fix_dispatches_review_when_findings(mock_load, mock_call):
     ctx = make_ctx()
     rc = _cmd_fix([], ctx)
     assert rc == 0
-    cmd = _first_call_containing(mock_call, "claude-review")
+    cmd = _first_call_containing(mock_call, "review")
     assert "--self" in cmd
     assert "--fix" in cmd
 
@@ -644,7 +644,7 @@ def test_cmd_fix_names_the_target_its_parent_locked(mock_load, mock_call):
     _cmd_fix([], make_ctx(pr_number=4242), original_pr=None,
                    original_branch=None)
 
-    cmd = _first_call_containing(mock_call, "claude-review")
+    cmd = _first_call_containing(mock_call, "review")
     assert ["--pr", "4242"] == cmd[cmd.index("--pr"):cmd.index("--pr") + 2]
     # Exactly one target flag: pr_context.resolve() rejects both at once.
     assert "--branch" not in cmd
@@ -669,7 +669,7 @@ def test_cmd_fix_prefers_the_target_the_operator_named(mock_load, mock_call):
     _cmd_fix([], make_ctx(pr_number=4242), original_pr="99",
                    original_branch=None)
 
-    cmd = _first_call_containing(mock_call, "claude-review")
+    cmd = _first_call_containing(mock_call, "review")
     assert ["--pr", "99"] == cmd[cmd.index("--pr"):cmd.index("--pr") + 2]
 
 
@@ -687,7 +687,7 @@ def test_cmd_fix_skips_review_when_no_findings_on_this_commit(mock_load, mock_ca
     mock_call.return_value = 0
     rc = _cmd_fix([], make_ctx(head_sha="abc123"))
     assert rc == 0
-    assert not _calls_containing(mock_call, "claude-review")
+    assert not _calls_containing(mock_call, "review")
 
 
 # ── A cached "nothing to do" is only about the commit it was measured on ─────
@@ -714,7 +714,7 @@ def test_cmd_fix_reviews_again_when_the_clean_verdict_was_another_commit(
     mock_load.return_value = state
     mock_call.return_value = 0
     _cmd_fix([], make_ctx(head_sha="abc123"))
-    assert _calls_containing(mock_call, "claude-review")
+    assert _calls_containing(mock_call, "review")
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
@@ -730,7 +730,7 @@ def test_cmd_fix_reviews_again_when_the_verdict_names_no_commit(mock_load, mock_
     mock_load.return_value = state
     mock_call.return_value = 0
     _cmd_fix([], make_ctx(head_sha="abc123"))
-    assert _calls_containing(mock_call, "claude-review")
+    assert _calls_containing(mock_call, "review")
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
@@ -751,7 +751,7 @@ def test_cmd_fix_reviews_again_when_head_cannot_be_resolved(mock_load, mock_call
     mock_load.return_value = state
     mock_call.return_value = 0
     _cmd_fix([], make_ctx(head_sha=""))
-    assert _calls_containing(mock_call, "claude-review")
+    assert _calls_containing(mock_call, "review")
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
@@ -840,7 +840,7 @@ def test_cmd_fix_does_not_check_ci_that_never_ran_against_a_matching_sha(
 
 
 _SCRIPT_HANDLERS = {
-    "claude-review": "cli.claude_review:main",
+    "review": "cli.review_entry:main",
     "ci-check": "cli.ci_check:main",
     "pr-describe": "cli.pr_describe:main",
     "pr-rebase": "cli.pr_rebase:main",
@@ -888,7 +888,7 @@ def test_cmd_fix_stops_when_the_review_refuses_the_branch(mock_load, mock_call):
     assert rc == supersession.EXIT_SUPERSEDED
     # Not even pr-describe: nothing after the refusal gets to act on the branch.
     assert [call.args[0] for call in mock_call.call_args_list] == [
-        "cli.claude_review:main",
+        "cli.review_entry:main",
     ]
 
 
@@ -1060,7 +1060,7 @@ def test_review_takes_a_bare_pr_number(mock_resolve, mock_call):
     with _record_arity_reads() as read:
         _run_main("review", _TEST_PR)
     cmd = _delegate_cmd(mock_call)
-    assert mock_call.call_args[0][0] == "cli.claude_review:main"
+    assert mock_call.call_args[0][0] == "cli.review_entry:main"
     assert cmd[cmd.index("--pr") + 1] == _TEST_PR
     assert "--self" not in cmd
     assert read == ["review"]
@@ -2031,7 +2031,7 @@ def test_cmd_fix_still_withholds_its_other_flags_from_describe(tmp_path):
 
 # ── The review gate asks about the commit the review will read ──────────────
 #
-# `ctx.head_sha` is the PR's *remote* head under `--pr`, while `claude-review
+# `ctx.head_sha` is the PR's *remote* head under `--pr`, while `review
 # --self` reads the worktree (`review.pipeline._with_local_diff`). Asking the
 # review gate about the remote head skipped the review after a clean pass
 # followed by unpushed commits — the local tree nobody had read was the one it
@@ -2055,7 +2055,7 @@ def test_cmd_fix_reviews_unpushed_local_commits(mock_load, mock_call):
     # `--pr` resolves ctx.head_sha to the remote head; the checkout has moved on.
     _cmd_fix([], make_ctx(head_sha="remote"), worktree_head="local")
 
-    assert _calls_containing(mock_call, "claude-review")
+    assert _calls_containing(mock_call, "review")
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
@@ -2076,7 +2076,7 @@ def test_cmd_fix_still_skips_when_the_checkout_is_on_the_reviewed_commit(
 
     _cmd_fix([], make_ctx(head_sha="remote"), worktree_head="local")
 
-    assert not _calls_containing(mock_call, "claude-review")
+    assert not _calls_containing(mock_call, "review")
 
 
 def test_the_review_subject_falls_back_when_the_checkout_is_gone():

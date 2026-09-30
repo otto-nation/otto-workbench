@@ -1,6 +1,6 @@
 ---
 paths:
-  - "ai/bin/claude-review"
+  - "ai/bin/review"
   - "ai/bin/review-*"
   - "ai/bin/ci-check"
   - "ai/bin/pr"
@@ -8,7 +8,7 @@ paths:
   - "ai/claude/agents/reviewer.md"
 ---
 
-# claude-review Development
+# review Development
 
 When adding or modifying a review phase, verify these integration points:
 - `review/types.py`: `SEVERITIES` list, `SeverityConfig` fields (`posting`, `body_group`, `section`, `aliases`), `severity_by_key()`
@@ -140,7 +140,7 @@ agent, the retry and the landing are the engine's. The agent answers on a
 generated tracking file rather than on `review.md`, so what the review document
 says is what the pass decided rather than what an agent happened to edit.
 
-## Debugging claude-review
+## Debugging review
 
 Review artifacts live in `~/.local/state/workbench/reviews/{repo}-{pr_or_branch}/`:
 
@@ -156,7 +156,7 @@ Review artifacts live in `~/.local/state/workbench/reviews/{repo}-{pr_or_branch}
 
 The review's trail is not in this directory. Every script appends to one root —
 `~/.local/state/workbench/trail/YYYY-MM.jsonl`. Read it with
-`otto-log query --pr <n>`. One review is three processes — `pr`, `claude-review`
+`otto-log query --pr <n>`. One review is three processes — `pr`, `review`
 and `review-orchestrate`, each with its own invocation — so reach for
 `otto-log show <invocation>` to get all three as one timeline; any of the three
 IDs finds the same run, and `--only` narrows back to the one process. When a
@@ -192,7 +192,7 @@ messages on stderr.
 |------------|--------|------------------|
 | `pr ci` | `ci-check` | script (updates state directly) |
 | `pr ci --fix` | `ci-check --fix` | script (updates state directly) |
-| `pr review` | `claude-review` | script (updates state directly) |
+| `pr review` | `review` | script (updates state directly) |
 | `pr review --post` | `review-post` | `pr` wrapper |
 | `pr review --repair` | `review-rebuild` (fallback) | `pr` wrapper |
 | `pr review --summary` | none (local computation) | none |
@@ -202,7 +202,7 @@ messages on stderr.
 | `pr comments --finish` | `review-threads --finish` | script (updates state directly) |
 | `pr rebase` | `pr-rebase` | script (updates state directly) |
 | `pr gc` | none (local via `review_gc`) | none |
-| `pr fix` | `claude-review` (--fix), `ci-check` (--fix) | none |
+| `pr fix` | `review` (--fix), `ci-check` (--fix) | none |
 | `pr status` | none (reads cached state) | none |
 
 ### Adding a new subcommand

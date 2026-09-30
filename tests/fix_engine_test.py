@@ -1904,6 +1904,35 @@ class TestVerifySuite:
 
         assert landed.called
 
+    def test_after_verify_sees_the_suite_verdict_not_a_stale_one(
+        self, tmp_path, landed, head, snapshots,
+    ):
+        """A red suite has to reach the hook that decides whether to publish.
+
+        `after_verify` is where a domain stops the round speaking outward, and
+        `pr.triage_round.hold_after_verify` describes the case it exists for
+        as "something ran and the fix did not hold" — which is a red suite in
+        as many words. Running the suite after this hook let the comments pass
+        reply `Fixed in <sha>` to a reviewer over a tree whose checks were
+        failing, because the verdict landed after the only thing that could
+        have held it.
+        """
+        adapter = self._configured(tmp_path, self._script(tmp_path, "exit 1"))
+        snapshots.side_effect = _reads(set(), {"a.py"})
+        seen = {}
+        adapter.after_verify = lambda outcomes: seen.update(
+            verified=[o.verified for o in outcomes],
+            suite=adapter.suite.status,
+        )
+
+        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
+            fix_engine.run(adapter)
+
+        assert seen["suite"] is fix_suite.SuiteStatus.RED
+        assert seen["verified"] == [False], (
+            "after_verify saw the per-item gate's verdict but not the suite's"
+        )
+
     def test_a_pass_that_claimed_nothing_does_not_pay_for_the_checks(
         self, tmp_path, landed, head, snapshots,
     ):

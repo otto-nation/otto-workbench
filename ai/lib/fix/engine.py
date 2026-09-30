@@ -367,17 +367,16 @@ class FixAdapter(ABC):
     def after_verify(self, outcomes: list[ItemOutcome]) -> None:
         """A domain's last word before the commit is landed and pushed.
 
-        Called once the per-item gate has spoken, and before `landing`. The
-        window matters: a domain that wants to stop the pass asserting anything
-        outward — because the gate falsified a fix, or the agent handed an item
-        back — has to say so before the push reads the publishing gate, and
-        `record` is too late for that.
+        Called once both gates have spoken — the per-item verify gate and the
+        batch suite — and before `landing`. The window matters: a domain that
+        wants to stop the pass asserting anything outward — because a gate
+        falsified a fix, the repo's own checks came back red, or the agent
+        handed an item back — has to say so before the push reads the
+        publishing gate, and `record` is too late for that.
 
-        Outcomes are final only with respect to that per-item gate, not the
-        batch suite: `_verify_suite` runs after this and can still flip a fixed
-        outcome's `verified` to False if the repo's own checks come back red.
-        An override that decides from `outcome.verified` is reading its state
-        at this instant, not its last word.
+        The suite's verdict is deliberately upstream of this rather than after
+        it. An override reading `outcome.verified` here is reading its final
+        value, which is what makes a red suite able to hold a round's replies.
 
         A no-op by default. What a falsified fix means is the domain's call,
         not the pipeline's: the comments pass owes a reviewer a reply and must
@@ -954,23 +953,28 @@ def run(
         scope_for=settled.scope_for,
     )
 
-    # Between the gate and the push, which is the only window that works: the
-    # per-item gate has spoken here, and `land` below reads the publishing gate
-    # a domain may want to close on the strength of its verdict. The batch
-    # suite a few lines down can still flip a fixed outcome's `verified` after
-    # this runs, so a domain reading that field here sees it as the per-item
-    # gate left it, not as the suite may yet leave it.
-    adapter.after_verify(settled.outcomes)
-
     # After the agent and before the commit — the one moment the difference is
     # the agent's work and nothing else's.
     changed = fix_scope.agent_changed(adapter.workdir, dirty_before)
 
-    # Between the agent's edits and the body that describes them. The two
+    # Between the agent's edits and everything that reports on them. The two
     # agents above check the pass's claims; this is the only thing that asks
-    # whether the pass broke something no claim mentions, and it has to run
-    # here because `landing` renders the commit message from these outcomes.
+    # whether the pass broke something no claim mentions.
+    #
+    # Before `after_verify`, not after. That hook is where a domain decides
+    # whether the round may speak outward, and `pr.triage_round`'s own words
+    # for the case it exists to catch — "something ran and the fix did not
+    # hold" — are a description of a red suite. Running it afterwards let the
+    # comments pass reply `Fixed in <sha>` to a reviewer over a tree whose
+    # checks were failing, because the verdict arrived after the only hook
+    # that could have stopped it.
     adapter.suite = _verify_suite(adapter, settled.outcomes, changed, trail)
+
+    # Between the verdicts and the push, which is the only window that works:
+    # both gates have spoken here — the per-item one above and the batch suite
+    # just now — and `land` below reads the publishing gate a domain may want
+    # to close on the strength of either.
+    adapter.after_verify(settled.outcomes)
 
     if changed is None:
         # Reported here rather than by each adapter. Every one of them owes the

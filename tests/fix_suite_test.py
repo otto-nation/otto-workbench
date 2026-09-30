@@ -174,13 +174,10 @@ def test_a_declaration_that_parses_to_nothing_is_an_error_not_an_absence(tmp_pat
 
     `shlex.split` does not treat `#` as a comment marker by default, so
     `"# nothing here"` does not parse to an empty argv — it tokenizes to
-    `['#', 'nothing', 'here']`, and fails because no program named `#` can be
-    started. That is the `except OSError` branch in `fix.suite.run`, not the
-    `if not argv:` branch a `#`-only declaration might suggest; both land on
-    `SuiteStatus.ERROR`, but for different reasons. The `if not argv:` branch
-    is not reachable through `run`'s public surface: any string that is not
-    all whitespace already produces at least one shlex token, and an
-    all-whitespace string is caught earlier as `NOT_DECLARED`.
+    `['#', 'nothing', 'here']` and fails because no program named `#` can be
+    started, through the `except OSError` path. An earlier version of this
+    test claimed to exercise an empty-argv guard; no input reaches one, which
+    is why `run` no longer carries that branch.
     """
     result = fix_suite.run(tmp_path, "   ", 30)
     assert result.status is fix_suite.SuiteStatus.NOT_DECLARED

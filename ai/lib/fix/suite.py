@@ -210,19 +210,13 @@ def run(
             status=SuiteStatus.ERROR, command=command,
             output_tail=f"could not parse fix.verify_command: {exc}",
         )
-    if not argv:
-        # A declaration that parsed to nothing. `shlex.split` does not treat
-        # `#` as a comment marker by default — a lone `#` still tokenizes to
-        # `['#']` and fails later as a missing executable — so this guards
-        # the case where `shlex`'s own behavior ever changes underneath this
-        # call, or a future argument to `shlex.split` enables comment
-        # stripping. Carried with its text rather than reported as an absent
-        # command, so its author is not sent looking for a key they had
-        # already set.
-        return SuiteResult(
-            status=SuiteStatus.ERROR, command=command,
-            output_tail="fix.verify_command parsed to an empty argv",
-        )
+    # No empty-argv branch below. `command.strip()` is already non-empty here,
+    # and `shlex.split` returns a token for every non-blank input — `#` is not
+    # a comment marker unless `comments=True`, which this does not pass, so
+    # even a lone `#` tokenizes to `['#']` and fails as a missing executable
+    # through the OSError path. A guard for the empty case would be a branch
+    # for a condition nothing reaches, which is the dead code the fix prompt's
+    # own rules forbid — it was written here once and removed for that reason.
 
     if timeout_s <= 0:
         # `Popen.communicate(timeout=...)` treats a non-positive timeout as

@@ -2343,7 +2343,9 @@ thing to do at all?" — and refuse on the same exit code, with the same
 | Signal | What it reads | When it fires |
 |---|---|---|
 | `no_merge_base` | `git merge-base <base> HEAD` exits nonzero | The branch and its base share no commit |
-| `conflicts_over_budget` | distinct conflicted files across the whole rebase | The count passes `_CONFLICT_FILE_BUDGET` |
+| `partially_landed` | a prefix of the branch's commits already in the base | Some, but not all, of the branch landed |
+| `conflicts_over_budget` | distinct conflicted files across the whole rebase | The count passes `CONFLICT_FILE_BUDGET` |
+| `resolutions_over_budget` | resolution calls spent across the whole rebase | The count passes `CONFLICT_RESOLUTION_BUDGET` |
 
 `no_merge_base` is exact rather than heuristic, and it costs one local git
 command, so it is asked before the landed signals rather than after them — those
@@ -2359,19 +2361,41 @@ verifies the ref names a commit first and passes when it does not — refusing
 those as unrelated history would send the operator after a root they do not
 have, where git's own error for the missing ref says what actually went wrong.
 
-The budget is the circuit breaker for what that produces. Conflict resolution is
-an AI call per conflicted file, with edit access to the worktree, and the wider
-the spread the less any single call can tell an intended change from an
-unrelated one — which is how a rebase resolving 51 conflicts rewrote
+`partially_landed` is what the two landed signals above cannot express. Both ask
+whether the branch's work is *entirely* in the base, so a branch whose first six
+commits landed and whose seventh has not reads to them exactly like a branch
+that landed nothing. Replaying such a branch onto the base reapplies the six
+that are already there, conflicting each of them against itself — which is the
+shape that burns a resolution call per file per commit and rewrites the base's
+version back to the branch's. Patch ids do not catch it either: one amendment
+early in the landed prefix changes the context lines of every later commit's
+hunks, so `git cherry` reports every one of them as unlanded.
+
+It is the one refusal that carries a remedy the tool can execute. `--fork-point
+<ref>` supplies git's `<upstream>` argument, so the replay is
+`git rebase --onto <base> <ref>` — the landed prefix is skipped and only the
+commits after it are replayed. The refusal names the exact ref to pass, because
+a refusal whose remedy the tool cannot express is a dead end.
+
+The budgets are the circuit breaker for what all of this produces. Conflict
+resolution is an AI call per conflicted file, with edit access to the worktree,
+and the wider the spread the less any single call can tell an intended change
+from an unrelated one — which is how a rebase resolving 51 conflicts rewrote
 `bin/otto-workbench`, a file the branch never touched, into invalid bash. Past
-the budget the rebase is aborted before the first resolution call, so the
+either budget the rebase is aborted before the next resolution call, so the
 worktree is left clean rather than half-replayed.
 
-The count is of *distinct files* across the whole rebase, not conflicts: a file
-conflicting in every replayed commit is one file's worth of risk, and counting
-it once per commit would refuse a narrow rebase over a long branch. The tally
-carries across steps, so a rebase that widens gradually is refused at the step
-that crosses the line rather than never.
+`conflicts_over_budget` counts *distinct files* across the whole rebase, not
+conflicts: a file conflicting in every replayed commit is one file's worth of
+risk, and counting it once per commit would refuse a narrow rebase over a long
+branch. The tally carries across steps, so a rebase that widens gradually is
+refused at the step that crosses the line rather than never.
+
+`resolutions_over_budget` counts the calls themselves, and exists because the
+first count is deliberately blind to repetition. Nine files conflicting in each
+of seven replayed commits is a spread of nine — a quarter of the file budget —
+while the run spends sixty-three AI calls. One measures how much of the tree is
+at risk; the other measures how much the run is spending to find out.
 
 A resumed rebase waives the budget. The conflicts are already sitting in the
 worktree by then; refusing would strand it mid-rebase with no path forward
@@ -4240,6 +4264,15 @@ Three signals, in the order `check` tries them, none of them sufficient alone:
   squash merge once the target ref has moved on, and the only one that costs a
   round trip, which is why the ladder reaches it last.
 
+`partial_landing` answers a fourth question the three above cannot, and only
+`pr rebase` asks it: whether a *prefix* of the branch is upstream while the
+rest is not. All three signals here are all-or-nothing — they report the
+branch's work present or absent — so a branch six of whose seven commits have
+landed reads to every one of them as a branch that landed nothing. It is kept
+apart from `check`'s ladder because it is not evidence the work is done: it is
+evidence that replaying the branch whole would reapply the landed part on top
+of itself, which is a different finding with a different remedy.
+
 Every one of them answers "no" rather than raising when it cannot ask: a ref
 that does not resolve, a base that was never fetched, a `gh` that is absent,
 unauthenticated or offline. "Landed" is the answer that suppresses something —
@@ -5113,6 +5146,7 @@ Usage:
   pr-rebase --force                   # rebase even when the branch already landed
   pr-rebase --abort                   # abort in-progress rebase
   pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref
+  pr-rebase --fork-point <ref>        # replay only the commits after <ref>
   pr-rebase --repo-dir <path>         # specify worktree directory
 
 ### cli/registry.py

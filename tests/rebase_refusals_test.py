@@ -1,5 +1,6 @@
 """Tests for rebase.refusals — the preflight, and what a refusal guarantees."""
 
+import json
 import sys
 from pathlib import Path
 from unittest import mock
@@ -106,8 +107,16 @@ class TestRefuse:
         assert outcome.status is RebaseStatus.ALREADY_LANDED
 
 
+def _spread_breach(spread: int = 40) -> refusals.BudgetBreach:
+    return refusals.BudgetBreach(
+        signal=rebase_types.RefusalSignal.CONFLICTS_OVER_BUDGET,
+        detail=f"conflicts in {spread} files, over the "
+               f"{rebase_types.CONFLICT_FILE_BUDGET}-file budget",
+    )
+
+
 class TestRefuseOverBudget:
-    """The only refusal raised mid-rebase — so it has a worktree to restore."""
+    """The only refusals raised mid-rebase — so they have a worktree to restore."""
 
     def test_it_aborts_before_refusing(self):
         commands = []
@@ -119,7 +128,7 @@ class TestRefuseOverBudget:
         with mock.patch.object(git_client, "run", side_effect=fake_run), \
              mock.patch.object(rebase_types.RebaseOutcome, "save"):
             rc = refusals.refuse_over_budget(
-                "/fake", _ctx(), 40, target_ref=_TARGET)
+                "/fake", _ctx(), _spread_breach(), target_ref=_TARGET)
 
         assert rc == refusals.REFUSAL_EXIT
         assert ("rebase", "--abort") in commands
@@ -128,7 +137,23 @@ class TestRefuseOverBudget:
         with mock.patch.object(git_client, "run",
                                return_value=mock.Mock(ok=True, returncode=0)), \
              mock.patch.object(rebase_types.RebaseOutcome, "save"):
-            refusals.refuse_over_budget("/fake", _ctx(), 40, target_ref=_TARGET)
+            refusals.refuse_over_budget(
+                "/fake", _ctx(), _spread_breach(), target_ref=_TARGET)
 
         err = capsys.readouterr().err
-        assert "40" in err and str(refusals.CONFLICT_FILE_BUDGET) in err
+        assert "40" in err and str(rebase_types.CONFLICT_FILE_BUDGET) in err
+
+    def test_the_resolution_budget_carries_its_own_signal(self, capsys):
+        """One status, two signals — the caller must not have to guess."""
+        with mock.patch.object(git_client, "run",
+                               return_value=mock.Mock(ok=True, returncode=0)), \
+             mock.patch.object(rebase_types.RebaseOutcome, "save"):
+            refusals.refuse_over_budget("/fake", _ctx(), refusals.BudgetBreach(
+                signal=rebase_types.RefusalSignal.RESOLUTIONS_OVER_BUDGET,
+                detail="63 conflict resolutions across 9 file(s), over the "
+                       f"{rebase_types.CONFLICT_RESOLUTION_BUDGET}-resolution budget",
+            ), target_ref=_TARGET)
+
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["signal"] == "resolutions_over_budget"
+        assert "63" in payload["detail"]

@@ -28,6 +28,8 @@ if str(LIB_DIR) not in sys.path:
 from git import client as git_client  # noqa: E402
 from rebase import inspect as rebase_inspect  # noqa: E402
 from rebase import lifecycle  # noqa: E402
+from rebase import stash as rebase_stash  # noqa: E402
+from rebase import types as rebase_types  # noqa: E402
 
 
 def _write(repo: Path, name: str, body: str) -> None:
@@ -154,6 +156,72 @@ class TestRerereIsHeldOff:
 
         assert rebase_inspect.detect_conflicts(str(repo)) == ["f.txt"]
         assert "AI-WROTE-THIS" not in (repo / "f.txt").read_text()
+
+
+class TestRerereIsHeldOffTheStashPopToo:
+    """`git stash pop` is the second doorway, and it was left open.
+
+    `lifecycle` passes the hold-off to all three of its `git rebase` calls and
+    `stash.py` omitted it. A pop is a merge of the stashed worktree onto the
+    rebased branch, so rerere is as live there as in any rebase step — which
+    means a cached resolution could be replayed into the user's restored
+    uncommitted work, and this run's unreviewed AI resolutions recorded into
+    the shared cache. One doorway held shut and a second left open is the same
+    regression, not a smaller one.
+
+    Driven against a real repo because the claim is about what git does on its
+    own when the config says nothing — which is the half no argv assertion can
+    reach.
+    """
+
+    def _stash_conflict(self, tmp_path) -> Path:
+        """A repo where popping the stash conflicts, with rerere already on.
+
+        `rr-cache` existing is what turns rerere on, and it is the state every
+        worktree on a machine that has ever run this is already in.
+        """
+        repo = init_repo(tmp_path / "repo")
+        _write(repo, "f.txt", "a\nb\nc\n")
+        git_in(repo, "add", "f.txt")
+        git_in(repo, "commit", "-q", "-m", "base")
+        _rr_cache(repo).mkdir(parents=True, exist_ok=True)
+
+        _write(repo, "f.txt", "a\nSTASHED\nc\n")
+        git_in(repo, "stash", "push", "-u", "-m", rebase_stash.STASH_MSG)
+
+        _write(repo, "f.txt", "a\nREBASED\nc\n")
+        git_in(repo, "commit", "-q", "-am", "feat: moved under the stash")
+        return repo
+
+    # passes-at-base: asserts git's own behaviour, which is the premise the fix answers
+    def test_rerere_is_live_during_a_pop_when_nothing_holds_it_off(self, tmp_path):
+        """The premise, proved rather than assumed.
+
+        If git did not record during a pop, the fix would be pointless. It
+        does: a bare pop leaves a preimage in the shared cache.
+        """
+        repo = self._stash_conflict(tmp_path)
+        git_client.run("stash", "pop", cwd=str(repo))
+
+        assert _cached_resolutions(repo) != []
+
+    def test_the_pop_records_nothing_under_the_hold_off(self, tmp_path):
+        repo = self._stash_conflict(tmp_path)
+        git_client.run("stash", "pop", cwd=str(repo),
+                       config=rebase_stash.RERERE_CONFIG)
+
+        assert _cached_resolutions(repo) == []
+
+    def test_the_unstash_path_passes_it(self, tmp_path):
+        """Through `auto_unstash`, which is what a run actually calls."""
+        repo = self._stash_conflict(tmp_path)
+        rebase_stash.auto_unstash(str(repo), rebase_types.RunMode.REBASE_ONLY)
+
+        assert _cached_resolutions(repo) == []
+
+    def test_it_is_the_same_constant_the_rebase_steps_use(self):
+        """One owner, so the next doorway cannot be held shut by a second copy."""
+        assert rebase_stash.RERERE_CONFIG is lifecycle.RERERE_CONFIG
 
 
 class TestUnattendedEditor:

@@ -11,9 +11,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent import invoke as agent_invoke
+from agent import retry as agent_retry
 from core import log
 from core.phases import Phase
-from core.trail import Trail, billed_to, terr, tfail, tinfo
+from core.trail import Trail, billed_to, terr, tfail, tinfo, tspan
 from git import regenerate as regen
 
 from . import conflicts
@@ -24,6 +25,7 @@ ConflictBlock = rebase_types.ConflictBlock
 ConflictPlan = rebase_types.ConflictPlan
 ConflictStrategy = rebase_types.ConflictStrategy
 GeneratedSignal = rebase_types.GeneratedSignal
+ParseFailure = rebase_types.ParseFailure
 Regenerator = regen.Regenerator
 RegenQueue = regen.RegenQueue
 Resolution = rebase_types.Resolution
@@ -171,6 +173,34 @@ def build_chunked_prompt(
     return "".join(parts)
 
 
+# ── Retry hints ──────────────────────────────────────────────────────────
+
+# Which correction each parse failure earns. Keyed on the failure's own enum
+# value, which the parsers put at the front of every reason string, so a new
+# failure mode that is not listed falls through to the generic wording rather
+# than silently inheriting another failure's correction.
+_HINT_FOR_FAILURE = {
+    ParseFailure.ECHOED_CONTEXT: agent_retry.ECHOED_CONTEXT_HINT,
+    ParseFailure.WHOLLY_ECHOED: agent_retry.ECHOED_CONTEXT_HINT,
+    ParseFailure.SURVIVING_CONFLICT_MARKER: agent_retry.SURVIVING_MARKER_HINT,
+}
+
+
+def hint_for_reason(reason: str) -> str:
+    """The retry correction that names *reason*, or the generic marker wording.
+
+    A reason is the failure's enum value with the block index and the offending
+    text appended, so the match is on the prefix — anchored at the start and at
+    a separator, not a bare substring, since ``echoed_context`` and
+    ``wholly_echoed_context`` would otherwise match each other.
+    """
+    head = reason.split(":", 1)[0].split("_in_block_", 1)[0]
+    for failure, hint in _HINT_FOR_FAILURE.items():
+        if head == failure.value or head.startswith(f"{failure.value}_"):
+            return hint
+    return agent_retry.BLANK_RESPONSE_HINT
+
+
 # ── Resolution paths ─────────────────────────────────────────────────────
 
 def resolve_full_file(
@@ -189,6 +219,12 @@ def resolve_full_file(
         Phase.REBASE, prompt, cwd=cwd,
         label=f"conflict resolution for {filepath}",
         usable=conflicts.resolution_parses, task="conflict-resolve",
+        # The retry is told what this answer got wrong rather than the generic
+        # marker wording: a resolution that copied the conflict markers through
+        # needs to be told to merge them, not to emit markers it already did.
+        retry_hint=lambda text: hint_for_reason(
+            conflicts.parse_resolved_content(text)[1],
+        ),
         **billed_to(trail),
     )
     if answer.exit_code != 0:
@@ -232,8 +268,15 @@ def resolve_chunked(
     answer = agent_invoke.run_prompt(
         Phase.REBASE, prompt, cwd=cwd,
         label=f"chunked resolution for {filepath}",
-        usable=lambda s: conflicts.parse_chunked_resolutions(s, blocks)[0] is not None,
+        usable=lambda s: conflicts.parse_chunked_resolutions(s, blocks).ok,
         task="conflict-resolve-chunked",
+        # The parser's own failure reason picks the correction. Discarding it
+        # and taking the default is what sent a lecture about emitting markers
+        # to an answer whose markers were perfect and whose mistake was
+        # repeating the context back.
+        retry_hint=lambda text: hint_for_reason(
+            conflicts.parse_chunked_resolutions(text, blocks).reason,
+        ),
         **billed_to(trail),
     )
     if answer.exit_code != 0:
@@ -242,18 +285,34 @@ def resolve_chunked(
         log.error(f"ai prompt failed for {filepath} (exit {answer.exit_code})")
         return None
 
-    resolutions, failure_reason = conflicts.parse_chunked_resolutions(answer.text, blocks)
-    if resolutions is None:
+    parsed = conflicts.parse_chunked_resolutions(answer.text, blocks)
+    if not parsed.ok:
         tfail(
             trail, "resolve_conflicts",
             f"failed to parse chunked resolution for {filepath}",
             output=answer.text,
-            data={"filepath": filepath, "reason": failure_reason},
+            data={"filepath": filepath, "reason": parsed.reason},
         )
-        log.error(f"Failed to parse chunked resolution for {filepath} ({failure_reason})")
+        log.error(f"Failed to parse chunked resolution for {filepath} ({parsed.reason})")
         return None
 
-    resolved_content = conflicts.splice_resolutions(content, blocks, resolutions)
+    if parsed.repaired:
+        # Recorded rather than passed over in silence: the trim is exact, but
+        # it is still this process editing the model's answer, and a run whose
+        # resolutions were mostly repaired is a prompt that needs looking at.
+        tinfo(
+            trail, "chunked_resolve",
+            f"trimmed echoed context from {parsed.repaired} of "
+            f"{len(blocks)} block(s) in {filepath}",
+            data={"filepath": filepath, "repaired": parsed.repaired,
+                  "blocks": len(blocks)},
+        )
+        log.dim(f"Trimmed echoed context from {parsed.repaired} block(s) "
+                f"in {filepath}")
+
+    resolved_content = conflicts.splice_resolutions(
+        content, blocks, parsed.resolutions,
+    )
     full_path.write_text(resolved_content)
     if not conflicts.git_add(filepath, cwd):
         return None
@@ -275,10 +334,25 @@ def resolve_single_file(
 
     blocks = conflicts.extract_conflict_blocks(content)
     if blocks and conflicts.should_chunk(content, blocks):
-        return resolve_chunked(
+        resolved = resolve_chunked(
             filepath, full_path, content, blocks, sha, subject, cwd,
             target_ref=target_ref, trail=trail,
         )
+        if resolved is not None:
+            return resolved
+        # The chunked path writes nothing until it has parsed every block, so
+        # a failure leaves the file exactly as it was and the whole-file prompt
+        # is a live second option rather than a repeat. It is also the stronger
+        # one: the failures that get here are about the chunked format itself —
+        # a block's markers missing, or context echoed around the answer — and
+        # neither exists in a prompt that asks for the file entire.
+        tinfo(
+            trail, "chunked_resolve",
+            f"falling back to whole-file resolution for {filepath}",
+            data={"filepath": filepath, "blocks": len(blocks)},
+        )
+        log.warn(f"Chunked resolution failed for {filepath} — "
+                 "retrying as a whole file.")
     return resolve_full_file(
         filepath, full_path, content, sha, subject, cwd,
         target_ref=target_ref, trail=trail,
@@ -385,20 +459,38 @@ def _run_deferred_regenerations(
 def resolve_file_conflicts(
     conflicts_list: list[str], cwd: str, sha: str, subject: str,
     *, target_ref: str, trail: Trail | None = None,
-) -> Resolution | None:
-    """Resolve conflicted files via classify → dispatch → deferred regen."""
+) -> Resolution:
+    """Resolve conflicted files via classify → dispatch → deferred regen.
+
+    Every file in the step is attempted, and one that cannot be resolved is
+    named in ``Resolution.failed`` rather than ending the step. This used to
+    return None at the first failure, which the caller turned into
+    ``git rebase --abort`` — so one unparseable answer for one file destroyed
+    every resolution the run had already made and every commit it had already
+    replayed. Nine files and a completed commit went that way in a single run.
+
+    Carrying on is not a lower standard; it is the same standard applied per
+    file. The files that resolve are staged, the ones that do not are reported,
+    and the caller stops the rebase *in place* so a human or a later
+    ``pr rebase --fix`` picks up from there with the finished work intact.
+    """
     resolved = []
+    unresolved = []
     queue = RegenQueue()
 
     for filepath in conflicts_list:
         full_path = Path(cwd) / filepath
-        plan = conflicts.classify_conflict(filepath, full_path, cwd)
-        if not dispatch_conflict(
-            filepath, full_path, cwd, plan, sha, subject, queue,
-            target_ref=target_ref, trail=trail,
-        ):
-            return None
-        resolved.append(filepath)
+        # One timed pair of events per conflicted file, whatever strategy
+        # resolves it. The gap between them is the only thing that answers
+        # "is this progressing or wedged" while a run is still going, which
+        # is what the skill's trail section tells an operator to read.
+        with tspan(trail, f"resolve_file:{filepath}"):
+            plan = conflicts.classify_conflict(filepath, full_path, cwd)
+            ok = dispatch_conflict(
+                filepath, full_path, cwd, plan, sha, subject, queue,
+                target_ref=target_ref, trail=trail,
+            )
+        (resolved if ok else unresolved).append(filepath)
 
     failed = _run_deferred_regenerations(queue, cwd, trail=trail)
 
@@ -406,4 +498,6 @@ def resolve_file_conflicts(
         terr(trail, "regenerate", "regeneration failed", data={"files": failed})
         log.warn(f"Regeneration failed for: {', '.join(failed)} — lockfiles may be stale")
 
-    return Resolution(files=resolved, stale=queue.unrebuildable + failed)
+    return Resolution(
+        files=resolved, stale=queue.unrebuildable + failed, failed=unresolved,
+    )

@@ -62,15 +62,113 @@ class TestAutoStash:
             assert rebase_stash.auto_stash("/fake") is None
 
 
+_OUR_STASH = "stash@{0}"
+
+
+def _has_our_stash():
+    """Patch the entry lookup so a unit test need not model `git stash list`."""
+    return mock.patch.object(
+        rebase_stash, "auto_stash_ref", return_value=_OUR_STASH,
+    )
+
+
+def _no_rebase():
+    return mock.patch.object(rebase_inspect, "rebase_in_progress",
+                             return_value=False)
+
+
+class TestAutoStashRef:
+    """Which entry to pop, resolved by message rather than assumed to be the top.
+
+    A run that held its stash across a paused rebase pops it in a *later*
+    process, by which time the operator may have stashed something of their
+    own on top — and popping the top entry then restores the wrong work into a
+    rebased tree.
+    """
+
+    def _listing(self, *entries):
+        return mock.patch.object(git_client, "lines", return_value=list(entries))
+
+    def test_it_finds_our_entry_below_someone_elses(self):
+        with self._listing(
+            "stash@{0}\x1fOn feat: my own work",
+            f"stash@{{1}}\x1fOn feat: {rebase_stash.STASH_MSG}",
+        ):
+            assert rebase_stash.auto_stash_ref("/fake") == "stash@{1}"
+
+    def test_a_similarly_named_entry_is_not_ours(self):
+        """Matched on the whole message, not on a substring of the line."""
+        with self._listing(
+            f"stash@{{0}}\x1fOn feat: before {rebase_stash.STASH_MSG} experiment",
+        ):
+            assert rebase_stash.auto_stash_ref("/fake") == ""
+
+    def test_no_entry_of_ours_is_the_empty_string(self):
+        with self._listing("stash@{0}\x1fOn feat: unrelated"):
+            assert rebase_stash.auto_stash_ref("/fake") == ""
+
+
+class TestRestoreHoldsTheStashDuringARebase:
+    """Popping into a conflicted index cannot work, and the advice destroyed work.
+
+    An exit-3 run leaves the rebase in progress by design. The pop then failed,
+    the rebase's own unmerged files were read as stash conflicts, and the tool
+    said "resolve manually, then `git stash drop`" — dropping a stash that had
+    never been applied.
+    """
+
+    def test_it_does_not_pop_while_a_rebase_is_in_progress(self, capsys):
+        with _has_our_stash(), \
+             mock.patch.object(rebase_inspect, "rebase_in_progress",
+                               return_value=True), \
+             mock.patch.object(git_client, "run") as run:
+            rebase_stash.restore("/fake", rebase_types.RunMode.FIX)
+
+        assert not any(args[:2] == ("stash", "pop") for args, _ in run.call_args_list)
+        err = capsys.readouterr().err
+        assert rebase_stash.STASH_MSG in err
+        assert "stash drop" not in err
+
+    def test_it_pops_once_the_rebase_is_over(self):
+        with _has_our_stash(), _no_rebase(), \
+             mock.patch.object(git_client, "run", return_value=_ok()) as run:
+            rebase_stash.restore("/fake", rebase_types.RunMode.FIX)
+
+        assert run.call_args[0][:3] == ("stash", "pop", _OUR_STASH)
+
+    def test_it_is_a_no_op_when_there_is_no_auto_stash(self):
+        with mock.patch.object(rebase_stash, "auto_stash_ref", return_value=""), \
+             mock.patch.object(git_client, "run") as run:
+            rebase_stash.restore("/fake", rebase_types.RunMode.FIX)
+
+        run.assert_not_called()
+
+
 class TestAutoUnstash:
     def test_a_clean_pop_says_so(self, capsys):
-        with mock.patch.object(git_client, "run", return_value=_ok()):
+        with _has_our_stash(), \
+             mock.patch.object(git_client, "run", return_value=_ok()):
             rebase_stash.auto_unstash("/fake", rebase_types.RunMode.PUSH)
         assert "Restored stashed changes" in capsys.readouterr().err
 
+    def test_the_pop_holds_rerere_off(self):
+        """A pop is a merge, so rerere replays into it as into any rebase step.
+
+        `lifecycle` passes this to all three of its `git rebase` calls and this
+        call was the gap — which meant a cached resolution could be replayed
+        into the user's restored work, and this run's unreviewed AI resolutions
+        recorded into the cache every later plain `git rebase` reads.
+        """
+        with _has_our_stash(), \
+             mock.patch.object(git_client, "run", return_value=_ok()) as run:
+            rebase_stash.auto_unstash("/fake", rebase_types.RunMode.PUSH)
+
+        assert run.call_args.kwargs["config"] == {"rerere.enabled": "false"}
+
     def test_a_pop_that_failed_without_conflicts_names_the_stash(self, capsys):
         """Nothing is lost — the entry survives, so the message points at it."""
-        with mock.patch.object(git_client, "run", return_value=_failed()), \
+        with _has_our_stash(), _no_rebase(), \
+             mock.patch.object(git_client, "run", return_value=_failed()), \
              mock.patch.object(rebase_inspect, "detect_conflicts", return_value=[]):
             rebase_stash.auto_unstash("/fake", rebase_types.RunMode.PUSH)
 
@@ -78,9 +176,24 @@ class TestAutoUnstash:
         assert rebase_stash.STASH_MSG in err
         assert "git stash pop" in err
 
+    def test_a_rebases_unmerged_files_are_never_read_as_stash_conflicts(self, capsys):
+        """Defense in depth behind `restore`'s guard, since the advice is lethal."""
+        with _has_our_stash(), \
+             mock.patch.object(rebase_inspect, "rebase_in_progress",
+                               return_value=True), \
+             mock.patch.object(git_client, "run", return_value=_failed()), \
+             mock.patch.object(rebase_inspect, "detect_conflicts",
+                               return_value=["mid_rebase.py"]):
+            rebase_stash.auto_unstash("/fake", rebase_types.RunMode.FIX)
+
+        err = capsys.readouterr().err
+        assert "stash drop" not in err
+        assert rebase_stash.STASH_MSG in err
+
     def test_conflicts_are_left_alone_when_the_run_may_not_resolve(self, capsys):
         """Without --fix the user resolves them, so say so rather than prompting."""
-        with mock.patch.object(git_client, "run", return_value=_failed()), \
+        with _has_our_stash(), _no_rebase(), \
+             mock.patch.object(git_client, "run", return_value=_failed()), \
              mock.patch.object(rebase_inspect, "detect_conflicts",
                                return_value=["a.py"]):
             rebase_stash.auto_unstash("/fake", rebase_types.RunMode.PUSH)
@@ -123,6 +236,7 @@ class TestAutoUnstashResolution:
 
         remaining = [conflicts, [] if resolved else conflicts]
         with mock.patch.object(git_client, "run", side_effect=fake_run), \
+             _has_our_stash(), _no_rebase(), \
              mock.patch.object(rebase_inspect, "detect_conflicts",
                                side_effect=remaining), \
              mock.patch.object(rebase_stash.ai_backend, "is_available",
@@ -143,7 +257,7 @@ class TestAutoUnstashResolution:
             tmp_path, conflicts=[name], answer=self._answer(resolved))
 
         assert (tmp_path / name).read_text() == "merged\n"
-        assert ("stash", "drop") in commands
+        assert ("stash", "drop", _OUR_STASH) in commands
 
     def test_the_prompt_names_the_file_and_both_sides(self, tmp_path):
         name = self._conflicted(tmp_path)
@@ -166,7 +280,7 @@ class TestAutoUnstashResolution:
             answer=self._answer("I could not work out the merge"), resolved=False)
 
         assert (tmp_path / name).read_text() == "<<<<<<< Updated upstream\nmine\n"
-        assert ("stash", "drop") not in commands
+        assert ("stash", "drop", _OUR_STASH) not in commands
 
     def test_a_failed_prompt_leaves_the_stash(self, tmp_path):
         name = self._conflicted(tmp_path)
@@ -175,7 +289,7 @@ class TestAutoUnstashResolution:
             tmp_path, conflicts=[name], answer=self._answer("", exit_code=1),
             resolved=False)
 
-        assert ("stash", "drop") not in commands
+        assert ("stash", "drop", _OUR_STASH) not in commands
 
     def test_a_binary_conflict_is_never_prompted_about(self, tmp_path):
         name = self._conflicted(tmp_path, name="logo.png")
@@ -188,7 +302,7 @@ class TestAutoUnstashResolution:
                 resolved=False)
 
         prompt.assert_not_called()
-        assert ("stash", "drop") not in commands
+        assert ("stash", "drop", _OUR_STASH) not in commands
 
     def test_a_drop_that_failed_is_reported(self, tmp_path, capsys):
         """The work is restored but the entry lingers — say so rather than claim clean."""

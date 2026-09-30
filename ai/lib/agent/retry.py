@@ -123,6 +123,36 @@ BLANK_RESPONSE_HINT = (
     "them.\n\n"
 )
 
+# Addressed to a conflict resolution that came back with the context it was
+# shown wrapped around the answer. The blank-response hint above is actively
+# wrong here and was what this path used to send: it lectures about emitting
+# the markers, and the markers were perfect — the mistake was including lines
+# the prompt asked to be left out. A hint that names the wrong mistake buys a
+# second identical answer, which is the failure `retry_blank_response`'s own
+# docstring warns about.
+ECHOED_CONTEXT_HINT = (
+    "IMPORTANT: A previous attempt wrapped the surrounding context lines "
+    "around its answer. The markers were right; what went in them was not. "
+    "Each conflict's replacement is the marker region alone — everything from "
+    "the <<<<<<< line through the >>>>>>> line, and not one line above or "
+    "below it. The context was shown to you so the merge could be reasoned "
+    "about; it is already in the file and will be duplicated if you repeat "
+    "it.\n\n"
+)
+
+# Addressed to a resolution that left git's own markers in the text it emitted
+# — an answer that copied the conflict through instead of merging it. Distinct
+# from the echo hint for the same reason that one is distinct from the blank
+# one: the two describe opposite mistakes, and the correction for "you included
+# too much around the region" tells an agent nothing about "you did not resolve
+# the region".
+SURVIVING_MARKER_HINT = (
+    "IMPORTANT: A previous attempt left git conflict markers in its answer. "
+    "A resolution contains no <<<<<<<, =======, ||||||| or >>>>>>> line at "
+    "all: it is the single merged version of the code that replaces all of "
+    "them. Decide what the merged text should be and emit only that.\n\n"
+)
+
 # The same correction for a caller whose answer is a bare JSON object rather
 # than a marker-wrapped block. Kept apart rather than folded into the wording
 # above: four of the five callers of `retry_blank_response` do wrap their
@@ -135,6 +165,16 @@ JSON_RESPONSE_HINT = (
     "one produces nothing. Answer from what is in this prompt, and emit the "
     "JSON object alone — no preamble, no explanation, no code fence.\n\n"
 )
+
+
+# What a caller may pass as a retry hint: the wording itself, or a function
+# from the unusable answer to the wording that names what was wrong with it.
+RetryHint = str | Callable[[str], str]
+
+
+def resolve_hint(hint: RetryHint, response: str) -> str:
+    """The hint text for *response*, whichever form the caller supplied."""
+    return hint(response) if callable(hint) else hint
 
 
 def has_output(path: str) -> bool:
@@ -334,7 +374,7 @@ def retry_blank_response(
     *,
     label: str,
     usable: Callable[[str], bool],
-    hint: str = BLANK_RESPONSE_HINT,
+    hint: RetryHint = BLANK_RESPONSE_HINT,
 ) -> tuple[str, int]:
     """Give a stateless prompt one more attempt when its answer will not parse.
 
@@ -349,9 +389,17 @@ def retry_blank_response(
     if it corrects the actual mistake: telling a caller that asked for a bare
     JSON object to "emit the requested markers" names a format its prompt never
     mentioned, and the second attempt fails the way the first did.
+
+    A caller whose answer can fail in several distinct ways passes a callable
+    instead, and it is handed the unusable answer to choose from.  A fixed
+    string cannot express that: the failure is not known until the first
+    attempt comes back, so a caller resolving the hint up front has to pick one
+    wording for every way its contract can be broken — which is how a
+    resolution that echoed its context, with faultless markers, was sent a
+    lecture about emitting markers.
     """
     response, rc = call(prompt)
     if rc != 0 or usable(response):
         return response, rc
     log.warn(f"{label} returned an unparseable response — retrying once")
-    return call(hint + prompt)
+    return call(resolve_hint(hint, response) + prompt)

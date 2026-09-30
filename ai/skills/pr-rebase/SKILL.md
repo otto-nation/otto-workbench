@@ -2,7 +2,7 @@
 name: pr-rebase
 description: "AI-assisted rebase onto the branch's base with conflict resolution and force push. TRIGGER when: user asks to rebase a branch, resolve rebase conflicts, update a branch against its base, or fix merge conflicts during rebase. SKIP: simple git pull --rebase with no conflicts; commit rewording (use task commit:reword instead)."
 source: otto-workbench/ai/skills/pr-rebase/SKILL.md
-invocation: "/pr-rebase [branch] [--no-fix] [--no-push] [--force] [--onto|--base <ref>]"
+invocation: "/pr-rebase [branch] [--no-fix] [--no-push] [--force] [--onto|--base <ref>] [--fork-point <ref>]"
 trigger: "Use when user asks to rebase a branch, resolve rebase conflicts, update a branch against its base, or fix merge conflicts during rebase."
 skip: "Do not use for simple git pull --rebase with no conflicts. Do not use for commit rewording (use task commit:reword instead)."
 output_schema:
@@ -47,6 +47,13 @@ Run with `/pr-rebase` or `/pr-rebase <branch>`.
 - `--onto <ref>` (also spelled `--base`, optional): Rebase onto this ref
   verbatim, overriding the PR base and the default branch. Only pass it when
   the user names a base; the resolved default is right otherwise.
+- `--fork-point <ref>` (optional): Replay only the commits *after* `<ref>`,
+  rather than the whole branch. This is git's `<upstream>` argument, which
+  `--onto` alone cannot express — with one ref, git's `<newbase>` and
+  `<upstream>` are the same and every commit since the merge base is replayed.
+  Only pass it when a `partially_landed` refusal named the ref in its `remedy`
+  field, or the user named one; it changes which commits end up on the branch.
+  Not git's boolean `--fork-point`, and it is ignored on a resumed rebase.
 
 ---
 
@@ -125,12 +132,15 @@ otto-log show <invocation> --json                 # adds each event's data field
 ```
 
 The run logs its target ref and why, the mode, whether it started fresh or
-resumed, and a timed pair of events per conflicted file — which is what answers
-"is this nearly done", since the gap between the pair is the rate. The count of
-commits still to replay rides in the `step` event's `data.remaining`, and the
-default rendering omits `data`, so that one needs `--json`. Either way it is one
-call, and no files written into the worktree to hold output the job facility
-already has.
+resumed, and a `resolve_file:<path>` span per conflicted file — a timed pair of
+events, opened before the file is classified and closed when it is staged. That
+pair is what answers "is this nearly done": the gap between them is the rate,
+and an open span with no close is the file being worked on right now. The count
+of commits still to replay rides in `data.remaining` on both kinds of `step`
+event — the one that resolves conflicts and the one that skips an empty commit
+— and the default rendering omits `data`, so that one needs `--json`. Either way
+it is one call, and no files written into the worktree to hold output the job
+facility already has.
 
 ### 2. Handle the result
 
@@ -165,7 +175,8 @@ conventional `generate` task. Say so and tell the user to regenerate them
 manually; a repo that keeps landing in the second case wants a
 `rebase.regenerate` entry in its `.workbench.yml`. Done.
 
-**Exit 3 — conflicts detected (`--no-fix` mode only).** Parse the JSON:
+**Exit 3 — the rebase is paused with conflicts a human must look at.** Parse the
+JSON:
 
 ```json
 {
@@ -177,13 +188,27 @@ manually; a repo that keeps landing in the second case wants a
 }
 ```
 
-Report what was found. Ask the user if they want AI resolution. If yes:
+Two runs reach this, and the difference is what the console said, not the JSON:
 
-```bash
-pr rebase --fix --branch <branch>
-```
+- **`--no-fix` mode.** Nothing was attempted. Report what was found and ask the
+  user whether they want AI resolution. If yes, `pr rebase --fix --branch
+  <branch>` resumes the in-progress rebase with AI resolution and force-pushes.
+- **`--fix` mode, where a file could not be resolved.** The AI's answer for that
+  file would not parse twice over, or the file is binary. Everything else in the
+  step is already resolved and staged, and every commit replayed so far is
+  intact — the rebase is *paused*, not aborted, and `files_resolved` in
+  `state.json` records what it kept. `files` names only what is still
+  unresolved. Report those, offer to resolve them by hand, and finish with
+  `pr rebase --fix --branch <branch>`, which resumes from where it stopped.
 
-This resumes the in-progress rebase with AI conflict resolution and force-pushes.
+Never answer an exit 3 with `pr rebase --abort`. The rebase holds real work by
+this point; aborting throws away every resolution the run made and every commit
+it replayed. Abort only when the user asks for it having been told that.
+
+While a rebase is paused this way, an auto-stash from the run that started it is
+*held* rather than popped — popping into a conflicted index cannot work. The run
+that finishes the rebase restores it. If the user abandons the rebase instead,
+their uncommitted work comes back with `git stash pop` after the abort.
 
 **Exit 4 — the rebase was refused, nothing was rebased or pushed.** Parse the JSON:
 
@@ -207,11 +232,14 @@ This resumes the in-progress rebase with AI conflict resolution and force-pushes
 | `empty_diff` | `already_landed` | The branch has commits but no diff against its base — what a squash merge leaves behind |
 | `commits_upstream` | `already_landed` | Every commit already has an equivalent upstream by patch id |
 | `no_merge_base` | `unrelated_history` | The branch and its base share no commit at all |
+| `partially_landed` | `partially_landed` | Some of the branch's commits are already in the base and some are not |
 | `conflicts_over_budget` | `conflicts_over_budget` | The rebase conflicted across more files than automatic resolution should attempt; it was aborted |
+| `resolutions_over_budget` | `conflicts_over_budget` | The rebase would have spent more AI resolution calls than the budget allows — the same files conflicting in commit after commit; it was aborted |
 
 `commits_ahead` is a count on the two git signals and `null` on `pr_merged`: the
 tracker is asked before the branch is checked out, so there is no honest count
-to report there. `pr_number` is set on `pr_merged` only.
+to report there. `pr_number` is set on `pr_merged` only. `remedy` is set on
+`partially_landed` only, and is the flag to re-run with.
 
 Report `detail` and stop. What to suggest depends on `status`:
 
@@ -221,9 +249,27 @@ Report `detail` and stop. What to suggest depends on `status`:
   left by a re-initialised repo. Rebasing would replay its entire history onto a
   base it has nothing in common with. Suggest cherry-picking the wanted commits
   onto a fresh branch instead.
-- `conflicts_over_budget` — a branch conflicting this widely has usually had its
-  work land in another shape. The rebase was already aborted, so the worktree is
-  clean; suggest checking whether the work is still wanted before forcing it.
+- `partially_landed` — an earlier part of the branch already landed, usually
+  because someone merged a prefix of it or amended it on the way in. Replaying
+  the whole branch would reapply those commits on top of themselves. This is the
+  one refusal with a real fix rather than an override: re-run with the flag the
+  `remedy` field gives, which replays only what is left.
+
+  ```bash
+  pr rebase --fix --fork-point <sha from remedy> --branch <branch>
+  ```
+
+  Use `remedy` verbatim — do not pick a fork point yourself. Fall back to
+  `--force` only if the user says the detection is wrong, and say what forcing
+  will replay before they agree.
+- `conflicts_over_budget` — a branch conflicting this widely, or this
+  repeatedly, has usually had its work land in another shape. The rebase was
+  already aborted, so the worktree is clean; suggest checking whether the work is
+  still wanted before forcing it. When the signal is `resolutions_over_budget`
+  the spread was narrow and the *depth* was not — the same handful of files
+  conflicting in commit after commit, which is what a partially-landed branch
+  looks like once the replay is under way. Check for a landed prefix before
+  forcing.
 
 If the user confirms they want the rebase anyway, re-run with the flag in
 `override`:

@@ -7,6 +7,7 @@ and file-level dispatch live in ``resolve_ai``.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from core import log
@@ -16,12 +17,18 @@ from git import regenerate as regen
 
 from . import types as rebase_types
 
+ChunkedResolutions = rebase_types.ChunkedResolutions
 ConflictBlock = rebase_types.ConflictBlock
 ConflictPlan = rebase_types.ConflictPlan
 ConflictStrategy = rebase_types.ConflictStrategy
+ContextEcho = rebase_types.ContextEcho
 DeleteSide = rebase_types.DeleteSide
+EchoSide = rebase_types.EchoSide
 GeneratedSignal = rebase_types.GeneratedSignal
 ParseFailure = rebase_types.ParseFailure
+Trim = rebase_types.Trim
+
+MAX_ECHOED_CONTEXT_LINES = rebase_types.MAX_ECHOED_CONTEXT_LINES
 
 
 # ── Constants ──────────────────────────────────────────────────────────────
@@ -29,33 +36,25 @@ ParseFailure = rebase_types.ParseFailure
 RESOLVE_BEGIN = "<<<RESOLVED>>>"
 RESOLVE_END = "<<<END_RESOLVED>>>"
 
-_CONFLICT_MARKER_PREFIXES = ("<<<<<<< ", "=======", ">>>>>>> ")
+# The two conflict markers that cannot be anything else, plus diff3's base
+# marker. Each is seven of its character followed by a space and a label, a
+# shape no language and no markup produces by accident.
+#
+# git's third marker, the bare `=======` separator, is deliberately absent. It
+# is seven equals signs alone on a line, which is also how Markdown underlines
+# a setext H1 — so a resolution of a `.md` conflict whose own content contains
+# a seven-character heading was rejected as holding a surviving conflict
+# marker. Nothing is lost by dropping it: git never writes a separator without
+# an opener above it and a closer below, so any real surviving conflict is
+# still caught by one of these three. A separator on its own is not evidence,
+# and treating it as evidence costs a correct resolution.
+_CONFLICT_MARKER_PREFIXES = ("<<<<<<< ", "||||||| ", ">>>>>>> ")
 
 GENERATED_HEADER_PATTERNS = ("DO NOT EDIT", "@generated", "Code generated")
 
 CONFLICT_CONTEXT_LINES = 30
 CHUNKED_MIN_LINES = 200
 CHUNKED_MAX_CONFLICT_RATIO = 0.5
-
-# How many *substantive* context lines a resolution may repeat before it is read
-# as having echoed the context back rather than resolved the conflict.
-#
-# Zero, because the count this is measured against already discounts everything
-# that matches by coincidence: lines the conflict region itself held, and the
-# blank lines and bare block-closers below. What is left is a line that says
-# something, sitting outside the region being replaced and reproduced anyway —
-# for which there is no innocent explanation, so one is enough.
-#
-# The budget belongs here rather than on raw matched lines. Against raw lines it
-# has to be loose enough for a resolution that ends where the context begins,
-# and a threshold loose enough for two coincidental blanks is also loose enough
-# for a real one-line echo to pass.
-#
-# ceiling: an exact-match line filter, which cannot see a resolution that echoes
-# its context with the indentation changed or a comment reflowed. Upgrade to a
-# similarity ratio if a rejected-then-retried resolution is ever traced to an
-# echo this missed on the first pass.
-MAX_ECHOED_CONTEXT_LINES = 0
 
 # Lines that carry no evidence of an echo when they match. A run of blank lines
 # or bare block-closers is filler both sides produce independently: a resolution
@@ -182,7 +181,11 @@ def is_binary(path: Path) -> bool:
 # ── Conflict markers ─────────────────────────────────────────────────────
 
 def has_conflict_markers(text: str) -> str | None:
-    """Check for git conflict markers at the start of lines. Returns the marker found, or None."""
+    """The first unambiguous git conflict marker in *text*, or None.
+
+    See ``_CONFLICT_MARKER_PREFIXES`` for which three are read as markers and
+    why the bare ``=======`` separator is not one of them.
+    """
     for line in text.splitlines():
         match = next((m for m in _CONFLICT_MARKER_PREFIXES if line.startswith(m)), None)
         if match:
@@ -226,36 +229,79 @@ def parse_resolved_content(stdout: str) -> tuple[str | None, str]:
 
 # ── Chunked conflict extraction ──────────────────────────────────────────
 
-def extract_conflict_blocks(
-    content: str, context_lines: int = CONFLICT_CONTEXT_LINES,
-) -> list[ConflictBlock]:
-    """Extract conflict blocks with surrounding context from file content."""
-    lines = content.splitlines(keepends=True)
-    blocks: list[ConflictBlock] = []
+@dataclass(frozen=True)
+class _MarkerSpan:
+    """The line range one conflict's markers occupy, opener through closer."""
+    start: int
+    end: int
+
+
+def _marker_spans(lines: list[str]) -> list[_MarkerSpan]:
+    """Every complete conflict region in *lines*, in file order.
+
+    An opener with no closer after it is skipped rather than ending the scan:
+    a stray ``<<<<<<< `` inside a string literal or a heredoc would otherwise
+    hide every real conflict below it.
+    """
+    spans: list[_MarkerSpan] = []
     i = 0
     while i < len(lines):
         if not lines[i].startswith("<<<<<<< "):
             i += 1
             continue
-        start = i
-        j = i + 1
-        while j < len(lines) and not lines[j].startswith(">>>>>>> "):
-            j += 1
-        if j >= len(lines):
+        end = next(
+            (j for j in range(i + 1, len(lines))
+             if lines[j].startswith(">>>>>>> ")),
+            None,
+        )
+        if end is None:
             i += 1
             continue
-        end = j
-        ctx_start = max(0, start - context_lines)
-        ctx_end = min(len(lines), end + 1 + context_lines)
-        blocks.append(ConflictBlock(
-            index=len(blocks) + 1,
-            start=start,
-            end=end,
-            conflict="".join(lines[start:end + 1]),
-            context_before="".join(lines[ctx_start:start]),
-            context_after="".join(lines[end + 1:ctx_end]),
-        ))
+        spans.append(_MarkerSpan(start=i, end=end))
         i = end + 1
+    return spans
+
+
+def extract_conflict_blocks(
+    content: str, context_lines: int = CONFLICT_CONTEXT_LINES,
+) -> list[ConflictBlock]:
+    """Extract conflict blocks with surrounding context from file content.
+
+    Each block's context stops at its neighbours, never at a fixed offset that
+    runs past one. Taking ``context_lines`` from the raw conflicted file put
+    the *next* conflict — markers, both sides and all — inside block 1's
+    ``context_after`` whenever two conflicts sat closer together than the
+    context width, which in a file with seven hunks is every one of them. The
+    chunked prompt then showed the model an envelope holding three conflicts
+    under the instruction "output everything from ``<<<<<<<`` through
+    ``>>>>>>>``", and got back either an answer for the whole envelope or three
+    conflicts collapsed into one — the two failures that ended a rebase of this
+    repo, neither of them the model's mistake.
+
+    Clamping also makes the echo guard mean what it says: a context that cannot
+    contain a conflict marker is a context whose overlap with a resolution is
+    always about the resolution's boundaries, never about a second conflict the
+    model was right to answer.
+    """
+    lines = content.splitlines(keepends=True)
+    spans = _marker_spans(lines)
+    blocks: list[ConflictBlock] = []
+    for i, span in enumerate(spans):
+        # The line after the previous conflict's closer, and the line holding
+        # the next conflict's opener. Nothing outside that window belongs to
+        # this block, however much context was asked for.
+        floor = spans[i - 1].end + 1 if i else 0
+        ceiling = spans[i + 1].start if i + 1 < len(spans) else len(lines)
+        ctx_start = max(floor, span.start - context_lines)
+        ctx_end = min(ceiling, span.end + 1 + context_lines)
+        blocks.append(ConflictBlock(
+            index=i + 1,
+            start=span.start,
+            end=span.end,
+            conflict="".join(lines[span.start:span.end + 1]),
+            context_before="".join(lines[ctx_start:span.start]),
+            context_after="".join(lines[span.end + 1:ctx_end]),
+        ))
     return blocks
 
 
@@ -295,8 +341,8 @@ def _substantive(lines: list[str], owned: set[str]) -> int:
     )
 
 
-def echoed_context_lines(resolution: str, block: ConflictBlock) -> int:
-    """How many lines of *block*'s context *resolution* repeated back.
+def context_echo(resolution: str, block: ConflictBlock) -> ContextEcho:
+    """How much of *block*'s context *resolution* repeated back, on each side.
 
     The chunked prompt sends each conflict wrapped in context and asks for only
     the conflict's replacement. A model that returns the context too is not
@@ -306,14 +352,20 @@ def echoed_context_lines(resolution: str, block: ConflictBlock) -> int:
     file. One rebase of this repo duplicated a whole shell function that way,
     which bash resolves by silently taking the second definition.
 
-    Lines the conflict region itself contains are not counted. A resolution
-    ending with a line that was genuinely part of the conflict is doing its job,
-    even when the following context happens to open with that same line.
+    Lines the conflict region itself contains are not counted as evidence. A
+    resolution ending with a line that was genuinely part of the conflict is
+    doing its job, even when the following context happens to open with that
+    same line.
 
     Neither are blank lines and bare block-closers, for the same reason one line
     of overlap is tolerated at all: they are filler that matches by coincidence.
     What is counted is substance — a line that says something, reproduced from
     the context on the other side of the boundary.
+
+    The *run* each side reports is the whole overlap, discounted lines
+    included, because that is what a repair has to remove: once a run is read
+    as an echo, every line in it is duplicated in the spliced file, and leaving
+    the coincidental ones behind leaves half a duplicate.
     """
     owned = set(block.conflict.splitlines())
     res = resolution.splitlines()
@@ -325,36 +377,100 @@ def echoed_context_lines(resolution: str, block: ConflictBlock) -> int:
     n_tail = _overlap(res, after)
     n_head = _overlap(before, res)
 
-    return max(
-        _substantive(after[:n_tail], owned),
+    return ContextEcho(
         # The *tail* of the preceding context, which is the part adjacent to the
         # conflict's start — mirroring `after`'s head being adjacent to its end.
         # Both are the lines that sit just outside what `splice_resolutions`
         # replaces, so both are the ones a resolution can duplicate.
-        _substantive(before[len(before) - n_head:], owned),
+        head=EchoSide(
+            run=n_head,
+            substantive=_substantive(before[len(before) - n_head:], owned),
+        ),
+        tail=EchoSide(run=n_tail, substantive=_substantive(after[:n_tail], owned)),
     )
+
+
+def echoed_context_lines(resolution: str, block: ConflictBlock) -> int:
+    """How many substantive lines of context *resolution* repeated back.
+
+    The scalar reading of `context_echo`, kept as the thing a failure reason
+    and a test assert against. Zero means nothing was echoed.
+    """
+    return context_echo(resolution, block).lines
+
+
+def trim_echoed_context(resolution: str, block: ConflictBlock) -> Trim:
+    """*resolution* with any echoed context removed from its ends.
+
+    The repair the measurement above was already computing and throwing away.
+    Rejecting an echo costs a retry with a fresh model call and, when the retry
+    also echoes, the whole file; trimming costs nothing and is exact — the
+    echoed run is a verbatim copy of lines that still sit beside the splice
+    point, so deleting it reconstructs the answer the prompt asked for.
+
+    Only a run read as an echo is removed. A one-line coincidence at the
+    boundary is left alone, which is the same conservatism the measurement
+    applies: with nothing substantive in the run there is no evidence a repair
+    is warranted, and trimming a line the resolution meant to emit would break
+    the code the same way the duplicate does.
+
+    A resolution that trims to nothing is not repaired. Every line it held came
+    from the context, so there is no resolution underneath the echo to recover
+    — the model answered with the surroundings and nothing else, and that goes
+    back to it rather than into the file.
+    """
+    echo = context_echo(resolution, block)
+    if not echo.found:
+        return Trim(text=resolution)
+
+    head = echo.head.run if echo.head.echoed else 0
+    tail = echo.tail.run if echo.tail.echoed else 0
+    lines = resolution.splitlines(keepends=True)
+    kept = lines[head:len(lines) - tail] if tail else lines[head:]
+    if not kept:
+        return Trim(text=resolution, head=head, tail=tail, ok=False)
+    return Trim(text="".join(kept), head=head, tail=tail)
+
+
+def _find_block_marker(stdout: str, marker: str) -> int:
+    """Where *marker* appears as itself rather than as another marker's prefix.
+
+    ``<<<RESOLVED>>>_1`` is a prefix of ``<<<RESOLVED>>>_11``, so a plain
+    substring search for block 1 finds block 11 in any answer with ten or more
+    blocks — and then reads block 11's resolution, or a span running backwards,
+    into block 1. A match is only this marker when the character after it is
+    not another digit.
+    """
+    start = 0
+    while (found := stdout.find(marker, start)) != -1:
+        after = found + len(marker)
+        if after >= len(stdout) or not stdout[after].isdigit():
+            return found
+        start = found + 1
+    return -1
 
 
 def parse_chunked_resolutions(
     stdout: str, blocks: list[ConflictBlock],
-) -> tuple[list[str] | None, str]:
-    """Extract per-block resolutions from AI output.
+) -> ChunkedResolutions:
+    """Extract per-block resolutions from AI output, repairing echoed context.
 
     Takes the blocks rather than a count because each resolution is checked
-    against the context its own block was sent with — see
-    ``echoed_context_lines`` for what that catches and why no marker check
-    reaches it.
-
-    Returns (list_of_resolutions, failure_reason). failure_reason is empty on success.
+    against the context its own block was sent with — see ``context_echo`` for
+    what that catches and why no marker check reaches it, and
+    ``trim_echoed_context`` for why the catch is now a repair.
     """
     resolutions = []
+    repaired = 0
     for i in range(1, len(blocks) + 1):
         begin_marker = f"{RESOLVE_BEGIN}_{i}"
         end_marker = f"{RESOLVE_END}_{i}"
-        begin = stdout.find(begin_marker)
-        end = stdout.find(end_marker)
+        begin = _find_block_marker(stdout, begin_marker)
+        end = _find_block_marker(stdout, end_marker)
         if begin == -1 or end == -1 or end <= begin:
-            return None, f"{ParseFailure.MISSING_BLOCK_MARKERS}_{i}"
+            return ChunkedResolutions(
+                reason=f"{ParseFailure.MISSING_BLOCK_MARKERS}_{i}",
+            )
         resolved = stdout[begin + len(begin_marker):end]
         if resolved.startswith("\n"):
             resolved = resolved[1:]
@@ -362,15 +478,24 @@ def parse_chunked_resolutions(
             resolved = resolved[:-1]
         surviving = has_conflict_markers(resolved)
         if surviving:
-            return None, (
+            return ChunkedResolutions(reason=(
                 f"{ParseFailure.SURVIVING_CONFLICT_MARKER}_in_block_{i}"
                 f":{surviving.strip()}"
+            ))
+        trim = trim_echoed_context(resolved, blocks[i - 1])
+        if not trim.ok:
+            return ChunkedResolutions(
+                reason=f"{ParseFailure.WHOLLY_ECHOED}_in_block_{i}",
             )
-        echoed = echoed_context_lines(resolved, blocks[i - 1])
-        if echoed > MAX_ECHOED_CONTEXT_LINES:
-            return None, f"{ParseFailure.ECHOED_CONTEXT}_in_block_{i}:{echoed}"
-        resolutions.append(resolved + "\n")
-    return resolutions, ""
+        if trim.trimmed:
+            repaired += 1
+        # Re-add the terminator stripped above, unless trimming already left
+        # one: the trim works on whole lines and keeps their line endings, so
+        # a repaired resolution comes back already terminated and appending
+        # would splice a blank line in where the echo used to be.
+        text = trim.text if trim.text.endswith("\n") else trim.text + "\n"
+        resolutions.append(text)
+    return ChunkedResolutions(resolutions=resolutions, repaired=repaired)
 
 
 def splice_resolutions(

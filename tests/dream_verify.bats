@@ -8,6 +8,9 @@ setup() {
   common_setup
   export HOME="$TMPDIR"
   export NO_COLOR=1
+  # Pinned into the sandbox: the store is keyed off the data root now, and an
+  # unset one resolves to the operator's real memory.
+  export WORKBENCH_DATA_DIR="$TMPDIR/data"
   DREAM_VERIFY="$REPO_ROOT/ai/bin/dream-verify"
 }
 
@@ -22,7 +25,7 @@ _make_memory_dir() {
   local memory_content="$2"
   shift 2
 
-  local dir="$HOME/.claude/projects/$project/memory"
+  local dir="$WORKBENCH_DATA_DIR/memory/$project"
   mkdir -p "$dir"
   printf '%s\n' "$memory_content" > "$dir/MEMORY.md"
 
@@ -68,7 +71,7 @@ EOF
 # ── Passing checks ───────────────────────────────────────────────────────────
 
 @test "dream-verify: passes when all checks clean" {
-  local dir="$HOME/.claude/projects/test-project/memory"
+  local dir="$WORKBENCH_DATA_DIR/memory/test-project"
   _make_memory_dir "test-project" "- [Topic](topic.md) — a test entry"
   _make_topic_file "$dir" "topic.md" "my-topic" "Some content here."
 
@@ -77,8 +80,8 @@ EOF
 }
 
 @test "dream-verify: passes with multiple clean projects" {
-  local dir1="$HOME/.claude/projects/project-one/memory"
-  local dir2="$HOME/.claude/projects/project-two/memory"
+  local dir1="$WORKBENCH_DATA_DIR/memory/project-one"
+  local dir2="$WORKBENCH_DATA_DIR/memory/project-two"
 
   _make_memory_dir "project-one" "- [Topic A](topic-a.md) — entry a"
   _make_topic_file "$dir1" "topic-a.md" "topic-a" "Clean content."
@@ -94,7 +97,7 @@ EOF
 
 @test "dream-verify: fails on MEMORY.md over 200 lines" {
   # Build 201 lines: 1 real reference + 200 padding lines
-  local dir="$HOME/.claude/projects/bloated-project/memory"
+  local dir="$WORKBENCH_DATA_DIR/memory/bloated-project"
   mkdir -p "$dir"
   python3 -c "
 lines = ['- [Entry](entry.md) — real entry']
@@ -122,7 +125,7 @@ with open('$dir/MEMORY.md', 'w') as f:
 # ── Relative dates ───────────────────────────────────────────────────────────
 
 @test "dream-verify: fails on relative date in topic file" {
-  local dir="$HOME/.claude/projects/date-project/memory"
+  local dir="$WORKBENCH_DATA_DIR/memory/date-project"
   _make_memory_dir "date-project" "- [Topic](topic.md) — has dates"
   _make_topic_file "$dir" "topic.md" "topic" "This happened yesterday and it was bad."
 
@@ -132,7 +135,7 @@ with open('$dir/MEMORY.md', 'w') as f:
 }
 
 @test "dream-verify: detects multiple relative date words" {
-  local dir="$HOME/.claude/projects/multi-date/memory"
+  local dir="$WORKBENCH_DATA_DIR/memory/multi-date"
   _make_memory_dir "multi-date" "- [Topic](topic.md) — dates"
   _make_topic_file "$dir" "topic.md" "topic" "We discussed this last week and will follow up tomorrow."
 
@@ -145,7 +148,7 @@ with open('$dir/MEMORY.md', 'w') as f:
 # ── Duplicate names ──────────────────────────────────────────────────────────
 
 @test "dream-verify: fails on duplicate name frontmatter" {
-  local dir="$HOME/.claude/projects/dup-project/memory"
+  local dir="$WORKBENCH_DATA_DIR/memory/dup-project"
   _make_memory_dir "dup-project" \
     "- [First](first.md) — entry one
 - [Second](second.md) — entry two"
@@ -161,8 +164,8 @@ with open('$dir/MEMORY.md', 'w') as f:
 # ── Multi-project failures ───────────────────────────────────────────────────
 
 @test "dream-verify: reports failures from multiple projects" {
-  local dir1="$HOME/.claude/projects/clean-project/memory"
-  local dir2="$HOME/.claude/projects/broken-project/memory"
+  local dir1="$WORKBENCH_DATA_DIR/memory/clean-project"
+  local dir2="$WORKBENCH_DATA_DIR/memory/broken-project"
 
   _make_memory_dir "clean-project" "- [Good](good.md) — clean"
   _make_topic_file "$dir1" "good.md" "good" "All fine."
@@ -177,9 +180,9 @@ with open('$dir/MEMORY.md', 'w') as f:
 # ── Edge cases ───────────────────────────────────────────────────────────────
 
 @test "dream-verify: skips directories without MEMORY.md" {
-  mkdir -p "$HOME/.claude/projects/no-memory-project"
+  mkdir -p "$WORKBENCH_DATA_DIR/memory/no-memory-project"
   _make_memory_dir "good-project" "- [Topic](topic.md) — entry"
-  local dir="$HOME/.claude/projects/good-project/memory"
+  local dir="$WORKBENCH_DATA_DIR/memory/good-project"
   _make_topic_file "$dir" "topic.md" "topic" "Content."
 
   run "$DREAM_VERIFY"

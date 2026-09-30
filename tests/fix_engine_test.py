@@ -1676,3 +1676,91 @@ def test_the_pass_still_commits_over_a_tree_it_shares(
 
     assert landed.call_count == 1
     assert run.landed is not None
+
+
+# ── an interactive session holding the worktree ─────────────────────────────
+
+
+def _holder(pid=4242, command="pi"):
+    """One foreign session, as held_by_others would report it."""
+    return fix_engine.session_lock.SessionHolder(
+        pid=pid,
+        started="Tue Sep 29 10:00:00 2026",
+        harness="pi",
+        session_id="",
+        command=command,
+    )
+
+
+def test_a_pass_refuses_a_worktree_an_interactive_session_holds(
+    tmp_path, landed, head, capsys,
+):
+    """No agent, no commit, and the holder named.
+
+    The incident behind #1453 was an investigation because nothing said who
+    else was writing. A refusal that does not name the session is the same
+    failure with an error message.
+    """
+    adapter = StubAdapter(tmp_path, count=2)
+    with patch.object(fix_engine.session_lock, "held_by_others",
+                      return_value=[_holder(command="pi --resume")]):
+        run, inv = _run(adapter)
+
+    assert inv.call_count == 0
+    assert landed.call_count == 0
+    assert adapter.recorded is None
+    assert run.outcomes == []
+    logged = capsys.readouterr().err
+    assert "4242" in logged
+    assert "pi --resume" in logged
+    assert "Tue Sep 29 10:00:00 2026" in logged
+
+
+def test_a_pass_runs_when_the_only_session_is_its_own(tmp_path, landed, head):
+    """The self-exemption, asserted on the pass having actually run.
+
+    held_by_others is what does the exempting, so an empty list here is a
+    session that holds the tree and is the caller's own. Asserted on the agent
+    running and the work landing rather than on the absence of an error: a
+    pass that silently did nothing would satisfy the weaker check.
+    """
+    adapter = StubAdapter(tmp_path, count=2)
+    with patch.object(fix_engine.session_lock, "held_by_others",
+                      return_value=[]):
+        run, inv = _run(adapter)
+
+    assert inv.call_count == 1
+    assert landed.call_count == 1
+    assert adapter.recorded is not None
+
+
+def test_the_override_commits_past_a_held_worktree(
+    tmp_path, landed, head, monkeypatch,
+):
+    """The escape hatch the refusal names, for a known-stale session."""
+    monkeypatch.setenv(fix_engine._LOCK_OVERRIDE_ENV, "1")
+    adapter = StubAdapter(tmp_path, count=2)
+    with patch.object(fix_engine.session_lock, "held_by_others",
+                      return_value=[_holder()]):
+        run, inv = _run(adapter)
+
+    assert inv.call_count == 1
+    assert landed.call_count == 1
+
+
+def test_an_unset_override_does_not_count_as_set(
+    tmp_path, landed, head, monkeypatch,
+):
+    """`VAR=` is how a shell exports an override nobody asked for.
+
+    A bare `in os.environ` check would read the empty string as consent, which
+    is the difference between a guard and a guard-shaped comment.
+    """
+    monkeypatch.setenv(fix_engine._LOCK_OVERRIDE_ENV, "")
+    adapter = StubAdapter(tmp_path, count=2)
+    with patch.object(fix_engine.session_lock, "held_by_others",
+                      return_value=[_holder()]):
+        run, inv = _run(adapter)
+
+    assert inv.call_count == 0
+    assert landed.call_count == 0

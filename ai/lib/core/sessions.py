@@ -24,19 +24,17 @@ normalises both to ``UserMessage`` so consumers never branch on harness.
 The slug a directory is named for is deliberately never parsed back into a path.
 Claude's transform maps every non-alphanumeric to ``-``, so ``a-b`` and ``a_b``
 both become ``a-b`` and the original is unrecoverable; Pi's transform
-(``pi_session_slug``) only replaces ``/``, ``\`` and ``:`` — a dot, a space, an
+(``pi_session_slug``) only replaces ``/``, ``\\`` and ``:`` — a dot, a space, an
 accent, an emoji all survive verbatim — so the two harnesses do not even agree
 on the encoding, and the harness-neutral ``canonical_slug`` (which replaces
 everything outside ``[A-Za-z0-9_]``) matches neither one's store. Both write
 the cwd *into* the transcript, which is a fact rather than an inference, so
 ``project_path_of`` reads that. The slug is written, never read.
 
-Memory is the one thing here that is genuinely Claude-shaped: it still lives in
-that harness's tree, one ``memory/`` directory per project slug. That is not a
-statement about which harness a session ran in — sessions come from every
-harness in the table — and moving those artifacts out is tracked separately.
-``memory_dirs`` is here so the location is stated once rather than at each
-consumer, which is how the transform came to be spelled four different ways.
+Memory is no longer addressed from here. It is keyed by repo identity under
+the data root, which every harness reads the same way — see
+``ai/lib/core/memory.py``. What remains here is the session stores, which are
+genuinely harness-shaped: one directory per harness, per cwd slug.
 
 ``lib/ai/session-count.sh`` is the shell expression of the same model, for the
 Stop-hook gates that cannot afford a Python start-up. ``tests/sessions_ssot.bats``
@@ -441,8 +439,8 @@ def pi_session_slug(path: Path | str) -> str:
     ``tests/sessions_ssot.bats``.
 
     No caller in ``ai/lib`` today — nothing here yet addresses Pi's own store
-    the way ``claude_slug`` below addresses Claude's for ``claude_memory_dir``.
-    It exists so the shell and Python transforms can be held to each other by
+    the way ``claude_slug`` below addresses Claude's. It exists so the shell
+    and Python transforms can be held to each other by
     ``tests/sessions_ssot.bats``, ahead of the consumer that will need it.
     """
     text = str(path)
@@ -472,7 +470,7 @@ def canonical_slug(path: Path | str) -> str:
     itself need: the gate stamps under ``$GATE_STAMPS_DIR`` and ``dream-scan``'s
     per-project grouping key. Addressing a harness's own store needs that
     harness's transform instead — ``pi_session_slug`` above, or ``claude_slug``
-    below, which is also where memory hangs.
+    below.
 
     ASCII alnum, not ``str.isalnum()``, for the reason ``claude_slug`` below
     spells it that way: the shell half is ``_encode_slug`` in
@@ -485,12 +483,6 @@ def canonical_slug(path: Path | str) -> str:
         c if (c.isascii() and c.isalnum()) or c == "_" else "-" for c in text
     )
     return f"--{encoded}--"
-
-
-# ── Memory ───────────────────────────────────────────────────────────────────
-
-# What the per-project memory directory is called inside a project's directory.
-MEMORY_DIRNAME = "memory"
 
 
 def _harness_named(name: str) -> Harness:
@@ -507,10 +499,10 @@ def _harness_named(name: str) -> Harness:
 
 
 def claude_projects_root(home: Path) -> Path:
-    """Claude Code's session store, which is also where memory lives.
+    """Claude Code's session store.
 
-    Read off HARNESSES rather than spelled again, so the root has one owner
-    whichever of its two jobs a caller came for.
+    Read off HARNESSES rather than spelled again, so callers share one owner
+    for the path.
     """
     return _harness_root(home, _harness_named("claude"))
 
@@ -520,11 +512,10 @@ def claude_slug(path: Path | str) -> str:
 
     Claude's transform, not ``canonical_slug`` above: every character outside
     ``[A-Za-z0-9]`` becomes a hyphen, underscores included. The two disagree on
-    purpose and both are needed — this one addresses Claude's own store, which
-    is where memory lives, and that one names the harness-neutral slug.
+    purpose and both are needed — this one addresses Claude's own session
+    store, and that one names the harness-neutral slug.
 
     Lossy, so it is never inverted: ``a-b`` and ``a_b`` both arrive as ``a-b``.
-    A caller wanting every memory directory sweeps with ``memory_dirs``.
 
     ASCII alnum, not ``str.isalnum()``: ``_claude_project_dir`` in
     ``lib/ai/session-count.sh`` encodes with the class ``A-Za-z0-9``, which
@@ -540,23 +531,3 @@ def claude_slug(path: Path | str) -> str:
     return "".join(c if c.isascii() and c.isalnum() else "-" for c in str(path))
 
 
-def claude_memory_dir(home: Path, repo_path: Path | str) -> Path:
-    """Where the memory for the repo at ``repo_path`` lives."""
-    return claude_projects_root(home) / claude_slug(repo_path) / MEMORY_DIRNAME
-
-
-def memory_dirs(home: Path) -> Iterator[Path]:
-    """Every project memory directory on this machine, in name order.
-
-    The project slug each one hangs off is ``dir.parent.name``. It is not
-    decoded back into a repo path anywhere — Claude's transform is lossy, as the
-    module docstring explains — so a caller wanting the repo starts from the
-    project registry and encodes forward instead.
-    """
-    root = claude_projects_root(home)
-    if not root.is_dir():
-        return
-    for entry in sorted(root.iterdir()):
-        candidate = entry / MEMORY_DIRNAME
-        if candidate.is_dir():
-            yield candidate

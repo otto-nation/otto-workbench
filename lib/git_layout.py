@@ -143,6 +143,27 @@ def project_root(directory: str | None = None) -> str | None:
     return worktree_for(directory).path
 
 
+def shared_dir(directory: str) -> str | None:
+    """The shared git directory ``directory``'s repository uses, as a physical path.
+
+    The Python spelling of ``git_shared_dir`` in ``lib/git_layout.sh``, and
+    total: an ordinary clone's ``.git`` is a perfectly good identity, which is
+    why this does not return None the way ``container_dir`` does for a plain
+    checkout. None only when git cannot answer at all.
+
+    The environment is cleared because ``GIT_DIR`` beats ``-C``. The pre-push
+    hook exports one, and without the clear this would name the hook's
+    repository. ``tests/projects.bats`` cross-validates the two languages.
+    """
+    common = git(directory, 'rev-parse', '--git-common-dir')
+    if not common:
+        return None
+    try:
+        return os.path.realpath(os.path.join(directory, common))
+    except OSError:
+        return None
+
+
 def git(repo_root: str, *args: str) -> str | None:
     """Run a read-only git query in the repo, or None if git cannot answer.
 

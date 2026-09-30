@@ -337,6 +337,18 @@ print(workbench_paths.gates_dir() / mod.LAST_RETRO_NAME, end='')
   [ "$(resolve_constants RETRO_STAMP_FILE)" = "$(resolve_python_last_retro)" ]
 }
 
+@test "bash and Python agree on the memory dir" {
+  [ "$(resolve_constants WORKBENCH_MEMORY_DIR)" = "$(resolve_python memory_dir)" ]
+}
+
+@test "the memory dir rides along when the data root moves" {
+  export WORKBENCH_DATA_DIR="$TMPDIR/explicit-data"
+  local root="$TMPDIR/explicit-data/memory"
+
+  [ "$(resolve_constants WORKBENCH_MEMORY_DIR)" = "$root" ]
+  [ "$(resolve_python memory_dir)" = "$root" ]
+}
+
 @test "the retro stamp rides along when the state root moves" {
   # retro-complete.sh writes it in bash and retro-scan reads it in Python. A
   # root that moves for one and not the other reads 0, which puts the scan in

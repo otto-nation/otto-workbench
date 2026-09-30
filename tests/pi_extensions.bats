@@ -2339,3 +2339,87 @@ print(len(d.get('follow_ups', {}).get('entries', [])))
   [ "$status" -eq 0 ]
   [ "$(_rfi_entry_count)" = "0" ]
 }
+
+# ── session-lock ─────────────────────────────────────────────────────────────
+# Same split as tree-lock-guard: the claim is in detect.ts, which imports one
+# node builtin, so node can load it directly. index.ts is the wiring no test
+# can reach.
+#
+# The record these write is read by ai/lib/fix/engine.py to refuse a pass, and
+# by ai/claude/bin/claude-session-lock for the other harness. Tests record a
+# real live pid rather than stubbing the CLI, so a renamed binary or a moved
+# lock path fails here rather than silently never claiming.
+
+# _session_claim REPO PID MODE — acquire or release through detect.ts.
+_session_claim() {
+  run node --input-type=module -e "
+    const m = await import('$REPO_ROOT/ai/pi/extensions/session-lock/detect.ts');
+    const pid = Number(process.argv[2]);
+    const out = process.argv[3] === 'release'
+      ? m.releaseFor(process.argv[1], pid)
+      : m.acquireFor(process.argv[1], pid, 'sess-1');
+    process.stdout.write(String(out));
+  " -- "$1" "$2" "${3:-acquire}"
+}
+
+@test "session-lock: a claim makes the worktree read as being edited" {
+  local repo="$TMPDIR/sl-repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+
+  # A process that outlives the node run: the record is only live while its
+  # pid is, so claiming node's own pid would prune itself on the next read.
+  sleep 30 &
+  local holder=$!
+
+  _session_claim "$repo" "$holder"
+  [ "$output" = "true" ]
+
+  run "$REPO_ROOT/bin/local/with-session-lock" "$repo" --check
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pid $holder"* ]]
+
+  kill "$holder" 2>/dev/null || true
+}
+
+@test "session-lock: releasing clears the claim" {
+  local repo="$TMPDIR/sl-release"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+
+  sleep 30 &
+  local holder=$!
+
+  _session_claim "$repo" "$holder"
+  _session_claim "$repo" "$holder" release
+  [ "$output" = "true" ]
+
+  run "$REPO_ROOT/bin/local/with-session-lock" "$repo" --check
+  [ "$status" -eq 1 ]
+
+  kill "$holder" 2>/dev/null || true
+}
+
+@test "session-lock: a killed session stops holding the worktree" {
+  # Kill-safety without a daemon, which is the whole reason the claim is a
+  # record rather than a flock. `wait` is the synchronisation point.
+  local repo="$TMPDIR/sl-killed"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+
+  sleep 30 &
+  local holder=$!
+  _session_claim "$repo" "$holder"
+
+  kill -9 "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+
+  run "$REPO_ROOT/bin/local/with-session-lock" "$repo" --check
+  [ "$status" -eq 1 ]
+}
+
+@test "session-lock: detect.ts imports no SDK" {
+  run grep -E '@earendil-works/pi-coding-agent|isToolCallEventType' \
+    "$REPO_ROOT/ai/pi/extensions/session-lock/detect.ts"
+  [ "$status" -ne 0 ]
+}

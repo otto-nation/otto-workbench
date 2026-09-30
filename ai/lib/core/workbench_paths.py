@@ -38,6 +38,10 @@ TRAIL_DIRNAME = "trail"
 REVIEWS_DIRNAME = "reviews"
 GATES_DIRNAME = "gates"
 
+# Subtree of the data root for authored per-repo memory. Distinct from the
+# state-root joins above because losing it has no producer to re-run.
+MEMORY_DIRNAME = "memory"
+
 # The registry of repos on this machine that use the workbench. ``lib/
 # constants.sh`` spells the same filename as PROJECTS_REGISTRY_NAME;
 # ``tests/workbench_roots.bats`` fails when the two drift.
@@ -95,7 +99,7 @@ def cache_dir(consumer: str | None = None) -> Path:
 
 
 def data_dir(consumer: str | None = None) -> Path:
-    """Authored data the workbench cannot regenerate: ``wiki/``.
+    """Authored data the workbench cannot regenerate: ``wiki/``, ``memory/``.
 
     Apart from the state root in what losing it costs. Everything under state
     is written by a tool and can be written again — ``ai/lib/review/gc.py``
@@ -144,6 +148,18 @@ def gates_dir() -> Path:
     ``tests/workbench_roots.bats`` holds to this value.
     """
     return state_dir() / GATES_DIRNAME
+
+
+def memory_dir() -> Path:
+    """Authored per-repo memory topic files.
+
+    Under the data root rather than state: a dream pass writes them from
+    session transcripts that then rotate away, and there is no producer to
+    re-run. Bash reaches the same directory through ``WORKBENCH_MEMORY_DIR``
+    in ``lib/constants.sh``, which ``tests/workbench_roots.bats`` holds to
+    this value.
+    """
+    return data_dir(MEMORY_DIRNAME)
 
 
 def projects_registry() -> Path:

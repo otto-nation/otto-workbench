@@ -154,7 +154,7 @@ bash ~/.agents/skills/dream/dream-complete.sh --root <scan-id>
 - **Never delete memory without replacement.** Removed entries must be either contradicted (replaced) or moved (to topic file or archive).
 - **Back up before first run.** On the very first run against a project:
 ```bash
-bash ~/.agents/skills/dream/dream-complete.sh --backup <project-slug>
+bash ~/.agents/skills/dream/dream-complete.sh --backup <repo-path>
 ```
 - **Dry run option.** On first use, read through all 4 phases but only print what you WOULD change, without writing. Confirm with the user before applying.
 

@@ -141,6 +141,30 @@ my_func() {
     assert _check(code) == []
 
 
+def test_heredoc_after_a_nested_substitution_with_an_apostrophe_is_still_skipped():
+    """A quoted ``$(printf "... remote's ...")`` must not leak a quote.
+
+    That leak used to suppress the next ``<<EOF`` once the checker trusted
+    ``heredoc_delimiter``, and the heredoc body was then scanned as shell.
+    """
+    code = '''\
+#!/usr/bin/env bats
+@test "x" {
+  [ "$output" = "$(printf "the remote's branch.")" ]
+  cat <<'EOF'
+if true; then
+  if true; then
+    if true; then
+      echo deep
+    fi
+  fi
+fi
+EOF
+}
+'''
+    assert _check(code) == []
+
+
 def test_heredoc_content_skipped():
     code = '''\
 #!/usr/bin/env bash

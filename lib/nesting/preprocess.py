@@ -14,15 +14,8 @@ def heredoc_delimiter(line: str, in_squote: bool, in_dquote: bool) -> str | None
     """The delimiter a heredoc opened on *line* will end at, or None.
 
     Lives here beside ``strip_shell_line`` because it is the other half of the
-    same scan, but only the size counter uses it today. ``nesting/bash.py``
-    keeps its own regex deliberately: it reads the delimiter off the raw line
-    and so opens a heredoc on a ``<<`` that is merely mentioned, but its state
-    also survives ``strip_shell_line`` leaking an unclosed single-quote span on
-    a line like ``"$(printf "the remote's branch")"`` — nested quoting inside a
-    command substitution that the flat scan cannot model. Switching it to this
-    helper makes it trust those leaked flags and suppress the next real
-    heredoc, which newly fails `tests/generate_doc_reference.bats`. Unifying
-    the two needs `strip_shell_line` fixed first; see #1471.
+    same scan. The size counter and ``nesting/bash.py`` both call it so they
+    agree on where a heredoc starts.
 
     Neither the raw line nor the quote-stripped one can answer this alone, and
     each is wrong in the opposite direction. ``strip_shell_line`` erases the
@@ -81,7 +74,20 @@ def strip_shell_line(
     Comments are skipped in the same pass rather than by a separate regex, so
     neither an apostrophe in prose (`# don't`, `"it's"`) can open a span nor a
     `#` inside a string (`sed 's/#.*//'`) can eat the quote that closes one.
+
+    Nested quoting inside ``$( )`` is tracked only in the returned flags.
+    Same-line stripped output is still the flat scan: a quoted substitution
+    such as ``foo="$(bar)"`` must stay ``foo=``, not ``foo=$(bar)``.
     """
+    stripped, _, _ = _flat_strip(line, in_squote, in_dquote)
+    _, in_squote, in_dquote = _nested_state(line, in_squote, in_dquote)
+    return stripped, in_squote, in_dquote
+
+
+def _flat_strip(
+    line: str, in_squote: bool, in_dquote: bool,
+) -> tuple[str, bool, bool]:
+    """Today's scan, moved verbatim so stripped output cannot move."""
     out: list[str] = []
     i = 0
     while i < len(line):
@@ -105,3 +111,94 @@ def strip_shell_line(
             out.append(char)
         i += step
     return ''.join(out), in_squote, in_dquote
+
+
+def _nested_state(
+    line: str, in_squote: bool, in_dquote: bool,
+) -> tuple[str, bool, bool]:
+    """Quote flags at end of *line*, with ``$( )`` as a nested quoting frame.
+
+    Stripped output is not produced here. Nested state must not drive
+    ``out.append``: re-enabling append inside a quoted ``$( )`` is what
+    turned ``foo="$(bar)"`` into ``foo=$(bar)`` across the tree.
+    """
+    _, in_squote, in_dquote, _closed = _scan_quote_frame(
+        line, 0, in_squote, in_dquote, close_paren=False,
+    )
+    return '', in_squote, in_dquote
+
+
+def _scan_quote_frame(
+    line: str,
+    i: int,
+    in_squote: bool,
+    in_dquote: bool,
+    *,
+    close_paren: bool,
+) -> tuple[int, bool, bool, bool]:
+    """Walk *line* from *i* tracking quotes; do not build stripped text.
+
+    When *close_paren* is set this is a ``$(`` body: quotes belong to this
+    frame, and the matching unquoted ``)`` returns so the parent frame resumes
+    unchanged. Nested ``$(`` recurses. ``$((`` is arithmetic, not a frame.
+    Single quotes suppress everything, including ``$(``. A backslash skips
+    the next character, so ``\\$(`` is not a substitution.
+
+    Returns ``(next_index, in_squote, in_dquote, closed)``.
+    """
+    depth = 0
+    n = len(line)
+    while i < n:
+        char = line[i]
+        if in_squote:
+            in_squote = char != "'"
+            i += 1
+            continue
+        if char == '\\':
+            i += 2
+            continue
+        sub = _consume_command_sub(line, i)
+        if sub is not None and sub[3]:
+            i = sub[0]
+            continue
+        if sub is not None:
+            return _unclosed_inner(sub[0], sub[1], sub[2])
+        if in_dquote:
+            in_dquote = char != '"'
+            i += 1
+            continue
+        if char == "'":
+            in_squote = True
+        elif char == '"':
+            in_dquote = True
+        elif char == '#':
+            break
+        elif close_paren and char == '(':
+            depth += 1
+        elif close_paren and char == ')' and depth == 0:
+            return i + 1, in_squote, in_dquote, True
+        elif close_paren and char == ')':
+            depth -= 1
+        i += 1
+    return i, in_squote, in_dquote, not close_paren
+
+
+def _consume_command_sub(
+    line: str, i: int,
+) -> tuple[int, bool, bool, bool] | None:
+    """Scan a ``$(`` body starting at *i*, or None if *i* is not one."""
+    if not line.startswith('$(', i) or line.startswith('$((', i):
+        return None
+    return _scan_quote_frame(line, i + 2, False, False, close_paren=True)
+
+
+def _unclosed_inner(
+    i: int, in_squote: bool, in_dquote: bool,
+) -> tuple[int, bool, bool, bool]:
+    # ceiling: the API returns two bools, so an unclosed $( inside an
+    # outer " cannot represent both frames — inner flags are returned
+    # and a later line's << is then read as code rather than a heredoc.
+    # Upgrade trigger: once a tracked shell file leaves $( unclosed at
+    # end of line inside a double-quoted span that a following heredoc
+    # opener depends on.
+    return i, in_squote, in_dquote, False

@@ -24,6 +24,11 @@ tools:
     visibility: brief
     description: "Declares a tree under validation while a command runs — the lock that tells editors a gate is in flight"
 
+  - name: with-session-lock
+    permission: false
+    visibility: brief
+    description: "Records that an interactive agent session is editing a worktree — the lock that stops an unattended fix pass committing over it"
+
   - name: validate-registries
     permission: false
     visibility: brief

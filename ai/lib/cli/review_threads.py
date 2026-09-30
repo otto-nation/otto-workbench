@@ -421,54 +421,53 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.fix:
         args.triage = True
-    if args.post:
-        publishing.enable()
-    elif not args.settle:
-        log.info("Draft mode — nothing is posted to GitHub. Re-run with --post to publish.")
+    with publishing.run(post=args.post):
+        if not args.post and not args.settle:
+            log.info("Draft mode — nothing is posted to GitHub. Re-run with --post to publish.")
 
-    ctx = pr_context.resolve(
-        pr=args.pr, branch=args.branch, repo_dir=args.repo_dir,
-    )
-    repo = ctx.repo
-    pr_number = ctx.pr_number
-    if pr_number is None:
-        log.error("No PR found for current branch")
-        return 1
-
-    if args.reply:
-        return thread_replies.run_reply(ctx, args.reply, args.body_file)
-    if args.settle:
-        return settlement.run_settle(
-            ctx, args.settle, args.settle_as, args.reason or "", args.commit or "",
+        ctx = pr_context.resolve(
+            pr=args.pr, branch=args.branch, repo_dir=args.repo_dir,
         )
-    branch = ctx.branch
-    # Called for its raise as much as its value: a bare-repo run must fail here,
-    # before the lock and the trail.
-    worktree = ctx.require_worktree()
-    head_sha = ctx.head_sha
+        repo = ctx.repo
+        pr_number = ctx.pr_number
+        if pr_number is None:
+            log.error("No PR found for current branch")
+            return 1
 
-    # A no-op when pr launched us — we resolve the same target and find its key
-    # already in WORKBENCH_RUN_LOCK.
-    # Acquired before Trail.start so contention costs no trail artifacts.
-    run_lock.claim_for_process(
-        ctx.target_dir,
-        command=" ".join([SCRIPT, *(argv if argv is not None else sys.argv[1:])]),
-        started=pr_state.now_iso(),
-        # This run's --fix pass commits in that checkout; no worktree switch
-        # happens on this path, so it is the tree that gets written to.
-        worktree=worktree,
-    )
+        if args.reply:
+            return thread_replies.run_reply(ctx, args.reply, args.body_file)
+        if args.settle:
+            return settlement.run_settle(
+                ctx, args.settle, args.settle_as, args.reason or "", args.commit or "",
+            )
+        branch = ctx.branch
+        # Called for its raise as much as its value: a bare-repo run must fail here,
+        # before the lock and the trail.
+        worktree = ctx.require_worktree()
+        head_sha = ctx.head_sha
 
-    trail = Trail.start(
-        script=SCRIPT,
-        context={"repo": repo, "pr": pr_number, "branch": branch},
-        debug=args.debug,
-    )
+        # A no-op when pr launched us — we resolve the same target and find its key
+        # already in WORKBENCH_RUN_LOCK.
+        # Acquired before Trail.start so contention costs no trail artifacts.
+        run_lock.claim_for_process(
+            ctx.target_dir,
+            command=" ".join([SCRIPT, *(argv if argv is not None else sys.argv[1:])]),
+            started=pr_state.now_iso(),
+            # This run's --fix pass commits in that checkout; no worktree switch
+            # happens on this path, so it is the tree that gets written to.
+            worktree=worktree,
+        )
 
-    try:
-        return _run_threads(trail, args, ctx)
-    except Exception as exc:
-        trail.error("unexpected_error", str(exc))
-        raise
-    finally:
-        trail.finish()
+        trail = Trail.start(
+            script=SCRIPT,
+            context={"repo": repo, "pr": pr_number, "branch": branch},
+            debug=args.debug,
+        )
+
+        try:
+            return _run_threads(trail, args, ctx)
+        except Exception as exc:
+            trail.error("unexpected_error", str(exc))
+            raise
+        finally:
+            trail.finish()

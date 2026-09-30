@@ -285,17 +285,20 @@ def _run(args, ctx: pr_context.ResolvedContext, cwd: str, trail: Trail) -> int:
     # side effect of it, so it is the one that opens the gate. `--no-push`
     # leaves it shut, and every push below then drafts its command instead
     # of running it — which is where the resume line comes from.
-    if mode.reaches_remote:
-        publishing.enable()
-    if args.force:
-        trail.decision("preflight", "waiving the already-landed check",
-                       reason=f"{REFUSAL_OVERRIDE_FLAG} flag set")
-    rc = cmd_start(cwd, ctx, mode, force=args.force, target_ref=target_ref,
-                   snapshot=snapshot, trail=trail)
+    #
+    # Push is the default, so a bare `pr rebase` opens the gate. `run` scopes
+    # that to this invocation: an in-process describe that was not given
+    # `--post` must not inherit it.
+    with publishing.run(post=mode.reaches_remote):
+        if args.force:
+            trail.decision("preflight", "waiving the already-landed check",
+                           reason=f"{REFUSAL_OVERRIDE_FLAG} flag set")
+        rc = cmd_start(cwd, ctx, mode, force=args.force, target_ref=target_ref,
+                       snapshot=snapshot, trail=trail)
 
-    if rc == 0 and mode is RunMode.PUSH:
-        rc = cmd_push(cwd, ctx, target_ref=target_ref, snapshot=snapshot, trail=trail)
-    return rc
+        if rc == 0 and mode is RunMode.PUSH:
+            rc = cmd_push(cwd, ctx, target_ref=target_ref, snapshot=snapshot, trail=trail)
+        return rc
 
 
 def main(argv: list[str] | None = None) -> int:

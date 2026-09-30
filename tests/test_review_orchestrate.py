@@ -3302,11 +3302,11 @@ class TestCleanupScope:
 
 
 class TestThePublishingGate:
-    """`--post` is forwarded here because the gate is per-process.
+    """`--post` is forwarded here because the fix pass lives in this process.
 
     `claude-review` decides whether a run may publish, but the fix pass runs in
-    this subprocess — spawned before that decision would otherwise be made — so
-    a gate opened in the parent would never reach the push the pass makes.
+    this process — today a subprocess, later an in-process call — so a gate
+    opened only in the parent would never reach the push the pass makes.
     """
 
     def _gate_at_first_work(self, ro, monkeypatch, tmp_path, argv):

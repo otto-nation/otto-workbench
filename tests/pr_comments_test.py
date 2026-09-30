@@ -779,6 +779,33 @@ class TestPublishingHold:
     def test_no_hold_by_default(self):
         assert publishing.held() == ""
 
+    def test_two_runs_in_one_process_do_not_leak_the_gate(self):
+        """A hold taken inside one `run` must not outrank the next.
+
+        Proves production `run()` resets both halves, not the `_drafts_only`
+        fixture: both runs happen in this test.
+        """
+        with publishing.run(post=True):
+            publishing.hold("discussion open")
+            assert publishing.enabled() is False
+        assert publishing.enabled() is False
+        assert publishing.held() == ""
+        with publishing.run(post=True):
+            assert publishing.enabled() is True
+
+    def test_a_rebase_opened_gate_does_not_authorise_a_describe_run(self):
+        """#909 T7 4c: rebase then describe in one process.
+
+        A bare `pr rebase` opens the gate because push is the default. A
+        describe that was not given `--post` must not inherit that.
+        """
+        with publishing.run(post=True):
+            assert publishing.enabled() is True
+            with publishing.run(post=False):
+                assert publishing.enabled() is False
+            assert publishing.enabled() is True
+        assert publishing.enabled() is False
+
 
 class TestIssueTrackerGate:
     """A tracking issue is as public as a reply — same gate.

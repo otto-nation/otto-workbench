@@ -17,6 +17,7 @@
     "command:claude-bash-guard",
     "command:claude-edit-guard",
     "command:claude-review",
+    "command:claude-session-lock",
     "command:dream-scan",
     "command:dream-verify",
     "command:eval-models",

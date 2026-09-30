@@ -20,6 +20,11 @@ tools:
     visibility: hidden
     description: "PreToolUse hook for Edit/Write — blocks edits on main/master unless gitignored, and edits to a tree a validator holds"
 
+  - name: claude-session-lock
+    permission: false
+    visibility: hidden
+    description: "Session hooks that record this session as editing its worktree — what stops an unattended fix pass committing over it"
+
   - name: reuse-mode-tracker
     permission: false
     visibility: hidden

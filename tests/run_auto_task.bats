@@ -182,13 +182,13 @@ EOF
 # sentinel is asked, or a gate that exits 1 for its own reasons — an empty
 # sandbox does exactly that — passes whether the sentinel works or not.
 _make_due_repo() {
-  local repo memory stale encoded
+  local repo stale encoded
   stale=$(( $(date +%s) - 8 * 24 * 3600 ))
 
   repo="$(gate_repo "due-project")"
-  memory="$(gate_memory "$repo")"
-  echo "$stale" > "$memory/.last-dream"
-  echo "$stale" > "$memory/.last-promote"
+  gate_memory "$repo" >/dev/null
+  echo "$stale" > "$(gate_stamp "$repo" last-dream)"
+  echo "$stale" > "$(gate_stamp "$repo" last-promote)"
 
   mkdir -p "$WORKBENCH_STATE_DIR/gates"
   echo "$stale" > "$WORKBENCH_STATE_DIR/gates/last-retro"

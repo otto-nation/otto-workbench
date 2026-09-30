@@ -27,7 +27,10 @@ unset _WB
 
 now=$(date +%s)
 
-while IFS=$'\t' read -r mem_dir _repo_dir; do
-  [[ -n "$mem_dir" ]] || continue
-  echo "$now" > "$mem_dir/.last-promote"
+# As dream-complete: the gates root may not exist yet on this machine.
+mkdir -p "$GATE_STAMPS_DIR"
+
+while IFS=$'\t' read -r _mem_dir repo_dir; do
+  [[ -n "$repo_dir" ]] || continue
+  echo "$now" > "$(_gate_stamp_file "$repo_dir" 'last-promote')"
 done < <(_memory_repos)

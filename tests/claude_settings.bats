@@ -352,11 +352,40 @@ _run_guard() {
   [ -n "$bin_dir" ]
 
   cmds=$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Edit|Write") | .hooks[].command' "$SETTINGS")
-  [ "$cmds" = "bash $bin_dir/claude-edit-guard" ] || {
-    echo "expected a single edit-guard invocation, got:"
+  # Two hooks share this matcher: the edit guard that can block, and the
+  # session-lock refresh that re-records a claim which went missing. Asserted
+  # as an exact list rather than a substring, so a third arrival is a decision
+  # somebody makes here rather than one that lands silently.
+  local expected
+  expected="bash $bin_dir/claude-edit-guard
+bash $bin_dir/claude-session-lock --refresh"
+  [ "$cmds" = "$expected" ] || {
+    echo "expected the edit guard then the session-lock refresh, got:"
     echo "$cmds"
     return 1
   }
+}
+
+@test "settings records and releases the session lock" {
+  # An unattended fix pass refuses on this record, so a session that never
+  # writes one is a session a pass will commit over. SessionEnd and not Stop:
+  # Stop fires after every assistant turn, so releasing there would drop the
+  # claim between turns while the session edits on.
+  local bin_dir start end
+  bin_dir=$(sed -n 's/^LOCAL_BIN_DIR="\(.*\)"$/\1/p' "$REPO_ROOT/lib/constants.sh")
+  [ -n "$bin_dir" ]
+
+  start=$(jq -r '.hooks.SessionStart[].hooks[].command' "$SETTINGS")
+  [[ "$start" == *"claude-session-lock --acquire"* ]] || {
+    echo "SessionStart does not acquire the session lock:"; echo "$start"; return 1
+  }
+
+  end=$(jq -r '.hooks.SessionEnd[].hooks[].command' "$SETTINGS")
+  [ "$end" = "bash $bin_dir/claude-session-lock --release" ] || {
+    echo "SessionEnd does not release the session lock:"; echo "$end"; return 1
+  }
+
+  [ "$(jq -r '.hooks.Stop[].hooks[].command' "$SETTINGS" | grep -c session-lock)" -eq 0 ]
 }
 
 @test "guard: exits 0 on a payload with no command" {

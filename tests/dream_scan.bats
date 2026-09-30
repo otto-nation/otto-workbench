@@ -8,6 +8,11 @@ setup() {
   common_setup
   DREAM_SCAN="$REPO_ROOT/ai/bin/dream-scan"
   sandbox_state_dir
+  # The memory store hangs off the data root and is keyed by repo identity,
+  # so both the root and the registry the scan reads forward from are pinned
+  # into the sandbox.
+  export WORKBENCH_DATA_DIR="$TMPDIR/data"
+  mkdir -p "$WORKBENCH_STATE_DIR"
 }
 
 teardown() {
@@ -54,11 +59,18 @@ EOF
 }
 
 # Helper: create a memory directory with MEMORY.md and topic files
+# _make_memory_dir REPO_NAME CONTENT [file:content ...] — a registered repo
+# with memory, keyed the way production keys it. Sets `dir` to the memory
+# directory, which the cases that add topic files read.
 _make_memory_dir() {
   local project="$1" memory_content="$2"
   shift 2
-  local dir="$TMPDIR/.claude/projects/$project/memory"
-  mkdir -p "$dir"
+  local repo="$TMPDIR/repos/$project"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  printf '%s\t%s\n' "$repo" "$(cd "$repo" && cd "$(git rev-parse --git-common-dir)" && pwd -P)" \
+    >> "$WORKBENCH_STATE_DIR/projects.registry"
+  dir="$(gate_memory "$repo")"
   printf '%s\n' "$memory_content" > "$dir/MEMORY.md"
 
   local arg filename content
@@ -232,16 +244,24 @@ PY
 
 @test "dream-scan --memory-dir prints the repo's memory directory and nothing else" {
   # Dots and underscores are the case the skill's own transform got wrong.
-  run "$DREAM_SCAN" --home "$TMPDIR" --memory-dir /Users/dev/git/otto.io/feat_one
+  local repo="$TMPDIR/repos/otto.io/feat_one"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+
+  run "$DREAM_SCAN" --home "$TMPDIR" --memory-dir "$repo"
   [[ "$status" -eq 0 ]]
   [[ "${#lines[@]}" -eq 1 ]]
-  [[ "$output" == "$TMPDIR/.claude/projects/-Users-dev-git-otto-io-feat-one/memory" ]]
+  [[ "$output" == "$(gate_memory "$repo")" ]]
 }
 
 @test "dream-scan --memory-dir exits before the report" {
   _make_session_jsonl "$TMPDIR/.claude/projects/test-proj/s.jsonl" "I prefer tabs"
 
-  run "$DREAM_SCAN" --home "$TMPDIR" --memory-dir /Users/dev/git/repo
+  local repo="$TMPDIR/repos/plain"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+
+  run "$DREAM_SCAN" --home "$TMPDIR" --memory-dir "$repo"
   [[ "$status" -eq 0 ]]
   [[ "$output" != *"Session Signals"* ]]
 }
@@ -318,7 +338,6 @@ PY
 # ── Memory state reporting ────────────────────────────────────────────────────
 
 @test "scan: reports memory state" {
-  local dir="$TMPDIR/.claude/projects/test-proj/memory"
   _make_memory_dir "test-proj" "- [Topic A](topic-a.md) — entry a
 - [Topic B](topic-b.md) — entry b"
   _make_topic_file "$dir" "topic-a.md" "topic-a" "First topic"
@@ -332,7 +351,6 @@ PY
 }
 
 @test "scan: reads topic file frontmatter" {
-  local dir="$TMPDIR/.claude/projects/test-proj/memory"
   _make_memory_dir "test-proj" "- [My Topic](topic.md) — entry"
   _make_topic_file "$dir" "topic.md" "my-topic-name" "A detailed description"
 
@@ -342,7 +360,6 @@ PY
 }
 
 @test "scan: detects stale entries" {
-  local dir="$TMPDIR/.claude/projects/test-proj/memory"
   _make_memory_dir "test-proj" "- [Old](old.md) — stale entry"
   _make_topic_file "$dir" "old.md" "old-topic" "Old content"
   # Set mtime to 100 days ago
@@ -354,14 +371,17 @@ PY
 }
 
 @test "scan: reports last dream timestamp" {
-  local dir="$TMPDIR/.claude/projects/test-proj/memory"
+  # The stamp is read from the gates root, not from beside the topic files.
+  # Asserted on the rendered date alone: an `|| [[ $output == *dream* ]]` arm
+  # matches the report's own heading, so it passes whether or not the stamp
+  # was found at all.
   _make_memory_dir "test-proj" "- [Topic](topic.md) — entry"
   _make_topic_file "$dir" "topic.md" "topic"
-  echo "1717862400" > "$dir/.last-dream"
+  echo "1717862400" > "$(gate_stamp "$TMPDIR/repos/test-proj" last-dream)"
 
   run "$DREAM_SCAN" --home "$TMPDIR" --days 30
   [[ "$status" -eq 0 ]]
-  [[ "$output" == *"2024"* ]] || [[ "$output" == *"dream"* ]]
+  [[ "$output" == *"2024-06-08"* ]]
 }
 
 # ── Output format ─────────────────────────────────────────────────────────────
@@ -369,7 +389,6 @@ PY
 @test "scan: output has Memory State and Session Signals sections" {
   _make_session_jsonl "$TMPDIR/.claude/projects/test-proj/s.jsonl" \
     "I prefer this approach"
-  local dir="$TMPDIR/.claude/projects/test-proj/memory"
   _make_memory_dir "test-proj" "- [Topic](topic.md) — entry"
   _make_topic_file "$dir" "topic.md" "topic"
 

@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Record that an interactive agent session is editing a worktree.
+#
+# A fix pass and a person editing in Pi or Claude Code are two writers in one
+# tree. The pass commits what it finds, so a half-finished edit lands in a
+# commit nobody reviewed. This is how a session says it is here.
+#
+# Unlike with-tree-lock, nothing is wrapped: that lock is a flock and has to
+# hold a descriptor for the length of the work, where this records a pid and
+# returns. Which is the point — Claude Code's session hooks are short-lived
+# subprocesses that could not hold a flock for the session behind them.
+#
+# Usage:
+#   with-session-lock <worktree> --acquire --harness NAME [--pid N]
+#   with-session-lock <worktree> --release [--pid N]
+#   with-session-lock <worktree> --check
+#
+# --pid defaults to the caller's parent, which is the harness process when a
+# hook invokes this. Exit status: 0, except --check, which exits 1 when no
+# session is editing (so `if with-session-lock t --check` reads as "is anyone
+# in there").
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
+
+usage() {
+  cat <<'USAGE'
+with-session-lock — record an interactive session editing a worktree
+
+Usage:
+  with-session-lock <worktree> --acquire --harness NAME [--pid N]
+                    [--session-id ID] [--command TEXT]
+  with-session-lock <worktree> --release [--pid N]
+  with-session-lock <worktree> --check
+
+Options:
+  --acquire        Record a session against this worktree.
+  --release        Drop this session's record.
+  --check          Report who is editing. Exit 1 when nobody is.
+  --pid N          The harness process. Default: this process's parent.
+  --harness NAME   Which harness, for the refusal message.
+  --session-id ID  The harness's own session id, for self-exemption.
+  --command TEXT   How the session is spelled in a refusal.
+  -h, --help       Show this message.
+USAGE
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+[[ -n "${1:-}" ]] || { usage >&2; exit 2; }
+
+PYTHONPATH="$REPO_ROOT/ai/lib${PYTHONPATH:+:$PYTHONPATH}" \
+  exec python3 "$REPO_ROOT/ai/lib/core/session_lock_cli.py" "$@"

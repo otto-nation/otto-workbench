@@ -640,6 +640,30 @@ class TestTheSummary:
         summary = review_fix._summary([_outcome("M1", FixOutcome.FIXED)], described)
         assert summary == "Fixed:\n  - [M1] headline"
 
+    def test_a_long_finding_wraps_instead_of_truncating_mid_sentence(self):
+        """The commit body is where a self-review records why; clipping loses it."""
+        sentence = (
+            "Scoping the toolchain-pin guard to only `strategy.job-index == 0` "
+            "makes the entire matrix skip the toolchain pin rather than applying "
+            "it on every job."
+        )
+        described = {"S1": review_fix._describe_finding(
+            _finding("S1", body=sentence),
+        )}
+        summary = review_fix._summary(
+            [_outcome("S1", FixOutcome.FIXED)], described,
+        )
+        assert sentence in " ".join(summary.split())
+        assert "\u2026" not in summary
+        lines = summary.splitlines()
+        assert all(len(line) <= 100 for line in lines)
+        prefix = "  - [S1] "
+        assert lines[1].startswith(prefix)
+        continuations = lines[2:]
+        assert continuations
+        hang = " " * len(prefix)
+        assert all(line.startswith(hang) for line in continuations)
+
     def test_a_skip_is_reported_by_the_reason_the_agent_gave(self):
         summary = review_fix._summary(
             [_outcome("S1", FixOutcome.NEEDS_HUMAN, "needs a product decision")], {},
@@ -1470,13 +1494,16 @@ class TestApplyOutcomes:
         assert "not verified automatically" in summary
 
     def test_the_caveat_survives_a_description_long_enough_to_crowd_it(self):
-        """The description gives way first — a half-printed caveat is the worse loss."""
+        """Wrapping keeps both halves: the description is no longer cut to make room."""
+        description = "x" * 80
         summary = review_fix._summary(
             [_outcome("M1", FixOutcome.FIXED, verified=False, verify_detail="no runnable check")],
-            {"M1": "x" * 80},
+            {"M1": description},
         )
-        assert summary.endswith("(not verified automatically — no runnable check)")
-        assert "…" in summary
+        joined = " ".join(summary.split())
+        assert description in joined
+        assert "(not verified automatically — no runnable check)" in joined
+        assert all(len(line) <= 100 for line in summary.splitlines())
 
     # passes-at-base: base writes no annotation, so the wording assertions hold vacuously there
     def test_an_unverified_tick_is_still_a_fix_to_the_parser(self):

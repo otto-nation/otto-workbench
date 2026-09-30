@@ -28,7 +28,7 @@ threshold_secs=$((PROMOTE_INTERVAL_HOURS * 3600))
 while IFS=$'\t' read -r memory_dir repo_dir; do
   [[ -n "$memory_dir" ]] || continue
 
-  last_promote="$(_read_stamp "$memory_dir/.last-promote")"
+  last_promote="$(_read_stamp "$(_gate_stamp_file "$repo_dir" 'last-promote')")"
 
   elapsed=$((now - last_promote))
   [[ "$elapsed" -lt "$threshold_secs" ]] && continue

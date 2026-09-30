@@ -30,12 +30,12 @@ teardown() {
 # case.
 _make_project() {
   local name="$1" last_promote_ts="$2" num_sessions="$3" session_mtime="${4:-}"
-  local repo memory
+  local repo
   repo="$(gate_repo "$name")"
-  memory="$(gate_memory "$repo")"
+  gate_memory "$repo" >/dev/null
 
   if [ -n "$last_promote_ts" ]; then
-    echo "$last_promote_ts" > "$memory/.last-promote"
+    echo "$last_promote_ts" > "$(gate_stamp "$repo" last-promote)"
   fi
 
   gate_sessions "$(gate_claude_dir "$repo")" "$num_sessions" "$session_mtime"
@@ -200,10 +200,10 @@ _make_project() {
   now=$(date +%s)
   local eight_days_ago=$((now - 691200))
 
-  local repo memory
+  local repo
   repo="$(gate_repo "pi-only")"
-  memory="$(gate_memory "$repo")"
-  echo "$eight_days_ago" > "$memory/.last-promote"
+  gate_memory "$repo" >/dev/null
+  echo "$eight_days_ago" > "$(gate_stamp "$repo" last-promote)"
   gate_sessions "$(gate_pi_dir "$repo")" 12
 
   run "$SHOULD_PROMOTE"
@@ -215,10 +215,10 @@ _make_project() {
   now=$(date +%s)
   local eight_days_ago=$((now - 691200))
 
-  local repo memory
+  local repo
   repo="$(gate_repo "spread")"
-  memory="$(gate_memory "$repo")"
-  echo "$eight_days_ago" > "$memory/.last-promote"
+  gate_memory "$repo" >/dev/null
+  echo "$eight_days_ago" > "$(gate_stamp "$repo" last-promote)"
 
   # Four sessions in each of three worktrees: under the minimum of 10 alone,
   # over it together. Counting any single directory would leave this shut.
@@ -255,8 +255,8 @@ _make_project() {
 
   run "$REPO_ROOT/ai/skills/promote/promote-complete.sh"
   [ "$status" -eq 0 ]
-  [ -f "$(gate_memory "$TEST_HOME/project-a")/.last-promote" ]
-  [ -f "$(gate_memory "$TEST_HOME/project-b")/.last-promote" ]
+  [ -f "$(gate_stamp "$TEST_HOME/project-a" last-promote)" ]
+  [ -f "$(gate_stamp "$TEST_HOME/project-b" last-promote)" ]
 }
 
 @test "promote-complete writes no stamp an unregistered repo would keep" {
@@ -268,7 +268,7 @@ _make_project() {
 
   run "$REPO_ROOT/ai/skills/promote/promote-complete.sh"
   [ "$status" -eq 0 ]
-  [ ! -f "$(gate_claude_dir "$orphan")/memory/.last-promote" ]
+  [ ! -f "$(gate_stamp "$orphan" last-promote)" ]
 }
 
 @test "promote-complete is quiet with nothing registered" {

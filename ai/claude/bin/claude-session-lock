@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# Session hook that records this Claude session as editing its worktree.
+#
+# An unattended `pr` fix pass commits what it finds in a worktree. A person
+# editing here at the same time is a second writer the pass cannot see, and
+# the pass wins — a half-finished edit lands in a commit nobody reviewed.
+# This is how the session says it is here; ai/lib/fix/engine.py is what reads
+# it and refuses.
+#
+# Its twin is ai/pi/extensions/session-lock, which records the same fact for
+# Pi. Both go through `with-session-lock`, so one record answers for both
+# harnesses and a pass does not have to know which one is running.
+#
+# Why a record and not a lock this process holds: a hook is a short-lived
+# subprocess, so any flock it took would die as it exits, while the session it
+# speaks for runs on. So the pid recorded is CLAUDE_PID — the session itself,
+# which is alive exactly as long as the claim should be. See
+# ai/lib/core/session_lock.py.
+#
+# Usage: claude-session-lock --acquire|--release|--refresh
+#        (stdin: the hook payload, read for `cwd`)
+#
+# Fails open everywhere. A session that cannot record itself is unprotected,
+# which is the behaviour before this existed; a hook that exits non-zero is an
+# error at the top of every session instead.
+
+set -e
+
+usage() {
+  cat <<EOF
+Usage: claude-session-lock --acquire|--release|--refresh
+
+Session hooks that record this Claude session as editing its worktree, so an
+unattended fix pass refuses to commit over it rather than racing it.
+
+  --acquire   SessionStart: record this session.
+  --release   SessionEnd: drop it.
+  --refresh   PreToolUse on Edit/Write: re-record when the claim is missing,
+              which repairs a SessionStart that failed or a /clear that
+              released while the session kept editing.
+
+The lock is documented in ai/lib/core/session_lock.py.
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+
+mode="${1:-}"
+case "$mode" in
+  --acquire|--release|--refresh) ;;
+  *) usage >&2; exit 2 ;;
+esac
+
+payload="$(cat 2>/dev/null || true)"
+
+# The payload names the session's cwd. Falling back to $PWD rather than
+# failing: a hook invoked with no stdin is a harness change, not a reason to
+# leave the tree unguarded.
+#
+# jq, like the sibling guards (claude-edit-guard, claude-bash-guard) use, not a
+# sed regex against raw JSON: a sed pattern reads the string's quoted
+# characters literally, so a cwd containing a JSON escape (an embedded
+# backslash) would come out wrong where jq decodes it correctly.
+#
+# `|| cwd=""` for the same reason the siblings write `|| exit 0`: jq exits 5
+# on input it cannot parse, and under `set -e` that kills the hook instead of
+# falling through to the $PWD default. A malformed payload must leave the
+# session unguarded, not report an error at the top of it.
+cwd="$(printf '%s' "$payload" | jq -r '.cwd // empty' 2>/dev/null)" || cwd=""
+[[ -n "$cwd" ]] || cwd="$PWD"
+[[ -d "$cwd" ]] || exit 0
+
+# CLAUDE_PID is the session process, injected into every hook and Bash
+# subprocess. Without it there is nothing whose lifetime matches the claim —
+# this hook's own pid dies in a moment — so there is no honest record to make.
+[[ "${CLAUDE_PID:-}" =~ ^[0-9]+$ ]] || exit 0
+
+# The symlink is followed before the traversal. sync_component_bin installs
+# this as ~/.local/bin/claude-session-lock and settings.json runs it by that
+# path: without the readlink, ../../.. climbs out of ~/.local/bin, the -x test
+# fails, and every real invocation silently does nothing while the tests —
+# which call the repo copy — stay green.
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+_repo_root="$(cd "$(dirname "$_SELF")/../../.." && pwd)"
+_with_session_lock="$_repo_root/bin/local/with-session-lock"
+[[ -x "$_with_session_lock" ]] || exit 0
+
+case "$mode" in
+  --release)
+    "$_with_session_lock" "$cwd" --release --pid "$CLAUDE_PID" >/dev/null 2>&1 || true
+    ;;
+  --refresh)
+    # Only when the claim has gone missing. An Edit arrives constantly and
+    # rewriting the record on each one would be a write per keystroke-ish
+    # event for a fact that has not changed.
+    if ! "$_with_session_lock" "$cwd" --check 2>/dev/null | grep -q "pid $CLAUDE_PID"; then
+      "$_with_session_lock" "$cwd" --acquire --pid "$CLAUDE_PID" \
+        --harness claude --session-id "${CLAUDE_CODE_SESSION_ID:-}" \
+        --command "claude" >/dev/null 2>&1 || true
+    fi
+    ;;
+  --acquire)
+    "$_with_session_lock" "$cwd" --acquire --pid "$CLAUDE_PID" \
+      --harness claude --session-id "${CLAUDE_CODE_SESSION_ID:-}" \
+      --command "claude" >/dev/null 2>&1 || true
+    ;;
+esac
+
+exit 0

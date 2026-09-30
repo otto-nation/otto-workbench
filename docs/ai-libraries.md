@@ -1442,21 +1442,22 @@ people the moment it lands, and a wrong one has to be retracted in front of the
 reviewer. So the default is to draft: callers print what they would have sent and
 report failure, and nothing leaves the machine until the entrypoint opts in.
 
-One flag owns this. Modules that write externally (`pr.comments`,
-`review.issue`) ask here rather than carrying their own switch.
+`run` owns this for one invocation. Modules that write externally
+(`pr.comments`, `review.issue`) ask here rather than carrying their own switch.
+Nested `run` calls save and restore, so an inner command cannot inherit an
+outer gate it did not open, and cannot close one it did not own.
 
-The decision is scoped to a **run**, not to the process. `pr fix` runs a
-review, a CI pass and a describe pass in one process, so the dispatch seam
-wraps each handler in `scope()` and whatever that handler opened closes again
-on the way out — what one pass was told to publish is not an authorisation for
-the next. Until in-process dispatch landed, the subprocess boundary was doing
-that scoping by accident, and there was no way to close the gate at all.
+`pr fix` runs a review, a CI pass and a describe pass in one process, so the
+dispatch seam wraps each handler in `scope()` and whatever that handler opened
+closes again on the way out — what one pass was told to publish is not an
+authorisation for the next.
 
 A hold overrides it. Some things a run learns mid-way — an unanswered question
 about whether the work should exist at all — mean nothing more should leave the
-machine, whatever the entrypoint was told. `hold` closes the gate for good and
-is not restored when a run exits, so the two only ever compose in the safe
-direction at both scopes.
+machine, whatever the entrypoint was told. `hold` closes the gate for the rest
+of that run, so the two only ever compose in the safe direction at both scopes.
+The next `run` starts clean: both the flag and the hold reset, or a hold would
+outrank a `--post` nobody in that invocation asked to refuse.
 
 What that means at the CLI: `pr comments` writes nothing outward unless you
 pass `--post`. Replies, the fix summary, thread resolutions, deferral tracking
@@ -3403,6 +3404,16 @@ Both halves are here, below any package that knows what a row *means*. What a
 cell says is a domain question; that a pipe inside one has to be escaped, and
 that a link renders as `[label](url)`, is not.
 
+### core/memory.py
+
+Per-repo authored memory, keyed by shared git dir rather than cwd.
+
+Memory topic files live under ``workbench_paths.memory_dir() / repo_key()``.
+The key is ``<canonical_slug[:64]>-<sha256(identity)[:8]>`` so three paths
+that collide under a bare slug — ``/Users/x/a-b/c``, ``/Users/x/a/b/c``,
+``/Users/x/a.b/c`` — still get three directories. Identity is
+``git_layout.shared_dir``, never Python's process-randomised ``hash()``.
+
 ### core/module_proxy.py
 
 A command module standing in front of the submodules its flow is spread over.
@@ -3722,6 +3733,60 @@ for serialization and type-hint-driven reconstruction for deserialization.
 not the only thing that has to know what an annotation means — `schema_gen`
 describes the same hints to a model and dispatches on the same answer.
 
+### core/session_lock.py
+
+Which worktrees an interactive agent session is editing right now.
+
+An unattended fix pass and a person editing in Pi or Claude Code are two
+writers in one working tree, and neither can see the other. The pass commits
+what it finds, so a half-finished edit lands in a commit nobody reviewed.
+
+The three locks in this package answer three different questions, and taking
+the wrong one is worse than taking none:
+
+``run_lock``
+    One workbench command per checkout — an exclusive flock held for the
+    length of a ``pr`` run.
+``tree_lock``
+    A validator is *reading* this tree, so nothing may edit it. Both edit
+    guards refuse writes while it is held, so a session that took this one
+    would block its own edits.
+``session_lock``
+    This module. A person is editing here, so an unattended pass must not
+    commit.
+
+A record, not a flock, and that is the design rather than a shortcut. A flock
+is held by a process, and under Claude Code there is no process to hold one:
+``SessionStart`` and ``SessionEnd`` are short-lived subprocesses whose locks
+die with the hook. Holding one would take a daemon per session, and a daemon
+that dies while its session lives is a lock that lies. So the holder is the
+harness process itself, named rather than attached to.
+
+Kill-safety comes from the pid instead of the kernel. A record is live only
+while its pid exists *and* was started at the recorded time: ``ps -o lstart=``
+returns non-zero for a dead pid, so a session killed with SIGKILL leaves a
+record the next reader prunes, and a pid recycled onto an unrelated process
+fails the start-time match rather than impersonating the session that died.
+That is strictly more than a bare ``os.kill(pid, 0)`` — which is all
+``tree_lock._alive`` needs, because there the flock is the verdict and the pid
+only names a holder in a diagnostic. Here the record *is* the verdict.
+
+Several sessions in one worktree are legitimate, so the file is JSONL with one
+object per holder, as ``tree_lock``'s is.
+
+### core/session_lock_cli.py
+
+Command-line face of the interactive session lock.
+
+Separate from session_lock.py so the library stays importable without argparse
+ceremony, and so each harness's hook has one file to invoke.
+
+Unlike ``tree_lock_cli``, nothing here wraps a child process. That module's
+lock is a flock, which lives only while a process holds the descriptor, so the
+work has to run underneath it. This one records a pid and returns — which is
+the whole reason a record was chosen: the harness process is the holder, and a
+hook that exits immediately can still name it. See ``session_lock``'s header.
+
 ### core/sessions.py
 
 Session transcripts, across every agent harness on this machine.
@@ -3750,19 +3815,17 @@ normalises both to ``UserMessage`` so consumers never branch on harness.
 The slug a directory is named for is deliberately never parsed back into a path.
 Claude's transform maps every non-alphanumeric to ``-``, so ``a-b`` and ``a_b``
 both become ``a-b`` and the original is unrecoverable; Pi's transform
-(``pi_session_slug``) only replaces ``/``, ``\`` and ``:`` — a dot, a space, an
+(``pi_session_slug``) only replaces ``/``, ``\\`` and ``:`` — a dot, a space, an
 accent, an emoji all survive verbatim — so the two harnesses do not even agree
 on the encoding, and the harness-neutral ``canonical_slug`` (which replaces
 everything outside ``[A-Za-z0-9_]``) matches neither one's store. Both write
 the cwd *into* the transcript, which is a fact rather than an inference, so
 ``project_path_of`` reads that. The slug is written, never read.
 
-Memory is the one thing here that is genuinely Claude-shaped: it still lives in
-that harness's tree, one ``memory/`` directory per project slug. That is not a
-statement about which harness a session ran in — sessions come from every
-harness in the table — and moving those artifacts out is tracked separately.
-``memory_dirs`` is here so the location is stated once rather than at each
-consumer, which is how the transform came to be spelled four different ways.
+Memory is no longer addressed from here. It is keyed by repo identity under
+the data root, which every harness reads the same way — see
+``ai/lib/core/memory.py``. What remains here is the session stores, which are
+genuinely harness-shaped: one directory per harness, per cwd slug.
 
 ``lib/ai/session-count.sh`` is the shell expression of the same model, for the
 Stop-hook gates that cannot afford a Python start-up. ``tests/sessions_ssot.bats``

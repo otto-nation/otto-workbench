@@ -1,6 +1,8 @@
-import pytest
-
-from nesting.preprocess import strip_shell_line, strip_strings_and_comments
+from nesting.preprocess import (
+    heredoc_delimiter,
+    strip_shell_line,
+    strip_strings_and_comments,
+)
 
 
 def test_removes_single_quoted_strings():
@@ -92,18 +94,28 @@ def test_an_escaped_quote_does_not_close_the_string_holding_it():
     assert strip_shell_line(line, False, False) == ("echo ; exit 0", False, False)
 
 
-@pytest.mark.xfail(
-    reason="#1471: the scan is flat, so a `\"` nested inside $( ) reads as closing "
-           "the outer span and the apostrophe after it opens one that never closes",
-    strict=True,
-)
 def test_an_apostrophe_inside_a_nested_substitution_does_not_leak_a_quote():
     """The returned state must describe the line, not a span that isn't open.
 
-    `tests/generate_doc_reference.bats:89` is this exact line. The nesting
-    checker survives it only because it discards these flags and reads its
-    heredoc delimiter off the raw line; a caller that trusts them sees every
-    following line as quoted and suppresses the next real heredoc opener.
+    `tests/generate_doc_reference.bats:89` is this exact line. A caller that
+    trusts the flags (the size counter, and now the nesting checker) would
+    otherwise see every following line as quoted and suppress the next real
+    heredoc opener.
     """
     line = '[ "$out" = "$(printf "the remote\'s branch.")" ]'
     assert strip_shell_line(line, False, False)[1:] == (False, False)
+
+
+def test_carried_state_from_line_89_still_finds_the_heredoc_on_line_93():
+    """`tests/generate_doc_reference.bats` lines 89 then 93.
+
+    The nested ``$(printf "... remote's ...")`` must not leak a quote, or
+    ``heredoc_delimiter`` starting from that state misses ``<< 'EOF'``.
+    """
+    line_89 = (
+        '  [ "$output" = "$(printf "resolve_default_branch\\tthe remote\'s '
+        'default branch.")" ]'
+    )
+    line_93 = '  cat > "$LIB_DIR/components.sh" << \'EOF\''
+    _, in_squote, in_dquote = strip_shell_line(line_89, False, False)
+    assert heredoc_delimiter(line_93, in_squote, in_dquote) == 'EOF'

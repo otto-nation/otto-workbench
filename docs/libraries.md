@@ -724,6 +724,7 @@ and `tests/projects.bats` cross-validates the halves against one file.
 | `project_registered` | print every registered repo that still exists, one per line. |
 | `project_forget DIR` | drop DIR's entry. Returns 1 when it had none. |
 | `project_prune` | drop entries whose directory is gone, and repeats. Prints how many went. |
+| `memory_orphans` | every memory directory whose repo has left the registry, one `<key>\t<file count>` line each. |
 | `project_repo_id DIR` | the identity DIR's repository keeps across its worktrees. |
 | `project_repo_label REPO_ID` | the directory REPO_ID's repository lives at. |
 | `project_repo_relative REPO_DIR WORK_TREE` | WORK_TREE named by the part of its path REPO_DIR has not already said, for a display that lists a repo's work trees under the repo's own row. |

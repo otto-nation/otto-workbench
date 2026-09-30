@@ -261,6 +261,46 @@ class TestRetryBlankResponse:
         ) == ("", 1)
         assert len(calls) == 1
 
+    def test_a_caller_can_name_the_correction_it_wants(self):
+        """The default hint asks for markers, which is wrong for a JSON caller.
+
+        Four of the five callers wrap their answer in markers and the hint
+        fits them. Triage asks for a bare JSON object, so the correction it
+        needs is a different sentence, not a reworded shared one.
+        """
+        calls = []
+
+        def call(prompt):
+            calls.append(prompt)
+            return ("{}", 0) if len(calls) == 2 else ("sorry", 0)
+
+        agent_retry.retry_blank_response(
+            call, "PROMPT", label="triage", usable=lambda s: s == "{}",
+            hint="FIX THIS: ",
+        )
+        assert calls[1] == "FIX THIS: PROMPT"
+        assert agent_retry.BLANK_RESPONSE_HINT not in calls[1]
+
+    # passes-at-base: asserts the behaviour this change was careful not to break
+    def test_the_marker_hint_is_what_a_caller_gets_by_default(self):
+        """The four marker callers must be unaffected by the new parameter."""
+        calls = []
+
+        def call(prompt):
+            calls.append(prompt)
+            return ("{}", 0) if len(calls) == 2 else ("sorry", 0)
+
+        agent_retry.retry_blank_response(
+            call, "PROMPT", label="describe", usable=lambda s: s == "{}",
+        )
+        assert calls[1] == agent_retry.BLANK_RESPONSE_HINT + "PROMPT"
+        assert "markers" in agent_retry.BLANK_RESPONSE_HINT
+
+    def test_the_json_hint_names_json_and_not_markers(self):
+        """The hint triage passes must correct the mistake triage makes."""
+        assert "JSON" in agent_retry.JSON_RESPONSE_HINT
+        assert "marker" not in agent_retry.JSON_RESPONSE_HINT.lower()
+
 
 # Every kind, and what the three retry decisions make of it. Adding a kind
 # without a row here fails `test_every_kind_is_covered` — the guard exists

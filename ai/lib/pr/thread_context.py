@@ -32,6 +32,12 @@ from pr.thread_models import ReportThread
 TRIAGE_CONTEXT_LINES = 10
 DIFF_CONTEXT_MAX_LINES = 100
 
+# The head of a file read for a file-level thread the branch did not touch.
+# Bounded for the same reason the window above is: this is one block of a
+# prompt that may carry forty of them, and the file behind it has no cited
+# line to centre on, so there is no part of it the thread points at.
+FILE_CONTEXT_MAX_LINES = 100
+
 
 def _window(file_path: str, line: int, repo_dir: Path) -> tuple[str, int, int]:
     """The source around `line`, and the 1-based bounds it was taken from.
@@ -70,10 +76,72 @@ def _window(file_path: str, line: int, repo_dir: Path) -> tuple[str, int, int]:
     return "\n".join(lines[start:end]), start + 1, end
 
 
+def _head_window(file_path: str, repo_dir: Path) -> str:
+    """The first `FILE_CONTEXT_MAX_LINES` of a file, and a note when cut.
+
+    Reads through the same failure rules as `_window`: a file the tree does
+    not have is no context, and a file that is not text raises rather than
+    reaching a model as replacement characters.
+    """
+    full_path = repo_dir / file_path
+    if not full_path.is_file():
+        return ""
+    try:
+        lines = full_path.read_text().splitlines()
+    except OSError:
+        return ""
+    total = len(lines)
+    if total > FILE_CONTEXT_MAX_LINES:
+        lines = lines[:FILE_CONTEXT_MAX_LINES]
+        lines.append(f"... ({total - FILE_CONTEXT_MAX_LINES} more lines)")
+    return "\n".join(lines)
+
+
 def code_context_for_thread(file_path: str, line: int | str, repo_dir: Path) -> str:
     """The source around one thread's location, fenced for a prompt."""
     snippet, _, _ = _window(file_path, int(line) if line else 0, repo_dir)
     return f"```\n{snippet}\n```" if snippet else ""
+
+
+def _file_level_context(file_path: str, repo_dir: Path) -> str:
+    """A labelled block for a thread that names a file but no line.
+
+    GitHub gives a file-level review comment a null line, which the line
+    window reads as no location at all. Skipping those was how a triage round
+    over nothing but file-level threads reached the model with an empty code
+    section while the prompt still required a cited line as evidence — asking
+    for a citation and supplying nothing to cite, which the model answered by
+    narrating a file read that the tool-less prompt shape cannot perform.
+
+    The diff is the better reading of the two: a file-level comment is about
+    what the PR did to the file, and the whole file may be far larger than a
+    triage prompt covering forty threads can hold. A file the branch did not
+    touch has no diff, and falls back to its head — an unchanged file is still
+    the thing that was commented on.
+    """
+    if not file_path or not (repo_dir / file_path).is_file():
+        return ""
+    diff = diff_context_for_file(file_path, repo_dir)
+    if diff:
+        body = diff.removeprefix("```diff\n").removesuffix("\n```")
+        return f"--- {file_path} (diff) ---\n{body}\n---"
+    head = _head_window(file_path, repo_dir)
+    return f"--- {file_path} (head) ---\n{head}\n---" if head else ""
+
+
+def _context_block(thread: ReportThread, repo_dir: Path) -> str:
+    """One thread's labelled block, or empty where there is nothing to read.
+
+    The two framings are chosen here rather than in the loop below so that
+    each reader stays one level deep: a cited line gets the window around it,
+    and a file-level thread gets the file.
+    """
+    if not thread.line:
+        return _file_level_context(thread.file, repo_dir)
+    snippet, start, end = _window(thread.file, int(thread.line), repo_dir)
+    if not snippet:
+        return ""
+    return f"--- {thread.file}:{start}-{end} ---\n{snippet}\n---"
 
 
 def gather_code_context(threads: list[ReportThread], repo_dir: Path) -> str:
@@ -82,14 +150,12 @@ def gather_code_context(threads: list[ReportThread], repo_dir: Path) -> str:
     Labelled rather than fenced because the reader is one prompt covering many
     threads: without the path and line range on each block, a model has no way
     to tell which snippet belongs to which thread.
+
+    A thread with no line is read against the file rather than dropped; see
+    `_file_level_context` for why an empty section is worse than a wide one.
     """
-    snippets = []
-    for thread in threads:
-        snippet, start, end = _window(
-            thread.file, int(thread.line or 0), repo_dir)
-        if snippet:
-            snippets.append(f"--- {thread.file}:{start}-{end} ---\n{snippet}\n---")
-    return "\n".join(snippets)
+    blocks = (_context_block(t, repo_dir) for t in threads)
+    return "\n".join(b for b in blocks if b)
 
 
 def diff_context_for_file(

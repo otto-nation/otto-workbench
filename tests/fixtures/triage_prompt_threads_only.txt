@@ -74,4 +74,8 @@ Return JSON matching this exact schema:
   ]
 }
 
+You have no tools and cannot read files, run commands, or look anything up: the
+code above is all of it. Classify from what is in this prompt and answer in one
+reply — there is no turn after this one in which a file read could land.
+
 IMPORTANT: Return ONLY the JSON object, no markdown fencing or explanation.

@@ -115,6 +115,7 @@ def run_prompt(
     repo: str | None = None,
     pr: str | None = None,
     config: WorkbenchConfig | None = None,
+    retry_hint: str = agent_retry.BLANK_RESPONSE_HINT,
 ) -> PromptResult:
     """Run a stateless phase, retrying once if its answer cannot be parsed.
 
@@ -122,6 +123,11 @@ def run_prompt(
     no session log, so an unusable answer is the only evidence the agent spent a
     turn without doing the job — the same thrash the review pipeline diagnoses
     from its logs.
+
+    ``retry_hint`` is what that second attempt is told it got wrong. The default
+    asks for the markers most callers here wrap their answer in; a caller whose
+    contract is a bare JSON object passes its own, because a retry that names
+    the wrong format corrects nothing.
 
     ``task`` is the name this call bills to in the usage ledger, defaulting to
     the phase's own. A phase may span several of them: the ledger separates a
@@ -142,7 +148,7 @@ def run_prompt(
             attempt, cwd=work_dir, model=knobs.model, thinking=knobs.thinking,
             provider=knobs.provider, task=ledger_task, repo=repo, pr=pr,
         ),
-        prompt, label=label or spec.label, usable=usable,
+        prompt, label=label or spec.label, usable=usable, hint=retry_hint,
     )
     return PromptResult(text, exit_code, exit_code == 0 and usable(text))
 

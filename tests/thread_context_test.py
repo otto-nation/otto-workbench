@@ -29,6 +29,39 @@ def tree(tmp_path):
     return tmp_path
 
 
+@pytest.fixture
+def branch(tmp_path):
+    """A `trunk`-based repo on a feature branch with two commits.
+
+    Module-scoped rather than bound to one class: the diff and the log both
+    need a real branch, and so does a file-level thread, which is read
+    against the diff.
+    """
+    origin = tmp_path / "origin"
+    run_checked(["git", "init", "--bare", "-q", "-b", "trunk", str(origin)])
+    work = tmp_path / "work"
+    run_checked(["git", "clone", "-q", str(origin), str(work)])
+    git_in(work, "config", "user.email", "t@example.com")
+    git_in(work, "config", "user.name", "Test")
+    (work / "a.py").write_text("base\n")
+    git_in(work, "add", "-A")
+    git_in(work, "commit", "-q", "--no-verify", "-m", "base")
+    git_in(work, "push", "-q", "-u", "origin", "trunk")
+    # A bare `git clone` of an empty origin leaves no origin/HEAD, and
+    # `default_branch` then falls back to "main" by design. Setting it is
+    # what makes this a `trunk` repo rather than a repo git cannot answer
+    # for — which is the case worth testing.
+    git_in(work, "remote", "set-head", "origin", "trunk")
+    git_in(work, "checkout", "-q", "-b", "feature")
+    (work / "a.py").write_text("base\nchanged\n")
+    git_in(work, "commit", "-q", "--no-verify", "-am", "first change")
+    (work / "b.py").write_text("new\n")
+    git_in(work, "add", "-A")
+    git_in(work, "commit", "-q", "--no-verify", "-m", "second change")
+    git_topology.default_branch_cached.cache_clear()
+    return work
+
+
 class TestTheContextWindow:
     """One window, asserted once — both framings below are built from it."""
 
@@ -105,6 +138,62 @@ class TestTheTwoFramings:
         assert thread_context.gather_code_context(threads, tree) == ""
 
 
+class TestAFileLevelThread:
+    """A thread GitHub reports against a file rather than a line.
+
+    A file-level comment carries `line: null`, which the line window reads as
+    no location and answers with nothing. Triage then asks a model to cite the
+    line proving its verdict while handing it no code to cite, and the model
+    answers by narrating the file read it has no tool to perform. Both open
+    threads on the run this came from were file-level.
+    """
+
+    def test_it_is_read_against_the_diff_when_there_is_no_line(self, branch):
+        threads = [ReportThread(id="t1", file="a.py", line=None)]
+        out = thread_context.gather_code_context(threads, branch)
+        assert "changed" in out
+
+    def test_the_block_says_which_file_and_that_it_is_a_diff(self, branch):
+        threads = [ReportThread(id="t1", file="a.py", line=None)]
+        out = thread_context.gather_code_context(threads, branch)
+        assert out.startswith("--- a.py (diff) ---\n")
+        assert out.endswith("\n---")
+
+    # passes-at-base: the cited-line path is untouched; this holds it against the new branch
+    def test_a_cited_line_still_wins_over_the_diff(self, branch):
+        """The line window is the better context where there is a line."""
+        threads = [ReportThread(id="t1", file="a.py", line=1)]
+        out = thread_context.gather_code_context(threads, branch)
+        assert out.startswith("--- a.py:1-2 ---\n")
+        assert "(diff)" not in out
+
+    def test_a_file_level_thread_on_an_unchanged_file_reads_the_head(self, branch):
+        """No diff is not no context: the file is still what was commented on."""
+        (branch / "c.py").write_text("".join(f"c{n}\n" for n in range(1, 6)))
+        threads = [ReportThread(id="t1", file="c.py", line=None)]
+        out = thread_context.gather_code_context(threads, branch)
+        assert "c1" in out and "c5" in out
+
+    # passes-at-base: a missing file was skipped before and must still be
+    def test_a_file_level_thread_on_a_missing_file_is_still_skipped(self, branch):
+        threads = [ReportThread(id="t1", file="gone.py", line=None)]
+        assert thread_context.gather_code_context(threads, branch) == ""
+
+    def test_a_file_level_thread_on_a_binary_file_is_not_softened(self, branch):
+        """`_head_window` must fail the same way `_window` does on a binary.
+
+        A binary file with no diff falls through to `_head_window`, which
+        claims to read through the same failure rules as `_window` — a
+        `UnicodeDecodeError` propagating rather than being softened into a
+        snippet of replacement characters. Untested before this: the only
+        file-level regression case was a missing file.
+        """
+        (branch / "bin.py").write_bytes(b"ok\n\xff\xfe\nmore\n")
+        threads = [ReportThread(id="t1", file="bin.py", line=None)]
+        with pytest.raises(UnicodeDecodeError):
+            thread_context.gather_code_context(threads, branch)
+
+
 class TestThreadCommentText:
     def test_comments_are_quoted_under_their_author(self):
         out = thread_context.thread_comment_text([
@@ -135,32 +224,6 @@ class TestThreadCommentText:
 
 class TestBranchReadings:
     """The two that need a real branch to answer."""
-
-    @pytest.fixture
-    def branch(self, tmp_path):
-        origin = tmp_path / "origin"
-        run_checked(["git", "init", "--bare", "-q", "-b", "trunk", str(origin)])
-        work = tmp_path / "work"
-        run_checked(["git", "clone", "-q", str(origin), str(work)])
-        git_in(work, "config", "user.email", "t@example.com")
-        git_in(work, "config", "user.name", "Test")
-        (work / "a.py").write_text("base\n")
-        git_in(work, "add", "-A")
-        git_in(work, "commit", "-q", "--no-verify", "-m", "base")
-        git_in(work, "push", "-q", "-u", "origin", "trunk")
-        # A bare `git clone` of an empty origin leaves no origin/HEAD, and
-        # `default_branch` then falls back to "main" by design. Setting it is
-        # what makes this a `trunk` repo rather than a repo git cannot answer
-        # for — which is the case worth testing.
-        git_in(work, "remote", "set-head", "origin", "trunk")
-        git_in(work, "checkout", "-q", "-b", "feature")
-        (work / "a.py").write_text("base\nchanged\n")
-        git_in(work, "commit", "-q", "--no-verify", "-am", "first change")
-        (work / "b.py").write_text("new\n")
-        git_in(work, "add", "-A")
-        git_in(work, "commit", "-q", "--no-verify", "-m", "second change")
-        git_topology.default_branch_cached.cache_clear()
-        return work
 
     def test_the_log_is_newest_first_and_branch_scoped(self, branch):
         out = thread_context.branch_commit_log(branch)

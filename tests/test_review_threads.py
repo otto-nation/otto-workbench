@@ -5828,6 +5828,37 @@ class TestTriagePromptVerificationValues:
         assert "Commits already made on this branch" not in prompt
 
 
+class TestTriagePromptStatesItsOwnLimits:
+    """What the prompt promises must match the shape it runs in.
+
+    Triage is prompt-shaped: the backend is invoked with no tools at all. A
+    prompt that requires a cited line as evidence, handed no code to cite,
+    reads to a model as an instruction to go and read the file — and the reply
+    is a narration of that read rather than the JSON the caller parses. Both
+    halves are asserted here because either alone leaves the contradiction.
+    """
+
+    def test_it_says_there_are_no_tools_to_read_with(self):
+        prompt = triage_prompt.build_triage_prompt([], "diff")
+        assert "cannot read files" in prompt
+
+    def test_the_no_tools_line_survives_having_no_context(self):
+        prompt = triage_prompt.build_triage_prompt([], "")
+        assert "cannot read files" in prompt
+
+    def test_with_no_code_the_evidence_verdicts_are_not_offered(self):
+        """Nothing to cite means the two posted-outward verdicts are unreachable."""
+        prompt = triage_prompt.build_triage_prompt([], "")
+        assert "no code context was available" in prompt
+        assert str(Verification.NEEDS_DISCUSSION) in prompt
+
+    # passes-at-base: the with-context path is unchanged; this pins that it stayed so
+    def test_with_code_the_evidence_requirement_stands(self):
+        prompt = triage_prompt.build_triage_prompt([], "some code")
+        assert "no code context was available" not in prompt
+        assert "REQUIRED for" in prompt
+
+
 class TestTheSchemaExampleIsValidJson:
     """The prompt closes with "Return ONLY the JSON object", so the shape it
     shows has to be one.
@@ -8569,7 +8600,31 @@ class TestTriageThrashGuard:
         assert rc == 0
         assert result is not None
         assert len(prompts) == 2
-        assert prompts[1].startswith(agent_retry.BLANK_RESPONSE_HINT)
+        assert prompts[1].startswith(agent_retry.JSON_RESPONSE_HINT)
+
+    def test_the_retry_corrects_json_rather_than_markers(self, tmp_path):
+        """The marker hint named a format this prompt never asks for.
+
+        Triage requests a bare JSON object. Told to "emit the requested
+        markers", a second attempt is being corrected about something it was
+        never asked to do, and fails the way the first did.
+        """
+        report = PRReport(threads=[ReportThread(id="t1", reviewer="kgn")])
+        prompts = []
+
+        def prompt(text, **kw):
+            prompts.append(text)
+            return ("I'll read the file first.", 0) if len(prompts) == 1 else (
+                '{"threads": []}', 0)
+
+        with (
+            patch.object(triage.agent_invoke.ai_backend, "prompt", side_effect=prompt),
+            patch.object(thread_context, "branch_commit_log", return_value=""),
+        ):
+            triage.run_triage(report, tmp_path, {})
+
+        assert "JSON" in prompts[1]
+        assert "markers" not in prompts[1].replace(prompts[0], "")
 
     def test_non_json_triage_output_is_kept_whole(self, tmp_path):
         """The old record kept a 500-character preview and no way to the rest."""

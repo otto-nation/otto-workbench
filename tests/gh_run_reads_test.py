@@ -237,11 +237,10 @@ def test_a_row_carries_the_number_the_dashboard_names_the_run_by():
 import json  # noqa: E402
 
 
-def _rollup(nodes, total=None, more=False, cursor="c1"):
+def _rollup(nodes, more=False, cursor="c1"):
     """A `gh api graphql` result carrying `nodes` as one page of the rollup."""
     payload = {"data": {"repository": {"object": {"statusCheckRollup": {
         "contexts": {
-            "totalCount": len(nodes) if total is None else total,
             "pageInfo": {"hasNextPage": more, "endCursor": cursor},
             "nodes": nodes,
         },
@@ -346,9 +345,9 @@ def test_rollup_actions_rows_carry_their_provenance():
 
 def test_a_second_page_is_followed_rather_than_cut_off():
     """A failing check at position 101 that nobody listed is a commit reporting green."""
-    page1 = _rollup([_check_run("Lint", run_id=900)], total=2, more=True)
+    page1 = _rollup([_check_run("Lint", run_id=900)], more=True)
     page2 = _rollup([_check_run("CodeQL", "FAILURE", app="scanner",
-                                run_id=None, db_id=77)], total=2)
+                                run_id=None, db_id=77)])
     with patch("gh.client.graphql", side_effect=[page1, page2]) as gql:
         checks = run_reads.fetch_commit_checks("owner/repo", "abc")
     assert [c["name"] for c in checks.external] == ["CodeQL"]
@@ -366,7 +365,7 @@ def test_one_page_is_one_call():
 
 def test_giving_up_on_a_long_rollup_trusts_no_run_to_be_green():
     """Past where we stopped reading, a run's checks are unseen."""
-    endless = _rollup([_check_run("Lint", run_id=900)], total=9999, more=True)
+    endless = _rollup([_check_run("Lint", run_id=900)], more=True)
     with patch("gh.client.graphql", return_value=endless) as gql:
         checks = run_reads.fetch_commit_checks("owner/repo", "abc")
     assert gql.call_count == run_reads._ROLLUP_MAX_PAGES
@@ -377,7 +376,7 @@ def test_giving_up_on_a_long_rollup_trusts_no_run_to_be_green():
 def test_a_page_that_fails_keeps_what_was_already_read():
     """A later page failing is not the same as there being no rollup at all."""
     page1 = _rollup([_check_run("CodeQL", "FAILURE", app="scanner",
-                                run_id=None, db_id=77)], total=2, more=True)
+                                run_id=None, db_id=77)], more=True)
     with patch("gh.client.graphql", side_effect=[page1, CmdResult(1)]):
         checks = run_reads.fetch_commit_checks("owner/repo", "abc")
     assert checks.answered is True

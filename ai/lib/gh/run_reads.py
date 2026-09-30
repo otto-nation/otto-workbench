@@ -266,7 +266,7 @@ query($owner:String!,$name:String!,$oid:GitObjectID!,$page:Int!,$after:String){
   repository(owner:$owner,name:$name){
     object(oid:$oid){ ... on Commit {
       statusCheckRollup { contexts(first:$page,after:$after){
-        totalCount pageInfo { hasNextPage endCursor } nodes {
+        pageInfo { hasNextPage endCursor } nodes {
         __typename
         ... on CheckRun { name status conclusion databaseId detailsUrl title
           checkSuite { app { slug } workflowRun { databaseId } } }

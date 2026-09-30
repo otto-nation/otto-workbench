@@ -332,7 +332,13 @@ def _pi_write_attempts(records: list[dict], output_path: str) -> list[str]:
 
 # A fenced block holding the whole document, as a model writes one when it is
 # narrating a tool call rather than making one: ```markdown ... ``` or ``` ... ```.
-_FENCED_DOCUMENT = re.compile(r"```(?:markdown|md)?\n(.*?)```", re.DOTALL)
+# Greedy, not lazy: the review format this pipeline generates nests fenced
+# evidence blocks inside Must-fix/Should-fix items, and a lazy `.*?` stops at
+# that inner closing fence, truncating the document there. Matching to the
+# *last* closing fence in the text keeps the whole document, including any
+# nested blocks, at the cost of merging genuinely separate fenced sections —
+# a narrated write only ever contains one document, so that trade is free here.
+_FENCED_DOCUMENT = re.compile(r"```(?:markdown|md)?\n(.*)```", re.DOTALL)
 
 
 def _narrated_write_contents(records: list[dict]) -> list[str]:
@@ -379,13 +385,28 @@ def _text_documents(message: dict) -> list[str]:
 
 
 def _from_first_heading(text: str) -> str:
-    """`text` from its first markdown heading on, or unchanged when it has none.
+    """`text` from its first level-1 markdown title on, or unchanged with none.
 
     A narrated write is the document with a sentence of preamble in front of
     it — "I already wrote the file, let me re-issue it" — and often the tool
     call spelled out as prose. Recovering that verbatim puts the chatter in
     the review file, where the heading-shaped title is what every later reader
     and the archive parser key off.
+
+    Anchored on level 1 specifically, not any of `#` through `######`: a model
+    that structures its own narration with headers — "## My plan\n..." — would
+    otherwise have that subheading matched first, leaving the plan/chatter
+    ahead of the real document. The review format this pipeline generates
+    always titles the document itself at level 1 (`# Self-Review: ...`), so
+    that level is the one narration is least likely to reuse for its own
+    commentary.
+
+    This is a heuristic tuned to the observed narration shapes, not a general
+    document-boundary detector: it assumes the deliverable's title is the
+    first level-1 heading, and a narration style that happens to open with its
+    own `# ...` line would defeat it the same way a `##` line defeated the
+    heading-agnostic version. A future narration shape that breaks this should
+    get its own alternative here rather than a wider heading match.
 
     The document's own title is usually not at the start of a line: a narrated
     call puts it straight after `write review.md "`, so a line-anchored search
@@ -398,7 +419,7 @@ def _from_first_heading(text: str) -> str:
     marker that reliably says where one ends. Text with no heading is returned
     as-is, and the caller's own heading filter is what then rejects it.
     """
-    match = re.search(r"""(?:^|["'])(#{1,6} )""", text, re.MULTILINE)
+    match = re.search(r"""(?:^|["'])(#(?!#) )""", text, re.MULTILINE)
     return text[match.start(1):] if match else text
 
 

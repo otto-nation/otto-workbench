@@ -675,6 +675,57 @@ class TestRecoveringAStrayWriteFromTheLog:
         assert body.startswith("# Self-Review: repo")
         assert "I already wrote" not in body
 
+    def test_narration_structured_with_its_own_subheading_is_still_trimmed(self, tmp_path):
+        """A model that headers its own commentary must not win the boundary.
+
+        `_from_first_heading` used to match the first heading of any level,
+        so a model narrating with a `## My plan` subheading ahead of the real
+        `# Self-Review: ...` title had that plan section survive into the
+        recovered document, verbatim, ahead of the document itself.
+        """
+        output = tmp_path / "review.md"
+        output.write_text("")
+        text = (
+            "## My plan\nI will now write the review.\n\n"
+            "# Self-Review: repo\n\n## Must fix\n- [M1] x\n"
+        )
+        log_path = _write_log(
+            tmp_path,
+            _pi_text(text),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is True
+        body = output.read_text()
+        assert body.startswith("# Self-Review: repo")
+        assert "My plan" not in body
+
+    def test_a_narrated_write_spelled_as_xml_is_recovered(self, tmp_path):
+        """The other narration shape the module's docstring names but did not test.
+
+        Some runs spell the tool call out as XML rather than prose, e.g.
+        `<invoke name="write"><parameter name="content">...`. The document
+        inside is recovered the same way as prose narration: by its own
+        line-anchored heading, with the surrounding tags treated as preamble.
+        """
+        output = tmp_path / "review.md"
+        output.write_text("")
+        text = (
+            '<invoke name="write">\n'
+            '<parameter name="path">review.md</parameter>\n'
+            '<parameter name="content">\n'
+            "# Self-Review: repo\n\n## Must fix\n- [M1] x\n"
+            "</parameter>\n</invoke>"
+        )
+        log_path = _write_log(
+            tmp_path,
+            _pi_text(text),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is True
+        body = output.read_text()
+        assert body.startswith("# Self-Review: repo")
+        assert "[M1]" in body
+
     def test_a_fenced_document_is_unwrapped(self, tmp_path):
         output = tmp_path / "review.md"
         output.write_text("")
@@ -688,6 +739,32 @@ class TestRecoveringAStrayWriteFromTheLog:
         assert "[M1]" in body
         assert "```" not in body
         assert "Here it is" not in body
+
+    def test_a_fenced_document_with_a_nested_fence_is_not_truncated(self, tmp_path):
+        """A Must-fix item's own evidence block nests a fence inside the outer one.
+
+        A lazy `.*?` in `_FENCED_DOCUMENT` stops at the inner closing fence,
+        dropping everything after it — exactly the shape the review format
+        this pipeline generates asks agents to produce.
+        """
+        output = tmp_path / "review.md"
+        output.write_text("")
+        doc = (
+            "## Must fix\n"
+            "- [M1] evidence:\n\n"
+            "```bash\necho hi\n```\n\n"
+            "## Should fix\n"
+            "- [S1] more\n"
+        )
+        log_path = _write_log(
+            tmp_path,
+            _pi_text("Here it is:\n\n```markdown\n" + doc + "```\n"),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is True
+        body = output.read_text()
+        assert "[M1]" in body
+        assert "[S1]" in body
 
     def test_assistant_chatter_without_a_heading_is_not_recovered(self, tmp_path):
         """What keeps the text source from inventing a review out of a refusal."""

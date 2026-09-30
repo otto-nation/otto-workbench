@@ -96,7 +96,11 @@ DEPENDENCY_FIELDS = ('peerDependencies', 'dependencies', 'devDependencies')
 # the `#`, and an unanchored search would misread that ref as a declared
 # floor. Requiring the whole clause to be a bare version or comparator range
 # makes a git URL fall through to "no floor" structurally, not incidentally.
-_VERSION_IN_RANGE = re.compile(r'(?:[~^]|>=|<=|=)?(\d+)\.(\d+)(?:\.(\d+))?')
+#
+# No `<` or `<=` alternative: a clause opening with `<` is an upper bound and
+# _range_floor drops it before it reaches this pattern, so listing it here
+# would be a branch nothing can take.
+_VERSION_IN_RANGE = re.compile(r'(?:[~^=]|>=?)?v?(\d+)\.(\d+)(?:\.(\d+))?')
 
 # Where pi keeps clones: one user-scope root, plus a per-project root inside any
 # repo whose settings declare a package. The project form is what multiplies —
@@ -154,6 +158,11 @@ def _range_floor(spec: str) -> tuple[int, int, int] | None:
 
     Anything that is not a version range — `*`, `latest`, `workspace:*`, a git
     URL — declares no floor, and None is the honest answer rather than a guess.
+
+    A prerelease or build suffix is not read either: `^1.0.0-beta.1` orders
+    below `1.0.0`, and reading it as 1.0.0 would fail a host the range admits.
+    pi has never published one, so the choice is between a miss on a version
+    that does not exist and a false failure on one that might.
     """
     for clause in spec.split():
         if clause.startswith('<'):

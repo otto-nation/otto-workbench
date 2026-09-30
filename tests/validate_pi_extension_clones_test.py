@@ -216,6 +216,9 @@ def test_the_legacy_specifier_declares_the_same_floor(validator, tmp_path):
     ('0.99.2', (0, 99, 2)),
     ('>=0.99.0 <1.0.0', (0, 99, 0)),
     ('<1.0.0 >=0.99.0', (0, 99, 0)),
+    ('>0.99.0', (0, 99, 0)),
+    ('v0.99.2', (0, 99, 2)),
+    ('=0.99.2', (0, 99, 2)),
     ('^0.87 || ^0.99', (0, 87, 0)),
     ('0.87', (0, 87, 0)),
 ])
@@ -236,6 +239,17 @@ def test_a_range_with_no_lower_bound_declares_no_floor(validator, spec):
     either: the clause as a whole is not a version range, so it names none.
     """
     assert validator._range_floor(spec) is None
+
+
+def test_a_prerelease_range_is_left_unread(validator):
+    """`^1.0.0-beta.1` names a floor, and it is deliberately not read.
+
+    A prerelease orders *below* the release it is named for, so reading this
+    as 1.0.0 would fail a host the range admits. pi has never published a
+    prerelease, which makes the choice one between a miss on a version that
+    does not exist and a false failure on one that might.
+    """
+    assert validator._range_floor('^1.0.0-beta.1') is None
 
 
 def test_an_unreadable_manifest_declares_no_floor(validator, tmp_path):

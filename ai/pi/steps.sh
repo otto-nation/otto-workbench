@@ -534,6 +534,44 @@ step_update_pi() {
   return 0
 }
 
+# step_pi_verify — reports skew that survived the two updates above.
+#
+# Both of those steps are non-fatal by design: an offline machine should still
+# get the rest of its config applied. That leaves the failure this whole gate
+# exists for reachable through the happy path — `pi update` warns, the warning
+# scrolls past, and the machine goes on running agents against a host its
+# clones have moved beyond. Acting without checking is how the drift was
+# introduced; checking after acting is what makes the sync's claim true.
+#
+# The validator is the same one pre-push runs, so this adds no second
+# definition of skew — it moves the existing one to where the damage happens.
+# An operator who syncs and then runs agents may not push for days.
+#
+# Reads only what is already on disk: no network, about a second for the ten
+# clones on this machine.
+#
+# Non-fatal like its siblings, and for a further reason: the condition is
+# usually not the operator's to fix in the moment — a clone lagging its host
+# waits on upstream. Saying so is the whole job.
+step_pi_verify() {
+  command -v pi > /dev/null 2>&1 || { warn "pi not found in PATH — skipping"; return; }
+
+  local validator="$BIN_SRC_DIR/local/validate-pi-extension-clones"
+  if [[ ! -x "$validator" ]]; then
+    warn "Cannot verify Pi clones — $validator is missing or not executable"
+    return 0
+  fi
+
+  [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Verifying Pi clones" || true
+
+  if "$validator" --quiet; then
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && success "Pi host and clones agree" || true
+  else
+    warn "Pi host and clones disagree — see above; agents may lose their tools"
+  fi
+  return 0
+}
+
 # _export_pi_config DIR — copies Pi config into DIR for tarball export.
 _export_pi_config() {
   local dest="$1"
@@ -566,6 +604,9 @@ sync_pi() {
 
   sync_header "pi packages"
   step_pi_packages
+
+  sync_header "pi skew"
+  step_pi_verify
 }
 
 register_pi_steps() {
@@ -575,6 +616,7 @@ register_pi_steps() {
   register_step "Pi guidelines"  step_pi_guidelines
   register_step "Update pi"      step_update_pi
   register_step "Pi packages"    step_pi_packages
+  register_step "Pi skew"        step_pi_verify
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

@@ -89,6 +89,20 @@ def no_write_hint(backend: Backend | None = None) -> str:
     )
 
 
+# Addressed to an agent that produced a tool call as prose, XML or JSON rather
+# than calling one. The ordinary no-write hint fails here on its own terms: it
+# tells the agent to write its file first, which is what the agent believes it
+# already did, so a second attempt reproduces the first. This names the mistake
+# instead of restating the instruction.
+_NARRATED_CALL_HINT = (
+    "IMPORTANT: A previous attempt wrote out a tool call as text — as prose, "
+    "as an XML element, or as a JSON object — instead of calling the tool. "
+    "Text that looks like a call does nothing: the file was never written and "
+    "the attempt was discarded. Emit an actual tool call this time. If you "
+    "find yourself typing the word 'write' followed by a path, or any tag or "
+    "brace around one, stop and make the call instead.\n\n"
+)
+
 FIX_RETRY_HINT = (
     "IMPORTANT: A previous attempt ran out of turns reading files without applying any fixes. "
     "Start with the highest-severity fixable findings and apply edits IMMEDIATELY. "
@@ -152,7 +166,15 @@ def hint_for(diagnosis: Diagnosis) -> str:
     Checked most-specific first: the no-write flag attaches to turn exhaustion
     and to clean completions alike, and naming the write mechanism beats
     telling the agent to hurry.
+
+    Narration is checked ahead of the no-write hint for the same reason, one
+    step further: both describe a run that wrote nothing, but only this one
+    describes an agent that thinks it already did. Naming the mechanism to an
+    agent that believes it used the mechanism is the hint that produced a
+    second identical failure.
     """
+    if diagnosis.narrated_call:
+        return _NARRATED_CALL_HINT
     if diagnosis.no_write_tool:
         return no_write_hint()
     if diagnosis.kind is DiagnosisKind.MAX_TURNS:

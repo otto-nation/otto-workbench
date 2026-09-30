@@ -524,3 +524,80 @@ class TestWriteRecipesMatchTheBackend:
         # The documented fallback is Claude's recipe, not merely any recipe.
         assert "old_string" in agent_templates.build_output_block("/tmp/out.md")
         assert "old_string" in agent_retry.no_write_hint()
+
+
+class TestANarratedRunEndToEnd:
+    """Which of salvage and retry answers a narrated run, and with what.
+
+    The two halves meet in `retry_unproductive`, which calls `recover()`
+    before it asks whether anything was produced. Neither half's unit tests
+    see that ordering, and it decides which one runs.
+    """
+
+    @staticmethod
+    def _log(tmp_path, text):
+        path = tmp_path / "session.jsonl"
+        path.write_text(
+            json.dumps({
+                "type": "turn_end",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": text}],
+                },
+            })
+            + "\n"
+            + json.dumps({"type": "result", "subtype": "success", "num_turns": 2})
+            + "\n",
+        )
+        return path
+
+    def test_a_salvageable_run_costs_no_retry(self, tmp_path):
+        """Recovering the document is cheaper than running the agent again."""
+        from agent.session import try_recover_output
+
+        output = tmp_path / "review.md"
+        output.write_text("")
+        log = self._log(
+            tmp_path,
+            'I already wrote it.\n\nwrite review.md "# Rev\n\n## Must fix\n- [M1] x\n"',
+        )
+        attempts = []
+        result = agent_retry.retry_unproductive(
+            lambda prompt, turns: attempts.append(prompt) or 0,
+            "ORIGINAL", str(log),
+            label="single", max_turns=15,
+            produced=lambda: output.stat().st_size > 0,
+            recover=lambda: try_recover_output(str(log), str(output)),
+            output_path=str(output),
+        )
+        assert attempts == []
+        assert result is None
+        assert "[M1]" in output.read_text()
+
+    def test_an_unsalvageable_narration_retries_with_the_narration_hint(self, tmp_path):
+        """No document in the reply, so the agent has to be asked again.
+
+        The hint has to be the narration one: this agent wrote a call as
+        text, and telling it to write its file first is telling it to do what
+        it believes it just did.
+        """
+        from agent.session import try_recover_output
+
+        output = tmp_path / "review.md"
+        output.write_text("")
+        log = self._log(
+            tmp_path,
+            "<write><path>review.md</path><content>see above</content></write>",
+        )
+        attempts = []
+        agent_retry.retry_unproductive(
+            lambda prompt, turns: attempts.append(prompt) or 0,
+            "ORIGINAL", str(log),
+            label="single", max_turns=15,
+            produced=lambda: output.stat().st_size > 0,
+            recover=lambda: try_recover_output(str(log), str(output)),
+            output_path=str(output),
+        )
+        assert len(attempts) == 1
+        assert "as text" in attempts[0]
+        assert attempts[0].endswith("ORIGINAL")

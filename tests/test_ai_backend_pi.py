@@ -1735,6 +1735,15 @@ class TestBareFlags:
         assert "--no-context-files" in cmd
         assert "--no-skills" in cmd
 
+    def test_prompt_cmd_disables_both_too(self):
+        # The gap that broke triage. A prompt is the shape that can least
+        # afford the interactive rulebook: its answer is parsed, not read, and
+        # the superpowers bootstrap's "announce a skill first" turns a bare-JSON
+        # contract into a prose preamble with no JSON in it at all.
+        cmd = ai_backend_pi._build_prompt_cmd()
+        assert "--no-context-files" in cmd
+        assert "--no-skills" in cmd
+
     def test_neither_cmd_disables_extensions(self):
         # --no-extensions would deregister the provider that serves the run and
         # strip every gh_*/web_* tool the agent list grants, leaving a review

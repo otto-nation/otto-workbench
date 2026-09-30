@@ -235,7 +235,20 @@ def _build_prompt_cmd(
     # and `prompt()` is UNBOUNDED — the rebase sat there until the job's own
     # timeout killed it 45 minutes later. Nothing in a prompt's contract wants
     # a tool: the caller sends text and parses text back.
-    cmd = ["pi", "-p", "--mode", "json", "--no-session", "--approve", "--no-tools"]
+    #
+    # BARE_FLAGS for the same reason the agent and fix commands carry them, and
+    # a prompt needs them more rather than less. A prompt is a contract: text in,
+    # a parseable answer out. Skill discovery loads the superpowers bootstrap,
+    # which instructs a session to announce a skill before answering anything —
+    # so a triage call that must return bare JSON returned "Using systematic
+    # verification to check code state before classifying..." and stopped. With
+    # --no-tools the model cannot act on that instruction either, so it narrates
+    # the tool it wanted and ends the turn. No JSON, and the caller's retry
+    # re-sends the same prompt into the same rulebook.
+    cmd = [
+        "pi", "-p", "--mode", "json", "--no-session", "--approve", "--no-tools",
+        *BARE_FLAGS,
+    ]
     if provider:
         cmd += ["--provider", provider]
     if model:

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from agent import retry as agent_retry
 from fix import engine as fix_engine
+from fix import suite as fix_suite
 from fix import types as fix_types
 from pr import ci_failures as ci
 from pr import ci_report
@@ -141,7 +142,11 @@ class CIFixAdapter(fix_engine.FixAdapter):
         fixed = sum(1 for o in outcomes if o.outcome.counts_as_fixed)
         msg = "fix: address CI failures"
         if fixed:
-            msg += f"\n\n{fixed} fixed, {len(outcomes) - fixed} skipped"
+            msg += "\n\n" + fix_suite.qualify_tally(
+                f"{fixed} fixed, {len(outcomes) - fixed} skipped", self.suite)
+        detail = fix_suite.detail_lines(self.suite)
+        if detail:
+            msg += "\n\n" + "\n".join(detail)
         return fix_engine.LandSpec(
             message=msg, regen="chore: regenerate after CI fixes",
             paths=changed if changed else set(),

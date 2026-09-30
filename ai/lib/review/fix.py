@@ -150,36 +150,6 @@ _UNCLAIMED_EDITS = (
 )
 
 
-def _counts_line(fixed: int, skipped: int, suite: fix_suite.SuiteResult) -> str:
-    """The tally at the head of the commit body, qualified by what ran.
-
-    `N fixed, M skipped` is a claim, and for most of this pipeline's life it
-    was made on the strength of a ticked checkbox. It survived a pass that
-    deleted a re-export two tests read and reworded a message a third
-    asserted on — "4 fixed, 0 skipped", over a suite that did not run.
-
-    So the word keeps its meaning only where something stood behind it. A red
-    run says so in the tally itself rather than only in the block below,
-    because this is the line that gets quoted — into a terminal, into a PR
-    body, into a summary somebody writes from memory — and a caveat that
-    lives one line further down does not travel with it.
-
-    A green run adds nothing. It means the selected checks pass with these
-    edits in the tree, which is not the same as each fix being right, and
-    spending the tally's words on the weaker claim is how the strong one stops
-    being read. The per-item verdict is the verify gate's, and it is already
-    rendered on the rows themselves.
-    """
-    tally = f"{fixed} fixed, {skipped} skipped"
-    if suite.demotes:
-        return f"{tally} — but the repo's checks are RED with these changes"
-    if suite.status is fix_suite.SuiteStatus.NOT_DECLARED:
-        return f"{tally} (unverified: no fix.verify_command declared)"
-    if suite.status in (fix_suite.SuiteStatus.TIMED_OUT, fix_suite.SuiteStatus.ERROR):
-        return f"{tally} (unverified: the repo's checks did not answer)"
-    return tally
-
-
 def _truncated(stop: Diagnosis | None) -> bool:
     return stop is not None and stop.kind is DiagnosisKind.MAX_TURNS
 
@@ -250,18 +220,10 @@ def _suite_block(lines: list[str], suite: fix_suite.SuiteResult | None) -> None:
     A pass whose repo declares no command and a pass whose checks came back
     clean render identically without this, and that pair is exactly how a red
     suite once shipped under a body reading `4 fixed, 0 skipped`.
-
-    Nothing is printed for a pass that had no reason to run the checks — no
-    claimed fixes, or no files — which `SuiteResult.reportable` is how the
-    result says. A note about a command nobody was going to run is noise on
-    the many passes that fix nothing.
     """
-    if suite is None or not suite.reportable:
-        return
-    lines.append(suite.note)
-    if suite.output_tail:
-        lines.append(suite.output_tail)
-    lines.append("")
+    detail = fix_suite.detail_lines(suite) if suite else []
+    if detail:
+        lines.extend([*detail, ""])
 
 
 def _unverified_detail(outcome: ItemOutcome) -> str | None:
@@ -812,7 +774,8 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         skipped = sum(1 for o in outcomes if o.outcome in _STILL_OPEN)
         message = "fix: self-review findings"
         if fixed:
-            message += f"\n\n{_counts_line(fixed, skipped, self.suite)}"
+            message += "\n\n" + fix_suite.qualify_tally(
+                f"{fixed} fixed, {skipped} skipped", self.suite)
         if self.summary:
             message += f"\n\n{self.summary}"
         return fix_engine.LandSpec(

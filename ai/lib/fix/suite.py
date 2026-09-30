@@ -393,6 +393,57 @@ def apply_to(outcomes: list[ItemOutcome], result: SuiteResult) -> int:
     return demoted
 
 
+def qualify_tally(tally: str, result: SuiteResult) -> str:
+    """A pass's `N fixed, M skipped` line, qualified by what actually ran.
+
+    The tally is a claim, and for most of this pipeline's life every domain
+    made it on the strength of a ticked checkbox. It survived a pass that
+    deleted a re-export two tests read and reworded a message a third
+    asserted on — "4 fixed, 0 skipped", over a suite that never ran.
+
+    Shared rather than written per domain because all three passes render the
+    same sentence and a fourth will too. The caller supplies the rendered
+    tally so it keeps its own nouns — the comments pass counts `deferred`
+    where the others count `skipped` — and this only adds the qualifier.
+
+    A red run says so in the tally itself rather than only in the block below
+    it, because this is the line that gets quoted: into a terminal, a PR body,
+    a summary somebody writes from memory. A caveat one line further down does
+    not travel with it.
+
+    A green run adds nothing. It means the selected checks pass with these
+    edits in the tree, which is not the same as each fix being right, and
+    spending the tally's words on the weaker claim is how the stronger one
+    stops being read.
+    """
+    if result.demotes:
+        return f"{tally} — but the repo's checks are RED with these changes"
+    if result.status is SuiteStatus.NOT_DECLARED:
+        return f"{tally} (unverified: no fix.verify_command declared)"
+    if result.status in (SuiteStatus.TIMED_OUT, SuiteStatus.ERROR):
+        return f"{tally} (unverified: the repo's checks did not answer)"
+    return tally
+
+
+def detail_lines(result: SuiteResult) -> list[str]:
+    """What the commit body carries about the run, beneath the tally.
+
+    Empty for a pass that had no reason to run the checks — a note about a
+    command nobody was going to run is noise on the many passes that fix
+    nothing, and a caveat printed everywhere is read nowhere.
+
+    A red run's failing output goes in the body because the commit is the
+    artifact a reader reaches for weeks later, and a verdict with no evidence
+    under it sends them back to re-run what the pass already ran.
+    """
+    if not result.reportable:
+        return []
+    lines = [result.note]
+    if result.output_tail:
+        lines.append(result.output_tail)
+    return lines
+
+
 def should_run(outcomes: list[ItemOutcome], changed: set[str] | None) -> bool:
     """Whether this pass produced anything worth running the repo's checks over.
 
@@ -416,6 +467,8 @@ __all__ = [
     "SuiteResult",
     "SuiteStatus",
     "apply_to",
+    "detail_lines",
+    "qualify_tally",
     "run",
     "should_run",
 ]

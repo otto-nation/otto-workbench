@@ -29,6 +29,7 @@ from fix import comment_checklist
 from fix import comment_replies
 from fix import comments as fix_comments
 from fix import engine as fix_engine
+from fix import suite as fix_suite
 from fix import tracking as fix_tracking
 from pr import state as pr_state
 from core import proc
@@ -1197,13 +1198,17 @@ class TestCommentFixLanding:
     """
 
     @staticmethod
-    def _spec(tmp_path, *, fixed=1, deferred=0, changed=frozenset({"a.py"})):
+    def _spec(tmp_path, *, fixed=1, deferred=0, changed=frozenset({"a.py"}),
+              suite=None):
         outcomes = (
             [ItemOutcome(id=f"f{n}", outcome=FixOutcome.FIXED) for n in range(fixed)]
             + [ItemOutcome(id=f"d{n}", outcome=FixOutcome.DEFERRED)
                for n in range(deferred)]
         )
-        return _fix_adapter(tmp_path).landing(
+        adapter = _fix_adapter(tmp_path)
+        if suite is not None:
+            adapter.suite = suite
+        return adapter.landing(
             outcomes, set(changed) if changed is not None else None)
 
     @staticmethod
@@ -1225,6 +1230,26 @@ class TestCommentFixLanding:
         subject, _, body = spec.message.partition("\n\n")
         assert subject == "fix: address review comments"
         assert body == "2 fixed, 3 deferred"
+
+    def test_a_red_suite_qualifies_the_comments_tally(self, tmp_path):
+        """A reviewer reads this body. It must not claim fixes over a red tree.
+
+        The comments pass kept its own copy of the tally and rendered it bare
+        while the suite ran, so the verdict reached the terminal and the
+        outcomes but never the commit a reviewer sees.
+        """
+        spec = self._spec(tmp_path, fixed=2, deferred=3, suite=fix_suite.SuiteResult(
+            status=fix_suite.SuiteStatus.RED, command="checks",
+            output_tail="E   boom"))
+
+        assert "2 fixed, 3 deferred — but the repo's checks are RED" in spec.message
+        assert "E   boom" in spec.message
+
+    def test_an_undeclared_command_qualifies_the_comments_tally(self, tmp_path):
+        spec = self._spec(tmp_path, fixed=2, deferred=3, suite=fix_suite.SuiteResult(
+            status=fix_suite.SuiteStatus.NOT_DECLARED))
+
+        assert "unverified: no fix.verify_command declared" in spec.message
 
     def test_a_pass_that_fixed_nothing_says_only_what_it_did(self, tmp_path):
         spec = self._spec(tmp_path, fixed=0, deferred=4)

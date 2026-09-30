@@ -226,6 +226,8 @@ step_pi_guidelines() {
 #
 # Gated on `command -v pi`, not a path: the installer writes to npm's global
 # prefix, which varies by machine, so there is no fixed launcher to test by name.
+# That gate means this step never moves a pi that is already there — keeping an
+# installed host current is step_update_pi's job, and it runs on every sync.
 step_install_pi() {
   install_via_installer pi "$PI_INSTALL_URL" "Pi"
 }
@@ -464,8 +466,9 @@ step_pi_settings() {
 # Pi clones a `git:` package once and then reuses whatever is on disk:
 # resolvePackageSources refetches only for `temporary` scope, so a user clone
 # freezes at the SHA it had on its first run and nothing moves it again.
-# `pi update` with no target updates the host binary alone, which is how a
-# machine ends up running a new pi against an old provider extension.
+# `pi update` with no target updates the host binary alone — that is what
+# step_update_pi does, immediately before this step, so the clones are
+# refreshed against the pi they will actually run under.
 #
 # That skew is silent in the direction that matters. A provider predating pi
 # 0.86's TranscriptContext sends the model no system prompt and no tool
@@ -492,6 +495,79 @@ step_pi_packages() {
     [[ "${WORKBENCH_SYNC:-}" != true ]] && success "Pi packages refreshed" || true
   else
     warn "Could not refresh Pi packages — run: pi update --extensions"
+  fi
+  return 0
+}
+
+# step_update_pi — moves the installed pi forward, so the host does not sit
+# still while the package clones beside it advance.
+#
+# step_install_pi is gated on `command -v pi`: it installs a machine that has
+# no pi and says "already installed" to every machine that does. Nothing else
+# touched the host, so a pi installed once stayed at that release indefinitely
+# — this machine reached twelve releases behind that way while step_pi_packages
+# kept pulling its clones up to upstream main every sync. That is the skew
+# bin/local/validate-pi-extension-clones exists to catch, manufactured by the
+# sync that was meant to prevent it.
+#
+# Ordered before step_pi_packages so the host moves first and the clones are
+# then refreshed against the pi they will actually run under.
+#
+# Does not install: a machine without pi is one whose operator did not choose
+# the tool, and sync re-applies config rather than adding tools. Same guard
+# sync_pi itself carries.
+#
+# Non-fatal, for the same reason step_pi_packages is: an offline machine
+# should still get the rest of its config applied. The gate is what reports a
+# host left behind by a failure here — a warning scrolls past, and this one
+# would otherwise be the only notice.
+step_update_pi() {
+  command -v pi > /dev/null 2>&1 || { warn "pi not found in PATH — skipping"; return; }
+
+  [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Updating Pi" || true
+
+  if pi update > /dev/null 2>&1; then
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && success "Pi is current" || true
+  else
+    warn "Could not update Pi — run: pi update"
+  fi
+  return 0
+}
+
+# step_pi_verify — reports skew that survived the two updates above.
+#
+# Both of those steps are non-fatal by design: an offline machine should still
+# get the rest of its config applied. That leaves the failure this whole gate
+# exists for reachable through the happy path — `pi update` warns, the warning
+# scrolls past, and the machine goes on running agents against a host its
+# clones have moved beyond. Acting without checking is how the drift was
+# introduced; checking after acting is what makes the sync's claim true.
+#
+# The validator is the same one pre-push runs, so this adds no second
+# definition of skew — it moves the existing one to where the damage happens.
+# An operator who syncs and then runs agents may not push for days.
+#
+# Reads only what is already on disk: no network, about a second for the ten
+# clones on this machine.
+#
+# Non-fatal like its siblings, and for a further reason: the condition is
+# usually not the operator's to fix in the moment — a clone lagging its host
+# waits on upstream. Saying so is the whole job.
+step_pi_verify() {
+  command -v pi > /dev/null 2>&1 || { warn "pi not found in PATH — skipping"; return; }
+
+  local validator="$BIN_SRC_DIR/local/validate-pi-extension-clones"
+  if [[ ! -x "$validator" ]]; then
+    warn "Cannot verify Pi clones — $validator is missing or not executable"
+    return 0
+  fi
+
+  [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Verifying Pi clones" || true
+
+  if "$validator" --quiet; then
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && success "Pi host and clones agree" || true
+  else
+    warn "Pi host and clones disagree — see above; agents may lose their tools"
   fi
   return 0
 }
@@ -523,8 +599,14 @@ sync_pi() {
   sync_header "pi guidelines → $PI_CONTEXT_FILE"
   step_pi_guidelines
 
+  sync_header "pi host"
+  step_update_pi
+
   sync_header "pi packages"
   step_pi_packages
+
+  sync_header "pi skew"
+  step_pi_verify
 }
 
 register_pi_steps() {
@@ -532,7 +614,9 @@ register_pi_steps() {
   register_step "Pi settings"    step_pi_settings
   register_step "Pi extensions"  step_pi_extensions
   register_step "Pi guidelines"  step_pi_guidelines
+  register_step "Update pi"      step_update_pi
   register_step "Pi packages"    step_pi_packages
+  register_step "Pi skew"        step_pi_verify
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

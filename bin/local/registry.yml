@@ -97,7 +97,7 @@ tools:
   - name: validate-pi-extension-clones
     permission: false
     visibility: brief
-    description: "Validates that every pi extension package clone on this machine can serve the installed pi, in both skew directions — a clone predating pi 0.86's transcript contract silently strips the agent's tools and lets it fabricate their output"
+    description: "Validates that every pi extension package clone on this machine can serve the installed pi, in both skew directions and against the pi-ai floor each package declares — a clone predating pi 0.86's transcript contract silently strips the agent's tools and lets it fabricate their output"
 
   - name: validate-tmpdir-isolation
     permission: false

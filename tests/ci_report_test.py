@@ -296,6 +296,7 @@ def test_a_commit_checked_without_a_workflow_names_no_run_number():
     assert render_dashboard(run, {}).startswith("## CI Checks (abc1234)")
 
 
+# passes-at-base: back-compat — pins that the unnumbered branch left this alone
 def test_a_run_that_has_a_number_still_reports_it():
     run = RunState(
         run_id=100, run_number=7, head_sha="abc1234567", status="completed",

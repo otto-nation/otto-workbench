@@ -432,6 +432,7 @@ def test_an_unreadable_ref_falls_back_to_the_api_rather_than_reporting_current()
     api.assert_called_once()
 
 
+# passes-at-base: back-compat — a bare repo must still get a real answer, not the silent zero that reads as current with the trunk
 def test_without_a_worktree_the_api_is_still_asked():
     """A bare-repo dashboard has no git to count with."""
     with patch("gh.client.api", return_value=CmdResult(0, "9\n")) as api:

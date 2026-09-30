@@ -385,6 +385,7 @@ def test_the_fetch_brings_the_default_branch_with_it(mock_run, _default, _branch
 @patch("git.topology.current_branch_quiet", return_value="main")
 @patch("git.topology.default_branch", return_value="main")
 @patch("pr.sync.subprocess.run")
+# passes-at-base: negative case — the trunk's own fetch named one ref before and still must, which is what the added ref could have broken
 def test_the_default_branch_is_not_named_twice_in_its_own_fetch(mock_run, _default, _branch):
     mock_run.return_value = MagicMock(returncode=0, stdout="")
     update_to_remote(_make_ctx(branch="main"))

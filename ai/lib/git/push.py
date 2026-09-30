@@ -118,12 +118,6 @@ from core import proc
 from core import publishing
 from core import timeouts
 from core.trail import Trail
-from pr import target
-
-# What the trail this module's `main` opens is filed under. A push from the
-# bash bridge is its own invocation, not a step of whatever spawned it — and
-# when something did spawn it, `Trail.start` roots this under that run anyway.
-SCRIPT = "push"
 
 
 class PushStatus(StrEnum):
@@ -917,14 +911,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     if ns.no_verify:
         args = ["--no-verify", *args]
 
-    # `repo_key_from_origin` rather than `gh repo view`: this runs on the far
-    # side of a hook that may have just failed, and a network read to label a
-    # trail is one more thing between the failure and the record of it. None
-    # when origin names no repo, which the query side already handles.
-    trail = Trail.start(
-        script=SCRIPT,
-        context={"repo": target.repo_key_from_origin(ns.cwd), "branch": ns.branch},
-    )
+    # ceiling: the context names the branch and not the repo, so `otto-log
+    # --repo` cannot filter these events. Both things that can spell
+    # `owner/repo` sit above this layer — `pr.context.detect_repo` at layer 4
+    # and `gh.client.repo_slug` at layer 3 — and `git` may import only `core`.
+    # Reaching up for a filter key would invert the stack, and parsing origin a
+    # second time here would be a second definition of a repo's name.
+    # Upgrade trigger: if push events need repo filtering, have the bash caller
+    # pass `--repo`; it is the layer that is allowed to know.
+    #
+    # Started outside the `try` deliberately: there is nothing to `finish` if
+    # opening it is what failed, and moving it inside makes the `finally` a
+    # `NameError` path.
+    trail = Trail.start(script=SCRIPT, context={"branch": ns.branch})
     try:
         result = push(ns.cwd, gated=False, branch=ns.branch, remote=ns.remote,
                       args=args, trail=trail)
@@ -932,6 +931,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _EXIT_CODES[result.status]
     finally:
         trail.finish()
+
+
+# What the trail above is filed under. Beside its one consumer rather than at
+# the top of the module, which is where this file keeps its other constants.
+SCRIPT = "push"
 
 
 if __name__ == "__main__":

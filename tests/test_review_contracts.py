@@ -1214,24 +1214,39 @@ def test_summary_contract_forbids_a_prior_findings_tally(path):
 # reading source files, and then invites a fresh finding ("Add any
 # cross-cutting findings") drafted from nothing but the merged content. That
 # finding reaches the PR unverified unless something tells the agent not to
-# claim it ran a check it never ran. group.md, self-review.md and
-# single-agent.md all carry this guard verbatim; synthesis.md is the fourth
-# write-first, finding-authoring template and must carry it too.
+# claim it ran a check it never ran. group.md, self-review.md,
+# self-review-synthesis.md and single-agent.md all carry this guard verbatim;
+# synthesis.md is the fifth write-first, finding-authoring template and must
+# carry it too.
 _NO_UNRUN_EXECUTION_CLAIM = (
     "Never write that you ran something unless you ran it in this session."
 )
 
+# The five templates known to need the guard, listed rather than scraped: the
+# guard applies to write-first, finding-authoring templates specifically, not
+# to every template under TEMPLATE_DIR (disprove.md, fix-*.md, holistic.md,
+# scout.md and verify-fixes.md do not author findings from unrun checks).
+_EXECUTION_CLAIM_GUARD_TEMPLATES = [
+    "group.md",
+    "self-review.md",
+    "self-review-synthesis.md",
+    "single-agent.md",
+    "synthesis.md",
+]
 
-def test_synthesis_template_forbids_unverified_execution_claims():
-    """synthesis.md's turn budget carries the execution-claim guard.
 
-    Regression for the guard being added everywhere the write-first pattern
-    landed except here: synthesis.md still let a cross-cutting finding claim
-    it ran something it never ran.
+@pytest.mark.parametrize("name", _EXECUTION_CLAIM_GUARD_TEMPLATES)
+def test_template_forbids_unverified_execution_claims(name):
+    """Every write-first, finding-authoring template carries the guard.
+
+    Regression for the guard landing in some of these templates but not all:
+    a prior fix added it to synthesis.md alone and left
+    self-review-synthesis.md — a template with the same write-first,
+    finding-authoring shape — without it.
     """
-    path = TEMPLATE_DIR / "synthesis.md"
+    path = TEMPLATE_DIR / name
     assert _NO_UNRUN_EXECUTION_CLAIM in path.read_text(), (
-        "synthesis.md's turn budget authors findings after a write-first "
+        f"{name}'s turn budget authors findings after a write-first "
         "instruction without the execution-claim guard other templates "
         "carry. Add the guard paragraph used in group.md / self-review.md / "
         "single-agent.md."

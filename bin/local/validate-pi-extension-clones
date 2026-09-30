@@ -1,0 +1,243 @@
+#!/usr/bin/env python3
+"""Validate that every pi extension package clone can serve the installed pi.
+
+Usage: bin/local/validate-pi-extension-clones [--quiet] [--json]
+
+Pi resolves a `git:` package in `settings.json` by cloning it once and then
+reusing whatever is on disk — `resolvePackageSources` refetches only for
+`temporary` scope, so a user or project clone freezes at the SHA it had on the
+first run that needed it. `pi update` with no flags updates the host binary
+alone. Nothing refreshes those clones, and nothing notices when the host moves
+out from under them.
+
+The failure that prompted this is silent, which is what makes it worth a gate.
+pi 0.86 replaced the provider input `Context` — carrying `systemPrompt` and
+`tools` as fields — with a normalized `TranscriptContext` holding both inside
+the transcript's system messages. A provider extension predating that change
+reads fields that no longer exist and sends the model no system prompt and no
+tool declarations. The model cannot call a tool, so it answers in prose and
+often *fabricates* the result: asked to run a command and report the output, an
+agent on a stale clone reported plausible output having executed nothing, and
+the run exited 0. A review, a triage, or a fix pass on that clone produces
+confident findings with no evidence behind them, under a green status.
+
+Both directions of the skew are checked, because both have now happened here:
+
+  clone older than host  — the provider predates the transcript contract, so
+                           tools silently vanish (the fabrication case)
+  clone newer than host  — the provider imports symbols the host's pi-ai does
+                           not export, e.g. `getCurrentSystemPrompt`, and every
+                           agent dies on turn 1 with a TypeError
+
+The clone on disk is what is inspected, not a version string committed
+somewhere. A pinned-version test passes while the clone that actually serves
+the run is stale, because the clone is gitignored and CI never sees it — so a
+check reading committed text answers a question nobody asked.
+
+Exit code: 0 when every clone found can serve the installed pi, 1 otherwise.
+Absent pi, or no clones at all, is a pass: this validates what is installed and
+has nothing to say about a machine that has not installed it.
+"""
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+_WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
+from ansi import RED, GREEN, YELLOW, DIM, NC  # noqa: E402
+
+# The pi release that introduced TranscriptContext. A provider extension is
+# expected to carry the adapter below from this version on.
+TRANSCRIPT_CONTRACT_VERSION = (0, 86)
+
+# The adapter a post-0.86 provider needs, relative to a package clone root.
+# Named by the symbol it must resolve rather than by file, since the file is
+# this package's own layout choice; the import is the contract with pi-ai.
+TRANSCRIPT_SYMBOLS = ('getCurrentSystemPrompt', 'getCurrentTools')
+
+# Where pi keeps clones: one user-scope root, plus a per-project root inside any
+# repo whose settings declare a package. The project form is what multiplies —
+# every worktree of a repo gets its own.
+USER_PACKAGE_ROOT = Path.home() / '.pi' / 'agent' / 'git'
+PROJECT_PACKAGE_GLOB = '.pi/git'
+
+# Where to look for project clones. A worktree container holds many peers.
+SEARCH_ROOTS = (Path.home() / 'git',)
+
+# How deep under a search root a `.pi/git` can sit: <root>/<repo>/<worktree>.
+PROJECT_SEARCH_DEPTH = 2
+
+
+def _run(cmd: list[str], cwd: str | None = None) -> str | None:
+    """Stdout of a command, or None when it cannot be run or fails."""
+    try:
+        out = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    return out.stdout.strip()
+
+
+def installed_pi_version() -> tuple[int, ...] | None:
+    """The version of the pi on PATH, or None when there is none to ask."""
+    raw = _run(['pi', '--version'])
+    if not raw:
+        return None
+    match = re.search(r'(\d+)\.(\d+)(?:\.(\d+))?', raw)
+    if not match:
+        return None
+    return tuple(int(p) for p in match.groups() if p is not None)
+
+
+def _package_clones(root: Path) -> list[Path]:
+    """Every package clone under a pi `git` root: <root>/<host>/<owner>/<repo>."""
+    if not root.is_dir():
+        return []
+    return sorted(p for p in root.glob('*/*/*') if (p / '.git').exists())
+
+
+def _project_git_roots() -> list[Path]:
+    """Every `.pi/git` directory under the search roots.
+
+    Bounded globs rather than rglob: an unbounded search of a home directory
+    full of worktrees is slow enough that the gate would get skipped, and a
+    clone never sits deeper than a worktree.
+    """
+    patterns = ['/'.join(['*'] * d) + '/' + PROJECT_PACKAGE_GLOB
+                for d in range(1, PROJECT_SEARCH_DEPTH + 1)]
+    roots = []
+    for search_root in SEARCH_ROOTS:
+        if not search_root.is_dir():
+            continue
+        roots.extend(p for pattern in patterns for p in search_root.glob(pattern))
+    return roots
+
+
+def discover_clones() -> list[tuple[str, Path]]:
+    """Every (scope, path) package clone this machine would load."""
+    found = [('user', p) for p in _package_clones(USER_PACKAGE_ROOT)]
+    for git_root in _project_git_roots():
+        found.extend(('project', p) for p in _package_clones(git_root))
+    return found
+
+
+def _declares_transcript_adapter(clone: Path) -> bool:
+    """Whether a clone resolves the post-0.86 transcript symbols anywhere."""
+    for path in clone.rglob('*.ts'):
+        if 'node_modules' in path.parts:
+            continue
+        try:
+            text = path.read_text(errors='replace')
+        except OSError:
+            continue
+        if any(symbol in text for symbol in TRANSCRIPT_SYMBOLS):
+            return True
+    return False
+
+
+def _has_provider_extension(clone: Path) -> bool:
+    """Whether a clone registers a model provider at all.
+
+    A package of plain tools has no opinion on the transcript contract, so the
+    check has nothing to say about it. Only a provider builds the request whose
+    shape 0.86 changed.
+    """
+    for path in clone.rglob('*.ts'):
+        if 'node_modules' in path.parts:
+            continue
+        try:
+            text = path.read_text(errors='replace')
+        except OSError:
+            continue
+        if 'registerProvider' in text or 'provider:' in text:
+            return True
+    return False
+
+
+def check_clone(clone: Path, pi_version: tuple[int, ...]) -> str | None:
+    """Return a description of the skew for this clone, or None when it is fine."""
+    if not _has_provider_extension(clone):
+        return None
+
+    host_has_transcript = pi_version[:2] >= TRANSCRIPT_CONTRACT_VERSION
+    clone_has_adapter = _declares_transcript_adapter(clone)
+
+    if host_has_transcript and not clone_has_adapter:
+        return ('clone predates the pi 0.86 transcript contract, so this provider '
+                'sends no system prompt and no tool declarations — the model cannot '
+                'call a tool and may report results it never produced')
+    if not host_has_transcript and clone_has_adapter:
+        return ('clone expects the pi 0.86 transcript contract but the installed pi '
+                'is older, so the provider imports symbols its pi-ai does not export '
+                'and every agent dies on turn 1')
+    return None
+
+
+def _clone_sha(clone: Path) -> str:
+    return _run(['git', 'rev-parse', '--short', 'HEAD'], cwd=str(clone)) or '?'
+
+
+def _report(scope: str, clone: Path, sha: str, problem: str) -> None:
+    print(f'{RED}✗{NC} {clone} ({scope} scope, {sha})', file=sys.stderr)
+    print(f'      {problem}', file=sys.stderr)
+    print(f'    {DIM}refresh with: pi update --extensions{NC}', file=sys.stderr)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description='Validate pi extension package clones against the installed pi.')
+    parser.add_argument('--quiet', action='store_true', help='Only show failures and summary')
+    parser.add_argument('--json', action='store_true', help='Emit findings as JSON')
+    args = parser.parse_args()
+
+    pi_version = installed_pi_version()
+    if pi_version is None:
+        if not args.quiet:
+            print(f'{DIM}pi is not installed — nothing to validate{NC}')
+        return
+
+    clones = discover_clones()
+    if not clones:
+        if not args.quiet:
+            print(f'{DIM}no pi package clones on this machine{NC}')
+        return
+
+    findings = []
+    for scope, clone in clones:
+        problem = check_clone(clone, pi_version)
+        sha = _clone_sha(clone)
+        if problem is not None:
+            findings.append({'scope': scope, 'path': str(clone), 'sha': sha,
+                             'problem': problem})
+        elif not args.quiet and not args.json:
+            print(f'  {GREEN}✓{NC} {clone} ({scope}, {sha})')
+
+    if args.json:
+        print(json.dumps({'pi_version': '.'.join(str(p) for p in pi_version),
+                          'clones_checked': len(clones), 'findings': findings}, indent=2))
+        sys.exit(1 if findings else 0)
+
+    for f in findings:
+        _report(f['scope'], Path(f['path']), f['sha'], f['problem'])
+
+    version = '.'.join(str(p) for p in pi_version)
+    print()
+    if not findings:
+        print(f'{GREEN}✓{NC} {len(clones)} pi package clones all serve pi {version}')
+        return
+
+    print(f'{RED}✗{NC} {len(findings)} of {len(clones)} pi package clones cannot serve '
+          f'pi {version}', file=sys.stderr)
+    print(f'  {YELLOW}A stale provider clone fails silently — the agent loses its tools '
+          f'and may fabricate their output.{NC}', file=sys.stderr)
+    sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

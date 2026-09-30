@@ -77,6 +77,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-ai-layers` | Validates that every ai/lib package imports only what the layer declaration in its __init__.py permits |
 | `validate-stat-portability` | Validates that stat format flags are confined to the lib/portable.sh helpers |
 | `validate-bats-version` | Validates that a bats suite using flags on run declares bats_require_minimum_version 1.5.0 |
+| `validate-pi-extension-clones` | Validates that every pi extension package clone on this machine can serve the installed pi, in both skew directions — a clone predating pi 0.86's transcript contract silently strips the agent's tools and lets it fabricate their output |
 | `validate-tmpdir-isolation` | Validates that a bats suite pins $TMPDIR to bats-owned scratch and never removes it by hand, so parallel cases do not share one directory and a failed setup cannot wipe the real temp directory |
 | `validate-script-loading` | Validates that only tests/conftest.py executes a module out of a file, so one script never has two module objects |
 | `validate-skip-coverage` | Validates that a platform skip does not silence a test whose subject is a tracked file — CI is Linux-only, so a darwin guard over a repo file is an assertion that never runs |

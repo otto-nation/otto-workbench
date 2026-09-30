@@ -1208,3 +1208,31 @@ def test_summary_contract_forbids_a_prior_findings_tally(path):
         f"{path.name} states a `## Summary` contract without the "
         f"no-prior-tally constraint. Add this sentence verbatim:\n\n{_NO_PRIOR_TALLY}"
     )
+
+
+# synthesis.md tells the agent to write its first action — the review — before
+# reading source files, and then invites a fresh finding ("Add any
+# cross-cutting findings") drafted from nothing but the merged content. That
+# finding reaches the PR unverified unless something tells the agent not to
+# claim it ran a check it never ran. group.md, self-review.md and
+# single-agent.md all carry this guard verbatim; synthesis.md is the fourth
+# write-first, finding-authoring template and must carry it too.
+_NO_UNRUN_EXECUTION_CLAIM = (
+    "Never write that you ran something unless you ran it in this session."
+)
+
+
+def test_synthesis_template_forbids_unverified_execution_claims():
+    """synthesis.md's turn budget carries the execution-claim guard.
+
+    Regression for the guard being added everywhere the write-first pattern
+    landed except here: synthesis.md still let a cross-cutting finding claim
+    it ran something it never ran.
+    """
+    path = TEMPLATE_DIR / "synthesis.md"
+    assert _NO_UNRUN_EXECUTION_CLAIM in path.read_text(), (
+        "synthesis.md's turn budget authors findings after a write-first "
+        "instruction without the execution-claim guard other templates "
+        "carry. Add the guard paragraph used in group.md / self-review.md / "
+        "single-agent.md."
+    )

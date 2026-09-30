@@ -2488,8 +2488,9 @@ The only writer of the review domain.
 
 `pr review` and the `review` entry point it dispatches to both finish a
 review, and both used to stamp `ReviewSummary` themselves — two mappings, two
-persist paths, and a PR review wrote the domain twice. This module is the one writer: it derives the domain
-fields from the typed report and persists them on the target the context names.
+persist paths, and a PR review wrote the domain twice. This module is the
+one writer: it derives the domain fields from the typed report and persists
+them on the target the context names.
 
 ### pr/state.py
 
@@ -5234,7 +5235,7 @@ Exit codes:
 
 Post a review file to GitHub as a PR review.
 
-Parses a markdown review file (produced by review), validates
+Parses a markdown review file (produced by `review`), validates
 finding positions against the PR diff, renumbers findings by posted
 location (inline first, then body), and creates a PENDING review via
 the GitHub API. Pass --submit to submit the review immediately.

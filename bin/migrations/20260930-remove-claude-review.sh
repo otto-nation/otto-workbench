@@ -14,5 +14,7 @@ migration_20260930_remove_claude_review() {
   if [[ -L "$target" ]]; then
     rm "$target"
     info "Removed claude-review symlink (the command is now 'review')"
+  else
+    return "$MIGRATION_NOOP"
   fi
 }

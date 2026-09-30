@@ -5031,8 +5031,10 @@ here would name a different tree's `ai/bin` than the shim the operator ran.
 
 `main` returns an int and does not exit, like every other `cli.<name>.main`.
 The shim does the `sys.exit`. `--tool-schema` is answered before anything
-else, because the MCP server executes `ai/bin/pr --tool-schema` to discover
-the tool and must not pay for a context resolution to get it.
+else, because `pr ci --tool-schema` still has to resolve the flag ahead of
+dispatch, and a reader running `ai/bin/pr --tool-schema` directly should not
+pay for a context resolution to get it. The MCP server no longer spawns this
+binary to discover the tool; it imports `cli.schema.tool_schema` directly.
 
 ### cli/pr_commands.py
 

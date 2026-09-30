@@ -147,9 +147,9 @@ _check_required_fields() {
   fi
 }
 
-# _check_no_duplicates FILE
+# _check_no_duplicates FILE VALIDATION
 _check_no_duplicates() {
-  local file="$1"
+  local file="$1" validation="$2"
   local dupes
   dupes=$(_tool_names "$file" | sort | uniq -d)
   if [[ -n "$dupes" ]]; then
@@ -169,9 +169,9 @@ _check_no_duplicates() {
   # kinds of thing and legitimately share a name — `linear` is a brew
   # formula and an auth alias today — and neither is a script the server can
   # offer, so comparing across those namespaces reports a collision that
-  # cannot happen.
-  local validation
-  validation=$(reg_get "$file" meta validation)
+  # cannot happen. VALIDATION is passed in by the caller, which already read
+  # meta.validation once for `_validate_registry`'s dispatch — reading it a
+  # second time here would parse the same value twice per file.
   if [[ "$validation" == "bindir" ]]; then
     local name
     while IFS= read -r name; do
@@ -307,10 +307,10 @@ _check_commands_field() {
   fi
 }
 
-# _validate_schema FILE
+# _validate_schema FILE VALIDATION
 # Runs required-field, allow-field, and duplicate checks for every entry in FILE.
 _validate_schema() {
-  local file="$1"
+  local file="$1" validation="$2"
   [[ -f "$file" ]] || { warn "$(basename "$file") not found — skipping"; return; }
   local count i=0
   count=$(reg_len "$file" tools)
@@ -321,7 +321,7 @@ _validate_schema() {
     _check_commands_field "$file" "$i"
     i=$(( i + 1 ))
   done
-  _check_no_duplicates "$file"
+  _check_no_duplicates "$file" "$validation"
 }
 
 # _validate_against_brewfile REGISTRY BREWFILE
@@ -568,17 +568,12 @@ _validate_auth_fields() {
   done
 }
 
-# _validate_registry FILE
-# Dispatches cross-validation based on meta.validation and meta.source in FILE.
+# _validate_registry FILE VALIDATION
+# Dispatches cross-validation based on VALIDATION (meta.validation, already
+# resolved by the caller) and meta.source in FILE.
 _validate_registry() {
-  local file="$1"
-  local validation source
-  validation=$(reg_get "$file" meta validation)
-  # Only an absent key defaults to `none`. An explicit `validation: ""` is a
-  # value someone wrote, and it names no cross-check — it falls through to the
-  # `*)` arm below and is reported, which is what the `// "none"` read this
-  # replaced did too: yq substitutes on null, not on an empty string.
-  reg_has "$file" meta validation || validation="none"
+  local file="$1" validation="$2"
+  local source
   source=$(reg_get "$file" meta source)
 
   case "$validation" in
@@ -718,16 +713,25 @@ main() {
       echo
       info "Schema: ${registry#"$REPO_ROOT/"}"
     fi
+    # Read once per file and threaded through: `_validate_schema` (by way of
+    # `_check_no_duplicates`) and `_validate_registry` both key off
+    # meta.validation, and re-reading it in each would parse the same value
+    # twice. Only an absent key defaults to `none` here — an explicit
+    # `validation: ""` is a value someone wrote, and it names no cross-check,
+    # so it is left as-is and reported by `_validate_registry`'s `*)` arm.
+    local validation
+    validation=$(reg_get "$registry" meta validation)
+    reg_has "$registry" meta validation || validation="none"
     # A `tools:` that is not a list has no entries to walk, and every check
     # that iterates them would report the file clean rather than report the
     # shape. Those are skipped when it fails; the meta-only checks below do not
     # read `tools` and still run, so one malformed collection does not hide
     # every other problem in the same file until it is fixed.
     if _check_list_shape "$registry" tools; then
-      _validate_schema "$registry"
+      _validate_schema "$registry" "$validation"
       _validate_auth_fields "$registry"
       _validate_install_check_command "$registry"
-      _validate_registry "$registry"
+      _validate_registry "$registry" "$validation"
     fi
     if _check_list_shape "$registry" env; then
       _validate_env_fields "$registry"

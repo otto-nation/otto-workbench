@@ -659,10 +659,12 @@ EOF
 
   run main
   [ "$status" -ne 0 ]
-  [[ "$output" == *"bin/registry.yml"* ]]
-  [[ "$output" == *"brew/registry.yml"* ]]
-  [[ "$output" == *"zsh/registry.yml"* ]]
   [ "$(grep -c "defined in multiple registries" <<< "$output")" -eq 1 ]
+  # Pins all three sources on the one line, in collect_registries' path
+  # order (bin, brew, zsh) — not just present somewhere in the output, which
+  # a regression splitting the accumulated sources across two lines would
+  # still satisfy.
+  [[ "$output" == *"env var 'SHARED_VAR' defined in multiple registries: bin/registry.yml brew/registry.yml zsh/registry.yml"* ]]
 }
 
 @test "fails on one tool name registered in two bindir registries" {

@@ -740,6 +740,179 @@ class TestRecoveringAStrayWriteFromTheLog:
         assert "```" not in body
         assert "Here it is" not in body
 
+    def test_commentary_fenced_after_the_document_is_not_recovered(self, tmp_path):
+        """A second fenced block after the review must not outrank it.
+
+        The scan keeps the *last* qualifying candidate, so a reply that closes
+        its review and then adds a ```bash``` aside recovered the aside. The
+        heading test is applied per block for this reason, not only to the
+        winner.
+        """
+        output = tmp_path / "review.md"
+        output.write_text("")
+        doc = "# Rev\n\n## Must fix\n- [M1] real\n"
+        log_path = _write_log(
+            tmp_path,
+            _pi_text(
+                # A ```markdown``` aside, not ```bash```: the caller's own
+                # "## " gate already rejects an untitled block, so only an
+                # aside that carries a heading of its own reaches the
+                # comparison this test exists to pin.
+                "Here:\n\n```markdown\n" + doc + "```\n\n"
+                "For reference:\n\n```markdown\n## Notes\nrm -rf /\n```\n",
+            ),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is True
+        body = output.read_text()
+        assert "[M1]" in body
+        assert "rm -rf" not in body
+
+    def test_the_last_of_two_documents_wins(self, tmp_path):
+        """A redrafted document is the one to keep, as with a retried write."""
+        output = tmp_path / "review.md"
+        output.write_text("")
+        log_path = _write_log(
+            tmp_path,
+            _pi_text(
+                "Draft:\n\n```markdown\n# Rev\n\n## Must fix\n- draft\n```\n\n"
+                "Final:\n\n```markdown\n# Rev\n\n## Must fix\n- final\n```\n",
+            ),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is True
+        body = output.read_text()
+        assert "final" in body
+        assert "draft" not in body
+
+    def test_an_unclosed_fence_keeps_what_the_agent_produced(self, tmp_path):
+        """A reply cut off mid-document is a partial review worth keeping."""
+        output = tmp_path / "review.md"
+        output.write_text("")
+        log_path = _write_log(
+            tmp_path,
+            _pi_text("Here:\n\n```markdown\n# Rev\n\n## Must fix\n- [M1] x\n"),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert "[M1]" in output.read_text()
+
+    def test_a_deliverable_with_no_level_one_title_is_still_trimmed(self, tmp_path):
+        """The scout artifact's format starts at `## Investigation Leads`.
+
+        Anchoring the trim on `# ` alone stops trimming entirely for that
+        deliverable, so the narration stays in front of the document. The
+        anchor is the shallowest heading present, which is the document's
+        own outline root whatever level it starts at.
+        """
+        output = tmp_path / "review.md"
+        output.write_text("")
+        log_path = _write_log(
+            tmp_path,
+            _pi_text(
+                "I will write the file now.\n\n"
+                "## Investigation Leads\n- **`a.py:1`** — x\n",
+            ),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is True
+        body = output.read_text()
+        assert body.startswith("## Investigation Leads")
+        assert "I will write" not in body
+
+    def test_narration_with_its_own_subheading_is_trimmed_away(self, tmp_path):
+        """A model that titles its own plan must not have the plan recovered."""
+        output = tmp_path / "review.md"
+        output.write_text("")
+        log_path = _write_log(
+            tmp_path,
+            _pi_text(
+                "## My plan\nI will now write it.\n\n"
+                "# Self-Review: repo\n\n## Must fix\n- [M1] x\n",
+            ),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is True
+        body = output.read_text()
+        assert body.startswith("# Self-Review: repo")
+        assert "My plan" not in body
+
+    def test_an_xml_shaped_call_loses_its_closing_tags(self, tmp_path):
+        """The shape the docstring claimed but no test pinned.
+
+        Observed in a real run: the model emitted `<write><path>...` and
+        `<invoke name="bash">` as text. Recovered verbatim the document
+        carries `</content></write>` on the end.
+        """
+        output = tmp_path / "review.md"
+        output.write_text("")
+        log_path = _write_log(
+            tmp_path,
+            _pi_text(
+                "<write>\n<path>/abs/review.md</path>\n<content>\n"
+                "# Rev\n\n## Must fix\n- [M1] x\n"
+                "</content>\n</write>",
+            ),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is True
+        body = output.read_text()
+        assert "[M1]" in body
+        assert "</content>" not in body
+        assert "</write>" not in body
+
+    def test_a_json_shaped_call_is_decoded_not_trimmed(self, tmp_path):
+        """A JSON narration carries the document as a string literal.
+
+        Its newlines are a backslash and an `n`, so recovering the text
+        verbatim yields one long line rather than a markdown document. No
+        trim fixes that — the body has to be decoded.
+        """
+        output = tmp_path / "review.md"
+        output.write_text("")
+        log_path = _write_log(
+            tmp_path,
+            _pi_text(json.dumps({
+                "command": "write",
+                "path": "/abs/review.md",
+                "content": "# Rev\n\n## Must fix\n- [M1] x\n",
+            }, indent=2)),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is True
+        body = output.read_text()
+        assert "[M1]" in body
+        assert "\\n" not in body
+        assert body.startswith("# Rev\n")
+
+    def test_a_document_ending_in_a_brace_keeps_it(self, tmp_path):
+        """The trim is XML-tag only, so a code sample's last line survives.
+
+        Stripping a trailing `}` or `"` as call syntax would eat the end of
+        any document whose final line is a closing brace or a quote.
+        """
+        output = tmp_path / "review.md"
+        output.write_text("")
+        log_path = _write_log(
+            tmp_path,
+            _pi_text("# Rev\n\n## Must fix\n- [M1] see:\n\n    foo = {\n      bar: 1\n    }\n"),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert output.read_text().rstrip().endswith("}")
+
+    def test_a_document_quoting_json_is_not_decoded_as_a_call(self, tmp_path):
+        """A review that mentions JSON is a document, not a narrated call."""
+        output = tmp_path / "review.md"
+        output.write_text("")
+        log_path = _write_log(
+            tmp_path,
+            _pi_text('# Rev\n\n## Must fix\n- [M1] the config `{"a": 1}` is wrong\n'),
+            _pi_result(subtype="success"),
+        )
+        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert '{"a": 1}' in output.read_text()
+
     def test_a_fenced_document_with_a_nested_fence_is_not_truncated(self, tmp_path):
         """A Must-fix item's own evidence block nests a fence inside the outer one.
 

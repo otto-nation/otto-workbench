@@ -224,12 +224,16 @@ def test_range_floor_reads_the_lower_bound(validator, spec, expected):
 
 
 @pytest.mark.parametrize('spec', ['<0.88.0', '*', 'latest', 'workspace:*',
-                                  'github:earendil-works/pi'])
+                                  'github:earendil-works/pi',
+                                  'github:earendil-works/pi#v0.99.2',
+                                  'git+https://github.com/earendil-works/pi.git#v0.99.2'])
 def test_a_range_with_no_lower_bound_declares_no_floor(validator, spec):
     """A ceiling is not a floor, and a non-range declares nothing.
 
     `<0.88.0` admits every older release, so reading its number as a minimum
-    would fail exactly the hosts it permits.
+    would fail exactly the hosts it permits. A git ref that happens to look
+    like a version (`#v0.99.2`) must not be misread as a declared floor
+    either: the clause as a whole is not a version range, so it names none.
     """
     assert validator._range_floor(spec) is None
 

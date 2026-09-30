@@ -90,7 +90,13 @@ DEPENDENCY_FIELDS = ('peerDependencies', 'dependencies', 'devDependencies')
 # repo at one version — 0.87.1 and 0.99.2 are each published under both names —
 # so the comparison holds. If they ever diverge this check reads the wrong
 # number, which is why the floor is only ever a lower bound: see _range_floor.
-_VERSION_IN_RANGE = re.compile(r'(\d+)\.(\d+)(?:\.(\d+))?')
+#
+# Anchored with fullmatch rather than search: a git specifier like
+# `github:earendil-works/pi#v0.99.2` contains a version-looking substring after
+# the `#`, and an unanchored search would misread that ref as a declared
+# floor. Requiring the whole clause to be a bare version or comparator range
+# makes a git URL fall through to "no floor" structurally, not incidentally.
+_VERSION_IN_RANGE = re.compile(r'(?:[~^]|>=|<=|=)?(\d+)\.(\d+)(?:\.(\d+))?')
 
 # Where pi keeps clones: one user-scope root, plus a per-project root inside any
 # repo whose settings declare a package. The project form is what multiplies —
@@ -152,7 +158,7 @@ def _range_floor(spec: str) -> tuple[int, int, int] | None:
     for clause in spec.split():
         if clause.startswith('<'):
             continue
-        match = _VERSION_IN_RANGE.search(clause)
+        match = _VERSION_IN_RANGE.fullmatch(clause)
         if match:
             return _triple(match.groups())
     return None
@@ -177,6 +183,14 @@ def declared_host_floor(clone: Path) -> tuple[int, int, int] | None:
     plain skills or tools. Nothing declared is nothing to check — the floor is
     the package's claim about itself, and this check does not invent one for a
     package that made none.
+
+    Reads only the clone root's `package.json`, not every manifest under the
+    clone — unlike the symbol checks below, which walk every `.ts` file. A
+    workspace clone with a nested `package.json` per extension would have its
+    pi-ai declaration invisible here even though the symbol check would still
+    see the import. Every clone this validator runs against today is a flat
+    single-manifest repo, so this is an assumption rather than a demonstrated
+    gap; widen the scan if a nested-manifest clone shows up.
     """
     try:
         manifest = json.loads((clone / 'package.json').read_text(errors='replace'))

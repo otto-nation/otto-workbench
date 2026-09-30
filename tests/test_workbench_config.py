@@ -1009,6 +1009,10 @@ def test_a_numeric_field_is_parsed_into_the_number_it_names():
     assert wcw.coerce_value(wc.FIX_VERIFY_TIMEOUT_KEY, "30") == 30
 
 
+# The float half of the numeric test this change split in two. The integer half
+# now runs against a real key; nothing on the surface is a float, so this one
+# keeps the patched type it always had.
+# passes-at-base: it is the pre-existing patched-type case, carried over intact
 def test_a_float_field_is_parsed_through_a_patched_type(monkeypatch):
     """No float on the surface yet; the branch is reached by its type."""
     monkeypatch.setattr(wcw, "schema_type", lambda _: "number")

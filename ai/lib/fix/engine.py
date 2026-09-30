@@ -237,6 +237,11 @@ class FixAdapter(ABC):
     # object sitting where a result should be, and the first attribute read
     # off it raises. Safe to share because `SuiteResult` is frozen.
     suite: fix_suite.SuiteResult = fix_suite.SuiteResult()
+    # Whether this domain wants the repo's checks run over its work. On by
+    # default: a pass that holds its push is a pass nothing else checks, which
+    # is every domain but one. `rebase.prepush` turns it off and says why
+    # there — the checks it would run are the ones about to run on its push.
+    verifies_with_suite: bool = True
     # Which phase sizes and prompts the verify gate, for a domain that runs one.
     # Separate from `phase` because the gate is a different agent asking a
     # different question: sizing it as the fix pass gives it the fix pass's
@@ -800,7 +805,7 @@ def _verify_suite(
     An adapter that was given one still wins: it is the same file when the two
     agree, and the caller's explicit choice when they do not.
     """
-    if not fix_suite.should_run(outcomes, changed):
+    if not adapter.verifies_with_suite or not fix_suite.should_run(outcomes, changed):
         return fix_suite.SuiteResult()
     config = adapter.config or load_config_or_default(adapter.workdir)
     result = fix_suite.run(

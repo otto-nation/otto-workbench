@@ -11,7 +11,9 @@ green", and a mock returning a returncode is the test agreeing with itself
 about what a process is.
 """
 
+import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -157,6 +159,57 @@ def test_a_timeout_establishes_nothing_either_way(tmp_path):
     assert result.demotes is False
     assert result.ran is False
     assert "did not finish" in result.note
+
+
+# Comfortably longer than the timeout the test gives the runner, so "the run
+# came back" cannot be the child having finished on its own.
+_ORPHAN_LIFETIME_S = 30
+# What the run gets to notice the timeout, signal the group and reap it. Well
+# under the lifetime above: the gap between them is what the assertion reads.
+_REAP_BUDGET_S = 15
+
+
+def test_a_timeout_reaps_the_whole_process_tree(tmp_path):
+    """A test runner is a tree, and `subprocess.run`'s timeout kills one process.
+
+    This repo's runner forks up to twelve workers. Orphaning them leaves them
+    competing for the worktree the pass is about to commit into, long after
+    the pass reported and exited.
+
+    Both halves are asserted, because either alone passes against the bug. A
+    child-only kill leaves `communicate` holding the inherited pipe until the
+    orphan exits by itself, so the tree *is* empty by the time the call
+    returns — it just took the orphan's full lifetime to get there. The
+    elapsed bound is what tells those apart.
+    """
+    child_pid = tmp_path / "child.pid"
+    cmd = _script(
+        tmp_path, "forker",
+        f"sleep {_ORPHAN_LIFETIME_S} & echo $! > {child_pid}\nwait",
+    )
+
+    started = time.monotonic()
+    result = fix_suite.run(tmp_path, cmd, 1)
+    elapsed = time.monotonic() - started
+
+    assert result.status is fix_suite.SuiteStatus.TIMED_OUT
+    assert elapsed < _REAP_BUDGET_S, (
+        f"the run took {elapsed:.0f}s to come back from a 1s timeout \u2014 it "
+        "waited out the orphan rather than signalling the group"
+    )
+    pid = int(child_pid.read_text().strip())
+    assert not _alive(pid), f"pid {pid} outlived the run that spawned it"
+
+
+def _alive(pid: int) -> bool:
+    """Whether `pid` still exists. Signal 0 tests without delivering."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 # ── what a result does to the pass's claims ─────────────────────────────────

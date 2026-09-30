@@ -51,7 +51,9 @@ a second definition of green living in a YAML string.
 
 from __future__ import annotations
 
+import os
 import shlex
+import signal
 import subprocess
 import time
 from dataclasses import dataclass
@@ -173,10 +175,14 @@ def _clip_tail(text: str, limit: int = OUTPUT_TAIL_CHARS) -> str:
     suite's — the masking `testing.md` names, and the one mistake this whole
     module exists to stop making.
     """
+    marker = "[...]\n"
     stripped = text.strip()
     if len(stripped) <= limit:
         return stripped
-    return "[...]\n" + stripped[-limit:]
+    # The marker is inside the budget, not added to it: a caller that sized
+    # `limit` against a commit body would find the clip overran the one number
+    # it was given.
+    return marker + stripped[-(limit - len(marker)):]
 
 
 def run(
@@ -214,37 +220,87 @@ def run(
     log.info(f"Verifying the pass against the repo's checks: {command}")
     started = time.monotonic()
     try:
-        # check=False: a non-zero exit is the answer this function exists to
-        # report, not an exception to raise. `capture_output` rather than a
-        # pipe to a filter, so the status read below is the runner's own.
-        completed = subprocess.run(
-            argv, cwd=workdir, capture_output=True, text=True,
-            timeout=timeout_s, check=False,
-        )
-    except subprocess.TimeoutExpired:
-        elapsed = time.monotonic() - started
-        result = SuiteResult(
-            status=SuiteStatus.TIMED_OUT, command=command, duration_s=elapsed,
-        )
+        result = _invoke(argv, workdir, command, timeout_s, started)
     except OSError as exc:
+        # The command could not be started at all — missing, not executable, a
+        # bad interpreter line. A broken declaration, not a red branch.
         result = SuiteResult(
             status=SuiteStatus.ERROR, command=command,
             duration_s=time.monotonic() - started, output_tail=str(exc),
         )
-    else:
-        elapsed = time.monotonic() - started
-        green = completed.returncode == 0
-        result = SuiteResult(
-            status=SuiteStatus.GREEN if green else SuiteStatus.RED,
-            command=command,
-            duration_s=elapsed,
-            output_tail="" if green else _clip_tail(
-                (completed.stdout or "") + (completed.stderr or ""),
-            ),
-        )
 
     _report(result, trail)
     return result
+
+
+# How long the runner gets to shut itself down after TERM before it is killed.
+# Short: the verdict is already decided by the timeout, and this is only about
+# not orphaning the tree.
+_TERM_GRACE_S = 5
+
+
+def _invoke(
+    argv: list[str], workdir: Path, command: str,
+    timeout_s: int, started: float,
+) -> SuiteResult:
+    """Run `argv` to completion or to the timeout, and read its exit status.
+
+    `Popen` with `start_new_session` rather than `subprocess.run(timeout=...)`,
+    because a test runner is a process *tree*. `run`'s timeout kills the direct
+    child only, and this repo's runner forks up to twelve parallel workers — a
+    timeout there would leave them running against a worktree the pass is about
+    to commit, competing with whatever the operator does next. The new session
+    makes the child a group leader so the whole tree can be signalled.
+
+    A non-zero exit is the answer this exists to report, not an exception; the
+    output is captured rather than piped to a filter, so the status read below
+    is the runner's own and not some `tail`'s.
+    """
+    proc = subprocess.Popen(
+        argv, cwd=workdir, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        _terminate_tree(proc)
+        return SuiteResult(
+            status=SuiteStatus.TIMED_OUT, command=command,
+            duration_s=time.monotonic() - started,
+        )
+
+    green = proc.returncode == 0
+    return SuiteResult(
+        status=SuiteStatus.GREEN if green else SuiteStatus.RED,
+        command=command,
+        duration_s=time.monotonic() - started,
+        output_tail="" if green else _clip_tail((stdout or "") + (stderr or "")),
+    )
+
+
+def _terminate_tree(proc: subprocess.Popen) -> None:
+    """Signal the whole process group, falling back to the child alone.
+
+    TERM before KILL so a runner that handles it can stop its own workers
+    tidily. The group may already be gone — the leader can exit while a worker
+    holds the pipe open — so `ProcessLookupError` is an ordinary outcome here
+    rather than a failure, and both passes tolerate it.
+
+    Returns once the tree is reaped. A KILL that still leaves `communicate`
+    blocked has nothing further to escalate to, so the second pass falls
+    through rather than looping: a wedged uninterruptible child is a kernel
+    state, not something another signal reaches.
+    """
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(os.getpgid(proc.pid), sig)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
+        try:
+            proc.communicate(timeout=_TERM_GRACE_S)
+        except subprocess.TimeoutExpired:
+            continue
+        return
 
 
 def _report(result: SuiteResult, trail: Trail | None) -> None:

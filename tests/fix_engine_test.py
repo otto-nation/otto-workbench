@@ -33,6 +33,7 @@ from fix.types import FixItem  # noqa: E402
 from git.land import CommitStatus  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 from fix import suite as fix_suite  # noqa: E402
+from rebase import prepush as rebase_prepush  # noqa: E402
 from config.workbench_config import FixConfig, WorkbenchConfig  # noqa: E402
 
 
@@ -1945,6 +1946,38 @@ class TestVerifySuite:
 
         assert run.suite.status is fix_suite.SuiteStatus.NOT_DECLARED
         assert run.outcomes[0].verified is None
+
+    def test_a_domain_can_opt_out_where_the_checks_run_right_after_it(
+        self, tmp_path, landed, head, snapshots,
+    ):
+        """`rebase.prepush` is the one, and the opt-out has to actually skip.
+
+        It runs because the repo's checks just failed and it pushes the moment
+        it lands, which runs them again for real. A third run in between would
+        triple the slowest part of a rebase for a verdict arriving seconds
+        later.
+        """
+        marker = tmp_path / "ran"
+        adapter = self._configured(
+            tmp_path, self._script(tmp_path, f"touch {marker}; exit 0"))
+        adapter.verifies_with_suite = False
+        snapshots.side_effect = _reads(set(), {"a.py"})
+
+        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
+            run = fix_engine.run(adapter)
+
+        assert not marker.exists()
+        assert run.suite.status is fix_suite.SuiteStatus.NOT_ATTEMPTED
+
+    def test_every_other_domain_is_opted_in_without_saying_so(self):
+        """The default is on: a domain gains the checks by declaring nothing.
+
+        The hole this closes is a pass whose push is held, which is the shape
+        of every domain but one. Defaulting off would reopen it for whichever
+        adapter is written next.
+        """
+        assert fix_engine.FixAdapter.verifies_with_suite is True
+        assert rebase_prepush.PrePushFixAdapter.verifies_with_suite is False
 
     def test_a_broken_declaration_does_not_take_the_pass_down_with_it(
         self, tmp_path, landed, head, snapshots,

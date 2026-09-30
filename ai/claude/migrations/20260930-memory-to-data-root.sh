@@ -44,20 +44,31 @@ migration_20260930_memory_to_data_root() {
   local mem_dir slug repo_dir key dest
   for mem_dir in "$projects_dir"/*/memory; do
     [[ -d "$mem_dir" ]] || continue
-    slug="$(basename "$(dirname "$mem_dir")")"
 
-    # Before resolution, because an empty directory holds nothing to carry and
-    # so cannot be an orphan. The orphan path below returns non-zero so the
-    # next sync retries a directory whose repo might resolve later; an empty
-    # one never gains content — every writer now writes the new location — so
-    # reporting it there fails the migration on every run forever over memory
-    # that does not exist. Removed rather than skipped, so the sweep shrinks:
-    # rmdir refuses a directory that is not empty, which is the guarantee that
-    # this can never take authored memory.
+    # Before resolution, and before the slug is even taken: an empty directory
+    # holds nothing to carry and so cannot be an orphan. The orphan path below
+    # returns non-zero so the next sync retries a directory whose repo might
+    # resolve later; an empty one never gains content — every writer now writes
+    # the new location — so reporting it there fails the migration on every run
+    # forever over memory that does not exist. Removed rather than skipped, so
+    # the sweep shrinks: rmdir refuses a directory that is not empty, which is
+    # the guarantee that this can never take authored memory.
     if _migration_dir_is_empty "$mem_dir"; then
-      rmdir "$mem_dir" 2>/dev/null && empty=$((empty + 1))
+      # Reported and retried rather than swallowed. A refused rmdir — an
+      # unwritable parent, a file landing between the test and the call —
+      # leaves the directory on disk, and touching no counter would let a run
+      # that visited only this one return MIGRATION_NOOP, which the framework
+      # records as applied and never retries.
+      if ! rmdir "$mem_dir" 2>/dev/null; then
+        warn "Could not remove empty $mem_dir — left in place"
+        unresolved=1
+        continue
+      fi
+      empty=$((empty + 1))
       continue
     fi
+
+    slug="$(basename "$(dirname "$mem_dir")")"
 
     # Forward from the registry, never by decoding the slug: Claude's transform
     # maps '/', '-' and '.' alike, so a directory name cannot say which repo it
@@ -137,33 +148,49 @@ _migration_repo_for_slug() {
   printf '%s' "$candidate"
 }
 
-# _migration_dir_is_empty DIR — true when DIR holds no entries, dotfiles included.
+# _migration_dir_entries DIR ARRAY_VAR — every entry in DIR, dotfiles included.
 #
-# The gate stamps are dotfiles, so a glob without dotglob would read a
-# directory holding only .last-dream as empty and rmdir would then refuse it,
-# leaving the counter wrong. Set and restored locally rather than left on: the
-# topic-file loop below globs *.md and must not start matching dotfiles.
-_migration_dir_is_empty() {
-  local dir="$1" entries had_dotglob=0
+# The gate stamps are dotfiles, so a caller globbing without dotglob reads a
+# directory holding only .last-dream as empty. Both options are set for the
+# expansion and restored to what the caller had: dotglob because the
+# topic-file loop globs *.md and must not start matching dotfiles, nullglob
+# because leaving it on changes how every later unmatched glob expands. With
+# nullglob on for the expansion an empty directory yields zero elements, so
+# the count answers emptiness outright rather than through a -e test on the
+# unexpanded pattern.
+_migration_dir_entries() {
+  local dir="$1"
+  local -n __entries="$2"
+  local had_dotglob=0 had_nullglob=0
   shopt -q dotglob && had_dotglob=1
-  shopt -s dotglob
-  entries=("$dir"/*)
+  shopt -q nullglob && had_nullglob=1
+  shopt -s dotglob nullglob
+  # shellcheck disable=SC2034  # written through the nameref above
+  __entries=("$dir"/*)
   [[ "$had_dotglob" -eq 1 ]] || shopt -u dotglob
-  [[ "${#entries[@]}" -eq 1 && ! -e "${entries[0]}" ]]
+  [[ "$had_nullglob" -eq 1 ]] || shopt -u nullglob
+  return 0
+}
+
+# _migration_dir_is_empty DIR — true when DIR holds no entries, dotfiles included.
+_migration_dir_is_empty() {
+  local entries=()
+  _migration_dir_entries "$1" entries
+  [[ "${#entries[@]}" -eq 0 ]]
 }
 
 # _migration_report_orphan MEM_DIR — name an unresolvable directory and its files.
+#
+# Through _migration_dir_entries so the listing covers dotfiles: a directory
+# reaching here holds something (the empty ones are removed before resolution),
+# and one holding only gate stamps would otherwise be reported as holding
+# nothing at all.
 _migration_report_orphan() {
-  local mem_dir="$1" f
+  local mem_dir="$1" f entries=()
   warn "Could not resolve a repo for $mem_dir — left in place"
-  for f in "$mem_dir"/*; do
-    # if/then rather than `[[ ]] &&`: this is the last statement in the loop
-    # body, so a final iteration whose test is false makes the loop — and the
-    # function — return 1, which under `set -e` fails the whole migration on
-    # an empty directory.
-    if [[ -e "$f" ]]; then
-      info "  holds $(basename "$f")"
-    fi
+  _migration_dir_entries "$mem_dir" entries
+  for f in "${entries[@]}"; do
+    info "  holds $(basename "$f")"
   done
   return 0
 }

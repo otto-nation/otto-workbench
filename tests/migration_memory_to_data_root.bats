@@ -108,6 +108,59 @@ _run_migration() {
   [ ! -d "$stray/memory" ]
 }
 
+@test "reports and retries an empty directory it cannot remove" {
+  # A refused rmdir leaves the directory on disk. Swallowed, a run that
+  # visited only this one returns MIGRATION_NOOP, which the framework records
+  # as applied and never retries — the directory then survives with nothing
+  # left to look at it.
+  local stray="$HOME/.claude/projects/-private-tmp"
+  mkdir -p "$stray/memory"
+  chmod a-w "$stray"
+
+  _run_migration
+  chmod u+w "$stray"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Could not remove empty"* ]]
+  [ -d "$stray/memory" ]
+}
+
+@test "lists a dotfile when reporting an unresolvable directory" {
+  # The listing globs through the dotfile-aware helper, so a directory holding
+  # only stamps is reported with what it holds rather than as holding nothing.
+  local stray="$HOME/.claude/projects/-private-tmp"
+  mkdir -p "$stray/memory"
+  echo 1700000000 > "$stray/memory/.last-dream"
+
+  _run_migration
+
+  [[ "$output" == *"Could not resolve a repo"* ]]
+  [[ "$output" == *"holds .last-dream"* ]]
+}
+
+@test "reads an empty directory as empty under a caller's nullglob" {
+  # With nullglob already on, a glob over an empty directory yields zero
+  # elements rather than the literal pattern. A helper testing for the
+  # unexpanded pattern reads that as non-empty and the directory is orphaned.
+  local stray="$HOME/.claude/projects/-private-tmp"
+  mkdir -p "$stray/memory"
+
+  WORKBENCH_DIR="$REPO_ROOT" run bash -c "
+    shopt -s nullglob
+    PROJECTS_EXCLUDED_PREFIXES=('$TMPDIR/state' '$TMPDIR/data')
+    . '$REPO_ROOT/lib/ui.sh'
+    . '$REPO_ROOT/lib/migrations.sh'
+    project_register '$REPO_DIR'
+    record_project_repo_ids
+    . '$MIGRATION'
+    migration_20260930_memory_to_data_root
+  "
+
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Could not resolve a repo"* ]]
+  [ ! -d "$stray/memory" ]
+}
+
 @test "a directory holding only gate stamps is not empty and is carried" {
   # The stamps are dotfiles, so a bare glob reads this directory as empty and
   # the run would rmdir it (or fail to, and miscount) rather than carrying the

@@ -48,8 +48,11 @@ import sys
 from pathlib import Path
 
 _WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
+for _path in (os.path.join(_WORKBENCH_DIR, 'lib'), os.path.join(_WORKBENCH_DIR, 'ai', 'lib')):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 from ansi import RED, GREEN, YELLOW, DIM, NC  # noqa: E402
+from config import workbench_projects  # noqa: E402
 
 # The pi release that introduced TranscriptContext. A provider extension is
 # expected to carry the adapter below from this version on.
@@ -65,12 +68,6 @@ TRANSCRIPT_SYMBOLS = ('getCurrentSystemPrompt', 'getCurrentTools')
 # every worktree of a repo gets its own.
 USER_PACKAGE_ROOT = Path.home() / '.pi' / 'agent' / 'git'
 PROJECT_PACKAGE_GLOB = '.pi/git'
-
-# Where to look for project clones. A worktree container holds many peers.
-SEARCH_ROOTS = (Path.home() / 'git',)
-
-# How deep under a search root a `.pi/git` can sit: <root>/<repo>/<worktree>.
-PROJECT_SEARCH_DEPTH = 2
 
 
 def _run(cmd: list[str], cwd: str | None = None) -> str | None:
@@ -89,7 +86,7 @@ def installed_pi_version() -> tuple[int, ...] | None:
     raw = _run(['pi', '--version'])
     if not raw:
         return None
-    match = re.search(r'(\d+)\.(\d+)(?:\.(\d+))?', raw)
+    match = re.match(r'(\d+)\.(\d+)(?:\.(\d+))?', raw)
     if not match:
         return None
     return tuple(int(p) for p in match.groups() if p is not None)
@@ -103,19 +100,19 @@ def _package_clones(root: Path) -> list[Path]:
 
 
 def _project_git_roots() -> list[Path]:
-    """Every `.pi/git` directory under the search roots.
+    """Every `.pi/git` directory under a registered project's worktree root.
 
-    Bounded globs rather than rglob: an unbounded search of a home directory
-    full of worktrees is slow enough that the gate would get skipped, and a
-    clone never sits deeper than a worktree.
+    Registered projects (`workbench_projects.registered()`) are the worktree
+    roots a workbench command has actually run in, at whatever depth they live
+    on this machine — no guessed search root or depth limit needed to find a
+    `.pi/git` sitting under one of them. See `lib/projects.sh`'s header for why
+    a guessed-root scan was tried and abandoned before.
     """
-    patterns = ['/'.join(['*'] * d) + '/' + PROJECT_PACKAGE_GLOB
-                for d in range(1, PROJECT_SEARCH_DEPTH + 1)]
     roots = []
-    for search_root in SEARCH_ROOTS:
-        if not search_root.is_dir():
-            continue
-        roots.extend(p for pattern in patterns for p in search_root.glob(pattern))
+    for project_root in workbench_projects.registered():
+        candidate = project_root / PROJECT_PACKAGE_GLOB
+        if candidate.is_dir():
+            roots.append(candidate)
     return roots
 
 
@@ -127,11 +124,23 @@ def discover_clones() -> list[tuple[str, Path]]:
     return found
 
 
+def _ts_files(clone: Path):
+    """Every `.ts` file under a clone, with `node_modules` pruned from descent.
+
+    A manual walk rather than `rglob` + a per-file filter: `node_modules` is
+    removed from `dirnames` in place, so the subtree is never entered, instead
+    of being walked and then discarded file by file.
+    """
+    for dirpath, dirnames, filenames in os.walk(clone):
+        dirnames[:] = [d for d in dirnames if d != 'node_modules']
+        for filename in filenames:
+            if filename.endswith('.ts'):
+                yield Path(dirpath) / filename
+
+
 def _declares_transcript_adapter(clone: Path) -> bool:
     """Whether a clone resolves the post-0.86 transcript symbols anywhere."""
-    for path in clone.rglob('*.ts'):
-        if 'node_modules' in path.parts:
-            continue
+    for path in _ts_files(clone):
         try:
             text = path.read_text(errors='replace')
         except OSError:
@@ -148,9 +157,7 @@ def _has_provider_extension(clone: Path) -> bool:
     check has nothing to say about it. Only a provider builds the request whose
     shape 0.86 changed.
     """
-    for path in clone.rglob('*.ts'):
-        if 'node_modules' in path.parts:
-            continue
+    for path in _ts_files(clone):
         try:
             text = path.read_text(errors='replace')
         except OSError:
@@ -198,13 +205,19 @@ def main() -> None:
 
     pi_version = installed_pi_version()
     if pi_version is None:
-        if not args.quiet:
+        if args.json:
+            print(json.dumps({'pi_version': None, 'clones_checked': 0, 'findings': []},
+                             indent=2))
+        elif not args.quiet:
             print(f'{DIM}pi is not installed — nothing to validate{NC}')
         return
 
     clones = discover_clones()
     if not clones:
-        if not args.quiet:
+        if args.json:
+            print(json.dumps({'pi_version': '.'.join(str(p) for p in pi_version),
+                             'clones_checked': 0, 'findings': []}, indent=2))
+        elif not args.quiet:
             print(f'{DIM}no pi package clones on this machine{NC}')
         return
 

@@ -12,6 +12,7 @@ A validator that caught only the loud one would have reported green through
 the entire fabrication window, which is the case that prompted it.
 """
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -128,10 +129,29 @@ def test_discovery_finds_a_user_scope_clone(validator, tmp_path, monkeypatch):
     subprocess.run(['git', 'init', '-q', str(pkg)], check=True)
 
     monkeypatch.setattr(validator, 'USER_PACKAGE_ROOT', root)
-    monkeypatch.setattr(validator, 'SEARCH_ROOTS', ())
+    monkeypatch.setattr(validator.workbench_projects, 'registered', lambda: [])
 
     found = validator.discover_clones()
     assert [('user', pkg)] == found
+
+
+def test_discovery_finds_a_deeply_nested_registered_project(validator, tmp_path, monkeypatch):
+    """A registered project's `.pi/git` is found at whatever depth it lives.
+
+    The registry records worktree roots directly, so this has nothing to guess
+    at: a repo four levels below a container is exactly as reachable as one at
+    the top, which a guessed root plus a depth cap could not promise.
+    """
+    project_root = tmp_path / 'git' / 'personal' / 'otto-nation' / 'otto-workbench' / 'main'
+    pkg = project_root / '.pi' / 'git' / 'github.com' / 'usemaximum' / 'pi-extensions'
+    pkg.mkdir(parents=True)
+    subprocess.run(['git', 'init', '-q', str(pkg)], check=True)
+
+    monkeypatch.setattr(validator, 'USER_PACKAGE_ROOT', tmp_path / 'agent' / 'git')
+    monkeypatch.setattr(validator.workbench_projects, 'registered', lambda: [project_root])
+
+    found = validator.discover_clones()
+    assert [('project', pkg)] == found
 
 
 def test_version_parsing_reads_a_bare_version_line(validator, monkeypatch):
@@ -139,7 +159,35 @@ def test_version_parsing_reads_a_bare_version_line(validator, monkeypatch):
     assert validator.installed_pi_version() == (0, 87, 1)
 
 
+def test_version_parsing_rejects_a_prefixed_banner(validator, monkeypatch):
+    """An unanchored match on the first number sequence would misreport this as
+    (1, 0, 0) instead of failing loudly on a banner shape this has never seen.
+    """
+    monkeypatch.setattr(validator, '_run',
+                        lambda *a, **k: 'update available: 1.0.0 (installed 0.87.1)')
+    assert validator.installed_pi_version() is None
+
+
 def test_no_pi_installed_is_not_a_violation(validator, monkeypatch):
     """The gate validates an installation; it has no opinion without one."""
     monkeypatch.setattr(validator, '_run', lambda *a, **k: None)
     assert validator.installed_pi_version() is None
+
+
+def test_json_output_when_pi_is_not_installed(validator, monkeypatch, capsys):
+    """--json is documented as always emitting JSON, absent pi included."""
+    monkeypatch.setattr(validator, 'installed_pi_version', lambda: None)
+    monkeypatch.setattr(validator.sys, 'argv', ['validate-pi-extension-clones', '--json'])
+    validator.main()
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {'pi_version': None, 'clones_checked': 0, 'findings': []}
+
+
+def test_json_output_when_no_clones_found(validator, monkeypatch, capsys):
+    """--json is documented as always emitting JSON, no clones included."""
+    monkeypatch.setattr(validator, 'installed_pi_version', lambda: (0, 87, 1))
+    monkeypatch.setattr(validator, 'discover_clones', lambda: [])
+    monkeypatch.setattr(validator.sys, 'argv', ['validate-pi-extension-clones', '--json'])
+    validator.main()
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {'pi_version': '0.87.1', 'clones_checked': 0, 'findings': []}

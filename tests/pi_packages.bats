@@ -107,7 +107,15 @@ _run_step() {
   [ "$status" -eq 0 ]
 
   # Inside sync_pi's body specifically, not merely somewhere in the file.
-  run bash -c "sed -n '/^sync_pi()/,/^}/p' '$REPO_ROOT/ai/pi/steps.sh' | grep -q step_pi_packages"
+  # `declare -f` asks bash for the function's actual boundaries rather than
+  # guessing from a closing brace at column 0 — a sed range like that goes
+  # blind the moment sync_pi grows a conditional or heredoc of its own.
+  run bash -c '
+    LIB_SRC_DIR="$1/lib"
+    . "$1/lib/env.sh"
+    . "$1/ai/pi/steps.sh"
+    declare -f sync_pi | grep -q step_pi_packages
+  ' _ "$REPO_ROOT"
   [ "$status" -eq 0 ]
 }
 

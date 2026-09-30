@@ -216,10 +216,12 @@ def _summary(outcomes: list[ItemOutcome], described: dict[str, str],
 def _suite_block(lines: list[str], suite: fix_suite.SuiteResult | None) -> None:
     """Open the summary with what ran against this work, and what it said.
 
-    Every state says something, including the two that say nothing happened.
-    A pass whose repo declares no command and a pass whose checks came back
-    clean render identically without this, and that pair is exactly how a red
-    suite once shipped under a body reading `4 fixed, 0 skipped`.
+    The silence-vs-clean call is `fix_suite.detail_lines`'s: it returns
+    nothing for a suite whose `reportable` is false, which is how a pass
+    whose repo declares no command and a pass whose checks came back clean
+    render identically here. That pair is exactly how a red suite once
+    shipped under a body reading `4 fixed, 0 skipped` — this function just
+    forwards what `detail_lines` decided.
     """
     detail = fix_suite.detail_lines(suite) if suite else []
     if detail:

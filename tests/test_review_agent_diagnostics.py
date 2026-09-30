@@ -424,41 +424,41 @@ class TestPiLogsAreReadableForWrites:
         assert not diagnosis.no_write_tool
 
 
-class TestNarrationScanIsSkippedWhenUnneeded:
-    """The narration scan is expensive, so it must not run on the common path.
+class TestTheNarrationScanIsOrderedCheaplyFirst:
+    """The expensive half runs only for a run that called nothing.
 
     `_narrated_write_contents` counts fence depth, parses JSON and matches a
-    heading regex over every assistant text block. That cost is only ever
-    worth paying when a no-write diagnosis is about to be returned; a run
-    that wrote its output has no use for the answer.
+    heading regex over every assistant text block. `_called_any_tool` is a
+    scan for one record type. The `and` puts the cheap test first, so the
+    expensive one is reached only in the rare case whose answer is used.
+
+    A lazy wrapper around the pair buys nothing on top of this and was tried:
+    its test passed against the eager form too, because the short circuit —
+    not the wrapper — is what skips the work.
     """
 
-    def test_a_pi_run_that_wrote_never_scans_for_narration(self, tmp_path, monkeypatch):
+    def test_a_run_that_called_tools_never_reaches_the_scan(self, tmp_path, monkeypatch):
         def _boom(records):
-            raise AssertionError("narration scan ran despite a successful write")
+            raise AssertionError("narration scan ran for a run that used tools")
 
         monkeypatch.setattr(review_agent, "_narrated_write_contents", _boom)
         log_path = _write_log(
             tmp_path,
-            _pi_tool("write", path="/out/review.md"),
-            json.dumps({"type": "turn_end"}),
+            _pi_tool("read", path="/wt/a.py"),
+            _pi_result(subtype="error_max_turns"),
+        )
+        # Reached the no-write branch — so the scan was skipped by the `and`,
+        # not by an early return above it.
+        assert review_agent.diagnose_missing_output(log_path).no_write_tool is True
+
+    def test_a_run_that_called_nothing_does_reach_the_scan(self, tmp_path):
+        """The other half: the cheap test must not suppress a real answer."""
+        log_path = _write_log(
+            tmp_path,
+            _pi_text('write review.md "# Rev\n\n## Must fix\n- [M1] x\n"'),
             _pi_result(subtype="success"),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
-        assert not diagnosis.no_write_tool
-
-    def test_a_claude_run_that_wrote_never_scans_for_narration(self, tmp_path, monkeypatch):
-        def _boom(records):
-            raise AssertionError("narration scan ran despite a successful write")
-
-        monkeypatch.setattr(review_agent, "_narrated_write_contents", _boom)
-        log_path = _write_log(
-            tmp_path,
-            _tool_use("Write", file_path="review.md", content="body"),
-            _result(subtype="success"),
-        )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
-        assert not diagnosis.no_write_tool
+        assert review_agent.diagnose_missing_output(log_path).narrated_call is True
 
 
 class TestAPiTransportFailureIsNotACompletedRun:

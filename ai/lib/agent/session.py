@@ -237,19 +237,19 @@ def diagnose_missing_output(log_path: str, output_path: str = "") -> Diagnosis:
     # hint would then be addressed to an agent that did call its tools, about
     # a mistake it did not make.
     #
-    # Computed lazily (only on the no-write paths below) because it scans
-    # every assistant text block — fence-depth counting, JSON parsing,
-    # heading regex — and that cost is wasted on the overwhelmingly common
-    # case of a run that did write its output.
-    def narrated() -> bool:
-        return not _called_any_tool(records) and bool(
-            _narrated_write_contents(records),
-        )
-
+    # The order of the `and` is what keeps this cheap. `_called_any_tool` is a
+    # scan for one record type; `_narrated_write_contents` counts fence depth,
+    # parses JSON and matches a heading regex over every assistant text block.
+    # Putting the cheap half first means the expensive half runs only for a
+    # run that called nothing at all — rare, and the only case whose answer is
+    # used. Reversing them would pay the full cost on every diagnosis.
+    narrated = not _called_any_tool(records) and bool(
+        _narrated_write_contents(records),
+    )
     if _is_pi_log(records):
         if _pi_wrote_output(records, output_path):
             return diagnosis
-        return replace(diagnosis, no_write_tool=True, narrated_call=narrated())
+        return replace(diagnosis, no_write_tool=True, narrated_call=narrated)
     if not _tool_use_is_observable(records):
         return diagnosis
     tools_used = _tool_names_used(records)
@@ -257,7 +257,7 @@ def diagnose_missing_output(log_path: str, output_path: str = "") -> Diagnosis:
     wrote = any(is_write_tool(name) for name in tools_used)
     if wrote:
         return diagnosis
-    return replace(diagnosis, no_write_tool=True, narrated_call=narrated())
+    return replace(diagnosis, no_write_tool=True, narrated_call=narrated)
 
 
 def _deliverable_is_gone(output_path: str) -> bool:

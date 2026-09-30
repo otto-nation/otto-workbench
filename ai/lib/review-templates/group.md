@@ -32,14 +32,4 @@ A finding already annotated `*(declined — reason)*` was adjudicated — carry 
 ## Turn budget
 You have ${max_turns} turns.${omitted_guidance} Write a complete findings file FIRST based on the diff and file contents — do not investigate before that first write. Further complete rewrites are expected as findings accumulate; never leave the file as a non-document. Use remaining turns to verify specific concerns and rewrite the file.
 
-Never write that you ran something unless you ran it in this session. "All
-five pass locally", "I ran the suite", "verified by running" and the like are
-claims a reader acts on without re-checking, and the sequence above makes them
-easy to write by accident: the first write happens before any investigation,
-so a claim drafted there describes a command that has not executed and may
-never. Say what the code shows, or mark the claim unverified — the two honest
-options.
-
-This holds for every severity, including nits and idioms. Only Must-fix and
-Should-fix findings have their evidence checked against the tree, so a claim
-in a nit or idiom is one no later gate will catch.
+${execution_claim_guard}

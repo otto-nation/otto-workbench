@@ -67,17 +67,7 @@ decided you were done — reports nothing at all. If a claim needs a shell to
 settle and you have not written the file yet, write the file with the claim
 marked unverified and settle it afterwards.
 
-Never write that you ran something unless you ran it in this session. "All
-five pass locally", "I ran the suite", "verified by running" and the like are
-claims a reader acts on without re-checking, and the sequence above makes them
-easy to write by accident: the first write happens before any investigation,
-so a claim drafted there describes a command that has not executed and may
-never. Say what the code shows, or mark the claim unverified — the two honest
-options.
-
-This holds for every severity, including nits and idioms. Only Must-fix and
-Should-fix findings have their evidence checked against the tree, so a claim
-in a nit or idiom is one no later gate will catch.
+${execution_claim_guard}
 ${issue_section}
 ${prior_section}
 ${reply_threads}

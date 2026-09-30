@@ -1210,14 +1210,17 @@ def test_summary_contract_forbids_a_prior_findings_tally(path):
     )
 
 
-# synthesis.md tells the agent to write its first action — the review — before
-# reading source files, and then invites a fresh finding ("Add any
-# cross-cutting findings") drafted from nothing but the merged content. That
-# finding reaches the PR unverified unless something tells the agent not to
-# claim it ran a check it never ran. group.md, self-review.md,
-# self-review-synthesis.md and single-agent.md all carry this guard verbatim;
-# synthesis.md is the fifth write-first, finding-authoring template and must
-# carry it too.
+# A write-first template tells the agent to write its file before reading any
+# source, and then invites findings drafted from nothing but what is already
+# in the prompt. Such a finding reaches the reader unverified unless something
+# tells the agent not to claim it ran a check it never ran.
+#
+# The guard is substituted, not written into each template: `${...}` in the
+# file, `build_execution_claim_guard` behind it. So the contract these hold is
+# that every write-first template *renders* it — asserting the prose appears
+# in the file would now fail on all five and pass on a template that dropped
+# the placeholder.
+_EXECUTION_CLAIM_PLACEHOLDER = "${execution_claim_guard}"
 _NO_UNRUN_EXECUTION_CLAIM = (
     "Never write that you ran something unless you ran it in this session."
 )
@@ -1284,15 +1287,61 @@ def test_write_first_re_does_not_match_on_file_first_wording_alone():
     "path", _write_first_templates(), ids=lambda p: p.name,
 )
 def test_template_forbids_unverified_execution_claims(path):
-    """Every write-first, finding-authoring template carries the guard.
+    """Every write-first, finding-authoring template renders the guard.
 
     Regression for the guard landing in some of these templates but not all:
     one fix added it to synthesis.md alone and left self-review-synthesis.md,
-    a template with the same write-first shape, without it.
+    a template with the same write-first shape, without it. It reached four of
+    five twice while it was being copied by hand, which is why the text now
+    has one owner and the templates carry a placeholder.
     """
-    assert _NO_UNRUN_EXECUTION_CLAIM in path.read_text(), (
+    assert _EXECUTION_CLAIM_PLACEHOLDER in path.read_text(), (
         f"{path.name}'s turn budget authors findings after a write-first "
-        "instruction without the execution-claim guard other templates "
-        "carry. Add the guard paragraph used in group.md / self-review.md / "
-        "single-agent.md."
+        f"instruction without {_EXECUTION_CLAIM_PLACEHOLDER}. Add the "
+        "placeholder and have the phase's builder call "
+        "`b.execution_claim_guard()`."
+    )
+
+
+def test_execution_claim_guard_states_the_ban():
+    """The substituted text is the ban itself, not an empty placeholder.
+
+    Without this the check above passes on a builder that renders nothing:
+    every template would carry `${execution_claim_guard}` and no template
+    would carry a guard.
+    """
+    assert _NO_UNRUN_EXECUTION_CLAIM in agent_templates.build_execution_claim_guard()
+    assert _NO_UNRUN_EXECUTION_CLAIM in agent_templates.build_execution_claim_guard(8)
+
+
+def test_execution_claim_guard_names_the_cross_cutting_step():
+    """A synthesis template's guard points at the step that adds findings.
+
+    The two synthesis templates number that step differently, so the builder
+    takes it as a parameter; a wrong number sends the agent to the wrong step.
+    """
+    assert "step 8" in agent_templates.build_execution_claim_guard(8)
+    assert "step 9" in agent_templates.build_execution_claim_guard(9)
+    assert "step" not in agent_templates.build_execution_claim_guard()
+
+
+@pytest.mark.parametrize(
+    ("name", "step"),
+    [("synthesis.md", 8), ("self-review-synthesis.md", 9)],
+)
+def test_synthesis_cross_cutting_step_matches_its_template(name, step):
+    """The step number the guard names is the one the template lists.
+
+    `_SYNTHESIS_CROSS_CUTTING_STEP` lives in the prompt builder and the task
+    list lives in the template, so nothing but this holds them together —
+    renumbering the list would otherwise leave the guard citing a step that
+    says something else.
+    """
+    from review.prompt import _SYNTHESIS_CROSS_CUTTING_STEP
+
+    assert step in _SYNTHESIS_CROSS_CUTTING_STEP.values()
+    body = (TEMPLATE_DIR / name).read_text()
+    assert re.search(rf"^{step}\. Add any cross-cutting findings", body, re.M), (
+        f"{name} does not number 'Add any cross-cutting findings' as step "
+        f"{step}, but _SYNTHESIS_CROSS_CUTTING_STEP tells the guard it does."
     )

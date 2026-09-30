@@ -34,18 +34,7 @@ ${output_block}
 ## Turn budget
 You have ${max_turns} turns total. Your FIRST action must be writing the review file — all the content you need is already in this prompt. Do not read source files before writing. Use remaining turns only for cross-file consistency checks (e.g., confirming a finding about file A aligns with how file B uses it) and Edit updates.
 
-Never write that you ran something unless you ran it in this session. "All
-five pass locally", "I ran the suite", "verified by running" and the like are
-claims a reader acts on without re-checking, and the sequence above makes them
-easy to write by accident: the first write happens before any investigation,
-so a claim drafted there describes a command that has not executed and may
-never. This applies to any cross-cutting finding you add in step 8, not just
-findings carried forward from groups — say what the code shows, or mark the
-claim unverified.
-
-This holds for every severity, including nits and idioms. Only Must-fix and
-Should-fix findings have their evidence checked against the tree, so a claim
-in a nit or idiom is one no later gate will catch.
+${execution_claim_guard}
 
 PR branch checked out at: ${wt_path} — you may read files to verify cross-references.
 ${prior_section}

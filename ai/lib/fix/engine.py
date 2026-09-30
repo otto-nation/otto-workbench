@@ -367,11 +367,17 @@ class FixAdapter(ABC):
     def after_verify(self, outcomes: list[ItemOutcome]) -> None:
         """A domain's last word before the commit is landed and pushed.
 
-        Called once the gate has spoken and the outcomes are final, and before
-        `landing`. The window matters: a domain that wants to stop the pass
-        asserting anything outward — because the gate falsified a fix, or the
-        agent handed an item back — has to say so before the push reads the
-        publishing gate, and `record` is too late for that.
+        Called once the per-item gate has spoken, and before `landing`. The
+        window matters: a domain that wants to stop the pass asserting anything
+        outward — because the gate falsified a fix, or the agent handed an item
+        back — has to say so before the push reads the publishing gate, and
+        `record` is too late for that.
+
+        Outcomes are final only with respect to that per-item gate, not the
+        batch suite: `_verify_suite` runs after this and can still flip a fixed
+        outcome's `verified` to False if the repo's own checks come back red.
+        An override that decides from `outcome.verified` is reading its state
+        at this instant, not its last word.
 
         A no-op by default. What a falsified fix means is the domain's call,
         not the pipeline's: the comments pass owes a reviewer a reply and must
@@ -949,8 +955,11 @@ def run(
     )
 
     # Between the gate and the push, which is the only window that works: the
-    # outcomes are final here, and `land` below reads the publishing gate a
-    # domain may want to close on the strength of them.
+    # per-item gate has spoken here, and `land` below reads the publishing gate
+    # a domain may want to close on the strength of its verdict. The batch
+    # suite a few lines down can still flip a fixed outcome's `verified` after
+    # this runs, so a domain reading that field here sees it as the per-item
+    # gate left it, not as the suite may yet leave it.
     adapter.after_verify(settled.outcomes)
 
     # After the agent and before the commit — the one moment the difference is

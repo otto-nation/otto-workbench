@@ -27,6 +27,22 @@ from fix import suite as fix_suite  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 
 
+class _RecordingTrail:
+    """A trail that keeps what it was told, so a test can read it back."""
+
+    def __init__(self):
+        self.events = []
+
+    def info(self, action, detail, data=None):
+        self.events.append(("info", action, detail, data or {}))
+
+    def warn(self, action, detail, data=None):
+        self.events.append(("warn", action, detail, data or {}))
+
+    def error(self, action, detail, data=None):
+        self.events.append(("error", action, detail, data or {}))
+
+
 def _script(tmp_path: Path, name: str, body: str) -> str:
     """A real executable in `tmp_path`, and the argv string that runs it."""
     path = tmp_path / name
@@ -82,6 +98,21 @@ def test_stderr_reaches_the_tail_as_well_as_stdout(tmp_path):
     assert "boom" in fix_suite.run(tmp_path, cmd, 30).output_tail
 
 
+def test_stdout_and_stderr_are_labeled_when_both_have_something_to_say(tmp_path):
+    """An interleaved failure reads as two labeled blocks, not one run-on.
+
+    `stdout` and `stderr` land back-to-back with nothing saying which stream
+    produced which text otherwise — a traceback on stderr next to output
+    already flushed to stdout, indistinguishable in the clipped tail.
+    """
+    cmd = _script(tmp_path, "red", "echo 'out line'; echo 'err line' >&2; exit 1")
+
+    tail = fix_suite.run(tmp_path, cmd, 30).output_tail
+
+    assert tail.index("out line") < tail.index("--- stderr ---")
+    assert tail.index("--- stderr ---") < tail.index("err line")
+
+
 def test_the_command_runs_in_the_worktree_it_was_given(tmp_path):
     """The tree under test is the one the agent edited, not the caller's cwd."""
     marker = tmp_path / "only-here"
@@ -120,14 +151,60 @@ def test_no_declared_command_is_reported_rather_than_passed_over(tmp_path):
     assert "fix.verify_command" in result.note
 
 
+def test_not_declared_reaches_the_trail_like_every_other_reportable_status(tmp_path):
+    """NOT_DECLARED is the one reportable status `run` used to return early on,
+    before ever calling `_report` — so it never reached `otto-log`, unlike
+    GREEN, RED, TIMED_OUT and ERROR, which all go through it. An operator
+    auditing trail history for "did this repo ever run its checks" got no
+    signal for the not-declared case.
+    """
+    trail = _RecordingTrail()
+
+    fix_suite.run(tmp_path, "", 30, trail)
+
+    assert len(trail.events) == 1
+    kind, action, detail, _data = trail.events[0]
+    assert kind == "warn"
+    assert action == "fix_verify_suite"
+    assert "fix.verify_command" in detail
+
+
 def test_a_declaration_that_parses_to_nothing_is_an_error_not_an_absence(tmp_path):
-    """Whitespace is absence; a `#` that shlex eats is a broken declaration."""
+    """Whitespace is absence; a command naming no real program is broken.
+
+    `shlex.split` does not treat `#` as a comment marker by default, so
+    `"# nothing here"` does not parse to an empty argv — it tokenizes to
+    `['#', 'nothing', 'here']`, and fails because no program named `#` can be
+    started. That is the `except OSError` branch in `fix.suite.run`, not the
+    `if not argv:` branch a `#`-only declaration might suggest; both land on
+    `SuiteStatus.ERROR`, but for different reasons. The `if not argv:` branch
+    is not reachable through `run`'s public surface: any string that is not
+    all whitespace already produces at least one shlex token, and an
+    all-whitespace string is caught earlier as `NOT_DECLARED`.
+    """
     result = fix_suite.run(tmp_path, "   ", 30)
     assert result.status is fix_suite.SuiteStatus.NOT_DECLARED
 
     broken = fix_suite.run(tmp_path, "# nothing here", 30)
     assert broken.status is fix_suite.SuiteStatus.ERROR
     assert broken.command == "# nothing here"
+
+
+def test_a_non_positive_timeout_is_refused_rather_than_reported_as_timed_out(tmp_path):
+    """`Popen.communicate(timeout=0)` treats a non-positive budget as already
+    elapsed, so an unclamped `fix.verify_timeout` of 0 (or less) would report a
+    fast, correctly-declared suite as `TIMED_OUT` — misreporting a bad config
+    value as a slow suite. It is refused before the process is even started.
+    """
+    cmd = _script(tmp_path, "green", "exit 0")
+
+    zero = fix_suite.run(tmp_path, cmd, 0)
+    assert zero.status is fix_suite.SuiteStatus.ERROR
+    assert "fix.verify_timeout" in zero.output_tail
+
+    negative = fix_suite.run(tmp_path, cmd, -5)
+    assert negative.status is fix_suite.SuiteStatus.ERROR
+    assert "fix.verify_timeout" in negative.output_tail
 
 
 def test_an_unparseable_declaration_is_an_error_and_not_a_crash(tmp_path):

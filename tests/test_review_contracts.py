@@ -44,7 +44,6 @@ from rebase import prepush as rebase_prepush  # noqa: E402
 from agent.registry import PHASES, REVIEW_PHASES  # noqa: E402
 from core import serde  # noqa: E402
 from core.phases import Mode, Phase, PhaseShape  # noqa: E402
-from rebase import prepush as rebase_prepush  # noqa: E402
 from review import fix as review_fix  # noqa: E402
 from review import grammar as review_grammar  # noqa: E402
 from review import prompt as review_prompt  # noqa: E402
@@ -643,19 +642,6 @@ def _render_fix_comments(wt_path) -> str:
     return _render_adapter(adapter)
 
 
-def _render_fix_prepush(wt_path) -> str:
-    """Render the pre-push repair pass's prompt through the real engine.
-
-    The one fix template with no substitution test of its own until now. It
-    renders through `fix_engine._prompt` like the other three, so the engine's
-    own placeholders were covered by them — but anything this template names
-    that the others do not was held by nothing.
-    """
-    return _render_adapter(rebase_prepush.PrePushFixAdapter(
-        str(wt_path), ["a.py"], "some check failed",
-    ))
-
-
 def _render_verify_fixes(wt_path) -> str:
     """Render the verify gate's prompt the way `fix_verify.run` renders it.
 
@@ -699,6 +685,13 @@ def _render_fix_findings(wt_path) -> str:
 
 
 def _render_fix_prepush(wt_path) -> str:
+    """Render the pre-push repair pass's prompt through the real engine.
+
+    The one fix template with no substitution test of its own until now. It
+    renders through `fix_engine._prompt` like the other three, so the engine's
+    own placeholders were covered by them — but anything this template names
+    that the others do not was held by nothing.
+    """
     return _render_adapter(rebase_prepush.PrePushFixAdapter(
         str(wt_path), ["server.go"], "gofmt: server.go needs formatting",
         # The lease the refused push carried; this renders a prompt and never

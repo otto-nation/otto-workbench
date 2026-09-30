@@ -199,7 +199,9 @@ def run(
     the one this module prevents.
     """
     if not command.strip():
-        return SuiteResult(status=SuiteStatus.NOT_DECLARED)
+        result = SuiteResult(status=SuiteStatus.NOT_DECLARED)
+        _report(result, trail)
+        return result
 
     try:
         argv = shlex.split(command)
@@ -209,12 +211,29 @@ def run(
             output_tail=f"could not parse fix.verify_command: {exc}",
         )
     if not argv:
-        # A declaration that parsed to nothing — a lone `#` comment, say.
-        # Carried with its text rather than reported as an absent command, so
-        # its author is not sent looking for a key they had already set.
+        # A declaration that parsed to nothing. `shlex.split` does not treat
+        # `#` as a comment marker by default — a lone `#` still tokenizes to
+        # `['#']` and fails later as a missing executable — so this guards
+        # the case where `shlex`'s own behavior ever changes underneath this
+        # call, or a future argument to `shlex.split` enables comment
+        # stripping. Carried with its text rather than reported as an absent
+        # command, so its author is not sent looking for a key they had
+        # already set.
         return SuiteResult(
             status=SuiteStatus.ERROR, command=command,
             output_tail="fix.verify_command parsed to an empty argv",
+        )
+
+    if timeout_s <= 0:
+        # `Popen.communicate(timeout=...)` treats a non-positive timeout as
+        # already elapsed, so a misconfigured `fix.verify_timeout` (0, or
+        # negative) would otherwise surface as `TIMED_OUT` almost instantly —
+        # misreporting a bad config value as a slow suite. Refused here with
+        # the same shape as the other broken-declaration cases above, rather
+        # than left to be misread later.
+        return SuiteResult(
+            status=SuiteStatus.ERROR, command=command,
+            output_tail=f"fix.verify_timeout must be positive, got {timeout_s}",
         )
 
     log.info(f"Verifying the pass against the repo's checks: {command}")
@@ -274,8 +293,24 @@ def _invoke(
         status=SuiteStatus.GREEN if green else SuiteStatus.RED,
         command=command,
         duration_s=time.monotonic() - started,
-        output_tail="" if green else _clip_tail((stdout or "") + (stderr or "")),
+        output_tail="" if green else _clip_tail(_combine_streams(stdout, stderr)),
     )
+
+
+def _combine_streams(stdout: str | None, stderr: str | None) -> str:
+    """`stdout` and `stderr`, labeled where both have something to say.
+
+    An interleaved failure — a traceback on stderr referencing output already
+    flushed to stdout — reads as two unbroken blocks otherwise, with nothing
+    saying which stream produced which text. A single-stream run gets its text
+    back unchanged, so a runner that only ever writes to one stream sees no
+    difference from before.
+    """
+    stdout = stdout or ""
+    stderr = stderr or ""
+    if stdout and stderr:
+        return f"{stdout}\n--- stderr ---\n{stderr}"
+    return stdout + stderr
 
 
 def _terminate_tree(proc: subprocess.Popen) -> None:

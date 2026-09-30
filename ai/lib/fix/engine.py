@@ -49,7 +49,7 @@ from fix import suite as fix_suite
 from fix import tracking as fix_tracking
 from git import client as git_client
 from git import land
-from core import log, session_lock
+from core import log, publishing, session_lock
 from agent.diagnosis import Diagnosis
 from agent.registry import PHASES
 from core.phases import Effort, Phase
@@ -375,8 +375,11 @@ class FixAdapter(ABC):
         publishing gate, and `record` is too late for that.
 
         The suite's verdict is deliberately upstream of this rather than after
-        it. An override reading `outcome.verified` here is reading its final
-        value, which is what makes a red suite able to hold a round's replies.
+        it, so an override reading `outcome.verified` reads its final value.
+        Do not build a red-suite hold on top of that, though: a suite demotion
+        leaves the item at FIXED and sets only `verified`, so a per-item filter
+        cannot distinguish it from a gate that stayed silent. `_verify_suite`
+        holds publishing centrally for exactly that reason.
 
         A no-op by default. What a falsified fix means is the domain's call,
         not the pipeline's: the comments pass owes a reviewer a reply and must
@@ -821,6 +824,17 @@ def _verify_suite(
         config.fix.verify_timeout, trail,
     )
     fix_suite.apply_to(outcomes, result)
+    if result.demotes:
+        # Held here rather than left to a domain's `after_verify`, because a
+        # red suite is a fact about the pass and not about any item in it.
+        # `hold_after_verify` cannot reach it by construction: it selects on
+        # `outcome.outcome in NEEDS_A_PERSON` before it reads `.verified`,
+        # and `apply_to` deliberately leaves a demoted item at FIXED — so a
+        # suite-only demotion is invisible to every per-item filter, in this
+        # domain and any future one. Holding centrally is also wider than the
+        # one domain that overrides the hook: nothing should reply, resolve,
+        # or push off a tree whose own checks are failing.
+        publishing.hold("the repo's checks are red with this pass's changes")
     return result
 
 
@@ -961,13 +975,11 @@ def run(
     # agents above check the pass's claims; this is the only thing that asks
     # whether the pass broke something no claim mentions.
     #
-    # Before `after_verify`, not after. That hook is where a domain decides
-    # whether the round may speak outward, and `pr.triage_round`'s own words
-    # for the case it exists to catch — "something ran and the fix did not
-    # hold" — are a description of a red suite. Running it afterwards let the
-    # comments pass reply `Fixed in <sha>` to a reviewer over a tree whose
-    # checks were failing, because the verdict arrived after the only hook
-    # that could have stopped it.
+    # Before `after_verify`, so a domain's last word is spoken over final
+    # outcomes rather than over a set the next line still changes. That
+    # ordering is necessary and is not what stops a red tree being reported
+    # as fixed: no per-item hook can see a suite demotion, because the item
+    # stays FIXED. `_verify_suite` holds publishing itself for that.
     adapter.suite = _verify_suite(adapter, settled.outcomes, changed, trail)
 
     # Between the verdicts and the push, which is the only window that works:

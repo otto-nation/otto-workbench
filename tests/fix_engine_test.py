@@ -33,6 +33,7 @@ from fix.types import FixItem  # noqa: E402
 from git.land import CommitStatus  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 from fix import suite as fix_suite  # noqa: E402
+from core import publishing  # noqa: E402
 from rebase import prepush as rebase_prepush  # noqa: E402
 from config.workbench_config import FixConfig, WorkbenchConfig  # noqa: E402
 
@@ -1932,6 +1933,52 @@ class TestVerifySuite:
         assert seen["verified"] == [False], (
             "after_verify saw the per-item gate's verdict but not the suite's"
         )
+
+    def test_a_red_suite_holds_publishing_for_every_domain(
+        self, tmp_path, landed, head, snapshots, publishing_on,
+    ):
+        """Nothing replies, resolves or pushes off a tree whose checks fail.
+
+        The per-item hooks cannot reach this case. `hold_after_verify`
+        selects on `outcome.outcome in NEEDS_A_PERSON` before it reads
+        `.verified`, and a suite demotion deliberately leaves the item at
+        FIXED — so a suite-only failure is invisible to every per-item
+        filter. Reordering the suite ahead of `after_verify` was necessary
+        and not sufficient; this is the part that actually shuts the gate.
+        """
+        adapter = self._configured(tmp_path, self._script(tmp_path, "exit 1"))
+        snapshots.side_effect = _reads(set(), {"a.py"})
+        assert publishing.enabled()
+
+        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
+            fix_engine.run(adapter)
+
+        assert not publishing.enabled()
+        assert "checks are red" in publishing.held()
+
+    def test_a_green_suite_leaves_publishing_open(
+        self, tmp_path, landed, head, snapshots, publishing_on,
+    ):
+        """The hold is monotonic, so opening it wrongly cannot be undone."""
+        adapter = self._configured(tmp_path, self._script(tmp_path, "exit 0"))
+        snapshots.side_effect = _reads(set(), {"a.py"})
+
+        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
+            fix_engine.run(adapter)
+
+        assert publishing.enabled()
+
+    def test_checks_that_did_not_answer_do_not_hold_publishing(
+        self, tmp_path, landed, head, snapshots, publishing_on,
+    ):
+        """A timeout is not evidence about the code, so it is not a reason to hold."""
+        adapter = self._configured(tmp_path, str(tmp_path / "nope"))
+        snapshots.side_effect = _reads(set(), {"a.py"})
+
+        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
+            fix_engine.run(adapter)
+
+        assert publishing.enabled()
 
     def test_a_pass_that_claimed_nothing_does_not_pay_for_the_checks(
         self, tmp_path, landed, head, snapshots,

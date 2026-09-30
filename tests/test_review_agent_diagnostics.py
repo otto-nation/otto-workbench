@@ -579,6 +579,72 @@ class TestAPiTransportFailureIsNotACompletedRun:
         assert diagnosis.detail == "spawn ENOENT"
 
 
+class TestDiagnosingANarratedCall:
+    """A run that wrote its tool call out as text instead of calling it.
+
+    Distinct from a plain no-write run: this agent believes it already wrote
+    the file, so the hint naming the write mechanism tells it to do what it
+    thinks it just did — which is how two consecutive attempts failed the
+    same way.
+    """
+
+    def test_a_tool_less_run_that_narrated_is_flagged(self, tmp_path):
+        log_path = _write_log(
+            tmp_path,
+            _pi_text('write review.md "# Rev\n\n## Must fix\n- [M1] x\n"'),
+            _pi_result(subtype="success"),
+        )
+        diagnosis = review_agent.diagnose_missing_output(log_path)
+        assert diagnosis.narrated_call is True
+        assert diagnosis.no_write_tool is True
+        assert "wrote its tool call as text" in diagnosis.message
+
+    def test_a_run_that_called_tools_is_not_flagged(self, tmp_path):
+        """Commentary containing a heading is not narration.
+
+        Measured over the session logs on this machine, 3 of 75 runs that
+        made real tool calls carry heading-bearing prose — one of them
+        alongside 58 calls. Without the called-nothing half of the test they
+        are told they narrated, about a mistake they did not make.
+        """
+        log_path = _write_log(
+            tmp_path,
+            _pi_tool("read", path="/wt/a.py"),
+            _pi_text("Good, that checks out.\n\n## Next\nNow the caller.\n"),
+            _pi_result(subtype="error_max_turns"),
+        )
+        diagnosis = review_agent.diagnose_missing_output(log_path)
+        assert diagnosis.narrated_call is False
+
+    def test_the_hint_names_the_mistake_not_the_mechanism(self, tmp_path):
+        from agent import retry as agent_retry
+
+        log_path = _write_log(
+            tmp_path,
+            _pi_text('write review.md "# Rev\n\n## Must fix\n- [M1] x\n"'),
+            _pi_result(subtype="success"),
+        )
+        hint = agent_retry.hint_for(review_agent.diagnose_missing_output(log_path))
+        assert "as text" in hint
+        # Not the no-write hint, which would tell an agent that believes it
+        # wrote the file to write the file.
+        assert "A previous attempt finished without" not in hint
+
+    def test_a_plain_no_write_run_still_gets_the_mechanism_hint(self, tmp_path):
+        """The narrower hint must not swallow the case it sits in front of."""
+        from agent import retry as agent_retry
+
+        log_path = _write_log(
+            tmp_path,
+            _pi_tool("read", path="/wt/a.py"),
+            _pi_result(subtype="success"),
+        )
+        diagnosis = review_agent.diagnose_missing_output(log_path)
+        assert diagnosis.no_write_tool is True
+        assert diagnosis.narrated_call is False
+        assert "A previous attempt finished without" in agent_retry.hint_for(diagnosis)
+
+
 class TestRecoveringAStrayWriteFromTheLog:
     """Findings an agent wrote somewhere other than the declared deliverable.
 

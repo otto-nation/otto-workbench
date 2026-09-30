@@ -151,6 +151,20 @@ def _tool_use_is_observable(records: list[dict]) -> bool:
     return bool(_of_type(records, "assistant"))
 
 
+def _called_any_tool(records: list[dict]) -> bool:
+    """Whether the run invoked a tool at all, in either backend's log shape.
+
+    Pi announces each call with `tool_execution_start`; Claude records a
+    `tool_use` block inside an assistant message. A log carrying neither is a
+    run that called nothing — or a shape this does not know, which is why the
+    one caller pairs this with positive evidence of narration rather than
+    treating a quiet log as proof on its own.
+    """
+    if any(record.get("type") == "tool_execution_start" for record in records):
+        return True
+    return bool(_tool_names_used(records))
+
+
 def _is_pi_log(records: list[dict]) -> bool:
     """Whether these records are a Pi RPC stream rather than a Claude log.
 
@@ -215,10 +229,20 @@ def diagnose_missing_output(log_path: str, output_path: str = "") -> Diagnosis:
     # Only now: a crash already explains the missing output, and saying it
     # twice pushes the cause out of the reader's way with a restatement of it.
     diagnosis = replace(diagnosis, deliverable_gone=gone)
+    # Narration means the agent produced a call as text *and called nothing*.
+    # Without the second half this fires on any run whose commentary happens
+    # to contain a markdown heading: measured over the logs on this machine,
+    # 3 of 75 runs that made real tool calls — one of them 58 of them — carry
+    # heading-bearing prose and would be told they had narrated. The hint
+    # would then be addressed to an agent that did call its tools, about a
+    # mistake it did not make.
+    narrated = not _called_any_tool(records) and bool(
+        _narrated_write_contents(records),
+    )
     if _is_pi_log(records):
         if _pi_wrote_output(records, output_path):
             return diagnosis
-        return replace(diagnosis, no_write_tool=True)
+        return replace(diagnosis, no_write_tool=True, narrated_call=narrated)
     if not _tool_use_is_observable(records):
         return diagnosis
     tools_used = _tool_names_used(records)
@@ -226,7 +250,7 @@ def diagnose_missing_output(log_path: str, output_path: str = "") -> Diagnosis:
     wrote = any(is_write_tool(name) for name in tools_used)
     if wrote:
         return diagnosis
-    return replace(diagnosis, no_write_tool=True)
+    return replace(diagnosis, no_write_tool=True, narrated_call=narrated)
 
 
 def _deliverable_is_gone(output_path: str) -> bool:

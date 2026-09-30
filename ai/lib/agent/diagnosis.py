@@ -100,6 +100,7 @@ _DIAGNOSIS_MESSAGES = {
 _MESSAGE_KINDS = {message: kind for kind, message in _DIAGNOSIS_MESSAGES.items()}
 
 _NO_WRITE_TOOL_SUFFIX = "never called a file-writing tool"
+_NARRATED_SUFFIX = "wrote its tool call as text instead of calling it"
 _DELIVERABLE_GONE_SUFFIX = "the pre-created deliverable is no longer there"
 
 
@@ -116,6 +117,16 @@ class Diagnosis:
 
     kind: DiagnosisKind
     no_write_tool: bool = False
+    # The run produced a tool call as assistant *text* rather than calling a
+    # tool: a fenced document, an XML element, or a JSON object naming the
+    # write. A narrower statement than `no_write_tool`, which says only that
+    # nothing was called — this says the agent believed it had called
+    # something, which is why the ordinary "write your file first" hint does
+    # not land: it tells the agent to do what it thinks it just did.
+    #
+    # Composes with `no_write_tool` rather than replacing it: narration is one
+    # way to call nothing, and a reader wants both facts.
+    narrated_call: bool = False
     # The declared deliverable is absent, not merely empty. The orchestrator
     # pre-creates it, so zero bytes is the ordinary shape of every failure here
     # and the existing message already says the agent did not write — the file
@@ -134,6 +145,8 @@ class Diagnosis:
         suffixes = []
         if self.no_write_tool:
             suffixes.append(_NO_WRITE_TOOL_SUFFIX)
+        if self.narrated_call:
+            suffixes.append(_NARRATED_SUFFIX)
         if self.deliverable_gone:
             suffixes.append(_DELIVERABLE_GONE_SUFFIX)
         return self._base_message() + "".join(f" — {s}" for s in suffixes)

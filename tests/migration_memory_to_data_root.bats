@@ -39,6 +39,11 @@ setup() {
 }
 
 teardown() {
+  # Before common_teardown, and unconditionally: the unwritable-parent test
+  # below strips write permission from a directory bats then has to remove.
+  # Restoring it only on that test's success path would leave the scratch
+  # tree undeletable on the failure path, which is the path that matters.
+  chmod -R u+w "$HOME/.claude/projects" 2>/dev/null || true
   common_teardown
 }
 
@@ -113,12 +118,20 @@ _run_migration() {
   # visited only this one returns MIGRATION_NOOP, which the framework records
   # as applied and never retries — the directory then survives with nothing
   # left to look at it.
+  # Root ignores the permission bits, so the rmdir would succeed and the test
+  # would assert the opposite of what it is named for. CI runs as a normal
+  # user on ubuntu-24.04; this is for a container that does not.
+  if [[ "$(id -u)" -eq 0 ]]; then
+    skip "root ignores the write bit this test removes"
+  fi
+
   local stray="$HOME/.claude/projects/-private-tmp"
   mkdir -p "$stray/memory"
+  # Restored by teardown rather than here — an assertion added between this
+  # line and the restore would otherwise strand an undeletable directory.
   chmod a-w "$stray"
 
   _run_migration
-  chmod u+w "$stray"
 
   [ "$status" -ne 0 ]
   [[ "$output" == *"Could not remove empty"* ]]

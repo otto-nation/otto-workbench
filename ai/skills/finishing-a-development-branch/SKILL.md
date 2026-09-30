@@ -155,8 +155,9 @@ Cleanup happens later, after the PR merges, and it is `wt remove` that does it â
 never `git worktree remove`, and never on `main` or the default branch. Your
 human partner runs it when they are done with the tree; `wt-cleanup` sweeps
 merged branches in bulk. If `wt remove` refuses, the tree is dirty: read what is
-there before forcing it, since `ignore/plans/` scratch work is gitignored and
-the PR carried none of it.
+there before forcing it. Plans and specs are not among it â€” those live in the
+repository's workspace at the container (`resolve-workspace`), which `wt remove`
+does not touch.
 
 If you do have to push again before the PR merges:
 - Say so on the PR, in a comment naming what changed and why. A silent push

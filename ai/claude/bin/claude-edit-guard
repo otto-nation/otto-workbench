@@ -2,12 +2,16 @@
 # PreToolUse guard for the Edit and Write tools.
 #
 # Reads a hook payload on stdin and exits 2 with an explanation when the edit
-# would land on main/master (unless the path is gitignored), or when a
-# validator currently holds the tree the file lives in. Exits 0 otherwise.
+# would land on main/master (unless the path is gitignored), when a validator
+# currently holds the tree the file lives in, or when it is a plan or spec
+# being written inside a worktree instead of the repository's workspace.
+# Exits 0 otherwise.
 #
-# The lock half has a twin: ai/pi/extensions/tree-lock-guard reads the same
-# lock for Pi. Both go through `with-tree-lock --check`, which is
-# tree_lock.is_locked(), so one fact answers both harnesses.
+# Two of the three have Pi twins: ai/pi/extensions/tree-lock-guard reads the
+# same lock, and ai/pi/extensions/workspace-guard applies the same workspace
+# rule. Both go through the same underlying command as this does —
+# `with-tree-lock --check` and `resolve-workspace` — so one fact answers both
+# harnesses rather than two implementations drifting.
 #
 # Usage: claude-edit-guard        (stdin: {"tool_input":{"file_path":"..."}})
 
@@ -48,7 +52,25 @@ file_path=$(jq -r '.tool_input.file_path // empty' 2>/dev/null) || exit 0
 # linked worktree reads, and the Pi twin in detect.ts strips the same four.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
 
-parent=$(dirname "$file_path")
+# _nearest_dir PATH — the closest ancestor of PATH that exists.
+#
+# A Write creating a file in a directory that is not there yet is the ordinary
+# case, not an edge one: the first spec a repo gets creates `specs/` with it.
+# Resolving the repository by `cd`-ing into the file's own parent fails for
+# every such write, and the guard then exits 0 — failing open on precisely the
+# writes it exists to catch. Walking up is what makes a new file in a new
+# directory visible to all three checks below.
+_nearest_dir() {
+  local d="$1"
+  while [[ -n "$d" && "$d" != "/" && ! -d "$d" ]]; do d=$(dirname "$d"); done
+  printf '%s' "$d"
+}
+
+case "$file_path" in
+  /*) _abs="$file_path" ;;
+  *)  _abs="$PWD/$file_path" ;;
+esac
+parent=$(_nearest_dir "$(dirname "$_abs")")
 repo_dir=$(cd "$parent" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null) || exit 0
 
 # The lock is checked before the branch rule, and without the gitignore
@@ -69,6 +91,37 @@ if [[ -x "$_with_tree_lock" ]] \
   && "$_with_tree_lock" --check "$repo_dir" >/dev/null 2>&1; then
   block "A validator holds this tree — a suite or a gate is reading the files you are about to change. Editing now invalidates that run: it reports against a tree that no longer exists, and a green result would be exactly as green. Wait for it to finish, or make the edit in another worktree."
 fi
+
+# ── Plans and specs belong at the container, not in a checkout ───────────────
+#
+# Checked against the path relative to the worktree, and on whole segments: a
+# `case` glob on the bare string would match `my-workspace/` and `ignore/`
+# anywhere in a longer name. The three shapes are the new home written in the
+# wrong place, the old `ignore/` convention, and the directory the
+# brainstorming skill defaults to — that last one is why this guard exists at
+# all, since the skill names it in prose the rule can only ask it to override.
+#
+# Both sides go through `pwd -P` before they are compared. On macOS a path
+# under /tmp or /var canonicalises to /private/..., and `--show-toplevel`
+# already returns that form — so comparing it against a raw payload path would
+# never match, and the guard would pass everything under those roots.
+_rest="${_abs#"$parent"/}"
+_top=$(cd "$repo_dir" && pwd -P)
+_rel="$(cd "$parent" && pwd -P)/$_rest"
+_rel="${_rel#"$_top"/}"
+
+_resolve_workspace="$_repo_root/bin/resolve-workspace"
+
+case "$_rel" in
+  workspace/*|ignore/plans/*|ignore/specs/*|docs/superpowers/*)
+    # The suggestion is the resolver's own answer, never a path built here —
+    # two spellings of one location is what the resolver exists to prevent.
+    if _ws=$("$_resolve_workspace" "$repo_dir" 2>/dev/null); then
+      block "A plan or spec belongs to the repository, not to this branch. Written here it is duplicated across every sibling worktree, invisible from them, and deleted by the \`wt remove\` that retires the branch — while the work it explains lives on in main. Write it under $_ws instead (plans/ or specs/), which is outside every checkout."
+    fi
+    block "A plan or spec belongs at the repository's container, and this is an ordinary clone — it has no container, so there is nowhere correct to put one. Convert the repo with \`wt-init\`, then write it under the path \`resolve-workspace\` prints. Writing it inside the checkout is the arrangement this refuses."
+    ;;
+esac
 
 branch=$(git -C "$repo_dir" branch --show-current 2>/dev/null) || exit 0
 [[ -z "$branch" ]] && exit 0

@@ -137,6 +137,11 @@ tools:
     visibility: brief
     description: "Resolve a fuzzy branch name to an exact git branch — tries exact, worktree, separator, fuzzy"
 
+  - name: resolve-workspace
+    permission: true
+    visibility: brief
+    description: "Print the workspace directory holding a repository's plans and specs — <container>/workspace, outside every checkout"
+
   - name: resolve-worktree
     permission: true
     visibility: brief

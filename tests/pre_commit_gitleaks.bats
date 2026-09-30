@@ -106,8 +106,16 @@ assert_scanner_ran() {
 # three-way contract depends on. Asserted in the operational cases too, so the
 # flag is held by more than the single leaks test.
 assert_exit_code_flag() {
+  # The expected value is read out of the hook rather than written here, so
+  # the constant lives in one place. Hardcoding it would leave a second copy
+  # that a change to the hook has to remember to update by hand, and the test
+  # would fail on the literal rather than on the behaviour.
+  local expected
+  expected=$(sed -n 's/^_GITLEAKS_LEAK_EXIT=\([0-9]*\)$/\1/p' \
+    "$REPO_ROOT/git/hooks/pre-commit")
+  [[ -n "$expected" ]]
   grep -qx -- "--exit-code" "$TMPDIR/gitleaks-argv"
-  grep -qx -- "7" "$TMPDIR/gitleaks-argv"
+  grep -qx -- "$expected" "$TMPDIR/gitleaks-argv"
 }
 
 # stage_a_file — one staged change, so there is something to commit.

@@ -114,14 +114,21 @@ _config_flag=""
 #   0 → clean        7 → leaks found        anything else → scanner failed
 _GITLEAKS_LEAK_EXIT=7
 
-set +e
+# Captured through if/else, the same shape pre-push-workbench uses. That file
+# needs it — a bare assignment fires its ERR trap — and this one does not, but
+# two spellings of one problem means a reader has to know which script traps
+# ERR before either reads correctly.
 # shellcheck disable=SC2086  # word splitting intentional for optional flag
-_gitleaks_output=$(gitleaks protect --staged --verbose --no-color --no-banner \
-  --exit-code "$_GITLEAKS_LEAK_EXIT" $_config_flag 2>&1)
-_gitleaks_status=$?
-set -e
+if _gitleaks_output=$(gitleaks protect --staged --verbose --no-color --no-banner \
+  --exit-code "$_GITLEAKS_LEAK_EXIT" $_config_flag 2>&1); then
+  _gitleaks_status=0
+else
+  _gitleaks_status=$?
+fi
 
 if (( _gitleaks_status == _GITLEAKS_LEAK_EXIT )); then
+  # stdout, where the old hook's findings went. The operational branch below
+  # uses stderr: a scan that did not happen is a hook problem, not a result.
   echo "$_gitleaks_output"
   echo "✗ gitleaks found potential secrets — review the output above before committing"
   exit 1

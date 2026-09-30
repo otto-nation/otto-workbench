@@ -285,3 +285,20 @@ def test_render_dashboard_truncates_a_long_annotation_it_falls_back_to():
     dashboard = render_dashboard(run, {"a": Outcome.NEW})
     assert "x" * ci_report._MAX_DASHBOARD_ANNOTATION in dashboard
     assert "x" * (ci_report._MAX_DASHBOARD_ANNOTATION + 1) not in dashboard
+
+
+def test_a_commit_checked_without_a_workflow_names_no_run_number():
+    """`Run #0` names a run that does not exist — nothing numbered it."""
+    run = RunState(
+        run_id=0, run_number=0, head_sha="abc1234567", status="completed",
+        conclusion="failure", fetched_at="", failures={},
+    )
+    assert render_dashboard(run, {}).startswith("## CI Checks (abc1234)")
+
+
+def test_a_run_that_has_a_number_still_reports_it():
+    run = RunState(
+        run_id=100, run_number=7, head_sha="abc1234567", status="completed",
+        conclusion="success", fetched_at="", failures={},
+    )
+    assert render_dashboard(run, {}).startswith("## CI Run #7 (abc1234)")

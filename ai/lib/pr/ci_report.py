@@ -163,7 +163,10 @@ def render_dashboard(
     show_status: bool = False,
 ) -> str:
     """Render a human-readable dashboard string for stderr output."""
-    header = f"## CI Run #{run.run_number} ({git_client.abbrev(run.head_sha)})"
+    # A commit can be checked by something that never ran a workflow, and there
+    # is then no run to number. `Run #0` would name one that does not exist.
+    header = (f"## CI Run #{run.run_number} " if run.run_number else "## CI Checks ") \
+        + f"({git_client.abbrev(run.head_sha)})"
     if show_status:
         suffix = "in progress" if run.status != "completed" else "complete"
         header += f" — {suffix}"

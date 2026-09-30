@@ -73,26 +73,33 @@ def _print_status(counts: ci_runs.JobCounts) -> None:
 
 def poll_until_complete(
     repo: str, branch: str, *, run_id: int | None,
-    timeout: int, interval: int, trail,
+    timeout: int, interval: int, trail, head_sha: str = "",
 ) -> PollResult:
     """Poll until every job has finished, or until `timeout` seconds have passed.
 
-    The run ids are re-resolved on every pass unless `run_id` pins one: a push
+    The runs are re-resolved on every pass unless `run_id` pins one: a push
     can set off a workflow the first poll did not see. Raises
     `ci_runs.RunUnavailable` when there is nothing to poll at all.
+
+    Payloads of runs that have finished are carried between polls. A poll
+    re-reads what is still moving; re-reading what has already concluded is a
+    call per run per poll spent on an answer that cannot have changed.
     """
     reported_job_ids: set[int] = set()
+    settled: dict[int, dict] = {}
     start_time = time.monotonic()
 
     while True:
         elapsed = time.monotonic() - start_time
 
-        run_ids = [run_id] if run_id else run_reads.fetch_latest_run_ids(repo, branch)
-        if not run_ids:
-            trail.warn("no_runs", "no workflow runs found")
-            raise ci_runs.RunUnavailable(f"No workflow runs found for branch '{branch}'")
+        rows = ([run_reads.RunRow(run_id=run_id)] if run_id
+                else run_reads.fetch_latest_runs(repo, branch, head_sha))
+        run_ids = [row.run_id for row in rows]
 
-        fetched = ci_runs.fetch_merged(repo, run_ids)
+        fetched = ci_runs.fetch_merged(repo, rows, head_sha=head_sha, cache=settled)
+        if fetched is None and not rows:
+            trail.warn("no_runs", "no checks found")
+            raise ci_runs.RunUnavailable(f"No checks found for branch '{branch}'")
         if fetched is None:
             trail.error("fetch_run_data", "failed to fetch run data")
             raise ci_runs.RunUnavailable("Failed to fetch run data")

@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+import pytest
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
@@ -148,6 +149,19 @@ def test_fetch_and_reset_blocks_when_unpushed_commits_cannot_be_counted(mock_run
     fetch_and_reset("/wt", "feat/x")
     assert not any("reset" in c.args[0] for c in mock_run.call_args_list)
     assert "could not be counted" in mock_log.warn.call_args.args[0]
+
+
+@pytest.fixture(autouse=True)
+def _pin_default_branch():
+    """Resolve the trunk without spending a subprocess call.
+
+    These cases drive `pr.sync` by queueing `subprocess.run` results in order,
+    and `patch("pr.sync.subprocess.run")` patches the real module rather than a
+    local alias — so any git the resolver runs of its own would eat an entry
+    meant for the fetch and slide every later assertion by one.
+    """
+    with patch("git.topology.default_branch", return_value="main"):
+        yield
 
 
 # ── update_to_remote ───────────────────────────────────────────────────────
@@ -351,3 +365,28 @@ def test_update_to_remote_degrades_when_reset_says_nothing(
     assert update_to_remote(ctx) is ctx
     warning = capsys.readouterr().err.splitlines()[0]
     assert warning.endswith("git reset --hard origin/feat/x failed (exit 1)")
+
+
+@patch("git.topology.current_branch_quiet", return_value="feat/x")
+@patch("git.topology.default_branch", return_value="main")
+@patch("pr.sync.subprocess.run")
+def test_the_fetch_brings_the_default_branch_with_it(mock_run, _default, _branch):
+    """What `behind_main` is measured against has to be current, or it undercounts.
+
+    A stale `origin/main` makes the branch look nearer the trunk than it is,
+    and the rebase that would have fired never does.
+    """
+    mock_run.return_value = MagicMock(returncode=0, stdout="")
+    update_to_remote(_make_ctx())
+    fetches = [c.args[0] for c in mock_run.call_args_list if "fetch" in c.args[0]]
+    assert fetches == [["git", "-C", "/wt", "fetch", "origin", "feat/x", "main"]]
+
+
+@patch("git.topology.current_branch_quiet", return_value="main")
+@patch("git.topology.default_branch", return_value="main")
+@patch("pr.sync.subprocess.run")
+def test_the_default_branch_is_not_named_twice_in_its_own_fetch(mock_run, _default, _branch):
+    mock_run.return_value = MagicMock(returncode=0, stdout="")
+    update_to_remote(_make_ctx(branch="main"))
+    fetches = [c.args[0] for c in mock_run.call_args_list if "fetch" in c.args[0]]
+    assert fetches == [["git", "-C", "/wt", "fetch", "origin", "main"]]

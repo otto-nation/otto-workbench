@@ -194,23 +194,125 @@ def _primary_first(payloads: list[dict]) -> list[dict]:
     return [payloads[lead_index], *rest]
 
 
-def fetch_merged(repo: str, run_ids: list[int]) -> MergedRun | None:
-    """Fetch each run's payload in parallel and fold them into one.
+def _apply_external(merged: dict, external: tuple[dict, ...]) -> dict:
+    """Fold the checks no Actions run accounts for into the merged verdict.
 
-    `None` when GitHub served none of them — there is nothing to merge and
-    nothing to report on.
+    They join the job list rather than riding alongside it, so that every
+    reader downstream — the failure scan, the job counts, the report — keeps
+    asking one question of one list. A second list would be a second answer to
+    "is this commit failing", which is the shape of the defect this exists to
+    close.
+
+    The rules are `merge_runs`'s own, applied to the same payload: a failure
+    stands whatever else is pending, and an unfinished check clears a
+    conclusion that has no failed job behind it.
     """
+    if not external:
+        return merged
+    merged["jobs"] = [*merged.get("jobs", []), *external]
+    if any(job.get("conclusion") in FAILURE_CONCLUSIONS for job in external):
+        merged["conclusion"] = "failure"
+        return merged
+    if any(job.get("status") != "completed" for job in external):
+        merged["status"] = "in_progress"
+        if not _claims_failure(merged):
+            merged["conclusion"] = ""
+    return merged
+
+
+def _hold_finished(cache: dict[int, dict], payloads: list[dict], served: dict) -> None:
+    """Keep the payloads of runs that have concluded, for the next poll to reuse.
+
+    A run GitHub has concluded does not change again, and a re-run arrives as a
+    new id rather than as a new state under the old one — so a poll that
+    re-reads a finished run is asking for an answer it already has.
+
+    Only runs that were actually fetched are held. A green run's payload was
+    built from the rollup, which the next poll rebuilds for nothing.
+    """
+    for payload in payloads:
+        rid = payload["_run_id"]
+        if rid in served and payload.get("status") == "completed":
+            cache[rid] = payload
+
+
+def _commit_checks(
+    repo: str, rows: list[run_reads.RunRow], head_sha: str,
+) -> run_reads.CommitChecks:
+    """The commit's full check list, asked for at a commit GitHub has heard of.
+
+    `head_sha` is the caller's idea of the branch head, which on a worktree
+    with unpushed commits is a commit the API has never seen — it answers
+    nothing, and reading that as "no checks" is the false green one layer down.
+    The runs themselves name a commit GitHub definitely ran, so an unanswered
+    rollup is retried there before the answer is believed.
+    """
+    sha = head_sha or (rows[0].head_sha if rows else "")
+    if not sha:
+        return run_reads.CommitChecks()
+    checks = run_reads.fetch_commit_checks(repo, sha)
+    if checks.answered or not rows:
+        return checks
+    ran_sha = rows[0].head_sha
+    if not ran_sha or ran_sha == sha:
+        return checks
+    return run_reads.fetch_commit_checks(repo, ran_sha)
+
+
+def fetch_merged(
+    repo: str, rows: list[run_reads.RunRow], *, head_sha: str = "",
+    cache: dict[int, dict] | None = None,
+) -> MergedRun | None:
+    """Fold every check on the commit — Actions runs and otherwise — into one payload.
+
+    A run the rollup proves settled and green is not fetched: its job payload
+    would carry only the step list of jobs that did not fail, and the rollup
+    already named every job under it. Anything else is fetched as before, which
+    is what keeps a cancelled run — dropped from the rollup while its failed
+    jobs live on — from being skipped on the strength of checks nobody saw.
+
+    `None` when GitHub served nothing at all: no run payload and no external
+    check. A commit whose only checks are external still reports, because a
+    repo can have checks without having a workflow.
+    """
+    checks = _commit_checks(repo, rows, head_sha)
+    green = checks.green_run_ids()
+    held = cache if cache is not None else {}
+
+    to_fetch = [row for row in rows if row.run_id not in green and row.run_id not in held]
     with ThreadPoolExecutor(max_workers=5) as pool:
-        fetched = list(pool.map(lambda rid: (rid, run_reads.fetch_run_data(repo, rid)), run_ids))
-    payloads = [{**data, "_run_id": rid} for rid, data in fetched if data is not None]
+        served = dict(pool.map(
+            lambda row: (row.run_id, run_reads.fetch_run_data(repo, row.run_id)), to_fetch,
+        ))
+
+    payloads: list[dict] = []
+    for row in rows:
+        if row.run_id in green:
+            data = row.as_payload(checks.actions.get(row.run_id, ()))
+        else:
+            data = served.get(row.run_id) or held.get(row.run_id)
+        if data is not None:
+            payloads.append({**data, "_run_id": row.run_id})
+
+    if cache is not None:
+        _hold_finished(cache, payloads, served)
+
     if not payloads:
-        return None
+        if not checks.external:
+            return None
+        # No workflow ran, but something checked the commit. Anchoring on a
+        # run that does not exist would be a lie about where the verdict came
+        # from, so the payload claims no run and `_apply_external` writes the
+        # conclusion from the checks themselves.
+        payloads = [{"databaseId": 0, "number": 0, "headSha": checks.sha,
+                     "status": "completed", "conclusion": "success",
+                     "jobs": [], "_run_id": 0}]
 
     # merge_runs writes the combined conclusion, status and job list onto the
     # first payload it is given, so it gets a copy of that one: each payload's
     # own conclusion and status stay as they were fetched.
     ordered = _primary_first(payloads)
-    merged = merge_runs([dict(ordered[0]), *ordered[1:]])
+    merged = _apply_external(merge_runs([dict(ordered[0]), *ordered[1:]]), checks.external)
     return MergedRun(payloads=payloads, merged=merged)
 
 

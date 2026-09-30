@@ -259,8 +259,35 @@ def _make_result(job_name, kind, annotations, source_run_id, failed_step, contex
     return JobFailure(job_name=job_name, kind=kind, items=items, failed_step=failed_step)
 
 
+def _external_failure(repo: str, job: dict) -> JobFailure | None:
+    """What a failed check that no Actions run produced has to say for itself.
+
+    The ladder below this does not apply and must not be climbed: there is no
+    `actions/jobs/{id}/logs` for a check another app posted and no run to
+    download an artifact from, so every rung would spend a call to be told no.
+
+    Annotations are still asked for, and are the reason this is worth doing
+    rather than reporting the check by name alone — a scanner posts its
+    findings as annotations against the file and line that caused them, and
+    those arrive through the same endpoint an Actions job's do. A status
+    context has no id and no annotations, so its own description is the item.
+    """
+    job_name = job.get("name", "unknown")
+    job_id = job.get("databaseId", 0)
+    annotations = run_reads.fetch_annotations(repo, job_id) if job_id else []
+    if not annotations:
+        summary = job.get("_summary") or job.get("_details_url", "")
+        if summary:
+            annotations = [{"message": summary, "path": "", "start_line": 0,
+                            "title": job_name}]
+    return _make_result(job_name, ci.FailureKind.EXTERNAL, annotations, None, None)
+
+
 def fetch_job_failure(repo: str, job: dict, run_data: dict) -> JobFailure | None:
     """Fetch annotations/logs for a single failed job. Thread-safe."""
+    if job.get("_check_source"):
+        return _external_failure(repo, job)
+
     job_name = job.get("name", "unknown")
     job_id = job.get("databaseId", 0)
     source_run_id = job.get("_source_run_id") or run_data.get("databaseId")

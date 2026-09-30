@@ -81,6 +81,7 @@ Present the classification table and proceed immediately to diagnosis:
 | 1 | lint | shellcheck | bin/foo.sh | 42 | new | SC2086: Double quote |
 | 2 | test | pytest | tests/auth.py | 18 | persisting | AssertionError |
 | 3 | infra | docker | — | — | new | connection refused |
+| 4 | external | CodeQL | app/db.py | 42 | new | Hard-coded credential |
 ```
 
 Do not ask for confirmation — proceed to diagnosis and fix. The user can interrupt
@@ -88,13 +89,14 @@ to override classifications at any point (e.g. "that test failure is flaky").
 
 ### 4. Diagnose
 
-For each non-infra, non-flaky failure group:
+For each non-infra, non-flaky, non-external failure group:
 
 - **lint:** The annotation usually contains the exact fix. Read the file to confirm context.
 - **test:** Read both the test file and the code under test. Identify the mismatch — is the test wrong, or is the code wrong?
 - **build:** Parse the log output. Look for missing dependencies, version mismatches, or config errors.
 - **infra:** Flag to user with the raw error. Do not attempt a fix.
 - **flaky:** Flag to user. Suggest re-running the workflow.
+- **external:** Flag to user with the annotation and the check's URL. Do not attempt a fix — another system reached this verdict and what would clear it is not knowable from here.
 
 Present diagnosis per group and proceed directly to fixing.
 
@@ -161,7 +163,7 @@ Print:
 - Number of fixes applied
 - Commit SHA
 - Number of failures resolved vs persisting
-- Any infra/flaky failures that need manual action
+- Any infra/flaky/external failures that need manual action
 - Link to the PR or run
 
 ---
@@ -175,6 +177,7 @@ Print:
 | **build** | Docker, webpack, gradle | Full logs | Dependency/config fix |
 | **infra** | Timeouts, rate limits, OOM | Full logs | Flag to user |
 | **flaky** | Same test passed in prior run | Never | Flag, suggest re-run |
+| **external** | CodeQL, Trivy, Scalr plan, any non-Actions check | Annotations only — it has no Actions logs | Flag to user |
 
 ---
 
@@ -182,7 +185,8 @@ Print:
 
 - Present classification + diagnosis, then proceed to fix without waiting for confirmation — the user can interrupt to override
 - Do not manually fetch CI logs (`gh run view`, `gh api`, `gh run view --log`). The `pr ci` JSON report includes failure context. Only call GitHub directly if the JSON context field is empty or clearly insufficient for a specific failure
-- NEVER auto-fix infra or flaky failures
+- NEVER auto-fix infra, flaky or external failures
+- A commit can be checked by something that ran no workflow. The report then names no run number and the dashboard reads `## CI Checks (<sha>)` rather than `## CI Run #N` — that is a commit with checks, not a missing run
 - Persisting failures on re-invocation include context of prior fix attempts
 - Single commit per fix cycle
 - State file lives at `<worktree>/ignore/ci-failures/state.json` — travels with the branch

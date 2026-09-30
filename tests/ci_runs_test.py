@@ -11,6 +11,7 @@ if str(LIB_DIR) not in sys.path:
 
 from pr import ci_annotations  # noqa: E402
 from pr import ci_failures as ci  # noqa: E402
+from gh import run_reads  # noqa: E402
 from pr import ci_runs  # noqa: E402
 
 
@@ -173,11 +174,27 @@ def test_merge_runs_in_progress_clears_a_jobless_failure_conclusion():
 # ── fetch_merged ─────────────────────────────────────────────────────────
 
 
-def _fetch_merged(payloads):
-    """Run `fetch_merged` over payloads GitHub would have served, in list order."""
+def _rows(payloads):
+    """The `gh run list` rows the payloads below would have come from."""
+    return [run_reads.RunRow(
+        run_id=p["databaseId"], number=p.get("number", 0),
+        head_sha=p.get("headSha", "abc"), status=p.get("status", ""),
+        conclusion=p.get("conclusion", ""),
+    ) for p in payloads]
+
+
+def _fetch_merged(payloads, checks=None):
+    """Run `fetch_merged` over payloads GitHub would have served, in list order.
+
+    The rollup answers nothing by default, so every run is fetched — which is
+    what these cases were written against and what a commit GitHub has no
+    rollup for still does.
+    """
     by_id = {p["databaseId"]: p for p in payloads}
-    with patch("gh.run_reads.fetch_run_data", side_effect=lambda repo, rid: by_id[rid]):
-        return ci_runs.fetch_merged("owner/repo", [p["databaseId"] for p in payloads])
+    with patch("gh.run_reads.fetch_run_data", side_effect=lambda repo, rid: by_id[rid]), \
+         patch("gh.run_reads.fetch_commit_checks",
+               return_value=checks or run_reads.CommitChecks()):
+        return ci_runs.fetch_merged("owner/repo", _rows(payloads))
 
 
 def test_a_jobless_cancelled_run_does_not_become_the_merged_conclusion():
@@ -543,3 +560,160 @@ def test_count_job_states_pending_is_queued():
         {"name": "deploy", "status": "pending", "conclusion": None},
     ]}
     assert ci_runs.count_job_states(merged).queued == 1
+
+
+# ── checks that are not Actions jobs ─────────────────────────────────────
+
+
+def _external(name, conclusion, status="completed", source="check_run"):
+    return {"name": name, "databaseId": 0, "status": status, "conclusion": conclusion,
+            "steps": [], "_check_source": source, "_details_url": "", "_summary": ""}
+
+
+def _green_run(run_id, *names):
+    return {run_id: tuple(
+        {"name": n, "databaseId": i, "status": "completed", "conclusion": "success",
+         "steps": [], "_from_rollup": True}
+        for i, n in enumerate(names, start=1)
+    )}
+
+
+_PASSING_RUN = {"databaseId": 200, "conclusion": "success", "status": "completed",
+                "number": 5, "headSha": "abc",
+                "jobs": [{"name": "test", "status": "completed", "conclusion": "success"}]}
+
+
+def test_an_app_check_failure_turns_a_green_commit_red():
+    """The defect: every Actions run passed, so the commit reported `All checks passed`."""
+    checks = run_reads.CommitChecks(
+        answered=True, external=(_external("CodeQL", "failure"),),
+    )
+    fetched = _fetch_merged([dict(_PASSING_RUN)], checks=checks)
+    assert fetched.merged["conclusion"] == "failure"
+    assert [j["name"] for j in fetched.merged["jobs"]] == ["test", "CodeQL"]
+
+
+def test_a_status_context_failure_turns_a_green_commit_red():
+    checks = run_reads.CommitChecks(
+        answered=True,
+        external=(_external("scalr/plan", "failure", source="status_context"),),
+    )
+    fetched = _fetch_merged([dict(_PASSING_RUN)], checks=checks)
+    assert fetched.merged["conclusion"] == "failure"
+
+
+def test_an_unfinished_external_check_leaves_the_commit_undecided():
+    """Reported complete, a running external check lets --wait stop early."""
+    checks = run_reads.CommitChecks(
+        answered=True, external=(_external("CodeQL", "", status="in_progress"),),
+    )
+    fetched = _fetch_merged([dict(_PASSING_RUN)], checks=checks)
+    assert fetched.merged["status"] == "in_progress"
+    assert fetched.merged["conclusion"] == ""
+
+
+def test_an_external_failure_outranks_an_unfinished_one():
+    """A failure stands whatever else is still going — merge_runs' own rule."""
+    checks = run_reads.CommitChecks(answered=True, external=(
+        _external("CodeQL", "failure"),
+        _external("scalr/plan", "", status="in_progress", source="status_context"),
+    ))
+    fetched = _fetch_merged([dict(_PASSING_RUN)], checks=checks)
+    assert fetched.merged["conclusion"] == "failure"
+
+
+def test_external_checks_are_counted_among_the_jobs():
+    """--wait reports N/M; an external check nobody counted makes the run look shorter."""
+    checks = run_reads.CommitChecks(answered=True, external=(
+        _external("CodeQL", "failure"),
+        _external("scalr/plan", "", status="in_progress", source="status_context"),
+    ))
+    fetched = _fetch_merged([dict(_PASSING_RUN)], checks=checks)
+    counts = ci_runs.count_job_states(fetched.merged)
+    assert counts.total == 3
+    assert counts.failed == 1
+    assert counts.running == 1
+    assert counts.finished is False
+
+
+def test_a_commit_whose_only_checks_are_external_still_reports():
+    """A repo can check a commit without running a workflow on it."""
+    checks = run_reads.CommitChecks(
+        answered=True, external=(_external("scalr/plan", "failure", source="status_context"),),
+    )
+    with patch("gh.run_reads.fetch_run_data", return_value=None), \
+         patch("gh.run_reads.fetch_commit_checks", return_value=checks):
+        fetched = ci_runs.fetch_merged("owner/repo", [], head_sha="abc")
+    assert fetched is not None
+    assert fetched.merged["conclusion"] == "failure"
+    assert [j["name"] for j in fetched.merged["jobs"]] == ["scalr/plan"]
+
+
+def test_nothing_at_all_is_still_nothing_to_report():
+    with patch("gh.run_reads.fetch_commit_checks", return_value=run_reads.CommitChecks()):
+        assert ci_runs.fetch_merged("owner/repo", [], head_sha="abc") is None
+
+
+# ── runs the rollup spares us fetching ───────────────────────────────────
+
+
+def test_a_run_the_rollup_proved_green_is_not_fetched():
+    """Its job payload holds only the steps of jobs that did not fail."""
+    checks = run_reads.CommitChecks(
+        answered=True, actions=_green_run(200, "test", "lint"),
+    )
+    rows = [run_reads.RunRow(run_id=200, number=5, head_sha="abc",
+                             status="completed", conclusion="success")]
+    with patch("gh.run_reads.fetch_run_data") as view, \
+         patch("gh.run_reads.fetch_commit_checks", return_value=checks):
+        fetched = ci_runs.fetch_merged("owner/repo", rows, head_sha="abc")
+    view.assert_not_called()
+    assert [j["name"] for j in fetched.merged["jobs"]] == ["test", "lint"]
+    assert fetched.merged["number"] == 5
+    assert fetched.merged["conclusion"] == "success"
+    assert ci_runs.count_job_states(fetched.merged).total == 2
+
+
+def test_a_run_the_rollup_did_not_account_for_is_still_fetched():
+    """A cancelled run is absent from the rollup while its failed jobs live on."""
+    cancelled = {"databaseId": 300, "conclusion": "cancelled", "status": "completed",
+                 "jobs": [{"name": "build", "status": "completed", "conclusion": "failure"}]}
+    checks = run_reads.CommitChecks(answered=True, actions=_green_run(200, "test"))
+    rows = [run_reads.RunRow(run_id=300, head_sha="abc", conclusion="cancelled"),
+            run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")]
+    with patch("gh.run_reads.fetch_run_data", return_value=cancelled) as view, \
+         patch("gh.run_reads.fetch_commit_checks", return_value=checks):
+        fetched = ci_runs.fetch_merged("owner/repo", rows, head_sha="abc")
+    assert [c.args[1] for c in view.call_args_list] == [300]
+    # What skipping it would have cost: the failed job itself. The merged
+    # conclusion stays `cancelled` either way — `cancelled` is not a failure
+    # conclusion, which is why the job list is the thing worth asserting on.
+    assert [j["name"] for j in ci_runs.failed_jobs(fetched.merged)] == ["build"]
+
+
+def test_an_unanswered_rollup_fetches_every_run():
+    """No rollup is no evidence — an approval-gated commit has none at all."""
+    checks = run_reads.CommitChecks(answered=False)
+    rows = [run_reads.RunRow(run_id=200, head_sha="abc", conclusion="success"),
+            run_reads.RunRow(run_id=300, head_sha="abc", conclusion="success")]
+    with patch("gh.run_reads.fetch_run_data",
+               side_effect=lambda repo, rid: {"databaseId": rid, "conclusion": "success",
+                                              "status": "completed", "jobs": []}) as view, \
+         patch("gh.run_reads.fetch_commit_checks", return_value=checks):
+        ci_runs.fetch_merged("owner/repo", rows, head_sha="abc")
+    assert sorted(c.args[1] for c in view.call_args_list) == [200, 300]
+
+
+def test_an_unpushed_head_retries_at_the_commit_the_runs_ran_on():
+    """A local HEAD the API never saw answers nothing, which is not `no checks`."""
+    external = (_external("CodeQL", "failure"),)
+    answers = {"local": run_reads.CommitChecks(answered=False, sha="local"),
+               "pushed": run_reads.CommitChecks(answered=True, external=external,
+                                                sha="pushed")}
+    rows = [run_reads.RunRow(run_id=200, number=5, head_sha="pushed", conclusion="success")]
+    with patch("gh.run_reads.fetch_run_data", return_value=dict(_PASSING_RUN)), \
+         patch("gh.run_reads.fetch_commit_checks",
+               side_effect=lambda repo, sha: answers[sha]) as rollup:
+        fetched = ci_runs.fetch_merged("owner/repo", rows, head_sha="local")
+    assert [c.args[1] for c in rollup.call_args_list] == ["local", "pushed"]
+    assert fetched.merged["conclusion"] == "failure"

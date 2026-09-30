@@ -103,7 +103,9 @@ def _report_run(trail, ctx, merged, run_ids, counts=None, show_status=False) -> 
 
     # Check how far behind origin/main the branch is — runs on every invocation
     # (not just --fix) because the JSON report includes behind_main for SKILL.md consumers
-    behind_main = run_reads.commits_behind_main(repo, branch) if branch not in ("main", "master") else 0
+    behind_main = run_reads.commits_behind_main(
+        repo, branch, str(ctx.worktree_root) if ctx.worktree_root else None,
+    )
 
     report = ci_report.CIReport.build(
         repo=repo, branch=branch, pr_number=ctx.pr_number,
@@ -124,18 +126,20 @@ def _run_ci(trail, args, ctx) -> ci_report.CIReport:
     repo = ctx.repo
     branch = ctx.branch
 
-    if args.run:
-        run_ids = [args.run]
-    else:
-        run_ids = run_reads.fetch_latest_run_ids(repo, branch)
-        if not run_ids:
-            trail.warn("no_runs", "no workflow runs found")
-            raise ci_runs.RunUnavailable(f"No workflow runs found for branch '{branch}'")
+    rows = ([run_reads.RunRow(run_id=args.run)] if args.run
+            else run_reads.fetch_latest_runs(repo, branch, ctx.head_sha))
+    run_ids = [row.run_id for row in rows]
 
     trail.info("fetch_runs", f"fetching {len(run_ids)} run(s)", data={"run_ids": run_ids})
 
-    fetched = ci_runs.fetch_merged(repo, run_ids)
+    # Not gated on there being a workflow run: a commit can be checked by
+    # something that is not a workflow, and bailing here on an empty run list
+    # is what made those checks unreportable rather than merely unseen.
+    fetched = ci_runs.fetch_merged(repo, rows, head_sha=ctx.head_sha)
     if fetched is None:
+        if not rows:
+            trail.warn("no_runs", "no checks found")
+            raise ci_runs.RunUnavailable(f"No checks found for branch '{branch}'")
         trail.error("fetch_run_data", "failed to fetch run data")
         raise ci_runs.RunUnavailable("Failed to fetch run data")
 
@@ -156,7 +160,7 @@ def _run_ci(trail, args, ctx) -> ci_report.CIReport:
 def _run_ci_wait(trail, args, ctx) -> ci_report.CIReport:
     """Poll CI until all jobs complete, emitting partial reports as failures arrive."""
     poll = ci_wait.poll_until_complete(
-        ctx.repo, ctx.branch, run_id=args.run,
+        ctx.repo, ctx.branch, run_id=args.run, head_sha=ctx.head_sha,
         timeout=args.wait_timeout, interval=args.wait_interval, trail=trail,
     )
 
@@ -245,7 +249,8 @@ def _run_fix(trail, report: ci_report.CIReport, ctx) -> int:
     )
     adapter = fix_ci.CIFixAdapter(report, ctx, state)
     if not adapter.fixable:
-        log.info("No fixable failures (all infra/flaky)")
+        kinds = sorted({f.group.kind.value for f in adapter.skipped})
+        log.info(f"No fixable failures (all {'/'.join(kinds) or 'infra/flaky'})")
         return 0
 
     # Rebase before the pass, not before the report — the original run has the

@@ -27,6 +27,11 @@ class FailureKind(Enum):
     BUILD = "build"
     INFRA = "infra"
     FLAKY = "flaky"  # user-override only; not auto-detected by classify_job
+    # A check no Actions workflow ran: another app's check run, or a status
+    # context an external system posted. Named as its own kind rather than
+    # classified by `classify_job`, which matches on job name and would read
+    # `CodeQL` as a BUILD failure and hand it to a fix pass as one.
+    EXTERNAL = "external"
 
 
 class Outcome(Enum):

@@ -63,12 +63,32 @@ def extract_json(text: str) -> str:
 
 
 def parses_as_json(text: str) -> bool:
-    """Whether triage output can be consumed. Drives the retry-once guard."""
+    """Whether triage output can be consumed. Drives the retry-once guard.
+
+    Shape, not just syntax. `extract_json` slices from the first brace to the
+    last, so any JSON object anywhere in the reply satisfies a bare
+    `json.loads` — including one the model emitted for something else
+    entirely. An agent that narrated a tool call it wanted to make returned
+
+        {"cmd": "cat -n lib/registries.sh", "description": "..."}
+
+    which parsed, so the retry never fired; `triage_result_from_dict` then read
+    a missing `threads` key as the empty list and triage reported nothing to
+    do on a PR full of unaddressed feedback. A clean "0 threads" is the worst
+    possible failure here, because it is indistinguishable from success.
+
+    Requiring one of the contract's own keys costs nothing on a real reply —
+    the schema always carries `threads` — and turns that silent empty result
+    back into a retry and then a loud parse failure.
+    """
     try:
-        json.loads(extract_json(text))
+        parsed = json.loads(extract_json(text))
     except (json.JSONDecodeError, TypeError):
         return False
-    return True
+    if not isinstance(parsed, dict):
+        return False
+    return any(isinstance(parsed.get(key), list)
+               for key in ("threads", "comment_items"))
 
 
 def collect_unseen_comments(report: PRReport) -> list[dict]:

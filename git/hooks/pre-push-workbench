@@ -107,11 +107,39 @@ fi
 _step "Scanning for secrets"
 _config_flag=""
 [[ -f "$REPO_ROOT/.gitleaks.toml" ]] && _config_flag="--config $REPO_ROOT/.gitleaks.toml"
+
+# See git/hooks/pre-commit for why the leaks verdict is moved off exit 1:
+# gitleaks uses 1 for both "leaks found" and "could not run", so a shim that
+# refuses to exec is otherwise reported as a secret finding.
+_GITLEAKS_LEAK_EXIT=7
+
+# Captured through if/else rather than a bare substitution under `set +e`:
+# this file traps ERR (see the top of the script), and a bare assignment from
+# a failing command fires that trap even with errexit off — so every leak and
+# every scanner error would print "pre-push hook failed" before the real
+# message. A substitution used as an `if` condition is exempt.
 # shellcheck disable=SC2086  # word splitting intentional for optional flag
-if _gitleaks_output=$(gitleaks protect --staged $_config_flag 2>&1); then
-  _pass
+if _gitleaks_output=$(gitleaks protect --staged --verbose --no-color --no-banner \
+  --exit-code "$_GITLEAKS_LEAK_EXIT" $_config_flag 2>&1); then
+  _gitleaks_status=0
 else
+  _gitleaks_status=$?
+fi
+
+if (( _gitleaks_status == 0 )); then
+  # _pass prints the step's tick and nothing else: a clean scan's --verbose
+  # progress output in $_gitleaks_output is intentionally discarded, because
+  # there is nothing in it worth showing when there is nothing to act on.
+  _pass
+elif (( _gitleaks_status == _GITLEAKS_LEAK_EXIT )); then
   _fail "$_gitleaks_output"
+else
+  _fail "gitleaks could not run (exit $_gitleaks_status) — this is NOT a secret finding.
+The scan never happened, so the push is refused rather than waved through.
+Common cause: gitleaks on PATH is a mise shim and some .mise.toml does not
+parse or is untrusted. Check: command -v gitleaks; mise doctor
+
+$_gitleaks_output"
 fi
 
 # ── Validation ───────────────────────────────────────────────────────────────

@@ -100,9 +100,51 @@ _repo_root="$(git rev-parse --show-toplevel)"
 _config_flag=""
 [[ -f "$_repo_root/.gitleaks.toml" ]] && _config_flag="--config $_repo_root/.gitleaks.toml"
 
+# A scanner that could not run must not be reported as a scanner that found
+# something. gitleaks exits 1 for BOTH "leaks found" and "operational error",
+# so a bare `|| echo "found potential secrets"` prints a false positive for an
+# unreadable config, a missing repo, or — the case that prompted this — a mise
+# shim refusing to exec because some .mise.toml upstack does not parse. That
+# reads as a leak nobody can find, and the commit is refused for a reason that
+# does not exist.
+#
+# --exit-code moves the leaks verdict off 1 and onto a code nothing else uses,
+# which makes the two outcomes structurally distinguishable instead of
+# guessable from message text:
+#   0 → clean        7 → leaks found        anything else → scanner failed
+_GITLEAKS_LEAK_EXIT=7
+
+# Captured through if/else, the same shape pre-push-workbench uses. That file
+# needs it — a bare assignment fires its ERR trap — and this one does not, but
+# two spellings of one problem means a reader has to know which script traps
+# ERR before either reads correctly.
 # shellcheck disable=SC2086  # word splitting intentional for optional flag
-gitleaks protect --staged --verbose --no-color --no-banner $_config_flag \
-  || { echo "✗ gitleaks found potential secrets — review the output above before committing"; exit 1; }
+if _gitleaks_output=$(gitleaks protect --staged --verbose --no-color --no-banner \
+  --exit-code "$_GITLEAKS_LEAK_EXIT" $_config_flag 2>&1); then
+  _gitleaks_status=0
+else
+  _gitleaks_status=$?
+fi
+
+if (( _gitleaks_status == _GITLEAKS_LEAK_EXIT )); then
+  # stdout, where the old hook's findings went. The operational branch below
+  # uses stderr: a scan that did not happen is a hook problem, not a result.
+  echo "$_gitleaks_output"
+  echo "✗ gitleaks found potential secrets — review the output above before committing"
+  exit 1
+elif (( _gitleaks_status != 0 )); then
+  echo "$_gitleaks_output" >&2
+  echo "✗ gitleaks could not run (exit $_gitleaks_status) — this is NOT a secret finding" >&2
+  echo "  The scan never happened, so the commit is refused rather than waved through." >&2
+  echo "  Common cause: gitleaks on PATH is a mise shim and some .mise.toml does not" >&2
+  echo "  parse or is untrusted. Compare:" >&2
+  echo "    command -v gitleaks" >&2
+  echo "    mise doctor" >&2
+  exit 1
+fi
+# _gitleaks_status == 0 falls through to here: a clean scan's --verbose
+# progress output in $_gitleaks_output is intentionally discarded — there is
+# nothing in it worth showing when there is nothing to act on.
 
 # Delegate to the repo-local hook if present (bypassed when core.hooksPath is set globally).
 #

@@ -94,6 +94,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import sys
+import traceback
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -910,9 +911,40 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = (["-u"] if ns.set_upstream else []) + [ns.remote, ns.branch]
     if ns.no_verify:
         args = ["--no-verify", *args]
-    result = push(ns.cwd, gated=False, branch=ns.branch, remote=ns.remote, args=args)
-    report(result, ns.cwd)
-    return _EXIT_CODES[result.status]
+
+    # ceiling: the context names the branch and not the repo, so `otto-log
+    # --repo` cannot filter these events. Both things that can spell
+    # `owner/repo` sit above this layer — `pr.context.detect_repo` at layer 4
+    # and `gh.client.repo_slug` at layer 3 — and `git` may import only `core`.
+    # Reaching up for a filter key would invert the stack, and parsing origin a
+    # second time here would be a second definition of a repo's name.
+    # Upgrade trigger: if push events need repo filtering, have the bash caller
+    # pass `--repo`; it is the layer that is allowed to know.
+    #
+    # Started outside the `try` deliberately: there is nothing to `finish` if
+    # opening it is what failed, and moving it inside makes the `finally` a
+    # `NameError` path.
+    trail = Trail.start(script=SCRIPT, context={"branch": ns.branch})
+    try:
+        result = push(ns.cwd, gated=False, branch=ns.branch, remote=ns.remote,
+                      args=args, trail=trail)
+        report(result, ns.cwd)
+        return _EXIT_CODES[result.status]
+    except Exception as exc:
+        # `finish` writes one unconditional summary with no verdict in it, so
+        # without this an exception mid-push leaves a trail that reads exactly
+        # like a clean run. Every other entry point records the same event for
+        # the same reason.
+        trail.error("unexpected_error", str(exc),
+                    data={"traceback": traceback.format_exc()})
+        raise
+    finally:
+        trail.finish()
+
+
+# What the trail above is filed under. Beside its one consumer rather than at
+# the top of the module, which is where this file keeps its other constants.
+SCRIPT = "push"
 
 
 if __name__ == "__main__":

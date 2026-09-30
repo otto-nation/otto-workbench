@@ -565,15 +565,15 @@ def test_count_job_states_pending_is_queued():
 # ── checks that are not Actions jobs ─────────────────────────────────────
 
 
-def _external(name, conclusion, status="completed", source="check_run"):
-    return {"name": name, "databaseId": 0, "status": status, "conclusion": conclusion,
+def _external(name, conclusion, status="completed", source="check_run", job_id=0):
+    return {"name": name, "databaseId": job_id, "status": status, "conclusion": conclusion,
             "steps": [], "_check_source": source, "_details_url": "", "_summary": ""}
 
 
 def _green_run(run_id, *names):
     return {run_id: tuple(
         {"name": n, "databaseId": i, "status": "completed", "conclusion": "success",
-         "steps": [], "_from_rollup": True}
+         "steps": []}
         for i, n in enumerate(names, start=1)
     )}
 
@@ -586,11 +586,13 @@ _PASSING_RUN = {"databaseId": 200, "conclusion": "success", "status": "completed
 def test_an_app_check_failure_turns_a_green_commit_red():
     """The defect: every Actions run passed, so the commit reported `All checks passed`."""
     checks = run_reads.CommitChecks(
-        answered=True, external=(_external("CodeQL", "failure"),),
+        answered=True, external=(_external("CodeQL", "failure", job_id=77),),
     )
     fetched = _fetch_merged([dict(_PASSING_RUN)], checks=checks)
     assert fetched.merged["conclusion"] == "failure"
     assert [j["name"] for j in fetched.merged["jobs"]] == ["test", "CodeQL"]
+    codeql = next(j for j in fetched.merged["jobs"] if j["name"] == "CodeQL")
+    assert codeql["databaseId"] == 77
 
 
 def test_a_status_context_failure_turns_a_green_commit_red():

@@ -259,6 +259,11 @@ _STATUS_STATES: dict[str, tuple[str, str]] = {
     "EXPECTED": ("queued", ""),
 }
 
+# CheckStatusState has more members than these two (QUEUED, PENDING, REQUESTED,
+# WAITING), and all of them fall through the `.get(..., "queued")` default
+# below deliberately: `count_job_states` only distinguishes completed, running
+# and queued, and every status but COMPLETED/IN_PROGRESS belongs in the last
+# bucket.
 _CHECK_STATUSES: dict[str, str] = {"COMPLETED": "completed", "IN_PROGRESS": "in_progress"}
 
 _ROLLUP_QUERY = """
@@ -356,8 +361,6 @@ def _from_check_run(node: dict, run_id: int | None) -> dict:
         job["_check_source"] = "check_run"
         job["_details_url"] = node.get("detailsUrl") or ""
         job["_summary"] = node.get("title") or ""
-        return job
-    job["_from_rollup"] = True
     return job
 
 

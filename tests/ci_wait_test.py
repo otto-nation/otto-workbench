@@ -252,3 +252,55 @@ def test_the_held_payload_still_reaches_the_final_merge():
 
     assert sorted(j["name"] for j in result.merged["jobs"]) == ["Lint", "Test"]
     assert result.counts.completed == 2
+
+
+def test_a_real_head_sha_reaches_the_rollup_short_circuit():
+    """The `_no_rollup` fixture stands for an unanswered rollup, but only once
+    `_commit_checks` is given a real sha to ask about. Every other test in this
+    file leaves rows at the default empty `head_sha` and never passes one to
+    `_poll`, so `_commit_checks`'s `if not sha: return CommitChecks()` fires
+    before `fetch_commit_checks` is ever called — the fixture's mock goes
+    unexercised there. This is the one case that reaches past that short
+    circuit, so a future change to its condition fails a test here instead of
+    nothing at all.
+    """
+    run_data = _run("completed", "success", [
+        {"name": "Lint", "conclusion": "success", "databaseId": 10, "status": "completed"},
+    ])
+
+    with patch("gh.run_reads.fetch_latest_runs", return_value=[_row(100, head_sha="abc123")]), \
+         patch("gh.run_reads.fetch_run_data", return_value=run_data), \
+         patch("gh.run_reads.fetch_commit_checks",
+               return_value=run_reads.CommitChecks()) as fetch_checks, \
+         patch("pr.ci_wait.time.sleep"):
+        _poll(head_sha="abc123")
+
+    fetch_checks.assert_called_once_with("owner/repo", "abc123")
+
+
+def test_a_pinned_run_does_not_borrow_the_branch_heads_rollup():
+    """`run_id` names a specific run; the rollup asked about it must be for
+    that run's own commit, not whatever the branch head currently is.
+
+    Regression test for the defect where `head_sha` (the branch's current
+    head) was passed to `fetch_merged` unconditionally even when `run_id`
+    pinned a run for a different, historical commit — letting an external
+    check answered at the *current* head get merged into a report about the
+    pinned run, silently attributing another commit's verdict to it.
+    """
+    run_data = _run("completed", "success", [])
+    stale_rollup = run_reads.CommitChecks(
+        answered=True, sha="currenthead",
+        external=({"name": "CodeQL", "databaseId": 0, "status": "completed",
+                   "conclusion": "failure", "steps": [],
+                   "_check_source": "check_run"},),
+    )
+
+    with patch("gh.run_reads.fetch_run_data", return_value=run_data), \
+         patch("gh.run_reads.fetch_commit_checks",
+               return_value=stale_rollup) as fetch_checks, \
+         patch("pr.ci_wait.time.sleep"):
+        result = _poll(run_id=555, head_sha="currenthead")
+
+    fetch_checks.assert_not_called()
+    assert result.merged["conclusion"] == "success"

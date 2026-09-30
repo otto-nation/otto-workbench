@@ -96,7 +96,14 @@ def poll_until_complete(
                 else run_reads.fetch_latest_runs(repo, branch, head_sha))
         run_ids = [row.run_id for row in rows]
 
-        fetched = ci_runs.fetch_merged(repo, rows, head_sha=head_sha, cache=settled)
+        # `head_sha` is the branch's current head, not the pinned run's commit
+        # once `run_id` names one — see `cli.ci_check._run_ci`'s identical guard.
+        # Passing it through would let the rollup answer for whatever the branch
+        # head has moved on to and splice that commit's external checks into a
+        # report about a different, pinned run.
+        rollup_head_sha = "" if run_id else head_sha
+
+        fetched = ci_runs.fetch_merged(repo, rows, head_sha=rollup_head_sha, cache=settled)
         if fetched is None and not rows:
             trail.warn("no_runs", "no checks found")
             raise ci_runs.RunUnavailable(f"No checks found for branch '{branch}'")

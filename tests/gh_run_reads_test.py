@@ -1,5 +1,6 @@
 """What `gh.run_reads` asks GitHub about a workflow run, and what it does with the answer."""
 
+import json
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -234,8 +235,6 @@ def test_a_row_carries_the_number_the_dashboard_names_the_run_by():
 
 # ── fetch_commit_checks ───────────────────────────────────────────────────
 
-import json  # noqa: E402
-
 
 def _rollup(nodes, more=False, cursor="c1"):
     """A `gh api graphql` result carrying `nodes` as one page of the rollup."""
@@ -332,13 +331,12 @@ def test_a_failed_job_keeps_its_run_out_of_the_green_set():
     assert len(checks.actions[900]) == 2
 
 
-def test_rollup_actions_rows_carry_their_provenance():
-    """They stand in for a job payload that was never fetched, and say so."""
+def test_rollup_actions_rows_are_shaped_like_a_fetched_job():
+    """They stand in for a job payload that was never fetched, in the same shape."""
     result = _rollup([_check_run("Lint", run_id=900, db_id=5)])
     with patch("gh.client.graphql", return_value=result):
         checks = run_reads.fetch_commit_checks("owner/repo", "abc")
     row = checks.actions[900][0]
-    assert row["_from_rollup"] is True
     assert row["databaseId"] == 5
     assert row["status"] == "completed"
 

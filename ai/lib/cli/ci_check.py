@@ -132,10 +132,19 @@ def _run_ci(trail, args, ctx) -> ci_report.CIReport:
 
     trail.info("fetch_runs", f"fetching {len(run_ids)} run(s)", data={"run_ids": run_ids})
 
+    # `ctx.head_sha` is the branch's current head, not the pinned run's commit —
+    # a run requested by id can be for a commit the branch has since moved past.
+    # Passing it through regardless would let `_commit_checks` answer a rollup
+    # for the wrong commit and splice an unrelated commit's external checks into
+    # this run's report. Withholding it here leaves rows[0].head_sha (empty for
+    # a pinned run) as the only candidate, so `_commit_checks` finds nothing to
+    # ask about and the rollup is skipped rather than answered for the wrong sha.
+    rollup_head_sha = "" if args.run else ctx.head_sha
+
     # Not gated on there being a workflow run: a commit can be checked by
     # something that is not a workflow, and bailing here on an empty run list
     # is what made those checks unreportable rather than merely unseen.
-    fetched = ci_runs.fetch_merged(repo, rows, head_sha=ctx.head_sha)
+    fetched = ci_runs.fetch_merged(repo, rows, head_sha=rollup_head_sha)
     if fetched is None:
         if not rows:
             trail.warn("no_runs", "no checks found")

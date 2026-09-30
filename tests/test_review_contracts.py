@@ -1222,31 +1222,57 @@ _NO_UNRUN_EXECUTION_CLAIM = (
     "Never write that you ran something unless you ran it in this session."
 )
 
-# The five templates known to need the guard, listed rather than scraped: the
-# guard applies to write-first, finding-authoring templates specifically, not
-# to every template under TEMPLATE_DIR (disprove.md, fix-*.md, holistic.md,
-# scout.md and verify-fixes.md do not author findings from unrun checks).
-_EXECUTION_CLAIM_GUARD_TEMPLATES = [
-    "group.md",
-    "self-review.md",
-    "self-review-synthesis.md",
-    "single-agent.md",
-    "synthesis.md",
-]
+# What makes a template need the guard: it tells the agent to write its file
+# before investigating, so a claim drafted there describes a command that has
+# not run. Templates without that instruction (disprove.md, which writes its
+# verdicts last, after investigating) and those that author no findings
+# (holistic.md, scout.md, fix-*.md, verify-fixes.md) are out of scope.
+_WRITE_FIRST_RE = re.compile(
+    r"FIRST action must be writing"
+    r"|do not investigate before that first write"
+    r"|file FIRST"
+)
 
 
-@pytest.mark.parametrize("name", _EXECUTION_CLAIM_GUARD_TEMPLATES)
-def test_template_forbids_unverified_execution_claims(name):
+def _write_first_templates() -> list[Path]:
+    """Every template that tells the agent to write before investigating.
+
+    Scraped rather than listed, following `_summary_contract_sources` above:
+    a sixth write-first template added later is held to the same constraint
+    without this file being edited. A hardcoded list is how the guard reached
+    four of five templates twice running — the list and the tree drift, and
+    the test passes on the files someone remembered.
+    """
+    return [
+        path for path in sorted(TEMPLATE_DIR.glob("*.md"))
+        if _WRITE_FIRST_RE.search(path.read_text())
+    ]
+
+
+def test_write_first_templates_are_found():
+    """The selector finds the known write-first templates, so the check below
+    is not vacuous. A selector that matched nothing would make the
+    parametrized assertion pass by having no cases at all.
+    """
+    found = {path.name for path in _write_first_templates()}
+    assert {
+        "group.md", "self-review.md", "self-review-synthesis.md",
+        "single-agent.md", "synthesis.md",
+    } <= found
+
+
+@pytest.mark.parametrize(
+    "path", _write_first_templates(), ids=lambda p: p.name,
+)
+def test_template_forbids_unverified_execution_claims(path):
     """Every write-first, finding-authoring template carries the guard.
 
     Regression for the guard landing in some of these templates but not all:
-    a prior fix added it to synthesis.md alone and left
-    self-review-synthesis.md — a template with the same write-first,
-    finding-authoring shape — without it.
+    one fix added it to synthesis.md alone and left self-review-synthesis.md,
+    a template with the same write-first shape, without it.
     """
-    path = TEMPLATE_DIR / name
     assert _NO_UNRUN_EXECUTION_CLAIM in path.read_text(), (
-        f"{name}'s turn budget authors findings after a write-first "
+        f"{path.name}'s turn budget authors findings after a write-first "
         "instruction without the execution-claim guard other templates "
         "carry. Add the guard paragraph used in group.md / self-review.md / "
         "single-agent.md."

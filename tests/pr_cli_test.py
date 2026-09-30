@@ -1102,7 +1102,7 @@ def test_internal_command_still_classifies_a_positional(mock_resolve, mock_call,
     assert read == ["fix"], "an internal command is asked, and answers empty"
 
 
-# ── _positional_index ──────────────────────────────────────────────────────
+# ── positional_index ───────────────────────────────────────────────────────
 
 
 def test_positional_index_skips_a_flag_value():

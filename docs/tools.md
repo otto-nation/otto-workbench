@@ -36,7 +36,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `ai-usage-log` | Bridge shell-invoked AI calls into the global usage ledger — render, unwrap, record |
 | `eval-models` | Evaluation runner — scores AI calls against a corpus, one task per manifest |
 | `rules-canary` | Canary for the --add-dir coupling — fails when coding rules stop reaching an agent |
-| `otto-mcp-server` | Dynamic MCP server — discovers tool-schema scripts and exposes them to MCP clients |
+| `otto-mcp-server` | MCP server — offers the tools the component registries declare, with schemas imported in-process |
 | `build-otto-ai-tools-tarball` | Package otto-ai-tools into a self-contained tarball for distribution |
 | `build-claude-config-tarball` | Package Claude Code configuration into a tarball for server or container deployment |
 | `workbench-export` | Export workbench Claude configs as a self-contained tarball, filtered by profile |

@@ -468,15 +468,42 @@ _init_test_repo() {
 }
 
 @test "edit-guard: allows a gitignored file on main" {
+  # Not `ignore/specs/` — that is a plan path, which the workspace rule
+  # refuses wherever it lands. This case is about the gitignore exemption to
+  # the branch rule, so it needs a path only that rule has an opinion about.
   local repo="$TMPDIR/repo"
   mkdir -p "$repo"
   _init_test_repo "$repo"
   echo "ignore/" > "$repo/.gitignore"
   git -C "$repo" add .gitignore
   git -C "$repo" commit -m "init" --quiet
-  mkdir -p "$repo/ignore/specs"
-  run _run_edit_guard "{\"tool_input\":{\"file_path\":\"$repo/ignore/specs/test.md\"}}"
+  mkdir -p "$repo/ignore/build"
+  run _run_edit_guard "{\"tool_input\":{\"file_path\":\"$repo/ignore/build/test.md\"}}"
   [ "$status" -eq 0 ]
+}
+
+@test "edit-guard: a gitignored plan path is still refused" {
+  # The precedence between the two rules, asserted rather than left to
+  # whichever check happens to run first. Being gitignored is what a plan in a
+  # worktree already is, and it is no help: `wt remove` deletes ignored files
+  # with the tree, so the exemption that makes sense for build output is
+  # exactly wrong here.
+  local repo="$TMPDIR/repo"
+  mkdir -p "$repo"
+  _init_test_repo "$repo"
+  echo "ignore/" > "$repo/.gitignore"
+  git -C "$repo" add .gitignore
+  git -C "$repo" commit -m "init" --quiet
+
+  run _run_edit_guard "{\"tool_input\":{\"file_path\":\"$repo/ignore/specs/test.md\"}}"
+
+  [ "$status" -eq 2 ]
+  # The fixture is an ordinary clone, so the refusal is the one that says there
+  # is nowhere correct to put it rather than the one naming a workspace. Pinned
+  # on `wt-init` because a refusal that does not say how to proceed is the
+  # failure mode of a guard nobody can satisfy.
+  [[ "$output" == *"ordinary clone"* ]]
+  [[ "$output" == *"wt-init"* ]]
 }
 
 @test "edit-guard: allows any file on a feature branch" {

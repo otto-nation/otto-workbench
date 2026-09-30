@@ -17,7 +17,29 @@ Before code changes, walk this ladder — stop at the first unmet gate:
 4. **Build** — each phase independently committable, shippable state. If too large for one commit, split it
 
 Plans describe *what* and *why* — not implementation details.
-Save plans to `ignore/plans/`, specs to `ignore/specs/`.
+
+Plans and specs go in the repository's **workspace**, which is not inside any
+checkout. Run `resolve-workspace` for the path — it prints `<container>/workspace`,
+the directory holding the bare `.git` that every worktree is a peer of — and write
+plans to `plans/` and specs to `specs/` under it. Never derive the path yourself;
+one script owns it and the guards below refuse what disagrees with it.
+
+A plan is about the repository, not about one branch of it, which is the whole
+reason it does not live in a worktree: written there it is duplicated across every
+sibling checkout, invisible from the others, and deleted by the `wt remove` that
+retires the branch — taking the reasoning with it while the work it explains lives
+on in `main`. Nothing at the container is inside a checkout, so there is no
+`.gitignore` entry to keep and no chance of committing one by accident.
+
+`resolve-workspace` exits 1 on an ordinary clone, which has no container. That is
+a refusal, not a prompt to improvise: convert the repo with `wt-init`. Writing to
+`<repo>/workspace` instead would put the artifact back inside the checkout, which
+is the arrangement the rule exists to end.
+
+This is enforced rather than asked for. `claude-edit-guard` under Claude Code and
+the `workspace-guard` extension under Pi both refuse a plan or spec write landing
+inside a worktree — including the `docs/superpowers/specs/` the brainstorming
+skill defaults to, which this rule overrides by the skill's own terms.
 A plan's out-of-scope section names the issue tracking each entry — see
 `issue-tracker.md` § Writing an issue (any tracker). An entry with no issue behind
 it is not deferred, it is dropped.

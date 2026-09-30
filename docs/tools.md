@@ -45,6 +45,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `mem-analyze` | macOS memory analysis report — pressure, swap usage, top processes, per-user totals |
 | `wt-cleanup` | Remove stale git worktrees — merged branches and optionally age-based cleanup |
 | `resolve-branch` | Resolve a fuzzy branch name to an exact git branch — tries exact, worktree, separator, fuzzy |
+| `resolve-workspace` | Print the workspace directory holding a repository's plans and specs — <container>/workspace, outside every checkout |
 | `resolve-worktree` | Print the worktree a bare-repo container stands in for — the checkout of its default branch |
 | `wt-init` | Convert a regular git repo to a bare repo with worktrees |
 | `lint-sweep` | Sweep lint violations across multiple Go repos — detect, report, and optionally create fix branches |

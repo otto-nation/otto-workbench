@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# Resolve the workspace directory a repository's plans and specs belong in.
+#
+# A plan or a spec is about the repository, not about one branch of it. Written
+# inside a worktree it is duplicated across every sibling checkout, invisible
+# from the others, and destroyed by `wt remove` — so it goes at the container,
+# the directory holding the bare `.git` with every worktree as a peer. Nothing
+# there is inside any checkout, which is also why it needs no .gitignore entry.
+#
+# Usage: resolve-workspace [DIR]
+#        DIR defaults to the current directory.
+#
+# Output: absolute workspace path on stdout — <container>/workspace
+# Exit:   0  resolved
+#         1  DIR is an ordinary clone, which has no container to write into
+#         64 usage error
+#
+# Exit 1 is a refusal and not a fallback. Writing to `<repo>/workspace` in an
+# ordinary clone would put the artifact back inside the checkout, which is the
+# arrangement this exists to end; the repo is converted with `wt-init` instead.
+#
+# The single owner of this path. Both halves of the answer are borrowed rather
+# than re-derived: `lib/git_layout.sh`'s `git_shared_dir` names the shared git
+# dir, whose parent is the container, and `bin/resolve-worktree` decides whether
+# that parent really is one. `bin/migrations/20260922-rename-issues-jira-url-
+# container.sh` composes the same two for the same reason. `lib/git_layout.py`'s
+# `container_dir` is the Python spelling of the pair and returns None exactly
+# where this exits 1; tests/resolve_workspace.bats holds them to one answer.
+
+set -e
+
+# Path arithmetic, not `git rev-parse --show-toplevel`, for the same reason
+# bin/local/validate-public-surface avoids it: this script clears the git
+# environment below, and a `git` call made *before* that clear answers about
+# whatever GIT_DIR a calling hook exported. That wrong answer is not a failure
+# — it is a different repository's root, which then fails to source lib/ui.sh
+# and takes the whole resolution down with it. The readlink is what makes the
+# arithmetic hold through the ~/.local/bin symlink.
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/.." && pwd)"
+# shellcheck source=/dev/null
+. "$WORKBENCH_DIR/lib/ui.sh"
+
+# The directory name under the container. Stated once here; the rule, the
+# guards and the migration all read it from this script's output rather than
+# spelling it again.
+WORKSPACE_DIRNAME="workspace"
+
+EXIT_NO_CONTAINER=1
+EXIT_USAGE=64
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [DIR]
+
+Print the workspace directory for the repository DIR belongs to — the
+<container>/$WORKSPACE_DIRNAME that holds its plans and specs. DIR defaults to
+the current directory.
+
+Exit codes:
+  0   resolved; the workspace path is on stdout
+  1   DIR is an ordinary clone — no container, nothing to resolve
+  64  usage error
+EOF
+}
+
+dir="."
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    -*) err "Unknown option: $1"; usage >&2; exit "$EXIT_USAGE" ;;
+    *) dir="$1"; shift ;;
+  esac
+done
+
+[[ -d "$dir" ]] || { err "No such directory: $dir"; exit "$EXIT_USAGE"; }
+
+# Cleared before any lookup, and inside this script rather than trusting the
+# caller: a sync or a hook exports GIT_DIR, which git reads ahead of any
+# directory it is handed, so the answer would be the hook's repository arriving
+# as a success. `git_shared_dir` clears it again in its own subshell; the repeat
+# is for the `resolve-worktree` call below, which discovers from the directory
+# it is given.
+git_env_clear
+
+common="$(git_shared_dir "$dir")" || {
+  err "$(cd "$dir" && pwd -P): not a git repository"
+  exit "$EXIT_NO_CONTAINER"
+}
+container="$(dirname "$common")"
+
+# `resolve-worktree` owns "is this a bare-repo container" in bash. 0 is a
+# container with a worktree on its default branch, 1 is one whose default
+# branch has no worktree — both are containers. 2 says ordinary repo or
+# worktree and 64 says the path is gone; either would mean writing the
+# artifact inside somebody's checkout.
+rc=0
+"$WORKBENCH_DIR/bin/resolve-worktree" "$container" >/dev/null 2>&1 || rc=$?
+if (( rc != 0 && rc != 1 )); then
+  err "$(cd "$dir" && pwd -P): an ordinary clone has no container to hold a workspace."
+  err "Convert it to the bare-repo worktree layout with: wt-init"
+  exit "$EXIT_NO_CONTAINER"
+fi
+
+printf '%s\n' "$container/$WORKSPACE_DIRNAME"

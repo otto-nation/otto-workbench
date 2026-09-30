@@ -133,9 +133,7 @@ def _ts_files(clone: Path):
     """
     for dirpath, dirnames, filenames in os.walk(clone):
         dirnames[:] = [d for d in dirnames if d != 'node_modules']
-        for filename in filenames:
-            if filename.endswith('.ts'):
-                yield Path(dirpath) / filename
+        yield from (Path(dirpath) / f for f in filenames if f.endswith('.ts'))
 
 
 def _declares_transcript_adapter(clone: Path) -> bool:

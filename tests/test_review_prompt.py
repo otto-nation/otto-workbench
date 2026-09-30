@@ -745,8 +745,14 @@ class TestSharedPromptBodies:
         self_ = self._vars(Phase.SYNTHESIS, "/tmp/r.md", mode=Mode.SELF, **shared)
         assert set(pr) - set(self_) == {"pr_number", "pr_title", "reviews_section"}
         assert set(self_) - set(pr) == {"branch_name"}
-        common_keys = set(pr) & set(self_)
+        # The execution-claim guard names the step that adds cross-cutting
+        # findings, and the two templates number that step differently — 8 in
+        # synthesis.md, 9 in self-review-synthesis.md. Expected to differ, and
+        # held against the templates by
+        # test_synthesis_cross_cutting_step_matches_its_template.
+        common_keys = (set(pr) & set(self_)) - {"execution_claim_guard"}
         assert all(pr[k] == self_[k] for k in common_keys)
+        assert pr["execution_claim_guard"] != self_["execution_claim_guard"]
 
 
 # ── An over-budget prompt is refused, not logged past ───────────────────────

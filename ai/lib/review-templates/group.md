@@ -31,3 +31,5 @@ A finding already annotated `*(declined — reason)*` was adjudicated — carry 
 
 ## Turn budget
 You have ${max_turns} turns.${omitted_guidance} Write a complete findings file FIRST based on the diff and file contents — do not investigate before that first write. Further complete rewrites are expected as findings accumulate; never leave the file as a non-document. Use remaining turns to verify specific concerns and rewrite the file.
+
+${execution_claim_guard}

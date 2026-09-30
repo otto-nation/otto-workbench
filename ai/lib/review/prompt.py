@@ -33,7 +33,7 @@ import os
 from core import log
 from core.serde import write_json
 from agent.token_count import count_tokens
-from agent.templates import build_output_block
+from agent.templates import build_execution_claim_guard, build_output_block
 from agent.types import EFFORT_PRESETS
 from core.phases import Mode, Phase
 from pr.domains import ReviewVerdict
@@ -121,6 +121,18 @@ class PromptBuilder:
     def output(self, output_path: str, *, stdout_warning: bool = False) -> "PromptBuilder":
         return self.set(
             "output_block", build_output_block(output_path, stdout_warning=stdout_warning),
+        )
+
+    def execution_claim_guard(self, *, cross_cutting_step: int | None = None) -> "PromptBuilder":
+        """The ban on claiming a command was run, for a write-first template.
+
+        Every template whose turn budget says to write before investigating
+        renders this. Substituted rather than written into each template for
+        the reason `output_block` is: one owner, so the five cannot drift.
+        """
+        return self.set(
+            "execution_claim_guard",
+            build_execution_claim_guard(cross_cutting_step),
         )
 
     def fit(
@@ -693,6 +705,15 @@ _REREVIEW_CTX: dict[Mode, str] = {
     ),
 }
 
+# Which numbered step adds cross-cutting findings, per synthesis template. The
+# execution-claim guard names it, and the two templates number their task
+# lists differently — a mismatch here sends the agent to the wrong step.
+# tests/test_review_contracts.py holds these against the templates themselves.
+_SYNTHESIS_CROSS_CUTTING_STEP: dict[Mode, int] = {
+    Mode.PR: 8,
+    Mode.SELF: 9,
+}
+
 
 def _identify_review(b: PromptBuilder, job: ReviewJob, **pr_only) -> None:
     """Register what names the review — the only thing the two modes split on.
@@ -733,6 +754,7 @@ def _prompt_single(job, common, extra, output):
     _identify_review(b, job, verdict_options=VERDICT_OPTIONS)
     b.set("repo", job.repo)
     b.set("prior_section", prior_section)
+    b.execution_claim_guard()
     b.output(output, stdout_warning=True)
     b.fit(job)
     return BuiltPrompt(b, "")
@@ -761,6 +783,11 @@ def _prompt_synthesis(job, common, extra, output):
     b.set("verdict_options", VERDICT_OPTIONS)
     b.set("holistic_content", extra.get("holistic_content") or "_No holistic assessment available._")
     b.set("merged_content", extra["merged_content"])
+    # The step that authors new cross-cutting findings is numbered by the
+    # template, and the two modes number it differently.
+    b.execution_claim_guard(
+        cross_cutting_step=_SYNTHESIS_CROSS_CUTTING_STEP[job.mode],
+    )
     b.output(output)
     # Synthesis has all findings in merged_content — diff is supplementary,
     # so allow it to shrink to 0 rather than blowing the budget.
@@ -819,6 +846,7 @@ def _prompt_group(job, common, extra, output):
     b.set("group_count", extra["group_count"])
     b.set("group_name", extra["group_name"])
     b.set("group_files_formatted", extra["group_files_formatted"])
+    b.execution_claim_guard()
     b.output(output)
     b.fit(job, file_filter=file_filter, skip_project_context=True)
     return BuiltPrompt(b, str(extra["group_idx"]))

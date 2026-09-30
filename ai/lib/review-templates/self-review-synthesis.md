@@ -35,6 +35,8 @@ ${output_block}
 ## Turn budget
 You have ${max_turns} turns total. Your FIRST action must be writing the review file — all the content you need is already in this prompt. Do not read any source files before writing. Use remaining turns to verify Must-fix and Should-fix claims and update the file via Edit.
 
+${execution_claim_guard}
+
 PR branch checked out at: ${wt_path} — you may read files to verify cross-references.
 ${prior_section}
 ${reply_threads}

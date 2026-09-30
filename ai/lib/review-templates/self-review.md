@@ -66,6 +66,8 @@ review file empty, and a run that ends there — out of turns, or because you
 decided you were done — reports nothing at all. If a claim needs a shell to
 settle and you have not written the file yet, write the file with the claim
 marked unverified and settle it afterwards.
+
+${execution_claim_guard}
 ${issue_section}
 ${prior_section}
 ${reply_threads}

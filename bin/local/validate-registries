@@ -599,18 +599,52 @@ _validate_registry() {
   esac
 }
 
+# _check_claimed_once NOUN VERB ENTRY... — one name may be claimed by one file.
+#
+# ENTRY is "name:source". Reports one error per over-claimed name, naming every
+# file that claims it, in the order they were collected.
+#
+# Both callers previously compared each entry against the last source seen and
+# overwrote it, which reports N-1 overlapping pairs for N claimants: three files
+# claiming one name gave "a and b" then "b and c", never naming a-and-c as
+# related and never saying three files were involved. Worse for the tool check,
+# where the surviving claimant is the one the MCP server actually keeps: the
+# second error named neither the kept file nor the last one to lose, so the
+# message pointed at no action. Accumulating every source and reporting once
+# per name says what is true — which files collide, and which one wins.
+_check_claimed_once() {
+  local noun="$1" verb="$2"
+  shift 2
+  # Insertion order, tracked separately: bash associative arrays do not keep it,
+  # and an error that lists claimants in hash order names a different "first"
+  # than the one discovery keeps.
+  local -a names=()
+  local -A claims=()
+  local entry name source
+  for entry in "$@"; do
+    name="${entry%%:*}"
+    source="${entry#*:}"
+    if [[ -z "${claims[$name]:-}" ]]; then
+      names+=("$name")
+      claims[$name]="$source"
+      continue
+    fi
+    # A file listing one name twice is the per-file duplicate check's to report.
+    [[ " ${claims[$name]} " == *" $source "* ]] && continue
+    claims[$name]+=" $source"
+  done
+
+  local -a sources
+  for name in "${names[@]}"; do
+    read -r -a sources <<< "${claims[$name]}"
+    (( ${#sources[@]} > 1 )) || continue
+    _fail "$noun '$name' $verb in multiple registries: ${sources[*]}"
+  done
+}
+
 # Cross-registry duplicate check: no env var name should appear in multiple registries.
 _check_cross_registry_dupes() {
-  local -A var_sources=()
-  local entry var source
-  for entry in "${ALL_ENV_VARS[@]}"; do
-    var="${entry%%:*}"
-    source="${entry#*:}"
-    if [[ -n "${var_sources[$var]:-}" && "${var_sources[$var]}" != "$source" ]]; then
-      _fail "env var '$var' defined in multiple registries: ${var_sources[$var]} and $source"
-    fi
-    var_sources[$var]="$source"
-  done
+  _check_claimed_once "env var" defined "${ALL_ENV_VARS[@]}"
 }
 
 # _check_cross_registry_tool_dupes — one tool name may be claimed by one file.
@@ -621,17 +655,10 @@ _check_cross_registry_dupes() {
 # first entry it reached and logs the rest — which leaves *which* tool a
 # client reaches decided by registry order. This is the only place that can
 # be an error rather than a log line.
+# The first source listed is the one discovery keeps, so the message names the
+# winner before the losers rather than leaving that to be inferred.
 _check_cross_registry_tool_dupes() {
-  local -A name_sources=()
-  local entry name source
-  for entry in "${ALL_TOOL_NAMES[@]}"; do
-    name="${entry%%:*}"
-    source="${entry#*:}"
-    if [[ -n "${name_sources[$name]:-}" && "${name_sources[$name]}" != "$source" ]]; then
-      _fail "tool '$name' registered in multiple registries: ${name_sources[$name]} and $source"
-    fi
-    name_sources[$name]="$source"
-  done
+  _check_claimed_once tool registered "${ALL_TOOL_NAMES[@]}"
 }
 
 # Cross-registry model-default check: exactly one env entry may claim

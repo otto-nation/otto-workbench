@@ -641,6 +641,30 @@ EOF
   [[ "$output" == *"defined in multiple registries"* ]]
 }
 
+@test "three registries claiming one env var are named in one error" {
+  # Pairwise chaining reported "a and b" then "b and c": two errors for one
+  # name, neither naming all three files.
+  for d in brew bin zsh; do
+    cat > "$TMPDIR/$d/registry.yml" << EOF
+meta:
+  section: "$d"
+  validation: none
+
+env:
+  - var: SHARED_VAR
+
+tools: []
+EOF
+  done
+
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"bin/registry.yml"* ]]
+  [[ "$output" == *"brew/registry.yml"* ]]
+  [[ "$output" == *"zsh/registry.yml"* ]]
+  [ "$(grep -c "defined in multiple registries" <<< "$output")" -eq 1 ]
+}
+
 @test "fails on one tool name registered in two bindir registries" {
   # The MCP server cannot refuse this: it discovers in the thread that also
   # serves re-discovery, so it keeps the first entry and logs the rest —
@@ -681,6 +705,38 @@ EOF
   run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"registered in multiple registries"* ]]
+}
+
+@test "three registries claiming one tool name name the kept file first" {
+  # Which file wins is the actionable half: discovery keeps the first in
+  # registry order, so the error lists it ahead of the ones it shadows.
+  for d in bin brew zsh; do
+    cat > "$TMPDIR/$d/registry.yml" << EOF
+meta:
+  section: "$d"
+  validation: bindir
+  source: bin
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: hidden
+    description: "claimed by $d"
+  - name: othertool
+    permission: false
+    visibility: hidden
+    description: "so the reverse check passes"
+EOF
+  done
+
+  run main
+  [ "$status" -ne 0 ]
+  # One line per over-claimed name, not one per colliding pair. Both names in
+  # this fixture are shared by all three files, so two lines is the whole of it
+  # — pairwise chaining would have emitted four.
+  [ "$(grep -c "registered in multiple registries" <<< "$output")" -eq 2 ]
+  # collect_registries walks in path order, so bin/ is the claimant kept.
+  [[ "$output" == *"tool 'mytool' registered in multiple registries: bin/registry.yml brew/registry.yml zsh/registry.yml"* ]]
 }
 
 # passes-at-base: the base has no cross-file check at all, so its scope is

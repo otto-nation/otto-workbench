@@ -424,6 +424,43 @@ class TestPiLogsAreReadableForWrites:
         assert not diagnosis.no_write_tool
 
 
+class TestNarrationScanIsSkippedWhenUnneeded:
+    """The narration scan is expensive, so it must not run on the common path.
+
+    `_narrated_write_contents` counts fence depth, parses JSON and matches a
+    heading regex over every assistant text block. That cost is only ever
+    worth paying when a no-write diagnosis is about to be returned; a run
+    that wrote its output has no use for the answer.
+    """
+
+    def test_a_pi_run_that_wrote_never_scans_for_narration(self, tmp_path, monkeypatch):
+        def _boom(records):
+            raise AssertionError("narration scan ran despite a successful write")
+
+        monkeypatch.setattr(review_agent, "_narrated_write_contents", _boom)
+        log_path = _write_log(
+            tmp_path,
+            _pi_tool("write", path="/out/review.md"),
+            json.dumps({"type": "turn_end"}),
+            _pi_result(subtype="success"),
+        )
+        diagnosis = review_agent.diagnose_missing_output(log_path)
+        assert not diagnosis.no_write_tool
+
+    def test_a_claude_run_that_wrote_never_scans_for_narration(self, tmp_path, monkeypatch):
+        def _boom(records):
+            raise AssertionError("narration scan ran despite a successful write")
+
+        monkeypatch.setattr(review_agent, "_narrated_write_contents", _boom)
+        log_path = _write_log(
+            tmp_path,
+            _tool_use("Write", file_path="review.md", content="body"),
+            _result(subtype="success"),
+        )
+        diagnosis = review_agent.diagnose_missing_output(log_path)
+        assert not diagnosis.no_write_tool
+
+
 class TestAPiTransportFailureIsNotACompletedRun:
     """Pi records a failed API call on `agent_end`, not on `result`.
 

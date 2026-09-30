@@ -127,6 +127,9 @@ else
 fi
 
 if (( _gitleaks_status == 0 )); then
+  # _pass prints the step's tick and nothing else: a clean scan's --verbose
+  # progress output in $_gitleaks_output is intentionally discarded, because
+  # there is nothing in it worth showing when there is nothing to act on.
   _pass
 elif (( _gitleaks_status == _GITLEAKS_LEAK_EXIT )); then
   _fail "$_gitleaks_output"

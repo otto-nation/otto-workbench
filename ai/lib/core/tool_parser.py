@@ -216,7 +216,7 @@ def value_taking_options(parser: ArgumentParser) -> list[str]:
                 "consume exactly one value (nargs=None or 1). Callers skip a fixed "
                 "one token after such an option, so answering for this one would "
                 "misclassify the next. Give the option a single value, or teach both "
-                "this function and _positional_index in ai/bin/pr to carry a count."
+                "this function and positional_index in cli.dispatch to carry a count."
             )
         options.update(action.option_strings)
     return sorted(options)

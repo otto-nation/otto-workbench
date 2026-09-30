@@ -700,8 +700,8 @@ readiness.
 
 ### `otto-mcp-server`
 
-Dynamic MCP server. Discovers workbench scripts and exposes them to any MCP client over
-stdio. Registered in `~/.claude.json` as `otto-workbench` by `otto-workbench ai sync`.
+MCP server. Offers the tools the component registries declare, over stdio. Registered in
+`~/.claude.json` as `otto-workbench` by `otto-workbench ai sync`.
 
 ```
 otto-mcp-server

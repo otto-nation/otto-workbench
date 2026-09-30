@@ -37,7 +37,6 @@ from cli import dispatch
 from cli import review_modes
 from cli.needs import Need
 from cli.pr_commands import (
-    EXIT_BUDGET_EXHAUSTED,
     cmd_create,
     cmd_fix,
     cmd_gc,
@@ -284,9 +283,12 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     """
     argv = list(sys.argv[1:] if argv is None else argv)
 
-    # Before the interrupt handler and before any parse: the MCP server runs
-    # `ai/bin/pr --tool-schema` to discover the tool, and that must not
-    # resolve a context or take a lock to answer a question about syntax.
+    # Before the interrupt handler and before any parse: `ai/bin/pr
+    # --tool-schema` answers a question about syntax, and that must not
+    # resolve a context or take a lock to do it. The MCP server no longer
+    # runs this to discover the tool — it imports `cli.schema.tool_schema`
+    # directly — but a reader invoking the binary directly still needs this
+    # answered up front.
     #
     # A subcommand named ahead of the flag answers for itself. `pr ci
     # --tool-schema` reports `CIDomain` where `pr --tool-schema` reports the

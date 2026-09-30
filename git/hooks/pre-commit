@@ -142,6 +142,9 @@ elif (( _gitleaks_status != 0 )); then
   echo "    mise doctor" >&2
   exit 1
 fi
+# _gitleaks_status == 0 falls through to here: a clean scan's --verbose
+# progress output in $_gitleaks_output is intentionally discarded — there is
+# nothing in it worth showing when there is nothing to act on.
 
 # Delegate to the repo-local hook if present (bypassed when core.hooksPath is set globally).
 #

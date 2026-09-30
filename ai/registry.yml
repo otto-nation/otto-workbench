@@ -137,7 +137,7 @@ tools:
   - name: otto-mcp-server
     permission: false
     visibility: hidden
-    description: "Dynamic MCP server — discovers tool-schema scripts and exposes them to MCP clients"
+    description: "MCP server — offers the tools the component registries declare, with schemas imported in-process"
 
   - name: build-otto-ai-tools-tarball
     permission: false

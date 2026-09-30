@@ -16,7 +16,7 @@ import pytest
 
 # `reviews_dir` is not imported — pytest discovers conftest fixtures itself,
 # and importing one shadows the fixture with a plain function.
-from conftest import (assert_no_worktree_exit, command_spec, load_script,
+from conftest import (assert_no_worktree_exit, command_spec,
                       make_ctx, seed_review)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -25,11 +25,12 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-pr_cli = load_script("pr_cli", BIN_DIR / "pr")
+from cli import pr as pr_cli  # noqa: E402
 
 from cli import dispatch  # noqa: E402
 from cli import pr_commands  # noqa: E402
 from cli import registry  # noqa: E402
+from cli import schema  # noqa: E402
 from core import proc  # noqa: E402
 from core import publishing  # noqa: E402
 from core import run_lock  # noqa: E402
@@ -89,26 +90,31 @@ def test_is_pr_target_empty():
 
 
 def _run_main(*argv):
-    """Run pr_cli.main() with the given argv, catching SystemExit."""
+    """Run `cli.pr.main` with the given argv and return its exit code.
+
+    `main` returns rather than exiting now, matching every other
+    `cli.<name>.main`; the `ai/bin/pr` shim does the `sys.exit`. SystemExit
+    is still caught because the refusal paths below it — an unserved
+    `--schema-version`, a target a command cannot resolve — raise it from a
+    library, and in production `publishing.call_entry_point` is what turns
+    those back into a code.
+
+    `bin_dir` is passed the way the shim passes it. Patching the branch check
+    makes `update_to_remote` treat the checkout as being on the wrong branch
+    and return early, without swallowing the call that tests of the fetch
+    axis still need to observe.
+    """
     mock_trail = MagicMock()
-    # The old `pr_cli.subprocess.run` patch replaced the process-wide
-    # `subprocess.run` (pr_cli imported the module), so git against the
-    # symbolic `/wt` worktree never ran. Patching the branch check directly so
-    # `update_to_remote` treats the checkout as being on the wrong branch and
-    # returns early, without swallowing the call that tests of the fetch axis
-    # still need to observe.
-    with patch("sys.argv", ["pr"] + list(argv)), \
-         patch("pr_cli.Trail.start", return_value=mock_trail), \
+    with patch("cli.pr.Trail.start", return_value=mock_trail), \
          patch("pr.sync.git_topology.current_branch_quiet", return_value=None):
         try:
-            pr_cli.main()
+            return pr_cli.main(list(argv), bin_dir=BIN_DIR)
         except SystemExit as e:
             return e.code
-    return None
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_global_flags_after_subcommand(mock_resolve, mock_call):
     """Global flags like --repo-dir work after the subcommand name."""
     mock_resolve.return_value = make_ctx()
@@ -120,7 +126,7 @@ def test_global_flags_after_subcommand(mock_resolve, mock_call):
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_global_flags_before_subcommand(mock_resolve, mock_call):
     """Global flags also work before the subcommand name."""
     mock_resolve.return_value = make_ctx()
@@ -132,7 +138,7 @@ def test_global_flags_before_subcommand(mock_resolve, mock_call):
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_global_flags_mixed_with_subcommand_flags(mock_resolve, mock_call):
     """--repo-dir after subcommand doesn't swallow subcommand-specific flags."""
     mock_resolve.return_value = make_ctx()
@@ -145,7 +151,7 @@ def test_global_flags_mixed_with_subcommand_flags(mock_resolve, mock_call):
 
 
 @patch("cli.dispatch.print_delegate_help")
-@patch("pr_cli.pr_context.resolve", side_effect=AssertionError("resolve must not be called"))
+@patch("cli.pr.pr_context.resolve", side_effect=AssertionError("resolve must not be called"))
 def test_help_flag_skips_context_resolution(mock_resolve, mock_help):
     rc = _run_main("ci", "--help")
     assert rc == 0
@@ -155,7 +161,7 @@ def test_help_flag_skips_context_resolution(mock_resolve, mock_help):
 
 
 @patch("cli.dispatch.print_delegate_help")
-@patch("pr_cli.pr_context.resolve", side_effect=AssertionError("resolve must not be called"))
+@patch("cli.pr.pr_context.resolve", side_effect=AssertionError("resolve must not be called"))
 def test_help_short_flag_skips_context_resolution(mock_resolve, mock_help):
     rc = _run_main("ci", "-h")
     assert rc == 0
@@ -207,7 +213,7 @@ def test_run_delegate_returns_exit_code():
 def test_cmd_review_injects_self_when_no_target(mock_call):
     mock_call.return_value = 0
     ctx = make_ctx(pr_number=None)
-    pr_cli.cmd_review([], ctx)
+    pr_cli.cmd_review([], ctx, bin_dir=BIN_DIR)
     cmd = mock_call.call_args[0][1]
     assert "--self" in cmd
 
@@ -216,7 +222,7 @@ def test_cmd_review_injects_self_when_no_target(mock_call):
 def test_cmd_review_no_self_when_pr_number(mock_call):
     mock_call.return_value = 0
     ctx = make_ctx()
-    pr_cli.cmd_review(["123"], ctx)
+    pr_cli.cmd_review(["123"], ctx, bin_dir=BIN_DIR)
     cmd = mock_call.call_args[0][1]
     self_count = cmd.count("--self")
     assert self_count == 0
@@ -226,7 +232,7 @@ def test_cmd_review_no_self_when_pr_number(mock_call):
 def test_cmd_review_no_self_when_pr_url(mock_call):
     mock_call.return_value = 0
     ctx = make_ctx()
-    pr_cli.cmd_review(["https://github.com/owner/repo/pull/99"], ctx)
+    pr_cli.cmd_review(["https://github.com/owner/repo/pull/99"], ctx, bin_dir=BIN_DIR)
     cmd = mock_call.call_args[0][1]
     assert "--self" not in cmd
 
@@ -236,7 +242,7 @@ def test_cmd_review_no_self_when_original_pr(mock_call):
     """--pr consumed by global parser still prevents --self injection."""
     mock_call.return_value = 0
     ctx = make_ctx()
-    pr_cli.cmd_review([], ctx, original_pr="1206")
+    pr_cli.cmd_review([], ctx, original_pr="1206", bin_dir=BIN_DIR)
     cmd = mock_call.call_args[0][1]
     assert "--self" not in cmd
 
@@ -246,7 +252,7 @@ def test_cmd_review_no_self_when_ctx_has_pr(mock_call):
     """Auto-detected PR number in context prevents --self injection."""
     mock_call.return_value = 0
     ctx = make_ctx(pr_number=99)
-    pr_cli.cmd_review([], ctx)
+    pr_cli.cmd_review([], ctx, bin_dir=BIN_DIR)
     cmd = mock_call.call_args[0][1]
     assert "--self" not in cmd
 
@@ -255,7 +261,7 @@ def test_cmd_review_no_self_when_ctx_has_pr(mock_call):
 def test_cmd_review_no_double_self(mock_call):
     mock_call.return_value = 0
     ctx = make_ctx()
-    pr_cli.cmd_review(["--self"], ctx)
+    pr_cli.cmd_review(["--self"], ctx, bin_dir=BIN_DIR)
     cmd = mock_call.call_args[0][1]
     assert cmd.count("--self") == 1
 
@@ -265,7 +271,7 @@ def test_cmd_review_no_self_when_branch_positional(mock_call):
     """A branch name positional should not trigger --self injection."""
     mock_call.return_value = 0
     ctx = make_ctx(pr_number=None)
-    pr_cli.cmd_review(["kgn/go-update"], ctx)
+    pr_cli.cmd_review(["kgn/go-update"], ctx, bin_dir=BIN_DIR)
     cmd = mock_call.call_args[0][1]
     assert "--self" not in cmd
     assert "kgn/go-update" in cmd
@@ -275,7 +281,7 @@ def test_cmd_review_no_self_when_branch_positional(mock_call):
 def test_cmd_review_passes_flags_through(mock_call):
     mock_call.return_value = 0
     ctx = make_ctx()
-    pr_cli.cmd_review(["--self", "--fix", "--no-post"], ctx)
+    pr_cli.cmd_review(["--self", "--fix", "--no-post"], ctx, bin_dir=BIN_DIR)
     cmd = mock_call.call_args[0][1]
     assert "--fix" in cmd
     assert "--no-post" in cmd
@@ -287,7 +293,7 @@ def test_cmd_review_passes_flags_through(mock_call):
 def test_review_recover_mutually_exclusive_with_post():
     """--recover and --post are mutually exclusive."""
     ctx = make_ctx()
-    rc = pr_cli.cmd_review(["--recover", "--post"], ctx)
+    rc = pr_cli.cmd_review(["--recover", "--post"], ctx, bin_dir=BIN_DIR)
     assert rc == 1
 
 
@@ -295,7 +301,7 @@ def test_review_recover_passes_through_to_delegate():
     """--recover alone is forwarded to claude-review."""
     ctx = make_ctx()
     with patch("core.publishing.call_entry_point", return_value=0) as mock_call:
-        pr_cli.cmd_review(["--recover", "42"], ctx)
+        pr_cli.cmd_review(["--recover", "42"], ctx, bin_dir=BIN_DIR)
     assert mock_call.call_args[0][0] == "cli.claude_review:main"
     cmd = mock_call.call_args[0][1]
     assert "--recover" in cmd
@@ -310,7 +316,7 @@ def test_cmd_review_post_delegates_to_review_post(mock_call, reviews_dir):
     review_dir = reviews_dir / "repo-42"
     review_dir.mkdir()
     (review_dir / "review.md").write_text("# Review")
-    rc = pr_cli.cmd_review(["--post"], make_ctx(pr_number=42))
+    rc = pr_cli.cmd_review(["--post"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
     assert rc == 0
     cmd = mock_call.call_args[0][1]
     assert mock_call.call_args[0][0] == "cli.review_post:main"
@@ -324,7 +330,7 @@ def test_cmd_review_post_passes_submit(mock_call, reviews_dir):
     review_dir = reviews_dir / "repo-42"
     review_dir.mkdir()
     (review_dir / "review.md").write_text("# Review")
-    rc = pr_cli.cmd_review(["--post", "--submit"], make_ctx(pr_number=42))
+    rc = pr_cli.cmd_review(["--post", "--submit"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
     assert rc == 0
     cmd = mock_call.call_args[0][1]
     assert "--submit" in cmd
@@ -344,7 +350,7 @@ def test_cmd_review_post_names_the_branch_it_publishes_for(mock_call, reviews_di
     review_dir.mkdir()
     (review_dir / "review.md").write_text("# Review")
 
-    pr_cli.cmd_review(["--post"], make_ctx(pr_number=42, branch="isaac/feat/x"))
+    pr_cli.cmd_review(["--post"], make_ctx(pr_number=42, branch="isaac/feat/x"), bin_dir=BIN_DIR)
 
     cmd = mock_call.call_args[0][1]
     assert "--expect-ref" in cmd
@@ -352,7 +358,7 @@ def test_cmd_review_post_names_the_branch_it_publishes_for(mock_call, reviews_di
 
 
 def test_cmd_review_post_fails_without_review_file(reviews_dir):
-    rc = pr_cli.cmd_review(["--post"], make_ctx(pr_number=42))
+    rc = pr_cli.cmd_review(["--post"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
     assert rc == 1
 
 
@@ -366,7 +372,7 @@ def test_cmd_review_post_finds_review_via_meta(mock_call, reviews_dir):
     (alt_dir / "meta.json").write_text(json.dumps({
         "repo": "owner/repo", "pr_number": "42",
     }))
-    rc = pr_cli.cmd_review(["--post"], make_ctx(pr_number=42))
+    rc = pr_cli.cmd_review(["--post"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
     assert rc == 0
     cmd = mock_call.call_args[0][1]
     assert mock_call.call_args[0][0] == "cli.review_post:main"
@@ -437,7 +443,7 @@ def test_run_delegate_omits_branch_when_none():
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_main_pr_flag_does_not_pass_both_to_delegate(mock_resolve, mock_call):
     """Regression: pr --pr 1927 comments must not pass both --branch and --pr."""
     mock_resolve.return_value = make_ctx(branch="feat/derived", pr_number=1927)
@@ -450,7 +456,7 @@ def test_main_pr_flag_does_not_pass_both_to_delegate(mock_resolve, mock_call):
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_main_branch_flag_prefers_resolved_pr(mock_resolve, mock_call):
     """pr --branch feat/foo comments forwards --pr when a PR was resolved."""
     mock_resolve.return_value = make_ctx(branch="feat/foo", pr_number=42)
@@ -463,7 +469,7 @@ def test_main_branch_flag_prefers_resolved_pr(mock_resolve, mock_call):
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_main_auto_detected_forwards_pr_only(mock_resolve, mock_call):
     """Bare 'pr comments' (no flags) forwards auto-detected --pr, not --branch."""
     mock_resolve.return_value = make_ctx(branch="feat/derived", pr_number=42)
@@ -518,7 +524,7 @@ def test_cmd_review_does_not_rewrite_domain_after_delegate(
         mock_call, mock_sync, reviews_dir):
     """claude-review already wrote the domain; pr must not write it again."""
     mock_call.return_value = 0
-    rc = pr_cli.cmd_review(["123"], make_ctx(pr_number=42))
+    rc = pr_cli.cmd_review(["123"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
     assert rc == 0
     mock_sync.assert_not_called()
 
@@ -528,7 +534,7 @@ def test_cmd_review_repair_succeeds_with_review_file(mock_sync, reviews_dir):
     review_dir = reviews_dir / "repo-42"
     review_dir.mkdir()
     (review_dir / "review.md").write_text("## Nit\n- **[N1]** path:1 — style\n")
-    rc = pr_cli.cmd_review(["--repair"], make_ctx(pr_number=42))
+    rc = pr_cli.cmd_review(["--repair"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
     assert rc == 0
     mock_sync.assert_called_once()
 
@@ -537,14 +543,14 @@ def test_cmd_review_repair_succeeds_with_review_file(mock_sync, reviews_dir):
 def test_cmd_review_repair_falls_back_to_rebuild(mock_call, reviews_dir):
     (reviews_dir / "repo-42").mkdir()
     mock_call.return_value = 0
-    rc = pr_cli.cmd_review(["--repair"], make_ctx(pr_number=42))
+    rc = pr_cli.cmd_review(["--repair"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
     assert rc == 0
     assert mock_call.call_args[0][0] == "cli.review_rebuild:main"
 
 
 def test_cmd_review_repair_no_pr_fails():
     ctx = make_ctx(pr_number=None)
-    rc = pr_cli.cmd_review(["--repair"], ctx)
+    rc = pr_cli.cmd_review(["--repair"], ctx, bin_dir=BIN_DIR)
     assert rc == 1
 
 
@@ -555,7 +561,7 @@ def test_cmd_review_summary_outputs_json(reviews_dir, capsys):
     review_dir = reviews_dir / "repo-42"
     review_dir.mkdir()
     (review_dir / "review.md").write_text("## Must fix\n- **[M1]** path:1 — bug\n")
-    rc = pr_cli.cmd_review(["--summary"], make_ctx(pr_number=42))
+    rc = pr_cli.cmd_review(["--summary"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
     assert rc == 0
     out = capsys.readouterr().out
     assert out.startswith("REVIEW_SUMMARY:")
@@ -564,7 +570,7 @@ def test_cmd_review_summary_outputs_json(reviews_dir, capsys):
 
 
 def test_cmd_review_summary_fails_without_review(reviews_dir):
-    rc = pr_cli.cmd_review(["--summary"], make_ctx(pr_number=42))
+    rc = pr_cli.cmd_review(["--summary"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
     assert rc == 1
 
 
@@ -573,13 +579,13 @@ def test_cmd_review_summary_fails_without_review(reviews_dir):
 
 def test_cmd_review_mutual_exclusivity():
     ctx = make_ctx()
-    rc = pr_cli.cmd_review(["--post", "--repair"], ctx)
+    rc = pr_cli.cmd_review(["--post", "--repair"], ctx, bin_dir=BIN_DIR)
     assert rc == 1
 
 
 def test_cmd_review_mutual_exclusivity_three():
     ctx = make_ctx()
-    rc = pr_cli.cmd_review(["--post", "--repair", "--summary"], ctx)
+    rc = pr_cli.cmd_review(["--post", "--repair", "--summary"], ctx, bin_dir=BIN_DIR)
     assert rc == 1
 
 
@@ -929,7 +935,7 @@ def test_cmd_fix_reports_a_failing_describe(mock_load, mock_call):
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_main_positional_branch_not_forwarded_as_extra(mock_resolve, mock_call):
     """Regression: 'pr rebase my-branch' must not pass my-branch as a bare positional."""
     mock_resolve.return_value = make_ctx(branch="my-branch", pr_number=None)
@@ -942,7 +948,7 @@ def test_main_positional_branch_not_forwarded_as_extra(mock_resolve, mock_call):
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_main_positional_pr_number_not_forwarded_as_extra(mock_resolve, mock_call):
     """Regression: 'pr ci 42' must not pass 42 as a bare positional."""
     mock_resolve.return_value = make_ctx(pr_number=42)
@@ -987,7 +993,7 @@ def _delegate_cmd(mock_call):
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_reply_id_is_not_eaten_as_the_positional_target(mock_resolve, mock_call):
     """--reply's value is its argument, not the PR number."""
     mock_resolve.return_value = make_ctx(pr_number=None, branch=None)
@@ -1003,7 +1009,7 @@ def test_reply_id_is_not_eaten_as_the_positional_target(mock_resolve, mock_call)
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_body_file_path_is_not_eaten_after_an_inline_reply(mock_resolve, mock_call):
     """--reply=ID is self-contained, so --body-file's path survives too."""
     mock_resolve.return_value = make_ctx(pr_number=None, branch=None)
@@ -1016,7 +1022,7 @@ def test_body_file_path_is_not_eaten_after_an_inline_reply(mock_resolve, mock_ca
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_reply_value_survives_an_explicit_branch(mock_resolve, mock_call):
     """An explicit --branch skips classification entirely; extra stays intact."""
     mock_resolve.return_value = make_ctx(branch="some/branch", pr_number=None)
@@ -1032,7 +1038,7 @@ def test_reply_value_survives_an_explicit_branch(mock_resolve, mock_call):
 
 @pytest.mark.parametrize("flag", ["--fix", "--triage"])
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_target_after_a_boolean_flag_is_still_the_target(mock_resolve, mock_call, flag):
     """A boolean flag consumes nothing, so the token after it is the PR number."""
     mock_resolve.return_value = make_ctx(pr_number=int(_TEST_PR))
@@ -1047,7 +1053,7 @@ def test_target_after_a_boolean_flag_is_still_the_target(mock_resolve, mock_call
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_review_takes_a_bare_pr_number(mock_resolve, mock_call):
     mock_resolve.return_value = make_ctx(pr_number=None, branch=None)
     mock_call.return_value = 0
@@ -1061,7 +1067,7 @@ def test_review_takes_a_bare_pr_number(mock_resolve, mock_call):
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_no_positional_candidate_skips_the_arity_read(mock_resolve, mock_call):
     """The common case must not pay for a delegate import."""
     mock_resolve.return_value = make_ctx()
@@ -1072,7 +1078,7 @@ def test_no_positional_candidate_skips_the_arity_read(mock_resolve, mock_call):
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve_local")
+@patch("cli.pr.pr_context.resolve_local")
 def test_status_needs_no_delegate_to_classify(mock_resolve, mock_call, worktree):
     """`pr status` is internal, has no delegate, and takes no positional."""
     mock_resolve.return_value = make_ctx(worktree_root=worktree)
@@ -1083,7 +1089,7 @@ def test_status_needs_no_delegate_to_classify(mock_resolve, mock_call, worktree)
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_internal_command_still_classifies_a_positional(mock_resolve, mock_call,
                                                         worktree):
     """`pr fix 3057` has no delegate to ask, but 3057 is still the target."""
@@ -1096,7 +1102,7 @@ def test_internal_command_still_classifies_a_positional(mock_resolve, mock_call,
     assert read == ["fix"], "an internal command is asked, and answers empty"
 
 
-# ── _positional_index ──────────────────────────────────────────────────────
+# ── positional_index ───────────────────────────────────────────────────────
 
 
 def test_positional_index_skips_a_flag_value():
@@ -1153,7 +1159,7 @@ def test_delegate_value_flags_answers_from_the_delegates_own_parser():
 
 def test_every_command_with_a_delegate_has_a_parser_factory():
     """A delegate `pr` cannot read arity from misclassifies its own target."""
-    assert (set(dispatch._PARSER_FACTORIES)
+    assert (set(dispatch.PARSER_FACTORIES)
             == {name for name, spec in registry.COMMANDS.items() if spec.script})
 
 
@@ -1167,11 +1173,11 @@ def test_a_parser_factory_takes_no_arguments(command):
     `pr`'s positional scan rather than from the delegate that owns it. Nothing
     else makes this contract structural.
 
-    Parametrized over the registry rather than over `_PARSER_FACTORIES`, whose
+    Parametrized over the registry rather than over `PARSER_FACTORIES`, whose
     absence at the merge base would fail collection for this whole file and
     take every other test's base result with it.
     """
-    factory = dispatch._PARSER_FACTORIES.get(command)
+    factory = dispatch.PARSER_FACTORIES.get(command)
     if factory is None:
         pytest.skip(f"{command} has no delegate parser")
     module_name, attr = factory.split(":", 1)
@@ -1207,7 +1213,7 @@ def test_every_delegate_answers_the_arity_question(command):
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_an_empty_arity_answer_still_dispatches_the_command(mock_resolve, mock_call):
     """A command whose delegate names no value-taking flag still runs."""
     mock_resolve.return_value = make_ctx(pr_number=int(_TEST_PR))
@@ -1223,7 +1229,7 @@ def test_an_empty_arity_answer_still_dispatches_the_command(mock_resolve, mock_c
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_main_installs_sigint_handler(mock_resolve, mock_call):
     """main() installs a SIGINT handler so Ctrl+C exits cleanly without a traceback."""
     import signal
@@ -1316,7 +1322,7 @@ _CREATE_VALUE_FLAGS = [
 
 @pytest.mark.parametrize("flag,value", _CREATE_VALUE_FLAGS)
 @patch("cli.pr_commands.subprocess.run")
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_create_forwards_a_flag_value_intact(mock_resolve, mock_run, flag, value):
     """The value reaches task pr:create as the flag's argument."""
     mock_resolve.return_value = make_ctx(pr_number=None, branch=None)
@@ -1330,7 +1336,7 @@ def test_create_forwards_a_flag_value_intact(mock_resolve, mock_run, flag, value
 
 @pytest.mark.parametrize("flag,value", _CREATE_VALUE_FLAGS)
 @patch("cli.pr_commands.subprocess.run")
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_create_does_not_resolve_a_flag_value_as_a_target(
         mock_resolve, mock_run, flag, value):
     """A swallowed value also reached resolve(), warning about a branch nobody named."""
@@ -1342,7 +1348,7 @@ def test_create_does_not_resolve_a_flag_value_as_a_target(
 
 
 @patch("cli.pr_commands.subprocess.run")
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_create_forwards_a_title_that_reads_like_a_pr_number(mock_resolve, mock_run):
     """A target-shaped value is the case the scan could never tell apart."""
     mock_resolve.return_value = make_ctx(pr_number=None, branch=None)
@@ -1354,7 +1360,7 @@ def test_create_forwards_a_title_that_reads_like_a_pr_number(mock_resolve, mock_
 
 
 @patch("cli.pr_commands.subprocess.run")
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_create_still_forwards_valueless_flags(mock_resolve, mock_run):
     """The flags that always survived have to keep surviving."""
     mock_resolve.return_value = make_ctx(pr_number=None, branch=None)
@@ -1393,7 +1399,7 @@ def test_a_command_with_no_delegate_declares_no_value_taking_flag(command):
         f"{command} has no delegate to read arity from — the value would be classified "
         f"as the command's target and dropped from the forwarded argv. Either give "
         f"{command} takes_target=False if it takes no positional target, or give it "
-        f"a delegate whose build_parser is registered in _PARSER_FACTORIES."
+        f"a delegate whose build_parser is registered in PARSER_FACTORIES."
     )
 
 
@@ -1481,7 +1487,7 @@ def _lock_file(target_dir):
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_main_locks_the_target_for_a_mutating_command(
         mock_resolve, mock_call, worktree):
     """worktree_root and target_dir are different directories here on purpose:
@@ -1503,7 +1509,7 @@ def test_main_locks_the_target_for_a_mutating_command(
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_main_locks_a_bare_repo_run(mock_resolve, mock_call, tmp_path):
     """Regression: a bare repo (no worktree_root) used to skip the lock
     entirely via the old `if ctx.worktree_root:` guard. target_dir is never
@@ -1516,7 +1522,7 @@ def test_main_locks_a_bare_repo_run(mock_resolve, mock_call, tmp_path):
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve_local")
+@patch("cli.pr.pr_context.resolve_local")
 def test_main_does_not_lock_for_status(mock_resolve, mock_call, worktree):
     """status is read-only, so it must never block on a run in flight."""
     target = worktree / "target"
@@ -1529,7 +1535,7 @@ def test_main_does_not_lock_for_status(mock_resolve, mock_call, worktree):
 @patch("cli.pr_commands.review_gc.prune_merged_targets", return_value=review_gc.PruneOutcome())
 @patch("cli.pr_commands.review_gc.prune_merged_reviews", return_value=review_gc.PruneOutcome())
 @patch("cli.pr_commands.review_gc.gc_reviews", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_main_locks_for_gc(mock_resolve, _gc, _prune, _prune_targets, worktree):
     """gc deletes the state directory, so it is not safe to run unlocked.
 
@@ -1547,7 +1553,7 @@ def test_main_locks_for_gc(mock_resolve, _gc, _prune, _prune_targets, worktree):
 @patch("cli.pr_commands.review_gc.prune_merged_targets", return_value=review_gc.PruneOutcome())
 @patch("cli.pr_commands.review_gc.prune_merged_reviews", return_value=review_gc.PruneOutcome())
 @patch("cli.pr_commands.review_gc.gc_reviews", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_gc_skips_own_target_when_pruning(
         mock_resolve, _gc, _prune, mock_prune_targets, worktree):
     """cmd_gc must pass its own target as `skip` — gc holds that lock, so a
@@ -1575,7 +1581,7 @@ def test_the_maintenance_script_branches_on_the_exit_code_pr_actually_uses():
        return_value=review_gc.PruneOutcome(0, cut_short=True))
 @patch("cli.pr_commands.review_gc.prune_merged_reviews", return_value=review_gc.PruneOutcome())
 @patch("cli.pr_commands.review_gc.gc_reviews", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_gc_cut_short_by_the_budget_is_not_reported_as_nothing_to_clean(
         mock_resolve, _gc, _prune, _prune_targets, worktree, capsys):
     """The headline symptom: a sweep that could not ask reported success.
@@ -1600,7 +1606,7 @@ def test_gc_cut_short_by_the_budget_is_not_reported_as_nothing_to_clean(
        return_value=review_gc.PruneOutcome(0, cut_short=True))
 @patch("cli.pr_commands.review_gc.prune_merged_reviews", return_value=review_gc.PruneOutcome())
 @patch("cli.pr_commands.review_gc.gc_reviews", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_gc_cut_short_records_a_trail_event(
         mock_resolve, _gc, _prune, _prune_targets, worktree):
     """The sweep is unattended, so the console line has no reader.
@@ -1613,23 +1619,23 @@ def test_gc_cut_short_records_a_trail_event(
     mock_trail = MagicMock()
 
     with patch("sys.argv", ["pr", "--repo-dir", str(worktree), "gc"]), \
-         patch("pr_cli.Trail.start", return_value=mock_trail):
+         patch("cli.pr.Trail.start", return_value=mock_trail):
         try:
-            pr_cli.main()
+            pr_cli.main(bin_dir=BIN_DIR)
         except SystemExit:
             pass
 
     assert mock_trail.summary.call_args.args[0] == "gc_cut_short"
 
 
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_main_reports_contention_and_exits_1(mock_resolve, worktree, capsys):
     target = worktree / "target"
     mock_resolve.return_value = make_ctx(worktree_root=worktree, target_dir=target)
     busy = run_lock.LockBusy(
         {"pid": 15461, "command": "pr review --self --fix", "started": "t"}, target)
 
-    with patch("pr_cli.run_lock.acquire", side_effect=busy):
+    with patch("cli.pr.run_lock.acquire", side_effect=busy):
         code = _run_main("--repo-dir", str(worktree), "comments")
     assert code == 1
     err = capsys.readouterr().err
@@ -1682,10 +1688,10 @@ def _dispatch_stage(*argv, ctx):
     what lets one parametrized test cover every command without nine sets of
     handler mocks.
     """
-    with patch("pr_cli.pr_context.resolve", return_value=ctx) as remote, \
-         patch("pr_cli.pr_context.resolve_local", return_value=ctx) as local, \
-         patch("pr_cli.pr_sync.update_to_remote", return_value=ctx) as update, \
-         patch("pr_cli._dispatch", return_value=0):
+    with patch("cli.pr.pr_context.resolve", return_value=ctx) as remote, \
+         patch("cli.pr.pr_context.resolve_local", return_value=ctx) as local, \
+         patch("cli.pr.pr_sync.update_to_remote", return_value=ctx) as update, \
+         patch("cli.pr._dispatch", return_value=0):
         _run_main(*argv)
     return SimpleNamespace(remote=remote, local=local, update=update)
 
@@ -1832,9 +1838,9 @@ def test_review_list_records_no_trail(reviews_dir, capsys):
     _a_review(reviews_dir)
     mock_trail = MagicMock()
     with patch("sys.argv", ["pr", "review", "--list", "--schema-version", "1"]), \
-         patch("pr_cli.Trail.start", return_value=mock_trail) as mock_start:
+         patch("cli.pr.Trail.start", return_value=mock_trail) as mock_start:
         try:
-            pr_cli.main()
+            pr_cli.main(bin_dir=BIN_DIR)
         except SystemExit as e:
             assert e.code in (None, 0)
     assert json.loads(capsys.readouterr().out)["reviews"]
@@ -1842,7 +1848,7 @@ def test_review_list_records_no_trail(reviews_dir, capsys):
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_non_list_dispatch_records_a_trail(mock_resolve, mock_call):
     """The exemption is scoped to `review --list`; every other dispatch still
     tells `Trail.start` to record, which is the wiring the exemption test
@@ -1851,9 +1857,9 @@ def test_non_list_dispatch_records_a_trail(mock_resolve, mock_call):
     mock_call.return_value = 0
     mock_trail = MagicMock()
     with patch("sys.argv", ["pr", "rebase"]), \
-         patch("pr_cli.Trail.start", return_value=mock_trail) as mock_start:
+         patch("cli.pr.Trail.start", return_value=mock_trail) as mock_start:
         try:
-            pr_cli.main()
+            pr_cli.main(bin_dir=BIN_DIR)
         except SystemExit:
             pass
     assert mock_start.call_args.kwargs["record"] is True
@@ -1923,18 +1929,18 @@ def test_a_command_serving_no_document_refuses_the_handshake(capsys):
 def test_the_schema_contracts_are_read_off_the_mode_table():
     """An error naming an invocation that no longer serves a document is worse
     than no error at all."""
-    assert pr_cli._schema_contracts() == ["pr review --list"]
-    assert pr_cli._served_schema_versions("review", ["--list"]) == \
+    assert schema.schema_contracts() == ["pr review --list"]
+    assert schema.served_schema_versions("review", ["--list"]) == \
         pr_cli.review_listing.SCHEMA_VERSIONS
-    assert pr_cli._served_schema_versions("review", ["--summary"]) == ()
-    assert pr_cli._served_schema_versions("status", []) == ()
+    assert schema.served_schema_versions("review", ["--summary"]) == ()
+    assert schema.served_schema_versions("status", []) == ()
 
 
 # ── push reconciliation ─────────────────────────────────────────────────────
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_every_command_reconciles_recorded_pushes_first(mock_resolve, mock_call):
     """The single entry point for the record the global pre-push hook leaves.
 
@@ -1944,7 +1950,7 @@ def test_every_command_reconciles_recorded_pushes_first(mock_resolve, mock_call)
     """
     mock_resolve.return_value = make_ctx()
     mock_call.return_value = 0
-    with patch("pr_cli.push_intent.reconcile") as reconcile:
+    with patch("cli.pr.push_intent.reconcile") as reconcile:
         reconcile.side_effect = lambda: mock_resolve.assert_not_called()
         _run_main("rebase")
     reconcile.assert_called_once_with()
@@ -1952,7 +1958,7 @@ def test_every_command_reconciles_recorded_pushes_first(mock_resolve, mock_call)
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-@patch("pr_cli.pr_context.resolve")
+@patch("cli.pr.pr_context.resolve")
 def test_a_reconciliation_that_raises_leaves_the_command_running(
         mock_resolve, mock_call, capsys):
     """Every subcommand passes through reconciliation on its way to work that
@@ -1960,7 +1966,7 @@ def test_a_reconciliation_that_raises_leaves_the_command_running(
     and it is a warning rather than silence so the bug is still findable."""
     mock_resolve.return_value = make_ctx()
     mock_call.return_value = 0
-    with patch("pr_cli.push_intent.reconcile", side_effect=RuntimeError("the record broke")):
+    with patch("cli.pr.push_intent.reconcile", side_effect=RuntimeError("the record broke")):
         _run_main("rebase")
     mock_resolve.assert_called_once()
     assert "the record broke" in capsys.readouterr().err

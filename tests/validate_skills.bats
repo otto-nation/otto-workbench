@@ -421,6 +421,65 @@ EOF
   [[ "$output" == *"does not support --tool-schema"* ]]
 }
 
+# ── output_schema naming a pr subcommand ─────────────────────────────────────
+#
+# A skill citing `pr ci` rather than `ai/bin/ci-check` names the invocation its
+# reader would type; the shim is an implementation detail of how `pr` used to
+# dispatch. These resolve through `cli.schema` in one interpreter rather than
+# executing anything, which is why there is no `_make_tool` here.
+#
+# The fake workbench borrows the real `ai/lib`, because that is the subject:
+# the resolver has to reach a genuine `cli.schema`. Nothing tracked is edited
+# — only the SKILL.md under $TMPDIR names the subcommand.
+
+_link_real_lib() {
+  mkdir -p "$FAKE_WORKBENCH/ai"
+  ln -sfn "$REPO_ROOT/ai/lib" "$FAKE_WORKBENCH/ai/lib"
+}
+
+@test "output_schema naming a pr subcommand resolves without running anything" {
+  _link_real_lib
+  _make_skill_with_tool "schema-skill" "pr ci"
+  _run_validate
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"output_schema tool 'pr ci' supports --tool-schema"* ]]
+}
+
+@test "every pr subcommand with a ToolParser delegate resolves" {
+  _link_real_lib
+  _make_skill_with_tool "rebase-skill" "pr rebase"
+  _run_validate
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"output_schema tool 'pr rebase' supports --tool-schema"* ]]
+}
+
+@test "a pr subcommand that declares no schema is refused" {
+  # `pr review` has a delegate parser, but a plain ArgumentParser — it prints
+  # prose, so it reports no schema and a skill must not claim one for it.
+  _link_real_lib
+  _make_skill_with_tool "schema-skill" "pr review"
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"'pr review' declares no schema"* ]]
+}
+
+@test "an unknown pr subcommand is refused rather than passing silently" {
+  _link_real_lib
+  _make_skill_with_tool "schema-skill" "pr nosuchcommand"
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"'pr nosuchcommand' declares no schema"* ]]
+}
+
+@test "a pr subcommand is not looked for in ai/bin" {
+  # The old resolver would have reported "not found in ai/bin/" for a name
+  # with a space in it. Reaching that message means the branch was skipped.
+  _link_real_lib
+  _make_skill_with_tool "schema-skill" "pr ci"
+  _run_validate
+  [[ "$output" != *"not found in ai/bin/"* ]]
+}
+
 # ── Mixed valid and invalid ──────────────────────────────────────────────────
 
 @test "mixed valid and invalid reports correct error count" {

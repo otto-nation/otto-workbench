@@ -6,7 +6,6 @@ import asyncio
 import json
 import logging
 import queue
-import re
 import shutil
 import stat
 import subprocess
@@ -20,27 +19,21 @@ from unittest import mock
 
 import pytest
 
-from conftest import git_out
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "claude" / "mcps"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from core import proc
 import server
 from server import (
-    PROBE_ATTEMPTS,
-    PROBE_WORKERS,
     WORKBENCH_DIR,
-    ProbeFailure,
     _args_to_cli,
+    _described,
     _extract_json,
     _log_lost_tools,
-    declares_tool_schema,
-    discover_tool_dirs,
+    _tool_schema,
     discover_tools,
     discover_with_baseline,
     discovery_fingerprint,
-    probe_tools,
     watch_for_tool_changes,
 )
 from config.tool_registry import RegistryEntry, Visibility
@@ -154,10 +147,9 @@ def _write_executable(path: Path, body: str) -> Path:
 class TestSpawnIsolation:
     """What `_run_script` asks `proc.run` for that a plain spawn does not give.
 
-    Both spawn sites go through it, so these hold for a discovery probe and a
-    tool call alike. `proc.run` owns the mechanism and `tests/proc_test.py`
-    covers it in its own right; what is asserted here is that this server asks
-    for it.
+    Tool calls go through it. `proc.run` owns the mechanism and
+    `tests/proc_test.py` covers it in its own right; what is asserted here is
+    that this server asks for it.
     """
 
     def test_a_script_that_reads_stdin_gets_eof(self, tmp_path):
@@ -183,8 +175,7 @@ class TestSpawnIsolation:
         Signalling only the direct child leaves them running against the
         account with nothing holding a handle to them. That the group kill
         reaches a grandchild is `proc.run`'s guarantee and is tested there;
-        what this asserts is that the server asks for it, on the path both the
-        probe and the tool call take.
+        what this asserts is that the server asks for it on the tool-call path.
         """
         with mock.patch.object(server.proc, "run") as run:
             server._run_script(["/bin/true"], 30)
@@ -215,29 +206,20 @@ class TestSpawnIsolation:
 
         assert (result.returncode, result.stdout, result.stderr) == (3, "out\n", "err\n")
 
-    def test_a_probe_of_a_script_that_reads_stdin_still_answers(self, tmp_path):
-        """The probe is the likeliest reader of all.
-
-        A script that does not recognise `--tool-schema` falls through to its
-        real work, and that work may read stdin — so this is the path where an
-        inherited transport is most likely to be consumed.
-        """
-        script = _write_executable(tmp_path / "hungry-tool", """\
-            #!/usr/bin/env python3
-            import json, sys
-            data = sys.stdin.read()
-            if "--tool-schema" in sys.argv:
-                json.dump({"name": "hungry-tool", "input_schema": {}, "read": data},
-                          sys.stdout)
-        """)
-
-        result = server.probe_tool(script)
-
-        assert result.ok, result.reason
-        assert result.schema["read"] == ""
-
 
 # ── Tool Discovery ────────────────────────────────────────────────────────
+
+
+def _entry(script: Path, visibility: Visibility = Visibility.BRIEF,
+           description: str = "", when_to_use: str = "",
+           usage: str = "") -> RegistryEntry:
+    return RegistryEntry(
+        name=script.name,
+        description=description or f"the {script.name} tool",
+        visibility=visibility,
+        when_to_use=when_to_use,
+        usage=usage,
+    )
 
 
 def _registered(*scripts: Path, visibility: Visibility = Visibility.BRIEF,
@@ -245,270 +227,165 @@ def _registered(*scripts: Path, visibility: Visibility = Visibility.BRIEF,
                 usage: str = "") -> dict[Path, RegistryEntry]:
     """A registry offering each of *scripts* under an entry of its own.
 
-    Discovery takes the registry as an argument for the same reason it takes
-    the directories: a case can then describe a tree the checkout does not
-    have. The real mapping — script path to entry, read out of the
-    ``registry.yml`` files — is tests/test_tool_registry.py's subject.
+    Discovery takes the registry as an argument so a case can describe a tree
+    the checkout does not have. The real mapping is
+    tests/test_tool_registry.py's subject.
     """
-    return {script.resolve(): RegistryEntry(
-        name=script.name,
-        description=description or f"the {script.name} tool",
-        visibility=visibility,
-        when_to_use=when_to_use,
-        usage=usage,
-    ) for script in scripts}
+    return {script: _entry(script, visibility=visibility, description=description,
+                           when_to_use=when_to_use, usage=usage)
+            for script in scripts}
 
 
-def _side_effect_of(script: Path) -> Path:
-    """The file _write_destructive_script's subject touches when it runs."""
-    return script.parent / "side-effect"
+def _schema_for(script: Path, name: str = "", description: str = "from the schema",
+                **extra) -> dict:
+    """A schema `_tool_schema` would return for *script* — no subprocess."""
+    document = {
+        "name": name or script.name,
+        "description": description,
+        "input_schema": {"type": "object", "properties": {}},
+        "_script": str(script),
+    }
+    document.update(extra)
+    return document
 
 
-def _write_destructive_script(directory: Path) -> Path:
-    """Write an unmarked executable whose only act is a visible side effect.
+class TestToolSchema:
+    """The import that replaced the probe. None is how a non-tool is declined."""
 
-    Nothing here answers the protocol, so anything that runs it has skipped the
-    marker check — which is the whole assertion.
-    """
-    script = directory / "destructive-script"
-    script.write_text(f"#!/bin/bash\ntouch '{_side_effect_of(script)}'\n")
-    script.chmod(script.stat().st_mode | stat.S_IXUSR)
-    return script
+    def test_pr_is_the_one_script_that_has_a_schema(self):
+        schema = _tool_schema(Path("/does/not/need/to/exist/pr"))
+
+        assert schema is not None
+        assert schema["name"] == "pr"
+        assert schema["_script"].endswith("/pr")
+        assert "input_schema" in schema
+
+    def test_a_registered_non_tool_returns_none_rather_than_raising(self):
+        """wt and otto-log are in the registry; they are not MCP tools."""
+        assert _tool_schema(Path("/usr/bin/wt")) is None
+        assert _tool_schema(Path("/usr/bin/otto-log")) is None
 
 
-def _write_marked_script(directory: Path, name: str, tool_name: str = "") -> Path:
-    """An executable at *name* answering the probe with a minimal schema.
+class TestDescribed:
+    """The registry's words win over whatever the schema carried."""
 
-    The schema names *tool_name* when given, which is how two scripts are made
-    to claim one tool — the filename and the name a script answers with are
-    independent, and discovery keys on the latter.
-    """
-    tool_name = tool_name or name
-    document = {"name": tool_name, "description": f"{tool_name}, as the script tells it",
-                "input_schema": {"type": "object", "properties": {}}}
-    directory.mkdir(parents=True, exist_ok=True)
-    script = directory / name
-    script.write_text(textwrap.dedent(f"""\
-        #!/usr/bin/env python3
-        import json, sys
-        if "--tool-schema" in sys.argv:
-            json.dump({document!r}, sys.stdout)
-            sys.exit(0)
-        open({str(_side_effect_of(script))!r}, "w").close()
-    """))
-    script.chmod(script.stat().st_mode | stat.S_IXUSR)
-    return script
+    def test_the_registry_description_replaces_the_schema_line(self):
+        schema = _schema_for(Path("/bin/pr"), description="what --help says")
+        entry = _entry(Path("/bin/pr"), description="what a client should read")
+
+        described = _described(schema, entry)
+
+        assert described["description"] == "what a client should read"
+        assert described["name"] == "pr"
+        assert schema["description"] == "what --help says"
+
+    def test_a_full_entry_answers_when_to_use_it_and_how(self):
+        """A client has no access to the rule files those two fields render into."""
+        schema = _schema_for(Path("/bin/pr"))
+        entry = _entry(
+            Path("/bin/pr"), visibility=Visibility.FULL,
+            description="what it is for", when_to_use="the moment arises",
+            usage="pr --now")
+
+        assert _described(schema, entry)["description"] == (
+            "what it is for\n\nWhen to use: the moment arises\n\nUsage: pr --now")
 
 
 class TestDiscovery:
-    """What a scan of a given directory turns up.
+    """What a registry dict turns into a served set.
 
-    Every case names its directories and its registry explicitly. Which
-    directories the server picks when it is not told is TestWorkbenchToolDirs'
-    subject — leaving the derived set in would make each "nothing was
-    discovered" assertion also assert that the workbench ships no tools.
+    Every case names its registry explicitly. Defaulting to the checkout is
+    TestWorkbenchDiscovery's subject — leaving that in would make each
+    "nothing was discovered" assertion also assert that the workbench ships
+    no tools.
     """
 
-    def test_discovers_tool_schema_scripts(self, tmp_path):
-        script = _write_marked_script(tmp_path, "my-tool")
+    def test_discovers_an_offered_pr(self, monkeypatch):
+        script = Path("/bin/pr")
+        monkeypatch.setattr(server, "_tool_schema",
+                            lambda s: _schema_for(s, name="pr"))
 
-        tools = discover_tools([tmp_path], _registered(script))
+        tools = discover_tools(_registered(script))
 
-        assert "my-tool" in tools
-        assert tools["my-tool"]["input_schema"] == {"type": "object", "properties": {}}
+        assert "pr" in tools
+        assert tools["pr"]["input_schema"] == {"type": "object", "properties": {}}
+        assert tools["pr"]["_script"] == str(script)
 
-    def test_skips_non_tool_scripts(self, tmp_path):
-        script = tmp_path / "plain-script"
-        script.write_text("#!/bin/bash\necho hello\n")
-        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    def test_an_empty_registry_offers_nothing(self):
+        assert discover_tools({}) == {}
 
-        tools = discover_tools([tmp_path], _registered(script))
+    def test_a_hidden_entry_is_not_offered(self, monkeypatch):
+        script = Path("/bin/pr")
+        monkeypatch.setattr(server, "_tool_schema",
+                            lambda s: _schema_for(s, name="pr"))
 
-        assert len(tools) == 0
-
-    def test_script_without_the_flag_is_never_executed(self, tmp_path):
-        """A script that ignores unknown flags must not run during discovery."""
-        script = _write_destructive_script(tmp_path)
-
-        tools = discover_tools([tmp_path], _registered(script))
+        tools = discover_tools(_registered(script, visibility=Visibility.HIDDEN))
 
         assert tools == {}
-        assert not _side_effect_of(script).exists()
 
-    def test_probing_an_unmarked_script_refuses_to_run_it(self, tmp_path):
-        """The guard travels with probe_tool, not with the caller that filters.
+    def test_a_hidden_entry_is_not_even_asked_for_a_schema(self, monkeypatch):
+        """visibility is decided before the import, so a hidden pr is never read."""
+        asked: list[Path] = []
 
-        ``tool_candidates`` screens for the marker, but probe_tool is importable
-        on its own and running an unmarked script is what wrote a release
-        archive into the CWD.
-        """
-        script = _write_destructive_script(tmp_path)
+        def tracking(script: Path):
+            asked.append(script)
+            return _schema_for(script, name="pr")
 
-        result = server.probe_tool(script)
+        monkeypatch.setattr(server, "_tool_schema", tracking)
 
-        assert result.ok is False
-        assert "no protocol marker" in result.reason
-        assert not _side_effect_of(script).exists()
+        tools = discover_tools(
+            _registered(Path("/bin/pr"), visibility=Visibility.HIDDEN))
 
-    def test_tool_parser_import_counts_as_a_declaration(self, tmp_path):
-        """ToolParser-based scripts inherit the flag without naming it."""
-        script = tmp_path / "framework-tool"
-        script.write_text("#!/usr/bin/env python3\nfrom tool_parser import ToolParser\n")
+        assert tools == {}
+        assert asked == []
 
-        assert declares_tool_schema(script) is True
+    def test_a_registered_non_tool_is_skipped_rather_than_raising(self):
+        """Most registered scripts are not tools — wt, otto-log, the scans."""
+        registry = _registered(Path("/usr/bin/wt"), Path("/usr/bin/otto-log"))
 
-    def test_a_shim_declares_through_the_cli_module_it_imports(self, tmp_path):
-        """A shim's twelve lines carry no marker; the parser it runs is a file away.
+        assert discover_tools(registry) == {}
 
-        Without this the D4 shims drop out of discovery one at a time as each
-        binary is reduced, and the only symptom is a tool the client stops
-        being offered.
-        """
-        bin_dir = tmp_path / "bin"
-        bin_dir.mkdir()
-        cli_dir = tmp_path / "lib" / "cli"
-        cli_dir.mkdir(parents=True)
-        (cli_dir / "widget.py").write_text("from core.tool_parser import ToolParser\n")
-        shim = bin_dir / "widget"
-        # With the linter directive every real shim carries, so the scan is not
-        # matching a line no checkout contains.
-        shim.write_text("#!/usr/bin/env python3\nfrom cli.widget import main  # noqa: E402\n")
+    def test_discovery_does_not_spawn_a_script(self, monkeypatch):
+        """The probe is gone: an offered pr is an import, not a subprocess."""
+        monkeypatch.setattr(server, "_tool_schema",
+                            lambda s: _schema_for(s, name="pr"))
+        with mock.patch.object(server, "_run_script") as run:
+            discover_tools(_registered(Path("/bin/pr")))
 
-        assert declares_tool_schema(shim) is True
+        run.assert_not_called()
 
-    def test_a_shim_over_an_unparsing_module_is_not_a_candidate(self, tmp_path):
-        """Delegation is not the declaration — the module still has to carry one."""
-        bin_dir = tmp_path / "bin"
-        bin_dir.mkdir()
-        cli_dir = tmp_path / "lib" / "cli"
-        cli_dir.mkdir(parents=True)
-        (cli_dir / "widget.py").write_text("import argparse\n")
-        shim = bin_dir / "widget"
-        shim.write_text("#!/usr/bin/env python3\nfrom cli.widget import main\n")
+    def test_the_description_comes_from_the_registry_not_the_schema(self, monkeypatch):
+        script = Path("/bin/pr")
+        monkeypatch.setattr(
+            server, "_tool_schema",
+            lambda s: _schema_for(s, name="pr", description="schema line"))
 
-        assert declares_tool_schema(shim) is False
+        tools = discover_tools(_registered(script, description="registry line"))
 
-    def test_tarball_builder_is_not_a_probe_candidate(self):
-        """The script that motivated the guard must stay out of the probe path.
+        assert tools["pr"]["description"] == "registry line"
 
-        A prose mention of the flag matches the scan, so its comments deliberately
-        avoid the literal.
-        """
-        builder = (
-            Path(__file__).resolve().parent.parent
-            / "ai" / "bin" / "build-otto-ai-tools-tarball"
-        )
-        if not builder.exists():
-            pytest.skip("builder not found")
+    def test_a_full_entry_is_what_the_client_reads(self, monkeypatch):
+        script = Path("/bin/pr")
+        monkeypatch.setattr(
+            server, "_tool_schema",
+            lambda s: _schema_for(s, name="pr", description="schema line"))
 
-        assert declares_tool_schema(builder) is False
+        tools = discover_tools(_registered(
+            script, visibility=Visibility.FULL, description="what it is for",
+            when_to_use="the moment arises", usage="pr --now"))
 
-    def test_launcher_is_not_a_probe_candidate(self):
-        """Probing the launcher would exec the server and hang until the timeout.
+        assert tools["pr"]["description"] == (
+            "what it is for\n\nWhen to use: the moment arises\n\nUsage: pr --now")
 
-        It sits in one of the directories always scanned, so like the tarball
-        builder its help text describes the protocol without spelling the
-        literal.
-        """
-        launcher = (
-            Path(__file__).resolve().parent.parent
-            / "ai" / "bin" / "otto-mcp-server"
-        )
-        if not launcher.exists():
-            pytest.skip("launcher not found")
 
-        assert declares_tool_schema(launcher) is False
+class TestWorkbenchDiscovery:
+    """The running checkout, with no registry argument."""
 
-    def test_skips_unreadable_script(self, tmp_path):
-        script = tmp_path / "unreadable"
-        script.write_text("#!/bin/bash\necho --tool-schema\n")
-        script.chmod(stat.S_IXUSR)
-
-        assert declares_tool_schema(script) is False
-
-    def test_skips_hidden_files(self, tmp_path):
-        script = tmp_path / ".hidden-tool"
-        script.write_text(textwrap.dedent("""\
-            #!/usr/bin/env python3
-            import json, sys
-            if "--tool-schema" in sys.argv:
-                json.dump({"name": "hidden", "input_schema": {}}, sys.stdout)
-                sys.exit(0)
-        """))
-        script.chmod(script.stat().st_mode | stat.S_IXUSR)
-
-        tools = discover_tools([tmp_path], _registered(script))
-        assert len(tools) == 0
-
-    def test_a_tool_that_exits_nonzero_is_reported(self, tmp_path, caplog):
-        """Carrying a marker means it meant to be a tool, so failing is news.
-
-        The scan covers every component's bin/, so whoever reads these logs is
-        rarely the person who broke the script — a silent skip is indexed under
-        "no tool here" and leaves nothing to debug.
-        """
-        script = tmp_path / "broken-tool"
-        script.write_text("#!/bin/bash\n# answers --tool-schema\necho boom >&2\nexit 3\n")
-        script.chmod(script.stat().st_mode | stat.S_IXUSR)
-
-        with caplog.at_level(logging.WARNING, logger="otto-mcp"):
-            assert discover_tools([tmp_path], _registered(script)) == {}
-
-        assert "broken-tool" in caplog.text
-        assert "exited 3" in caplog.text
-        assert "boom" in caplog.text
-
-    def test_a_tool_with_an_incomplete_schema_names_the_missing_key(self, tmp_path, caplog):
-        script = tmp_path / "partial-tool"
-        script.write_text(textwrap.dedent("""\
-            #!/usr/bin/env python3
-            import json, sys
-            if "--tool-schema" in sys.argv:
-                json.dump({"name": "partial-tool"}, sys.stdout)
-                sys.exit(0)
-        """))
-        script.chmod(script.stat().st_mode | stat.S_IXUSR)
-
-        with caplog.at_level(logging.WARNING, logger="otto-mcp"):
-            assert discover_tools([tmp_path], _registered(script)) == {}
-
-        assert "partial-tool" in caplog.text
-        assert "input_schema" in caplog.text
-
-    def test_a_tool_emitting_invalid_json_is_reported(self, tmp_path, caplog):
-        script = tmp_path / "garbled-tool"
-        script.write_text("#!/bin/bash\n# answers --tool-schema\necho not json\n")
-        script.chmod(script.stat().st_mode | stat.S_IXUSR)
-
-        with caplog.at_level(logging.WARNING, logger="otto-mcp"):
-            assert discover_tools([tmp_path], _registered(script)) == {}
-
-        assert "garbled-tool" in caplog.text
-        # One except branch covers three failure modes, so the log has to name
-        # which one rather than leave it to the exception's str().
-        assert "JSONDecodeError" in caplog.text
-
-    def test_a_script_with_no_marker_is_skipped_quietly(self, tmp_path, caplog):
-        """Most executables are not tools — warning on each would drown the rest."""
-        script = tmp_path / "plain-script"
-        script.write_text("#!/bin/bash\necho hello\n")
-        script.chmod(script.stat().st_mode | stat.S_IXUSR)
-
-        with caplog.at_level(logging.WARNING, logger="otto-mcp"):
-            assert discover_tools([tmp_path], _registered(script)) == {}
-
-        assert caplog.text == ""
-
-    def test_no_directories_yields_no_tools(self):
-        assert discover_tools([], {}) == {}
-
-    def test_discovers_real_tools(self):
-        """Verify discovery works with actual ToolParser-enabled scripts."""
-        bin_dir = WORKBENCH_DIR / "ai" / "bin"
-        if not (bin_dir / "pr").exists():
+    def test_the_workbench_offers_pr(self):
+        if not (WORKBENCH_DIR / "ai" / "bin" / "pr").exists():
             pytest.skip("scripts not found")
 
-        tools = discover_tools([bin_dir])
+        tools = discover_tools()
 
         assert "pr" in tools
         assert "input_schema" in tools["pr"]
@@ -521,480 +398,57 @@ class TestDiscovery:
         before a state file exists. The honest contract is none until the
         schema is per-subcommand.
         """
-        bin_dir = WORKBENCH_DIR / "ai" / "bin"
-        if not (bin_dir / "pr").exists():
+        if not (WORKBENCH_DIR / "ai" / "bin" / "pr").exists():
             pytest.skip("scripts not found")
 
-        assert discover_tools([bin_dir])["pr"].get("output_schema") is None
-
-
-class TestDuplicateNames:
-    """Two scripts answering to one name.
-
-    Runtime keeps the first the scan reached, because raising in discovery
-    would run in the watcher thread as well as at startup — one ambiguity
-    would either take the server down or stop re-discovery for the session.
-    What it must not do is stay quiet: which of the two a client reaches is
-    decided by directory order. `bin/local/validate-tool-schema` is where the
-    collision fails.
-    """
-
-    def test_the_first_script_scanned_wins(self, tmp_path):
-        first = _write_marked_script(tmp_path / "a", "alpha", tool_name="shared")
-        second = _write_marked_script(tmp_path / "b", "beta", tool_name="shared")
-
-        tools = discover_tools([tmp_path / "a", tmp_path / "b"],
-                               _registered(first, second))
-
-        assert list(tools) == ["shared"]
-        assert tools["shared"]["_script"] == str(first)
-
-    def test_the_loser_is_logged_at_error_naming_both(self, tmp_path, caplog):
-        first = _write_marked_script(tmp_path / "a", "alpha", tool_name="shared")
-        second = _write_marked_script(tmp_path / "b", "beta", tool_name="shared")
-
-        with caplog.at_level(logging.ERROR, logger="otto-mcp"):
-            discover_tools([tmp_path / "a", tmp_path / "b"], _registered(first, second))
-
-        errors = [r for r in caplog.records if r.levelno == logging.ERROR]
-        assert len(errors) == 1
-        assert str(first) in errors[0].getMessage()
-        assert str(second) in errors[0].getMessage()
-
-
-# ── Probing ───────────────────────────────────────────────────────────────
-
-
-# The bound a case runs under when every tool in it is meant to time out.
-# Nothing there turns on a fixture being scheduled inside the bound — a script
-# the kernel has not started yet and a script sleeping far past it both produce
-# the timeout the case is about — so it can stay short enough that a breach
-# costs tenths of a second.
-#
-# A case where some tool must *answer* takes the shipped bound instead. An
-# answer does turn on the fixture being scheduled, and half a second is not
-# reliably enough to fork and start a shell on a machine running this suite in
-# parallel. Pinning such a case short reproduced the defect this section exists
-# to check for: the machine decided the result, not the tool.
-PROBE_BOUND = 0.5
-
-# What a fixture runs when it must not answer this attempt. `exec` so the sleep
-# takes over the pid the prober kills — a sleep left running under a killed
-# parent outlives its case by half a minute, and that is load the next case pays.
-NEVER_ANSWERS = "exec sleep 30\n"
-
-# Sleeping tools enough that a serial round would be plainly slower than a
-# concurrent one, and fewer than PROBE_WORKERS so they all go out together.
-SLOW_TOOLS = 6
-
-assert SLOW_TOOLS <= PROBE_WORKERS, "the cases below assume one round holds them all"
-
-
-def _attempts_of(script: Path) -> Path:
-    """The file a fixture tool appends a byte to each time it is run.
-
-    Only a fixture given room to answer can be trusted to have written it: a
-    probe that breaches its bound is SIGKILLed, and the kill can land before
-    bash has reached the script's first line. Cases counting how many times a
-    script was probed use the ``probes`` fixture, which counts on the side of
-    the fence that cannot be killed.
-    """
-    return script.parent / f"{script.name}.attempts"
-
-
-def _tool_body(name: str) -> str:
-    """The line that answers the probe with a minimal schema for *name*."""
-    document = {"name": name, "input_schema": {"type": "object", "properties": {}}}
-    return f"printf '%s' '{json.dumps(document)}'\n"
-
-
-def _write_probe_fixture(directory: Path, name: str, middle: str) -> Path:
-    """A marked script that records the attempt, runs *middle*, then answers.
-
-    Real subprocesses rather than a patched ``subprocess.run``: a probe that
-    outruns its bound is what these cases are about, and a sleeping script is
-    the honest way to produce one.
-    """
-    script = directory / name
-    script.write_text("#!/bin/bash\n"
-                      "# answers --tool-schema\n"
-                      f"printf 'x' >> '{_attempts_of(script)}'\n"
-                      f"{middle}"
-                      f"{_tool_body(name)}")
-    script.chmod(script.stat().st_mode | stat.S_IXUSR)
-    return script
-
-
-def _write_sleeping_tool(directory: Path, name: str) -> Path:
-    """A marked script that never answers inside any bound worth waiting."""
-    return _write_probe_fixture(directory, name, NEVER_ANSWERS)
-
-
-def _write_flaky_tool(directory: Path, name: str) -> Path:
-    """Outruns the bound the first time it is run, and answers after that.
-
-    Which attempt it is on comes from the stamp file, so it only tells the truth
-    under a bound its first line is certain to be reached inside — the case
-    using it takes the shipped bound rather than PROBE_BOUND.
-    """
-    script = directory / name
-    return _write_probe_fixture(
-        directory, name,
-        f"[ \"$(wc -c < '{_attempts_of(script)}' | tr -d ' ')\" -lt 2 ] "
-        f"&& {NEVER_ANSWERS}")
-
-
-def _write_dawdling_tool(directory: Path, name: str, pause: float) -> Path:
-    """Answers, but only after *pause* seconds — so completion order is known."""
-    return _write_probe_fixture(directory, name, f"sleep {pause}\n")
-
-
-@pytest.fixture
-def short_probe_bound(monkeypatch):
-    """The server's bound, shortened so a breach costs the suite tenths.
-
-    Only for a case where every tool is meant to time out — see PROBE_BOUND.
-    """
-    monkeypatch.setattr(server, "DISCOVERY_TIMEOUT", PROBE_BOUND)
-
-
-@pytest.fixture
-def probes(monkeypatch):
-    """Every script the prober spawned a probe for, in the order it did.
-
-    Counted here rather than by the fixture scripts themselves: a timed-out
-    probe is SIGKILLed, and on a busy machine that lands before the script has
-    recorded anything, so a stamp the child writes undercounts exactly the
-    attempts these cases exist to check. The real probe still runs.
-    """
-    spawned: list[Path] = []
-    probe = server.probe_tool
-
-    def counting(script: Path):
-        spawned.append(script)
-        return probe(script)
-
-    monkeypatch.setattr(server, "probe_tool", counting)
-    return spawned
-
-
-class TestProbeFailure:
-    """A wedged probe and a wrong answer are different problems.
-
-    Both used to arrive as one ``reason`` string off one ``except`` clause, so
-    a tool dropped because the machine had nothing left to schedule read
-    exactly like a tool whose author broke it.
-    """
-
-    def test_a_probe_that_ran_out_of_time_says_so(self, tmp_path, short_probe_bound):
-        script = _write_sleeping_tool(tmp_path, "sleeping-tool")
-
-        result = probe_tools([script])[0]
-
-        assert result.failure is ProbeFailure.TIMED_OUT
-        assert result.timed_out is True
-        assert "did not answer within" in result.reason
-
-    def test_a_non_zero_exit_is_a_broken_tool_not_a_slow_one(self, tmp_path):
-        script = tmp_path / "broken-tool"
-        script.write_text("#!/bin/bash\n# answers --tool-schema\nexit 3\n")
-        script.chmod(script.stat().st_mode | stat.S_IXUSR)
-
-        result = probe_tools([script])[0]
-
-        assert result.failure is ProbeFailure.BROKEN
-        assert result.timed_out is False
-
-    def test_malformed_json_is_a_broken_tool(self, tmp_path):
-        script = tmp_path / "garbled-tool"
-        script.write_text("#!/bin/bash\n# answers --tool-schema\necho not json\n")
-        script.chmod(script.stat().st_mode | stat.S_IXUSR)
-
-        result = probe_tools([script])[0]
-
-        assert result.failure is ProbeFailure.BROKEN
-        assert "JSONDecodeError" in result.reason
-
-    def test_a_schema_missing_a_key_is_a_broken_tool(self, tmp_path):
-        script = tmp_path / "partial-tool"
-        script.write_text(textwrap.dedent("""\
-            #!/usr/bin/env python3
-            import json, sys
-            if "--tool-schema" in sys.argv:
-                json.dump({"name": "partial-tool"}, sys.stdout)
-                sys.exit(0)
-        """))
-        script.chmod(script.stat().st_mode | stat.S_IXUSR)
-
-        assert probe_tools([script])[0].failure is ProbeFailure.BROKEN
-
-    def test_an_unmarked_script_is_neither(self, tmp_path):
-        """Nothing ran, so there is no tool here to call slow or broken."""
-        script = _write_destructive_script(tmp_path)
-
-        assert probe_tools([script])[0].failure is ProbeFailure.UNMARKED
-
-    def test_a_tool_that_answers_carries_no_failure(self, tmp_path):
-        script = _write_marked_script(tmp_path, "my-tool")
-
-        result = probe_tools([script])[0]
-
-        assert result.ok is True
-        assert result.failure is None
-
-
-class TestConcurrentProbing:
-    """Candidates go out together, which is what pays for a generous bound."""
-
-    def test_results_come_back_in_the_order_they_were_asked_for(self, tmp_path):
-        """Two runs over the same tree must not disagree about nothing.
-
-        The pauses run counter to the order asked for, so a list assembled as
-        the probes finished would come back reversed.
-        """
-        scripts = [_write_dawdling_tool(tmp_path, f"tool-{i}", pause)
-                   for i, pause in enumerate((0.4, 0.3, 0.2, 0.1, 0.0))]
-
-        results = probe_tools(scripts)
-
-        assert [r.script for r in results] == scripts
-        assert all(r.ok for r in results)
-
-    def test_the_wait_is_one_probes_and_not_one_per_tool(self, tmp_path,
-                                                         short_probe_bound):
-        """The bound can only be generous if startup does not pay it per tool.
-
-        Probed one at a time these would cost SLOW_TOOLS bounds, twice over
-        with the retry. Together they cost two.
-        """
-        scripts = [_write_sleeping_tool(tmp_path, f"sleeping-{i}")
-                   for i in range(SLOW_TOOLS)]
-
-        started = time.monotonic()
-        results = probe_tools(scripts)
-        elapsed = time.monotonic() - started
-
-        assert all(r.timed_out for r in results)
-        assert elapsed < SLOW_TOOLS * PROBE_BOUND, (
-            f"{SLOW_TOOLS} probes of {PROBE_BOUND}s took {elapsed:.1f}s — "
-            f"that is a serial round, not a concurrent one")
-
-    def test_no_thread_is_asked_for_when_there_is_nothing_to_probe(self):
-        assert probe_tools([]) == []
-
-
-class TestProbeRetry:
-    """A probe that lost a race with the scheduler gets one more chance.
-
-    Re-discovery runs when the scanned directories change, so a tool dropped at
-    startup is missing until somebody edits the tree — not until the next poll.
-    That is what makes a second attempt worth its cost, and the cost is one more
-    bound for the round rather than one per tool.
-    """
-
-    def test_a_tool_that_answers_on_the_second_try_is_discovered(
-            self, tmp_path, probes):
-        """The shipped bound, because the second attempt has to be able to answer.
-
-        It is also the one case that pays the bound in full — the first attempt
-        sleeps through it — which is what a real transient stall costs.
-        """
-        script = _write_flaky_tool(tmp_path, "flaky-tool")
-
-        result = probe_tools([script])[0]
-
-        assert result.ok is True
-        assert probes == [script] * PROBE_ATTEMPTS
-
-    def test_a_tool_that_never_answers_is_run_the_attempt_count_and_no_more(
-            self, tmp_path, short_probe_bound, probes):
-        script = _write_sleeping_tool(tmp_path, "sleeping-tool")
-
-        assert probe_tools([script])[0].timed_out is True
-        assert probes == [script] * PROBE_ATTEMPTS
-
-    def test_a_tool_that_answered_wrongly_is_not_run_again(self, tmp_path, probes):
-        """Re-running it would cost the same wait to be told the same thing."""
-        script = _write_probe_fixture(tmp_path, "broken-tool", "exit 3\n")
-
-        assert probe_tools([script])[0].failure is ProbeFailure.BROKEN
-        assert probes == [script]
-
-
-class TestTimeoutIsReportedApart:
-    """What an operator reading the server's stderr is sent to look at."""
-
-    def test_a_timed_out_probe_is_an_error_that_blames_the_machine(
-            self, tmp_path, short_probe_bound, caplog):
-        script = _write_sleeping_tool(tmp_path, "sleeping-tool")
-
-        with caplog.at_level(logging.WARNING, logger="otto-mcp"):
-            assert discover_tools([tmp_path], _registered(script)) == {}
-
-        dropped = [r for r in caplog.records if "Not offering" in r.getMessage()]
-        assert len(dropped) == 1
-        assert dropped[0].levelno == logging.ERROR
-        assert "loaded machine or a wedged script" in dropped[0].getMessage()
-        assert "sleeping-tool" in dropped[0].getMessage()
-
-    def test_a_broken_tool_stays_a_warning_about_the_tool(self, tmp_path, caplog):
-        script = _write_probe_fixture(tmp_path, "broken-tool", "exit 3\n")
-
-        with caplog.at_level(logging.WARNING, logger="otto-mcp"):
-            assert discover_tools([tmp_path], _registered(script)) == {}
-
-        skipped = [r for r in caplog.records if "Skipping" in r.getMessage()]
-        assert len(skipped) == 1
-        assert skipped[0].levelno == logging.WARNING
-        assert "exited 3" in skipped[0].getMessage()
-
-    def test_a_slow_tool_does_not_stop_the_others_being_offered(
-            self, tmp_path, caplog, monkeypatch):
-        """One dropped tool is one tool, not a scan that gave up.
-
-        The shipped bound, because the round holds a tool that has to answer and
-        the two share one bound — shortening it to hurry the sleeper along is
-        how the quick tool starts timing out too.
-
-        One attempt rather than the shipped two, which is a different knob: the
-        bound stays what ships, and the sleeper still breaches it in full. What
-        this drops is the identical second breach, which says nothing here —
-        retry is TestProbeRetry's subject, and it asserts on the attempt count
-        directly. Worth doing because the two breaches are served serially, so
-        the case cost a flat 10s of the suite's wall time.
-        """
-        monkeypatch.setattr(server, "PROBE_ATTEMPTS", 1)
-        slow = _write_sleeping_tool(tmp_path, "sleeping-tool")
-        quick = _write_marked_script(tmp_path, "my-tool")
-
-        with caplog.at_level(logging.ERROR, logger="otto-mcp"):
-            tools = discover_tools([tmp_path], _registered(slow, quick))
-
-        assert set(tools) == {"my-tool"}
-        assert "sleeping-tool" in caplog.text
-
-
-class TestRegistryVisibility:
-    """Which of the marked scripts a client is offered.
-
-    Carrying the marker makes a script probeable, not public. Every one of them
-    used to be listed, which put ``ci-check`` and ``pr-rebase`` beside ``pr`` —
-    the CLI whose ``pr ci`` and ``pr rebase`` subcommands run them.
-    """
-
-    def test_a_hidden_tool_is_neither_offered_nor_run(self, tmp_path):
-        """The filter runs before the probe, so a hidden script is never executed."""
-        script = _write_marked_script(tmp_path, "inner-tool")
-
-        tools = discover_tools([tmp_path], _registered(script, visibility=Visibility.HIDDEN))
-
-        assert tools == {}
-        assert not _side_effect_of(script).exists()
-
-    def test_an_unregistered_tool_is_neither_offered_nor_run(self, tmp_path, caplog):
-        """A marked script nothing documents is as absent as a broken one.
-
-        It is a warning rather than a silent skip: the marker says it meant to
-        be a tool, and bin/local/validate-tool-schema fails the build on it.
-        """
-        script = _write_marked_script(tmp_path, "stray-tool")
-
-        with caplog.at_level(logging.WARNING, logger="otto-mcp"):
-            assert discover_tools([tmp_path], {}) == {}
-
-        assert "stray-tool" in caplog.text
-        assert "no registry entry" in caplog.text
-        assert not _side_effect_of(script).exists()
-
-    def test_the_registry_owns_the_description_a_client_reads(self, tmp_path):
-        """The two have already drifted: the script's line is written for --help."""
-        script = _write_marked_script(tmp_path, "my-tool")
-
-        tools = discover_tools([tmp_path], _registered(script, description="what it is for"))
-
-        assert tools["my-tool"]["description"] == "what it is for"
-
-    def test_a_full_entry_answers_when_to_use_it_and_how(self, tmp_path):
-        """A client has no access to the rule files those two fields render into."""
-        script = _write_marked_script(tmp_path, "my-tool")
-
-        tools = discover_tools([tmp_path], _registered(
-            script, visibility=Visibility.FULL, description="what it is for",
-            when_to_use="the moment arises", usage="my-tool --now"))
-
-        assert tools["my-tool"]["description"] == (
-            "what it is for\n\nWhen to use: the moment arises\n\nUsage: my-tool --now")
+        assert discover_tools()["pr"].get("output_schema") is None
 
     def test_the_pr_subcommands_are_not_offered_beside_pr(self):
-        """The case that motivated this: hidden in the registry, hidden here."""
-        bin_dir = WORKBENCH_DIR / "ai" / "bin"
-        if not (bin_dir / "pr-rebase").exists():
+        """The case that motivated visibility: hidden in the registry, hidden here."""
+        if not (WORKBENCH_DIR / "ai" / "bin" / "pr-rebase").exists():
             pytest.skip("scripts not found")
 
-        tools = discover_tools([bin_dir])
+        tools = discover_tools()
 
         assert "pr" in tools
         assert {"pr-rebase", "ci-check", "pr-describe"}.isdisjoint(tools)
 
 
-class TestWorkbenchToolDirs:
-    """The component layout is the whole of where the server looks.
+class TestDuplicateNames:
+    """Two entries answering to one name.
 
-    An earlier design read the directories from a config file no install ever
-    wrote, so discovery resolved to nothing and every machine ran a registered
-    server exposing zero tools. Deriving them from the layout is what fixed
-    that; these cases hold the derivation to the tiers it has to reach.
+    Runtime keeps the first the scan reached, because raising in discovery
+    would run in the watcher thread as well as at startup — one ambiguity
+    would either take the server down or stop re-discovery for the session.
+    What it must not do is stay quiet: which of the two a client reaches is
+    decided by registry order. `bin/local/validate-registries` is where the
+    collision fails.
     """
 
-    def test_derived_dirs_span_every_component_level(self):
-        """The root, a one-level component, and a nested one."""
-        dirs = discover_tool_dirs()
+    def test_the_first_script_scanned_wins(self, monkeypatch):
+        first = Path("/a/pr")
+        second = Path("/b/pr")
+        monkeypatch.setattr(server, "_tool_schema",
+                            lambda s: _schema_for(s, name="pr"))
 
-        assert WORKBENCH_DIR / "bin" in dirs
-        assert WORKBENCH_DIR / "git" / "bin" in dirs
-        assert WORKBENCH_DIR / "terminals" / "ghostty" / "bin" in dirs
+        tools = discover_tools(_registered(first, second))
 
-    def test_every_tracked_bin_dir_is_covered(self):
-        """Drift guard: a component tier deeper than the glob reaches fails here.
+        assert list(tools) == ["pr"]
+        assert tools["pr"]["_script"] == str(first)
 
-        The two-level glob mirrors lib/components.sh. If a bin/ ever lands at a
-        depth it does not reach, its tools go silently undiscovered — so make
-        that a test failure rather than an absence nobody notices.
-        """
-        listing = git_out(WORKBENCH_DIR, "ls-files", "--", "*bin/*")
-        tracked = {
-            WORKBENCH_DIR / re.sub(r"(^|/)bin/.*", r"\1bin", line)
-            for line in listing.splitlines()
-        }
+    def test_the_loser_is_logged_at_error_naming_both(self, monkeypatch, caplog):
+        first = Path("/a/pr")
+        second = Path("/b/pr")
+        monkeypatch.setattr(server, "_tool_schema",
+                            lambda s: _schema_for(s, name="pr"))
 
-        assert tracked <= set(discover_tool_dirs())
+        with caplog.at_level(logging.ERROR, logger="otto-mcp"):
+            discover_tools(_registered(first, second))
 
-    def test_another_root_can_be_named(self, tmp_path):
-        """bin/local/validate-tool-schema points this at a fixture tree.
-
-        Re-deriving the layout there would be a second copy of the rule the
-        server owns, which is the drift this parameter exists to prevent.
-        """
-        (tmp_path / "git" / "bin").mkdir(parents=True)
-        (tmp_path / "bin").mkdir()
-
-        assert discover_tool_dirs(tmp_path) == [tmp_path / "bin", tmp_path / "git" / "bin"]
-
-    def test_an_untold_scan_discovers_the_workbench_tools(self):
-        """The regression guard: a config-only server yielded no tools at all."""
-        if not (WORKBENCH_DIR / "ai" / "bin" / "pr").exists():
-            pytest.skip("scripts not found")
-
-        assert "pr" in discover_tools()
-
-    def test_the_derived_set_is_the_only_source(self):
-        """Asked with no directories, the server scans the derived ones only.
-
-        The equality is the assertion the deleted config keys used to break: a
-        second source of directories would put a tool in the left-hand side
-        that naming the layout cannot produce.
-        """
-        assert discover_tools() == discover_tools(discover_tool_dirs())
+        errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert len(errors) == 1
+        assert str(first) in errors[0].getMessage()
+        assert str(second) in errors[0].getMessage()
 
 
 # ── The served set ────────────────────────────────────────────────────────
@@ -1015,11 +469,11 @@ def _served_tools() -> dict:
 class TestServedSchemas:
     """What the server offers, recorded so a rewrite of discovery can be checked.
 
-    Discovery executes every candidate script with ``--tool-schema`` and keeps
-    what answers. Phase 7 replaces that probe with a read of the tool registry,
-    which is a change of mechanism that must not be a change of output — and
-    nothing else in this file compares the *whole* served set, so a schema
-    silently gained or lost would pass every case above.
+    Discovery used to execute every candidate with ``--tool-schema``. It now
+    reads the registry and imports the schema — a change of mechanism that
+    must not be a change of output. Nothing else in this file compares the
+    *whole* served set, so a schema silently gained or lost would pass every
+    case above.
 
     Regenerate the fixture by writing ``json.dumps(_served_tools(), indent=2,
     sort_keys=True)`` to it. A diff here is a change to the MCP surface and is
@@ -1037,17 +491,99 @@ class TestServedSchemas:
 
 
 def _fingerprint_tree(root: Path) -> Path:
-    """A checkout with one registered, marked script in its bin/."""
-    bin_dir = root / "bin"
-    bin_dir.mkdir()
-    script = _write_marked_script(bin_dir, "watched-tool")
-    (bin_dir / "registry.yml").write_text(textwrap.dedent("""\
+    """A checkout whose fingerprint inputs exist: one registry and the two modules."""
+    bindir = root / "bin"
+    bindir.mkdir()
+    registry = bindir / "registry.yml"
+    registry.write_text(textwrap.dedent("""\
         meta:
           validation: bindir
           source: bin
 
         tools:
-          - name: watched-tool
+          - name: pr
+            permission: false
+            visibility: brief
+            description: "The watched tool"
+    """))
+    cli = root / "ai" / "lib" / "cli"
+    cli.mkdir(parents=True)
+    (cli / "schema.py").write_text("# schema\n")
+    (cli / "registry.py").write_text("# registry\n")
+    return registry
+
+
+class TestDiscoveryFingerprint:
+    """What has to move before the server pays for a re-scan.
+
+    Narrowed to the inputs discovery actually reads: the registry files, and
+    the two modules the schema is built from. A `bin/` script changing is no
+    longer a reason to re-import.
+    """
+
+    def test_an_untouched_tree_fingerprints_the_same_twice(self, tmp_path):
+        _fingerprint_tree(tmp_path)
+
+        assert discovery_fingerprint(tmp_path) == discovery_fingerprint(tmp_path)
+
+    def test_an_edited_registry_changes_it(self, tmp_path):
+        """A tool withdrawn by going hidden touches no line of its schema module."""
+        registry = _fingerprint_tree(tmp_path)
+        before = discovery_fingerprint(tmp_path)
+
+        registry.write_text(registry.read_text().replace("brief", "hidden"))
+
+        assert discovery_fingerprint(tmp_path) != before
+
+    def test_editing_the_schema_module_changes_it(self, tmp_path):
+        """The case the old fingerprint could not see: schema.py is not under bin/.
+
+        A flag added to `pr` used to leave every scanned directory untouched,
+        so the poll never re-imported and the client kept the startup schema
+        for the life of the session.
+        """
+        _fingerprint_tree(tmp_path)
+        schema = tmp_path / "ai" / "lib" / "cli" / "schema.py"
+        before = discovery_fingerprint(tmp_path)
+
+        schema.write_text(schema.read_text() + "# a new flag\n")
+
+        assert discovery_fingerprint(tmp_path) != before
+
+    def test_editing_the_cli_registry_module_changes_it(self, tmp_path):
+        _fingerprint_tree(tmp_path)
+        module = tmp_path / "ai" / "lib" / "cli" / "registry.py"
+        before = discovery_fingerprint(tmp_path)
+
+        module.write_text(module.read_text() + "# another command\n")
+
+        assert discovery_fingerprint(tmp_path) != before
+
+    def test_editing_a_bin_script_does_not_change_it(self, tmp_path):
+        """Discovery no longer reads the binary; a comment in it is not an input."""
+        _fingerprint_tree(tmp_path)
+        script = tmp_path / "bin" / "pr"
+        script.write_text("#!/bin/sh\n")
+        before = discovery_fingerprint(tmp_path)
+
+        script.write_text("#!/bin/sh\n# a new line\n")
+
+        assert discovery_fingerprint(tmp_path) == before
+
+
+def _pr_checkout(root: Path) -> Path:
+    """A throwaway WORKBENCH_DIR whose registry offers `pr`."""
+    bindir = root / "ai" / "bin"
+    bindir.mkdir(parents=True)
+    script = bindir / "pr"
+    script.write_text("#!/bin/sh\n")
+    (root / "ai" / "registry.yml").write_text(textwrap.dedent("""\
+        meta:
+          validation: bindir
+          source: ai/bin
+
+        tools:
+          - name: pr
             permission: false
             visibility: brief
             description: "The watched tool"
@@ -1055,100 +591,42 @@ def _fingerprint_tree(root: Path) -> Path:
     return script
 
 
-class TestDiscoveryFingerprint:
-    """What has to move before the server pays for a re-scan."""
-
-    def test_an_untouched_tree_fingerprints_the_same_twice(self, tmp_path):
-        _fingerprint_tree(tmp_path)
-
-        assert discovery_fingerprint(tmp_path) == discovery_fingerprint(tmp_path)
-
-    def test_an_edited_script_changes_it(self, tmp_path):
-        script = _fingerprint_tree(tmp_path)
-        before = discovery_fingerprint(tmp_path)
-
-        script.write_text(script.read_text() + "\n# a new line\n")
-
-        assert discovery_fingerprint(tmp_path) != before
-
-    def test_a_new_file_in_a_scanned_directory_changes_it(self, tmp_path):
-        _fingerprint_tree(tmp_path)
-        before = discovery_fingerprint(tmp_path)
-
-        _write_marked_script(tmp_path / "bin", "later-tool")
-
-        assert discovery_fingerprint(tmp_path) != before
-
-    def test_a_deleted_script_changes_it(self, tmp_path):
-        script = _fingerprint_tree(tmp_path)
-        before = discovery_fingerprint(tmp_path)
-
-        script.unlink()
-
-        assert discovery_fingerprint(tmp_path) != before
-
-    def test_an_edited_registry_changes_it(self, tmp_path):
-        """A tool withdrawn by going hidden touches no line of its script."""
-        _fingerprint_tree(tmp_path)
-        registry = tmp_path / "bin" / "registry.yml"
-        before = discovery_fingerprint(tmp_path)
-
-        registry.write_text(registry.read_text().replace("brief", "hidden"))
-
-        assert discovery_fingerprint(tmp_path) != before
-
-    def test_making_a_script_executable_changes_it(self, tmp_path):
-        """chmod +x is the whole of what turns a file into a candidate."""
-        _fingerprint_tree(tmp_path)
-        plain = tmp_path / "bin" / "not-yet-a-tool"
-        plain.write_text("#!/bin/sh\n# --tool-schema\n")
-        before = discovery_fingerprint(tmp_path)
-
-        plain.chmod(plain.stat().st_mode | stat.S_IXUSR)
-
-        assert discovery_fingerprint(tmp_path) != before
-
-    def test_a_new_component_directory_changes_it(self, tmp_path):
-        _fingerprint_tree(tmp_path)
-        before = discovery_fingerprint(tmp_path)
-
-        (tmp_path / "editors" / "zed" / "bin").mkdir(parents=True)
-
-        assert discovery_fingerprint(tmp_path) != before
-
-
 class TestDiscoverWithBaseline:
     """The baseline has to describe a tree no newer than the scan it pairs with."""
 
     def test_the_scan_it_returns_is_the_one_it_ran(self, tmp_path, monkeypatch):
         monkeypatch.setattr(server, "WORKBENCH_DIR", tmp_path)
-        _fingerprint_tree(tmp_path)
+        _pr_checkout(tmp_path)
 
         discovered = discover_with_baseline()
 
-        assert set(discovered.tools) == {"watched-tool"}
+        assert set(discovered.tools) == {"pr"}
         assert discovered.fingerprint == discovery_fingerprint(tmp_path)
 
-    def test_a_tool_landing_during_the_scan_still_looks_new_afterwards(
+    def test_a_change_during_the_scan_still_looks_new_afterwards(
             self, tmp_path, monkeypatch):
-        """Stamped after the scan, that tool is in the baseline and never arrives.
+        """Stamped after the scan, that change is in the baseline and never arrives.
 
         No poll sees the file appear, so the client is offered the startup list
         for the rest of the session — and the client owns this process, so
         nothing outside it can restart the server either.
         """
         monkeypatch.setattr(server, "WORKBENCH_DIR", tmp_path)
-        _fingerprint_tree(tmp_path)
+        _pr_checkout(tmp_path)
+        registry = tmp_path / "ai" / "registry.yml"
 
-        def scan_while_a_tool_lands(dirs=None, registry=None):
-            _write_marked_script(tmp_path / "bin", "later-tool")
+        def scan_while_the_registry_changes(registry=None):
+            registry_path = tmp_path / "ai" / "registry.yml"
+            registry_path.write_text(registry_path.read_text() + "\n# landed\n")
             return {}
 
-        monkeypatch.setattr(server, "discover_tools", scan_while_a_tool_lands)
+        monkeypatch.setattr(server, "discover_tools", scan_while_the_registry_changes)
 
         discovered = discover_with_baseline()
 
         assert discovered.fingerprint != discovery_fingerprint(tmp_path)
+        # The write above is the change the stamp must have missed.
+        assert "landed" in registry.read_text()
 
 
 # The bound on a case whose *done* signal never arrives, not the wait a passing
@@ -1184,7 +662,7 @@ class _Recorder:
         self.polls += 1
         return self._next(self.fingerprints)
 
-    def discover(self, dirs=None, registry=None):
+    def discover(self, registry=None):
         self.scans += 1
         if self.scans <= self.failures:
             raise OSError("a scan that could not finish")
@@ -1263,7 +741,7 @@ class TestWatchForToolChanges:
         assert set(held) == {"b"}
 
     def test_a_change_that_leaves_the_tools_alone_announces_nothing(self, monkeypatch):
-        """Touching a README under a scanned directory is not a tool change."""
+        """Touching a file discovery reads is not itself a tool change."""
         tools = {"a": _schema("a")}
 
         recorder = self._run(monkeypatch, ["before", "after"], [dict(tools)], tools,
@@ -1312,26 +790,26 @@ class TestLostTools:
         assert "gone-tool" in caplog.text
         assert "its script is gone" in caplog.text
 
-    def test_a_broken_script_is_an_error_carrying_the_probe_reason(self, tmp_path, caplog):
-        script = tmp_path / "broken-tool"
-        script.write_text("#!/bin/sh\n# --tool-schema\nexit 3\n")
-        script.chmod(script.stat().st_mode | stat.S_IXUSR)
-        before = {"broken-tool": {"name": "broken-tool", "_script": str(script)}}
+    def test_a_withdrawn_tool_whose_script_remains_names_the_registry(
+            self, tmp_path, caplog):
+        """The branch that used to re-run the tool to ask why it was gone.
+
+        `_why_gone` called `probe_tool` here, which no longer exists — a lost
+        tool whose script was still on disk would have raised `NameError` in
+        the watcher thread, where nothing is there to catch it. With discovery
+        reading the registry there are only two ways for a tool to go, and
+        this is the other one.
+        """
+        script = tmp_path / "pr"
+        script.touch()
+        before = {"pr": {"name": "pr", "_script": str(script)}}
 
         with caplog.at_level(logging.ERROR, logger="otto-mcp"):
             _log_lost_tools(before, {})
 
-        assert "broken-tool" in caplog.text
-        assert "exited 3" in caplog.text
-
-    def test_a_tool_that_still_answers_says_the_registry_withdrew_it(self, tmp_path, caplog):
-        script = _write_marked_script(tmp_path, "hidden-tool")
-        before = {"hidden-tool": {"name": "hidden-tool", "_script": str(script)}}
-
-        with caplog.at_level(logging.ERROR, logger="otto-mcp"):
-            _log_lost_tools(before, {})
-
-        assert "no longer offers it" in caplog.text
+        assert "pr" in caplog.text
+        assert "its registry entry no longer offers it" in caplog.text
+        assert "its script is gone" not in caplog.text
 
     def test_a_tool_that_survived_the_scan_is_not_reported(self, caplog):
         tools = {"a": _schema("a")}
@@ -1372,72 +850,58 @@ uv_required = pytest.mark.skipif(
     reason="the server runs under `uv run --with mcp`, as ai/bin/otto-mcp-server does",
 )
 
+
+# Production `_tool_schema` only answers for a script named `pr`. The transport
+# cases need several tools with different schema shapes (output_schema vs not,
+# a contract broken on purpose), so the fake checkout patches `_tool_schema` to
+# read a sidecar JSON next to each script. That is a fixture seam, not a second
+# discovery protocol: handle_call_tool still spawns the script.
 _ECHO_TOOL = '''\
 #!/usr/bin/env python3
-"""Answers with the JSON object its output schema promises."""
 import json, sys
-
-if "--tool-schema" in sys.argv:
-    json.dump({
-        "name": "echo-tool",
-        "description": "Echo a word back",
-        "input_schema": {"type": "object", "properties": {"word": {"type": "string"}}},
-        "output_schema": {"type": "object", "properties": {"word": {"type": "string"}}},
-    }, sys.stdout)
-    sys.exit(0)
-
 json.dump({"word": sys.argv[sys.argv.index("--word") + 1]}, sys.stdout)
 '''
 
 _PLAIN_TOOL = '''\
 #!/usr/bin/env python3
-"""Declares no output schema, so its stdout is prose and that is fine."""
-import json, sys
-
-if "--tool-schema" in sys.argv:
-    json.dump({
-        "name": "plain-tool",
-        "description": "Print a line of text",
-        "input_schema": {"type": "object", "properties": {}},
-    }, sys.stdout)
-    sys.exit(0)
-
 print("plain output")
 '''
 
 _SILENT_TOOL = '''\
 #!/usr/bin/env python3
-"""Promises a JSON object and prints prose — the contract this tool breaks."""
-import json, sys
-
-if "--tool-schema" in sys.argv:
-    json.dump({
-        "name": "silent-tool",
-        "description": "Promise JSON and print prose",
-        "input_schema": {"type": "object", "properties": {}},
-        "output_schema": {"type": "object", "properties": {"ok": {"type": "boolean"}}},
-    }, sys.stdout)
-    sys.exit(0)
-
 print("no json here")
 '''
 
-
 _INNER_TOOL = '''\
 #!/usr/bin/env python3
-"""Registered hidden, the way the subcommands `pr` runs are."""
-import json, sys
-
-if "--tool-schema" in sys.argv:
-    json.dump({
-        "name": "inner-tool",
-        "description": "An implementation detail of another tool",
-        "input_schema": {"type": "object", "properties": {}},
-    }, sys.stdout)
-    sys.exit(0)
-
 print("inner output")
 '''
+
+_ECHO_SCHEMA = {
+    "name": "echo-tool",
+    "description": "Echo a word back",
+    "input_schema": {"type": "object", "properties": {"word": {"type": "string"}}},
+    "output_schema": {"type": "object", "properties": {"word": {"type": "string"}}},
+}
+
+_PLAIN_SCHEMA = {
+    "name": "plain-tool",
+    "description": "Print a line of text",
+    "input_schema": {"type": "object", "properties": {}},
+}
+
+_SILENT_SCHEMA = {
+    "name": "silent-tool",
+    "description": "Promise JSON and print prose",
+    "input_schema": {"type": "object", "properties": {}},
+    "output_schema": {"type": "object", "properties": {"ok": {"type": "boolean"}}},
+}
+
+_INNER_SCHEMA = {
+    "name": "inner-tool",
+    "description": "An implementation detail of another tool",
+    "input_schema": {"type": "object", "properties": {}},
+}
 
 
 @dataclass(frozen=True)
@@ -1446,19 +910,17 @@ class _FixtureTool:
 
     name: str
     source: str
+    schema: dict
     visibility: Visibility = Visibility.BRIEF
 
 
 _FIXTURE_TOOLS = (
-    _FixtureTool("echo-tool", _ECHO_TOOL),
-    _FixtureTool("plain-tool", _PLAIN_TOOL),
-    _FixtureTool("silent-tool", _SILENT_TOOL),
-    _FixtureTool("inner-tool", _INNER_TOOL, visibility=Visibility.HIDDEN),
+    _FixtureTool("echo-tool", _ECHO_TOOL, _ECHO_SCHEMA),
+    _FixtureTool("plain-tool", _PLAIN_TOOL, _PLAIN_SCHEMA),
+    _FixtureTool("silent-tool", _SILENT_TOOL, _SILENT_SCHEMA),
+    _FixtureTool("inner-tool", _INNER_TOOL, _INNER_SCHEMA, visibility=Visibility.HIDDEN),
 )
 
-# The registry the running server reads is the one on disk, so the fixture
-# writes YAML rather than handing the server a dict — the file is the half of
-# the path a unit test cannot reach.
 _FIXTURE_REGISTRY_META = """\
 meta:
   section: "Fixture Tools"
@@ -1467,6 +929,37 @@ meta:
 
 tools:
 """
+
+_SIDECAR_LAUNCHER = '''\
+#!/usr/bin/env python3
+"""Run the copied server with fixture schemas read from sidecar JSON files."""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import server  # noqa: E402
+
+
+def _tool_schema(script: Path) -> dict | None:
+    sidecar = Path(str(script) + ".schema.json")
+    if not sidecar.is_file():
+        return None
+    schema = json.loads(sidecar.read_text())
+    schema["_script"] = str(script)
+    return schema
+
+
+server._tool_schema = _tool_schema
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+    asyncio.run(server.main())
+'''
 
 
 def _fixture_registry() -> str:
@@ -1478,8 +971,15 @@ def _fixture_registry() -> str:
         for tool in _FIXTURE_TOOLS)
 
 
+def _write_fixture_tool(bin_dir: Path, tool: _FixtureTool) -> None:
+    script = bin_dir / tool.name
+    script.write_text(tool.source)
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    Path(str(script) + ".schema.json").write_text(json.dumps(tool.schema))
+
+
 def _build_fake_checkout(root: Path) -> Path:
-    """Lay out a throwaway checkout around the server and return its script.
+    """Lay out a throwaway checkout around the server and return its launcher.
 
     ``server.py`` derives ``WORKBENCH_DIR`` from its own resolved path, so the
     copy has to be a real file: a symlink resolves back to this repo and the
@@ -1488,22 +988,26 @@ def _build_fake_checkout(root: Path) -> Path:
     The workbench's own Python is reached through that same derived path, so
     ``ai/lib`` is left pointing at this repo — the server imports the registry
     reader from the checkout it was copied out of.
+
+    The launcher patches `_tool_schema` to read sidecar JSON, because
+    production only imports a schema for a script named `pr` and these cases
+    need several tools with different shapes.
     """
     mcps = root / "ai" / "claude" / "mcps"
     mcps.mkdir(parents=True)
     shutil.copy(WORKBENCH_DIR / "ai" / "claude" / "mcps" / "server.py", mcps / "server.py")
     (root / "ai" / "lib").symlink_to(WORKBENCH_DIR / "ai" / "lib")
+    launcher = mcps / "run.py"
+    launcher.write_text(_SIDECAR_LAUNCHER)
 
     bin_dir = root / "bin"
     bin_dir.mkdir()
     for tool in _FIXTURE_TOOLS:
-        script = bin_dir / tool.name
-        script.write_text(tool.source)
-        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+        _write_fixture_tool(bin_dir, tool)
 
     (bin_dir / "registry.yml").write_text(_fixture_registry())
 
-    return mcps / "server.py"
+    return launcher
 
 
 @dataclass(frozen=True)
@@ -1792,19 +1296,14 @@ class TestClientTransport:
 
 _LATER_TOOL = '''\
 #!/usr/bin/env python3
-"""Merged while the client was already connected."""
-import json, sys
-
-if "--tool-schema" in sys.argv:
-    json.dump({
-        "name": "later-tool",
-        "description": "Arrived after the handshake",
-        "input_schema": {"type": "object", "properties": {}},
-    }, sys.stdout)
-    sys.exit(0)
-
 print("later output")
 '''
+
+_LATER_SCHEMA = {
+    "name": "later-tool",
+    "description": "Arrived after the handshake",
+    "input_schema": {"type": "object", "properties": {}},
+}
 
 _LATER_ENTRY = """\
   - name: later-tool
@@ -1834,9 +1333,8 @@ class TestRediscovery:
     """A tool merged while the client is connected, without restarting it.
 
     The unit cases drive the watcher with discovery stubbed out. This is the
-    only place the whole chain runs: a real script appearing in a scanned
-    directory, the poll noticing, and a frame reaching the client that did not
-    ask for it.
+    only place the whole chain runs: a registry entry appearing, the poll
+    noticing, and a frame reaching the client that did not ask for it.
     """
 
     def test_a_tool_added_after_startup_is_announced_and_then_listed(self, tmp_path):
@@ -1851,6 +1349,7 @@ class TestRediscovery:
             later = tmp_path / "bin" / "later-tool"
             later.write_text(_LATER_TOOL)
             later.chmod(later.stat().st_mode | stat.S_IXUSR)
+            Path(str(later) + ".schema.json").write_text(json.dumps(_LATER_SCHEMA))
             registry = tmp_path / "bin" / "registry.yml"
             registry.write_text(registry.read_text() + _LATER_ENTRY)
 

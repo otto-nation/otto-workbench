@@ -6,19 +6,17 @@ supports both for free.
 
 ``--tool-schema`` emits a JSON document describing the tool's name, description,
 input schema (derived from argparse actions), and output schema (explicitly
-annotated). It is how the MCP server discovers tools — it probes every
-executable in the workbench's component ``bin/`` directories, plus any
-``tool_dirs`` adds — and it is what a skill's ``output_schema`` cites.
+annotated). ``build_schema`` is the same document without the flag, which is
+how a caller that already holds the parser asks — ``cli.schema`` reads it to
+answer for a ``pr`` subcommand.
 
-MCP discovery only probes scripts whose source names ``ToolParser`` or
-``--tool-schema`` (see ``ai/claude/mcps/server.py``). A tool that implements
-the protocol some other way will not be discovered. Naming the flag in a script
-under one of those directories is therefore a claim, and
-``bin/local/validate-tool-schema`` holds the build to it: it probes every
-candidate discovery would and fails when one cannot answer.
-``bin/local/validate-skills`` asserts the converse for the tool a skill's
-``output_schema`` names — that one must implement the protocol whether or not it
-carries a marker, or the skill cites a contract nothing publishes.
+The flag is no longer how tools are *discovered*. MCP reads the registry and
+imports the schema (see ``ai/claude/mcps/server.py``); it used to glob nine
+``bin`` directories, byte-grep each executable for a marker, and spawn every
+match. What the flag remains is the contract a skill's ``output_schema``
+cites and the string a reader runs to see it — ``pr ci --tool-schema``.
+``bin/local/validate-skills`` holds a skill to it: the tool it names must
+publish a schema, or the skill cites a contract nothing answers for.
 
 The output schema is generated from the tool's dataclass by ``schema_gen``,
 which describes what ``serde`` will accept for each field rather than deciding
@@ -38,8 +36,7 @@ might be missing, hang, or exit non-zero. ``pr`` now imports the parser and
 asks it directly, and a delegate that will not import is left to raise: it
 cannot run either, so degrading would misclassify the target and then fail
 dispatch anyway. ``--tool-schema`` is unaffected — it shares this module with
-that protocol and nothing else, and MCP discovery still enrols a script by
-finding it.
+that protocol and nothing else.
 
 One constraint comes with a flat list of option strings: every *option* the
 parser declares must consume exactly one value. It cannot express ``nargs='?'``,
@@ -105,13 +102,20 @@ class ToolParser(ArgumentParser):
             args = sys.argv[1:]
 
         if "--tool-schema" in args:
-            json.dump(self._build_schema(), sys.stdout, indent=2)
+            json.dump(self.build_schema(), sys.stdout, indent=2)
             sys.stdout.write("\n")
             sys.exit(0)
 
         return super().parse_args(args, namespace)
 
-    def _build_schema(self) -> dict:
+    def build_schema(self) -> dict:
+        """This parser's tool-schema document.
+
+        Public because the flag is not the only way to ask any more:
+        `cli.schema.subcommand_schema` imports the delegate's parser and
+        reads it in-process, which is how `pr ci` reports the `CIDomain`
+        contract that `pr --tool-schema` cannot carry for all nine at once.
+        """
         schema: dict = {
             "name": self.prog or "",
             "description": self.description or "",
@@ -212,7 +216,7 @@ def value_taking_options(parser: ArgumentParser) -> list[str]:
                 "consume exactly one value (nargs=None or 1). Callers skip a fixed "
                 "one token after such an option, so answering for this one would "
                 "misclassify the next. Give the option a single value, or teach both "
-                "this function and _positional_index in ai/bin/pr to carry a count."
+                "this function and positional_index in cli.dispatch to carry a count."
             )
         options.update(action.option_strings)
     return sorted(options)

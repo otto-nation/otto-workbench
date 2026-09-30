@@ -3927,19 +3927,17 @@ supports both for free.
 
 ``--tool-schema`` emits a JSON document describing the tool's name, description,
 input schema (derived from argparse actions), and output schema (explicitly
-annotated). It is how the MCP server discovers tools — it probes every
-executable in the workbench's component ``bin/`` directories, plus any
-``tool_dirs`` adds — and it is what a skill's ``output_schema`` cites.
+annotated). ``build_schema`` is the same document without the flag, which is
+how a caller that already holds the parser asks — ``cli.schema`` reads it to
+answer for a ``pr`` subcommand.
 
-MCP discovery only probes scripts whose source names ``ToolParser`` or
-``--tool-schema`` (see ``ai/claude/mcps/server.py``). A tool that implements
-the protocol some other way will not be discovered. Naming the flag in a script
-under one of those directories is therefore a claim, and
-``bin/local/validate-tool-schema`` holds the build to it: it probes every
-candidate discovery would and fails when one cannot answer.
-``bin/local/validate-skills`` asserts the converse for the tool a skill's
-``output_schema`` names — that one must implement the protocol whether or not it
-carries a marker, or the skill cites a contract nothing publishes.
+The flag is no longer how tools are *discovered*. MCP reads the registry and
+imports the schema (see ``ai/claude/mcps/server.py``); it used to glob nine
+``bin`` directories, byte-grep each executable for a marker, and spawn every
+match. What the flag remains is the contract a skill's ``output_schema``
+cites and the string a reader runs to see it — ``pr ci --tool-schema``.
+``bin/local/validate-skills`` holds a skill to it: the tool it names must
+publish a schema, or the skill cites a contract nothing answers for.
 
 The output schema is generated from the tool's dataclass by ``schema_gen``,
 which describes what ``serde`` will accept for each field rather than deciding
@@ -3959,8 +3957,7 @@ might be missing, hang, or exit non-zero. ``pr`` now imports the parser and
 asks it directly, and a delegate that will not import is left to raise: it
 cannot run either, so degrading would misclassify the target and then fail
 dispatch anyway. ``--tool-schema`` is unaffected — it shares this module with
-that protocol and nothing else, and MCP discovery still enrols a script by
-finding it.
+that protocol and nothing else.
 
 One constraint comes with a flat list of option strings: every *option* the
 parser declares must consume exactly one value. It cannot express ``nargs='?'``,
@@ -5011,6 +5008,34 @@ names. The resolvers here still take a table rather than reaching for one:
 `review_modes` would otherwise have to be imported from below it, and taking it
 as an argument is also what lets a test declare a table of its own.
 
+### cli/pr.py
+
+`pr`'s parser, its dispatcher, and the two commands that shape argv.
+
+The entry point, and only the entry point. Every subcommand's work lives
+below this layer: four in `cli.pr_commands`, five behind a `CommandSpec`
+handler the registry names. What is here is the two-pass global parse, the
+usage text, the ordering of resolve/register/fetch/lock, and the routing.
+
+`cmd_review` and `cmd_comments` are here rather than in `cli.pr_commands`
+because neither is a command in its own right: both shape argv ahead of a
+delegate the registry already names — `--self` injection, mode routing — and
+`cli.pr_commands` holds the four that `pr` genuinely performs itself.
+
+`bin_dir` is a parameter, not something this module derives. Under
+`WORKBENCH_AI_LIB_DIR` this file resolves inside the pinned checkout while
+the entry point's own directory does not, so a path built from `__file__`
+here would name a different tree's `ai/bin` than the shim the operator ran.
+`ai/bin/pr` passes its own, matching `cli.review_modes` and
+`review.publish.post`.
+
+`main` returns an int and does not exit, like every other `cli.<name>.main`.
+The shim does the `sys.exit`. `--tool-schema` is answered before anything
+else, because `pr ci --tool-schema` still has to resolve the flag ahead of
+dispatch, and a reader running `ai/bin/pr --tool-schema` directly should not
+pay for a context resolution to get it. The MCP server no longer spawns this
+binary to discover the tool; it imports `cli.schema.tool_schema` directly.
+
 ### cli/pr_commands.py
 
 The four `pr` subcommands that used to be defined inside the binary.
@@ -5218,6 +5243,35 @@ Usage:
   review-threads --fix
   review-threads --settle THREAD_ID [--as fixed|dismissed|already_addressed]
   review-threads --finish
+
+### cli/schema.py
+
+What `pr` tells a machine consumer about itself.
+
+Three related documents, all of them derived rather than written down twice:
+
+* the **tool schema** an MCP client reads to know what `pr` accepts;
+* the **schema contracts** — which invocations serve a versioned document
+  rather than a human table;
+* the **per-subcommand schema**, which is a delegate's own parser answering
+  for itself.
+
+That last one is the part D2 specified and nothing built. `pr --tool-schema`
+answers for the whole command and has no `output_schema`, because one of the
+nine subcommands prints a `PRState` document and the other eight print prose
+— declaring one schema for all nine made the MCP server reject the eight. So
+the honest per-command contract is the delegate's, and `subcommand_schema`
+is how a consumer asks for it.
+
+A consumer that wants the union asks `pr --tool-schema`; one that wants to
+know what `pr ci` returns asks for that subcommand by name. Neither is a
+second declaration: the enum comes from `cli.registry.COMMANDS`, the output
+schema from the delegate's own `ToolParser`, and a subcommand that grows a
+flag says so in both without anyone editing this module.
+
+`SCRIPT` is the literal `"pr"` rather than anything derived from `__file__`.
+This module is `schema.py`, and a tool name taken from its own filename would
+advertise the wrong command.
 
 ### cli/wiki.py
 

@@ -271,7 +271,8 @@ def test_the_refusal_names_the_flag_and_the_fix():
     with pytest.raises(ValueError) as exc_info:
         value_taking_options(parser)
     assert "--track declares nargs='+'" in str(exc_info.value)
-    assert "_positional_index" in str(exc_info.value), "the message must name the fix"
+    assert "positional_index in cli.dispatch" in str(exc_info.value), \
+        "the message must name the fix, at the location it now lives"
 
 
 # passes-at-base: the arity constraint was never on the delegate's own CLI, and deleting the protocol must not narrow what one may declare

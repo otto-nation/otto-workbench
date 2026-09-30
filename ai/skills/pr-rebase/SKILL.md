@@ -6,7 +6,7 @@ invocation: "/pr-rebase [branch] [--no-fix] [--no-push] [--force] [--onto|--base
 trigger: "Use when user asks to rebase a branch, resolve rebase conflicts, update a branch against its base, or fix merge conflicts during rebase."
 skip: "Do not use for simple git pull --rebase with no conflicts. Do not use for commit rewording (use task commit:reword instead)."
 output_schema:
-  tool: pr-rebase
+  tool: pr rebase
 ---
 
 # PR Rebase

@@ -641,6 +641,145 @@ EOF
   [[ "$output" == *"defined in multiple registries"* ]]
 }
 
+@test "three registries claiming one env var are named in one error" {
+  # Pairwise chaining reported "a and b" then "b and c": two errors for one
+  # name, neither naming all three files.
+  for d in brew bin zsh; do
+    cat > "$TMPDIR/$d/registry.yml" << EOF
+meta:
+  section: "$d"
+  validation: none
+
+env:
+  - var: SHARED_VAR
+
+tools: []
+EOF
+  done
+
+  run main
+  [ "$status" -ne 0 ]
+  [ "$(grep -c "defined in multiple registries" <<< "$output")" -eq 1 ]
+  # Pins all three sources on the one line, in collect_registries' path
+  # order (bin, brew, zsh) — not just present somewhere in the output, which
+  # a regression splitting the accumulated sources across two lines would
+  # still satisfy.
+  [[ "$output" == *"env var 'SHARED_VAR' defined in multiple registries: bin/registry.yml brew/registry.yml zsh/registry.yml"* ]]
+}
+
+@test "fails on one tool name registered in two bindir registries" {
+  # The MCP server cannot refuse this: it discovers in the thread that also
+  # serves re-discovery, so it keeps the first entry and logs the rest —
+  # which leaves registry order deciding which tool a client reaches.
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "A"
+  validation: bindir
+  source: bin
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: hidden
+    description: "one"
+  - name: othertool
+    permission: false
+    visibility: hidden
+    description: "and the other file, so the reverse check passes"
+EOF
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "B"
+  validation: bindir
+  source: bin
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: hidden
+    description: "the same name, from a second registry"
+  - name: othertool
+    permission: false
+    visibility: hidden
+    description: "and the other file, so the reverse check passes"
+EOF
+
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"registered in multiple registries"* ]]
+}
+
+@test "three registries claiming one tool name name the kept file first" {
+  # Which file wins is the actionable half: discovery keeps the first in
+  # registry order, so the error lists it ahead of the ones it shadows.
+  for d in bin brew zsh; do
+    cat > "$TMPDIR/$d/registry.yml" << EOF
+meta:
+  section: "$d"
+  validation: bindir
+  source: bin
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: hidden
+    description: "claimed by $d"
+  - name: othertool
+    permission: false
+    visibility: hidden
+    description: "so the reverse check passes"
+EOF
+  done
+
+  run main
+  [ "$status" -ne 0 ]
+  # One line per over-claimed name, not one per colliding pair. Both names in
+  # this fixture are shared by all three files, so two lines is the whole of it
+  # — pairwise chaining would have emitted four.
+  [ "$(grep -c "registered in multiple registries" <<< "$output")" -eq 2 ]
+  # collect_registries walks in path order, so bin/ is the claimant kept.
+  [[ "$output" == *"tool 'mytool' registered in multiple registries: bin/registry.yml brew/registry.yml zsh/registry.yml"* ]]
+}
+
+# passes-at-base: the base has no cross-file check at all, so its scope is
+# trivially satisfied there. Deleting the `bindir` guard from the check does
+# fail this, which is what it is here to hold.
+@test "a name shared by a brew stack and an env alias is not a collision" {
+  # `linear` is a brew formula and an auth alias on the live tree. Neither is
+  # a script the server can offer, so comparing across those namespaces would
+  # report a collision that cannot happen.
+  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+meta:
+  section: "A"
+  validation: none
+
+tools:
+  - name: shared
+    permission: false
+    visibility: hidden
+    description: "a brew formula"
+EOF
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "B"
+  validation: none
+
+tools:
+  - name: shared
+    permission: false
+    visibility: hidden
+    description: "something else entirely"
+EOF
+
+  run main
+  # Exit 0, not merely the absence of the message: an absence is also what a
+  # run that died on an unrelated schema error produces, and a fixture missing
+  # a required field reads as this test passing when nothing reached the scope
+  # check at all.
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"registered in multiple registries"* ]]
+}
+
 @test "fails when install_check true with empty tools and no install_check_command" {
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'
 meta:

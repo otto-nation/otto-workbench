@@ -135,22 +135,47 @@ _validate_output_schema() {
     return
   fi
 
-  tool_script="$WORKBENCH_DIR/ai/bin/$tool_name"
-  if [[ ! -x "$tool_script" ]]; then
-    tool_script="$WORKBENCH_DIR/ai/claude/bin/$tool_name"
-  fi
-  if [[ ! -x "$tool_script" ]]; then
-    _fail "$display: output_schema tool '$tool_name' not found in ai/bin/ or ai/claude/bin/"
-    return
-  fi
+  # A `pr` subcommand answers from the registry, in one interpreter, rather
+  # than by running anything. That is what lets a skill name the invocation a
+  # user types — `pr ci` — instead of `ai/bin/ci-check`, which is a shim the
+  # skill's reader has no reason to know exists.
+  if [[ "$tool_name" == pr\ * ]]; then
+    local subcommand="${tool_name#pr }"
+    if ! schema_out=$(python3 -c '
+import json, sys
+sys.path.insert(0, sys.argv[1] + "/ai/lib")
+from cli.schema import subcommand_schema
+doc = subcommand_schema(sys.argv[2])
+if doc is None:
+    sys.exit(1)
+json.dump(doc, sys.stdout)
+' "$WORKBENCH_DIR" "$subcommand" 2>/dev/null); then
+      _fail "$display: output_schema tool '$tool_name' declares no schema — \
+a pr subcommand reports one only when its delegate's parser is a ToolParser"
+      return
+    fi
+  else
+    tool_script="$WORKBENCH_DIR/ai/bin/$tool_name"
+    if [[ ! -x "$tool_script" ]]; then
+      tool_script="$WORKBENCH_DIR/ai/claude/bin/$tool_name"
+    fi
+    if [[ ! -x "$tool_script" ]]; then
+      _fail "$display: output_schema tool '$tool_name' not found in ai/bin/ or ai/claude/bin/"
+      return
+    fi
 
-  if ! schema_out=$("$tool_script" --tool-schema 2>/dev/null); then
-    _fail "$display: output_schema tool '$tool_name' does not support --tool-schema"
-    return
+    if ! schema_out=$("$tool_script" --tool-schema 2>/dev/null); then
+      _fail "$display: output_schema tool '$tool_name' does not support --tool-schema"
+      return
+    fi
   fi
 
   # Exit 0 alone proves nothing — a script that ignores unknown flags also exits 0.
-  # Keys mirror REQUIRED_SCHEMA_KEYS in ai/claude/mcps/server.py.
+  # The two keys are the whole of what a schema document must carry: a name to
+  # be cited by and an input contract to be called against. The MCP server used
+  # to hold the same pair as REQUIRED_SCHEMA_KEYS, checking what a probe
+  # printed; it builds the document itself now, so this is the only place left
+  # that reads one it did not write.
   if jq -e 'has("name") and has("input_schema")' <<< "$schema_out" > /dev/null 2>&1; then
     _pass "$display: output_schema tool '$tool_name' supports --tool-schema"
   else

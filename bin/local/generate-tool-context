@@ -485,8 +485,14 @@ _emit_skill_reference() {
       printf '\n**Output:** `%s`\n' "$output"
     fi
     if [[ -n "$output_tool" ]]; then
+      # The invocation a reader can run to see the schema. A `pr` subcommand
+      # is named as one — `pr ci --tool-schema` — rather than as the shim it
+      # used to dispatch to, which is not a name the reader has any reason to
+      # know. The "(MCP tool: ...)" note is gone with the probe: `pr` is the
+      # only tool MCP offers, so naming a hidden delegate as one was wrong
+      # even before discovery stopped scanning for them.
       # shellcheck disable=SC2016  # backticks are markdown literals
-      printf '**Output schema:** `%s --tool-schema` (MCP tool: `%s`)\n' "$output_tool" "$output_tool"
+      printf '**Output schema:** `%s --tool-schema`\n' "$output_tool"
     fi
     # A skill with a should-<name>.sh gate is asked by the maintenance timer as
     # well as by the Stop hook — read off the gate rather than listed here, so a

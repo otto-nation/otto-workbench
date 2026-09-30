@@ -147,15 +147,36 @@ _check_required_fields() {
   fi
 }
 
-# _check_no_duplicates FILE
+# _check_no_duplicates FILE VALIDATION
 _check_no_duplicates() {
-  local file="$1"
+  local file="$1" validation="$2"
   local dupes
   dupes=$(_tool_names "$file" | sort | uniq -d)
   if [[ -n "$dupes" ]]; then
     while IFS= read -r name; do
       _fail "$(basename "$file"): duplicate tool name: $name"
     done <<< "$dupes"
+  fi
+
+  # Tracked for the cross-registry check below, but only for the registries
+  # that name executables. A name is unique per file by the check above; two
+  # *files* claiming one is a separate question, and was nobody's until the
+  # MCP probe went. Discovery keys on the name, keeps whichever entry it
+  # reached first and logs the other, so a collision decides which tool a
+  # client gets by registry order.
+  #
+  # `bindir` only. A brew stack and an env-alias file describe different
+  # kinds of thing and legitimately share a name — `linear` is a brew
+  # formula and an auth alias today — and neither is a script the server can
+  # offer, so comparing across those namespaces reports a collision that
+  # cannot happen. VALIDATION is passed in by the caller, which already read
+  # meta.validation once for `_validate_registry`'s dispatch — reading it a
+  # second time here would parse the same value twice per file.
+  if [[ "$validation" == "bindir" ]]; then
+    local name
+    while IFS= read -r name; do
+      [[ -n "$name" ]] && ALL_TOOL_NAMES+=("$name:${file#"$REPO_ROOT/"}")
+    done < <(_tool_names "$file")
   fi
 }
 
@@ -286,10 +307,10 @@ _check_commands_field() {
   fi
 }
 
-# _validate_schema FILE
+# _validate_schema FILE VALIDATION
 # Runs required-field, allow-field, and duplicate checks for every entry in FILE.
 _validate_schema() {
-  local file="$1"
+  local file="$1" validation="$2"
   [[ -f "$file" ]] || { warn "$(basename "$file") not found — skipping"; return; }
   local count i=0
   count=$(reg_len "$file" tools)
@@ -300,7 +321,7 @@ _validate_schema() {
     _check_commands_field "$file" "$i"
     i=$(( i + 1 ))
   done
-  _check_no_duplicates "$file"
+  _check_no_duplicates "$file" "$validation"
 }
 
 # _validate_against_brewfile REGISTRY BREWFILE
@@ -547,17 +568,12 @@ _validate_auth_fields() {
   done
 }
 
-# _validate_registry FILE
-# Dispatches cross-validation based on meta.validation and meta.source in FILE.
+# _validate_registry FILE VALIDATION
+# Dispatches cross-validation based on VALIDATION (meta.validation, already
+# resolved by the caller) and meta.source in FILE.
 _validate_registry() {
-  local file="$1"
-  local validation source
-  validation=$(reg_get "$file" meta validation)
-  # Only an absent key defaults to `none`. An explicit `validation: ""` is a
-  # value someone wrote, and it names no cross-check — it falls through to the
-  # `*)` arm below and is reported, which is what the `// "none"` read this
-  # replaced did too: yq substitutes on null, not on an empty string.
-  reg_has "$file" meta validation || validation="none"
+  local file="$1" validation="$2"
+  local source
   source=$(reg_get "$file" meta source)
 
   case "$validation" in
@@ -578,18 +594,66 @@ _validate_registry() {
   esac
 }
 
+# _check_claimed_once NOUN VERB ENTRY... — one name may be claimed by one file.
+#
+# ENTRY is "name:source". Reports one error per over-claimed name, naming every
+# file that claims it, in the order they were collected.
+#
+# Both callers previously compared each entry against the last source seen and
+# overwrote it, which reports N-1 overlapping pairs for N claimants: three files
+# claiming one name gave "a and b" then "b and c", never naming a-and-c as
+# related and never saying three files were involved. Worse for the tool check,
+# where the surviving claimant is the one the MCP server actually keeps: the
+# second error named neither the kept file nor the last one to lose, so the
+# message pointed at no action. Accumulating every source and reporting once
+# per name says what is true — which files collide, and which one wins.
+_check_claimed_once() {
+  local noun="$1" verb="$2"
+  shift 2
+  # Insertion order, tracked separately: bash associative arrays do not keep it,
+  # and an error that lists claimants in hash order names a different "first"
+  # than the one discovery keeps.
+  local -a names=()
+  local -A claims=()
+  local entry name source
+  for entry in "$@"; do
+    name="${entry%%:*}"
+    source="${entry#*:}"
+    if [[ -z "${claims[$name]:-}" ]]; then
+      names+=("$name")
+      claims[$name]="$source"
+      continue
+    fi
+    # A file listing one name twice is the per-file duplicate check's to report.
+    [[ " ${claims[$name]} " == *" $source "* ]] && continue
+    claims[$name]+=" $source"
+  done
+
+  local -a sources
+  for name in "${names[@]}"; do
+    read -r -a sources <<< "${claims[$name]}"
+    (( ${#sources[@]} > 1 )) || continue
+    _fail "$noun '$name' $verb in multiple registries: ${sources[*]}"
+  done
+}
+
 # Cross-registry duplicate check: no env var name should appear in multiple registries.
 _check_cross_registry_dupes() {
-  local -A var_sources=()
-  local entry var source
-  for entry in "${ALL_ENV_VARS[@]}"; do
-    var="${entry%%:*}"
-    source="${entry#*:}"
-    if [[ -n "${var_sources[$var]:-}" && "${var_sources[$var]}" != "$source" ]]; then
-      _fail "env var '$var' defined in multiple registries: ${var_sources[$var]} and $source"
-    fi
-    var_sources[$var]="$source"
-  done
+  _check_claimed_once "env var" defined "${ALL_ENV_VARS[@]}"
+}
+
+# _check_cross_registry_tool_dupes — one tool name may be claimed by one file.
+#
+# The per-file check cannot see this, and the MCP server cannot refuse it: it
+# discovers in a thread that also serves re-discovery, so raising would either
+# take the server down or freeze the tool list for the session. It keeps the
+# first entry it reached and logs the rest — which leaves *which* tool a
+# client reaches decided by registry order. This is the only place that can
+# be an error rather than a log line.
+# The first source listed is the one discovery keeps, so the message names the
+# winner before the losers rather than leaving that to be inferred.
+_check_cross_registry_tool_dupes() {
+  _check_claimed_once tool registered "${ALL_TOOL_NAMES[@]}"
 }
 
 # Cross-registry model-default check: exactly one env entry may claim
@@ -616,6 +680,7 @@ main() {
   REGISTRIES_CHECKED=0
   declare -a ALL_ENV_VARS=()   # "VAR_NAME:source_file" pairs for cross-registry dupe check
   declare -a ALL_MODEL_DEFAULTS=()  # same shape, for the single-model-default check
+  declare -a ALL_TOOL_NAMES=()      # same shape, for the cross-registry tool-name check
 
   if ! command -v yq >/dev/null 2>&1; then
     err "yq not found — run: brew install yq"
@@ -648,16 +713,25 @@ main() {
       echo
       info "Schema: ${registry#"$REPO_ROOT/"}"
     fi
+    # Read once per file and threaded through: `_validate_schema` (by way of
+    # `_check_no_duplicates`) and `_validate_registry` both key off
+    # meta.validation, and re-reading it in each would parse the same value
+    # twice. Only an absent key defaults to `none` here — an explicit
+    # `validation: ""` is a value someone wrote, and it names no cross-check,
+    # so it is left as-is and reported by `_validate_registry`'s `*)` arm.
+    local validation
+    validation=$(reg_get "$registry" meta validation)
+    reg_has "$registry" meta validation || validation="none"
     # A `tools:` that is not a list has no entries to walk, and every check
     # that iterates them would report the file clean rather than report the
     # shape. Those are skipped when it fails; the meta-only checks below do not
     # read `tools` and still run, so one malformed collection does not hide
     # every other problem in the same file until it is fixed.
     if _check_list_shape "$registry" tools; then
-      _validate_schema "$registry"
+      _validate_schema "$registry" "$validation"
       _validate_auth_fields "$registry"
       _validate_install_check_command "$registry"
-      _validate_registry "$registry"
+      _validate_registry "$registry" "$validation"
     fi
     if _check_list_shape "$registry" env; then
       _validate_env_fields "$registry"
@@ -667,6 +741,9 @@ main() {
 
   if [[ "${#ALL_ENV_VARS[@]}" -gt 0 ]]; then
     _check_cross_registry_dupes
+  fi
+  if [[ "${#ALL_TOOL_NAMES[@]}" -gt 0 ]]; then
+    _check_cross_registry_tool_dupes
   fi
   _check_single_model_default
 

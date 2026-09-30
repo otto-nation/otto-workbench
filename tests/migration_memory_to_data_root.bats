@@ -138,6 +138,31 @@ _run_migration() {
   [ -d "$stray/memory" ]
 }
 
+@test "a run that only fails to remove a directory is not recorded as a no-op" {
+  # The counters and the retry flag are separate, and only the counters gated
+  # the early return: a run whose single visit set `unresolved` and counted
+  # nothing answered MIGRATION_NOOP, which lib/migrations.sh records exactly
+  # like work and never asks again. Every other case here seeds a carriable
+  # directory in setup(), so `carried` is never 0 and this branch is
+  # unreachable from them — the baseline has to go for the guard to be tested.
+  if [[ "$(id -u)" -eq 0 ]]; then
+    skip "root ignores the write bit this test removes"
+  fi
+
+  rm -rf "$HOME/.claude/projects/$SLUG"
+
+  local stray="$HOME/.claude/projects/-private-tmp"
+  mkdir -p "$stray/memory"
+  chmod a-w "$stray"
+
+  _run_migration
+
+  # 3 is MIGRATION_NOOP: recorded and never retried, which is the outcome
+  # this guard exists to refuse. 1 is the retry signal.
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Could not remove empty"* ]]
+}
+
 @test "lists a dotfile when reporting an unresolvable directory" {
   # The listing globs through the dotfile-aware helper, so a directory holding
   # only stamps is reported with what it holds rather than as holding nothing.

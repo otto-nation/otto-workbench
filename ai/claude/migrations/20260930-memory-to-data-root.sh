@@ -54,17 +54,7 @@ migration_20260930_memory_to_data_root() {
     # the sweep shrinks: rmdir refuses a directory that is not empty, which is
     # the guarantee that this can never take authored memory.
     if _migration_dir_is_empty "$mem_dir"; then
-      # Reported and retried rather than swallowed. A refused rmdir — an
-      # unwritable parent, a file landing between the test and the call —
-      # leaves the directory on disk, and touching no counter would let a run
-      # that visited only this one return MIGRATION_NOOP, which the framework
-      # records as applied and never retries.
-      if ! rmdir "$mem_dir" 2>/dev/null; then
-        warn "Could not remove empty $mem_dir — left in place"
-        unresolved=1
-        continue
-      fi
-      empty=$((empty + 1))
+      _migration_remove_empty "$mem_dir" && empty=$((empty + 1)) || unresolved=1
       continue
     fi
 
@@ -106,7 +96,13 @@ migration_20260930_memory_to_data_root() {
     carried=$((carried + 1))
   done
 
-  if [[ "$carried" -eq 0 && "$orphaned" -eq 0 && "$empty" -eq 0 ]]; then
+  # `unresolved` belongs in this guard, not only in the return below it. It is
+  # set by paths that touch none of the three counters — a refused rmdir, a
+  # repo that cannot be keyed — so a run whose only visit took one of them
+  # would otherwise answer MIGRATION_NOOP here and never reach the retry
+  # signal. The framework records a no-op exactly like work and never asks
+  # again, which would strand the directory with nothing left to look at it.
+  if [[ "$carried" -eq 0 && "$orphaned" -eq 0 && "$empty" -eq 0 && "$unresolved" -eq 0 ]]; then
     return "$MIGRATION_NOOP"
   fi
 
@@ -146,6 +142,20 @@ _migration_repo_for_slug() {
   candidate="$(_migration_cwd_from_transcripts "$CLAUDE_DIR/projects/$slug")" || return 1
   [[ -n "$candidate" && -d "$candidate" ]] || return 1
   printf '%s' "$candidate"
+}
+
+# _migration_remove_empty DIR — remove an empty DIR. Non-zero when it survives.
+#
+# A refused rmdir — an unwritable parent, or a file landing between the
+# emptiness test and this call — leaves the directory on disk. Reported rather
+# than swallowed, so the caller can flag the run for retry: a run that visited
+# only this directory and counted nothing would otherwise be recorded as a
+# no-op and never asked again.
+_migration_remove_empty() {
+  local dir="$1"
+  rmdir "$dir" 2>/dev/null && return 0
+  warn "Could not remove empty $dir — left in place"
+  return 1
 }
 
 # _migration_dir_entries DIR ARRAY_VAR — every entry in DIR, dotfiles included.

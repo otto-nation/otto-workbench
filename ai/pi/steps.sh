@@ -457,6 +457,45 @@ step_pi_settings() {
   return 0
 }
 
+# step_pi_packages — refreshes the git package clones Pi resolves from
+# settings.json, so a user-scope clone cannot sit at a SHA the installed pi
+# cannot serve.
+#
+# Pi clones a `git:` package once and then reuses whatever is on disk:
+# resolvePackageSources refetches only for `temporary` scope, so a user clone
+# freezes at the SHA it had on its first run and nothing moves it again.
+# `pi update` with no target updates the host binary alone, which is how a
+# machine ends up running a new pi against an old provider extension.
+#
+# That skew is silent in the direction that matters. A provider predating pi
+# 0.86's TranscriptContext sends the model no system prompt and no tool
+# declarations, so the agent cannot call a tool and answers without one —
+# runs exit 0 having done no work. bin/local/validate-pi-extension-clones
+# reports the condition; this is what cures it, and the two belong together
+# or the gate is a red light with no pedal.
+#
+# --no-approve because sync speaks for this machine's user scope only. Without
+# it, a sync run from inside a repo carrying .pi/settings.json would adopt and
+# update that project's packages too — the operator's call, not something a
+# config re-apply should make for them.
+#
+# A pinned package stays pinned: pi resolves the declared ref, so an `@v6.3.0`
+# entry re-fetches that tag rather than advancing. Non-fatal, because a
+# machine that is offline or behind a forge that is down should still get the
+# rest of its config applied.
+step_pi_packages() {
+  command -v pi > /dev/null 2>&1 || { warn "pi not found in PATH — skipping"; return; }
+
+  [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Refreshing Pi packages" || true
+
+  if pi update --extensions --no-approve > /dev/null 2>&1; then
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && success "Pi packages refreshed" || true
+  else
+    warn "Could not refresh Pi packages — run: pi update --extensions"
+  fi
+  return 0
+}
+
 # _export_pi_config DIR — copies Pi config into DIR for tarball export.
 _export_pi_config() {
   local dest="$1"
@@ -483,6 +522,9 @@ sync_pi() {
 
   sync_header "pi guidelines → $PI_CONTEXT_FILE"
   step_pi_guidelines
+
+  sync_header "pi packages"
+  step_pi_packages
 }
 
 register_pi_steps() {
@@ -490,6 +532,7 @@ register_pi_steps() {
   register_step "Pi settings"    step_pi_settings
   register_step "Pi extensions"  step_pi_extensions
   register_step "Pi guidelines"  step_pi_guidelines
+  register_step "Pi packages"    step_pi_packages
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

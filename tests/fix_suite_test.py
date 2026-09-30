@@ -161,12 +161,20 @@ def test_a_timeout_establishes_nothing_either_way(tmp_path):
     assert "did not finish" in result.note
 
 
-# Comfortably longer than the timeout the test gives the runner, so "the run
-# came back" cannot be the child having finished on its own.
-_ORPHAN_LIFETIME_S = 30
-# What the run gets to notice the timeout, signal the group and reap it. Well
-# under the lifetime above: the gap between them is what the assertion reads.
-_REAP_BUDGET_S = 15
+# How long the fixture's orphan would live if nothing killed it. Comfortably
+# longer than _REAP_BUDGET_S, so "the run came back" cannot be the child
+# having finished on its own.
+_ORPHAN_LIFETIME_S = 40
+# What the runner gets before the timeout fires. Not the tight bound it looks
+# like: it has to cover bash starting, forking and writing a file on a machine
+# running the whole suite across twelve workers. At 1s this test failed in CI
+# for that reason alone — the timeout beat the fixture to its own pid file —
+# which is a flake in the test and not a finding about the code.
+_FIXTURE_TIMEOUT_S = 5
+# The wall-clock ceiling the assertion reads. Between the timeout above and
+# the lifetime above, so a run that signalled the group lands well under it
+# and one that waited out the orphan lands well over.
+_REAP_BUDGET_S = 20
 
 
 def test_a_timeout_reaps_the_whole_process_tree(tmp_path):
@@ -180,22 +188,29 @@ def test_a_timeout_reaps_the_whole_process_tree(tmp_path):
     child-only kill leaves `communicate` holding the inherited pipe until the
     orphan exits by itself, so the tree *is* empty by the time the call
     returns — it just took the orphan's full lifetime to get there. The
-    elapsed bound is what tells those apart.
+    elapsed bound is what tells those apart, and it is the assertion that
+    fails at ~40s against the old behaviour.
     """
     child_pid = tmp_path / "child.pid"
     cmd = _script(
         tmp_path, "forker",
-        f"sleep {_ORPHAN_LIFETIME_S} & echo $! > {child_pid}\nwait",
+        f"sleep {_ORPHAN_LIFETIME_S} &\necho $! > {child_pid}\nwait",
     )
 
     started = time.monotonic()
-    result = fix_suite.run(tmp_path, cmd, 1)
+    result = fix_suite.run(tmp_path, cmd, _FIXTURE_TIMEOUT_S)
     elapsed = time.monotonic() - started
 
     assert result.status is fix_suite.SuiteStatus.TIMED_OUT
     assert elapsed < _REAP_BUDGET_S, (
-        f"the run took {elapsed:.0f}s to come back from a 1s timeout \u2014 it "
-        "waited out the orphan rather than signalling the group"
+        f"the run took {elapsed:.0f}s to come back from a "
+        f"{_FIXTURE_TIMEOUT_S}s timeout — it waited out the orphan rather "
+        "than signalling the group"
+    )
+    assert child_pid.exists(), (
+        f"the fixture did not record its child within {_FIXTURE_TIMEOUT_S}s — "
+        "the machine was too loaded for the fixture, not a finding about the "
+        "code under test"
     )
     pid = int(child_pid.read_text().strip())
     assert not _alive(pid), f"pid {pid} outlived the run that spawned it"

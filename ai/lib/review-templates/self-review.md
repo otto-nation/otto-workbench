@@ -75,9 +75,9 @@ so a claim drafted there describes a command that has not executed and may
 never. Say what the code shows, or mark the claim unverified — the two honest
 options.
 
-This holds for every severity, including nits. Only Must-fix and Should-fix
-findings have their evidence checked against the tree, so a claim in a nit is
-one no later gate will catch.
+This holds for every severity, including nits and idioms. Only Must-fix and
+Should-fix findings have their evidence checked against the tree, so a claim
+in a nit or idiom is one no later gate will catch.
 ${issue_section}
 ${prior_section}
 ${reply_threads}

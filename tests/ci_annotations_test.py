@@ -559,6 +559,18 @@ def test_an_external_check_that_says_nothing_still_becomes_an_item():
     assert "kubesec" in result.items[0].annotation
 
 
+def test_an_external_check_with_only_notice_annotations_falls_back_to_summary():
+    """All-notice annotations filter down to nothing — that's not a pass either."""
+    notices = [{"annotation_level": "notice", "message": "fyi", "path": "a.py",
+                "start_line": 1, "title": "kubesec"}]
+    job = _external_job(name="kubesec", db_id=77, summary="kubesec found issues")
+    with patch("gh.run_reads.fetch_annotations", return_value=notices):
+        result = ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 1})
+    assert result is not None
+    assert result.kind is ci.FailureKind.EXTERNAL
+    assert result.items[0].annotation == "kubesec found issues"
+
+
 def test_codeql_is_not_classified_as_a_build_failure():
     """`classify_job` matches on name and would read it as BUILD, and fix it as one."""
     assert ci.classify_job("CodeQL", []) is ci.FailureKind.BUILD

@@ -275,7 +275,10 @@ def _external_failure(repo: str, job: dict) -> JobFailure | None:
     job_name = job.get("name", "unknown")
     job_id = job.get("databaseId", 0)
     annotations = run_reads.fetch_annotations(repo, job_id) if job_id else []
-    if not annotations:
+    # Annotations that are all notice-level filter down to nothing in
+    # annotations_to_items, which is indistinguishable from never having
+    # fetched any — fall back on the filtered result, not the raw one.
+    if not annotations_to_items(annotations, job_name):
         summary = job.get("_summary") or job.get("_details_url", "")
         if summary:
             annotations = [{"message": summary, "path": "", "start_line": 0,

@@ -85,9 +85,14 @@ class ParseFailure(StrEnum):
     END_BEFORE_BEGIN = "end_before_begin"
     SURVIVING_CONFLICT_MARKER = "surviving_conflict_marker"
     MISSING_BLOCK_MARKERS = "missing_markers_for_block"
-    ECHOED_CONTEXT = "echoed_context"
     # An echo that trimming cannot repair: every line the model returned came
     # from the context, so removing the echo removes the resolution with it.
+    #
+    # There is no member for an ordinary echo, and deliberately so: one is
+    # trimmed and the resolution used, which is a repair rather than a parse
+    # failure. A member for it would be vocabulary no parser can produce,
+    # which reads to the next person as a live failure mode that simply never
+    # fires — see `conflicts.trim_echoed_context`.
     WHOLLY_ECHOED = "wholly_echoed_context"
 
 

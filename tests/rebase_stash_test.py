@@ -62,6 +62,10 @@ class TestAutoStash:
             assert rebase_stash.auto_stash("/fake") is None
 
 
+# A stand-in for whatever ref `auto_stash_ref` resolves, not a claim about
+# stack position — the tests below stub the lookup rather than exercise it.
+# `TestAutoStashRef` is where position actually matters, and it asserts that
+# the entry is found by message wherever it sits.
 _OUR_STASH = "stash@{0}"
 
 

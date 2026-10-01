@@ -180,7 +180,6 @@ def build_chunked_prompt(
 # failure mode that is not listed falls through to the generic wording rather
 # than silently inheriting another failure's correction.
 _HINT_FOR_FAILURE = {
-    ParseFailure.ECHOED_CONTEXT: agent_retry.ECHOED_CONTEXT_HINT,
     ParseFailure.WHOLLY_ECHOED: agent_retry.ECHOED_CONTEXT_HINT,
     ParseFailure.SURVIVING_CONFLICT_MARKER: agent_retry.SURVIVING_MARKER_HINT,
 }

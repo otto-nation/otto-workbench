@@ -22,15 +22,24 @@ if str(LIB_DIR) not in sys.path:
 from agent import retry as agent_retry  # noqa: E402
 from rebase import conflicts as rebase_conflicts  # noqa: E402
 from rebase import resolve_ai as rebase_resolve  # noqa: E402
+from rebase import types as rebase_types  # noqa: E402
 
 _CONFLICT = "<<<<<<< HEAD\n    return a\n=======\n    return b\n>>>>>>> abc\n"
 _AFTER = "\n# next thing\ndef other():\n"
 
 
+def _block() -> rebase_types.ConflictBlock:
+    """One conflict with context on both sides, as the chunked prompt sends it."""
+    return rebase_types.ConflictBlock(
+        index=1, start=0, end=4, conflict=_CONFLICT,
+        context_before="def f(a, b):\n", context_after=_AFTER,
+    )
+
+
 class TestHintForReason:
     @pytest.mark.parametrize("reason,expected", [
-        ("echoed_context_in_block_2:3", agent_retry.ECHOED_CONTEXT_HINT),
         ("wholly_echoed_context_in_block_1", agent_retry.ECHOED_CONTEXT_HINT),
+        ("wholly_echoed_context", agent_retry.ECHOED_CONTEXT_HINT),
         ("surviving_conflict_marker_in_block_1:<<<<<<<",
          agent_retry.SURVIVING_MARKER_HINT),
         ("surviving_conflict_marker:<<<<<<<", agent_retry.SURVIVING_MARKER_HINT),
@@ -47,10 +56,48 @@ class TestHintForReason:
         The generic hint's instruction is to emit the markers; sending it to a
         resolution whose markers were faultless corrects nothing and buys a
         second identical answer.
+
+        Phrased against the reason a parser really emits. An ordinary echo is
+        trimmed rather than reported, so the wholly-echoed case is the only
+        echo that reaches a retry at all — asserting on a reason string
+        nothing produces would pin the dispatch table to itself.
         """
-        hint = rebase_resolve.hint_for_reason("echoed_context_in_block_1:2")
+        hint = rebase_resolve.hint_for_reason("wholly_echoed_context_in_block_1")
         assert "context" in hint
         assert hint is not agent_retry.BLANK_RESPONSE_HINT
+
+    def test_every_hint_key_is_a_reason_some_parser_emits(self):
+        """The table must not accumulate vocabulary nothing can produce.
+
+        A key no parser emits reads as a live failure mode that never fires,
+        and the test pinning it reads as coverage. Both are worse than the
+        missing entry would be — so the source of truth is what the parsers
+        actually write, and this is what keeps the two in step.
+        """
+        emitted = set()
+        for block_count, text in (
+            (1, "nothing parseable here"),
+            (1, f"{rebase_conflicts.RESOLVE_BEGIN}_1\n<<<<<<< HEAD\n"
+                f"{rebase_conflicts.RESOLVE_END}_1\n"),
+            (1, f"{rebase_conflicts.RESOLVE_BEGIN}_1\n{_AFTER}"
+                f"{rebase_conflicts.RESOLVE_END}_1\n"),
+        ):
+            parsed = rebase_conflicts.parse_chunked_resolutions(
+                text, [_block() for _ in range(block_count)],
+            )
+            if parsed.reason:
+                emitted.add(parsed.reason.split(":", 1)[0]
+                            .split("_in_block_", 1)[0])
+        for text in ("no markers",
+                     f"{rebase_conflicts.RESOLVE_BEGIN}\n<<<<<<< HEAD\n"
+                     f"{rebase_conflicts.RESOLVE_END}"):
+            reason = rebase_conflicts.parse_resolved_content(text)[1]
+            if reason:
+                emitted.add(reason.split(":", 1)[0])
+
+        for failure in rebase_resolve._HINT_FOR_FAILURE:
+            assert any(e == failure.value or e.startswith(f"{failure.value}_")
+                       for e in emitted), f"{failure.value} is emitted by no parser"
 
     def test_an_unknown_failure_falls_back_rather_than_borrowing(self):
         """A new failure mode must not silently inherit another's correction."""

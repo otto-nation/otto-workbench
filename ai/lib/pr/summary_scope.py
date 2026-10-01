@@ -106,6 +106,10 @@ class PublishedRow:
         """
         if not self.legacy:
             return self.line
+        # No `digest=` here: `RowRecord.digest` is only ever an output, filled
+        # in by `read_row_marker` from a marker already on the line.
+        # `mark_row` recomputes it itself from `ours` and the current text, so
+        # a value set on the record passed in would be silently ignored.
         record = pr.published_record.RowRecord(
             self.key, self.location, self.text_key, self.outcome)
         return pr.published_record.mark_row(self.line, record, ours=self.ours)

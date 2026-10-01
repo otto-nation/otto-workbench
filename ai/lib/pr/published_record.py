@@ -176,4 +176,9 @@ def reply_marker_intact(body: str) -> bool | None:
     last = matches[-1]
     if normalise(body[last.end():]):
         return False
+    # `bool(...)` rejects an empty captured digest as not intact. That is
+    # exactly what `stamp_reply` would write for a reply whose text normalises
+    # to "" (see `fingerprint`'s empty-maps-to-empty rule) — unreachable in
+    # practice because a generated reply's text is never empty, but if it ever
+    # were, this would read it as a person's rather than as ours.
     return bool(last.group(1)) and last.group(1) == fingerprint(body[: last.start()])

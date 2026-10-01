@@ -75,7 +75,7 @@ def test_an_edit_to_any_cell_makes_the_row_a_persons():
         row.line.replace("guard the nil", "guard the nil (see thread)"),
         row.line.replace("@kgn", "@someone"),
         row.line.replace("a.py:3", "a.py:4"),
-        row.line.replace("abc1234](", "abc1234](") + " — but see below",
+        row.line + " — but see below",
     ):
         [published] = pr.summary_scope.published_rows(_body(edited))
         assert (published.key, published.ours, published.outcome) == (row.key, False, None)

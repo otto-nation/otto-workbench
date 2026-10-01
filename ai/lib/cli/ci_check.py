@@ -212,6 +212,15 @@ def _rebase_if_behind(trail, report: ci_report.CIReport, ctx) -> bool:
         log.warn("Rebase refused — continuing with CI fixes on current base")
         return False
 
+    # A paused rebase is not a failure either: the replay stopped with its
+    # resolved work staged in the worktree, waiting on `pr rebase --fix` or
+    # `--abort`. The fix pass below checks for exactly this and refuses, so
+    # saying here that fixes will continue would just be wrong.
+    if rc == rebase_types.CONFLICTS_EXIT:
+        trail.warn("rebase_paused", "rebase paused with conflicts — not fixing")
+        log.warn("Rebase paused with conflicts — not applying CI fixes until it is resolved")
+        return False
+
     if rc != 0:
         trail.warn("rebase_failed", f"rebase failed (exit {rc})")
         log.warn("Rebase failed — continuing with CI fixes on current base")

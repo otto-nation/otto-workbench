@@ -199,19 +199,34 @@ class TestPartialLandingStaysQuietWhereItShould:
     def test_a_repeated_subject_out_of_order_is_not_a_prefix(self, tmp_path):
         """The ordering constraint on the loose signal, exercised.
 
-        `chore: regenerate` appears on main *before* the branch's own earlier
-        commit would have to have landed, so matching by subject alone would
-        manufacture a fork point out of two unrelated commits.
+        The branch's first commit lands for real (by subject, not patch id, so
+        the watermark moves), which puts an unrelated, decoy `chore:
+        regenerate` commit *before* that watermark on main. The branch's own
+        `chore: regenerate` never lands anywhere after it. Matching by subject
+        without the `since` bound would find the decoy anyway — it is still
+        reachable from `target_ref` — and wrongly report the whole branch as
+        landed instead of a one-commit prefix.
         """
         repo = _base_repo(tmp_path)
         _commit(repo, "gen.txt", "v0\n", "chore: regenerate")
-        _branch_of(repo, ["feat: one", "chore: regenerate"])
+
+        git_in(repo, "checkout", "-q", "-b", "feat")
+        branch_feat_one = _commit(repo, "f0.txt", "branch feat one\n", "feat: one")
+        _commit(repo, "f1.txt", "branch regenerate\n", "chore: regenerate")
 
         git_in(repo, "checkout", "-q", "main")
-        _commit(repo, "gen.txt", "v1\n", "chore: regenerate")
+        # A genuinely different diff under the same subject: this must match by
+        # subject, not by patch id, so it is what moves `since` forward.
+        _commit(repo, "main_feat_one.txt", "main feat one\n", "feat: one")
         git_in(repo, "checkout", "-q", "feat")
 
-        assert branch_landed.partial_landing(str(repo), target_ref="main") is None
+        partial = branch_landed.partial_landing(str(repo), target_ref="main")
+
+        assert partial is not None
+        assert partial.landed == 1
+        assert partial.unlanded == 1
+        assert partial.fork_point == branch_feat_one
+        assert partial.fork_subject == "feat: one"
 
     def test_a_subject_that_is_only_a_prefix_of_an_upstream_one_does_not_match(
         self, tmp_path,

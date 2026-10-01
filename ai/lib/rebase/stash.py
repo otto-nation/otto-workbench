@@ -102,7 +102,8 @@ def restore(cwd: str, mode: RunMode, *, trail: Trail | None = None) -> None:
     Holding the stash costs nothing. The entry stays on the stack, named, and
     the run that finishes the rebase restores it.
     """
-    if not auto_stash_ref(cwd):
+    stash_ref = auto_stash_ref(cwd)
+    if not stash_ref:
         return
     if rebase_inspect.rebase_in_progress(cwd):
         tinfo(trail, "stash", "held the auto-stash — rebase still in progress")
@@ -111,11 +112,11 @@ def restore(cwd: str, mode: RunMode, *, trail: Trail | None = None) -> None:
         log.dim("They are restored by the run that finishes it: re-run "
                 "`pr rebase --fix`, or `pr rebase --abort` then `git stash pop`.")
         return
-    auto_unstash(cwd, mode, trail=trail)
+    auto_unstash(cwd, mode, ref=stash_ref, trail=trail)
 
 
 def auto_unstash(
-    cwd: str, mode: RunMode, *, trail: Trail | None = None,
+    cwd: str, mode: RunMode, *, ref: str = "", trail: Trail | None = None,
 ) -> None:
     """Pop stashed changes, resolving conflicts if needed.
 
@@ -127,8 +128,12 @@ def auto_unstash(
     Callers want `restore`, which adds the in-progress-rebase guard. This is
     the unguarded half, kept separate so the guard has one owner rather than
     being repeated at each call site.
+
+    *ref* is looked up fresh when not given — `restore` already has it from its
+    own guard check and passes it through rather than asking `git stash list`
+    the same question twice.
     """
-    ref = auto_stash_ref(cwd)
+    ref = ref or auto_stash_ref(cwd)
     if not ref:
         return
     r = git_client.run("stash", "pop", ref, cwd=cwd, config=RERERE_CONFIG)

@@ -134,6 +134,22 @@ def test_a_refused_rebase_is_reported_apart_from_a_failed_one():
     assert trail.warn.call_args[0][0] == "rebase_refused"
 
 
+def test_a_paused_rebase_is_reported_apart_from_a_failed_one():
+    """Exit 3 is a pause, not a breakage — the fix pass refuses it next.
+
+    Lumping it into the generic failure branch tells the operator fixes will
+    continue on the current base, immediately before the guard added at the
+    top of `_run_fix` refuses to touch a paused rebase at all.
+    """
+    trail = MagicMock()
+    with _rebase_returning(ci_check.rebase_types.CONFLICTS_EXIT, posting=True):
+        result = ci_check._rebase_if_behind(trail, _report(behind_main=5),
+                                            _mock_ctx())
+
+    assert result is False
+    assert trail.warn.call_args[0][0] == "rebase_paused"
+
+
 def test_a_refused_rebase_does_not_report_a_moved_head():
     """The fix pass that follows runs on the un-rebased base.
 

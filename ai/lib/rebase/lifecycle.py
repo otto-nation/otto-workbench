@@ -199,7 +199,7 @@ def _report_conflicts_and_stop(
         target_base=target_ref,
     ).save(ctx)
     ConflictReport.from_repo(cwd).emit()
-    return 3
+    return rebase_types.CONFLICTS_EXIT
 
 
 def _over_budget(
@@ -417,7 +417,7 @@ def _resolved_fork_point(cwd: str, fork_point: str) -> str:
     for, which git reports as success.
     """
     sha = git_client.out("rev-parse", "--verify", f"{fork_point}^{{commit}}",
-                         cwd=cwd).strip()
+                         cwd=cwd)
     if not sha:
         return ""
     if not git_client.ok("merge-base", "--is-ancestor", sha, "HEAD", cwd=cwd):

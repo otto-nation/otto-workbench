@@ -188,7 +188,7 @@ JSON:
 }
 ```
 
-Two runs reach this, and the difference is what the console said, not the JSON:
+Three runs reach this, and the difference is what the console said, not the JSON:
 
 - **`--no-fix` mode.** Nothing was attempted. Report what was found and ask the
   user whether they want AI resolution. If yes, `pr rebase --fix --branch
@@ -200,6 +200,11 @@ Two runs reach this, and the difference is what the console said, not the JSON:
   `state.json` records what it kept. `files` names only what is still
   unresolved. Report those, offer to resolve them by hand, and finish with
   `pr rebase --fix --branch <branch>`, which resumes from where it stopped.
+- **`--fix` mode, where the AI backend is unavailable.** The console says so
+  directly ("Cannot resolve conflicts — AI backend unavailable.") before any
+  file is even attempted. Resuming with `pr rebase --fix --branch <branch>`
+  hits the same wall again with nothing changed — fix the AI backend's
+  availability first, then resume.
 
 Never answer an exit 3 with `pr rebase --abort`. The rebase holds real work by
 this point; aborting throws away every resolution the run made and every commit

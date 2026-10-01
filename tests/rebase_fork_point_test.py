@@ -21,7 +21,6 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from gh import landed as branch_landed  # noqa: E402
-from git import client as git_client  # noqa: E402
 from pr.domains import RebaseStatus  # noqa: E402
 from rebase import lifecycle  # noqa: E402
 from rebase import refusals  # noqa: E402

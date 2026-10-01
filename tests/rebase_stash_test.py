@@ -136,6 +136,21 @@ class TestRestoreHoldsTheStashDuringARebase:
 
         assert run.call_args[0][:3] == ("stash", "pop", _OUR_STASH)
 
+    def test_restore_looks_up_the_stash_entry_only_once(self):
+        """`restore` already has the ref from its own guard check.
+
+        `auto_unstash` resolves `auto_stash_ref` fresh only when it is not
+        handed one, so a `restore` that already resolved it must pass it
+        through rather than asking `git stash list` the same question twice.
+        """
+        with mock.patch.object(
+            rebase_stash, "auto_stash_ref", return_value=_OUR_STASH,
+        ) as ref, _no_rebase(), \
+             mock.patch.object(git_client, "run", return_value=_ok()):
+            rebase_stash.restore("/fake", rebase_types.RunMode.FIX)
+
+        assert ref.call_count == 1
+
     def test_it_is_a_no_op_when_there_is_no_auto_stash(self):
         with mock.patch.object(rebase_stash, "auto_stash_ref", return_value=""), \
              mock.patch.object(git_client, "run") as run:

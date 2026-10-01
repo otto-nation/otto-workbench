@@ -257,7 +257,12 @@ class Resolution:
 
     @property
     def ok(self) -> bool:
-        """Every conflicted file in the step was resolved."""
+        """No conflicted file in the step was an outright failure.
+
+        A file in ``stale`` still makes this True: it was staged, just with a
+        regenerate command that failed, so it is resolved-with-a-caveat rather
+        than resolved clean.
+        """
         return not self.failed
 
 
@@ -316,6 +321,7 @@ class RefDivergence:
 
 
 REFUSAL_EXIT = 4
+CONFLICTS_EXIT = 3
 REFUSAL_OVERRIDE_FLAG = "--force"
 CONFLICT_FILE_BUDGET = 20
 

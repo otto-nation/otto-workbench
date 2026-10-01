@@ -22,18 +22,9 @@ if str(LIB_DIR) not in sys.path:
 from agent import retry as agent_retry  # noqa: E402
 from rebase import conflicts as rebase_conflicts  # noqa: E402
 from rebase import resolve_ai as rebase_resolve  # noqa: E402
-from rebase import types as rebase_types  # noqa: E402
 
 _CONFLICT = "<<<<<<< HEAD\n    return a\n=======\n    return b\n>>>>>>> abc\n"
 _AFTER = "\n# next thing\ndef other():\n"
-
-
-def _block(**kwargs):
-    defaults = dict(
-        index=1, start=0, end=4, conflict=_CONFLICT,
-        context_before="def f(a, b):\n", context_after=_AFTER,
-    )
-    return rebase_types.ConflictBlock(**{**defaults, **kwargs})
 
 
 class TestHintForReason:

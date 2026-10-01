@@ -61,6 +61,7 @@ RebaseOutcome = rebase_types.RebaseOutcome
 RunMode = rebase_types.RunMode
 
 REFUSAL_EXIT = rebase_types.REFUSAL_EXIT
+CONFLICTS_EXIT = rebase_types.CONFLICTS_EXIT
 REFUSAL_OVERRIDE_FLAG = rebase_types.REFUSAL_OVERRIDE_FLAG
 
 
@@ -241,7 +242,7 @@ def build_parser() -> ToolParser:
         prog=SCRIPT,
         description="Rebase onto the branch's base with conflict detection and force-push",
         output_schema=RebaseSummary,
-        ok_exit_codes=[3, REFUSAL_EXIT],
+        ok_exit_codes=[CONFLICTS_EXIT, REFUSAL_EXIT],
     )
     parser.add_argument("--repo-dir", "--worktree",
                         dest="repo_dir",

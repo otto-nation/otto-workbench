@@ -391,7 +391,7 @@ class TestTrimEchoedContext:
 
 
 class TestParseChunkedRepairsEchoedContext:
-    """The guard reached through the parser the resolver actually calls."""
+    """The repair reached through the parser the resolver actually calls."""
 
     def _stdout(self, body: str, n: int = 1) -> str:
         return (

@@ -421,6 +421,61 @@ _pi_build_models() {
          | reduce .[] as $m ([]; if index($m) then . else . + [$m] end)) }'
 }
 
+# _pi_warn_unknown_models — warn when a set model env var names an id pi does
+# not list for the default provider. Never fails the sync: a missing or broken
+# `pi` is skipped, because pi may be absent or offline and a 404 mid-review is
+# still how those machines find out. Quiet when every set value is listed.
+#
+# Kept out of _pi_build_models because that function's stdout is captured as
+# JSON; a warning printed there would corrupt the merge.
+_pi_warn_unknown_models() {
+  [[ -f "$ENV_LOCAL_FILE" ]] || return 0
+
+  if ! declare -F collect_model_env_vars > /dev/null 2>&1; then
+    # shellcheck source=../../lib/registries.sh
+    . "$LIB_SRC_DIR/registries.sh"
+  fi
+
+  local -a model_vars=() model_roles=()
+  collect_model_env_vars model_vars model_roles "$WORKBENCH_STABLE_DIR" || return 0
+
+  local i value
+  local -a names=() values=()
+  for (( i=0; i<${#model_vars[@]}; i++ )); do
+    value=$(read_env_local_var "${model_vars[i]}")
+    [[ -n "$value" ]] || continue
+    names+=("${model_vars[i]}")
+    values+=("$value")
+  done
+  (( ${#names[@]} > 0 )) || return 0
+
+  # pi may be absent (a Claude-only machine) or offline. Skip rather than fail.
+  command -v pi > /dev/null 2>&1 || return 0
+
+  local listing
+  listing=$(pi --list-models 2>/dev/null) || return 0
+  [[ -n "$listing" ]] || return 0
+
+  local provider
+  provider=$(jq -r '.defaultProvider // "google-vertex-claude"' \
+    "$PI_SETTINGS_SRC" 2>/dev/null) || return 0
+
+  local -A listed=()
+  local col1 col2
+  while read -r col1 col2 _ || [[ -n "$col1" ]]; do
+    [[ "$col1" == "provider" ]] && continue
+    [[ "$col1" == "$provider" ]] || continue
+    [[ -n "$col2" ]] || continue
+    listed["$col2"]=1
+  done <<< "$listing"
+
+  for (( i=0; i<${#names[@]}; i++ )); do
+    [[ -n "${listed[${values[i]}]+x}" ]] && continue
+    warn "${names[i]}=${values[i]} is not listed under $provider — set it in ~/.env.local"
+  done
+  return 0
+}
+
 # step_pi_settings — merges the workbench's managed keys into Pi's global settings.
 #
 # Merged rather than copied because Pi writes to the same file: `pi install`,
@@ -441,6 +496,7 @@ step_pi_settings() {
 
   local models
   models=$(_pi_build_models)
+  _pi_warn_unknown_models
 
   local result
   result=$(jq -n \

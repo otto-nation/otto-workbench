@@ -416,7 +416,8 @@ Ctrl+S in `/model` all land there — so `step_pi_settings`
 file rather than copying over it. Scalar keys are seeds: one the live file
 already carries stays as whatever set it first, which also means a changed
 template default never reaches a machine that already has the key. Delete the key
-there to be re-seeded.
+there to be re-seeded. A set `AI_*_MODEL` in `~/.env.local` that `pi --list-models`
+does not list for the default provider is a warning, not a failed sync.
 
 `packages` is reconciled instead, because a list gains an entry without
 displacing one. Before declaring one, the sync asks GitHub whether this machine

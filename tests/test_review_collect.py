@@ -1298,7 +1298,9 @@ class TestCollectDeltaEndsAtTheStampedHead:
     contradict the incremental note's `prior..head` span.
     """
 
-    def _job_after_a_late_commit(self, tmp_path: Path) -> ReviewJob:
+    def _job_after_a_late_commit(
+        self, tmp_path: Path, head_sha: str | None = None, base: str = "main",
+    ) -> ReviewJob:
         repo = init_repo(tmp_path / "repo")
         (repo / "mine.go").write_text("package main\n")
         commit_all(repo, "init")
@@ -1314,14 +1316,17 @@ class TestCollectDeltaEndsAtTheStampedHead:
         commit_all(repo, "a commit made after the snapshot")
 
         job = _delta_job(
-            head_sha=stamped,
+            head_sha=stamped if head_sha is None else head_sha,
             prior_review=f"<!-- head_sha: {prior_sha} -->\nprior",
         )
         surface = [
             {"path": p, "additions": 1, "deletions": 0}
             for p in ("mine.go", "late.go")
         ]
-        return replace(job, wt_path=str(repo), pr=replace(job.pr, files=surface))
+        return replace(
+            job, wt_path=str(repo),
+            pr=replace(job.pr, files=surface, base=base),
+        )
 
     def test_a_commit_after_the_snapshot_is_left_out(self, tmp_path, capsys):
         delta = review.collect._collect_delta(self._job_after_a_late_commit(tmp_path))
@@ -1332,6 +1337,47 @@ class TestCollectDeltaEndsAtTheStampedHead:
         assert "work this review is stamped with" in delta.commit_log
         assert "a commit made after the snapshot" not in delta.commit_log
         assert "late.go" not in delta.diff
+
+    def test_the_unattributed_range_is_pinned_too(self, tmp_path, capsys):
+        job = self._job_after_a_late_commit(tmp_path, base="no-such-base")
+        delta = review.collect._collect_delta(job)
+        capsys.readouterr()
+
+        assert delta.attribution is DeltaAttribution.UNATTRIBUTED
+        assert delta.files == ["mine.go"]
+        assert "work this review is stamped with" in delta.commit_log
+        assert "a commit made after the snapshot" not in delta.commit_log
+        assert "late.go" not in delta.diff
+
+    def test_no_stamped_sha_ends_at_head(self, tmp_path, capsys):
+        job = self._job_after_a_late_commit(tmp_path, head_sha="")
+        delta = review.collect._delta_head(job)
+
+        assert delta == "HEAD"
+
+    def test_a_stamped_sha_the_worktree_lacks_ends_at_head(self, tmp_path, capsys):
+        # The API snapshot can be newer than the checkout. A range ending at a
+        # SHA git cannot resolve comes back empty, so the delta would vanish.
+        missing = "f" * 40
+        job = self._job_after_a_late_commit(tmp_path, head_sha=missing)
+        delta = review.collect._collect_delta(job)
+        capsys.readouterr()
+
+        assert review.collect._delta_head(job) == "HEAD"
+        assert delta.attribution is DeltaAttribution.ATTRIBUTED
+        assert sorted(delta.files) == ["late.go", "mine.go"]
+        assert "a commit made after the snapshot" in delta.commit_log
+
+    def test_the_full_history_and_diff_end_at_the_stamped_sha(self, tmp_path, capsys):
+        job = self._job_after_a_late_commit(tmp_path)
+
+        data = review.collect.collect_preflight_data(job)
+        capsys.readouterr()
+        diff, commit_log = data.diff, data.commit_log
+
+        assert "work this review is stamped with" in commit_log
+        assert "a commit made after the snapshot" not in commit_log
+        assert "late.go" not in diff
 
 
 # ── fetch_branch_metadata ─────────────────────────────────────────────

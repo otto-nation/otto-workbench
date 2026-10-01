@@ -460,10 +460,19 @@ def _delta_head(job: ReviewJob) -> str:
     about what this review covered. Pinned, a commit landing mid-run is simply
     left for the next re-review, which starts from the stamped SHA.
 
-    ``HEAD`` only when no SHA was resolved, which is the range every caller
-    used before there was a pin to take.
+    The full commit history and full diff end at this same commit (see
+    `collect_preflight_data`), so every section of the prompt agrees with the
+    header.
+
+    ``HEAD`` when no SHA was resolved, or when the SHA is not a commit in the
+    worktree: in PR mode it is the API snapshot, and a push after checkout
+    leaves it absent here, where every range ending at it would come back
+    empty. ``HEAD`` is the range every caller used before there was a pin.
     """
-    return job.pr.head_sha or "HEAD"
+    head = job.pr.head_sha
+    if head and git.client.out("cat-file", "-t", head, cwd=job.wt_path) == "commit":
+        return head
+    return "HEAD"
 
 
 def _author_delta(
@@ -512,7 +521,7 @@ def _author_delta(
     return git.numstat.parse_numstat("\n".join(w.stdout for w in walks))
 
 
-def _delta_log(job: ReviewJob, prior_sha: str, base_ref: str) -> str:
+def _delta_log(job: ReviewJob, prior_sha: str, base_ref: str, head: str) -> str:
     """The commits behind the delta, excluding the base's when there is one.
 
     A list of the base's commits describes work this review is not looking at,
@@ -524,14 +533,14 @@ def _delta_log(job: ReviewJob, prior_sha: str, base_ref: str) -> str:
     surface = ["--", *(f["path"] for f in job.pr.files)] if job.pr.files else []
     exclude = ["--no-merges", "--not", base_ref] if base_ref else []
     raw_log = git.client.out(
-        "log", "--stat", "--reverse", f"{prior_sha}..{_delta_head(job)}", *exclude, *surface,
+        "log", "--stat", "--reverse", f"{prior_sha}..{head}", *exclude, *surface,
         cwd=job.wt_path,
     )
     return _truncate_log(raw_log, MAX_DELTA_LOG_BYTES, "Delta commit log")
 
 
 def _delta_diff_and_log(
-    job: ReviewJob, prior_sha: str, base_ref: str,
+    job: ReviewJob, prior_sha: str, base_ref: str, head: str,
 ) -> tuple[str, str]:
     """The delta's prompt context: the patch to read and the commits behind it.
 
@@ -551,13 +560,11 @@ def _delta_diff_and_log(
         # toward skipping.
         raw_diff = worktree_diff(job.wt_path, prior_sha)
     else:
-        raw_diff = git.client.out(
-            "diff", f"{prior_sha}..{_delta_head(job)}", cwd=job.wt_path,
-        )
+        raw_diff = git.client.out("diff", f"{prior_sha}..{head}", cwd=job.wt_path)
     raw_diff = _scope_to_surface(raw_diff, job.pr.files)
     return (
         truncate_diff(raw_diff, MAX_DELTA_DIFF_BYTES).text,
-        _delta_log(job, prior_sha, base_ref),
+        _delta_log(job, prior_sha, base_ref, head),
     )
 
 
@@ -604,7 +611,8 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
 
     base = job.pr.base or git.topology.default_branch(Path(job.wt_path))
     ref = base_ref(job.wt_path, base) if job.mode != Mode.SELF else ""
-    delta_diff, delta_log = _delta_diff_and_log(job, prior_sha, ref)
+    head = _delta_head(job)
+    delta_diff, delta_log = _delta_diff_and_log(job, prior_sha, ref, head)
 
     if not ref:
         # Attributing the range needs a base to exclude. Without one the whole
@@ -619,7 +627,7 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
             DeltaAttribution.UNATTRIBUTED,
         )
 
-    authored = _author_delta(job.wt_path, prior_sha, ref, _delta_head(job))
+    authored = _author_delta(job.wt_path, prior_sha, ref, head)
     if authored is None:
         core.log.warn(
             "Could not attribute the commits since the prior review — the delta "
@@ -629,7 +637,7 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
         # beside a list naming their files reads as a contradiction.
         files = [m.group(1) for m in _DIFF_HEADER_RE.finditer(delta_diff)]
         return DeltaScope(
-            delta_diff, _delta_log(job, prior_sha, ""), files, 0, prior_sha,
+            delta_diff, _delta_log(job, prior_sha, "", head), files, 0, prior_sha,
             DeltaAttribution.UNATTRIBUTED,
         )
 
@@ -654,20 +662,21 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
 
 def _collect_git_data(
     wt_path: str, base: str, pr_files: list[dict], include_worktree: bool = False,
+    head: str = "HEAD",
 ) -> tuple[str, str]:
     fetch_base(wt_path, base)
     # One resolution for both ranges below, so the log and the diff cannot end
     # up measured from different commits.
     ref = base_ref(wt_path, base) or "HEAD"
     commit_log = git.client.out(
-        "log", "--stat", "--reverse", f"{ref}..HEAD", cwd=wt_path,
+        "log", "--stat", "--reverse", f"{ref}..{head}", cwd=wt_path,
     )
     commit_log = _truncate_log(commit_log, MAX_COMMIT_LOG_BYTES)
 
     if include_worktree:
         return worktree_diff(wt_path, fork_point(wt_path, base)), commit_log
 
-    diff = git.client.out("diff", f"{ref}...HEAD", cwd=wt_path)
+    diff = git.client.out("diff", f"{ref}...{head}", cwd=wt_path)
     if not diff and pr_files:
         diff = git.client.out("diff", "HEAD", cwd=wt_path)
     return diff, commit_log
@@ -806,8 +815,11 @@ def collect_preflight_data(job: ReviewJob) -> PreflightData:
     wt = Path(job.wt_path)
     base = job.pr.base or git.topology.default_branch(wt)
 
+    # Self-review's subject is the working tree, so it is not pinned.
+    head = "HEAD" if job.mode == Mode.SELF else _delta_head(job)
     diff, commit_log = _collect_git_data(
         job.wt_path, base, job.pr.files, include_worktree=job.mode == Mode.SELF,
+        head=head,
     )
     claude_md, architecture_md, review_checklists, profiles = _collect_project_context(wt)
     all_contents, all_permissions, file_changes = _collect_file_data(wt, job.pr.files)

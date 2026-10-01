@@ -19,6 +19,7 @@ import git.regenerate
 
 from . import conflicts
 from . import repo_regen
+from . import survival
 from . import types as rebase_types
 
 ConflictBlock = rebase_types.ConflictBlock
@@ -200,6 +201,32 @@ def hint_for_reason(reason: str) -> str:
     return agent.retry.BLANK_RESPONSE_HINT
 
 
+# ── Survival of the clean changes ────────────────────────────────────────
+
+def answer_losses(
+    filepath: str, stages: conflicts.StageTexts, text: str,
+) -> tuple[survival.Loss, ...]:
+    """The changes a parsed whole-file answer discarded that git had merged cleanly.
+
+    Empty for an answer that does not parse: that is the parser's failure to
+    report, and its own hint is the better correction.
+    """
+    resolved, _ = conflicts.parse_resolved_content(text)
+    if resolved is None:
+        return ()
+    return survival.audit(
+        filepath, base=stages.base, target=stages.target,
+        replayed=stages.replayed, resolved=resolved,
+    ).blocking
+
+
+def dropped_change_hint(losses: tuple[survival.Loss, ...]) -> str:
+    """The retry correction naming each change the previous answer threw away."""
+    return agent.retry.DROPPED_CHANGE_HINT + "".join(
+        f"- {loss.describe()}\n" for loss in losses
+    ) + "\n"
+
+
 # ── Resolution paths ─────────────────────────────────────────────────────
 
 def resolve_full_file(
@@ -207,8 +234,28 @@ def resolve_full_file(
     sha: str, subject: str, cwd: str, *, target_ref: str,
     trail: Trail | None = None,
 ) -> str | None:
-    """Resolve via full-file prompt (small files or heavily conflicted)."""
-    ours_content = conflicts.get_ours_content(filepath, cwd)
+    """Resolve via full-file prompt (small files or heavily conflicted).
+
+    The whole-file answer is the one shape that can silently drop a change git
+    had already merged: the model rewrites every line, and copying one side's
+    file through parses perfectly. So an answer is usable only once it parses
+    *and* keeps every clean change — the same judgement the commit hook makes,
+    applied before the file is written rather than after it is staged. The
+    chunked path needs no such check: it splices answers into the conflict
+    blocks alone, and the merged lines around them are never in its hands.
+    """
+    stages = conflicts.stage_texts(filepath, cwd)
+
+    def usable(text: str) -> bool:
+        return conflicts.resolution_parses(text) and not answer_losses(filepath, stages, text)
+
+    def retry_hint(text: str) -> str:
+        losses = answer_losses(filepath, stages, text)
+        if losses:
+            return dropped_change_hint(losses)
+        return hint_for_reason(conflicts.parse_resolved_content(text)[1])
+
+    ours_content = stages.target
     commit_diff = conflicts.get_commit_diff(filepath, cwd)
     prompt = build_resolve_prompt(
         filepath, content, sha, subject, target_ref=target_ref,
@@ -217,13 +264,12 @@ def resolve_full_file(
     answer = agent.invoke.run_prompt(
         Phase.REBASE, prompt, cwd=cwd,
         label=f"conflict resolution for {filepath}",
-        usable=conflicts.resolution_parses, task="conflict-resolve",
+        usable=usable, task="conflict-resolve",
         # The retry is told what this answer got wrong rather than the generic
         # marker wording: a resolution that copied the conflict markers through
-        # needs to be told to merge them, not to emit markers it already did.
-        retry_hint=lambda text: hint_for_reason(
-            conflicts.parse_resolved_content(text)[1],
-        ),
+        # needs to be told to merge them, not to emit markers it already did,
+        # and one that dropped a merged change needs to be told which.
+        retry_hint=retry_hint,
         **billed_to(trail),
     )
     if answer.exit_code != 0:
@@ -242,6 +288,19 @@ def resolve_full_file(
             data={"filepath": filepath, "reason": failure_reason},
         )
         core.log.error(f"Failed to parse resolution for {filepath} ({failure_reason})")
+        return None
+
+    losses = answer_losses(filepath, stages, stdout)
+    if losses:
+        tfail(
+            trail, "resolve_conflicts",
+            f"resolution for {filepath} discards merged changes",
+            output=stdout,
+            data={"filepath": filepath,
+                  "losses": [loss.describe() for loss in losses]},
+        )
+        core.log.error(f"Resolution for {filepath} throws away {len(losses)} change(s) "
+                       "git had merged cleanly — not writing it")
         return None
 
     full_path.write_text(resolved_content)

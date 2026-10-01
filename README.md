@@ -47,7 +47,7 @@ Re-applies all workbench config — migrations, symlinks, tool context, AI setti
 
 - **[Scripts](docs/tools.md#scripts)** — workbench utilities for environment management, validation, and code generation
 - **Shell** — ZSH configuration with [modular config layers](docs/architecture.md#shell-zsh), Starship prompt, and lazy-loaded plugin management
-- **Git** — [two-layer gitconfig](docs/architecture.md#git), global hooks (secret scanning, linting), and conventional commit conventions
+- **Git** — [two-layer gitconfig](docs/architecture.md#git), global hooks (secret scanning, linting, rebase conflict-resolution audit), and conventional commit conventions
 - **[Tools](docs/tools.md#installed-tools)** — CLI tools managed via Homebrew, organized by domain (shell, infra, languages, dev)
 - **[AI](docs/ai-automation.md)** — Claude Code integration with skills, agents, guidelines, and AI-powered git automation
 - **[Task automation](docs/ai-automation.md#task-automation)** — global Taskfile for AI-powered commits, PRs, and reviews

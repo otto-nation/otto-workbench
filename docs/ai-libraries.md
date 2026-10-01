@@ -4954,6 +4954,43 @@ Each check answers with a ``RefusalReport`` or None, and ``refuse`` is what
 turns one into the shared exit code. A refusal leaves the worktree untouched
 and nothing pushed, which is the guarantee the whole module exists to keep.
 
+### rebase/replay_audit.py
+
+Audit a replay for changes its conflict resolution threw away.
+
+`survival` judges one file from four texts. This module finds the texts: the
+commit a rebase or cherry-pick is stopped on, its parent, the tip it is
+replayed onto, and the resolution staged in the index. It also covers the
+case no commit hook sees: a resolution that empties a commit makes
+`rebase --continue` drop it without committing anything, and `rebase --skip`
+does the same on request, so the only record either happened is the old→new
+map git hands `post-rewrite`.
+
+Three callers, one judgement:
+
+* the global `prepare-commit-msg` hook refuses the commit that concludes a
+  conflicted replay step when it discards a clean change — `-n` does not skip
+  that hook, and `rebase --continue` runs it;
+* the global `post-rewrite` hook reports commits a finished rebase dropped
+  whose changes are not in the result;
+* `pr rebase` audits its own resolutions before it continues, so a refusal
+  arrives as a paused rebase with the files named rather than as a hook
+  failure it would have to interpret.
+
+Files the rebase tool itself resolves by taking one side — lockfiles it
+regenerates, files marked generated — are exempt, and that list is
+`conflicts.classify_conflict`'s, so the two cannot disagree about which files
+may be taken whole.
+
+Run as a hook entry point::
+
+    python3 -I -c '...' <ai/lib> commit
+    python3 -I -c '...' <ai/lib> rewritten rebase   < old-new pairs
+
+Exit codes: 0 when nothing was refused (including when the audit could not
+run — a bug here must never cost somebody a commit), ``REFUSED_EXIT`` when the
+commit must not be made.
+
 ### rebase/repo_regen.py
 
 The repo-specific half of regeneration — what *this* repo rebuilds, and how.
@@ -4979,6 +5016,36 @@ Auto-stash and auto-unstash around a rebase.
 A rebase tolerates uncommitted changes; the pre-push hooks that run after it do
 not, so anything left in the worktree is stashed for the duration and restored
 after. Restoring can conflict, which is why the AI resolution path is here too.
+
+### rebase/survival.py
+
+Whether both sides of a replayed change survived the resolution of one file.
+
+A conflict resolution can be wrong in two ways. It can merge badly, which is a
+judgement call no tool here makes. Or it can *discard* one side outright —
+`git checkout --ours` during a rebase replaces the file with the target's copy
+and throws away every change the replayed commit made to it, including the
+hunks git had already merged cleanly. Nothing reports that: the file has no
+markers, `git add` accepts it, and `rebase --continue` either commits the rest
+of the change or, when nothing is left, drops the commit without a word.
+
+This module answers the second question only, from four texts — the merge
+base, the target, the replayed commit's version, and the resolution — and
+reports at two strengths:
+
+* **Blocking.** A change one side made *cleanly* — no overlap with the other
+  side, so git merged it unaided — reads in the resolution exactly as the base
+  had it. That is what a whole-file checkout leaves behind and almost never
+  what a person meant; the incident behind this check lost hand edits to it
+  across two rebases with nothing noticing. When the resolution is the other
+  side verbatim, the losses are reported as one whole-file verdict, which is
+  the clearer account of what happened.
+* **Advisory.** A region both sides changed resolves to exactly one side's
+  text. That is often right — the target rewrote the code the commit touched —
+  so it is reported, not refused.
+
+Line-based and pure: it reads no repository. `replay_audit` supplies the texts
+for a commit mid-rebase, and `resolve_ai` for an answer before it is written.
 
 ### rebase/target.py
 

@@ -133,6 +133,22 @@ EOF
   [ -f "$GIT_HOOKS_SRC_DIR/pre-push-workbench" ]
 }
 
+@test "global hooks install every hook the workbench ships, pointing at the checkout" {
+  GIT_HOOKS_DIR="$TMPDIR/git-hooks"
+  # install_symlink re-points a worktree's links at the stable checkout; pinned
+  # equal so the links name this checkout on any machine layout.
+  WORKBENCH_STABLE_DIR="$WORKBENCH_DIR"
+
+  run step_global_hooks
+  [ "$status" -eq 0 ]
+  local hook
+  for hook in pre-commit prepare-commit-msg pre-push post-rewrite; do
+    [ "$(readlink "$GIT_HOOKS_DIR/$hook")" = "$GIT_HOOKS_SRC_DIR/$hook" ]
+    [ -x "$GIT_HOOKS_SRC_DIR/$hook" ]
+  done
+  [ "$(git config --global core.hooksPath)" = "$GIT_HOOKS_DIR" ]
+}
+
 @test "pre-commit hook has current header" {
   grep -q "git/steps.sh" "$GIT_HOOKS_SRC_DIR/pre-commit"
   run grep "task dev:setup" "$GIT_HOOKS_SRC_DIR/pre-commit"

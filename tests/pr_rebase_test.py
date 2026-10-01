@@ -322,25 +322,41 @@ def test_is_generated_file_missing_file(tmp_path):
     assert signal is None
 
 
-# ── _get_ours_content ──────────────────────────────────────────────────────
+# ── stage_texts ───────────────────────────────────────────────────────────
 
 
-def test_get_ours_content_returns_stage2():
-    fake_result = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout="base version content\n",
-    )
-    with mock.patch("subprocess.run", return_value=fake_result) as mock_run:
-        result = rebase.conflicts.get_ours_content("src/file.py", "/fake")
-    assert result == "base version content\n"
-    assert _unconfigured(mock_run.call_args[0][0]) == ["git", "show", ":2:src/file.py"]
+def test_stage_texts_reads_each_conflict_stage_unstripped():
+    """Stage 1 is the base, 2 the target, 3 the replayed commit, bytes intact."""
+    stdout = {":1:src/file.py": "base\n", ":2:src/file.py": "target\n\n",
+              ":3:src/file.py": "replayed\n"}
+
+    def fake(argv, **kwargs):
+        spec = _unconfigured(argv)[-1]
+        return subprocess.CompletedProcess(args=argv, returncode=0, stdout=stdout[spec])
+
+    with mock.patch("subprocess.run", side_effect=fake) as mock_run:
+        stages = rebase.conflicts.stage_texts("src/file.py", "/fake")
+
+    assert stages == rebase.conflicts.StageTexts("base\n", "target\n\n", "replayed\n")
+    assert _unconfigured(mock_run.call_args_list[1][0][0]) == [
+        "git", "cat-file", "blob", ":2:src/file.py",
+    ]
     assert mock_run.call_args.kwargs["cwd"] == "/fake"
 
 
-def test_get_ours_content_returns_none_on_failure():
-    fake_result = subprocess.CompletedProcess(args=[], returncode=128, stdout="", stderr="not found")
-    with mock.patch("subprocess.run", return_value=fake_result):
-        result = rebase.conflicts.get_ours_content("new_file.py", "/fake")
-    assert result is None
+def test_stage_texts_is_none_where_a_side_lacks_the_file():
+    """A file added on the branch has no stage 1 or 2."""
+    def fake(argv, **kwargs):
+        present = _unconfigured(argv)[-1].startswith(":3:")
+        return subprocess.CompletedProcess(
+            args=argv, returncode=0 if present else 128,
+            stdout="new\n" if present else "", stderr="" if present else "not found",
+        )
+
+    with mock.patch("subprocess.run", side_effect=fake):
+        stages = rebase.conflicts.stage_texts("new_file.py", "/fake")
+
+    assert stages == rebase.conflicts.StageTexts(None, None, "new\n")
 
 
 # ── _get_commit_diff ──────────────────────────────────────────────────────
@@ -601,7 +617,8 @@ class TestLedgerAttribution:
     @staticmethod
     def _resolving(tmp_path, trail, recorded):
         """Drive one rebase-assist prompt and capture what it billed to."""
-        with mock.patch.object(rebase.conflicts, "get_ours_content", return_value=""), \
+        with mock.patch.object(rebase.conflicts, "stage_texts",
+                               return_value=rebase.conflicts.StageTexts(None, "", None)), \
              mock.patch.object(rebase.conflicts, "get_commit_diff", return_value=""), \
              mock.patch.object(agent.backend, "prompt",
                                side_effect=lambda *a, **kw: (
@@ -635,7 +652,8 @@ class TestFailureRecording:
         """The old record kept 500 characters of a tail and no way to the rest."""
         fake_trail = mock.MagicMock()
         answer = mock.Mock(exit_code=0, text="the model explained itself at length")
-        with mock.patch.object(rebase.conflicts, "get_ours_content", return_value=""), \
+        with mock.patch.object(rebase.conflicts, "stage_texts",
+                               return_value=rebase.conflicts.StageTexts(None, "", None)), \
              mock.patch.object(rebase.conflicts, "get_commit_diff", return_value=""), \
              mock.patch.object(agent.invoke, "run_prompt",
                                return_value=answer):
@@ -1240,7 +1258,7 @@ def test_resolve_file_conflicts_calls_claude():
                     args=cmd, returncode=0,
                     stdout=resolved_output, stderr="",
                 )
-            if cmd[:2] == ["git", "show"] and ":2:" in cmd[2]:
+            if _unconfigured(cmd)[:3] == ["git", "cat-file", "blob"] and ":2:" in cmd[-1]:
                 return subprocess.CompletedProcess(
                     args=cmd, returncode=0,
                     stdout="base version\n", stderr="",
@@ -1264,9 +1282,14 @@ def test_resolve_file_conflicts_calls_claude():
         git_add_calls = [(c, w) for c, w in calls if c == ["git", "add", "main.go"]]
         assert len(git_add_calls) == 1
         assert git_add_calls[0][1] == tmpdir
-        # Verify context-fetching git calls were made
-        ours_calls = [c for c, _ in calls if c[:2] == ["git", "show"] and ":2:" in str(c)]
-        assert len(ours_calls) == 1
+        # Verify context-fetching git calls were made: each conflict stage read
+        # once, which is both the prompt's target side and the survival check's
+        # three versions.
+        stage_reads = sorted(
+            _unconfigured(c)[-1] for c, _ in calls
+            if _unconfigured(c)[:3] == ["git", "cat-file", "blob"]
+        )
+        assert stage_reads == [":1:main.go", ":2:main.go", ":3:main.go"]
         diff_calls = [c for c, _ in calls if "REBASE_HEAD^" in str(c)]
         assert len(diff_calls) == 1
 
@@ -1274,7 +1297,7 @@ def test_resolve_file_conflicts_calls_claude():
 def _fake_run_with_context(extra_handler=None):
     """Return a fake subprocess.run that handles context-fetching git calls."""
     def fake_run(cmd, **kwargs):
-        if cmd[:2] == ["git", "show"] and len(cmd) > 2 and ":2:" in cmd[2]:
+        if _unconfigured(cmd)[:3] == ["git", "cat-file", "blob"] and ":2:" in cmd[-1]:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="base\n", stderr="")
         if _unconfigured(cmd)[:2] == ["git", "diff"] and "REBASE_HEAD^" in cmd:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="diff\n", stderr="")

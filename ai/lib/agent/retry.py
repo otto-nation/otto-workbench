@@ -153,6 +153,18 @@ SURVIVING_MARKER_HINT = (
     "them. Decide what the merged text should be and emit only that.\n\n"
 )
 
+# Addressed to a whole-file resolution that parsed but threw away a change git
+# had already merged cleanly — usually by emitting one side's copy of the file.
+# The caller appends the changes that went missing, since "keep both sides"
+# without naming them is the instruction the first attempt already ignored.
+DROPPED_CHANGE_HINT = (
+    "IMPORTANT: A previous attempt threw away changes that were not in "
+    "conflict. Only the regions between conflict markers need a decision; "
+    "every line outside them is already merged and must appear in your answer "
+    "exactly as it is in the file you were given. Do not substitute either "
+    "side's whole copy of the file. These changes were missing:\n"
+)
+
 # The same correction for a caller whose answer is a bare JSON object rather
 # than a marker-wrapped block. Kept apart rather than folded into the wording
 # above: four of the five callers of `retry_blank_response` do wrap their

@@ -188,7 +188,7 @@ JSON:
 }
 ```
 
-Three runs reach this, and the difference is what the console said, not the JSON:
+Four runs reach this, and the difference is what the console said, not the JSON:
 
 - **`--no-fix` mode.** Nothing was attempted. Report what was found and ask the
   user whether they want AI resolution. If yes, `pr rebase --fix --branch
@@ -205,6 +205,17 @@ Three runs reach this, and the difference is what the console said, not the JSON
   file is even attempted. Resuming with `pr rebase --fix --branch <branch>`
   hits the same wall again with nothing changed — fix the AI backend's
   availability first, then resume.
+- **A resolution that throws away changes.** The console prints "This
+  resolution throws away changes" and lists, per file, each change git had
+  merged cleanly that the resolution no longer contains — the signature of a
+  whole-file `git checkout --ours`/`--theirs`. `files` names those files. When
+  the run made the resolution itself, the conflict has been put back
+  (`git checkout -m`) and resuming retries it. When the resolution was staged by
+  hand before the run, it is left as it was: show the user the listed changes,
+  restore the conflict with `git checkout -m -- <file>` and resolve it hunk by
+  hunk, or — only if the user confirms each listed change really is superseded
+  — resume with `WORKBENCH_ALLOW_DROPPED_CHANGES=1 pr rebase --fix --branch
+  <branch>`.
 
 Never answer an exit 3 with `pr rebase --abort`. The rebase holds real work by
 this point; aborting throws away every resolution the run made and every commit
@@ -355,3 +366,9 @@ they then ask for the branch to be pushed.
   `otto-log show` holds the detail; files written for the agent's own benefit are
   litter, which is why `pr` stopped writing its trail into working trees
 - Never preflight with `git fetch`, `rev-list`, or `gh pr view` — see step 0
+- Never resolve a conflict in a hand-written file with a whole-file
+  `git checkout --ours`/`--theirs`, or by copying either side's file in. It
+  replaces every hunk, including the ones git merged cleanly, and the branch's
+  edits vanish with no marker left behind. `pr rebase` refuses to continue past
+  one, and so does the global `prepare-commit-msg` hook. Taking one side whole is
+  right only for generated files, which `pr rebase` already does by itself

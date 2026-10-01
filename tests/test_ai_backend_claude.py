@@ -242,16 +242,16 @@ class TestEveryCommandCarriesAnAddDir:
             captured["add_dirs"] = inv.add_dirs
             return 0
 
-        import agent.backend as ai_backend
-        original = ai_backend.invoke_fix
-        ai_backend.invoke_fix = fake_invoke_fix
+        import agent.backend
+        original = agent.backend.invoke_fix
+        agent.backend.invoke_fix = fake_invoke_fix
         try:
             agent.invoke.run_fix(
                 _FIX_PHASE, "prompt", cwd="/tmp/the-worktree",
                 session_log="", produced=lambda: True,
             )
         finally:
-            ai_backend.invoke_fix = original
+            agent.backend.invoke_fix = original
 
         assert captured["add_dirs"] == ["/tmp/the-worktree"]
 

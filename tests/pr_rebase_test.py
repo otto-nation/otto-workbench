@@ -1404,7 +1404,7 @@ def test_resolve_file_conflicts_opens_a_span_per_conflicted_file():
     assert opened == ["resolve_file:a.go", "resolve_file:b.go"]
 
 
-def test_resolve_file_conflicts_git_add_failure_returns_none():
+def test_resolve_file_conflicts_git_add_failure_is_reported_per_file():
     """M1: git add failure is reported per file, not by aborting the run."""
     with tempfile.TemporaryDirectory() as tmpdir:
         conflict_file = Path(tmpdir) / "main.go"
@@ -1890,7 +1890,7 @@ def test_step_conflicts_refuses_past_the_resolution_budget():
     """The count the file budget is deliberately blind to.
 
     Nine files conflicting in each of seven replayed commits is a spread of
-    nine — a quarter of the file budget — while the run makes sixty-three AI
+    nine — 45% of the file budget — while the run makes sixty-three AI
     calls. Before this budget existed the run burned every one of them against
     a branch whose work had already landed in another shape.
     """

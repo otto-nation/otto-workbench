@@ -92,7 +92,7 @@ class TestTheRefusalCarriesAnExecutableRemedy:
 
 
 class TestForkPointReplay:
-    """The flag against a real repository \u2014 which commits actually land."""
+    """The flag against a real repository — which commits actually land."""
 
     def _partially_landed(self, tmp_path) -> Path:
         """`feat` has four commits; three equivalents are already on main."""

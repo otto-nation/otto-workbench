@@ -340,3 +340,37 @@ def test_a_pinned_runs_settled_rollup_is_not_reasked_next_poll():
     # and only once even though the loop polled twice.
     assert fetch_checks.call_args_list == [(("owner/repo", "abc123"),)]
     assert result.merged["status"] == "completed"
+
+
+def test_a_rollup_with_a_check_still_running_is_asked_again():
+    """The other half of the cache's rule, and the half that can go wrong.
+
+    Holding an unsettled rollup would freeze an external check at whatever it
+    said on the first poll — a CodeQL run still going would stay "running"
+    for the life of the wait and could never be reported when it failed.
+    Only a rollup with nothing left in flight may be reused.
+    """
+    in_progress = _run("in_progress", "", [
+        {"name": "Test", "conclusion": None, "databaseId": 11, "status": "in_progress"},
+    ])
+    done = _run("completed", "success", [
+        {"name": "Test", "conclusion": "success", "databaseId": 11, "status": "completed"},
+    ])
+    run_payloads = iter((in_progress, done))
+    running_check = {"name": "CodeQL", "databaseId": 0, "status": "in_progress",
+                     "conclusion": "", "steps": [], "_check_source": "check_run"}
+    failed_check = {**running_check, "status": "completed", "conclusion": "failure"}
+    rollups = iter((
+        run_reads.CommitChecks(answered=True, external=(running_check,)),
+        run_reads.CommitChecks(answered=True, external=(failed_check,)),
+    ))
+
+    with patch("gh.run_reads.fetch_run_data", side_effect=lambda repo, rid: next(run_payloads)), \
+         patch("gh.run_reads.fetch_commit_checks",
+               side_effect=lambda repo, sha: next(rollups)) as fetch_checks, \
+         patch("gh.run_reads.fetch_annotations", return_value=[]), \
+         patch("pr.ci_wait.time.sleep"):
+        result = _poll(run_id=555, head_sha="currenthead")
+
+    assert [c.args[1] for c in fetch_checks.call_args_list] == ["abc123", "abc123"]
+    assert result.merged["conclusion"] == "failure"

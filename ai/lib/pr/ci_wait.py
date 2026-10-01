@@ -86,8 +86,7 @@ def poll_until_complete(
     call per run per poll spent on an answer that cannot have changed.
     """
     reported_job_ids: set[int] = set()
-    settled: dict[int, dict] = {}
-    late_checks: dict[str, run_reads.CommitChecks] = {}
+    settled = ci_runs.PollCache()
     start_time = time.monotonic()
 
     while True:
@@ -105,7 +104,7 @@ def poll_until_complete(
         rollup_head_sha = "" if run_id else head_sha
 
         fetched = ci_runs.fetch_merged(
-            repo, rows, head_sha=rollup_head_sha, cache=settled, late_checks_cache=late_checks,
+            repo, rows, head_sha=rollup_head_sha, cache=settled,
         )
         if fetched is None and not rows:
             trail.warn("no_runs", "no checks found")

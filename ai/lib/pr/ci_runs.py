@@ -15,7 +15,7 @@ called from here once per failed job and in parallel.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from gh import run_reads
@@ -220,6 +220,24 @@ def _apply_external(merged: dict, external: tuple[dict, ...]) -> dict:
     return merged
 
 
+@dataclass
+class PollCache:
+    """What one poll may hand to the next, for answers that cannot have changed.
+
+    A single owner for both, because they are one question asked of two
+    sources and they are always carried together. Two loose dicts keyed
+    differently — run id to payload, commit to rollup — is an argument pair a
+    call site can cross over, and the older of them was called just `cache`,
+    which stopped being a name once there were two.
+
+    Only a wait loop has a next poll. A single-shot run passes nothing and
+    every read is made fresh.
+    """
+
+    runs: dict[int, dict] = field(default_factory=dict)
+    checks: dict[str, run_reads.CommitChecks] = field(default_factory=dict)
+
+
 def _hold_finished(cache: dict[int, dict], payloads: list[dict], served: dict) -> None:
     """Keep the payloads of runs that have concluded, for the next poll to reuse.
 
@@ -270,8 +288,7 @@ def _checks_settled(checks: run_reads.CommitChecks) -> bool:
 
 
 def _late_checks(
-    repo: str, payloads: list[dict],
-    cache: dict[str, run_reads.CommitChecks] | None = None,
+    repo: str, payloads: list[dict], cache: PollCache | None = None,
 ) -> run_reads.CommitChecks:
     """The rollup at the commit the runs named, for a caller that could not.
 
@@ -292,18 +309,17 @@ def _late_checks(
     sha = (payloads[0].get("headSha") or "") if payloads else ""
     if not sha:
         return run_reads.CommitChecks()
-    if cache is not None and sha in cache:
-        return cache[sha]
+    if cache is not None and sha in cache.checks:
+        return cache.checks[sha]
     checks = run_reads.fetch_commit_checks(repo, sha)
     if cache is not None and _checks_settled(checks):
-        cache[sha] = checks
+        cache.checks[sha] = checks
     return checks
 
 
 def fetch_merged(
     repo: str, rows: list[run_reads.RunRow], *, head_sha: str = "",
-    cache: dict[int, dict] | None = None,
-    late_checks_cache: dict[str, run_reads.CommitChecks] | None = None,
+    cache: PollCache | None = None,
 ) -> MergedRun | None:
     """Fold every check on the commit — Actions runs and otherwise — into one payload.
 
@@ -330,7 +346,7 @@ def fetch_merged(
     sha = head_sha or (rows[0].head_sha if rows else "")
     checks = _commit_checks(repo, rows, sha) if sha else run_reads.CommitChecks()
     green = checks.green_run_ids()
-    held = cache if cache is not None else {}
+    held = cache.runs if cache is not None else {}
 
     to_fetch = [row for row in rows if row.run_id not in green and row.run_id not in held]
     with ThreadPoolExecutor(max_workers=5) as pool:
@@ -348,10 +364,10 @@ def fetch_merged(
             payloads.append({**data, "_run_id": row.run_id})
 
     if cache is not None:
-        _hold_finished(cache, payloads, served)
+        _hold_finished(cache.runs, payloads, served)
 
     if not sha:
-        checks = _late_checks(repo, payloads, late_checks_cache)
+        checks = _late_checks(repo, payloads, cache)
 
     if not payloads:
         if not checks.external:

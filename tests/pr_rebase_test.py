@@ -1890,7 +1890,7 @@ def test_step_conflicts_refuses_past_the_resolution_budget():
     """The count the file budget is deliberately blind to.
 
     Nine files conflicting in each of seven replayed commits is a spread of
-    nine — 45% of the file budget — while the run makes sixty-three AI
+    nine — well inside the file budget — while the run makes sixty-three AI
     calls. Before this budget existed the run burned every one of them against
     a branch whose work had already landed in another shape.
     """

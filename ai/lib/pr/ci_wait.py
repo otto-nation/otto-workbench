@@ -21,6 +21,24 @@ from pr import ci_report
 from pr import ci_runs
 
 
+# How many extra polls a read that did not complete may buy. Enough for a
+# flaky call to come good, few enough that a permanent cause — a token with
+# no scope to read checks — costs a couple of intervals rather than the
+# caller's whole timeout.
+_MAX_INCOMPLETE_RETRIES = 2
+
+
+def _retry_incomplete(passes: int, elapsed: float, timeout: int) -> bool:
+    """Whether an incomplete read is worth another pass, in budget and in tries."""
+    return passes < _MAX_INCOMPLETE_RETRIES and elapsed < timeout
+
+
+def _nothing_came_back(discovery: run_reads.RunDiscovery) -> str:
+    """Why this poll has nothing to report on, in words the caller can print."""
+    return ("the workflow run list could not be read" if discovery.failed
+            else "no run data came back")
+
+
 @dataclass(frozen=True)
 class PollResult:
     """What a finished or timed-out poll leaves for the final report."""
@@ -88,6 +106,7 @@ def poll_until_complete(
     reported_job_ids: set[int] = set()
     settled = ci_runs.PollCache()
     start_time = time.monotonic()
+    incomplete_passes = 0
 
     while True:
         elapsed = time.monotonic() - start_time
@@ -106,12 +125,21 @@ def poll_until_complete(
         fetched = ci_runs.fetch_merged(
             repo, discovery, head_sha=rollup_head_sha, cache=settled,
         )
-        if fetched is None and not discovery.rows:
+        if fetched is None and not discovery.failed and not discovery.rows:
+            # A commit with no checks is not going to grow any. Said apart
+            # from a listing that failed, which is the condition this loop
+            # exists to outlast.
             trail.warn("no_runs", "no checks found")
             raise ci_runs.RunUnavailable(f"No checks found for branch '{branch}'")
+        if fetched is None and not _retry_incomplete(incomplete_passes, elapsed, timeout):
+            reason = _nothing_came_back(discovery)
+            trail.error("fetch_run_data", reason)
+            raise ci_runs.RunUnavailable(f"Gave up polling: {reason}")
         if fetched is None:
-            trail.error("fetch_run_data", "failed to fetch run data")
-            raise ci_runs.RunUnavailable("Failed to fetch run data")
+            incomplete_passes += 1
+            trail.warn("incomplete_poll", f"{_nothing_came_back(discovery)} — retrying")
+            time.sleep(interval)
+            continue
 
         merged = fetched.merged
         new_failed_jobs = [
@@ -124,8 +152,22 @@ def poll_until_complete(
         counts = ci_runs.count_job_states(merged)
         _print_status(counts)
 
-        if merged.get("status") == "completed" or counts.finished:
+        # Everything that can be read has settled. If something could not be
+        # read, spend a little of the remaining budget re-reading it before
+        # reporting an incomplete picture: every other transient condition in
+        # this loop is retried, and the cause is usually one flaky call.
+        # Bounded, so a cause that is not transient — a token that cannot see
+        # checks at all — costs a couple of polls rather than the timeout.
+        unread = merged.get("_unread", ())
+        settled_now = merged.get("status") == "completed" or counts.finished
+        retrying = unread and _retry_incomplete(incomplete_passes, elapsed, timeout)
+        if settled_now and not retrying:
             return PollResult(run_ids=run_ids, merged=merged, counts=counts)
+        if settled_now:
+            incomplete_passes += 1
+            trail.warn("incomplete_poll", f"{len(unread)} unread — retrying")
+            time.sleep(interval)
+            continue
 
         if elapsed >= timeout:
             print(f"  Timeout after {int(elapsed)}s — emitting partial results",

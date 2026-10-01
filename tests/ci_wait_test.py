@@ -174,14 +174,82 @@ def test_poll_raises_when_the_branch_has_no_runs():
     assert trail.warn.call_args[0][0] == "no_runs"
 
 
-def test_poll_raises_when_no_run_data_comes_back():
+def test_poll_retries_then_gives_up_when_no_run_data_comes_back():
+    """A read that returned nothing is retried before the wait is abandoned.
+
+    Every other transient condition in this loop is retried; a single flaky
+    `gh` call should not end a fifteen-minute wait. The retry is bounded, so
+    a cause that is not transient costs a couple of intervals rather than the
+    caller's whole budget.
+    """
     trail = MagicMock()
-    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery(rows=(_row(100),))), \
-         patch("gh.run_reads.fetch_run_data", return_value=None):
-        with pytest.raises(ci_runs.RunUnavailable, match="Failed to fetch"):
+    with patch("gh.run_reads.fetch_latest_runs",
+               return_value=run_reads.RunDiscovery(rows=(_row(100),))), \
+         patch("gh.run_reads.fetch_run_data", return_value=None) as view:
+        with pytest.raises(ci_runs.RunUnavailable, match="Gave up polling"):
             _poll(trail=trail)
+    assert view.call_count == 3, "two retries, then the give-up"
     trail.error.assert_called_once()
     assert trail.error.call_args[0][0] == "fetch_run_data"
+
+
+def test_a_failed_run_listing_mid_wait_is_retried_not_reported_as_no_checks():
+    """`gh run list` failing is not the commit having no checks, and the loop
+    exists to outlast exactly this."""
+    good = run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123"),))
+    discoveries = iter((run_reads.RunDiscovery(failed=True), good))
+    done = _run("completed", "success", [
+        {"name": "Lint", "conclusion": "success", "databaseId": 10, "status": "completed"},
+    ])
+
+    with patch("gh.run_reads.fetch_latest_runs", side_effect=lambda *a, **k: next(discoveries)), \
+         patch("gh.run_reads.fetch_run_data", return_value=done), \
+         patch("pr.ci_wait.time.sleep"):
+        result = _poll(head_sha="abc123")
+
+    assert result.merged["conclusion"] == "success"
+
+
+def test_an_unread_poll_is_retried_before_the_wait_reports_it():
+    """Everything has settled but one read failed — spend a pass re-reading it."""
+    done = _run("completed", "success", [
+        {"name": "Lint", "conclusion": "success", "databaseId": 10, "status": "completed"},
+    ])
+    rollups = iter((
+        run_reads.CommitChecks(unreadable=True),
+        run_reads.CommitChecks(answered=True),
+    ))
+
+    with patch("gh.run_reads.fetch_latest_runs",
+               return_value=run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123"),))), \
+         patch("gh.run_reads.fetch_run_data", return_value=done), \
+         patch("gh.run_reads.fetch_commit_checks",
+               side_effect=lambda repo, sha: next(rollups)) as rollup, \
+         patch("pr.ci_wait.time.sleep"):
+        result = _poll(head_sha="abc123")
+
+    assert rollup.call_count == 2
+    assert result.merged.get("_unread", ()) == ()
+    assert result.merged["conclusion"] == "success"
+
+
+def test_a_persistently_unread_poll_still_finishes():
+    """A token that can never read the rollup must not burn the whole timeout."""
+    done = _run("completed", "success", [
+        {"name": "Lint", "conclusion": "success", "databaseId": 10, "status": "completed"},
+    ])
+
+    with patch("gh.run_reads.fetch_latest_runs",
+               return_value=run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123"),))), \
+         patch("gh.run_reads.fetch_run_data", return_value=done), \
+         patch("gh.run_reads.fetch_commit_checks",
+               return_value=run_reads.CommitChecks(unreadable=True)) as rollup, \
+         patch("pr.ci_wait.time.sleep"):
+        result = _poll(head_sha="abc123")
+
+    assert rollup.call_count == 3, "two retries, then report what is known"
+    assert result.merged["_unread"] != ()
+    assert result.merged["conclusion"] == ""
 
 
 def test_poll_re_resolves_run_ids_unless_one_is_pinned():

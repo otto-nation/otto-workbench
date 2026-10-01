@@ -566,8 +566,17 @@ def test_count_job_states_pending_is_queued():
 
 
 def _external(name, conclusion, status="completed", source="check_run", job_id=0):
-    return {"name": name, "databaseId": job_id, "status": status, "conclusion": conclusion,
-            "steps": [], "_check_source": source, "_details_url": "", "_summary": ""}
+    """An external check as `run_reads` would have handed it over.
+
+    Put through the same normaliser the real rollup path uses rather than
+    hand-rolling the dict: the rule that a finished check failed unless it
+    concluded green is applied at that boundary, and a double that restates
+    the shape instead of sharing it keeps passing after the code it stands
+    for has stopped agreeing with it.
+    """
+    return run_reads._as_failure_unless_green(
+        {"name": name, "databaseId": job_id, "status": status, "conclusion": conclusion,
+         "steps": [], "_check_source": source, "_details_url": "", "_summary": ""})
 
 
 def _green_run(run_id, *names):
@@ -837,3 +846,34 @@ def test_a_run_with_no_jobs_yet_is_not_finished():
     assert ci_runs.count_job_states(
         {"jobs": [{"name": "a", "status": "completed", "conclusion": "success"}]},
     ).finished is True
+
+
+def test_a_cancelled_external_check_survives_an_unrelated_unread_reason():
+    """One vocabulary: the verdict and the job list must agree about `cancelled`.
+
+    `_apply_external` called it a failure while `failed_jobs` — which asks
+    the blacklist `cancelled` is missing from — saw no failed job. Any unread
+    reason then put `_mark_unread` through `_claims_failure`, which re-derived
+    the verdict from that empty list and cleared the failure again.
+    """
+    good = run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
+    bad = run_reads.RunRow(run_id=300, head_sha="abc", conclusion="success")
+    checks = run_reads.CommitChecks(
+        answered=True, external=(_external("scalr/plan", "cancelled",
+                                           source="status_context"),))
+    fetched = _merged(
+        _discovery(good, bad), checks,
+        served=lambda rid: _green_payload() if rid == 200 else None,
+    )
+    assert fetched.merged["conclusion"] == "failure"
+    assert fetched.merged["_unread"] == ("run 300 could not be read",)
+
+
+def test_a_cancelled_external_check_becomes_a_named_failure():
+    """A verdict naming nothing is not actionable — the check must reach the report."""
+    row = run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
+    checks = run_reads.CommitChecks(
+        answered=True, external=(_external("scalr/plan", "cancelled",
+                                           source="status_context"),))
+    fetched = _merged(_discovery(row), checks)
+    assert [j["name"] for j in ci_runs.failed_jobs(fetched.merged)] == ["scalr/plan"]

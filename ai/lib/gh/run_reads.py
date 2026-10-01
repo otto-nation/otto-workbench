@@ -395,18 +395,42 @@ def _from_check_run(node: dict, run_id: int | None) -> dict:
         job["_check_source"] = "check_run"
         job["_details_url"] = node.get("detailsUrl") or ""
         job["_summary"] = node.get("title") or ""
+        return _as_failure_unless_green(job)
+    return job
+
+
+def _as_failure_unless_green(job: dict) -> dict:
+    """Say a finished external check failed, in the word the rest of the code reads.
+
+    One vocabulary, settled at the boundary rather than by each reader.
+    `FAILURE_CONCLUSIONS` is a blacklist and is missing `cancelled`; the test
+    for *passing* is a whitelist and is not. Letting the two disagree is how a
+    cancelled check came to set a failing verdict while producing no failed
+    job to name it: `failed_jobs` asks the blacklist, so no item was built,
+    and anything re-deriving the verdict from the job list — `_claims_failure`
+    under `_mark_unread`, most of all — reached the opposite answer and
+    cleared the failure again.
+
+    The word GitHub actually used survives in `_summary`, so the reader is
+    still told `cancelled` rather than this normalisation.
+    """
+    reported = job["conclusion"]
+    if job["status"] != "completed" or reported in GREEN_CONCLUSIONS:
+        return job
+    job["conclusion"] = "failure"
+    job["_summary"] = job["_summary"] or f"check concluded {reported or 'without a result'}"
     return job
 
 
 def _from_status_context(node: dict) -> dict:
     """A rollup status context in the job shape, with its state translated."""
     status, conclusion = _STATUS_STATES.get(node.get("state", ""), ("queued", ""))
-    return _job_shape(
+    return _as_failure_unless_green(_job_shape(
         node.get("context", "unknown"), status, conclusion,
         _check_source="status_context",
         _details_url=node.get("targetUrl") or "",
         _summary=node.get("description") or "",
-    )
+    ))
 
 
 def _sort_page(nodes: list[dict], external: list[dict],

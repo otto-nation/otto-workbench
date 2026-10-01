@@ -500,3 +500,33 @@ def test_a_failed_run_listing_is_not_an_empty_one():
     with patch("gh.client.json_out", return_value=[]):
         found = run_reads.fetch_latest_runs("owner/repo", "main")
     assert found.failed is False and found.rows == ()
+
+
+def test_a_cancelled_external_check_speaks_the_failure_vocabulary():
+    """`cancelled` is absent from FAILURE_CONCLUSIONS, so it is normalised here."""
+    result = _rollup([_check_run("scalr/plan", "CANCELLED", app="scalr",
+                                 run_id=None, db_id=7)])
+    with patch("gh.client.graphql", return_value=result):
+        checks = run_reads.fetch_commit_checks("owner/repo", "abc")
+    assert checks.external[0]["conclusion"] == "failure"
+    # What GitHub actually said survives for the reader.
+    assert "cancelled" in checks.external[0]["_summary"]
+
+
+def test_a_green_external_check_is_left_alone():
+    # passes-at-base: back-compat — the pass path must survive the normalisation
+    result = _rollup([_check_run("CodeQL", "SUCCESS", app="scanner",
+                                 run_id=None, db_id=7)])
+    with patch("gh.client.graphql", return_value=result):
+        checks = run_reads.fetch_commit_checks("owner/repo", "abc")
+    assert checks.external[0]["conclusion"] == "success"
+
+
+def test_an_unfinished_external_check_is_not_called_a_failure():
+    """Still running is not a verdict; only a finished check is judged."""
+    result = _rollup([_check_run("CodeQL", None, app="scanner", run_id=None,
+                                 db_id=7, status="IN_PROGRESS")])
+    with patch("gh.client.graphql", return_value=result):
+        checks = run_reads.fetch_commit_checks("owner/repo", "abc")
+    assert checks.external[0]["conclusion"] == ""
+    assert checks.external[0]["status"] == "in_progress"

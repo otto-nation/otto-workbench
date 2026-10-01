@@ -53,6 +53,16 @@ class RunRow:
     status: str = ""
     conclusion: str = ""
     workflow: str = ""
+    # Re-running a workflow reuses the run id and increments this, so the id
+    # alone does not identify a result. Anything holding a run's payload has
+    # to key on both or it will serve the previous attempt's verdict for a run
+    # that has since been re-run and failed.
+    attempt: int = 1
+
+    @property
+    def identity(self) -> tuple[int, int]:
+        """What actually names one run result, as opposed to one run."""
+        return (self.run_id, self.attempt)
 
     def as_payload(self, jobs: tuple[dict, ...]) -> dict:
         """The run payload `gh run view` would have served, built from the row.
@@ -69,7 +79,23 @@ class RunRow:
         }
 
 
-def fetch_latest_runs(repo: str, branch: str, head_sha: str = "") -> list[RunRow]:
+@dataclass(frozen=True)
+class RunDiscovery:
+    """The runs found for a commit, and whether the looking itself worked.
+
+    `failed` is the distinction that keeps an empty list honest. `gh run list`
+    answers with nothing both when a commit has no workflow runs and when the
+    call did not succeed, and those mean opposite things: the first is a fact
+    about the commit, the second is an absence of facts. Collapsed into one
+    empty list, a failed listing reads as a commit with nothing to report,
+    which is the shape of every bug this module has had.
+    """
+
+    rows: tuple[RunRow, ...] = ()
+    failed: bool = False
+
+
+def fetch_latest_runs(repo: str, branch: str, head_sha: str = "") -> RunDiscovery:
     """Workflow runs for one commit on `branch`, one per workflow.
 
     `head_sha` names the commit. Without one the newest row's SHA stands in,
@@ -92,11 +118,13 @@ def fetch_latest_runs(repo: str, branch: str, head_sha: str = "") -> list[RunRow
     runs = gh_client.json_out(
         "run", "list", "--repo", repo, "--branch", branch,
         "--limit", "20",
-        "--json", "databaseId,headSha,workflowName,conclusion,status,number",
-        default=[],
+        "--json", "databaseId,headSha,workflowName,conclusion,status,number,attempt",
+        default=None,
     )
+    if runs is None:
+        return RunDiscovery(failed=True)
     if not runs:
-        return []
+        return RunDiscovery()
     latest_sha = head_sha or runs[0]["headSha"]
     seen_workflows: set[str] = set()
     seen_cancelled: set[str] = set()
@@ -120,8 +148,9 @@ def fetch_latest_runs(repo: str, branch: str, head_sha: str = "") -> list[RunRow
             run_id=r["databaseId"], number=r.get("number") or 0,
             head_sha=r["headSha"], status=r.get("status") or "",
             conclusion=r.get("conclusion") or "", workflow=wf,
+            attempt=r.get("attempt") or 1,
         ))
-    return rows
+    return RunDiscovery(rows=tuple(rows))
 
 
 def fetch_run_data(repo: str, run_id: int) -> dict | None:
@@ -242,10 +271,13 @@ _ROLLUP_PAGE = 100
 # verdict rather than inventing one.
 _ROLLUP_MAX_PAGES = 10
 
-# What a check run has to conclude for its run to need no further reading. A
-# run whose every check is one of these has no failed job and no job still
-# going, so its job payload holds nothing the rollup did not already carry.
-_SETTLED_GREEN = frozenset(("success", "neutral", "skipped"))
+# What a finished check has to conclude for it to count as passing. A
+# whitelist rather than a list of failures, because the failure list is the
+# one that goes stale: `cancelled` was already missing from
+# `FAILURE_CONCLUSIONS`, so a cancelled external check read as a pass, and
+# anything GitHub adds to the enum later would too. Everything not named here
+# is something a reader has to be told about.
+GREEN_CONCLUSIONS = frozenset(("success", "neutral", "skipped"))
 
 # GitHub spells a status context's state in its own vocabulary, which is not
 # the one FAILURE_CONCLUSIONS is written in. `error` is the entry that matters:
@@ -304,6 +336,13 @@ class CommitChecks:
 
     answered: bool = False
     truncated: bool = False
+    # Whether a read failed, as opposed to a commit having nothing to report.
+    # `answered` is false for both, and they mean opposite things: GitHub
+    # returning no rollup is a fact about the commit — an approval-gated run
+    # has none — while a call that errored is an absence of facts. Only the
+    # second may withhold a verdict, or every held workflow would report as
+    # unknown.
+    unreadable: bool = False
     external: tuple[dict, ...] = ()
     actions: dict[int, tuple[dict, ...]] = field(default_factory=dict)
 
@@ -320,7 +359,7 @@ class CommitChecks:
             return frozenset()
         return frozenset(
             run_id for run_id, rows in self.actions.items()
-            if rows and all(row["conclusion"] in _SETTLED_GREEN for row in rows)
+            if rows and all(row["conclusion"] in GREEN_CONCLUSIONS for row in rows)
         )
 
 
@@ -385,22 +424,41 @@ def _sort_page(nodes: list[dict], external: list[dict],
         actions.setdefault(run_id, []).append(job)
 
 
-def _rollup_page(repo: str, sha: str, after: str | None) -> dict | None:
-    """One page of the commit's rollup, or None when there is no rollup to read."""
+@dataclass(frozen=True)
+class _Page:
+    """One attempt at a page of the rollup, and which kind of nothing it got.
+
+    `contexts` present is a page to read. Absent, `failed` is the whole of the
+    difference between "this commit has no checks" and "nobody could find
+    out", which the caller has to keep apart.
+    """
+
+    contexts: dict | None = None
+    failed: bool = False
+
+
+def _rollup_page(repo: str, sha: str, after: str | None) -> _Page:
+    """One page of the commit's rollup, or which way it came back empty."""
     owner, _, name = repo.partition("/")
     r = gh_client.graphql(_ROLLUP_QUERY, variables={
         "owner": owner, "name": name, "oid": sha,
         "page": _ROLLUP_PAGE, "after": after,
     })
     if not r.ok:
-        return None
+        return _Page(failed=True)
     try:
         data = json.loads(r.stdout)
     except (json.JSONDecodeError, TypeError):
-        return None
-    obj = (((data or {}).get("data") or {}).get("repository") or {}).get("object") or {}
+        return _Page(failed=True)
+    # A GraphQL error, or a null `data`, is the server declining to answer — a
+    # token without the scope to read checks lands here, and reading that as
+    # "no checks" would hide every external check in the repo behind a
+    # permissions problem nobody is told about.
+    if not isinstance(data, dict) or data.get("errors") or data.get("data") is None:
+        return _Page(failed=True)
+    obj = ((data["data"].get("repository") or {}).get("object")) or {}
     contexts = (obj.get("statusCheckRollup") or {}).get("contexts") or {}
-    return contexts if contexts.get("nodes") is not None else None
+    return _Page(contexts=contexts) if contexts.get("nodes") is not None else _Page()
 
 
 def fetch_commit_checks(repo: str, sha: str) -> CommitChecks:
@@ -418,28 +476,30 @@ def fetch_commit_checks(repo: str, sha: str) -> CommitChecks:
     external: list[dict] = []
     actions: dict[int, list[dict]] = {}
     after: str | None = None
-    answered = complete = False
+    answered = complete = failed = False
 
     for _ in range(_ROLLUP_MAX_PAGES):
-        contexts = _rollup_page(repo, sha, after)
+        page = _rollup_page(repo, sha, after)
         # A later page failing is not the same as there being no rollup: what
         # was already read stands, and the unread remainder leaves the result
         # incomplete rather than empty.
-        if contexts is None:
+        if page.contexts is None:
+            failed = page.failed
             break
         answered = True
-        _sort_page(contexts["nodes"], external, actions)
-        page = contexts.get("pageInfo") or {}
-        complete = not page.get("hasNextPage")
+        _sort_page(page.contexts["nodes"], external, actions)
+        info = page.contexts.get("pageInfo") or {}
+        complete = not info.get("hasNextPage")
         if complete:
             break
-        after = page.get("endCursor")
+        after = info.get("endCursor")
 
     if not answered:
-        return CommitChecks()
+        return CommitChecks(unreadable=failed)
     # Anything short of a clean finish is truncated, which is what withholds a
     # green verdict the pages nobody read could have contradicted.
     return CommitChecks(
-        answered=True, truncated=not complete, external=tuple(external),
+        answered=True, truncated=not complete, unreadable=failed,
+        external=tuple(external),
         actions={rid: tuple(rows) for rid, rows in actions.items()},
     )

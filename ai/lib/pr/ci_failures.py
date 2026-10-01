@@ -103,6 +103,10 @@ class RunState:
     conclusion: str
     fetched_at: str
     failures: dict[str, FailureGroup]
+    # Why this run's picture may be incomplete, in words a reader can act on.
+    # Empty is the claim that everything GitHub had was read; an empty
+    # `failures` means "nothing failed" only alongside it.
+    unread: tuple[str, ...] = ()
 
 
 # ── Classification ─────────────────────────────────────────────────────────
@@ -567,6 +571,7 @@ def _summarize(domain, run: RunState) -> None:
     domain.conclusion = run.conclusion
     domain.failure_count = sum(kind_counts.values())
     domain.failure_kinds = kind_counts
+    domain.unread = list(run.unread)
     domain.last_run_id = run.run_id
     domain.last_run_number = run.run_number
     domain.updated_at = run.fetched_at
@@ -599,7 +604,7 @@ def sync_ci_domain(domain, run: RunState):
         run_id=run.run_id, run_number=run.run_number,
         head_sha=run.head_sha, status=run.status,
         conclusion=run.conclusion, fetched_at=run.fetched_at,
-        failures=synced_failures,
+        failures=synced_failures, unread=run.unread,
     )
 
     domain.runs[run.run_id] = synced_run

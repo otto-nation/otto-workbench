@@ -92,9 +92,9 @@ def poll_until_complete(
     while True:
         elapsed = time.monotonic() - start_time
 
-        rows = ([run_reads.RunRow(run_id=run_id)] if run_id
-                else run_reads.fetch_latest_runs(repo, branch, head_sha))
-        run_ids = [row.run_id for row in rows]
+        discovery = (run_reads.RunDiscovery(rows=(run_reads.RunRow(run_id=run_id),))
+                     if run_id else run_reads.fetch_latest_runs(repo, branch, head_sha))
+        run_ids = [row.run_id for row in discovery.rows]
 
         # `head_sha` is the branch's current head, not the pinned run's commit
         # once `run_id` names one — see `cli.ci_check._run_ci`'s identical guard.
@@ -104,9 +104,9 @@ def poll_until_complete(
         rollup_head_sha = "" if run_id else head_sha
 
         fetched = ci_runs.fetch_merged(
-            repo, rows, head_sha=rollup_head_sha, cache=settled,
+            repo, discovery, head_sha=rollup_head_sha, cache=settled,
         )
-        if fetched is None and not rows:
+        if fetched is None and not discovery.rows:
             trail.warn("no_runs", "no checks found")
             raise ci_runs.RunUnavailable(f"No checks found for branch '{branch}'")
         if fetched is None:

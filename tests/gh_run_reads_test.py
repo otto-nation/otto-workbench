@@ -24,8 +24,8 @@ def test_deduplicates_rerun_of_same_workflow():
         {"databaseId": 100, "headSha": "abc", "workflowName": "CI"},
     ]
     with patch("gh.client.json_out", return_value=runs):
-        rows = run_reads.fetch_latest_runs("owner/repo", "main")
-    assert [r.run_id for r in rows] == [200]
+        found = run_reads.fetch_latest_runs("owner/repo", "main")
+    assert [r.run_id for r in found.rows] == [200]
 
 
 def test_keeps_distinct_workflows():
@@ -35,8 +35,8 @@ def test_keeps_distinct_workflows():
         {"databaseId": 201, "headSha": "abc", "workflowName": "Deploy"},
     ]
     with patch("gh.client.json_out", return_value=runs):
-        rows = run_reads.fetch_latest_runs("owner/repo", "main")
-    assert [r.run_id for r in rows] == [200, 201]
+        found = run_reads.fetch_latest_runs("owner/repo", "main")
+    assert [r.run_id for r in found.rows] == [200, 201]
 
 
 def test_rerun_with_multiple_workflows():
@@ -47,8 +47,8 @@ def test_rerun_with_multiple_workflows():
         {"databaseId": 100, "headSha": "abc", "workflowName": "CI"},
     ]
     with patch("gh.client.json_out", return_value=runs):
-        rows = run_reads.fetch_latest_runs("owner/repo", "main")
-    assert [r.run_id for r in rows] == [300, 201]
+        found = run_reads.fetch_latest_runs("owner/repo", "main")
+    assert [r.run_id for r in found.rows] == [300, 201]
 
 
 def test_filters_to_latest_sha():
@@ -58,14 +58,14 @@ def test_filters_to_latest_sha():
         {"databaseId": 200, "headSha": "abc", "workflowName": "CI"},
     ]
     with patch("gh.client.json_out", return_value=runs):
-        rows = run_reads.fetch_latest_runs("owner/repo", "main")
-    assert [r.run_id for r in rows] == [300]
+        found = run_reads.fetch_latest_runs("owner/repo", "main")
+    assert [r.run_id for r in found.rows] == [300]
 
 
 def test_empty_run_list():
     with patch("gh.client.json_out", return_value=[]):
-        rows = run_reads.fetch_latest_runs("owner/repo", "main")
-    assert [r.run_id for r in rows] == []
+        found = run_reads.fetch_latest_runs("owner/repo", "main")
+    assert [r.run_id for r in found.rows] == []
 
 
 def test_filters_skipped_runs():
@@ -75,8 +75,8 @@ def test_filters_skipped_runs():
         {"databaseId": 201, "headSha": "abc", "workflowName": "Dependabot", "conclusion": "skipped"},
     ]
     with patch("gh.client.json_out", return_value=runs):
-        rows = run_reads.fetch_latest_runs("owner/repo", "main")
-    assert [r.run_id for r in rows] == [200]
+        found = run_reads.fetch_latest_runs("owner/repo", "main")
+    assert [r.run_id for r in found.rows] == [200]
 
 
 def test_keeps_cancelled_runs_so_their_failed_jobs_are_seen():
@@ -86,8 +86,8 @@ def test_keeps_cancelled_runs_so_their_failed_jobs_are_seen():
         {"databaseId": 201, "headSha": "abc", "workflowName": "Old CI", "conclusion": "cancelled"},
     ]
     with patch("gh.client.json_out", return_value=runs):
-        rows = run_reads.fetch_latest_runs("owner/repo", "main")
-    assert [r.run_id for r in rows] == [200, 201]
+        found = run_reads.fetch_latest_runs("owner/repo", "main")
+    assert [r.run_id for r in found.rows] == [200, 201]
 
 
 def test_cancelled_run_does_not_shadow_a_later_real_run():
@@ -101,8 +101,8 @@ def test_cancelled_run_does_not_shadow_a_later_real_run():
         {"databaseId": 200, "headSha": "abc", "workflowName": "CI", "conclusion": "failure"},
     ]
     with patch("gh.client.json_out", return_value=runs):
-        rows = run_reads.fetch_latest_runs("owner/repo", "main")
-    assert [r.run_id for r in rows] == [300, 200]
+        found = run_reads.fetch_latest_runs("owner/repo", "main")
+    assert [r.run_id for r in found.rows] == [300, 200]
 
 
 def test_a_real_run_does_not_shadow_a_cancelled_run_of_its_workflow():
@@ -118,8 +118,8 @@ def test_a_real_run_does_not_shadow_a_cancelled_run_of_its_workflow():
         {"databaseId": 200, "headSha": "abc", "workflowName": "CI", "conclusion": "cancelled"},
     ]
     with patch("gh.client.json_out", return_value=runs):
-        rows = run_reads.fetch_latest_runs("owner/repo", "main")
-    assert [r.run_id for r in rows] == [300, 200]
+        found = run_reads.fetch_latest_runs("owner/repo", "main")
+    assert [r.run_id for r in found.rows] == [300, 200]
 
 
 def test_skipped_run_does_not_shadow_a_later_real_run():
@@ -129,8 +129,8 @@ def test_skipped_run_does_not_shadow_a_later_real_run():
         {"databaseId": 200, "headSha": "abc", "workflowName": "CI", "conclusion": "failure"},
     ]
     with patch("gh.client.json_out", return_value=runs):
-        rows = run_reads.fetch_latest_runs("owner/repo", "main")
-    assert [r.run_id for r in rows] == [200]
+        found = run_reads.fetch_latest_runs("owner/repo", "main")
+    assert [r.run_id for r in found.rows] == [200]
 
 
 def test_all_skipped_returns_empty():
@@ -140,8 +140,8 @@ def test_all_skipped_returns_empty():
         {"databaseId": 201, "headSha": "abc", "workflowName": "B", "conclusion": "skipped"},
     ]
     with patch("gh.client.json_out", return_value=runs):
-        rows = run_reads.fetch_latest_runs("owner/repo", "main")
-    assert [r.run_id for r in rows] == []
+        found = run_reads.fetch_latest_runs("owner/repo", "main")
+    assert [r.run_id for r in found.rows] == []
 
 
 def test_cancelled_run_is_selected_when_it_is_all_there_is():
@@ -151,8 +151,8 @@ def test_cancelled_run_is_selected_when_it_is_all_there_is():
         {"databaseId": 201, "headSha": "abc", "workflowName": "B", "conclusion": "cancelled"},
     ]
     with patch("gh.client.json_out", return_value=runs):
-        rows = run_reads.fetch_latest_runs("owner/repo", "main")
-    assert [r.run_id for r in rows] == [201]
+        found = run_reads.fetch_latest_runs("owner/repo", "main")
+    assert [r.run_id for r in found.rows] == [201]
 
 
 def test_in_progress_runs_kept():
@@ -162,8 +162,8 @@ def test_in_progress_runs_kept():
         {"databaseId": 201, "headSha": "abc", "workflowName": "Deploy", "conclusion": "skipped"},
     ]
     with patch("gh.client.json_out", return_value=runs):
-        rows = run_reads.fetch_latest_runs("owner/repo", "main")
-    assert [r.run_id for r in rows] == [200]
+        found = run_reads.fetch_latest_runs("owner/repo", "main")
+    assert [r.run_id for r in found.rows] == [200]
 
 
 # ── fetch_job_logs ────────────────────────────────────────────────────────
@@ -227,10 +227,10 @@ def test_a_row_carries_the_number_the_dashboard_names_the_run_by():
     runs = [{"databaseId": 200, "headSha": "abc", "workflowName": "CI",
              "conclusion": "success", "status": "completed", "number": 42}]
     with patch("gh.client.json_out", return_value=runs):
-        rows = run_reads.fetch_latest_runs("owner/repo", "main")
-    assert rows[0].number == 42
-    assert rows[0].conclusion == "success"
-    assert rows[0].as_payload(())["number"] == 42
+        found = run_reads.fetch_latest_runs("owner/repo", "main")
+    assert found.rows[0].number == 42
+    assert found.rows[0].conclusion == "success"
+    assert found.rows[0].as_payload(())["number"] == 42
 
 
 # ── fetch_commit_checks ───────────────────────────────────────────────────
@@ -389,8 +389,8 @@ def test_head_sha_argument_beats_the_newest_row():
         {"databaseId": 200, "headSha": "asked", "workflowName": "CI"},
     ]
     with patch("gh.client.json_out", return_value=runs):
-        rows = run_reads.fetch_latest_runs("owner/repo", "main", head_sha="asked")
-    assert [r.run_id for r in rows] == [200]
+        found = run_reads.fetch_latest_runs("owner/repo", "main", head_sha="asked")
+    assert [r.run_id for r in found.rows] == [200]
 
 
 # ── commits_behind_main: counted locally ──────────────────────────────────
@@ -454,3 +454,49 @@ def test_without_a_worktree_both_spellings_of_the_trunk_are_skipped():
         assert run_reads.commits_behind_main("owner/repo", "main") == 0
         assert run_reads.commits_behind_main("owner/repo", "master") == 0
     api.assert_not_called()
+
+
+def test_a_commit_github_reports_no_checks_for_is_not_unreadable():
+    """An approval-gated run has no rollup; that is a fact, not a failed read."""
+    empty = CmdResult(0, json.dumps({"data": {"repository": {"object": None}}}))
+    with patch("gh.client.graphql", return_value=empty):
+        checks = run_reads.fetch_commit_checks("owner/repo", "abc")
+    assert checks.answered is False
+    assert checks.unreadable is False
+
+
+def test_a_failed_rollup_call_is_unreadable():
+    with patch("gh.client.graphql", return_value=CmdResult(1)):
+        checks = run_reads.fetch_commit_checks("owner/repo", "abc")
+    assert checks.unreadable is True
+
+
+def test_graphql_errors_are_unreadable_rather_than_empty():
+    """A token without the scope to read checks answers 200 with an errors block.
+
+    Read as "no checks", a permissions problem would hide every external
+    check in the repo behind a green report that names nothing.
+    """
+    denied = CmdResult(0, json.dumps(
+        {"data": None, "errors": [{"message": "Resource not accessible"}]}))
+    with patch("gh.client.graphql", return_value=denied):
+        checks = run_reads.fetch_commit_checks("owner/repo", "abc")
+    assert checks.unreadable is True
+    assert checks.answered is False
+
+
+def test_malformed_json_is_unreadable():
+    with patch("gh.client.graphql", return_value=CmdResult(0, "not json")):
+        checks = run_reads.fetch_commit_checks("owner/repo", "abc")
+    assert checks.unreadable is True
+
+
+def test_a_failed_run_listing_is_not_an_empty_one():
+    """`gh run list` answers with nothing both when it fails and when there is
+    nothing, and those mean opposite things."""
+    with patch("gh.client.json_out", return_value=None):
+        found = run_reads.fetch_latest_runs("owner/repo", "main")
+    assert found.failed is True and found.rows == ()
+    with patch("gh.client.json_out", return_value=[]):
+        found = run_reads.fetch_latest_runs("owner/repo", "main")
+    assert found.failed is False and found.rows == ()

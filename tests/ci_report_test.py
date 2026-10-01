@@ -73,7 +73,7 @@ def test_serialize_failures_carries_the_progression_it_was_given():
 
 _SINGLE_SHOT_KEYS = [
     "repo", "branch", "pr_number", "run_id", "run_ids", "run_number",
-    "head_sha", "conclusion", "behind_main", "failures", "progression",
+    "head_sha", "conclusion", "status", "unread", "behind_main", "failures", "progression",
     "resolved_since_prior",
 ]
 
@@ -303,3 +303,29 @@ def test_a_run_that_has_a_number_still_reports_it():
         conclusion="success", fetched_at="", failures={},
     )
     assert render_dashboard(run, {}).startswith("## CI Run #7 (abc1234)")
+
+
+def _run_with(unread=(), failures=None, status="completed", conclusion="success"):
+    return RunState(
+        run_id=100, run_number=7, head_sha="abc1234567", status=status,
+        conclusion=conclusion, fetched_at="", failures=failures or {}, unread=unread,
+    )
+
+
+def test_a_report_that_could_not_read_everything_never_says_all_checks_passed():
+    """The quietest false green: listing what was found, omitting what was not."""
+    out = render_dashboard(_run_with(unread=("run 300 could not be read",)), {})
+    assert "All checks passed." not in out
+    assert "Could not read every check on this commit:" in out
+    assert "run 300 could not be read" in out
+
+
+def test_a_conclusion_with_nothing_under_it_is_not_reported_as_a_pass():
+    """A run held for approval concludes non-success while naming no failure."""
+    out = render_dashboard(_run_with(conclusion="action_required"), {})
+    assert "All checks passed." not in out
+    assert "action_required" in out
+
+
+def test_a_clean_run_still_says_all_checks_passed():
+    assert "All checks passed." in render_dashboard(_run_with(), {})

@@ -70,7 +70,7 @@ def test_poll_emits_partial_on_new_failure(capsys):
     ])
     payloads = iter((cycle1, cycle2))
 
-    with patch("gh.run_reads.fetch_latest_runs", side_effect=[[_row(100)], [_row(100)]]), \
+    with patch("gh.run_reads.fetch_latest_runs", side_effect=[run_reads.RunDiscovery(rows=(_row(100),))] * 2), \
          patch("gh.run_reads.fetch_run_data", side_effect=lambda repo, rid: next(payloads)), \
          patch("gh.run_reads.fetch_annotations", return_value=[]), \
          patch("pr.ci_annotations.log_fallback",
@@ -98,7 +98,7 @@ def test_poll_reports_each_failed_job_once(capsys):
     ])
     payloads = iter((failed, failed, done))
 
-    with patch("gh.run_reads.fetch_latest_runs", return_value=[_row(100)]), \
+    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery(rows=(_row(100),))), \
          patch("gh.run_reads.fetch_run_data", side_effect=lambda repo, rid: next(payloads)), \
          patch("gh.run_reads.fetch_annotations", return_value=[]), \
          patch("pr.ci_annotations.log_fallback",
@@ -122,7 +122,7 @@ def test_poll_reads_new_failures_through_ci_runs_definition():
     weird_job = {"name": "Weird", "conclusion": "success", "databaseId": 20, "status": "completed"}
     run_data = _run("completed", "success", [weird_job])
 
-    with patch("gh.run_reads.fetch_latest_runs", return_value=[_row(100)]), \
+    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery(rows=(_row(100),))), \
          patch("gh.run_reads.fetch_run_data", return_value=run_data), \
          patch("pr.ci_runs.failed_jobs", return_value=[weird_job]), \
          patch("pr.ci_wait.emit_partial") as emit_partial, \
@@ -140,7 +140,7 @@ def test_poll_emits_status_lines(capsys):
         {"name": "Test", "conclusion": "success", "databaseId": 11, "status": "completed"},
     ])
 
-    with patch("gh.run_reads.fetch_latest_runs", return_value=[_row(100)]), \
+    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery(rows=(_row(100),))), \
          patch("gh.run_reads.fetch_run_data", return_value=run_data), \
          patch("pr.ci_wait.time.sleep"):
         result = _poll()
@@ -155,7 +155,7 @@ def test_poll_returns_what_it_has_when_it_times_out(capsys):
         {"name": "Test", "conclusion": None, "databaseId": 11, "status": "in_progress"},
     ])
 
-    with patch("gh.run_reads.fetch_latest_runs", return_value=[_row(100)]), \
+    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery(rows=(_row(100),))), \
          patch("gh.run_reads.fetch_run_data", return_value=run_data), \
          patch("pr.ci_wait.time.sleep"):
         result = _poll(timeout=0)
@@ -167,7 +167,7 @@ def test_poll_returns_what_it_has_when_it_times_out(capsys):
 
 def test_poll_raises_when_the_branch_has_no_runs():
     trail = MagicMock()
-    with patch("gh.run_reads.fetch_latest_runs", return_value=[]):
+    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery()):
         with pytest.raises(ci_runs.RunUnavailable, match="feat/test"):
             _poll(trail=trail)
     trail.warn.assert_called_once()
@@ -176,7 +176,7 @@ def test_poll_raises_when_the_branch_has_no_runs():
 
 def test_poll_raises_when_no_run_data_comes_back():
     trail = MagicMock()
-    with patch("gh.run_reads.fetch_latest_runs", return_value=[_row(100)]), \
+    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery(rows=(_row(100),))), \
          patch("gh.run_reads.fetch_run_data", return_value=None):
         with pytest.raises(ci_runs.RunUnavailable, match="Failed to fetch"):
             _poll(trail=trail)
@@ -190,7 +190,7 @@ def test_poll_re_resolves_run_ids_unless_one_is_pinned():
         {"name": "Test", "conclusion": "success", "databaseId": 11, "status": "completed"},
     ])
 
-    with patch("gh.run_reads.fetch_latest_runs", return_value=[_row(100)]) as fetch_ids, \
+    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery(rows=(_row(100),))) as fetch_ids, \
          patch("gh.run_reads.fetch_run_data", return_value=run_data), \
          patch("pr.ci_wait.time.sleep"):
         result = _poll(run_id=555)
@@ -226,8 +226,8 @@ def test_a_run_that_has_finished_is_not_fetched_again_next_poll():
     def serve(repo, rid):
         return finished if rid == 100 else next(state[200])
 
-    rows = [_row(100), _row(200)]
-    with patch("gh.run_reads.fetch_latest_runs", return_value=rows), \
+    discovered = run_reads.RunDiscovery(rows=(_row(100), _row(200)))
+    with patch("gh.run_reads.fetch_latest_runs", return_value=discovered), \
          patch("gh.run_reads.fetch_run_data", side_effect=serve) as view, \
          patch("pr.ci_wait.time.sleep"):
         result = _poll()
@@ -245,7 +245,7 @@ def test_the_held_payload_still_reaches_the_final_merge():
     def serve(repo, rid):
         return finished if rid == 100 else next(state[200])
 
-    with patch("gh.run_reads.fetch_latest_runs", return_value=[_row(100), _row(200)]), \
+    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery(rows=(_row(100), _row(200)))), \
          patch("gh.run_reads.fetch_run_data", side_effect=serve), \
          patch("pr.ci_wait.time.sleep"):
         result = _poll()
@@ -268,7 +268,7 @@ def test_a_real_head_sha_reaches_the_rollup_short_circuit():
         {"name": "Lint", "conclusion": "success", "databaseId": 10, "status": "completed"},
     ])
 
-    with patch("gh.run_reads.fetch_latest_runs", return_value=[_row(100, head_sha="abc123")]), \
+    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123"),))), \
          patch("gh.run_reads.fetch_run_data", return_value=run_data), \
          patch("gh.run_reads.fetch_commit_checks",
                return_value=run_reads.CommitChecks()) as fetch_checks, \
@@ -277,37 +277,6 @@ def test_a_real_head_sha_reaches_the_rollup_short_circuit():
 
     fetch_checks.assert_called_once_with("owner/repo", "abc123")
 
-
-def test_a_known_heads_settled_rollup_is_not_reasked_next_poll():
-    """`_commit_checks` — the path used whenever the branch head is known up
-    front, which is the ordinary, far more common case than a pinned `--run`
-    — must cache a settled rollup across polls too, the same as `_late_checks`
-    does for the pinned path.
-
-    Regression test for the gap where `PollCache.checks` was wired into
-    `_late_checks` but not into `_commit_checks`, so a known-head poll kept
-    re-issuing the `statusCheckRollup` query every pass even once it had
-    nothing left in flight.
-    """
-    in_progress = _run("in_progress", "", [
-        {"name": "Test", "conclusion": None, "databaseId": 11, "status": "in_progress"},
-    ])
-    done = _run("completed", "success", [
-        {"name": "Test", "conclusion": "success", "databaseId": 11, "status": "completed"},
-    ])
-    run_payloads = iter((in_progress, done))
-    settled_checks = run_reads.CommitChecks(answered=True)
-
-    with patch("gh.run_reads.fetch_latest_runs", return_value=[_row(100, head_sha="abc123")]), \
-         patch("gh.run_reads.fetch_run_data", side_effect=lambda repo, rid: next(run_payloads)), \
-         patch("gh.run_reads.fetch_commit_checks",
-               return_value=settled_checks) as fetch_checks, \
-         patch("pr.ci_wait.time.sleep"):
-        result = _poll(head_sha="abc123")
-
-    # Asked once even though the loop polled twice.
-    assert fetch_checks.call_args_list == [(("owner/repo", "abc123"),)]
-    assert result.merged["status"] == "completed"
 
 
 def test_a_pinned_run_asks_its_rollup_at_its_own_commit():
@@ -342,36 +311,6 @@ def test_a_pinned_run_asks_its_rollup_at_its_own_commit():
     assert [c.args[1] for c in fetch_checks.call_args_list] == ["abc123"]
     assert result.merged["conclusion"] == "success"
 
-
-def test_a_pinned_runs_settled_rollup_is_not_reasked_next_poll():
-    """A pinned run's rollup never changes commit between polls, so once it has
-    answered with nothing left in flight, a second poll must not re-issue the
-    same `statusCheckRollup` query — it already has the answer.
-
-    Regression test for the gap where `_late_checks` re-fetched the rollup on
-    every poll even once it was settled, because the run's own Actions payload
-    being served from the `settled`/`held` cache carries no signal that the
-    rollup fetched for the same commit could be reused too.
-    """
-    in_progress = _run("in_progress", "", [
-        {"name": "Test", "conclusion": None, "databaseId": 11, "status": "in_progress"},
-    ])
-    done = _run("completed", "success", [
-        {"name": "Test", "conclusion": "success", "databaseId": 11, "status": "completed"},
-    ])
-    run_payloads = iter((in_progress, done))
-    settled_checks = run_reads.CommitChecks(answered=True)
-
-    with patch("gh.run_reads.fetch_run_data", side_effect=lambda repo, rid: next(run_payloads)), \
-         patch("gh.run_reads.fetch_commit_checks",
-               return_value=settled_checks) as fetch_checks, \
-         patch("pr.ci_wait.time.sleep"):
-        result = _poll(run_id=555, head_sha="currenthead")
-
-    # Both polls asked about the run's own commit (abc123), never currenthead,
-    # and only once even though the loop polled twice.
-    assert fetch_checks.call_args_list == [(("owner/repo", "abc123"),)]
-    assert result.merged["status"] == "completed"
 
 
 def test_a_rollup_with_a_check_still_running_is_asked_again():
@@ -449,4 +388,77 @@ def test_a_truncated_rollup_is_not_cached_even_when_every_check_is_completed():
     # than served from cache — if it were cached, the second poll would reuse
     # the "success" verdict and never see the check an unread page flipped.
     assert [c.args[1] for c in fetch_checks.call_args_list] == ["abc123", "abc123"]
+    assert result.merged["conclusion"] == "failure"
+
+
+def test_the_rollup_is_re_read_every_poll():
+    """A settled rollup is not safe to carry forward, unlike a run attempt.
+
+    A run attempt is immutable once concluded and a re-run is a new attempt,
+    so the payload cache can key on that and be right. A commit's rollup has
+    no such identity: a status context can be re-posted at the same commit
+    and a check run re-requested, with nothing in the answer to say it
+    changed. Caching it was tried and bought one call per poll at the price
+    of a verdict that could go stale mid-wait, which is the trade this whole
+    branch exists to refuse.
+    """
+    in_progress = _run("in_progress", "", [
+        {"name": "Test", "conclusion": None, "databaseId": 11, "status": "in_progress"},
+    ])
+    done = _run("completed", "success", [
+        {"name": "Test", "conclusion": "success", "databaseId": 11, "status": "completed"},
+    ])
+    payloads = iter((in_progress, done))
+    settled = run_reads.CommitChecks(answered=True)
+
+    with patch("gh.run_reads.fetch_latest_runs",
+               return_value=run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123"),))), \
+         patch("gh.run_reads.fetch_run_data", side_effect=lambda repo, rid: next(payloads)), \
+         patch("gh.run_reads.fetch_commit_checks", return_value=settled) as rollup, \
+         patch("pr.ci_wait.time.sleep"):
+        _poll(head_sha="abc123")
+
+    assert [c.args[1] for c in rollup.call_args_list] == ["abc123", "abc123"]
+
+
+def test_a_re_run_is_not_served_from_the_previous_attempts_payload():
+    """Re-running a workflow reuses the run id and increments the attempt.
+
+    Keyed on the id alone, a run that passed, was re-run, and failed would be
+    answered out of the cache as the pass it used to be for the rest of the
+    wait — a green verdict over a red run, from the optimisation meant to be
+    free.
+    """
+    passed = {"databaseId": 100, "number": 1, "headSha": "abc123", "status": "completed",
+              "conclusion": "success",
+              "jobs": [{"name": "Lint", "conclusion": "success",
+                        "databaseId": 10, "status": "completed"}]}
+    failed = {**passed, "conclusion": "failure",
+              "jobs": [{"name": "Lint", "conclusion": "failure",
+                        "databaseId": 10, "status": "completed"}]}
+    served = iter((passed, failed))
+    # Poll 1 sees attempt 1 alongside a run still going; poll 2 sees the
+    # re-run as attempt 2, and everything finished.
+    discoveries = iter((
+        run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123"),
+                                     _row(200, head_sha="abc123"))),
+        run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123", attempt=2),)),
+    ))
+    running = {"databaseId": 200, "number": 2, "headSha": "abc123",
+               "status": "in_progress", "conclusion": None,
+               "jobs": [{"name": "Test", "conclusion": None,
+                         "databaseId": 20, "status": "in_progress"}]}
+
+    def serve(repo, rid):
+        return next(served) if rid == 100 else running
+
+    with patch("gh.run_reads.fetch_latest_runs", side_effect=lambda *a, **k: next(discoveries)), \
+         patch("gh.run_reads.fetch_run_data", side_effect=serve) as view, \
+         patch("gh.run_reads.fetch_annotations", return_value=[]), \
+         patch("pr.ci_annotations.log_fallback",
+               return_value=_no_log_fallback(ci.FailureKind.LINT)), \
+         patch("pr.ci_wait.time.sleep"):
+        result = _poll(head_sha="abc123")
+
+    assert [c.args[1] for c in view.call_args_list].count(100) == 2
     assert result.merged["conclusion"] == "failure"

@@ -126,9 +126,9 @@ def _run_ci(trail, args, ctx) -> ci_report.CIReport:
     repo = ctx.repo
     branch = ctx.branch
 
-    rows = ([run_reads.RunRow(run_id=args.run)] if args.run
-            else run_reads.fetch_latest_runs(repo, branch, ctx.head_sha))
-    run_ids = [row.run_id for row in rows]
+    discovery = (run_reads.RunDiscovery(rows=(run_reads.RunRow(run_id=args.run),))
+                 if args.run else run_reads.fetch_latest_runs(repo, branch, ctx.head_sha))
+    run_ids = [row.run_id for row in discovery.rows]
 
     trail.info("fetch_runs", f"fetching {len(run_ids)} run(s)", data={"run_ids": run_ids})
 
@@ -144,9 +144,12 @@ def _run_ci(trail, args, ctx) -> ci_report.CIReport:
     # Not gated on there being a workflow run: a commit can be checked by
     # something that is not a workflow, and bailing here on an empty run list
     # is what made those checks unreportable rather than merely unseen.
-    fetched = ci_runs.fetch_merged(repo, rows, head_sha=rollup_head_sha)
+    fetched = ci_runs.fetch_merged(repo, discovery, head_sha=rollup_head_sha)
     if fetched is None:
-        if not rows:
+        if discovery.failed:
+            trail.error("list_runs", "could not list workflow runs")
+            raise ci_runs.RunUnavailable(f"Could not list workflow runs for '{branch}'")
+        if not discovery.rows:
             trail.warn("no_runs", "no checks found")
             raise ci_runs.RunUnavailable(f"No checks found for branch '{branch}'")
         trail.error("fetch_run_data", "failed to fetch run data")

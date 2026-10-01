@@ -61,6 +61,8 @@ The script outputs:
 
 **Early exit — check BEFORE proceeding to step 2.** If the command failed (non-zero exit) or all checks passed, report the result to the user and **stop — do not proceed further**. Without `--wait`, all-pass means no JSON report in the output. With `--wait`, the final JSON is always emitted — check for `"failures": []` in the `"type": "final"` report instead.
 
+**`failures: []` is not on its own a pass.** Check `unread` first: a non-empty list names the checks this run could not read — a rollup the API refused, a run whose payload did not come back, more checks than were listed. The failures reported are then what was *found*, not what there is, and `conclusion` is cleared rather than `success`. Report the unread reasons to the user and treat the result as unknown; do not tell them CI is green, and do not start fixing as though the list were complete. A re-run of `pr ci` is usually enough, since most causes are transient.
+
 ### 2. Classify and group failures
 
 **Incremental mode (with `--wait`):** Process each `---`-delimited JSON chunk as it arrives. For `"type": "partial"` chunks, classify and begin diagnosing the failures immediately — more may arrive. When `"type": "final"` arrives, present the complete classification table and summarize any already-diagnosed failures.
@@ -183,6 +185,7 @@ Print:
 
 ## Constraints
 
+- An empty `failures` means CI passed only when `unread` is also empty — otherwise it means nobody could see all of it
 - Present classification + diagnosis, then proceed to fix without waiting for confirmation — the user can interrupt to override
 - Do not manually fetch CI logs (`gh run view`, `gh api`, `gh run view --log`). The `pr ci` JSON report includes failure context. Only call GitHub directly if the JSON context field is empty or clearly insufficient for a specific failure
 - NEVER auto-fix infra, flaky or external failures

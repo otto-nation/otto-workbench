@@ -202,7 +202,7 @@ def test_run_ci_wait_emits_the_final_report(capsys):
         ],
     }
 
-    with patch("gh.run_reads.fetch_latest_runs", return_value=[_row(100)]), \
+    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery(rows=(_row(100),))), \
          patch("gh.run_reads.fetch_run_data", return_value=run_data), \
          patch("gh.run_reads.fetch_annotations", return_value=[]), \
          patch("pr.ci_annotations.log_fallback",
@@ -219,7 +219,7 @@ def test_run_ci_wait_emits_the_final_report(capsys):
 
 def test_run_ci_wait_leaves_nothing_to_poll_to_the_entry_point():
     """`RunUnavailable` travels to `main`, which owns the exit code."""
-    with patch("gh.run_reads.fetch_latest_runs", return_value=[]):
+    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery()):
         with pytest.raises(ci_runs.RunUnavailable, match="No checks found"):
             ci_check._run_ci_wait(MagicMock(), _wait_args(), make_ctx())
 
@@ -227,7 +227,7 @@ def test_run_ci_wait_leaves_nothing_to_poll_to_the_entry_point():
 def test_run_ci_leaves_nothing_to_report_on_to_the_entry_point():
     """The single-shot path raises the same thing rather than exiting itself."""
     args = _wait_args()
-    with patch("gh.run_reads.fetch_latest_runs", return_value=[]):
+    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery()):
         with pytest.raises(ci_runs.RunUnavailable, match="No checks found"):
             ci_check._run_ci(MagicMock(), args, make_ctx())
 
@@ -300,7 +300,7 @@ def test_main_reports_a_missing_run_and_exits_one(capsys):
          patch.object(ci_check.pr_context, "resolve", return_value=make_ctx()), \
          patch.object(ci_check.run_lock, "claim_for_process"), \
          patch.object(ci_check.Trail, "start", return_value=MagicMock()), \
-         patch("gh.run_reads.fetch_latest_runs", return_value=[]):
+         patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery()):
         assert ci_check.main([]) == 1
 
     assert "No checks found" in capsys.readouterr().err
@@ -316,7 +316,7 @@ def test_main_takes_no_checkout_lock_without_fix():
          patch.object(ci_check.pr_context, "resolve", return_value=make_ctx()), \
          patch.object(ci_check.run_lock, "claim_for_process") as claim, \
          patch.object(ci_check.Trail, "start", return_value=MagicMock()), \
-         patch("gh.run_reads.fetch_latest_runs", return_value=[]):
+         patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery()):
         ci_check.main([])
 
     assert claim.call_args.kwargs["worktree"] is None
@@ -329,7 +329,7 @@ def test_main_takes_the_checkout_lock_with_fix():
          patch.object(ci_check.pr_context, "resolve", return_value=ctx), \
          patch.object(ci_check.run_lock, "claim_for_process") as claim, \
          patch.object(ci_check.Trail, "start", return_value=MagicMock()), \
-         patch("gh.run_reads.fetch_latest_runs", return_value=[]):
+         patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery()):
         ci_check.main(["--fix"])
 
     assert claim.call_args.kwargs["worktree"] == ctx.worktree_root

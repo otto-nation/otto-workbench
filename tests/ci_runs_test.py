@@ -175,12 +175,12 @@ def test_merge_runs_in_progress_clears_a_jobless_failure_conclusion():
 
 
 def _rows(payloads):
-    """The `gh run list` rows the payloads below would have come from."""
-    return [run_reads.RunRow(
+    """The `gh run list` discovery the payloads below would have come from."""
+    return run_reads.RunDiscovery(rows=tuple(run_reads.RunRow(
         run_id=p["databaseId"], number=p.get("number", 0),
         head_sha=p.get("headSha", "abc"), status=p.get("status", ""),
         conclusion=p.get("conclusion", ""),
-    ) for p in payloads]
+    ) for p in payloads))
 
 
 def _fetch_merged(payloads, checks=None):
@@ -645,7 +645,7 @@ def test_a_commit_whose_only_checks_are_external_still_reports():
     )
     with patch("gh.run_reads.fetch_run_data", return_value=None), \
          patch("gh.run_reads.fetch_commit_checks", return_value=checks):
-        fetched = ci_runs.fetch_merged("owner/repo", [], head_sha="abc")
+        fetched = ci_runs.fetch_merged("owner/repo", run_reads.RunDiscovery(), head_sha="abc")
     assert fetched is not None
     assert fetched.merged["conclusion"] == "failure"
     assert [j["name"] for j in fetched.merged["jobs"]] == ["scalr/plan"]
@@ -653,7 +653,7 @@ def test_a_commit_whose_only_checks_are_external_still_reports():
 
 def test_nothing_at_all_is_still_nothing_to_report():
     with patch("gh.run_reads.fetch_commit_checks", return_value=run_reads.CommitChecks()):
-        assert ci_runs.fetch_merged("owner/repo", [], head_sha="abc") is None
+        assert ci_runs.fetch_merged("owner/repo", run_reads.RunDiscovery(), head_sha="abc") is None
 
 
 # ── runs the rollup spares us fetching ───────────────────────────────────
@@ -668,7 +668,7 @@ def test_a_run_the_rollup_proved_green_is_not_fetched():
                              status="completed", conclusion="success")]
     with patch("gh.run_reads.fetch_run_data") as view, \
          patch("gh.run_reads.fetch_commit_checks", return_value=checks):
-        fetched = ci_runs.fetch_merged("owner/repo", rows, head_sha="abc")
+        fetched = ci_runs.fetch_merged("owner/repo", run_reads.RunDiscovery(rows=tuple(rows)), head_sha="abc")
     view.assert_not_called()
     assert [j["name"] for j in fetched.merged["jobs"]] == ["test", "lint"]
     assert fetched.merged["number"] == 5
@@ -685,7 +685,7 @@ def test_a_run_the_rollup_did_not_account_for_is_still_fetched():
             run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")]
     with patch("gh.run_reads.fetch_run_data", return_value=cancelled) as view, \
          patch("gh.run_reads.fetch_commit_checks", return_value=checks):
-        fetched = ci_runs.fetch_merged("owner/repo", rows, head_sha="abc")
+        fetched = ci_runs.fetch_merged("owner/repo", run_reads.RunDiscovery(rows=tuple(rows)), head_sha="abc")
     assert [c.args[1] for c in view.call_args_list] == [300]
     # What skipping it would have cost: the failed job itself. The merged
     # conclusion stays `cancelled` either way — `cancelled` is not a failure
@@ -702,7 +702,7 @@ def test_an_unanswered_rollup_fetches_every_run():
                side_effect=lambda repo, rid: {"databaseId": rid, "conclusion": "success",
                                               "status": "completed", "jobs": []}) as view, \
          patch("gh.run_reads.fetch_commit_checks", return_value=checks):
-        ci_runs.fetch_merged("owner/repo", rows, head_sha="abc")
+        ci_runs.fetch_merged("owner/repo", run_reads.RunDiscovery(rows=tuple(rows)), head_sha="abc")
     assert sorted(c.args[1] for c in view.call_args_list) == [200, 300]
 
 
@@ -715,6 +715,125 @@ def test_an_unpushed_head_retries_at_the_commit_the_runs_ran_on():
     with patch("gh.run_reads.fetch_run_data", return_value=dict(_PASSING_RUN)), \
          patch("gh.run_reads.fetch_commit_checks",
                side_effect=lambda repo, sha: answers[sha]) as rollup:
-        fetched = ci_runs.fetch_merged("owner/repo", rows, head_sha="local")
+        fetched = ci_runs.fetch_merged("owner/repo", run_reads.RunDiscovery(rows=tuple(rows)), head_sha="local")
     assert [c.args[1] for c in rollup.call_args_list] == ["local", "pushed"]
     assert fetched.merged["conclusion"] == "failure"
+
+
+# ── knowledge that is incomplete must not read as a pass ──────────────────
+
+
+def _discovery(*rows, failed=False):
+    return run_reads.RunDiscovery(rows=rows, failed=failed)
+
+
+def _green_payload(run_id=200):
+    return {"databaseId": run_id, "number": 5, "headSha": "abc", "status": "completed",
+            "conclusion": "success",
+            "jobs": [{"name": "test", "status": "completed", "conclusion": "success"}]}
+
+
+def _merged(discovery, checks, served=_green_payload):
+    fetch = served if callable(served) else (lambda repo, rid: served)
+    with patch("gh.run_reads.fetch_run_data",
+               side_effect=lambda repo, rid: fetch(rid) if callable(served) else served), \
+         patch("gh.run_reads.fetch_commit_checks", return_value=checks):
+        return ci_runs.fetch_merged("owner/repo", discovery, head_sha="abc")
+
+
+def test_an_unreadable_rollup_withholds_the_pass():
+    """Not knowing what the external checks said is not the same as them passing."""
+    row = run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
+    fetched = _merged(_discovery(row), run_reads.CommitChecks(unreadable=True))
+    assert fetched.merged["conclusion"] == ""
+    assert fetched.merged["_unread"] == ("the commit's check rollup could not be read",)
+
+
+def test_a_commit_with_genuinely_no_rollup_still_passes():
+    """GitHub reporting no checks is a fact about the commit, not a failed read.
+
+    An approval-gated run has no rollup at all, and treating that as unread
+    would report every held workflow as unknown.
+    """
+    row = run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
+    fetched = _merged(_discovery(row), run_reads.CommitChecks(answered=False))
+    assert fetched.merged["conclusion"] == "success"
+    assert "_unread" not in fetched.merged
+
+
+def test_a_truncated_rollup_withholds_the_pass():
+    """The checks past the page could be the failing ones."""
+    row = run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
+    fetched = _merged(_discovery(row), run_reads.CommitChecks(answered=True, truncated=True))
+    assert fetched.merged["conclusion"] == ""
+    assert "more checks than were listed" in fetched.merged["_unread"][0]
+
+
+def test_a_run_nobody_could_read_withholds_the_pass():
+    """The run was dropped from the payloads; its verdict must not be assumed."""
+    good = run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
+    bad = run_reads.RunRow(run_id=300, head_sha="abc", conclusion="failure")
+    fetched = _merged(
+        _discovery(good, bad), run_reads.CommitChecks(answered=True),
+        served=lambda rid: _green_payload() if rid == 200 else None,
+    )
+    assert fetched.merged["conclusion"] == ""
+    assert fetched.merged["_unread"] == ("run 300 could not be read",)
+
+
+def test_a_failed_run_listing_withholds_the_pass():
+    """An empty run list from a failed call is an absence of facts, not a green commit."""
+    checks = run_reads.CommitChecks(
+        answered=True, external=(_external("CodeQL", "success"),))
+    with patch("gh.run_reads.fetch_run_data", return_value=None), \
+         patch("gh.run_reads.fetch_commit_checks", return_value=checks):
+        fetched = ci_runs.fetch_merged(
+            "owner/repo", run_reads.RunDiscovery(failed=True), head_sha="abc")
+    assert fetched.merged["conclusion"] == ""
+    assert "workflow run list could not be read" in fetched.merged["_unread"][0]
+
+
+def test_a_real_failure_outranks_an_incomplete_read():
+    """Unread withholds a pass; it must not erase a failure already evidenced."""
+    good = run_reads.RunRow(run_id=200, head_sha="abc", conclusion="failure")
+    bad = run_reads.RunRow(run_id=300, head_sha="abc", conclusion="failure")
+    failing = {"databaseId": 200, "number": 5, "headSha": "abc", "status": "completed",
+               "conclusion": "failure",
+               "jobs": [{"name": "test", "status": "completed", "conclusion": "failure"}]}
+    fetched = _merged(
+        _discovery(good, bad), run_reads.CommitChecks(answered=True),
+        served=lambda rid: failing if rid == 200 else None,
+    )
+    assert fetched.merged["conclusion"] == "failure"
+    assert fetched.merged["_unread"] == ("run 300 could not be read",)
+
+
+def test_a_cancelled_external_check_is_not_a_pass():
+    """`cancelled` was absent from FAILURE_CONCLUSIONS, so it read as green."""
+    row = run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
+    checks = run_reads.CommitChecks(
+        answered=True, external=(_external("scalr/plan", "cancelled",
+                                           source="status_context"),))
+    fetched = _merged(_discovery(row), checks)
+    assert fetched.merged["conclusion"] == "failure"
+
+
+def test_an_unrecognised_external_conclusion_is_not_a_pass():
+    """Whitelisted: a word GitHub adds to the enum later must not arrive as green."""
+    row = run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
+    checks = run_reads.CommitChecks(
+        answered=True, external=(_external("Trivy", "something_new"),))
+    fetched = _merged(_discovery(row), checks)
+    assert fetched.merged["conclusion"] == "failure"
+
+
+def test_a_run_with_no_jobs_yet_is_not_finished():
+    """A freshly queued run has an empty job list, and "none running" is vacuous.
+
+    Read as finished, the first poll of every wait returned at once with no
+    failures — a green that only meant the jobs did not exist yet.
+    """
+    assert ci_runs.count_job_states({"jobs": []}).finished is False
+    assert ci_runs.count_job_states(
+        {"jobs": [{"name": "a", "status": "completed", "conclusion": "success"}]},
+    ).finished is True

@@ -395,7 +395,7 @@ _pi_build_models() {
   fi
 
   local provider values_json='[]'
-  provider=$(jq -r '.defaultProvider // "google-vertex-claude"' "$PI_SETTINGS_SRC")
+  provider=$(_pi_default_provider)
   # Guarded because bash 4.3 treats "${arr[@]}" on an empty array as unbound.
   if (( ${#values[@]} > 0 )); then
     values_json=$(printf '%s\n' "${values[@]}" | jq -Rn '[inputs]')
@@ -419,6 +419,13 @@ _pi_build_models() {
          | map(select(. != ""))
          | map("\($provider)/\(.)")
          | reduce .[] as $m ([]; if index($m) then . else . + [$m] end)) }'
+}
+
+# _pi_default_provider — prints the provider prefix model ids are built and
+# checked against: the template's defaultProvider, or the hardcoded fallback
+# every caller shares.
+_pi_default_provider() {
+  jq -r '.defaultProvider // "google-vertex-claude"' "$PI_SETTINGS_SRC" 2>/dev/null
 }
 
 # _pi_warn_unknown_models — warn when a set model env var names an id pi does
@@ -457,8 +464,7 @@ _pi_warn_unknown_models() {
   [[ -n "$listing" ]] || return 0
 
   local provider
-  provider=$(jq -r '.defaultProvider // "google-vertex-claude"' \
-    "$PI_SETTINGS_SRC" 2>/dev/null) || return 0
+  provider=$(_pi_default_provider) || return 0
 
   local -A listed=()
   local col1 col2
@@ -484,7 +490,23 @@ _pi_warn_unknown_models() {
 # authoritative. Model config is derived from the vars the registries declare
 # with a model role, read out of ~/.env.local — the same SSOT Claude Code reads
 # — and applied after template scalars so it always wins.
+#
+# One registry scan for the whole step. _pi_build_models and
+# _pi_warn_unknown_models each call collect_model_env_vars against the same
+# scan_dir, and each re-scans on its own, so the yq parse of every registry
+# ran twice per sync and the second threw away what the first had cached —
+# the identical duplication step_claude_settings carries a reg_scan_hold for.
+# Safe because the step only reads the registry tree; see `reg_scan_hold` in
+# lib/registries.sh for the bound that makes it so.
 step_pi_settings() {
+  if ! declare -F reg_scan_hold > /dev/null 2>&1; then
+    # shellcheck source=/dev/null
+    . "$LIB_SRC_DIR/registries.sh"
+  fi
+  reg_scan_hold _step_pi_settings
+}
+
+_step_pi_settings() {
   mkdir -p "$PI_AGENT_DIR"
 
   local existing="{}" content

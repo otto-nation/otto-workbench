@@ -609,3 +609,69 @@ _hide_pi() {
   [[ "$output" == *"is not listed under google-vertex-claude"* ]]
   _teardown_env_local
 }
+
+# ── one registry scan per sync, not one per collector ──────────────────────────
+
+@test "step_pi_settings shares one registry scan between build and warn" {
+  # _pi_build_models and _pi_warn_unknown_models each call
+  # collect_model_env_vars against the same scan_dir. step_pi_settings wraps
+  # both in one reg_scan_hold, so the second call must reuse the first's scan
+  # rather than rescanning the directory on disk.
+  #
+  # Proven the same way registries_cache.bats proves reg_scan_hold's sharing:
+  # through the hold's own cost rather than its benefit. collect_model_env_vars
+  # is wrapped so its first call — _pi_build_models' — rewrites the registry
+  # out from under AI_MODEL to declare AI_OTHER_MODEL instead, which has no
+  # value in ~/.env.local. A second, unheld call would see only
+  # AI_OTHER_MODEL and find nothing set, so _pi_warn_unknown_models would stay
+  # silent regardless of whether claude-opus-5 is listed. A held call still
+  # sees AI_MODEL from the scan _pi_build_models already loaded, and warns.
+  mkdir -p "$TMPDIR/registries"
+  cat > "$TMPDIR/registries/models.env.yml" << 'YAML'
+meta:
+  section: "test models"
+  validation: none
+env:
+  - var: AI_MODEL
+    role: model-default
+YAML
+  _seed_env_local 'export AI_MODEL=claude-opus-5'
+  _stub_gh 'echo "{}"'
+  _stub_pi_list_models
+
+  run bash -c '
+    set -e
+    success() { echo "OK $*"; }
+    warn()    { echo "WARN $*"; }
+    err()     { echo "ERR $*"; }
+    skip()    { echo "SKIP $*"; }
+    PI_AGENT_DIR="$2"
+    PI_SETTINGS_FILE="$2/settings.json"
+    PI_SETTINGS_SRC="$3"
+    PI_SYNC_SETTINGS_JQ="$1/ai/pi/sync-settings.jq"
+    ENV_LOCAL_FILE="$4"
+    LIB_SRC_DIR="$1/lib"
+    WORKBENCH_STABLE_DIR="$5"
+    REGISTRY_FILE="$5/models.env.yml"
+    . "$1/lib/env.sh"
+    . "$1/lib/registries.sh"
+    __orig_def=$(declare -f collect_model_env_vars)
+    eval "_orig_collect_model_env_vars${__orig_def#collect_model_env_vars}"
+    collect_model_env_vars() {
+      _orig_collect_model_env_vars "$@"
+      cat > "$REGISTRY_FILE" << YAML2
+meta:
+  section: "test models"
+  validation: none
+env:
+  - var: AI_OTHER_MODEL
+    role: model-default
+YAML2
+    }
+    . "$1/ai/pi/steps.sh"
+    step_pi_settings
+  ' _ "$REPO_ROOT" "$AGENT_DIR" "$TEMPLATE" "$TMPDIR/.env.local" "$TMPDIR/registries"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"AI_MODEL=claude-opus-5"* ]]
+  _teardown_env_local
+}

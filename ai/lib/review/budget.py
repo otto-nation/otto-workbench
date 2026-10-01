@@ -210,7 +210,16 @@ def _parse_context_tokens(raw: str) -> int | None:
 
 
 def _parse_pi_list_models(text: str) -> dict[str, int]:
-    """Model id -> context window, taking the minimum across providers."""
+    """Model id -> context window, taking the minimum across providers.
+
+    Assumes the model column is a bare id — the same spelling a resolved
+    review model uses (`claude-haiku-4-5`), with no `@version` or
+    `provider/` decoration. A deployment whose provider lists ids that way
+    (`claude-haiku-4-5@20251001`, `xai/grok-4.6`) would never match here and
+    would fall through to `MODEL_CONTEXT_TOKENS` silently rather than loudly
+    — worth re-checking this assumption if the catalogue's own format ever
+    changes.
+    """
     windows: dict[str, int] = {}
     for line in text.splitlines():
         parts = line.split()
@@ -238,7 +247,11 @@ def _run_pi_list_models() -> str:
         result = core.proc.run(
             ["pi", "--list-models"], timeout=core.timeouts.LOCAL,
         )
-    except FileNotFoundError:
+    except OSError:
+        # Not just FileNotFoundError: a `pi` present on disk but not
+        # executable raises PermissionError, another OSError subclass, and
+        # that must fall back the same way — the stated goal is that pi
+        # absent, hung, or unreadable is never a hard dependency.
         return ""
     if not result.ok:
         return ""
@@ -263,7 +276,11 @@ class UnknownModelWindow(RuntimeError):
     def __init__(self, model: str, detail: str = ""):
         self.model = model
         if not detail:
-            known = ", ".join(sorted(MODEL_CONTEXT_TOKENS))
+            # Both sources, not just the fallback table: when the catalogue is
+            # readable it usually knows more models than MODEL_CONTEXT_TOKENS
+            # ever will, and a reader chasing a typo'd model name wants the
+            # full list this process could actually have resolved against.
+            known = ", ".join(sorted(set(MODEL_CONTEXT_TOKENS) | set(_pi_catalogue_windows())))
             detail = (
                 f"no context window on record for model {model!r} — not in "
                 f"pi's provider catalogue or "

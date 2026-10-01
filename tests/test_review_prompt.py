@@ -1335,8 +1335,12 @@ class TestTheWindowPrefersPisCatalogue:
         def missing(*_a, **_k):
             raise FileNotFoundError("pi")
 
+        def not_executable(*_a, **_k):
+            raise PermissionError("pi")
+
         for run in (
             missing,
+            not_executable,
             lambda *_a, **_k: CmdResult(returncode=1),
             lambda *_a, **_k: CmdResult(returncode=0, stdout="not a table"),
             lambda *_a, **_k: CmdResult(returncode=0, stdout=""),
@@ -1344,6 +1348,23 @@ class TestTheWindowPrefersPisCatalogue:
             monkeypatch.setattr(core.proc, "run", run)
             review.budget._pi_catalogue_windows.cache_clear()
             assert model_window_tokens(model) == expected
+
+    def test_an_unknown_model_names_catalogue_models_too(self, monkeypatch):
+        """A typo'd model's error should not undersell what's actually known.
+
+        MODEL_CONTEXT_TOKENS alone is a narrower list than a readable
+        catalogue usually offers; the message should name both.
+        """
+        import review.budget
+        from review.budget import UnknownModelWindow, prompt_budget_bytes
+
+        monkeypatch.setattr(review.budget, "_run_pi_list_models", lambda: (
+            "provider model context max-out thinking images\n"
+            "xai grok-4.6 120K 32K yes no\n"
+        ))
+        with pytest.raises(UnknownModelWindow) as caught:
+            prompt_budget_bytes("gpt-5")
+        assert "grok-4.6" in str(caught.value)
 
     def test_the_narrowest_window_wins_across_providers(self, monkeypatch):
         """The same id under two providers is only as wide as the smaller."""

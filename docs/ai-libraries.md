@@ -322,6 +322,66 @@ Every function has a no-answer value — ``False`` and ``""`` — so a caller
 in a hook, a CI job, or a subprocess gets a usable result instead of an
 exception. No answer is never consent.
 
+### fix/blame.py
+
+Which item a red suite is probably complaining about.
+
+`fix.suite` can tell the tree is broken and not which of sixteen items broke
+it, so a red run marks every claimed fix unverified. That is the honest answer
+and it is a poor one to read: seven hedged rows, one of them wrong.
+
+A failing test carries more than the path-attribution ceiling in
+`fix.reconcile` has to work with. That ceiling is about a *file having moved* —
+"something changed here", with nothing to say what. A failure has a name, an
+error, and the values the runner printed. Both regressions that motivated the
+suite named the symbol the pass had just deleted:
+
+    AttributeError: module 'cli.pr' has no attribute 'EXIT_BUDGET_EXHAUSTED'
+
+So: intersect the symbols an item's anchor file *lost* in this pass with the
+text of the failure. No test selector, no import graph, no structured runner
+output, no new cross-repo contract — a diff and a string.
+
+**This points, it does not judge.** Nothing here changes an outcome. A wrong
+pointer costs a reader one wasted look; a wrong demotion records the right fix
+as the defect, which is the mistake `fix.suite.apply_to` already refuses to
+make. Every claimed fix stays `verified = False` on a red run exactly as before
+— this only says where to start.
+
+**Why the two filters, measured rather than guessed.** Across 319 changed files
+from 25 real fix passes in this repo, plain token intersection implicated 11%
+of them against a failure none of them caused. The noise is prose: a diff
+carries comments and markdown, a pytest run is full of English, and `gate`,
+`review` and `could` all match. Two filters close it:
+
+  - **Symbol-shaped only.** A token counts if it contains an underscore or an
+    uppercase letter — snake_case, CamelCase, SCREAMING_CASE — and never if it
+    is a plain lowercase word. 11% to 0.9%, catching both known regressions.
+  - **Rare in the repo.** `read_text`, `Path` and `ArgumentParser` were the
+    entire remaining tail. A name a hundred files mention says nothing about
+    who removed one reference to it. 0.9% to 0%.
+
+**Two ceilings, both real.**
+
+`// ceiling: attribution is per anchor *file*, not per item. Two findings in
+one file are indistinguishable, which is the genuine residue of the ceiling
+`fix.reconcile` documents. Upgrade trigger: if a pass is seen attributing to
+the wrong one of two same-file items, carry the agent's hunk ranges per item
+and rank by distance to the anchor line.`
+
+`// ceiling: the signal is the runner's verbosity, not this rule's. pytest
+rewrites assertions and echoes values, so a symbol shows up; bats prints only
+the failing assertion's source line unless `--print-output-on-failure` is set,
+which `bin/local/run-tests` now passes. Upgrade trigger: when a repo declares
+a verify command whose runner prints neither, this returns nothing and should
+keep returning nothing rather than guessing from exit codes.`
+
+`// ceiling: the rarity threshold is fitted on one repo's naming, so 0% false
+positives is a measurement here and not a guarantee elsewhere. Upgrade
+trigger: if a repo reports pointers that are routinely wrong, raise
+`_MAX_FILES` for it or drop the pointer line rather than keeping a confident
+wrong answer.`
+
 ### fix/ci.py
 
 CI's half of a fix pass: the failures, the commit, and the state write.

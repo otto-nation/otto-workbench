@@ -23,6 +23,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from fix import blame as fix_blame  # noqa: E402
 from fix import suite as fix_suite  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 
@@ -367,6 +368,34 @@ def test_only_claimed_fixes_are_withdrawn(tmp_path):
         outcomes, fix_suite.SuiteResult(status=fix_suite.SuiteStatus.RED))
 
     assert deferred.verified is None
+
+
+def test_a_pointer_is_printed_above_the_failing_output(tmp_path):
+    """The tail runs to two thousand characters; the lead is one line.
+
+    Printed underneath, it is the line a reader scrolls past, which is the
+    whole reason the pointer exists.
+    """
+    result = fix_suite.SuiteResult(
+        status=fix_suite.SuiteStatus.RED, command="checks",
+        output_tail="E  AttributeError: no attribute 'EXIT_BUDGET_EXHAUSTED'",
+        pointers=(fix_blame.Pointer("N1", "cli/pr.py", ("EXIT_BUDGET_EXHAUSTED",)),),
+    )
+
+    lines = fix_suite.detail_lines(result)
+
+    assert "Checks RED" in lines[0]
+    assert "start here" in lines[1]
+    assert "[N1] cli/pr.py" in lines[2]
+    assert lines.index("E  AttributeError: no attribute 'EXIT_BUDGET_EXHAUSTED'") > 2
+
+
+def test_a_red_run_with_nothing_to_point_at_reads_as_it_did_before(tmp_path):
+    """An empty pointer set is the ordinary case, not a sign of trouble."""
+    result = fix_suite.SuiteResult(
+        status=fix_suite.SuiteStatus.RED, command="checks", output_tail="boom")
+
+    assert fix_suite.detail_lines(result) == ["Checks RED: checks (0s)", "boom"]
 
 
 # ── when the checks are worth running at all ────────────────────────────────

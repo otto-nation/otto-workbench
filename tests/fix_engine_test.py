@@ -1815,6 +1815,25 @@ class TestTheAgentCanWriteTheFileItIsToldToAnswer:
         assert adapter.add_dirs() == [adapter.workdir]
 
 
+
+def _git_worktree(tmp_path):
+    """A committed repo whose one file the test then edits.
+
+    `fix.blame` reads `git diff HEAD`, so a bare `tmp_path` has no change to
+    describe and the pointer would be empty for a reason unrelated to what is
+    under test.
+    """
+    import subprocess
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    (wt / "a.py").write_text("LOST_SENTINEL = 1\n")
+    for args in (("init", "--quiet"), ("config", "user.email", "t@e.com"),
+                 ("config", "user.name", "T"), ("add", "-A"),
+                 ("commit", "-qm", "base")):
+        subprocess.run(["git", "-C", str(wt), *args], check=True,
+                       capture_output=True)
+    return wt
+
 # ── the repo's own checks, between the agent and the commit ─────────────────
 
 
@@ -1955,6 +1974,53 @@ class TestVerifySuite:
 
         assert not publishing.enabled()
         assert "checks are red" in publishing.held()
+
+    def test_a_red_run_names_the_item_whose_file_lost_the_symbol(
+        self, tmp_path, landed, head, snapshots, publishing_on,
+    ):
+        """End to end: the pointer reaches the commit body the engine lands.
+
+        The engine is the only layer holding both halves — the pass's items
+        with their anchors, and the failure text — so this is the wiring no
+        unit test of `fix.blame` can cover.
+        """
+        wt = _git_worktree(tmp_path)
+        (wt / "a.py").write_text("")       # the agent's edit: the symbol is gone
+        failing = self._script(
+            tmp_path, "echo \"AttributeError: no attribute 'LOST_SENTINEL'\"; exit 1")
+        adapter = self._configured(wt, failing)
+        adapter.items = lambda: [FixItem(id="i0", file="a.py", line=1,
+                                         label="x", body="b")]
+        snapshots.side_effect = _reads(set(), {"a.py"})
+
+        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
+            run = fix_engine.run(adapter)
+
+        assert [p.item_id for p in run.suite.pointers] == ["i0"]
+        assert run.suite.pointers[0].symbols == ("LOST_SENTINEL",)
+
+    def test_a_deferred_item_is_never_pointed_at(
+        self, tmp_path, landed, head, snapshots, publishing_on,
+    ):
+        """It claimed nothing, so a red suite has nothing of its to contradict.
+
+        Pointing at it would send a reader to the one place the pass says it
+        did not touch.
+        """
+        wt = _git_worktree(tmp_path)
+        (wt / "a.py").write_text("")
+        failing = self._script(
+            tmp_path, "echo \"AttributeError: no attribute 'LOST_SENTINEL'\"; exit 1")
+        adapter = self._configured(wt, failing)
+        adapter.items = lambda: [FixItem(id="i0", file="a.py", line=1,
+                                         label="x", body="b")]
+        snapshots.side_effect = _reads(set(), {"a.py"})
+
+        with patch.object(agent_invoke, "run_fix",
+                          _answer(adapter, tick="declined", reason="no")):
+            run = fix_engine.run(adapter)
+
+        assert run.suite.pointers == ()
 
     def test_a_green_suite_leaves_publishing_open(
         self, tmp_path, landed, head, snapshots, publishing_on,

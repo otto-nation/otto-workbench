@@ -69,6 +69,7 @@ from pathlib import Path
 
 from core import log
 from core.trail import Trail, tinfo, twarn
+from fix import blame as fix_blame
 from pr.fix import ItemOutcome
 
 # What of a failing run's output is worth carrying into a commit body and a
@@ -130,6 +131,12 @@ class SuiteResult:
     # The tail of combined stdout/stderr, already clipped. Empty on every
     # status but RED and ERROR — a green run's output is noise in a commit body.
     output_tail: str = ""
+    # Items the failure text appears to be about, from `fix.blame`. Attached by
+    # the engine rather than computed here, because it takes the pass's items
+    # and this module is handed only a command. Always empty on a green run,
+    # and empty on a red one is the ordinary case — it means nothing could be
+    # pointed at, never that nothing is wrong.
+    pointers: tuple[fix_blame.Pointer, ...] = ()
 
     @property
     def ran(self) -> bool:
@@ -439,6 +446,10 @@ def detail_lines(result: SuiteResult) -> list[str]:
     if not result.reportable:
         return []
     lines = [result.note]
+    # Before the output rather than after it. The tail can run to two thousand
+    # characters and the pointer is the one line worth reading first; printed
+    # underneath, it is the line a reader scrolls past.
+    lines.extend(fix_blame.describe(result.pointers))
     if result.output_tail:
         lines.append(result.output_tail)
     return lines

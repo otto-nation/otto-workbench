@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-from conftest import load_script, run_checked
+from conftest import exec_fresh, load_script, run_checked
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
@@ -159,3 +159,20 @@ def test_pr_details_reads_typed_fields(tmp_path):
     pr.state.apply(state, pr.domains.CommentsSummary(by_state={"open": 2}))
 
     assert statusline._pr_details(state) == "review:approve 2open"
+
+
+def test_a_broken_ai_lib_blanks_the_pr_segment_instead_of_crashing(monkeypatch):
+    """Regression: the script used to carry an unconditional `import pr.target`
+    ahead of the guarded try/except that imports the same module to catch
+    exactly this failure. The unconditional pair ran first, so a broken ai/lib
+    raised at module import time instead of being caught, and `pr` never got
+    the chance to degrade to None. Setting `sys.modules["pr.target"] = None`
+    makes the next `import pr.target` raise ImportError, standing in for a
+    broken ai/lib without touching the real module on disk."""
+    monkeypatch.setitem(sys.modules, "pr.target", None)
+
+    broken = exec_fresh("workbench_statusline_broken_import",
+                         BIN_DIR / "workbench-statusline")
+
+    assert broken.pr is None
+    assert broken._pr_piece() == ""

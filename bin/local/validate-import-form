@@ -56,7 +56,7 @@ from repo_scan import BASE_SKIP_DIRS  # noqa: E402
 
 LIB_DIR = Path("ai") / "lib"
 SCAN_ROOTS = ("ai", "tests", "lib", "bin")
-SKIP_DIRS = BASE_SKIP_DIRS | {"__pycache__", ".venv", "venv", "node_modules"}
+SKIP_DIRS = BASE_SKIP_DIRS | {"__pycache__", ".venv", "venv"}
 
 
 @dataclass(frozen=True)
@@ -117,12 +117,16 @@ def _from_import_findings(node: ast.AST, layout: Layout):
 
 
 def _plain_import_findings(node: ast.AST, layout: Layout):
-    """`import pkg.mod as x`, the alias wearing the other spelling."""
+    """`import pkg.mod as x`, the alias wearing the other spelling — or the
+    whole package aliased bare (`import pkg as x`), which wears it just as
+    well once a module of that package is reached through the alias."""
     if not isinstance(node, ast.Import):
         return
     for alias in node.names:
         head, _, leaf = alias.name.partition(".")
-        if not alias.asname or not layout.holds(head, leaf):
+        if not alias.asname:
+            continue
+        if not layout.holds(head, leaf) and not (not leaf and head in layout.packages):
             continue
         yield Finding(node.lineno,
                       f"import {alias.name} as {alias.asname} — an aliased module "
@@ -136,12 +140,28 @@ def _import_findings(tree: ast.Module, layout: Layout):
         yield from _plain_import_findings(node, layout)
 
 
+_SCOPE_BOUNDARIES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda,
+                     ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
+
+def _walk_own_scope(fn: ast.AST):
+    """Like `ast.walk`, but does not cross into a nested function, lambda, or
+    comprehension — each of those has its own scope in Python, so a name they
+    bind says nothing about what *this* function binds."""
+    stack = list(ast.iter_child_nodes(fn))
+    while stack:
+        node = stack.pop()
+        yield node
+        if not isinstance(node, _SCOPE_BOUNDARIES):
+            stack.extend(ast.iter_child_nodes(node))
+
+
 def _packages_bound_in(fn: ast.AST, layout: Layout) -> set[str]:
     """Package names this function binds as a local or a parameter."""
     args = fn.args
     bound = {a.arg for a in [*args.posonlyargs, *args.args, *args.kwonlyargs]
              if a.arg in layout.packages}
-    return bound | {n.id for n in ast.walk(fn)
+    return bound | {n.id for n in _walk_own_scope(fn)
                     if isinstance(n, ast.Name)
                     and isinstance(n.ctx, (ast.Store, ast.Del))
                     and n.id in layout.packages}
@@ -215,7 +235,8 @@ def discover_files(repo_root: Path) -> list[Path]:
 
 def _report(relpath: str, findings: list[Finding], quiet: bool) -> None:
     if not findings:
-        print(f"  {GREEN}✓{NC} {relpath}") if not quiet else None
+        if not quiet:
+            print(f"  {GREEN}✓{NC} {relpath}")
         return
     print(f"{RED}✗{NC} {relpath}")
     for finding in findings:

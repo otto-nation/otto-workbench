@@ -42,6 +42,14 @@ class TestTheImportForm:
         assert len(found) == 1
         assert "an aliased module" in found[0]
 
+    def test_a_bare_package_alias_is_refused_too(self):
+        """`import pr as p` wears the aliasing just as much as `import pr.state
+        as x` once a module is reached through it — `p.state` is the other
+        spelling just as surely as `pr_state` is."""
+        found = reasons("import pr as p\n")
+        assert len(found) == 1
+        assert "an aliased module" in found[0]
+
     def test_importing_a_symbol_is_not_a_module_import(self):
         """`PRState` is a class. Only module objects are governed here."""
         assert reasons("from pr.state import PRState\n") == []
@@ -98,6 +106,31 @@ class TestTheShadowCheck:
             "def f(pr):\n"
             "    return pr.number\n"
             "def g():\n"
+            "    return pr.state.load_state()\n"
+        )
+        assert reasons(source) == []
+
+    def test_a_comprehension_loop_variable_does_not_convict_its_own_function(self):
+        """A comprehension has its own scope in Python 3: the `pr` bound by
+        `for pr in prs` never leaks into `f`'s own scope, so `f`'s own
+        `pr.state.load_state()` is unambiguous and must not be flagged."""
+        source = (
+            "import pr.state\n"
+            "def f(prs):\n"
+            "    names = [pr.number for pr in prs]\n"
+            "    return pr.state.load_state()\n"
+        )
+        assert reasons(source) == []
+
+    def test_a_nested_function_s_own_local_does_not_convict_the_enclosing_one(self):
+        """`inner`'s own `pr = acquire()` is local to `inner`, not to `f` —
+        it never shadows the package for `f`'s own `pr.state` call."""
+        source = (
+            "import pr.state\n"
+            "def f():\n"
+            "    def inner():\n"
+            "        pr = acquire()\n"
+            "        return pr\n"
             "    return pr.state.load_state()\n"
         )
         assert reasons(source) == []

@@ -9,7 +9,6 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import git.regenerate
 import rebase.conflicts
 import rebase.types
 

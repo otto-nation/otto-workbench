@@ -356,7 +356,7 @@ def post_fix_replies(
     repo: str,
     pr_number: int,
     cp: pr.attribution.CommitPushResult,
-    history: "attribution.AddressingHistory | None" = None,
+    history: pr.attribution.AddressingHistory | None = None,
     host: str = "",
 ) -> int:
     """Post replies to each fixed thread. Returns count of replies posted.

@@ -110,7 +110,7 @@ _SPECS: tuple[CommandSpec, ...] = (
     # shaping, and a consumer reading this field wants the callable that
     # performs the command.
     CommandSpec("review",   "Run code review",
-                cli.review_modes.need_for,                  script="review",
+                cli.review_modes.need_for,              script="review",
                 handler="cli.review_entry:main"),
     CommandSpec("comments", "Fetch and manage PR review threads",
                 Need(REMOTE, update=True,  lock=True),  script="review-threads",

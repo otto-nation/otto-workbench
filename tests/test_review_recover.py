@@ -278,21 +278,21 @@ class TestTheRunningTotalChargesEveryPhase:
     """
 
     def test_synthesis_spend_closes_the_disprove_gate(self, job, run):
-        agent_spend = run(
+        agent_run = run(
             job, costs={"synthesis": 5.0}, review_body=_REVIEW_WITH_FINDING,
             max_cost=1.0, disprove=True,
         )
 
-        assert "synthesis" in agent_spend.phases
-        assert "disprove" not in agent_spend.phases
+        assert "synthesis" in agent_run.phases
+        assert "disprove" not in agent_run.phases
 
     def test_a_synthesis_within_budget_leaves_the_gate_open(self, job, run):
-        agent_spend = run(
+        agent_run = run(
             job, costs={"synthesis": 0.1}, review_body=_REVIEW_WITH_FINDING,
             max_cost=1.0, disprove=True,
         )
 
-        assert "disprove" in agent_spend.phases
+        assert "disprove" in agent_run.phases
 
 
 class TestTheDisproveGateRecordsItsOwnOutcome:

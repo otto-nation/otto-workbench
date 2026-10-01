@@ -446,3 +446,15 @@ class TestAReplySaysWhatWasEstablished:
             captured, threads,
         )
         assert "not verified" in body.lower()
+
+
+class TestPostFixRepliesAnnotationsResolve:
+    """Regression: `history` carried the pre-codemod bare name `attribution`
+    in its string annotation, which this module no longer imports (it imports
+    `pr.attribution`). The module runs under PEP 563, so the stale name is
+    inert until something reads it with `typing.get_type_hints`."""
+
+    def test_post_fix_replies_signature_resolves(self):
+        import typing
+        hints = typing.get_type_hints(pr.thread_replies.post_fix_replies)
+        assert hints["history"] == pr.attribution.AddressingHistory | None

@@ -20,7 +20,6 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import eval.scoring_cifix
 from agent.usage import SessionUsage
 from eval.scoring_cifix import CiFixTask, run_verify, verify_command
 from eval.scoring import RunOutcome, ScoringResult, aggregate_runs

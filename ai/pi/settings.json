@@ -4,6 +4,9 @@
   "defaultThinkingLevel": "medium",
   "packages": [
     "git:github.com/usemaximum/pi-extensions",
-    "git:github.com/obra/superpowers@v6.3.0"
+    {
+      "source": "git:github.com/obra/superpowers@v6.3.0",
+      "extensions": []
+    }
   ]
 }

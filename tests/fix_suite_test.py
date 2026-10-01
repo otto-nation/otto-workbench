@@ -307,10 +307,17 @@ def _alive(pid: int) -> bool:
         return False
     except PermissionError:
         return True
-    state = subprocess.run(
-        ["ps", "-o", "stat=", "-p", str(pid)],
-        capture_output=True, text=True, check=False,
-    ).stdout.strip()
+    try:
+        state = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(pid)],
+            capture_output=True, text=True, check=False, timeout=10,
+        ).stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        # No usable `ps` (minimal image) or a stalled one: fall back to the
+        # signal-0 answer, which said the pid exists.
+        return True
+    # Empty output means no such pid: it exited between os.kill and ps, or ps
+    # failed (check=False ignores the return code). Either way, not alive.
     return bool(state) and not state.startswith("Z")
 
 

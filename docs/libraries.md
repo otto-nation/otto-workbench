@@ -777,7 +777,7 @@ replay_audit "$_workbench" commit || exit 1
 
 | Function | Purpose |
 |----------|---------|
-| `replay_audit WORKBENCH SUBCOMMAND [ARGS...]` | returns 1 only on a refusal. |
+| `replay_audit WORKBENCH SUBCOMMAND [ARGS...]` | runs the audit for SUBCOMMAND (`commit` or `rewritten`); returns 1 only on a refusal. |
 
 ### roots.sh
 

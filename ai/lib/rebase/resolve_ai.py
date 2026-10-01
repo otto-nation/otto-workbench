@@ -246,14 +246,32 @@ def resolve_full_file(
     """
     stages = conflicts.stage_texts(filepath, cwd)
 
+    # `usable` and `retry_hint` are each asked about the same candidate answer
+    # more than once — `run_prompt` checks `usable` itself and again after its
+    # retry loop returns — and the code below asks a third time once that loop
+    # is done. Parsing is cheap, but `survival.audit` is diff-based, so each
+    # answer's verdict is computed once here and reused by every asker.
+    judged: dict[str, tuple[str | None, str, tuple[survival.Loss, ...]]] = {}
+
+    def judge(text: str) -> tuple[str | None, str, tuple[survival.Loss, ...]]:
+        if text not in judged:
+            resolved, reason = conflicts.parse_resolved_content(text)
+            losses = () if resolved is None else survival.audit(
+                filepath, base=stages.base, target=stages.target,
+                replayed=stages.replayed, resolved=resolved,
+            ).blocking
+            judged[text] = (resolved, reason, losses)
+        return judged[text]
+
     def usable(text: str) -> bool:
-        return conflicts.resolution_parses(text) and not answer_losses(filepath, stages, text)
+        resolved, _, losses = judge(text)
+        return resolved is not None and not losses
 
     def retry_hint(text: str) -> str:
-        losses = answer_losses(filepath, stages, text)
+        _, reason, losses = judge(text)
         if losses:
             return dropped_change_hint(losses)
-        return hint_for_reason(conflicts.parse_resolved_content(text)[1])
+        return hint_for_reason(reason)
 
     ours_content = stages.target
     commit_diff = conflicts.get_commit_diff(filepath, cwd)
@@ -279,7 +297,7 @@ def resolve_full_file(
         return None
 
     stdout = answer.text
-    resolved_content, failure_reason = conflicts.parse_resolved_content(stdout)
+    resolved_content, failure_reason, losses = judge(stdout)
     if resolved_content is None:
         tfail(
             trail, "resolve_conflicts",
@@ -290,7 +308,6 @@ def resolve_full_file(
         core.log.error(f"Failed to parse resolution for {filepath} ({failure_reason})")
         return None
 
-    losses = answer_losses(filepath, stages, stdout)
     if losses:
         tfail(
             trail, "resolve_conflicts",

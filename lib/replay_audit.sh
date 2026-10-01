@@ -21,7 +21,8 @@ _LIB_REPLAY_AUDIT_SH=1
 # reported and waved through, never mistaken for a refusal.
 readonly REPLAY_AUDIT_REFUSED=10
 
-# replay_audit WORKBENCH SUBCOMMAND [ARGS...] — returns 1 only on a refusal.
+# replay_audit WORKBENCH SUBCOMMAND [ARGS...] — runs the audit for SUBCOMMAND
+# (`commit` or `rewritten`); returns 1 only on a refusal.
 #
 # `python3 -I` because the hook's cwd is somebody else's repository: isolated
 # mode adds neither that directory nor the script's to sys.path, so a

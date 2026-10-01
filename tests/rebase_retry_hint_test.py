@@ -296,3 +296,21 @@ class TestAWholeFileAnswerMustKeepTheCleanChanges:
         assert result == "f.txt"
         assert path.read_text() == "a\nBM+B\nc\nD\ne\nF\ng\n"
         assert retried == []
+
+    def test_the_same_answer_is_audited_once_not_three_times(self, tmp_path):
+        """`usable`, `retry_hint`, and the post-loop check all judge the same text.
+
+        `_resolve`'s fake `run_prompt` calls `usable(answer_text)` and
+        `retry_hint(answer_text)` on the discarding answer, and
+        `resolve_full_file` then judges that same `stdout` a third time once the
+        loop returns. `survival.audit` is diff-based, so the three askers must
+        share one verdict per answer rather than recomputing it each time.
+        """
+        retried = []
+
+        with mock.patch.object(
+            rebase.survival, "audit", wraps=rebase.survival.audit,
+        ) as audit:
+            self._resolve(tmp_path, self._answer(self._STAGES.target), retried)
+
+        assert audit.call_count == 1

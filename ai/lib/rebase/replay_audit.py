@@ -196,8 +196,11 @@ def audit_paths(
         if skipped:
             audits.append(rebase.survival.FileAudit(path, skipped=skipped))
             continue
-        b, u, t, r = texts
-        audits.append(rebase.survival.audit(path, base=b, target=u, replayed=t, resolved=r))
+        base_text, target_text, replayed_text, resolved_text = texts
+        audits.append(rebase.survival.audit(
+            path, base=base_text, target=target_text,
+            replayed=replayed_text, resolved=resolved_text,
+        ))
     return tuple(audits)
 
 
@@ -250,6 +253,12 @@ def _command_for(commands: dict[str, str], commit: str) -> str:
     The longest matching sha wins when more than one is a prefix match: it is
     the more specific of the two, and the only tie-break available short of
     talking to git again.
+
+    *commit* is always the full sha `post-rewrite` hands us, and `done` never
+    abbreviates to something longer than that — so `sha.startswith(commit)`
+    only ever agrees with `commit.startswith(sha)` on an exact match, which the
+    first disjunct already covers. Kept anyway as the one test that stays
+    correct if that assumption about `done` ever stops holding.
     """
     matches = [
         (sha, command) for sha, command in commands.items()

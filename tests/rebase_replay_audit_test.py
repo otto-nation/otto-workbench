@@ -28,6 +28,7 @@ import pr.domains  # noqa: E402
 import rebase.inspect  # noqa: E402
 import rebase.lifecycle  # noqa: E402
 import rebase.replay_audit  # noqa: E402
+import rebase.survival  # noqa: E402
 import rebase.types  # noqa: E402
 
 BASE = "a\nb\nc\nd\ne\nf\ng\n"

@@ -267,6 +267,36 @@ def _record_failed(
     ).save(ctx)
 
 
+def _restore_conflicts(cwd: str, paths: list[str]) -> None:
+    """Bring the conflict back into each of *paths*, for a refused resolution.
+
+    `git checkout -m` redoes the merge between HEAD and the commit under
+    replay regardless of what the index currently holds, which is what lets it
+    recreate a conflict this run had already resolved and staged. It is a
+    no-op, though, for a path the two sides never actually conflicted over —
+    `audit_replay` audits every path the replayed commit touched, not only the
+    ones this step had conflicts in, so a cleanly auto-merged file can still be
+    named here (a questionable three-way merge `survival.audit` flagged
+    `blocking`). There is nothing in the index beforehand that tells the two
+    cases apart, so the check happens after: a path still clean once the
+    checkout has run had nothing to restore.
+    """
+    r = git.client.run("checkout", "-m", "--", *paths, cwd=cwd)
+    if not r.ok:
+        core.log.warn(
+            f"Could not restore the conflict in {', '.join(paths)}: "
+            f"{r.stderr.strip()}"
+        )
+        return
+    restored = set(rebase_inspect.detect_conflicts(cwd))
+    missing = [p for p in paths if p not in restored]
+    if missing:
+        core.log.warn(
+            f"No conflict to restore in {', '.join(missing)} — git merged "
+            "them without one; revert the discarded change(s) by hand."
+        )
+
+
 def _halt_if_discarding(
     cwd: str, ctx: pr.context.ResolvedContext, tally: ResolutionTally, *,
     target_ref: str, restore: bool, mode: RunMode = RunMode.FIX,
@@ -318,7 +348,7 @@ def _halt_if_discarding(
         core.log.warn(f"{replay_audit.ALLOW_ENV}=1 — continuing anyway.")
         return None
     if restore:
-        git.client.run("checkout", "-m", "--", *refused, cwd=cwd)
+        _restore_conflicts(cwd, refused)
     RebaseOutcome(
         status=RebaseStatus.CONFLICTS,
         conflicts_resolved=len(tally.files),

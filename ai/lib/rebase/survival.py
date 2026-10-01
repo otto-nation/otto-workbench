@@ -341,6 +341,11 @@ def _reverted(
     after_at = change.at + len(change.lines)
     after = side_text[after_at:after_at + _CONTEXT_LINES]
     window = [*before, *change.lines, *after]
+    # Empty only for a pure deletion sitting at the very start or end of a file
+    # with fewer than `_CONTEXT_LINES` neighbouring lines. The alignment check
+    # above has already passed by then, and an "equal" op means literal content
+    # equality, so there is nothing left for a containment check to rule out —
+    # this is the alignment check's own guarantee standing alone, not a gap.
     return not window or not _contains(r, window)
 
 

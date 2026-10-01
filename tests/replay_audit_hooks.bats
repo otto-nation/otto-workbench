@@ -77,6 +77,11 @@ rebase_in_progress() {
   [ -d "$(git -C "$W" rev-parse --absolute-git-dir)/rebase-merge" ]
 }
 
+# Same reasoning as `rebase_in_progress`, for a stopped cherry-pick.
+cherry_pick_in_progress() {
+  [ -f "$(git -C "$W" rev-parse --absolute-git-dir)/CHERRY_PICK_HEAD" ]
+}
+
 # ── prepare-commit-msg ───────────────────────────────────────────────────────
 
 @test "a whole-file --ours resolution is refused and the rebase stays stopped" {
@@ -89,6 +94,8 @@ rebase_in_progress() {
   [[ "$output" == *"git checkout -m -- f"* ]]
   rebase_in_progress
   # The resolution is still staged, ready to be redone or overridden.
+  # `$(...)` strips trailing newlines on both sides, so the no-trailing-newline
+  # `printf` here matches the `git show` blob despite it ending in `\n`.
   [ "$(git -C "$W" show :f)" = "$(printf 'a\nBM\nc\nD\ne\nf\ng')" ]
 }
 
@@ -161,6 +168,7 @@ rebase_in_progress() {
   run git -C "$W" cherry-pick --continue
   [ "$status" -ne 0 ]
   [[ "$output" == *"WORKBENCH_ALLOW_DROPPED_CHANGES=1 git cherry-pick --continue"* ]]
+  cherry_pick_in_progress
 }
 
 @test "an ordinary commit after a conflicted rebase is not audited against it" {

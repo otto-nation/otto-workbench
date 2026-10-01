@@ -29,7 +29,7 @@ from review.paths import FILENAME_POST_SESSION  # noqa: E402
 import core.prompt
 import core.publishing
 
-# Captured before the `posts` fixture replaces `review_publish.post` with a
+# Captured before the `posts` fixture replaces `review.publish.post` with a
 # recording stub, so the parameter names below still name the real function.
 _POST_SIGNATURE = inspect.signature(review.publish.post)
 

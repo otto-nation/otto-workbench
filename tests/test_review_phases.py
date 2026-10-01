@@ -239,7 +239,7 @@ class TestPhaseRunnerReachesBackend:
     """PhaseRunner.invoke() must reach ai_backend.invoke_agent with the
     fully-resolved AgentInvocation and must wait on the job's throttle.
 
-    Every other pipeline test stubs review_pipeline.run_agent, which swallows
+    Every other pipeline test stubs review.pipeline.run_agent, which swallows
     any argument shape. Patching one layer deeper, at ai_backend.invoke_agent,
     keeps the seam between PhaseRunner and the backend under test.
     """
@@ -330,7 +330,7 @@ class TestNoDuplicateDefaults:
 
 
 class TestAnnotationsResolve:
-    """Every annotation in review_phases names the type it means.
+    """Every annotation in review.phases names the type it means.
 
     The module runs under PEP 563, so a wrong or stale annotation is inert
     until something reads it — `_run_skipped_groups` carried `dict` for a
@@ -339,7 +339,7 @@ class TestAnnotationsResolve:
 
     @staticmethod
     def _own_functions():
-        """Every function review_phases defines, methods included."""
+        """Every function review.phases defines, methods included."""
         import inspect
 
         owned = [

@@ -1,4 +1,4 @@
-"""Tests for pr_context library."""
+"""Tests for pr.context library."""
 
 import os
 import subprocess

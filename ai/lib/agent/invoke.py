@@ -5,7 +5,7 @@ shape is, ``agent.registry`` says which phases there are, ``agent.phases``
 says what one resolves to here, and ``agent.backend`` knows how to talk to a
 CLI. This module is what sits between them: given a phase and
 a prompt, it builds the invocation from the phase's resolved model, thinking
-level and provider, runs it, and hands the result to ``agent_retry``'s guard.
+level and provider, runs it, and hands the result to ``agent.retry``'s guard.
 
 One function per ``PhaseShape``, and a phase reaches exactly the one its spec
 names — ``run_prompt`` for a stateless call, ``run_agent`` for a tool-using

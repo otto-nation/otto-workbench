@@ -203,7 +203,7 @@ class TestTheFollowupPatternKnowsEveryLead:
         Both halves are needed or the trailing sentence never renders and the
         case proves nothing: `code_link` returns "" for a file the tree does
         not have, and it also returns "" when `head_sha` is empty — which is
-        what `git_client.head_sha` answers for a directory that is not a repo.
+        what `git.client.head_sha` answers for a directory that is not a repo.
         """
         run_checked(["git", "init", "-q", "-b", "main", str(tmp_path)])
         git_in(tmp_path, "config", "user.email", "t@example.com")

@@ -27,7 +27,7 @@ from conftest import git_in, init_worktree  # noqa: E402
 def _commit(path: Path, name: str = "f.txt", content: str = "one") -> str:
     """Write a file and commit it, returning the resulting SHA.
 
-    Setup runs through the shared runner rather than `git_client.run`, which is
+    Setup runs through the shared runner rather than `git.client.run`, which is
     the subject here and never raises on a non-zero exit: a rejected commit
     would otherwise reach the test as `head_sha`'s empty-repo answer and fail
     whatever assertion came next, naming a SHA lookup rather than the commit.

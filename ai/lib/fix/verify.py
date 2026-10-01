@@ -112,7 +112,7 @@ def run(
     Signature is the engine's `VerifyFn`: the engine supplies the phase and the
     items, and the adapter is how a domain's own branch, repo and worktree reach
     the prompt. The unused prompt argument keeps the shape identical to
-    `agent_invoke.run_fix`, so a test can substitute one for the other.
+    `agent.invoke.run_fix`, so a test can substitute one for the other.
 
     Chunked at `phase_chunk_size` so a pass that claimed more fixes than the
     cap covers still gets five turns an item, rather than one invoke squeezing

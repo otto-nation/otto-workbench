@@ -48,7 +48,7 @@ shape is, ``agent.registry`` says which phases there are, ``agent.phases``
 says what one resolves to here, and ``agent.backend`` knows how to talk to a
 CLI. This module is what sits between them: given a phase and
 a prompt, it builds the invocation from the phase's resolved model, thinking
-level and provider, runs it, and hands the result to ``agent_retry``'s guard.
+level and provider, runs it, and hands the result to ``agent.retry``'s guard.
 
 One function per ``PhaseShape``, and a phase reaches exactly the one its spec
 names — ``run_prompt`` for a stateless call, ``run_agent`` for a tool-using
@@ -466,7 +466,7 @@ wants and what to do with the outcomes. Everything between those is here.
 
 Two rules the passes disagreed on, settled here:
 
-**A batch that stalled has already had its retry.** ``agent_invoke.run_fix``
+**A batch that stalled has already had its retry.** ``agent.invoke.run_fix``
 gives an unproductive pass a second attempt of its own, so handing that batch's
 deferrals to the partial-progress retry buys a third identical run. One stalled
 batch must not spend the whole pass's retry either, which is why the two are
@@ -868,7 +868,7 @@ Phase executors for the review pipeline.
 
 A review is a sequence of agent phases. What a phase *is* — its built-in spec,
 and how that spec resolves against the config file and the environment — is
-`agent.registry` and `agent_phases`, which the whole workbench shares. This module
+`agent.registry` and `agent.phases`, which the whole workbench shares. This module
 is the review pipeline's half: `PhaseRunner`, which binds a resolved phase to
 one review's worktree, session log and throttle, and `run_phase`, which drives
 one of them end to end.
@@ -1020,7 +1020,7 @@ the pipeline. None of it runs a phase, so it stays callable from the phase
 executors and the orchestration layer alike.
 
 The hints, the retryability test and the retry driver are shared with the other
-`pr` scripts — see agent_retry. Aliased here so the review modules keep reading
+`pr` scripts — see agent.retry. Aliased here so the review modules keep reading
 the way they always have.
 
 ### review/run.py
@@ -1164,7 +1164,7 @@ near-duplicate does not.
 
 Fix pass for review.
 
-Runs after a review is written and `--fix` is set. `fix_engine` owns the
+Runs after a review is written and `--fix` is set. `fix.engine` owns the
 pipeline — the batching, the agent, the retry, the commit — and what stays here
 is the three things only a review can answer: which findings are still open,
 which files the pass is allowed to commit, and how the review document reads
@@ -1596,7 +1596,7 @@ The PR's own metadata, its surrounding conversation, the diff, the
 pending-review check, and the consolidated review-thread query. Used by the
 pipeline before any agent runs, and by review.posting and review.dedup after.
 
-The transport is not here. ``gh_client`` owns running gh, the timeout tiers and
+The transport is not here. ``gh.client`` owns running gh, the timeout tiers and
 the rate-limit ladder; this module owns what the review system asks for and how
 it reads the answer. Nothing here decides how a call is made, so a change to
 retry or to a bound is made once, in the client, for every caller.
@@ -2680,9 +2680,9 @@ killed or timed out says nothing about the tree, and reading that silence as
 clean is how a worktree full of uncommitted work gets reset. The other
 direction costs a skipped reset and a logged reason.
 
-Split out of `pr_context` because it is a mutation built on the resolver's
+Split out of `pr.context` because it is a mutation built on the resolver's
 output rather than part of resolving — it takes a `ResolvedContext` and acts on
-it, where `git_topology` is the topology the resolver reads on the way in.
+it, where `git.topology` is the topology the resolver reads on the way in.
 
 ### pr/target.py
 
@@ -3722,7 +3722,7 @@ lock, while reviews of two different PRs launched from one directory take two.
 That key is ``(origin repo key, branch)`` and says nothing about *where* a run
 writes. Two runs can name different branches and mutate one checkout: a ``--pr``
 run keys on the branch GitHub reports for the PR, while the worktree it was
-launched in stands on whatever it stands on, and ``pr_context`` only relocates a
+launched in stands on whatever it stands on, and ``pr.context`` only relocates a
 run to a branch's own worktree when it was given ``--branch``. Both runs then
 take different target locks, both succeed, and both edit and commit in the same
 tree.

@@ -58,7 +58,7 @@ from pr.thread_models import (
 
 
 class CommentFixAdapter(fix.engine.FixAdapter):
-    """The comments pass, in the terms `fix_engine` runs one in.
+    """The comments pass, in the terms `fix.engine` runs one in.
 
     Everything before the agent arrives here settled: triage has classified the
     threads, the supersession and contested holds have been placed, and the
@@ -70,7 +70,7 @@ class CommentFixAdapter(fix.engine.FixAdapter):
     account for them: a summary that named only what the agent saw would read as
     if the dismissed and the contested were never triaged.
 
-    **A round with nothing fixable builds one of these too.** `fix_engine.run`
+    **A round with nothing fixable builds one of these too.** `fix.engine.run`
     declines to run a pass with no items and never calls `record`, which is
     right — there is nothing to commit — but the round still owes a reviewer the
     table for what triage settled and the state file its outcomes. That tail
@@ -424,7 +424,7 @@ def run_pass(
             verify=fix.verify.run if verify else None,
         )
     else:
-        # `fix_engine.run` returns an empty `FixRun` for a pass with no items
+        # `fix.engine.run` returns an empty `FixRun` for a pass with no items
         # and never reaches `record`, which is the right contract — there is
         # nothing to commit. The round still owes its table and its state
         # write, so the tail is called here with the run that did not happen.

@@ -69,7 +69,7 @@ def flatten(
 def _failure_body(failure: CIFailure) -> str:
     """The diagnosis this domain puts under one failure's heading.
 
-    The heading, the id marker and the outcome boxes belong to `fix_tracking`,
+    The heading, the id marker and the outcome boxes belong to `fix.tracking`,
     which is also what reads them back, so the two halves of the format cannot
     drift apart.
     """

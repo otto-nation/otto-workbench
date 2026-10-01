@@ -206,7 +206,7 @@ def run_pr_review(
 
         # Inside the try, so a refusal still cleans up the worktree it read.
         # Its own flag rather than force_prompts, which has absorbed
-        # --post/--no-post — see review_preflight.supersession_override.
+        # --post/--no-post — see review.preflight.supersession_override.
         review.preflight.refuse_if_superseded(
             wt_path, repo, ctx.target_dir, ctx.branch,
             override=review.preflight.supersession_override(flags.force, flags.recover),

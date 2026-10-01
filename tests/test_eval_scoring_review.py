@@ -1,4 +1,4 @@
-"""Tests for eval_scoring_review: manifest parsing, finding matching, scoring."""
+"""Tests for eval.scoring_review: manifest parsing, finding matching, scoring."""
 
 from __future__ import annotations
 

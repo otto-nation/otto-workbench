@@ -5,9 +5,9 @@ killed or timed out says nothing about the tree, and reading that silence as
 clean is how a worktree full of uncommitted work gets reset. The other
 direction costs a skipped reset and a logged reason.
 
-Split out of `pr_context` because it is a mutation built on the resolver's
+Split out of `pr.context` because it is a mutation built on the resolver's
 output rather than part of resolving — it takes a `ResolvedContext` and acts on
-it, where `git_topology` is the topology the resolver reads on the way in.
+it, where `git.topology` is the topology the resolver reads on the way in.
 """
 
 # doc-group: pr-state

@@ -331,7 +331,7 @@ def fixture_substitutions(repo_dir: str) -> dict[str, str]:
     report. `HEAD_SHA` exists because the skill asks for blob permalinks pinned
     to a full sha and JSON gives a fixture author no way to slice one.
 
-    `git_client.abbrev` rather than a slice: `_ABBREV` owns that width, so a
+    `git.client.abbrev` rather than a slice: `_ABBREV` owns that width, so a
     fixture stays consistent with the command it is standing in for.
     """
     head = fixture_head_sha(repo_dir)

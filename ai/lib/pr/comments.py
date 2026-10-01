@@ -251,7 +251,7 @@ def fetch_threads(
 def _gh_post(endpoint: str, body: str, method: str = "POST") -> CmdResult:
     """Send *body* as a JSON `{"body": …}` payload to a gh api REST endpoint.
 
-    The publishing gate lives here rather than in `gh_client`: it is a policy
+    The publishing gate lives here rather than in `gh.client`: it is a policy
     this module owns, and a transport that consulted it would gate every read
     in `ai/` on a flag about writes. A draft reports failure rather than
     success, because every "posted" counter downstream reads this result and

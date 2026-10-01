@@ -3,7 +3,7 @@
 Against a real repo, with only the push stubbed. Everything `land` settles —
 what an empty commit means, what a pathspec stages, what git says when a hook
 refuses — is git's behaviour rather than this module's, and a mocked
-`git_client` would agree with whatever the assertion expected.
+`git.client` would agree with whatever the assertion expected.
 """
 
 import sys
@@ -96,9 +96,9 @@ def test_an_unverified_push_is_not_folded_into_lost():
 
 
 def test_land_owns_the_commit_vocabulary():
-    """The enum land maps push results into is land's own, not pr_fix's.
+    """The enum land maps push results into is land's own, not pr.fix's.
 
-    `pr_fix` sits above `git` in the layer order, so an enum land imports from
+    `pr.fix` sits above `git` in the layer order, so an enum land imports from
     it is an upward edge — and land is the only consumer of it below `pr`.
     """
     assert git.land.CommitStatus.PUSHED == "pushed"

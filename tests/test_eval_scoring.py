@@ -1,4 +1,4 @@
-"""Tests for eval_scoring: aggregation, baseline schema, and baseline comparison."""
+"""Tests for eval.scoring: aggregation, baseline schema, and baseline comparison."""
 
 from __future__ import annotations
 

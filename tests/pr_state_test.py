@@ -1,4 +1,4 @@
-"""Tests for pr_state library."""
+"""Tests for pr.state library."""
 
 import json
 import sys

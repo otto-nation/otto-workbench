@@ -50,7 +50,7 @@ def rewritten_away(wt_path: Path, sha: str) -> bool:
     rewrite" on purpose: a question git could not answer must never be the
     reason a hold clears.
 
-    That last reading is why this cannot be written with `git_client.ok`, which
+    That last reading is why this cannot be written with `git.client.ok`, which
     collapses every non-zero exit into one answer.
     """
     return git.client.run(
@@ -82,7 +82,7 @@ def patch_ids(wt_path: Path, *revs: str) -> dict[str, list[str]]:
     )
     if not patches.ok or not patches.stdout:
         return {}
-    # Not git_client: this one reads a diff on stdin, and `run` deliberately
+    # Not git.client: this one reads a diff on stdin, and `run` deliberately
     # exposes no way to write to a child's input.
     ids = core.proc.run(["git", "patch-id", "--stable"], cwd=wt_path,
                    input_text=patches.stdout, timeout=core.timeouts.LOCAL)

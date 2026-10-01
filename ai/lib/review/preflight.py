@@ -107,7 +107,7 @@ def refuse_unresolvable_base(wt_path: str, override: str, *, trail: Trail) -> No
     """Stop before a review measured against a ref the operator misnamed.
 
     Every range a review reads is anchored to the base, and git reports an
-    unknown ref by exiting non-zero — which `git_client.out` returns as empty
+    unknown ref by exiting non-zero — which `git.client.out` returns as empty
     output. The review then runs to completion over an empty diff and reports
     no findings, which is indistinguishable from a branch that is genuinely
     clean. That is the worst failure this code has: it costs the full model

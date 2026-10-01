@@ -2,7 +2,7 @@
 
 A review is a sequence of agent phases. What a phase *is* — its built-in spec,
 and how that spec resolves against the config file and the environment — is
-`agent.registry` and `agent_phases`, which the whole workbench shares. This module
+`agent.registry` and `agent.phases`, which the whole workbench shares. This module
 is the review pipeline's half: `PhaseRunner`, which binds a resolved phase to
 one review's worktree, session log and throttle, and `run_phase`, which drives
 one of them end to end.
@@ -84,7 +84,7 @@ def _omitted_bump(phase: Phase, job: ReviewJob) -> int:
 def job_turns(phase: Phase, job: ReviewJob) -> int:
     """A phase's turn budget for this job: registry default plus its bump.
 
-    Named for the job rather than the phase because ``agent_phases.phase_turns``
+    Named for the job rather than the phase because ``agent.phases.phase_turns``
     is the registry's answer and this is the same answer with this job's omitted
     files folded in — two names so the proxy in ``review-orchestrate`` can patch
     either without the other going with it.
@@ -173,7 +173,7 @@ class PhaseRunner:
         self, prompt: str, max_turns: int | None = None, *, label: str = "",
     ) -> int:
         """Run one attempt. Positional `(prompt, max_turns)` is the shape
-        `agent_retry.retry_missing_output` calls its callback with, so a
+        `agent.retry.retry_missing_output` calls its callback with, so a
         runner can be handed to it directly."""
         return run_agent(
             self.invocation(prompt, max_turns, label=label),

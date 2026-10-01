@@ -1,13 +1,13 @@
-"""Tests for the review findings fix pass — `review_fix`'s half of the engine.
+"""Tests for the review findings fix pass — `review.fix`'s half of the engine.
 
-The pipeline is `fix_engine`'s and `fix_engine_test.py` holds it: the batching,
+The pipeline is `fix.engine`'s and `fix_engine_test.py` holds it: the batching,
 the retry, and what the landing owner is handed. What is here is the half only
 a review can answer — which findings are open, which paths the commit may be
 scoped to, and how `review.md` reads once the agent has answered.
 
 The end-to-end cases run against a real repo, because attribution is a set of
 path strings git produced and a stubbed `status` line would agree with whatever
-the test expected. The agent is stubbed at `agent_invoke.run_fix`, which is
+the test expected. The agent is stubbed at `agent.invoke.run_fix`, which is
 where the review's own boundary is: everything below it is the engine's, and
 everything above it is what this module decided to ask for.
 """
@@ -191,7 +191,7 @@ def _run(
 ):
     """Run the pass with the agent stubbed, and hand back the stub.
 
-    The verify gate is stubbed alongside it, at `fix_verify.run` rather than at
+    The verify gate is stubbed alongside it, at `fix.verify.run` rather than at
     the agent: the two share one `run_fix`, so a single stub would hand the
     gate's checklist to a helper that answers in the fix pass's vocabulary and
     every case here would fail on a box the verify file does not carry.
@@ -305,7 +305,7 @@ class TestWhatTheReviewLendsTheAgentCall:
     def test_the_session_log_is_the_one_the_review_s_sweep_removes(
         self, git_wt, tmp_path,
     ):
-        """`review_gc` finds a phase's log by the name the registry gives it.
+        """`review.gc` finds a phase's log by the name the registry gives it.
 
         The engine's own default sits under a name the sweep never asks for, so
         a `--fix` pass would leave its session log behind in a finished review.
@@ -391,7 +391,7 @@ class TestTheVerifyGate:
 
         Everything else here would pass against a pass that never gated — the
         stub in `_run` patches the runner, not the wiring — so this asserts the
-        argument reaches `fix_engine.run`.
+        argument reaches `fix.engine.run`.
         """
         job = _make_job(git_wt, tmp_path, self.REVIEW)
         with patch.object(fix.engine, "run") as run:
@@ -414,7 +414,7 @@ class TestTheVerifyGate:
     ):
         """Named from the registry, for the reason the fix pass's log is.
 
-        The engine's default sits under a name `review_gc` never asks for, so a
+        The engine's default sits under a name `review.gc` never asks for, so a
         gated pass would leave its session log beside the deliverable.
         """
         job = _make_job(git_wt, tmp_path, self.REVIEW)

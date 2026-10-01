@@ -38,7 +38,7 @@ def _completed(returncode, stdout=""):
 def _subcommand(cmd) -> str:
     """The git subcommand, past any `-c key=value` the client prefixes it with.
 
-    Mirrors how `git_client._argv` builds argv — a second way of prefixing the
+    Mirrors how `git.client._argv` builds argv — a second way of prefixing the
     subcommand there needs this to learn about it.
     """
     rest = cmd[1:]
@@ -156,7 +156,7 @@ class TestDetect:
     ):
         """No network, or a network that never answers, is a reason to say less —
         not a reason to say nothing."""
-        # A TimeoutExpired earns gh_client's transient ladder, which serves a
+        # A TimeoutExpired earns gh.client's transient ladder, which serves a
         # real 2s + 4s before giving up. This asserts on the signals that
         # survive a failed search, never on the waiting, so the ladder is
         # collected rather than served — the same seam gh_client_test's

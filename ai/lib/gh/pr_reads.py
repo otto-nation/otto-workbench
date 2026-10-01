@@ -4,7 +4,7 @@ The PR's own metadata, its surrounding conversation, the diff, the
 pending-review check, and the consolidated review-thread query. Used by the
 pipeline before any agent runs, and by review.posting and review.dedup after.
 
-The transport is not here. ``gh_client`` owns running gh, the timeout tiers and
+The transport is not here. ``gh.client`` owns running gh, the timeout tiers and
 the rate-limit ladder; this module owns what the review system asks for and how
 it reads the answer. Nothing here decides how a call is made, so a change to
 retry or to a bound is made once, in the client, for every caller.

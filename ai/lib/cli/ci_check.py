@@ -198,7 +198,7 @@ def _rebase_if_behind(trail, report: pr.ci_report.CIReport, ctx) -> bool:
 
     No snapshot is passed: this run has no `gh pr view` of its own to hand on,
     and `refusals.tracker_landed_check` reads the tracker itself when it gets
-    none. That read can be refused — `pr_context.resolve` has already spent
+    none. That read can be refused — `pr.context.resolve` has already spent
     GraphQL getting here — and the refusal comes back as `REFUSAL_EXIT`, which
     is reported apart from a failed rebase below.
     """

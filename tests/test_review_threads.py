@@ -907,7 +907,7 @@ def _fake_ctx(tmp_path, **overrides):
 
 
 def _git_ran(returncode, stdout="", stderr=""):
-    """What a stubbed `git_client.run` hands back.
+    """What a stubbed `git.client.run` hands back.
 
     `out`, `ok`, `lines` and `head_sha` are all `run` underneath, so patching
     the one call covers every read the script makes.
@@ -916,7 +916,7 @@ def _git_ran(returncode, stdout="", stderr=""):
 
 
 def _answering_the_owner(mock_run, sha="abc1234", touched=("f.go",)):
-    """Wrap a `git_client.run` stub so the owner's own reads are answered.
+    """Wrap a `git.client.run` stub so the owner's own reads are answered.
 
     The commit scope is a dirty-set snapshot taken on either side of the agent,
     and a catch-all stub answers both readings identically — an empty
@@ -960,7 +960,7 @@ def _answering_the_owner(mock_run, sha="abc1234", touched=("f.go",)):
 def _tick_every_fix(wt_path):
     """An `invoke_fix` stub that answers every entry `fixed`.
 
-    `fix_engine` rewrites the checklist immediately before each invocation, so
+    `fix.engine` rewrites the checklist immediately before each invocation, so
     an agent that answers anything has to answer it from inside the call —
     a file ticked beforehand is overwritten before the agent ever sees it.
     """
@@ -1194,7 +1194,7 @@ class TestCommentFixLanding:
 
     What the commit, the push, the regeneration retry and the recovery each do
     is the owner's, and `land_test.py` holds it against a real repo; asking for
-    them is `fix_engine`'s, and `fix_engine_test.py` holds that. What is left to
+    them is `fix.engine`'s, and `fix_engine_test.py` holds that. What is left to
     this command is the spec it hands over and the record it keeps of the answer.
     """
 
@@ -3182,7 +3182,7 @@ class TestTriageOnlyPassQueue:
 def _gated(*_args, **_kwargs):
     """Stand in for a GitHub write, reporting what the real one would.
 
-    `pr_comments.post_thread_reply` and `resolve_thread` both refuse and return
+    `pr.comments.post_thread_reply` and `resolve_thread` both refuse and return
     False when the gate is shut. A mock hardwired to True would report a drafted
     run as having published, which is the exact confusion these tests exist to
     catch.
@@ -6056,7 +6056,7 @@ class TestARoundWhoseOnlyContentIsAnUnreadComment:
 class TestTheRoundWithNothingToFixTakesTheSameTail:
     """One `record`, whether or not the agent ran.
 
-    `fix_engine.run` declines a pass with no items and never calls `record`,
+    `fix.engine.run` declines a pass with no items and never calls `record`,
     so the round with nothing fixable used to run a second copy of the tail
     written out in the entry function. The two drifted in three ways before
     anyone noticed — a dropped `has_comment_items`, a summary the fix path
@@ -8879,7 +8879,7 @@ class TestWorktreeGuard:
 class TestCommentTrackingRoundTrip:
     """What the agent records comes back on the thread that earned it.
 
-    The file format is `fix_tracking`'s and is tested there. What is tested here
+    The file format is `fix.tracking`'s and is tested there. What is tested here
     is the domain's half of the round trip: the section bodies this pass renders,
     and the entries the parsed verdicts are attached back onto.
     """
@@ -8889,7 +8889,7 @@ class TestCommentTrackingRoundTrip:
                            summary="rename it")
 
     def _built(self, tmp_path, threads, comment_items=()):
-        """Write the checklist the way `fix_engine` writes it for this adapter."""
+        """Write the checklist the way `fix.engine` writes it for this adapter."""
         adapter = _fix_adapter(
             tmp_path,
             report=PRReport(repo="owner/repo", pr_number=42),

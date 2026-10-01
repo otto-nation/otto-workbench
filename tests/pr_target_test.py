@@ -1,7 +1,7 @@
 """Tests for the run-target path contract.
 
 SLUG_VECTORS and REPO_KEY_VECTORS are this repo's own expectations of
-`pr_target`, not a table another repo asserts against. Changing a row still
+`pr.target`, not a table another repo asserts against. Changing a row still
 changes where live runs look for their own state, so a row is edited to fix a
 bug in the rule, never to make a failing test pass.
 """
@@ -98,7 +98,7 @@ REPO_KEY_VECTORS = [
     ("https://gitlab.com/group/sub/team/service/widget.git",
      "group-sub-team-service-widget-b37e4eef"),
     # A local remote keys on its trailing segment alone — see the ceiling in
-    # pr_target: leading directories are machine-specific.
+    # pr.target: leading directories are machine-specific.
     ("/srv/git/widget.git", "widget-8ac140ce"),
     ("/srv/git/widget/.git", "widget-8ac140ce"),
     ("/srv/mirrors/otto-workbench/", "otto-workbench-3df215bb"),
@@ -538,7 +538,7 @@ def test_target_dir_for_checkout_matches_target_dir(tmp_path, monkeypatch):
 def test_target_dir_for_checkout_prefers_origin_over_any_api_name(tmp_path, monkeypatch):
     """The derived directory name comes from `origin`, not any API-reported name.
 
-    No `gh` call exists in pr_target at all, so there is no code path here that
+    No `gh` call exists in pr.target at all, so there is no code path here that
     a network name could reach — asserted by the module's contents, not by
     breaking PATH to prove git can't shell out.
     """

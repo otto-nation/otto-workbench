@@ -1,4 +1,4 @@
-"""Tests for agent_registry — what the phases the workbench ships are set to.
+"""Tests for agent.registry — what the phases the workbench ships are set to.
 
 The rules a spec applies to its own fields are ``test_agent_types``. Here the
 subject is the inventory: that every phase has an entry, and that the numbers
@@ -65,7 +65,7 @@ class TestPhaseDomains:
         }
 
     def test_review_phases_keep_the_registry_order(self):
-        # review_paths globs artifacts in this order, and a reader of
+        # review.paths globs artifacts in this order, and a reader of
         # docs/ai-review.md reads the pipeline in it.
         assert REVIEW_PHASES == tuple(
             p for p in PHASES if PHASES[p].domain is PhaseDomain.REVIEW

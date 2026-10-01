@@ -94,7 +94,7 @@ def base_ref(wt_path: str, base: str) -> str:
     one every caller already handles.
 
     Empty when neither qualifies, which callers must tell from a resolved ref:
-    ``git log ... --not <missing>`` exits 128, and `git_client.out` reports
+    ``git log ... --not <missing>`` exits 128, and `git.client.out` reports
     that as empty output — indistinguishable from an author who changed nothing.
     """
     remote = f"origin/{base}"
@@ -472,7 +472,7 @@ def _author_delta(
     get it wrong.
 
     None when any walk failed, rather than the empty result a failure would
-    otherwise be indistinguishable from. `git_client.out` reports a non-zero
+    otherwise be indistinguishable from. `git.client.out` reports a non-zero
     exit and a timeout alike as no output, and an empty delta is the answer
     that skips every group.
     """

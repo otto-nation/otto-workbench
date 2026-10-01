@@ -8,7 +8,7 @@ three merge shapes are built here — unlanded, squashed, cherry-picked onto a
 target that moved on — because telling them apart is the whole contract.
 
 The tracker signal has no local equivalent, so its transport is stubbed under
-`gh_client` and the argv the client builds stays observable from the call.
+`gh.client` and the argv the client builds stays observable from the call.
 """
 
 import subprocess
@@ -98,7 +98,7 @@ def replayed(repo: Path) -> Path:
 def _gh_response(payload: str, returncode: int = 0):
     """Patch the transport so the gh call answers with *payload*.
 
-    Stubbed under `gh_client` rather than at it, so the argv the client builds
+    Stubbed under `gh.client` rather than at it, so the argv the client builds
     and the tier it picks are both still observable from the call.
     """
     return mock.patch(

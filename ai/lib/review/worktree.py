@@ -224,7 +224,7 @@ def find_repo_root(repo: str, explicit_dir: str = "") -> str:
 
     The match is case-insensitive: ``repo`` can be the canonical, case-folded
     label ``pr.context.detect_repo`` returns for an ordinary origin remote
-    (see ``pr_target.RepoIdentity``), while a checkout's directory name keeps
+    (see ``pr.target.RepoIdentity``), while a checkout's directory name keeps
     whatever case it was cloned with. GitHub itself treats the two as the same
     repo, so this does too.
     """

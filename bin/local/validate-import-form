@@ -6,7 +6,7 @@ Usage: bin/local/validate-import-form [--quiet] [file...]
 One spelling, everywhere:
 
     import pr.state            # not `from pr import state`
-    pr.state.load_state(...)   # not `pr_state.load_state(...)`
+    pr.state.load_state(...)   # not `pr.state.load_state(...)`
 
 #908 repackaged `ai/lib` into layered packages and aliased every import back
 to its old flat name so the move could be proved byte-exact. #1137 retired
@@ -36,8 +36,8 @@ Three things are checked:
 
 A fourth check covers shell. `tests/*.bats` embeds Python in heredocs, which
 no AST can see, and a reach-through survived there through three green runs of
-everything else: `mod.agent_templates` in `review_orchestrate_prompt.bats`,
-where `agent_templates` was `cli.review_orchestrate`'s alias for
+everything else: `mod.agent.templates` in `review_orchestrate_prompt.bats`,
+where `agent.templates` was `cli.review_orchestrate`'s alias for
 `agent.templates`. The retired names cannot be listed — they no longer exist —
 but they can be *derived*: `<package>_<module>` naming a real pair is the
 shape every one of them had. Anchored on a leading dot, so it matches an

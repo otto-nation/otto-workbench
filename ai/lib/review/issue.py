@@ -393,7 +393,7 @@ def _issue_cli_ok(cmd: list[str]) -> bool:
     is indistinguishable from. Reading that as failure would drop a label that
     had in fact just been created, and say so in a warning.
 
-    ``gh_client.ok`` is this for the GitHub half; the tracker CLIs are optional
+    ``gh.client.ok`` is this for the GitHub half; the tracker CLIs are optional
     binaries, so a missing one is a failure rather than an exception.
     """
     try:

@@ -979,9 +979,9 @@ class TestPhaseSynthesis:
         """Patch the module-level imports `_phase_synthesis` reaches through.
 
         The synthesis phase spans three modules: it builds its own prompt and
-        post-processes its own findings in `review_steps`, writes the result
-        through `review_outcome`, but invokes the agent through `PhaseRunner`,
-        whose bindings live in `review_phases`. Each name is patched on the
+        post-processes its own findings in `review.steps`, writes the result
+        through `review.outcome`, but invokes the agent through `PhaseRunner`,
+        whose bindings live in `review.phases`. Each name is patched on the
         module that owns it — an explicit map, not a guess, because a name
         this maps wrong lands the patch on a module the code under test never
         reads and the test passes having mocked nothing.
@@ -994,9 +994,9 @@ class TestPhaseSynthesis:
             "build_prompt": review.steps,
             "post_process_findings": review.outcome,
             "run_agent": review.phases,
-            # `_retry_missing_output` is `agent_retry.retry_missing_output`
-            # (aliased in `review_retry`), which recovers through its own
-            # `try_recover_output` binding, not `review_phases`' — that one is
+            # `_retry_missing_output` is `agent.retry.retry_missing_output`
+            # (aliased in `review.retry`), which recovers through its own
+            # `try_recover_output` binding, not `review.phases`' — that one is
             # read only by `_review_group`, which this phase never calls.
             "try_recover_output": agent.retry,
         }

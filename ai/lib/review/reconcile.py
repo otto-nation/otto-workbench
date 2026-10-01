@@ -472,7 +472,7 @@ def passed_over(
     finding, and a caller asking for a disposition needs the finding itself —
     the lines the prior review wrote, to put back in front of an agent.
 
-    `head_sha` only reaches `reconcile()` to skip its own `git_client.head_sha`
+    `head_sha` only reaches `reconcile()` to skip its own `git.client.head_sha`
     lookup — this function never reads `Reconciliation.head_sha` itself, so a
     caller that already has the value in hand should pass it.
 

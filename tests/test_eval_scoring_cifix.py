@@ -1,4 +1,4 @@
-"""Tests for eval_scoring_cifix: the verify oracle, agent gating, and scoring.
+"""Tests for eval.scoring_cifix: the verify oracle, agent gating, and scoring.
 
 The corpus tests are the important ones. They prove, without spending a token,
 that every ci-fix case fails before the fix and passes after it — an oracle that

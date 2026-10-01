@@ -436,7 +436,7 @@ def test_a_paused_rebase_stops_the_fix_pass(tmp_path):
 def test_ci_fix_pass_that_checks_nothing_off_is_retried_with_the_hint(tmp_path):
     """The hint is CI's own, not whichever one the diagnosis happens to name.
 
-    `agent_retry.hint_for` is written for a phase producing a document out of
+    `agent.retry.hint_for` is written for a phase producing a document out of
     nothing, and a fix pass is handed a checklist that already exists.
     """
     _, inv, _ = _drive_fix(tmp_path, tick=False)

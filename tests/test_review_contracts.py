@@ -1,8 +1,8 @@
 """Cross-file contract tests for the review system.
 
 Verifies that constants, templates, regex patterns, and CLI interfaces
-stay consistent across agent_registry, agent_templates, review_document,
-review_prompt, review-templates/, and agents/reviewer.md.
+stay consistent across agent.registry, agent.templates, review.document,
+review.prompt, review-templates/, and agents/reviewer.md.
 
 All expectations are derived dynamically from source — no hardcoded lists.
 """
@@ -593,7 +593,7 @@ def _render_via_build_prompt(
 
 
 def _render_adapter(adapter) -> str:
-    """Render a fix template the way `fix_engine` renders it for a real pass.
+    """Render a fix template the way `fix.engine` renders it for a real pass.
 
     Going through the engine rather than restating the substitution keeps this
     honest about what an agent is actually handed: a placeholder the engine
@@ -643,7 +643,7 @@ def _render_fix_comments(wt_path) -> str:
 
 
 def _render_verify_fixes(wt_path) -> str:
-    """Render the verify gate's prompt the way `fix_verify.run` renders it.
+    """Render the verify gate's prompt the way `fix.verify.run` renders it.
 
     Driven through the real runner with the agent call stubbed out, for the
     reason `_render_adapter` gives: a placeholder the runner stopped supplying
@@ -688,7 +688,7 @@ def _render_fix_prepush(wt_path) -> str:
     """Render the pre-push repair pass's prompt through the real engine.
 
     The one fix template with no substitution test of its own until now. It
-    renders through `fix_engine._prompt` like the other three, so the engine's
+    renders through `fix.engine._prompt` like the other three, so the engine's
     own placeholders were covered by them — but anything this template names
     that the others do not was held by nothing.
     """
@@ -736,7 +736,7 @@ def _unsubstituted(rendered: str) -> list[str]:
 
 
 class TestPromptBuilderRegistry:
-    """`review_registry`'s table and the phase registry name the same phases.
+    """`review.registry`'s table and the phase registry name the same phases.
 
     Keying the table by `Phase` is what makes this checkable at all: while the
     builders were keyed by template filename the two tables shared no name, so
@@ -752,7 +752,7 @@ class TestPromptBuilderRegistry:
         assert set(review.registry.registered()) == expected
 
     def test_a_phase_with_no_builder_is_refused(self):
-        """The fix pass is a review phase, but `fix_engine` builds its prompt."""
+        """The fix pass is a review phase, but `fix.engine` builds its prompt."""
         with pytest.raises(ValueError, match="renders no review prompt"):
             review.registry.build_prompt(Phase.FIX, _make_review_job(), max_turns=15)
 
@@ -1034,10 +1034,10 @@ class TestOutputBlockContract:
     def test_fix_templates_explain_every_box_the_checklist_offers(
         self, render, tmp_path,
     ):
-        """The boxes are `fix_tracking`'s; the prose explaining them is per-domain.
+        """The boxes are `fix.tracking`'s; the prose explaining them is per-domain.
 
         Every template spells out the same three answers in its own words, so a
-        box renamed or added in `fix_tracking` leaves prose behind that describes
+        box renamed or added in `fix.tracking` leaves prose behind that describes
         a checklist the agent is not looking at. No template has to say it the
         same way — each only has to still be talking about all of them.
         """

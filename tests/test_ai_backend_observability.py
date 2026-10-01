@@ -575,7 +575,7 @@ class TestAgentCallSitesPassCwd:
         )
         # Guard the scanner itself: a matcher that silently matches nothing
         # would make this test pass forever. The population is small because
-        # `agent_invoke` owns every invocation the workbench makes — what stops
+        # `agent.invoke` owns every invocation the workbench makes — what stops
         # a sixth appearing elsewhere is `TestOneOwnerForBackendCalls`.
         assert found >= 5, f"expected to find spawning call sites, found {found}"
 
@@ -632,7 +632,7 @@ def _unowned_backend_calls(source: Path) -> list[str]:
 
 
 class TestOneOwnerForBackendCalls:
-    """Only ``agent_invoke`` reaches the three entry points that spend money.
+    """Only ``agent.invoke`` reaches the three entry points that spend money.
 
     Each call site used to assemble its own invocation, and each did it slightly
     differently: a hardcoded model here, a missing retry ceiling there, a ledger

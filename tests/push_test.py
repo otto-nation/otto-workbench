@@ -45,7 +45,7 @@ done
 
 
 def _never_runs(*cmd, **kwargs):
-    """A `git_client.run` that fails the test if anything reaches it."""
+    """A `git.client.run` that fails the test if anything reaches it."""
     raise AssertionError(f"git ran when it should not have: {cmd}")
 
 
@@ -1090,7 +1090,7 @@ def test_cli_keeps_the_whole_gate_output_when_the_hook_refuses(pushable):
     Without one, a gate that ran for half an hour and printed the only copy of
     a rare test failure leaves a 20-line excerpt on a terminal and nothing on
     disk — which is how one such failure was lost. Driven through a real
-    refusing hook rather than a stubbed `git_client.run`, because what is under
+    refusing hook rather than a stubbed `git.client.run`, because what is under
     test is that the hook's own words reach the artifact.
     """
     wt, _ = pushable

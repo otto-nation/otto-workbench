@@ -1,6 +1,6 @@
-"""Tests for agent_invoke — the one owner of an agent invocation.
+"""Tests for agent.invoke — the one owner of an agent invocation.
 
-``agent_registry`` says what a phase is set to and ``agent_phases`` says what it
+``agent.registry`` says what a phase is set to and ``agent.phases`` says what it
 resolves to; here the subject is what the three runners do with that. Chiefly:
 that each phase reaches only the runner its shape names, that what the phase
 resolved to is what the backend is told, and that a runner spends nothing the

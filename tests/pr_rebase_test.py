@@ -59,7 +59,7 @@ import fix.scope
 
 
 def _unconfigured(cmd):
-    """A git argv with `git_client`'s `-c key=value` prefixes stripped.
+    """A git argv with `git.client`'s `-c key=value` prefixes stripped.
 
     The client decides `core.quotePath=false` for every path-listing subcommand
     and `core.editor=true` for a `rebase --continue`, so the argv git receives
@@ -2698,7 +2698,7 @@ def _completed(cmd, returncode=0, stdout=""):
 def _gh_response(payload: str, returncode: int = 0):
     """Patch the transport so the gh call answers with *payload*.
 
-    Stubbed under `gh_client` rather than at it, so the argv the client builds
+    Stubbed under `gh.client` rather than at it, so the argv the client builds
     and the tier it picks are both still observable from the call.
     """
     return mock.patch(
@@ -2718,7 +2718,7 @@ def _landed_ctx(**overrides):
 
 
 def test_pr_base_branch_reads_the_base_the_context_resolved():
-    """`pr_context.resolve` already read `baseRefName` off whichever call found
+    """`pr.context.resolve` already read `baseRefName` off whichever call found
     the PR, so by the time a rebase asks, the answer is in hand."""
     ctx = _landed_ctx(repo="owner/repo", base=_OTHER_BASE)
 
@@ -2756,7 +2756,7 @@ def _resolve_target(onto=None, *, pr_base=None, default_branch="main",
                     parent_branch=""):
     """Resolve the target ref with every probe forced.
 
-    `parent_branch` pins what `git_topology.stack_parent` returns: left live
+    `parent_branch` pins what `git.topology.stack_parent` returns: left live
     it walks the ancestry of whatever repo the suite is running inside, so
     the rung under test would be decided by the checkout rather than by the
     case. Named apart from the patched attribute so the two are not
@@ -3961,7 +3961,7 @@ def test_a_rebuild_alongside_editable_work_is_swept_into_the_agent_s_commit(tmp_
             ["models.go", "server.go"], args=_LEASE.args,
         )
 
-    # `prepush.land` and `fix_engine.land` are one module, so the count is what
+    # `prepush.land` and `fix.engine.land` are one module, so the count is what
     # distinguishes one commit from two — not which name the owner was reached
     # through.
     assert owner.call_count == 1

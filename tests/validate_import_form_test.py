@@ -45,7 +45,7 @@ class TestTheImportForm:
     def test_a_bare_package_alias_is_refused_too(self):
         """`import pr as p` wears the aliasing just as much as `import pr.state
         as x` once a module is reached through it — `p.state` is the other
-        spelling just as surely as `pr_state` is."""
+        spelling just as surely as `pr.state` is."""
         found = reasons("import pr as p\n")
         assert len(found) == 1
         assert "an aliased module" in found[0]
@@ -157,7 +157,7 @@ class TestTheCheckerItself:
 
 
 class TestEmbeddedPythonInShell:
-    """The gap that let `mod.agent_templates` survive three green runs.
+    """The gap that let `mod.agent.templates` survive three green runs.
 
     A `.bats` heredoc holds Python no AST sees. The retired names cannot be
     listed because they no longer exist, so the check derives the shape they
@@ -179,7 +179,7 @@ class TestEmbeddedPythonInShell:
         assert val.check_shell("echo $x.pr_helpers\n", LAYOUT) == []
 
     def test_a_bare_word_without_the_dot_is_somebody_elses_name(self):
-        """`go.mod` and a local called `pr_state` are not reach-throughs."""
+        """`go.mod` and a local called `pr.state` are not reach-throughs."""
         assert val.check_shell('echo "module example.com/x" > go.mod\n', LAYOUT) == []
         assert val.check_shell("pr_state=1\n", LAYOUT) == []
 

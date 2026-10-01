@@ -179,7 +179,7 @@ def delegate_argv(spec: CommandSpec, argv: list[str],
     """The argv a delegate is called with, context flags injected.
 
     Exactly one of --pr or --branch (never both), so the delegate's own
-    `pr_context.resolve()` does not hit the mutual-exclusivity check.
+    `pr.context.resolve()` does not hit the mutual-exclusivity check.
     Priority: explicit --pr > resolved PR number > explicit --branch >
     auto-detected branch. The PR number is preferred because it is a stable
     identifier, and because it prevents a mismatched --repo-dir/--branch pair

@@ -56,7 +56,7 @@ REBASE_CONFIG = {**RERERE_CONFIG, **UNATTENDED_CONFIG}
 
 # Paired with `UNATTENDED_CONFIG`: the config says which editor to use, and this
 # makes sure nothing in the environment outranks it. Both halves are needed —
-# see `git_client.unattended_env` for the precedence table and what an inherited
+# see `git.client.unattended_env` for the precedence table and what an inherited
 # `GIT_EDITOR` did to an unattended rebase.
 #
 # Re-exported rather than defined here because the same environment is owed to
@@ -101,7 +101,7 @@ def drive_to_completion(
     when the rebase began, so unpushed local commits leave it ahead of the
     remote, and naming it in the lease fails the eventual push with ``stale
     info`` even though the remote never moved — see
-    ``rebase_lease.remembered_tip``.
+    ``rebase.lease.remembered_tip``.
     """
     if lease is None:
         lease = rebase_lease.resolve(
@@ -483,7 +483,7 @@ def fresh(
 
     if ctx.current_branch != ctx.branch:
         display = ctx.current_branch or "detached HEAD"
-        # Defense in depth: pr_context now creates a worktree per branch, but
+        # Defense in depth: pr.context now creates a worktree per branch, but
         # --repo-dir bypasses that and can point straight at the default
         # branch's worktree. Checking out here would leave a feature branch
         # sitting in main/, where the next tool that syncs main/ to

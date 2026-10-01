@@ -1,4 +1,4 @@
-"""Tests for pr_context shared resolution module."""
+"""Tests for pr.context shared resolution module."""
 
 import sys
 from pathlib import Path

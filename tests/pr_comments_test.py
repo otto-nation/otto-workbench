@@ -1,4 +1,4 @@
-"""Tests for pr_comments library."""
+"""Tests for pr.comments library."""
 
 import json
 import sys

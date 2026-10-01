@@ -1,4 +1,4 @@
-"""Tests for review_prompt: scoped prompt section builders."""
+"""Tests for review.prompt: scoped prompt section builders."""
 
 import json
 import re

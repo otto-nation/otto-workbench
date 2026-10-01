@@ -3,7 +3,7 @@
 
 Usage: bin/local/validate-worktree-guards [--quiet] [file...]
 
-pr_context.ResolvedContext.worktree_root is Path | None — a bare repo with no
+pr.context.ResolvedContext.worktree_root is Path | None — a bare repo with no
 worktree checked out on the branch legitimately resolves to None.  Handing that
 None onward produces a TypeError, a FileNotFoundError: 'None', or the literal
 string "None" inside a git invocation, always several frames from the cause.
@@ -36,7 +36,7 @@ _WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpat
 sys.path.insert(0, os.path.join(_WORKBENCH_DIR, 'lib'))
 from ansi import RED, GREEN, DIM, NC  # noqa: E402
 
-# Only the resolved-context field is optional.  pr_state.PRIdentity has a
+# Only the resolved-context field is optional.  pr.state.PRIdentity has a
 # worktree_root of its own that is a plain str, so match on the receiver too.
 FIELD = 'worktree_root'
 RECEIVERS = {'ctx', 'self'}

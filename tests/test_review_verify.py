@@ -308,7 +308,7 @@ class TestParseVerificationKeepsAColonThatIsNotALineSuffix:
 
     This reader used to truncate at the last colon, so a path carrying one of
     its own verified against its prefix — a file that does not exist, which
-    fails every evidence check. `review_grammar.strip_line_suffix` now takes
+    fails every evidence check. `review.grammar.strip_line_suffix` now takes
     off a line suffix and nothing else.
     """
 

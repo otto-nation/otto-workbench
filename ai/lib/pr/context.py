@@ -366,7 +366,7 @@ def resolve_local(
 
     * ``pr_number`` is always None and ``repo`` is the canonical form behind the
       repo key (``acme/widget``), not ``gh``'s ``owner/repo`` — see
-      ``pr_target.RepoIdentity``. A caller that wants the branch's PR without
+      ``pr.target.RepoIdentity``. A caller that wants the branch's PR without
       giving up this rung's no-network guarantee asks for it separately, with
       ``pr_number_if_reachable``.
     * A bare repo hands back an existing worktree but never creates one, so
@@ -470,7 +470,7 @@ def pr_number_if_reachable(repo: str, branch: str) -> BranchPR:
     is measured against, and without it the review covers the parent's commits
     as well as its own. Both come off one call — see :class:`BranchPR`.
 
-    Best-effort by construction — ``gh_client.out`` returns "" for a failed
+    Best-effort by construction — ``gh.client.out`` returns "" for a failed
     call, so an unreachable or exhausted API is indistinguishable here from a
     branch with no PR, and both give an empty ``BranchPR``. Callers must read
     that as "no PR known", never as "no PR exists".
@@ -685,7 +685,7 @@ def _as_pr_number(said: str) -> int | None:
     """A PR number gh printed, or None when it printed anything else.
 
     An empty answer is the routine one: a branch with no PR yet 404s, and
-    `gh_client` returns that on the first attempt rather than retrying a 4xx.
+    `gh.client` returns that on the first attempt rather than retrying a 4xx.
     """
     try:
         return int(said.strip())

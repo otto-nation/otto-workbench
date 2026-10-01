@@ -131,7 +131,7 @@ def _subject_stem(path: str) -> str:
     """The source stem a test file is named for, else the file's own stem.
 
     Strips one test affix, so a compound name keeps whatever else it carries:
-    ``test_review_grouping.py`` yields ``review_grouping``, which no source
+    ``test_review_grouping.py`` yields ``review.grouping``, which no source
     stem matches, and the file falls back to its own top-level directory. That
     is the accepted cost of staying lexical — resolving it needs the import
     graph, which does not generalise past this repo.

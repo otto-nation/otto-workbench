@@ -1,4 +1,4 @@
-"""Tests for review_paths — the review directory's layout and its archives."""
+"""Tests for review.paths — the review directory's layout and its archives."""
 
 import os
 import sys

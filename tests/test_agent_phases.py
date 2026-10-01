@@ -1,4 +1,4 @@
-"""Tests for agent_phases — what a phase's registry entry resolves to.
+"""Tests for agent.phases — what a phase's registry entry resolves to.
 
 The budget arithmetic lives here rather than beside each caller: three fix
 passes size themselves the same way off three different registry entries, and

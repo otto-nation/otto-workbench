@@ -1826,7 +1826,7 @@ def test_gc_clean_stale_intermediates_removes_stale(cr, tmp_path):
 def test_gc_clean_stale_intermediates_collects_every_phase_artifact(cr, tmp_path):
     # The pattern list used to be hand-copied and never grew scout.md or
     # disprove.md. Derived from Phase, a new phase's artifact is
-    # collected without editing review_gc.
+    # collected without editing review.gc.
     d = tmp_path / "review-dir"
     d.mkdir()
     stale = ("holistic.md", "scout.md", "group-1.md", "disprove.md")
@@ -2255,7 +2255,7 @@ def test_update_pr_state_writes_to_the_prs_target_not_the_callers(
     second resolution here reads the caller's branch instead, which is how the
     verdict for one PR used to overwrite another's state.
 
-    Both targets are built through `pr_target` — the repo key is opaque and no
+    Both targets are built through `pr.target` — the repo key is opaque and no
     test may reconstruct one.
     """
     import pr.state

@@ -1,6 +1,6 @@
 """Fix pass for review.
 
-Runs after a review is written and `--fix` is set. `fix_engine` owns the
+Runs after a review is written and `--fix` is set. `fix.engine` owns the
 pipeline — the batching, the agent, the retry, the commit — and what stays here
 is the three things only a review can answer: which findings are still open,
 which files the pass is allowed to commit, and how the review document reads
@@ -223,7 +223,7 @@ def _suite_block(lines: list[str], suite: fix.suite.SuiteResult | None) -> None:
     shipped under a body reading `4 fixed, 0 skipped`.
 
     The one silent state is a pass that had no reason to run the checks.
-    `fix_suite.detail_lines` decides that, via `SuiteResult.reportable`; this
+    `fix.suite.detail_lines` decides that, via `SuiteResult.reportable`; this
     forwards the decision rather than making a second one.
     """
     detail = fix.suite.detail_lines(suite) if suite else []
@@ -595,7 +595,7 @@ def _bullet_paths(paths: set[str]) -> str:
 
 
 class ReviewFixAdapter(fix.engine.FixAdapter):
-    """The findings pass, in the terms `fix_engine` runs one in.
+    """The findings pass, in the terms `fix.engine` runs one in.
 
     The open findings are the work; everything the review already settled — a
     checked box, a decline it reached itself — never reaches the agent and never

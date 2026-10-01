@@ -1,6 +1,6 @@
 """Tests for the thrash guard shared across the pr scripts.
 
-review_retry's own retry behaviour is covered in test_review_pipeline_retry;
+review.retry's own retry behaviour is covered in test_review_pipeline_retry;
 these cover the generalisations the other pr scripts depend on — an arbitrary
 `produced` predicate and the log-less prompt path.
 """
@@ -38,7 +38,7 @@ def _write_log(tmp_path: Path, payload: dict) -> str:
 
 
 class TestPipelineDelegatesToSharedGuard:
-    """review_retry must not carry a second copy of the guard."""
+    """review.retry must not carry a second copy of the guard."""
 
     def test_retryability_is_the_same_function(self):
         assert review.retry._is_retryable is agent.retry.is_retryable

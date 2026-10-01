@@ -647,7 +647,7 @@ def test_cmd_fix_names_the_target_its_parent_locked(mock_load, mock_call):
 
     cmd = _first_call_containing(mock_call, "review")
     assert ["--pr", "4242"] == cmd[cmd.index("--pr"):cmd.index("--pr") + 2]
-    # Exactly one target flag: pr_context.resolve() rejects both at once.
+    # Exactly one target flag: pr.context.resolve() rejects both at once.
     assert "--branch" not in cmd
 
 
@@ -2082,7 +2082,7 @@ def test_cmd_fix_still_skips_when_the_checkout_is_on_the_reviewed_commit(
 def test_the_review_subject_falls_back_when_the_checkout_is_gone():
     """A gate deciding what to run must not be what ends the run.
 
-    `pr_context.head_sha` shells out with `cwd=` set, which raises rather than
+    `pr.context.head_sha` shells out with `cwd=` set, which raises rather than
     returning "" when the directory is not there.
     """
     from pathlib import Path as _Path
@@ -2175,7 +2175,7 @@ def test_cmd_status_dumps_the_head_it_compared_against(observed, mock_load, caps
 def test_the_worktree_head_read_never_ends_the_command(boom):
     """Both ways the shell-out can fail, since they are not one exception.
 
-    `pr_context.head_sha` runs git with a cwd and a timeout. A removed
+    `pr.context.head_sha` runs git with a cwd and a timeout. A removed
     worktree or a missing git binary raises OSError; a hung rev-parse raises
     TimeoutExpired, which is a SubprocessError and NOT an OSError. Catching
     only the first would let a hung git take down a read-only `pr status`.

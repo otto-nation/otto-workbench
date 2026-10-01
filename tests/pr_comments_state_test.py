@@ -1,4 +1,4 @@
-"""Tests for pr_comments_state — the review-thread ledger and its file."""
+"""Tests for pr.comments_state — the review-thread ledger and its file."""
 
 import json
 import sys

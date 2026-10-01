@@ -41,7 +41,7 @@ def test_unbounded_is_none_so_it_reaches_subprocess_unchanged():
 
 
 def test_the_table_imports_nothing():
-    """`proc` and `git_client` import this, so an import here risks a cycle.
+    """`proc` and `git.client` import this, so an import here risks a cycle.
 
     Read from the source rather than from the loaded module: by the time this
     test runs, `sys.modules` says nothing about who imported what.

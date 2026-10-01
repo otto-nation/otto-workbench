@@ -7,7 +7,7 @@ the pipeline. None of it runs a phase, so it stays callable from the phase
 executors and the orchestration layer alike.
 
 The hints, the retryability test and the retry driver are shared with the other
-`pr` scripts — see agent_retry. Aliased here so the review modules keep reading
+`pr` scripts — see agent.retry. Aliased here so the review modules keep reading
 the way they always have.
 """
 

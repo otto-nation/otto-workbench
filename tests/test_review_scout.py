@@ -1,4 +1,4 @@
-"""Tests for review_scout: lead parsing, filtering, and formatting."""
+"""Tests for review.scout: lead parsing, filtering, and formatting."""
 
 import sys
 from pathlib import Path

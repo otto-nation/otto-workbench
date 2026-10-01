@@ -13,7 +13,7 @@ lock, while reviews of two different PRs launched from one directory take two.
 That key is ``(origin repo key, branch)`` and says nothing about *where* a run
 writes. Two runs can name different branches and mutate one checkout: a ``--pr``
 run keys on the branch GitHub reports for the PR, while the worktree it was
-launched in stands on whatever it stands on, and ``pr_context`` only relocates a
+launched in stands on whatever it stands on, and ``pr.context`` only relocates a
 run to a branch's own worktree when it was given ``--branch``. Both runs then
 take different target locks, both succeed, and both edit and commit in the same
 tree.

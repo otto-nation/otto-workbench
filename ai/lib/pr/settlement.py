@@ -301,7 +301,7 @@ def adopt_settled_threads(
     Idempotent by id: a thread already in the snapshot is skipped, so a second
     `--finish` adds nothing. `FixRecord.merge_into` cannot be relied on here —
     `_finish_deferred_work` mutates the record in place and saves it directly
-    rather than folding it through `pr_state.apply`.
+    rather than folding it through `pr.state.apply`.
 
     Resolved threads are deliberately out of scope. `settlement_for` grades one
     SETTLED_ELSEWHERE too, but a resolved thread is collapsed on GitHub and the

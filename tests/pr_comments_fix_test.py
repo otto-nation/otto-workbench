@@ -1,6 +1,6 @@
 """Tests for the comment pass's own fix record — its status lines and blockers.
 
-The generic vocabulary every domain shares lives in ``pr_fix``, and is tested
+The generic vocabulary every domain shares lives in ``pr.fix``, and is tested
 in ``pr_fix_test.py``; this covers what ``FixSummary`` says on top of it.
 """
 

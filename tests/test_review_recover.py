@@ -142,7 +142,7 @@ def job(tmp_path):
 def run(monkeypatch):
     """Run the pipeline with a scripted agent, returning that agent."""
     # Both modules bind build_prompt: the phases build the group prompts,
-    # review_steps builds the synthesis one.
+    # review.steps builds the synthesis one.
     monkeypatch.setattr(review.phases, "build_prompt", lambda *a, **k: "PROMPT")
     monkeypatch.setattr(review.steps, "build_prompt", lambda *a, **k: "PROMPT")
 

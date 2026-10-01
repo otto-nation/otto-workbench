@@ -227,7 +227,7 @@ class TestRerereIsHeldOffTheStashPopToo:
 class TestUnattendedEditor:
     """Nothing in the environment can hand an unattended rebase an editor.
 
-    What `unattended_env` does to the variables is `git_client`'s to assert — it
+    What `unattended_env` does to the variables is `git.client`'s to assert — it
     owns them now, because an AI agent's own git calls are owed the same
     treatment and two copies of the list would drift. What is asserted here is
     that the rebase driver still reaches for it, and that a real `--autosquash`

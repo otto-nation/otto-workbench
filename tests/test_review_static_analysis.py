@@ -1,4 +1,4 @@
-"""Tests for review_static_analysis: static analysis framework for review pipeline."""
+"""Tests for review.static_analysis: static analysis framework for review pipeline."""
 
 import sys
 from pathlib import Path

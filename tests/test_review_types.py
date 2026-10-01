@@ -71,7 +71,7 @@ class TestReplyStateIsAStringOnTheWire:
         assert {review.types.ReplyState.RESOLVED: 1}["resolved"] == 1
 
     def test_no_member_collides_with_a_thread_state(self):
-        # `pr_comments_state.ThreadState` answers the same question from the
+        # `pr.comments_state.ThreadState` answers the same question from the
         # author's side. The two vocabularies overlap and must not be swapped
         # for one another, so a shared member has to mean the same thing.
         from pr.comments_state import ThreadState

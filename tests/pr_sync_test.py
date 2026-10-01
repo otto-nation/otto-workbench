@@ -25,7 +25,7 @@ from conftest import make_ctx  # noqa: E402
 def _safe_reset_runs():
     """subprocess.run results for a worktree that is safe to hard-reset.
 
-    Patching `pr_sync.subprocess.run` also serves `git_topology.current_branch_quiet`'s
+    Patching `pr.sync.subprocess.run` also serves `git.topology.current_branch_quiet`'s
     own `rev-parse --abbrev-ref` call below (the second result in this list) — both
     modules import the same `subprocess` module object, so a patch on its `run`
     attribute reaches every caller regardless of which module name it was applied

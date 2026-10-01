@@ -1,4 +1,4 @@
-"""Tests for review_collect — collection, budget fit, and the preflight block."""
+"""Tests for review.collect — collection, budget fit, and the preflight block."""
 
 from __future__ import annotations
 
@@ -437,7 +437,7 @@ class TestTheBlockReportsWhatItsDiffCost:
 def _ceiling_for(repo, monkeypatch, room: int) -> None:
     """Pin the collection budget so exactly ``room`` bytes are left for contents.
 
-    The patch targets `rc` (`review_collect`), not `review_budget`, for the
+    The patch targets `rc` (`review.collect`), not `review.budget`, for the
     reason spelled out in `test_tier1_files_prioritized_over_tier2_when_budget_tight`:
     `collect_preflight_data` reads the name bound into its own module namespace.
     """
@@ -550,7 +550,7 @@ class TestCollectPreflightData:
     def test_a_pr_against_an_unpushed_base_still_sees_its_commits(self, tmp_path):
         """The PR path reads its diff and commit log through the same resolver.
         A base with no remote-tracking ref makes both ranges name a ref that
-        does not exist — `git` exits non-zero and `git_client.out` reports that
+        does not exist — `git` exits non-zero and `git.client.out` reports that
         as empty, so the review is handed no diff and no log at all."""
         origin = tmp_path / "origin.git"
         git_out(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
@@ -788,10 +788,10 @@ class TestCollectPreflightData:
         )
         # Set budget so diff fits but only ~1000 bytes remain for file contents.
         #
-        # The patch targets `rc` (`review_collect`), not `review_budget`, because
-        # `collect_preflight_data` reads the name `review_collect` bound into its
-        # own module namespace when it imported it — patching `review_budget`
-        # would rebind a name `review_collect` already copied, which the code
+        # The patch targets `rc` (`review.collect`), not `review.budget`, because
+        # `collect_preflight_data` reads the name `review.collect` bound into its
+        # own module namespace when it imported it — patching `review.budget`
+        # would rebind a name `review.collect` already copied, which the code
         # under test would never see. `TEMPLATE_OVERHEAD_BYTES` on the same line
         # is a plain read rather than a patch, so it names its owner directly.
         diff_size = len(git.client.out(
@@ -1246,7 +1246,7 @@ class TestCollectDeltaAncestry:
     def test_a_failed_numstat_walk_is_not_an_empty_delta(self, tmp_path, capsys):
         """git failing must not read as "the author changed nothing".
 
-        `git_client.out` reports a non-zero exit and a timeout alike as no
+        `git.client.out` reports a non-zero exit and a timeout alike as no
         output, which is exactly what an author who changed nothing produces.
         Believing it would carry every group forward and skip a real review.
         """

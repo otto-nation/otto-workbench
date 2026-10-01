@@ -436,7 +436,7 @@ class TestAThreadNoRoundEverGaveADispositionTo:
 
         `FixRecord.merge_into` keys by id, but `_finish_deferred_work` mutates
         the record in place and saves it rather than folding it through
-        `pr_state.apply`, so the guard has to be this function's own.
+        `pr.state.apply`, so the guard has to be this function's own.
         """
         state = _state()
         threads = {"t1": self._addressed()}

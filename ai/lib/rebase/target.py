@@ -39,7 +39,7 @@ def pr_base_branch(
     no PR number is resolved yet, so a branch with an open PR still surfaces a
     base here even before its number is known.
 
-    Without one, ``ctx.base`` answers: ``pr_context.resolve`` reads the base off
+    Without one, ``ctx.base`` answers: ``pr.context.resolve`` reads the base off
     whichever call found the PR, so by the time a rebase asks, the field is
     already filled and no second round trip is owed. It is empty only when that
     call could not answer either — no ``gh``, no auth, no PR — and a read here
@@ -47,7 +47,7 @@ def pr_base_branch(
 
     Best effort, unlike ``branch_landed.merged_pr``, which now tells a refused
     read from an answered one: gh may be absent, unauthenticated or
-    rate-limited. Where it cannot say, :func:`pr_context.base_branch` derives a
+    rate-limited. Where it cannot say, :func:`pr.context.base_branch` derives a
     stack parent from local ancestry before falling back to the trunk, so the
     cost of this returning None is no longer a rebase onto the wrong base for
     every stacked branch — only for one whose parent git cannot see either.
@@ -114,7 +114,7 @@ def local_vs_remote(cwd: str, branch: str) -> RefDivergence:
     """Compare the local *branch* ref against origin's, without moving HEAD.
 
     Deliberately ref-to-ref rather than the ``origin/<branch>..HEAD`` that
-    pr_context._unpushed_count asks: this runs while the worktree is still on
+    pr.context._unpushed_count asks: this runs while the worktree is still on
     some other branch, so HEAD is not the thing being measured.
     """
     r = git.client.run(

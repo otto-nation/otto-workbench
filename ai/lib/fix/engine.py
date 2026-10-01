@@ -13,7 +13,7 @@ wants and what to do with the outcomes. Everything between those is here.
 
 Two rules the passes disagreed on, settled here:
 
-**A batch that stalled has already had its retry.** ``agent_invoke.run_fix``
+**A batch that stalled has already had its retry.** ``agent.invoke.run_fix``
 gives an unproductive pass a second attempt of its own, so handing that batch's
 deferrals to the partial-progress retry buys a third identical run. One stalled
 batch must not spend the whole pass's retry either, which is why the two are
@@ -219,7 +219,7 @@ class FixAdapter(ABC):
     config: WorkbenchConfig | None = None
     effort: Effort | None = None
     model: str = ""
-    # Deliberately not `agent_retry.hint_for`, whose hints are written for a
+    # Deliberately not `agent.retry.hint_for`, whose hints are written for a
     # phase that produces a document out of nothing: one tells the agent to
     # write its findings file immediately, the other that the file exists and is
     # empty. Neither is true of a tracking file that arrives populated, so a fix

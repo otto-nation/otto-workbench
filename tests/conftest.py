@@ -270,7 +270,7 @@ def _no_live_backend(monkeypatch):
 
     The floor exists because a missing stub does not read as one. A test that
     replaces ``<script>.ai_backend`` wholesale stopped covering the call once
-    ``agent_invoke`` began holding its own reference to the module — the call
+    ``agent.invoke`` began holding its own reference to the module — the call
     then costs real money and answers differently every run, which surfaces as a
     flaky assertion rather than as an unstubbed seam.
     """

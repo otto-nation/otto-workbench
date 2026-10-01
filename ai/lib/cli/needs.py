@@ -31,7 +31,7 @@ class Need:
     must not fetch (it does its own), and `gc` writes nothing to the remote yet
     still locks, because it deletes the directory other runs key on.
 
-    * ``depth`` — how far ``pr_context`` resolves. LOCAL is git alone; REMOTE
+    * ``depth`` — how far ``pr.context`` resolves. LOCAL is git alone; REMOTE
       adds the ``gh`` calls that name the repo and the PR. LOCAL never learns a
       branch's PR number, even when one already exists — `resolve_local`'s
       `pr_number` is unconditionally None, so a caller reaching for LOCAL to
@@ -77,7 +77,7 @@ REVIEW_DEFAULT_NEED = Need(REMOTE, update=True, lock=True)
 # comes from the network — the repo label it does need is the one
 # `repo_identity_from_origin` reads off the git remote. That label is not
 # byte-identical to what `gh repo view` would return: it folds case and drops
-# the host (see `pr_target.RepoIdentity`), which is fine for what a self-review
+# the host (see `pr.target.RepoIdentity`), which is fine for what a self-review
 # uses it for.
 #
 # LOCAL rather than REMOTE because a self-review is the pass that runs *before*

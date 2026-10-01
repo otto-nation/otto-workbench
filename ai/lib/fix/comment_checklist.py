@@ -35,7 +35,7 @@ def fix_items(
 
     This domain's whole contribution to the file is the body of each section —
     the conversation, the code around the line, and the PR's diff for the file.
-    The heading, the id marker and the outcome boxes belong to `fix_tracking`,
+    The heading, the id marker and the outcome boxes belong to `fix.tracking`,
     which is also what reads them back, so the two halves of the format cannot
     drift apart.
     """

@@ -1,4 +1,4 @@
-"""Tests for review_issue library."""
+"""Tests for review.issue library."""
 
 import json
 import sys

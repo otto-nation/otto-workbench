@@ -1,4 +1,4 @@
-"""Tests for review_worktree library."""
+"""Tests for review.worktree library."""
 
 import json
 import subprocess
@@ -770,7 +770,7 @@ def test_find_repo_root_find_exception_returns_empty(monkeypatch):
 def test_find_repo_root_matches_a_mixed_case_checkout(monkeypatch):
     """The slug is case-folded; the directory on disk is not.
 
-    `detect_repo` returns `pr_target.RepoIdentity.label`, which folds A-Z, so a
+    `detect_repo` returns `pr.target.RepoIdentity.label`, which folds A-Z, so a
     repo cloned as `MyProject` arrives here as `myproject`. Comparing that
     byte-for-byte against the directory name would miss the checkout the caller
     is sitting in and send the review off to walk ~/git for a repo it already

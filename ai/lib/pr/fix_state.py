@@ -118,7 +118,7 @@ def persist(
     it is folded in. Calling the discharge methods here, after the merge, is
     what tells them apart.
 
-    Not `pr_state.apply_state_update`, which takes a domain name and a dict.
+    Not `pr.state.apply_state_update`, which takes a domain name and a dict.
     Two differences rule it out and only one is about typing: this hands over a
     `FixSummary` the caller already built rather than a mapping to reconstruct
     through serde, and — the load-bearing one — it writes the comments domain

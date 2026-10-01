@@ -145,7 +145,7 @@ def test_not_a_dataclass():
 
 
 def test_pr_state_models():
-    """Verify schema generation works on the actual pr_state dataclasses."""
+    """Verify schema generation works on the actual pr.state dataclasses."""
     from pr.domains import (
         CIDomain,
         CommentsSummary,

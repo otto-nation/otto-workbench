@@ -559,7 +559,7 @@ class TestBackup:
             raise OSError("disk full")
 
         # Patches the `tarfile` module directly, imported by this file, rather than
-        # reaching it through `wiki.wiki_backup.tarfile` — two levels of indirection
+        # reaching it through `wiki.wiki.backup.tarfile` — two levels of indirection
         # that would break silently if `backup.py`'s import structure changed.
         monkeypatch.setattr(tarfile, "open", explode)
         with pytest.raises(OSError):

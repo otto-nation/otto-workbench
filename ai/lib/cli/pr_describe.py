@@ -254,7 +254,7 @@ def project_follow_ups(
 def _mark_projected(state, entries) -> bool:
     """Record that these entries have reached the body. Returns whether any moved.
 
-    Filtered to `e.ref.id` first, matching `pr_follow_ups.render_block`'s own
+    Filtered to `e.ref.id` first, matching `pr.follow_ups.render_block`'s own
     filter — an id-less entry is never written into the rendered block, so
     marking it projected here would tell `readiness()` a reviewer can see an
     entry that in fact never reached the body.
@@ -355,7 +355,7 @@ def run_describe(
         revised = pr.follow_ups.project(revised, state.follow_ups.entries)
     if revised is None:
         # _usable_revision already passed, so this should not happen, but guard
-        # against a caller that bypasses agent_invoke.run_prompt and so never
+        # against a caller that bypasses agent.invoke.run_prompt and so never
         # ran that check.
         if trail:
             trail.error("describe", "AI response missing extraction markers")

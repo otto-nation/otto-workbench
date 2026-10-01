@@ -26,6 +26,16 @@ RunMode = rebase_types.RunMode
 
 STASH_MSG = "pr-rebase: auto-stash"
 
+# The same hold-off the rebase steps run under, for the same reason. A pop is a
+# merge of the stashed worktree onto the rewritten branch, so rerere replays
+# into it exactly as it would into a rebase step — which means a cached
+# resolution could be applied to the user's uncommitted work, and this run's
+# unreviewed AI resolutions could be recorded into the cache every later plain
+# `git rebase` reads. `lifecycle` passes this to all three of its `git rebase`
+# calls and this call was the gap: one doorway held shut and a second left
+# open is the same regression, not a smaller one.
+RERERE_CONFIG = rebase_types.RERERE_CONFIG
+
 
 def auto_stash(cwd: str, *, trail: Trail | None = None) -> bool | None:
     """Stash uncommitted changes if the working tree is dirty.
@@ -55,8 +65,58 @@ def auto_stash(cwd: str, *, trail: Trail | None = None) -> bool | None:
     return True
 
 
+def auto_stash_ref(cwd: str) -> str:
+    """The stash entry this tool pushed, as a ref, or "" if there is none.
+
+    Resolved by message rather than assumed to be ``stash@{0}``. The fresh path
+    pops moments after pushing and would be right either way, but a run that
+    held its stash across a paused rebase pops it in a *later* process, by
+    which time the operator may well have stashed something of their own on
+    top — and popping the top entry then restores the wrong work into a
+    rebased tree.
+
+    Matched on the whole message after git's ``On <branch>: `` prefix, not on a
+    substring of the line: an operator's own stash named "before pr-rebase:
+    auto-stash experiment" is not this one.
+    """
+    for line in git_client.lines(
+        "stash", "list", "--format=%gd%x1f%gs", cwd=cwd,
+    ):
+        ref, _, subject = line.partition("\x1f")
+        _, _, message = subject.partition(": ")
+        if ref and (message == STASH_MSG or subject == STASH_MSG):
+            return ref
+    return ""
+
+
+def restore(cwd: str, mode: RunMode, *, trail: Trail | None = None) -> None:
+    """Put the auto-stash back, unless a rebase is still holding the index.
+
+    The guard is the whole point. A run that stops at exit 3 leaves the rebase
+    in progress *by design*, and popping into that index cannot work: git
+    refuses the pop outright, and the failure path then read the rebase's own
+    unmerged files as stash conflicts and told the operator to resolve them and
+    run ``git stash drop`` — dropping a stash that was never applied, which is
+    the one instruction here that destroys work outright.
+
+    Holding the stash costs nothing. The entry stays on the stack, named, and
+    the run that finishes the rebase restores it.
+    """
+    stash_ref = auto_stash_ref(cwd)
+    if not stash_ref:
+        return
+    if rebase_inspect.rebase_in_progress(cwd):
+        tinfo(trail, "stash", "held the auto-stash — rebase still in progress")
+        log.warn(f"Your uncommitted changes stay stashed as '{STASH_MSG}' — "
+                 "the rebase is still in progress.")
+        log.dim("They are restored by the run that finishes it: re-run "
+                "`pr rebase --fix`, or `pr rebase --abort` then `git stash pop`.")
+        return
+    auto_unstash(cwd, mode, ref=stash_ref, trail=trail)
+
+
 def auto_unstash(
-    cwd: str, mode: RunMode, *, trail: Trail | None = None,
+    cwd: str, mode: RunMode, *, ref: str = "", trail: Trail | None = None,
 ) -> None:
     """Pop stashed changes, resolving conflicts if needed.
 
@@ -64,13 +124,31 @@ def auto_unstash(
     stash holds an untracked file the rebased branch now tracks, which git
     refuses to overwrite. Nothing is lost either way: a failed pop keeps the
     stash entry, so the message names it rather than only echoing git.
+
+    Callers want `restore`, which adds the in-progress-rebase guard. This is
+    the unguarded half, kept separate so the guard has one owner rather than
+    being repeated at each call site.
+
+    *ref* is looked up fresh when not given — `restore` already has it from its
+    own guard check and passes it through rather than asking `git stash list`
+    the same question twice.
     """
-    r = git_client.run("stash", "pop", cwd=cwd)
+    ref = ref or auto_stash_ref(cwd)
+    if not ref:
+        return
+    r = git_client.run("stash", "pop", ref, cwd=cwd, config=RERERE_CONFIG)
     if r.ok:
         log.ok("Restored stashed changes.")
         return
 
-    conflicts = rebase_inspect.detect_conflicts(cwd)
+    # Defense in depth behind `restore`'s guard: unmerged files during a rebase
+    # belong to the rebase, not to a pop that git refused to even attempt, and
+    # reading them as stash conflicts is what produced advice to drop a stash
+    # that had never been applied.
+    conflicts = (
+        [] if rebase_inspect.rebase_in_progress(cwd)
+        else rebase_inspect.detect_conflicts(cwd)
+    )
     if not conflicts:
         tfail(trail, "unstash", "stash pop failed", output=r.combined_output)
         log.error(f"git stash pop failed: {r.stderr.strip()}")
@@ -134,10 +212,11 @@ def auto_unstash(
 
     remaining = rebase_inspect.detect_conflicts(cwd)
     if remaining:
-        log.warn(f"{len(remaining)} stash conflict(s) remain — resolve manually, then `git stash drop`.")
+        log.warn(f"{len(remaining)} stash conflict(s) remain — resolve manually, "
+                 f"then `git stash drop {ref}`.")
+        return
+    r = git_client.run("stash", "drop", ref, cwd=cwd)
+    if r.ok:
+        log.ok("Restored stashed changes.")
     else:
-        r = git_client.run("stash", "drop", cwd=cwd)
-        if r.ok:
-            log.ok("Restored stashed changes.")
-        else:
-            log.warn(f"git stash drop failed: {r.stderr.strip()}")
+        log.warn(f"git stash drop failed: {r.stderr.strip()}")

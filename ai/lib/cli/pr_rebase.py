@@ -23,6 +23,7 @@ Usage:
   pr-rebase --force                   # rebase even when the branch already landed
   pr-rebase --abort                   # abort in-progress rebase
   pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref
+  pr-rebase --fork-point <ref>        # replay only the commits after <ref>
   pr-rebase --repo-dir <path>         # specify worktree directory
 """
 
@@ -60,6 +61,7 @@ RebaseOutcome = rebase_types.RebaseOutcome
 RunMode = rebase_types.RunMode
 
 REFUSAL_EXIT = rebase_types.REFUSAL_EXIT
+CONFLICTS_EXIT = rebase_types.CONFLICTS_EXIT
 REFUSAL_OVERRIDE_FLAG = rebase_types.REFUSAL_OVERRIDE_FLAG
 
 
@@ -148,7 +150,7 @@ def cmd_push(
 
 def cmd_start(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
-    force: bool = False, *, target_ref: str,
+    force: bool = False, *, target_ref: str, fork_point: str = "",
     snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
 ) -> int:
@@ -160,6 +162,10 @@ def cmd_start(
     The conflict budget is waived on the resume path for the same reason, and
     for a sharper one — it refuses by aborting, and a resumed rebase is one an
     operator may have half-resolved by hand.
+
+    ``fork_point`` likewise applies only to a fresh rebase: it selects which
+    commits git replays, and a resumed rebase's todo list was written by the
+    run that started it.
     """
     if rebase_inspect.rebase_in_progress(cwd):
         target_ref = rebase_target.resume_target_ref(ctx, target_ref, trail=trail)
@@ -167,11 +173,22 @@ def cmd_start(
             trail, "rebase_state", "detected in-progress rebase",
             reason="rebase-merge or rebase-apply directory exists",
         )
+        if fork_point:
+            log.warn(f"Ignoring --fork-point {fork_point} — the in-progress "
+                     "rebase already has its list of commits to replay.")
         log.info("Detected in-progress rebase — resuming...")
-        return lifecycle.drive_to_completion(
-            cwd, ctx, mode, target_ref=target_ref, force=True,
-            snapshot=snapshot, trail=trail,
-        )
+        try:
+            return lifecycle.drive_to_completion(
+                cwd, ctx, mode, target_ref=target_ref, force=True,
+                snapshot=snapshot, trail=trail,
+            )
+        finally:
+            # An earlier run may have stashed and then stopped with the rebase
+            # still in progress, holding the entry rather than popping it into
+            # a conflicted index. This run is the one that finishes the rebase,
+            # so it is the one that owes the restore — `restore` is a no-op
+            # when there is no auto-stash or the rebase is still unfinished.
+            stash.restore(cwd, mode, trail=trail)
 
     stashed = stash.auto_stash(cwd, trail=trail)
     if stashed is None:
@@ -181,15 +198,18 @@ def cmd_start(
         trail, "rebase_state", "starting fresh rebase",
         reason="no in-progress rebase detected",
     )
-    rc = lifecycle.fresh(
-        cwd, ctx, mode, force=force, target_ref=target_ref, snapshot=snapshot,
-        trail=trail,
-    )
-
-    if stashed:
-        stash.auto_unstash(cwd, mode, trail=trail)
-
-    return rc
+    try:
+        return lifecycle.fresh(
+            cwd, ctx, mode, force=force, target_ref=target_ref,
+            fork_point=fork_point, snapshot=snapshot, trail=trail,
+        )
+    finally:
+        # try/finally rather than a trailing call: the run lock gets this right
+        # and the stash did not, so an exception — or the 90-minute kill the
+        # skill itself warns about — left the user's uncommitted work sitting
+        # on the stack with nothing on the console saying it was there.
+        if stashed:
+            stash.restore(cwd, mode, trail=trail)
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
@@ -222,7 +242,7 @@ def build_parser() -> ToolParser:
         prog=SCRIPT,
         description="Rebase onto the branch's base with conflict detection and force-push",
         output_schema=RebaseSummary,
-        ok_exit_codes=[3, REFUSAL_EXIT],
+        ok_exit_codes=[CONFLICTS_EXIT, REFUSAL_EXIT],
     )
     parser.add_argument("--repo-dir", "--worktree",
                         dest="repo_dir",
@@ -232,6 +252,14 @@ def build_parser() -> ToolParser:
     parser.add_argument("--onto", "--base", dest="onto",
                         help="Ref to rebase onto — overrides the PR's base branch "
                              "and the repo's default branch")
+    # git's `<upstream>` argument, which `--onto` alone cannot express: with
+    # one ref, <newbase> and <upstream> are the same and the whole branch is
+    # replayed. Takes a value, unlike git's own boolean `--fork-point`.
+    parser.add_argument("--fork-point", dest="fork_point", metavar="REF",
+                        help="Replay only the commits after REF, onto the "
+                             "target — for a branch whose earlier commits "
+                             "already landed. The partially-landed refusal "
+                             "names the ref to pass")
     parser.add_argument("--fix", action="store_true",
                         help="Autonomous mode — resolve conflicts with AI and rebase "
                              "(force-pushes unless --no-push)")
@@ -294,6 +322,7 @@ def _run(args, ctx: pr_context.ResolvedContext, cwd: str, trail: Trail) -> int:
             trail.decision("preflight", "waiving the already-landed check",
                            reason=f"{REFUSAL_OVERRIDE_FLAG} flag set")
         rc = cmd_start(cwd, ctx, mode, force=args.force, target_ref=target_ref,
+                       fork_point=args.fork_point or "",
                        snapshot=snapshot, trail=trail)
 
         if rc == 0 and mode is RunMode.PUSH:

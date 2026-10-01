@@ -517,9 +517,36 @@ def test_parse_resolved_content_allows_comment_dividers():
     assert reason == ""
 
 
-def test_parse_resolved_content_rejects_bare_equals_line():
-    """A bare ======= line (git conflict marker) should be rejected."""
-    stdout = "<<<RESOLVED>>>\ncode above\n=======\ncode below\n<<<END_RESOLVED>>>"
+def test_parse_resolved_content_allows_a_bare_equals_line():
+    """A bare ======= is a Markdown setext underline as often as a marker.
+
+    Seven equals signs alone on a line is how Markdown underlines an H1, so
+    reading it as a surviving conflict marker rejected correct resolutions of
+    `.md` conflicts. Nothing is lost: git never writes a separator without an
+    opener above it and a closer below, and the test below asserts a real
+    surviving conflict is still caught by those.
+    """
+    stdout = "<<<RESOLVED>>>\nHeading\n=======\ncode below\n<<<END_RESOLVED>>>"
+    content, reason = rebase_conflicts.parse_resolved_content(stdout)
+    assert reason == ""
+    assert content == "Heading\n=======\ncode below\n"
+
+
+# passes-at-base: the detection this keeps, asserted so dropping the separator cannot cost it
+def test_parse_resolved_content_rejects_a_whole_surviving_conflict():
+    """What dropping the separator must not cost: the real case."""
+    stdout = ("<<<RESOLVED>>>\n<<<<<<< HEAD\ncode above\n=======\n"
+              "code below\n>>>>>>> abc123\n<<<END_RESOLVED>>>")
+    content, reason = rebase_conflicts.parse_resolved_content(stdout)
+    assert content is None
+    assert "surviving_conflict_marker" in reason
+
+
+# passes-at-base: the same guarantee from the other end, held across the change
+def test_parse_resolved_content_rejects_a_conflict_missing_its_opener():
+    """The closer alone is still unambiguous, so it still catches this."""
+    stdout = ("<<<RESOLVED>>>\ncode above\n=======\ncode below\n"
+              ">>>>>>> abc123\n<<<END_RESOLVED>>>")
     content, reason = rebase_conflicts.parse_resolved_content(stdout)
     assert content is None
     assert "surviving_conflict_marker" in reason
@@ -985,9 +1012,9 @@ def test_build_chunked_prompt_names_the_resolved_ref():
 
 def test_parse_chunked_resolutions_single():
     stdout = "<<<RESOLVED>>>_1\nresolved line\n<<<END_RESOLVED>>>_1\n"
-    result, reason = rebase_conflicts.parse_chunked_resolutions(stdout, [_block()])
-    assert reason == ""
-    assert result == ["resolved line\n"]
+    parsed = rebase_conflicts.parse_chunked_resolutions(stdout, [_block()])
+    assert parsed.reason == ""
+    assert parsed.resolutions == ["resolved line\n"]
 
 
 def test_parse_chunked_resolutions_multiple():
@@ -995,27 +1022,27 @@ def test_parse_chunked_resolutions_multiple():
         "<<<RESOLVED>>>_1\nfirst\n<<<END_RESOLVED>>>_1\n"
         "<<<RESOLVED>>>_2\nsecond\n<<<END_RESOLVED>>>_2\n"
     )
-    result, reason = rebase_conflicts.parse_chunked_resolutions(
+    parsed = rebase_conflicts.parse_chunked_resolutions(
         stdout, [_block(index=1), _block(index=2)],
     )
-    assert reason == ""
-    assert result == ["first\n", "second\n"]
+    assert parsed.reason == ""
+    assert parsed.resolutions == ["first\n", "second\n"]
 
 
 def test_parse_chunked_resolutions_missing_marker():
     stdout = "<<<RESOLVED>>>_1\nfirst\n<<<END_RESOLVED>>>_1\n"
-    result, reason = rebase_conflicts.parse_chunked_resolutions(
+    parsed = rebase_conflicts.parse_chunked_resolutions(
         stdout, [_block(index=1), _block(index=2)],
     )
-    assert result is None
-    assert "block_2" in reason
+    assert not parsed.ok
+    assert "block_2" in parsed.reason
 
 
 def test_parse_chunked_resolutions_surviving_markers():
     stdout = "<<<RESOLVED>>>_1\n<<<<<<< HEAD\nstill broken\n<<<END_RESOLVED>>>_1\n"
-    result, reason = rebase_conflicts.parse_chunked_resolutions(stdout, [_block()])
-    assert result is None
-    assert "surviving_conflict_marker" in reason
+    parsed = rebase_conflicts.parse_chunked_resolutions(stdout, [_block()])
+    assert not parsed.ok
+    assert "surviving_conflict_marker" in parsed.reason
 
 
 def test_splice_resolutions_single():
@@ -1103,7 +1130,9 @@ def test_resolve_file_conflicts_skips_binary():
                 ["image.png"], tmpdir, "abc123", "feat: add image",
                 target_ref=_TARGET,
             )
-        assert result is None
+        assert not result.ok
+        assert result.failed == ["image.png"]
+        assert result.files == []
 
 
 def test_resolve_file_conflicts_accepts_theirs_for_generated():
@@ -1270,7 +1299,8 @@ def test_resolve_file_conflicts_claude_failure_returns_none():
                 target_ref=_TARGET,
             )
 
-        assert result is None
+        assert not result.ok
+        assert result.failed == ["main.go"]
 
 
 def test_resolve_file_conflicts_claude_exit0_with_conflict_markers():
@@ -1293,11 +1323,89 @@ def test_resolve_file_conflicts_claude_exit0_with_conflict_markers():
                 target_ref=_TARGET,
             )
 
-        assert result is None
+        assert not result.ok
+        assert result.failed == ["main.go"]
 
 
-def test_resolve_file_conflicts_git_add_failure_returns_none():
-    """M1: git add failure must abort, not loop infinitely."""
+def test_resolve_file_conflicts_keeps_going_past_one_unresolvable_file():
+    """One bad answer must not cost the files that resolved fine.
+
+    This returned None at the first failure, and the caller turned that into
+    `git rebase --abort` — so one unparseable resolution threw away every file
+    the run had already resolved and every commit it had already replayed.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for name in ("good.go", "bad.go", "also_good.go"):
+            (Path(tmpdir) / name).write_text(
+                "<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n",
+            )
+
+        def handler(cmd, **kwargs):
+            if cmd[:3] != ["claude", "-p", "--bare"]:
+                return None
+            # The prompt reaches the CLI on stdin, not in argv.
+            if "bad.go" in kwargs.get("input", ""):
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=0, stdout="no markers here", stderr="",
+                )
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0,
+                stdout="<<<RESOLVED>>>\nmerged\n<<<END_RESOLVED>>>\n", stderr="",
+            )
+
+        with mock.patch("subprocess.run", side_effect=_fake_run_with_context(handler)):
+            result = rebase_resolve.resolve_file_conflicts(
+                ["good.go", "bad.go", "also_good.go"], tmpdir,
+                "abc123", "feat: refactor", target_ref=_TARGET,
+            )
+
+        assert result.failed == ["bad.go"]
+        assert result.files == ["good.go", "also_good.go"]
+        # The file *after* the failure was resolved on disk, not merely listed.
+        # That is the difference between carrying on and reporting late, and
+        # it is the half a count of names cannot show.
+        assert (Path(tmpdir) / "also_good.go").read_text() == "merged\n"
+        assert "<<<<<<<" in (Path(tmpdir) / "bad.go").read_text()
+
+
+def test_resolve_file_conflicts_opens_a_span_per_conflicted_file():
+    """The trail claim the skill makes, made true.
+
+    SKILL.md tells an operator to read "a timed pair of events per conflicted
+    file" to tell a progressing run from a wedged one. There was one span in
+    the whole flow, and the common path emitted only a completion event — so
+    the file being worked on right now was invisible, which is exactly the
+    question that section claims to answer.
+    """
+    trail = mock.MagicMock()
+    trail.span.return_value = contextlib.nullcontext()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for name in ("a.go", "b.go"):
+            (Path(tmpdir) / name).write_text(
+                "<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n",
+            )
+
+        def handler(cmd, **kwargs):
+            if cmd[:3] != ["claude", "-p", "--bare"]:
+                return None
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0,
+                stdout="<<<RESOLVED>>>\nmerged\n<<<END_RESOLVED>>>\n", stderr="",
+            )
+
+        with mock.patch("subprocess.run", side_effect=_fake_run_with_context(handler)):
+            rebase_resolve.resolve_file_conflicts(
+                ["a.go", "b.go"], tmpdir, "abc123", "feat: x",
+                target_ref=_TARGET, trail=trail,
+            )
+
+    opened = [c[0][0] for c in trail.span.call_args_list]
+    assert opened == ["resolve_file:a.go", "resolve_file:b.go"]
+
+
+def test_resolve_file_conflicts_git_add_failure_is_reported_per_file():
+    """M1: git add failure is reported per file, not by aborting the run."""
     with tempfile.TemporaryDirectory() as tmpdir:
         conflict_file = Path(tmpdir) / "main.go"
         conflict_file.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
@@ -1318,7 +1426,8 @@ def test_resolve_file_conflicts_git_add_failure_returns_none():
                 target_ref=_TARGET,
             )
 
-        assert result is None
+        assert not result.ok
+        assert result.failed == ["main.go"]
 
 
 def test_resolve_file_conflicts_go_mod_uses_ai_merge():
@@ -1637,6 +1746,7 @@ def test_drive_to_completion_safety_valve():
          mock.patch.object(rebase_inspect, "rebase_in_progress", return_value=True), \
          mock.patch.object(rebase_inspect, "detect_conflicts", return_value=[]), \
          mock.patch.object(lifecycle, "step_advance", return_value=None), \
+         mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None), \
          mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0)):
         result = lifecycle.drive_to_completion(
             "/fake", ctx, rebase_types.RunMode.PUSH, target_ref=_TARGET,
@@ -1761,13 +1871,48 @@ def test_step_conflicts_refuses_past_the_file_budget():
 
     assert rc == 4
     resolve.assert_not_called()
-    assert refuse.call_args[0][2] == rebase_types.CONFLICT_FILE_BUDGET + 2
+    breach = refuse.call_args[0][2]
+    assert breach.signal is rebase_types.RefusalSignal.CONFLICTS_OVER_BUDGET
+    assert str(rebase_types.CONFLICT_FILE_BUDGET + 2) in breach.detail
 
 
 def test_step_conflicts_counts_distinct_files_not_conflicts():
-    """A file conflicting in several replayed commits counts once."""
+    """A file conflicting in several replayed commits counts once *for spread*."""
     repeated = ["same.py"] * (rebase_types.CONFLICT_FILE_BUDGET + 5)
     rc, refuse, resolve = _run_step_over_budget(already=repeated, conflicts=["same.py"])
+
+    assert rc is None
+    refuse.assert_not_called()
+    assert resolve.called
+
+
+def test_step_conflicts_refuses_past_the_resolution_budget():
+    """The count the file budget is deliberately blind to.
+
+    Nine files conflicting in each of seven replayed commits is a spread of
+    nine — well inside the file budget — while the run makes sixty-three AI
+    calls. Before this budget existed the run burned every one of them against
+    a branch whose work had already landed in another shape.
+    """
+    files = [f"f{i}.py" for i in range(9)]
+    spent = files * (rebase_types.CONFLICT_RESOLUTION_BUDGET // len(files) + 1)
+    rc, refuse, resolve = _run_step_over_budget(already=spent, conflicts=files)
+
+    assert rc == 4
+    resolve.assert_not_called()
+    breach = refuse.call_args[0][2]
+    assert breach.signal is rebase_types.RefusalSignal.RESOLUTIONS_OVER_BUDGET
+    # The spread stayed well inside the file budget the whole time, which is
+    # why the older signal never fired on this shape.
+    assert len(set(spent)) <= rebase_types.CONFLICT_FILE_BUDGET
+
+
+def test_step_conflicts_resolution_budget_is_waived_by_force():
+    files = [f"f{i}.py" for i in range(9)]
+    spent = files * (rebase_types.CONFLICT_RESOLUTION_BUDGET // len(files) + 1)
+    rc, refuse, resolve = _run_step_over_budget(
+        already=spent, conflicts=files, force=True,
+    )
 
     assert rc is None
     refuse.assert_not_called()
@@ -1953,21 +2098,50 @@ def test_rebase_success_conflicts_resolved_counts_files():
     assert mock_emit.call_args[0][0]["conflicts_resolved"] == 3
 
 
-def test_step_conflicts_fix_resolution_fails_aborts():
-    """AI resolution failure aborts rebase and returns 1."""
+def test_step_conflicts_unresolvable_file_pauses_without_aborting():
+    """An unresolvable file stops the run; it does not destroy it.
+
+    The abort this replaces cost one run nine resolved files and a completed
+    commit, because a tenth file's answer would not parse. The rebase stays in
+    the worktree, the exit code is the same 3 a human-resolvable conflict
+    returns, and `git rebase --abort` is not run.
+    """
     ctx = mock.MagicMock()
-    with mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
-         mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=0), \
-         mock.patch.object(lifecycle, "ai_backend") as mock_ai, \
-         mock.patch.object(rebase_resolve, "resolve_file_conflicts", return_value=None), \
-         mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0)):
-        mock_ai.is_available.return_value = True
-        rc = lifecycle.step_conflicts(
-            "/fake", ctx, rebase_types.RunMode.FIX, ["a.py"],
-            rebase_types.ResolutionTally(), target_ref=_TARGET,
+    tally = rebase_types.ResolutionTally()
+    resolution = rebase_types.Resolution(files=["ok.py"], failed=["bad.py"])
+    commands = []
+
+    def fake_run(cmd, **kwargs):
+        commands.append(cmd)
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=0, stdout="", stderr="",
         )
 
-    assert rc == 1
+    saved = []
+    with mock.patch.object(rebase_inspect, "rebase_head_info",
+                           return_value=("abc123", "feat: thing")), \
+         mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=2), \
+         mock.patch.object(rebase_inspect, "detect_conflicts", return_value=["bad.py"]), \
+         mock.patch.object(lifecycle, "ai_backend") as mock_ai, \
+         mock.patch.object(rebase_resolve, "resolve_file_conflicts",
+                           return_value=resolution), \
+         mock.patch.object(rebase_types.RebaseOutcome, "save",
+                           lambda self, c: saved.append(self)), \
+         mock.patch.object(core_report, "emit_json"), \
+         mock.patch("subprocess.run", side_effect=fake_run):
+        mock_ai.is_available.return_value = True
+        rc = lifecycle.step_conflicts(
+            "/fake", ctx, rebase_types.RunMode.FIX, ["ok.py", "bad.py"], tally,
+            target_ref=_TARGET,
+        )
+
+    assert rc == 3
+    assert not any("--abort" in cmd for cmd in commands)
+    # The resolution that did succeed is kept, in the tally and in the state
+    # a resume reads — the whole point of not aborting.
+    assert tally.files == ["ok.py"]
+    assert saved and saved[-1].files_resolved == ["ok.py"]
+    assert saved[-1].status is rebase_types.RebaseStatus.CONFLICTS
 
 
 def test_step_conflicts_fix_ai_unavailable():
@@ -2013,19 +2187,24 @@ def test_step_conflicts_continue_fails_but_rebase_in_progress():
     assert tally.files == ["a.py"]
 
 
-def test_step_conflicts_continue_fails_rebase_not_in_progress_aborts():
-    """rebase --continue fails and rebase is not in progress — abort."""
+def test_step_conflicts_continue_fails_records_instead_of_aborting():
+    """The abort here was a no-op that made the log claim something false.
+
+    This path is past the check that says the rebase is *not* in progress, so
+    `git rebase --abort` had nothing to abort and failed silently — while the
+    console said "aborting" and nothing recorded what the run had resolved.
+    """
     ctx = mock.MagicMock()
-    abort_called = []
+    commands = []
+    saved = []
 
     def fake_run(cmd, **kwargs):
-        if "--abort" in cmd:
-            abort_called.append(True)
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+        commands.append(cmd)
         if "rebase" in cmd and "--continue" in cmd:
             return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="fatal: error")
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
+    tally = rebase_types.ResolutionTally()
     with mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
          mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=0), \
          mock.patch.object(lifecycle, "ai_backend") as mock_ai, \
@@ -2033,15 +2212,18 @@ def test_step_conflicts_continue_fails_rebase_not_in_progress_aborts():
              return_value=rebase_types.Resolution(files=["a.py"]),
          ), \
          mock.patch.object(rebase_inspect, "rebase_in_progress", return_value=False), \
+         mock.patch.object(rebase_types.RebaseOutcome, "save",
+                           lambda self, c: saved.append(self)), \
          mock.patch("subprocess.run", side_effect=fake_run):
         mock_ai.is_available.return_value = True
         rc = lifecycle.step_conflicts(
-            "/fake", ctx, rebase_types.RunMode.FIX, ["a.py"],
-            rebase_types.ResolutionTally(), target_ref=_TARGET,
+            "/fake", ctx, rebase_types.RunMode.FIX, ["a.py"], tally,
+            target_ref=_TARGET,
         )
 
     assert rc == 1
-    assert abort_called
+    assert not any("--abort" in cmd for cmd in commands)
+    assert saved and saved[-1].files_resolved == ["a.py"]
 
 
 # ── _step_advance ────────────────────────────────────────────────────────
@@ -2058,18 +2240,40 @@ def test_step_advance_empty_patch_skips():
 
     with mock.patch.object(rebase_inspect, "is_empty_patch", return_value=True), \
          mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=3), \
          mock.patch("subprocess.run", side_effect=fake_run):
-        rc = lifecycle.step_advance("/fake")
+        rc = lifecycle.step_advance("/fake", mock.MagicMock(), target_ref=_TARGET)
 
     assert rc is None
     assert skip_called
+
+
+def test_step_advance_empty_commit_event_carries_remaining():
+    """`data.remaining` rides on both `step` events or the trail lies.
+
+    The conflict step carried it and this one did not, so a run whose commits
+    were mostly empty — which is what a partially-landed branch produces —
+    reported no progress at all to anyone reading the trail to see whether it
+    was moving.
+    """
+    fake_trail = mock.MagicMock()
+    with mock.patch.object(rebase_inspect, "is_empty_patch", return_value=True), \
+         mock.patch.object(rebase_inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
+         mock.patch.object(rebase_inspect, "remaining_rebase_commits", return_value=4), \
+         mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(
+             args=[], returncode=0, stdout="", stderr="")):
+        lifecycle.step_advance(
+            "/fake", mock.MagicMock(), target_ref=_TARGET, trail=fake_trail,
+        )
+
+    assert fake_trail.decision.call_args.kwargs["data"]["remaining"] == 4
 
 
 def test_step_advance_continue_succeeds():
     """Non-empty patch with successful --continue returns None."""
     with mock.patch.object(rebase_inspect, "is_empty_patch", return_value=False), \
          mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")):
-        rc = lifecycle.step_advance("/fake")
+        rc = lifecycle.step_advance("/fake", mock.MagicMock(), target_ref=_TARGET)
 
     assert rc is None
 
@@ -2084,32 +2288,37 @@ def test_step_advance_continue_fails_but_rebase_in_progress():
     with mock.patch.object(rebase_inspect, "is_empty_patch", return_value=False), \
          mock.patch.object(rebase_inspect, "rebase_in_progress", return_value=True), \
          mock.patch("subprocess.run", side_effect=fake_run):
-        rc = lifecycle.step_advance("/fake")
+        rc = lifecycle.step_advance("/fake", mock.MagicMock(), target_ref=_TARGET)
 
     assert rc is None
 
 
-def test_step_advance_continue_fails_aborts():
-    """--continue failure with rebase not in progress aborts and returns 1."""
-    abort_called = []
+def test_step_advance_continue_fails_records_instead_of_aborting():
+    """Same dead abort as its sibling, and the same missing state file."""
+    commands = []
+    saved = []
 
     def fake_run(cmd, **kwargs):
-        if "--abort" in cmd:
-            abort_called.append(True)
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+        commands.append(cmd)
         return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="stuck state")
 
+    tally = rebase_types.ResolutionTally(files=["a.py"])
     with mock.patch.object(rebase_inspect, "is_empty_patch", return_value=False), \
          mock.patch.object(rebase_inspect, "rebase_in_progress", return_value=False), \
+         mock.patch.object(rebase_types.RebaseOutcome, "save",
+                           lambda self, c: saved.append(self)), \
          mock.patch("subprocess.run", side_effect=fake_run):
-        rc = lifecycle.step_advance("/fake")
+        rc = lifecycle.step_advance(
+            "/fake", mock.MagicMock(), tally, target_ref=_TARGET,
+        )
 
     assert rc == 1
-    assert abort_called
+    assert not any("--abort" in cmd for cmd in commands)
+    assert saved and saved[-1].files_resolved == ["a.py"]
 
 
 def test_step_advance_continue_failure_records_the_whole_output():
-    """The abort path recorded a warn carrying a bare `stderr` key before this.
+    """The failure path recorded a warn carrying a bare `stderr` key before this.
 
     Its sibling `_step_conflicts` ends identically and already routes through
     `Trail.failure`, so the whole of what git said reaches an artifact.
@@ -2118,14 +2327,15 @@ def test_step_advance_continue_failure_records_the_whole_output():
     fake_trail = mock.MagicMock()
 
     def fake_run(cmd, **kwargs):
-        if "--abort" in cmd:
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
         return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr=stderr)
 
     with mock.patch.object(rebase_inspect, "is_empty_patch", return_value=False), \
          mock.patch.object(rebase_inspect, "rebase_in_progress", return_value=False), \
+         mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None), \
          mock.patch("subprocess.run", side_effect=fake_run):
-        rc = lifecycle.step_advance("/fake", trail=fake_trail)
+        rc = lifecycle.step_advance(
+            "/fake", mock.MagicMock(), target_ref=_TARGET, trail=fake_trail,
+        )
 
     assert rc == 1
     fake_trail.warn.assert_not_called()
@@ -2133,7 +2343,7 @@ def test_step_advance_continue_failure_records_the_whole_output():
     kwargs = fake_trail.failure.call_args.kwargs
     assert kwargs["output"].count("detail line") == 200
     assert "detail line 0\n" in kwargs["output"]
-    assert kwargs["data"] == {"exit_code": 1}
+    assert kwargs["data"]["exit_code"] == 1
 
 
 # ── _fresh ──────────────────────────────────────────────────────────────────
@@ -2786,7 +2996,10 @@ def test_refuse_over_budget_aborts_before_refusing(capsys):
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
          mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None):
-        rc = refusals.refuse_over_budget("/fake", ctx, 35, target_ref=_TARGET)
+        rc = refusals.refuse_over_budget("/fake", ctx, refusals.BudgetBreach(
+            signal=rebase_types.RefusalSignal.CONFLICTS_OVER_BUDGET,
+            detail="conflicts in 35 files, over the 20-file budget",
+        ), target_ref=_TARGET)
 
     assert rc == 4
     assert ["git", "rebase", "--abort"] in commands
@@ -2795,6 +3008,21 @@ def test_refuse_over_budget_aborts_before_refusing(capsys):
     assert payload["status"] == pr_domains.RebaseStatus.CONFLICTS_OVER_BUDGET.value
     assert payload["override"] == "--force"
     assert "35" in payload["detail"]
+
+
+def test_refuse_over_budget_names_the_count_that_ran_out(capsys):
+    """Two budgets, one status — `signal` is what tells them apart."""
+    with mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(
+             args=[], returncode=0, stdout="", stderr="")), \
+         mock.patch.object(rebase_types.RebaseOutcome, "save", lambda self, c: None):
+        refusals.refuse_over_budget("/fake", _landed_ctx(), refusals.BudgetBreach(
+            signal=rebase_types.RefusalSignal.RESOLUTIONS_OVER_BUDGET,
+            detail="63 conflict resolutions across 9 file(s)",
+        ), target_ref=_TARGET)
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["signal"] == "resolutions_over_budget"
+    assert payload["status"] == pr_domains.RebaseStatus.CONFLICTS_OVER_BUDGET.value
 
 
 def test_refuse_renders_the_hint_for_every_refusal_status():
@@ -2806,6 +3034,7 @@ def test_refuse_renders_the_hint_for_every_refusal_status():
     statuses = {
         pr_domains.RebaseStatus.ALREADY_LANDED.value,
         pr_domains.RebaseStatus.UNRELATED_HISTORY.value,
+        pr_domains.RebaseStatus.PARTIALLY_LANDED.value,
         pr_domains.RebaseStatus.CONFLICTS_OVER_BUDGET.value,
         pr_domains.RebaseStatus.TRACKER_UNREAD.value,
     }
@@ -2827,7 +3056,8 @@ def test_refuse_landed_emits_the_exit_4_payload(capsys):
     assert json.loads(captured.out) == {
         "branch": _LANDED_BRANCH, "signal": "pr_merged",
         "detail": f"PR #{_LANDED_PR} is merged", "commits_ahead": 18,
-        "pr_number": _LANDED_PR, "status": "already_landed", "override": "--force",
+        "pr_number": _LANDED_PR, "status": "already_landed",
+        "override": "--force", "remedy": "",
     }
     assert f"Refusing to rebase {_LANDED_BRANCH}" in captured.err
     assert "--force" in captured.err
@@ -2846,9 +3076,12 @@ def test_refuse_landed_keeps_every_documented_key_when_unmeasured(capsys):
     payload = json.loads(capsys.readouterr().out)
     assert set(payload) == {
         "branch", "signal", "detail", "commits_ahead",
-        "pr_number", "status", "override",
+        "pr_number", "status", "override", "remedy",
     }
     assert payload["commits_ahead"] is None
+    # Empty rather than absent: a caller reads "there is no narrower way to do
+    # this" from the value, not from the key being missing.
+    assert payload["remedy"] == ""
 
 
 def test_refuse_landed_records_the_status_for_the_dashboard():
@@ -4015,6 +4248,8 @@ def test_auto_unstash_pop_failure_without_conflicts_names_the_stash():
         )
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(rebase_stash, "auto_stash_ref", return_value="stash@{0}"), \
+         mock.patch.object(rebase_inspect, "rebase_in_progress", return_value=False), \
          mock.patch.object(rebase_inspect, "detect_conflicts", return_value=[]), \
          mock.patch.object(prepush.log, "warn", side_effect=warnings.append):
         rebase_stash.auto_unstash("/fake", rebase_types.RunMode.PUSH)
@@ -4031,6 +4266,8 @@ def test_cmd_start_skips_stash_when_rebase_in_progress():
 
     with mock.patch.object(rebase_inspect, "rebase_in_progress", return_value=True), \
          mock.patch.object(rebase_stash, "auto_stash") as mock_stash, \
+         mock.patch.object(rebase_stash, "restore"), \
+         mock.patch.object(rebase_target, "resume_target_ref", return_value=_TARGET), \
          mock.patch.object(lifecycle, "drive_to_completion", return_value=0):
         result = pr_rebase_cli.cmd_start(
             "/fake", ctx, rebase_types.RunMode.FIX, target_ref=_TARGET,
@@ -4046,6 +4283,7 @@ def test_cmd_start_stashes_before_fresh_rebase():
 
     with mock.patch.object(rebase_inspect, "rebase_in_progress", return_value=False), \
          mock.patch.object(rebase_stash, "auto_stash", return_value=False) as mock_stash, \
+         mock.patch.object(rebase_stash, "restore"), \
          mock.patch.object(lifecycle, "fresh", return_value=0):
         result = pr_rebase_cli.cmd_start(
             "/fake", ctx, rebase_types.RunMode.PUSH, target_ref=_TARGET,
@@ -4053,6 +4291,44 @@ def test_cmd_start_stashes_before_fresh_rebase():
 
     assert result == 0
     mock_stash.assert_called_once()
+
+
+def test_cmd_start_restores_the_stash_when_the_rebase_raises():
+    """A bare sequence left the user's work on the stack with nothing said.
+
+    An exception — or the 90-minute kill the skill itself warns about — skipped
+    the unstash entirely, because it was a trailing statement rather than a
+    `finally`. The run lock has always got this right; the stash had not.
+    """
+    with mock.patch.object(rebase_inspect, "rebase_in_progress", return_value=False), \
+         mock.patch.object(rebase_stash, "auto_stash", return_value=True), \
+         mock.patch.object(rebase_stash, "restore") as restore, \
+         mock.patch.object(lifecycle, "fresh", side_effect=RuntimeError("boom")):
+        with pytest.raises(RuntimeError):
+            pr_rebase_cli.cmd_start(
+                "/fake", mock.MagicMock(), rebase_types.RunMode.PUSH,
+                target_ref=_TARGET,
+            )
+
+    restore.assert_called_once()
+
+
+def test_cmd_start_restores_a_held_stash_after_a_resume():
+    """The run that finishes the rebase is the one that owes the restore.
+
+    An earlier run held its stash rather than popping it into a conflicted
+    index; nothing would ever have popped it if only the fresh path restored.
+    """
+    with mock.patch.object(rebase_inspect, "rebase_in_progress", return_value=True), \
+         mock.patch.object(rebase_target, "resume_target_ref", return_value=_TARGET), \
+         mock.patch.object(rebase_stash, "restore") as restore, \
+         mock.patch.object(lifecycle, "drive_to_completion", return_value=0):
+        pr_rebase_cli.cmd_start(
+            "/fake", mock.MagicMock(), rebase_types.RunMode.FIX,
+            target_ref=_TARGET,
+        )
+
+    restore.assert_called_once()
 
 
 def test_cmd_start_stash_failure_aborts():
@@ -4081,6 +4357,7 @@ def test_cmd_start_resume_forwards_the_snapshot():
     snapshot = rebase_pr_snapshot.PRSnapshot(state="OPEN", number=1)
 
     with mock.patch.object(rebase_inspect, "rebase_in_progress", return_value=True), \
+         mock.patch.object(rebase_stash, "restore"), \
          mock.patch.object(rebase_target, "resume_target_ref", return_value=_TARGET), \
          mock.patch.object(lifecycle, "drive_to_completion", return_value=0) as drive:
         pr_rebase_cli.cmd_start(

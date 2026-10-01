@@ -115,7 +115,7 @@ def run_prompt(
     repo: str | None = None,
     pr: str | None = None,
     config: WorkbenchConfig | None = None,
-    retry_hint: str = agent_retry.BLANK_RESPONSE_HINT,
+    retry_hint: agent_retry.RetryHint = agent_retry.BLANK_RESPONSE_HINT,
 ) -> PromptResult:
     """Run a stateless phase, retrying once if its answer cannot be parsed.
 
@@ -127,7 +127,10 @@ def run_prompt(
     ``retry_hint`` is what that second attempt is told it got wrong. The default
     asks for the markers most callers here wrap their answer in; a caller whose
     contract is a bare JSON object passes its own, because a retry that names
-    the wrong format corrects nothing.
+    the wrong format corrects nothing. A caller whose answer can fail in
+    several distinct ways passes a callable, which is handed the unusable
+    answer and returns the hint that names *that* failure — see
+    ``agent_retry.RetryHint``.
 
     ``task`` is the name this call bills to in the usage ledger, defaulting to
     the phase's own. A phase may span several of them: the ledger separates a

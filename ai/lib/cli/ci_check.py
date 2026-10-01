@@ -40,6 +40,7 @@ from pr import ci_wait
 from pr import context as pr_context
 from pr import domains as pr_domains
 from pr import state as pr_state
+from rebase import inspect as rebase_inspect
 from rebase import target as rebase_target
 from rebase import types as rebase_types
 
@@ -211,6 +212,15 @@ def _rebase_if_behind(trail, report: ci_report.CIReport, ctx) -> bool:
         log.warn("Rebase refused — continuing with CI fixes on current base")
         return False
 
+    # A paused rebase is not a failure either: the replay stopped with its
+    # resolved work staged in the worktree, waiting on `pr rebase --fix` or
+    # `--abort`. The fix pass below checks for exactly this and refuses, so
+    # saying here that fixes will continue would just be wrong.
+    if rc == rebase_types.CONFLICTS_EXIT:
+        trail.warn("rebase_paused", "rebase paused with conflicts — not fixing")
+        log.warn("Rebase paused with conflicts — not applying CI fixes until it is resolved")
+        return False
+
     if rc != 0:
         trail.warn("rebase_failed", f"rebase failed (exit {rc})")
         log.warn("Rebase failed — continuing with CI fixes on current base")
@@ -252,6 +262,19 @@ def _run_fix(trail, report: ci_report.CIReport, ctx) -> int:
     # failures we need to fix, but the branch should be current before applying
     # fixes.
     _rebase_if_behind(trail, report, ctx)
+
+    # A rebase that stopped part-way leaves its replay in the worktree, and a
+    # fix pass turned loose on a mid-rebase index edits files still carrying
+    # conflict markers and commits them onto a detached HEAD. The rebase used
+    # to abort itself on the way out of every failure, so "it failed, carry on"
+    # was safe; now that a resolvable stop keeps the work it already did, this
+    # is what keeps it safe.
+    if rebase_inspect.rebase_in_progress(str(ctx.require_worktree())):
+        trail.error("rebase_paused", "a rebase is in progress — not fixing")
+        log.error("A rebase is paused in this worktree — not applying CI fixes.")
+        log.dim("Finish it with `pr rebase --fix`, or discard it with "
+                "`pr rebase --abort`, then re-run.")
+        return 1
 
     trail.info("fix_start", f"{len(adapter.fixable)} fixable failure(s)")
     log.info(f"Fixing {len(adapter.fixable)} CI failure(s)...")

@@ -19,6 +19,15 @@ Three signals, in the order `check` tries them, none of them sufficient alone:
   squash merge once the target ref has moved on, and the only one that costs a
   round trip, which is why the ladder reaches it last.
 
+`partial_landing` answers a fourth question the three above cannot, and only
+`pr rebase` asks it: whether a *prefix* of the branch is upstream while the
+rest is not. All three signals here are all-or-nothing — they report the
+branch's work present or absent — so a branch six of whose seven commits have
+landed reads to every one of them as a branch that landed nothing. It is kept
+apart from `check`'s ladder because it is not evidence the work is done: it is
+evidence that replaying the branch whole would reapply the landed part on top
+of itself, which is a different finding with a different remedy.
+
 Every one of them answers "no" rather than raising when it cannot ask: a ref
 that does not resolve, a base that was never fetched, a `gh` that is absent,
 unauthenticated or offline. "Landed" is the answer that suppresses something —
@@ -207,6 +216,167 @@ def all_commits_upstream(
     """
     lines = git_client.lines("cherry", target_ref, rev, cwd=cwd)
     return bool(lines) and all(ln.startswith("-") for ln in lines)
+
+
+@dataclass(frozen=True)
+class BranchCommit:
+    """One commit the branch adds over the ref it is measured against."""
+
+    sha: str
+    subject: str
+
+
+@dataclass(frozen=True)
+class PartialLanding:
+    """A leading run of the branch's commits is upstream; the rest is not.
+
+    ``fork_point`` is the last commit of that run — the ref to replay *from*,
+    which is what makes this the one finding here with an executable remedy.
+    """
+
+    landed: int
+    unlanded: int
+    fork_point: str
+    fork_subject: str = ""
+
+    @property
+    def total(self) -> int:
+        return self.landed + self.unlanded
+
+
+def branch_commits(
+    cwd: str | Path, *, target_ref: str, rev: str = "HEAD",
+) -> list[BranchCommit]:
+    """The commits *rev* adds over *target_ref*, oldest first."""
+    lines = git_client.lines(
+        "log", "--reverse", "--no-merges", "--format=%H%x1f%s",
+        f"{target_ref}..{rev}", cwd=cwd,
+    )
+    commits = []
+    for line in lines:
+        sha, _, subject = line.partition("\x1f")
+        if sha:
+            commits.append(BranchCommit(sha=sha, subject=subject))
+    return commits
+
+
+def _patch_equivalent(
+    cwd: str | Path, *, target_ref: str, rev: str,
+) -> frozenset[str]:
+    """Shas of *rev*'s commits that `git cherry` finds equivalent upstream."""
+    equivalent = set()
+    for line in git_client.lines("cherry", target_ref, rev, cwd=cwd):
+        mark, _, sha = line.partition(" ")
+        if mark == "-" and sha:
+            equivalent.add(sha)
+    return frozenset(equivalent)
+
+
+def _same_subject_upstream(
+    cwd: str | Path, *, subject: str, since: str, target_ref: str,
+) -> str:
+    """The oldest commit in ``since..target_ref`` with exactly *subject*, or "".
+
+    ``--fixed-strings`` because a subject is prose and holds regex
+    metacharacters, and the match is re-checked against the subject in full:
+    `--grep` matches a substring of the message, so "fix: auth" would otherwise
+    match "fix: auth token refresh" and claim a landing that never happened.
+    """
+    lines = git_client.lines(
+        "log", "--reverse", "--fixed-strings", f"--grep={subject}",
+        "--format=%H%x1f%s", f"{since}..{target_ref}", cwd=cwd,
+    )
+    for line in lines:
+        sha, _, found = line.partition("\x1f")
+        if found == subject:
+            return sha
+    return ""
+
+
+def partial_landing(
+    cwd: str | Path, *, target_ref: str, rev: str = "HEAD",
+) -> PartialLanding | None:
+    """A leading run of *rev*'s commits already in *target_ref*, or None.
+
+    Walks the branch oldest-first and stops at the first commit that is not
+    upstream. Only a *prefix* counts: a branch whose third commit landed and
+    whose second did not has not been partially rebased, it has had one commit
+    cherry-picked, and replaying it from a fork point would drop the second.
+
+    Two signals per commit, because neither alone sees this case:
+
+    * an equivalent patch id, which `git cherry` finds — exact, and what
+      catches a clean cherry-pick or rebase of the prefix;
+    * an identical subject upstream, which catches what patch ids miss. One
+      amendment anywhere in the landed prefix changes the context lines of
+      every later commit's hunks, so all seven commits of a seven-commit
+      prefix can diverge by patch id while every one of them is plainly there
+      by subject. That is the case this whole function exists for, and the
+      exact signal cannot see it.
+
+    The subject signal is the loose one, so it is constrained twice over. A
+    match must be the *whole* subject, and each subject match must be a
+    descendant of the last one — a prefix that landed landed in order, and
+    requiring the upstream commits to be in that same order is what stops a
+    repeated subject like "chore: regenerate" from manufacturing a fork point
+    out of two unrelated commits.
+
+    A patch-id match does not advance that watermark, because `git cherry`
+    reports *that* a commit has an equivalent upstream and not which one. The
+    ordering is therefore enforced among subject matches rather than across
+    both kinds, which can only ever widen the search — and the fork point
+    stays safe either way, since every commit before it was found upstream by
+    one signal or the other.
+
+    Merge commits are excluded, as they are from `git cherry`, so a branch
+    carrying one has it counted on neither side.
+
+    Returns None unless both sides are non-empty. Everything landed is
+    `by_git`'s finding, not this one, and nothing landed is the ordinary
+    rebase.
+    """
+    base = git_client.out("merge-base", target_ref, rev, cwd=cwd)
+    if not base:
+        return None
+
+    commits = branch_commits(cwd, target_ref=target_ref, rev=rev)
+    if len(commits) < 2:
+        # One commit is all-or-nothing by construction: whichever way it goes,
+        # one of the two sides of a partial landing is empty.
+        return None
+
+    equivalent = _patch_equivalent(cwd, target_ref=target_ref, rev=rev)
+    fork = None
+    previous_upstream = base
+    for index, commit in enumerate(commits):
+        if commit.sha in equivalent:
+            fork = commit
+            continue
+        match = _same_subject_upstream(
+            cwd, subject=commit.subject, since=previous_upstream,
+            target_ref=target_ref,
+        )
+        if not match:
+            return _partial(fork, landed=index, unlanded=len(commits) - index)
+        previous_upstream = match
+        fork = commit
+    return None
+
+
+def _partial(
+    fork: BranchCommit | None, *, landed: int, unlanded: int,
+) -> PartialLanding | None:
+    """The finding, or None when there is no prefix to fork from.
+
+    *fork* is None exactly when the walk stopped on the branch's first commit,
+    which is the ordinary unlanded branch and the common case.
+    """
+    if fork is None or landed == 0 or unlanded == 0:
+        return None
+    return PartialLanding(
+        landed=landed, unlanded=unlanded,
+        fork_point=fork.sha, fork_subject=fork.subject,
+    )
 
 
 def by_tracker(

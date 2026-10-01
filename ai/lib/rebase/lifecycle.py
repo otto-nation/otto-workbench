@@ -29,35 +29,18 @@ from . import target as rebase_target
 from . import types as rebase_types
 
 CONFLICT_FILE_BUDGET = rebase_types.CONFLICT_FILE_BUDGET
+CONFLICT_RESOLUTION_BUDGET = rebase_types.CONFLICT_RESOLUTION_BUDGET
 ConflictReport = rebase_types.ConflictReport
 MAX_REBASE_STEPS = rebase_types.MAX_REBASE_STEPS
 RebaseOutcome = rebase_types.RebaseOutcome
 ResolutionTally = rebase_types.ResolutionTally
 RunMode = rebase_types.RunMode
 
-
-# rerere is held off for the whole of an AI-resolved rebase, and the `false` is
-# load bearing — omitting the key does not do this.
-#
-# git enables rerere on its own whenever `$GIT_DIR/rr-cache` exists, so once any
-# run has created that directory the feature is on for good, with no config
-# entry anywhere naming it. Only an explicit `false` overrides the auto-detect.
-#
-# What that cost when it was on: every conflict the AI resolved was recorded
-# into the cache as the postimage for that hunk, unreviewed. `rr-cache` lives in
-# the *common* directory, so one cache is shared by every worktree of the repo,
-# and a later plain `git rebase` — no AI, no prompt, rerere unset in the
-# operator's own config — silently replays it. That is how a resolution that
-# duplicated a shell function came back after being fixed by hand.
-#
-# The reuse this gives up was measured before it was removed rather than assumed
-# away: at the time, the trail held 371 conflict resolutions and no replay at
-# all. The standing reason behind that number is structural — rerere keys on the
-# exact hunk and a rebase meets each distinct conflict once, so the cache can
-# only pay off across runs, which is the same cross-run reach that made it
-# unsafe. Re-measure with `otto-log` before reviving this; do not trust the
-# count above to have stayed true.
-RERERE_CONFIG = {"rerere.enabled": "false"}
+# Re-exported rather than defined here: `git stash pop` replays the worktree
+# onto the rewritten branch and is as able to reuse a cached resolution as any
+# rebase step, so the constant belongs where both this module and `stash` can
+# reach it. See `rebase.types.RERERE_CONFIG` for what leaving it enabled cost.
+RERERE_CONFIG = rebase_types.RERERE_CONFIG
 
 # `core.editor=true` is what keeps an unattended run unattended: git opens the
 # editor for a commit whose message it wants confirmed, and `true` exits zero
@@ -156,8 +139,21 @@ def _drive_loop(
         if conflict_found:
             tally.commits += 1
 
-    terr(trail, "drive_to_completion", f"rebase did not complete after {MAX_REBASE_STEPS} steps")
+    terr(trail, "drive_to_completion",
+         f"rebase did not complete after {MAX_REBASE_STEPS} steps",
+         data={"files_resolved": tally.files, "commits": tally.commits})
     log.error(f"Rebase did not complete after {MAX_REBASE_STEPS} steps — aborting.")
+    # Recorded before the abort, which is what destroys the evidence. A runaway
+    # loop is the one place an abort is still right — something is cycling and
+    # leaving it half-replayed helps nobody — but the run must not also be
+    # silent about the work it just threw away.
+    RebaseOutcome(
+        status=RebaseStatus.ABORTED,
+        conflicts_resolved=len(tally.files),
+        files_resolved=tally.files,
+        files_stale=tally.stale,
+        target_base=target_ref,
+    ).save(ctx)
     git_client.run("rebase", "--abort", cwd=cwd)
     return 1
 
@@ -169,7 +165,9 @@ def _drive_one_step(
 ) -> tuple[int | None, bool]:
     conflicts = rebase_inspect.detect_conflicts(cwd)
     if not conflicts:
-        return step_advance(cwd, tally, trail=trail), False
+        return step_advance(
+            cwd, ctx, tally, target_ref=target_ref, trail=trail,
+        ), False
 
     rc = step_conflicts(
         cwd, ctx, mode, conflicts, tally, target_ref=target_ref, force=force,
@@ -182,11 +180,104 @@ def _drive_one_step(
 
 def _report_conflicts_and_stop(
     cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str,
+    tally: ResolutionTally | None = None,
 ) -> int:
-    """Persist status=conflicts, emit the report, and return the conflicts exit code."""
-    RebaseOutcome(status=RebaseStatus.CONFLICTS, target_base=target_ref).save(ctx)
+    """Persist status=conflicts, emit the report, and return the conflicts exit code.
+
+    *tally* is what the run resolved before it stopped, and is recorded rather
+    than dropped. A stop is not an abort: the rebase stays in the worktree with
+    everything already resolved staged in it, so the state file has to say what
+    that is — a resume reads it, and a `pr status` reading a bare
+    ``status=conflicts`` would report a run that did nothing.
+    """
+    tally = tally if tally is not None else ResolutionTally()
+    RebaseOutcome(
+        status=RebaseStatus.CONFLICTS,
+        conflicts_resolved=len(tally.files),
+        files_resolved=tally.files,
+        files_stale=tally.stale,
+        target_base=target_ref,
+    ).save(ctx)
     ConflictReport.from_repo(cwd).emit()
-    return 3
+    return rebase_types.CONFLICTS_EXIT
+
+
+def _over_budget(
+    tally: ResolutionTally, conflicts: list[str],
+) -> refusals.BudgetBreach | None:
+    """Whichever conflict budget this step would cross, or None.
+
+    Two counts, measuring different things — see `pr.domains` for why one is
+    not enough. Spread is checked first because it is the older signal and the
+    one whose refusal text an operator is likelier to recognise; either alone
+    stops the rebase.
+    """
+    spread = len(set(tally.files) | set(conflicts))
+    if spread > CONFLICT_FILE_BUDGET:
+        return refusals.BudgetBreach(
+            signal=rebase_types.RefusalSignal.CONFLICTS_OVER_BUDGET,
+            detail=f"conflicts in {spread} files, over the "
+                   f"{CONFLICT_FILE_BUDGET}-file budget",
+        )
+
+    depth = tally.depth + len(conflicts)
+    if depth > CONFLICT_RESOLUTION_BUDGET:
+        return refusals.BudgetBreach(
+            signal=rebase_types.RefusalSignal.RESOLUTIONS_OVER_BUDGET,
+            detail=f"{depth} conflict resolutions across {spread} file(s), "
+                   f"over the {CONFLICT_RESOLUTION_BUDGET}-resolution budget",
+        )
+    return None
+
+
+def _record_failed(
+    ctx: pr_context.ResolvedContext, tally: ResolutionTally, *, target_ref: str,
+) -> None:
+    """Persist what a failed run resolved before it stopped.
+
+    Every path that gives up owes this. A run that ends without writing state
+    leaves the next reader — `pr status`, `cmd_push`, the operator — with the
+    previous run's summary and no sign that anything happened since.
+    """
+    RebaseOutcome(
+        status=RebaseStatus.CONFLICTS,
+        conflicts_resolved=len(tally.files),
+        files_resolved=tally.files,
+        files_stale=tally.stale,
+        target_base=target_ref,
+    ).save(ctx)
+
+
+def _halt_unresolved(
+    cwd: str, ctx: pr_context.ResolvedContext, unresolved: list[str],
+    tally: ResolutionTally, *, target_ref: str, trail: Trail | None = None,
+) -> int:
+    """Stop on files the AI could not resolve — without aborting the rebase.
+
+    The abort this replaces is what made one unparseable answer cost a whole
+    run: nine resolved files and a replayed commit were thrown away because a
+    tenth file's resolution would not parse. Nothing about that failure makes
+    the other nine wrong, and nothing about it makes the rebase unrecoverable.
+
+    So the rebase is left exactly where it is. The resolved files are staged,
+    the unresolved ones still carry their markers, and the exit code is the
+    same 3 that `--no-fix` returns for conflicts a human must look at — which
+    is what this now is. `cmd_start` resumes from here on the next run, and the
+    auto-stash is held rather than popped into the conflicted index.
+    """
+    terr(trail, "resolve_conflicts",
+         f"{len(unresolved)} file(s) could not be resolved",
+         data={"unresolved": unresolved, "resolved": tally.files})
+    log.error(f"Could not resolve {len(unresolved)} file(s): "
+              f"{', '.join(unresolved)}")
+    if tally.files:
+        log.ok(f"Kept {len(tally.files)} resolution(s) already made — "
+               "the rebase is paused, not aborted.")
+    log.dim("Resolve the listed files by hand and re-run `pr rebase --fix` to "
+            "continue, or `pr rebase --abort` to throw the whole replay away.")
+    return _report_conflicts_and_stop(
+        cwd, ctx, target_ref=target_ref, tally=tally,
+    )
 
 
 def step_conflicts(
@@ -196,18 +287,23 @@ def step_conflicts(
 ) -> int | None:
     """Handle a rebase step with conflicts. Returns exit code to stop, or None to continue."""
     if not mode.resolves_conflicts:
-        return _report_conflicts_and_stop(cwd, ctx, target_ref=target_ref)
+        return _report_conflicts_and_stop(
+            cwd, ctx, target_ref=target_ref, tally=tally,
+        )
 
     if not ai_backend.is_available():
         terr(trail, "resolve_conflicts", "AI backend unavailable")
         log.error("Cannot resolve conflicts — AI backend unavailable.")
-        return _report_conflicts_and_stop(cwd, ctx, target_ref=target_ref)
-
-    spread = len(set(tally.files) | set(conflicts))
-    if not force and spread > CONFLICT_FILE_BUDGET:
-        return refusals.refuse_over_budget(
-            cwd, ctx, spread, target_ref=target_ref, trail=trail,
+        return _report_conflicts_and_stop(
+            cwd, ctx, target_ref=target_ref, tally=tally,
         )
+
+    if not force:
+        over = _over_budget(tally, conflicts)
+        if over is not None:
+            return refusals.refuse_over_budget(
+                cwd, ctx, over, target_ref=target_ref, trail=trail,
+            )
 
     sha, subject = rebase_inspect.rebase_head_info(cwd)
     remaining = rebase_inspect.remaining_rebase_commits(cwd)
@@ -225,12 +321,11 @@ def step_conflicts(
     resolved = rebase_resolve.resolve_file_conflicts(
         conflicts, cwd, sha, subject, target_ref=target_ref, trail=trail,
     )
-    if resolved is None:
-        terr(trail, "resolve_conflicts", "AI resolution failed, aborting rebase")
-        log.error("AI conflict resolution failed — aborting rebase.")
-        git_client.run("rebase", "--abort", cwd=cwd)
-        return 1
     tally.absorb(resolved)
+    if not resolved.ok:
+        return _halt_unresolved(
+            cwd, ctx, resolved.failed, tally, target_ref=target_ref, trail=trail,
+        )
 
     # Stage any remaining unstaged changes from post-resolution fixups (e.g. go mod tidy)
     if git_client.lines("diff", "--name-only", cwd=cwd):
@@ -248,16 +343,23 @@ def step_conflicts(
     if rebase_inspect.rebase_in_progress(cwd):
         return None
 
+    # No abort here, and none below in `step_advance`. Both are past the check
+    # that says the rebase is no longer in progress, so `git rebase --abort`
+    # had nothing to abort and failed silently — it only ever made the log
+    # claim something the run had not done. What was missing instead is this:
+    # a state file saying what the run resolved before git stopped taking it.
     tfail(trail, "step_conflicts", "rebase --continue failed after resolution",
-           output=r.combined_output)
-    log.error("rebase --continue failed after conflict resolution — aborting.")
-    git_client.run("rebase", "--abort", cwd=cwd)
+           output=r.combined_output,
+           data={"files_resolved": tally.files})
+    log.error("rebase --continue failed after conflict resolution.")
+    _record_failed(ctx, tally, target_ref=target_ref)
     return 1
 
 
 def step_advance(
-    cwd: str, tally: ResolutionTally | None = None, *,
-    trail: Trail | None = None,
+    cwd: str, ctx: pr_context.ResolvedContext,
+    tally: ResolutionTally | None = None, *,
+    target_ref: str, trail: Trail | None = None,
 ) -> int | None:
     """Advance rebase when there are no conflicts. Returns exit code to stop, or None to continue."""
     tally = tally if tally is not None else ResolutionTally()
@@ -267,7 +369,12 @@ def step_advance(
         tdecision(
             trail, "step", f"skipping empty commit {sha}",
             reason="patch already applied upstream",
-            data={"commit": sha, "subject": subject},
+            # `remaining` rides on both `step` events or on neither. The
+            # conflict step carried it and this one did not, so a run whose
+            # commits were mostly empty reported no progress at all to anyone
+            # reading the trail for it.
+            data={"commit": sha, "subject": subject,
+                  "remaining": rebase_inspect.remaining_rebase_commits(cwd)},
         )
         # Carries the same config as the other two: --skip drops the current
         # commit and goes straight on to apply the next, so the merges it runs
@@ -293,19 +400,48 @@ def step_advance(
         return None
 
     tfail(trail, "step_advance", "rebase --continue failed without conflicts",
-           output=r.combined_output, data={"exit_code": r.returncode})
-    log.error("rebase --continue failed without conflicts — aborting.")
-    git_client.run("rebase", "--abort", cwd=cwd)
+           output=r.combined_output,
+           data={"exit_code": r.returncode, "files_resolved": tally.files})
+    log.error("rebase --continue failed without conflicts.")
+    _record_failed(ctx, tally, target_ref=target_ref)
     return 1
+
+
+def _resolved_fork_point(cwd: str, fork_point: str) -> str:
+    """*fork_point* as a sha, or "" if it is not a commit reachable from HEAD.
+
+    Checked before the replay rather than left to git, because git's own
+    failure for a bad ``<upstream>`` is indistinguishable from a rebase that
+    went wrong — and because a ref that resolves but is *not* an ancestor of
+    HEAD silently replays a different set of commits than the operator asked
+    for, which git reports as success.
+    """
+    sha = git_client.out("rev-parse", "--verify", f"{fork_point}^{{commit}}",
+                         cwd=cwd)
+    if not sha:
+        return ""
+    if not git_client.ok("merge-base", "--is-ancestor", sha, "HEAD", cwd=cwd):
+        return ""
+    return sha
 
 
 def fresh(
     cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
-    force: bool = False, *, target_ref: str,
+    force: bool = False, *, target_ref: str, fork_point: str = "",
     snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
 ) -> int:
-    """Start a fresh rebase onto the target ref."""
+    """Start a fresh rebase onto the target ref.
+
+    ``fork_point`` is git's ``<upstream>`` argument, and naming it makes the
+    replay ``git rebase --onto <target_ref> <fork_point>`` — only the commits
+    after it. Without it, ``<newbase>`` and ``<upstream>`` are the same ref and
+    the whole branch is replayed, which is right for every ordinary rebase and
+    wrong for the one `refusals.partially_landed_check` catches: a branch whose
+    prefix already landed. That refusal names the fork point to pass here, and
+    before this parameter existed the tool could not express the fix it was
+    recommending.
+    """
     default = git_topology.default_branch(cwd)
     if ctx.branch == default:
         terr(trail, "preflight", f"on protected branch {ctx.branch}")
@@ -379,6 +515,33 @@ def fresh(
     if landed is not None:
         return refusals.refuse(ctx, landed, target_ref=target_ref, trail=trail)
 
+    # After the all-or-nothing landed signals, which are cheaper and whose
+    # finding is stronger: a branch entirely upstream is not partially
+    # upstream, and this walk costs a git call per commit in the prefix.
+    # Skipped when the operator has already named a fork point, since the
+    # refusal's only purpose is to ask for one.
+    if not force and not fork_point:
+        partial = refusals.partially_landed_check(cwd, ctx, target_ref=target_ref)
+        if partial is not None:
+            return refusals.refuse(ctx, partial, target_ref=target_ref, trail=trail)
+
+    replay_from = ""
+    if fork_point:
+        replay_from = _resolved_fork_point(cwd, fork_point)
+        if not replay_from:
+            terr(trail, "preflight", f"unusable fork point {fork_point}")
+            log.error(f"Cannot replay from {fork_point} — it is not a commit "
+                      f"on {ctx.branch}.")
+            log.dim("Pass a commit the branch descends from; the "
+                    "partially-landed refusal names the one to use.")
+            return 1
+        tdecision(
+            trail, "fork_point", f"replaying only the commits after {replay_from}",
+            reason=f"{refusals.FORK_POINT_FLAG} {fork_point}",
+            data={"fork_point": replay_from, "requested": fork_point},
+        )
+        log.info(f"Replaying only the commits after {replay_from[:8]}.")
+
     log.info(f"Rebasing onto {target_ref}...")
     # --autosquash unconditionally: it acts only on commits whose subject starts
     # with `fixup!` or `squash!`, which is a marker the author wrote to say
@@ -389,8 +552,16 @@ def fresh(
     #
     # Non-interactive since git 2.22 — no todo editor opens, so nothing here
     # waits on one.
+    #
+    # `--onto <target> <fork>` rather than a bare `<target>` when a fork point
+    # was named: git collapses <newbase> and <upstream> onto one ref only in
+    # the two-argument form, and keeping that form was what made the
+    # partially-landed remedy unreachable through this tool.
+    replay = (
+        ["--onto", target_ref, replay_from] if replay_from else [target_ref]
+    )
     r = git_client.run(
-        "rebase", "--autosquash", target_ref, cwd=cwd, config=REBASE_CONFIG,
+        "rebase", "--autosquash", *replay, cwd=cwd, config=REBASE_CONFIG,
         env=unattended_env(),
     )
     # Threaded into the loop below rather than created there: the loop's first

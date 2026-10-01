@@ -58,6 +58,95 @@ class TestExtractConflictBlocks:
     def test_no_conflicts(self):
         assert conflicts.extract_conflict_blocks("clean file\n") == []
 
+    # passes-at-base: pins the scan behaviour the rewritten extractor must keep
+    def test_an_unclosed_opener_does_not_hide_the_conflicts_below_it(self):
+        content = (
+            'marker = "<<<<<<< not really"\n'
+            "<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n"
+        )
+        blocks = conflicts.extract_conflict_blocks(content)
+        assert len(blocks) == 1
+        assert blocks[0].start == 1
+
+
+class TestContextStopsAtTheNeighbouringConflict:
+    """Root cause of the two failures that ended a rebase of this repo.
+
+    Context was taken as a fixed offset from the raw conflicted file, so in any
+    file whose hunks sit closer together than the context width — seven hunks
+    in one file, which is the ordinary case — block 1's `context_after` held
+    blocks 2 and 3 verbatim, markers and all. The prompt then said "output
+    everything from <<<<<<< through >>>>>>>" over an envelope containing three
+    conflicts, and got back an answer for the envelope or three conflicts
+    collapsed into one. Neither was the model's mistake.
+    """
+
+    def _packed(self, n: int, gap: int = 2) -> str:
+        """*n* conflicts separated by *gap* lines — far inside the context width."""
+        between = "".join(f"filler {i}\n" for i in range(gap))
+        one = "<<<<<<< HEAD\nours {i}\n=======\ntheirs {i}\n>>>>>>> abc\n"
+        return "lead\n" + between.join(one.format(i=i) for i in range(n)) + "tail\n"
+
+    def test_no_block_context_contains_a_conflict_marker(self):
+        blocks = conflicts.extract_conflict_blocks(self._packed(7))
+        assert len(blocks) == 7
+        for block in blocks:
+            assert conflicts.has_conflict_markers(block.context_before) is None
+            assert conflicts.has_conflict_markers(block.context_after) is None
+            assert "=======" not in block.context_before
+            assert "=======" not in block.context_after
+
+    def test_the_gap_between_two_conflicts_is_all_the_context_there_is(self):
+        blocks = conflicts.extract_conflict_blocks(self._packed(2, gap=3))
+        assert blocks[0].context_after == "filler 0\nfiller 1\nfiller 2\n"
+        assert blocks[1].context_before == "filler 0\nfiller 1\nfiller 2\n"
+
+    # passes-at-base: the clamp is a ceiling, so the ordinary case is unchanged by design
+    def test_conflicts_further_apart_than_the_window_still_get_full_context(self):
+        """The clamp is a ceiling, not a replacement for the context width."""
+        blocks = conflicts.extract_conflict_blocks(
+            self._packed(2, gap=100), context_lines=5,
+        )
+        assert len(blocks[0].context_after.splitlines()) == 5
+        assert len(blocks[1].context_before.splitlines()) == 5
+
+    # passes-at-base: the outer bounds were already right; the clamp must not move them
+    def test_the_file_edges_still_bound_the_first_and_last(self):
+        blocks = conflicts.extract_conflict_blocks(self._packed(2))
+        assert blocks[0].context_before == "lead\n"
+        assert blocks[-1].context_after == "tail\n"
+
+
+class TestTheSeparatorIsNotEvidenceOnItsOwn:
+    """`=======` alone on a line is also a Markdown setext H1 underline.
+
+    Treating it as a surviving conflict marker rejected correct resolutions of
+    `.md` conflicts whose own content happened to underline a seven-character
+    heading.
+    """
+
+    def test_a_setext_underline_is_not_a_conflict_marker(self):
+        assert conflicts.has_conflict_markers("Heading\n=======\n\nbody\n") is None
+
+    def test_a_markdown_resolution_with_a_setext_heading_parses(self):
+        body = "Release\n=======\n\nNotes.\n"
+        stdout = f"{conflicts.RESOLVE_BEGIN}\n{body}{conflicts.RESOLVE_END}"
+        content, reason = conflicts.parse_resolved_content(stdout)
+        assert reason == ""
+        assert content == body
+
+    # passes-at-base: what dropping the separator must not cost, so it has to hold both sides
+    def test_a_real_surviving_conflict_is_still_caught_by_its_opener(self):
+        text = "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> abc\n"
+        assert conflicts.has_conflict_markers(text) == "<<<<<<< "
+
+    def test_a_surviving_closer_alone_is_still_caught(self):
+        """A resolution that dropped the opener but kept the rest."""
+        assert conflicts.has_conflict_markers("ours\n=======\ntheirs\n>>>>>>> abc\n") == ">>>>>>> "
+
+    def test_the_diff3_base_marker_is_caught(self):
+        assert conflicts.has_conflict_markers("||||||| merged common ancestors\n") == "||||||| "
+
 
 # ── should_chunk ─────────────────────────────────────────────────────────
 
@@ -235,8 +324,74 @@ class TestEchoedContextLines:
         assert conflicts.echoed_context_lines("    return a\n", block) == 0
 
 
-class TestParseChunkedRejectsEchoedContext:
-    """The guard reached through the parser the resolver actually calls."""
+class TestTrimEchoedContext:
+    """The repair the measurement was already computing and throwing away."""
+
+    def test_a_clean_resolution_is_returned_untouched(self):
+        trim = conflicts.trim_echoed_context("    return a + b\n", _ctx_block())
+        assert trim.ok
+        assert trim.trimmed == 0
+        assert trim.text == "    return a + b\n"
+
+    def test_the_echoed_tail_is_removed(self):
+        trim = conflicts.trim_echoed_context(
+            "    return a + b\n" + _AFTER, _ctx_block(),
+        )
+        assert trim.ok
+        assert trim.text == "    return a + b\n"
+
+    def test_the_echoed_head_is_removed(self):
+        trim = conflicts.trim_echoed_context(
+            _BEFORE + "    return a + b\n", _ctx_block(),
+        )
+        assert trim.ok
+        assert trim.text == "    return a + b\n"
+
+    def test_an_echo_on_both_sides_at_once_is_removed(self):
+        block = rebase_types.ConflictBlock(
+            index=1, start=0, end=4, conflict=_CONFLICT,
+            context_before="import os\nCONST = 1\n",
+            context_after="def tail():\n    pass\n",
+        )
+        trim = conflicts.trim_echoed_context(
+            "CONST = 1\n    merged\ndef tail():\n", block,
+        )
+        assert trim.ok
+        assert trim.text == "    merged\n"
+
+    def test_a_coincidental_boundary_line_is_left_alone(self):
+        """Trimming is as conservative as the measurement that triggers it.
+
+        A resolution ending in the same bare closer the context opens with is
+        two different braces, not a repeat — removing it would break the code
+        exactly the way the duplicate does.
+        """
+        block = _ctx_block(after="}\n\nint other(void) {\n")
+        trim = conflicts.trim_echoed_context("    x();\n}\n", block)
+        assert trim.trimmed == 0
+        assert trim.text == "    x();\n}\n"
+
+    def test_the_whole_echoed_run_goes_not_just_its_substantive_lines(self):
+        """Half a duplicate is still a duplicate.
+
+        The run here is a blank line then a comment. Only the comment is
+        evidence of an echo, but both are in the file already, so leaving the
+        blank behind would splice an extra one in.
+        """
+        block = _ctx_block(after="\n# next thing\ndef other():\n")
+        trim = conflicts.trim_echoed_context(
+            "    return a + b\n\n# next thing\n", block,
+        )
+        assert trim.text == "    return a + b\n"
+
+    def test_a_resolution_that_is_nothing_but_echo_is_not_repaired(self):
+        """There is no resolution under the echo to recover."""
+        trim = conflicts.trim_echoed_context(_AFTER, _ctx_block())
+        assert not trim.ok
+
+
+class TestParseChunkedRepairsEchoedContext:
+    """The repair reached through the parser the resolver actually calls."""
 
     def _stdout(self, body: str, n: int = 1) -> str:
         return (
@@ -244,22 +399,42 @@ class TestParseChunkedRejectsEchoedContext:
             f"{conflicts.RESOLVE_END}_{n}\n"
         )
 
-    def test_rejects_a_resolution_that_echoed_its_context(self):
-        result, reason = conflicts.parse_chunked_resolutions(
+    def test_it_repairs_a_resolution_that_echoed_its_context(self):
+        """The echo was measured exactly and then thrown away; now it is fixed."""
+        parsed = conflicts.parse_chunked_resolutions(
             self._stdout("    return a + b\n" + _AFTER), [_ctx_block()],
         )
-        assert result is None
-        assert rebase_types.ParseFailure.ECHOED_CONTEXT in reason
+        assert parsed.ok
+        assert parsed.repaired == 1
+        assert parsed.resolutions == ["    return a + b\n"]
 
-    def test_accepts_the_same_resolution_without_the_echo(self):
-        result, reason = conflicts.parse_chunked_resolutions(
+    def test_a_repaired_resolution_splices_without_duplicating(self):
+        """The damage the repair exists to prevent, asserted on the output."""
+        content = (
+            "def head():\n    pass\n"
+            "<<<<<<< HEAD\n    return a\n=======\n    return b\n>>>>>>> abc\n"
+            "\n# next thing\ndef other():\n    pass\n"
+        )
+        block = conflicts.extract_conflict_blocks(content)[0]
+        echoed = "    return a + b\n" + block.context_after
+
+        parsed = conflicts.parse_chunked_resolutions(
+            self._stdout(echoed), [block],
+        )
+        assert parsed.ok
+        spliced = conflicts.splice_resolutions(content, [block], parsed.resolutions)
+        assert spliced.count("def other():") == 1
+        assert spliced.count("# next thing") == 1
+
+    def test_it_accepts_the_same_resolution_without_the_echo(self):
+        parsed = conflicts.parse_chunked_resolutions(
             self._stdout("    return a + b\n"), [_ctx_block()],
         )
-        assert reason == ""
-        assert result == ["    return a + b\n"]
+        assert parsed.reason == ""
+        assert parsed.repaired == 0
+        assert parsed.resolutions == ["    return a + b\n"]
 
-    def test_names_the_block_that_echoed(self):
-        """Which block failed, so a retry's diagnosis is not a guess."""
+    def test_it_counts_only_the_blocks_it_repaired(self):
         blocks = [
             rebase_types.ConflictBlock(
                 index=1, start=0, end=4, conflict=_CONFLICT,
@@ -271,9 +446,87 @@ class TestParseChunkedRejectsEchoedContext:
             self._stdout("fine\n", 1)
             + self._stdout("    return a + b\n" + _AFTER, 2)
         )
-        result, reason = conflicts.parse_chunked_resolutions(stdout, blocks)
-        assert result is None
-        assert "block_2" in reason
+        parsed = conflicts.parse_chunked_resolutions(stdout, blocks)
+        assert parsed.ok
+        assert parsed.repaired == 1
+        assert parsed.resolutions == ["fine\n", "    return a + b\n"]
+
+    def test_a_wholly_echoed_block_fails_and_names_itself(self):
+        """The one echo trimming cannot repair goes back to the model."""
+        blocks = [
+            rebase_types.ConflictBlock(
+                index=1, start=0, end=4, conflict=_CONFLICT,
+                context_before="", context_after="",
+            ),
+            _ctx_block(),
+        ]
+        stdout = self._stdout("fine\n", 1) + self._stdout(_AFTER, 2)
+        parsed = conflicts.parse_chunked_resolutions(stdout, blocks)
+        assert not parsed.ok
+        assert rebase_types.ParseFailure.WHOLLY_ECHOED in parsed.reason
+        assert "block_2" in parsed.reason
+
+
+class TestBlockMarkersAreMatchedOnBoundaries:
+    """`<<<RESOLVED>>>_1` is a prefix of `<<<RESOLVED>>>_11`.
+
+    A plain substring search reads block 11's answer into block 1 in any file
+    with ten or more conflicts, which is exactly the size of file the chunked
+    path is chosen for.
+    """
+
+    def _blocks(self, n: int) -> list:
+        return [
+            rebase_types.ConflictBlock(
+                index=i + 1, start=0, end=1,
+                conflict="<<<<<<< HEAD\n>>>>>>> abc\n",
+                context_before="", context_after="",
+            )
+            for i in range(n)
+        ]
+
+    def _answer(self, order: list[int]) -> str:
+        return "".join(
+            f"{conflicts.RESOLVE_BEGIN}_{i}\nR{i}\n"
+            f"{conflicts.RESOLVE_END}_{i}\n"
+            for i in order
+        )
+
+    def test_block_one_is_not_read_from_block_eleven(self):
+        """Out of order, because in order the bug hides behind `find`.
+
+        A substring search returns the *earliest* match, so an answer emitted
+        1..11 finds block 1's own marker first and the defect is invisible.
+        Models do not reliably emit in order, and when block 11 comes first its
+        resolution is what block 1 gets — or the span runs backwards and the
+        block is reported missing.
+        """
+        blocks = self._blocks(11)
+        parsed = conflicts.parse_chunked_resolutions(
+            self._answer([11, *range(1, 11)]), blocks,
+        )
+        assert parsed.ok
+        assert parsed.resolutions[0] == "R1\n"
+        assert parsed.resolutions[10] == "R11\n"
+
+    def test_an_in_order_answer_still_parses(self):
+        """The back-compat half: the common answer shape is unaffected."""
+        blocks = self._blocks(11)
+        parsed = conflicts.parse_chunked_resolutions(
+            self._answer(list(range(1, 12))), blocks,
+        )
+        assert parsed.ok
+        assert parsed.resolutions[0] == "R1\n"
+        assert parsed.resolutions[10] == "R11\n"
+
+    def test_a_missing_block_one_is_not_satisfied_by_block_eleven(self):
+        """The substring match did not only misread — it hid a real absence."""
+        blocks = self._blocks(11)
+        parsed = conflicts.parse_chunked_resolutions(
+            self._answer(list(range(2, 12))), blocks,
+        )
+        assert not parsed.ok
+        assert parsed.reason.endswith("_1")
 
 
 class TestTheDuplicatedFunctionRegression:
@@ -306,13 +559,25 @@ class TestTheDuplicatedFunctionRegression:
             + self.HELPER
         )
 
-    def test_the_echoing_resolution_is_rejected(self):
+    # passes-at-base: the pre-existing detection, kept as the premise the new repair acts on
+    def test_the_echoing_resolution_is_caught(self):
         content = self._file()
         block = conflicts.extract_conflict_blocks(content)[0]
         echoed = "    report_missing_xdist\n" + block.context_after
 
         n = conflicts.echoed_context_lines(echoed, block)
         assert n > conflicts.MAX_ECHOED_CONTEXT_LINES
+
+    def test_the_echo_is_trimmed_back_to_the_resolution(self):
+        """Caught is no longer the end of it — the repair is exact."""
+        content = self._file()
+        block = conflicts.extract_conflict_blocks(content)[0]
+        echoed = "    report_missing_xdist\n" + block.context_after
+
+        trim = conflicts.trim_echoed_context(echoed, block)
+        assert trim.ok
+        spliced = conflicts.splice_resolutions(content, [block], [trim.text])
+        assert spliced.count("report_missing_xdist() {") == 1
 
     # passes-at-base: asserts the unchanged splice behaviour the guard exists to keep unreached
     def test_splicing_it_would_have_duplicated_the_function(self):

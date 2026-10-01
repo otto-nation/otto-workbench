@@ -51,10 +51,16 @@ class RefusalSignal(StrEnum):
     """Which check refused the rebase.
 
     The first three found the branch's work already present in the target ref;
-    ``NO_MERGE_BASE`` and ``CONFLICTS_OVER_BUDGET`` found the rebase itself
-    unsafe to run against that ref. ``TRACKER_REFUSED`` found neither — it
-    refuses because whether the branch landed could not be determined at all,
-    the one signal that refuses on an absence rather than on evidence.
+    ``NO_MERGE_BASE``, ``PARTIALLY_LANDED`` and the two budget signals found
+    the rebase itself unsafe to run against that ref. ``TRACKER_REFUSED``
+    found neither — it refuses because whether the branch landed could not be
+    determined at all, the one signal that refuses on an absence rather than
+    on evidence.
+
+    ``PARTIALLY_LANDED`` is the only one whose remedy the tool can carry out
+    itself: it names the ref to pass to ``--fork-point``, which turns the
+    replay into ``git rebase --onto <base> <ref>`` and skips the prefix that
+    already landed.
 
     The landed three take their wire values from ``branch_landed``, which owns
     both the checks and their names — ``push_intent`` reports on the same three
@@ -65,7 +71,9 @@ class RefusalSignal(StrEnum):
     EMPTY_DIFF = branch_landed.LandedSignal.EMPTY_DIFF.value
     COMMITS_UPSTREAM = branch_landed.LandedSignal.COMMITS_UPSTREAM.value
     NO_MERGE_BASE = "no_merge_base"
+    PARTIALLY_LANDED = "partially_landed"
     CONFLICTS_OVER_BUDGET = "conflicts_over_budget"
+    RESOLUTIONS_OVER_BUDGET = "resolutions_over_budget"
     TRACKER_REFUSED = "tracker_refused"
 
 
@@ -77,7 +85,15 @@ class ParseFailure(StrEnum):
     END_BEFORE_BEGIN = "end_before_begin"
     SURVIVING_CONFLICT_MARKER = "surviving_conflict_marker"
     MISSING_BLOCK_MARKERS = "missing_markers_for_block"
-    ECHOED_CONTEXT = "echoed_context"
+    # An echo that trimming cannot repair: every line the model returned came
+    # from the context, so removing the echo removes the resolution with it.
+    #
+    # There is no member for an ordinary echo, and deliberately so: one is
+    # trimmed and the resolution used, which is a repair rather than a parse
+    # failure. A member for it would be vocabulary no parser can produce,
+    # which reads to the next person as a live failure mode that simply never
+    # fires — see `conflicts.trim_echoed_context`.
+    WHOLLY_ECHOED = "wholly_echoed_context"
 
 
 class RunMode(StrEnum):
@@ -139,15 +155,120 @@ class ConflictPlan:
 
 
 @dataclass(frozen=True)
+class EchoSide:
+    """One boundary's overlap between a resolution and the context beside it.
+
+    Two numbers rather than one because they answer different questions.
+    ``run`` is how many lines the overlap spans, which is what a repair has to
+    remove — the whole run is duplicated in the spliced file, so a partial trim
+    leaves half a duplicate behind. ``substantive`` is how much of that run is
+    *evidence* of an echo rather than filler both sides produce independently,
+    which is what decides whether to repair at all.
+
+    Keeping them apart is what lets a one-line coincidence be tolerated while a
+    three-line run containing one real echoed line is removed entire.
+    """
+
+    run: int = 0
+    substantive: int = 0
+
+    @property
+    def echoed(self) -> bool:
+        """Whether this side's overlap is read as an echo rather than a coincidence."""
+        return self.substantive > MAX_ECHOED_CONTEXT_LINES
+
+
+@dataclass(frozen=True)
+class ContextEcho:
+    """How much of a block's context a resolution repeated back, on each side."""
+
+    head: EchoSide = field(default_factory=EchoSide)
+    tail: EchoSide = field(default_factory=EchoSide)
+
+    @property
+    def found(self) -> bool:
+        return self.head.echoed or self.tail.echoed
+
+    @property
+    def lines(self) -> int:
+        """The larger side's substantive count — what a failure reason reports.
+
+        The larger rather than the sum: with the budget at zero either side
+        alone already fails, so the two can never combine into a verdict
+        neither reaches on its own.
+        """
+        return max(self.head.substantive, self.tail.substantive)
+
+
+@dataclass(frozen=True)
+class Trim:
+    """A resolution with any echoed context removed, and what came off.
+
+    ``ok`` is False for the one echo trimming cannot repair: a resolution that
+    was *entirely* context, where removing the echo leaves nothing to splice.
+    That is not a resolution with a flaw to fix, it is an answer that never
+    resolved anything, and it goes back to the model.
+    """
+
+    text: str = ""
+    head: int = 0
+    tail: int = 0
+    ok: bool = True
+
+    @property
+    def trimmed(self) -> int:
+        """How many echoed lines were removed."""
+        return self.head + self.tail
+
+
+@dataclass(frozen=True)
+class ChunkedResolutions:
+    """Per-block resolutions parsed out of one chunked answer.
+
+    A type rather than the pair this returned, because the parser now reports a
+    third thing: how many blocks it repaired on the way through. A caller wants
+    the resolutions, the failure reason and the repair count, and a tuple that
+    grew to three would have broken every call site to say so.
+    """
+
+    resolutions: list[str] | None = None
+    reason: str = ""
+    repaired: int = 0
+
+    @property
+    def ok(self) -> bool:
+        return self.resolutions is not None
+
+
+@dataclass(frozen=True)
 class Resolution:
-    """Files resolved in one rebase step, and which of those have stale content.
+    """Files resolved in one rebase step, and which of those went wrong.
 
     A file is stale when it was staged from the incoming side but its
     regeneration command failed, so it never got merged with the target
     branch's changes.
+
+    A file is *failed* when nothing resolved it at all — the AI's answer would
+    not parse twice over, the file is binary, or a git command refused. The
+    step carries on past one rather than returning nothing: every other file in
+    the step is resolvable, and abandoning them throws away work the run has
+    already paid for. What the caller does with a non-empty ``failed`` is stop
+    *without* aborting, so the resolutions already staged survive for the
+    resume — see `lifecycle.step_conflicts`.
     """
     files: list[str] = field(default_factory=list)
     stale: list[str] = field(default_factory=list)
+    failed: list[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        """No conflicted file in the step was an outright failure.
+
+        A file in ``stale`` still makes this True: it was staged, just with a
+        regenerate command that failed, so it is resolved-with-a-caveat rather
+        than resolved clean.
+        """
+        return not self.failed
 
 
 @dataclass
@@ -155,12 +276,24 @@ class ResolutionTally:
     """Files resolved and commits that conflicted across a whole rebase."""
     files: list[str] = field(default_factory=list)
     stale: list[str] = field(default_factory=list)
+    failed: list[str] = field(default_factory=list)
     commits: int = 0
 
     def absorb(self, resolution: Resolution) -> None:
         """Fold one step's resolution into the running totals."""
         self.files.extend(resolution.files)
         self.stale.extend(resolution.stale)
+        self.failed.extend(resolution.failed)
+
+    @property
+    def spread(self) -> int:
+        """Distinct files this rebase has conflicted in so far."""
+        return len(set(self.files))
+
+    @property
+    def depth(self) -> int:
+        """Resolution calls this rebase has spent — one per file per commit."""
+        return len(self.files)
 
 
 @dataclass(frozen=True)
@@ -193,11 +326,79 @@ class RefDivergence:
 
 
 REFUSAL_EXIT = 4
+CONFLICTS_EXIT = 3
 REFUSAL_OVERRIDE_FLAG = "--force"
 CONFLICT_FILE_BUDGET = 20
+
+# The second half of the breaker, and the one that measures the cost. The file
+# budget above bounds how *wide* a rebase conflicts; this bounds how *much* it
+# spends, because the two come apart badly on a long branch: nine files
+# conflicting in each of seven replayed commits reads as a spread of nine
+# forever — well inside the file budget — while the run makes sixty-three AI
+# calls against a branch whose work had already landed in another shape.
+#
+# Twice the file budget, derived rather than picked: a rebase may meet every
+# file in its permitted spread twice over before this fires. A branch that
+# genuinely conflicts more than that in the same files is replaying its own
+# history against a base that already holds it, which is the case the refusal
+# exists to stop.
+CONFLICT_RESOLUTION_BUDGET = 2 * CONFLICT_FILE_BUDGET
+
 MAX_REBASE_STEPS = 500
 REGEN_MESSAGE = "chore: regenerate after rebase"
 UNPUSHED_SUBJECT_LIMIT = 10
+
+# How many *substantive* context lines a resolution may repeat before it is read
+# as having echoed the context back rather than resolved the conflict.
+#
+# Zero, because the count this is measured against already discounts everything
+# that matches by coincidence: lines the conflict region itself held, and the
+# blank lines and bare block-closers `conflicts._STRUCTURAL_LINES` names. What
+# is left is a line that says something, sitting outside the region being
+# replaced and reproduced anyway — for which there is no innocent explanation,
+# so one is enough.
+#
+# The budget belongs on substantive lines rather than raw matched ones. Against
+# raw lines it has to be loose enough for a resolution that ends where the
+# context begins, and a threshold loose enough for two coincidental blanks is
+# also loose enough for a real one-line echo to pass.
+#
+# ceiling: an exact-match line filter, which cannot see a resolution that echoes
+# its context with the indentation changed or a comment reflowed. Upgrade to a
+# similarity ratio if a rejected-then-retried resolution is ever traced to an
+# echo this missed on the first pass.
+MAX_ECHOED_CONTEXT_LINES = 0
+
+# rerere is held off for the whole of an AI-resolved rebase, and the `false` is
+# load bearing — omitting the key does not do this.
+#
+# git enables rerere on its own whenever `$GIT_DIR/rr-cache` exists, so once any
+# run has created that directory the feature is on for good, with no config
+# entry anywhere naming it. Only an explicit `false` overrides the auto-detect.
+#
+# What that cost when it was on: every conflict the AI resolved was recorded
+# into the cache as the postimage for that hunk, unreviewed. `rr-cache` lives in
+# the *common* directory, so one cache is shared by every worktree of the repo,
+# and a later plain `git rebase` — no AI, no prompt, rerere unset in the
+# operator's own config — silently replays it. That is how a resolution that
+# duplicated a shell function came back after being fixed by hand.
+#
+# It lives here, in the module every other one in `rebase/` already imports,
+# because a merge git performs on this run's behalf is not only a `git rebase`:
+# `git stash pop` replays the worktree onto the rewritten branch and is as able
+# to reuse a cached resolution as any rebase step. Holding it off in `lifecycle`
+# alone left that one uncovered, which is the same regression in a second
+# doorway — so the constant sits where both doors can reach it rather than
+# being re-derived beside each.
+#
+# The reuse this gives up was measured before it was removed rather than assumed
+# away: at the time, the trail held 371 conflict resolutions and no replay at
+# all. The standing reason behind that number is structural — rerere keys on the
+# exact hunk and a rebase meets each distinct conflict once, so the cache can
+# only pay off across runs, which is the same cross-run reach that made it
+# unsafe. Re-measure with `otto-log` before reviving this; do not trust the
+# count above to have stayed true.
+RERERE_CONFIG = {"rerere.enabled": "false"}
 
 
 # ── Report payloads ─────────────────────────────────────────────────────────
@@ -295,6 +496,12 @@ class RefusalReport:
     pr_number: int | None = None
     status: str = RebaseStatus.ALREADY_LANDED.value
     override: str = REFUSAL_OVERRIDE_FLAG
+    # The command that resolves this refusal without waiving it, for the one
+    # refusal that has one. Empty everywhere else, so a caller reads "there is
+    # a narrower way to do what you asked" from its presence rather than from
+    # knowing which signal fired. `override` remains the blunt way out of any
+    # of them.
+    remedy: str = ""
 
     def emit(self) -> None:
         core_report.emit_json(asdict(self))

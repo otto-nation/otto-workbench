@@ -9,7 +9,7 @@ and nothing pushed, which is the guarantee the whole module exists to keep.
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 
 from core import log
 from core.trail import Trail, terr
@@ -23,12 +23,33 @@ from . import inspect as rebase_inspect
 from . import pr_snapshot as rebase_pr_snapshot
 from . import types as rebase_types
 
-CONFLICT_FILE_BUDGET = rebase_types.CONFLICT_FILE_BUDGET
+# The budgets themselves are not re-exported here. This module renders a
+# breach its caller already measured, and an alias nothing in the file reads is
+# a second place for the next reader to look for the number's owner.
 REFUSAL_EXIT = rebase_types.REFUSAL_EXIT
 REFUSAL_OVERRIDE_FLAG = rebase_types.REFUSAL_OVERRIDE_FLAG
 RebaseOutcome = rebase_types.RebaseOutcome
 RefusalReport = rebase_types.RefusalReport
 RefusalSignal = rebase_types.RefusalSignal
+
+# The flag that turns a refusal into a narrower replay rather than waiving it.
+# Named here because both the refusal text and the CLI must spell it the same,
+# and a remedy naming a flag that does not parse is the dead end the partial
+# landing signal was added to avoid.
+FORK_POINT_FLAG = "--fork-point"
+
+
+@dataclass(frozen=True)
+class BudgetBreach:
+    """Which conflict budget a step would cross, and what it would have spent.
+
+    Two budgets share one refusal status, so the caller passes the signal that
+    fired alongside the sentence describing it rather than letting this module
+    guess which count was the one that ran out.
+    """
+
+    signal: RefusalSignal
+    detail: str
 
 
 def as_refusal(
@@ -139,6 +160,45 @@ def git_landed_check(
     )
 
 
+def partially_landed_check(
+    cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str,
+) -> RefusalReport | None:
+    """Refuse a branch whose leading commits are already in the target ref.
+
+    The gap between the two landed signals. Both of those ask whether the
+    branch's work is *entirely* upstream, so a branch with six landed commits
+    and one unlanded reads to them exactly like a branch that landed nothing —
+    `git cherry` reports a `+` for the seventh and `all(...)` is False. There
+    is no count of unique commits at which that stops being true; a branch with
+    one commit left is structurally incapable of tripping it.
+
+    Replaying such a branch reapplies the landed prefix on top of itself, which
+    conflicts every one of those commits against the version of itself already
+    in the base — the shape that spends a resolution call per file per commit
+    and ends by rewriting the base's copy back to the branch's.
+
+    Unlike every other refusal here, this one has a remedy the tool can carry
+    out: the fork point it names is what `--fork-point` takes, and the replay
+    becomes `git rebase --onto <base> <fork-point>`. See
+    `branch_landed.partial_landing` for how the prefix is identified.
+    """
+    partial = branch_landed.partial_landing(cwd, target_ref=target_ref)
+    if partial is None:
+        return None
+    return RefusalReport(
+        branch=ctx.branch,
+        signal=RefusalSignal.PARTIALLY_LANDED.value,
+        detail=(
+            f"{partial.landed} of {partial.total} commit(s) are already in "
+            f"{target_ref} — the branch forked at {partial.fork_point} "
+            f"({partial.fork_subject})"
+        ),
+        commits_ahead=partial.total,
+        status=RebaseStatus.PARTIALLY_LANDED.value,
+        remedy=f"{FORK_POINT_FLAG} {partial.fork_point}",
+    )
+
+
 def unrelated_history_check(
     cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str,
 ) -> RefusalReport | None:
@@ -177,6 +237,11 @@ REFUSAL_HINTS = {
         "A branch conflicting this widely with {ref} has usually had its work "
         "land in another shape. Resolving that many conflicts unattended "
         "rewrites files the branch never touched.",
+    RebaseStatus.PARTIALLY_LANDED.value:
+        "Replaying the whole branch would reapply the commits already in "
+        "{ref} on top of themselves, conflicting each against its own landed "
+        "version. Replay only what is left instead — the fork point to skip "
+        "to is in the refusal above.",
     RebaseStatus.TRACKER_UNREAD.value:
         "Whether this branch's PR already merged is the one thing a squash "
         "merge leaves no trace of in git, and the quota to ask ran out. "
@@ -193,6 +258,11 @@ def refuse(
     terr(trail, "preflight", f"refusing to rebase ({report.signal})", data=asdict(report))
     log.error(f"Refusing to rebase {report.branch} — {report.detail}.")
     log.dim(REFUSAL_HINTS[report.status].format(ref=target_ref))
+    # The narrower way out before the blunt one, where there is a narrower way.
+    # `--force` waives every check at once, so offering it first to a refusal
+    # that has an exact remedy trains the operator to reach past the fix.
+    if report.remedy:
+        log.dim(f"Re-run with {report.remedy} to replay only what is left.")
     log.dim(f"Pass {REFUSAL_OVERRIDE_FLAG} to rebase it anyway.")
     RebaseOutcome(status=RebaseStatus(report.status), target_base=target_ref).save(ctx)
     report.emit()
@@ -200,21 +270,24 @@ def refuse(
 
 
 def refuse_over_budget(
-    cwd: str, ctx: pr_context.ResolvedContext, spread: int, *, target_ref: str,
-    trail: Trail | None = None,
+    cwd: str, ctx: pr_context.ResolvedContext, breach: BudgetBreach, *,
+    target_ref: str, trail: Trail | None = None,
 ) -> int:
-    """Abort a rebase conflicting too widely to be resolved unattended.
+    """Abort a rebase conflicting too widely, or too often, to resolve unattended.
 
-    The only refusal raised mid-rebase rather than in the preflight: how far a
-    branch and its base have diverged is not knowable until git says so. The
-    abort restores the branch, so the refusal leaves the worktree where the
-    preflight refusals do — untouched, with nothing pushed.
+    The only refusals raised mid-rebase rather than in the preflight: how far a
+    branch and its base have diverged, and how many resolutions that costs, are
+    not knowable until git says so. The abort restores the branch, so the
+    refusal leaves the worktree where the preflight refusals do — untouched,
+    with nothing pushed.
+
+    Both budgets share ``CONFLICTS_OVER_BUDGET`` as their status, since the
+    operator's options are identical, and differ in ``signal``, which is what
+    says which count ran out.
     """
     git_client.run("rebase", "--abort", cwd=cwd)
     return refuse(ctx, RefusalReport(
-        branch=ctx.branch, signal=RefusalSignal.CONFLICTS_OVER_BUDGET.value,
-        detail=f"conflicts in {spread} files, over the "
-               f"{CONFLICT_FILE_BUDGET}-file budget",
+        branch=ctx.branch, signal=breach.signal.value, detail=breach.detail,
         status=RebaseStatus.CONFLICTS_OVER_BUDGET.value,
     ), target_ref=target_ref, trail=trail)
 

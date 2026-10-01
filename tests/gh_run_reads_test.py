@@ -431,7 +431,6 @@ def test_an_unreadable_ref_falls_back_to_the_api_rather_than_reporting_current()
     api.assert_called_once()
 
 
-# passes-at-base: back-compat — a bare repo must still get a real answer, not the silent zero that reads as current with the trunk
 def test_without_a_worktree_the_api_is_still_asked():
     """A bare-repo dashboard has no git to count with, so GitHub is asked both for the trunk's name and the comparison."""
     def fake_api(endpoint, jq="", **kwargs):

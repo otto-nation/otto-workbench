@@ -418,24 +418,27 @@ def test_a_rollup_with_a_check_still_running_is_asked_again():
     assert result.merged["conclusion"] == "failure"
 
 
-def test_a_truncated_rollup_is_not_cached_even_when_every_check_is_completed():
-    """A truncated rollup must not be cached just because every check it did
-    read is `completed` — the page it never reached could hold a check that
-    never got read at all, completed or not.
+def test_a_truncated_poll_is_retried_and_the_fuller_answer_wins():
+    """A poll that could not read every page must not have its partial verdict stand.
 
-    Regression test for the gap where `_checks_settled` cached on `answered`
-    and the external jobs it had without checking `truncated`, so a rollup cut
-    short by a transient page failure got treated as settled and a check on an
-    unread page was never surfaced for the rest of the wait.
+    Named for what it now holds: the rollup cache and `_checks_settled` this
+    case was originally written against are both gone, so "not cached" is no
+    longer the mechanism. What matters is unchanged and is still worth
+    pinning — a truncated read marks the poll incomplete, the loop spends a
+    pass re-reading it, and the check that only the fuller page carried
+    decides the verdict.
     """
-    in_progress = _run("in_progress", "", [
-        {"name": "Test", "conclusion": None, "databaseId": 11, "status": "in_progress"},
-    ])
+    # The Actions run is finished on the *first* poll, so the truncated
+    # rollup is the only thing left that could send the loop round again.
+    # With a run still in progress the second poll happens regardless and the
+    # test would pass without the retry it is named for ever running.
     done = _run("completed", "success", [
         {"name": "Test", "conclusion": "success", "databaseId": 11, "status": "completed"},
     ])
-    run_payloads = iter((in_progress, done))
-    completed_check = {"name": "CodeQL", "databaseId": 0, "status": "completed",
+    # databaseId 99 rather than 0: `_external_failure` only looks up
+    # annotations for a check that has an id, so a zero here would make any
+    # `fetch_annotations` patch dead and read as coverage that is not there.
+    completed_check = {"name": "CodeQL", "databaseId": 99, "status": "completed",
                        "conclusion": "success", "steps": [], "_check_source": "check_run"}
     failed_check = {**completed_check, "conclusion": "failure"}
     rollups = iter((
@@ -443,18 +446,17 @@ def test_a_truncated_rollup_is_not_cached_even_when_every_check_is_completed():
         run_reads.CommitChecks(answered=True, truncated=False, external=(failed_check,)),
     ))
 
-    with patch("gh.run_reads.fetch_run_data", side_effect=lambda repo, rid: next(run_payloads)), \
+    with patch("gh.run_reads.fetch_run_data", return_value=done), \
          patch("gh.run_reads.fetch_commit_checks",
                side_effect=lambda repo, sha: next(rollups)) as fetch_checks, \
-         patch("gh.run_reads.fetch_annotations", return_value=[]), \
+         patch("gh.run_reads.fetch_annotations", return_value=[]) as fetch_annotations, \
          patch("pr.ci_wait.time.sleep"):
         result = _poll(run_id=555, head_sha="currenthead")
 
-    # The truncated first rollup must be re-asked on the second poll rather
-    # than served from cache — if it were cached, the second poll would reuse
-    # the "success" verdict and never see the check an unread page flipped.
     assert [c.args[1] for c in fetch_checks.call_args_list] == ["abc123", "abc123"]
+    fetch_annotations.assert_called_once_with("owner/repo", 99)
     assert result.merged["conclusion"] == "failure"
+    assert result.merged.get("_unread", ()) == ()
 
 
 def test_the_rollup_is_re_read_every_poll():

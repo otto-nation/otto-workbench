@@ -34,6 +34,15 @@ Three things are checked:
      function that also reaches `pr.state` captures the package, and the call
      fails at runtime rather than at import.
 
+A fourth check covers shell. `tests/*.bats` embeds Python in heredocs, which
+no AST can see, and a reach-through survived there through three green runs of
+everything else: `mod.agent_templates` in `review_orchestrate_prompt.bats`,
+where `agent_templates` was `cli.review_orchestrate`'s alias for
+`agent.templates`. The retired names cannot be listed — they no longer exist —
+but they can be *derived*: `<package>_<module>` naming a real pair is the
+shape every one of them had. Anchored on a leading dot, so it matches an
+attribute reach-through and not a variable that merely reads that way.
+
 Importing a *symbol* is untouched: `from pr.state import PRState` binds a
 class, not a module, and is the normal way to reach one.
 
@@ -45,6 +54,7 @@ from __future__ import annotations
 import argparse
 import ast
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,6 +66,7 @@ from repo_scan import BASE_SKIP_DIRS  # noqa: E402
 
 LIB_DIR = Path("ai") / "lib"
 SCAN_ROOTS = ("ai", "tests", "lib", "bin")
+SHELL_SUFFIXES = (".bats", ".bash", ".sh")
 SKIP_DIRS = BASE_SKIP_DIRS | {"__pycache__", ".venv", "venv"}
 
 
@@ -193,6 +204,32 @@ def _shadow_findings(tree: ast.Module, layout: Layout):
             yield from _captures_in(fn, bound, layout)
 
 
+def _retired_alias_names(layout: Layout) -> dict[str, str]:
+    """`{pkg_mod: pkg.mod}` — the shape every retired alias had.
+
+    Derived rather than listed. The names are gone from the tree, so a list
+    would be a second copy of history that nothing keeps true.
+    """
+    return {f"{pkg}_{mod}": f"{pkg}.{mod}"
+            for pkg, mods in layout.modules.items() for mod in mods}
+
+
+def check_shell(source: str, layout: Layout) -> list[Finding]:
+    """Reach-throughs in the Python that shell files embed in heredocs."""
+    retired = _retired_alias_names(layout)
+    if not retired:
+        return []
+    pattern = re.compile(r"\.(" + "|".join(map(re.escape, retired)) + r")\b")
+    found = []
+    for number, line in enumerate(source.splitlines(), 1):
+        for match in pattern.finditer(line):
+            name = match.group(1)
+            found.append(Finding(number,
+                                 f".{name} — {name} was an alias for "
+                                 f"{retired[name]}; reach the module directly"))
+    return found
+
+
 def check_source(source: str, layout: Layout) -> list[Finding]:
     try:
         tree = ast.parse(source)
@@ -219,7 +256,7 @@ def _python_under(base: Path):
     for path in sorted(base.rglob("*")):
         if path.is_dir() or SKIP_DIRS & set(path.parts):
             continue
-        if _is_python(path):
+        if _is_python(path) or path.suffix in SHELL_SUFFIXES:
             yield path
 
 
@@ -257,7 +294,9 @@ def main(argv: list[str] | None = None) -> int:
 
     failed = 0
     for path in files:
-        findings = check_source(path.read_text(errors="replace"), layout)
+        source = path.read_text(errors="replace")
+        findings = (check_shell(source, layout) if path.suffix in SHELL_SUFFIXES
+                    else check_source(source, layout))
         relpath = os.path.relpath(path, repo_root)
         failed += 1 if findings else 0
         _report(relpath, findings, args.quiet)

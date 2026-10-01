@@ -154,3 +154,35 @@ class TestTheCheckerItself:
             and val.check_source(path.read_text(), layout)
         ]
         assert offenders == []
+
+
+class TestEmbeddedPythonInShell:
+    """The gap that let `mod.agent_templates` survive three green runs.
+
+    A `.bats` heredoc holds Python no AST sees. The retired names cannot be
+    listed because they no longer exist, so the check derives the shape they
+    all had: `<package>_<module>` naming a real pair, reached through a dot.
+    """
+
+    def test_a_reach_through_in_a_heredoc_is_caught(self):
+        source = 'result=$(_py \'\nresult = mod.pr_state.load_state()\n\')\n'
+        found = [f.reason for f in val.check_shell(source, LAYOUT)]
+        assert len(found) == 1
+        assert "pr_state was an alias for pr.state" in found[0]
+
+    def test_the_qualified_form_in_a_heredoc_is_fine(self):
+        source = 'result=$(_py \'\nimport pr.state\nresult = pr.state.load_state()\n\')\n'
+        assert val.check_shell(source, LAYOUT) == []
+
+    def test_a_pair_that_names_no_real_module_is_not_flagged(self):
+        """`pr_helpers` is not a module here, so it is somebody's variable."""
+        assert val.check_shell("echo $x.pr_helpers\n", LAYOUT) == []
+
+    def test_a_bare_word_without_the_dot_is_somebody_elses_name(self):
+        """`go.mod` and a local called `pr_state` are not reach-throughs."""
+        assert val.check_shell('echo "module example.com/x" > go.mod\n', LAYOUT) == []
+        assert val.check_shell("pr_state=1\n", LAYOUT) == []
+
+    def test_every_line_is_reported_not_just_the_first(self):
+        source = "a.pr_state\nb.gh_client\n"
+        assert len(val.check_shell(source, LAYOUT)) == 2

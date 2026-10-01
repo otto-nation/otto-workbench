@@ -41,6 +41,7 @@ import pr.state
 import review.completion
 import review.run
 import review.worktree
+import review.paths
 from review.paths import review_file_path
 from review.pipeline import DEFAULT_MAX_PARALLEL
 from review.summary import json_summary
@@ -318,9 +319,7 @@ def _run_self_review_body(
     # the remote head, so ctx.head_sha can predate the commit the pipeline recorded.
     recover_head_sha = pr.context.head_sha(wt_path) if recover else ""
 
-    repo_name = repo.split("/")[-1]
-    branch_sanitized = (ctx.branch or "").replace("/", "-")
-    review_dir = core.workbench_paths.reviews_dir() / f"{repo_name}-self-{branch_sanitized}"
+    review_dir = review.paths.self_review_dir(repo, ctx.branch or "")
     review_dir.mkdir(parents=True, exist_ok=True)
 
     trail = Trail.start(

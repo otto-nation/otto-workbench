@@ -22,8 +22,27 @@ from core import publishing  # noqa: E402
 from git.land import CommitStatus  # noqa: E402
 from pr import ci_annotations  # noqa: E402
 from pr import ci_failures as ci  # noqa: E402
+from gh import run_reads  # noqa: E402
 from pr import ci_runs  # noqa: E402
 from pr.ci_report import CIReport  # noqa: E402
+
+
+def _row(run_id, **kw):
+    """A `gh run list` row for a run whose payload the test supplies itself."""
+    return run_reads.RunRow(run_id=run_id, **kw)
+
+
+@pytest.fixture(autouse=True)
+def _no_rollup():
+    """No commit-check rollup unless a test asks for one.
+
+    An unanswered rollup is what a commit GitHub reports no checks for, so
+    every case below behaves as it did before the rollup existed — and none of
+    them reaches the network to find that out.
+    """
+    with patch("gh.run_reads.fetch_commit_checks",
+               return_value=run_reads.CommitChecks()):
+        yield
 
 
 def _no_log_fallback(kind):
@@ -199,7 +218,7 @@ def test_run_ci_wait_emits_the_final_report(capsys):
         ],
     }
 
-    with patch("gh.run_reads.fetch_latest_run_ids", return_value=[100]), \
+    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery(rows=(_row(100),))), \
          patch("gh.run_reads.fetch_run_data", return_value=run_data), \
          patch("gh.run_reads.fetch_annotations", return_value=[]), \
          patch("pr.ci_annotations.log_fallback",
@@ -216,17 +235,79 @@ def test_run_ci_wait_emits_the_final_report(capsys):
 
 def test_run_ci_wait_leaves_nothing_to_poll_to_the_entry_point():
     """`RunUnavailable` travels to `main`, which owns the exit code."""
-    with patch("gh.run_reads.fetch_latest_run_ids", return_value=[]):
-        with pytest.raises(ci_runs.RunUnavailable, match="No workflow runs found"):
+    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery()):
+        with pytest.raises(ci_runs.RunUnavailable, match="No checks found"):
             ci_check._run_ci_wait(MagicMock(), _wait_args(), make_ctx())
 
 
 def test_run_ci_leaves_nothing_to_report_on_to_the_entry_point():
     """The single-shot path raises the same thing rather than exiting itself."""
     args = _wait_args()
-    with patch("gh.run_reads.fetch_latest_run_ids", return_value=[]):
-        with pytest.raises(ci_runs.RunUnavailable, match="No workflow runs found"):
+    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery()):
+        with pytest.raises(ci_runs.RunUnavailable, match="No checks found"):
             ci_check._run_ci(MagicMock(), args, make_ctx())
+
+
+def test_run_ci_asks_a_pinned_runs_rollup_at_that_runs_own_commit():
+    """`--run <id>` pins a specific run; the rollup must be for that run's
+    commit, not whatever the branch currently sits at.
+
+    Regression test for the defect where `ctx.head_sha` (the branch's current
+    head) was passed to `fetch_merged` even when `--run` pinned a historical
+    run for a different commit — letting an external check answered at the
+    *current* head get merged into a report about the pinned run, silently
+    attributing another commit's verdict to it.
+
+    Not answered by skipping the rollup for a pinned run: that leaves the
+    defect this whole change exists to fix alive on the `--run` path, where a
+    red external check would report green. The run names its own commit once
+    fetched, so the question waits rather than going unasked.
+    """
+    run_data = {
+        "databaseId": 555, "number": 3, "headSha": "runsha",
+        "status": "completed", "conclusion": "success", "jobs": [],
+    }
+    by_sha = {
+        "currenthead": run_reads.CommitChecks(
+            answered=True,
+            external=({"name": "CodeQL", "databaseId": 0, "status": "completed",
+                       "conclusion": "failure", "steps": [],
+                       "_check_source": "check_run"},)),
+        "runsha": run_reads.CommitChecks(answered=True),
+    }
+    args = _wait_args(run=555)
+    ctx = make_ctx(head_sha="currenthead")
+
+    with patch("gh.run_reads.fetch_run_data", return_value=run_data), \
+         patch("gh.run_reads.fetch_commit_checks",
+               side_effect=lambda repo, sha: by_sha[sha]) as fetch_checks, \
+         patch("gh.run_reads.commits_behind_main", return_value=0):
+        report = ci_check._run_ci(MagicMock(), args, ctx)
+
+    assert [c.args[1] for c in fetch_checks.call_args_list] == ["runsha"]
+    assert report.conclusion == "success"
+
+
+def test_a_pinned_runs_own_external_failure_is_still_reported():
+    """The point of asking at all — skipping the rollup here would report green."""
+    run_data = {
+        "databaseId": 555, "number": 3, "headSha": "runsha",
+        "status": "completed", "conclusion": "success", "jobs": [],
+    }
+    checks = run_reads.CommitChecks(
+        answered=True,
+        external=({"name": "CodeQL", "databaseId": 0, "status": "completed",
+                   "conclusion": "failure", "steps": [],
+                   "_check_source": "check_run", "_summary": "1 alert"},))
+    args = _wait_args(run=555)
+
+    with patch("gh.run_reads.fetch_run_data", return_value=run_data), \
+         patch("gh.run_reads.fetch_commit_checks", return_value=checks), \
+         patch("gh.run_reads.fetch_annotations", return_value=[]), \
+         patch("gh.run_reads.commits_behind_main", return_value=0):
+        report = ci_check._run_ci(MagicMock(), args, make_ctx(head_sha="currenthead"))
+
+    assert report.conclusion == "failure"
 
 
 def test_main_reports_a_missing_run_and_exits_one(capsys):
@@ -235,10 +316,10 @@ def test_main_reports_a_missing_run_and_exits_one(capsys):
          patch.object(ci_check.pr_context, "resolve", return_value=make_ctx()), \
          patch.object(ci_check.run_lock, "claim_for_process"), \
          patch.object(ci_check.Trail, "start", return_value=MagicMock()), \
-         patch("gh.run_reads.fetch_latest_run_ids", return_value=[]):
+         patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery()):
         assert ci_check.main([]) == 1
 
-    assert "No workflow runs found" in capsys.readouterr().err
+    assert "No checks found" in capsys.readouterr().err
 
 
 def test_main_takes_no_checkout_lock_without_fix():
@@ -251,7 +332,7 @@ def test_main_takes_no_checkout_lock_without_fix():
          patch.object(ci_check.pr_context, "resolve", return_value=make_ctx()), \
          patch.object(ci_check.run_lock, "claim_for_process") as claim, \
          patch.object(ci_check.Trail, "start", return_value=MagicMock()), \
-         patch("gh.run_reads.fetch_latest_run_ids", return_value=[]):
+         patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery()):
         ci_check.main([])
 
     assert claim.call_args.kwargs["worktree"] is None
@@ -264,7 +345,7 @@ def test_main_takes_the_checkout_lock_with_fix():
          patch.object(ci_check.pr_context, "resolve", return_value=ctx), \
          patch.object(ci_check.run_lock, "claim_for_process") as claim, \
          patch.object(ci_check.Trail, "start", return_value=MagicMock()), \
-         patch("gh.run_reads.fetch_latest_run_ids", return_value=[]):
+         patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery()):
         ci_check.main(["--fix"])
 
     assert claim.call_args.kwargs["worktree"] == ctx.worktree_root

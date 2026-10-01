@@ -80,6 +80,12 @@ class CIReport:
     resolved_since_prior: list[str]
     completed: int | None = None
     total: int | None = None
+    # Why the run's picture may be incomplete. Non-empty means `failures` is
+    # what was found rather than what there is, so a consumer must not read
+    # an empty list as a pass — `status` and `conclusion` say the same thing
+    # less directly, and the skill was reading `failures` alone.
+    unread: tuple[str, ...] = ()
+    status: str = ""
 
     @classmethod
     def build(
@@ -119,6 +125,8 @@ class CIReport:
             run_number=run_state.run_number,
             head_sha=run_state.head_sha,
             conclusion=run_state.conclusion,
+            unread=run_state.unread,
+            status=run_state.status,
             behind_main=behind_main,
             failures=run_state.failures,
             progression=progression,
@@ -138,6 +146,8 @@ class CIReport:
             "run_number": self.run_number,
             "head_sha": self.head_sha,
             "conclusion": self.conclusion,
+            "status": self.status,
+            "unread": list(self.unread),
             "behind_main": self.behind_main,
             "failures": serialize_failures(self.failures, self.progression),
             "progression": {k: v.value for k, v in self.progression.items()},
@@ -163,7 +173,10 @@ def render_dashboard(
     show_status: bool = False,
 ) -> str:
     """Render a human-readable dashboard string for stderr output."""
-    header = f"## CI Run #{run.run_number} ({git_client.abbrev(run.head_sha)})"
+    # A commit can be checked by something that never ran a workflow, and there
+    # is then no run to number. `Run #0` would name one that does not exist.
+    header = (f"## CI Run #{run.run_number} " if run.run_number else "## CI Checks ") \
+        + f"({git_client.abbrev(run.head_sha)})"
     if show_status:
         suffix = "in progress" if run.status != "completed" else "complete"
         header += f" — {suffix}"
@@ -173,9 +186,25 @@ def render_dashboard(
         lines.append(f"Workflow runs: {', '.join(str(r) for r in run_ids)}")
         lines.append("")
 
+    if run.unread:
+        # Printed ahead of everything, and never alongside a pass: these are
+        # the checks nobody could read, and a report that lists failures it
+        # did find while silently omitting what it could not look at is the
+        # false green in its quietest form.
+        lines.append("Could not read every check on this commit:")
+        lines += [f"  - {reason}" for reason in run.unread]
+        lines.append("")
+
     if not run.failures:
-        if run.status != "completed":
+        if run.unread:
+            lines.append("No failures among the checks that were read.")
+        elif run.status != "completed":
             lines.append("Checks still running — results incomplete.")
+        elif run.conclusion and run.conclusion != "success":
+            # A conclusion with nothing under it to name: a run held for
+            # approval, or one whose only failed job produced no reportable
+            # item. Reported as what GitHub said rather than as a pass.
+            lines.append(f"No failures to name, but the run concluded {run.conclusion}.")
         else:
             lines.append("All checks passed.")
         return "\n".join(lines)

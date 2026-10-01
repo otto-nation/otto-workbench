@@ -157,10 +157,29 @@ def update_to_remote(ctx: pr_context.ResolvedContext) -> pr_context.ResolvedCont
         )
         return ctx
 
+    # The default branch rides along on the one fetch. Nothing resets onto it
+    # — it is fetched so that what is measured *against* it is current, which
+    # is how far this branch is behind the trunk. Left out, `origin/<default>`
+    # is whatever the last full fetch left behind and the branch reports
+    # itself nearer the trunk than it is, which is the direction that does
+    # harm: too small a number is a rebase that never fires.
+    default = git_topology.default_branch(cwd)
+    refs = [ctx.branch] if default == ctx.branch else [ctx.branch, default]
     r = subprocess.run(
-        ["git", "-C", cwd, "fetch", "origin", ctx.branch],
+        ["git", "-C", cwd, "fetch", "origin", *refs],
         capture_output=True, text=True, timeout=timeouts.TRANSFER,
     )
+    if r.returncode != 0 and len(refs) > 1:
+        # `default_branch` falls back to a literal guess ("main") when no
+        # candidate has a local remote-tracking ref, and `git fetch` aborts the
+        # whole call — updating nothing, not even the branch — when any named
+        # ref cannot be resolved on the remote. Retried with the branch alone
+        # so a bad guess at the trunk's name cannot take its own fetch down
+        # with it.
+        r = subprocess.run(
+            ["git", "-C", cwd, "fetch", "origin", ctx.branch],
+            capture_output=True, text=True, timeout=timeouts.TRANSFER,
+        )
     if r.returncode != 0:
         return ctx
 

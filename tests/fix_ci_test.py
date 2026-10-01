@@ -336,3 +336,17 @@ def test_the_agent_may_write_the_tracking_file_it_is_judged_on(tmp_path):
     assert adapter.tracking_path.parent in adapter.add_dirs()
     assert adapter.verify_tracking_path(1).parent in adapter.add_dirs()
     assert adapter.workdir in adapter.add_dirs()
+
+
+def test_an_external_check_is_reported_but_not_handed_to_the_fix_pass(tmp_path):
+    """The verdict belongs to another system; what would clear it is not ours to know.
+
+    Skipped is not dropped — the item is still on the report, and the run's
+    conclusion still blocks readiness.
+    """
+    adapter = _adapter(tmp_path, {
+        "codeql": _group("CodeQL", ci.FailureKind.EXTERNAL, _item("ext-1")),
+        "lint": _group("Lint", ci.FailureKind.LINT, _item("lint-1")),
+    })
+    assert [f.item.id for f in adapter.fixable] == ["lint-1"]
+    assert [f.item.id for f in adapter.skipped] == ["ext-1"]

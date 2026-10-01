@@ -498,3 +498,84 @@ def test_a_non_tap_log_still_keeps_the_original_annotations():
         result = ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 100})
     assert result.items[0].file == _UNINFORMATIVE_ANNOTATIONS[0]["path"]
     assert "FAIL: TestFoo" in result.items[0].context
+
+
+# ── checks no Actions run produced ───────────────────────────────────────
+
+
+def _external_job(name="CodeQL", db_id=77, summary="", source="check_run"):
+    return {"name": name, "databaseId": db_id, "status": "completed",
+            "conclusion": "failure", "steps": [], "_check_source": source,
+            "_details_url": "https://example/check", "_summary": summary}
+
+
+def test_an_app_check_never_reaches_the_log_ladder():
+    """There is no actions/jobs/{id}/logs for it, and no run to download from."""
+    with patch("gh.run_reads.fetch_annotations", return_value=[]), \
+         patch("pr.ci_annotations.log_fallback") as ladder, \
+         patch("pr.ci_annotations.fetch_test_artifact") as artifact:
+        result = ci_annotations.fetch_job_failure(
+            "owner/repo", _external_job(summary="2 alerts"), {"databaseId": 1},
+        )
+    ladder.assert_not_called()
+    artifact.assert_not_called()
+    assert result.kind is ci.FailureKind.EXTERNAL
+    assert result.items[0].annotation == "2 alerts"
+
+
+def test_an_app_checks_own_annotations_are_read():
+    """A scanner posts file-and-line findings through the same endpoint a job does."""
+    annotations = [{"message": "Hard-coded credential", "path": "app/db.py",
+                    "start_line": 42, "title": "py/hardcoded-credentials"}]
+    with patch("gh.run_reads.fetch_annotations", return_value=annotations) as fetch:
+        result = ci_annotations.fetch_job_failure(
+            "owner/repo", _external_job(), {"databaseId": 1},
+        )
+    assert fetch.call_args.args[1] == 77
+    assert result.items[0].file == "app/db.py"
+    assert result.items[0].line == 42
+    assert result.kind is ci.FailureKind.EXTERNAL
+
+
+def test_a_status_context_has_no_id_to_look_annotations_up_by():
+    """Asking for annotations on id 0 is a call that can only answer nothing."""
+    job = _external_job(name="scalr/plan", db_id=0, summary="plan errored",
+                        source="status_context")
+    with patch("gh.run_reads.fetch_annotations") as fetch:
+        result = ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 1})
+    fetch.assert_not_called()
+    assert result.job_name == "scalr/plan"
+    assert result.items[0].annotation == "plan errored"
+
+
+def test_an_external_check_that_says_nothing_still_becomes_an_item():
+    """Reported by name alone is still reported — silence is not a pass."""
+    job = _external_job(name="kubesec", db_id=0, summary="", source="status_context")
+    job["_details_url"] = ""
+    with patch("gh.run_reads.fetch_annotations", return_value=[]):
+        result = ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 1})
+    assert result is not None
+    assert result.kind is ci.FailureKind.EXTERNAL
+    assert "kubesec" in result.items[0].annotation
+
+
+def test_an_external_check_with_only_notice_annotations_falls_back_to_summary():
+    """All-notice annotations filter down to nothing — that's not a pass either."""
+    notices = [{"annotation_level": "notice", "message": "fyi", "path": "a.py",
+                "start_line": 1, "title": "kubesec"}]
+    job = _external_job(name="kubesec", db_id=77, summary="kubesec found issues")
+    with patch("gh.run_reads.fetch_annotations", return_value=notices):
+        result = ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 1})
+    assert result is not None
+    assert result.kind is ci.FailureKind.EXTERNAL
+    assert result.items[0].annotation == "kubesec found issues"
+
+
+def test_codeql_is_not_classified_as_a_build_failure():
+    """`classify_job` matches on name and would read it as BUILD, and fix it as one."""
+    assert ci.classify_job("CodeQL", []) is ci.FailureKind.BUILD
+    with patch("gh.run_reads.fetch_annotations", return_value=[]):
+        result = ci_annotations.fetch_job_failure(
+            "owner/repo", _external_job(summary="alert"), {"databaseId": 1},
+        )
+    assert result.kind is ci.FailureKind.EXTERNAL

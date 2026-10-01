@@ -276,6 +276,10 @@ class CIDomain(Domain):
     failure_kinds: dict[str, int] = field(default_factory=dict)
     last_run_id: int | None = None
     last_run_number: int | None = None
+    # Reasons the last read could not see every check on the commit. A
+    # blocker rather than a footnote: "no failures found" from a read that
+    # did not finish is not the same claim as "nothing failed".
+    unread: list[str] = field(default_factory=list)
     # Detailed run tracking (formerly in CIState)
     # Keyed by run_id. JSON stringifies every key on the way out; serde
     # restores the ints on the way back in.
@@ -295,16 +299,32 @@ class CIDomain(Domain):
     def render_status(self) -> list[str]:
         if not self.updated_at:
             return ["**CI**: not checked yet"]
-        icon = "green" if self.conclusion == "success" else "red"
-        lines = [f"**CI** ({icon}): {self.conclusion} — {self.failure_count} failure(s)"]
+        icon = "green" if self.conclusion == "success" and not self.unread else "red"
+        lines = [f"**CI** ({icon}): {self.conclusion or 'no verdict'} — "
+                 f"{self.failure_count} failure(s)"]
         for kind, count in sorted(self.failure_kinds.items()):
             lines.append(f"  {kind}: {count}")
+        for reason in self.unread:
+            lines.append(f"  unread: {reason}")
         if self.last_run_number:
             lines.append(f"  run #{self.last_run_number}")
         return lines
 
     def readiness(self, state: "PRState") -> Readiness:
         if not self.updated_at:
+            return Readiness(unchecked=("CI",))
+        # A real failure outranks an incomplete read: a conclusion of
+        # "failure" only survives the merge in ci_runs._mark_unread when a
+        # failed job stands behind it, so it is evidence rather than a word
+        # with nothing to show for it, and it names the commit as broken
+        # before "unread" can soften that to "nobody can presently tell".
+        if self.conclusion == "failure":
+            return Readiness(blockers=("CI failing",))
+        # Reported apart from a failure, because they are different questions
+        # for whoever reads it: one says the commit is broken, the other says
+        # nobody can presently tell. Treating the second as green is the whole
+        # defect this domain's CI reads were changed to close.
+        if self.unread:
             return Readiness(unchecked=("CI",))
         if self.conclusion != "success":
             return Readiness(blockers=("CI failing",))

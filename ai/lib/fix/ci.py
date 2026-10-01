@@ -22,8 +22,19 @@ from pr import state as pr_state
 from core.phases import Phase
 from pr.fix import FixOutcome, FixRecord, ItemOutcome
 
-# Nothing the agent could edit would clear either of these.
-_SKIP_KINDS = frozenset((ci.FailureKind.INFRA, ci.FailureKind.FLAKY))
+# Nothing the agent could edit would clear any of these:
+# - INFRA: the failure is in the runner or the platform, not in anything the
+#   repo's own code could change.
+# - FLAKY: the job's own history says it fails and passes on the same code,
+#   so an edit is not what would clear it.
+# - EXTERNAL: the check was not run by us — the verdict belongs to another
+#   system, and what would clear it is not knowable from the annotation it
+#   posted.
+# Each is still reported, and still blocks readiness — it is diagnosis that is
+# skipped, not the failure.
+_SKIP_KINDS = frozenset((
+    ci.FailureKind.INFRA, ci.FailureKind.FLAKY, ci.FailureKind.EXTERNAL,
+))
 
 
 @dataclass(frozen=True)

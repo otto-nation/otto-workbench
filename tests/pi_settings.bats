@@ -302,7 +302,8 @@ _live() {
   #
   # That the shims record this pin is validate-skills' check, not this one: it
   # runs on every push rather than only when a path this suite names changes.
-  run jq -r '.packages[] | select(startswith("git:github.com/obra/superpowers"))' \
+  run jq -r '.packages[] | (if type == "object" then .source else . end)
+    | select(startswith("git:github.com/obra/superpowers"))' \
     "$REPO_ROOT/ai/pi/settings.json"
   [ "$status" -eq 0 ]
   [[ "$output" =~ ^git:github\.com/obra/superpowers@v[0-9]+\.[0-9]+\.[0-9]+$ ]]
@@ -313,7 +314,8 @@ _live() {
   # extension, so the shims and the package entry must land together. A sync
   # that installed the package without them would leave using-git-worktrees
   # meaning `git worktree add` into .worktrees/ on this machine.
-  run jq -e '.packages | any(startswith("git:github.com/obra/superpowers"))' \
+  run jq -e '.packages | any((if type == "object" then .source else . end)
+    | startswith("git:github.com/obra/superpowers"))' \
     "$REPO_ROOT/ai/pi/settings.json"
   [ "$status" -eq 0 ]
   [ -f "$REPO_ROOT/ai/skills/using-git-worktrees/SKILL.md" ]
@@ -322,11 +324,11 @@ _live() {
 }
 
 @test "the shipped template filters no superpowers skills" {
-  # A package `skills: ["!..."]` filter disables the resource at the package
-  # layer and the extension's resources_discover hook re-adds the directory,
-  # so the skill returns. Every displaced skill is displaced by an ai/skills/
-  # file of the same name instead — see ai/skills/using-git-worktrees.
-  run jq -e '.packages | map(select(type == "object")) | length == 0' \
+  # Every displaced skill is displaced by an ai/skills/ file of the same name —
+  # see ai/skills/using-git-worktrees. The package entry filters only upstream's
+  # bootstrap extension (see ai/pi/extensions/superpowers-bootstrap); a skills
+  # filter beside it would be a second displacement mechanism to keep in step.
+  run jq -e '.packages | map(select(type == "object" and has("skills"))) | length == 0' \
     "$REPO_ROOT/ai/pi/settings.json"
   [ "$status" -eq 0 ]
 }

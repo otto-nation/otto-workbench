@@ -568,6 +568,35 @@ _make_worktrees() {
   git -C "$MAIN_WT" add -A
   git -C "$MAIN_WT" commit -qm init
   git -C "$MAIN_WT" worktree add -q -b feature "$FEAT_WT"
+  # A commit of its own, because every caller describes this worktree as
+  # merged and a branch with no commits is unstarted rather than merged —
+  # `_is_unstarted` in bin/wt-cleanup keeps those, so a fixture without one
+  # would be testing that guard instead of the residue checks these cases are
+  # about.
+  printf 'work\n' > "$FEAT_WT/worked.txt"
+  git -C "$FEAT_WT" add -A
+  git -C "$FEAT_WT" commit -qm "work on feature"
+}
+
+# _make_unstarted_worktree — a feature worktree whose branch holds no commit,
+# in a repo that ignores `ignore/` from its first commit.
+#
+# Separate from `_make_worktrees` because the ignore rule has to predate the
+# worktree: `_ignore_on_main` commits it afterwards, so the worktree never
+# carries it and git reports the file as untracked rather than ignored. That
+# is a different case, already covered above.
+_make_unstarted_worktree() {
+  MAIN_WT="$TMPDIR/repo"
+  FEAT_WT="$TMPDIR/feature"
+  mkdir -p "$MAIN_WT"
+  git -C "$MAIN_WT" init -q --initial-branch=main
+  git -C "$MAIN_WT" config user.email test@example.com
+  git -C "$MAIN_WT" config user.name Test
+  printf 'ignore/\n' > "$MAIN_WT/.gitignore"
+  printf 'alpha\n' > "$MAIN_WT/list.txt"
+  git -C "$MAIN_WT" add -A
+  git -C "$MAIN_WT" commit -qm init
+  git -C "$MAIN_WT" worktree add -q -b feature "$FEAT_WT"
 }
 
 # _ignore_on_main PATTERN — commit PATTERN to main's .gitignore, after the
@@ -1182,4 +1211,97 @@ JSON
   [ "$status" -eq 0 ]
   [[ "$output" == *"no stale worktrees"* ]]
   [ ! -s "$WT_REMOVE_LOG" ]
+}
+
+# ── An unstarted branch is not a merged one ─────────────────────────────────
+#
+# A branch cut and not yet committed to has its tip at the default branch's,
+# so `⊂` reads true and the merge check calls it merged. Nothing between that
+# and removal notices the branch never had a chance to hold anything, and
+# `git status` does not report ignored files — so a worktree holding only a
+# plan under `ignore/` reads clean as well. Both guards satisfied, the
+# worktree and its branch go.
+
+@test "an unstarted branch is kept even though git calls it merged" {
+  _make_unstarted_worktree
+  # Guard the premise: `feature` really has no commit of its own.
+  [ "$(git -C "$FEAT_WT" rev-list --count main..feature)" -eq 0 ]
+
+  _write_worktrees <<JSON
+[
+  {"branch":"main","path":"$MAIN_WT","is_main":true,"is_current":false,"main_state":"clean","symbols":"","commit":{"timestamp":0}},
+  {"branch":"feature","path":"$FEAT_WT","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":0}}
+]
+JSON
+  _run_cleanup --no-grace-period
+  [ "$status" -eq 0 ]
+  [ ! -s "$WT_REMOVE_LOG" ]
+  grep -q "SKIP-UNSTARTED branch=feature" "$CLEANUP_LOG"
+}
+
+@test "work only git ignores does not make an unstarted worktree removable" {
+  # The case that lost a worktree: the branch had no commits and its only
+  # content was a plan under `ignore/`, which `git status` never reports.
+  _make_unstarted_worktree
+  mkdir -p "$FEAT_WT/ignore/plans"
+  printf 'the reasoning this worktree exists for\n' > "$FEAT_WT/ignore/plans/design.md"
+  # Guard the premise: git really does see this worktree as clean.
+  [ -z "$(git -C "$FEAT_WT" status --porcelain -uall)" ]
+
+  _write_worktrees <<JSON
+[
+  {"branch":"main","path":"$MAIN_WT","is_main":true,"is_current":false,"main_state":"clean","symbols":"","commit":{"timestamp":0}},
+  {"branch":"feature","path":"$FEAT_WT","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":0}}
+]
+JSON
+  _run_cleanup --no-grace-period
+  [ "$status" -eq 0 ]
+  [ ! -s "$WT_REMOVE_LOG" ]
+  [ -f "$FEAT_WT/ignore/plans/design.md" ]
+}
+
+@test "a branch that did commit and then merged is still removed" {
+  # The regression guard: keeping unstarted branches must not keep started
+  # ones, or the merged path stops collecting anything at all.
+  _make_worktrees
+  [ "$(git -C "$FEAT_WT" rev-list --count main..feature)" -eq 1 ]
+
+  _write_worktrees <<JSON
+[
+  {"branch":"main","path":"$MAIN_WT","is_main":true,"is_current":false,"main_state":"clean","symbols":"","commit":{"timestamp":0}},
+  {"branch":"feature","path":"$FEAT_WT","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":0}}
+]
+JSON
+  _run_cleanup --no-grace-period
+  [ "$status" -eq 0 ]
+  grep -q -- "--force-delete" "$WT_REMOVE_LOG"
+}
+
+@test "an age removal still collects an unstarted worktree" {
+  # --age is a statement about abandonment, not about integration. An empty
+  # worktree nobody has touched for months is what it is asked to collect.
+  _make_unstarted_worktree
+  local old_timestamp
+  old_timestamp=$(( $(date +%s) - 100 * 86400 ))
+
+  _write_worktrees <<JSON
+[
+  {"branch":"main","path":"$MAIN_WT","is_main":true,"is_current":false,"main_state":"clean","symbols":"","commit":{"timestamp":0}},
+  {"branch":"feature","path":"$FEAT_WT","is_main":false,"is_current":false,"main_state":"ahead","symbols":"↑1","commit":{"timestamp":$old_timestamp}}
+]
+JSON
+  _run_cleanup --age 30 --no-grace-period
+  [ "$status" -eq 0 ]
+  [ -s "$WT_REMOVE_LOG" ]
+}
+
+@test "a worktree this cannot open is judged exactly as it was before" {
+  # The predicate reads git in the worktree. With no worktree to read, it
+  # declines to overrule the rest of the script rather than guessing.
+  _write_worktrees <<'JSON'
+[{"branch":"feat/gone","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":0}}]
+JSON
+  _run_cleanup --no-grace-period
+  [ "$status" -eq 0 ]
+  grep -q -- "--force-delete" "$WT_REMOVE_LOG"
 }

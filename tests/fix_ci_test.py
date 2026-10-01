@@ -11,7 +11,8 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from fix import ci as fix_ci  # noqa: E402
+from fix import ci as fix_ci
+from fix import suite as fix_suite  # noqa: E402
 from fix import engine as fix_engine  # noqa: E402
 from git import land  # noqa: E402
 from git.land import CommitStatus  # noqa: E402
@@ -226,6 +227,44 @@ def test_the_commit_message_counts_what_the_agent_answered(tmp_path):
 
     assert spec.message == "fix: address CI failures\n\n1 fixed, 2 skipped"
     assert spec.regen == "chore: regenerate after CI fixes"
+
+
+def test_a_red_suite_qualifies_the_ci_tally(tmp_path):
+    """The CI pass runs the repo's checks too, so its body must say what they said.
+
+    It rendered a bare `N fixed, M skipped` while the suite ran and the
+    verdict went nowhere — the same sentence, in a second domain, that the
+    review pass was fixed for. No review round caught this one.
+    """
+    adapter = _adapter(tmp_path, {})
+    adapter.suite = fix_suite.SuiteResult(
+        status=fix_suite.SuiteStatus.RED, command="checks", output_tail="E   boom")
+
+    message = adapter.landing([ItemOutcome(id="a", outcome=FixOutcome.FIXED)],
+                              {"a.py"}).message
+
+    assert "1 fixed, 0 skipped — but the repo's checks are RED" in message
+    assert "E   boom" in message
+
+
+def test_an_undeclared_command_qualifies_the_ci_tally(tmp_path):
+    adapter = _adapter(tmp_path, {})
+    adapter.suite = fix_suite.SuiteResult(status=fix_suite.SuiteStatus.NOT_DECLARED)
+
+    message = adapter.landing([ItemOutcome(id="a", outcome=FixOutcome.FIXED)],
+                              {"a.py"}).message
+
+    assert "unverified: no fix.verify_command declared" in message
+
+
+def test_a_ci_pass_with_nothing_to_check_carries_no_note(tmp_path):
+    """The default result is silent, so an ordinary pass reads as it always did."""
+    adapter = _adapter(tmp_path, {})
+
+    message = adapter.landing([ItemOutcome(id="a", outcome=FixOutcome.FIXED)],
+                              {"a.py"}).message
+
+    assert message == "fix: address CI failures\n\n1 fixed, 0 skipped"
 
 
 def test_a_pass_that_fixed_nothing_says_only_what_it_did(tmp_path):

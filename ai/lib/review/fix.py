@@ -59,6 +59,7 @@ from pathlib import Path
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from fix import engine as fix_engine
 from fix import scope as fix_scope
+from fix import suite as fix_suite
 from fix import types as fix_types
 from fix import verify as fix_verify
 from core import log, publishing
@@ -163,7 +164,8 @@ def _skip_reason(outcome: ItemOutcome, truncated: bool) -> str:
 
 def _summary(outcomes: list[ItemOutcome], described: dict[str, str],
              changed: set[str] | None = None, *,
-             stop: Diagnosis | None = None) -> str:
+             stop: Diagnosis | None = None,
+             suite: fix_suite.SuiteResult | None = None) -> str:
     """What the pass did, for the commit message and the operator's terminal.
 
     Three blocks, because the three answers are worth telling apart: a fix is
@@ -182,10 +184,17 @@ def _summary(outcomes: list[ItemOutcome], described: dict[str, str],
 
     `stop` is why the last attempt ended. A MAX_TURNS pass is named as truncated
     here so the commit body differs from a finished one without the trail.
+
+    `suite` is what the repo's own checks said about the tree being committed,
+    and it goes first because it is the line that decides how much of the rest
+    to believe. A red run puts its failing output in the body: the commit is
+    the artifact a reader reaches for weeks later, and a verdict with no
+    evidence under it sends them back to re-run what the pass already ran.
     """
     lines: list[str] = []
     if _truncated(stop):
         lines.append(f"Pass truncated: {stop.message}")
+    _suite_block(lines, suite)
     _block(lines, "Fixed:", [
         (o.id, _fixed_entry(described.get(o.id, ""), o))
         for o in outcomes if o.outcome.counts_as_fixed
@@ -202,6 +211,23 @@ def _summary(outcomes: list[ItemOutcome], described: dict[str, str],
         lines.append(_UNCLAIMED_EDITS.format(files="\n".join(
             f"  {path}" for path in sorted(changed))))
     return "\n".join(lines)
+
+
+def _suite_block(lines: list[str], suite: fix_suite.SuiteResult | None) -> None:
+    """Open the summary with what ran against this work, and what it said.
+
+    Every reportable state gets a line, and the lines differ on purpose: a
+    repo that declares no command says so, and a run that came back clean
+    says that instead. Rendering those two the same is how a red suite once
+    shipped under a body reading `4 fixed, 0 skipped`.
+
+    The one silent state is a pass that had no reason to run the checks.
+    `fix_suite.detail_lines` decides that, via `SuiteResult.reportable`; this
+    forwards the decision rather than making a second one.
+    """
+    detail = fix_suite.detail_lines(suite) if suite else []
+    if detail:
+        lines.extend([*detail, ""])
 
 
 def _unverified_detail(outcome: ItemOutcome) -> str | None:
@@ -745,13 +771,15 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
             )
         self.changed = changed
         self.summary = _summary(
-            outcomes, self._descriptions(), changed, stop=self.stop,
+            outcomes, self._descriptions(), changed,
+            stop=self.stop, suite=self.suite,
         )
         fixed = sum(1 for o in outcomes if o.outcome.counts_as_fixed)
         skipped = sum(1 for o in outcomes if o.outcome in _STILL_OPEN)
         message = "fix: self-review findings"
         if fixed:
-            message += f"\n\n{fixed} fixed, {skipped} skipped"
+            message += "\n\n" + fix_suite.qualify_tally(
+                f"{fixed} fixed, {skipped} skipped", self.suite)
         if self.summary:
             message += f"\n\n{self.summary}"
         return fix_engine.LandSpec(

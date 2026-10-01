@@ -31,6 +31,8 @@ ${tracking_content}
 
 ${answer_format}
 
+${execution_claim_guard}
+
 ## Check the finding before you fix it
 
 A finding is a reviewer's claim about the code, not a fact about it. Some of
@@ -143,7 +145,10 @@ in those words. "No test: prose change" is an answer. An empty `<why>` is not.
   test written beside it passes either way
 - If a finding is ambiguous or requires a design choice, tick `needs a person` and say what the choice is — leaving it unticked reports it as unread
 - If the code a finding points at carries a `// ceiling:` or `// ceiling-permanent:` comment naming that exact tradeoff, the tradeoff is a documented decision. Do not "fix" it — tick `declined` and say so
-- Run the named test only. To run a suite, invoke it directly (`pytest tests/foo.py`). Do not invoke `bin/local/run-tests`, `validate-all`, or unscoped `pytest`/`bats` — the pre-push gate reproduces those
+- Run the named test only. To run a suite, invoke it directly (`pytest tests/foo.py`). Do not invoke `bin/local/run-tests`, `validate-all`, or unscoped `pytest`/`bats` — the pipeline runs the repo's own checks over your work the moment you finish, and a second full run inside your turn budget buys nothing
+- That run is not a safety net you can lean on. It reports which of *this pass's* edits broke the tree, and it cannot tell your fix from the fifteen beside it — the named test is what ties a working fix to the item that claimed it
+- Before you delete anything as unused — an import, a constant, a function, a re-export — grep the repo for it. A name unreferenced in the file it is declared in may be read from another module, and "unused here" is not "unused". A finding that calls something dead is a claim to check, not an instruction
+- When you change a string a caller might assert on — an error message, a CLI line, a log prefix — grep for the old text before you move on, and carry the test with the change. A reworded message with a stale assertion beside it is a red suite for a fix that was right
 
 ## Generated files
 

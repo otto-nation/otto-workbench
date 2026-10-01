@@ -20,6 +20,8 @@ ${check_output}
 
 ${answer_format}
 
+${execution_claim_guard}
+
 ## What earns each box
 
 - **fixed** — a formatting, build, lint, or import error the check named, or a

@@ -216,6 +216,14 @@ class PrePushFixAdapter(fix_engine.FixAdapter):
     title = "Pre-push Fix Tracking"
     action = "fixing pre-push check failures"
     item_noun = "file"
+    # The one domain that opts out of `fix.suite`, and the only one that can.
+    # Every other pass holds its push, so the repo's checks do not run again
+    # after it — that gap is what the engine's own run exists to close. This
+    # pass is different in both directions: it is here *because* those checks
+    # just failed, and `land` pushes the moment it finishes, which runs them
+    # again for real. Running them a third time in between would triple the
+    # slowest part of a rebase to pre-empt a verdict arriving seconds later.
+    verifies_with_suite = False
 
     def __init__(
         self, cwd: str, editable: list[str], check_output: str, *,

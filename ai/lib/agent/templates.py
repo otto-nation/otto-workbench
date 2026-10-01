@@ -27,6 +27,7 @@ it is a call that cannot succeed.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from enum import StrEnum
 from pathlib import Path
 from string import Template
 from types import MappingProxyType
@@ -168,25 +169,54 @@ GENERATED_BLOCK = (
 )
 
 
-def build_execution_claim_guard(cross_cutting_step: int | None = None) -> str:
-    """What a review agent may not claim it ran.
+class ClaimOccasion(StrEnum):
+    """Why the agent reading this guard is tempted to claim an unrun command.
 
-    Every template that tells an agent to write its file before investigating
-    needs this, and the reason is that instruction: a claim drafted on the
-    first write describes a command that has not executed and may never. Only
-    Must-fix and Should-fix findings have their evidence checked against the
-    tree (`review.verify._verify_findings`), so a claim in a nit or an idiom
-    reaches the reader with no gate behind it.
+    The ban is one sentence and is the same everywhere. What differs is the
+    mechanism that produces the false claim and what fails to catch it, and
+    an agent acts on the specific one — a review agent told about the `fixed`
+    box, or a fix agent told about nits, is reading advice for somebody else.
+    """
+
+    # A template whose turn budget says to write the findings file before
+    # investigating. The claim gets drafted ahead of the command.
+    WRITE_FIRST = "write_first"
+    # A fix pass's tracking file, whose `fixed` box asks by name for the test
+    # that fails without the change. The form itself invites the fabrication.
+    FIX_EVIDENCE = "fix_evidence"
+
+
+def build_execution_claim_guard(
+    cross_cutting_step: int | None = None,
+    *,
+    occasion: ClaimOccasion = ClaimOccasion.WRITE_FIRST,
+) -> str:
+    """What an agent may not claim it ran.
+
+    Two occasions produce the same false claim by different routes. A
+    write-first template tells the agent to write its file before
+    investigating, so a claim drafted on that first write describes a command
+    that has not executed and may never; only Must-fix and Should-fix findings
+    have their evidence checked against the tree
+    (`review.verify._verify_findings`), so a claim in a nit or an idiom reaches
+    the reader with no gate behind it. A fix pass is the sharper case: the
+    `fixed` box asks for the test that fails without the change, so the form
+    is itself a standing invitation to name a plausible test rather than a run
+    one.
 
     A builder rather than a constant because the synthesis templates address a
     step that authors new cross-cutting findings, and that step's number is
-    theirs. `cross_cutting_step` is None for a template with no such step.
+    theirs. `cross_cutting_step` is None for a template with no such step, and
+    is meaningless outside the write-first occasion.
 
-    One owner rather than five copies, for the reason `GENERATED_BLOCK` and
+    One owner rather than eight copies, for the reason `GENERATED_BLOCK` and
     `build_output_block` are: hand-copied instructional text drifts. This
     paragraph reached four of five templates twice running while it was being
-    copied by hand.
+    copied by hand, which is the whole argument for the parameter rather than
+    a second function beside this one.
     """
+    if occasion is ClaimOccasion.FIX_EVIDENCE:
+        return _fix_evidence_guard()
     if cross_cutting_step is None:
         settle = (
             "never. Say what the code shows, or mark the claim unverified — the "
@@ -199,9 +229,7 @@ def build_execution_claim_guard(cross_cutting_step: int | None = None) -> str:
             "groups — say what the code shows, or mark the\nclaim unverified."
         )
     return (
-        "Never write that you ran something unless you ran it in this session. "
-        '"All\nfive pass locally", "I ran the suite", "verified by running" and '
-        "the like are\nclaims a reader acts on without re-checking, and the "
+        f"{_CLAIM_BAN}, and the "
         "sequence above makes them\neasy to write by accident: the first write "
         "happens before any investigation,\nso a claim drafted there describes "
         "a command that has not executed and may\n"
@@ -210,6 +238,35 @@ def build_execution_claim_guard(cross_cutting_step: int | None = None) -> str:
         "This holds for every severity, including nits and idioms. Only Must-fix "
         "and\nShould-fix findings have their evidence checked against the tree, "
         "so a claim\nin a nit or idiom is one no later gate will catch."
+    )
+
+
+# The invariant. Every occasion opens with this sentence and then says why
+# *this* agent is about to break it — so the two renderings cannot drift on the
+# one part that is a rule rather than an explanation.
+_CLAIM_BAN = (
+    "Never write that you ran something unless you ran it in this session. "
+    '"All\nfive pass locally", "I ran the suite", "verified by running" and '
+    "the like are\nclaims a reader acts on without re-checking"
+)
+
+
+def _fix_evidence_guard() -> str:
+    """The ban as a fix pass meets it: in the `fixed` box, asking for a test."""
+    return (
+        f"{_CLAIM_BAN}. The `fixed` box asks\nyou for the test that fails "
+        "without your change, which makes naming a\nplausible test easier than "
+        "running one — and a named test that was never run\nreads exactly like "
+        "a named test that passed.\n"
+        "\n"
+        "Run it, or say you did not. \"No test: prose change\" is an answer, and "
+        "so is\nnaming the test and adding that you could not run it. An "
+        "invented one is not.\n"
+        "\n"
+        "Nothing downstream reliably catches this. The verify gate reaches no "
+        "verdict\non some items and its silence leaves your claim standing, and "
+        "the repo's own\nchecks run once over the whole pass — they can tell the "
+        "tree is broken but not\nwhich of your items broke it."
     )
 
 

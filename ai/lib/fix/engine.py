@@ -45,17 +45,18 @@ from agent import phases as agent_phases
 from agent import retry as agent_retry
 from agent import templates as agent_templates
 from fix import scope as fix_scope
+from fix import suite as fix_suite
 from fix import tracking as fix_tracking
 from git import client as git_client
 from git import land
-from core import log, session_lock
+from core import log, publishing, session_lock
 from agent.diagnosis import Diagnosis
 from agent.registry import PHASES
 from core.phases import Effort, Phase
 from fix.types import FixItem
 from pr.fix import FixOutcome, ItemOutcome
 from core.trail import Trail, tinfo
-from config.workbench_config import WorkbenchConfig
+from config.workbench_config import WorkbenchConfig, load_config_or_default
 from fix import gate as fix_gate
 from fix.gate import VerifyFn
 
@@ -167,6 +168,11 @@ class FixRun:
     batches: int = 0
     max_turns: int = 0
     max_budget: float = 0.0
+    # What the repo's own checks said about the tree this pass committed, for a
+    # caller reporting the pass after the fact. The commit body has it already:
+    # `landing` reads the same result off the adapter before the message is
+    # rendered, which is why it is not carried here for the domain's benefit.
+    suite: fix_suite.SuiteResult = field(default_factory=fix_suite.SuiteResult)
 
 
 class FixAdapter(ABC):
@@ -219,6 +225,23 @@ class FixAdapter(ABC):
     # the cap, else None. The commit body is assembled in `landing`, which runs
     # before `FixRun` exists, so this is how a domain names a truncated pass.
     stop: Diagnosis | None = None
+    # Set by the engine before `landing`, the same way and for the same reason:
+    # what the repo's own checks said about the tree this pass is committing.
+    # A domain that renders a commit body reads it to say so there, which is
+    # the whole point of running the checks before the landing rather than
+    # after — see `fix.suite`. Left at NOT_ATTEMPTED for a pass that never had
+    # anything worth checking, which is what keeps those passes silent.
+    #
+    # A shared instance rather than a `field(default_factory=...)`: this class
+    # is a plain ABC and not a dataclass, so a `field()` here is a `Field`
+    # object sitting where a result should be, and the first attribute read
+    # off it raises. Safe to share because `SuiteResult` is frozen.
+    suite: fix_suite.SuiteResult = fix_suite.SuiteResult()
+    # Whether this domain wants the repo's checks run over its work. On by
+    # default: a pass that holds its push is a pass nothing else checks, which
+    # is every domain but one. `rebase.prepush` turns it off and says why
+    # there — the checks it would run are the ones about to run on its push.
+    verifies_with_suite: bool = True
     # Which phase sizes and prompts the verify gate, for a domain that runs one.
     # Separate from `phase` because the gate is a different agent asking a
     # different question: sizing it as the fix pass gives it the fix pass's
@@ -344,11 +367,19 @@ class FixAdapter(ABC):
     def after_verify(self, outcomes: list[ItemOutcome]) -> None:
         """A domain's last word before the commit is landed and pushed.
 
-        Called once the gate has spoken and the outcomes are final, and before
-        `landing`. The window matters: a domain that wants to stop the pass
-        asserting anything outward — because the gate falsified a fix, or the
-        agent handed an item back — has to say so before the push reads the
+        Called once both gates have spoken — the per-item verify gate and the
+        batch suite — and before `landing`. The window matters: a domain that
+        wants to stop the pass asserting anything outward — because a gate
+        falsified a fix, the repo's own checks came back red, or the agent
+        handed an item back — has to say so before the push reads the
         publishing gate, and `record` is too late for that.
+
+        The suite's verdict is deliberately upstream of this rather than after
+        it, so an override reading `outcome.verified` reads its final value.
+        Do not build a red-suite hold on top of that, though: a suite demotion
+        leaves the item at FIXED and sets only `verified`, so a per-item filter
+        cannot distinguish it from a gate that stayed silent. `_verify_suite`
+        holds publishing centrally for exactly that reason.
 
         A no-op by default. What a falsified fix means is the domain's call,
         not the pipeline's: the comments pass owes a reviewer a reply and must
@@ -425,6 +456,9 @@ def _prompt(adapter: FixAdapter, turns: int, *, resume: bool = False) -> str:
         tracking_content=adapter.tracking_path.read_text(),
         tracking_file=str(adapter.tracking_path),
         answer_format=fix_tracking.instructions(adapter.item_noun),
+        execution_claim_guard=agent_templates.build_execution_claim_guard(
+            occasion=agent_templates.ClaimOccasion.FIX_EVIDENCE,
+        ),
         worktree_block=agent_templates.build_worktree_block(str(adapter.workdir)),
         generated_block=agent_templates.GENERATED_BLOCK,
         role_block=agent_templates.ROLE_BLOCK,
@@ -765,6 +799,45 @@ def _merge_scopes(
     return merged
 
 
+def _verify_suite(
+    adapter: FixAdapter, outcomes: list[ItemOutcome],
+    changed: set[str] | None, trail: Trail | None,
+) -> fix_suite.SuiteResult:
+    """Run the repo's declared checks over the pass's work and apply the verdict.
+
+    The engine's half of `fix.suite`: resolve the command from the worktree's
+    config, run it, and let a red result withdraw the pass's verification
+    claims before `landing` renders a body that would otherwise say those
+    claims held.
+
+    Config is re-read from the worktree rather than taken from `adapter.config`
+    because a pass launched from another directory carries the config of
+    wherever it was launched, and the checks belong to the tree being edited.
+    An adapter that was given one still wins: it is the same file when the two
+    agree, and the caller's explicit choice when they do not.
+    """
+    if not adapter.verifies_with_suite or not fix_suite.should_run(outcomes, changed):
+        return fix_suite.SuiteResult()
+    config = adapter.config or load_config_or_default(adapter.workdir)
+    result = fix_suite.run(
+        adapter.workdir, config.fix.verify_command,
+        config.fix.verify_timeout, trail,
+    )
+    fix_suite.apply_to(outcomes, result)
+    if result.demotes:
+        # Held here rather than left to a domain's `after_verify`, because a
+        # red suite is a fact about the pass and not about any item in it.
+        # `hold_after_verify` cannot reach it by construction: it selects on
+        # `outcome.outcome in NEEDS_A_PERSON` before it reads `.verified`,
+        # and `apply_to` deliberately leaves a demoted item at FIXED — so a
+        # suite-only demotion is invisible to every per-item filter, in this
+        # domain and any future one. Holding centrally is also wider than the
+        # one domain that overrides the hook: nothing should reply, resolve,
+        # or push off a tree whose own checks are failing.
+        publishing.hold("the repo's checks are red with this pass's changes")
+    return result
+
+
 def _stamp(outcomes: list[ItemOutcome], read_sha: str, commit_sha: str) -> None:
     """Anchor each outcome to the tree it was decided in and the commit it landed in.
 
@@ -894,14 +967,27 @@ def run(
         scope_for=settled.scope_for,
     )
 
-    # Between the gate and the push, which is the only window that works: the
-    # outcomes are final here, and `land` below reads the publishing gate a
-    # domain may want to close on the strength of them.
-    adapter.after_verify(settled.outcomes)
-
     # After the agent and before the commit — the one moment the difference is
     # the agent's work and nothing else's.
     changed = fix_scope.agent_changed(adapter.workdir, dirty_before)
+
+    # Between the agent's edits and everything that reports on them. The two
+    # agents above check the pass's claims; this is the only thing that asks
+    # whether the pass broke something no claim mentions.
+    #
+    # Before `after_verify`, so a domain's last word is spoken over final
+    # outcomes rather than over a set the next line still changes. That
+    # ordering is necessary and is not what stops a red tree being reported
+    # as fixed: no per-item hook can see a suite demotion, because the item
+    # stays FIXED. `_verify_suite` holds publishing itself for that.
+    adapter.suite = _verify_suite(adapter, settled.outcomes, changed, trail)
+
+    # Between the verdicts and the push, which is the only window that works:
+    # both gates have spoken here — the per-item one above and the batch suite
+    # just now — and `land` below reads the publishing gate a domain may want
+    # to close on the strength of either.
+    adapter.after_verify(settled.outcomes)
+
     if changed is None:
         # Reported here rather than by each adapter. Every one of them owes the
         # operator this line — the fixes are loose in the worktree and only
@@ -929,6 +1015,7 @@ def run(
         stop=settled.stop,
         head_before=head_before,
         batches=len(batched),
+        suite=adapter.suite,
         max_turns=max_turns,
         max_budget=max((b.max_budget for b in results), default=0.0),
     )

@@ -35,6 +35,7 @@ from core.trail import Trail
 from fix import comment_checklist
 from fix import comment_replies
 from fix import engine as fix_engine
+from fix import suite as fix_suite
 from fix import types as fix_types
 from fix import verify as fix_verify
 from git import client as git_client
@@ -189,7 +190,11 @@ class CommentFixAdapter(fix_engine.FixAdapter):
         deferred = sum(1 for o in outcomes if o.outcome is FixOutcome.DEFERRED)
         msg = "fix: address review comments"
         if fixed:
-            msg += f"\n\n{fixed} fixed, {deferred} deferred"
+            msg += "\n\n" + fix_suite.qualify_tally(
+                f"{fixed} fixed, {deferred} deferred", self.suite)
+        detail = fix_suite.detail_lines(self.suite)
+        if detail:
+            msg += "\n\n" + "\n".join(detail)
         return fix_engine.LandSpec(
             message=msg,
             regen="chore: regenerate after review comment fixes",

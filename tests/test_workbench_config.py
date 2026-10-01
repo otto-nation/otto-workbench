@@ -998,12 +998,69 @@ def test_an_empty_label_list_is_kept_as_the_opt_out_it_is(roots):
     assert wc.load_config(project).issues.labels == []
 
 
-def test_a_numeric_field_is_parsed_into_the_number_it_names(monkeypatch):
-    """No key on the surface is numeric yet, so the branch is reached by its type."""
-    monkeypatch.setattr(wcw, "schema_type", lambda _: "integer")
-    assert wcw.coerce_value("some.count", "3") == 3
+def test_a_numeric_field_is_parsed_into_the_number_it_names():
+    """Against a real integer key, so the writer is read through the surface.
+
+    This used to monkeypatch `schema_type` because nothing on the surface was
+    numeric. `fix.verify_timeout` is, so the coercion is now reached the way a
+    caller reaches it — a patched type would keep passing if the key stopped
+    being an integer.
+    """
+    assert wcw.coerce_value(wc.FIX_VERIFY_TIMEOUT_KEY, "30") == 30
+
+
+# The float half of the numeric test this change split in two. The integer half
+# now runs against a real key; nothing on the surface is a float, so this one
+# keeps the patched type it always had.
+# passes-at-base: it is the pre-existing patched-type case, carried over intact
+def test_a_float_field_is_parsed_through_a_patched_type(monkeypatch):
+    """No float on the surface yet; the branch is reached by its type."""
     monkeypatch.setattr(wcw, "schema_type", lambda _: "number")
     assert wcw.coerce_value("some.ratio", "1.5") == 1.5
+
+
+def test_the_fix_verification_keys_are_on_the_surface():
+    """`fix.engine` reads these off a loaded config; an absent key reads as unset."""
+    assert wc.defines_key(wc.FIX_VERIFY_COMMAND_KEY)
+    assert wc.defines_key(wc.FIX_VERIFY_TIMEOUT_KEY)
+
+
+def test_a_repo_that_declares_no_verify_command_gets_the_empty_default():
+    """Empty is "this repo has not said", which `fix.suite` reports as such.
+
+    A default command here would point every repo at a script only one of them
+    has, which is the reason the key exists instead of a hardcoded runner.
+    """
+    assert wc.WorkbenchConfig().fix.verify_command == ""
+
+
+def test_the_declared_command_round_trips_from_the_project_scope(roots):
+    _, project = roots
+    _write(project / wc.PROJECT_CONFIG_NAME,
+           "fix:\n  verify_command: bin/local/run-tests --changed\n"
+           "  verify_timeout: 120\n")
+
+    loaded = wc.load_config(project)
+
+    assert loaded.fix.verify_command == "bin/local/run-tests --changed"
+    assert loaded.fix.verify_timeout == 120
+
+
+def test_the_verify_timeout_refuses_a_value_that_is_not_a_number():
+    with pytest.raises(wc.ConfigValueError):
+        wcw.coerce_value(wc.FIX_VERIFY_TIMEOUT_KEY, "ten minutes")
+
+
+def test_the_verification_keys_are_refused_at_the_machine_scope():
+    """They name a path inside one checkout and bound that repo's own checks.
+
+    A machine-wide command points every other repo at a script it does not
+    have, and the pass would report ERROR on repos that never opted in.
+    """
+    for key in (wc.FIX_VERIFY_COMMAND_KEY, wc.FIX_VERIFY_TIMEOUT_KEY):
+        assert wcw.check_scope(key, wc.GLOBAL_SCOPE).ok is False
+        assert wcw.check_scope(key, wc.PROJECT_SCOPE).ok is True
+        assert wcw.check_scope(key, wc.CONTAINER_SCOPE).ok is True
 
 
 def test_a_numeric_field_refuses_a_value_that_is_not_a_number(monkeypatch):

@@ -40,10 +40,10 @@ from fix import engine as fix_engine  # noqa: E402
 from fix import tracking as fix_tracking  # noqa: E402
 from fix import types as fix_types  # noqa: E402
 from fix import verify as fix_verify  # noqa: E402
+from rebase import prepush as rebase_prepush  # noqa: E402
 from agent.registry import PHASES, REVIEW_PHASES  # noqa: E402
 from core import serde  # noqa: E402
 from core.phases import Mode, Phase, PhaseShape  # noqa: E402
-from rebase import prepush as rebase_prepush  # noqa: E402
 from review import fix as review_fix  # noqa: E402
 from review import grammar as review_grammar  # noqa: E402
 from review import prompt as review_prompt  # noqa: E402
@@ -685,6 +685,13 @@ def _render_fix_findings(wt_path) -> str:
 
 
 def _render_fix_prepush(wt_path) -> str:
+    """Render the pre-push repair pass's prompt through the real engine.
+
+    The one fix template with no substitution test of its own until now. It
+    renders through `fix_engine._prompt` like the other three, so the engine's
+    own placeholders were covered by them — but anything this template names
+    that the others do not was held by nothing.
+    """
     return _render_adapter(rebase_prepush.PrePushFixAdapter(
         str(wt_path), ["server.go"], "gofmt: server.go needs formatting",
         # The lease the refused push carried; this renders a prompt and never
@@ -785,6 +792,13 @@ class TestTemplateRendering:
     def test_verify_fixes_template_fully_substituted(self, tmp_path):
         left = _unsubstituted(_render_verify_fixes(tmp_path))
         assert not left, f"verify-fixes.md left: {left}"
+
+    # Closes a pre-existing coverage gap: the template it renders was already
+    # fully substituted before this change added a placeholder to it.
+    # passes-at-base: the gap it closes is coverage, not behaviour
+    def test_fix_prepush_template_fully_substituted(self, tmp_path):
+        left = _unsubstituted(_render_fix_prepush(tmp_path))
+        assert not left, f"fix-prepush.md left: {left}"
 
     def test_the_comments_adapter_declares_the_gate_s_own_phase(self):
         """The one domain that runs a gate must name the gate's phase.
@@ -1225,11 +1239,22 @@ _NO_UNRUN_EXECUTION_CLAIM = (
     "Never write that you ran something unless you ran it in this session."
 )
 
-# What makes a template need the guard: it tells the agent to write its file
+# Two things make a template need the guard, and they are selected two ways
+# because they are two different properties.
+#
+# The first is a write-first instruction: the agent is told to write its file
 # before investigating, so a claim drafted there describes a command that has
-# not run. Templates without that instruction (disprove.md, which writes its
-# verdicts last, after investigating) and those that author no findings
-# (holistic.md, scout.md, fix-*.md, verify-fixes.md) are out of scope.
+# not run. That is a property of the prose, so it is scraped from the prose.
+#
+# The second is a fix pass's tracking file, whose `fixed` box asks by name for
+# the test that fails without the change — the form itself invites naming a
+# plausible test over running one. That is a property of the *phase*, not of
+# any wording, so it is read off the registry: every `PhaseShape.FIX` phase's
+# template, with no list here to drift from the tree.
+#
+# Templates with neither (disprove.md, which writes its verdicts last, after
+# investigating; holistic.md and scout.md, which author no findings) are out
+# of scope.
 #
 # Deliberately two alternatives, not three: an earlier version also matched
 # the bare substring "file FIRST", which is redundant with "do not investigate
@@ -1243,31 +1268,76 @@ _WRITE_FIRST_RE = re.compile(
 )
 
 
-def _write_first_templates() -> list[Path]:
-    """Every template that tells the agent to write before investigating.
+def _fix_shape_templates() -> set[str]:
+    """Every template a fix pass renders, read off the phase registry.
 
-    Scraped rather than listed, following `_summary_contract_sources` above:
-    a sixth write-first template added later is held to the same constraint
-    without this file being edited. A hardcoded list is how the guard reached
-    four of five templates twice running — the list and the tree drift, and
-    the test passes on the files someone remembered.
+    Structural rather than a name pattern: `fix-*.md` would miss
+    verify-fixes.md and would match a future template called fix-something
+    that no phase renders. The registry is what actually decides which
+    template an agent is handed.
     """
+    return {
+        PHASES[phase].template_for()
+        for phase, spec in PHASES.items()
+        if spec.shape is PhaseShape.FIX
+    }
+
+
+def _execution_claim_templates() -> list[Path]:
+    """Every template whose agent can author an unrun execution claim.
+
+    Scraped and derived rather than listed, following
+    `_summary_contract_sources` above: a write-first template or a fix phase
+    added later is held to the same constraint without this file being
+    edited. A hardcoded list is how the guard reached four of five templates
+    twice running — the list and the tree drift, and the test passes on the
+    files someone remembered.
+    """
+    fix_templates = _fix_shape_templates()
     return [
         path for path in sorted(TEMPLATE_DIR.glob("*.md"))
-        if _WRITE_FIRST_RE.search(path.read_text())
+        if _WRITE_FIRST_RE.search(path.read_text()) or path.name in fix_templates
     ]
 
 
-def test_write_first_templates_are_found():
-    """The selector finds the known write-first templates, so the check below
-    is not vacuous. A selector that matched nothing would make the
-    parametrized assertion pass by having no cases at all.
+# A non-vacuity pin on the selector, which reads the registry and the prose —
+# neither of which this change alters. The behaviour test it guards,
+# test_template_forbids_unverified_execution_claims, does fail at base.
+# passes-at-base: it pins the selector, not the guard the selector feeds
+def test_execution_claim_templates_are_found():
+    """The selector finds both populations, so the check below is not vacuous.
+
+    A selector that matched nothing would make the parametrized assertion
+    pass by having no cases at all. Pinned as an exact set so a template that
+    silently leaves the scope is a failure rather than one fewer case.
     """
-    found = {path.name for path in _write_first_templates()}
+    found = {path.name for path in _execution_claim_templates()}
     assert found == {
+        # write-first, scraped from the prose
         "group.md", "self-review.md", "self-review-synthesis.md",
         "single-agent.md", "synthesis.md",
-    }, f"unexpected set of write-first templates: {sorted(found)}"
+        # fix-shape, derived from the phase registry
+        "fix-findings.md", "verify-fixes.md", "fix-comments.md",
+        "fix-ci.md", "fix-prepush.md",
+    }, f"unexpected set of execution-claim templates: {sorted(found)}"
+
+
+# Pure non-vacuity on the two selectors: the write-first one predates this
+# change and the other reads the phase registry.
+# passes-at-base: it asserts the selectors match something, not what they feed
+def test_both_populations_are_non_empty():
+    """Either selector silently matching nothing would halve the guard's scope.
+
+    The union above would still look healthy on the remaining half, and the
+    exact-set assertion would be the only thing standing between that and a
+    population nobody checks.
+    """
+    write_first = {
+        path.name for path in sorted(TEMPLATE_DIR.glob("*.md"))
+        if _WRITE_FIRST_RE.search(path.read_text())
+    }
+    assert write_first, "the write-first scrape matched no template"
+    assert _fix_shape_templates(), "no phase declares PhaseShape.FIX"
 
 
 def test_write_first_re_does_not_match_on_file_first_wording_alone():
@@ -1284,7 +1354,7 @@ def test_write_first_re_does_not_match_on_file_first_wording_alone():
 
 
 @pytest.mark.parametrize(
-    "path", _write_first_templates(), ids=lambda p: p.name,
+    "path", _execution_claim_templates(), ids=lambda p: p.name,
 )
 def test_template_forbids_unverified_execution_claims(path):
     """Every write-first, finding-authoring template renders the guard.
@@ -1312,6 +1382,46 @@ def test_execution_claim_guard_states_the_ban():
     """
     assert _NO_UNRUN_EXECUTION_CLAIM in agent_templates.build_execution_claim_guard()
     assert _NO_UNRUN_EXECUTION_CLAIM in agent_templates.build_execution_claim_guard(8)
+
+
+def test_the_fix_occasion_states_the_ban_and_names_the_fixed_box():
+    """A fix agent gets the same rule with its own mechanism named.
+
+    The ban is the invariant and must survive the occasion split; the `fixed`
+    box is why a fix agent in particular is about to break it. An agent told
+    about a write-first sequence it has no part in is reading advice for
+    somebody else and skips the paragraph.
+    """
+    guard = agent_templates.build_execution_claim_guard(
+        occasion=agent_templates.ClaimOccasion.FIX_EVIDENCE)
+
+    assert _NO_UNRUN_EXECUTION_CLAIM in guard
+    assert "`fixed` box" in guard
+    assert "first write" not in guard, "write-first rationale leaked into the fix guard"
+
+
+def test_the_write_first_occasion_is_unchanged_by_the_split():
+    """The default occasion still renders exactly what the five templates had."""
+    assert agent_templates.build_execution_claim_guard() == (
+        agent_templates.build_execution_claim_guard(
+            occasion=agent_templates.ClaimOccasion.WRITE_FIRST))
+    assert "first write" in agent_templates.build_execution_claim_guard()
+
+
+def test_every_fix_template_renders_a_guard_with_no_placeholder_left():
+    """`render` uses safe_substitute, so an unfilled placeholder reaches the agent.
+
+    The contract check above asserts the placeholder is *in the file*; this
+    asserts something fills it. Without it a template could carry
+    `${execution_claim_guard}` that no render site supplies, and the agent
+    would be shown the literal text.
+    """
+    guard = agent_templates.build_execution_claim_guard(
+        occasion=agent_templates.ClaimOccasion.FIX_EVIDENCE)
+    for name in sorted(_fix_shape_templates()):
+        rendered = agent_templates.render(name, execution_claim_guard=guard)
+        assert _EXECUTION_CLAIM_PLACEHOLDER not in rendered, name
+        assert _NO_UNRUN_EXECUTION_CLAIM in rendered, name
 
 
 def test_execution_claim_guard_names_the_cross_cutting_step():

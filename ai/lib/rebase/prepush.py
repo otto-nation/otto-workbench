@@ -38,15 +38,15 @@ import hashlib
 from collections.abc import Sequence
 from pathlib import Path
 
-from agent import backend as ai_backend
-from core import log
+import agent.backend
+import core.log
 from core.phases import Phase
 from core.trail import Trail, terr, tinfo
-from fix import engine as fix_engine
-from fix import types as fix_types
-from git import land
-from git import regenerate as regen
-from pr import target as pr_target
+import fix.engine
+import fix.types
+import git.land
+import git.regenerate
+import pr.target
 from pr.fix import ItemOutcome
 
 from . import conflicts as rebase_conflicts
@@ -54,7 +54,7 @@ from . import repo_regen
 from . import types as rebase_types
 
 GeneratedFix = rebase_types.GeneratedFix
-RegenQueue = regen.RegenQueue
+RegenQueue = git.regenerate.RegenQueue
 
 REGEN_MESSAGE = rebase_types.REGEN_MESSAGE
 
@@ -129,7 +129,7 @@ def regenerate(
             stale.append(filepath)
 
     if stale:
-        log.warn(f"No regeneration command for {len(stale)} generated file(s)")
+        core.log.warn(f"No regeneration command for {len(stale)} generated file(s)")
         tinfo(
             trail, TRAIL_ACTION, "generated files with no regeneration command",
             data={"files": stale},
@@ -137,7 +137,7 @@ def regenerate(
 
     rebuilt = False
     for job in queue:
-        if regen.run_regeneration(job, cwd=cwd, trail=trail):
+        if git.regenerate.run_regeneration(job, cwd=cwd, trail=trail):
             rebuilt = True
             continue
         stale.extend(f for f in job.files if f not in stale)
@@ -179,9 +179,9 @@ def _artifacts_dir(workdir: Path) -> Path:
     enough name to key a directory under the state root, so the artifacts stay
     outside the repo either way.
     """
-    target = pr_target.target_dir_for_checkout(workdir)
+    target = pr.target.target_dir_for_checkout(workdir)
     if target is None:
-        target = pr_target.targets_root() / _unkeyed_slug(workdir)
+        target = pr.target.targets_root() / _unkeyed_slug(workdir)
     return target / "pr-rebase"
 
 
@@ -195,10 +195,10 @@ def _unkeyed_slug(workdir: Path) -> str:
     """
     resolved = str(workdir.resolve())
     digest = hashlib.sha256(resolved.encode()).hexdigest()[:12]
-    return f"unkeyed-{pr_target.slug(workdir.name)}-{digest}"
+    return f"unkeyed-{pr.target.slug(workdir.name)}-{digest}"
 
 
-class PrePushFixAdapter(fix_engine.FixAdapter):
+class PrePushFixAdapter(fix.engine.FixAdapter):
     """A rebase's half of a fix pass: the named files, the commit, the record.
 
     The items are the files the failing check complained about, minus the
@@ -229,7 +229,7 @@ class PrePushFixAdapter(fix_engine.FixAdapter):
         self, cwd: str, editable: list[str], check_output: str, *,
         args: Sequence[str],
         rebuilt: Sequence[str] = (),
-        repo: str = "", pr: str = "", branch: str = "",
+        repo: str = "", pr_ref: str = "", branch: str = "",
         trail: Trail | None = None,
     ) -> None:
         self.workdir = Path(cwd)
@@ -243,11 +243,11 @@ class PrePushFixAdapter(fix_engine.FixAdapter):
         self.rebuilt = list(rebuilt)
         self.check_output = check_output
         self.repo = repo
-        self.pr = pr
+        self.pr = pr_ref
         self.branch = branch
         self.trail = trail
 
-    def items(self) -> list[fix_types.FixItem]:
+    def items(self) -> list[fix.types.FixItem]:
         """One item per file the check named, keyed by the path itself.
 
         The path is the id because it is the only identifier a check failure
@@ -256,7 +256,7 @@ class PrePushFixAdapter(fix_engine.FixAdapter):
         tracking file that produced it.
         """
         return [
-            fix_types.FixItem(
+            fix.types.FixItem(
                 id=path, file=path, label="named by the failing check",
                 body=f"The pre-push check named `{path}`. Repair it against "
                      "the check output in the prompt.",
@@ -270,7 +270,7 @@ class PrePushFixAdapter(fix_engine.FixAdapter):
 
     def landing(
         self, outcomes: list[ItemOutcome], changed: set[str] | None,
-    ) -> fix_engine.LandSpec:
+    ) -> fix.engine.LandSpec:
         """Commit everything the pass touched, and force-push it.
 
         Three things this domain needs that a fix pass does not always:
@@ -312,12 +312,12 @@ class PrePushFixAdapter(fix_engine.FixAdapter):
         # An unattributable pass commits nothing at all — not even the rebuild,
         # which would otherwise be force-pushed as though it were the repair.
         scope = set() if changed is None else changed | set(self.rebuilt)
-        return fix_engine.LandSpec(
+        return fix.engine.LandSpec(
             message=message, regen=REGEN_MESSAGE, recover=True,
             args=self.args, paths=scope,
         )
 
-    def record(self, run: fix_engine.FixRun) -> None:
+    def record(self, run: fix.engine.FixRun) -> None:
         """Report the pass on the trail, which is the only durable place there is.
 
         Every `Domain` carries a `fix: FixRecord` and this writes none, because
@@ -351,7 +351,7 @@ class PrePushFixAdapter(fix_engine.FixAdapter):
 def fix_push_failures(
     cwd: str, error_output: str, resolved_files: list[str],
     *, args: Sequence[str], trail: Trail | None = None,
-) -> land.LandResult | None:
+) -> git.land.LandResult | None:
     """Fix pre-push check errors, then land the repair.
 
     Generated files are rebuilt from their sources; everything else goes to a
@@ -388,27 +388,27 @@ def fix_push_failures(
     # The engine invokes the backend unconditionally, so the availability check
     # stays here: without it a machine with no backend pays for the tracking
     # file and the batching before failing at the call.
-    if not editable or not ai_backend.is_available():
+    if not editable or not agent.backend.is_available():
         return _land_rebuild(cwd, generated, args=args, trail=trail)
 
     context = trail.context if trail else {}
-    pr = context.get("pr")
+    pr_ref = context.get("pr")
     adapter = PrePushFixAdapter(
         cwd, editable, truncated,
         args=args,
         rebuilt=_rebuilt_files(generated),
         repo=str(context.get("repo") or ""),
-        pr=str(pr) if pr else "",
+        pr_ref=str(pr_ref) if pr_ref else "",
         branch=str(context.get("branch") or ""),
         trail=trail,
     )
-    return fix_engine.run(adapter, trail=trail).landed
+    return fix.engine.run(adapter, trail=trail).landed
 
 
 def _land_rebuild(
     cwd: str, generated: GeneratedFix, *, args: Sequence[str],
     trail: Trail | None = None,
-) -> land.LandResult | None:
+) -> git.land.LandResult | None:
     """Commit and force-push a repair that was entirely a regeneration.
 
     The engine's landing is unreachable here — it lands what an agent produced,
@@ -423,7 +423,7 @@ def _land_rebuild(
         return None
 
     rebuilt = _rebuilt_files(generated)
-    landed = land.land(
+    landed = git.land.land(
         cwd, message=REGEN_MESSAGE, gated=True, args=tuple(args),
         trail=trail, paths=rebuilt,
     )

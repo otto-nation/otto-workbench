@@ -1,4 +1,4 @@
-"""Tests for pr_state library."""
+"""Tests for pr.state library."""
 
 import json
 import sys
@@ -15,7 +15,7 @@ if str(LIB_DIR) not in sys.path:
 import pytest
 
 from conftest import readiness_state
-from pr import state as pr_state
+import pr.state
 from git.land import CommitStatus
 from pr.comments_fix import CLOSEOUT_COMMAND, FixSummary
 from config.workbench_config import IssueProvider
@@ -633,7 +633,7 @@ def test_save_never_exposes_a_truncated_file(worktree, monkeypatch):
     A failed write must leave the previous state readable. The temp file the
     guarantee rests on is serde's now, so that is where the failure is
     injected — this asserts save_state still routes through it."""
-    from core import serde
+    import core.serde
 
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc",
                       worktree_root=str(worktree))
@@ -643,7 +643,7 @@ def test_save_never_exposes_a_truncated_file(worktree, monkeypatch):
         fp.write('{"partial":')
         raise OSError("disk full")
 
-    monkeypatch.setattr(serde.json, "dump", _explode)
+    monkeypatch.setattr(core.serde.json, "dump", _explode)
     with pytest.raises(OSError):
         save_state(worktree, state)
 
@@ -662,7 +662,7 @@ def test_save_leaves_no_temp_files_behind(worktree):
 
 
 def test_save_discards_the_temp_file_when_the_write_fails(worktree, monkeypatch):
-    from core import serde
+    import core.serde
 
     state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc",
                       worktree_root=str(worktree))
@@ -671,7 +671,7 @@ def test_save_discards_the_temp_file_when_the_write_fails(worktree, monkeypatch)
     def _explode(obj, fp, **kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr(serde.json, "dump", _explode)
+    monkeypatch.setattr(core.serde.json, "dump", _explode)
     with pytest.raises(OSError):
         save_state(worktree, state)
 
@@ -898,7 +898,7 @@ def test_the_live_push_observation_is_never_dated():
     """`cmd_status` observes push now, so its stamp cannot be old."""
     state = new_state("acme/widget", "feat/x", pr_number=7, head_sha="a",
                       worktree_root="/wt")
-    push = PushDomain(ahead=2, updated_at=pr_state.now_iso())
+    push = PushDomain(ahead=2, updated_at=pr.state.now_iso())
     lines = render_dashboard(state, push, repo="acme/widget", branch="feat/x")
     assert "**Push**: 2 commit(s) not pushed" in lines
 
@@ -1938,7 +1938,7 @@ class TestPRCloseState:
 
     def test_the_gh_query_asks_for_every_field_a_state_needs(self):
         """Derived from the enum, so a state added there is fetched for free."""
-        fields = pr_state.GH_STATE_JSON_FIELDS.split(",")
+        fields = pr.state.GH_STATE_JSON_FIELDS.split(",")
         assert fields[0] == "state"
         assert set(fields[1:]) == {
             s.ended_at_field for s in PRCloseState if s.is_terminal
@@ -1946,8 +1946,8 @@ class TestPRCloseState:
 
 
 class TestTerminalSummary:
-    def _state(self) -> pr_state.PRState:
-        state = pr_state.PRState(identity=pr_state.PRIdentity(
+    def _state(self) -> pr.state.PRState:
+        state = pr.state.PRState(identity=pr.state.PRIdentity(
             repo="org/repo", branch="feat/x", pr_number=7,
             head_sha="abc1234", worktree_root="/tmp/wt",
         ))
@@ -1959,7 +1959,7 @@ class TestTerminalSummary:
         return state
 
     def test_carries_every_field_the_prune_is_about_to_delete(self):
-        payload = pr_state.terminal_summary(self._state(), PRClosure(
+        payload = pr.state.terminal_summary(self._state(), PRClosure(
             PRCloseState.MERGED, "2026-08-13T09:00:00Z"))
         assert payload == {
             "outcome": "MERGED",
@@ -1984,7 +1984,7 @@ class TestTerminalSummary:
             title="a deferred thing",
             source=FollowUpSource.SELF_REVIEW,
         )], updated_at="t")
-        payload = pr_state.terminal_summary(state, PRClosure(PRCloseState.MERGED))
+        payload = pr.state.terminal_summary(state, PRClosure(PRCloseState.MERGED))
         assert payload["follow_ups"] == [{
             "ref": {"provider": "github", "id": "1455", "url": "https://x"},
             "title": "a deferred thing",
@@ -1998,7 +1998,7 @@ class TestTerminalSummary:
 
     def test_finding_counts_are_copied_not_aliased(self):
         state = self._state()
-        payload = pr_state.terminal_summary(state, PRClosure(PRCloseState.CLOSED))
+        payload = pr.state.terminal_summary(state, PRClosure(PRCloseState.CLOSED))
         state.review.finding_counts["must-fix"] = 99
         assert payload["finding_counts"]["must-fix"] == 2
 
@@ -2006,13 +2006,13 @@ class TestTerminalSummary:
         """The payload is written to the trail as JSON; an Enum would not
         serialize, and `pr gc` reports the failure rather than raising it — so a
         regression here would go out as a warning nobody reads."""
-        payload = pr_state.terminal_summary(
+        payload = pr.state.terminal_summary(
             self._state(), PRClosure(PRCloseState.MERGED))
         assert payload["outcome"] == "MERGED"
         assert json.loads(json.dumps(payload)) == payload
 
     def test_the_action_name_is_published(self):
-        assert pr_state.TERMINAL_SUMMARY_ACTION == "pr_outcome"
+        assert pr.state.TERMINAL_SUMMARY_ACTION == "pr_outcome"
 
 
 # ── A stale verdict is not a clean bill of health ───────────────────────────

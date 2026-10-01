@@ -11,12 +11,12 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from conftest import latch_graphql  # noqa: E402
-from gh import budget as gh_budget
-from gh import client as gh_client
+import gh.budget
+import gh.client
 from pr.domains import RebaseStatus
-from rebase import pr_snapshot as rebase_pr_snapshot
-from rebase import refusals
-from rebase import target as rebase_target
+import rebase.pr_snapshot
+import rebase.refusals
+import rebase.target
 from rebase.types import RefusalSignal
 
 
@@ -25,7 +25,7 @@ def _ctx(pr_number=42, branch="isaac/feat/x", repo="acme/widget"):
 
 
 def _answers(data):
-    return mock.patch.object(gh_client, "pr_view", return_value=data)
+    return mock.patch.object(gh.client, "pr_view", return_value=data)
 
 
 class TestFetch:
@@ -35,29 +35,29 @@ class TestFetch:
             "baseRefName": "release/2", "isDraft": False,
             "reviewDecision": "APPROVED",
         }) as view:
-            snapshot = rebase_pr_snapshot.fetch("/wt", _ctx())
+            snapshot = rebase.pr_snapshot.fetch("/wt", _ctx())
 
         view.assert_called_once()
-        assert set(rebase_pr_snapshot.FIELDS) == set(view.call_args[0][1:])
+        assert set(rebase.pr_snapshot.FIELDS) == set(view.call_args[0][1:])
         assert snapshot.base_ref == "release/2"
         assert snapshot.review_decision == "APPROVED"
         assert snapshot.answered
 
     def test_it_asks_by_number_when_one_is_resolved(self):
         with _answers({"state": "OPEN"}) as view:
-            rebase_pr_snapshot.fetch("/wt", _ctx(pr_number=42))
+            rebase.pr_snapshot.fetch("/wt", _ctx(pr_number=42))
         assert view.call_args[0][0] == "42"
 
     def test_it_asks_by_branch_when_no_number_is_resolved(self):
         with _answers({"state": "OPEN"}) as view:
-            rebase_pr_snapshot.fetch("/wt", _ctx(pr_number=None))
+            rebase.pr_snapshot.fetch("/wt", _ctx(pr_number=None))
         assert view.call_args[0][0] == "isaac/feat/x"
 
     def test_a_tracker_that_cannot_answer_is_not_an_answer(self):
         # gh absent, unauthenticated, rate-limited, or no PR: all the same, and
         # none of them may read as a state that stops a rebase.
         with _answers({}):
-            snapshot = rebase_pr_snapshot.fetch("/wt", _ctx())
+            snapshot = rebase.pr_snapshot.fetch("/wt", _ctx())
 
         assert not snapshot.answered
         assert not snapshot.merged
@@ -65,7 +65,7 @@ class TestFetch:
 
     def test_it_asks_nothing_when_there_is_nothing_to_ask_about(self):
         with _answers({"state": "OPEN"}) as view:
-            snapshot = rebase_pr_snapshot.fetch(
+            snapshot = rebase.pr_snapshot.fetch(
                 "/wt", _ctx(pr_number=None, branch=""),
             )
         view.assert_not_called()
@@ -76,22 +76,22 @@ class TestOpenAndReady:
     """Which PRs a force-push notice is owed to."""
 
     def test_a_ready_open_pr_is_one_someone_may_be_reading(self):
-        assert rebase_pr_snapshot.PRSnapshot(
+        assert rebase.pr_snapshot.PRSnapshot(
             state="OPEN", number=1, is_draft=False,
         ).open_and_ready
 
     def test_a_draft_is_the_author_s_own_workspace(self):
-        assert not rebase_pr_snapshot.PRSnapshot(
+        assert not rebase.pr_snapshot.PRSnapshot(
             state="OPEN", number=1, is_draft=True,
         ).open_and_ready
 
     def test_a_merged_pr_is_not_awaiting_review(self):
-        assert not rebase_pr_snapshot.PRSnapshot(
+        assert not rebase.pr_snapshot.PRSnapshot(
             state="MERGED", number=1,
         ).open_and_ready
 
     def test_a_closed_unmerged_pr_is_not_awaiting_review(self):
-        assert not rebase_pr_snapshot.PRSnapshot(
+        assert not rebase.pr_snapshot.PRSnapshot(
             state="CLOSED", number=1,
         ).open_and_ready
 
@@ -100,18 +100,18 @@ class TestItReplacesTheSecondCall:
     """The two reads this collapsed, each still answering the same way."""
 
     def test_the_base_comes_from_the_snapshot_without_a_second_read(self):
-        with mock.patch.object(gh_client, "pr_view") as view:
-            base = rebase_target.pr_base_branch(
+        with mock.patch.object(gh.client, "pr_view") as view:
+            base = rebase.target.pr_base_branch(
                 "/wt", _ctx(),
-                rebase_pr_snapshot.PRSnapshot(state="OPEN", base_ref="main"),
+                rebase.pr_snapshot.PRSnapshot(state="OPEN", base_ref="main"),
             )
         view.assert_not_called()
         assert base == "main"
 
     def test_a_merged_pr_still_refuses_from_the_snapshot(self):
-        report = refusals.tracker_landed_check(
+        report = rebase.refusals.tracker_landed_check(
             "/wt", _ctx(),
-            rebase_pr_snapshot.PRSnapshot(
+            rebase.pr_snapshot.PRSnapshot(
                 state="MERGED", number=42, url="https://gh/42",
             ),
         )
@@ -119,27 +119,27 @@ class TestItReplacesTheSecondCall:
         assert "42" in report.detail
 
     def test_an_open_pr_is_no_refusal(self):
-        assert refusals.tracker_landed_check(
-            "/wt", _ctx(), rebase_pr_snapshot.PRSnapshot(state="OPEN", number=42),
+        assert rebase.refusals.tracker_landed_check(
+            "/wt", _ctx(), rebase.pr_snapshot.PRSnapshot(state="OPEN", number=42),
         ) is None
 
     def test_an_unanswered_snapshot_is_no_refusal(self):
         # A machine with no gh, no auth or no network cannot answer this at any
         # point, and refusing on it would mean `pr rebase` never runs there.
-        assert refusals.tracker_landed_check(
-            "/wt", _ctx(), rebase_pr_snapshot.PRSnapshot(),
+        assert rebase.refusals.tracker_landed_check(
+            "/wt", _ctx(), rebase.pr_snapshot.PRSnapshot(),
         ) is None
 
     def test_the_wording_matches_the_path_that_reads_it_itself(self):
         """Both paths phrase one finding, so neither drifts from the other."""
-        from_snapshot = refusals.tracker_landed_check(
+        from_snapshot = rebase.refusals.tracker_landed_check(
             "/wt", _ctx(),
-            rebase_pr_snapshot.PRSnapshot(
+            rebase.pr_snapshot.PRSnapshot(
                 state="MERGED", number=42, url="https://gh/42",
             ),
         )
         with _answers({"state": "MERGED", "number": 42, "url": "https://gh/42"}):
-            from_its_own_read = refusals.tracker_landed_check("/wt", _ctx())
+            from_its_own_read = rebase.refusals.tracker_landed_check("/wt", _ctx())
 
         assert from_snapshot.detail == from_its_own_read.detail
         assert from_snapshot.signal == from_its_own_read.signal
@@ -155,7 +155,7 @@ class TestARefusedRead:
 
     def test_the_snapshot_records_that_the_call_was_declined(self):
         with latch_graphql(), _answers({}):
-            snapshot = rebase_pr_snapshot.fetch("/wt", _ctx())
+            snapshot = rebase.pr_snapshot.fetch("/wt", _ctx())
 
         assert snapshot.refused
         assert not snapshot.answered
@@ -163,7 +163,7 @@ class TestARefusedRead:
     def test_an_ordinary_failure_is_not_a_refusal(self):
         """No gh, no auth, no network, no PR — none of them latch."""
         with _answers({}):
-            snapshot = rebase_pr_snapshot.fetch("/wt", _ctx())
+            snapshot = rebase.pr_snapshot.fetch("/wt", _ctx())
 
         assert not snapshot.refused
         assert not snapshot.answered
@@ -171,14 +171,14 @@ class TestARefusedRead:
     def test_a_successful_read_is_never_marked_refused(self):
         """A latch armed by some earlier call must not taint an answer we got."""
         with latch_graphql(), _answers({"state": "OPEN", "number": 42}):
-            snapshot = rebase_pr_snapshot.fetch("/wt", _ctx())
+            snapshot = rebase.pr_snapshot.fetch("/wt", _ctx())
 
         assert not snapshot.refused
         assert snapshot.answered
 
     def test_it_refuses_the_rebase(self):
-        report = refusals.tracker_landed_check(
-            "/wt", _ctx(), rebase_pr_snapshot.PRSnapshot(refused=True),
+        report = rebase.refusals.tracker_landed_check(
+            "/wt", _ctx(), rebase.pr_snapshot.PRSnapshot(refused=True),
         )
 
         assert report is not None
@@ -188,18 +188,18 @@ class TestARefusedRead:
     def test_it_does_not_claim_the_branch_landed(self):
         """The status ALREADY_LANDED asserts the work is in the base. Nothing
         here established that — the check is refusing because it could not."""
-        report = refusals.tracker_landed_check(
-            "/wt", _ctx(), rebase_pr_snapshot.PRSnapshot(refused=True),
+        report = rebase.refusals.tracker_landed_check(
+            "/wt", _ctx(), rebase.pr_snapshot.PRSnapshot(refused=True),
         )
 
         assert report.status != RebaseStatus.ALREADY_LANDED.value
         assert "not asked" in report.detail
 
     def test_the_hint_explains_what_proceeding_would_cost(self):
-        report = refusals.tracker_landed_check(
-            "/wt", _ctx(), rebase_pr_snapshot.PRSnapshot(refused=True),
+        report = rebase.refusals.tracker_landed_check(
+            "/wt", _ctx(), rebase.pr_snapshot.PRSnapshot(refused=True),
         )
-        hint = refusals.REFUSAL_HINTS[report.status].format(ref="origin/main")
+        hint = rebase.refusals.REFUSAL_HINTS[report.status].format(ref="origin/main")
 
         assert "squash merge" in hint
         assert "force-push" in hint
@@ -213,7 +213,7 @@ class TestARefusedRead:
         successfully read and found open.
         """
         with latch_graphql(), _answers({"state": "OPEN", "number": 42}):
-            assert refusals.tracker_landed_check("/wt", _ctx()) is None
+            assert rebase.refusals.tracker_landed_check("/wt", _ctx()) is None
 
     def test_the_snapshotless_path_refuses_a_read_of_its_own_that_was_declined(
         self,
@@ -227,7 +227,7 @@ class TestARefusedRead:
         likely to meet an armed latch, and it force-pushes.
         """
         with latch_graphql(), _answers({}):
-            report = refusals.tracker_landed_check("/wt", _ctx())
+            report = rebase.refusals.tracker_landed_check("/wt", _ctx())
 
         assert report is not None
         assert report.status == RebaseStatus.TRACKER_UNREAD.value
@@ -240,7 +240,7 @@ class TestARefusedRead:
         without auth, or offline.
         """
         with _answers({}):
-            assert refusals.tracker_landed_check("/wt", _ctx()) is None
+            assert rebase.refusals.tracker_landed_check("/wt", _ctx()) is None
 
     def test_the_remedy_survives_the_latch_expiring_before_the_report_builds(
         self,
@@ -253,14 +253,14 @@ class TestARefusedRead:
         this pins that the remedy travels with the snapshot instead.
         """
         with latch_graphql(), _answers({}):
-            snapshot = rebase_pr_snapshot.fetch("/wt", _ctx())
+            snapshot = rebase.pr_snapshot.fetch("/wt", _ctx())
         assert "refills at" in snapshot.remedy
 
         # The latch expires before the refusal report is built.
-        gh_budget.reset_for_tests()
-        assert gh_budget.latched(gh_budget.Resource.GRAPHQL) is None
+        gh.budget.reset_for_tests()
+        assert gh.budget.latched(gh.budget.Resource.GRAPHQL) is None
 
-        report = refusals.tracker_landed_check("/wt", _ctx(), snapshot)
+        report = rebase.refusals.tracker_landed_check("/wt", _ctx(), snapshot)
 
         assert "refills at" in report.detail
 
@@ -269,18 +269,18 @@ class TestARefusedRead:
     ):
         """A snapshot built with `refused=True` alone, as tests upstream do,
         still gets a usable remedy rather than an empty one."""
-        report = refusals.tracker_landed_check(
-            "/wt", _ctx(), rebase_pr_snapshot.PRSnapshot(refused=True),
+        report = rebase.refusals.tracker_landed_check(
+            "/wt", _ctx(), rebase.pr_snapshot.PRSnapshot(refused=True),
         )
 
-        assert gh_budget.BUDGET_EXHAUSTED_HINT in report.detail
+        assert gh.budget.BUDGET_EXHAUSTED_HINT in report.detail
 
 
 class TestNameTheOpenPR:
     """The notice, which both force-push sites call."""
 
     def test_it_names_a_ready_pr(self, capsys):
-        rebase_pr_snapshot.name_the_open_pr(rebase_pr_snapshot.PRSnapshot(
+        rebase.pr_snapshot.name_the_open_pr(rebase.pr_snapshot.PRSnapshot(
             state="OPEN", number=1358, url="https://gh/1358",
         ))
         err = capsys.readouterr().err
@@ -288,27 +288,27 @@ class TestNameTheOpenPR:
         assert "ready for review" in err
 
     def test_it_falls_back_to_the_number_when_there_is_no_url(self, capsys):
-        rebase_pr_snapshot.name_the_open_pr(
-            rebase_pr_snapshot.PRSnapshot(state="OPEN", number=1358),
+        rebase.pr_snapshot.name_the_open_pr(
+            rebase.pr_snapshot.PRSnapshot(state="OPEN", number=1358),
         )
         assert "#1358" in capsys.readouterr().err
 
     def test_it_says_nothing_about_a_draft(self, capsys):
-        rebase_pr_snapshot.name_the_open_pr(rebase_pr_snapshot.PRSnapshot(
+        rebase.pr_snapshot.name_the_open_pr(rebase.pr_snapshot.PRSnapshot(
             state="OPEN", number=1, is_draft=True,
         ))
         assert capsys.readouterr().err == ""
 
     def test_it_says_nothing_about_a_closed_pr(self, capsys):
-        rebase_pr_snapshot.name_the_open_pr(
-            rebase_pr_snapshot.PRSnapshot(state="CLOSED", number=1),
+        rebase.pr_snapshot.name_the_open_pr(
+            rebase.pr_snapshot.PRSnapshot(state="CLOSED", number=1),
         )
         assert capsys.readouterr().err == ""
 
     def test_it_says_nothing_when_github_could_not_be_asked(self, capsys):
-        rebase_pr_snapshot.name_the_open_pr(rebase_pr_snapshot.PRSnapshot())
+        rebase.pr_snapshot.name_the_open_pr(rebase.pr_snapshot.PRSnapshot())
         assert capsys.readouterr().err == ""
 
     def test_it_tolerates_having_no_snapshot_at_all(self, capsys):
-        rebase_pr_snapshot.name_the_open_pr(None)
+        rebase.pr_snapshot.name_the_open_pr(None)
         assert capsys.readouterr().err == ""

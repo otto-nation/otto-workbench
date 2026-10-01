@@ -1,4 +1,4 @@
-"""Tests for pr_comments_state — the review-thread ledger and its file."""
+"""Tests for pr.comments_state — the review-thread ledger and its file."""
 
 import json
 import sys
@@ -11,8 +11,8 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from core import serde
-from pr import comments as pr_comments
+import core.serde
+import pr.comments
 from pr.comments_state import (
     CommentsState, ThreadRecord, ThreadState, load_state, save_state,
 )
@@ -53,7 +53,7 @@ def test_the_ledger_sits_under_the_run_target(tmp_path):
     should hold."""
     target = tmp_path / "state" / "pr" / "acme-widget-abc-main"
 
-    path = pr_comments.threads_state_path(target)
+    path = pr.comments.threads_state_path(target)
 
     assert path == target / "pr-comments" / "state.json"
     assert "ignore" not in path.parts
@@ -65,15 +65,15 @@ def test_the_ledger_sits_beside_the_rest_of_the_pass(tmp_path):
     artifacts rather than leaving it behind."""
     target = tmp_path / "target"
 
-    assert pr_comments.threads_state_path(target).parent == \
-        pr_comments.artifacts_dir(target)
+    assert pr.comments.threads_state_path(target).parent == \
+        pr.comments.artifacts_dir(target)
 
 
 def test_two_branches_in_one_worktree_get_separate_ledgers(tmp_path):
     """What keying on the target buys over keying on the worktree: the old path
     gave one file to whichever branch the worktree currently held."""
-    first = pr_comments.threads_state_path(tmp_path / "acme-widget-main")
-    second = pr_comments.threads_state_path(tmp_path / "acme-widget-feature")
+    first = pr.comments.threads_state_path(tmp_path / "acme-widget-main")
+    second = pr.comments.threads_state_path(tmp_path / "acme-widget-feature")
 
     assert first != second
 
@@ -127,7 +127,7 @@ def test_save_never_exposes_a_truncated_file(tmp_path, monkeypatch):
         fp.write('{"partial":')
         raise OSError("disk full")
 
-    monkeypatch.setattr(serde.json, "dump", _explode)
+    monkeypatch.setattr(core.serde.json, "dump", _explode)
     with pytest.raises(OSError):
         save_state(path, _state(pr_number=2))
 
@@ -152,7 +152,7 @@ def test_the_written_shape_is_a_bare_id_to_record_mapping(tmp_path):
 
 def _write(path: Path, threads: dict) -> None:
     """Write a state file's `threads` directly, bypassing `save_state`."""
-    document = serde.to_dict(_state(last_run="2026-06-14T15:00:00Z"))
+    document = core.serde.to_dict(_state(last_run="2026-06-14T15:00:00Z"))
     path.write_text(json.dumps({**document, "threads": threads}))
 
 
@@ -167,7 +167,7 @@ def test_one_unreadable_thread_does_not_discard_the_others(tmp_path, corrupt):
     Discarding the whole ledger would re-triage every thread on the PR to
     recover from one entry, and triage is the part no API replays."""
     path = tmp_path / "state.json"
-    _write(path, {"T_good": serde.to_dict(_decided()), "T_bad": corrupt})
+    _write(path, {"T_good": core.serde.to_dict(_decided()), "T_bad": corrupt})
 
     loaded = load_state(path)
     assert loaded is not None

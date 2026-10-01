@@ -18,10 +18,10 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from gh import run_reads
+import gh.run_reads
 from gh.run_reads import FAILURE_CONCLUSIONS
-from pr import ci_annotations
-from pr import ci_failures as ci
+import pr.ci_annotations
+import pr.ci_failures
 
 
 class RunUnavailable(Exception):
@@ -34,7 +34,7 @@ class RunUnavailable(Exception):
     """
 
 
-def _dedupe_items(items: tuple[ci.FailureItem, ...]) -> tuple[ci.FailureItem, ...]:
+def _dedupe_items(items: tuple[pr.ci_failures.FailureItem, ...]) -> tuple[pr.ci_failures.FailureItem, ...]:
     """Drop repeats of a failure one job reported in more than one run.
 
     A commit can have two runs of the same workflow — a cancelled one and the
@@ -44,7 +44,7 @@ def _dedupe_items(items: tuple[ci.FailureItem, ...]) -> tuple[ci.FailureItem, ..
     distinct annotations anchored on the same file and line share one.
     """
     seen: set[tuple[str, str]] = set()
-    kept: list[ci.FailureItem] = []
+    kept: list[pr.ci_failures.FailureItem] = []
     for item in items:
         key = (item.id, item.annotation)
         if key in seen:
@@ -74,13 +74,13 @@ def _claims_failure(run_data: dict) -> bool:
     return run_data.get("conclusion") in FAILURE_CONCLUSIONS and bool(failed_jobs(run_data))
 
 
-def parse_run(repo: str, run_data: dict) -> ci.RunState:
+def parse_run(repo: str, run_data: dict) -> pr.ci_failures.RunState:
     """Parse gh run data into a RunState with classified failures."""
-    failures: dict[str, ci.FailureGroup] = {}
+    failures: dict[str, pr.ci_failures.FailureGroup] = {}
 
     with ThreadPoolExecutor(max_workers=5) as pool:
         results = list(pool.map(
-            lambda j: ci_annotations.fetch_job_failure(repo, j, run_data), failed_jobs(run_data),
+            lambda j: pr.ci_annotations.fetch_job_failure(repo, j, run_data), failed_jobs(run_data),
         ))
 
     for r in results:
@@ -88,13 +88,13 @@ def parse_run(repo: str, run_data: dict) -> ci.RunState:
             continue
         job_key = r.job_name.lower().replace(" ", "-").replace("/", "-")
         prior_items = failures[job_key].items if job_key in failures else ()
-        failures[job_key] = ci.FailureGroup(
+        failures[job_key] = pr.ci_failures.FailureGroup(
             job=r.job_name, kind=r.kind,
             items=_dedupe_items(prior_items + tuple(r.items)),
             failed_step=r.failed_step,
         )
 
-    return ci.RunState(
+    return pr.ci_failures.RunState(
         run_id=run_data["databaseId"],
         run_number=run_data.get("number", 0),
         head_sha=run_data.get("headSha", ""),
@@ -253,7 +253,7 @@ class PollCache:
 
 
 def _hold_finished(
-    cache: PollCache, rows: list[run_reads.RunRow], payloads: list[dict], served: dict,
+    cache: PollCache, rows: list[gh.run_reads.RunRow], payloads: list[dict], served: dict,
 ) -> None:
     """Keep the payloads of run attempts that have concluded, for the next poll.
 
@@ -273,8 +273,8 @@ def _hold_finished(
 
 
 def _commit_checks(
-    repo: str, rows: list[run_reads.RunRow], sha: str,
-) -> run_reads.CommitChecks:
+    repo: str, rows: list[gh.run_reads.RunRow], sha: str,
+) -> gh.run_reads.CommitChecks:
     """The commit's full check list, asked for at a commit GitHub has heard of.
 
     `sha` is the caller's idea of the branch head, which on a worktree with
@@ -283,14 +283,14 @@ def _commit_checks(
     themselves name a commit GitHub definitely ran, so an unanswered rollup is
     retried there before the answer is believed.
     """
-    checks = run_reads.fetch_commit_checks(repo, sha)
+    checks = gh.run_reads.fetch_commit_checks(repo, sha)
     ran_sha = rows[0].head_sha if rows else ""
     if not checks.answered and rows and ran_sha and ran_sha != sha:
-        checks = run_reads.fetch_commit_checks(repo, ran_sha)
+        checks = gh.run_reads.fetch_commit_checks(repo, ran_sha)
     return checks
 
 
-def _late_checks(repo: str, payloads: list[dict]) -> run_reads.CommitChecks:
+def _late_checks(repo: str, payloads: list[dict]) -> gh.run_reads.CommitChecks:
     """The rollup at the commit the runs named, for a caller that could not.
 
     A run pinned by id arrives with no commit attached, and the caller's own
@@ -308,12 +308,12 @@ def _late_checks(repo: str, payloads: list[dict]) -> run_reads.CommitChecks:
     from this one.
     """
     sha = (payloads[0].get("headSha") or "") if payloads else ""
-    return run_reads.fetch_commit_checks(repo, sha) if sha else run_reads.CommitChecks()
+    return gh.run_reads.fetch_commit_checks(repo, sha) if sha else gh.run_reads.CommitChecks()
 
 
 def _unread_reasons(
-    discovery: run_reads.RunDiscovery, checks: run_reads.CommitChecks,
-    rows: list[run_reads.RunRow], payloads: list[dict],
+    discovery: gh.run_reads.RunDiscovery, checks: gh.run_reads.CommitChecks,
+    rows: list[gh.run_reads.RunRow], payloads: list[dict],
 ) -> tuple[str, ...]:
     """Every reason this verdict rests on something nobody managed to read.
 
@@ -355,7 +355,7 @@ def _mark_unread(merged: dict, reasons: tuple[str, ...]) -> dict:
 
 
 def fetch_merged(
-    repo: str, discovery: run_reads.RunDiscovery, *, head_sha: str = "",
+    repo: str, discovery: gh.run_reads.RunDiscovery, *, head_sha: str = "",
     cache: PollCache | None = None,
 ) -> MergedRun | None:
     """Fold every check on the commit — Actions runs and otherwise — into one payload.
@@ -382,7 +382,7 @@ def fetch_merged(
     # a field on the answer, so "was it asked" cannot drift from "what it said".
     rows = list(discovery.rows)
     sha = head_sha or (rows[0].head_sha if rows else "")
-    checks = _commit_checks(repo, rows, sha) if sha else run_reads.CommitChecks()
+    checks = _commit_checks(repo, rows, sha) if sha else gh.run_reads.CommitChecks()
     green = checks.green_run_ids()
     held = cache.runs if cache is not None else {}
 
@@ -390,7 +390,7 @@ def fetch_merged(
                 if row.run_id not in green and row.identity not in held]
     with ThreadPoolExecutor(max_workers=5) as pool:
         served = dict(pool.map(
-            lambda row: (row.run_id, run_reads.fetch_run_data(repo, row.run_id)), to_fetch,
+            lambda row: (row.run_id, gh.run_reads.fetch_run_data(repo, row.run_id)), to_fetch,
         ))
 
     payloads: list[dict] = []

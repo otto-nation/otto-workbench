@@ -26,8 +26,9 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest  # noqa: E402
 
-from core import markdown  # noqa: E402
-from pr import summary_model, summary_row  # noqa: E402
+import core.markdown  # noqa: E402
+import pr.summary_model
+import pr.summary_row  # noqa: E402
 from pr.comments_state import ThreadState  # noqa: E402
 from pr.thread_models import CommentItem, ReportThread  # noqa: E402
 
@@ -78,7 +79,7 @@ def _key_via_text(row: str) -> str:
     This is the path a carried-over row takes: it exists only as markdown, so
     its cells are parsed back out before it can be keyed.
     """
-    return summary_model.row_key_from_cells(markdown.row_cells(row))
+    return pr.summary_model.row_key_from_cells(core.markdown.row_cells(row))
 
 
 class TestTheTwoPathsAgree:
@@ -97,25 +98,25 @@ class TestTheTwoPathsAgree:
         self, shape_name, status, head_sha,
     ):
         entry = _entry(ROW_SHAPES[shape_name])
-        cells = summary_row.row_cells_for(entry, status, {}, REPO, 1, head_sha)
-        row = summary_row.render_row(cells)
-        assert summary_model.row_key_from_cells(cells) == _key_via_text(row)
+        cells = pr.summary_row.row_cells_for(entry, status, {}, REPO, 1, head_sha)
+        row = pr.summary_row.render_row(cells)
+        assert pr.summary_model.row_key_from_cells(cells) == _key_via_text(row)
 
     @pytest.mark.parametrize("shape_name", sorted(ROW_SHAPES))
     def test_a_row_keys_the_same_through_a_full_round_trip(self, shape_name):
         """Render, publish, read back, key — the sequence a real round runs."""
         entry = _entry(ROW_SHAPES[shape_name])
-        cells = summary_row.row_cells_for(entry, "Deferred", {}, REPO, 1, SHA)
+        cells = pr.summary_row.row_cells_for(entry, "Deferred", {}, REPO, 1, SHA)
         published = "\n".join([
-            summary_model.TABLE_HEADER,
-            summary_model.TABLE_DIVIDER,
-            summary_row.render_row(cells),
+            pr.summary_model.TABLE_HEADER,
+            pr.summary_model.TABLE_DIVIDER,
+            pr.summary_row.render_row(cells),
         ])
         recovered = [
             line for line in published.splitlines()
             if line.startswith("|") and line.strip("|-: ")
         ][-1]
-        assert _key_via_text(recovered) == summary_model.row_key_from_cells(cells)
+        assert _key_via_text(recovered) == pr.summary_model.row_key_from_cells(cells)
 
 
 class TestTheActionCellIsNeverIdentity:
@@ -129,8 +130,8 @@ class TestTheActionCellIsNeverIdentity:
     def test_every_status_keys_the_row_alike(self, shape_name):
         entry = _entry(ROW_SHAPES[shape_name])
         keys = {
-            summary_model.row_key_from_cells(
-                summary_row.row_cells_for(entry, status, {}, REPO, 1, SHA))
+            pr.summary_model.row_key_from_cells(
+                pr.summary_row.row_cells_for(entry, status, {}, REPO, 1, SHA))
             for status in STATUSES
         }
         assert len(keys) == 1
@@ -150,10 +151,10 @@ class TestTheFallbackTierIsReached:
         # No thread id and no comment-item source, so neither anchor is written.
         entry = CommentItem(id="local-1", summary=summary, reviewer="kgn",
                             file="a.py", line=2)
-        return summary_row.row_cells_for(entry, status, {}, REPO, 1, SHA)
+        return pr.summary_row.row_cells_for(entry, status, {}, REPO, 1, SHA)
 
     def test_a_row_with_no_anchor_still_has_an_identity(self):
-        key = summary_model.row_key_from_cells(self._unanchored_cells("a point"))
+        key = pr.summary_model.row_key_from_cells(self._unanchored_cells("a point"))
         assert key
         assert "#discussion_r" not in key
         assert "#issuecomment" not in key
@@ -162,18 +163,18 @@ class TestTheFallbackTierIsReached:
         """Idempotence at the tier the suite never reached through `emit`."""
         first = self._unanchored_cells("a point", "Deferred")
         later = self._unanchored_cells("a point", "Fixed in [`9f2e1a0`](u)")
-        assert (summary_model.row_key_from_cells(first)
-                == summary_model.row_key_from_cells(later))
+        assert (pr.summary_model.row_key_from_cells(first)
+                == pr.summary_model.row_key_from_cells(later))
 
     def test_the_fallback_key_survives_the_text_path(self):
         cells = self._unanchored_cells("a point")
-        row = summary_row.render_row(cells)
-        assert _key_via_text(row) == summary_model.row_key_from_cells(cells)
+        row = pr.summary_row.render_row(cells)
+        assert _key_via_text(row) == pr.summary_model.row_key_from_cells(cells)
 
     def test_two_unanchored_rows_at_one_location_key_apart_by_summary(self):
         """The summary cell is all that separates them, so it has to count."""
-        a = summary_model.row_key_from_cells(self._unanchored_cells("first point"))
-        b = summary_model.row_key_from_cells(self._unanchored_cells("second point"))
+        a = pr.summary_model.row_key_from_cells(self._unanchored_cells("first point"))
+        b = pr.summary_model.row_key_from_cells(self._unanchored_cells("second point"))
         assert a != b
 
 
@@ -190,9 +191,9 @@ class TestTheDroppedAnchorShape:
     def test_the_key_follows_the_rendered_cell_not_the_entry(self):
         entry = CommentItem(id="t1", summary="s", reviewer="kgn", file="a.py", line=9)
         # No head_sha, so no permalink and no anchor decision to make.
-        bare = summary_row.row_cells_for(entry, "Deferred", {}, REPO, 1, "")
-        key = summary_model.row_key_from_cells(bare)
-        assert _key_via_text(summary_row.render_row(bare)) == key
+        bare = pr.summary_row.row_cells_for(entry, "Deferred", {}, REPO, 1, "")
+        key = pr.summary_model.row_key_from_cells(bare)
+        assert _key_via_text(pr.summary_row.render_row(bare)) == key
 
 
 def _thread(tid: str, db_id: int) -> ReportThread:
@@ -216,16 +217,16 @@ class TestAThreadAnchorIsIdentityOnItsOwn:
     def _cells(self, status="Deferred", **kw):
         entry = CommentItem(id="t1", summary=kw.get("summary", "drop the guard"),
                             reviewer="kgn", file="a.py", line=2)
-        return summary_row.row_cells_for(
+        return pr.summary_row.row_cells_for(
             entry, status, {"t1": _thread("t1", 111)}, REPO, 1, kw.get("head_sha", ""))
 
     def test_the_anchor_alone_is_the_key(self):
-        assert summary_model.row_key_from_cells(self._cells()) == "#discussion_r111"
+        assert pr.summary_model.row_key_from_cells(self._cells()) == "#discussion_r111"
 
     def test_the_summary_does_not_enter_a_thread_row_key(self):
         """Rewording a thread's summary must not present it as a new row."""
-        a = summary_model.row_key_from_cells(self._cells(summary="first wording"))
-        b = summary_model.row_key_from_cells(self._cells(summary="second wording"))
+        a = pr.summary_model.row_key_from_cells(self._cells(summary="first wording"))
+        b = pr.summary_model.row_key_from_cells(self._cells(summary="second wording"))
         assert a == b == "#discussion_r111"
 
     def test_the_anchor_is_found_wherever_it_sits_in_the_row(self):
@@ -233,7 +234,7 @@ class TestAThreadAnchorIsIdentityOnItsOwn:
         cells = ["plain text", "@kgn",
                  "[`a.py:2`](https://github.com/owner/repo/pull/1#discussion_r222)",
                  "Deferred"]
-        assert summary_model.row_key_from_cells(cells) == "#discussion_r222"
+        assert pr.summary_model.row_key_from_cells(cells) == "#discussion_r222"
 
 
 class TestSiblingItemsKeyApartUnderOneAnchor:
@@ -248,29 +249,29 @@ class TestSiblingItemsKeyApartUnderOneAnchor:
     def _cells(self, item_id: str, summary: str):
         entry = CommentItem(id=item_id, summary=summary, reviewer="kgn",
                             file="a.py", line=2)
-        return summary_row.row_cells_for(entry, "Deferred", {}, REPO, 1, "")
+        return pr.summary_row.row_cells_for(entry, "Deferred", {}, REPO, 1, "")
 
     def test_each_sibling_gets_its_own_key(self):
         """What M2 breaks: three findings reach the table as one row."""
         keys = {
-            summary_model.row_key_from_cells(self._cells(f"ic-500-{i}", s))
+            pr.summary_model.row_key_from_cells(self._cells(f"ic-500-{i}", s))
             for i, s in enumerate(["first point", "second point", "third point"])
         }
         assert len(keys) == 3
 
     def test_the_anchor_is_still_half_the_key(self):
-        key = summary_model.row_key_from_cells(self._cells("ic-500-0", "a point"))
+        key = pr.summary_model.row_key_from_cells(self._cells("ic-500-0", "a point"))
         assert key.startswith("#issuecomment-500")
         assert "a point" in key
 
     def test_a_sibling_keys_alike_across_a_status_change(self):
         first = self._cells("ic-500-0", "a point")
-        later = summary_row.row_cells_for(
+        later = pr.summary_row.row_cells_for(
             CommentItem(id="ic-500-0", summary="a point", reviewer="kgn",
                         file="a.py", line=2),
             "Fixed in [`9f2e1a0`](u)", {}, REPO, 1, "")
-        assert (summary_model.row_key_from_cells(first)
-                == summary_model.row_key_from_cells(later))
+        assert (pr.summary_model.row_key_from_cells(first)
+                == pr.summary_model.row_key_from_cells(later))
 
 
 class TestDecorationIsStrippedFromTheKey:
@@ -289,14 +290,14 @@ class TestDecorationIsStrippedFromTheKey:
         later = ["a point", "@kgn",
                  "[`a.py:2`](https://github.com/owner/repo/blob/bbbbbbb/a.py#L2)",
                  "Deferred"]
-        assert (summary_model.row_key_from_cells(first)
-                == summary_model.row_key_from_cells(later))
+        assert (pr.summary_model.row_key_from_cells(first)
+                == pr.summary_model.row_key_from_cells(later))
 
     def test_backticks_do_not_reach_the_key(self):
         plain = ["a point", "@kgn", "a.py:2", "Deferred"]
         ticked = ["a point", "@kgn", "`a.py:2`", "Deferred"]
-        assert (summary_model.row_key_from_cells(plain)
-                == summary_model.row_key_from_cells(ticked))
+        assert (pr.summary_model.row_key_from_cells(plain)
+                == pr.summary_model.row_key_from_cells(ticked))
 
 
 class TestPipesCannotBreakIdentity:
@@ -304,8 +305,8 @@ class TestPipesCannotBreakIdentity:
 
     def test_a_summary_pipe_keys_the_same_both_ways(self):
         entry = _entry(ROW_SHAPES["pipe_in_summary"])
-        cells = summary_row.row_cells_for(entry, "Deferred", {}, REPO, 1, SHA)
-        assert len(cells) == len(summary_model.TABLE_COLUMNS)
-        row = summary_row.render_row(cells)
-        assert len(markdown.row_cells(row)) == len(summary_model.TABLE_COLUMNS)
-        assert _key_via_text(row) == summary_model.row_key_from_cells(cells)
+        cells = pr.summary_row.row_cells_for(entry, "Deferred", {}, REPO, 1, SHA)
+        assert len(cells) == len(pr.summary_model.TABLE_COLUMNS)
+        row = pr.summary_row.render_row(cells)
+        assert len(core.markdown.row_cells(row)) == len(pr.summary_model.TABLE_COLUMNS)
+        assert _key_via_text(row) == pr.summary_model.row_key_from_cells(cells)

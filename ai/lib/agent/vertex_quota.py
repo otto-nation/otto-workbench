@@ -26,11 +26,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from core import log
-from core import proc
-from core import serde
-from core import timeouts
-from core import workbench_paths
+import core.log
+import core.proc
+import core.serde
+import core.timeouts
+import core.workbench_paths
 from core.phases import Phase
 
 try:
@@ -174,11 +174,11 @@ def _mint_access_token() -> str | None:
             creds.refresh(_GoogleAuthRequest())
             return creds.token
         except (_GoogleAuthError, OSError) as exc:
-            log.dim(f"google-auth unavailable ({exc}) — falling back to gcloud")
+            core.log.dim(f"google-auth unavailable ({exc}) — falling back to gcloud")
     try:
-        result = proc.run(
+        result = core.proc.run(
             ["gcloud", "auth", "application-default", "print-access-token"],
-            timeout=timeouts.NETWORK,
+            timeout=core.timeouts.NETWORK,
         )
         if result.ok and result.stdout.strip():
             return result.stdout.strip()
@@ -199,7 +199,7 @@ def _cache_key(project: str, region: str) -> Path:
     """
     raw = f"{project}:{region}"
     h = hashlib.sha256(raw.encode()).hexdigest()[:12]
-    return workbench_paths.cache_dir(_CACHE_CONSUMER) / f"{h}.json"
+    return core.workbench_paths.cache_dir(_CACHE_CONSUMER) / f"{h}.json"
 
 
 def _check_cache(project: str, region: str) -> dict[str, str] | None:
@@ -219,7 +219,7 @@ def _write_cache(project: str, region: str, models: dict[str, str]) -> None:
     """Record the quota probe's result. A cache that cannot be written is not
     a failure worth surfacing — the next run re-probes."""
     try:
-        serde.write_json(_cache_key(project, region), {"ts": time.time(), "models": models})
+        core.serde.write_json(_cache_key(project, region), {"ts": time.time(), "models": models})
     except OSError:
         pass
 
@@ -242,7 +242,7 @@ def _fetch_provisioned_models(
     req = urllib.request.Request(url, headers={
         "Authorization": f"Bearer {token}",
     })
-    with urllib.request.urlopen(req, timeout=timeouts.NETWORK) as resp:
+    with urllib.request.urlopen(req, timeout=core.timeouts.NETWORK) as resp:
         data = json.loads(resp.read())
 
     buckets = [
@@ -278,13 +278,13 @@ def check_quota(model: str, project: str, region: str) -> VertexQuotaResult:
 
     token = access_token()
     if not token:
-        log.warn("Vertex quota check skipped — could not obtain access token")
+        core.log.warn("Vertex quota check skipped — could not obtain access token")
         return VertexQuotaResult(QuotaVerdict.UNKNOWN, base_model)
 
     try:
         models = _fetch_provisioned_models(project, region, token)
     except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
-        log.warn(f"Vertex quota check skipped — quota API error: {exc}")
+        core.log.warn(f"Vertex quota check skipped — quota API error: {exc}")
         return VertexQuotaResult(QuotaVerdict.UNKNOWN, base_model)
 
     _write_cache(project, region, models)
@@ -330,14 +330,14 @@ def _verdict(
 def _report_failure(
     result: VertexQuotaResult, phases: Sequence[str], project: str, region: str,
 ) -> None:
-    log.error(
+    core.log.error(
         f"Vertex AI model '{result.model}' has no quota in"
         f" project '{project}' region '{region}'"
     )
     if result.available_models:
-        log.dim(f"  Available: {', '.join(result.available_models)}")
+        core.log.dim(f"  Available: {', '.join(result.available_models)}")
     keys = ", ".join(Phase(p).model_env_key for p in phases)
-    log.dim(f"  Fix: set {keys} to a provisioned model")
+    core.log.dim(f"  Fix: set {keys} to a provisioned model")
 
 
 def run_preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
@@ -354,7 +354,7 @@ def run_preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
     env = vertex_env()
     if not env:
         missing = [key for key in _VERTEX_ENV_KEYS if not os.environ.get(key)]
-        log.warn(f"Vertex quota check skipped — missing env: {', '.join(missing)}")
+        core.log.warn(f"Vertex quota check skipped — missing env: {', '.join(missing)}")
         trail.info("vertex_quota", "skipped — missing env vars",
                    data={"missing": missing})
         return True
@@ -363,7 +363,7 @@ def run_preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
 
     skipped = sorted(m for m in models if not is_checkable(m))
     if skipped:
-        log.dim(f"Vertex quota check skipped for CLI shorthand: {', '.join(skipped)}")
+        core.log.dim(f"Vertex quota check skipped for CLI shorthand: {', '.join(skipped)}")
 
     failures: list[tuple[VertexQuotaResult, Sequence[str]]] = []
     checked = sorted(m for m in models if is_checkable(m))

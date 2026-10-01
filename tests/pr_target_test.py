@@ -1,7 +1,7 @@
 """Tests for the run-target path contract.
 
 SLUG_VECTORS and REPO_KEY_VECTORS are this repo's own expectations of
-`pr_target`, not a table another repo asserts against. Changing a row still
+`pr.target`, not a table another repo asserts against. Changing a row still
 changes where live runs look for their own state, so a row is edited to fix a
 bug in the rule, never to make a failing test pass.
 """
@@ -19,7 +19,7 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest
 
-from pr import target as pr_target
+import pr.target
 
 
 # The slug rule's expectations, spelled out rather than recomputed, so a change
@@ -38,12 +38,12 @@ SLUG_VECTORS = [
 
 @pytest.mark.parametrize("branch,expected", SLUG_VECTORS)
 def test_slug_vectors(branch, expected):
-    assert pr_target.slug(branch) == expected
+    assert pr.target.slug(branch) == expected
 
 
 def test_target_dir_is_rooted_at_the_state_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
-    assert pr_target.target_dir("otto-workbench-3df215bb", "feat/x") == (
+    assert pr.target.target_dir("otto-workbench-3df215bb", "feat/x") == (
         tmp_path / "pr" / "otto-workbench-3df215bb-feat-x"
     )
 
@@ -51,9 +51,9 @@ def test_target_dir_is_rooted_at_the_state_dir(tmp_path, monkeypatch):
 def test_target_dir_follows_a_moved_state_root(tmp_path, monkeypatch):
     """state_dir() resolves per call, so a moved state root carries pr/ along."""
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "old"))
-    before = pr_target.target_dir("repo", "main")
+    before = pr.target.target_dir("repo", "main")
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "new"))
-    after = pr_target.target_dir("repo", "main")
+    after = pr.target.target_dir("repo", "main")
     assert before != after
     assert after.parent.parent == tmp_path / "new"
 
@@ -98,7 +98,7 @@ REPO_KEY_VECTORS = [
     ("https://gitlab.com/group/sub/team/service/widget.git",
      "group-sub-team-service-widget-b37e4eef"),
     # A local remote keys on its trailing segment alone — see the ceiling in
-    # pr_target: leading directories are machine-specific.
+    # pr.target: leading directories are machine-specific.
     ("/srv/git/widget.git", "widget-8ac140ce"),
     ("/srv/git/widget/.git", "widget-8ac140ce"),
     ("/srv/mirrors/otto-workbench/", "otto-workbench-3df215bb"),
@@ -149,7 +149,7 @@ REPO_KEY_VECTORS = [
 
 @pytest.mark.parametrize("url,expected", REPO_KEY_VECTORS)
 def test_repo_key_vectors(url, expected):
-    assert pr_target._repo_key(url) == expected
+    assert pr.target._repo_key(url) == expected
 
 
 # The URL-to-host contract, which answers a different question from the table
@@ -195,7 +195,7 @@ REMOTE_HOST_VECTORS = [
 
 @pytest.mark.parametrize("url,expected", REMOTE_HOST_VECTORS)
 def test_remote_host_vectors(url, expected):
-    assert pr_target._remote_host(url) == expected
+    assert pr.target._remote_host(url) == expected
 
 
 @pytest.mark.parametrize("url,expected", REPO_KEY_VECTORS)
@@ -206,8 +206,8 @@ def test_reading_the_host_does_not_move_a_single_key(url, expected):
     The host field is additive precisely so that none of them move; this asserts
     it over the same table rather than trusting that the parse was kept apart.
     """
-    pr_target._remote_host(url)
-    assert pr_target._repo_key(url) == expected
+    pr.target._remote_host(url)
+    assert pr.target._repo_key(url) == expected
 
 
 @pytest.mark.parametrize("a,b", [
@@ -218,8 +218,8 @@ def test_one_key_can_carry_two_hosts(a, b):
     """The ceiling in `_canonical` keeps same-pathed repos on one key, and this
     change does not revisit that. What it adds is the ability to tell them
     apart afterwards, which is exactly what a rendered link needs."""
-    assert pr_target._repo_key(a) == pr_target._repo_key(b)
-    assert pr_target._remote_host(a) != pr_target._remote_host(b)
+    assert pr.target._repo_key(a) == pr.target._repo_key(b)
+    assert pr.target._remote_host(a) != pr.target._remote_host(b)
 
 
 @pytest.mark.parametrize("host,expected", [
@@ -235,12 +235,12 @@ def test_one_key_can_carry_two_hosts(a, b):
     ("https://ghe.acme.com", "https://ghe.acme.com"),
 ])
 def test_forge_base_url(host, expected):
-    assert pr_target.forge_base_url(host) == expected
+    assert pr.target.forge_base_url(host) == expected
 
 
 def test_forge_base_url_defaults_to_public_github():
     """A call site not yet threaded renders what it always rendered."""
-    assert pr_target.forge_base_url() == "https://github.com"
+    assert pr.target.forge_base_url() == "https://github.com"
 
 
 @pytest.mark.parametrize("a,b", [
@@ -251,13 +251,13 @@ def test_forge_base_url_defaults_to_public_github():
 ])
 def test_the_namespace_is_what_keeps_same_named_repos_apart(a, b):
     """The whole point of qualifying the key — one shared dir is one shared lock."""
-    assert pr_target._repo_key(a) != pr_target._repo_key(b)
+    assert pr.target._repo_key(a) != pr.target._repo_key(b)
 
 
 def test_a_file_url_keys_the_same_as_the_path_it_names():
     """One remote spelled two ways is still one target, so still one run.lock."""
-    assert pr_target._repo_key("file:///srv/git/widget.git") == \
-        pr_target._repo_key("/srv/git/widget.git")
+    assert pr.target._repo_key("file:///srv/git/widget.git") == \
+        pr.target._repo_key("/srv/git/widget.git")
 
 
 @pytest.mark.parametrize("authority", ["", "localhost", "bogushost"])
@@ -267,7 +267,7 @@ def test_a_file_url_ignores_its_authority_exactly_as_git_does(authority):
     The authority is recorded verbatim in remote.origin.url, so keying on it
     would give one clone as many state dirs as it has spellings.
     """
-    assert pr_target._repo_key(f"file://{authority}/srv/git/widget.git") == \
+    assert pr.target._repo_key(f"file://{authority}/srv/git/widget.git") == \
         "widget-8ac140ce"
 
 
@@ -289,7 +289,7 @@ def test_paths_that_flatten_alike_still_key_apart(a, b):
     Each pair flattens to one readable string. The digest is the whole reason
     they are not one directory.
     """
-    assert pr_target._repo_key(a) != pr_target._repo_key(b)
+    assert pr.target._repo_key(a) != pr.target._repo_key(b)
 
 
 def test_the_digest_suffix_is_stable_across_calls():
@@ -298,12 +298,12 @@ def test_the_digest_suffix_is_stable_across_calls():
     The literal is the assertion: recomputing the hash here would only prove the
     test can call hashlib.
     """
-    key = pr_target._repo_key("https://github.com/acme/文档.git")
+    key = pr.target._repo_key("https://github.com/acme/文档.git")
     assert key == "acme-3aa38a61"
-    assert pr_target._repo_key("https://github.com/acme/文档.git") == key
-    other = pr_target._repo_key("https://github.com/acme/日本語.git")
+    assert pr.target._repo_key("https://github.com/acme/文档.git") == key
+    other = pr.target._repo_key("https://github.com/acme/日本語.git")
     assert other == "acme-bc6e6e54"
-    assert pr_target._repo_key("https://github.com/acme/日本語.git") == other
+    assert pr.target._repo_key("https://github.com/acme/日本語.git") == other
 
 
 def test_the_repo_key_folds_case_but_the_branch_slug_does_not():
@@ -312,16 +312,16 @@ def test_the_repo_key_folds_case_but_the_branch_slug_does_not():
     `feat/A` and `feat/a` are two branches on every git host, so folding the
     branch slug would point two live runs at one lock.
     """
-    assert pr_target._repo_key("https://github.com/Acme/Widget.git") == \
-        pr_target._repo_key("https://github.com/acme/widget.git")
-    assert pr_target.target_dir("acme-widget-b9d71e86", "feat/A") != \
-        pr_target.target_dir("acme-widget-b9d71e86", "feat/a")
+    assert pr.target._repo_key("https://github.com/Acme/Widget.git") == \
+        pr.target._repo_key("https://github.com/acme/widget.git")
+    assert pr.target.target_dir("acme-widget-b9d71e86", "feat/A") != \
+        pr.target.target_dir("acme-widget-b9d71e86", "feat/a")
 
 
 def test_the_git_suffix_strip_ignores_case():
     """`.GIT` and `.git` name one repo, so a clone spelled either way is one target."""
-    assert pr_target._repo_key("git@github.com:acme/widget.GIT") == \
-        pr_target._repo_key("git@github.com:acme/widget.git")
+    assert pr.target._repo_key("git@github.com:acme/widget.GIT") == \
+        pr.target._repo_key("git@github.com:acme/widget.git")
 
 
 @pytest.mark.parametrize("with_dot_git,plain", [
@@ -337,8 +337,8 @@ def test_a_dot_git_directory_keys_as_the_repo_holding_it(with_dot_git, plain):
     and a second lock, and the local spelling canonicalized to "" and reported
     no state at all for a repo that has some.
     """
-    assert pr_target._repo_key(with_dot_git) == pr_target._repo_key(plain)
-    assert pr_target._repo_key(with_dot_git) is not None
+    assert pr.target._repo_key(with_dot_git) == pr.target._repo_key(plain)
+    assert pr.target._repo_key(with_dot_git) is not None
 
 
 def test_the_case_fold_maps_a_to_z_and_nothing_else():
@@ -349,29 +349,29 @@ def test_the_case_fold_maps_a_to_z_and_nothing_else():
     hands one repo two keys depending on where the process runs. Folding only
     U+0041-U+005A removes both channels, at the cost of the last two assertions.
     """
-    assert pr_target._canonical("https://github.com/ACME/API") == "acme/api"
-    assert pr_target._repo_key("https://github.com/acme/API") == "acme-api-c7198fbc"
+    assert pr.target._canonical("https://github.com/ACME/API") == "acme/api"
+    assert pr.target._repo_key("https://github.com/acme/API") == "acme-api-c7198fbc"
     # É (U+00C9) is cased, and is deliberately left alone.
-    assert pr_target._canonical("https://github.com/acme/CAFÉ") == "acme/cafÉ"
-    assert pr_target._repo_key("https://github.com/acme/CAFÉ") != \
-        pr_target._repo_key("https://github.com/acme/café")
+    assert pr.target._canonical("https://github.com/acme/CAFÉ") == "acme/cafÉ"
+    assert pr.target._repo_key("https://github.com/acme/CAFÉ") != \
+        pr.target._repo_key("https://github.com/acme/café")
 
 
 @pytest.mark.parametrize("url", [u for u, key in REPO_KEY_VECTORS if key])
 def test_a_key_is_always_one_safe_path_component(url, tmp_path, monkeypatch):
     """A key holding "/", "." or ".." would put a run's state outside pr/."""
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
-    key = pr_target._repo_key(url)
+    key = pr.target._repo_key(url)
     assert "/" not in key
     assert key not in (".", "..")
-    assert pr_target.target_dir(key, "main").resolve().parent == (tmp_path / "pr")
+    assert pr.target.target_dir(key, "main").resolve().parent == (tmp_path / "pr")
 
 
 @pytest.mark.parametrize("url", ["https://github.com/..",
                                  "https://github.com/./widget.git"])
 def test_relative_components_survive_only_as_readable_text(url):
     """The digest suffix is what makes ".." unable to be a whole component."""
-    assert "-" in pr_target._repo_key(url)
+    assert "-" in pr.target._repo_key(url)
 
 
 _LONG = "https://github.com/acme/" + "x" * 70
@@ -383,8 +383,8 @@ def test_the_readable_part_is_capped_and_the_digest_carries_the_rest():
     The cap is the reason they share a readable prefix, and the digest is the
     reason that sharing costs nothing.
     """
-    one = pr_target._repo_key(f"{_LONG}/one.git")
-    two = pr_target._repo_key(f"{_LONG}/two.git")
+    one = pr.target._repo_key(f"{_LONG}/one.git")
+    two = pr.target._repo_key(f"{_LONG}/two.git")
     readable_one, _, digest_one = one.rpartition("-")
     readable_two, _, digest_two = two.rpartition("-")
     assert len(readable_one) == 64
@@ -395,7 +395,7 @@ def test_the_readable_part_is_capped_and_the_digest_carries_the_rest():
 
 def test_a_deeply_nested_path_stays_whole_under_the_cap():
     """The cap is for pathological paths; ordinary GitLab depth never reaches it."""
-    key = pr_target._repo_key("https://gitlab.com/group/sub/team/service/widget.git")
+    key = pr.target._repo_key("https://gitlab.com/group/sub/team/service/widget.git")
     readable = key.rpartition("-")[0]
     assert readable == "group-sub-team-service-widget"
     assert len(readable) < 64
@@ -407,7 +407,7 @@ def test_the_readable_part_never_ends_in_a_dash():
     The 65-character slug is cut to 64, which lands on the separator; the literal
     is the assertion because the pre-truncation slug also ends in "-z".
     """
-    key = pr_target._repo_key("https://github.com/" + "y" * 63 + "/z")
+    key = pr.target._repo_key("https://github.com/" + "y" * 63 + "/z")
     assert key == "y" * 63 + "-72a8ee35"
 
 
@@ -429,14 +429,14 @@ def _git_repo(path: Path, origin: str, branch: str = "main") -> Path:
     ("/srv/git/widget.git", "widget-8ac140ce"),
 ])
 def test_repo_key_from_origin_reads_the_remote(tmp_path, origin, expected):
-    assert pr_target.repo_key_from_origin(str(_git_repo(tmp_path / "wt", origin))) == expected
+    assert pr.target.repo_key_from_origin(str(_git_repo(tmp_path / "wt", origin))) == expected
 
 
 def test_repo_key_from_origin_is_none_without_an_origin(tmp_path):
     path = tmp_path / "wt"
     path.mkdir()
     run_checked(["git", "init", "-q", str(path)])
-    assert pr_target.repo_key_from_origin(str(path)) is None
+    assert pr.target.repo_key_from_origin(str(path)) is None
 
 
 @pytest.mark.parametrize("origin,expected", [
@@ -447,7 +447,7 @@ def test_repo_key_from_origin_is_none_without_an_origin(tmp_path):
 ])
 def test_repo_identity_labels_the_remote_readably(tmp_path, origin, expected):
     """The readable name, for callers that must not pay for `gh repo view`."""
-    identity = pr_target.repo_identity_from_origin(str(_git_repo(tmp_path / "wt", origin)))
+    identity = pr.target.repo_identity_from_origin(str(_git_repo(tmp_path / "wt", origin)))
     assert identity.label == expected
 
 
@@ -458,7 +458,7 @@ def test_repo_identity_labels_the_remote_readably(tmp_path, origin, expected):
 ])
 def test_repo_identity_carries_the_host(tmp_path, origin, expected):
     """Read from the same origin as the label and the key, in the same pass."""
-    identity = pr_target.repo_identity_from_origin(str(_git_repo(tmp_path / "wt", origin)))
+    identity = pr.target.repo_identity_from_origin(str(_git_repo(tmp_path / "wt", origin)))
     assert identity.host == expected
 
 
@@ -466,9 +466,9 @@ def test_repo_identity_host_does_not_disturb_the_key(tmp_path):
     """An enterprise remote keys exactly as the public one it shadows."""
     ghe = _git_repo(tmp_path / "a", "https://ghe.acme.com/acme/widget.git")
     pub = _git_repo(tmp_path / "b", "https://github.com/acme/widget.git")
-    assert pr_target.repo_key_from_origin(str(ghe)) == \
-        pr_target.repo_key_from_origin(str(pub))
-    assert pr_target.repo_identity_from_origin(str(ghe)).host == "ghe.acme.com"
+    assert pr.target.repo_key_from_origin(str(ghe)) == \
+        pr.target.repo_key_from_origin(str(pub))
+    assert pr.target.repo_identity_from_origin(str(ghe)).host == "ghe.acme.com"
 
 
 def test_repo_identity_host_reads_the_recorded_spelling_not_the_rewrite(tmp_path):
@@ -485,7 +485,7 @@ def test_repo_identity_host_reads_the_recorded_spelling_not_the_rewrite(tmp_path
     ])
     assert run_checked(["git", "-C", str(repo), "remote", "get-url", "origin"]).stdout.strip() \
         == "git@ghebox:acme/widget.git"
-    identity = pr_target.repo_identity_from_origin(str(repo))
+    identity = pr.target.repo_identity_from_origin(str(repo))
     assert identity.host == "ghe.acme.com"
 
 
@@ -493,24 +493,24 @@ def test_repo_identity_is_none_without_an_origin(tmp_path):
     path = tmp_path / "wt"
     path.mkdir()
     run_checked(["git", "init", "-q", str(path)])
-    assert pr_target.repo_identity_from_origin(str(path)) is None
+    assert pr.target.repo_identity_from_origin(str(path)) is None
 
 
 def test_repo_identity_is_none_when_the_remote_names_no_repo(tmp_path):
     """An origin with no path has no canonical form, so it names no repo — the
     same condition under which it has no key."""
     wt = _git_repo(tmp_path / "wt", "ssh://git@github.com/")
-    assert pr_target.repo_identity_from_origin(str(wt)) is None
-    assert pr_target.repo_key_from_origin(str(wt)) is None
+    assert pr.target.repo_identity_from_origin(str(wt)) is None
+    assert pr.target.repo_key_from_origin(str(wt)) is None
 
 
 def test_repo_identity_label_and_key_name_one_repo(tmp_path):
     """Both derive from one canonical form, so a checkout cannot report a label
     and a key that disagree about which repo it is."""
     wt = _git_repo(tmp_path / "wt", "https://github.com/Acme/Widget.git")
-    identity = pr_target.repo_identity_from_origin(str(wt))
-    assert identity.key.startswith(pr_target.slug(identity.label))
-    assert identity.key == pr_target.repo_key_from_origin(str(wt))
+    identity = pr.target.repo_identity_from_origin(str(wt))
+    assert identity.key.startswith(pr.target.slug(identity.label))
+    assert identity.key == pr.target.repo_key_from_origin(str(wt))
 
 
 def test_repo_identity_reads_the_origin_once(tmp_path, monkeypatch):
@@ -518,11 +518,11 @@ def test_repo_identity_reads_the_origin_once(tmp_path, monkeypatch):
     cannot disagree is that there is only one read behind them."""
     wt = _git_repo(tmp_path / "wt", "git@github.com:acme/widget.git")
     reads = []
-    real = pr_target._origin_url
-    monkeypatch.setattr(pr_target, "_origin_url",
+    real = pr.target._origin_url
+    monkeypatch.setattr(pr.target, "_origin_url",
                         lambda cwd: reads.append(cwd) or real(cwd))
 
-    pr_target.repo_identity_from_origin(str(wt))
+    pr.target.repo_identity_from_origin(str(wt))
 
     assert len(reads) == 1
 
@@ -531,20 +531,20 @@ def test_target_dir_for_checkout_matches_target_dir(tmp_path, monkeypatch):
     """The two derivations of one identity, asserted equal rather than assumed."""
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
     wt = _git_repo(tmp_path / "wt", "git@github.com:acme/widget.git", "feat/login")
-    assert pr_target.target_dir_for_checkout(wt) == pr_target.target_dir(
+    assert pr.target.target_dir_for_checkout(wt) == pr.target.target_dir(
         "acme-widget-b9d71e86", "feat/login")
 
 
 def test_target_dir_for_checkout_prefers_origin_over_any_api_name(tmp_path, monkeypatch):
     """The derived directory name comes from `origin`, not any API-reported name.
 
-    No `gh` call exists in pr_target at all, so there is no code path here that
+    No `gh` call exists in pr.target at all, so there is no code path here that
     a network name could reach — asserted by the module's contents, not by
     breaking PATH to prove git can't shell out.
     """
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
     wt = _git_repo(tmp_path / "wt", "https://github.com/acme/renamed-clone.git", "main")
-    assert pr_target.target_dir_for_checkout(wt).name == \
+    assert pr.target.target_dir_for_checkout(wt).name == \
         "acme-renamed-clone-2027bcd9-main"
 
 
@@ -553,7 +553,7 @@ def test_target_dir_for_checkout_is_none_without_an_origin(tmp_path, monkeypatch
     path = tmp_path / "wt"
     path.mkdir()
     run_checked(["git", "init", "-q", str(path)])
-    assert pr_target.target_dir_for_checkout(path) is None
+    assert pr.target.target_dir_for_checkout(path) is None
 
 
 def test_target_dir_for_checkout_is_none_on_detached_head(tmp_path, monkeypatch):
@@ -566,7 +566,7 @@ def test_target_dir_for_checkout_is_none_on_detached_head(tmp_path, monkeypatch)
                      "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
                      "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
     run_checked(["git", "-C", str(wt), "checkout", "-q", "--detach", "HEAD"])
-    assert pr_target.target_dir_for_checkout(wt) is None
+    assert pr.target.target_dir_for_checkout(wt) is None
 
 
 class TestIsPublicGithub:
@@ -580,17 +580,17 @@ class TestIsPublicGithub:
 
     @pytest.mark.parametrize("host", ["", "   ", "github.com", "GitHub.com", "GITHUB.COM"])
     def test_the_public_spellings(self, host):
-        assert pr_target.is_public_github(host) is True
+        assert pr.target.is_public_github(host) is True
 
     @pytest.mark.parametrize("host", ["ghe.acme.com", "github.acme.com",
                                       "gitlab.com", "github.com.evil.test"])
     def test_everything_else_is_not(self, host):
-        assert pr_target.is_public_github(host) is False
+        assert pr.target.is_public_github(host) is False
 
 
 class TestFoldCaseIsTheOnlyFold:
     def test_it_folds_ascii_only(self):
-        assert pr_target.fold_case("ACME/Widget-API") == "acme/widget-api"
+        assert pr.target.fold_case("ACME/Widget-API") == "acme/widget-api"
 
     def test_a_unicode_uppercase_is_left_alone(self):
         """`str.lower` would fold these; the key contract says it must not.
@@ -598,13 +598,13 @@ class TestFoldCaseIsTheOnlyFold:
         A Unicode fold anywhere near this path produces two keys for one repo
         on machines that disagree about the locale.
         """
-        assert pr_target.fold_case("\u0130") == "\u0130"
-        assert pr_target.fold_case("\u00c9") == "\u00c9"
-        assert pr_target.fold_case("\u0130").lower() != "\u0130"
+        assert pr.target.fold_case("\u0130") == "\u0130"
+        assert pr.target.fold_case("\u00c9") == "\u00c9"
+        assert pr.target.fold_case("\u0130").lower() != "\u0130"
 
     def test_the_ascii_around_a_unicode_char_still_folds(self):
         """Per-codepoint, so one untouched character does not exempt its word."""
-        assert pr_target.fold_case("\u0130STANBUL") == "\u0130stanbul"
+        assert pr.target.fold_case("\u0130STANBUL") == "\u0130stanbul"
 
 
 class TestDisplayRepo:
@@ -617,23 +617,23 @@ class TestDisplayRepo:
 
     @pytest.mark.parametrize("host", ["", "github.com", "GitHub.com"])
     def test_a_public_host_shows_the_bare_slug(self, host):
-        assert pr_target.display_repo("acme/widget", host) == "acme/widget"
+        assert pr.target.display_repo("acme/widget", host) == "acme/widget"
 
     def test_an_enterprise_host_qualifies_the_slug(self):
-        assert pr_target.display_repo("acme/widget", "ghe.acme.com") == (
+        assert pr.target.display_repo("acme/widget", "ghe.acme.com") == (
             "ghe.acme.com/acme/widget")
 
     def test_two_instances_serving_one_slug_render_differently(self):
         """The whole point: the bare slug cannot tell these apart."""
-        assert pr_target.display_repo("acme/widget", "ghe.acme.com") != (
-            pr_target.display_repo("acme/widget", "ghe.other.com"))
+        assert pr.target.display_repo("acme/widget", "ghe.acme.com") != (
+            pr.target.display_repo("acme/widget", "ghe.other.com"))
 
     def test_a_trailing_slash_does_not_double(self):
-        assert pr_target.display_repo("acme/widget", "ghe.acme.com/") == (
+        assert pr.target.display_repo("acme/widget", "ghe.acme.com/") == (
             "ghe.acme.com/acme/widget")
 
     def test_the_identity_exposes_it_beside_the_untouched_label(self):
-        identity = pr_target.RepoIdentity(
+        identity = pr.target.RepoIdentity(
             label="acme/widget", key="acme-widget-1234abcd", host="ghe.acme.com")
         assert identity.display_label == "ghe.acme.com/acme/widget"
         assert identity.label == "acme/widget", "what gh and the layout still use"

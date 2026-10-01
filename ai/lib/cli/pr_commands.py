@@ -22,18 +22,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-from cli import dispatch
+import cli.dispatch
 from cli.registry import COMMANDS
-from core import log
-from core import publishing
-from core import timeouts
+import core.log
+import core.publishing
+import core.timeouts
 from core.trail import Trail
-from gh import budget as gh_budget
-from pr import context as pr_context
-from pr import domains as pr_domains
-from pr import state as pr_state
-from pr import supersession
-from review import gc as review_gc
+import gh.budget
+import pr.context
+import pr.domains
+import pr.state
+import pr.supersession
+import review.gc
 
 # A command that stopped because the account's hourly GitHub quota is spent.
 # Its own code because the remedy is nothing the caller did wrong and nothing
@@ -51,22 +51,22 @@ from review import gc as review_gc
 EXIT_BUDGET_EXHAUSTED = 75
 
 
-def _run_pass(command: str, argv: list[str], ctx: pr_context.ResolvedContext, *,
+def _run_pass(command: str, argv: list[str], ctx: pr.context.ResolvedContext, *,
               original_pr: str | None = None,
               original_branch: str | None = None,
               **kwargs) -> int:
     """Run one of `pr fix`'s passes in this process, and return its code."""
     spec = COMMANDS[command]
-    return publishing.call_entry_point(
+    return core.publishing.call_entry_point(
         spec.handler,
-        dispatch.delegate_argv(spec, argv, ctx,
+        cli.dispatch.delegate_argv(spec, argv, ctx,
                                original_pr=original_pr,
                                original_branch=original_branch),
         **kwargs,
     )
 
 
-def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
+def cmd_status(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
     """Render unified status dashboard from cached state.
 
     The dashboard is a fold over the domain registry, not a list of renderers:
@@ -83,11 +83,11 @@ def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     markers above were computed against.
     """
     wt = ctx.require_worktree()
-    state = pr_state.load_state(ctx.target_dir)
+    state = pr.state.load_state(ctx.target_dir)
 
     branch = state.identity.branch if state else ctx.branch
     repo = state.identity.repo if state else ctx.repo
-    push = pr_domains.PushDomain.observed(wt, branch, updated_at=pr_state.now_iso())
+    push = pr.domains.PushDomain.observed(wt, branch, updated_at=pr.state.now_iso())
 
     # Refreshed for the same reason push is, and it is the same kind of
     # question: `identity.head_sha` is from whenever state was last *written*,
@@ -99,10 +99,10 @@ def cmd_status(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     if state:
         state.identity.head_sha = _worktree_head(wt, state.identity.head_sha)
 
-    lines = pr_state.render_dashboard(state, push, repo=repo, branch=branch)
+    lines = pr.state.render_dashboard(state, push, repo=repo, branch=branch)
     print("\n".join(lines), file=sys.stderr)
     if state:
-        json.dump(pr_state.state_to_dict(state), sys.stdout, indent=2)
+        json.dump(pr.state.state_to_dict(state), sys.stdout, indent=2)
         print()
     return 0
 
@@ -128,12 +128,12 @@ def _worktree_head(wt: Path, fallback: str) -> str:
     dashboard read should be what ends the command.
     """
     try:
-        return pr_context.head_sha(str(wt)) or fallback
+        return pr.context.head_sha(str(wt)) or fallback
     except (OSError, subprocess.TimeoutExpired):
         return fallback
 
 
-def _worth_running(domain: pr_domains.Domain, head_sha: str, *,
+def _worth_running(domain: pr.domains.Domain, head_sha: str, *,
                    has_work: bool, name: str) -> bool:
     """Whether to run a pass, given what the cache last said about `domain`.
 
@@ -162,12 +162,12 @@ def _worth_running(domain: pr_domains.Domain, head_sha: str, *,
         return True
     if domain.describes(head_sha):
         return False
-    log.dim(f"{name}: the last check was against a different commit — "
+    core.log.dim(f"{name}: the last check was against a different commit — "
             f"re-running rather than trusting it")
     return True
 
 
-def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
+def cmd_fix(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
     """Run fix passes for CI, review, and comments.
 
     Three passes in one process. Each goes through `cli.dispatch`, which is
@@ -177,9 +177,9 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     than the two after it.
     """
     wt = ctx.require_worktree()
-    state = pr_state.load_state(ctx.target_dir)
+    state = pr.state.load_state(ctx.target_dir)
     if not state:
-        log.error("No state yet. Run pr ci, pr review, or pr comments first.")
+        core.log.error("No state yet. Run pr ci, pr review, or pr comments first.")
         return 1
 
     exit_code = 0
@@ -197,7 +197,7 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     review_findings = sum(state.review.finding_counts.values())
     if _worth_running(state.review, review_sha,
                       has_work=review_findings > 0, name="Review"):
-        log.info(f"Fixing {review_findings} review finding(s)..." if review_findings
+        core.log.info(f"Fixing {review_findings} review finding(s)..." if review_findings
                  else "Reviewing...")
         # `--repo-dir` names the tree explicitly rather than letting the pass
         # re-derive one: without a target it resolves the worktree's current
@@ -211,7 +211,7 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
             # `cli.review_entry.main`.
             install_signal_handler=False,
         )
-        if rc == supersession.EXIT_SUPERSEDED:
+        if rc == pr.supersession.EXIT_SUPERSEDED:
             # Every remaining pass acts on the same branch, so a refusal that
             # says "this branch may not be worth working on" answers for all of
             # them. Continuing would spend the CI fix pass on the question the
@@ -221,10 +221,10 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
             # `sys.exit(EXIT_SUPERSEDED)` back into a returncode. As a
             # subprocess the kernel did that; without the seam this branch
             # would be dead code and the refusal would end `pr fix` silently.
-            log.error("Stopping — the review refused this branch as superseded.")
-            log.dim(f"Resolve it, or re-run with {supersession.OVERRIDE_FLAG} "
+            core.log.error("Stopping — the review refused this branch as superseded.")
+            core.log.dim(f"Resolve it, or re-run with {pr.supersession.OVERRIDE_FLAG} "
                     f"to override.")
-            return supersession.EXIT_SUPERSEDED
+            return pr.supersession.EXIT_SUPERSEDED
         if rc != 0:
             exit_code = 1
 
@@ -234,11 +234,11 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
         ci_fixable = state.ci.failure_count - infra_count
 
     if _worth_running(state.ci, ctx.head_sha, has_work=ci_fixable > 0, name="CI"):
-        log.blank()
+        core.log.blank()
         # The count is what the cache last saw, and the child re-fetches before
         # fixing anything — so it is reported as the reason for running, not as
         # the work about to be done.
-        log.info(f"Fixing {ci_fixable} CI failure(s)..." if ci_fixable > 0
+        core.log.info(f"Fixing {ci_fixable} CI failure(s)..." if ci_fixable > 0
                  else "Checking CI...")
         rc = _run_pass(
             "ci", ["--fix"] + list(argv), ctx,
@@ -254,8 +254,8 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     # say a verdict was about this one.
     actionable = state.comments.by_state.get("new", 0) + state.comments.by_state.get("contested", 0)
     if state.comments.updated_at and actionable > 0:
-        log.blank()
-        log.info(f"Comments: {actionable} actionable thread(s) — run pr comments --fix")
+        core.log.blank()
+        core.log.info(f"Comments: {actionable} actionable thread(s) — run pr comments --fix")
 
     # Last, because the description has to describe the branch as it ends up.
     # pr-describe re-resolves HEAD itself and no-ops when nothing landed, so
@@ -267,7 +267,7 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     # flag that means something to describe. Editing the PR body is gated like
     # every other GitHub write, so without this a `pr fix --post` would push
     # its commits and post its replies and then draft the description alone.
-    log.blank()
+    core.log.blank()
     describe_argv = ["--post"] if "--post" in argv else []
     if _run_pass("describe", describe_argv, ctx,
                  original_pr=_kw.get("original_pr"),
@@ -277,7 +277,7 @@ def cmd_fix(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     return exit_code
 
 
-def cmd_create(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
+def cmd_create(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
     """Delegate PR creation to task pr:create."""
     cmd = ["task", "--global"]
     if ctx.worktree_root:
@@ -285,10 +285,10 @@ def cmd_create(argv: list[str], ctx: pr_context.ResolvedContext, **_kw) -> int:
     cmd.append("pr:create")
     if argv:
         cmd += ["--"] + list(argv)
-    return subprocess.run(cmd, timeout=timeouts.UNBOUNDED).returncode
+    return subprocess.run(cmd, timeout=core.timeouts.UNBOUNDED).returncode
 
 
-def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, *, trail: Trail, **_kw) -> int:
+def cmd_gc(argv: list[str], ctx: pr.context.ResolvedContext, *, trail: Trail, **_kw) -> int:
     """Clean up stale PR artifacts across all domains.
 
     A sweep the GitHub budget cut short is reported as such, and exits
@@ -300,21 +300,21 @@ def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, *, trail: Trail, **
     """
     # All user-scoped, so this works from a bare repo. Our own target is
     # skipped: we are holding its lock right now.
-    local = review_gc.gc_reviews()
+    local = review.gc.gc_reviews()
     outcome = (
-        review_gc.prune_merged_reviews()
-        + review_gc.prune_merged_targets(skip=ctx.target_dir, trail=trail)
+        review.gc.prune_merged_reviews()
+        + review.gc.prune_merged_targets(skip=ctx.target_dir, trail=trail)
     )
     total = local + outcome.pruned
 
     if outcome.cut_short:
-        latch = gh_budget.latched(gh_budget.Resource.GRAPHQL)
-        remedy = latch.remedy() if latch else gh_budget.BUDGET_EXHAUSTED_HINT
-        log.warn(
+        latch = gh.budget.latched(gh.budget.Resource.GRAPHQL)
+        remedy = latch.remedy() if latch else gh.budget.BUDGET_EXHAUSTED_HINT
+        core.log.warn(
             f"GC: stopped early — the GitHub API budget is spent, so the PRs "
             f"behind this sweep were never asked about ({remedy})")
         if total:
-            log.info(f"GC: cleaned {total} item(s) before it ran out")
+            core.log.info(f"GC: cleaned {total} item(s) before it ran out")
         trail.summary(
             "gc_cut_short",
             f"budget exhausted after cleaning {total} item(s)",
@@ -323,7 +323,7 @@ def cmd_gc(argv: list[str], ctx: pr_context.ResolvedContext, *, trail: Trail, **
         return EXIT_BUDGET_EXHAUSTED
 
     if total > 0:
-        log.info(f"GC: cleaned {total} item(s) total")
+        core.log.info(f"GC: cleaned {total} item(s) total")
     else:
-        log.info("GC: nothing to clean")
+        core.log.info("GC: nothing to clean")
     return 0

@@ -15,11 +15,11 @@ as an argument is also what lets a test declare a table of its own.
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
-from pr import context as pr_context
+import pr.context
 
-NONE = pr_context.ContextDepth.NONE
-LOCAL = pr_context.ContextDepth.LOCAL
-REMOTE = pr_context.ContextDepth.REMOTE
+NONE = pr.context.ContextDepth.NONE
+LOCAL = pr.context.ContextDepth.LOCAL
+REMOTE = pr.context.ContextDepth.REMOTE
 
 
 @dataclass(frozen=True)
@@ -31,7 +31,7 @@ class Need:
     must not fetch (it does its own), and `gc` writes nothing to the remote yet
     still locks, because it deletes the directory other runs key on.
 
-    * ``depth`` — how far ``pr_context`` resolves. LOCAL is git alone; REMOTE
+    * ``depth`` — how far ``pr.context`` resolves. LOCAL is git alone; REMOTE
       adds the ``gh`` calls that name the repo and the PR. LOCAL never learns a
       branch's PR number, even when one already exists — `resolve_local`'s
       `pr_number` is unconditionally None, so a caller reaching for LOCAL to
@@ -43,7 +43,7 @@ class Need:
       the worktree, so it is safe alongside another run.
     """
 
-    depth: pr_context.ContextDepth
+    depth: pr.context.ContextDepth
     update: bool
     lock: bool
 
@@ -62,7 +62,7 @@ class Need:
         `otto-log` query then has to read — see `trail.TRAIL_KEEP_MONTHS`,
         which bounds that file for the writers this does not cover.
         """
-        resolves_nothing = self.depth is pr_context.ContextDepth.NONE
+        resolves_nothing = self.depth is pr.context.ContextDepth.NONE
         return self.lock or not resolves_nothing
 
 
@@ -77,7 +77,7 @@ REVIEW_DEFAULT_NEED = Need(REMOTE, update=True, lock=True)
 # comes from the network — the repo label it does need is the one
 # `repo_identity_from_origin` reads off the git remote. That label is not
 # byte-identical to what `gh repo view` would return: it folds case and drops
-# the host (see `pr_target.RepoIdentity`), which is fine for what a self-review
+# the host (see `pr.target.RepoIdentity`), which is fine for what a self-review
 # uses it for.
 #
 # LOCAL rather than REMOTE because a self-review is the pass that runs *before*

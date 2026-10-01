@@ -23,8 +23,8 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from gh import budget  # noqa: E402
-from gh import client as gh_client  # noqa: E402
+import gh.budget  # noqa: E402
+import gh.client  # noqa: E402
 
 EXHAUSTED = "GraphQL: API rate limit already exceeded for user ID 7399350."
 
@@ -62,8 +62,8 @@ def test_a_second_call_after_an_exhausted_budget_is_not_made(stub_gh):
     """
     calls = _refusing_gh(stub_gh)
 
-    gh_client.run("pr", "view", "1", "--repo", "o/r")
-    gh_client.run("pr", "view", "2", "--repo", "o/r")
+    gh.client.run("pr", "view", "1", "--repo", "o/r")
+    gh.client.run("pr", "view", "2", "--repo", "o/r")
 
     assert len(_non_probe_calls(calls)) == 1
 
@@ -75,10 +75,10 @@ def test_the_short_circuited_result_says_no_call_was_made(stub_gh):
     the whole defence of a synthetic result is that it says what it is.
     """
     _refusing_gh(stub_gh)
-    gh_client.run("pr", "view", "1", "--repo", "o/r")
+    gh.client.run("pr", "view", "1", "--repo", "o/r")
 
-    r = gh_client.run("pr", "view", "2", "--repo", "o/r")
-    assert r.returncode == budget.BUDGET_LATCHED_RETURNCODE
+    r = gh.client.run("pr", "view", "2", "--repo", "o/r")
+    assert r.returncode == gh.budget.BUDGET_LATCHED_RETURNCODE
     assert r.detail.startswith("no call made")
     assert "7399350" in r.detail
 
@@ -91,7 +91,7 @@ def test_the_remedy_is_explained_once_not_per_call(stub_gh, capsys):
     """
     _refusing_gh(stub_gh)
     for i in range(10):
-        gh_client.run("pr", "view", str(i), "--repo", "o/r")
+        gh.client.run("pr", "view", str(i), "--repo", "o/r")
 
     said = capsys.readouterr().err
     assert said.count("hourly GitHub API quota") == 1
@@ -104,10 +104,10 @@ def test_the_hint_does_not_recommend_the_endpoint_that_lies():
     real GraphQL call was refused. Sending a user there is sending them to be
     told the budget is fine.
     """
-    assert "rate_limit" not in budget.BUDGET_EXHAUSTED_HINT
-    assert "X-Ratelimit-Reset" in budget.BUDGET_EXHAUSTED_HINT
-    assert "X-Ratelimit-Reset" in budget.Latch(
-        budget.Resource.GRAPHQL, "1", None).remedy()
+    assert "rate_limit" not in gh.budget.BUDGET_EXHAUSTED_HINT
+    assert "X-Ratelimit-Reset" in gh.budget.BUDGET_EXHAUSTED_HINT
+    assert "X-Ratelimit-Reset" in gh.budget.Latch(
+        gh.budget.Resource.GRAPHQL, "1", None).remedy()
 
 
 def test_the_reset_time_comes_from_the_response_header(stub_gh):
@@ -115,9 +115,9 @@ def test_the_reset_time_comes_from_the_response_header(stub_gh):
     at = int(time.time()) + 600
     _refusing_gh(stub_gh, reset=at)
 
-    gh_client.run("pr", "view", "1", "--repo", "o/r")
+    gh.client.run("pr", "view", "1", "--repo", "o/r")
 
-    latch = budget.latched(budget.Resource.GRAPHQL)
+    latch = gh.budget.latched(gh.budget.Resource.GRAPHQL)
     assert latch is not None
     assert latch.reset == float(at)
     assert time.strftime("%H:%M:%S", time.localtime(at)) in latch.remedy()
@@ -130,9 +130,9 @@ def test_no_reset_header_means_no_reset_time_is_claimed(stub_gh):
     """
     _refusing_gh(stub_gh, reset=None)
 
-    gh_client.run("pr", "view", "1", "--repo", "o/r")
+    gh.client.run("pr", "view", "1", "--repo", "o/r")
 
-    latch = budget.latched(budget.Resource.GRAPHQL)
+    latch = gh.budget.latched(gh.budget.Resource.GRAPHQL)
     assert latch is not None
     assert latch.reset is None
     assert "refills at" not in latch.remedy()
@@ -149,9 +149,9 @@ def test_a_reset_beyond_one_window_is_clamped(stub_gh):
     said = int(time.time()) + 86400
     _refusing_gh(stub_gh, reset=said)
 
-    gh_client.run("pr", "view", "1", "--repo", "o/r")
+    gh.client.run("pr", "view", "1", "--repo", "o/r")
 
-    latch = budget.latched(budget.Resource.GRAPHQL)
+    latch = gh.budget.latched(gh.budget.Resource.GRAPHQL)
     assert latch is not None
     assert latch.expires <= time.time() + 3600 + 1
     assert latch.reset == float(said)
@@ -161,10 +161,10 @@ def test_an_unclassifiable_argv_is_called_rather_than_refused(stub_gh):
     """Fail open. A call wrongly made costs one already-spent point; a call
     wrongly refused is indistinguishable from GitHub having nothing to say."""
     calls = _refusing_gh(stub_gh)
-    gh_client.run("pr", "view", "1", "--repo", "o/r")
+    gh.client.run("pr", "view", "1", "--repo", "o/r")
     before = len(_non_probe_calls(calls))
 
-    gh_client.run("run", "download", "12345")
+    gh.client.run("run", "download", "12345")
 
     assert len(_non_probe_calls(calls)) == before + 1
 
@@ -172,10 +172,10 @@ def test_an_unclassifiable_argv_is_called_rather_than_refused(stub_gh):
 def test_a_latched_graphql_budget_does_not_refuse_rest(stub_gh):
     """REST and GraphQL are separate 5000-point budgets that refill apart."""
     calls = _refusing_gh(stub_gh)
-    gh_client.run("pr", "view", "1", "--repo", "o/r")
+    gh.client.run("pr", "view", "1", "--repo", "o/r")
     before = len(_non_probe_calls(calls))
 
-    gh_client.run("api", "repos/o/r")
+    gh.client.run("api", "repos/o/r")
 
     assert len(_non_probe_calls(calls)) == before + 1
 
@@ -183,14 +183,14 @@ def test_a_latched_graphql_budget_does_not_refuse_rest(stub_gh):
 def test_the_latch_clears_once_the_reset_passes(stub_gh, monkeypatch):
     """The budget refills on its own, so the latch has to let go on its own."""
     calls = _refusing_gh(stub_gh, reset=int(time.time()) + 600)
-    gh_client.run("pr", "view", "1", "--repo", "o/r")
+    gh.client.run("pr", "view", "1", "--repo", "o/r")
     before = len(_non_probe_calls(calls))
 
     # Bound outside the lambda: reading `time.time` through the patched module
     # would call the replacement from inside itself.
     real_time = time.time
-    monkeypatch.setattr(budget.time, "time", lambda: real_time() + 601)
-    gh_client.run("pr", "view", "2", "--repo", "o/r")
+    monkeypatch.setattr(gh.budget.time, "time", lambda: real_time() + 601)
+    gh.client.run("pr", "view", "2", "--repo", "o/r")
 
     assert len(_non_probe_calls(calls)) == before + 1
 
@@ -202,10 +202,10 @@ def test_a_child_process_inherits_the_latch(stub_gh):
     grandchild pays again for what its parent already learned.
     """
     _refusing_gh(stub_gh, reset=int(time.time()) + 600)
-    gh_client.run("pr", "view", "1", "--repo", "o/r")
+    gh.client.run("pr", "view", "1", "--repo", "o/r")
 
-    assert budget.LATCH_ENV in os.environ
-    assert "graphql" in os.environ[budget.LATCH_ENV]
+    assert gh.budget.LATCH_ENV in os.environ
+    assert "graphql" in os.environ[gh.budget.LATCH_ENV]
 
 
 def test_an_inherited_latch_is_adopted_without_being_asked_to(stub_gh, monkeypatch):
@@ -219,11 +219,11 @@ def test_an_inherited_latch_is_adopted_without_being_asked_to(stub_gh, monkeypat
     """
     calls = stub_gh('printf "{}\\n"; exit 0')
     at = int(time.time()) + 600
-    monkeypatch.setenv(budget.LATCH_ENV, f"graphql:{at}:{at}:7399350")
+    monkeypatch.setenv(gh.budget.LATCH_ENV, f"graphql:{at}:{at}:7399350")
 
-    r = gh_client.run("pr", "view", "1", "--repo", "o/r")
+    r = gh.client.run("pr", "view", "1", "--repo", "o/r")
 
-    assert r.returncode == budget.BUDGET_LATCHED_RETURNCODE
+    assert r.returncode == gh.budget.BUDGET_LATCHED_RETURNCODE
     assert _non_probe_calls(calls) == []
 
 
@@ -238,23 +238,23 @@ def test_arming_one_resource_does_not_drop_an_inherited_other(stub_gh, monkeypat
     its parent paid for gone from both the table and the variable.
     """
     at = int(time.time()) + 600
-    monkeypatch.setenv(budget.LATCH_ENV, f"core:{at}:{at}:7399350")
+    monkeypatch.setenv(gh.budget.LATCH_ENV, f"core:{at}:{at}:7399350")
     _refusing_gh(stub_gh, reset=at)
 
-    budget.arm(f"{EXHAUSTED}\n", budget.Resource.GRAPHQL)
+    gh.budget.arm(f"{EXHAUSTED}\n", gh.budget.Resource.GRAPHQL)
 
-    assert budget.latched(budget.Resource.CORE) is not None
-    assert budget.latched(budget.Resource.GRAPHQL) is not None
-    assert "core" in os.environ[budget.LATCH_ENV]
+    assert gh.budget.latched(gh.budget.Resource.CORE) is not None
+    assert gh.budget.latched(gh.budget.Resource.GRAPHQL) is not None
+    assert "core" in os.environ[gh.budget.LATCH_ENV]
 
 
 def test_an_expired_inherited_latch_is_ignored(stub_gh, monkeypatch):
     """A latch whose window has passed is history, not a refusal."""
     calls = stub_gh('printf "{}\\n"; exit 0')
     at = int(time.time()) - 10
-    monkeypatch.setenv(budget.LATCH_ENV, f"graphql:{at}:{at}:7399350")
+    monkeypatch.setenv(gh.budget.LATCH_ENV, f"graphql:{at}:{at}:7399350")
 
-    gh_client.run("pr", "view", "1", "--repo", "o/r")
+    gh.client.run("pr", "view", "1", "--repo", "o/r")
 
     assert len(_non_probe_calls(calls)) == 1
 
@@ -269,9 +269,9 @@ def test_a_malformed_inherited_latch_is_ignored(stub_gh, monkeypatch, raw):
     shell that happened to have it set.
     """
     calls = stub_gh('printf "{}\\n"; exit 0')
-    monkeypatch.setenv(budget.LATCH_ENV, raw)
+    monkeypatch.setenv(gh.budget.LATCH_ENV, raw)
 
-    gh_client.run("pr", "view", "1", "--repo", "o/r")
+    gh.client.run("pr", "view", "1", "--repo", "o/r")
 
     assert len(_non_probe_calls(calls)) == 1
 
@@ -280,21 +280,21 @@ def test_an_ordinary_failure_does_not_arm_the_latch(stub_gh):
     """A 404 is an answer. Only a quota refusal closes the gate."""
     calls = stub_gh('printf "gh: Not Found\\n" >&2\nexit 1\n')
 
-    gh_client.run("pr", "view", "1", "--repo", "o/r")
-    gh_client.run("pr", "view", "2", "--repo", "o/r")
+    gh.client.run("pr", "view", "1", "--repo", "o/r")
+    gh.client.run("pr", "view", "2", "--repo", "o/r")
 
-    assert budget.latched(budget.Resource.GRAPHQL) is None
+    assert gh.budget.latched(gh.budget.Resource.GRAPHQL) is None
     assert len(_non_probe_calls(calls)) == 2
 
 
 def test_resource_for_maps_the_calls_that_actually_bleed():
     """`gh pr view` spends the GraphQL budget while reading like neither
     `api` nor `graphql` — it is the call the GC sweep made twenty-one times."""
-    assert budget.resource_for(("pr", "view", "1")) is budget.Resource.GRAPHQL
-    assert budget.resource_for(("api", "graphql")) is budget.Resource.GRAPHQL
-    assert budget.resource_for(("api", "repos/o/r")) is budget.Resource.CORE
-    assert budget.resource_for(("run", "download", "1")) is None
-    assert budget.resource_for(()) is None
+    assert gh.budget.resource_for(("pr", "view", "1")) is gh.budget.Resource.GRAPHQL
+    assert gh.budget.resource_for(("api", "graphql")) is gh.budget.Resource.GRAPHQL
+    assert gh.budget.resource_for(("api", "repos/o/r")) is gh.budget.Resource.CORE
+    assert gh.budget.resource_for(("run", "download", "1")) is None
+    assert gh.budget.resource_for(()) is None
 
 
 def test_a_budget_that_dies_mid_ladder_stops_the_remaining_attempts(
@@ -314,9 +314,9 @@ def test_a_budget_that_dies_mid_ladder_stops_the_remaining_attempts(
         f'printf "{EXHAUSTED}\\n" >&2\n'
         "exit 1\n",
     )
-    monkeypatch.setattr(gh_client, "sleep", lambda _n: None)
+    monkeypatch.setattr(gh.client, "sleep", lambda _n: None)
 
-    gh_client.graphql("query {}")
+    gh.client.graphql("query {}")
 
     # The secondary-limit attempt and the one that found the budget gone. The
     # three the ladder still had are not spent.
@@ -334,7 +334,7 @@ def test_threads_meeting_the_same_refusal_probe_once(stub_gh, capsys):
 
     calls = _refusing_gh(stub_gh)
     workers = [
-        threading.Thread(target=gh_client.run, args=("pr", "view", str(i)))
+        threading.Thread(target=gh.client.run, args=("pr", "view", str(i)))
         for i in range(8)
     ]
     for worker in workers:
@@ -361,7 +361,7 @@ def test_a_search_call_is_not_attributed_to_a_budget_it_does_not_spend(argv):
     /search/issues, returning `X-Ratelimit-Resource: graphql` and `search`.
     `pr.supersession` reaches the same budget through `gh api search/issues`.
     """
-    assert budget.resource_for(argv) is None
+    assert gh.budget.resource_for(argv) is None
 
 
 def test_a_search_refusal_does_not_latch_the_core_budget(stub_gh):
@@ -374,8 +374,8 @@ def test_a_search_refusal_does_not_latch_the_core_budget(stub_gh):
     """
     calls = _refusing_gh(stub_gh)
 
-    gh_client.api("search/issues?q=repo:o/r+one+is:merged")
-    gh_client.api("search/issues?q=repo:o/r+two+is:merged")
+    gh.client.api("search/issues?q=repo:o/r+one+is:merged")
+    gh.client.api("search/issues?q=repo:o/r+two+is:merged")
 
-    assert budget.latched(budget.Resource.CORE) is None
+    assert gh.budget.latched(gh.budget.Resource.CORE) is None
     assert len(_non_probe_calls(calls)) == 2

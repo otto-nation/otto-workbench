@@ -26,7 +26,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import MappingProxyType
 
-from core import log
+import core.log
 from core.phases import Backend
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.types import DEFAULT_RETRY_CEILING
@@ -302,14 +302,14 @@ def retry_unproductive(
         turns_fn(diagnosis, max_turns) if turns_fn is not None
         else turns_for(diagnosis, max_turns, ceiling=ceiling)
     )
-    log.warn(
+    core.log.warn(
         f"{label} produced no output ({diagnosis.message}) "
         f"— retrying once ({turns} turns)"
     )
-    log.blank()
+    core.log.blank()
     prior = preserve_log(log_path)
     invoke(hint_select(diagnosis) + prompt, turns)
-    log.blank()
+    core.log.blank()
 
     if not produced() and recover:
         recover()
@@ -401,5 +401,5 @@ def retry_blank_response(
     response, rc = call(prompt)
     if rc != 0 or usable(response):
         return response, rc
-    log.warn(f"{label} returned an unparseable response — retrying once")
+    core.log.warn(f"{label} returned an unparseable response — retrying once")
     return call(resolve_hint(hint, response) + prompt)

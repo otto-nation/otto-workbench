@@ -31,28 +31,28 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from core import log
-from core import publishing
-from git import push
+import core.log
+import core.publishing
+import git.push
 from git.land import CommitStatus
-from pr import attribution
-from pr import comments as pc
-from pr import history_rewrite
-from pr import state as pr_state
-from pr import summary_model
-from pr import summary_render
-from pr import summary_rounds
-from pr import summary_row
-from pr import summary_scope
+import pr.attribution
+import pr.comments
+import pr.history_rewrite
+import pr.state
+import pr.summary_model
+import pr.summary_render
+import pr.summary_rounds
+import pr.summary_row
+import pr.summary_scope
 from pr.fix import FixOutcome
 from pr.summary_render import SUMMARY_MARKER
 from pr.thread_models import CommentItem, PRReport, ReportThread
 
 def _warn_unattributed_fixes(
     fixed: list[CommentItem],
-    cp: attribution.CommitPushResult,
+    cp: pr.attribution.CommitPushResult,
     folded: set[str] | None = None,
-    history: attribution.AddressingHistory | None = None,
+    history: pr.attribution.AddressingHistory | None = None,
     threads_by_id: dict[str, ReportThread] | None = None,
 ) -> None:
     """Say so when rows claim fixes that no commit accounts for.
@@ -88,30 +88,30 @@ def _warn_unattributed_fixes(
     An unpushed commit is not this either: the work is committed and the row
     says so, it is only the link that has to wait.
     """
-    if attribution.commit_unpushed(cp.status):
+    if pr.attribution.commit_unpushed(cp.status):
         return
     folded = folded or set()
     threads_by_id = threads_by_id or {}
     orphans = [
         e for e in fixed
         if e.id not in folded
-        and not attribution.attribute_commit(e, cp, history, threads_by_id.get(e.id)).cited
-        and not summary_row.settled_outside_the_pass(e, cp)
+        and not pr.attribution.attribute_commit(e, cp, history, threads_by_id.get(e.id)).cited
+        and not pr.summary_row.settled_outside_the_pass(e, cp)
     ]
     if not orphans:
         return
-    log.warn(
+    core.log.warn(
         f"{len(orphans)} fixed row(s) have no commit to attribute them to "
         f"(commit status: {cp.status}) — rendering them without a claim"
     )
 
 
 def _warned_history(
-    content: summary_model.RoundContent,
-    cp: attribution.CommitPushResult,
+    content: pr.summary_model.RoundContent,
+    cp: pr.attribution.CommitPushResult,
     threads_by_id: dict[str, ReportThread],
     wt_path: Path | None,
-) -> attribution.AddressingHistory:
+) -> pr.attribution.AddressingHistory:
     """The history this render will resolve rows against, warned over first.
 
     Both publish paths open the same way and must keep doing so: the warning
@@ -130,14 +130,14 @@ def _warned_history(
     of. Without them every such row reads as predating the review, because the
     only other thing that dates a row is a review thread and an item has none.
     """
-    history = attribution.AddressingHistory(
+    history = pr.attribution.AddressingHistory(
         wt_path,
-        summary_rounds.comment_timestamps(
+        pr.summary_rounds.comment_timestamps(
             content.issue_comments, content.review_body_comments),
     )
     _warn_unattributed_fixes(
         content.of(FixOutcome.FIXED), cp,
-        summary_model.folded_item_ids(content, threads_by_id),
+        pr.summary_model.folded_item_ids(content, threads_by_id),
         history, threads_by_id,
     )
     return history
@@ -169,7 +169,7 @@ def newest_reviewer_activity(report: PRReport) -> str:
     return max((s for s in stamps if s), default="")
 
 
-def _answered_since(existing: pc.MarkerComment, activity_at: str) -> bool:
+def _answered_since(existing: pr.comments.MarkerComment, activity_at: str) -> bool:
     """Whether anything was said on the PR below the published summary.
 
     Editing is invisible: GitHub leaves the comment where it was posted and
@@ -188,8 +188,8 @@ def _answered_since(existing: pc.MarkerComment, activity_at: str) -> bool:
 
 
 def _earlier_rounds(
-    marked: pc.MarkerHistory, target_id: int | None,
-) -> list[summary_rounds.SummaryRound]:
+    marked: pr.comments.MarkerHistory, target_id: int | None,
+) -> list[pr.summary_rounds.SummaryRound]:
     """The summary comments this round's footer links back to, oldest first.
 
     ``target_id`` is the comment being edited, left out because a comment
@@ -197,7 +197,7 @@ def _earlier_rounds(
     links every one of them.
     """
     return [
-        summary_rounds.SummaryRound(number, c.url)
+        pr.summary_rounds.SummaryRound(number, c.url)
         for number, c in enumerate(marked.comments, 1)
         if c.url and (target_id is None or c.comment_id != target_id)
     ]
@@ -241,52 +241,52 @@ def publish_summary(
     update — the earlier rounds stay readable in the comments this run could
     not reach.
     """
-    marked = pc.find_marker_comments(repo, pr_number, SUMMARY_MARKER)
+    marked = pr.comments.find_marker_comments(repo, pr_number, SUMMARY_MARKER)
     existing = marked.newest
     answered = _answered_since(existing, activity_at)
-    scope = summary_rounds.round_scope(marked, answered)
+    scope = pr.summary_rounds.round_scope(marked, answered)
     render = functools.partial(
         build_body,
         scope=scope,
         chain=_earlier_rounds(marked, None if answered else existing.comment_id),
     )
     body = render(carried_over=[])
-    hand_held = summary_scope.hand_written_rows(marked.bodies, body)
+    hand_held = pr.summary_scope.hand_written_rows(marked.bodies, body)
     for row in hand_held:
-        log.warn(
+        core.log.warn(
             f"Keeping the hand-written Action cell on {row.key}: "
-            f"{summary_scope.row_action_cell(row.published)!r} — this round would have "
-            f"rendered {summary_scope.row_action_cell(row.replaced_by)!r}"
+            f"{pr.summary_scope.row_action_cell(row.published)!r} — this round would have "
+            f"rendered {pr.summary_scope.row_action_cell(row.replaced_by)!r}"
         )
     if hand_held:
         body = render(carried_over=[], hand_held=hand_held)
     # Only against the comment being replaced. A row on any other summary
     # comment is still published there, and lifting it into this one would
     # restate the round the chain already carries.
-    carried = summary_scope.carried_over_rows(
+    carried = pr.summary_scope.carried_over_rows(
         "" if answered else existing.body, body, scope.elsewhere_keys, folded,
         folded_texts)
     if carried:
-        log.warn(
+        core.log.warn(
             f"Published summary has {len(carried)} row(s) this run cannot account "
             "for — carrying them forward rather than dropping them"
         )
         body = render(carried_over=carried, hand_held=hand_held)
     if answered:
-        log.info(
+        core.log.info(
             "The published summary has been answered since it was posted — "
             "posting a fresh one scoped to this round rather than editing a "
             "comment nobody will re-read"
         )
-        return pc.post_issue_comment(repo, pr_number, body)
-    return pc.post_issue_comment(
+        return pr.comments.post_issue_comment(repo, pr_number, body)
+    return pr.comments.post_issue_comment(
         repo, pr_number, body, marker=SUMMARY_MARKER, existing=existing,
     )
 
 
 def post_fix_summary(
-    content: summary_model.RoundContent,
-    cp: attribution.CommitPushResult,
+    content: pr.summary_model.RoundContent,
+    cp: pr.attribution.CommitPushResult,
     repo: str,
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
@@ -294,14 +294,14 @@ def post_fix_summary(
     head_sha: str = "",
     activity_at: str = "",
     wt_path: Path | None = None,
-    history: attribution.AddressingHistory | None = None,
+    history: pr.attribution.AddressingHistory | None = None,
     host: str = "",
 ) -> str | None:
     """Post summary issue comment to the PR. Returns the comment URL or None."""
     if not content.has_content:
         return None
     url = publish_summary(repo, pr_number, functools.partial(
-        summary_render.build_summary_body,
+        pr.summary_render.build_summary_body,
         content, cp, repo, pr_number, threads_by_id,
         has_comment_items=has_comment_items,
         head_sha=head_sha,
@@ -309,17 +309,17 @@ def post_fix_summary(
         history=history,
         host=host,
     ), activity_at=activity_at,
-        folded=summary_model.folded_locations(content, threads_by_id),
-        folded_texts=summary_model.folded_restatements(content, threads_by_id))
+        folded=pr.summary_model.folded_locations(content, threads_by_id),
+        folded_texts=pr.summary_model.folded_restatements(content, threads_by_id))
     if url:
-        log.info(f"Posted fix summary: {url}")
-    elif publishing.enabled():
-        log.error("failed to post fix summary")
+        core.log.info(f"Posted fix summary: {url}")
+    elif core.publishing.enabled():
+        core.log.error("failed to post fix summary")
     return url
 
 
 def summary_still_owed(
-    content: summary_model.RoundContent, commit_status: str, has_unaccounted: bool,
+    content: pr.summary_model.RoundContent, commit_status: str, has_unaccounted: bool,
 ) -> bool:
     """Whether this round has a fix summary the PR has not been told about.
 
@@ -346,14 +346,14 @@ def summary_still_owed(
     """
     if content.of(FixOutcome.DEFERRED) or content.needs_a_person or has_unaccounted:
         return True
-    if attribution.commit_unpushed(commit_status):
+    if pr.attribution.commit_unpushed(commit_status):
         return True
     return content.has_content
 
 
 def post_or_defer_summary(
-    content: summary_model.RoundContent,
-    cp: attribution.CommitPushResult,
+    content: pr.summary_model.RoundContent,
+    cp: pr.attribution.CommitPushResult,
     repo: str,
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
@@ -369,8 +369,8 @@ def post_or_defer_summary(
     When deferred, the summary is re-rendered from FixSummary during --finish.
     """
     history = _warned_history(content, cp, threads_by_id, wt_path)
-    if attribution.commit_unpushed(cp.status):
-        log.info("Deferred fix summary — commit not on the remote, will post after push lands")
+    if pr.attribution.commit_unpushed(cp.status):
+        core.log.info("Deferred fix summary — commit not on the remote, will post after push lands")
         return None
 
     if not content.needs_a_person and not content.of(FixOutcome.DEFERRED):
@@ -384,7 +384,7 @@ def post_or_defer_summary(
             host=host,
         )
 
-    log.info("Deferred fix summary — will render from state on --finish")
+    core.log.info("Deferred fix summary — will render from state on --finish")
     return None
 
 
@@ -427,8 +427,8 @@ class SummaryOutcome:
 
 
 def publish(
-    content: summary_model.RoundContent,
-    cp: attribution.CommitPushResult,
+    content: pr.summary_model.RoundContent,
+    cp: pr.attribution.CommitPushResult,
     repo: str,
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
@@ -464,7 +464,7 @@ def publish(
 
 
 def render_deferred_summary(
-    state: pr_state.PRState, report: PRReport, repo: str, pr_number: int,
+    state: pr.state.PRState, report: PRReport, repo: str, pr_number: int,
     threads_by_id: dict[str, ReportThread], host: str = "",
 ) -> None:
     """Re-render fix summary from state and post it.
@@ -482,14 +482,14 @@ def render_deferred_summary(
     wt_path = Path(state.identity.worktree_root) if state.identity.worktree_root else None
 
     status = record.commit_status
-    if attribution.commit_unpushed(record.commit_status) and record.commit_sha:
-        if not wt_path or not push.holds(wt_path, record.commit_sha):
-            log.info("Push still pending — keeping summary deferred")
+    if pr.attribution.commit_unpushed(record.commit_status) and record.commit_sha:
+        if not wt_path or not git.push.holds(wt_path, record.commit_sha):
+            core.log.info("Push still pending — keeping summary deferred")
             return
         status = CommitStatus.PUSHED
         # Same reason as the deferred-reply queue: only a run that actually
         # publishes may retire an unpushed status, or the queue is lost silently.
-        if publishing.enabled():
+        if core.publishing.enabled():
             record.commit_status = status
 
     # A plain partition over every outcome, with nothing dropped: this renderer
@@ -511,16 +511,16 @@ def render_deferred_summary(
         by_outcome.setdefault(o.outcome, []).append(
             CommentItem.from_outcome(o, fix.reviewers.get(o.id, "")),
         )
-    content = summary_model.RoundContent(
+    content = pr.summary_model.RoundContent(
         by_outcome=by_outcome,
         issue_comments=report.issue_comments,
         review_body_comments=report.review_body_comments,
     )
 
-    cp = history_rewrite.reconciled_commit(record, status, wt_path)
+    cp = pr.history_rewrite.reconciled_commit(record, status, wt_path)
     history = _warned_history(content, cp, threads_by_id, wt_path)
     url = publish_summary(repo, pr_number, functools.partial(
-        summary_render.build_summary_body,
+        pr.summary_render.build_summary_body,
         content, cp, repo, pr_number, threads_by_id,
         deferred_issue_id=fix.deferred_issue_id,
         deferred_issue_url=fix.deferred_issue_url,
@@ -530,10 +530,10 @@ def render_deferred_summary(
         history=history,
         host=host,
     ), activity_at=newest_reviewer_activity(report),
-        folded=summary_model.folded_locations(content, threads_by_id),
-        folded_texts=summary_model.folded_restatements(content, threads_by_id))
+        folded=pr.summary_model.folded_locations(content, threads_by_id),
+        folded_texts=pr.summary_model.folded_restatements(content, threads_by_id))
     if url:
-        log.info(f"Posted deferred fix summary: {url}")
+        core.log.info(f"Posted deferred fix summary: {url}")
         fix.summary_posted(url)
-    elif publishing.enabled():
-        log.error("failed to post deferred fix summary")
+    elif core.publishing.enabled():
+        core.log.error("failed to post deferred fix summary")

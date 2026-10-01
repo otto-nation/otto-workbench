@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace as dataclass_replace
 from enum import StrEnum
 
-from core import serde
+import core.serde
 from pr.comments_state import ThreadState
 from pr.fix import FixOutcome, ItemOutcome, SettledBy
 
@@ -801,7 +801,7 @@ def _lenient_from_dict(cls, raw):
     prevent — a malformed field costs the entry, not the PR.
     """
     try:
-        return serde.from_dict(cls, raw)
+        return core.serde.from_dict(cls, raw)
     except (TypeError, ValueError):
         return cls()
 

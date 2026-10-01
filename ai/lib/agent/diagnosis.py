@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from core import serde
+import core.serde
 
 
 class DiagnosisKind(StrEnum):
@@ -222,7 +222,7 @@ class Diagnosis:
         if isinstance(raw, cls):
             return raw
         if isinstance(raw, dict):
-            return serde.from_dict(cls, raw)
+            return core.serde.from_dict(cls, raw)
         text = str(raw)
         if text in _MESSAGE_KINDS:
             return cls(_MESSAGE_KINDS[text])

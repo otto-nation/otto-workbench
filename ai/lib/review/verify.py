@@ -65,7 +65,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from core import log
+import core.log
 from pr.domains import ReviewVerdict
 from review.document import (
     SECTION_PRIOR_FINDINGS, SECTION_SUMMARY, SECTION_VERDICT,
@@ -273,7 +273,7 @@ def _verify_findings(text: str, wt_path: str) -> tuple[str, dict]:
         details.append(detail)
         if not detail["match_result"]:
             dropped.append(f["id"])
-            log.info(f"Dropping {f['id']} ({f['path']}): {_drop_reason(detail)}")
+            core.log.info(f"Dropping {f['id']} ({f['path']}): {_drop_reason(detail)}")
     result = {
         "findings_checked": len(details),
         "findings_passed": len(details) - len(dropped),
@@ -466,7 +466,7 @@ def post_process_findings(review_file: str, wt_path: str = "") -> dict | None:
         text, verification = _verify_findings(text, wt_path)
         dropped = verification["dropped"]
         if dropped:
-            log.info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")
+            core.log.info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")
     text = _strip_evidence_blocks(text)
     text = strip_sid_markers(text)
     text = strip_sections(text, [SECTION_PRIOR_FINDINGS])

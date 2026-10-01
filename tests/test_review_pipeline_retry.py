@@ -8,15 +8,16 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from review import gc as review_gc
-from review import outcome as review_outcome
-from review import phases as review_phases
-from review import pipeline as review_pipeline
-from review import retry as review_retry
-from review import state as review_state
-from review import types as review_types
+import review.gc
+import review.outcome
+import review.phases
+import review.pipeline
+import review.retry
+import review.state
+import review.types
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from core.phases import Phase
+import core.log
 
 _TURNS = 15
 _MAX_TURNS = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS)
@@ -38,13 +39,13 @@ def _write_log(tmp_path: Path, *lines: str) -> str:
 
 def _make_job(
     tmp_path: Path, head_sha: str = "abc", session_log: str = "",
-) -> review_pipeline.ReviewJob:
-    return review_pipeline.ReviewJob(
+) -> review.pipeline.ReviewJob:
+    return review.pipeline.ReviewJob(
         repo="org/repo", pr_number="1",
-        pr=review_pipeline.PRMetadata(
+        pr=review.pipeline.PRMetadata(
             title="t", body="", head="b", base="main", head_sha=head_sha,
             additions=1, deletions=1, changed_files=1, files=[]),
-        ctx=review_pipeline.PRContext(), wt_path=str(tmp_path),
+        ctx=review.pipeline.PRContext(), wt_path=str(tmp_path),
         review_file=str(tmp_path / "review.md"),
         session_log=session_log or str(tmp_path / "session.jsonl"),
     )
@@ -70,16 +71,16 @@ class _Invoke:
 
 class TestRetryHintFor:
     def test_no_write_diagnosis_names_the_write_mechanism(self):
-        assert review_retry._retry_hint_for(_NO_WRITE) == review_retry._no_write_hint()
+        assert review.retry._retry_hint_for(_NO_WRITE) == review.retry._no_write_hint()
 
     def test_plain_max_turns_gets_the_generic_hint(self):
-        assert review_retry._retry_hint_for(_MAX_TURNS) == review_retry._RETRY_HINT
+        assert review.retry._retry_hint_for(_MAX_TURNS) == review.retry._RETRY_HINT
 
     def test_transient_error_gets_no_hint(self):
-        assert review_retry._retry_hint_for(_TRANSIENT) == ""
+        assert review.retry._retry_hint_for(_TRANSIENT) == ""
 
     def test_missing_result_record_gets_no_hint(self):
-        assert review_retry._retry_hint_for(
+        assert review.retry._retry_hint_for(
             Diagnosis(DiagnosisKind.NO_RESULT_RECORD),
         ) == ""
 
@@ -90,12 +91,12 @@ class TestIsRetryable:
         diagnosis = Diagnosis(
             DiagnosisKind.COMPLETED, detail="success", no_write_tool=True,
         )
-        assert review_retry._is_retryable(diagnosis)
-        assert review_retry._retry_hint_for(diagnosis) == review_retry._no_write_hint()
+        assert review.retry._is_retryable(diagnosis)
+        assert review.retry._retry_hint_for(diagnosis) == review.retry._no_write_hint()
 
     def test_clean_completion_that_wrote_nothing_observable_is_not_retryable(self):
         """Without the no-write flag there is no reason to expect a difference."""
-        assert not review_retry._is_retryable(
+        assert not review.retry._is_retryable(
             Diagnosis(DiagnosisKind.COMPLETED, detail="success"),
         )
 
@@ -103,26 +104,26 @@ class TestIsRetryable:
         diagnosis = Diagnosis(
             DiagnosisKind.COMPLETED, detail="success", no_write_tool=True,
         )
-        assert review_retry._retry_turns_for(diagnosis, 15) == 15
+        assert review.retry._retry_turns_for(diagnosis, 15) == 15
 
 
 class TestRetryTurnsFor:
     def test_max_turns_doubles(self):
-        assert review_retry._retry_turns_for(_MAX_TURNS, 15) == 30
+        assert review.retry._retry_turns_for(_MAX_TURNS, 15) == 30
 
     def test_doubling_is_capped_at_the_group_ceiling(self):
-        assert review_retry._retry_turns_for(_MAX_TURNS, 20) == review_phases.RETRY_MAX_TURNS_GROUP
+        assert review.retry._retry_turns_for(_MAX_TURNS, 20) == review.phases.RETRY_MAX_TURNS_GROUP
 
     def test_budget_above_the_ceiling_is_not_lowered(self):
-        assert review_retry._retry_turns_for(_MAX_TURNS, 40) == 40
+        assert review.retry._retry_turns_for(_MAX_TURNS, 40) == 40
 
     def test_non_turn_failures_keep_their_budget(self):
-        assert review_retry._retry_turns_for(_TRANSIENT, 15) == 15
+        assert review.retry._retry_turns_for(_TRANSIENT, 15) == 15
 
 
 class TestRetryMissingOutput:
     def _run(self, invoke, log_path, output_path, max_turns=_TURNS):
-        return review_retry._retry_missing_output(
+        return review.retry._retry_missing_output(
             invoke, "PROMPT", log_path, output_path,
             label="Test phase", max_turns=max_turns,
         )
@@ -151,7 +152,7 @@ class TestRetryMissingOutput:
         invoke = _Invoke(str(output), write_on=1, log_path=log_path)
         assert self._run(invoke, log_path, str(output)) is None
         prompt, turns = invoke.calls[0]
-        assert prompt == review_retry._RETRY_HINT + "PROMPT"
+        assert prompt == review.retry._RETRY_HINT + "PROMPT"
         assert turns == 30
 
     def test_no_write_diagnosis_selects_the_write_first_hint(self, tmp_path):
@@ -168,7 +169,7 @@ class TestRetryMissingOutput:
         output = tmp_path / "out.md"
         invoke = _Invoke(str(output), write_on=1, log_path=log_path)
         self._run(invoke, log_path, str(output))
-        assert invoke.calls[0][0].startswith(review_retry._no_write_hint())
+        assert invoke.calls[0][0].startswith(review.retry._no_write_hint())
 
     def test_retry_runs_once_and_reports_its_own_failure(self, tmp_path):
         log_path = _write_log(tmp_path, _result())
@@ -195,13 +196,13 @@ class TestRetryMissingOutput:
         log_path = _write_log(tmp_path, _result())
         job = _make_job(tmp_path, session_log=log_path)
         codes = iter([0, 3])
-        monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **k: "PROMPT")
-        monkeypatch.setattr(review_phases, "run_agent", lambda *a, **k: next(codes))
+        monkeypatch.setattr(review.pipeline, "build_prompt", lambda *a, **k: "PROMPT")
+        monkeypatch.setattr(review.phases, "run_agent", lambda *a, **k: next(codes))
         errors = []
-        monkeypatch.setattr(review_pipeline.log, "error", errors.append)
+        monkeypatch.setattr(core.log, "error", errors.append)
 
         with pytest.raises(SystemExit):
-            review_pipeline.run_single_agent(job)
+            review.pipeline.run_single_agent(job)
 
         assert "exited with code 3" in errors[0]
 
@@ -235,10 +236,10 @@ class TestSingleAgentCleanup:
             Path(job.session_log).write_text(_result("success") + "\n")
             return 0
 
-        monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **k: "PROMPT")
-        monkeypatch.setattr(review_phases, "run_agent", _agent)
-        with review_gc.cleaned_on_success(Path(job.artifact_dir)):
-            review_pipeline.run_single_agent(job, disprove=False)
+        monkeypatch.setattr(review.pipeline, "build_prompt", lambda *a, **k: "PROMPT")
+        monkeypatch.setattr(review.phases, "run_agent", _agent)
+        with review.gc.cleaned_on_success(Path(job.artifact_dir)):
+            review.pipeline.run_single_agent(job, disprove=False)
         return job
 
     def test_disprove_artifacts_do_not_survive(self, tmp_path, monkeypatch):
@@ -262,8 +263,8 @@ class TestSingleAgentCleanup:
 
 _PINNED_SHA = "old1234"
 _GROUPS = [
-    review_types.Group(name="g1", files=["a.py"], lines=10),
-    review_types.Group(name="g2", files=["b.py"], lines=10),
+    review.types.Group(name="g1", files=["a.py"], lines=10),
+    review.types.Group(name="g2", files=["b.py"], lines=10),
 ]
 
 
@@ -293,7 +294,7 @@ class TestResolveRecoveryPinnedMetadata:
         state_path = _write_state(tmp_path)
         job = _make_job(tmp_path, head_sha=_PINNED_SHA)
 
-        plan = review_state._resolve_recovery(job, _GROUPS)
+        plan = review.state._resolve_recovery(job, _GROUPS)
 
         assert plan.state is not None
         assert plan.state.scanned is True
@@ -309,7 +310,7 @@ class TestResolveRecoveryPinnedMetadata:
         )
         job = _make_job(tmp_path, head_sha=_PINNED_SHA)
 
-        plan = review_state._resolve_recovery(job, _GROUPS)
+        plan = review.state._resolve_recovery(job, _GROUPS)
 
         assert plan.skip_groups == {0}
         assert plan.state is not None
@@ -326,7 +327,7 @@ class TestResolveRecoveryPinnedMetadata:
         )
         job = _make_job(tmp_path, head_sha=_PINNED_SHA)
 
-        plan = review_state._resolve_recovery(job, _GROUPS)
+        plan = review.state._resolve_recovery(job, _GROUPS)
 
         assert plan.state is None
         assert plan.skip_groups is None
@@ -346,7 +347,7 @@ class TestResolveRecoveryPinnedMetadata:
         )
         job = _make_job(tmp_path, head_sha=_PINNED_SHA)
 
-        plan = review_state._resolve_recovery(job, _GROUPS)
+        plan = review.state._resolve_recovery(job, _GROUPS)
 
         assert plan.already_complete is False
         assert plan.resume_at_gate is True
@@ -364,7 +365,7 @@ class TestResolveRecoveryPinnedMetadata:
         )
         job = _make_job(tmp_path, head_sha=_PINNED_SHA)
 
-        plan = review_state._resolve_recovery(job, _GROUPS)
+        plan = review.state._resolve_recovery(job, _GROUPS)
 
         assert plan.resume_at_gate is False
         assert plan.skip_groups == {0}
@@ -373,7 +374,7 @@ class TestResolveRecoveryPinnedMetadata:
         state_path = _write_state(tmp_path)
         job = _make_job(tmp_path, head_sha="new5678")
 
-        plan = review_state._resolve_recovery(job, _GROUPS)
+        plan = review.state._resolve_recovery(job, _GROUPS)
 
         assert plan.state is None
         assert plan.already_complete is False
@@ -393,15 +394,15 @@ class TestCompleteReviewReadsSectionConstants:
         from review.document import SECTION_SUMMARY
         f = tmp_path / "review.md"
         f.write_text(f"## {SECTION_SUMMARY}\n\nAll good.\n")
-        assert review_outcome.is_complete_review(str(f))
+        assert review.outcome.is_complete_review(str(f))
 
     def test_verdict_section_marks_a_review_complete(self, tmp_path):
         from review.document import SECTION_VERDICT
         f = tmp_path / "review.md"
         f.write_text(f"## {SECTION_VERDICT}\n\nApprove.\n")
-        assert review_outcome.is_complete_review(str(f))
+        assert review.outcome.is_complete_review(str(f))
 
     def test_a_body_with_neither_section_is_incomplete(self, tmp_path):
         f = tmp_path / "review.md"
         f.write_text("- **[M1]** **`x.py:1`** — a finding\n")
-        assert not review_outcome.is_complete_review(str(f))
+        assert not review.outcome.is_complete_review(str(f))

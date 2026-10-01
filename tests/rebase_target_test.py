@@ -17,10 +17,10 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from gh import client as gh_client
-from git import topology as git_topology
-from rebase import target as rebase_target
-from rebase import types as rebase_types
+import gh.client
+import git.topology
+import rebase.target
+import rebase.types
 
 _TARGET = "origin/main"
 _BRANCH = "isaac/feat/x"
@@ -66,9 +66,9 @@ class TestResolveTargetRef:
     """Four sources, in authority order — the first that answers wins."""
 
     def test_onto_beats_every_probe(self):
-        with mock.patch.object(gh_client, "pr_view") as view, \
-             mock.patch.object(git_topology, "default_branch") as default:
-            got = rebase_target.resolve_target_ref(
+        with mock.patch.object(gh.client, "pr_view") as view, \
+             mock.patch.object(git.topology, "default_branch") as default:
+            got = rebase.target.resolve_target_ref(
                 "/fake", _ctx(pr_number=7), "origin/release/1.2")
 
         assert got == "origin/release/1.2"
@@ -77,34 +77,34 @@ class TestResolveTargetRef:
 
     def test_the_prs_base_beats_the_repo_default(self):
         """A stacked or release-targeted PR is replayed onto its own base."""
-        with mock.patch.object(git_topology, "stack_parent", return_value=""), \
-             mock.patch.object(git_topology, "default_branch", return_value="main"):
-            assert rebase_target.resolve_target_ref(
+        with mock.patch.object(git.topology, "stack_parent", return_value=""), \
+             mock.patch.object(git.topology, "default_branch", return_value="main"):
+            assert rebase.target.resolve_target_ref(
                 "/fake", _ctx(pr_number=7, base="release/1.2"), None,
             ) == "origin/release/1.2"
 
     def test_a_stack_parent_beats_the_repo_default(self):
         """No PR to state a base, but git can see what this branch forked from.
         Replaying onto the trunk would carry the parent's commits along."""
-        with mock.patch.object(git_topology, "stack_parent",
+        with mock.patch.object(git.topology, "stack_parent",
                                return_value="feat/parent"), \
-             mock.patch.object(git_topology, "default_branch", return_value="main"):
-            assert rebase_target.resolve_target_ref(
+             mock.patch.object(git.topology, "default_branch", return_value="main"):
+            assert rebase.target.resolve_target_ref(
                 "/fake", _ctx(), None) == "origin/feat/parent"
 
     def test_no_pr_and_no_stack_falls_back_to_the_repo_default(self):
-        with mock.patch.object(gh_client, "pr_view") as view, \
-             mock.patch.object(git_topology, "stack_parent", return_value=""), \
-             mock.patch.object(git_topology, "default_branch", return_value="trunk"):
-            assert rebase_target.resolve_target_ref(
+        with mock.patch.object(gh.client, "pr_view") as view, \
+             mock.patch.object(git.topology, "stack_parent", return_value=""), \
+             mock.patch.object(git.topology, "default_branch", return_value="trunk"):
+            assert rebase.target.resolve_target_ref(
                 "/fake", _ctx(), None) == "origin/trunk"
         view.assert_not_called()
 
     def test_a_tracker_that_cannot_say_falls_back(self):
         """gh may be absent, unauthenticated or rate-limited — not a failure."""
-        with mock.patch.object(git_topology, "stack_parent", return_value=""), \
-             mock.patch.object(git_topology, "default_branch", return_value="main"):
-            assert rebase_target.resolve_target_ref(
+        with mock.patch.object(git.topology, "stack_parent", return_value=""), \
+             mock.patch.object(git.topology, "default_branch", return_value="main"):
+            assert rebase.target.resolve_target_ref(
                 "/fake", _ctx(pr_number=7), None) == _TARGET
 
 
@@ -112,15 +112,15 @@ class TestResumeTargetRef:
     """A resume replays onto what the run that started it recorded."""
 
     def test_a_recorded_base_wins_over_this_runs_resolution(self):
-        with mock.patch.object(rebase_types, "recorded_target_base",
+        with mock.patch.object(rebase.types, "recorded_target_base",
                                return_value="origin/release/1.2"):
-            assert rebase_target.resume_target_ref(
+            assert rebase.target.resume_target_ref(
                 _ctx(), _TARGET) == "origin/release/1.2"
 
     def test_no_prior_state_keeps_this_runs_ref(self):
-        with mock.patch.object(rebase_types, "recorded_target_base",
+        with mock.patch.object(rebase.types, "recorded_target_base",
                                return_value=None):
-            assert rebase_target.resume_target_ref(_ctx(), _TARGET) == _TARGET
+            assert rebase.target.resume_target_ref(_ctx(), _TARGET) == _TARGET
 
 
 class TestCheckoutTargetBranch:
@@ -131,7 +131,7 @@ class TestCheckoutTargetBranch:
         head = _git(repo, "rev-parse", "HEAD")
         _git(repo, "update-ref", f"refs/remotes/origin/{_BRANCH}", head)
 
-        assert rebase_target.checkout_target_branch(str(repo), _ctx()) == 0
+        assert rebase.target.checkout_target_branch(str(repo), _ctx()) == 0
         assert _git(repo, "rev-parse", "--abbrev-ref", "HEAD") == _BRANCH
 
     def test_unpushed_commits_are_kept(self, tmp_path):
@@ -143,7 +143,7 @@ class TestCheckoutTargetBranch:
         unpushed = _commit(repo, "unpushed.txt", "unpushed work")
         _git(repo, "checkout", "-q", "main")
 
-        assert rebase_target.checkout_target_branch(str(repo), _ctx()) == 0
+        assert rebase.target.checkout_target_branch(str(repo), _ctx()) == 0
         assert _git(repo, "rev-parse", "HEAD") == unpushed
 
     def test_a_branch_merely_behind_is_fast_forwarded(self, tmp_path):
@@ -155,7 +155,7 @@ class TestCheckoutTargetBranch:
         _git(repo, "checkout", "-q", "main")
         _git(repo, "branch", "-f", _BRANCH, behind)
 
-        assert rebase_target.checkout_target_branch(str(repo), _ctx()) == 0
+        assert rebase.target.checkout_target_branch(str(repo), _ctx()) == 0
         assert _git(repo, "rev-parse", "HEAD") == ahead
 
     def test_true_divergence_is_refused_rather_than_resolved(self, tmp_path):
@@ -171,7 +171,7 @@ class TestCheckoutTargetBranch:
         local = _commit(repo, "ours.txt", "our work")
         _git(repo, "checkout", "-q", "main")
 
-        assert rebase_target.checkout_target_branch(str(repo), _ctx()) == 1
+        assert rebase.target.checkout_target_branch(str(repo), _ctx()) == 1
         assert _git(repo, "rev-parse", _BRANCH) == local
 
     def test_a_refusal_names_the_commits_it_will_not_discard(self, tmp_path, capsys):
@@ -186,6 +186,6 @@ class TestCheckoutTargetBranch:
         _commit(repo, "ours.txt", "the one they would lose")
         _git(repo, "checkout", "-q", "main")
 
-        rebase_target.checkout_target_branch(str(repo), _ctx())
+        rebase.target.checkout_target_branch(str(repo), _ctx())
 
         assert "the one they would lose" in capsys.readouterr().err

@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from core import log
+import core.log
 from review.document import ReviewDocument
 from review.paths import ReviewEntry, ReviewEntryKind, iter_review_entries
 from review.types import Finding
@@ -210,5 +210,5 @@ def scan_local_reviews(
         for repo_key, prs in local_repos.items()
     ]
 
-    log.info(f"Found {sum(len(r['prs']) for r in result_list)} local review(s)")
+    core.log.info(f"Found {sum(len(r['prs']) for r in result_list)} local review(s)")
     return LocalReviewScan(repos=result_list, unmatched=unmatched, consumed=consumed_dirs)

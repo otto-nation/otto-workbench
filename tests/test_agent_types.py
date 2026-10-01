@@ -1,4 +1,4 @@
-"""Tests for agent_types — the shapes that describe an inventory of phases.
+"""Tests for agent.types — the shapes that describe an inventory of phases.
 
 Everything here is provable without knowing which phases exist: the rules a
 ``PhaseSpec`` applies to whatever it is handed. What the nine real phases are

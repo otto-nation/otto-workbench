@@ -22,8 +22,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from core import markdown
-from pr import summary_model
+import core.markdown
+import pr.summary_model
 from pr.summary_model import TABLE_COLUMNS
 
 
@@ -44,13 +44,13 @@ def row_location_key(row: str) -> str:
     are compared against `finding_location`'s, which carry the bare login. The
     two forms are only interchangeable if they spell the reviewer the same way.
     """
-    cells = markdown.row_cells(row)
+    cells = core.markdown.row_cells(row)
     if len(cells) < len(TABLE_COLUMNS):
         return ""
-    location = markdown.plain_cell(cells[2])
+    location = core.markdown.plain_cell(cells[2])
     if ":" not in location:
         return ""
-    reviewer = markdown.plain_cell(cells[1]).removeprefix("@")
+    reviewer = core.markdown.plain_cell(cells[1]).removeprefix("@")
     return f"{reviewer}|{location}"
 
 
@@ -64,7 +64,7 @@ def row_key(row: str) -> str:
     through here; it is keyed from the cells it was built from, before it
     becomes markdown at all.
     """
-    return summary_model.row_key_from_cells(markdown.row_cells(row))
+    return pr.summary_model.row_key_from_cells(core.markdown.row_cells(row))
 
 
 def table_rows(body: str) -> list[str]:
@@ -76,7 +76,7 @@ def table_rows(body: str) -> list[str]:
             continue
         if not line.strip("|-: "):
             continue
-        if markdown.row_cells(line) == list(TABLE_COLUMNS):
+        if core.markdown.row_cells(line) == list(TABLE_COLUMNS):
             continue
         rows.append(line)
     return rows
@@ -84,7 +84,7 @@ def table_rows(body: str) -> list[str]:
 
 def row_action_cell(row: str) -> str:
     """The Action cell of a rendered row, or "" for a row that has no such cell."""
-    cells = markdown.row_cells(row)
+    cells = core.markdown.row_cells(row)
     if len(cells) < len(TABLE_COLUMNS):
         return ""
     return cells[len(TABLE_COLUMNS) - 1]
@@ -99,10 +99,10 @@ def row_summary_key(row: str) -> str:
     recognise a folded item by — read through the same normaliser the entries
     went through, or the two forms would never match.
     """
-    cells = markdown.row_cells(row)
+    cells = core.markdown.row_cells(row)
     if len(cells) < len(TABLE_COLUMNS):
         return ""
-    return summary_model.normalised_finding_text(markdown.plain_cell(cells[0]))
+    return pr.summary_model.normalised_finding_text(core.markdown.plain_cell(cells[0]))
 
 
 def carried_over_rows(
@@ -164,7 +164,7 @@ def carried_over_rows(
     fresh_keys = {row_key(row) for row in fresh_rows}
 
     def was_folded(row: str) -> bool:
-        if not summary_model.ITEM_ANCHOR_RE.search(row):
+        if not pr.summary_model.ITEM_ANCHOR_RE.search(row):
             return False
         location = row_location_key(row)
         if location:
@@ -179,7 +179,7 @@ def carried_over_rows(
     ]
 
 
-def hand_written_rows(published: Sequence[str], fresh: str) -> list[summary_model.HeldRow]:
+def hand_written_rows(published: Sequence[str], fresh: str) -> list[pr.summary_model.HeldRow]:
     """Published rows this render would overwrite a human's Action cell on.
 
     `carried_over_rows` is the sibling case and covers the opposite one: a
@@ -225,7 +225,7 @@ def hand_written_rows(published: Sequence[str], fresh: str) -> list[summary_mode
     held = []
     for key, row in newest_by_key.items():
         cell = row_action_cell(row)
-        if not cell or key not in fresh_by_key or summary_model.is_generated_action(cell):
+        if not cell or key not in fresh_by_key or pr.summary_model.is_generated_action(cell):
             continue
-        held.append(summary_model.HeldRow(key, row, fresh_by_key[key]))
+        held.append(pr.summary_model.HeldRow(key, row, fresh_by_key[key]))
     return held

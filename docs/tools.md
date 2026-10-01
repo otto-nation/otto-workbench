@@ -76,6 +76,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-magic-values` | Validates that an abbreviated sha, an exit code, and a truncation cap are spelled by the module that owns them |
 | `validate-frozen-roots` | Validates that no module freezes a workbench root into an import-time constant |
 | `validate-ai-layers` | Validates that every ai/lib package imports only what the layer declaration in its __init__.py permits |
+| `validate-import-form` | Validates that every ai/lib module is imported as `import pkg.mod` and named through its package |
 | `validate-stat-portability` | Validates that stat format flags are confined to the lib/portable.sh helpers |
 | `validate-bats-version` | Validates that a bats suite using flags on run declares bats_require_minimum_version 1.5.0 |
 | `validate-pi-extension-clones` | Validates that every pi extension package clone on this machine can serve the installed pi, in both skew directions and against the pi-ai floor each package declares — a clone predating pi 0.86's transcript contract silently strips the agent's tools and lets it fabricate their output |

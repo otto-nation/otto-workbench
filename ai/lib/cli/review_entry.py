@@ -30,17 +30,17 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 from agent.registry import add_phase_skip_flags, phase_skips
-from core import log
-from core import proc
-from core import run_lock
-from core import version
-from core import workbench_paths
+import core.log
+import core.proc
+import core.run_lock
+import core.version
+import core.workbench_paths
 from core.trail import Trail, add_trail_args
-from pr import context as pr_context
-from pr import state as pr_state
-from review import completion as review_completion
-from review import run as review_run
-from review import worktree as review_worktree
+import pr.context
+import pr.state
+import review.completion
+import review.run
+import review.worktree
 from review.paths import review_file_path
 from review.pipeline import DEFAULT_MAX_PARALLEL
 from review.summary import json_summary
@@ -108,7 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _flags(args, argv: list[str], generator_version: str) -> review_run.ReviewFlags:
+def _flags(args, argv: list[str], generator_version: str) -> review.run.ReviewFlags:
     """The parsed argv as the value the flows read.
 
     *argv* is the list `main` was given, not `sys.argv`. Called in-process
@@ -116,7 +116,7 @@ def _flags(args, argv: list[str], generator_version: str) -> review_run.ReviewFl
     against the review, and the one a run lock reports to whoever it turns
     away, read `pr fix --post` for a review that was never invoked that way.
     """
-    return review_run.ReviewFlags(
+    return review.run.ReviewFlags(
         bin_dir=BIN_DIR,
         generator_version=generator_version,
         command=" ".join([SCRIPT] + argv),
@@ -141,7 +141,7 @@ def _flags(args, argv: list[str], generator_version: str) -> review_run.ReviewFl
     )
 
 
-def _emit_json_summary(fd: int | None, outcome: review_run.ReviewOutcome) -> None:
+def _emit_json_summary(fd: int | None, outcome: review.run.ReviewOutcome) -> None:
     """Write the machine-readable summary to the descriptor stdout was saved to.
 
     Takes the outcome rather than re-deriving the path: a self review's file
@@ -155,8 +155,8 @@ def _emit_json_summary(fd: int | None, outcome: review_run.ReviewOutcome) -> Non
     os.write(fd, (summary + "\n").encode())
 
 
-def _run_review(args, argv: list[str], ctx: pr_context.ResolvedContext,
-                generator_version: str) -> review_run.ReviewOutcome:
+def _run_review(args, argv: list[str], ctx: pr.context.ResolvedContext,
+                generator_version: str) -> review.run.ReviewOutcome:
     """Review the PR *ctx* names.
 
     ``ctx`` comes from ``main()``, which resolved it to take the run lock.
@@ -175,7 +175,7 @@ def _run_review(args, argv: list[str], ctx: pr_context.ResolvedContext,
     )
 
     try:
-        return review_run.run_pr_review(
+        return review.run.run_pr_review(
             ctx, _flags(args, argv, generator_version), review_file, trail=trail)
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
@@ -185,7 +185,7 @@ def _run_review(args, argv: list[str], ctx: pr_context.ResolvedContext,
 
 
 def _run_self_review(args, argv: list[str],
-                     generator_version: str = "") -> review_run.ReviewOutcome:
+                     generator_version: str = "") -> review.run.ReviewOutcome:
     """Review a local checkout.
 
     Resolution lives here rather than in `review.run` because acquiring the
@@ -200,17 +200,17 @@ def _run_self_review(args, argv: list[str],
     is_pr = False
     is_branch = False
     if pr_input:
-        if pr_context.is_pr_ref(pr_input):
+        if pr.context.is_pr_ref(pr_input):
             is_pr = True
         else:
             is_branch = True
 
     if is_branch:
-        pr_input = review_worktree.resolve_branch_input(pr_input, repo_dir)
+        pr_input = review.worktree.resolve_branch_input(pr_input, repo_dir)
 
     # Only a branch name is a worktree target — passing a PR ref here would have
     # the resolver create a worktree on a branch named after the PR number.
-    wt_path = review_worktree.resolve_wt_path(repo_dir, pr_input if is_branch else "")
+    wt_path = review.worktree.resolve_wt_path(repo_dir, pr_input if is_branch else "")
 
     # Reached only when --self was passed, so there is no PR to name and the
     # context resolves from git alone. Invoked through `pr`, the same depth is
@@ -218,9 +218,9 @@ def _run_self_review(args, argv: list[str],
     # two have to agree or `review --self` would still spend the `gh`
     # call `pr review --self` no longer does. resolve_at escalates to REMOTE on
     # its own when a PR reference is passed alongside.
-    ctx = pr_context.resolve_at(
-        pr_context.ContextDepth.LOCAL,
-        pr=pr_input if is_pr else None,
+    ctx = pr.context.resolve_at(
+        pr.context.ContextDepth.LOCAL,
+        pr_ref=pr_input if is_pr else None,
         branch=pr_input if is_branch else None,
         repo_dir=wt_path,
     )
@@ -240,8 +240,8 @@ def _run_self_review(args, argv: list[str],
     # number reaching `run_self_review` through `ctx.pr_number` is what makes
     # the PR-aware metadata path reachable from a plain `--self` at all.
     found = (
-        pr_context.BranchPR(number=ctx.pr_number, base=ctx.base) if ctx.pr_number
-        else pr_context.pr_number_if_reachable(repo, ctx.branch)
+        pr.context.BranchPR(number=ctx.pr_number, base=ctx.base) if ctx.pr_number
+        else pr.context.pr_number_if_reachable(repo, ctx.branch)
     )
     ctx = replace(ctx, pr_number=found.number, base=found.base)
     pr_number = str(found.number) if found.number else ""
@@ -261,10 +261,10 @@ def _run_self_review(args, argv: list[str],
     if ctx.worktree_root and not (is_pr or is_branch):
         reviewed_tree = ctx.worktree_root
 
-    run_lock.claim_for_process(
+    core.run_lock.claim_for_process(
         ctx.target_dir,
         command=" ".join([SCRIPT] + argv),
-        started=pr_state.now_iso(),
+        started=pr.state.now_iso(),
         worktree=reviewed_tree,
     )
 
@@ -275,22 +275,22 @@ def _run_self_review(args, argv: list[str],
 
 
 def _run_self_review_body(
-    ctx: pr_context.ResolvedContext, pr_number: str, args, argv: list[str],
+    ctx: pr.context.ResolvedContext, pr_number: str, args, argv: list[str],
     generator_version: str,
     repo: str, is_pr: bool, is_branch: bool, pr_input: str, wt_path: str, recover: bool,
     repo_dir: str,
-) -> review_run.ReviewOutcome:
+) -> review.run.ReviewOutcome:
     """The rest of a self-review, once its identity is resolved and locked."""
-    wt_cleanup: review_worktree.WorktreeResult | None = None
+    wt_cleanup: review.worktree.WorktreeResult | None = None
 
     if is_pr:
         if not args.skip_user_verification:
-            review_completion.verify_pr_ownership(pr_number, repo)
-        wt_cleanup = review_worktree.switch_to_pr_branch(pr_number, repo, wt_path)
+            review.completion.verify_pr_ownership(pr_number, repo)
+        wt_cleanup = review.worktree.switch_to_pr_branch(pr_number, repo, wt_path)
         if wt_cleanup:
             wt_path = wt_cleanup.path
     elif is_branch:
-        wt_cleanup = review_worktree.switch_to_branch(pr_input, wt_path)
+        wt_cleanup = review.worktree.switch_to_branch(pr_input, wt_path)
         if wt_cleanup:
             wt_path = wt_cleanup.path
 
@@ -307,20 +307,20 @@ def _run_self_review_body(
     # branch that already has the PR checked out). `wt_path` names the right
     # tree whether or not an actual switch happened.
     if is_pr or is_branch:
-        run_lock.claim_for_process(
+        core.run_lock.claim_for_process(
             ctx.target_dir,
             command=" ".join([SCRIPT] + argv),
-            started=pr_state.now_iso(),
+            started=pr.state.now_iso(),
             worktree=Path(wt_path),
         )
 
     # Read HEAD after the switch — checking out a PR hard-resets the worktree to
     # the remote head, so ctx.head_sha can predate the commit the pipeline recorded.
-    recover_head_sha = pr_context.head_sha(wt_path) if recover else ""
+    recover_head_sha = pr.context.head_sha(wt_path) if recover else ""
 
     repo_name = repo.split("/")[-1]
     branch_sanitized = (ctx.branch or "").replace("/", "-")
-    review_dir = workbench_paths.reviews_dir() / f"{repo_name}-self-{branch_sanitized}"
+    review_dir = core.workbench_paths.reviews_dir() / f"{repo_name}-self-{branch_sanitized}"
     review_dir.mkdir(parents=True, exist_ok=True)
 
     trail = Trail.start(
@@ -330,7 +330,7 @@ def _run_self_review_body(
     )
 
     try:
-        return review_run.run_self_review(
+        return review.run.run_self_review(
             ctx, _flags(args, argv, generator_version), review_dir, wt_path,
             recover_head_sha=recover_head_sha, trail=trail,
         )
@@ -340,7 +340,7 @@ def _run_self_review_body(
     finally:
         trail.finish()
         if wt_cleanup:
-            review_worktree.cleanup_self_review_worktree(wt_cleanup, repo_dir)
+            review.worktree.cleanup_self_review_worktree(wt_cleanup, repo_dir)
 
 
 def main(argv: list[str] | None = None, *,
@@ -362,13 +362,13 @@ def main(argv: list[str] | None = None, *,
     # installed the identical handler at its own entry point, and a second
     # install would replace the caller's without chaining or restoring it.
     if install_signal_handler:
-        proc.install_interrupt_handler(log.interrupted)
+        core.proc.install_interrupt_handler(core.log.interrupted)
 
     argv = list(sys.argv[1:] if argv is None else argv)
     parsed = build_parser().parse_args(argv)
 
     if parsed.version:
-        print(version.version_string(SCRIPT))
+        print(core.version.version_string(SCRIPT))
         return 0
 
     with _json_summary_stdout(parsed.json_summary) as json_stdout_fd:
@@ -422,18 +422,18 @@ def _main_body(parsed, argv: list[str], json_stdout_fd: int | None) -> int:
     elif parsed.branch and not parsed.positional:
         parsed.positional = [parsed.branch]
 
-    workbench_paths.reviews_dir().mkdir(parents=True, exist_ok=True)
+    core.workbench_paths.reviews_dir().mkdir(parents=True, exist_ok=True)
 
     if parsed.fix and not parsed.self_review:
-        log.error("--fix requires --self")
+        core.log.error("--fix requires --self")
         return 1
 
     if parsed.push and not parsed.fix:
-        log.error("--push requires --fix")
+        core.log.error("--push requires --fix")
         return 1
 
     if parsed.recover and parsed.force:
-        log.error("--recover and --force are mutually exclusive")
+        core.log.error("--recover and --force are mutually exclusive")
         return 1
 
     # Above the --self dispatch rather than below it: the two flags contradict
@@ -441,14 +441,14 @@ def _main_body(parsed, argv: list[str], json_stdout_fd: int | None) -> int:
     # path let `--self --no-post --post` through to a self review that ignored
     # --no-post and forwarded --post to the orchestrate publishing gate.
     if parsed.no_post and parsed.post:
-        log.error("--no-post and --post are mutually exclusive")
+        core.log.error("--no-post and --post are mutually exclusive")
         return 1
 
     # One line, and the whole of it: the review's `generator:` marker names
     # the tool and both versions behind it. The earlier form took the last
     # line of the two-line `--version` output, which dropped the tool's own
     # version and left the marker naming only the workbench build.
-    generator_version = version.generator(SCRIPT)
+    generator_version = core.version.generator(SCRIPT)
 
     if parsed.self_review:
         outcome = _run_self_review(parsed, argv, generator_version)
@@ -461,11 +461,11 @@ def _main_body(parsed, argv: list[str], json_stdout_fd: int | None) -> int:
         return 1
 
     if command in _REMOVED:
-        log.error(f"'{command}' subcommand removed. Use: {_REMOVED[command]}")
+        core.log.error(f"'{command}' subcommand removed. Use: {_REMOVED[command]}")
         return 1
 
-    pr_arg, branch_arg = pr_context.classify_target(command)
-    ctx = pr_context.resolve(pr=pr_arg, branch=branch_arg, repo_dir=parsed.repo_dir)
+    pr_arg, branch_arg = pr.context.classify_target(command)
+    ctx = pr.context.resolve(pr_ref=pr_arg, branch=branch_arg, repo_dir=parsed.repo_dir)
     # A no-op when pr launched us — we resolve the same target and find its key
     # already in WORKBENCH_RUN_LOCK.
     #
@@ -473,10 +473,10 @@ def _main_body(parsed, argv: list[str], json_stdout_fd: int | None) -> int:
     # and resets it, so the tree it writes to is not the one resolved here. The
     # checkout is claimed further in, by `review.run`, once that tree exists —
     # same target, so it passes through this claim rather than contending.
-    run_lock.claim_for_process(
+    core.run_lock.claim_for_process(
         ctx.target_dir,
         command=" ".join([SCRIPT] + argv),
-        started=pr_state.now_iso(),
+        started=pr.state.now_iso(),
     )
     outcome = _run_review(parsed, argv, ctx, generator_version)
     _emit_json_summary(json_stdout_fd, outcome)

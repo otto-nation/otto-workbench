@@ -34,11 +34,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core import log
+import core.log
 from core.trail import Trail, tinfo
-from gh import budget as gh_budget
-from gh import client as gh_client
-from pr import context as pr_context
+import gh.budget
+import gh.client
+import pr.context
 
 # The fields one read collects. `state`, `number` and `url` answer the
 # already-landed refusal; `baseRefName` picks the ref to replay onto; the last
@@ -119,15 +119,15 @@ def name_the_open_pr(
     if snapshot is None or not snapshot.open_and_ready:
         return
     where = snapshot.url or f"#{snapshot.number}"
-    log.warn(f"This branch has an open PR, marked ready for review: {where}")
-    log.dim("Force-pushing rewrites what a reviewer may be reading — say on the "
+    core.log.warn(f"This branch has an open PR, marked ready for review: {where}")
+    core.log.dim("Force-pushing rewrites what a reviewer may be reading — say on the "
             "PR what this push changed.")
     tinfo(trail, "ready_pr_push", "force-pushing a branch with a ready PR",
           data={"pr": snapshot.number, "url": snapshot.url,
                 "review_decision": snapshot.review_decision})
 
 
-def fetch(cwd: str, ctx: pr_context.ResolvedContext) -> PRSnapshot:
+def fetch(cwd: str, ctx: pr.context.ResolvedContext) -> PRSnapshot:
     """Read the PR for *ctx*, or the empty snapshot when it cannot be read.
 
     Asked by number when one is resolved and by branch otherwise, matching what
@@ -140,7 +140,7 @@ def fetch(cwd: str, ctx: pr_context.ResolvedContext) -> PRSnapshot:
     # reaches gh — never a bare `gh pr view` with nothing to look up.
     if not target:
         return PRSnapshot()
-    data = gh_client.pr_view(target, *FIELDS, repo=ctx.repo, cwd=cwd)
+    data = gh.client.pr_view(target, *FIELDS, repo=ctx.repo, cwd=cwd)
     if not data:
         # Asked after the call, not before: a latch that armed *during* this
         # read is the case that matters, and one that expires between the two
@@ -149,7 +149,7 @@ def fetch(cwd: str, ctx: pr_context.ResolvedContext) -> PRSnapshot:
         # The remedy is read from the same latch, in the same instant, rather
         # than left for a later caller to re-derive from a latch that may have
         # since expired.
-        latch = gh_budget.latched(gh_budget.Resource.GRAPHQL)
+        latch = gh.budget.latched(gh.budget.Resource.GRAPHQL)
         return PRSnapshot(
             refused=latch is not None,
             remedy=latch.remedy() if latch else "",

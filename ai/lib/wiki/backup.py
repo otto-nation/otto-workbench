@@ -31,8 +31,8 @@ import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from core import serde
-from core import workbench_paths
+import core.serde
+import core.workbench_paths
 
 from .paths import BACKUPS_DIRNAME, is_wiki
 
@@ -72,7 +72,7 @@ def backups_dir(root: Path) -> Path:
     """
     root = root.resolve()
     digest = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:12]
-    return workbench_paths.state_dir() / BACKUPS_DIRNAME / f"{root.name}-{digest}"
+    return core.workbench_paths.state_dir() / BACKUPS_DIRNAME / f"{root.name}-{digest}"
 
 
 def snapshots(root: Path) -> list[Path]:
@@ -138,7 +138,7 @@ def snapshot(root: Path, keep: int = KEEP_DEFAULT, now: datetime | None = None) 
     try:
         with tarfile.open(partial, "w:gz") as archive:
             archive.add(root, arcname=root.name)
-        serde.replace_file(partial, target)
+        core.serde.replace_file(partial, target)
     finally:
         partial.unlink(missing_ok=True)
 

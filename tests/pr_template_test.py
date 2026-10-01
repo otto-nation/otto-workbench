@@ -15,7 +15,7 @@ import pytest
 LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
 
-from core import pr_template  # noqa: E402
+import core.pr_template  # noqa: E402
 
 CLI = LIB_DIR / "core" / "pr_template.py"
 
@@ -30,7 +30,7 @@ def _write(root: Path, rel: str, text: str) -> None:
 # ── where a template may live ───────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("rel", pr_template.TEMPLATE_PATHS)
+@pytest.mark.parametrize("rel", core.pr_template.TEMPLATE_PATHS)
 def test_every_documented_location_is_found(tmp_path, rel):
     """Each location GitHub honours, resolved on its own.
 
@@ -49,7 +49,7 @@ def test_every_documented_location_is_found(tmp_path, rel):
     filesystem here is agreeing with GitHub.
     """
     _write(tmp_path, rel, "## Why\n")
-    template = pr_template.load(tmp_path)
+    template = core.pr_template.load(tmp_path)
     assert template.found
     assert template.text == "## Why\n"
     assert template.path.casefold() == rel.casefold()
@@ -65,7 +65,7 @@ def test_the_docs_directory_is_a_location(tmp_path):
     is legible as itself rather than as one row of six.
     """
     _write(tmp_path, "docs/pull_request_template.md", "## Why\n")
-    template = pr_template.load(tmp_path)
+    template = core.pr_template.load(tmp_path)
     assert template.found
     assert template.path == "docs/pull_request_template.md"
 
@@ -74,7 +74,7 @@ def test_earlier_locations_win(tmp_path):
     _write(tmp_path, ".github/pull_request_template.md", "first")
     _write(tmp_path, "PULL_REQUEST_TEMPLATE.md", "middle")
     _write(tmp_path, "docs/pull_request_template.md", "last")
-    assert pr_template.load(tmp_path).text == "first"
+    assert core.pr_template.load(tmp_path).text == "first"
 
 
 def test_a_template_in_a_subdirectory_is_not_found(tmp_path):
@@ -84,17 +84,17 @@ def test_a_template_in_a_subdirectory_is_not_found(tmp_path):
     it as one would have `pr:create` enforce sections GitHub never shows.
     """
     _write(tmp_path, "packages/api/.github/pull_request_template.md", "## Why\n")
-    assert not pr_template.load(tmp_path).found
+    assert not core.pr_template.load(tmp_path).found
 
 
 # ── a repo with no template ─────────────────────────────────────────────────
 
 
 def test_a_repo_without_one_gets_the_fallback(tmp_path):
-    template = pr_template.load(tmp_path)
+    template = core.pr_template.load(tmp_path)
     assert not template.found
     assert template.path == ""
-    assert template.text == pr_template.FALLBACK_TEMPLATE
+    assert template.text == core.pr_template.FALLBACK_TEMPLATE
 
 
 def test_an_unreadable_template_reads_as_absent(tmp_path):
@@ -108,7 +108,7 @@ def test_an_unreadable_template_reads_as_absent(tmp_path):
     path.write_text("## Why\n")
     path.chmod(0o000)
     try:
-        assert not pr_template.load(tmp_path).found
+        assert not core.pr_template.load(tmp_path).found
     finally:
         # Restored so tmp_path's cleanup can remove it.
         path.chmod(0o644)
@@ -127,25 +127,25 @@ def test_a_non_utf8_template_reads_as_absent(tmp_path):
     path = tmp_path / ".github" / "pull_request_template.md"
     path.parent.mkdir()
     path.write_bytes(b"\xff\xfe\x00\x01")
-    assert not pr_template.load(tmp_path).found
+    assert not core.pr_template.load(tmp_path).found
 
 
 def test_headers_are_the_sections_a_body_must_carry(tmp_path):
     _write(tmp_path, ".github/pull_request_template.md",
            "## What\n\nsome prose\n\n## Why\n")
-    assert pr_template.load(tmp_path).headers == ["## What", "## Why"]
+    assert core.pr_template.load(tmp_path).headers == ["## What", "## Why"]
 
 
 def test_nested_headers_are_not_sections(tmp_path):
     """`###` is structure inside a section, and a body is never asked for one."""
     _write(tmp_path, ".github/pull_request_template.md",
            "## What\n\n### Details\n\n## Why\n")
-    assert pr_template.load(tmp_path).headers == ["## What", "## Why"]
+    assert core.pr_template.load(tmp_path).headers == ["## What", "## Why"]
 
 
 def test_a_template_with_no_headers_requires_no_sections(tmp_path):
     _write(tmp_path, ".github/pull_request_template.md", "just prose\n")
-    template = pr_template.load(tmp_path)
+    template = core.pr_template.load(tmp_path)
     assert template.found
     assert template.headers == []
 
@@ -174,7 +174,7 @@ def test_a_repo_with_no_template_records_an_empty_path(tmp_path):
     assert result.returncode == 0
     path, _, text = result.stdout.partition("\n")
     assert path == ""
-    assert text == pr_template.FALLBACK_TEMPLATE
+    assert text == core.pr_template.FALLBACK_TEMPLATE
 
 
 def test_an_empty_template_yields_a_record_with_no_body(tmp_path):
@@ -198,7 +198,7 @@ def test_the_fallback_can_be_asked_for_alone(tmp_path):
     """
     result = _cli("--fallback")
     assert result.returncode == 0
-    assert result.stdout == pr_template.FALLBACK_TEMPLATE + "\n"
+    assert result.stdout == core.pr_template.FALLBACK_TEMPLATE + "\n"
 
 
 def test_a_root_that_does_not_exist_is_an_error(tmp_path):

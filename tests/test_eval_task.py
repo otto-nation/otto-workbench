@@ -16,12 +16,14 @@ LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-from eval import task as eval_task
-from core import proc
-from core import timeouts
+import eval.task
+import core.proc
+import core.timeouts
 from agent.usage import SessionUsage
-from eval import scoring as eval_scoring
+import eval.scoring
 from eval.scoring import ScoringResult
+import agent.backend
+import eval.conditions
 
 
 def _make_case(root: Path, name: str, task: str = "review") -> Path:
@@ -42,40 +44,40 @@ def _make_case(root: Path, name: str, task: str = "review") -> Path:
 
 class TestTaskRegistry:
     def test_get_task_dispatches(self):
-        task = eval_task.get_task("review")
+        task = eval.task.get_task("review")
         assert task.name == "review"
         assert callable(task.run)
         assert callable(task.score)
 
     def test_unknown_task_names_the_known_ones(self):
         with pytest.raises(KeyError) as exc:
-            eval_task.get_task("nope")
+            eval.task.get_task("nope")
         assert "review" in str(exc.value)
 
     def test_manifest_defaults_to_review(self):
         """The field is additive — manifests written before it still run."""
-        assert eval_task.task_name({}) == "review"
+        assert eval.task.task_name({}) == "review"
 
     def test_manifest_task_is_honoured(self):
-        assert eval_task.task_name({"task": "review"}) == "review"
+        assert eval.task.task_name({"task": "review"}) == "review"
 
     def test_corpus_manifests_declare_a_registered_task(self):
         manifests = sorted((REPO_ROOT / "eval" / "corpus").glob("*/manifest.json"))
         assert manifests, "corpus is empty"
         for path in manifests:
             manifest = json.loads(path.read_text())
-            assert eval_task.get_task(eval_task.task_name(manifest)) is not None
+            assert eval.task.get_task(eval.task.task_name(manifest)) is not None
 
 
 class TestRunArtifacts:
     def test_defaults_are_empty_not_absent(self):
-        artifacts = eval_task.RunArtifacts()
+        artifacts = eval.task.RunArtifacts()
         assert artifacts.exit_code == 0
         assert artifacts.temp_dirs == []
         assert artifacts.data == {}
 
     def test_usage_defaults_to_unmeasured_zero(self):
-        assert eval_task.RunArtifacts().usage.cost == 0.0
+        assert eval.task.RunArtifacts().usage.cost == 0.0
 
 
 class TestCreateTempRepo:
@@ -92,7 +94,7 @@ class TestCreateTempRepo:
     @contextlib.contextmanager
     def _repo(cls, tmp_path: Path):
         """Builds the fixture and guarantees cleanup, so each test only names its assertion."""
-        repo = Path(eval_task.create_temp_repo(str(cls._case(tmp_path)), prefix="eval-test-"))
+        repo = Path(eval.task.create_temp_repo(str(cls._case(tmp_path)), prefix="eval-test-"))
         try:
             yield repo
         finally:
@@ -101,8 +103,8 @@ class TestCreateTempRepo:
     def test_builds_an_eval_branch_carrying_the_sources(self, tmp_path):
         with self._repo(tmp_path) as repo:
             assert (repo / "bug.py").read_text() == "def f():\n    pass\n"
-            branch = proc.run(["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
-                              timeout=timeouts.LOCAL)
+            branch = core.proc.run(["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
+                              timeout=core.timeouts.LOCAL)
             assert branch.stdout.strip() == "eval"
 
     def test_origin_head_names_the_branch_the_case_forked_from(self, tmp_path):
@@ -111,9 +113,9 @@ class TestCreateTempRepo:
         pipeline diffed the branch against itself and every review case scored
         recall 0 on a clean, fully-billed run."""
         with self._repo(tmp_path) as repo:
-            head = proc.run(
+            head = core.proc.run(
                 ["git", "-C", str(repo), "symbolic-ref", "refs/remotes/origin/HEAD"],
-                timeout=timeouts.LOCAL)
+                timeout=core.timeouts.LOCAL)
             assert head.stdout.strip() == "refs/remotes/origin/main"
 
     def test_the_resolved_trunk_yields_a_range_holding_the_sources(self, tmp_path):
@@ -121,13 +123,13 @@ class TestCreateTempRepo:
         trunk through `resolve_default_branch`, and the empty diff it produced
         is the symptom that cost the run. Resolve the base the way the pipeline
         does, then diff against it."""
-        from git import topology as git_topology
+        import git.topology
         with self._repo(tmp_path) as repo:
-            base = git_topology.default_branch(str(repo))
+            base = git.topology.default_branch(str(repo))
             assert base == "main"
-            diff = proc.run(
+            diff = core.proc.run(
                 ["git", "-C", str(repo), "diff", "--name-only", f"origin/{base}...HEAD"],
-                timeout=timeouts.LOCAL)
+                timeout=core.timeouts.LOCAL)
             assert diff.stdout.split() == ["bug.py"]
 
     def test_the_inherited_git_env_does_not_reach_the_fixture(self, tmp_path, monkeypatch):
@@ -139,9 +141,9 @@ class TestCreateTempRepo:
     def test_the_fixture_head_sha_names_a_commit_the_repo_has(self, tmp_path):
         """The whole point: a case citing this sha cites something that resolves."""
         with self._repo(tmp_path) as repo:
-            sha = eval_task.fixture_head_sha(str(repo))
-            kind = proc.run(["git", "-C", str(repo), "cat-file", "-t", sha],
-                            timeout=timeouts.LOCAL)
+            sha = eval.task.fixture_head_sha(str(repo))
+            kind = core.proc.run(["git", "-C", str(repo), "cat-file", "-t", sha],
+                            timeout=core.timeouts.LOCAL)
             assert kind.stdout.strip() == "commit"
 
     def test_an_inherited_git_dir_does_not_redirect_the_head_read(
@@ -151,9 +153,9 @@ class TestCreateTempRepo:
         calling checkout's HEAD — a sha that resolves everywhere except the
         fixture, which is quieter than the placeholder it replaces."""
         with self._repo(tmp_path) as repo:
-            expected = eval_task.fixture_head_sha(str(repo))
+            expected = eval.task.fixture_head_sha(str(repo))
             monkeypatch.setenv("GIT_DIR", str(REPO_ROOT / ".git"))
-            assert eval_task.fixture_head_sha(str(repo)) == expected
+            assert eval.task.fixture_head_sha(str(repo)) == expected
 
     def test_an_unbuildable_repo_raises_rather_than_returning_an_empty_sha(
         self, tmp_path,
@@ -161,14 +163,14 @@ class TestCreateTempRepo:
         """An empty sha substituted into a rule's `match` produces a rule that
         can never fire — the failure `check_group` exists to prevent."""
         with pytest.raises(RuntimeError) as exc:
-            eval_task.fixture_head_sha(str(tmp_path))
+            eval.task.fixture_head_sha(str(tmp_path))
         assert "git rev-parse HEAD failed" in str(exc.value)
 
     def test_a_failing_step_raises_with_gits_own_words(self, tmp_path):
         """Calls the private `_git_step` directly, not `create_temp_repo`, to isolate
         the error-message contract from the rest of the fixture build."""
         with pytest.raises(RuntimeError) as exc:
-            eval_task._git_step(["git", "-C", str(tmp_path)], ["log"], eval_task.clean_env())
+            eval.task._git_step(["git", "-C", str(tmp_path)], ["log"], eval.task.clean_env())
         assert "git log failed" in str(exc.value)
         assert "not a git repository" in str(exc.value)
 
@@ -183,8 +185,8 @@ class TestCreateTempRepo:
         """
         killed = ["sh", "-c", "kill -PIPE $$", "git"]
         with pytest.raises(RuntimeError) as exc:
-            eval_task._git_step(killed, ["commit", "--allow-empty", "-m", "initial"],
-                                eval_task.clean_env())
+            eval.task._git_step(killed, ["commit", "--allow-empty", "-m", "initial"],
+                                eval.task.clean_env())
         message = str(exc.value)
         assert "git commit --allow-empty -m initial failed" in message
         assert "SIGPIPE (signal 13)" in message
@@ -202,7 +204,7 @@ class _StubTask:
 
     def run(self, case_dir, opts):
         self.opts = opts
-        return eval_task.RunArtifacts(
+        return eval.task.RunArtifacts(
             usage=SessionUsage(cost=0.25),
             temp_dirs=[self.temp_dir],
             data={"summary": "stub ran"},
@@ -218,7 +220,7 @@ def stub_run(monkeypatch, tmp_path):
     temp_dir = tmp_path / "scratch"
     temp_dir.mkdir()
     task = _StubTask(str(temp_dir))
-    monkeypatch.setitem(eval_task._TASK_FACTORIES, "stub", lambda: task)
+    monkeypatch.setitem(eval.task._TASK_FACTORIES, "stub", lambda: task)
     entry = {
         "name": "case-a",
         "case_dir": str(tmp_path),
@@ -235,7 +237,7 @@ class TestRunnerDispatch:
     def test_dispatches_on_the_manifest_task(self, em, stub_run):
         task, entry, args = stub_run
         em._run_single(entry, "claude-opus-5", "opus", 0, args)
-        assert task.opts == eval_task.RunOptions(
+        assert task.opts == eval.task.RunOptions(
             model="claude-opus-5", effort="medium", timeout=42, verbose=False,
         )
 
@@ -265,7 +267,7 @@ class TestReportRun:
             "", "", 0, recall=1.0,
             false_positive_count=fp_count, false_positive_ok=fp_ok,
         )
-        em._report_run(eval_task.RunArtifacts(), result, 1)
+        em._report_run(eval.task.RunArtifacts(), result, 1)
         return capsys.readouterr().err
 
     def test_over_budget_is_called_out(self, em, capsys):
@@ -287,38 +289,38 @@ class TestOutcomeFor:
     """
 
     def test_a_clean_exit_is_measured(self):
-        assert eval_task.outcome_for(
-            SessionUsage(input_tokens=80)) is eval_scoring.RunOutcome.MEASURED
+        assert eval.task.outcome_for(
+            SessionUsage(input_tokens=80)) is eval.scoring.RunOutcome.MEASURED
 
     def test_a_non_zero_exit_that_spent_money_is_measured(self):
         """An agent that ran, worked, and failed produced a real result."""
-        assert eval_task.outcome_for(
-            SessionUsage(cost=0.31)) is eval_scoring.RunOutcome.MEASURED
+        assert eval.task.outcome_for(
+            SessionUsage(cost=0.31)) is eval.scoring.RunOutcome.MEASURED
 
     def test_a_non_zero_exit_that_burned_tokens_is_measured(self):
         """A run can do real work and still report no cost — a stubbed or free model."""
-        assert eval_task.outcome_for(
-            SessionUsage(input_tokens=900)) is eval_scoring.RunOutcome.MEASURED
+        assert eval.task.outcome_for(
+            SessionUsage(input_tokens=900)) is eval.scoring.RunOutcome.MEASURED
 
     def test_a_non_zero_exit_with_nothing_spent_never_ran(self):
-        assert eval_task.outcome_for(SessionUsage()) is eval_scoring.RunOutcome.NOT_RUN
+        assert eval.task.outcome_for(SessionUsage()) is eval.scoring.RunOutcome.NOT_RUN
 
     def test_cache_reads_alone_count_as_work(self):
         """total_tokens covers the cache fields; billed_input alone would miss them."""
-        assert eval_task.outcome_for(
-            SessionUsage(cache_read_tokens=4000)) is eval_scoring.RunOutcome.MEASURED
+        assert eval.task.outcome_for(
+            SessionUsage(cache_read_tokens=4000)) is eval.scoring.RunOutcome.MEASURED
 
     def test_artifacts_default_to_measured(self):
         """A task that never classifies keeps today's behaviour."""
-        assert eval_task.RunArtifacts().measured
+        assert eval.task.RunArtifacts().measured
 
 
 class TestReportUnmeasuredRun:
     def test_a_dead_run_reports_no_score(self, em, capsys):
         """recall 0% for a run that never happened is the confusion, not the report."""
         result = ScoringResult(
-            "", "", 0, recall=0.0, outcome=eval_scoring.RunOutcome.NOT_RUN)
-        em._report_run(eval_task.RunArtifacts(), result, 3)
+            "", "", 0, recall=0.0, outcome=eval.scoring.RunOutcome.NOT_RUN)
+        em._report_run(eval.task.RunArtifacts(), result, 3)
         err = capsys.readouterr().err
         assert "not scored" in err
         assert "recall" not in err
@@ -463,7 +465,7 @@ class TestServedModelLabel:
         task, entry, args = stub_run
 
         def run(_case_dir, _opts):
-            return eval_task.RunArtifacts(
+            return eval.task.RunArtifacts(
                 usage=SessionUsage(
                     cost=0.25, cost_by_model={"claude-opus-5": 0.25},
                 ),
@@ -479,7 +481,7 @@ class TestServedModelLabel:
         task, entry, args = stub_run
 
         def run(_case_dir, _opts):
-            return eval_task.RunArtifacts(
+            return eval.task.RunArtifacts(
                 usage=SessionUsage(cost=0.25, cost_by_model={
                     "claude-opus-5": 0.2, "claude-sonnet-5": 0.05,
                 }),
@@ -539,7 +541,7 @@ def _recording_task(calls):
                     "rules_home": opts.rules_home,
                     "condition": opts.condition,
                 })
-                return eval_task.RunArtifacts(
+                return eval.task.RunArtifacts(
                     usage=SessionUsage(cost=0.01, input_tokens=10),
                     data={"summary": "stub"},
                 )
@@ -615,8 +617,8 @@ def test_a_pi_backend_seeds_from_pi_layers_not_claude(tmp_path, monkeypatch, em)
         (dest / "rules" / "general.md").write_text("# g\n")
         return dest.resolve()
 
-    monkeypatch.setattr(em.ai_backend, "selected_backend", lambda: em.ai_backend.Backend.PI)
-    monkeypatch.setattr(em.conditions, "prepare_seed_source", fake_prepare)
+    monkeypatch.setattr(agent.backend, "selected_backend", lambda: agent.backend.Backend.PI)
+    monkeypatch.setattr(eval.conditions, "prepare_seed_source", fake_prepare)
     calls = []
     monkeypatch.setattr(em, "get_task", _recording_task(calls))
     em.run_eval(_args(tmp_path, conditions="full,trimmed", runs=1))
@@ -630,10 +632,10 @@ def test_a_missing_pi_source_fails_loudly_rather_than_seeding_empty(
     _make_case(tmp_path / "corpus", "a", task="ci-fix")
 
     def fake_prepare(kind, dest, *, workbench_dir=None):
-        raise em.conditions.MissingRuleSource("Pi rule layers produced no files")
+        raise eval.conditions.MissingRuleSource("Pi rule layers produced no files")
 
-    monkeypatch.setattr(em.ai_backend, "selected_backend", lambda: em.ai_backend.Backend.PI)
-    monkeypatch.setattr(em.conditions, "prepare_seed_source", fake_prepare)
+    monkeypatch.setattr(agent.backend, "selected_backend", lambda: agent.backend.Backend.PI)
+    monkeypatch.setattr(eval.conditions, "prepare_seed_source", fake_prepare)
     with pytest.raises(SystemExit, match="Pi rule layers produced no files"):
         em.run_eval(_args(tmp_path, conditions="full", runs=1))
 
@@ -672,16 +674,16 @@ def _task_trimmed_never_ran():
 
             def run(self, case_dir, opts):
                 self.condition = opts.condition
-                return eval_task.RunArtifacts(
+                return eval.task.RunArtifacts(
                     usage=SessionUsage(cost=0.01, input_tokens=10),
                     data={"summary": "stub"},
                 )
 
             def score(self, artifacts, manifest):
                 outcome = (
-                    eval_scoring.RunOutcome.NOT_RUN
+                    eval.scoring.RunOutcome.NOT_RUN
                     if self.condition == "trimmed"
-                    else eval_scoring.RunOutcome.MEASURED
+                    else eval.scoring.RunOutcome.MEASURED
                 )
                 return ScoringResult(
                     "", "", 0, recall=1.0, billed_input=40000, outcome=outcome,

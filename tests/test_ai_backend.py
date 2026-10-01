@@ -13,16 +13,16 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from agent import backend as ai_backend
-from agent import usage as ai_usage
-from git import client as git_client
+import agent.backend
+import agent.usage
+import git.client
 
 
 @pytest.fixture
 def ledger(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
-    monkeypatch.setattr(ai_usage, "_warned", False)
-    return tmp_path / ai_usage.LEDGER_DIRNAME
+    monkeypatch.setattr(agent.usage, "_warned", False)
+    return tmp_path / agent.usage.LEDGER_DIRNAME
 
 
 def _records(ledger_dir):
@@ -71,7 +71,7 @@ def fake_backend(monkeypatch):
     mod.invoke_fix = invoke_fix
     mod.prompt = prompt_fn
     mod.calls = calls
-    monkeypatch.setattr(ai_backend, "_get_module", lambda: mod)
+    monkeypatch.setattr(agent.backend, "_get_module", lambda: mod)
     return mod
 
 
@@ -89,59 +89,59 @@ class TestBackendSelection:
         both layers are cleared and each test sets back only what it is about.
         """
         monkeypatch.delenv("AI_BACKEND", raising=False)
-        monkeypatch.setattr(ai_backend, "_configured_backend", lambda: None)
+        monkeypatch.setattr(agent.backend, "_configured_backend", lambda: None)
 
     def test_nothing_selected_is_none(self):
-        assert ai_backend.selected_backend() is None
+        assert agent.backend.selected_backend() is None
 
     def test_reads_env(self, monkeypatch):
         monkeypatch.setenv("AI_BACKEND", "pi")
-        assert ai_backend.selected_backend() is ai_backend.Backend.PI
+        assert agent.backend.selected_backend() is agent.backend.Backend.PI
 
     def test_unrecognised_backend_is_not_a_fallback(self, monkeypatch):
         """A typo meant something specific and did not get it."""
         monkeypatch.setenv("AI_BACKEND", "not-a-backend")
-        assert ai_backend.selected_backend() is None
+        assert agent.backend.selected_backend() is None
 
     def test_empty_string_is_not_a_selection(self, monkeypatch):
         """`export AI_BACKEND=` is a real shape, and it selects nothing."""
         monkeypatch.setenv("AI_BACKEND", "")
-        assert ai_backend.selected_backend() is None
+        assert agent.backend.selected_backend() is None
 
     def test_empty_string_falls_through_to_config(self, monkeypatch):
         """Empty is falsy, unlike an unrecognised value: config still gets asked."""
         monkeypatch.setenv("AI_BACKEND", "")
         monkeypatch.setattr(
-            ai_backend, "_configured_backend", lambda: ai_backend.Backend.PI,
+            agent.backend, "_configured_backend", lambda: agent.backend.Backend.PI,
         )
-        assert ai_backend.selected_backend() is ai_backend.Backend.PI
+        assert agent.backend.selected_backend() is agent.backend.Backend.PI
 
     def test_config_supplies_the_backend_when_the_env_is_silent(self, monkeypatch):
         monkeypatch.delenv("AI_BACKEND", raising=False)
         monkeypatch.setattr(
-            ai_backend, "_configured_backend", lambda: ai_backend.Backend.PI,
+            agent.backend, "_configured_backend", lambda: agent.backend.Backend.PI,
         )
-        assert ai_backend.selected_backend() is ai_backend.Backend.PI
+        assert agent.backend.selected_backend() is agent.backend.Backend.PI
 
     def test_env_beats_config(self, monkeypatch):
         monkeypatch.setenv("AI_BACKEND", "claude")
         monkeypatch.setattr(
-            ai_backend, "_configured_backend", lambda: ai_backend.Backend.PI,
+            agent.backend, "_configured_backend", lambda: agent.backend.Backend.PI,
         )
-        assert ai_backend.selected_backend() is ai_backend.Backend.CLAUDE
+        assert agent.backend.selected_backend() is agent.backend.Backend.CLAUDE
 
     def test_dispatch_names_both_ways_to_set_it(self, monkeypatch):
         monkeypatch.delenv("AI_BACKEND", raising=False)
-        with pytest.raises(ai_backend.BackendNotSelected) as exc:
-            ai_backend._get_module()
+        with pytest.raises(agent.backend.BackendNotSelected) as exc:
+            agent.backend._get_module()
         assert "AI_BACKEND" in str(exc.value)
         assert "agent.backend" in str(exc.value)
 
     def test_dispatch_names_the_invalid_value_on_a_typo(self, monkeypatch):
         """A typo'd AI_BACKEND is configured, just wrong — say what was set."""
         monkeypatch.setenv("AI_BACKEND", "cluade")
-        with pytest.raises(ai_backend.BackendNotSelected, match="cluade"):
-            ai_backend._get_module()
+        with pytest.raises(agent.backend.BackendNotSelected, match="cluade"):
+            agent.backend._get_module()
 
     def test_dispatch_names_the_invalid_value_from_config(self, tmp_path, monkeypatch):
         """A typo'd agent.backend is configured, just wrong — say what was set.
@@ -154,30 +154,30 @@ class TestBackendSelection:
         """
         monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(tmp_path))
         (tmp_path / "config.yml").write_text("agent:\n  backend: cluade\n")
-        with pytest.raises(ai_backend.BackendNotSelected, match="cluade"):
-            ai_backend._get_module()
+        with pytest.raises(agent.backend.BackendNotSelected, match="cluade"):
+            agent.backend._get_module()
 
     def test_is_available_is_false_rather_than_raising(self, monkeypatch):
         """The rebase paths ask this to decide whether to offer AI at all."""
         monkeypatch.delenv("AI_BACKEND", raising=False)
-        assert ai_backend.is_available() is False
+        assert agent.backend.is_available() is False
 
     def test_or_claude_passes_through_a_real_selection(self, monkeypatch):
         """The fallback only applies when nothing is selected."""
         monkeypatch.setenv("AI_BACKEND", "pi")
-        assert ai_backend.selected_backend_or_claude() is ai_backend.Backend.PI
+        assert agent.backend.selected_backend_or_claude() is agent.backend.Backend.PI
 
     def test_or_claude_falls_back_when_nothing_is_selected(self):
         """The shared fallback ``agent.templates`` and ``agent.retry`` both use."""
-        assert ai_backend.selected_backend_or_claude() is ai_backend.Backend.CLAUDE
+        assert agent.backend.selected_backend_or_claude() is agent.backend.Backend.CLAUDE
 
 
 class TestPreflightDispatch:
     def test_routes_to_claude_backend(self, monkeypatch):
         monkeypatch.setenv("AI_BACKEND", "claude")
-        from agent import backend_claude as ai_backend_claude
-        monkeypatch.setattr(ai_backend_claude, "preflight", lambda models, trail: False)
-        assert ai_backend.preflight({"claude-sonnet-5": ["group"]}, MagicMock()) is False
+        import agent.backend_claude
+        monkeypatch.setattr(agent.backend_claude, "preflight", lambda models, trail: False)
+        assert agent.backend.preflight({"claude-sonnet-5": ["group"]}, MagicMock()) is False
 
     def test_pi_backend_skips_vertex_quota(self, monkeypatch):
         """Regression: Vertex env left exported must not abort a Pi run."""
@@ -186,13 +186,13 @@ class TestPreflightDispatch:
         monkeypatch.setenv("ANTHROPIC_VERTEX_PROJECT_ID", "proj")
         monkeypatch.setenv("CLOUD_ML_REGION", "us-east5")
 
-        from agent import vertex_quota
+        import agent.vertex_quota
 
         def _unreachable(*args, **kwargs):
             pytest.fail("Pi run reached the Vertex quota API")
 
-        monkeypatch.setattr(vertex_quota, "check_quota", _unreachable)
-        assert ai_backend.preflight({"claude-sonnet-5": ["group"]}, MagicMock()) is True
+        monkeypatch.setattr(agent.vertex_quota, "check_quota", _unreachable)
+        assert agent.backend.preflight({"claude-sonnet-5": ["group"]}, MagicMock()) is True
 
 
 class TestAgentInvocation:
@@ -200,19 +200,19 @@ class TestAgentInvocation:
         """One object, three modules — a reordered field cannot misbind."""
         import inspect
 
-        from agent import backend as ai_backend
-        from agent import backend_claude as ai_backend_claude
-        from agent import backend_pi as ai_backend_pi
+        import agent.backend
+        import agent.backend_claude
+        import agent.backend_pi
 
-        for mod in (ai_backend, ai_backend_claude, ai_backend_pi):
+        for mod in (agent.backend, agent.backend_claude, agent.backend_pi):
             for fn_name in ("invoke_agent", "invoke_fix"):
                 params = list(inspect.signature(getattr(mod, fn_name)).parameters)
                 assert params == ["inv"], f"{mod.__name__}.{fn_name} takes {params}"
 
     def test_defaults_leave_every_optional_field_unset(self):
-        from agent import backend as ai_backend
+        import agent.backend
 
-        inv = ai_backend.AgentInvocation(prompt="hi")
+        inv = agent.backend.AgentInvocation(prompt="hi")
         assert inv.cwd == ""
         assert inv.session_log == ""
         assert inv.add_dirs == []
@@ -232,18 +232,18 @@ class TestAgentInvocation:
     def test_is_frozen(self):
         import dataclasses
 
-        from agent import backend as ai_backend
+        import agent.backend
         import pytest
 
-        inv = ai_backend.AgentInvocation(prompt="hi")
+        inv = agent.backend.AgentInvocation(prompt="hi")
         with pytest.raises(dataclasses.FrozenInstanceError):
             inv.prompt = "bye"
 
     def test_add_dirs_are_not_shared_between_instances(self):
-        from agent import backend as ai_backend
+        import agent.backend
 
-        a = ai_backend.AgentInvocation(prompt="a")
-        b = ai_backend.AgentInvocation(prompt="b")
+        a = agent.backend.AgentInvocation(prompt="a")
+        b = agent.backend.AgentInvocation(prompt="b")
         a.add_dirs.append("/tmp")
         assert b.add_dirs == []
 
@@ -257,7 +257,7 @@ class TestInvokeAgentRecords:
         monkeypatch.setenv("AI_BACKEND", "claude")
         log = tmp_path / "session.jsonl"
         _session_log(log)
-        ai_backend.invoke_agent(ai_backend.AgentInvocation(
+        agent.backend.invoke_agent(agent.backend.AgentInvocation(
             prompt="p", cwd=str(tmp_path), session_log=str(log),
             model="claude-sonnet-4-6",
         ))
@@ -279,10 +279,10 @@ class TestInvokeAgentRecords:
         happened; it is recorded against an unknown backend.
         """
         monkeypatch.delenv("AI_BACKEND", raising=False)
-        monkeypatch.setattr(ai_backend, "_configured_backend", lambda: None)
+        monkeypatch.setattr(agent.backend, "_configured_backend", lambda: None)
         log = tmp_path / "session.jsonl"
         _session_log(log)
-        ai_backend.invoke_agent(ai_backend.AgentInvocation(
+        agent.backend.invoke_agent(agent.backend.AgentInvocation(
             prompt="p", cwd=str(tmp_path), session_log=str(log),
         ))
         rec = _records(ledger)[0]
@@ -295,7 +295,7 @@ class TestInvokeAgentRecords:
         log = tmp_path / "session.jsonl"
         _session_log(log)
         fake_backend.exit_code = 1
-        ai_backend.invoke_agent(ai_backend.AgentInvocation(
+        agent.backend.invoke_agent(agent.backend.AgentInvocation(
             prompt="p", cwd=str(tmp_path), session_log=str(log),
         ))
         rec = _records(ledger)[0]
@@ -305,7 +305,7 @@ class TestInvokeAgentRecords:
     def test_records_task_label(self, ledger, fake_backend, tmp_path):
         log = tmp_path / "session.jsonl"
         _session_log(log)
-        ai_backend.invoke_agent(ai_backend.AgentInvocation(
+        agent.backend.invoke_agent(agent.backend.AgentInvocation(
             prompt="p", cwd=str(tmp_path), session_log=str(log), task="review-group",
         ))
         assert _records(ledger)[0]["task"] == "review-group"
@@ -314,24 +314,24 @@ class TestInvokeAgentRecords:
         """Ledger labels ride along on the invocation; the backend still sees one object."""
         log = tmp_path / "session.jsonl"
         _session_log(log)
-        inv = ai_backend.AgentInvocation(
+        inv = agent.backend.AgentInvocation(
             prompt="p", cwd=str(tmp_path), session_log=str(log), task="review-group",
         )
-        ai_backend.invoke_agent(inv)
+        agent.backend.invoke_agent(inv)
         assert fake_backend.calls == [("invoke_agent", inv)]
 
     def test_returns_backend_exit_code(self, ledger, fake_backend, tmp_path):
         log = tmp_path / "session.jsonl"
         _session_log(log)
         fake_backend.exit_code = 42
-        inv = ai_backend.AgentInvocation(
+        inv = agent.backend.AgentInvocation(
             prompt="p", cwd=str(tmp_path), session_log=str(log),
         )
-        assert ai_backend.invoke_agent(inv) == 42
+        assert agent.backend.invoke_agent(inv) == 42
 
     def test_missing_session_log_records_nothing(self, ledger, fake_backend, tmp_path):
         """No usable usage source is better recorded as absent than as zero."""
-        ai_backend.invoke_agent(ai_backend.AgentInvocation(
+        agent.backend.invoke_agent(agent.backend.AgentInvocation(
             prompt="p", cwd=str(tmp_path),
             session_log=str(tmp_path / "never-written.jsonl"),
         ))
@@ -342,7 +342,7 @@ class TestInvokeFixRecords:
     def test_records_when_session_log_written(self, ledger, fake_backend, tmp_path):
         log = tmp_path / "fix.jsonl"
         _session_log(log, cost=0.25, input_tokens=10)
-        ai_backend.invoke_fix(ai_backend.AgentInvocation(
+        agent.backend.invoke_fix(agent.backend.AgentInvocation(
             prompt="p", cwd=str(tmp_path), session_log=str(log),
         ))
         rec = _records(ledger)[0]
@@ -350,7 +350,7 @@ class TestInvokeFixRecords:
         assert rec["cost"] == pytest.approx(0.25)
 
     def test_no_session_log_records_nothing(self, ledger, fake_backend, tmp_path):
-        ai_backend.invoke_fix(ai_backend.AgentInvocation(prompt="p", cwd=str(tmp_path)))
+        agent.backend.invoke_fix(agent.backend.AgentInvocation(prompt="p", cwd=str(tmp_path)))
         assert _records(ledger) == []
 
 
@@ -362,11 +362,11 @@ class TestLedgerFailureIsolation:
         def boom(**kwargs):
             raise RuntimeError("ledger exploded")
 
-        monkeypatch.setattr(ai_usage, "record", boom)
-        inv = ai_backend.AgentInvocation(
+        monkeypatch.setattr(agent.usage, "record", boom)
+        inv = agent.backend.AgentInvocation(
             prompt="p", cwd=str(tmp_path), session_log=str(log),
         )
-        assert ai_backend.invoke_agent(inv) == 0
+        assert agent.backend.invoke_agent(inv) == 0
 
 
 class TestScriptName:
@@ -374,7 +374,7 @@ class TestScriptName:
         monkeypatch.setattr(sys, "argv", ["/usr/local/bin/pr-rebase", "--fix"])
         log = tmp_path / "session.jsonl"
         _session_log(log)
-        ai_backend.invoke_agent(ai_backend.AgentInvocation(
+        agent.backend.invoke_agent(agent.backend.AgentInvocation(
             prompt="p", cwd=str(tmp_path), session_log=str(log),
         ))
         assert _records(ledger)[0]["script"] == "pr-rebase"
@@ -390,34 +390,34 @@ class TestCwdIsRequired:
 
     def test_invoke_agent_refuses_an_empty_cwd(self, fake_backend):
         with pytest.raises(ValueError, match="requires a non-empty cwd"):
-            ai_backend.invoke_agent(ai_backend.AgentInvocation(prompt="p"))
+            agent.backend.invoke_agent(agent.backend.AgentInvocation(prompt="p"))
         assert fake_backend.calls == [], "backend was reached despite the guard"
 
     def test_invoke_fix_refuses_an_empty_cwd(self, fake_backend):
         with pytest.raises(ValueError, match="requires a non-empty cwd"):
-            ai_backend.invoke_fix(ai_backend.AgentInvocation(prompt="p"))
+            agent.backend.invoke_fix(agent.backend.AgentInvocation(prompt="p"))
         assert fake_backend.calls == []
 
     def test_prompt_refuses_an_empty_cwd(self, fake_backend):
         with pytest.raises(ValueError, match="requires a non-empty cwd"):
-            ai_backend.prompt("hi", cwd="")
+            agent.backend.prompt("hi", cwd="")
         assert fake_backend.calls == []
 
     def test_prompt_requires_cwd_as_a_keyword(self):
         """No positional slot to fill by accident, and no default to inherit."""
         import inspect
 
-        param = inspect.signature(ai_backend.prompt).parameters["cwd"]
+        param = inspect.signature(agent.backend.prompt).parameters["cwd"]
         assert param.kind is inspect.Parameter.KEYWORD_ONLY
         assert param.default is inspect.Parameter.empty
 
     @pytest.mark.parametrize("call", [
-        lambda cwd: ai_backend.prompt("hi", cwd=cwd),
-        lambda cwd: ai_backend.invoke_agent(
-            ai_backend.AgentInvocation(prompt="p", cwd=cwd),
+        lambda cwd: agent.backend.prompt("hi", cwd=cwd),
+        lambda cwd: agent.backend.invoke_agent(
+            agent.backend.AgentInvocation(prompt="p", cwd=cwd),
         ),
-        lambda cwd: ai_backend.invoke_fix(
-            ai_backend.AgentInvocation(prompt="p", cwd=cwd),
+        lambda cwd: agent.backend.invoke_fix(
+            agent.backend.AgentInvocation(prompt="p", cwd=cwd),
         ),
     ], ids=["prompt", "invoke_agent", "invoke_fix"])
     def test_a_nonexistent_cwd_is_named_rather_than_inherited(
@@ -429,7 +429,7 @@ class TestCwdIsRequired:
         assert fake_backend.calls == []
 
     def test_prompt_forwards_cwd_to_the_backend(self, fake_backend, tmp_path):
-        ai_backend.prompt("hi", cwd=str(tmp_path))
+        agent.backend.prompt("hi", cwd=str(tmp_path))
         assert fake_backend.calls[0][2]["cwd"] == str(tmp_path)
 
 
@@ -437,7 +437,7 @@ class TestBackendsRunInTheGivenDirectory:
     """The cwd must reach subprocess, not just the invocation object."""
 
     def test_claude_prompt_passes_cwd_to_subprocess(self, monkeypatch, tmp_path):
-        from agent import backend_claude as ai_backend_claude
+        import agent.backend_claude
 
         seen = {}
 
@@ -446,11 +446,11 @@ class TestBackendsRunInTheGivenDirectory:
             return subprocess.CompletedProcess(cmd, 0, '{"result": "ok"}', "")
 
         monkeypatch.setattr(subprocess, "run", fake_run)
-        ai_backend_claude.prompt("hi", cwd=str(tmp_path))
+        agent.backend_claude.prompt("hi", cwd=str(tmp_path))
         assert seen["cwd"] == str(tmp_path)
 
     def test_pi_prompt_passes_cwd_to_subprocess(self, monkeypatch, tmp_path):
-        from agent import backend_pi as ai_backend_pi
+        import agent.backend_pi
 
         seen = {}
 
@@ -459,14 +459,14 @@ class TestBackendsRunInTheGivenDirectory:
             return subprocess.CompletedProcess(cmd, 0, "ok", "")
 
         monkeypatch.setattr(subprocess, "run", fake_run)
-        ai_backend_pi.prompt("hi", cwd=str(tmp_path))
+        agent.backend_pi.prompt("hi", cwd=str(tmp_path))
         assert seen["cwd"] == str(tmp_path)
 
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
     def test_claude_agents_run_in_the_invocation_cwd(
         self, monkeypatch, tmp_path, entry_point,
     ):
-        from agent import backend_claude as ai_backend_claude
+        import agent.backend_claude
 
         seen = {}
 
@@ -485,7 +485,7 @@ class TestBackendsRunInTheGivenDirectory:
 
         monkeypatch.setattr(subprocess, "Popen", fake_popen)
         log = tmp_path / "s.jsonl"
-        getattr(ai_backend_claude, entry_point)(ai_backend.AgentInvocation(
+        getattr(agent.backend_claude, entry_point)(agent.backend.AgentInvocation(
             prompt="p", cwd=str(tmp_path), session_log=str(log),
         ))
         assert seen["cwd"] == str(tmp_path)
@@ -544,13 +544,13 @@ class TestBackendsGetTheInvocationEnv:
         module = importlib.import_module("agent.backend_claude")
         seen = {}
         monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
-        getattr(module, entry_point)(ai_backend.AgentInvocation(
+        getattr(module, entry_point)(agent.backend.AgentInvocation(
             prompt="p", cwd=str(tmp_path),
             session_log=str(tmp_path / "s.jsonl"),
             env={"PATH": "/stub:/usr/bin"},
         ))
         assert seen["env"]["PATH"] == "/stub:/usr/bin"
-        assert set(seen["env"]) == {"PATH", *git_client.EDITOR_VARS}
+        assert set(seen["env"]) == {"PATH", *git.client.EDITOR_VARS}
 
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
     def test_pi_extends_the_invocation_env_without_replacing_it(
@@ -564,7 +564,7 @@ class TestBackendsGetTheInvocationEnv:
         module = importlib.import_module("agent.backend_pi")
         seen = {}
         monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
-        getattr(module, entry_point)(ai_backend.AgentInvocation(
+        getattr(module, entry_point)(agent.backend.AgentInvocation(
             prompt="p", cwd=str(tmp_path),
             session_log=str(tmp_path / "s.jsonl"),
             env={"PATH": "/stub:/usr/bin"},
@@ -572,7 +572,7 @@ class TestBackendsGetTheInvocationEnv:
         assert seen["env"]["PATH"] == "/stub:/usr/bin"
         assert seen["env"]["REVIEW_WORKTREE_DIR"] == str(tmp_path)
         assert set(seen["env"]) == {
-            "PATH", "REVIEW_WORKTREE_DIR", *git_client.EDITOR_VARS,
+            "PATH", "REVIEW_WORKTREE_DIR", *git.client.EDITOR_VARS,
         }
 
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
@@ -584,7 +584,7 @@ class TestBackendsGetTheInvocationEnv:
         module = importlib.import_module("agent.backend_claude")
         seen = {}
         monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
-        getattr(module, entry_point)(ai_backend.AgentInvocation(
+        getattr(module, entry_point)(agent.backend.AgentInvocation(
             prompt="p", cwd=str(tmp_path),
             session_log=str(tmp_path / "s.jsonl"),
         ))
@@ -599,7 +599,7 @@ class TestBackendsGetTheInvocationEnv:
         module = importlib.import_module("agent.backend_pi")
         seen = {}
         monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
-        getattr(module, entry_point)(ai_backend.AgentInvocation(
+        getattr(module, entry_point)(agent.backend.AgentInvocation(
             prompt="p", cwd=str(tmp_path),
             session_log=str(tmp_path / "s.jsonl"),
         ))
@@ -626,17 +626,17 @@ class TestAgentsCannotBeHandedAnEditor:
     def test_an_inherited_editor_is_overridden(
         self, monkeypatch, tmp_path, module_name, entry_point,
     ):
-        for var in git_client.EDITOR_VARS:
+        for var in git.client.EDITOR_VARS:
             monkeypatch.setenv(var, "vim")
         module = importlib.import_module(module_name)
         seen = {}
         monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
-        getattr(module, entry_point)(ai_backend.AgentInvocation(
+        getattr(module, entry_point)(agent.backend.AgentInvocation(
             prompt="p", cwd=str(tmp_path),
             session_log=str(tmp_path / "s.jsonl"),
         ))
-        for var in git_client.EDITOR_VARS:
-            assert seen["env"][var] == git_client.NO_EDITOR
+        for var in git.client.EDITOR_VARS:
+            assert seen["env"][var] == git.client.NO_EDITOR
 
     @pytest.mark.parametrize("module_name", BACKENDS)
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
@@ -647,18 +647,18 @@ class TestAgentsCannotBeHandedAnEditor:
         module = importlib.import_module(module_name)
         seen = {}
         monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
-        getattr(module, entry_point)(ai_backend.AgentInvocation(
+        getattr(module, entry_point)(agent.backend.AgentInvocation(
             prompt="p", cwd=str(tmp_path),
             session_log=str(tmp_path / "s.jsonl"),
             env={"PATH": "/stub", "GIT_EDITOR": "vim"},
         ))
-        assert seen["env"]["GIT_EDITOR"] == git_client.NO_EDITOR
+        assert seen["env"]["GIT_EDITOR"] == git.client.NO_EDITOR
         assert seen["env"]["PATH"] == "/stub"
 
 
 class TestBuildAddDirs:
     def test_artifact_dir_and_worktree_only(self):
-        from agent import session as review_agent
+        import agent.session
 
-        dirs = review_agent.build_add_dirs("/wt", "/reviews/pr-42")
+        dirs = agent.session.build_add_dirs("/wt", "/reviews/pr-42")
         assert dirs == ["/reviews/pr-42", "/wt"]

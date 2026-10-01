@@ -22,12 +22,12 @@ from conftest import _load_lib, seed_repo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from config import workbench_config as wc
-from config import workbench_config_write as wcw
+import config.workbench_config
+import config.workbench_config_write
 
 config_cli = _load_lib("config_cli")
 
-KEY = wc.ISSUE_PROVIDER_KEY
+KEY = config.workbench_config.ISSUE_PROVIDER_KEY
 
 
 def _records(capsys) -> list[tuple[str, str, str]]:
@@ -42,7 +42,7 @@ def _run(capsys, *argv) -> tuple[int, list[tuple[str, str, str]]]:
 
 
 def _declare(path: Path, provider: str) -> None:
-    (path / wc.PROJECT_CONFIG_NAME).write_text(
+    (path / config.workbench_config.PROJECT_CONFIG_NAME).write_text(
         f"issues:\n  provider: {provider}\n")
 
 
@@ -58,22 +58,22 @@ def test_reads_a_named_repos_own_config(capsys, repo):
     _declare(repo, "github")
     code, records = _run(capsys, KEY, str(repo))
     assert code == 0
-    assert records == [(wc.PROJECT_SCOPE, "github", str(repo))]
+    assert records == [(config.workbench_config.PROJECT_SCOPE, "github", str(repo))]
 
 
 def test_names_the_global_scope_when_the_repo_inherits(capsys, repo):
-    wcw.set_value(KEY, "linear")
+    config.workbench_config_write.set_value(KEY, "linear")
     code, records = _run(capsys, KEY, str(repo))
     assert code == 0
-    assert records == [(wc.GLOBAL_SCOPE, "linear", str(repo))]
+    assert records == [(config.workbench_config.GLOBAL_SCOPE, "linear", str(repo))]
 
 
 def test_the_repos_own_answer_outranks_the_machines(capsys, repo):
-    wcw.set_value(KEY, "linear")
+    config.workbench_config_write.set_value(KEY, "linear")
     _declare(repo, "github")
     code, records = _run(capsys, KEY, str(repo))
     assert code == 0
-    assert records == [(wc.PROJECT_SCOPE, "github", str(repo))]
+    assert records == [(config.workbench_config.PROJECT_SCOPE, "github", str(repo))]
 
 
 def test_reads_the_scope_above_a_bare_repos_worktrees(capsys, container):
@@ -87,7 +87,7 @@ def test_reads_the_scope_above_a_bare_repos_worktrees(capsys, container):
     worktree = container / "main"
     code, records = _run(capsys, KEY, str(worktree))
     assert code == 0
-    assert records == [(wc.CONTAINER_SCOPE, "linear", str(worktree))]
+    assert records == [(config.workbench_config.CONTAINER_SCOPE, "linear", str(worktree))]
 
 
 def test_the_worktrees_own_answer_outranks_the_containers(capsys, container):
@@ -96,7 +96,7 @@ def test_the_worktrees_own_answer_outranks_the_containers(capsys, container):
     _declare(worktree, "github")
     code, records = _run(capsys, KEY, str(worktree))
     assert code == 0
-    assert records == [(wc.PROJECT_SCOPE, "github", str(worktree))]
+    assert records == [(config.workbench_config.PROJECT_SCOPE, "github", str(worktree))]
 
 
 def test_with_no_dir_it_answers_for_the_callers_own_repo(capsys, repo, monkeypatch):
@@ -104,7 +104,7 @@ def test_with_no_dir_it_answers_for_the_callers_own_repo(capsys, repo, monkeypat
     monkeypatch.chdir(repo)
     code, records = _run(capsys, KEY)
     assert code == 0
-    assert records == [(wc.PROJECT_SCOPE, "github", str(repo))]
+    assert records == [(config.workbench_config.PROJECT_SCOPE, "github", str(repo))]
 
 
 def test_with_no_dir_it_answers_from_a_bare_repos_container(capsys, container, monkeypatch):
@@ -120,7 +120,7 @@ def test_with_no_dir_it_answers_from_a_bare_repos_container(capsys, container, m
     monkeypatch.chdir(container)
     code, records = _run(capsys, KEY)
     assert code == 0
-    assert records == [(wc.PROJECT_SCOPE, "github", str(container / "main"))]
+    assert records == [(config.workbench_config.PROJECT_SCOPE, "github", str(container / "main"))]
 
 
 # ─── Nothing to report ───────────────────────────────────────────────────────
@@ -134,28 +134,28 @@ def test_with_no_dir_it_answers_from_a_bare_repos_container(capsys, container, m
 def test_a_repo_with_no_config_resolves_to_the_default(capsys, repo):
     code, records = _run(capsys, KEY, str(repo))
     assert code == 0
-    assert records == [(wc.DEFAULT_SCOPE, "", str(repo))]
+    assert records == [(config.workbench_config.DEFAULT_SCOPE, "", str(repo))]
 
 
 def test_a_directory_that_is_gone_resolves_to_the_default(capsys, tmp_path):
     absent = tmp_path / "never-existed"
     code, records = _run(capsys, KEY, str(absent))
     assert code == 0
-    assert records == [(wc.DEFAULT_SCOPE, "", str(absent))]
+    assert records == [(config.workbench_config.DEFAULT_SCOPE, "", str(absent))]
 
 
 def test_an_unparseable_config_resolves_to_the_default(capsys, repo):
-    (repo / wc.PROJECT_CONFIG_NAME).write_text("issues:\n  provider: [unclosed\n")
+    (repo / config.workbench_config.PROJECT_CONFIG_NAME).write_text("issues:\n  provider: [unclosed\n")
     code, records = _run(capsys, KEY, str(repo))
     assert code == 0
-    assert records == [(wc.DEFAULT_SCOPE, "", str(repo))]
+    assert records == [(config.workbench_config.DEFAULT_SCOPE, "", str(repo))]
 
 
 # ─── The batch ───────────────────────────────────────────────────────────────
 
 def test_a_bad_repo_costs_only_its_own_row(capsys, tmp_path):
     bad = seed_repo(tmp_path / "bad")
-    (bad / wc.PROJECT_CONFIG_NAME).write_text("issues:\n  provider: [unclosed\n")
+    (bad / config.workbench_config.PROJECT_CONFIG_NAME).write_text("issues:\n  provider: [unclosed\n")
     good = seed_repo(tmp_path / "good")
     _declare(good, "github")
     gone = tmp_path / "gone"
@@ -163,9 +163,9 @@ def test_a_bad_repo_costs_only_its_own_row(capsys, tmp_path):
     code, records = _run(capsys, KEY, str(bad), str(gone), str(good))
     assert code == 0
     assert records == [
-        (wc.DEFAULT_SCOPE, "", str(bad)),
-        (wc.DEFAULT_SCOPE, "", str(gone)),
-        (wc.PROJECT_SCOPE, "github", str(good)),
+        (config.workbench_config.DEFAULT_SCOPE, "", str(bad)),
+        (config.workbench_config.DEFAULT_SCOPE, "", str(gone)),
+        (config.workbench_config.PROJECT_SCOPE, "github", str(good)),
     ]
 
 
@@ -197,14 +197,14 @@ def test_an_empty_value_still_leaves_three_fields(capsys, repo):
     """
     code = config_cli.main(["get", KEY, str(repo)])
     assert code == 0
-    assert capsys.readouterr().out == f"{wc.DEFAULT_SCOPE}\t\t{repo}\n"
+    assert capsys.readouterr().out == f"{config.workbench_config.DEFAULT_SCOPE}\t\t{repo}\n"
 
 
 def test_a_value_spanning_lines_is_collapsed_onto_one(capsys, repo):
-    (repo / wc.PROJECT_CONFIG_NAME).write_text('agent:\n  model: "a\\nb"\n')
+    (repo / config.workbench_config.PROJECT_CONFIG_NAME).write_text('agent:\n  model: "a\\nb"\n')
     code, records = _run(capsys, "agent.model", str(repo))
     assert code == 0
-    assert records == [(wc.PROJECT_SCOPE, "a b", str(repo))]
+    assert records == [(config.workbench_config.PROJECT_SCOPE, "a b", str(repo))]
 
 
 # ─── The guard ───────────────────────────────────────────────────────────────
@@ -247,12 +247,12 @@ def test_a_key_only_this_checkout_defines_is_readable(capsys, repo, monkeypatch)
     test it at all.
     """
     monkeypatch.setattr(
-        config_cli.workbench_config_write, "check_key", _refuse_everything,
+        config.workbench_config_write, "check_key", _refuse_everything,
     )
     _declare(repo, "github")
     code, records = _run(capsys, KEY, str(repo))
     assert code == 0
-    assert records == [(wc.PROJECT_SCOPE, "github", str(repo))]
+    assert records == [(config.workbench_config.PROJECT_SCOPE, "github", str(repo))]
 
 
 def _refuse_everything(key: str):

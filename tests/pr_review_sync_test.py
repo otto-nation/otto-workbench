@@ -12,7 +12,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from conftest import make_ctx
-from pr import state as pr_state
+import pr.state
 from pr.domains import ReviewStatus, ReviewVerdict
 from pr.review_sync import sync_review_domain
 from review.summary import ReviewSummaryReport, build_review_summary, json_summary
@@ -46,7 +46,7 @@ def test_sync_review_domain_is_the_writer(tmp_path):
     assert written is not None
     assert written.finding_counts == {"must_fix": 1, "nit": 2}
     assert written.total_tokens == 36
-    loaded = pr_state.load_state(ctx.target_dir)
+    loaded = pr.state.load_state(ctx.target_dir)
     assert loaded.review.finding_counts == {"must_fix": 1, "nit": 2}
     assert loaded.review.verdict == ReviewVerdict.CHANGES_REQUESTED.value
     assert loaded.review.cost_usd == pytest.approx(1.5)
@@ -60,21 +60,21 @@ def test_sync_review_domain_keeps_prior_type_when_the_report_omits_it(tmp_path):
     sync_review_domain(ctx, ReviewSummaryReport(review_type="incremental"))
     sync_review_domain(ctx, ReviewSummaryReport(review_file="later.md"))
 
-    assert pr_state.load_state(ctx.target_dir).review.review_type == "incremental"
+    assert pr.state.load_state(ctx.target_dir).review.review_type == "incremental"
 
 
 def test_sync_review_domain_defaults_missing_type_to_full(tmp_path):
     ctx = make_ctx(target_dir=tmp_path / "pr" / "feat", worktree_root=tmp_path / "wt")
     sync_review_domain(ctx, ReviewSummaryReport())
 
-    assert pr_state.load_state(ctx.target_dir).review.review_type == "full"
+    assert pr.state.load_state(ctx.target_dir).review.review_type == "full"
 
 
 def test_sync_review_domain_records_unknown_recoverable(tmp_path):
     ctx = make_ctx(target_dir=tmp_path / "pr" / "feat", worktree_root=tmp_path / "wt")
     sync_review_domain(ctx, ReviewSummaryReport(review_file="r.md"))
 
-    assert pr_state.load_state(ctx.target_dir).review.recoverable is None
+    assert pr.state.load_state(ctx.target_dir).review.recoverable is None
 
 
 def test_sync_review_domain_lands_with_the_pr_not_the_caller(tmp_path):
@@ -91,9 +91,9 @@ def test_sync_review_domain_lands_with_the_pr_not_the_caller(tmp_path):
         review_file="r.md", verdict="approve", head_sha="pr-sha",
     ))
 
-    assert (target / pr_state.STATE_FILE).is_file()
-    assert not list(caller.rglob(pr_state.STATE_FILE))
-    written = pr_state.load_state(target)
+    assert (target / pr.state.STATE_FILE).is_file()
+    assert not list(caller.rglob(pr.state.STATE_FILE))
+    written = pr.state.load_state(target)
     assert written.identity.pr_number == 2973
     assert written.identity.worktree_root == str(caller)
 

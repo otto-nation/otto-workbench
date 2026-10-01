@@ -35,7 +35,7 @@ import os
 from enum import StrEnum
 from pathlib import Path
 
-from config import workbench_config
+import config.workbench_config
 from agent.registry import PHASES, REVIEW_PHASES
 from agent.types import EFFORT_PRESETS
 from core.phases import ENV_PREFIX, Effort, Phase, Thinking
@@ -162,7 +162,7 @@ def resolve_provider() -> str | None:
     return os.environ.get(PROVIDER_ENV)
 
 
-def phase_provider(config: WorkbenchConfig | None = None) -> str | None:
+def phase_provider(cfg: WorkbenchConfig | None = None) -> str | None:
     """The backend provider an invocation runs against: the env key, then config.
 
     Not per-phase: a provider is where the models are served from, and a run
@@ -170,31 +170,31 @@ def phase_provider(config: WorkbenchConfig | None = None) -> str | None:
     unattributable. The phase argument other resolvers take is deliberately
     absent so no caller can imply otherwise.
     """
-    return resolve_provider() or _config(config).agent.provider
+    return resolve_provider() or _config(cfg).agent.provider
 
 
 # ── Config layers ────────────────────────────────────────────────────────────
 
 
-def _config(config: WorkbenchConfig | None) -> WorkbenchConfig:
+def _config(cfg: WorkbenchConfig | None) -> WorkbenchConfig:
     """The caller's config, or the one on disk.
 
     Callers resolving several values in a row pass the config they already
     loaded; the default is for the ones resolving a single value.
     """
-    return config if config is not None else workbench_config.load_config_or_default()
+    return cfg if cfg is not None else config.workbench_config.load_config_or_default()
 
 
-def _config_model(phase: Phase, config: WorkbenchConfig) -> str | None:
+def _config_model(phase: Phase, cfg: WorkbenchConfig) -> str | None:
     """The model this phase's config asks for: its own entry, else the section."""
-    override = config.agent.phases.get(phase)
+    override = cfg.agent.phases.get(phase)
     if override is not None and override.model:
         return override.model
-    return config.agent.model
+    return cfg.agent.model
 
 
 def phase_model(
-    phase: Phase, explicit: str | None, config: WorkbenchConfig | None = None,
+    phase: Phase, explicit: str | None, cfg: WorkbenchConfig | None = None,
 ) -> str:
     """Resolve the model for a phase.
 
@@ -204,7 +204,7 @@ def phase_model(
     built-in layers collapse into the default handed to it.
     """
     phase = Phase(phase)
-    cfg = _config(config)
+    cfg = _config(cfg)
     return resolve_model(
         explicit,
         phase.model_env_key,
@@ -232,7 +232,7 @@ def collect_phase_models(
     it never runs.
     """
     models: dict[str, list[Phase]] = {}
-    cfg = workbench_config.load_config_or_default(project_root)
+    cfg = config.workbench_config.load_config_or_default(project_root)
     for phase in REVIEW_PHASES:
         models.setdefault(phase_model(phase, explicit, cfg), []).append(phase)
     return models
@@ -240,7 +240,7 @@ def collect_phase_models(
 
 def phase_thinking_default(
     phase: Phase, effort: Effort | None = None,
-    config: WorkbenchConfig | None = None,
+    cfg: WorkbenchConfig | None = None,
 ) -> Thinking | None:
     """The thinking level below the env layers: config, effort preset, spec.
 
@@ -249,7 +249,7 @@ def phase_thinking_default(
     everything to. ``effort=None`` is a phase running outside a review, where
     there is no preset to flatten anything and the spec stands under the config.
     """
-    cfg = _config(config)
+    cfg = _config(cfg)
     override = cfg.agent.phases.get(phase)
     if override is not None and override.thinking is not None:
         return override.thinking
@@ -261,21 +261,21 @@ def phase_thinking_default(
 
 def phase_thinking(
     phase: Phase, effort: Effort | None = None,
-    config: WorkbenchConfig | None = None,
+    cfg: WorkbenchConfig | None = None,
 ) -> str | None:
     """The thinking level a phase runs at, env layers included."""
     return resolve_thinking(
-        None, phase.thinking_env_key, phase_thinking_default(phase, effort, config),
+        None, phase.thinking_env_key, phase_thinking_default(phase, effort, cfg),
     )
 
 
 def resolve_effort(
-    explicit: Effort | None, config: WorkbenchConfig | None = None,
+    explicit: Effort | None, cfg: WorkbenchConfig | None = None,
 ) -> Effort:
     """The effort preset: the flag, the config, then medium."""
     if explicit is not None:
         return explicit
-    return _config(config).review.effort or Effort.MEDIUM
+    return _config(cfg).review.effort or Effort.MEDIUM
 
 
 # ── Turn and dollar budgets ──────────────────────────────────────────────────

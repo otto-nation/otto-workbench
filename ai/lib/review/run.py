@@ -28,22 +28,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from core import log
-from core import prompt
-from core import run_lock
+import core.log
+import core.prompt
+import core.run_lock
 from core.phases import Phase
 from core.trail import Trail
-from gh import client as gh_client
-from git import client as git_client
-from pr import context as pr_context
-from pr import state as pr_state
-from pr import target as pr_target
-from review import invoke as review_invoke
-from review import issue as review_issue
-from review import preflight as review_preflight
-from review import publish as review_publish
-from review import recover as review_recover
-from review import worktree as review_worktree
+import gh.client
+import git.client
+import pr.context
+import pr.state
+import pr.target
+import review.invoke
+import review.issue
+import review.preflight
+import review.publish
+import review.recover
+import review.worktree
 from review.completion import ReviewOutcome, finish_review, resolve_prior_review
 from review.paths import FILENAME_PIPELINE_STATE, FILENAME_SESSION
 
@@ -86,7 +86,7 @@ class ReviewFlags:
 
 
 def run_pr_review(
-    ctx: pr_context.ResolvedContext,
+    ctx: pr.context.ResolvedContext,
     flags: ReviewFlags,
     review_file: Path,
     *,
@@ -103,17 +103,17 @@ def run_pr_review(
     # Resolved before the issue lookup below, not with the worktree setup it
     # feeds further down: the repo's own .workbench.yml is what says which
     # tracker to read, and looking it up without one resolves to nothing.
-    repo_root = review_worktree.find_repo_root(repo, flags.repo_dir)
+    repo_root = review.worktree.find_repo_root(repo, flags.repo_dir)
     if not repo_root:
         # `find_repo_root` still takes the bare slug — only the message a
         # person reads names the instance, which is the difference between
         # "clone it" and "you cloned the other one".
-        shown = pr_target.display_repo(repo, ctx.host)
+        shown = pr.target.display_repo(repo, ctx.host)
         trail.error("setup_worktree", f"cannot find local clone of {shown}")
-        log.error(f"Cannot find local clone of {shown}. Clone it first and re-run from within the repo.")
+        core.log.error(f"Cannot find local clone of {shown}. Clone it first and re-run from within the repo.")
         raise SystemExit(1)
 
-    pr_meta = gh_client.pr_view(pr_number, "headRefName", "body", repo=repo)
+    pr_meta = gh.client.pr_view(pr_number, "headRefName", "body", repo=repo)
     pr_head = pr_meta.get("headRefName", "")
     pr_body = pr_meta.get("body", "")
 
@@ -123,24 +123,24 @@ def run_pr_review(
     issue_link = flags.issue_link
     issue_context = ""
     if not issue_link:
-        provider_info = review_issue.load_issue_provider(repo_root)
-        issue_id = review_issue.extract_issue_id(provider_info.name, pr_head, pr_body)
-        issue_result = review_issue.fetch_issue_context(
+        provider_info = review.issue.load_issue_provider(repo_root)
+        issue_id = review.issue.extract_issue_id(provider_info.name, pr_head, pr_body)
+        issue_result = review.issue.fetch_issue_context(
             provider_info.name, issue_id, repo, provider_info.options,
         )
         issue_context = issue_result.context
         if issue_result.link:
             issue_link = issue_result.link
 
-    pr_url = f"{pr_target.forge_base_url(ctx.host)}/{repo}/pull/{pr_number}"
+    pr_url = f"{pr.target.forge_base_url(ctx.host)}/{repo}/pull/{pr_number}"
 
     # --force absorbs the unattended flags for the prompts below, and only for
     # those: supersession reads the raw flag — see preflight.supersession_override.
     force_prompts = flags.force or flags.no_post or flags.auto_post
 
     if flags.recover:
-        recover_sha = review_recover.resolve_recover_sha(
-            review_dir, review_recover.get_pr_head_sha(repo, pr_number))
+        recover_sha = review.recover.resolve_recover_sha(
+            review_dir, review.recover.get_pr_head_sha(repo, pr_number))
         has_pipeline_state = True
         force_prompts = True
     else:
@@ -148,10 +148,10 @@ def run_pr_review(
         has_pipeline_state = (review_dir / FILENAME_PIPELINE_STATE).is_file()
 
     if has_pipeline_state and review_file.exists():
-        review_recover.should_auto_recover(repo, pr_number, review_file)
+        review.recover.should_auto_recover(repo, pr_number, review_file)
 
     if not has_pipeline_state:
-        review_preflight.check_stale_review(repo, pr_number, review_file, force_prompts)
+        review.preflight.check_stale_review(repo, pr_number, review_file, force_prompts)
     trail.decision(
         "review_freshness",
         "resume" if has_pipeline_state else "fresh review",
@@ -159,20 +159,20 @@ def run_pr_review(
         data={"has_pipeline_state": has_pipeline_state},
     )
 
-    review_preflight.check_pending_review(repo, pr_number, force_prompts)
+    review.preflight.check_pending_review(repo, pr_number, force_prompts)
 
     # Last, because it is the expensive step: the three checks above can all end
     # the run, and each of them is a `gh` call against an unshallowed clone and
     # a checkout.
     trail.info("setup_worktree", "setting up PR worktree",
                data={"repo_root": repo_root, "pr_head": pr_head})
-    wt_result = review_worktree.setup_pr_worktree(repo, pr_number, repo_root, pr_head)
+    wt_result = review.worktree.setup_pr_worktree(repo, pr_number, repo_root, pr_head)
 
     # pin_recover_worktree can exit, so it runs under the same finally as the
     # review itself — otherwise a fallback PR worktree would be left on disk.
     pinned_wt = None
     try:
-        wt_path, pinned_wt = review_recover.pin_recover_worktree(
+        wt_path, pinned_wt = review.recover.pin_recover_worktree(
             recover_sha, wt_result.path, repo_root, f"recover-pr-{pr_number}",
         )
 
@@ -189,10 +189,10 @@ def run_pr_review(
         # Same command string as the target-lock claim in `review`'s
         # `main()`, so the two locks report one holder rather than a different
         # command depending on which of the two a contender trips.
-        run_lock.claim_for_process(
+        core.run_lock.claim_for_process(
             ctx.target_dir,
             command=flags.command or f"review {pr_number}",
-            started=pr_state.now_iso(),
+            started=pr.state.now_iso(),
             worktree=Path(wt_path),
         )
 
@@ -201,15 +201,15 @@ def run_pr_review(
         # operator stood in is on another branch entirely. Normally rung 2
         # answers from GitHub's base and nothing local is consulted — the
         # derivation is what a PR whose base `gh` could not report falls to.
-        review_preflight.refuse_unresolvable_base(wt_path, flags.base, trail=trail)
-        base = pr_context.base_branch(ctx, override=flags.base, cwd=wt_path, trail=trail)
+        review.preflight.refuse_unresolvable_base(wt_path, flags.base, trail=trail)
+        base = pr.context.base_branch(ctx, override=flags.base, cwd=wt_path, trail=trail)
 
         # Inside the try, so a refusal still cleans up the worktree it read.
         # Its own flag rather than force_prompts, which has absorbed
-        # --post/--no-post — see review_preflight.supersession_override.
-        review_preflight.refuse_if_superseded(
+        # --post/--no-post — see review.preflight.supersession_override.
+        review.preflight.refuse_if_superseded(
             wt_path, repo, ctx.target_dir, ctx.branch,
-            override=review_preflight.supersession_override(flags.force, flags.recover),
+            override=review.preflight.supersession_override(flags.force, flags.recover),
             base=base,
             trail=trail,
         )
@@ -218,7 +218,7 @@ def run_pr_review(
         # three of them exit, two by prompting, so an issue link asked for any
         # earlier is one the operator types and then watches be discarded.
         if not issue_link and not issue_context and not flags.no_post and not flags.auto_post:
-            issue_link = prompt.ask("Issue link (optional, Enter to skip): ")
+            issue_link = core.prompt.ask("Issue link (optional, Enter to skip): ")
 
         if issue_link or issue_context:
             trail.info("issue_context", "issue context available",
@@ -232,7 +232,7 @@ def run_pr_review(
                          "skipped": sorted(str(p) for p in flags.skip_phases),
                          "max_cost": flags.max_cost, "model": flags.model})
 
-        request = review_invoke.OrchestrateRequest(
+        request = review.invoke.OrchestrateRequest(
             repo=repo, pr_number=pr_number, review_file=review_file,
             wt_path=wt_path, target_dir=ctx.target_dir, session_log=session_log,
             bin_dir=flags.bin_dir, generator_version=flags.generator_version,
@@ -244,9 +244,9 @@ def run_pr_review(
             disprove=flags.disprove, generated=flags.generated,
             recover_sha=recover_sha,
         )
-        wall_ms = review_invoke.run(request)
+        wall_ms = review.invoke.run(request)
 
-        posting = review_publish.resolve(
+        posting = review.publish.resolve(
             repo, pr_number, review_file,
             no_post=flags.no_post, auto_post=flags.auto_post,
             auto_submit=flags.auto_submit, bin_dir=flags.bin_dir,
@@ -258,12 +258,12 @@ def run_pr_review(
             branch_name=ctx.branch or "", pr_url=pr_url,
         )
     finally:
-        review_worktree.cleanup_worktree(pinned_wt, repo_root)
-        review_worktree.cleanup_worktree(wt_result, repo_root)
+        review.worktree.cleanup_worktree(pinned_wt, repo_root)
+        review.worktree.cleanup_worktree(wt_result, repo_root)
 
 
 def run_self_review(
-    ctx: pr_context.ResolvedContext,
+    ctx: pr.context.ResolvedContext,
     flags: ReviewFlags,
     review_dir: Path,
     wt_path: str,
@@ -289,8 +289,8 @@ def run_self_review(
     # stacked branch measured against the trunk by one of them and its parent
     # by another would be refused over the parent's commits and then reviewed
     # without them.
-    review_preflight.refuse_unresolvable_base(wt_path, flags.base, trail=trail)
-    base = pr_context.base_branch(ctx, override=flags.base, cwd=wt_path, trail=trail)
+    review.preflight.refuse_unresolvable_base(wt_path, flags.base, trail=trail)
+    base = pr.context.base_branch(ctx, override=flags.base, cwd=wt_path, trail=trail)
 
     trail.info("resolve_context", f"self-review in {repo}",
                data={"pr": pr_number, "repo": repo, "branch": branch_name,
@@ -298,15 +298,15 @@ def run_self_review(
 
     # First, ahead of the issue fetch below: this is the cheapest point at which
     # the run can still cost nothing.
-    review_preflight.refuse_if_superseded(
+    review.preflight.refuse_if_superseded(
         wt_path, repo, ctx.target_dir, branch_name,
-        override=review_preflight.supersession_override(flags.force, flags.recover),
+        override=review.preflight.supersession_override(flags.force, flags.recover),
         base=base,
         trail=trail,
     )
 
     if flags.recover:
-        recover_sha = review_recover.resolve_recover_sha(review_dir, recover_head_sha)
+        recover_sha = review.recover.resolve_recover_sha(review_dir, recover_head_sha)
         has_pipeline_state = True
     else:
         recover_sha = ""
@@ -316,28 +316,28 @@ def run_self_review(
     issue_link = flags.issue_link
     issue_context = ""
     if not issue_link:
-        provider_info = review_issue.load_issue_provider(wt_path)
-        issue_id = review_issue.extract_issue_id(provider_info.name, branch_name)
-        issue_result = review_issue.fetch_issue_context(
+        provider_info = review.issue.load_issue_provider(wt_path)
+        issue_id = review.issue.extract_issue_id(provider_info.name, branch_name)
+        issue_result = review.issue.fetch_issue_context(
             provider_info.name, issue_id, repo, provider_info.options,
         )
         issue_context = issue_result.context
         if issue_result.link:
             issue_link = issue_result.link
 
-    if flags.fix and review_recover.recover_drifted(recover_sha, wt_path):
-        log.error(
-            f"--fix cannot run on a review recovered at {git_client.abbrev(recover_sha)} — HEAD has "
+    if flags.fix and review.recover.recover_drifted(recover_sha, wt_path):
+        core.log.error(
+            f"--fix cannot run on a review recovered at {git.client.abbrev(recover_sha)} — HEAD has "
             f"moved, so the edits would land in a throwaway checkout. Recover without "
             f"--fix, then run `pr review --self --fix`."
         )
         raise SystemExit(1)
 
-    review_wt_path, pinned_wt = review_recover.pin_recover_worktree(
+    review_wt_path, pinned_wt = review.recover.pin_recover_worktree(
         recover_sha, wt_path, wt_path, f"recover-{branch_name}",
     )
 
-    request = review_invoke.OrchestrateRequest(
+    request = review.invoke.OrchestrateRequest(
         repo=repo, pr_number=pr_number, review_file=review_file,
         wt_path=review_wt_path, target_dir=ctx.target_dir,
         session_log=session_log, bin_dir=flags.bin_dir,
@@ -357,12 +357,12 @@ def run_self_review(
     # same `finally` also owns a worktree that `pin_recover_worktree` can exit
     # out of; here there is nothing else in scope to lose.
     try:
-        wall_ms = review_invoke.run(request)
+        wall_ms = review.invoke.run(request)
     finally:
-        review_worktree.cleanup_worktree(pinned_wt, wt_path)
+        review.worktree.cleanup_worktree(pinned_wt, wt_path)
 
     pr_url = (
-        f"{pr_target.forge_base_url(ctx.host)}/{repo}/pull/{pr_number}"
+        f"{pr.target.forge_base_url(ctx.host)}/{repo}/pull/{pr_number}"
         if pr_number else ""
     )
 
@@ -370,6 +370,6 @@ def run_self_review(
     # make and no post log to aggregate.
     return finish_review(
         request, wall_ms, ctx=ctx, trail=trail,
-        posting=review_publish.PostResult(False, False, ""),
+        posting=review.publish.PostResult(False, False, ""),
         branch_name=branch_name, pr_url=pr_url,
     )

@@ -28,7 +28,7 @@ import threading
 import time
 from pathlib import Path
 
-from core import log
+import core.log
 from core.workbench_paths import state_dir
 
 LOCK_NAME = "quota-throttle.lock"
@@ -72,7 +72,7 @@ class QuotaThrottle:
         """
         with _THREAD_LOCK:
             wait = self._write_exhausted(model)
-        log.warn(f"Quota exhausted on {model} — backing off {wait:.0f}s")
+        core.log.warn(f"Quota exhausted on {model} — backing off {wait:.0f}s")
         return wait
 
     def wait_if_needed(self) -> None:
@@ -87,7 +87,7 @@ class QuotaThrottle:
         if remaining > self._max_backoff:
             remaining = self._max_backoff
         if remaining > 0:
-            log.info(f"Throttle: waiting {remaining:.0f}s for quota to recover")
+            core.log.info(f"Throttle: waiting {remaining:.0f}s for quota to recover")
             time.sleep(remaining)
 
     def _write_exhausted(self, model: str) -> float:

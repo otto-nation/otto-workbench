@@ -34,8 +34,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from core import log
-from core import publishing
+import core.log
+import core.publishing
 from core.phases import Phase
 from agent.registry import phase_skip_argv
 
@@ -147,9 +147,9 @@ def fail(message: str, session_log: str) -> None:
     `review.gc` also reads `SystemExit` as "this run did not finish", which is
     what keeps a failed run's artifacts on disk for `pr review --recover`.
     """
-    log.error(message)
+    core.log.error(message)
     if Path(session_log).is_file():
-        log.dim(f"Session log: {session_log}")
+        core.log.dim(f"Session log: {session_log}")
     sys.exit(1)
 
 
@@ -168,7 +168,7 @@ def run(request: OrchestrateRequest) -> int:
     argv = build_argv(request)
 
     wall_start = time.monotonic()
-    rc = publishing.call_entry_point("cli.review_orchestrate:main", argv[1:])
+    rc = core.publishing.call_entry_point("cli.review_orchestrate:main", argv[1:])
     wall_ms = int((time.monotonic() - wall_start) * 1000)
 
     if rc != 0:

@@ -1,4 +1,4 @@
-"""Tests for agent_registry — what the phases the workbench ships are set to.
+"""Tests for agent.registry — what the phases the workbench ships are set to.
 
 The rules a spec applies to its own fields are ``test_agent_types``. Here the
 subject is the inventory: that every phase has an entry, and that the numbers
@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from agent import registry as agent_registry
+import agent.registry
 from agent.registry import PHASES, REVIEW_PHASES
 from agent.types import EFFORT_PRESETS
 from core.phases import AgentKind, Phase, PhaseDomain, PhaseShape, Thinking
@@ -33,7 +33,7 @@ class TestPhasesRegistry:
         The cost is that a second spec for a phase already declared overwrites
         the first with no error — the count is the only place that shows.
         """
-        assert len(agent_registry._SPECS) == len(PHASES)
+        assert len(agent.registry._SPECS) == len(PHASES)
 
 
 class TestPhaseDomains:
@@ -65,7 +65,7 @@ class TestPhaseDomains:
         }
 
     def test_review_phases_keep_the_registry_order(self):
-        # review_paths globs artifacts in this order, and a reader of
+        # review.paths globs artifacts in this order, and a reader of
         # docs/ai-review.md reads the pipeline in it.
         assert REVIEW_PHASES == tuple(
             p for p in PHASES if PHASES[p].domain is PhaseDomain.REVIEW

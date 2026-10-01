@@ -23,8 +23,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core import signal_relay
-from core import timeouts
+import core.signal_relay
+import core.timeouts
 from core.job_slots import GRANT_ENV, claim, holders
 
 
@@ -68,7 +68,7 @@ def _run_child(child: list[str], granted: int) -> int:
     """
     env = os.environ.copy()
     env[GRANT_ENV] = str(granted)
-    with signal_relay.forwarding_signals() as relay:
+    with core.signal_relay.forwarding_signals() as relay:
         try:
             proc = subprocess.Popen(child, start_new_session=True, env=env)
         except OSError as exc:
@@ -81,7 +81,7 @@ def _run_child(child: list[str], granted: int) -> int:
             print(f"job_slots_cli: cannot run {child[0]}: {exc}", file=sys.stderr)
             return 127
         relay.forward_to(proc)
-        code = proc.wait(timeout=timeouts.UNBOUNDED)
+        code = proc.wait(timeout=core.timeouts.UNBOUNDED)
     # A negative returncode is -signal. sys.exit(-N) becomes 256-N;
     # callers expect the shell convention 128+N (SIGTERM -> 143).
     return 128 + (-code) if code < 0 else code

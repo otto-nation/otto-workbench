@@ -20,9 +20,9 @@ import json
 import re
 from dataclasses import dataclass, field, replace
 
-from core import log
-from gh import client as gh_client
-from gh import pr_reads
+import core.log
+import gh.client
+import gh.pr_reads
 from gh.pr_reads import PRData, GQL_REVIEWS_LIMIT
 
 from review.format import CLASS_SKIPPED
@@ -82,7 +82,7 @@ def _extract_body_findings(body: str) -> list[PostedFinding]:
 @functools.lru_cache(maxsize=1)
 def get_bot_login() -> str:
     """Return the authenticated GitHub user's login, or empty string on failure."""
-    return gh_client.login()
+    return gh.client.login()
 
 
 # ── Bot comment collection ──────────────────────────────────────────────────
@@ -115,10 +115,10 @@ def _collect_inline_comments(
     else:
         # `None` rather than `[]`: a failed listing must not read as a PR the
         # bot has not commented on.
-        all_comments = gh_client.api_json(
+        all_comments = gh.client.api_json(
             f"repos/{repo}/pulls/{pr}/comments", default=None)
         if all_comments is None:
-            log.warn(f"Could not read {repo}#{pr}'s inline comments — dedup cannot tell "
+            core.log.warn(f"Could not read {repo}#{pr}'s inline comments — dedup cannot tell "
                      "a repeat from a new finding")
             return PostedFindings(looked=False)
         posted = [
@@ -139,10 +139,10 @@ def _collect_review_findings(
     if pr_data is not None:
         bodies = pr_data.bot_review_bodies(bot_user)
     else:
-        all_reviews = gh_client.api_json(
+        all_reviews = gh.client.api_json(
             f"repos/{repo}/pulls/{pr}/reviews", default=None)
         if all_reviews is None:
-            log.warn(f"Could not read {repo}#{pr}'s review bodies — dedup cannot tell "
+            core.log.warn(f"Could not read {repo}#{pr}'s review bodies — dedup cannot tell "
                      "a repeat from a new finding")
             return PostedFindings(looked=False)
         bodies = [
@@ -187,7 +187,7 @@ def dedup_against_posted(
         # is the right one — a finding nobody can prove is a repeat should
         # still be posted. The warning is what the log has to show for it,
         # because the reviewer is the one who sees the duplicate.
-        log.warn(
+        core.log.warn(
             "Could not read what the bot has already posted — dedup is skipped, "
             "so findings already on the PR may be posted again")
         return findings, []
@@ -275,15 +275,15 @@ def fetch_bot_reviews(repo: str, pr: str, pr_data: PRData | None = None) -> BotR
       }}
     }}
     """
-    result = gh_client.graphql(
+    result = gh.client.graphql(
         query, variables={"owner": owner, "name": name, "pr": int(pr)},
     )
     if not result.ok:
         # `None` rather than `[]` as the default: the fallback failing too is
         # the case that must not read as "the bot has posted nothing".
-        all_reviews = gh_client.api_json(f"repos/{repo}/pulls/{pr}/reviews", default=None)
+        all_reviews = gh.client.api_json(f"repos/{repo}/pulls/{pr}/reviews", default=None)
         if all_reviews is None:
-            log.warn(
+            core.log.warn(
                 f"Could not read {repo}#{pr}'s reviews by either route — "
                 "dedup has nothing to match against")
             return BotReviews(looked=False)
@@ -299,10 +299,10 @@ def fetch_bot_reviews(repo: str, pr: str, pr_data: PRData | None = None) -> BotR
         reviews = data["data"]["repository"]["pullRequest"]["reviews"]
         nodes = reviews["nodes"]
     except (json.JSONDecodeError, KeyError, TypeError):
-        log.warn(f"Could not parse {repo}#{pr}'s reviews — dedup has nothing to match against")
+        core.log.warn(f"Could not parse {repo}#{pr}'s reviews — dedup has nothing to match against")
         return BotReviews(looked=False)
 
-    pr_reads.warn_if_truncated(reviews, f"{repo}#{pr} reviews")
+    gh.pr_reads.warn_if_truncated(reviews, f"{repo}#{pr} reviews")
 
     return BotReviews([
         {"id": n["databaseId"], "body": n.get("body", ""), "state": n.get("state", "")}

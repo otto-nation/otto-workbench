@@ -24,11 +24,12 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from cli import registry  # noqa: E402
-from cli import schema  # noqa: E402
+import cli.registry  # noqa: E402
+import cli.schema  # noqa: E402
 from cli.needs import LOCAL, NONE, REMOTE, Need  # noqa: E402
 from cli.registry import COMMANDS, CommandSpec, need_for, validate_needs  # noqa: E402
-from core import timeouts, tool_parser  # noqa: E402
+import core.timeouts
+import core.tool_parser  # noqa: E402
 
 
 # ── what the registry declares ────────────────────────────────────────────
@@ -41,7 +42,7 @@ def test_the_registry_names_every_subcommand():
 
 def test_no_command_is_declared_twice():
     """The tuple is keyed afterwards, so a duplicate name would vanish silently."""
-    assert len(registry._SPECS) == len(COMMANDS)
+    assert len(cli.registry._SPECS) == len(COMMANDS)
 
 
 def test_the_key_is_the_spec_s_own_name():
@@ -140,8 +141,8 @@ def test_the_registry_is_the_only_list_of_subcommands():
     The set assertion above hardcodes the nine names and never looks at the
     parser, so a subcommand added directly to `_build_parser` would pass it.
     """
-    from cli import pr as pr_cli
-    assert set(tool_parser.subparsers(pr_cli._build_parser())) == set(COMMANDS)
+    import cli.pr
+    assert set(core.tool_parser.subparsers(cli.pr._build_parser())) == set(COMMANDS)
 
 
 # The order the nine are declared in, spelled out rather than read off
@@ -160,14 +161,14 @@ def test_the_declaration_order_is_the_display_order():
     order a reader expects — create, then inspect, then act — not alphabetical
     and not arbitrary.
     """
-    from cli import pr as pr_cli
+    import cli.pr
     declared = _DISPLAY_ORDER
-    assert [s.name for s in registry._SPECS] == declared
+    assert [s.name for s in cli.registry._SPECS] == declared
     assert list(COMMANDS) == declared
-    assert list(tool_parser.subparsers(pr_cli._build_parser())) == declared
-    assert schema.tool_schema()["input_schema"]["properties"]["command"]["enum"] \
+    assert list(core.tool_parser.subparsers(cli.pr._build_parser())) == declared
+    assert cli.schema.tool_schema()["input_schema"]["properties"]["command"]["enum"] \
         == declared
-    usage = pr_cli._build_usage().splitlines()
+    usage = cli.pr._build_usage().splitlines()
     body = usage[usage.index("Commands:") + 1:]
     helped = [line.split()[0] for line in body[:len(declared)]]
     assert helped == declared
@@ -193,7 +194,7 @@ def test_a_delegate_reports_its_own_output_contract(command):
     made the MCP server reject the eight. This is the per-command answer, and
     it is what lets a skill cite `pr ci` rather than `ai/bin/ci-check`.
     """
-    doc = schema.subcommand_schema(command)
+    doc = cli.schema.subcommand_schema(command)
 
     assert doc is not None, f"{command} declares a ToolParser but reported nothing"
     assert doc["name"] == f"pr {command}", (
@@ -213,7 +214,7 @@ def test_a_named_subcommand_answers_the_flag_for_itself(tmp_path):
     """
     out = subprocess.run(
         [str(BIN_DIR / "pr"), "ci", "--tool-schema"],
-        capture_output=True, text=True, timeout=timeouts.QUICK, check=True,
+        capture_output=True, text=True, timeout=core.timeouts.QUICK, check=True,
     )
     doc = json.loads(out.stdout)
     assert doc["name"] == "pr ci"
@@ -224,7 +225,7 @@ def test_the_bare_flag_still_answers_for_the_whole_command(tmp_path):
     """MCP discovery reads this one, and a subcommand must not shadow it."""
     out = subprocess.run(
         [str(BIN_DIR / "pr"), "--tool-schema"],
-        capture_output=True, text=True, timeout=timeouts.QUICK, check=True,
+        capture_output=True, text=True, timeout=core.timeouts.QUICK, check=True,
     )
     doc = json.loads(out.stdout)
     assert doc["name"] == "pr"
@@ -241,26 +242,26 @@ def test_a_command_with_no_contract_falls_back_to_the_union():
     """
     out = subprocess.run(
         [str(BIN_DIR / "pr"), "status", "--tool-schema"],
-        capture_output=True, text=True, timeout=timeouts.QUICK, check=True,
+        capture_output=True, text=True, timeout=core.timeouts.QUICK, check=True,
     )
     assert json.loads(out.stdout)["name"] == "pr"
 
 
 def test_the_union_schema_still_declares_no_output_contract():
     """Adding the per-command answer must not put a false one on the union."""
-    assert "output_schema" not in schema.tool_schema()
+    assert "output_schema" not in cli.schema.tool_schema()
 
 
 def test_rebase_carries_the_exit_codes_that_are_not_failures():
     """A refusal and a conflict are answers, and a consumer must not read
     either as the command having broken."""
-    assert schema.subcommand_schema("rebase")["ok_exit_codes"] == [3, 4]
+    assert cli.schema.subcommand_schema("rebase")["ok_exit_codes"] == [3, 4]
 
 
 @pytest.mark.parametrize("command", ["status", "fix", "create", "gc"])
 def test_a_command_pr_runs_itself_reports_no_subcommand_schema(command):
     """No delegate parser, so nothing to report — the union already answered."""
-    assert schema.subcommand_schema(command) is None
+    assert cli.schema.subcommand_schema(command) is None
 
 
 @pytest.mark.parametrize("command", ["review", "comments"])
@@ -271,7 +272,7 @@ def test_a_delegate_without_a_declared_contract_reports_nothing(command):
     prose, not a document. Reporting a schema for them would be the same
     overclaim the union schema avoids by declaring none.
     """
-    assert schema.subcommand_schema(command) is None
+    assert cli.schema.subcommand_schema(command) is None
 
 
 # ── declared dispatch needs ───────────────────────────────────────────────
@@ -420,7 +421,7 @@ def test_pr_help_imports_no_delegate():
     )
     out = subprocess.run(
         [sys.executable, "-c", probe.replace('sys.argv[0]', repr(str(BIN_DIR / "pr")))],
-        capture_output=True, text=True, timeout=timeouts.QUICK, check=True,
+        capture_output=True, text=True, timeout=core.timeouts.QUICK, check=True,
     )
     loaded = {m for m in out.stdout.strip().split(",") if m}
     assert loaded, "the probe loaded no cli module at all — it did not run `pr`"

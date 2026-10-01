@@ -28,33 +28,33 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from core.trail import Trail, add_trail_args
-from agent import diagnosis as _ad
-from agent import invoke as _ai
-from agent import phases as _aph
-from agent import usage as _au
-from review import prompt as _rpmt
-from review import prompt_prior as _rprior
-from review import prompt_sections as _rpsec
-from review import registry as _rreg
-from agent import session as _ra
-from review import pipeline as _rpl
-from review import finding_issue as _rfi
-from review import fix as _rfx
-from review import gc as _rgc
-from review import paths as _rpath
-from review import phases as _rph
-from review import steps as _rstp
-from review import outcome as _rout
-from review import retry as _rrt
-from review import state as _rst
-from review import types as _rt
+import agent.diagnosis
+import agent.invoke
+import agent.phases
+import agent.usage
+import review.prompt
+import review.prompt_prior
+import review.prompt_sections
+import review.registry
+import agent.session
+import review.pipeline
+import review.finding_issue
+import review.fix
+import review.gc
+import review.paths
+import review.phases
+import review.steps
+import review.outcome
+import review.retry
+import review.state
+import review.types
 
-from core import log
-from core import module_proxy
-from pr import state as pr_state
-from core import proc
+import core.log
+import core.module_proxy
+import pr.state
+import core.proc
 
-from pr import target as pr_target
+import pr.target
 from pr.context import detect_repo
 from agent.registry import add_phase_skip_flags, phase_skips
 from core.phases import Effort, Mode
@@ -68,7 +68,7 @@ from core.tool_parser import enum_arg
 # The function rather than the module: `git.client` binds `run` and `ok`, which
 # `core.proc` and `core.log` also bind, and the proxy cannot patch a name that
 # means two things. `abbrev` is pure formatting of a sha already in hand.
-from git import numstat
+import git.numstat
 from git.client import abbrev
 # Same collision: `core.publishing.run` is not `core.proc.run`.
 from core.publishing import run as publishing_run
@@ -88,7 +88,7 @@ from review.pipeline import (
 from review.static_analysis import (
     added_lines, format_static_analysis, run_static_analysis,
 )
-from agent import backend as ai_backend
+import agent.backend
 
 # The binary a user runs and the trail records, which is not this module's own
 # name. Spelled out rather than derived, so the shim can be renamed only by
@@ -96,12 +96,12 @@ from agent import backend as ai_backend
 SCRIPT = "review-orchestrate"
 
 _SUBMODULES = (
-    _ad, _ai, _aph, _au, _rpmt, _rprior, _rpsec, _rreg, _ra, _rpl, _rfi, _rfx, _rgc,
-    _rpath, _rph, _rstp, _rout, _rrt, _rst, _rt,
-    ai_backend, log, module_proxy, numstat, pr_state, pr_target, proc,
+    agent.diagnosis, agent.invoke, agent.phases, agent.usage, review.prompt, review.prompt_prior, review.prompt_sections, review.registry, agent.session, review.pipeline, review.finding_issue, review.fix, review.gc,
+    review.paths, review.phases, review.steps, review.outcome, review.retry, review.state, review.types,
+    agent.backend, core.log, core.module_proxy, git.numstat, pr.state, pr.target, core.proc,
 )
 
-module_proxy.install(__name__, _SUBMODULES)
+core.module_proxy.install(__name__, _SUBMODULES)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -141,14 +141,14 @@ def _budgets_are_derivable(phase_models, trail) -> bool:
         try:
             budget = prompt_budget_bytes(model)
         except UnknownModelWindow as exc:
-            log.error(f"Cannot budget prompts for {named}: {exc}")
+            core.log.error(f"Cannot budget prompts for {named}: {exc}")
             trail.decision(
                 "prompt_budget", "aborting review", reason=str(exc),
             )
             return False
         alias = ModelAlias.parse(model)
         if alias is not None:
-            log.warn(
+            core.log.warn(
                 f"{model!r} is an unresolved tier alias, so the tier floor "
                 f"({budget // 1024}KB) is the budget for {named} rather than "
                 f"the model's own window. Set {alias.env_key} to budget "
@@ -190,7 +190,7 @@ def _inject_static_analysis_section(job: ReviewJob) -> dict | None:
         # here because `_static_items` only reports the fallback once a
         # violation exists to report it about, and by then the reason base
         # resolution was skipped is gone.
-        log.warn("Static analysis: no base to diff against, scanning whole files")
+        core.log.warn("Static analysis: no base to diff against, scanning whole files")
     try:
         added = added_lines(job.wt_path, base) if base else None
         results = run_static_analysis(changed_files, job.wt_path, added)
@@ -202,7 +202,7 @@ def _inject_static_analysis_section(job: ReviewJob) -> dict | None:
         # the run would end with no verdict stamped and no fix pass. A
         # violation nobody hears about is a worse report; it is not a worse
         # review.
-        log.warn(f"Static analysis failed, skipping the section: {exc}")
+        core.log.warn(f"Static analysis failed, skipping the section: {exc}")
         return None
     declined = read_review_meta(Path(job.artifact_dir)).static_declined
     section = format_static_analysis(results, declined)
@@ -237,7 +237,7 @@ def _is_no_op_rereview(job) -> bool:
     after every guard it has; everything else leaves it `UNATTRIBUTED`.
     """
     return bool(
-        _rpsec._is_incremental(job)
+        review.prompt_sections._is_incremental(job)
         and job.preflight.delta_proven_empty
         and job.prior_review
     )
@@ -291,7 +291,7 @@ def _review_scale(job) -> ReviewScale:
     """
     pf = job.preflight
     attributed = (
-        _rpsec._is_incremental(job)
+        review.prompt_sections._is_incremental(job)
         and pf.delta_attribution is DeltaAttribution.ATTRIBUTED
     )
     if attributed:
@@ -301,7 +301,7 @@ def _review_scale(job) -> ReviewScale:
         )
     return ReviewScale(
         job.pr.changed_files,
-        numstat.weighted_lines(job.pr.additions, job.pr.deletions),
+        git.numstat.weighted_lines(job.pr.additions, job.pr.deletions),
         "pr",
         raw_lines=job.pr.total_lines,
     )
@@ -357,14 +357,14 @@ def _file_open_findings(args, job, trail) -> None:
     # Read defensively: `--fix` has other callers that build their own args, and
     # a review that files nothing is the correct behaviour for all of them.
     if getattr(args, "track_all", False):
-        track = _rfi.TRACK_ALL
+        track = review.finding_issue.TRACK_ALL
     else:
         track = frozenset(getattr(args, "track", ()) or ())
     if not track:
-        _rfi.report_unfiled(Path(job.artifact_dir), track)
+        review.finding_issue.report_unfiled(Path(job.artifact_dir), track)
         return
     with trail.span("file_findings"):
-        _rfi.file_and_link(Path(job.artifact_dir), job, track, trail)
+        review.finding_issue.file_and_link(Path(job.artifact_dir), job, track, trail)
 
 
 def _run_phases(trail, args, job) -> Pipeline:
@@ -381,7 +381,7 @@ def _run_phases(trail, args, job) -> Pipeline:
             reason="the author has committed nothing since the prior review",
             data={"prior_sha": job.preflight.prior_head_sha, "head_sha": job.pr.head_sha},
         )
-        log.warn(
+        core.log.warn(
             "No author changes since the prior review — carrying its findings "
             f"forward ({abbrev(job.preflight.prior_head_sha)}.."
             f"{abbrev(job.pr.head_sha)})")
@@ -444,14 +444,14 @@ def _run_orchestrate(trail, args, repo, session_log) -> int:
     # same resolution `ReviewJob.config` makes, and checking a different one
     # would clear a model the review never runs while missing the one it does.
     phase_models = collect_phase_models(args.model, args.repo_dir)
-    if not ai_backend.preflight(phase_models, trail):
+    if not agent.backend.preflight(phase_models, trail):
         return 1
     if not _budgets_are_derivable(phase_models, trail):
         return 1
     run_ctx = fetch_metadata(
         repo, args.pr, args.mode, args.repo_dir, args.recover_sha, base=args.base,
     )
-    pr, ctx, pr_data = run_ctx.pr, run_ctx.context, run_ctx.data
+    pr_number, ctx, pr_data = run_ctx.pr, run_ctx.context, run_ctx.data
 
     prior_review = ""
     if args.prior_review and Path(args.prior_review).exists():
@@ -465,11 +465,11 @@ def _run_orchestrate(trail, args, repo, session_log) -> int:
     # someone else's review. Disagreement falls back to the empty host and
     # renders public GitHub, which is the answer this gave before the host
     # existed; a wrong enterprise host is worse than a known-generic one.
-    origin = pr_target.repo_identity_from_origin(args.repo_dir)
+    origin = pr.target.repo_identity_from_origin(args.repo_dir)
     host = origin.host if origin and origin.label == repo else ""
 
     job = ReviewJob(
-        repo=repo, host=host, pr_number=args.pr, pr=pr, ctx=ctx,
+        repo=repo, host=host, pr_number=args.pr, pr=pr_number, ctx=ctx,
         wt_path=args.repo_dir, review_file=args.review_file,
         session_log=session_log,
         issue_link=args.issue, issue_context=args.issue_context,
@@ -484,12 +484,12 @@ def _run_orchestrate(trail, args, repo, session_log) -> int:
     # Handed to us, not derived: --repo-dir may be a detached review worktree,
     # which has no branch to key on.
     job.pr_state_data = (
-        pr_state.load_state(Path(args.target_dir)) if args.target_dir else None
+        pr.state.load_state(Path(args.target_dir)) if args.target_dir else None
     )
 
     if pr_data and args.mode != Mode.SELF:
         viewer = pr_data.viewer_login
-        pr_author = getattr(pr, "author", "")
+        pr_author = getattr(pr_number, "author", "")
         if pr_author and pr_author.lower() == viewer.lower():
             job.viewer_role = ViewerRole.AUTHOR
         elif viewer.lower() in [r.lower() for r in getattr(pr_data, "requested_reviewers", [])]:
@@ -497,7 +497,7 @@ def _run_orchestrate(trail, args, repo, session_log) -> int:
         else:
             job.viewer_role = ViewerRole.REVIEWER
 
-    log.info("Collecting file data...")
+    core.log.info("Collecting file data...")
     if prior_review and args.pr:
         with ThreadPoolExecutor(max_workers=2) as pool:
             pf_future = pool.submit(collect_preflight_data, job)
@@ -590,7 +590,7 @@ def main(argv: list[str] | None = None) -> int:
     # and must see the same gate.
     with publishing_run(post=args.post):
         if args.mode == Mode.PR and not args.pr:
-            log.error("--pr is required in pr mode")
+            core.log.error("--pr is required in pr mode")
             return 1
 
         repo = args.repo or detect_repo(cwd=args.repo_dir)
@@ -606,7 +606,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             return _run_orchestrate(trail, args, repo, session_log)
         except KeyboardInterrupt:
-            return proc.INTERRUPT_RETURNCODE
+            return core.proc.INTERRUPT_RETURNCODE
         except Exception as exc:
             trail.error("unexpected_error", str(exc))
             raise

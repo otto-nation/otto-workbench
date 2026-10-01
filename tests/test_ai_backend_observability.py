@@ -22,10 +22,10 @@ AI_DIR = Path(__file__).resolve().parent.parent / "ai"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from agent import backend as ai_backend
-from agent import backend_claude as ai_backend_claude
-from agent import backend_pi as ai_backend_pi
-from agent import usage as ai_usage
+import agent.backend
+import agent.backend_claude
+import agent.backend_pi
+import agent.usage
 from conftest import FIXTURES_DIR
 
 RESULT_ENVELOPE = {
@@ -47,17 +47,17 @@ RESULT_ENVELOPE = {
 
 class TestBuildPromptCmd:
     def test_requests_json_output(self):
-        cmd = ai_backend_claude._build_prompt_cmd()
+        cmd = agent.backend_claude._build_prompt_cmd()
         assert "--output-format" in cmd
         assert cmd[cmd.index("--output-format") + 1] == "json"
 
     def test_output_format_requires_print_flag(self):
         """--output-format only works with --print; -p must already be present."""
-        cmd = ai_backend_claude._build_prompt_cmd()
+        cmd = agent.backend_claude._build_prompt_cmd()
         assert "-p" in cmd
 
     def test_model_still_passed(self):
-        cmd = ai_backend_claude._build_prompt_cmd(model="claude-opus-4-6")
+        cmd = agent.backend_claude._build_prompt_cmd(model="claude-opus-4-6")
         assert cmd[cmd.index("--model") + 1] == "claude-opus-4-6"
 
     def test_a_thinking_level_is_accepted_and_dropped(self, monkeypatch, tmp_path):
@@ -69,7 +69,7 @@ class TestBuildPromptCmd:
         seen = []
         monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: seen.append(cmd) or
                             subprocess.CompletedProcess(cmd, 0, "answer", ""))
-        text, code, _ = ai_backend_claude.prompt(
+        text, code, _ = agent.backend_claude.prompt(
             "ask", cwd=str(tmp_path), thinking="high", provider="bedrock",
         )
         assert (text, code) == ("answer", 0)
@@ -79,13 +79,13 @@ class TestBuildPromptCmd:
 
 class TestBuildFixCmd:
     def test_requests_stream_json_output(self):
-        cmd = ai_backend_claude._build_fix_cmd(ai_backend.AgentInvocation(prompt="p"))
+        cmd = agent.backend_claude._build_fix_cmd(agent.backend.AgentInvocation(prompt="p"))
         assert "--output-format" in cmd
         assert cmd[cmd.index("--output-format") + 1] == "stream-json"
 
     def test_denies_gh_so_the_agent_cannot_write_to_github(self):
         """Every outward write waits for --post; `gh` would route around it."""
-        cmd = ai_backend_claude._build_fix_cmd(ai_backend.AgentInvocation(prompt="p"))
+        cmd = agent.backend_claude._build_fix_cmd(agent.backend.AgentInvocation(prompt="p"))
         assert "--disallowedTools" in cmd
         denied = cmd[cmd.index("--disallowedTools") + 1].split(",")
         assert "Bash(gh:*)" in denied
@@ -98,7 +98,7 @@ class TestBuildFixCmd:
         agent touch. An agent that commits or rebases lands work outside the one
         scope the pass can account for — which is how a fix pass came to rewrite
         a branch somebody was working on."""
-        cmd = ai_backend_claude._build_fix_cmd(ai_backend.AgentInvocation(prompt="p"))
+        cmd = agent.backend_claude._build_fix_cmd(agent.backend.AgentInvocation(prompt="p"))
         denied = cmd[cmd.index("--disallowedTools") + 1].split(",")
         assert f"Bash({command}:*)" in denied
 
@@ -113,7 +113,7 @@ class TestBuildFixCmd:
         than before. A parity claim is about what the two backends *refuse*, so
         that is what is compared.
         """
-        detect = (Path(ai_backend_pi.__file__).resolve().parent.parent.parent
+        detect = (Path(agent.backend_pi.__file__).resolve().parent.parent.parent
                   / "pi" / "extensions-cli" / "detect.ts")
         script = (
             f"const {{ bypassesTheCommitScope }} = await import({str(detect)!r});"
@@ -145,7 +145,7 @@ class TestBuildFixCmd:
         past Pi, not that the two sets are equal."""
         claude_denied = {
             d[len("Bash(git "):-len(":*)")]
-            for d in ai_backend_claude.FIX_DENIED_TOOLS.split(",")
+            for d in agent.backend_claude.FIX_DENIED_TOOLS.split(",")
             if d.startswith("Bash(git ")
         }
         assert claude_denied, "no git denies found on the Claude side"
@@ -181,7 +181,7 @@ class TestBuildFixCmd:
 
     def test_the_review_agent_keeps_gh(self):
         """Only the fix pass is barred — a review agent reads the PR with it."""
-        cmd = ai_backend_claude._build_agent_cmd(ai_backend.AgentInvocation(prompt="p"))
+        cmd = agent.backend_claude._build_agent_cmd(agent.backend.AgentInvocation(prompt="p"))
         assert "--disallowedTools" not in cmd
 
 
@@ -190,7 +190,7 @@ class TestPromptParsesEnvelope:
         def fake_run(cmd, **kwargs):
             return subprocess.CompletedProcess(cmd, returncode, stdout, "")
         monkeypatch.setattr(subprocess, "run", fake_run)
-        return ai_backend_claude.prompt("hi", cwd=str(tmp_path))
+        return agent.backend_claude.prompt("hi", cwd=str(tmp_path))
 
     def test_returns_result_text_not_raw_json(self, monkeypatch, tmp_path):
         text, code, usage = self._run(monkeypatch, tmp_path, json.dumps(RESULT_ENVELOPE))
@@ -226,18 +226,18 @@ class TestPromptRecordsToLedger:
     @pytest.fixture
     def ledger(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
-        monkeypatch.setattr(ai_usage, "_warned", False)
-        return tmp_path / ai_usage.LEDGER_DIRNAME
+        monkeypatch.setattr(agent.usage, "_warned", False)
+        return tmp_path / agent.usage.LEDGER_DIRNAME
 
     def test_prompt_records_usage(self, ledger, monkeypatch, tmp_path):
         mod = types.SimpleNamespace(
             prompt=lambda text, **kw: (
                 "answer", 0,
-                ai_usage.SessionUsage(cost=0.42, input_tokens=12, cache_read_tokens=9000),
+                agent.usage.SessionUsage(cost=0.42, input_tokens=12, cache_read_tokens=9000),
             ),
         )
-        monkeypatch.setattr(ai_backend, "_get_module", lambda: mod)
-        text, code = ai_backend.prompt(
+        monkeypatch.setattr(agent.backend, "_get_module", lambda: mod)
+        text, code = agent.backend.prompt(
             "hi", cwd=str(tmp_path), task="conflict-resolve",
         )
         assert (text, code) == ("answer", 0)
@@ -250,8 +250,8 @@ class TestPromptRecordsToLedger:
     def test_unmeasured_prompt_records_nothing(self, ledger, monkeypatch, tmp_path):
         """A zero row reads as a free call; an absent row reads as unmeasured."""
         mod = types.SimpleNamespace(prompt=lambda text, **kw: ("answer", 0, None))
-        monkeypatch.setattr(ai_backend, "_get_module", lambda: mod)
-        assert ai_backend.prompt("hi", cwd=str(tmp_path)) == ("answer", 0)
+        monkeypatch.setattr(agent.backend, "_get_module", lambda: mod)
+        assert agent.backend.prompt("hi", cwd=str(tmp_path)) == ("answer", 0)
         assert list(ledger.glob("*.jsonl")) == []
 
     def test_agent_session_log_without_result_records_nothing(
@@ -261,8 +261,8 @@ class TestPromptRecordsToLedger:
         session_log = tmp_path / "session.jsonl"
         session_log.write_text('{"type":"assistant"}\n')
         mod = types.SimpleNamespace(invoke_agent=lambda inv: 1)
-        monkeypatch.setattr(ai_backend, "_get_module", lambda: mod)
-        ai_backend.invoke_agent(ai_backend.AgentInvocation(
+        monkeypatch.setattr(agent.backend, "_get_module", lambda: mod)
+        agent.backend.invoke_agent(agent.backend.AgentInvocation(
             prompt="p", cwd=str(tmp_path), session_log=str(session_log),
         ))
         assert list(ledger.glob("*.jsonl")) == []
@@ -270,8 +270,8 @@ class TestPromptRecordsToLedger:
     def test_backend_returning_pair_still_works(self, ledger, monkeypatch, tmp_path):
         """A backend that has not adopted the usage triple must not crash dispatch."""
         mod = types.SimpleNamespace(prompt=lambda text, **kw: ("answer", 0))
-        monkeypatch.setattr(ai_backend, "_get_module", lambda: mod)
-        assert ai_backend.prompt("hi", cwd=str(tmp_path)) == ("answer", 0)
+        monkeypatch.setattr(agent.backend, "_get_module", lambda: mod)
+        assert agent.backend.prompt("hi", cwd=str(tmp_path)) == ("answer", 0)
         assert list(ledger.glob("*.jsonl")) == []
 
 
@@ -299,14 +299,14 @@ class TestFixWritesSessionLog:
         log = tmp_path / "fix.jsonl"
         lines = [json.dumps(RESULT_ENVELOPE) + "\n"]
         self._fake_proc(monkeypatch, lines)
-        ai_backend_claude.invoke_fix(ai_backend.AgentInvocation(
+        agent.backend_claude.invoke_fix(agent.backend.AgentInvocation(
             prompt="p", session_log=str(log),
         ))
-        assert ai_usage.parse_session_log(str(log)).cost == pytest.approx(0.42)
+        assert agent.usage.parse_session_log(str(log)).cost == pytest.approx(0.42)
 
     def test_no_session_log_path_does_not_crash(self, monkeypatch, capsys):
         self._fake_proc(monkeypatch, [json.dumps(RESULT_ENVELOPE) + "\n"])
-        assert ai_backend_claude.invoke_fix(ai_backend.AgentInvocation(prompt="p")) == 0
+        assert agent.backend_claude.invoke_fix(agent.backend.AgentInvocation(prompt="p")) == 0
 
     def test_streams_assistant_text_not_raw_json(self, monkeypatch, capsys):
         event = {
@@ -314,7 +314,7 @@ class TestFixWritesSessionLog:
             "message": {"content": [{"type": "text", "text": "patching the file"}]},
         }
         self._fake_proc(monkeypatch, [json.dumps(event) + "\n"])
-        ai_backend_claude.invoke_fix(ai_backend.AgentInvocation(prompt="p"))
+        agent.backend_claude.invoke_fix(agent.backend.AgentInvocation(prompt="p"))
         err = capsys.readouterr().err
         assert "patching the file" in err
         assert '"type"' not in err
@@ -327,7 +327,7 @@ class TestFixWritesSessionLog:
             ]},
         }
         self._fake_proc(monkeypatch, [json.dumps(event) + "\n"])
-        ai_backend_claude.invoke_fix(ai_backend.AgentInvocation(prompt="p"))
+        agent.backend_claude.invoke_fix(agent.backend.AgentInvocation(prompt="p"))
         assert "Read main.go" in capsys.readouterr().err
 
 
@@ -364,18 +364,19 @@ def test_lib_sources_discovered():
 def _backend_bindings(tree: ast.Module) -> tuple[set[str], dict[str, str]]:
     """Local names that reach ai_backend: module aliases, and `from`-imported members.
 
-    `ai_backend` seeds the set because `import ai_backend` binds it and the scanner's
-    own unit tests parse bare snippets with no import line. Real call sites reach the
-    module through its package home, `agent.backend`, after the layer move — checked
-    alongside the flat form rather than in place of it, since the scanner's own tests
-    still parse bare `ai_backend` snippets.
+    `ai_backend` seeds the set because the scanner's own unit tests parse bare
+    snippets with no import line. Real call sites reach the module as
+    `agent.backend`, written out in full: #1137 retired the aliases, so the
+    callee is an attribute chain rather than a single name, and the dotted
+    spelling is recognised alongside the bare one the unit tests still use.
     """
     modules = {"ai_backend"}
     direct: dict[str, str] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             modules.update(
-                a.asname or a.name for a in node.names if a.name == "ai_backend"
+                a.asname or a.name for a in node.names
+                if a.name in ("ai_backend", "agent.backend")
             )
         elif isinstance(node, ast.ImportFrom) and node.module == "ai_backend":
             direct.update((a.asname or a.name, a.name) for a in node.names)
@@ -392,11 +393,25 @@ def _reaches_backend(
     fn: ast.expr, names: frozenset[str], modules: set[str], direct: dict[str, str],
 ) -> bool:
     """Whether a callee resolves to one of ai_backend's `names`, alias or not."""
-    if isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name):
-        return fn.attr in names and fn.value.id in modules
+    if isinstance(fn, ast.Attribute):
+        if fn.attr not in names:
+            return False
+        return _dotted(fn.value) in modules
     if isinstance(fn, ast.Name):
         return direct.get(fn.id) in names
     return False
+
+
+def _dotted(node: ast.expr) -> str | None:
+    """`agent.backend` for the chain that spells it, or None if it is not one."""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    parts.append(node.id)
+    return ".".join(reversed(parts))
 
 
 def _backend_calls(tree: ast.Module, names: frozenset[str]):
@@ -560,7 +575,7 @@ class TestAgentCallSitesPassCwd:
         )
         # Guard the scanner itself: a matcher that silently matches nothing
         # would make this test pass forever. The population is small because
-        # `agent_invoke` owns every invocation the workbench makes — what stops
+        # `agent.invoke` owns every invocation the workbench makes — what stops
         # a sixth appearing elsewhere is `TestOneOwnerForBackendCalls`.
         assert found >= 5, f"expected to find spawning call sites, found {found}"
 
@@ -617,7 +632,7 @@ def _unowned_backend_calls(source: Path) -> list[str]:
 
 
 class TestOneOwnerForBackendCalls:
-    """Only ``agent_invoke`` reaches the three entry points that spend money.
+    """Only ``agent.invoke`` reaches the three entry points that spend money.
 
     Each call site used to assemble its own invocation, and each did it slightly
     differently: a hardcoded model here, a missing retry ceiling there, a ledger
@@ -683,7 +698,7 @@ class TestBackendUsageParity:
         def fake_run(cmd, **kwargs):
             return subprocess.CompletedProcess(cmd, 0, json.dumps(RESULT_ENVELOPE), "")
         monkeypatch.setattr(subprocess, "run", fake_run)
-        return ai_backend_claude.prompt("hi", cwd=str(tmp_path))
+        return agent.backend_claude.prompt("hi", cwd=str(tmp_path))
 
     def _pi(self, monkeypatch, tmp_path):
         stream = (FIXTURES_DIR / "pi_prompt_session.jsonl").read_text()
@@ -692,8 +707,8 @@ class TestBackendUsageParity:
             stdout = stream
             returncode = 0
 
-        monkeypatch.setattr(ai_backend_pi.subprocess, "run", lambda *a, **k: _Result())
-        return ai_backend_pi.prompt("hi", cwd=str(tmp_path))
+        monkeypatch.setattr(agent.backend_pi.subprocess, "run", lambda *a, **k: _Result())
+        return agent.backend_pi.prompt("hi", cwd=str(tmp_path))
 
     def test_both_backends_return_the_measured_triple(self, monkeypatch, tmp_path):
         for name, run in (("claude", self._claude), ("pi", self._pi)):
@@ -734,14 +749,14 @@ class TestPiAgentPathParity:
         )["data"]
 
         pi_log = tmp_path / "pi.jsonl"
-        ai_backend_pi._write_result_record(
+        agent.backend_pi._write_result_record(
             str(pi_log), "completed", 2, stats["cost"], 4321, stats, "claude-opus-5",
         )
         claude_log = tmp_path / "claude.jsonl"
         claude_log.write_text(json.dumps(RESULT_ENVELOPE) + "\n")
 
-        pi_usage = ai_usage.parse_session_log(str(pi_log))
-        claude_usage = ai_usage.parse_session_log(str(claude_log))
+        pi_usage = agent.usage.parse_session_log(str(pi_log))
+        claude_usage = agent.usage.parse_session_log(str(claude_log))
 
         for name, usage in (("pi", pi_usage), ("claude", claude_usage)):
             assert usage.cost > 0, f"{name} session log reported a free run"

@@ -23,7 +23,7 @@ from enum import Enum
 from pathlib import Path
 from typing import get_type_hints
 
-from core import serde
+import core.serde
 from config.workbench_config import (
     CONFIG_HEADER,
     CONFIG_NAME,
@@ -87,14 +87,14 @@ def _is_enum(hint) -> bool:
 
 def _values_column(hint) -> str:
     """How the reference table describes what a key accepts."""
-    kind, args = serde.classify(hint)
-    if kind is serde.HintKind.OPTIONAL:
+    kind, args = core.serde.classify(hint)
+    if kind is core.serde.HintKind.OPTIONAL:
         return _values_column(args[0])
-    if kind is serde.HintKind.ENUM:
+    if kind is core.serde.HintKind.ENUM:
         return ", ".join(f"`{member.value}`" for member in hint)
-    if kind is serde.HintKind.SCALAR:
+    if kind is core.serde.HintKind.SCALAR:
         return {bool: "boolean", int: "integer", float: "number"}.get(hint, "string")
-    if kind is serde.HintKind.LIST:
+    if kind is core.serde.HintKind.LIST:
         return f"list of {_values_column(args[0])}"
     return "any"
 
@@ -153,11 +153,11 @@ def _reference_rows(cls, prefix: str = "") -> list[tuple[str, str, str]]:
     rows: list[tuple[str, str, str]] = []
     hints = get_type_hints(cls)
     for f in dataclasses.fields(cls):
-        kind, args = serde.classify(hints[f.name])
+        kind, args = core.serde.classify(hints[f.name])
         key = f"{prefix}{f.name}"
-        if kind is serde.HintKind.DATACLASS:
+        if kind is core.serde.HintKind.DATACLASS:
             rows += _reference_rows(hints[f.name], f"{key}.")
-        elif kind is serde.HintKind.DICT and args and dataclasses.is_dataclass(args[1]):
+        elif kind is core.serde.HintKind.DICT and args and dataclasses.is_dataclass(args[1]):
             placeholder = f"<{args[0].__name__.lower()}>"
             rows += _reference_rows(args[1], f"{key}.{placeholder}.")
         else:
@@ -170,10 +170,10 @@ def _key_placeholders(cls) -> list[tuple[str, str]]:
     notes: list[tuple[str, str]] = []
     hints = get_type_hints(cls)
     for f in dataclasses.fields(cls):
-        kind, args = serde.classify(hints[f.name])
-        if kind is serde.HintKind.DATACLASS:
+        kind, args = core.serde.classify(hints[f.name])
+        if kind is core.serde.HintKind.DATACLASS:
             notes += _key_placeholders(hints[f.name])
-        elif kind is serde.HintKind.DICT and args and _is_enum(args[0]):
+        elif kind is core.serde.HintKind.DICT and args and _is_enum(args[0]):
             names = ", ".join(f"`{member.value}`" for member in args[0])
             notes.append((f"<{args[0].__name__.lower()}>", names))
     return notes
@@ -368,12 +368,12 @@ def _resolved_rows(
     rows: list[ResolvedKey] = []
     hints = get_type_hints(cls)
     for f in dataclasses.fields(cls):
-        kind, args = serde.classify(hints[f.name])
+        kind, args = core.serde.classify(hints[f.name])
         key = f"{prefix}{f.name}"
         value = getattr(obj, f.name)
-        if kind is serde.HintKind.DATACLASS:
+        if kind is core.serde.HintKind.DATACLASS:
             rows += _resolved_rows(hints[f.name], value, provenance, f"{key}.")
-        elif kind is serde.HintKind.DICT and args and dataclasses.is_dataclass(args[1]):
+        elif kind is core.serde.HintKind.DICT and args and dataclasses.is_dataclass(args[1]):
             rows += _entry_rows(args[1], value, provenance, f"{key}.")
         else:
             rows.append(ResolvedKey(key, render_value(value), provenance.get(key)))
@@ -413,7 +413,7 @@ def config_status(project_root: Path | str | None = None) -> ConfigStatus:
                    if not schema_accepts(schema, key)]
 
     try:
-        config = serde.from_dict(WorkbenchConfig, merged)
+        config = core.serde.from_dict(WorkbenchConfig, merged)
     except (TypeError, ValueError) as exc:
         problems += _typing_problems(loaded) or [f"{scopes[0].path}: {exc}"]
         return ConfigStatus(list(reversed(scopes)), [], strays, problems)
@@ -462,7 +462,7 @@ def _typing_problems(loaded: list[tuple[ConfigScope, dict]]) -> list[str]:
     problems: list[str] = []
     for scope, raw in loaded:
         try:
-            serde.from_dict(WorkbenchConfig, raw)
+            core.serde.from_dict(WorkbenchConfig, raw)
         except (TypeError, ValueError) as exc:
             problems.append(f"{scope.path}: {exc}")
     return problems

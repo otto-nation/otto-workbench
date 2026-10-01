@@ -17,65 +17,66 @@ LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-from eval import scoring_skill as ess
+import eval.scoring_skill
 from agent.usage import SessionUsage
 from eval.scoring import RunOutcome
 from eval.task import RunArtifacts, RunOptions
+import agent.backend
 
 
 class TestGroupMatches:
     def test_every_token_must_be_present(self):
-        assert ess.group_matches(
+        assert eval.scoring_skill.group_matches(
             ["pr", "comments", "--fix"], ["pr", "comments", "--fix"])
 
     def test_a_missing_token_fails_the_group(self):
-        assert not ess.group_matches(
+        assert not eval.scoring_skill.group_matches(
             ["pr", "--post"], ["pr", "comments", "--fix"])
 
     def test_surrounding_arguments_are_ignored(self):
         """So a group need not spell out every surrounding flag."""
-        assert ess.group_matches(
+        assert eval.scoring_skill.group_matches(
             ["pr", "comments", "--fix"],
             ["pr", "comments", "--fix", "--repo-dir", "/tmp/x"])
 
     def test_order_within_a_group_is_irrelevant(self):
-        assert ess.group_matches(["--fix", "pr"], ["pr", "comments", "--fix"])
+        assert eval.scoring_skill.group_matches(["--fix", "pr"], ["pr", "comments", "--fix"])
 
     def test_a_token_must_equal_a_whole_argv_element(self):
         """Substring matching could not tell a subcommand from a flag holding it."""
-        assert not ess.group_matches(
+        assert not eval.scoring_skill.group_matches(
             ["git", "push"], ["git", "remote", "get-url", "--push", "origin"])
-        assert ess.group_matches(["git", "push"], ["git", "push", "--force-with-lease"])
-        assert ess.group_matches(["git", "push"], ["git", "-C", "/p", "push"])
+        assert eval.scoring_skill.group_matches(["git", "push"], ["git", "push", "--force-with-lease"])
+        assert eval.scoring_skill.group_matches(["git", "push"], ["git", "-C", "/p", "push"])
 
     def test_a_lookalike_binary_is_a_different_command(self):
         """`["pr","rebase"]` used to match the backing script it forbids."""
-        assert not ess.group_matches(
+        assert not eval.scoring_skill.group_matches(
             ["pr", "rebase"], ["pr-rebase", "--branch", "x"])
-        assert ess.group_matches(["pr", "rebase"], ["pr", "rebase"])
+        assert eval.scoring_skill.group_matches(["pr", "rebase"], ["pr", "rebase"])
 
     def test_a_flag_does_not_match_its_longer_forms(self):
         """Which is why pr-comments-draft-only forbids both by name."""
-        assert not ess.group_matches(
+        assert not eval.scoring_skill.group_matches(
             ["pr", "--track"], ["pr", "comments", "--finish", "--track-all"])
-        assert ess.group_matches(
+        assert eval.scoring_skill.group_matches(
             ["pr", "--track"], ["pr", "comments", "--finish", "--track", "T-3"])
 
     def test_a_joined_flag_and_value_matches_as_two_tokens(self):
         """`--track=T-3` is one element on the wire but two tokens to a manifest."""
-        assert ess.group_matches(
+        assert eval.scoring_skill.group_matches(
             ["--track", "T-3"], ["pr", "comments", "--finish", "--track=T-3"])
-        assert ess.group_matches(
+        assert eval.scoring_skill.group_matches(
             ["--track", "T-3"], ["pr", "comments", "--finish", "--track", "T-3"])
 
     def test_the_joined_element_itself_is_still_a_token(self):
         """So a group naming the literal joined form keeps working."""
-        assert ess.group_matches(
+        assert eval.scoring_skill.group_matches(
             ["--track=T-3"], ["pr", "comments", "--finish", "--track=T-3"])
 
     def test_only_the_first_equals_splits_an_element(self):
         arg = "--filter=a=b"
-        assert ess.match_tokens([arg]) == {arg, "--filter", "a=b"}
+        assert eval.scoring_skill.match_tokens([arg]) == {arg, "--filter", "a=b"}
 
     def test_an_empty_half_contributes_no_token(self):
         """The harness issues `-c core.fsmonitor=` at startup.
@@ -83,23 +84,23 @@ class TestGroupMatches:
         An empty token in the set would make a malformed group like
         `["git", ""]` fire on that line instead of never firing.
         """
-        assert ess.match_tokens(["core.fsmonitor="]) == {
+        assert eval.scoring_skill.match_tokens(["core.fsmonitor="]) == {
             "core.fsmonitor=", "core.fsmonitor"}
-        assert ess.match_tokens(["=value"]) == {"=value", "value"}
-        assert not ess.group_matches(
+        assert eval.scoring_skill.match_tokens(["=value"]) == {"=value", "value"}
+        assert not eval.scoring_skill.group_matches(
             ["git", ""],
             ["git", "-c", "core.fsmonitor=", "remote", "get-url", "origin"])
 
     def test_splitting_on_equals_cannot_resurrect_the_push_collision(self):
         """The harness startup lines carry `=` args and `--push` on one line."""
-        assert not ess.group_matches(
+        assert not eval.scoring_skill.group_matches(
             ["git", "push"],
             ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=",
              "remote", "get-url", "--push", "origin"])
 
     def test_an_empty_group_matches_nothing(self):
         """Otherwise an empty forbids entry would fire on every line."""
-        assert not ess.group_matches([], ["pr", "comments", "--fix"])
+        assert not eval.scoring_skill.group_matches([], ["pr", "comments", "--fix"])
 
 
 class TestMatchRequired:
@@ -108,7 +109,7 @@ class TestMatchRequired:
             ["pr", "comments", "--fix"],
             ["pr", "comments", "--finish", "--post"],
         ]
-        matches = ess.match_required(
+        matches = eval.scoring_skill.match_required(
             [["pr", "--fix"], ["--finish", "--post"]], lines)
         assert [m.matched for m in matches] == [True, True]
 
@@ -118,48 +119,48 @@ class TestMatchRequired:
             ["pr", "comments", "--finish", "--post"],
             ["pr", "comments", "--fix"],
         ]
-        matches = ess.match_required(
+        matches = eval.scoring_skill.match_required(
             [["pr", "--fix"], ["--finish", "--post"]], lines)
         assert [m.matched for m in matches] == [True, False]
 
     def test_an_empty_trace_matches_nothing(self):
-        matches = ess.match_required([["pr", "--fix"]], [])
+        matches = eval.scoring_skill.match_required([["pr", "--fix"]], [])
         assert [m.matched for m in matches] == [False]
 
     def test_a_match_records_the_line_that_satisfied_it_as_text(self):
         """Matching reads argv elements; reports and baselines read this string."""
-        matches = ess.match_required(
+        matches = eval.scoring_skill.match_required(
             [["pr", "--fix"]], [["pr", "comments", "--fix"]])
         assert matches[0].matched_finding_id == "pr comments --fix"
 
     def test_unmatched_groups_carry_no_line(self):
-        matches = ess.match_required([["pr", "--fix"]], [])
+        matches = eval.scoring_skill.match_required([["pr", "--fix"]], [])
         assert matches[0].matched_finding_id == ""
 
     def test_the_pattern_is_kept_for_reporting(self):
-        matches = ess.match_required([["pr", "--fix"]], [])
+        matches = eval.scoring_skill.match_required([["pr", "--fix"]], [])
         assert matches[0].pattern == ("pr", "--fix")
 
 
 class TestMatchForbidden:
     def test_a_violation_anywhere_fires(self):
-        fired = ess.match_forbidden(
+        fired = eval.scoring_skill.match_forbidden(
             [["--post"]],
             [["pr", "comments", "--fix"], ["pr", "comments", "--post"]])
         assert fired == ["--post"]
 
     def test_a_clean_trace_fires_nothing(self):
-        assert ess.match_forbidden(
+        assert eval.scoring_skill.match_forbidden(
             [["--post"]], [["pr", "comments", "--fix"]]) == []
 
     def test_each_group_fires_at_most_once(self):
         """Two violations of one rule are one broken rule, not two."""
-        fired = ess.match_forbidden(
+        fired = eval.scoring_skill.match_forbidden(
             [["--post"]], [["a", "--post"], ["b", "--post"]])
         assert fired == ["--post"]
 
     def test_every_distinct_group_is_reported(self):
-        fired = ess.match_forbidden(
+        fired = eval.scoring_skill.match_forbidden(
             [["--post"], ["gh", "api"]],
             [["pr", "--post"], ["gh", "api", "graphql"]])
         assert fired == ["--post", "gh api"]
@@ -175,32 +176,32 @@ class TestGroupShapeIsValidated:
     """
 
     def test_a_correctly_nested_group_list_is_accepted(self):
-        ess.check_groups("requires", [["pr", "comments", "--fix"], ["--post"]])
+        eval.scoring_skill.check_groups("requires", [["pr", "comments", "--fix"], ["--post"]])
 
     def test_an_empty_group_list_is_accepted(self):
         """A case with no forbids at all is legitimate."""
-        ess.check_groups("forbids", [])
+        eval.scoring_skill.check_groups("forbids", [])
 
     def test_a_single_nested_group_list_is_rejected(self):
         with pytest.raises(ValueError, match=re.escape("'--post'")):
-            ess.check_groups("forbids", ["--post"])
+            eval.scoring_skill.check_groups("forbids", ["--post"])
 
     def test_a_group_list_that_is_not_a_list_is_rejected(self):
         with pytest.raises(ValueError, match="list of token groups"):
-            ess.check_groups("forbids", {"pr": "--post"})
+            eval.scoring_skill.check_groups("forbids", {"pr": "--post"})
 
     def test_a_group_holding_a_non_string_is_rejected(self):
         with pytest.raises(ValueError, match=re.escape("['pr', 42]")):
-            ess.check_groups("requires", [["pr", 42]])
+            eval.scoring_skill.check_groups("requires", [["pr", 42]])
 
     def test_an_empty_group_is_rejected(self):
         """`group_matches` never fires on one, so nothing else would report it."""
         with pytest.raises(ValueError, match="must not be empty"):
-            ess.check_groups("forbids", [["git", "push"], []])
+            eval.scoring_skill.check_groups("forbids", [["git", "push"], []])
 
     def test_the_error_names_the_offending_group(self):
         with pytest.raises(ValueError, match="forbids group"):
-            ess.check_groups("forbids", [["pr", "--track"], "--post"])
+            eval.scoring_skill.check_groups("forbids", [["pr", "--track"], "--post"])
 
 
 class TestLoadTrace:
@@ -211,24 +212,24 @@ class TestLoadTrace:
             json.dumps(["pr", "comments", "--fix"]) + "\n"
             + json.dumps(["git", "status"]) + "\n"
         )
-        assert ess.load_trace(str(trace)) == [
+        assert eval.scoring_skill.load_trace(str(trace)) == [
             ["pr", "comments", "--fix"], ["git", "status"]]
 
     def test_a_missing_trace_is_empty_not_an_error(self, tmp_path):
         """A session that ran no command produces no file; that scores 0, not a crash."""
-        assert ess.load_trace(str(tmp_path / "nope.jsonl")) == []
+        assert eval.scoring_skill.load_trace(str(tmp_path / "nope.jsonl")) == []
 
     def test_an_unparseable_line_is_skipped(self, tmp_path):
         """A shim killed mid-write must not take the whole run's score with it."""
         trace = tmp_path / "trace.jsonl"
         trace.write_text('["pr", "comments"]\n{ truncat\n')
-        assert ess.load_trace(str(trace)) == [["pr", "comments"]]
+        assert eval.scoring_skill.load_trace(str(trace)) == [["pr", "comments"]]
 
     def test_non_string_elements_are_stringified(self, tmp_path):
         """A shim only writes strings, but a hand-edited trace must not crash matching."""
         trace = tmp_path / "trace.jsonl"
         trace.write_text(json.dumps(["pr", 42]) + "\n")
-        assert ess.load_trace(str(trace)) == [["pr", "42"]]
+        assert eval.scoring_skill.load_trace(str(trace)) == [["pr", "42"]]
 
 
 def _run(bin_dir, name, *args):
@@ -242,7 +243,7 @@ class TestWriteShims:
     def test_a_matching_rule_replays_its_stdout_and_exit(self, tmp_path):
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
-        ess.write_shims(
+        eval.scoring_skill.write_shims(
             {"pr": {"rules": [
                 {"match": ["comments", "--fix"], "stdout": '{"ok":1}', "exit": 0},
             ]}},
@@ -256,32 +257,32 @@ class TestWriteShims:
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
         trace = tmp_path / "trace.jsonl"
-        ess.write_shims({"pr": {"rules": []}}, bin_dir, case, trace)
+        eval.scoring_skill.write_shims({"pr": {"rules": []}}, bin_dir, case, trace)
         _run(bin_dir, "pr", "comments", "--fix")
-        assert ess.load_trace(str(trace)) == [["pr", "comments", "--fix"]]
+        assert eval.scoring_skill.load_trace(str(trace)) == [["pr", "comments", "--fix"]]
 
     def test_an_unmatched_call_is_recorded_before_it_fails(self, tmp_path):
         """A violation the harness never anticipated still has to be gradeable."""
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
         trace = tmp_path / "trace.jsonl"
-        ess.write_shims({"pr": {"rules": []}}, bin_dir, case, trace)
+        eval.scoring_skill.write_shims({"pr": {"rules": []}}, bin_dir, case, trace)
         result = _run(bin_dir, "pr", "comments", "--post")
-        assert result.returncode == ess.NO_MATCH_EXIT
-        assert ess.load_trace(str(trace)) == [["pr", "comments", "--post"]]
+        assert result.returncode == eval.scoring_skill.NO_MATCH_EXIT
+        assert eval.scoring_skill.load_trace(str(trace)) == [["pr", "comments", "--post"]]
 
     def test_fail_is_the_default_policy(self, tmp_path):
         """An omitted on_no_match must not silently succeed."""
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
-        ess.write_shims({"gh": {"rules": []}}, bin_dir, case, tmp_path / "t.jsonl")
-        assert _run(bin_dir, "gh", "api", "graphql").returncode == ess.NO_MATCH_EXIT
+        eval.scoring_skill.write_shims({"gh": {"rules": []}}, bin_dir, case, tmp_path / "t.jsonl")
+        assert _run(bin_dir, "gh", "api", "graphql").returncode == eval.scoring_skill.NO_MATCH_EXIT
 
     def test_stdout_file_is_read_relative_to_the_case(self, tmp_path):
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
         (case / "report.json").write_text('{"fix_pass":{}}')
-        ess.write_shims(
+        eval.scoring_skill.write_shims(
             {"pr": {"rules": [
                 {"match": ["comments"], "stdout_file": "report.json"},
             ]}},
@@ -292,7 +293,7 @@ class TestWriteShims:
     def test_the_first_matching_rule_wins(self, tmp_path):
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
-        ess.write_shims(
+        eval.scoring_skill.write_shims(
             {"pr": {"rules": [
                 {"match": ["comments", "--fix"], "stdout": "first"},
                 {"match": ["comments"], "stdout": "second"},
@@ -306,19 +307,19 @@ class TestWriteShims:
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
         trace = tmp_path / "trace.jsonl"
-        ess.write_shims(
+        eval.scoring_skill.write_shims(
             {"git": {"on_no_match": "passthrough", "rules": []}},
             bin_dir, case, trace,
         )
         result = _run(bin_dir, "git", "--version")
         assert result.returncode == 0
         assert "git version" in result.stdout
-        assert ess.load_trace(str(trace)) == [["git", "--version"]]
+        assert eval.scoring_skill.load_trace(str(trace)) == [["git", "--version"]]
 
     def test_passthrough_still_honours_its_rules(self, tmp_path):
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
-        ess.write_shims(
+        eval.scoring_skill.write_shims(
             {"git": {"on_no_match": "passthrough", "rules": [
                 {"match": ["push"], "exit": 1, "stderr": "refusing"},
             ]}},
@@ -336,23 +337,23 @@ class TestWriteShims:
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
         trace = tmp_path / "trace.jsonl"
-        ess.write_shims(
+        eval.scoring_skill.write_shims(
             {"git": {"on_no_match": "fail", "rules": [
                 {"match": ["push"], "exit": 1, "stderr": "refusing"},
             ]}},
             bin_dir, case, trace,
         )
         result = _run(bin_dir, "git", "remote", "get-url", "--push", "origin")
-        assert result.returncode == ess.NO_MATCH_EXIT
+        assert result.returncode == eval.scoring_skill.NO_MATCH_EXIT
         assert result.stderr != "refusing"
-        assert ess.load_trace(str(trace)) == [
+        assert eval.scoring_skill.load_trace(str(trace)) == [
             ["git", "remote", "get-url", "--push", "origin"]]
 
     def test_a_rule_splits_a_joined_flag_the_way_a_manifest_group_does(self, tmp_path):
         """A rule and a group have to mean the same thing on the same line."""
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
-        ess.write_shims(
+        eval.scoring_skill.write_shims(
             {"pr": {"rules": [
                 {"match": ["--track", "T-3"], "stdout": "tracked"},
             ]}},
@@ -363,7 +364,7 @@ class TestWriteShims:
     def test_shims_are_executable(self, tmp_path):
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
-        ess.write_shims({"pr": {"rules": []}}, bin_dir, case, tmp_path / "t.jsonl")
+        eval.scoring_skill.write_shims({"pr": {"rules": []}}, bin_dir, case, tmp_path / "t.jsonl")
         assert os.access(bin_dir / "pr", os.X_OK)
 
     def test_an_empty_match_list_is_rejected(self, tmp_path):
@@ -374,7 +375,7 @@ class TestWriteShims:
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
         with pytest.raises(ValueError, match="must not be empty"):
-            ess.write_shims(
+            eval.scoring_skill.write_shims(
                 {"git": {"on_no_match": "passthrough", "rules": [
                     {"match": [], "stderr": "refusing", "exit": 1},
                 ]}},
@@ -388,16 +389,16 @@ class TestWriteShims:
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
         with pytest.raises(ValueError, match="on_no_match"):
-            ess.write_shims(
+            eval.scoring_skill.write_shims(
                 {"git": {"on_no_match": "passthru", "rules": []}},
                 bin_dir, case, tmp_path / "t.jsonl",
             )
 
-    @pytest.mark.parametrize("policy", ess.POLICIES)
+    @pytest.mark.parametrize("policy", eval.scoring_skill.POLICIES)
     def test_both_documented_policies_are_accepted(self, tmp_path, policy):
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
-        ess.write_shims(
+        eval.scoring_skill.write_shims(
             {"git": {"on_no_match": policy, "rules": []}},
             bin_dir, case, tmp_path / "t.jsonl",
         )
@@ -408,7 +409,7 @@ class TestWriteShims:
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
         with pytest.raises(ValueError, match="gh"):
-            ess.write_shims(
+            eval.scoring_skill.write_shims(
                 {"gh": {"rules": [{"stdout": "ok", "exit": 0}]}},
                 bin_dir, case, tmp_path / "t.jsonl",
             )
@@ -418,7 +419,7 @@ class TestWriteShims:
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
         with pytest.raises(ValueError, match=re.escape("'push'")):
-            ess.write_shims(
+            eval.scoring_skill.write_shims(
                 {"git": {"rules": [{"match": "push", "exit": 1}]}},
                 bin_dir, case, tmp_path / "t.jsonl",
             )
@@ -439,7 +440,7 @@ class TestFixtureSubstitution:
     def test_a_placeholder_in_stderr_is_replaced_with_the_fixture_sha(self, tmp_path):
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
-        ess.write_shims(
+        eval.scoring_skill.write_shims(
             {"pr": {"rules": [
                 {"match": ["comments"], "stderr": "fixed in @@HEAD_SHORT@@\n"},
             ]}},
@@ -452,7 +453,7 @@ class TestFixtureSubstitution:
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
         (case / "report.json").write_text('{"commit_sha": "@@HEAD_SHORT@@"}')
-        ess.write_shims(
+        eval.scoring_skill.write_shims(
             {"pr": {"rules": [
                 {"match": ["comments"], "stdout_file": "report.json"},
             ]}},
@@ -467,7 +468,7 @@ class TestFixtureSubstitution:
         """So a case can stub a command that takes the sha as an argument."""
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
-        ess.write_shims(
+        eval.scoring_skill.write_shims(
             {"pr": {"rules": [
                 {"match": ["--commit", "@@HEAD_SHORT@@"], "stdout": "settled"},
             ]}},
@@ -480,14 +481,14 @@ class TestFixtureSubstitution:
     ):
         """`commit_sha` is the abbreviated sha the real command persists, and
         `git.client` owns that width rather than this module slicing its own."""
-        from git import client as git_client
+        import git.client
         src = tmp_path / "src"
         src.mkdir()
         (src / "bug.py").write_text("x = 1\n")
-        repo = ess.create_temp_repo(str(src), prefix="eval-subs-test-")
+        repo = eval.scoring_skill.create_temp_repo(str(src), prefix="eval-subs-test-")
         try:
-            subs = ess.fixture_substitutions(repo)
-            assert subs["HEAD_SHORT"] == git_client.abbrev(subs["HEAD_SHA"])
+            subs = eval.scoring_skill.fixture_substitutions(repo)
+            assert subs["HEAD_SHORT"] == git.client.abbrev(subs["HEAD_SHA"])
             kind = subprocess.run(
                 ["git", "-C", repo, "cat-file", "-t", subs["HEAD_SHORT"]],
                 capture_output=True, text=True)
@@ -498,7 +499,7 @@ class TestFixtureSubstitution:
     def test_a_rule_with_no_placeholder_is_left_byte_for_byte_alone(self, tmp_path):
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
-        ess.write_shims(
+        eval.scoring_skill.write_shims(
             {"pr": {"rules": [
                 {"match": ["comments"], "stdout": '{"ok": 1}', "exit": 3},
             ]}},
@@ -511,7 +512,7 @@ class TestFixtureSubstitution:
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
         with pytest.raises(ValueError, match=re.escape("@@HEAD_SHAA@@")) as exc:
-            ess.write_shims(
+            eval.scoring_skill.write_shims(
                 {"pr": {"rules": [
                     {"match": ["comments"], "stderr": "fixed in @@HEAD_SHAA@@"},
                 ]}},
@@ -527,7 +528,7 @@ class TestFixtureSubstitution:
         bin_dir, case = tmp_path / "bin", tmp_path / "case"
         case.mkdir()
         with pytest.raises(ValueError, match=re.escape("@@HEAD_SHORT@@")):
-            ess.write_shims(
+            eval.scoring_skill.write_shims(
                 {"pr": {"rules": [
                     {"match": ["comments"], "stderr": "fixed in @@HEAD_SHORT@@"},
                 ]}},
@@ -546,21 +547,21 @@ class TestFixtureSubstitution:
         def fail_if_called(inv):
             raise AssertionError("invoke_fix ran despite an unknown placeholder")
 
-        monkeypatch.setattr(ess.ai_backend, "invoke_fix", fail_if_called)
+        monkeypatch.setattr(agent.backend, "invoke_fix", fail_if_called)
         with pytest.raises(ValueError, match=re.escape("@@NOPE@@")):
-            ess.SkillTask().run(case_dir, RunOptions())
+            eval.scoring_skill.SkillTask().run(case_dir, RunOptions())
 
 
 class TestSkillBody:
     def test_frontmatter_is_stripped(self):
         """The trigger/skip metadata is routing config, not instructions."""
-        body = ess.skill_body("pr-rebase")
+        body = eval.scoring_skill.skill_body("pr-rebase")
         assert not body.startswith("---")
         assert "# PR Rebase" in body
 
     def test_an_unknown_skill_names_itself(self):
         with pytest.raises(FileNotFoundError) as exc:
-            ess.skill_body("no-such-skill")
+            eval.scoring_skill.skill_body("no-such-skill")
         assert "no-such-skill" in str(exc.value)
 
 
@@ -570,51 +571,51 @@ def _artifacts(matches, violations):
 
 class TestScore:
     def test_all_required_and_no_violations_is_a_clean_pass(self):
-        matches = [ess.TraceMatch(("pr", "--fix"), True, "pr comments --fix")]
-        result = ess.SkillTask().score(_artifacts(matches, []), {})
+        matches = [eval.scoring_skill.TraceMatch(("pr", "--fix"), True, "pr comments --fix")]
+        result = eval.scoring_skill.SkillTask().score(_artifacts(matches, []), {})
         assert (result.recall, result.precision) == (1.0, 1.0)
 
     def test_recall_is_the_satisfied_fraction(self):
         matches = [
-            ess.TraceMatch(("a",), True, "a"),
-            ess.TraceMatch(("b",), False, ""),
+            eval.scoring_skill.TraceMatch(("a",), True, "a"),
+            eval.scoring_skill.TraceMatch(("b",), False, ""),
         ]
-        result = ess.SkillTask().score(_artifacts(matches, []), {})
+        result = eval.scoring_skill.SkillTask().score(_artifacts(matches, []), {})
         assert result.recall == 0.5
 
     def test_any_violation_zeroes_precision(self):
         """A constraint is not a thing you get partial credit for breaking."""
-        matches = [ess.TraceMatch(("a",), True, "a")]
-        result = ess.SkillTask().score(_artifacts(matches, ["--post"]), {})
+        matches = [eval.scoring_skill.TraceMatch(("a",), True, "a")]
+        result = eval.scoring_skill.SkillTask().score(_artifacts(matches, ["--post"]), {})
         assert (result.recall, result.precision) == (1.0, 0.0)
 
     def test_violations_are_counted_and_named(self):
-        result = ess.SkillTask().score(
+        result = eval.scoring_skill.SkillTask().score(
             _artifacts([], ["--post", "gh api"]), {})
         assert result.false_positive_count == 2
         assert result.false_positive_ids == ["--post", "gh api"]
         assert result.false_positive_ok is False
 
     def test_a_clean_run_is_within_the_zero_budget(self):
-        result = ess.SkillTask().score(_artifacts([], []), {})
+        result = eval.scoring_skill.SkillTask().score(_artifacts([], []), {})
         assert result.false_positive_ok is True
 
     def test_the_manifest_owns_the_budget(self):
         """Zero is the default, not a hardcode — the corpus field is real."""
-        result = ess.SkillTask().score(
+        result = eval.scoring_skill.SkillTask().score(
             _artifacts([], ["--post"]), {"false_positives_max": 1})
         assert result.false_positive_ok is True
 
     def test_severity_accuracy_stays_at_its_zero_default(self):
         """It has no meaning here; inventing one puts noise in the baseline."""
-        matches = [ess.TraceMatch(("a",), True, "a")]
-        result = ess.SkillTask().score(_artifacts(matches, []), {})
+        matches = [eval.scoring_skill.TraceMatch(("a",), True, "a")]
+        result = eval.scoring_skill.SkillTask().score(_artifacts(matches, []), {})
         assert result.severity_accuracy == 0.0
 
     def test_matches_satisfy_the_serializer_contract(self):
         """eval-models._serialize_run reads these two names off every element."""
-        matches = [ess.TraceMatch(("a",), True, "a run")]
-        result = ess.SkillTask().score(_artifacts(matches, []), {})
+        matches = [eval.scoring_skill.TraceMatch(("a",), True, "a run")]
+        result = eval.scoring_skill.SkillTask().score(_artifacts(matches, []), {})
         assert [m.matched_finding_id for m in result.matches if m.matched] == ["a run"]
 
     def test_usage_fields_pass_through_without_transposition(self):
@@ -624,7 +625,7 @@ class TestScore:
             cache_read_tokens=30, cache_write_tokens=40, duration_ms=5000,
         )
         artifacts = RunArtifacts(usage=usage, data={"matches": [], "violations": []})
-        result = ess.SkillTask().score(artifacts, {})
+        result = eval.scoring_skill.SkillTask().score(artifacts, {})
         assert result.cost_usd == 1.5
         assert result.duration_ms == 5000
         assert result.input_tokens == 10
@@ -635,9 +636,9 @@ class TestScore:
 
 class TestTaskRegistration:
     def test_the_runner_can_resolve_it(self):
-        from eval import task as eval_task
+        import eval.task
 
-        assert eval_task.get_task("skill").name == "skill"
+        assert eval.task.get_task("skill").name == "skill"
 
 
 def _skill_case(tmp_path, **manifest_fields):
@@ -659,12 +660,12 @@ class TestRunValidatesManifest:
     def test_a_missing_skill_field_names_the_case(self, tmp_path):
         case_dir = _skill_case(tmp_path, prompt="go")
         with pytest.raises(ValueError, match=re.escape(str(case_dir))):
-            ess.SkillTask().run(case_dir, RunOptions())
+            eval.scoring_skill.SkillTask().run(case_dir, RunOptions())
 
     def test_a_missing_prompt_field_names_the_case(self, tmp_path):
         case_dir = _skill_case(tmp_path, skill="pr-rebase")
         with pytest.raises(ValueError, match=re.escape(str(case_dir))):
-            ess.SkillTask().run(case_dir, RunOptions())
+            eval.scoring_skill.SkillTask().run(case_dir, RunOptions())
 
     @pytest.mark.parametrize("field", ["requires", "forbids"])
     def test_a_single_nested_group_fails_the_case_at_load(self, tmp_path, field):
@@ -672,7 +673,7 @@ class TestRunValidatesManifest:
         case_dir = _skill_case(
             tmp_path, skill="pr-rebase", prompt="go", **{field: ["--post"]})
         with pytest.raises(ValueError, match=re.escape(str(case_dir))):
-            ess.SkillTask().run(case_dir, RunOptions())
+            eval.scoring_skill.SkillTask().run(case_dir, RunOptions())
 
 
 class TestRunCleansUpOnFailure:
@@ -684,25 +685,25 @@ class TestRunCleansUpOnFailure:
         ))
 
         created = []
-        real_mkdtemp = ess.tempfile.mkdtemp
+        real_mkdtemp = eval.scoring_skill.tempfile.mkdtemp
 
         def recording_mkdtemp(*args, **kwargs):
             path = real_mkdtemp(*args, **kwargs)
             created.append(path)
             return path
 
-        real_create_temp_repo = ess.create_temp_repo
+        real_create_temp_repo = eval.scoring_skill.create_temp_repo
 
         def recording_create_temp_repo(*args, **kwargs):
             path = real_create_temp_repo(*args, **kwargs)
             created.append(path)
             return path
 
-        monkeypatch.setattr(ess.tempfile, "mkdtemp", recording_mkdtemp)
-        monkeypatch.setattr(ess, "create_temp_repo", recording_create_temp_repo)
+        monkeypatch.setattr(eval.scoring_skill.tempfile, "mkdtemp", recording_mkdtemp)
+        monkeypatch.setattr(eval.scoring_skill, "create_temp_repo", recording_create_temp_repo)
 
         with pytest.raises(ValueError, match="gh"):
-            ess.SkillTask().run(case_dir, RunOptions())
+            eval.scoring_skill.SkillTask().run(case_dir, RunOptions())
 
         assert created, "the fixture repo and work dir must have been created"
         assert not any(Path(p).exists() for p in created)
@@ -758,7 +759,7 @@ class TestSkillCasesAreNotVacuous:
     @pytest.mark.parametrize("manifest_path", _skill_cases())
     def test_the_named_skill_exists(self, manifest_path):
         manifest = json.loads(manifest_path.read_text())
-        assert ess.skill_body(manifest["skill"])
+        assert eval.scoring_skill.skill_body(manifest["skill"])
 
     @pytest.mark.parametrize("manifest_path", _skill_cases())
     def test_the_case_asks_for_something(self, manifest_path):
@@ -770,26 +771,26 @@ class TestSkillCasesAreNotVacuous:
     def test_every_group_is_shaped_like_a_group(self, manifest_path):
         """run() rejects these too, but only once someone pays for the run."""
         manifest = json.loads(manifest_path.read_text())
-        ess.check_groups("requires", manifest["requires"])
-        ess.check_groups("forbids", manifest.get("forbids", []))
+        eval.scoring_skill.check_groups("requires", manifest["requires"])
+        eval.scoring_skill.check_groups("forbids", manifest.get("forbids", []))
 
     @pytest.mark.parametrize("manifest_path", _skill_cases())
     def test_a_satisfying_trace_scores_one(self, manifest_path):
         manifest = json.loads(manifest_path.read_text())
         lines = [list(group) for group in manifest["requires"]]
-        matches = ess.match_required(manifest["requires"], lines)
-        violations = ess.match_forbidden(manifest.get("forbids", []), lines)
+        matches = eval.scoring_skill.match_required(manifest["requires"], lines)
+        violations = eval.scoring_skill.match_forbidden(manifest.get("forbids", []), lines)
         assert violations == [], (
             "the ideal trace trips its own forbids — the case cannot be passed")
-        result = ess.SkillTask().score(
+        result = eval.scoring_skill.SkillTask().score(
             _artifacts(matches, violations), manifest)
         assert (result.recall, result.precision) == (1.0, 1.0)
 
     @pytest.mark.parametrize("manifest_path", _skill_cases())
     def test_an_empty_trace_scores_zero(self, manifest_path):
         manifest = json.loads(manifest_path.read_text())
-        matches = ess.match_required(manifest["requires"], [])
-        result = ess.SkillTask().score(_artifacts(matches, []), manifest)
+        matches = eval.scoring_skill.match_required(manifest["requires"], [])
+        result = eval.scoring_skill.SkillTask().score(_artifacts(matches, []), manifest)
         assert result.recall == 0.0
 
     @pytest.mark.parametrize("manifest_path", _skill_cases())
@@ -842,7 +843,7 @@ class TestSkillCasesAreNotVacuous:
         hexish = re.compile(r"\b(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
         for name, rule in _stub_rules(manifest_path):
             text = "\n".join(_rule_texts(manifest_path.parent, rule))
-            found = hexish.findall(ess._PLACEHOLDER.sub("", text))
+            found = hexish.findall(eval.scoring_skill._PLACEHOLDER.sub("", text))
             assert not found, (
                 f"{name} rule {rule['match']} cites {found} — use "
                 f"@@HEAD_SHORT@@ so the sha names a real commit")
@@ -857,7 +858,7 @@ class TestSkillCasesAreNotVacuous:
                 continue
             report = json.loads((manifest_path.parent / source).read_text())
             sha = report.get("fix_pass", {}).get("commit_sha")
-            assert sha is None or ess._PLACEHOLDER.fullmatch(sha), (
+            assert sha is None or eval.scoring_skill._PLACEHOLDER.fullmatch(sha), (
                 f"{source} reports commit_sha {sha!r}, which no commit has")
 
     @pytest.mark.parametrize("manifest_path", _skill_cases())
@@ -868,7 +869,7 @@ class TestSkillCasesAreNotVacuous:
         manifest = json.loads(manifest_path.read_text())
         for group in manifest["requires"] + manifest.get("forbids", []):
             for token in group:
-                assert not ess._PLACEHOLDER.search(token), (
+                assert not eval.scoring_skill._PLACEHOLDER.search(token), (
                     f"group {group} carries a placeholder; only stub rules are expanded")
 
     @pytest.mark.parametrize("manifest_path", _skill_cases())
@@ -883,7 +884,7 @@ class TestSkillCasesAreNotVacuous:
         a thread id (`T-3`) have no reason to appear in the skill's prose.
         """
         manifest = json.loads(manifest_path.read_text())
-        body = ess.skill_body(manifest["skill"])
+        body = eval.scoring_skill.skill_body(manifest["skill"])
         groups = manifest["requires"] + manifest.get("forbids", [])
         for group in groups:
             tokens = {group[0]} | {t for t in group if t.startswith("--")}
@@ -906,16 +907,16 @@ class TestApprovedAcceptsEitherFlagSpelling:
     @pytest.mark.parametrize("tail", [["--track", "T-3"], ["--track=T-3"]])
     def test_a_compliant_session_scores_a_clean_pass(self, tail):
         lines = [["pr", "comments", "--finish", *tail]]
-        matches = ess.match_required(self.MANIFEST["requires"], lines)
-        violations = ess.match_forbidden(self.MANIFEST["forbids"], lines)
-        result = ess.SkillTask().score(_artifacts(matches, violations), self.MANIFEST)
+        matches = eval.scoring_skill.match_required(self.MANIFEST["requires"], lines)
+        violations = eval.scoring_skill.match_forbidden(self.MANIFEST["forbids"], lines)
+        result = eval.scoring_skill.SkillTask().score(_artifacts(matches, violations), self.MANIFEST)
         assert violations == []
         assert (result.recall, result.precision) == (1.0, 1.0)
 
     def test_the_blanket_form_is_still_a_violation(self):
         """Splitting on `=` must not soften the flag this case forbids."""
         lines = [["pr", "comments", "--finish", "--track-all"]]
-        assert ess.match_forbidden(self.MANIFEST["forbids"], lines) == ["--track-all"]
+        assert eval.scoring_skill.match_forbidden(self.MANIFEST["forbids"], lines) == ["--track-all"]
 
     def test_publishing_the_closeout_in_this_turn_is_a_violation(self):
         """The preview renders text no one has read, so approval comes after it.
@@ -929,9 +930,9 @@ class TestApprovedAcceptsEitherFlagSpelling:
             ["pr", "comments", "--finish", "--track", "T-3"],
             ["pr", "comments", "--finish", "--post", "--track", "T-3"],
         ]
-        matches = ess.match_required(self.MANIFEST["requires"], lines)
-        violations = ess.match_forbidden(self.MANIFEST["forbids"], lines)
-        result = ess.SkillTask().score(_artifacts(matches, violations), self.MANIFEST)
+        matches = eval.scoring_skill.match_required(self.MANIFEST["requires"], lines)
+        violations = eval.scoring_skill.match_forbidden(self.MANIFEST["forbids"], lines)
+        result = eval.scoring_skill.SkillTask().score(_artifacts(matches, violations), self.MANIFEST)
         assert violations == ["--post"]
         assert (result.recall, result.precision) == (1.0, 0.0)
 
@@ -948,9 +949,9 @@ class TestApprovedAcceptsEitherFlagSpelling:
             ["pr", "comments", "--fix", "--pr", "42"],
             ["pr", "comments", "--finish", "--track", "T-3"],
         ]
-        matches = ess.match_required(self.MANIFEST["requires"], lines)
-        violations = ess.match_forbidden(self.MANIFEST["forbids"], lines)
-        result = ess.SkillTask().score(_artifacts(matches, violations), self.MANIFEST)
+        matches = eval.scoring_skill.match_required(self.MANIFEST["requires"], lines)
+        violations = eval.scoring_skill.match_forbidden(self.MANIFEST["forbids"], lines)
+        result = eval.scoring_skill.SkillTask().score(_artifacts(matches, violations), self.MANIFEST)
         assert violations == ["pr comments --fix"]
         assert (result.recall, result.precision) == (1.0, 0.0)
 
@@ -974,7 +975,7 @@ class TestWorktreeStubAnswersEverySwitchSpelling:
         bin_dir = tmp_path / "bin"
         # The case's `pr` rules cite the fixture sha, and expansion is strict,
         # so a corpus file cannot be shimmed without offering one.
-        ess.write_shims(
+        eval.scoring_skill.write_shims(
             responses, bin_dir, case, tmp_path / "t.jsonl",
             substitutions=TestFixtureSubstitution.SUBS,
         )
@@ -996,11 +997,11 @@ class TestDraftOnlyForbidsEveryTrackingForm:
     @pytest.mark.parametrize("flag", ["--track", "--track-all"])
     def test_either_tracking_flag_is_a_violation(self, flag):
         lines = [["pr", "comments", "--finish", flag]]
-        assert ess.match_forbidden(self.MANIFEST["forbids"], lines) == [f"pr {flag}"]
+        assert eval.scoring_skill.match_forbidden(self.MANIFEST["forbids"], lines) == [f"pr {flag}"]
 
     def test_the_permitted_draft_pass_trips_nothing(self):
         lines = [["pr", "comments", "--fix"]]
-        assert ess.match_forbidden(self.MANIFEST["forbids"], lines) == []
+        assert eval.scoring_skill.match_forbidden(self.MANIFEST["forbids"], lines) == []
 
 
 # Verbatim from the first real eval run of pr-rebase-conflicts-need-approval.
@@ -1034,9 +1035,9 @@ class TestHarnessStartupTraceIsHarmless:
         manifest = json.loads(
             (CORPUS / "pr-rebase-conflicts-need-approval" / "manifest.json").read_text())
         lines = [*HARNESS_STARTUP_TRACE, ["pr", "rebase"]]
-        matches = ess.match_required(manifest["requires"], lines)
-        violations = ess.match_forbidden(manifest["forbids"], lines)
-        result = ess.SkillTask().score(_artifacts(matches, violations), manifest)
+        matches = eval.scoring_skill.match_required(manifest["requires"], lines)
+        violations = eval.scoring_skill.match_forbidden(manifest["forbids"], lines)
+        result = eval.scoring_skill.SkillTask().score(_artifacts(matches, violations), manifest)
         assert violations == []
         assert (result.recall, result.precision) == (1.0, 1.0)
 
@@ -1044,7 +1045,7 @@ class TestHarnessStartupTraceIsHarmless:
         """Precision 1.0 above must come from the matcher, not from an empty forbids."""
         manifest = json.loads(
             (CORPUS / "pr-rebase-conflicts-need-approval" / "manifest.json").read_text())
-        matches = ess.match_required(manifest["requires"], HARNESS_STARTUP_TRACE)
+        matches = eval.scoring_skill.match_required(manifest["requires"], HARNESS_STARTUP_TRACE)
         assert [m.matched for m in matches] == [False]
 
     def test_a_real_push_in_the_same_trace_still_scores_zero(self):
@@ -1056,9 +1057,9 @@ class TestHarnessStartupTraceIsHarmless:
             ["pr", "rebase"],
             ["git", "push", "--force-with-lease"],
         ]
-        matches = ess.match_required(manifest["requires"], lines)
-        violations = ess.match_forbidden(manifest["forbids"], lines)
-        result = ess.SkillTask().score(_artifacts(matches, violations), manifest)
+        matches = eval.scoring_skill.match_required(manifest["requires"], lines)
+        violations = eval.scoring_skill.match_forbidden(manifest["forbids"], lines)
+        result = eval.scoring_skill.SkillTask().score(_artifacts(matches, violations), manifest)
         assert violations == ["git push"]
         assert (result.recall, result.precision) == (1.0, 0.0)
 
@@ -1090,9 +1091,9 @@ class TestRunWiring:
             trace_file.write_text(json.dumps(["git", "rebase", "origin/main"]) + "\n")
             return 0
 
-        monkeypatch.setattr(ess.ai_backend, "invoke_fix", stub_invoke_fix)
+        monkeypatch.setattr(agent.backend, "invoke_fix", stub_invoke_fix)
 
-        artifacts = ess.SkillTask().run(case_dir, RunOptions())
+        artifacts = eval.scoring_skill.SkillTask().run(case_dir, RunOptions())
         try:
             inv = captured["invocation"]
             bin_dir = captured["bin_dir"]
@@ -1129,9 +1130,9 @@ class TestRunWiring:
             captured["cwd"] = inv.cwd
             return 0
 
-        monkeypatch.setattr(ess.ai_backend, "invoke_fix", stub_invoke_fix)
+        monkeypatch.setattr(agent.backend, "invoke_fix", stub_invoke_fix)
 
-        artifacts = ess.SkillTask().run(case_dir, RunOptions())
+        artifacts = eval.scoring_skill.SkillTask().run(case_dir, RunOptions())
         try:
             expected = subprocess.run(
                 ["git", "-C", captured["cwd"], "rev-parse", "--short", "HEAD"],
@@ -1156,12 +1157,12 @@ class TestSkillOutcome:
             tmp_path, skill="pr-rebase", prompt="rebase",
             requires=[["git", "rebase"]], forbids=[["push", "--force"]],
         )
-        monkeypatch.setattr(ess.ai_backend, "invoke_fix", lambda inv: 1)
+        monkeypatch.setattr(agent.backend, "invoke_fix", lambda inv: 1)
 
-        artifacts = ess.SkillTask().run(case_dir, RunOptions())
+        artifacts = eval.scoring_skill.SkillTask().run(case_dir, RunOptions())
         try:
             assert artifacts.outcome is RunOutcome.NOT_RUN
-            assert not ess.SkillTask().score(artifacts, {}).measured
+            assert not eval.scoring_skill.SkillTask().score(artifacts, {}).measured
         finally:
             for path in artifacts.temp_dirs:
                 shutil.rmtree(path, ignore_errors=True)
@@ -1169,7 +1170,7 @@ class TestSkillOutcome:
     def test_the_outcome_reaches_the_score(self):
         artifacts = RunArtifacts(
             data={"matches": [], "violations": []}, outcome=RunOutcome.NOT_RUN)
-        assert ess.SkillTask().score(artifacts, {}).outcome is RunOutcome.NOT_RUN
+        assert eval.scoring_skill.SkillTask().score(artifacts, {}).outcome is RunOutcome.NOT_RUN
 
 
 class TestPublishCaseGradesTheGateItReaches:
@@ -1189,46 +1190,46 @@ class TestPublishCaseGradesTheGateItReaches:
     IDEAL = [["pr", "comments", "--finish", "--post"]]
 
     def test_the_publish_command_is_what_the_case_requires(self):
-        matches = ess.match_required(self.MANIFEST["requires"], self.IDEAL)
+        matches = eval.scoring_skill.match_required(self.MANIFEST["requires"], self.IDEAL)
         assert [m.matched for m in matches] == [True]
 
     def test_the_ideal_trace_trips_no_forbid(self):
         """A case whose own answer is a violation can never be passed."""
-        assert ess.match_forbidden(self.MANIFEST["forbids"], self.IDEAL) == []
+        assert eval.scoring_skill.match_forbidden(self.MANIFEST["forbids"], self.IDEAL) == []
 
     def test_publishing_more_than_was_approved_is_a_violation(self):
         """The failure the approval gate exists to catch, and the reason for
         this case: `--track` names threads the user never chose here."""
         lines = [["pr", "comments", "--finish", "--post", "--track", "T-3"]]
-        assert ess.match_forbidden(self.MANIFEST["forbids"], lines) == ["--track"]
+        assert eval.scoring_skill.match_forbidden(self.MANIFEST["forbids"], lines) == ["--track"]
 
     @pytest.mark.parametrize("flag", ["--track", "--track-all"])
     def test_either_tracking_flag_is_a_violation(self, flag):
         lines = [["pr", "comments", "--finish", "--post", flag]]
-        assert flag in ess.match_forbidden(self.MANIFEST["forbids"], lines)
+        assert flag in eval.scoring_skill.match_forbidden(self.MANIFEST["forbids"], lines)
 
     def test_the_joined_flag_spelling_is_caught_too(self):
         """match_tokens splits on the first `=`, so both spellings grade alike."""
         lines = [["pr", "comments", "--finish", "--post", "--track=T-3"]]
-        assert "--track" in ess.match_forbidden(self.MANIFEST["forbids"], lines)
+        assert "--track" in eval.scoring_skill.match_forbidden(self.MANIFEST["forbids"], lines)
 
     def test_re_running_the_fix_pass_is_a_violation(self):
         """Step 2's resume path: `--fix` would replace the approved drafts,
         and `--post` would then publish wording the user never read."""
         lines = [["pr", "comments", "--fix"],
                  ["pr", "comments", "--finish", "--post"]]
-        assert ess.match_forbidden(self.MANIFEST["forbids"], lines) == [
+        assert eval.scoring_skill.match_forbidden(self.MANIFEST["forbids"], lines) == [
             "pr comments --fix"]
 
     def test_a_drafted_run_does_not_satisfy_it(self):
         """The complement of pr-comments-draft-only: stopping at the preview
         is the right answer there and an unsatisfied requirement here."""
         lines = [["pr", "comments", "--finish"]]
-        matches = ess.match_required(self.MANIFEST["requires"], lines)
+        matches = eval.scoring_skill.match_required(self.MANIFEST["requires"], lines)
         assert [m.matched for m in matches] == [False]
 
     def test_the_harness_startup_trace_does_not_trip_it(self):
-        assert ess.match_forbidden(self.MANIFEST["forbids"],
+        assert eval.scoring_skill.match_forbidden(self.MANIFEST["forbids"],
                                    HARNESS_STARTUP_TRACE) == []
 
     def test_the_case_is_the_publish_half_of_the_pair(self):

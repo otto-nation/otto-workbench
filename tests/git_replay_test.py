@@ -21,7 +21,7 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest  # noqa: E402
 
-from git import replay  # noqa: E402
+import git.replay  # noqa: E402
 
 # One static subject and one fixed date for every fix commit, which is the
 # situation `replayed_commit` has to work in: the pass commits under a single
@@ -72,30 +72,30 @@ def _rebase_onto_moved_main(wt) -> None:
 class TestRewrittenAway:
     def test_a_commit_still_on_the_branch_is_not_orphaned(self, work):
         sha = _commit(work, "fix.txt")
-        assert replay.rewritten_away(work, sha) is False
+        assert git.replay.rewritten_away(work, sha) is False
 
     def test_a_rebased_commit_is_orphaned(self, work):
         sha = _commit(work, "fix.txt")
         _rebase_onto_moved_main(work)
-        assert replay.rewritten_away(work, sha) is True
+        assert git.replay.rewritten_away(work, sha) is True
 
     def test_the_orphan_still_resolves_as_an_object(self, work):
         """The whole reason existence is the wrong question to ask."""
         sha = _commit(work, "fix.txt")
         _rebase_onto_moved_main(work)
         assert git_out(work, "cat-file", "-t", sha).strip() == "commit"
-        assert replay.rewritten_away(work, sha) is True
+        assert git.replay.rewritten_away(work, sha) is True
 
     def test_a_sha_git_cannot_resolve_is_not_read_as_a_rewrite(self, work):
         """A question git declined to answer must never clear a hold."""
         _commit(work, "fix.txt")
-        assert replay.rewritten_away(work, "0" * 40) is False
+        assert git.replay.rewritten_away(work, "0" * 40) is False
 
 
 class TestPatchIds:
     def test_a_commit_maps_to_the_patch_it_carries(self, work):
         sha = _commit(work, "fix.txt")
-        ids = replay.patch_ids(work, "--no-walk", sha)
+        ids = git.replay.patch_ids(work, "--no-walk", sha)
         assert len(ids) == 1
         assert len(next(iter(ids.values()))) == 1
 
@@ -105,22 +105,22 @@ class TestPatchIds:
         _rebase_onto_moved_main(work)
         after = _short(work)
 
-        before_ids = replay.patch_ids(work, "--no-walk", first)
-        after_ids = replay.patch_ids(work, "--no-walk", after)
+        before_ids = git.replay.patch_ids(work, "--no-walk", first)
+        after_ids = git.replay.patch_ids(work, "--no-walk", after)
 
         assert set(before_ids) == set(after_ids)
 
     def test_different_changes_do_not_collide(self, work):
         _commit(work, "one.txt")
         _commit(work, "two.txt")
-        assert len(replay.patch_ids(work, "HEAD~2..HEAD")) == 2
+        assert len(git.replay.patch_ids(work, "HEAD~2..HEAD")) == 2
 
     def test_an_empty_range_maps_nothing(self, work):
         _commit(work, "fix.txt")
-        assert replay.patch_ids(work, "HEAD..HEAD") == {}
+        assert git.replay.patch_ids(work, "HEAD..HEAD") == {}
 
     def test_an_unresolvable_range_maps_nothing(self, work):
-        assert replay.patch_ids(work, "no-such-ref..HEAD") == {}
+        assert git.replay.patch_ids(work, "no-such-ref..HEAD") == {}
 
 
 class TestReplayedCommit:
@@ -128,7 +128,7 @@ class TestReplayedCommit:
         held = _commit(work, "fix.txt")
         _rebase_onto_moved_main(work)
 
-        found = replay.replayed_commit(work, held)
+        found = git.replay.replayed_commit(work, held)
 
         assert found == _short(work)
         assert found != held
@@ -139,14 +139,14 @@ class TestReplayedCommit:
         _rebase_onto_moved_main(work)
         git_in(work, "commit", "-q", "--no-verify", "--amend", "-m", "reworded")
 
-        assert replay.replayed_commit(work, held) == _short(work)
+        assert git.replay.replayed_commit(work, held) == _short(work)
 
     def test_a_dropped_commit_is_not_found(self, work):
         held = _commit(work, "fix.txt")
         _rebase_onto_moved_main(work)
         git_in(work, "reset", "-q", "--hard", "HEAD~1")
 
-        assert replay.replayed_commit(work, held) == ""
+        assert git.replay.replayed_commit(work, held) == ""
 
     def test_a_reworked_fix_is_not_found(self, work):
         """The honest answer: that change is not on the branch under any name."""
@@ -157,7 +157,7 @@ class TestReplayedCommit:
         _rebase_onto_moved_main(work)
         _commit(work, "fix.txt", "reworked entirely\n")
 
-        assert replay.replayed_commit(work, held) == ""
+        assert git.replay.replayed_commit(work, held) == ""
 
     def test_a_duplicated_patch_is_refused_rather_than_guessed(self, work):
         """Two answers is no answer: nothing to choose between them."""
@@ -166,7 +166,7 @@ class TestReplayedCommit:
         git_in(work, "revert", "--no-edit", "HEAD")
         git_in(work, "cherry-pick", held)
 
-        assert replay.replayed_commit(work, held) == ""
+        assert git.replay.replayed_commit(work, held) == ""
 
     def test_a_commit_still_on_the_branch_is_not_its_own_replay(self, work):
         """Asked out of order, this answers "no", which is why order matters.
@@ -179,5 +179,5 @@ class TestReplayedCommit:
         """
         sha = _commit(work, "fix.txt")
 
-        assert replay.rewritten_away(work, sha) is False
-        assert replay.replayed_commit(work, sha) == ""
+        assert git.replay.rewritten_away(work, sha) is False
+        assert git.replay.replayed_commit(work, sha) == ""

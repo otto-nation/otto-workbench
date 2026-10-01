@@ -91,8 +91,10 @@ SIGNAL_PATTERNS: dict[str, re.Pattern] = {
 SIGNAL_PRIORITY = ["correction", "preference", "decision", "pattern", "review_feedback"]
 
 
-from config import workbench_projects
-from core import log, memory, sessions
+import config.workbench_projects
+import core.log
+import core.memory
+import core.sessions
 
 
 # ── Core functions ───────────────────────────────────────────────────────────
@@ -105,7 +107,7 @@ def classify_signal(text: str) -> str | None:
     return None
 
 
-parse_frontmatter = memory.parse_frontmatter
+parse_frontmatter = core.memory.parse_frontmatter
 
 
 # ── Scanning ─────────────────────────────────────────────────────────────────
@@ -118,7 +120,7 @@ def _read_last_dream(repo_path: Path) -> str | None:
     other cooldowns, rather than among the authored topic files it used to
     share a directory with.
     """
-    stamp = memory.gate_stamp_file(repo_path, LAST_DREAM_STAMP)
+    stamp = core.memory.gate_stamp_file(repo_path, LAST_DREAM_STAMP)
     try:
         ts = int(stamp.read_text().strip())
     except (ValueError, OSError):
@@ -126,7 +128,7 @@ def _read_last_dream(repo_path: Path) -> str | None:
     return datetime.fromtimestamp(ts).strftime(DATETIME_FMT)
 
 
-def _topic_row(tf: memory.TopicFile) -> dict:
+def _topic_row(tf: core.memory.TopicFile) -> dict:
     return {
         "filename": tf.filename,
         "name": tf.name,
@@ -146,12 +148,12 @@ def scan_memory_state() -> list[dict]:
     repo it belongs to.
     """
     states = []
-    for repo_path in workbench_projects.registered():
+    for repo_path in config.workbench_projects.registered():
         try:
-            directory = memory.memory_dir(repo_path)
+            directory = core.memory.memory_dir(repo_path)
         except ValueError:
             continue
-        state = memory.state_of(directory)
+        state = core.memory.state_of(directory)
         if state is None:
             continue
         states.append({
@@ -163,7 +165,7 @@ def scan_memory_state() -> list[dict]:
     return states
 
 
-def _signals_in(session: sessions.Session) -> list[dict]:
+def _signals_in(session: core.sessions.Session) -> list[dict]:
     """Every classified human turn in one transcript.
 
     Each signal is dated from its own record rather than from the file, which
@@ -173,7 +175,7 @@ def _signals_in(session: sessions.Session) -> list[dict]:
     counted once.
     """
     signals = []
-    for message in sessions.iter_user_messages(session):
+    for message in core.sessions.iter_user_messages(session):
         category = classify_signal(message.text)
         if category is None:
             continue
@@ -186,7 +188,7 @@ def _signals_in(session: sessions.Session) -> list[dict]:
     return signals
 
 
-def _project_id_of(message: sessions.UserMessage) -> str:
+def _project_id_of(message: core.sessions.UserMessage) -> str:
     """What to file a signal under.
 
     The canonical slug of the cwd the session recorded, which is stable across
@@ -197,10 +199,10 @@ def _project_id_of(message: sessions.UserMessage) -> str:
     """
     if message.project_path is None:
         return message.harness
-    return sessions.canonical_slug(message.project_path)
+    return core.sessions.canonical_slug(message.project_path)
 
 
-def scan_sessions(discovered: list[sessions.Session]) -> list[dict]:
+def scan_sessions(discovered: list[core.sessions.Session]) -> list[dict]:
     signals = []
     for session in discovered:
         signals.extend(_signals_in(session))
@@ -346,7 +348,7 @@ def main() -> None:
     # Pi.
     if args.list_transcripts:
         cutoff = datetime.now() - timedelta(days=args.days)
-        for session in sessions.discover_sessions(home, since=cutoff):
+        for session in core.sessions.discover_sessions(home, since=cutoff):
             print(session.path)
         raise SystemExit(0)
 
@@ -356,7 +358,7 @@ def main() -> None:
     # `_` or a `.`. Same reasoning as the branch above: the script that owns the
     # location answers, rather than each skill deriving it again.
     if args.memory_dir is not None:
-        print(memory.memory_dir(args.memory_dir))
+        print(core.memory.memory_dir(args.memory_dir))
         raise SystemExit(0)
 
     trail = Trail.start(
@@ -366,26 +368,26 @@ def main() -> None:
     )
 
     try:
-        log.info(f"Scanning sessions from last {args.days} days")
-        log.info(f"Home: {home}")
+        core.log.info(f"Scanning sessions from last {args.days} days")
+        core.log.info(f"Home: {home}")
 
         memory_states = scan_memory_state()
-        log.info(f"Found {len(memory_states)} project(s) with memory")
+        core.log.info(f"Found {len(memory_states)} project(s) with memory")
         trail.info("scan_memories", f"found {len(memory_states)} memory files across {sum(len(s.get('topic_files', [])) for s in memory_states)} topics")
 
         cutoff = datetime.now() - timedelta(days=args.days)
-        discovered = sessions.discover_sessions(home, since=cutoff)
+        discovered = core.sessions.discover_sessions(home, since=cutoff)
         # Tallied off the list already in hand, not by a second discovery pass:
         # every Session carries the harness that wrote it. Seeded from HARNESSES
         # first so a harness that went undiscovered reports `pi 0` rather than
         # dropping out of the header — the silent failure _format_counts exists
         # to make visible, and what tests/dream_scan.bats asserts end to end.
-        counts = {h.name: 0 for h in sessions.HARNESSES}
+        counts = {h.name: 0 for h in core.sessions.HARNESSES}
         counts.update(Counter(s.harness for s in discovered))
-        log.info(f"Sessions: {counts}")
+        core.log.info(f"Sessions: {counts}")
 
         signals = scan_sessions(discovered)
-        log.info(f"Found {len(signals)} signal(s)")
+        core.log.info(f"Found {len(signals)} signal(s)")
         trail.info(
             "scan_sessions",
             f"scanned {sum(counts.values())} transcripts ({counts}) from last "

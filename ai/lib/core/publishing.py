@@ -90,7 +90,7 @@ import importlib
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from core import log
+import core.log
 
 _enabled = False
 _held = ""
@@ -172,7 +172,7 @@ def hold(reason: str) -> None:
     if _held:
         return
     _held = reason
-    log.info(f"Publishing held — {reason}. Nothing further leaves the machine.")
+    core.log.info(f"Publishing held — {reason}. Nothing further leaves the machine.")
 
 
 def held() -> str:
@@ -191,9 +191,9 @@ def enabled() -> bool:
 
 def draft(action: str, body: str = "") -> None:
     """Record what would have been written, to stderr."""
-    log.info(f"DRAFT (not published) — {action}")
+    core.log.info(f"DRAFT (not published) — {action}")
     for line in body.splitlines():
-        log.dim(line)
+        core.log.dim(line)
 
 
 def call_entry_point(handler: str, argv: list[str], **kwargs) -> int:
@@ -254,5 +254,5 @@ def exit_code_of(value: object) -> int:
         # land here too and return 1 and 0 respectively — the same values
         # CPython itself would use, so this is intentional rather than a gap.
         return value
-    log.error(str(value))
+    core.log.error(str(value))
     return 1

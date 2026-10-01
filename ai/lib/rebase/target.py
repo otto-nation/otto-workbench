@@ -14,10 +14,10 @@ Not to be confused with ``pr.target``, which owns repo identity and target
 
 from __future__ import annotations
 
-from core import log
+import core.log
 from core.trail import Trail, tdecision, terr, tfail
-from git import client as git_client
-from pr import context as pr_context
+import git.client
+import pr.context
 
 from . import inspect as rebase_inspect
 from . import pr_snapshot as rebase_pr_snapshot
@@ -28,7 +28,7 @@ UNPUSHED_SUBJECT_LIMIT = rebase_types.UNPUSHED_SUBJECT_LIMIT
 
 
 def pr_base_branch(
-    cwd: str, ctx: pr_context.ResolvedContext,
+    cwd: str, ctx: pr.context.ResolvedContext,
     snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
 ) -> str | None:
     """The branch the PR targets per GitHub, or None when it cannot say.
@@ -39,7 +39,7 @@ def pr_base_branch(
     no PR number is resolved yet, so a branch with an open PR still surfaces a
     base here even before its number is known.
 
-    Without one, ``ctx.base`` answers: ``pr_context.resolve`` reads the base off
+    Without one, ``ctx.base`` answers: ``pr.context.resolve`` reads the base off
     whichever call found the PR, so by the time a rebase asks, the field is
     already filled and no second round trip is owed. It is empty only when that
     call could not answer either — no ``gh``, no auth, no PR — and a read here
@@ -47,7 +47,7 @@ def pr_base_branch(
 
     Best effort, unlike ``branch_landed.merged_pr``, which now tells a refused
     read from an answered one: gh may be absent, unauthenticated or
-    rate-limited. Where it cannot say, :func:`pr_context.base_branch` derives a
+    rate-limited. Where it cannot say, :func:`pr.context.base_branch` derives a
     stack parent from local ancestry before falling back to the trunk, so the
     cost of this returning None is no longer a rebase onto the wrong base for
     every stacked branch — only for one whose parent git cannot see either.
@@ -58,7 +58,7 @@ def pr_base_branch(
 
 
 def resolve_target_ref(
-    cwd: str, ctx: pr_context.ResolvedContext, onto: str | None,
+    cwd: str, ctx: pr.context.ResolvedContext, onto: str | None,
     *, snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
 ) -> str:
@@ -83,14 +83,14 @@ def resolve_target_ref(
     # Passed as `known` rather than folded onto the context: the snapshot's base
     # is the same GitHub fact `ctx.base` carries, read by a different call, and
     # this is the caller the parameter exists for.
-    base = pr_context.base_branch(
+    base = pr.context.base_branch(
         ctx, known=pr_base_branch(cwd, ctx, snapshot) or "", cwd=cwd, trail=trail,
     )
     return decide(f"origin/{base}", f"resolved base branch {base}")
 
 
 def resume_target_ref(
-    ctx: pr_context.ResolvedContext, target_ref: str, *, trail: Trail | None = None,
+    ctx: pr.context.ResolvedContext, target_ref: str, *, trail: Trail | None = None,
 ) -> str:
     """The ref an in-progress rebase is actually replaying onto.
 
@@ -114,10 +114,10 @@ def local_vs_remote(cwd: str, branch: str) -> RefDivergence:
     """Compare the local *branch* ref against origin's, without moving HEAD.
 
     Deliberately ref-to-ref rather than the ``origin/<branch>..HEAD`` that
-    pr_context._unpushed_count asks: this runs while the worktree is still on
+    pr.context._unpushed_count asks: this runs while the worktree is still on
     some other branch, so HEAD is not the thing being measured.
     """
-    r = git_client.run(
+    r = git.client.run(
         "rev-list", "--left-right", "--count",
         f"origin/{branch}...refs/heads/{branch}", cwd=cwd,
     )
@@ -132,7 +132,7 @@ def local_vs_remote(cwd: str, branch: str) -> RefDivergence:
 
 def unpushed_subjects(cwd: str, branch: str) -> list[str]:
     """Subjects of commits on local *branch* that origin's copy does not have."""
-    return git_client.lines(
+    return git.client.lines(
         "log", "--no-decorate", "--oneline",
         f"-{UNPUSHED_SUBJECT_LIMIT}", f"origin/{branch}..refs/heads/{branch}",
         cwd=cwd,
@@ -140,7 +140,7 @@ def unpushed_subjects(cwd: str, branch: str) -> list[str]:
 
 
 def refuse_diverged(
-    cwd: str, ctx: pr_context.ResolvedContext, div: RefDivergence,
+    cwd: str, ctx: pr.context.ResolvedContext, div: RefDivergence,
     *, trail: Trail | None = None,
 ) -> int:
     """Report a local branch that neither ref can be discarded from."""
@@ -149,22 +149,22 @@ def refuse_diverged(
         trail, "preflight", f"{ctx.branch} has diverged from origin/{ctx.branch}",
         data={"ahead": div.ahead, "behind": div.behind, "unpushed": subjects},
     )
-    log.error(
+    core.log.error(
         f"Refusing to check out {ctx.branch} — it holds {div.ahead} commit(s) "
         f"origin/{ctx.branch} does not, and origin holds {div.behind} it does not."
     )
     for subject in subjects:
-        log.dim(f"  {subject}")
+        core.log.dim(f"  {subject}")
     # A list that stops at the cap without saying so reads as the whole set,
     # and the operator would go reconcile a branch they think they have seen.
     if div.ahead > len(subjects):
-        log.dim(f"  ... and {div.ahead - len(subjects)} more")
-    log.dim("Reconcile the two in that branch's own worktree, then retry.")
+        core.log.dim(f"  ... and {div.ahead - len(subjects)} more")
+    core.log.dim("Reconcile the two in that branch's own worktree, then retry.")
     return 1
 
 
 def checkout_target_branch(
-    cwd: str, ctx: pr_context.ResolvedContext, *, trail: Trail | None = None,
+    cwd: str, ctx: pr.context.ResolvedContext, *, trail: Trail | None = None,
 ) -> int:
     """Put *cwd* on ctx.branch without discarding commits either ref holds alone.
 
@@ -195,14 +195,14 @@ def checkout_target_branch(
 
 
 def run_checkout(
-    cwd: str, ctx: pr_context.ResolvedContext, args: tuple[str, ...],
+    cwd: str, ctx: pr.context.ResolvedContext, args: tuple[str, ...],
     *, trail: Trail | None = None,
 ) -> int:
     """Run one checkout, reporting git's own stderr when it refuses."""
-    co = git_client.run(*args, cwd=cwd)
+    co = git.client.run(*args, cwd=cwd)
     if not co.ok:
         tfail(trail, "preflight", f"cannot checkout {ctx.branch}", output=co.combined_output)
-        log.error(f"Cannot checkout {ctx.branch}: {co.stderr.strip()}")
+        core.log.error(f"Cannot checkout {ctx.branch}: {co.stderr.strip()}")
         return 1
     return 0
 

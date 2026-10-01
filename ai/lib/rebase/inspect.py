@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from core import log, proc
-from git import client as git_client
+import core.log
+import core.proc
+import git.client
 
 # ── Constants ───────────────────────────────────────────────────────────────
 
@@ -33,7 +34,7 @@ _PICK_COMMANDS = frozenset({
 
 def git_dir(cwd: str) -> Path:
     """Return the ``.git`` directory path for the repo."""
-    raw = git_client.out("rev-parse", "--git-dir", cwd=cwd)
+    raw = git.client.out("rev-parse", "--git-dir", cwd=cwd)
     return Path(raw) if Path(raw).is_absolute() else Path(cwd) / raw
 
 
@@ -54,19 +55,19 @@ def rebase_in_progress(cwd: str) -> bool:
 
 def detect_conflicts(cwd: str) -> list[str]:
     """Return list of conflicted file paths."""
-    return git_client.lines("diff", "--name-only", "--diff-filter=U", cwd=cwd)
+    return git.client.lines("diff", "--name-only", "--diff-filter=U", cwd=cwd)
 
 
 def is_empty_patch(cwd: str) -> bool:
     """Check if the current rebase step has no changes (patch already applied upstream)."""
-    staged = git_client.ok("diff", "--cached", "--quiet", cwd=cwd)
-    return staged and git_client.ok("diff", "--quiet", cwd=cwd)
+    staged = git.client.ok("diff", "--cached", "--quiet", cwd=cwd)
+    return staged and git.client.ok("diff", "--quiet", cwd=cwd)
 
 
 def rebase_head_info(cwd: str) -> tuple[str, str]:
     """Return ``(short_sha, subject)`` of the commit being rebased."""
-    sha = git_client.out("rev-parse", "--short", "REBASE_HEAD", cwd=cwd)
-    subject = git_client.out("log", "-1", "--format=%s", "REBASE_HEAD", cwd=cwd)
+    sha = git.client.out("rev-parse", "--short", "REBASE_HEAD", cwd=cwd)
+    subject = git.client.out("log", "-1", "--format=%s", "REBASE_HEAD", cwd=cwd)
     return sha, subject
 
 
@@ -101,9 +102,9 @@ def status_lines(cwd: str) -> list[str] | None:
     the rebase.  A ``status`` killed by a timeout or a locked index must not be
     spelled the same way as a tree with nothing in it.
     """
-    status = git_client.run("status", "--porcelain", cwd=cwd)
+    status = git.client.run("status", "--porcelain", cwd=cwd)
     if not status.ok:
-        log.warn(proc.failure_message(f"git status failed in {cwd}", status))
+        core.log.warn(core.proc.failure_message(f"git status failed in {cwd}", status))
         return None
     return [line for line in status.stdout.splitlines() if line.strip()]
 
@@ -113,7 +114,7 @@ def status_lines(cwd: str) -> list[str] | None:
 
 def ref_exists(cwd: str, ref: str) -> bool:
     """Whether *ref* resolves in the repo at *cwd*."""
-    return git_client.ok("rev-parse", "--verify", "--quiet", ref, cwd=cwd)
+    return git.client.ok("rev-parse", "--verify", "--quiet", ref, cwd=cwd)
 
 
 def shares_history(cwd: str, *, target_ref: str) -> bool:
@@ -127,4 +128,4 @@ def shares_history(cwd: str, *, target_ref: str) -> bool:
     """
     if not ref_exists(cwd, target_ref):
         return True
-    return git_client.ok("merge-base", target_ref, "HEAD", cwd=cwd)
+    return git.client.ok("merge-base", target_ref, "HEAD", cwd=cwd)

@@ -8,10 +8,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from agent import invoke as agent_invoke
-from agent import backend as ai_backend
-from agent import session as review_agent
-from review import retry as review_retry
+import agent.invoke
+import agent.backend
+import agent.session
+import review.retry
 from agent.diagnosis import Diagnosis, DiagnosisKind
 
 
@@ -56,7 +56,7 @@ class TestDiagnoseMissingOutput:
             _tool_use("Bash", command="ls"),
             _result(),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis.kind is DiagnosisKind.MAX_TURNS
         assert diagnosis.no_write_tool
 
@@ -67,13 +67,13 @@ class TestDiagnoseMissingOutput:
             _tool_use("Edit", file_path="/tmp/out.md", old_string=""),
             _result(),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis == Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS)
 
     def test_no_assistant_records_stays_plain(self, tmp_path):
         """Non-Claude backends log no tool_use — absence is not evidence."""
         log_path = _write_log(tmp_path, _result())
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis == Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS)
 
     def test_crash_is_not_labelled_a_no_write_failure(self, tmp_path):
@@ -86,10 +86,10 @@ class TestDiagnoseMissingOutput:
                 "result": "spawn ENOENT",
             }),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis.kind is DiagnosisKind.AGENT_ERROR
         assert not diagnosis.no_write_tool
-        assert not review_retry._is_retryable(diagnosis)
+        assert not review.retry._is_retryable(diagnosis)
 
     def test_transient_crash_is_classified_apart_from_a_plain_one(self, tmp_path):
         log_path = _write_log(
@@ -99,9 +99,9 @@ class TestDiagnoseMissingOutput:
                 "result": "API Error: Connection to the API was lost.",
             }),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis.kind is DiagnosisKind.TRANSIENT
-        assert review_retry._is_retryable(diagnosis)
+        assert review.retry._is_retryable(diagnosis)
 
     def test_clean_completion_without_a_write_is_labelled(self, tmp_path):
         log_path = _write_log(
@@ -109,10 +109,10 @@ class TestDiagnoseMissingOutput:
             _tool_use("Read", file_path="/tmp/a"),
             json.dumps({"type": "result", "subtype": "success"}),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis.kind is DiagnosisKind.COMPLETED
         assert diagnosis.no_write_tool
-        assert review_retry._is_retryable(diagnosis)
+        assert review.retry._is_retryable(diagnosis)
 
     def test_refusal_without_any_tool_call_is_labelled(self, tmp_path):
         """A one-turn refusal calls no tool at all — the clearest no-write case.
@@ -126,17 +126,17 @@ class TestDiagnoseMissingOutput:
             _text("I'm configured as a review-only assistant; I won't apply fixes."),
             json.dumps({"type": "result", "subtype": "success"}),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis.no_write_tool
-        assert review_retry._is_retryable(diagnosis)
+        assert review.retry._is_retryable(diagnosis)
 
     def test_missing_log_unchanged(self, tmp_path):
-        diagnosis = review_agent.diagnose_missing_output(str(tmp_path / "nope.jsonl"))
+        diagnosis = agent.session.diagnose_missing_output(str(tmp_path / "nope.jsonl"))
         assert diagnosis == Diagnosis(DiagnosisKind.NO_SESSION_LOG)
 
     def test_no_result_record_unchanged(self, tmp_path):
         log_path = _write_log(tmp_path, _tool_use("Read", file_path="/tmp/a"))
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis == Diagnosis(DiagnosisKind.NO_RESULT_RECORD)
 
     def test_quota_retry_without_a_result_is_quota_exhausted(self, tmp_path):
@@ -144,7 +144,7 @@ class TestDiagnoseMissingOutput:
             tmp_path,
             json.dumps({"type": "system", "subtype": "api_retry", "error_status": 429}),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis == Diagnosis(DiagnosisKind.QUOTA_EXHAUSTED)
 
 
@@ -242,12 +242,12 @@ class TestSinglePassRead:
             tmp_path, _tool_use("Read", file_path="/tmp/a"), _result(),
         )
         reads = []
-        real = review_agent.read_jsonl
+        real = agent.session.read_jsonl
         monkeypatch.setattr(
-            review_agent, "read_jsonl",
+            agent.session, "read_jsonl",
             lambda p: (reads.append(p), real(p))[1],
         )
-        review_agent.diagnose_missing_output(log_path)
+        agent.session.diagnose_missing_output(log_path)
         assert reads == [log_path]
 
 
@@ -261,14 +261,14 @@ class TestWritableDirs:
     def _add_dirs(self, monkeypatch, artifact_dir: str) -> list[str]:
         captured = {}
         monkeypatch.setattr(
-            agent_invoke.ai_backend, "invoke_agent",
+            agent.backend, "invoke_agent",
             lambda inv: captured.update(add_dirs=inv.add_dirs) or 0,
         )
-        agent_invoke.run_agent(
-            ai_backend.AgentInvocation(
+        agent.invoke.run_agent(
+            agent.backend.AgentInvocation(
                 prompt="prompt",
                 session_log="/tmp/session.jsonl",
-                add_dirs=review_agent.build_add_dirs("/tmp/wt", artifact_dir),
+                add_dirs=agent.session.build_add_dirs("/tmp/wt", artifact_dir),
             ),
         )
         return captured["add_dirs"]
@@ -342,7 +342,7 @@ class TestPiLogsAreReadableForWrites:
             json.dumps({"type": "turn_end"}),
             _pi_result(),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis.kind is DiagnosisKind.MAX_TURNS
         assert diagnosis.no_write_tool
 
@@ -354,7 +354,7 @@ class TestPiLogsAreReadableForWrites:
             json.dumps({"type": "turn_end"}),
             _pi_result(),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert not diagnosis.no_write_tool
 
     def test_a_completed_pi_run_with_no_write_is_still_flagged(self, tmp_path):
@@ -365,7 +365,7 @@ class TestPiLogsAreReadableForWrites:
             json.dumps({"type": "agent_end"}),
             _pi_result(subtype="success"),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis.kind is DiagnosisKind.COMPLETED
         assert diagnosis.no_write_tool
 
@@ -379,7 +379,7 @@ class TestPiLogsAreReadableForWrites:
                 "result": "spawn ENOENT",
             }),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis.kind is DiagnosisKind.AGENT_ERROR
         assert not diagnosis.no_write_tool
 
@@ -387,7 +387,7 @@ class TestPiLogsAreReadableForWrites:
         # Absence of evidence is not evidence of absence for a backend whose
         # logs this module cannot read.
         log_path = _write_log(tmp_path, _result())
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert not diagnosis.no_write_tool
 
     def test_a_scratch_write_is_not_the_deliverable(self, tmp_path):
@@ -404,7 +404,7 @@ class TestPiLogsAreReadableForWrites:
             json.dumps({"type": "turn_end"}),
             _pi_result(subtype="success"),
         )
-        diagnosis = review_agent.diagnose_missing_output(
+        diagnosis = agent.session.diagnose_missing_output(
             log_path, output_path="/out/review.md",
         )
         assert diagnosis.kind is DiagnosisKind.COMPLETED
@@ -418,7 +418,7 @@ class TestPiLogsAreReadableForWrites:
             json.dumps({"type": "turn_end"}),
             _pi_result(subtype="success"),
         )
-        diagnosis = review_agent.diagnose_missing_output(
+        diagnosis = agent.session.diagnose_missing_output(
             log_path, output_path="/out/review.md",
         )
         assert not diagnosis.no_write_tool
@@ -441,7 +441,7 @@ class TestTheNarrationScanIsOrderedCheaplyFirst:
         def _boom(records):
             raise AssertionError("narration scan ran for a run that used tools")
 
-        monkeypatch.setattr(review_agent, "_narrated_write_contents", _boom)
+        monkeypatch.setattr(agent.session, "_narrated_write_contents", _boom)
         log_path = _write_log(
             tmp_path,
             _pi_tool("read", path="/wt/a.py"),
@@ -449,7 +449,7 @@ class TestTheNarrationScanIsOrderedCheaplyFirst:
         )
         # Reached the no-write branch — so the scan was skipped by the `and`,
         # not by an early return above it.
-        assert review_agent.diagnose_missing_output(log_path).no_write_tool is True
+        assert agent.session.diagnose_missing_output(log_path).no_write_tool is True
 
     def test_a_run_that_called_nothing_does_reach_the_scan(self, tmp_path):
         """The other half: the cheap test must not suppress a real answer."""
@@ -458,7 +458,7 @@ class TestTheNarrationScanIsOrderedCheaplyFirst:
             _pi_text('write review.md "# Rev\n\n## Must fix\n- [M1] x\n"'),
             _pi_result(subtype="success"),
         )
-        assert review_agent.diagnose_missing_output(log_path).narrated_call is True
+        assert agent.session.diagnose_missing_output(log_path).narrated_call is True
 
 
 class TestAPiTransportFailureIsNotACompletedRun:
@@ -482,7 +482,7 @@ class TestAPiTransportFailureIsNotACompletedRun:
             ),
             _pi_result(subtype="success"),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis.kind is DiagnosisKind.TRANSIENT
         assert "ETIMEDOUT" in diagnosis.message
 
@@ -495,7 +495,7 @@ class TestAPiTransportFailureIsNotACompletedRun:
             _pi_agent_end("error", "socket hang up"),
             _pi_result(subtype="success"),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis.kind in _RETRYABLE_KINDS
 
     def test_the_agent_is_not_blamed_for_a_network_fault(self, tmp_path):
@@ -506,7 +506,7 @@ class TestAPiTransportFailureIsNotACompletedRun:
             _pi_agent_end("error", "read ETIMEDOUT"),
             _pi_result(subtype="success"),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert not diagnosis.no_write_tool
         assert _NO_WRITE_SUFFIX not in diagnosis.message
 
@@ -517,7 +517,7 @@ class TestAPiTransportFailureIsNotACompletedRun:
             _pi_agent_end("error", "401 unauthorized"),
             _pi_result(subtype="success"),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis.kind is DiagnosisKind.AGENT_ERROR
 
     # passes-at-base: the genuine no-write case, which this change preserves
@@ -529,7 +529,7 @@ class TestAPiTransportFailureIsNotACompletedRun:
             _pi_agent_end(),
             _pi_result(subtype="success"),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis.kind is DiagnosisKind.COMPLETED
         assert diagnosis.no_write_tool
 
@@ -546,7 +546,7 @@ class TestAPiTransportFailureIsNotACompletedRun:
             _pi_agent_end("aborted", "Request was aborted."),
             _pi_result(),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis.kind is DiagnosisKind.MAX_TURNS
         assert diagnosis.num_turns == _TURNS
 
@@ -560,7 +560,7 @@ class TestAPiTransportFailureIsNotACompletedRun:
             _pi_agent_end(),
             _pi_result(subtype="success"),
         )
-        diagnosis = review_agent.diagnose_missing_output(
+        diagnosis = agent.session.diagnose_missing_output(
             log_path, output_path="/out/review.md",
         )
         assert diagnosis.kind is DiagnosisKind.COMPLETED
@@ -584,7 +584,7 @@ class TestAPiTransportFailureIsNotACompletedRun:
             ),
             _pi_result(subtype="success"),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis.kind is DiagnosisKind.COMPLETED
 
     def test_the_last_message_of_the_last_envelope_is_the_one_read(self, tmp_path):
@@ -598,7 +598,7 @@ class TestAPiTransportFailureIsNotACompletedRun:
             ),
             _pi_result(subtype="success"),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis.kind is DiagnosisKind.TRANSIENT
 
     # passes-at-base: a bound on the new check, which base does not make at all
@@ -612,7 +612,7 @@ class TestAPiTransportFailureIsNotACompletedRun:
                 "result": "spawn ENOENT",
             }),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis.detail == "spawn ENOENT"
 
 
@@ -631,7 +631,7 @@ class TestDiagnosingANarratedCall:
             _pi_text('write review.md "# Rev\n\n## Must fix\n- [M1] x\n"'),
             _pi_result(subtype="success"),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis.narrated_call is True
         assert diagnosis.no_write_tool is True
         assert "wrote its tool call as text" in diagnosis.message
@@ -650,18 +650,18 @@ class TestDiagnosingANarratedCall:
             _pi_text("Good, that checks out.\n\n## Next\nNow the caller.\n"),
             _pi_result(subtype="error_max_turns"),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis.narrated_call is False
 
     def test_the_hint_names_the_mistake_not_the_mechanism(self, tmp_path):
-        from agent import retry as agent_retry
+        import agent.retry
 
         log_path = _write_log(
             tmp_path,
             _pi_text('write review.md "# Rev\n\n## Must fix\n- [M1] x\n"'),
             _pi_result(subtype="success"),
         )
-        hint = agent_retry.hint_for(review_agent.diagnose_missing_output(log_path))
+        hint = agent.retry.hint_for(agent.session.diagnose_missing_output(log_path))
         assert "as text" in hint
         # Not the no-write hint, which would tell an agent that believes it
         # wrote the file to write the file.
@@ -669,17 +669,17 @@ class TestDiagnosingANarratedCall:
 
     def test_a_plain_no_write_run_still_gets_the_mechanism_hint(self, tmp_path):
         """The narrower hint must not swallow the case it sits in front of."""
-        from agent import retry as agent_retry
+        import agent.retry
 
         log_path = _write_log(
             tmp_path,
             _pi_tool("read", path="/wt/a.py"),
             _pi_result(subtype="success"),
         )
-        diagnosis = review_agent.diagnose_missing_output(log_path)
+        diagnosis = agent.session.diagnose_missing_output(log_path)
         assert diagnosis.no_write_tool is True
         assert diagnosis.narrated_call is False
-        assert "A previous attempt finished without" in agent_retry.hint_for(diagnosis)
+        assert "A previous attempt finished without" in agent.retry.hint_for(diagnosis)
 
 
 class TestRecoveringAStrayWriteFromTheLog:
@@ -700,7 +700,7 @@ class TestRecoveringAStrayWriteFromTheLog:
             _pi_tool("write", path=str(output), content="## Must fix\n- [M1] x\n"),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert agent.session.try_recover_output(log_path, str(output)) is True
         assert "## Must fix" in output.read_text()
 
     def test_a_relative_write_of_the_same_name_is_recovered(self, tmp_path):
@@ -712,7 +712,7 @@ class TestRecoveringAStrayWriteFromTheLog:
             _pi_tool("write", path="review.md", content="## Must fix\n- [M1] x\n"),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert agent.session.try_recover_output(log_path, str(output)) is True
         assert "## Must fix" in output.read_text()
 
     def test_a_scratch_write_beside_it_is_not_the_deliverable(self, tmp_path):
@@ -725,7 +725,7 @@ class TestRecoveringAStrayWriteFromTheLog:
                      content="## Must fix\n- [M1] not the review\n"),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is False
+        assert agent.session.try_recover_output(log_path, str(output)) is False
         assert output.read_text() == ""
 
     def test_a_probe_without_headings_is_not_recovered(self, tmp_path):
@@ -737,7 +737,7 @@ class TestRecoveringAStrayWriteFromTheLog:
             _pi_tool("write", path="review.md", content="test"),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is False
+        assert agent.session.try_recover_output(log_path, str(output)) is False
 
     def test_the_last_qualifying_write_wins(self, tmp_path):
         """A refused write is retried, and the document grows across attempts."""
@@ -749,7 +749,7 @@ class TestRecoveringAStrayWriteFromTheLog:
             _pi_tool("write", path="review.md", content="## Must fix\n- final\n"),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert agent.session.try_recover_output(log_path, str(output)) is True
         assert "final" in output.read_text()
         assert "draft" not in output.read_text()
 
@@ -769,7 +769,7 @@ class TestRecoveringAStrayWriteFromTheLog:
             _pi_text('I already wrote the file.\n\nwrite review.md "' + doc + '"'),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert agent.session.try_recover_output(log_path, str(output)) is True
         body = output.read_text()
         assert "[M1]" in body
         # The narration is dropped and the document's own title survives: the
@@ -797,7 +797,7 @@ class TestRecoveringAStrayWriteFromTheLog:
             _pi_text(text),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert agent.session.try_recover_output(log_path, str(output)) is True
         body = output.read_text()
         assert body.startswith("# Self-Review: repo")
         assert "My plan" not in body
@@ -824,7 +824,7 @@ class TestRecoveringAStrayWriteFromTheLog:
             _pi_text(text),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert agent.session.try_recover_output(log_path, str(output)) is True
         body = output.read_text()
         assert body.startswith("# Self-Review: repo")
         assert "[M1]" in body
@@ -837,7 +837,7 @@ class TestRecoveringAStrayWriteFromTheLog:
             _pi_text("Here it is:\n\n```markdown\n## Must fix\n- [M1] x\n```\n"),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert agent.session.try_recover_output(log_path, str(output)) is True
         body = output.read_text()
         assert "[M1]" in body
         assert "```" not in body
@@ -866,7 +866,7 @@ class TestRecoveringAStrayWriteFromTheLog:
             ),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert agent.session.try_recover_output(log_path, str(output)) is True
         body = output.read_text()
         assert "[M1]" in body
         assert "rm -rf" not in body
@@ -883,7 +883,7 @@ class TestRecoveringAStrayWriteFromTheLog:
             ),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert agent.session.try_recover_output(log_path, str(output)) is True
         body = output.read_text()
         assert "final" in body
         assert "draft" not in body
@@ -897,7 +897,7 @@ class TestRecoveringAStrayWriteFromTheLog:
             _pi_text("Here:\n\n```markdown\n# Rev\n\n## Must fix\n- [M1] x\n"),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert agent.session.try_recover_output(log_path, str(output)) is True
         assert "[M1]" in output.read_text()
 
     def test_a_deliverable_with_no_level_one_title_is_still_trimmed(self, tmp_path):
@@ -918,7 +918,7 @@ class TestRecoveringAStrayWriteFromTheLog:
             ),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert agent.session.try_recover_output(log_path, str(output)) is True
         body = output.read_text()
         assert body.startswith("## Investigation Leads")
         assert "I will write" not in body
@@ -935,7 +935,7 @@ class TestRecoveringAStrayWriteFromTheLog:
             ),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert agent.session.try_recover_output(log_path, str(output)) is True
         body = output.read_text()
         assert body.startswith("# Self-Review: repo")
         assert "My plan" not in body
@@ -958,7 +958,7 @@ class TestRecoveringAStrayWriteFromTheLog:
             ),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert agent.session.try_recover_output(log_path, str(output)) is True
         body = output.read_text()
         assert "[M1]" in body
         assert "</content>" not in body
@@ -982,7 +982,7 @@ class TestRecoveringAStrayWriteFromTheLog:
             }, indent=2)),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert agent.session.try_recover_output(log_path, str(output)) is True
         body = output.read_text()
         assert "[M1]" in body
         assert "\\n" not in body
@@ -1001,7 +1001,7 @@ class TestRecoveringAStrayWriteFromTheLog:
             _pi_text("# Rev\n\n## Must fix\n- [M1] see:\n\n    foo = {\n      bar: 1\n    }\n"),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert agent.session.try_recover_output(log_path, str(output)) is True
         assert output.read_text().rstrip().endswith("}")
 
     def test_a_document_quoting_json_is_not_decoded_as_a_call(self, tmp_path):
@@ -1013,7 +1013,7 @@ class TestRecoveringAStrayWriteFromTheLog:
             _pi_text('# Rev\n\n## Must fix\n- [M1] the config `{"a": 1}` is wrong\n'),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert agent.session.try_recover_output(log_path, str(output)) is True
         assert '{"a": 1}' in output.read_text()
 
     def test_a_fenced_document_with_a_nested_fence_is_not_truncated(self, tmp_path):
@@ -1037,7 +1037,7 @@ class TestRecoveringAStrayWriteFromTheLog:
             _pi_text("Here it is:\n\n```markdown\n" + doc + "```\n"),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert agent.session.try_recover_output(log_path, str(output)) is True
         body = output.read_text()
         assert "[M1]" in body
         assert "[S1]" in body
@@ -1051,7 +1051,7 @@ class TestRecoveringAStrayWriteFromTheLog:
             _pi_text("I could not complete the review. Please advise."),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is False
+        assert agent.session.try_recover_output(log_path, str(output)) is False
         assert output.read_text() == ""
 
     def test_the_prompt_is_not_mistaken_for_the_agents_output(self, tmp_path):
@@ -1068,7 +1068,7 @@ class TestRecoveringAStrayWriteFromTheLog:
             _pi_text("## Review format\nWrite your findings here.", role="user"),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is False
+        assert agent.session.try_recover_output(log_path, str(output)) is False
         assert output.read_text() == ""
 
     def test_a_real_write_beats_narrated_text(self, tmp_path):
@@ -1081,7 +1081,7 @@ class TestRecoveringAStrayWriteFromTheLog:
             _pi_text("## Must fix\n- from the narration\n"),
             _pi_result(subtype="success"),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert agent.session.try_recover_output(log_path, str(output)) is True
         assert "from the tool" in output.read_text()
         assert "from the narration" not in output.read_text()
 
@@ -1097,7 +1097,7 @@ class TestRecoveringAStrayWriteFromTheLog:
                 ],
             }),
         )
-        assert review_agent.try_recover_output(log_path, str(output)) is True
+        assert agent.session.try_recover_output(log_path, str(output)) is True
         assert "denied" in output.read_text()
 
 
@@ -1116,7 +1116,7 @@ class TestAMissingDeliverableIsNamedAsSuch:
             _pi_tool("read", path="/wt/a.py"),
             _pi_result(subtype="success"),
         )
-        diagnosis = review_agent.diagnose_missing_output(
+        diagnosis = agent.session.diagnose_missing_output(
             log_path, output_path=str(tmp_path / "absent.md"),
         )
         assert diagnosis.deliverable_gone
@@ -1131,7 +1131,7 @@ class TestAMissingDeliverableIsNamedAsSuch:
             _pi_tool("read", path="/wt/a.py"),
             _pi_result(subtype="success"),
         )
-        diagnosis = review_agent.diagnose_missing_output(
+        diagnosis = agent.session.diagnose_missing_output(
             log_path, output_path=str(output),
         )
         assert not diagnosis.deliverable_gone
@@ -1146,7 +1146,7 @@ class TestAMissingDeliverableIsNamedAsSuch:
                 "result": "spawn ENOENT",
             }),
         )
-        diagnosis = review_agent.diagnose_missing_output(
+        diagnosis = agent.session.diagnose_missing_output(
             log_path, output_path=str(tmp_path / "absent.md"),
         )
         assert diagnosis.kind is DiagnosisKind.AGENT_ERROR
@@ -1154,19 +1154,19 @@ class TestAMissingDeliverableIsNamedAsSuch:
 
     def test_a_missing_deliverable_does_not_change_retryability(self, tmp_path):
         """Reporting honesty, not a behaviour change: both answers must match."""
-        from agent import retry as agent_retry
+        import agent.retry
 
         output = tmp_path / "review.md"
         lines = (_pi_tool("read", path="/wt/a.py"), _pi_result(subtype="success"))
-        without_file = review_agent.diagnose_missing_output(
+        without_file = agent.session.diagnose_missing_output(
             _write_log(tmp_path, *lines), output_path=str(output),
         )
         output.write_text("")
-        with_file = review_agent.diagnose_missing_output(
+        with_file = agent.session.diagnose_missing_output(
             _write_log(tmp_path, *lines), output_path=str(output),
         )
         assert without_file.deliverable_gone
         assert not with_file.deliverable_gone
-        assert agent_retry.is_retryable(with_file) == agent_retry.is_retryable(
+        assert agent.retry.is_retryable(with_file) == agent.retry.is_retryable(
             without_file,
         )

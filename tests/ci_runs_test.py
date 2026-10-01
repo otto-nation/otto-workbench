@@ -9,15 +9,15 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from pr import ci_annotations  # noqa: E402
-from pr import ci_failures as ci  # noqa: E402
-from gh import run_reads  # noqa: E402
-from pr import ci_runs  # noqa: E402
+import pr.ci_annotations  # noqa: E402
+import pr.ci_failures  # noqa: E402
+import gh.run_reads  # noqa: E402
+import pr.ci_runs  # noqa: E402
 
 
 def _no_log_fallback(kind):
     """A `log_fallback` result for a job whose logs yielded nothing."""
-    return ci_annotations.LogFallback([], "", kind, structured=False)
+    return pr.ci_annotations.LogFallback([], "", kind, structured=False)
 
 
 # ── merge_runs ───────────────────────────────────────────────────────────
@@ -29,7 +29,7 @@ def test_merge_runs_skipped_does_not_poison_conclusion():
         {"_run_id": 1, "databaseId": 1, "conclusion": "success", "jobs": []},
         {"_run_id": 2, "databaseId": 2, "conclusion": "skipped", "jobs": []},
     ]
-    result = ci_runs.merge_runs(runs)
+    result = pr.ci_runs.merge_runs(runs)
     assert result["conclusion"] == "success"
 
 
@@ -38,7 +38,7 @@ def test_merge_runs_cancelled_does_not_poison_conclusion():
         {"_run_id": 1, "databaseId": 1, "conclusion": "success", "jobs": []},
         {"_run_id": 2, "databaseId": 2, "conclusion": "cancelled", "jobs": []},
     ]
-    result = ci_runs.merge_runs(runs)
+    result = pr.ci_runs.merge_runs(runs)
     assert result["conclusion"] == "success"
 
 
@@ -48,7 +48,7 @@ def test_merge_runs_real_failure_overrides():
         {"_run_id": 2, "databaseId": 2, "conclusion": "failure",
          "jobs": [{"name": "test", "status": "completed", "conclusion": "failure"}]},
     ]
-    result = ci_runs.merge_runs(runs)
+    result = pr.ci_runs.merge_runs(runs)
     assert result["conclusion"] == "failure"
 
 
@@ -65,7 +65,7 @@ def test_merge_runs_jobless_action_required_does_not_poison_conclusion():
          "jobs": [{"name": "test", "status": "completed", "conclusion": "success"}]},
         {"_run_id": 2, "databaseId": 2, "conclusion": "action_required", "jobs": []},
     ]
-    result = ci_runs.merge_runs(runs)
+    result = pr.ci_runs.merge_runs(runs)
     assert result["conclusion"] == "success"
 
 
@@ -77,7 +77,7 @@ def test_merge_runs_jobless_startup_failure_and_stale_do_not_poison_conclusion()
              "jobs": [{"name": "test", "status": "completed", "conclusion": "success"}]},
             {"_run_id": 2, "databaseId": 2, "conclusion": conclusion, "jobs": []},
         ]
-        assert ci_runs.merge_runs(runs)["conclusion"] == "success", conclusion
+        assert pr.ci_runs.merge_runs(runs)["conclusion"] == "success", conclusion
 
 
 def test_merge_runs_action_required_with_a_failed_job_still_overrides():
@@ -91,7 +91,7 @@ def test_merge_runs_action_required_with_a_failed_job_still_overrides():
         {"_run_id": 2, "databaseId": 2, "conclusion": "action_required",
          "jobs": [{"name": "deploy", "status": "completed", "conclusion": "action_required"}]},
     ]
-    result = ci_runs.merge_runs(runs)
+    result = pr.ci_runs.merge_runs(runs)
     assert result["conclusion"] == "failure"
 
 
@@ -102,11 +102,11 @@ def test_merge_runs_a_failed_job_under_a_passing_run_still_overrides():
         {"_run_id": 2, "databaseId": 2, "conclusion": "failure",
          "jobs": [{"name": "lint", "status": "completed", "conclusion": "timed_out"}]},
     ]
-    assert ci_runs.merge_runs(runs)["conclusion"] == "failure"
+    assert pr.ci_runs.merge_runs(runs)["conclusion"] == "failure"
 
 
 def test_merge_runs_empty_list():
-    assert ci_runs.merge_runs([]) is None
+    assert pr.ci_runs.merge_runs([]) is None
 
 
 def test_merge_runs_collects_all_jobs():
@@ -114,7 +114,7 @@ def test_merge_runs_collects_all_jobs():
         {"_run_id": 1, "databaseId": 1, "conclusion": "success", "jobs": [{"name": "build"}]},
         {"_run_id": 2, "databaseId": 2, "conclusion": "success", "jobs": [{"name": "lint"}]},
     ]
-    result = ci_runs.merge_runs(runs)
+    result = pr.ci_runs.merge_runs(runs)
     assert len(result["jobs"]) == 2
     assert result["jobs"][0]["name"] == "build"
     assert result["jobs"][1]["name"] == "lint"
@@ -126,7 +126,7 @@ def test_merge_runs_tags_source_run_id():
         {"_run_id": 100, "databaseId": 100, "conclusion": "success", "jobs": [{"name": "lint"}]},
         {"_run_id": 200, "databaseId": 200, "conclusion": "failure", "jobs": [{"name": "build"}]},
     ]
-    result = ci_runs.merge_runs(runs)
+    result = pr.ci_runs.merge_runs(runs)
     assert result["jobs"][0]["_source_run_id"] == 100
     assert result["jobs"][1]["_source_run_id"] == 200
 
@@ -137,7 +137,7 @@ def test_merge_runs_in_progress_clears_success():
         {"_run_id": 1, "databaseId": 1, "status": "completed", "conclusion": "success", "jobs": []},
         {"_run_id": 2, "databaseId": 2, "status": "in_progress", "conclusion": None, "jobs": []},
     ]
-    result = ci_runs.merge_runs(runs)
+    result = pr.ci_runs.merge_runs(runs)
     assert result["status"] == "in_progress"
     assert result["conclusion"] == ""
 
@@ -149,7 +149,7 @@ def test_merge_runs_in_progress_preserves_failure():
          "jobs": [{"name": "test", "status": "completed", "conclusion": "failure"}]},
         {"_run_id": 2, "databaseId": 2, "status": "in_progress", "conclusion": None, "jobs": []},
     ]
-    result = ci_runs.merge_runs(runs)
+    result = pr.ci_runs.merge_runs(runs)
     assert result["conclusion"] == "failure"
     assert result["status"] == "in_progress"
 
@@ -166,7 +166,7 @@ def test_merge_runs_in_progress_clears_a_jobless_failure_conclusion():
          "conclusion": "action_required", "jobs": []},
         {"_run_id": 2, "databaseId": 2, "status": "in_progress", "conclusion": None, "jobs": []},
     ]
-    result = ci_runs.merge_runs(runs)
+    result = pr.ci_runs.merge_runs(runs)
     assert result["status"] == "in_progress"
     assert result["conclusion"] == ""
 
@@ -176,7 +176,7 @@ def test_merge_runs_in_progress_clears_a_jobless_failure_conclusion():
 
 def _rows(payloads):
     """The `gh run list` discovery the payloads below would have come from."""
-    return run_reads.RunDiscovery(rows=tuple(run_reads.RunRow(
+    return gh.run_reads.RunDiscovery(rows=tuple(gh.run_reads.RunRow(
         run_id=p["databaseId"], number=p.get("number", 0),
         head_sha=p.get("headSha", "abc"), status=p.get("status", ""),
         conclusion=p.get("conclusion", ""),
@@ -193,8 +193,8 @@ def _fetch_merged(payloads, checks=None):
     by_id = {p["databaseId"]: p for p in payloads}
     with patch("gh.run_reads.fetch_run_data", side_effect=lambda repo, rid: by_id[rid]), \
          patch("gh.run_reads.fetch_commit_checks",
-               return_value=checks or run_reads.CommitChecks()):
-        return ci_runs.fetch_merged("owner/repo", _rows(payloads))
+               return_value=checks or gh.run_reads.CommitChecks()):
+        return pr.ci_runs.fetch_merged("owner/repo", _rows(payloads))
 
 
 def test_a_jobless_cancelled_run_does_not_become_the_merged_conclusion():
@@ -253,7 +253,7 @@ def test_an_approval_gated_run_is_not_reported_as_a_failure_naming_nothing():
         {"databaseId": 400, "conclusion": "action_required", "status": "completed",
          "number": 7, "headSha": "abc123", "jobs": []},
     ])
-    state = ci_runs.parse_run("owner/repo", fetched.merged)
+    state = pr.ci_runs.parse_run("owner/repo", fetched.merged)
     assert state.failures == {}
     assert state.conclusion != "failure"
 
@@ -290,8 +290,8 @@ def test_parse_run_skips_null_conclusion_jobs():
         {"name": "Test", "conclusion": None, "databaseId": 12},
     ])
     with patch("gh.run_reads.fetch_annotations", return_value=[]):
-        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(ci.FailureKind.BUILD)):
-            result = ci_runs.parse_run("owner/repo", run_data)
+        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(pr.ci_failures.FailureKind.BUILD)):
+            result = pr.ci_runs.parse_run("owner/repo", run_data)
     assert len(result.failures) == 1
     assert "lint" in result.failures
 
@@ -304,8 +304,8 @@ def test_parse_run_skips_success_and_neutral_jobs():
         {"name": "Deploy", "conclusion": "neutral", "databaseId": 12},
     ])
     with patch("gh.run_reads.fetch_annotations", return_value=[]):
-        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(ci.FailureKind.BUILD)):
-            result = ci_runs.parse_run("owner/repo", run_data)
+        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(pr.ci_failures.FailureKind.BUILD)):
+            result = pr.ci_runs.parse_run("owner/repo", run_data)
     assert len(result.failures) == 1
 
 
@@ -315,8 +315,8 @@ def test_parse_run_includes_timed_out_jobs():
         {"name": "Slow Test", "conclusion": "timed_out", "databaseId": 10},
     ])
     with patch("gh.run_reads.fetch_annotations", return_value=[]):
-        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(ci.FailureKind.TEST)):
-            result = ci_runs.parse_run("owner/repo", run_data)
+        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(pr.ci_failures.FailureKind.TEST)):
+            result = pr.ci_runs.parse_run("owner/repo", run_data)
     assert len(result.failures) == 1
 
 
@@ -333,8 +333,8 @@ def test_parse_run_propagates_source_run_id():
         ],
     }
     with patch("gh.run_reads.fetch_annotations", return_value=[]):
-        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(ci.FailureKind.BUILD)):
-            result = ci_runs.parse_run("owner/repo", run_data)
+        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(pr.ci_failures.FailureKind.BUILD)):
+            result = pr.ci_runs.parse_run("owner/repo", run_data)
     group = list(result.failures.values())[0]
     assert group.items[0].source_run_id == 200
 
@@ -345,8 +345,8 @@ def test_parse_run_defaults_source_run_id_to_primary():
         {"name": "Lint", "conclusion": "failure", "databaseId": 10},
     ])
     with patch("gh.run_reads.fetch_annotations", return_value=[]):
-        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(ci.FailureKind.BUILD)):
-            result = ci_runs.parse_run("owner/repo", run_data)
+        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(pr.ci_failures.FailureKind.BUILD)):
+            result = pr.ci_runs.parse_run("owner/repo", run_data)
     group = list(result.failures.values())[0]
     assert group.items[0].source_run_id == 100
 
@@ -365,8 +365,8 @@ def test_parse_run_includes_failed_step():
         },
     ])
     with patch("gh.run_reads.fetch_annotations", return_value=[]):
-        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(ci.FailureKind.BUILD)):
-            result = ci_runs.parse_run("owner/repo", run_data)
+        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(pr.ci_failures.FailureKind.BUILD)):
+            result = pr.ci_runs.parse_run("owner/repo", run_data)
     group = list(result.failures.values())[0]
     assert group.failed_step == "Generate & check drift"
 
@@ -377,8 +377,8 @@ def test_parse_run_failed_step_none_without_steps():
         {"name": "Lint", "conclusion": "failure", "databaseId": 10},
     ])
     with patch("gh.run_reads.fetch_annotations", return_value=[]):
-        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(ci.FailureKind.BUILD)):
-            result = ci_runs.parse_run("owner/repo", run_data)
+        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(pr.ci_failures.FailureKind.BUILD)):
+            result = pr.ci_runs.parse_run("owner/repo", run_data)
     group = list(result.failures.values())[0]
     assert group.failed_step is None
 
@@ -398,9 +398,9 @@ def test_parse_run_enriches_uninformative_build_annotations():
         {"name": "Generate & verify", "conclusion": "failure", "databaseId": 10},
     ])
     with patch("gh.run_reads.fetch_annotations", return_value=uninformative_annotations):
-        fallback = ci_annotations.LogFallback(log_annotations, log_context, ci.FailureKind.BUILD, structured=False)
+        fallback = pr.ci_annotations.LogFallback(log_annotations, log_context, pr.ci_failures.FailureKind.BUILD, structured=False)
         with patch("pr.ci_annotations.log_fallback", return_value=fallback) as mock_fallback:
-            result = ci_runs.parse_run("owner/repo", run_data)
+            result = pr.ci_runs.parse_run("owner/repo", run_data)
     mock_fallback.assert_called_once()
     group = list(result.failures.values())[0]
     assert "exit code 1" in group.items[0].annotation
@@ -416,8 +416,8 @@ def test_parse_run_keeps_uninformative_annotations_when_log_fallback_empty():
         {"name": "Generate & verify", "conclusion": "failure", "databaseId": 10},
     ])
     with patch("gh.run_reads.fetch_annotations", return_value=uninformative_annotations):
-        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(ci.FailureKind.BUILD)):
-            result = ci_runs.parse_run("owner/repo", run_data)
+        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(pr.ci_failures.FailureKind.BUILD)):
+            result = pr.ci_runs.parse_run("owner/repo", run_data)
     group = list(result.failures.values())[0]
     assert "exit code 1" in group.items[0].annotation
     assert group.items[0].context is None
@@ -435,9 +435,9 @@ def test_parse_run_enriches_uninformative_test_annotations():
         {"name": "pytest unit", "conclusion": "failure", "databaseId": 10},
     ])
     with patch("gh.run_reads.fetch_annotations", return_value=uninformative_annotations):
-        fallback = ci_annotations.LogFallback(log_annotations, log_context, ci.FailureKind.TEST, structured=False)
+        fallback = pr.ci_annotations.LogFallback(log_annotations, log_context, pr.ci_failures.FailureKind.TEST, structured=False)
         with patch("pr.ci_annotations.log_fallback", return_value=fallback) as mock_fallback:
-            result = ci_runs.parse_run("owner/repo", run_data)
+            result = pr.ci_runs.parse_run("owner/repo", run_data)
     mock_fallback.assert_called_once()
     group = list(result.failures.values())[0]
     assert "exit code 1" in group.items[0].annotation
@@ -454,7 +454,7 @@ def test_parse_run_does_not_enrich_lint_with_uninformative_annotations():
     ])
     with patch("gh.run_reads.fetch_annotations", return_value=uninformative_annotations):
         with patch("pr.ci_annotations.log_fallback") as mock_fallback:
-            ci_runs.parse_run("owner/repo", run_data)
+            pr.ci_runs.parse_run("owner/repo", run_data)
     mock_fallback.assert_not_called()
 
 
@@ -472,8 +472,8 @@ def test_parse_run_does_not_double_count_a_job_reported_by_two_runs():
         {"annotation_level": "failure", "message": "boom", "path": "a.py", "start_line": 3, "title": "E1"},
     ]
     with patch("gh.run_reads.fetch_annotations", return_value=annotations):
-        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(ci.FailureKind.LINT)):
-            result = ci_runs.parse_run("owner/repo", run_data)
+        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(pr.ci_failures.FailureKind.LINT)):
+            result = pr.ci_runs.parse_run("owner/repo", run_data)
     group = list(result.failures.values())[0]
     assert len(group.items) == 1
 
@@ -488,8 +488,8 @@ def test_parse_run_keeps_distinct_failures_sharing_one_id():
         {"annotation_level": "failure", "message": "line too long", "path": "a.py", "start_line": 3, "title": "E1"},
     ]
     with patch("gh.run_reads.fetch_annotations", return_value=annotations):
-        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(ci.FailureKind.LINT)):
-            result = ci_runs.parse_run("owner/repo", run_data)
+        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(pr.ci_failures.FailureKind.LINT)):
+            result = pr.ci_runs.parse_run("owner/repo", run_data)
     group = list(result.failures.values())[0]
     assert len(group.items) == 2
 
@@ -503,7 +503,7 @@ def test_count_job_states_all_completed():
         {"name": "test", "status": "completed", "conclusion": "failure"},
         {"name": "build", "status": "completed", "conclusion": "neutral"},
     ]}
-    counts = ci_runs.count_job_states(merged)
+    counts = pr.ci_runs.count_job_states(merged)
     assert counts.completed == 3
     assert counts.failed == 1
     assert counts.running == 0
@@ -518,7 +518,7 @@ def test_count_job_states_mixed():
         {"name": "build", "status": "queued", "conclusion": None},
         {"name": "deploy", "status": "waiting", "conclusion": None},
     ]}
-    counts = ci_runs.count_job_states(merged)
+    counts = pr.ci_runs.count_job_states(merged)
     assert counts.completed == 1
     assert counts.failed == 0
     assert counts.running == 1
@@ -532,14 +532,14 @@ def test_a_queued_job_is_counted_in_the_total_the_status_line_reports():
         {"name": "test", "status": "in_progress", "conclusion": None},
         {"name": "build", "status": "queued", "conclusion": None},
     ]}
-    counts = ci_runs.count_job_states(merged)
+    counts = pr.ci_runs.count_job_states(merged)
     assert counts.total == 3
     assert counts.finished is False
 
 
 def test_count_job_states_empty():
     merged = {"jobs": []}
-    counts = ci_runs.count_job_states(merged)
+    counts = pr.ci_runs.count_job_states(merged)
     assert counts.completed == 0
     assert counts.failed == 0
     assert counts.running == 0
@@ -550,7 +550,7 @@ def test_count_job_states_timed_out_is_failed():
     merged = {"jobs": [
         {"name": "slow", "status": "completed", "conclusion": "timed_out"},
     ]}
-    counts = ci_runs.count_job_states(merged)
+    counts = pr.ci_runs.count_job_states(merged)
     assert counts.completed == 1
     assert counts.failed == 1
 
@@ -559,7 +559,7 @@ def test_count_job_states_pending_is_queued():
     merged = {"jobs": [
         {"name": "deploy", "status": "pending", "conclusion": None},
     ]}
-    assert ci_runs.count_job_states(merged).queued == 1
+    assert pr.ci_runs.count_job_states(merged).queued == 1
 
 
 # ── checks that are not Actions jobs ─────────────────────────────────────
@@ -574,7 +574,7 @@ def _external(name, conclusion, status="completed", source="check_run", job_id=0
     the shape instead of sharing it keeps passing after the code it stands
     for has stopped agreeing with it.
     """
-    return run_reads._as_failure_unless_green(
+    return gh.run_reads._as_failure_unless_green(
         {"name": name, "databaseId": job_id, "status": status, "conclusion": conclusion,
          "steps": [], "_check_source": source, "_details_url": "", "_summary": ""})
 
@@ -594,7 +594,7 @@ _PASSING_RUN = {"databaseId": 200, "conclusion": "success", "status": "completed
 
 def test_an_app_check_failure_turns_a_green_commit_red():
     """The defect: every Actions run passed, so the commit reported `All checks passed`."""
-    checks = run_reads.CommitChecks(
+    checks = gh.run_reads.CommitChecks(
         answered=True, external=(_external("CodeQL", "failure", job_id=77),),
     )
     fetched = _fetch_merged([dict(_PASSING_RUN)], checks=checks)
@@ -605,7 +605,7 @@ def test_an_app_check_failure_turns_a_green_commit_red():
 
 
 def test_a_status_context_failure_turns_a_green_commit_red():
-    checks = run_reads.CommitChecks(
+    checks = gh.run_reads.CommitChecks(
         answered=True,
         external=(_external("scalr/plan", "failure", source="status_context"),),
     )
@@ -615,7 +615,7 @@ def test_a_status_context_failure_turns_a_green_commit_red():
 
 def test_an_unfinished_external_check_leaves_the_commit_undecided():
     """Reported complete, a running external check lets --wait stop early."""
-    checks = run_reads.CommitChecks(
+    checks = gh.run_reads.CommitChecks(
         answered=True, external=(_external("CodeQL", "", status="in_progress"),),
     )
     fetched = _fetch_merged([dict(_PASSING_RUN)], checks=checks)
@@ -625,7 +625,7 @@ def test_an_unfinished_external_check_leaves_the_commit_undecided():
 
 def test_an_external_failure_outranks_an_unfinished_one():
     """A failure stands whatever else is still going — merge_runs' own rule."""
-    checks = run_reads.CommitChecks(answered=True, external=(
+    checks = gh.run_reads.CommitChecks(answered=True, external=(
         _external("CodeQL", "failure"),
         _external("scalr/plan", "", status="in_progress", source="status_context"),
     ))
@@ -635,12 +635,12 @@ def test_an_external_failure_outranks_an_unfinished_one():
 
 def test_external_checks_are_counted_among_the_jobs():
     """--wait reports N/M; an external check nobody counted makes the run look shorter."""
-    checks = run_reads.CommitChecks(answered=True, external=(
+    checks = gh.run_reads.CommitChecks(answered=True, external=(
         _external("CodeQL", "failure"),
         _external("scalr/plan", "", status="in_progress", source="status_context"),
     ))
     fetched = _fetch_merged([dict(_PASSING_RUN)], checks=checks)
-    counts = ci_runs.count_job_states(fetched.merged)
+    counts = pr.ci_runs.count_job_states(fetched.merged)
     assert counts.total == 3
     assert counts.failed == 1
     assert counts.running == 1
@@ -649,20 +649,20 @@ def test_external_checks_are_counted_among_the_jobs():
 
 def test_a_commit_whose_only_checks_are_external_still_reports():
     """A repo can check a commit without running a workflow on it."""
-    checks = run_reads.CommitChecks(
+    checks = gh.run_reads.CommitChecks(
         answered=True, external=(_external("scalr/plan", "failure", source="status_context"),),
     )
     with patch("gh.run_reads.fetch_run_data", return_value=None), \
          patch("gh.run_reads.fetch_commit_checks", return_value=checks):
-        fetched = ci_runs.fetch_merged("owner/repo", run_reads.RunDiscovery(), head_sha="abc")
+        fetched = pr.ci_runs.fetch_merged("owner/repo", gh.run_reads.RunDiscovery(), head_sha="abc")
     assert fetched is not None
     assert fetched.merged["conclusion"] == "failure"
     assert [j["name"] for j in fetched.merged["jobs"]] == ["scalr/plan"]
 
 
 def test_nothing_at_all_is_still_nothing_to_report():
-    with patch("gh.run_reads.fetch_commit_checks", return_value=run_reads.CommitChecks()):
-        assert ci_runs.fetch_merged("owner/repo", run_reads.RunDiscovery(), head_sha="abc") is None
+    with patch("gh.run_reads.fetch_commit_checks", return_value=gh.run_reads.CommitChecks()):
+        assert pr.ci_runs.fetch_merged("owner/repo", gh.run_reads.RunDiscovery(), head_sha="abc") is None
 
 
 # ── runs the rollup spares us fetching ───────────────────────────────────
@@ -670,61 +670,61 @@ def test_nothing_at_all_is_still_nothing_to_report():
 
 def test_a_run_the_rollup_proved_green_is_not_fetched():
     """Its job payload holds only the steps of jobs that did not fail."""
-    checks = run_reads.CommitChecks(
+    checks = gh.run_reads.CommitChecks(
         answered=True, actions=_green_run(200, "test", "lint"),
     )
-    rows = [run_reads.RunRow(run_id=200, number=5, head_sha="abc",
+    rows = [gh.run_reads.RunRow(run_id=200, number=5, head_sha="abc",
                              status="completed", conclusion="success")]
     with patch("gh.run_reads.fetch_run_data") as view, \
          patch("gh.run_reads.fetch_commit_checks", return_value=checks):
-        fetched = ci_runs.fetch_merged("owner/repo", run_reads.RunDiscovery(rows=tuple(rows)), head_sha="abc")
+        fetched = pr.ci_runs.fetch_merged("owner/repo", gh.run_reads.RunDiscovery(rows=tuple(rows)), head_sha="abc")
     view.assert_not_called()
     assert [j["name"] for j in fetched.merged["jobs"]] == ["test", "lint"]
     assert fetched.merged["number"] == 5
     assert fetched.merged["conclusion"] == "success"
-    assert ci_runs.count_job_states(fetched.merged).total == 2
+    assert pr.ci_runs.count_job_states(fetched.merged).total == 2
 
 
 def test_a_run_the_rollup_did_not_account_for_is_still_fetched():
     """A cancelled run is absent from the rollup while its failed jobs live on."""
     cancelled = {"databaseId": 300, "conclusion": "cancelled", "status": "completed",
                  "jobs": [{"name": "build", "status": "completed", "conclusion": "failure"}]}
-    checks = run_reads.CommitChecks(answered=True, actions=_green_run(200, "test"))
-    rows = [run_reads.RunRow(run_id=300, head_sha="abc", conclusion="cancelled"),
-            run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")]
+    checks = gh.run_reads.CommitChecks(answered=True, actions=_green_run(200, "test"))
+    rows = [gh.run_reads.RunRow(run_id=300, head_sha="abc", conclusion="cancelled"),
+            gh.run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")]
     with patch("gh.run_reads.fetch_run_data", return_value=cancelled) as view, \
          patch("gh.run_reads.fetch_commit_checks", return_value=checks):
-        fetched = ci_runs.fetch_merged("owner/repo", run_reads.RunDiscovery(rows=tuple(rows)), head_sha="abc")
+        fetched = pr.ci_runs.fetch_merged("owner/repo", gh.run_reads.RunDiscovery(rows=tuple(rows)), head_sha="abc")
     assert [c.args[1] for c in view.call_args_list] == [300]
     # What skipping it would have cost: the failed job itself. The merged
     # conclusion stays `cancelled` either way — `cancelled` is not a failure
     # conclusion, which is why the job list is the thing worth asserting on.
-    assert [j["name"] for j in ci_runs.failed_jobs(fetched.merged)] == ["build"]
+    assert [j["name"] for j in pr.ci_runs.failed_jobs(fetched.merged)] == ["build"]
 
 
 def test_an_unanswered_rollup_fetches_every_run():
     """No rollup is no evidence — an approval-gated commit has none at all."""
-    checks = run_reads.CommitChecks(answered=False)
-    rows = [run_reads.RunRow(run_id=200, head_sha="abc", conclusion="success"),
-            run_reads.RunRow(run_id=300, head_sha="abc", conclusion="success")]
+    checks = gh.run_reads.CommitChecks(answered=False)
+    rows = [gh.run_reads.RunRow(run_id=200, head_sha="abc", conclusion="success"),
+            gh.run_reads.RunRow(run_id=300, head_sha="abc", conclusion="success")]
     with patch("gh.run_reads.fetch_run_data",
                side_effect=lambda repo, rid: {"databaseId": rid, "conclusion": "success",
                                               "status": "completed", "jobs": []}) as view, \
          patch("gh.run_reads.fetch_commit_checks", return_value=checks):
-        ci_runs.fetch_merged("owner/repo", run_reads.RunDiscovery(rows=tuple(rows)), head_sha="abc")
+        pr.ci_runs.fetch_merged("owner/repo", gh.run_reads.RunDiscovery(rows=tuple(rows)), head_sha="abc")
     assert sorted(c.args[1] for c in view.call_args_list) == [200, 300]
 
 
 def test_an_unpushed_head_retries_at_the_commit_the_runs_ran_on():
     """A local HEAD the API never saw answers nothing, which is not `no checks`."""
     external = (_external("CodeQL", "failure"),)
-    answers = {"local": run_reads.CommitChecks(answered=False),
-               "pushed": run_reads.CommitChecks(answered=True, external=external)}
-    rows = [run_reads.RunRow(run_id=200, number=5, head_sha="pushed", conclusion="success")]
+    answers = {"local": gh.run_reads.CommitChecks(answered=False),
+               "pushed": gh.run_reads.CommitChecks(answered=True, external=external)}
+    rows = [gh.run_reads.RunRow(run_id=200, number=5, head_sha="pushed", conclusion="success")]
     with patch("gh.run_reads.fetch_run_data", return_value=dict(_PASSING_RUN)), \
          patch("gh.run_reads.fetch_commit_checks",
                side_effect=lambda repo, sha: answers[sha]) as rollup:
-        fetched = ci_runs.fetch_merged("owner/repo", run_reads.RunDiscovery(rows=tuple(rows)), head_sha="local")
+        fetched = pr.ci_runs.fetch_merged("owner/repo", gh.run_reads.RunDiscovery(rows=tuple(rows)), head_sha="local")
     assert [c.args[1] for c in rollup.call_args_list] == ["local", "pushed"]
     assert fetched.merged["conclusion"] == "failure"
 
@@ -733,7 +733,7 @@ def test_an_unpushed_head_retries_at_the_commit_the_runs_ran_on():
 
 
 def _discovery(*rows, failed=False):
-    return run_reads.RunDiscovery(rows=rows, failed=failed)
+    return gh.run_reads.RunDiscovery(rows=rows, failed=failed)
 
 
 def _green_payload(run_id=200):
@@ -747,13 +747,13 @@ def _merged(discovery, checks, served=_green_payload):
     with patch("gh.run_reads.fetch_run_data",
                side_effect=lambda repo, rid: fetch(rid) if callable(served) else served), \
          patch("gh.run_reads.fetch_commit_checks", return_value=checks):
-        return ci_runs.fetch_merged("owner/repo", discovery, head_sha="abc")
+        return pr.ci_runs.fetch_merged("owner/repo", discovery, head_sha="abc")
 
 
 def test_an_unreadable_rollup_withholds_the_pass():
     """Not knowing what the external checks said is not the same as them passing."""
-    row = run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
-    fetched = _merged(_discovery(row), run_reads.CommitChecks(unreadable=True))
+    row = gh.run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
+    fetched = _merged(_discovery(row), gh.run_reads.CommitChecks(unreadable=True))
     assert fetched.merged["conclusion"] == ""
     assert fetched.merged["_unread"] == ("the commit's check rollup could not be read",)
 
@@ -764,26 +764,26 @@ def test_a_commit_with_genuinely_no_rollup_still_passes():
     An approval-gated run has no rollup at all, and treating that as unread
     would report every held workflow as unknown.
     """
-    row = run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
-    fetched = _merged(_discovery(row), run_reads.CommitChecks(answered=False))
+    row = gh.run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
+    fetched = _merged(_discovery(row), gh.run_reads.CommitChecks(answered=False))
     assert fetched.merged["conclusion"] == "success"
     assert "_unread" not in fetched.merged
 
 
 def test_a_truncated_rollup_withholds_the_pass():
     """The checks past the page could be the failing ones."""
-    row = run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
-    fetched = _merged(_discovery(row), run_reads.CommitChecks(answered=True, truncated=True))
+    row = gh.run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
+    fetched = _merged(_discovery(row), gh.run_reads.CommitChecks(answered=True, truncated=True))
     assert fetched.merged["conclusion"] == ""
     assert "more checks than were listed" in fetched.merged["_unread"][0]
 
 
 def test_a_run_nobody_could_read_withholds_the_pass():
     """The run was dropped from the payloads; its verdict must not be assumed."""
-    good = run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
-    bad = run_reads.RunRow(run_id=300, head_sha="abc", conclusion="failure")
+    good = gh.run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
+    bad = gh.run_reads.RunRow(run_id=300, head_sha="abc", conclusion="failure")
     fetched = _merged(
-        _discovery(good, bad), run_reads.CommitChecks(answered=True),
+        _discovery(good, bad), gh.run_reads.CommitChecks(answered=True),
         served=lambda rid: _green_payload() if rid == 200 else None,
     )
     assert fetched.merged["conclusion"] == ""
@@ -792,25 +792,25 @@ def test_a_run_nobody_could_read_withholds_the_pass():
 
 def test_a_failed_run_listing_withholds_the_pass():
     """An empty run list from a failed call is an absence of facts, not a green commit."""
-    checks = run_reads.CommitChecks(
+    checks = gh.run_reads.CommitChecks(
         answered=True, external=(_external("CodeQL", "success"),))
     with patch("gh.run_reads.fetch_run_data", return_value=None), \
          patch("gh.run_reads.fetch_commit_checks", return_value=checks):
-        fetched = ci_runs.fetch_merged(
-            "owner/repo", run_reads.RunDiscovery(failed=True), head_sha="abc")
+        fetched = pr.ci_runs.fetch_merged(
+            "owner/repo", gh.run_reads.RunDiscovery(failed=True), head_sha="abc")
     assert fetched.merged["conclusion"] == ""
     assert "workflow run list could not be read" in fetched.merged["_unread"][0]
 
 
 def test_a_real_failure_outranks_an_incomplete_read():
     """Unread withholds a pass; it must not erase a failure already evidenced."""
-    good = run_reads.RunRow(run_id=200, head_sha="abc", conclusion="failure")
-    bad = run_reads.RunRow(run_id=300, head_sha="abc", conclusion="failure")
+    good = gh.run_reads.RunRow(run_id=200, head_sha="abc", conclusion="failure")
+    bad = gh.run_reads.RunRow(run_id=300, head_sha="abc", conclusion="failure")
     failing = {"databaseId": 200, "number": 5, "headSha": "abc", "status": "completed",
                "conclusion": "failure",
                "jobs": [{"name": "test", "status": "completed", "conclusion": "failure"}]}
     fetched = _merged(
-        _discovery(good, bad), run_reads.CommitChecks(answered=True),
+        _discovery(good, bad), gh.run_reads.CommitChecks(answered=True),
         served=lambda rid: failing if rid == 200 else None,
     )
     assert fetched.merged["conclusion"] == "failure"
@@ -819,8 +819,8 @@ def test_a_real_failure_outranks_an_incomplete_read():
 
 def test_a_cancelled_external_check_is_not_a_pass():
     """`cancelled` was absent from FAILURE_CONCLUSIONS, so it read as green."""
-    row = run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
-    checks = run_reads.CommitChecks(
+    row = gh.run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
+    checks = gh.run_reads.CommitChecks(
         answered=True, external=(_external("scalr/plan", "cancelled",
                                            source="status_context"),))
     fetched = _merged(_discovery(row), checks)
@@ -829,8 +829,8 @@ def test_a_cancelled_external_check_is_not_a_pass():
 
 def test_an_unrecognised_external_conclusion_is_not_a_pass():
     """Whitelisted: a word GitHub adds to the enum later must not arrive as green."""
-    row = run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
-    checks = run_reads.CommitChecks(
+    row = gh.run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
+    checks = gh.run_reads.CommitChecks(
         answered=True, external=(_external("Trivy", "something_new"),))
     fetched = _merged(_discovery(row), checks)
     assert fetched.merged["conclusion"] == "failure"
@@ -842,8 +842,8 @@ def test_a_run_with_no_jobs_yet_is_not_finished():
     Read as finished, the first poll of every wait returned at once with no
     failures — a green that only meant the jobs did not exist yet.
     """
-    assert ci_runs.count_job_states({"jobs": []}).finished is False
-    assert ci_runs.count_job_states(
+    assert pr.ci_runs.count_job_states({"jobs": []}).finished is False
+    assert pr.ci_runs.count_job_states(
         {"jobs": [{"name": "a", "status": "completed", "conclusion": "success"}]},
     ).finished is True
 
@@ -856,9 +856,9 @@ def test_a_cancelled_external_check_survives_an_unrelated_unread_reason():
     reason then put `_mark_unread` through `_claims_failure`, which re-derived
     the verdict from that empty list and cleared the failure again.
     """
-    good = run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
-    bad = run_reads.RunRow(run_id=300, head_sha="abc", conclusion="success")
-    checks = run_reads.CommitChecks(
+    good = gh.run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
+    bad = gh.run_reads.RunRow(run_id=300, head_sha="abc", conclusion="success")
+    checks = gh.run_reads.CommitChecks(
         answered=True, external=(_external("scalr/plan", "cancelled",
                                            source="status_context"),))
     fetched = _merged(
@@ -871,12 +871,12 @@ def test_a_cancelled_external_check_survives_an_unrelated_unread_reason():
 
 def test_a_cancelled_external_check_becomes_a_named_failure():
     """A verdict naming nothing is not actionable — the check must reach the report."""
-    row = run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
-    checks = run_reads.CommitChecks(
+    row = gh.run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
+    checks = gh.run_reads.CommitChecks(
         answered=True, external=(_external("scalr/plan", "cancelled",
                                            source="status_context"),))
     fetched = _merged(_discovery(row), checks)
-    assert [j["name"] for j in ci_runs.failed_jobs(fetched.merged)] == ["scalr/plan"]
+    assert [j["name"] for j in pr.ci_runs.failed_jobs(fetched.merged)] == ["scalr/plan"]
 
 
 def test_a_cancelled_external_check_reaches_every_reader_of_a_conclusion():
@@ -887,12 +887,12 @@ def test_a_cancelled_external_check_reaches_every_reader_of_a_conclusion():
     to learn the rule. Asserted because it is the reader furthest from the
     normalisation and the one no earlier test covered.
     """
-    row = run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
-    checks = run_reads.CommitChecks(
+    row = gh.run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
+    checks = gh.run_reads.CommitChecks(
         answered=True, external=(_external("scalr/plan", "cancelled",
                                            source="status_context"),))
     fetched = _merged(_discovery(row), checks)
-    counts = ci_runs.count_job_states(fetched.merged)
+    counts = pr.ci_runs.count_job_states(fetched.merged)
     assert counts.failed == 1
     assert fetched.merged["conclusion"] == "failure"
-    assert [j["name"] for j in ci_runs.failed_jobs(fetched.merged)] == ["scalr/plan"]
+    assert [j["name"] for j in pr.ci_runs.failed_jobs(fetched.merged)] == ["scalr/plan"]

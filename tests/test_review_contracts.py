@@ -1,8 +1,8 @@
 """Cross-file contract tests for the review system.
 
 Verifies that constants, templates, regex patterns, and CLI interfaces
-stay consistent across agent_registry, agent_templates, review_document,
-review_prompt, review-templates/, and agents/reviewer.md.
+stay consistent across agent.registry, agent.templates, review.document,
+review.prompt, review-templates/, and agents/reviewer.md.
 
 All expectations are derived dynamically from source — no hardcoded lists.
 """
@@ -31,27 +31,27 @@ if str(LIB_DIR) not in sys.path:
 
 from conftest import make_ctx, model_budget_bytes  # noqa: E402
 
-from agent import registry as agent_registry  # noqa: E402
-from agent import templates as agent_templates  # noqa: E402
-from agent import invoke as agent_invoke  # noqa: E402
-from fix import ci as fix_ci  # noqa: E402
-from fix import comments as fix_comments  # noqa: E402
-from fix import engine as fix_engine  # noqa: E402
-from fix import tracking as fix_tracking  # noqa: E402
-from fix import types as fix_types  # noqa: E402
-from fix import verify as fix_verify  # noqa: E402
-from rebase import prepush as rebase_prepush  # noqa: E402
+import agent.registry  # noqa: E402
+import agent.templates  # noqa: E402
+import agent.invoke  # noqa: E402
+import fix.ci  # noqa: E402
+import fix.comments  # noqa: E402
+import fix.engine  # noqa: E402
+import fix.tracking  # noqa: E402
+import fix.types  # noqa: E402
+import fix.verify  # noqa: E402
+import rebase.prepush  # noqa: E402
 from agent.registry import PHASES, REVIEW_PHASES  # noqa: E402
-from core import serde  # noqa: E402
+import core.serde  # noqa: E402
 from core.phases import Mode, Phase, PhaseShape  # noqa: E402
-from review import fix as review_fix  # noqa: E402
-from review import grammar as review_grammar  # noqa: E402
-from review import prompt as review_prompt  # noqa: E402
-from review import registry as review_registry  # noqa: E402
-from review import spans as review_spans  # noqa: E402
-from review import types as review_types  # noqa: E402
+import review.fix  # noqa: E402
+import review.grammar  # noqa: E402
+import review.prompt  # noqa: E402
+import review.registry  # noqa: E402
+import review.spans  # noqa: E402
+import review.types  # noqa: E402
 from gh.types import PRContext, PRMetadata  # noqa: E402
-from pr import ci_failures  # noqa: E402
+import pr.ci_failures  # noqa: E402
 from pr.ci_report import CIReport  # noqa: E402
 from pr.state import PRIdentity, PRState  # noqa: E402
 from pr.thread_models import PRReport  # noqa: E402
@@ -146,29 +146,29 @@ class TestReviewMeta:
 
     def test_empty_string_pr_number_returns_none(self):
         """Empty-string pr_number from meta.json must not crash with ValueError on int("")."""
-        meta = review_types.review_meta_from_dict({"pr_number": ""})
+        meta = review.types.review_meta_from_dict({"pr_number": ""})
         assert meta.pr_number is None
 
     def test_valid_pr_number_as_string(self):
-        meta = review_types.review_meta_from_dict({"pr_number": "42"})
+        meta = review.types.review_meta_from_dict({"pr_number": "42"})
         assert meta.pr_number == 42
 
     def test_missing_pr_number_returns_none(self):
-        meta = review_types.review_meta_from_dict({})
+        meta = review.types.review_meta_from_dict({})
         assert meta.pr_number is None
 
     def test_none_pr_number_returns_none(self):
-        meta = review_types.review_meta_from_dict({"pr_number": None})
+        meta = review.types.review_meta_from_dict({"pr_number": None})
         assert meta.pr_number is None
 
     def test_timestamps_are_absent_when_the_file_predates_them(self):
         """No backfill: a meta.json without them reports them as absent."""
-        meta = review_types.review_meta_from_dict({})
+        meta = review.types.review_meta_from_dict({})
         assert meta.started_at == ""
         assert meta.reviewed_at == ""
 
     def test_timestamps_are_read_from_the_file(self):
-        meta = review_types.review_meta_from_dict({
+        meta = review.types.review_meta_from_dict({
             "started_at": "2026-08-18T13:47:03+00:00",
             "reviewed_at": "2026-08-18T14:02:11+00:00",
         })
@@ -176,7 +176,7 @@ class TestReviewMeta:
         assert meta.reviewed_at == "2026-08-18T14:02:11+00:00"
 
     def test_the_host_is_read_from_the_file(self):
-        meta = review_types.review_meta_from_dict({"host": "ghe.acme.com"})
+        meta = review.types.review_meta_from_dict({"host": "ghe.acme.com"})
         assert meta.host == "ghe.acme.com"
 
     # passes-at-base: pins the back-compat read this change was careful not to break
@@ -187,7 +187,7 @@ class TestReviewMeta:
         added in the wrong shape would take the whole record's `repo` down with
         it and silently unattribute every review already on disk.
         """
-        meta = review_types.review_meta_from_dict(
+        meta = review.types.review_meta_from_dict(
             {"repo": "acme/widget", "pr_number": "7", "head_sha": "abc123"})
         assert meta.host == ""
         assert meta.repo == "acme/widget"
@@ -195,10 +195,10 @@ class TestReviewMeta:
 
     def test_the_host_survives_a_write_and_read(self):
         """What `review-post` depends on: the host reaches it through the file."""
-        written = serde.to_dict(
-            review_types.ReviewMeta(repo="acme/widget", host="ghe.acme.com"))
+        written = core.serde.to_dict(
+            review.types.ReviewMeta(repo="acme/widget", host="ghe.acme.com"))
         assert written["host"] == "ghe.acme.com"
-        assert serde.from_dict(review_types.ReviewMeta, written).host == "ghe.acme.com"
+        assert core.serde.from_dict(review.types.ReviewMeta, written).host == "ghe.acme.com"
 
 
 # ── 1c. TestPhaseSkipFlags ───────────────────────────────────────────────────
@@ -206,7 +206,7 @@ class TestReviewMeta:
 
 def _skip_flag_parser():
     parser = argparse.ArgumentParser()
-    agent_registry.add_phase_skip_flags(parser)
+    agent.registry.add_phase_skip_flags(parser)
     return parser
 
 
@@ -228,21 +228,21 @@ class TestPhaseSkipFlags:
 
     def test_nothing_skipped_by_default(self):
         args = _skip_flag_parser().parse_args([])
-        assert agent_registry.phase_skips(args) == frozenset()
+        assert agent.registry.phase_skips(args) == frozenset()
 
     def test_each_flag_names_its_own_phase(self):
         for phase in (p for p in REVIEW_PHASES if PHASES[p].optional):
             args = _skip_flag_parser().parse_args([f"--no-{phase}"])
-            assert agent_registry.phase_skips(args) == frozenset({phase})
+            assert agent.registry.phase_skips(args) == frozenset({phase})
 
     def test_argv_round_trips_through_the_parser(self):
         skips = frozenset({Phase.GROUP, Phase.SYNTHESIS, Phase.DISPROVE})
-        argv = agent_registry.phase_skip_argv(skips)
-        assert agent_registry.phase_skips(_skip_flag_parser().parse_args(argv)) == skips
+        argv = agent.registry.phase_skip_argv(skips)
+        assert agent.registry.phase_skips(_skip_flag_parser().parse_args(argv)) == skips
 
     def test_argv_follows_the_registry_order(self):
         every = frozenset(p for p in REVIEW_PHASES if PHASES[p].optional)
-        assert agent_registry.phase_skip_argv(every) == [
+        assert agent.registry.phase_skip_argv(every) == [
             f"--no-{p}" for p in REVIEW_PHASES if PHASES[p].optional
         ]
 
@@ -270,20 +270,20 @@ class TestSeverityConsistency:
     """Severity registry is internally consistent."""
 
     def test_every_severity_key_is_single_char(self):
-        for s in review_types.SEVERITIES:
+        for s in review.types.SEVERITIES:
             assert len(s.key) == 1, f"{s.key} is not a single character"
 
     def test_posting_values_are_valid(self):
-        for s in review_types.SEVERITIES:
+        for s in review.types.SEVERITIES:
             assert s.posting in ("inline", "body"), f"{s.key} has invalid posting: {s.posting}"
 
     def test_body_group_values_are_valid(self):
-        for s in review_types.SEVERITIES:
+        for s in review.types.SEVERITIES:
             assert s.body_group in ("by_severity", "by_file"), f"{s.key} has invalid body_group: {s.body_group}"
 
     def test_finding_id_regex_accepts_all_severity_keys(self):
-        keys = [s.key for s in review_types.SEVERITIES]
-        regex_keys = review_grammar.FINDING_ID_RE.pattern
+        keys = [s.key for s in review.types.SEVERITIES]
+        regex_keys = review.grammar.FINDING_ID_RE.pattern
         for key in keys:
             assert key in regex_keys, f"FINDING_ID_RE does not include severity key {key}"
 
@@ -295,18 +295,18 @@ class TestSeverityRegistry:
     """SeverityConfig registry provides all severity metadata."""
 
     def test_severities_has_four_entries(self):
-        assert len(review_types.SEVERITIES) == 4
+        assert len(review.types.SEVERITIES) == 4
 
     def test_severity_keys_are_unique(self):
-        keys = [s.key for s in review_types.SEVERITIES]
+        keys = [s.key for s in review.types.SEVERITIES]
         assert len(keys) == len(set(keys))
 
     def test_severity_keys_are_msni(self):
-        keys = [s.key for s in review_types.SEVERITIES]
+        keys = [s.key for s in review.types.SEVERITIES]
         assert keys == ["M", "S", "N", "I"]
 
     def test_severity_by_key_returns_correct_config(self):
-        m = review_types.severity_by_key("M")
+        m = review.types.severity_by_key("M")
         assert m.label == "must-fix"
         assert m.section == "Must fix"
         assert m.posting == "inline"
@@ -314,24 +314,24 @@ class TestSeverityRegistry:
 
     def test_severity_by_key_unknown_raises(self):
         with pytest.raises(KeyError):
-            review_types.severity_by_key("X")
+            review.types.severity_by_key("X")
 
     def test_nit_is_body_posting(self):
-        n = review_types.severity_by_key("N")
+        n = review.types.severity_by_key("N")
         assert n.posting == "body"
         assert n.body_group == "by_file"
 
     def test_idiom_is_body_posting(self):
-        i = review_types.severity_by_key("I")
+        i = review.types.severity_by_key("I")
         assert i.posting == "body"
         assert i.body_group == "by_file"
 
     def test_nit_aliases_include_nits(self):
-        n = review_types.severity_by_key("N")
+        n = review.types.severity_by_key("N")
         assert "Nits" in n.aliases
 
     def test_severity_config_is_frozen(self):
-        m = review_types.severity_by_key("M")
+        m = review.types.severity_by_key("M")
         with pytest.raises(AttributeError):
             m.key = "X"
 
@@ -353,7 +353,7 @@ class TestFindingIdRegex:
         ids=["must-fix", "should-fix", "nit", "idiom"],
     )
     def test_standard_finding_format(self, severity, seq, line):
-        m = review_grammar.FINDING_ID_RE.match(line)
+        m = review.grammar.FINDING_ID_RE.match(line)
         assert m is not None, f"FINDING_ID_RE did not match: {line!r}"
         assert m.group(2) == severity
         assert int(m.group(3)) == seq
@@ -367,7 +367,7 @@ class TestFindingIdRegex:
         ids=["checkbox-M", "checkbox-S"],
     )
     def test_checkbox_format(self, line):
-        m = review_grammar.FINDING_ID_RE.match(line)
+        m = review.grammar.FINDING_ID_RE.match(line)
         assert m is not None, f"FINDING_ID_RE did not match checkbox format: {line!r}"
 
     @pytest.mark.parametrize(
@@ -379,12 +379,12 @@ class TestFindingIdRegex:
         ids=["strikethrough-S", "strikethrough-M"],
     )
     def test_strikethrough_format(self, line):
-        m = review_grammar.FINDING_ID_RE.match(line)
+        m = review.grammar.FINDING_ID_RE.match(line)
         assert m is not None, f"FINDING_ID_RE did not match strikethrough: {line!r}"
 
     def test_extracts_severity_and_seq(self):
         line = '- **[N7]** **`foo.py:1`** — trailing whitespace'
-        m = review_grammar.FINDING_ID_RE.match(line)
+        m = review.grammar.FINDING_ID_RE.match(line)
         assert m is not None
         assert m.group(2) == "N"
         assert m.group(3) == "7"
@@ -402,8 +402,8 @@ class TestFindingIdRegex:
             '- [x] **[N3]** `README.md:1` — typo',
             '- ~~**[I4]** **`old.go:1`** — resolved~~',
         ]:
-            assert review_grammar.FINDING_ID_RE.match(line)
-            assert review_spans.ends_finding_body(line), (
+            assert review.grammar.FINDING_ID_RE.match(line)
+            assert review.spans.ends_finding_body(line), (
                 f"opens a finding but does not end the one above it: {line!r}"
             )
 
@@ -423,7 +423,7 @@ class TestFindingIdRegex:
             if example_re.match(line.strip())
         ]
         for line in example_lines:
-            m = review_grammar.FINDING_ID_RE.match(line.strip())
+            m = review.grammar.FINDING_ID_RE.match(line.strip())
             assert m is not None, (
                 f"FINDING_ID_RE does not match reviewer.md example: {line.strip()!r}"
             )
@@ -486,7 +486,7 @@ class TestSpecBodyShapesBelongToTheFindingAboveThem:
     )
     def test_no_documented_body_line_ends_the_finding(self, source, block):
         for line in _documented_body_lines(block):
-            assert not review_spans.ends_finding_body(line), (
+            assert not review.spans.ends_finding_body(line), (
                 f"{source} writes this under a finding, "
                 f"but ends_finding_body reads it as a boundary: {line!r}"
             )
@@ -496,7 +496,7 @@ class TestSpecBodyShapesBelongToTheFindingAboveThem:
     )
     def test_every_documented_body_line_lands_in_a_span(self, source, block):
         claimed: set[str] = set()
-        for span in review_spans.finding_spans(block):
+        for span in review.spans.finding_spans(block):
             claimed.update(
                 line.strip() for line in span.text_of(block).split("\n") if line.strip()
             )
@@ -586,14 +586,14 @@ def _render_via_build_prompt(
     key: tuple[Phase, Mode], job: ReviewJob | None = None,
 ) -> str:
     phase, mode = key
-    return review_registry.build_prompt(
+    return review.registry.build_prompt(
         phase, job or _make_review_job(mode=mode), max_turns=15,
         **_BUILD_PROMPT_EXTRAS[key],
     )
 
 
 def _render_adapter(adapter) -> str:
-    """Render a fix template the way `fix_engine` renders it for a real pass.
+    """Render a fix template the way `fix.engine` renders it for a real pass.
 
     Going through the engine rather than restating the substitution keeps this
     honest about what an agent is actually handed: a placeholder the engine
@@ -602,23 +602,23 @@ def _render_adapter(adapter) -> str:
     """
     adapter.tracking_path.parent.mkdir(parents=True, exist_ok=True)
     adapter.tracking_path.write_text("- [ ] fixed\n")
-    return fix_engine._prompt(adapter, 15)
+    return fix.engine._prompt(adapter, 15)
 
 
 def _render_fix_ci(wt_path) -> str:
     ctx = make_ctx(repo="owner/repo", branch="user/feat/thing",
                    worktree_root=wt_path, target_dir=wt_path)
-    failure = ci_failures.FailureItem(
+    failure = pr.ci_failures.FailureItem(
         id="build-1", annotation="test failed", file=None, line=None,
         diagnosis=None, fix_sha=None, outcome=None, headline="test failed",
     )
-    return _render_adapter(fix_ci.CIFixAdapter(
+    return _render_adapter(fix.ci.CIFixAdapter(
         CIReport(
             repo="owner/repo", branch="user/feat/thing", pr_number=42,
             run_id=100, run_ids=[100], run_number=1, head_sha="abc123",
             conclusion="failure", behind_main=0,
-            failures={"build": ci_failures.FailureGroup(
-                job="build", kind=ci_failures.FailureKind.BUILD, items=(failure,),
+            failures={"build": pr.ci_failures.FailureGroup(
+                job="build", kind=pr.ci_failures.FailureKind.BUILD, items=(failure,),
             )},
             progression={}, resolved_since_prior=[],
         ), ctx,
@@ -632,7 +632,7 @@ def _render_fix_ci(wt_path) -> str:
 def _render_fix_comments(wt_path) -> str:
     ctx = make_ctx(repo="owner/repo", branch="user/feat/thing",
                    pr_number=1, worktree_root=wt_path, target_dir=wt_path)
-    adapter = fix_comments.CommentFixAdapter(
+    adapter = fix.comments.CommentFixAdapter(
         PRReport(repo="owner/repo", pr_number=1), ctx, wt_path,
         TriagedRound(),
     )
@@ -643,7 +643,7 @@ def _render_fix_comments(wt_path) -> str:
 
 
 def _render_verify_fixes(wt_path) -> str:
-    """Render the verify gate's prompt the way `fix_verify.run` renders it.
+    """Render the verify gate's prompt the way `fix.verify.run` renders it.
 
     Driven through the real runner with the agent call stubbed out, for the
     reason `_render_adapter` gives: a placeholder the runner stopped supplying
@@ -651,7 +651,7 @@ def _render_verify_fixes(wt_path) -> str:
     """
     ctx = make_ctx(repo="owner/repo", branch="user/feat/thing",
                    pr_number=1, worktree_root=wt_path, target_dir=wt_path)
-    adapter = fix_comments.CommentFixAdapter(
+    adapter = fix.comments.CommentFixAdapter(
         PRReport(repo="owner/repo", pr_number=1), ctx, wt_path,
         TriagedRound(),
     )
@@ -661,12 +661,12 @@ def _render_verify_fixes(wt_path) -> str:
 
     def capture(_phase, prompt, **_kwargs):
         rendered["prompt"] = prompt
-        return agent_invoke.FixResult(0, None)
+        return agent.invoke.FixResult(0, None)
 
-    with patch.object(fix_verify.agent_invoke, "run_fix", side_effect=capture):
-        fix_verify.run(
+    with patch.object(agent.invoke, "run_fix", side_effect=capture):
+        fix.verify.run(
             Phase.COMMENTS_VERIFY, "",
-            items=[fix_types.FixItem(id="t1", file="a.py", line=2, label="x")],
+            items=[fix.types.FixItem(id="t1", file="a.py", line=2, label="x")],
             adapter=adapter,
         )
     return rendered["prompt"]
@@ -677,22 +677,22 @@ def _render_fix_findings(wt_path) -> str:
         wt_path=str(wt_path),
         review_file=str(wt_path / "reviews" / "review.md"),
     )
-    finding = review_types.Finding(
-        id="M1", severity=review_types.SEVERITY_MUST, seq=1,
+    finding = review.types.Finding(
+        id="M1", severity=review.types.SEVERITY_MUST, seq=1,
         path="a.py", line=3, end_line=None, body="the guard is missing",
     )
-    return _render_adapter(review_fix.ReviewFixAdapter(job, [finding]))
+    return _render_adapter(review.fix.ReviewFixAdapter(job, [finding]))
 
 
 def _render_fix_prepush(wt_path) -> str:
     """Render the pre-push repair pass's prompt through the real engine.
 
     The one fix template with no substitution test of its own until now. It
-    renders through `fix_engine._prompt` like the other three, so the engine's
+    renders through `fix.engine._prompt` like the other three, so the engine's
     own placeholders were covered by them — but anything this template names
     that the others do not was held by nothing.
     """
-    return _render_adapter(rebase_prepush.PrePushFixAdapter(
+    return _render_adapter(rebase.prepush.PrePushFixAdapter(
         str(wt_path), ["server.go"], "gofmt: server.go needs formatting",
         # The lease the refused push carried; this renders a prompt and never
         # pushes, so the value only has to be the shape the adapter stores.
@@ -724,9 +724,9 @@ _AGENT_RENDERERS = _FIX_RENDERERS | {
 }
 
 
-def _make_common_sections() -> review_prompt.CommonSections:
-    return review_prompt.CommonSections(
-        **{name: "" for name in review_prompt.COMMON_SECTION_NAMES},
+def _make_common_sections() -> review.prompt.CommonSections:
+    return review.prompt.CommonSections(
+        **{name: "" for name in review.prompt.COMMON_SECTION_NAMES},
         budget_bytes=MAX_PROMPT_BYTES,
     )
 
@@ -736,7 +736,7 @@ def _unsubstituted(rendered: str) -> list[str]:
 
 
 class TestPromptBuilderRegistry:
-    """`review_registry`'s table and the phase registry name the same phases.
+    """`review.registry`'s table and the phase registry name the same phases.
 
     Keying the table by `Phase` is what makes this checkable at all: while the
     builders were keyed by template filename the two tables shared no name, so
@@ -749,17 +749,17 @@ class TestPromptBuilderRegistry:
             phase for phase in REVIEW_PHASES
             if PHASES[phase].shape is PhaseShape.AGENT
         }
-        assert set(review_registry.registered()) == expected
+        assert set(review.registry.registered()) == expected
 
     def test_a_phase_with_no_builder_is_refused(self):
-        """The fix pass is a review phase, but `fix_engine` builds its prompt."""
+        """The fix pass is a review phase, but `fix.engine` builds its prompt."""
         with pytest.raises(ValueError, match="renders no review prompt"):
-            review_registry.build_prompt(Phase.FIX, _make_review_job(), max_turns=15)
+            review.registry.build_prompt(Phase.FIX, _make_review_job(), max_turns=15)
 
     def test_every_builder_is_reached_by_the_extras_table(self):
         """Coverage below is per (phase, mode), so no builder goes unrendered."""
         assert {phase for phase, _ in _BUILD_PROMPT_EXTRAS} == set(
-            review_registry.registered(),
+            review.registry.registered(),
         )
 
 
@@ -808,7 +808,7 @@ class TestTemplateRendering:
         which `verify-fixes.md` forbids in as many words. The fallback is for a
         domain with no gate, so nothing else catches this.
         """
-        phase = fix_comments.CommentFixAdapter.verify_phase
+        phase = fix.comments.CommentFixAdapter.verify_phase
         assert phase is Phase.COMMENTS_VERIFY
         assert PHASES[phase].template_for() == "verify-fixes.md"
 
@@ -906,7 +906,7 @@ class TestOutputBlockContract:
     )
     def test_output_block_rendered_verbatim(self, key, output_path, stdout_warning):
         rendered = _render_via_build_prompt(key)
-        expected = agent_templates.build_output_block(
+        expected = agent.templates.build_output_block(
             output_path, stdout_warning=stdout_warning,
         )
         assert expected in rendered
@@ -940,7 +940,7 @@ class TestOutputBlockContract:
     @pytest.mark.parametrize("render", sorted(_AGENT_RENDERERS))
     def test_fix_templates_share_the_worktree_block(self, render, tmp_path):
         rendered = _AGENT_RENDERERS[render](tmp_path)
-        assert agent_templates.build_worktree_block(str(tmp_path)) in rendered
+        assert agent.templates.build_worktree_block(str(tmp_path)) in rendered
 
     @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
     def test_fix_templates_share_the_generated_block(self, render, tmp_path):
@@ -951,7 +951,7 @@ class TestOutputBlockContract:
         carries it and none of them words it for itself.
         """
         rendered = _FIX_RENDERERS[render](tmp_path)
-        assert agent_templates.GENERATED_BLOCK in rendered
+        assert agent.templates.GENERATED_BLOCK in rendered
 
     @pytest.mark.parametrize("render", sorted(_FIX_RENDERERS))
     def test_fix_templates_share_the_role_block(self, render, tmp_path):
@@ -964,7 +964,7 @@ class TestOutputBlockContract:
         the role rather than four domain-specific paragraphs.
         """
         rendered = _FIX_RENDERERS[render](tmp_path)
-        assert agent_templates.ROLE_BLOCK in rendered
+        assert agent.templates.ROLE_BLOCK in rendered
 
     def test_fix_and_verify_templates_forbid_unscoped_runners(self, tmp_path):
         """A phase whose budget is turns must not spend them on the pre-push gate."""
@@ -1034,18 +1034,18 @@ class TestOutputBlockContract:
     def test_fix_templates_explain_every_box_the_checklist_offers(
         self, render, tmp_path,
     ):
-        """The boxes are `fix_tracking`'s; the prose explaining them is per-domain.
+        """The boxes are `fix.tracking`'s; the prose explaining them is per-domain.
 
         Every template spells out the same three answers in its own words, so a
-        box renamed or added in `fix_tracking` leaves prose behind that describes
+        box renamed or added in `fix.tracking` leaves prose behind that describes
         a checklist the agent is not looking at. No template has to say it the
         same way — each only has to still be talking about all of them.
         """
         task = _FIX_RENDERERS[render](tmp_path).split("## Task", 1)[1]
-        for box in fix_tracking._BOXES:
+        for box in fix.tracking._BOXES:
             why = (
-                f" — {fix_tracking._WHY}"
-                if box.outcome in fix_tracking._REASONED
+                f" — {fix.tracking._WHY}"
+                if box.outcome in fix.tracking._REASONED
                 else ""
             )
             assert f"`- [x] {box.label}{why}`" in task, box.label
@@ -1072,19 +1072,19 @@ class TestSharedSectionNames:
         bad = [
             f"review/prompt.py:{lineno} {name!r}"
             for lineno, name in calls
-            if name not in review_prompt.COMMON_SECTION_NAMES
+            if name not in review.prompt.COMMON_SECTION_NAMES
         ]
         assert not bad, "shared() called with non-CommonSections names: " + ", ".join(bad)
 
     def test_unknown_name_raises_with_the_valid_set(self):
-        builder = review_prompt.PromptBuilder(_make_common_sections())
+        builder = review.prompt.PromptBuilder(_make_common_sections())
         with pytest.raises(KeyError, match="pr_haeder"):
             builder.shared("pr_haeder")
 
     def test_every_common_field_is_reachable(self):
         """A field no handler shares is dead weight on every prompt build."""
         shared_names = {name for _, name in self._shared_call_args()}
-        unused = sorted(review_prompt.COMMON_SECTION_NAMES - shared_names)
+        unused = sorted(review.prompt.COMMON_SECTION_NAMES - shared_names)
         assert not unused, f"CommonSections fields no handler uses: {unused}"
 
 
@@ -1114,7 +1114,7 @@ class TestPromptBudgetAccounting:
         extra = dict(_BUILD_PROMPT_EXTRAS[(Phase.GROUP, Mode.PR)])
         extra["group_file_paths"] = list(self._PATHS)
         extra["group_files_formatted"] = files_formatted
-        return review_registry.build_prompt(
+        return review.registry.build_prompt(
             Phase.GROUP, job, max_turns=15, **extra,
         )
 
@@ -1380,8 +1380,8 @@ def test_execution_claim_guard_states_the_ban():
     every template would carry `${execution_claim_guard}` and no template
     would carry a guard.
     """
-    assert _NO_UNRUN_EXECUTION_CLAIM in agent_templates.build_execution_claim_guard()
-    assert _NO_UNRUN_EXECUTION_CLAIM in agent_templates.build_execution_claim_guard(8)
+    assert _NO_UNRUN_EXECUTION_CLAIM in agent.templates.build_execution_claim_guard()
+    assert _NO_UNRUN_EXECUTION_CLAIM in agent.templates.build_execution_claim_guard(8)
 
 
 def test_the_fix_occasion_states_the_ban_and_names_the_fixed_box():
@@ -1392,8 +1392,8 @@ def test_the_fix_occasion_states_the_ban_and_names_the_fixed_box():
     about a write-first sequence it has no part in is reading advice for
     somebody else and skips the paragraph.
     """
-    guard = agent_templates.build_execution_claim_guard(
-        occasion=agent_templates.ClaimOccasion.FIX_EVIDENCE)
+    guard = agent.templates.build_execution_claim_guard(
+        occasion=agent.templates.ClaimOccasion.FIX_EVIDENCE)
 
     assert _NO_UNRUN_EXECUTION_CLAIM in guard
     assert "`fixed` box" in guard
@@ -1402,10 +1402,10 @@ def test_the_fix_occasion_states_the_ban_and_names_the_fixed_box():
 
 def test_the_write_first_occasion_is_unchanged_by_the_split():
     """The default occasion still renders exactly what the five templates had."""
-    assert agent_templates.build_execution_claim_guard() == (
-        agent_templates.build_execution_claim_guard(
-            occasion=agent_templates.ClaimOccasion.WRITE_FIRST))
-    assert "first write" in agent_templates.build_execution_claim_guard()
+    assert agent.templates.build_execution_claim_guard() == (
+        agent.templates.build_execution_claim_guard(
+            occasion=agent.templates.ClaimOccasion.WRITE_FIRST))
+    assert "first write" in agent.templates.build_execution_claim_guard()
 
 
 def test_every_fix_template_renders_a_guard_with_no_placeholder_left():
@@ -1416,10 +1416,10 @@ def test_every_fix_template_renders_a_guard_with_no_placeholder_left():
     `${execution_claim_guard}` that no render site supplies, and the agent
     would be shown the literal text.
     """
-    guard = agent_templates.build_execution_claim_guard(
-        occasion=agent_templates.ClaimOccasion.FIX_EVIDENCE)
+    guard = agent.templates.build_execution_claim_guard(
+        occasion=agent.templates.ClaimOccasion.FIX_EVIDENCE)
     for name in sorted(_fix_shape_templates()):
-        rendered = agent_templates.render(name, execution_claim_guard=guard)
+        rendered = agent.templates.render(name, execution_claim_guard=guard)
         assert _EXECUTION_CLAIM_PLACEHOLDER not in rendered, name
         assert _NO_UNRUN_EXECUTION_CLAIM in rendered, name
 
@@ -1430,9 +1430,9 @@ def test_execution_claim_guard_names_the_cross_cutting_step():
     The two synthesis templates number that step differently, so the builder
     takes it as a parameter; a wrong number sends the agent to the wrong step.
     """
-    assert "step 8" in agent_templates.build_execution_claim_guard(8)
-    assert "step 9" in agent_templates.build_execution_claim_guard(9)
-    assert "step" not in agent_templates.build_execution_claim_guard()
+    assert "step 8" in agent.templates.build_execution_claim_guard(8)
+    assert "step 9" in agent.templates.build_execution_claim_guard(9)
+    assert "step" not in agent.templates.build_execution_claim_guard()
 
 
 @pytest.mark.parametrize(

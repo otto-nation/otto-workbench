@@ -20,8 +20,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from core import log
-from core import workbench_paths
+import core.log
+import core.workbench_paths
 from core.trail import MONTH_STEM, TS_FORMAT
 
 
@@ -36,7 +36,7 @@ FALLBACK_WINDOW = timedelta(hours=1)
 def discover_trails(since: datetime | None = None) -> list[Path]:
     """Every trail file a *since* window can reach, oldest month first."""
     try:
-        files = sorted(workbench_paths.trail_dir().glob("*.jsonl"))
+        files = sorted(core.workbench_paths.trail_dir().glob("*.jsonl"))
     except OSError:
         # A missing trail root is not an error — glob on a directory that
         # does not exist yet raises nothing, so the only thing this catches
@@ -111,13 +111,13 @@ def parse_since(since: str, *, strict: bool = False) -> datetime:
     unit = suffixes.get(suffix)
     if not unit:
         if strict:
-            log.error(f"Invalid time window: {since!r} (expected e.g. 2h, 7d, 30m)")
+            core.log.error(f"Invalid time window: {since!r} (expected e.g. 2h, 7d, 30m)")
             raise SystemExit(1)
         return now - FALLBACK_WINDOW
     try:
         return now - timedelta(**{unit: int(since[:-1])})
     except ValueError:
-        log.error(f"Invalid --since value: {since!r}")
+        core.log.error(f"Invalid --since value: {since!r}")
         raise SystemExit(1)
 
 

@@ -80,7 +80,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core import serde
+import core.serde
 from pr.target import display_repo
 from review.paths import (
     ReviewEntry, ReviewEntryKind, aggregate_session_usage, iter_review_entries,
@@ -221,7 +221,7 @@ def document(schema_version: int) -> dict:
     """
     return {
         "schema_version": schema_version,
-        "reviews": [serde.to_dict(row) for row in rows()],
+        "reviews": [core.serde.to_dict(row) for row in rows()],
     }
 
 

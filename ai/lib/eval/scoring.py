@@ -663,5 +663,5 @@ _FLOOR_EXPORTS = frozenset({
 def __getattr__(name: str):
     if name not in _FLOOR_EXPORTS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    from eval import floors as _floors
-    return getattr(_floors, name)
+    import eval.floors
+    return getattr(eval.floors, name)

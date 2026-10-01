@@ -33,8 +33,8 @@ import json
 import sys
 from pathlib import Path
 
-from cli import dispatch
-from cli import review_modes
+import cli.dispatch
+import cli.review_modes
 from cli.needs import Need
 from cli.pr_commands import (
     # Re-exported, not used here: the tests read `pr_cli.EXIT_BUDGET_EXHAUSTED`
@@ -54,16 +54,16 @@ from cli.schema import (
     subcommand_schema,
     tool_schema,
 )
-from pr import context as pr_context
-from pr import state as pr_state
-from pr import sync as pr_sync
-from pr import push_intent
-from core import log
-from core import proc
-from core import publishing
-from config import workbench_projects
-from core import run_lock
-from review import listing as review_listing
+import pr.context
+import pr.state
+import pr.sync
+import pr.push_intent
+import core.log
+import core.proc
+import core.publishing
+import config.workbench_projects
+import core.run_lock
+import review.listing
 from core.trail import Trail, add_trail_args
 
 # The command a user types. A literal, not `Path(__file__).name`: this module
@@ -77,7 +77,7 @@ def _is_pr_target(target: str | None) -> bool:
     """Check if target looks like a PR URL or number (not a branch name)."""
     if not target:
         return False
-    return pr_context.is_pr_ref(target)
+    return pr.context.is_pr_ref(target)
 
 
 
@@ -88,36 +88,36 @@ def _is_pr_target(target: str | None) -> bool:
 # `cmd_review` and `cmd_comments` stay here; see `cli.pr_commands`'s module
 # docstring for why (and for which four subcommands moved there instead).
 
-def cmd_review(argv: list[str], ctx: pr_context.ResolvedContext, *,
+def cmd_review(argv: list[str], ctx: pr.context.ResolvedContext, *,
                bin_dir: Path,
                original_pr: str | None = None,
                original_branch: str | None = None,
                schema_version: int | None = None,
                **_kw) -> int:
     """Run a review, or handle one of the mode flags in `review_modes.MODES`."""
-    given = review_modes.flags_given(argv)
+    given = cli.review_modes.flags_given(argv)
     if len(given) > 1:
-        log.error(f"{SCRIPT}: {review_modes.flags_prose()} are mutually exclusive")
+        core.log.error(f"{SCRIPT}: {cli.review_modes.flags_prose()} are mutually exclusive")
         return 1
 
     if given:
         flag = given[0]
-        handler = review_modes.MODES[flag].handler
+        handler = cli.review_modes.MODES[flag].handler
         if handler:
             return handler([a for a in argv if a != flag], ctx,
                            bin_dir=bin_dir, schema_version=schema_version)
 
     has_self = "--self" in argv
-    positionals, _ = dispatch.split_argv(argv)
+    positionals, _ = cli.dispatch.split_argv(argv)
     has_pr_target = (
         any(_is_pr_target(p) for p in positionals)
         or _is_pr_target(original_pr)
         or ctx.pr_number is not None
     )
     inject = ["--self"] if not has_self and not has_pr_target and not positionals else []
-    return publishing.call_entry_point(
+    return core.publishing.call_entry_point(
         "cli.review_entry:main",
-        dispatch.delegate_argv(COMMANDS["review"], inject + list(argv), ctx,
+        cli.dispatch.delegate_argv(COMMANDS["review"], inject + list(argv), ctx,
                                original_pr=original_pr,
                                original_branch=original_branch),
         # `pr` installed the identical handler at its own entry point, and
@@ -135,18 +135,18 @@ def _invocation(command: str, argv: list[str]) -> str:
     --list` are different commands to everyone but argparse — so an error about
     one has to name the flag or it reads as being about the other.
     """
-    modes = review_modes.flags_given(argv) if command == "review" else []
+    modes = cli.review_modes.flags_given(argv) if command == "review" else []
     return " ".join(filter(None, [SCRIPT, command, *modes[:1]]))
 
 
-def cmd_comments(argv: list[str], ctx: pr_context.ResolvedContext, *,
+def cmd_comments(argv: list[str], ctx: pr.context.ResolvedContext, *,
                  original_pr: str | None = None,
                  original_branch: str | None = None,
                  **_kw) -> int:
     """Delegate to review-threads, routing --triage, --fix, --settle and --finish flags."""
-    return publishing.call_entry_point(
+    return core.publishing.call_entry_point(
         "cli.review_threads:main",
-        dispatch.delegate_argv(COMMANDS["comments"], list(argv), ctx,
+        cli.dispatch.delegate_argv(COMMANDS["comments"], list(argv), ctx,
                                original_pr=original_pr,
                                original_branch=original_branch),
     )
@@ -193,7 +193,7 @@ def _build_usage() -> str:
         for name, spec in COMMANDS.items()
     )
     contracts = ", ".join(schema_contracts())
-    versions = ", ".join(str(v) for v in review_listing.SCHEMA_VERSIONS)
+    versions = ", ".join(str(v) for v in review.listing.SCHEMA_VERSIONS)
     return f"""\
 pr — PR lifecycle management
 
@@ -216,7 +216,7 @@ Run 'pr <command> -h' for details on a specific command."""
 
 def _reject_a_target_that_resolves_to_nothing(
     command: str, argv: list[str], need: Need,
-    pr: str | None, branch: str | None,
+    pr_arg: str | None, branch: str | None,
 ) -> None:
     """Exit if a command that resolves nothing was handed a target anyway.
 
@@ -226,15 +226,15 @@ def _reject_a_target_that_resolves_to_nothing(
     #123" and would come back with every review on the machine, which is a
     wrong answer that looks exactly like a right one.
     """
-    given = pr or branch
-    if need.depth is not pr_context.ContextDepth.NONE or not given:
+    given = pr_arg or branch
+    if need.depth is not pr.context.ContextDepth.NONE or not given:
         return
-    log.error(f"{SCRIPT}: {_invocation(command, argv)} answers from your state "
+    core.log.error(f"{SCRIPT}: {_invocation(command, argv)} answers from your state "
               f"root and takes no PR or branch — drop {given!r}")
     sys.exit(EXIT_USAGE)
 
 
-def _dispatch(args, ctx: pr_context.ResolvedContext, extra: list[str], global_args, *,
+def _dispatch(args, ctx: pr.context.ResolvedContext, extra: list[str], global_args, *,
               need: Need,
               bin_dir: Path,
               original_pr: str | None,
@@ -266,9 +266,9 @@ def _dispatch(args, ctx: pr_context.ResolvedContext, extra: list[str], global_ar
         assert spec.handler, \
             (f"pr: command {args.command!r} has no handler and no wrapper — "
              f"register it in _CUSTOM or give its CommandSpec a handler")
-        return publishing.call_entry_point(
+        return core.publishing.call_entry_point(
             spec.handler,
-            dispatch.delegate_argv(spec, extra, ctx,
+            cli.dispatch.delegate_argv(spec, extra, ctx,
                                    original_pr=original_pr,
                                    original_branch=original_branch),
         )
@@ -307,7 +307,7 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
         sys.stdout.write("\n")
         return 0
 
-    proc.install_interrupt_handler(log.interrupted)
+    core.proc.install_interrupt_handler(core.log.interrupted)
 
     # Two-pass parse: extract global flags first, then route the subcommand.
     # Argparse subparsers swallow flags after the subcommand name, so
@@ -359,16 +359,16 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     # cleared by hand. The warning names the exception, so a bug is still said
     # out loud rather than swallowed.
     try:
-        push_intent.reconcile()
+        pr.push_intent.reconcile()
     except Exception as exc:
-        log.warn(f"could not reconcile recorded pushes: {exc}")
+        core.log.warn(f"could not reconcile recorded pushes: {exc}")
 
     spec = COMMANDS[args.command]
     # The delegate's own parser prints its own help, in this process. It is
     # asked for the parser rather than run with `--help`, because a delegate
     # `main` does more than parse before argparse ever sees the flag.
     if {"-h", "--help"} & set(extra) and spec.script:
-        dispatch.print_delegate_help(spec)
+        cli.dispatch.print_delegate_help(spec)
         return 0
 
     original_pr = getattr(args, "pr", None)
@@ -382,9 +382,9 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     ambiguous = (original_pr is None and original_branch is None
                  and spec.takes_target)
     if ambiguous and any(not a.startswith("-") for a in extra):
-        idx = dispatch.positional_index(extra, dispatch.delegate_value_flags(spec))
+        idx = cli.dispatch.positional_index(extra, cli.dispatch.delegate_value_flags(spec))
         if idx >= 0:
-            original_pr, original_branch = pr_context.classify_target(extra[idx])
+            original_pr, original_branch = pr.context.classify_target(extra[idx])
             extra.pop(idx)
 
     if global_args.schema_version is not None:
@@ -400,9 +400,9 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
         args.command, extra, need, original_pr, original_branch,
     )
 
-    ctx = pr_context.resolve_at(
+    ctx = pr.context.resolve_at(
         need.depth,
-        pr=original_pr,
+        pr_ref=original_pr,
         branch=original_branch,
         repo_dir=getattr(args, "repo_dir", None),
     )
@@ -411,10 +411,10 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     # use is `pr` never opens a Claude session, so the SessionStart hook never
     # sees it. The root is already resolved, so this costs no subprocess.
     if ctx.worktree_root:
-        workbench_projects.register(ctx.worktree_root)
+        config.workbench_projects.register(ctx.worktree_root)
 
     if need.update:
-        ctx = pr_sync.update_to_remote(ctx)
+        ctx = pr.sync.update_to_remote(ctx)
 
     # The lock is acquired before _dispatch so contention costs no trail
     # artifacts.
@@ -428,10 +428,10 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     # ci-check, review-threads, and claude-review's plain --self.
     try:
         lock = (
-            run_lock.acquire(
+            core.run_lock.acquire(
                 ctx.target_dir,
                 command=" ".join([SCRIPT] + argv),
-                started=pr_state.now_iso(),
+                started=pr.state.now_iso(),
             )
             if need.lock else contextlib.nullcontext()
         )
@@ -441,6 +441,6 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
                              bin_dir=bin_dir,
                              original_pr=original_pr,
                              original_branch=original_branch)
-    except run_lock.LockBusy as exc:
-        run_lock.report_busy(exc)
+    except core.run_lock.LockBusy as exc:
+        core.run_lock.report_busy(exc)
         return 1

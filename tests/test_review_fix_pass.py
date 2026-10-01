@@ -1,13 +1,13 @@
-"""Tests for the review findings fix pass — `review_fix`'s half of the engine.
+"""Tests for the review findings fix pass — `review.fix`'s half of the engine.
 
-The pipeline is `fix_engine`'s and `fix_engine_test.py` holds it: the batching,
+The pipeline is `fix.engine`'s and `fix_engine_test.py` holds it: the batching,
 the retry, and what the landing owner is handed. What is here is the half only
 a review can answer — which findings are open, which paths the commit may be
 scoped to, and how `review.md` reads once the agent has answered.
 
 The end-to-end cases run against a real repo, because attribution is a set of
 path strings git produced and a stubbed `status` line would agree with whatever
-the test expected. The agent is stubbed at `agent_invoke.run_fix`, which is
+the test expected. The agent is stubbed at `agent.invoke.run_fix`, which is
 where the review's own boundary is: everything below it is the engine's, and
 everything above it is what this module decided to ask for.
 """
@@ -23,35 +23,37 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-from agent import invoke as agent_invoke
+import agent.invoke
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import PHASES
-from fix import engine as fix_engine
-from fix import gate as fix_gate
-from git import land
-from git import push
-from review import document as review_document
-from fix import suite as fix_suite
-from review import fix as review_fix
-from review import grammar as review_grammar
-from review import paths as review_paths
-from review import types as review_types
-from core import publishing
+import fix.engine
+import fix.gate
+import git.land
+import git.push
+import review.document
+import fix.suite
+import review.fix
+import review.grammar
+import review.paths
+import review.types
+import core.publishing
 from core.proc import TIMEOUT_RETURNCODE, CmdResult
 from core.phases import Effort, Phase
-from pr import attribution
+import pr.attribution
 from pr.fix import FixOutcome, ItemOutcome
 from gh.types import PRContext, PRMetadata
 from review.static_analysis import (
     CheckerResult, StaticViolation, format_static_analysis,
 )
 from review.types import Finding, ReviewJob
+import fix.verify
+import git.client
 
 # What the push owner answers when the fix pass's commit reached the remote.
 # The pass no longer pushes for itself — `land` does — so stubbing the owner is
 # how a test keeps a real commit and no network.
-_PUSHED = push.PushResult(
-    push.PushStatus.PUSHED, sha="9bc3f64ab", branch="feat/x", remote_sha="9bc3f64ab",
+_PUSHED = git.push.PushResult(
+    git.push.PushStatus.PUSHED, sha="9bc3f64ab", branch="feat/x", remote_sha="9bc3f64ab",
 )
 
 
@@ -129,7 +131,7 @@ def _make_job(
 
 
 def _tracking(job: ReviewJob) -> Path:
-    return Path(job.artifact_dir) / fix_engine.TRACKING_FILENAME
+    return Path(job.artifact_dir) / fix.engine.TRACKING_FILENAME
 
 
 def _is_heading(line: str) -> bool:
@@ -177,8 +179,8 @@ def _answer(job: ReviewJob, boxes: dict[str, str], *, work=None, stop=None):
         # take for the answer they asked for. Fail on the typo instead.
         assert not owed, f"no box matched the answer for: {sorted(owed)}"
         if stop is None:
-            return agent_invoke.FixResult(0, None)
-        return agent_invoke.FixResult(0, None, stop=stop)
+            return agent.invoke.FixResult(0, None)
+        return agent.invoke.FixResult(0, None, stop=stop)
 
     return run_fix
 
@@ -189,7 +191,7 @@ def _run(
 ):
     """Run the pass with the agent stubbed, and hand back the stub.
 
-    The verify gate is stubbed alongside it, at `fix_verify.run` rather than at
+    The verify gate is stubbed alongside it, at `fix.verify.run` rather than at
     the agent: the two share one `run_fix`, so a single stub would hand the
     gate's checklist to a helper that answers in the fix pass's vocabulary and
     every case here would fail on a box the verify file does not carry.
@@ -199,11 +201,11 @@ def _run(
     cases below about what this module decides; the gate's own effect on them is
     `TestTheVerifyGate`'s.
     """
-    with patch.object(review_fix.fix_verify, "run",
+    with patch.object(fix.verify, "run",
                       side_effect=lambda *a, **k: dict(verdicts or {})):
-        with patch.object(fix_engine.agent_invoke, "run_fix",
+        with patch.object(agent.invoke, "run_fix",
                           side_effect=_answer(job, boxes, work=work, stop=stop)) as inv:
-            review_fix.run_fix_pass(job, **kwargs)
+            review.fix.run_fix_pass(job, **kwargs)
     return inv
 
 
@@ -264,9 +266,9 @@ class TestTheWorkSet:
     def test_an_item_is_labelled_with_its_severity_section(self, git_wt, tmp_path):
         """The agent orders its work by severity, so the section has to reach it."""
         job = _make_job(git_wt, tmp_path, "## Nit\n- [ ] **[N1]** `a.py:1` — Style\n")
-        adapter = review_fix.ReviewFixAdapter(job, [_finding("N1")])
+        adapter = review.fix.ReviewFixAdapter(job, [_finding("N1")])
 
-        assert adapter.items()[0].label == review_types.severity_by_key("N").section
+        assert adapter.items()[0].label == review.types.severity_by_key("N").section
 
     def test_a_review_with_nothing_open_never_runs_the_agent(self, git_wt, tmp_path):
         job = _make_job(
@@ -303,16 +305,16 @@ class TestWhatTheReviewLendsTheAgentCall:
     def test_the_session_log_is_the_one_the_review_s_sweep_removes(
         self, git_wt, tmp_path,
     ):
-        """`review_gc` finds a phase's log by the name the registry gives it.
+        """`review.gc` finds a phase's log by the name the registry gives it.
 
         The engine's own default sits under a name the sweep never asks for, so
         a `--fix` pass would leave its session log behind in a finished review.
         """
         job = _make_job(git_wt, tmp_path, "## Nit\n- [ ] **[N1]** `src.py:1` — Style\n")
-        adapter = review_fix.ReviewFixAdapter(job, [_finding("N1")])
+        adapter = review.fix.ReviewFixAdapter(job, [_finding("N1")])
 
         assert adapter.session_log == Path(
-            review_paths.phase_log_path(job.review_file, Phase.FIX),
+            review.paths.phase_log_path(job.review_file, Phase.FIX),
         )
         assert adapter.session_log.parent == Path(job.artifact_dir)
 
@@ -321,7 +323,7 @@ class TestWhatTheReviewLendsTheAgentCall:
     ):
         """The tracking file lives there, not in the worktree under review."""
         job = _make_job(git_wt, tmp_path, "## Nit\n- [ ] **[N1]** `src.py:1` — Style\n")
-        adapter = review_fix.ReviewFixAdapter(job, [_finding("N1")])
+        adapter = review.fix.ReviewFixAdapter(job, [_finding("N1")])
 
         assert adapter.tracking_path.parent in adapter.add_dirs()
         assert adapter.workdir in adapter.add_dirs()
@@ -341,7 +343,7 @@ class TestTheVerifyGate:
 
     REVIEW = "## Must fix\n- [ ] **[M1]** `helper.py:1` — Missing helper\n"
 
-    @patch("git.land.push.push", return_value=_PUSHED)
+    @patch("git.push.push", return_value=_PUSHED)
     def test_a_fix_the_gate_falsifies_is_not_committed_as_fixed(
         self, mock_push, git_wt, tmp_path,
     ):
@@ -355,7 +357,7 @@ class TestTheVerifyGate:
         _run(
             job, {"M1": "fixed — test_helper"},
             work=lambda: (git_wt / "helper.py").write_text("def helper(): pass\n"),
-            verdicts={"M1": fix_gate.Verdict(
+            verdicts={"M1": fix.gate.Verdict(
                 ok=False, detail="test_helper does not exist",
             )},
         )
@@ -370,7 +372,7 @@ class TestTheVerifyGate:
         assert "fixed" not in msg
         assert "Skipped:\n  - [M1] test_helper does not exist" in msg
 
-    @patch("git.land.push.push", return_value=_PUSHED)
+    @patch("git.push.push", return_value=_PUSHED)
     def test_a_fix_the_gate_confirms_is_committed_as_fixed(
         self, mock_push, git_wt, tmp_path,
     ):
@@ -378,7 +380,7 @@ class TestTheVerifyGate:
         _run(
             job, {"M1": "fixed — test_helper"},
             work=lambda: (git_wt / "helper.py").write_text("def helper(): pass\n"),
-            verdicts={"M1": fix_gate.Verdict(ok=True, detail="suite green")},
+            verdicts={"M1": fix.gate.Verdict(ok=True, detail="suite green")},
         )
 
         assert "- [x] **[M1]**" in Path(job.review_file).read_text()
@@ -389,13 +391,13 @@ class TestTheVerifyGate:
 
         Everything else here would pass against a pass that never gated — the
         stub in `_run` patches the runner, not the wiring — so this asserts the
-        argument reaches `fix_engine.run`.
+        argument reaches `fix.engine.run`.
         """
         job = _make_job(git_wt, tmp_path, self.REVIEW)
-        with patch.object(review_fix.fix_engine, "run") as run:
-            review_fix.run_fix_pass(job)
+        with patch.object(fix.engine, "run") as run:
+            review.fix.run_fix_pass(job)
 
-        assert run.call_args.kwargs["verify"] is review_fix.fix_verify.run
+        assert run.call_args.kwargs["verify"] is fix.verify.run
 
     def test_the_gate_is_prompted_as_the_gate_not_as_the_fix_pass(self):
         """Falling back to `phase` hands a checking agent fix-findings.md.
@@ -403,7 +405,7 @@ class TestTheVerifyGate:
         That template tells it to edit source, which the gate's own rules
         forbid in as many words — the bug #1358 fixed for the comments domain.
         """
-        phase = review_fix.ReviewFixAdapter.verify_phase
+        phase = review.fix.ReviewFixAdapter.verify_phase
         assert phase is Phase.FIX_VERIFY
         assert PHASES[phase].template_for() == "verify-fixes.md"
 
@@ -412,14 +414,14 @@ class TestTheVerifyGate:
     ):
         """Named from the registry, for the reason the fix pass's log is.
 
-        The engine's default sits under a name `review_gc` never asks for, so a
+        The engine's default sits under a name `review.gc` never asks for, so a
         gated pass would leave its session log beside the deliverable.
         """
         job = _make_job(git_wt, tmp_path, self.REVIEW)
-        adapter = review_fix.ReviewFixAdapter(job, [_finding("M1")])
+        adapter = review.fix.ReviewFixAdapter(job, [_finding("M1")])
 
         assert adapter.verify_session_log(1) == Path(
-            review_paths.phase_log_path(job.review_file, Phase.FIX_VERIFY, 1),
+            review.paths.phase_log_path(job.review_file, Phase.FIX_VERIFY, 1),
         )
         assert adapter.verify_session_log(1).parent == Path(job.artifact_dir)
 
@@ -441,7 +443,7 @@ class TestTheCommitScope:
             "## Must fix\n- [ ] **[M1]** `a.py:1` — Bug\n",
             files=files,
         )
-        return review_fix.ReviewFixAdapter(job, [_finding("M1")])
+        return review.fix.ReviewFixAdapter(job, [_finding("M1")])
 
     def test_the_scope_is_what_the_engine_attributed_to_the_agent(
         self, git_wt, tmp_path,
@@ -505,8 +507,8 @@ class TestTheCommitScope:
         somebody writes from memory.
         """
         adapter = self._adapter(git_wt, tmp_path)
-        adapter.suite = fix_suite.SuiteResult(
-            status=fix_suite.SuiteStatus.RED, command="bin/local/run-tests --changed",
+        adapter.suite = fix.suite.SuiteResult(
+            status=fix.suite.SuiteStatus.RED, command="bin/local/run-tests --changed",
             output_tail="E   AttributeError: no attribute 'EXIT_BUDGET_EXHAUSTED'",
         )
 
@@ -520,13 +522,13 @@ class TestTheCommitScope:
         self, git_wt, tmp_path,
     ):
         adapter = self._adapter(git_wt, tmp_path)
-        adapter.suite = fix_suite.SuiteResult(
-            status=fix_suite.SuiteStatus.NOT_DECLARED)
+        adapter.suite = fix.suite.SuiteResult(
+            status=fix.suite.SuiteStatus.NOT_DECLARED)
 
         spec = adapter.landing([_outcome("M1", FixOutcome.FIXED)], {"a.py"})
 
         assert "unverified: no fix.verify_command declared" in spec.message
-        assert fix_suite.NOT_DECLARED_NOTE in spec.message
+        assert fix.suite.NOT_DECLARED_NOTE in spec.message
 
     def test_a_green_run_leaves_the_tally_as_it_was(self, git_wt, tmp_path):
         """Green means the checks pass, not that each fix is right.
@@ -535,8 +537,8 @@ class TestTheCommitScope:
         stops being read.
         """
         adapter = self._adapter(git_wt, tmp_path)
-        adapter.suite = fix_suite.SuiteResult(
-            status=fix_suite.SuiteStatus.GREEN, command="checks", duration_s=12.0)
+        adapter.suite = fix.suite.SuiteResult(
+            status=fix.suite.SuiteStatus.GREEN, command="checks", duration_s=12.0)
 
         spec = adapter.landing([_outcome("M1", FixOutcome.FIXED)], {"a.py"})
 
@@ -548,8 +550,8 @@ class TestTheCommitScope:
         self, git_wt, tmp_path,
     ):
         adapter = self._adapter(git_wt, tmp_path)
-        adapter.suite = fix_suite.SuiteResult(
-            status=fix_suite.SuiteStatus.TIMED_OUT, command="checks", duration_s=900.0)
+        adapter.suite = fix.suite.SuiteResult(
+            status=fix.suite.SuiteStatus.TIMED_OUT, command="checks", duration_s=900.0)
 
         spec = adapter.landing([_outcome("M1", FixOutcome.FIXED)], {"a.py"})
 
@@ -611,7 +613,7 @@ class TestBranchScope:
 
     REVIEW = "## Must fix\n- [ ] **[M1]** `helper.py:1` — Missing helper\n"
 
-    @patch("git.land.push.push", return_value=_PUSHED)
+    @patch("git.push.push", return_value=_PUSHED)
     def test_an_out_of_branch_edit_is_reported_and_left_uncommitted(
         self, mock_push, git_wt, tmp_path, capsys,
     ):
@@ -632,7 +634,7 @@ class TestBranchScope:
         assert "not committing" in err
         assert "lib/nesting/bash.py" in err
 
-    @patch("git.land.push.push", return_value=_PUSHED)
+    @patch("git.push.push", return_value=_PUSHED)
     def test_an_in_branch_edit_is_committed(
         self, mock_push, git_wt, tmp_path, capsys,
     ):
@@ -645,7 +647,7 @@ class TestBranchScope:
         assert _committed_paths(git_wt) == {"helper.py"}
         assert "outside this branch" not in capsys.readouterr().err
 
-    @patch("git.land.push.push", return_value=_PUSHED)
+    @patch("git.push.push", return_value=_PUSHED)
     def test_a_colocated_test_of_an_in_branch_file_is_committed(
         self, mock_push, git_wt, tmp_path,
     ):
@@ -674,12 +676,12 @@ class TestBranchScope:
             files=["src/auth.go", "pkg/util.go"],
             base="feat/parent",
         )
-        adapter = review_fix.ReviewFixAdapter(
+        adapter = review.fix.ReviewFixAdapter(
             job, [_finding("M1", path="helper.py")],
         )
         adapter.tracking_path.parent.mkdir(parents=True, exist_ok=True)
         adapter.tracking_path.write_text("- [ ] fixed\n")
-        prompt = fix_engine._prompt(adapter, 15)
+        prompt = fix.engine._prompt(adapter, 15)
 
         assert "src/auth.go" in prompt
         assert "pkg/util.go" in prompt
@@ -697,7 +699,7 @@ class TestTheSummary:
     FINDINGS = {"M1": "the guard is missing"}
 
     def test_a_fix_is_described_by_the_finding_it_answered(self):
-        summary = review_fix._summary(
+        summary = review.fix._summary(
             [_outcome("M1", FixOutcome.FIXED)], self.FINDINGS,
         )
         assert summary == "Fixed:\n  - [M1] the guard is missing"
@@ -705,13 +707,13 @@ class TestTheSummary:
     def test_a_fix_for_a_finding_the_review_no_longer_holds_names_its_file(self):
         """The tracking file records a location, and nothing else about the item."""
         outcome = ItemOutcome(id="M9", outcome=FixOutcome.FIXED, file="gone.py")
-        assert "[M9] gone.py" in review_fix._summary([outcome], self.FINDINGS)
+        assert "[M9] gone.py" in review.fix._summary([outcome], self.FINDINGS)
 
     def test_a_multi_line_body_is_reported_by_its_first_line(self):
-        described = {"M1": review_fix._describe_finding(
+        described = {"M1": review.fix._describe_finding(
             _finding("M1", body="headline\n\nthe rest of it"),
         )}
-        summary = review_fix._summary([_outcome("M1", FixOutcome.FIXED)], described)
+        summary = review.fix._summary([_outcome("M1", FixOutcome.FIXED)], described)
         assert summary == "Fixed:\n  - [M1] headline"
 
     def test_a_long_finding_wraps_instead_of_truncating_mid_sentence(self):
@@ -721,10 +723,10 @@ class TestTheSummary:
             "makes the entire matrix skip the toolchain pin rather than applying "
             "it on every job."
         )
-        described = {"S1": review_fix._describe_finding(
+        described = {"S1": review.fix._describe_finding(
             _finding("S1", body=sentence),
         )}
-        summary = review_fix._summary(
+        summary = review.fix._summary(
             [_outcome("S1", FixOutcome.FIXED)], described,
         )
         assert sentence in " ".join(summary.split())
@@ -739,18 +741,18 @@ class TestTheSummary:
         assert all(line.startswith(hang) for line in continuations)
 
     def test_a_skip_is_reported_by_the_reason_the_agent_gave(self):
-        summary = review_fix._summary(
+        summary = review.fix._summary(
             [_outcome("S1", FixOutcome.NEEDS_HUMAN, "needs a product decision")], {},
         )
         assert "Skipped:\n  - [S1] needs a product decision" in summary
 
     def test_a_deferral_is_reported_as_a_skip_with_no_reason(self):
         """The agent never reached it, so there is no reason it could have given."""
-        summary = review_fix._summary([_outcome("N1", FixOutcome.DEFERRED)], {})
+        summary = review.fix._summary([_outcome("N1", FixOutcome.DEFERRED)], {})
         assert "Skipped:\n  - [N1] no auto-fix" in summary
 
     def test_a_truncated_pass_names_the_turn_limit(self):
-        summary = review_fix._summary(
+        summary = review.fix._summary(
             [
                 _outcome("M1", FixOutcome.FIXED),
                 _outcome("N1", FixOutcome.DEFERRED),
@@ -762,7 +764,7 @@ class TestTheSummary:
         assert "30" in summary
 
     def test_a_truncated_deferral_is_not_reported_as_no_auto_fix(self):
-        summary = review_fix._summary(
+        summary = review.fix._summary(
             [_outcome("N1", FixOutcome.DEFERRED)],
             {},
             stop=Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=30),
@@ -772,18 +774,18 @@ class TestTheSummary:
 
     def test_a_decline_has_its_own_heading(self):
         """A skip is retried next pass; a decline is work nobody is going to do."""
-        summary = review_fix._summary(
+        summary = review.fix._summary(
             [_outcome("M2", FixOutcome.DECLINED, "documented `ceiling:` tradeoff")], {},
         )
         assert "Declined:\n  - [M2] documented `ceiling:` tradeoff" in summary
         assert "Skipped:" not in summary
 
     def test_a_decline_without_a_reason_says_what_it_still_means(self):
-        summary = review_fix._summary([_outcome("N1", FixOutcome.DECLINED)], {})
+        summary = review.fix._summary([_outcome("N1", FixOutcome.DECLINED)], {})
         assert "adjudicated, not a defect" in summary
 
     def test_a_pass_that_settled_nothing_summarises_nothing(self):
-        assert review_fix._summary([], {}) == ""
+        assert review.fix._summary([], {}) == ""
 
     def test_a_pass_claiming_no_fixes_names_the_files_it_is_committing(self):
         """The blocks describe outcomes; the commit carries files.
@@ -793,7 +795,7 @@ class TestTheSummary:
         mechanical check — and the summary then reads as though the pass did
         nothing, over a commit that changed the code.
         """
-        summary = review_fix._summary(
+        summary = review.fix._summary(
             [_outcome("N1", FixOutcome.DEFERRED)], {}, {"caller.py", "a_test.py"},
         )
 
@@ -809,7 +811,7 @@ class TestTheSummary:
         Printing the files under every summary would train the reader to skip
         the block, which costs exactly the case the block exists for.
         """
-        summary = review_fix._summary(
+        summary = review.fix._summary(
             [_outcome("M1", FixOutcome.FIXED), _outcome("N1", FixOutcome.DEFERRED)],
             {}, {"a.py"},
         )
@@ -818,7 +820,7 @@ class TestTheSummary:
 
     def test_a_pass_that_committed_nothing_does_not_get_the_footer(self):
         """Nothing was staged, so there is no discrepancy to report."""
-        summary = review_fix._summary(
+        summary = review.fix._summary(
             [_outcome("N1", FixOutcome.DEFERRED)], {}, set(),
         )
 
@@ -826,7 +828,7 @@ class TestTheSummary:
 
     def test_an_unreadable_worktree_does_not_get_the_footer(self):
         """None is "could not look", which is not evidence of unclaimed work."""
-        summary = review_fix._summary(
+        summary = review.fix._summary(
             [_outcome("N1", FixOutcome.DEFERRED)], {}, None,
         )
 
@@ -834,7 +836,7 @@ class TestTheSummary:
 
     def test_a_fix_the_gate_could_not_stand_behind_says_so(self):
         """Only a falsified fix is demoted, so an unverifiable one stays under Fixed."""
-        summary = review_fix._summary(
+        summary = review.fix._summary(
             [_outcome("M1", FixOutcome.FIXED, verified=False,
                       verify_detail="no runnable check")],
             self.FINDINGS,
@@ -845,14 +847,14 @@ class TestTheSummary:
         )
 
     def test_an_unverified_fix_with_no_detail_still_carries_the_caveat(self):
-        summary = review_fix._summary(
+        summary = review.fix._summary(
             [_outcome("M1", FixOutcome.FIXED, verified=False)], self.FINDINGS,
         )
         assert summary == "Fixed:\n  - [M1] the guard is missing (not verified automatically)"
 
     # passes-at-base: asserts the silence this change was careful to preserve
     def test_a_fix_the_gate_confirmed_carries_no_caveat(self):
-        summary = review_fix._summary(
+        summary = review.fix._summary(
             [_outcome("M1", FixOutcome.FIXED, verified=True,
                       verify_detail="pytest tests/a_test.py passed")],
             self.FINDINGS,
@@ -862,7 +864,7 @@ class TestTheSummary:
     # passes-at-base: asserts the silence this change was careful to preserve
     def test_a_pass_that_never_ran_the_gate_reads_as_it_always_did(self):
         """`verified is None` is nobody asking, which is not a caveat to print."""
-        summary = review_fix._summary(
+        summary = review.fix._summary(
             [_outcome("M1", FixOutcome.FIXED, verify_detail="ignored")], self.FINDINGS,
         )
         assert summary == "Fixed:\n  - [M1] the guard is missing"
@@ -900,7 +902,7 @@ class TestStaticViolationsAsWork:
         reported rather than silent, for both id shapes.
         """
         job = _make_job(git_wt, tmp_path, "## Must fix\n", files=["src.py"])
-        adapter = review_fix.ReviewFixAdapter(
+        adapter = review.fix.ReviewFixAdapter(
             job, [],
             violations=[
                 _violation(vid, "src.py", 1, message="first"),
@@ -922,7 +924,7 @@ class TestStaticViolationsAsWork:
         work and then refused at the commit as out of scope.
         """
         job = _make_job(git_wt, tmp_path, "## Must fix\n", files=["src.py"])
-        adapter = review_fix.ReviewFixAdapter(
+        adapter = review.fix.ReviewFixAdapter(
             job, [], violations=[_violation("SA1", "elsewhere.py", 3)],
         )
 
@@ -983,7 +985,7 @@ class TestStaticViolationsAsWork:
     def test_the_pass_takes_at_most_the_cap(self, git_wt, tmp_path):
         """Five turns an item against an eighty-turn cap: an uncapped section
         would spend the whole budget on mechanical edits."""
-        over = review_fix._MAX_STATIC_ITEMS + 5
+        over = review.fix._MAX_STATIC_ITEMS + 5
         job = _make_job(git_wt, tmp_path, "## Must fix\n", files=["src.py"])
         # One site each: `_static_items` collapses a site to a single item, so
         # violations sharing a function would test that collapse instead.
@@ -991,12 +993,12 @@ class TestStaticViolationsAsWork:
             _violation(f"SA{n}", "src.py", n, context=f"in f{n}()")
             for n in range(1, over + 1)
         ])
-        taken = review_fix._static_items(job.static_results)
+        taken = review.fix._static_items(job.static_results)
 
-        assert len(taken) == review_fix._MAX_STATIC_ITEMS
+        assert len(taken) == review.fix._MAX_STATIC_ITEMS
         # The ones a reader sees first, not an arbitrary slice.
         assert [v.id for v in taken] == [
-            f"SA{n}" for n in range(1, review_fix._MAX_STATIC_ITEMS + 1)
+            f"SA{n}" for n in range(1, review.fix._MAX_STATIC_ITEMS + 1)
         ]
 
     def test_a_violation_with_no_id_is_never_taken(self, git_wt, tmp_path):
@@ -1005,7 +1007,7 @@ class TestStaticViolationsAsWork:
         An outcome against it would have no line to be written back to.
         """
         results = _static_results(StaticViolation(file="src.py", line=1, message="x"))
-        assert review_fix._static_items(results) == []
+        assert review.fix._static_items(results) == []
 
     def test_an_unscoped_result_yields_no_work(self, git_wt, tmp_path):
         """Whole-file measurements are a report, not a work list.
@@ -1018,7 +1020,7 @@ class TestStaticViolationsAsWork:
         results = _static_results(
             _violation("SA1", "src.py", 4), scoped=False,
         )
-        assert review_fix._static_items(results) == []
+        assert review.fix._static_items(results) == []
 
     def test_an_unscoped_result_still_reports_its_violations(self, git_wt, tmp_path):
         """Not taking the work does not mean hiding the finding."""
@@ -1042,7 +1044,7 @@ class TestStaticViolationsAsWork:
             _violation(f"SA{n}", "src.py", n, context="in deep()")
             for n in range(4, 8)
         ])
-        taken = review_fix._static_items(results)
+        taken = review.fix._static_items(results)
 
         assert [v.id for v in taken] == ["SA4"]
         # The shallowest line, which is where the flattening starts.
@@ -1054,19 +1056,19 @@ class TestStaticViolationsAsWork:
             _violation("SA1", "src.py", 4, context="in one()"),
             _violation("SA2", "src.py", 9, context="in two()"),
         )
-        assert [v.id for v in review_fix._static_items(results)] == ["SA1", "SA2"]
+        assert [v.id for v in review.fix._static_items(results)] == ["SA1", "SA2"]
 
     def test_the_same_function_name_in_two_files_is_two_items(self, git_wt, tmp_path):
         results = _static_results(
             _violation("SA1", "a.py", 4, context="in run()"),
             _violation("SA2", "b.py", 4, context="in run()"),
         )
-        assert [v.id for v in review_fix._static_items(results)] == ["SA1", "SA2"]
+        assert [v.id for v in review.fix._static_items(results)] == ["SA1", "SA2"]
 
     def test_a_fixed_violation_is_described_by_its_location_and_message(self):
         """A violation has no prose body, so the location has to be in the line."""
         violation = _violation("SA1", "src.py", 12, context="in run()")
-        summary = review_fix._summary(
+        summary = review.fix._summary(
             [_outcome("SA1", FixOutcome.FIXED)], {"SA1": violation.describe()},
         )
         assert summary == (
@@ -1103,7 +1105,7 @@ class TestADeclineSurvivesTheNextRound:
         job = self._declined_round(git_wt, tmp_path)
         site = _violation("SA1", "src.py", 4, context="in f()").site
 
-        recorded = review_paths.read_review_meta(
+        recorded = review.paths.read_review_meta(
             Path(job.artifact_dir),
         ).static_declined
         assert site in recorded
@@ -1114,7 +1116,7 @@ class TestADeclineSurvivesTheNextRound:
     ):
         """The whole point: a `ceiling:` decline is not re-litigated forever."""
         job = self._declined_round(git_wt, tmp_path)
-        declined = review_paths.read_review_meta(
+        declined = review.paths.read_review_meta(
             Path(job.artifact_dir),
         ).static_declined
 
@@ -1122,7 +1124,7 @@ class TestADeclineSurvivesTheNextRound:
         next_round = _static_results(
             _violation("SA1", "src.py", 6, context="in f()"),
         )
-        assert review_fix._static_items(next_round, declined) == []
+        assert review.fix._static_items(next_round, declined) == []
 
     def test_a_line_that_moved_is_still_the_same_site(self, git_wt, tmp_path):
         """Keyed on file and function, so an edit above it does not revive it."""
@@ -1136,7 +1138,7 @@ class TestADeclineSurvivesTheNextRound:
         other = _violation("SA2", "src.py", 9, context="in g()")
         assert declined.site != other.site
 
-        taken = review_fix._static_items(
+        taken = review.fix._static_items(
             _static_results(other), {declined.site: "ceiling"},
         )
         assert [v.id for v in taken] == ["SA2"]
@@ -1165,7 +1167,7 @@ class TestADeclineSurvivesTheNextRound:
         )
         _run(job, {"SA1": "needs a person — a design call"})
 
-        assert review_paths.read_review_meta(
+        assert review.paths.read_review_meta(
             Path(job.artifact_dir),
         ).static_declined == {}
 
@@ -1191,13 +1193,13 @@ class TestApplyStaticOutcomes:
         return next(ln for ln in text.split("\n") if f"**[{vid}]**" in ln)
 
     def test_a_fixed_violation_is_ticked(self):
-        out = review_fix._apply_static_outcomes(
+        out = review.fix._apply_static_outcomes(
             self.SECTION, [_outcome("SA1", FixOutcome.FIXED)],
         )
         assert self._line(out, "SA1").startswith("- [x] **[SA1]**")
 
     def test_a_skipped_violation_carries_the_reason(self):
-        out = review_fix._apply_static_outcomes(self.SECTION, [
+        out = review.fix._apply_static_outcomes(self.SECTION, [
             _outcome("SA1", FixOutcome.NEEDS_HUMAN, "needs an extracted helper"),
         ])
         line = self._line(out, "SA1")
@@ -1205,7 +1207,7 @@ class TestApplyStaticOutcomes:
         assert line.endswith("*(skipped — needs an extracted helper)*")
 
     def test_a_declined_violation_carries_the_reason(self):
-        out = review_fix._apply_static_outcomes(self.SECTION, [
+        out = review.fix._apply_static_outcomes(self.SECTION, [
             _outcome("SA1", FixOutcome.DECLINED, "ceiling: documented tradeoff"),
         ])
         assert self._line(out, "SA1").endswith("*(declined — ceiling: documented tradeoff)*")
@@ -1216,20 +1218,20 @@ class TestApplyStaticOutcomes:
         A violation past the cap has no outcome, and annotating it would report
         a verdict the pass never reached.
         """
-        out = review_fix._apply_static_outcomes(
+        out = review.fix._apply_static_outcomes(
             self.SECTION, [_outcome("SA1", FixOutcome.FIXED)],
         )
         assert self._line(out, "SA2") == self._line(self.SECTION, "SA2")
 
     def test_a_deferral_leaves_the_line_alone(self):
         """The agent never reached it, so the line still describes open work."""
-        out = review_fix._apply_static_outcomes(
+        out = review.fix._apply_static_outcomes(
             self.SECTION, [_outcome("SA1", FixOutcome.DEFERRED)],
         )
         assert self._line(out, "SA1") == self._line(self.SECTION, "SA1")
 
     def test_an_unverified_fix_ticks_and_says_so(self):
-        out = review_fix._apply_static_outcomes(self.SECTION, [
+        out = review.fix._apply_static_outcomes(self.SECTION, [
             _outcome("SA1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
@@ -1239,7 +1241,7 @@ class TestApplyStaticOutcomes:
 
     def test_an_already_ticked_line_is_not_annotated_twice(self):
         ticked = self.SECTION.replace("- [ ] **[SA1]**", "- [x] **[SA1]**")
-        out = review_fix._apply_static_outcomes(ticked, [
+        out = review.fix._apply_static_outcomes(ticked, [
             _outcome("SA1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
@@ -1258,7 +1260,7 @@ class TestApplyStaticOutcomes:
             "## Static Analysis\n"
             "- [ ] **[SA1]** **`t.md:1`** — the line `- [ ] fixed` is malformed\n"
         )
-        out = review_fix._apply_static_outcomes(
+        out = review.fix._apply_static_outcomes(
             section, [_outcome("SA1", FixOutcome.FIXED)],
         )
         line = self._line(out, "SA1")
@@ -1283,7 +1285,7 @@ class TestApplyStaticOutcomes:
             "\n"
             + self.SECTION
         )
-        out = review_fix._apply_static_outcomes(
+        out = review.fix._apply_static_outcomes(
             text, [_outcome("SA1", FixOutcome.FIXED)],
         )
         quoted, declared = [
@@ -1295,14 +1297,14 @@ class TestApplyStaticOutcomes:
     def test_a_document_with_no_section_is_returned_unchanged(self):
         """Nothing to scope to is nothing to rewrite."""
         text = "## Must fix\n- [ ] **[M1]** `a.py:1` — Missing guard\n"
-        assert review_fix._apply_static_outcomes(
+        assert review.fix._apply_static_outcomes(
             text, [_outcome("SA1", FixOutcome.FIXED)],
         ) == text
 
     def test_the_rest_of_the_document_survives_the_rewrite(self):
         """The scoping splices the section back between what surrounded it."""
         text = self.SECTION + "\n## Verdict\n\nRequest changes\n"
-        out = review_fix._apply_static_outcomes(
+        out = review.fix._apply_static_outcomes(
             text, [_outcome("SA1", FixOutcome.FIXED)],
         )
         assert "## Verdict" in out
@@ -1312,7 +1314,7 @@ class TestApplyStaticOutcomes:
     def test_a_finding_line_is_left_to_the_findings_rewriter(self):
         """The two streams must not rewrite each other's lines."""
         both = "## Must fix\n- [ ] **[M1]** `a.py:1` — Missing guard\n\n" + self.SECTION
-        out = review_fix._apply_static_outcomes(
+        out = review.fix._apply_static_outcomes(
             both, [_outcome("M1", FixOutcome.FIXED)],
         )
         assert "- [ ] **[M1]**" in out
@@ -1369,13 +1371,13 @@ class TestApplyOutcomes:
     )
 
     def test_a_fix_ticks_the_box(self):
-        out = review_fix._apply_outcomes(self.OPEN, [_outcome("M1", FixOutcome.FIXED)])
+        out = review.fix._apply_outcomes(self.OPEN, [_outcome("M1", FixOutcome.FIXED)])
         assert "- [x] **[M1]**" in out
         assert "- [ ] **[M2]**" in out
 
     def test_an_unverified_fix_ticks_the_box_and_says_so(self):
         """The tick is honest — an edit landed — but nothing exercised it."""
-        out = review_fix._apply_outcomes(self.OPEN, [
+        out = review.fix._apply_outcomes(self.OPEN, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
@@ -1393,12 +1395,12 @@ class TestApplyOutcomes:
             "- [ ] **[M1]** `a.py:1` — the `*(declined — x)*` annotation is read "
             "anywhere\n"
         )
-        out = review_fix._apply_outcomes(
+        out = review.fix._apply_outcomes(
             text, [_outcome("M1", FixOutcome.NEEDS_HUMAN, "no auto-fix")],
         )
-        doc = review_document.ReviewDocument.parse(out)
+        doc = review.document.ReviewDocument.parse(out)
         assert doc.findings[0].declined is False
-        assert review_document.is_skipped(doc.findings[0]) is True
+        assert review.document.is_skipped(doc.findings[0]) is True
         assert [f.id for f in doc.open_findings if not f.declined] == ["M1"]
 
     def test_a_reason_carrying_a_newline_does_not_fabricate_a_finding(self):
@@ -1407,21 +1409,21 @@ class TestApplyOutcomes:
         `fix.tracking` collapses whitespace on the engine's path, but an
         `ItemOutcome` built anywhere else does not pass through it.
         """
-        out = review_fix._apply_outcomes(self.OPEN, [
+        out = review.fix._apply_outcomes(self.OPEN, [
             _outcome("M1", FixOutcome.NEEDS_HUMAN,
                      "one\n- [ ] **[M9]** `b.py:2` — injected"),
         ])
-        assert [f.id for f in review_document.ReviewDocument.parse(out).findings] == [
+        assert [f.id for f in review.document.ReviewDocument.parse(out).findings] == [
             "M1", "M2",
         ]
 
     # passes-at-base: base writes no caveat, so no detail reaches the document
     def test_a_verify_detail_carrying_a_newline_does_not_fabricate_a_finding(self):
-        out = review_fix._apply_outcomes(self.OPEN, [
+        out = review.fix._apply_outcomes(self.OPEN, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="one\n- [ ] **[S9]** `b.py:2` — injected"),
         ])
-        assert [f.id for f in review_document.ReviewDocument.parse(out).findings] == [
+        assert [f.id for f in review.document.ReviewDocument.parse(out).findings] == [
             "M1", "M2",
         ]
 
@@ -1439,19 +1441,19 @@ class TestApplyOutcomes:
             "characters so the append lands after it"
         )
         line = f"- [ ] **[M1]** `a.py:1` — {body}"
-        out = review_fix._apply_outcomes(
+        out = review.fix._apply_outcomes(
             f"## Must fix\n{line}\n",
             [_outcome("M1", FixOutcome.NEEDS_HUMAN, "no auto-fix")],
         )
-        before = review_grammar.FindingIdentity.of(line)
-        after = review_grammar.FindingIdentity.of(out.splitlines()[1])
+        before = review.grammar.FindingIdentity.of(line)
+        after = review.grammar.FindingIdentity.of(out.splitlines()[1])
         assert after.stable_id == before.stable_id
 
     # passes-at-base: base rewrites nothing on the line, so the spacing is safe for free
     def test_an_append_leaves_the_author_s_own_spacing_alone(self):
         """Inline code, table alignment and indentation are the author's."""
         line = "- [ ] **[M1]** `a.py:1` — compare `x  ==  y` and a | a  | b  | table"
-        out = review_fix._apply_outcomes(
+        out = review.fix._apply_outcomes(
             f"## Must fix\n{line}\n",
             [_outcome("M1", FixOutcome.NEEDS_HUMAN, "nope")],
         )
@@ -1460,11 +1462,11 @@ class TestApplyOutcomes:
     def test_a_verdict_does_not_overwrite_a_carried_caveat(self):
         """The finding stays open, so the next round retries it rather than losing it."""
         line = "- [ ] **[M1]** `a.py:1` — x *(unverified — no runnable check)*"
-        out = review_fix._apply_outcomes(
+        out = review.fix._apply_outcomes(
             f"## Must fix\n{line}\n",
             [_outcome("M1", FixOutcome.NEEDS_HUMAN, "no auto-fix")],
         )
-        doc = review_document.ReviewDocument.parse(out)
+        doc = review.document.ReviewDocument.parse(out)
         assert out.splitlines()[1] == line
         assert [f.id for f in doc.open_findings if not f.declined] == ["M1"]
 
@@ -1482,11 +1484,11 @@ class TestApplyOutcomes:
             "- [ ] **[M1]** `a.py:1` — The `*(declined — reason)*` annotation "
             "is matched anywhere\n"
         )
-        out = review_fix._apply_outcomes(text, [
+        out = review.fix._apply_outcomes(text, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
-        finding = review_document.ReviewDocument.parse(out).findings[0]
+        finding = review.document.ReviewDocument.parse(out).findings[0]
         assert finding.declined is False
         assert finding.checked is True
 
@@ -1502,12 +1504,12 @@ class TestApplyOutcomes:
             "## Must fix\n"
             "- [ ] **[M1]** `a.py:1` — prose about `*(skipped — x)*` here\n"
         )
-        out = review_fix._apply_outcomes(text, [
+        out = review.fix._apply_outcomes(text, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
-        finding = review_document.ReviewDocument.parse(out).findings[0]
-        assert review_document._SKIP_TAIL_RE.search(finding.body) is None
+        finding = review.document.ReviewDocument.parse(out).findings[0]
+        assert review.document._SKIP_TAIL_RE.search(finding.body) is None
         assert finding.checked is True
 
     def test_a_box_quoted_in_prose_is_not_the_one_that_gets_ticked(self):
@@ -1521,7 +1523,7 @@ class TestApplyOutcomes:
             "- **[M1]** **`a.py:1`** — the template writes `- [ ] **[M1]**` "
             "with no box\n"
         )
-        out = review_fix._apply_outcomes(text, [
+        out = review.fix._apply_outcomes(text, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
@@ -1529,13 +1531,13 @@ class TestApplyOutcomes:
 
     def test_a_skip_reason_quoting_a_decline_stays_a_skip(self):
         """`reason` is the gate's own prose, by way of the engine's verdict."""
-        out = review_fix._apply_outcomes(self.OPEN, [
+        out = review.fix._apply_outcomes(self.OPEN, [
             _outcome("M1", FixOutcome.NEEDS_HUMAN,
                      "as the docs say *(declined — adjudicated)*"),
         ])
-        finding = review_document.ReviewDocument.parse(out).findings[0]
+        finding = review.document.ReviewDocument.parse(out).findings[0]
         assert finding.declined is False
-        assert review_document.is_skipped(finding) is True
+        assert review.document.is_skipped(finding) is True
 
     def test_a_clip_with_no_room_yields_nothing(self):
         """`text[:n]` with a non-positive n counts from the end.
@@ -1543,24 +1545,24 @@ class TestApplyOutcomes:
         The slice would hand back most of the string where the budget was
         tightest — longest output exactly where the caller had least room.
         """
-        assert review_fix._clip("abcdefgh", 0) == ""
-        assert review_fix._clip("abcdefgh", -5) == ""
+        assert review.fix._clip("abcdefgh", 0) == ""
+        assert review.fix._clip("abcdefgh", -5) == ""
 
     def test_a_clip_never_exceeds_the_limit_it_was_given(self):
         for limit in range(-2, 12):
-            assert len(review_fix._clip("abcdefgh", limit)) <= max(limit, 0)
+            assert len(review.fix._clip("abcdefgh", limit)) <= max(limit, 0)
 
     # passes-at-base: base writes no caveat, so its lines are short for free
     def test_a_hedged_summary_line_fits_the_commit_body_limit(self):
         """These lines land in a commit body, and no hook on this path checks them."""
-        summary = review_fix._summary(
+        summary = review.fix._summary(
             [_outcome("M1", FixOutcome.FIXED, verified=False, verify_detail="y" * 60)],
             {"M1": "x" * 80},
         )
         assert all(len(line) <= 100 for line in summary.splitlines())
 
     def test_a_long_detail_alone_cannot_overrun_the_line(self):
-        summary = review_fix._summary(
+        summary = review.fix._summary(
             [_outcome("M1", FixOutcome.FIXED, verified=False, verify_detail="y" * 90)],
             {"M1": "short"},
         )
@@ -1570,7 +1572,7 @@ class TestApplyOutcomes:
     def test_the_caveat_survives_a_description_long_enough_to_crowd_it(self):
         """Wrapping keeps both halves: the description is no longer cut to make room."""
         description = "x" * 80
-        summary = review_fix._summary(
+        summary = review.fix._summary(
             [_outcome("M1", FixOutcome.FIXED, verified=False, verify_detail="no runnable check")],
             {"M1": description},
         )
@@ -1587,16 +1589,16 @@ class TestApplyOutcomes:
         short-circuits on a checked finding and so answers False for any tick
         however the annotation reads.
         """
-        out = review_fix._apply_outcomes(self.OPEN, [
+        out = review.fix._apply_outcomes(self.OPEN, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
         assert "*(skipped" not in out
         assert "*(declined" not in out
-        finding = review_document.ReviewDocument.parse(out).findings[0]
+        finding = review.document.ReviewDocument.parse(out).findings[0]
         assert finding.checked is True
         assert finding.declined is False
-        assert review_document.is_skipped(finding) is False
+        assert review.document.is_skipped(finding) is False
 
     # passes-at-base: base annotates nothing, so a checkbox-free line is untouched there anyway
     def test_a_finding_with_no_checkbox_is_not_annotated(self):
@@ -1606,7 +1608,7 @@ class TestApplyOutcomes:
         guard that makes this idempotent never engages — annotating anyway
         appends a caveat per round to a finding that never closes.
         """
-        out = review_fix._apply_outcomes(self.NO_CHECKBOX, [
+        out = review.fix._apply_outcomes(self.NO_CHECKBOX, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
@@ -1618,7 +1620,7 @@ class TestApplyOutcomes:
                            verify_detail="no runnable check")
         text = self.NO_CHECKBOX
         for _ in range(3):
-            text = review_fix._apply_outcomes(text, [outcome])
+            text = review.fix._apply_outcomes(text, [outcome])
         assert text == self.NO_CHECKBOX
 
     # passes-at-base: base never interpolates verify_detail, so there is no quotation to escape
@@ -1629,11 +1631,11 @@ class TestApplyOutcomes:
         caveat is found there and the whole finding reads as adjudicated — which
         drops it from the next round's work set.
         """
-        out = review_fix._apply_outcomes(self.OPEN, [
+        out = review.fix._apply_outcomes(self.OPEN, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="the repro *(declined — see above)*"),
         ])
-        finding = review_document.ReviewDocument.parse(out).findings[0]
+        finding = review.document.ReviewDocument.parse(out).findings[0]
         assert finding.declined is False
         assert finding.checked is True
 
@@ -1645,13 +1647,13 @@ class TestApplyOutcomes:
         for any tick however the annotation reads — it cannot see whether the
         quotation survived into the document.
         """
-        out = review_fix._apply_outcomes(self.OPEN, [
+        out = review.fix._apply_outcomes(self.OPEN, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="see *(skipped — needs design)*"),
         ])
-        finding = review_document.ReviewDocument.parse(out).findings[0]
-        assert review_document._SKIP_TAIL_RE.search(finding.body) is None
-        assert review_document.is_skipped(finding) is False
+        finding = review.document.ReviewDocument.parse(out).findings[0]
+        assert review.document._SKIP_TAIL_RE.search(finding.body) is None
+        assert review.document.is_skipped(finding) is False
         assert finding.checked is True
 
     # passes-at-base: base leaves a carried-forward annotation alone by writing none of its own
@@ -1667,7 +1669,7 @@ class TestApplyOutcomes:
             "## Must fix\n"
             "- [ ] **[M1]** `a.py:1` — x *(unverified — no runnable check)*\n"
         )
-        out = review_fix._apply_outcomes(hedged, [
+        out = review.fix._apply_outcomes(hedged, [
             _outcome("M1", FixOutcome.FIXED, verified=False,
                      verify_detail="no runnable check"),
         ])
@@ -1676,7 +1678,7 @@ class TestApplyOutcomes:
         )
 
     def test_an_unverified_fix_with_no_detail_is_annotated_bare(self):
-        out = review_fix._apply_outcomes(
+        out = review.fix._apply_outcomes(
             self.OPEN, [_outcome("M1", FixOutcome.FIXED, verified=False)],
         )
         assert out.splitlines()[1].endswith("*(unverified)*")
@@ -1686,46 +1688,46 @@ class TestApplyOutcomes:
         """A record accumulates across rounds, so the same outcome is re-applied."""
         outcome = _outcome("M1", FixOutcome.FIXED, verified=False,
                            verify_detail="no runnable check")
-        once = review_fix._apply_outcomes(self.OPEN, [outcome])
-        assert review_fix._apply_outcomes(once, [outcome]) == once
+        once = review.fix._apply_outcomes(self.OPEN, [outcome])
+        assert review.fix._apply_outcomes(once, [outcome]) == once
 
     # passes-at-base: asserts the silence this change was careful to preserve
     def test_a_verified_fix_ticks_the_box_and_says_nothing_more(self):
-        out = review_fix._apply_outcomes(
+        out = review.fix._apply_outcomes(
             self.OPEN, [_outcome("M1", FixOutcome.FIXED, verified=True)],
         )
         assert out.splitlines()[1] == "- [x] **[M1]** `a.py:1` — Missing nil check"
 
     def test_a_needs_a_person_is_annotated_as_a_skip(self):
         """`*(skipped — reason)*` is the vocabulary the review's parser reads."""
-        out = review_fix._apply_outcomes(
+        out = review.fix._apply_outcomes(
             self.OPEN, [_outcome("M2", FixOutcome.NEEDS_HUMAN, "needs design")],
         )
         assert out.splitlines()[2].endswith("*(skipped — needs design)*")
-        assert review_document.ReviewDocument.parse(out).findings[1].checked is False
+        assert review.document.ReviewDocument.parse(out).findings[1].checked is False
 
     def test_an_agent_s_decline_is_annotated_as_one(self):
-        out = review_fix._apply_outcomes(
+        out = review.fix._apply_outcomes(
             self.OPEN, [_outcome("M1", FixOutcome.DECLINED, "documented tradeoff")],
         )
-        finding = review_document.ReviewDocument.parse(out).findings[0]
+        finding = review.document.ReviewDocument.parse(out).findings[0]
         assert finding.declined is True
         assert finding.decline_reason == "documented tradeoff"
 
     def test_an_annotation_with_no_reason_still_registers(self):
-        out = review_fix._apply_outcomes(self.OPEN, [_outcome("M1", FixOutcome.DECLINED)])
-        assert review_document.ReviewDocument.parse(out).findings[0].declined is True
+        out = review.fix._apply_outcomes(self.OPEN, [_outcome("M1", FixOutcome.DECLINED)])
+        assert review.document.ReviewDocument.parse(out).findings[0].declined is True
 
     def test_a_finding_the_agent_never_reached_is_left_for_the_next_round(self):
-        out = review_fix._apply_outcomes(self.OPEN, [_outcome("M1", FixOutcome.DEFERRED)])
+        out = review.fix._apply_outcomes(self.OPEN, [_outcome("M1", FixOutcome.DEFERRED)])
         assert out == self.OPEN
 
     def test_a_finding_no_outcome_names_is_left_alone(self):
-        assert review_fix._apply_outcomes(self.OPEN, []) == self.OPEN
+        assert review.fix._apply_outcomes(self.OPEN, []) == self.OPEN
 
     def test_a_box_the_review_already_ticked_is_not_re_annotated(self):
         text = "## Must fix\n- [x] **[M1]** `a.py:1` — Already fixed\n"
-        out = review_fix._apply_outcomes(
+        out = review.fix._apply_outcomes(
             text, [_outcome("M1", FixOutcome.NEEDS_HUMAN, "needs design")],
         )
         assert out == text
@@ -1736,7 +1738,7 @@ class TestApplyOutcomes:
             "## Must fix\n"
             "- [ ] **[M1]** `a.py:1` — *(declined — documented tradeoff)* — Lock\n"
         )
-        out = review_fix._apply_outcomes(text, [_outcome("M1", FixOutcome.FIXED)])
+        out = review.fix._apply_outcomes(text, [_outcome("M1", FixOutcome.FIXED)])
         assert out == text
 
     def test_a_finding_already_carrying_a_skip_gains_no_second_annotation(self):
@@ -1745,14 +1747,14 @@ class TestApplyOutcomes:
             "## Must fix\n"
             "- [ ] **[M1]** `a.py:1` — Lock *(skipped — needs design)*\n"
         )
-        out = review_fix._apply_outcomes(
+        out = review.fix._apply_outcomes(
             text, [_outcome("M1", FixOutcome.NEEDS_HUMAN, "still needs design")],
         )
         assert out == text
 
     def test_prose_outside_a_finding_line_is_untouched(self):
         text = self.OPEN + "\n## Notes\n\nA paragraph about `- [ ] **[M1]**` syntax.\n"
-        out = review_fix._apply_outcomes(text, [_outcome("M1", FixOutcome.FIXED)])
+        out = review.fix._apply_outcomes(text, [_outcome("M1", FixOutcome.FIXED)])
         assert out.endswith("A paragraph about `- [ ] **[M1]**` syntax.\n")
         assert "- [x] **[M1]**" in out
 
@@ -1774,7 +1776,7 @@ class TestWhatALandedPassLeavesBehind:
         "- [ ] **[M2]** `helper.py:1` — Missing helper\n"
     )
 
-    @patch("git.land.push.push", return_value=_PUSHED)
+    @patch("git.push.push", return_value=_PUSHED)
     def test_only_the_agents_own_changes_are_committed_and_credited(
         self, mock_push, git_wt, tmp_path,
     ):
@@ -1802,7 +1804,7 @@ class TestWhatALandedPassLeavesBehind:
         assert "*(skipped — hand edit in flight)*" in review
         mock_push.assert_called_once()
 
-    @patch("git.land.push.push", return_value=_PUSHED)
+    @patch("git.push.push", return_value=_PUSHED)
     def test_the_commit_message_reports_what_the_pass_settled(
         self, mock_push, git_wt, tmp_path,
     ):
@@ -1819,7 +1821,7 @@ class TestWhatALandedPassLeavesBehind:
         assert "[M2] Missing helper" in msg
         assert "[M1] needs a product decision" in msg
 
-    @patch("git.land.push.push", return_value=_PUSHED)
+    @patch("git.push.push", return_value=_PUSHED)
     def test_the_summary_reaches_the_operator_s_terminal(
         self, mock_push, git_wt, tmp_path, capsys,
     ):
@@ -1830,7 +1832,7 @@ class TestWhatALandedPassLeavesBehind:
         assert "Fix summary:" in err
         assert "[M1] by design" in err
 
-    @patch("git.land.push.push", return_value=_PUSHED)
+    @patch("git.push.push", return_value=_PUSHED)
     def test_a_truncated_pass_names_the_limit_in_the_summary_and_commit(
         self, mock_push, git_wt, tmp_path, capsys,
     ):
@@ -1856,7 +1858,7 @@ class TestWhatALandedPassLeavesBehind:
         assert "not reached (turn limit)" in msg
         assert "no auto-fix" not in msg
 
-    @patch("git.land.push.push", return_value=_PUSHED)
+    @patch("git.push.push", return_value=_PUSHED)
     def test_a_pass_that_changed_no_files_commits_nothing(
         self, mock_push, git_wt, tmp_path,
     ):
@@ -1868,7 +1870,7 @@ class TestWhatALandedPassLeavesBehind:
         mock_push.assert_not_called()
         assert "*(declined — by design)*" in Path(job.review_file).read_text()
 
-    @patch("git.land.push.push", return_value=_PUSHED)
+    @patch("git.push.push", return_value=_PUSHED)
     def test_a_commit_the_hook_refused_still_re_renders_the_review(
         self, mock_push, git_wt, tmp_path, live_git_hooks,
     ):
@@ -1897,8 +1899,8 @@ class TestTheHeldCommitIsRecorded:
 
     @staticmethod
     def _landing(status, sha="abc1234", resume=""):
-        return fix_engine.FixRun(
-            landed=land.LandResult(status=status, sha=sha, resume=resume),
+        return fix.engine.FixRun(
+            landed=git.land.LandResult(status=status, sha=sha, resume=resume),
         )
 
     REVIEW = (
@@ -1915,28 +1917,28 @@ class TestTheHeldCommitIsRecorded:
         argument along.
         """
         job = _make_job(git_wt, tmp_path, self.REVIEW)
-        landed = land.LandResult(status=land.CommitStatus.PUSH_HELD, sha="abc1234")
-        with patch.object(review_fix.fix_engine, "run",
-                          return_value=fix_engine.FixRun(landed=landed)):
-            review_fix.run_fix_pass(job)
+        landed = git.land.LandResult(status=git.land.CommitStatus.PUSH_HELD, sha="abc1234")
+        with patch.object(fix.engine, "run",
+                          return_value=fix.engine.FixRun(landed=landed)):
+            review.fix.run_fix_pass(job)
 
-        meta = review_paths.read_review_meta(Path(job.artifact_dir))
+        meta = review.paths.read_review_meta(Path(job.artifact_dir))
         assert meta.unpushed_fix_commit == "abc1234"
 
     def test_a_held_commit_is_recorded_as_owed(self, git_wt, tmp_path):
         job = _make_job(git_wt, tmp_path)
         review_dir = Path(job.artifact_dir)
-        review_fix._record_commit(job, self._landing(land.CommitStatus.PUSH_HELD))
+        review.fix._record_commit(job, self._landing(git.land.CommitStatus.PUSH_HELD))
 
-        meta = review_paths.read_review_meta(review_dir)
+        meta = review.paths.read_review_meta(review_dir)
         assert meta.fix_commit_sha == "abc1234"
         assert meta.unpushed_fix_commit == "abc1234"
 
     def test_a_pushed_commit_owes_nothing(self, git_wt, tmp_path):
         job = _make_job(git_wt, tmp_path)
-        review_fix._record_commit(job, self._landing(land.CommitStatus.PUSHED))
+        review.fix._record_commit(job, self._landing(git.land.CommitStatus.PUSHED))
 
-        meta = review_paths.read_review_meta(Path(job.artifact_dir))
+        meta = review.paths.read_review_meta(Path(job.artifact_dir))
         assert meta.fix_commit_sha == "abc1234"
         assert meta.unpushed_fix_commit == ""
 
@@ -1949,22 +1951,22 @@ class TestTheHeldCommitIsRecorded:
         `push_unverified`.
         """
         job = _make_job(git_wt, tmp_path)
-        for status in land.CommitStatus:
-            review_fix._record_commit(job, self._landing(status))
-            meta = review_paths.read_review_meta(Path(job.artifact_dir))
-            expected = "abc1234" if attribution.commit_unpushed(status) else ""
+        for status in git.land.CommitStatus:
+            review.fix._record_commit(job, self._landing(status))
+            meta = review.paths.read_review_meta(Path(job.artifact_dir))
+            expected = "abc1234" if pr.attribution.commit_unpushed(status) else ""
             assert meta.unpushed_fix_commit == expected, status
 
     def test_recording_keeps_what_the_sidecar_already_held(self, git_wt, tmp_path):
         """The sidecar is the review's attribution; a fix pass adds to it."""
         job = _make_job(git_wt, tmp_path)
         review_dir = Path(job.artifact_dir)
-        review_paths.write_review_meta(
-            review_dir, review_types.ReviewMeta(repo="o/r", head_sha="deadbeef"),
+        review.paths.write_review_meta(
+            review_dir, review.types.ReviewMeta(repo="o/r", head_sha="deadbeef"),
         )
-        review_fix._record_commit(job, self._landing(land.CommitStatus.PUSH_HELD))
+        review.fix._record_commit(job, self._landing(git.land.CommitStatus.PUSH_HELD))
 
-        meta = review_paths.read_review_meta(review_dir)
+        meta = review.paths.read_review_meta(review_dir)
         assert (meta.repo, meta.head_sha) == ("o/r", "deadbeef")
         assert meta.unpushed_fix_commit == "abc1234"
 
@@ -1972,10 +1974,10 @@ class TestTheHeldCommitIsRecorded:
         """Nothing to commit is not a retraction of what an earlier round said."""
         job = _make_job(git_wt, tmp_path)
         review_dir = Path(job.artifact_dir)
-        review_fix._record_commit(job, self._landing(land.CommitStatus.PUSH_HELD))
-        review_fix._record_commit(job, fix_engine.FixRun(landed=None))
+        review.fix._record_commit(job, self._landing(git.land.CommitStatus.PUSH_HELD))
+        review.fix._record_commit(job, fix.engine.FixRun(landed=None))
 
-        assert review_paths.read_review_meta(review_dir).unpushed_fix_commit == "abc1234"
+        assert review.paths.read_review_meta(review_dir).unpushed_fix_commit == "abc1234"
 
     def test_a_pass_that_landed_nothing_new_leaves_the_record_alone(self, git_wt, tmp_path):
         """`NO_CHANGES`/`COMMIT_FAILED` carry no new sha and must not overwrite one.
@@ -1987,12 +1989,12 @@ class TestTheHeldCommitIsRecorded:
         """
         job = _make_job(git_wt, tmp_path)
         review_dir = Path(job.artifact_dir)
-        review_fix._record_commit(job, self._landing(land.CommitStatus.PUSH_HELD))
-        for status in (land.CommitStatus.NO_CHANGES, land.CommitStatus.COMMIT_FAILED):
-            review_fix._record_commit(
-                job, fix_engine.FixRun(landed=land.LandResult(status=status, sha="")),
+        review.fix._record_commit(job, self._landing(git.land.CommitStatus.PUSH_HELD))
+        for status in (git.land.CommitStatus.NO_CHANGES, git.land.CommitStatus.COMMIT_FAILED):
+            review.fix._record_commit(
+                job, fix.engine.FixRun(landed=git.land.LandResult(status=status, sha="")),
             )
-            meta = review_paths.read_review_meta(review_dir)
+            meta = review.paths.read_review_meta(review_dir)
             assert meta.fix_commit_sha == "abc1234", status
             assert meta.unpushed_fix_commit == "abc1234", status
 
@@ -2005,19 +2007,19 @@ class TestTheHeldCommitIsRecorded:
         """
         job = _make_job(git_wt, tmp_path)
         review_dir = Path(job.artifact_dir)
-        review_paths.write_review_meta(
-            review_dir, review_types.ReviewMeta(repo="o/r", head_sha="deadbeef"),
+        review.paths.write_review_meta(
+            review_dir, review.types.ReviewMeta(repo="o/r", head_sha="deadbeef"),
         )
-        review_fix._record_commit(job, fix_engine.FixRun(landed=MagicMock()))
+        review.fix._record_commit(job, fix.engine.FixRun(landed=MagicMock()))
 
-        meta = review_paths.read_review_meta(review_dir)
+        meta = review.paths.read_review_meta(review_dir)
         assert (meta.repo, meta.head_sha) == ("o/r", "deadbeef")
         assert meta.fix_commit_sha == ""
 
     def test_a_sidecar_predating_the_field_owes_nothing(self):
         """An unpushed commit is a positive fact, never inferred from silence."""
-        assert review_types.ReviewMeta().unpushed_fix_commit == ""
-        assert review_types.ReviewMeta(fix_commit_sha="abc1234").unpushed_fix_commit == ""
+        assert review.types.ReviewMeta().unpushed_fix_commit == ""
+        assert review.types.ReviewMeta(fix_commit_sha="abc1234").unpushed_fix_commit == ""
 
 
 class TestSnapshotDiffStagesEveryShapeOfChange:
@@ -2028,7 +2030,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
     spelled with bytes git escapes before it prints them.
     """
 
-    @patch("git.land.push.push", return_value=_PUSHED)
+    @patch("git.push.push", return_value=_PUSHED)
     def test_a_file_the_agent_deletes_is_committed_as_a_deletion(
         self, mock_push, git_wt, tmp_path,
     ):
@@ -2046,7 +2048,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
         assert git_out(git_wt, "status", "--porcelain").strip() == ""
         assert "- [x] **[N1]**" in Path(job.review_file).read_text()
 
-    @patch("git.land.push.push", return_value=_PUSHED)
+    @patch("git.push.push", return_value=_PUSHED)
     def test_a_rename_commits_both_halves(self, mock_push, git_wt, tmp_path):
         """The old path leaves via the diff, the new one via the untracked list."""
         job = _make_job(
@@ -2063,7 +2065,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
         assert git_out(git_wt, "status", "--porcelain").strip() == ""
         assert "- [x] **[N1]**" in Path(job.review_file).read_text()
 
-    @patch("git.land.push.push", return_value=_PUSHED)
+    @patch("git.push.push", return_value=_PUSHED)
     def test_a_path_git_would_escape_is_staged_verbatim(
         self, mock_push, git_wt, tmp_path,
     ):
@@ -2082,7 +2084,7 @@ class TestSnapshotDiffStagesEveryShapeOfChange:
 
         assert _committed_paths(git_wt) == {"café brûlé.py"}
 
-    @patch("git.land.push.push", return_value=_PUSHED)
+    @patch("git.push.push", return_value=_PUSHED)
     def test_a_path_dirty_before_the_pass_is_not_credited_even_when_edited(
         self, mock_push, git_wt, tmp_path,
     ):
@@ -2123,7 +2125,7 @@ class TestRunFixPassWhenTheSnapshotFails:
         """Make every later read of the worktree's state fail, as a lock would."""
         (git_wt / ".git" / "index").write_bytes(b"garbage")
 
-    @patch("git.land.push.push", return_value=_PUSHED)
+    @patch("git.push.push", return_value=_PUSHED)
     def test_an_unreadable_worktree_stops_the_pass_before_the_agent_runs(
         self, mock_push, git_wt, tmp_path, capsys,
     ):
@@ -2140,7 +2142,7 @@ class TestRunFixPassWhenTheSnapshotFails:
         mock_push.assert_not_called()
         assert "skipping fix pass" in capsys.readouterr().err
 
-    @patch("git.land.push.push", return_value=_PUSHED)
+    @patch("git.push.push", return_value=_PUSHED)
     def test_the_agents_work_is_not_dropped_when_the_second_snapshot_fails(
         self, mock_push, git_wt, tmp_path, capsys,
     ):
@@ -2161,7 +2163,7 @@ class TestRunFixPassWhenTheSnapshotFails:
         assert "nothing was committed or pushed" in err
         assert str(git_wt) in err
 
-    @patch("git.land.push.push", return_value=_PUSHED)
+    @patch("git.push.push", return_value=_PUSHED)
     def test_a_pass_that_could_not_attribute_its_work_re_renders_nothing(
         self, mock_push, git_wt, tmp_path,
     ):
@@ -2210,11 +2212,11 @@ class TestAPassWithNothingToFix:
         self, git_wt, tmp_path, capsys, monkeypatch,
     ):
         """The gap itself: nothing to push, and commits nobody pushed."""
-        monkeypatch.setattr(publishing, "enabled", lambda: True)
+        monkeypatch.setattr(core.publishing, "enabled", lambda: True)
         self._with_upstream(git_wt, tmp_path, ahead=2)
         job = _make_job(git_wt, tmp_path, self.CLEAN)
 
-        review_fix.run_fix_pass(job)
+        review.fix.run_fix_pass(job)
 
         err = capsys.readouterr().err
         assert "2 commits ahead of its remote" in err
@@ -2223,10 +2225,10 @@ class TestAPassWithNothingToFix:
     def test_one_commit_is_not_reported_in_the_plural(
         self, git_wt, tmp_path, capsys, monkeypatch,
     ):
-        monkeypatch.setattr(publishing, "enabled", lambda: True)
+        monkeypatch.setattr(core.publishing, "enabled", lambda: True)
         self._with_upstream(git_wt, tmp_path, ahead=1)
 
-        review_fix.run_fix_pass(_make_job(git_wt, tmp_path, self.CLEAN))
+        review.fix.run_fix_pass(_make_job(git_wt, tmp_path, self.CLEAN))
 
         assert "1 commit ahead" in capsys.readouterr().err
 
@@ -2235,10 +2237,10 @@ class TestAPassWithNothingToFix:
         self, git_wt, tmp_path, capsys, monkeypatch,
     ):
         """The ordinary clean run must not grow a line that means nothing."""
-        monkeypatch.setattr(publishing, "enabled", lambda: True)
+        monkeypatch.setattr(core.publishing, "enabled", lambda: True)
         self._with_upstream(git_wt, tmp_path, ahead=0)
 
-        review_fix.run_fix_pass(_make_job(git_wt, tmp_path, self.CLEAN))
+        review.fix.run_fix_pass(_make_job(git_wt, tmp_path, self.CLEAN))
 
         assert "ahead of its remote" not in capsys.readouterr().err
 
@@ -2252,9 +2254,9 @@ class TestAPassWithNothingToFix:
         answer here rather than a coincidence worth working around: a branch
         with no remote is not a branch whose remote is missing commits.
         """
-        monkeypatch.setattr(publishing, "enabled", lambda: True)
+        monkeypatch.setattr(core.publishing, "enabled", lambda: True)
 
-        review_fix.run_fix_pass(_make_job(git_wt, tmp_path, self.CLEAN))
+        review.fix.run_fix_pass(_make_job(git_wt, tmp_path, self.CLEAN))
 
         assert "ahead of its remote" not in capsys.readouterr().err
 
@@ -2265,10 +2267,10 @@ class TestAPassWithNothingToFix:
         Without `--post` the unpushed branch is the outcome that was asked for,
         and warning about it would fire on every local `--fix` run.
         """
-        monkeypatch.setattr(publishing, "enabled", lambda: False)
+        monkeypatch.setattr(core.publishing, "enabled", lambda: False)
         self._with_upstream(git_wt, tmp_path, ahead=2)
 
-        review_fix.run_fix_pass(_make_job(git_wt, tmp_path, self.CLEAN))
+        review.fix.run_fix_pass(_make_job(git_wt, tmp_path, self.CLEAN))
 
         assert "ahead of its remote" not in capsys.readouterr().err
 
@@ -2279,19 +2281,19 @@ class TestAPassWithNothingToFix:
 class TestParseCheckboxState:
     def test_unchecked_finding(self):
         text = "## Must fix\n- [ ] **[M1]** **`file.go:10`** — Bug found\n"
-        findings = review_document.ReviewDocument.parse(text).findings
+        findings = review.document.ReviewDocument.parse(text).findings
         assert len(findings) == 1
         assert findings[0].checked is False
 
     def test_checked_finding(self):
         text = "## Must fix\n- [x] **[M1]** **`file.go:10`** — Bug fixed\n"
-        findings = review_document.ReviewDocument.parse(text).findings
+        findings = review.document.ReviewDocument.parse(text).findings
         assert len(findings) == 1
         assert findings[0].checked is True
 
     def test_no_checkbox_finding(self):
         text = "## Must fix\n- **[M1]** **`file.go:10`** — Bug found\n"
-        findings = review_document.ReviewDocument.parse(text).findings
+        findings = review.document.ReviewDocument.parse(text).findings
         assert len(findings) == 1
         assert findings[0].checked is False
 
@@ -2303,7 +2305,7 @@ class TestParseCheckboxState:
             "## Nit\n"
             "- [x] **[N1]** **`c.go:3`** — Also fixed\n"
         )
-        findings = review_document.ReviewDocument.parse(text).findings
+        findings = review.document.ReviewDocument.parse(text).findings
         assert len(findings) == 3
         by_id = {f.id: f for f in findings}
         assert by_id["M1"].checked is True
@@ -2324,14 +2326,14 @@ class TestIsSkipped:
             id="S1", severity="S", seq=1, path="a.go", line=1, end_line=None,
             body="*(skipped — requires design decision)* — Some finding body",
         )
-        assert review_document.is_skipped(finding) is True
+        assert review.document.is_skipped(finding) is True
 
     def test_a_trailing_annotation_registers(self):
         finding = Finding(
             id="S1", severity="S", seq=1, path="a.go", line=1, end_line=None,
             body="Some finding body *(skipped -- needs confirmation)*",
         )
-        assert review_document.is_skipped(finding) is True
+        assert review.document.is_skipped(finding) is True
 
     def test_a_skip_without_a_reason_still_registers(self):
         """Mirrors the decline case — a bare annotation is still a skip."""
@@ -2339,21 +2341,21 @@ class TestIsSkipped:
             id="S1", severity="S", seq=1, path="a.go", line=1, end_line=None,
             body="*(skipped)* — Some finding body",
         )
-        assert review_document.is_skipped(finding) is True
+        assert review.document.is_skipped(finding) is True
 
     def test_a_plain_finding_carries_no_skip(self):
         finding = Finding(
             id="S1", severity="S", seq=1, path="a.go", line=1, end_line=None,
             body="Plain finding body",
         )
-        assert review_document.is_skipped(finding) is False
+        assert review.document.is_skipped(finding) is False
 
     def test_a_checked_finding_carries_no_skip(self):
         finding = Finding(
             id="M1", severity="M", seq=1, path="a.go", line=1, end_line=None,
             body="*(skipped — stale)* — body", checked=True,
         )
-        assert review_document.is_skipped(finding) is False
+        assert review.document.is_skipped(finding) is False
 
 
 class TestParseDeclinedFindings:
@@ -2370,13 +2372,13 @@ class TestParseDeclinedFindings:
             "- [ ] **[M1]** `a.go:1` — *(declined — documented `ceiling:` tradeoff)* "
             "— Global lock serialises writes\n"
         )
-        findings = review_document.ReviewDocument.parse(text).findings
+        findings = review.document.ReviewDocument.parse(text).findings
         assert findings[0].declined is True
         assert findings[0].decline_reason == "documented `ceiling:` tradeoff"
 
     def test_a_decline_without_a_reason_still_registers(self):
         text = "## Must fix\n- [ ] **[M1]** `a.go:1` — *(declined)* — Body\n"
-        findings = review_document.ReviewDocument.parse(text).findings
+        findings = review.document.ReviewDocument.parse(text).findings
         assert findings[0].declined is True
         assert findings[0].decline_reason == ""
 
@@ -2386,7 +2388,7 @@ class TestParseDeclinedFindings:
             "## Must fix\n"
             "- [ ] **[M1]** `a.go:1` — Global lock *(declined — by design)*\n"
         )
-        findings = review_document.ReviewDocument.parse(text).findings
+        findings = review.document.ReviewDocument.parse(text).findings
         assert findings[0].declined is True
         assert findings[0].decline_reason == "by design"
 
@@ -2401,14 +2403,14 @@ class TestParseDeclinedFindings:
             "- [ ] **[M1]** `review_document.py:99` — The `*(declined — reason)*` "
             "annotation is matched anywhere in the line, so prose trips it\n"
         )
-        findings = review_document.ReviewDocument.parse(text).findings
+        findings = review.document.ReviewDocument.parse(text).findings
         assert findings[0].declined is False
         assert findings[0].decline_reason == ""
 
     def test_a_skip_is_not_a_decline(self):
         """A skip is work deferred; a decline is work rejected."""
         text = "## Must fix\n- [ ] **[M1]** `a.go:1` — *(skipped — needs design)* — Body\n"
-        findings = review_document.ReviewDocument.parse(text).findings
+        findings = review.document.ReviewDocument.parse(text).findings
         assert findings[0].declined is False
 
     def test_a_file_without_declines_parses_unchanged(self):
@@ -2418,7 +2420,7 @@ class TestParseDeclinedFindings:
             "- [x] **[M1]** `a.go:1` — Fixed\n"
             "- [ ] **[M2]** `b.go:2` — Still open\n"
         )
-        findings = review_document.ReviewDocument.parse(text).findings
+        findings = review.document.ReviewDocument.parse(text).findings
         assert [f.declined for f in findings] == [False, False]
         assert [f.decline_reason for f in findings] == ["", ""]
 
@@ -2434,22 +2436,22 @@ class TestCommittedNothing:
     """
 
     def test_an_empty_commit_is_not_a_rejection(self, git_wt):
-        result = land.git_client.run("commit", "-m", "x", cwd=git_wt)
+        result = git.client.run("commit", "-m", "x", cwd=git_wt)
         assert not result.ok
-        assert land.committed_nothing(result) is True
+        assert git.land.committed_nothing(result) is True
 
     def test_staged_but_unchanged_content_is_not_a_rejection(self, git_wt):
         """`add` of an unmodified file stages nothing, so the commit is empty."""
         git_out(git_wt, "add", "src.py")
-        result = land.git_client.run("commit", "-m", "x", cwd=git_wt)
+        result = git.client.run("commit", "-m", "x", cwd=git_wt)
         assert not result.ok
-        assert land.committed_nothing(result) is True
+        assert git.land.committed_nothing(result) is True
 
     def test_a_hook_rejection_is_a_rejection(self, git_wt, tmp_path, live_git_hooks):
         """`live_git_hooks` is what lets the hook run — the suite disowns them."""
         _install_failing_pre_commit(tmp_path)
         (git_wt / "src.py").write_text("edited\n")
         git_out(git_wt, "add", "src.py")
-        result = land.git_client.run("commit", "-m", "x", cwd=git_wt)
+        result = git.client.run("commit", "-m", "x", cwd=git_wt)
         assert not result.ok
-        assert land.committed_nothing(result) is False
+        assert git.land.committed_nothing(result) is False

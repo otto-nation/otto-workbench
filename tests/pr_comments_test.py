@@ -1,4 +1,4 @@
-"""Tests for pr_comments library."""
+"""Tests for pr.comments library."""
 
 import json
 import sys
@@ -16,17 +16,20 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from pr import comments as pr_comments
-from pr import domains as pr_domains
-from pr import state as pr_state
-from core import publishing
-from review import issue as review_issue
+import pr.comments
+import pr.domains
+import pr.state
+import core.publishing
+import review.issue
 from core.proc import CmdResult
 from gh.pr_reads import ThreadSet
 from pr.comments import (
     compute_thread_state, sync_threads, fetch_threads, render_dashboard,
 )
 from pr.comments_state import ThreadRecord, ThreadState
+import core.log
+import core.proc
+import gh.client
 
 
 REPO = "owner/repo"
@@ -35,7 +38,7 @@ REPO = "owner/repo"
 # ── fetch_threads ───────────────────────────────────────────────────────────
 
 def test_fetch_threads_uses_the_paginated_fetcher():
-    with patch.object(pr_comments, "fetch_review_threads",
+    with patch.object(pr.comments, "fetch_review_threads",
                       return_value=ThreadSet([{"id": "PRRT_1"}], complete=True)) as fetcher:
         assert fetch_threads("owner", "repo", 42) == ThreadSet([{"id": "PRRT_1"}], complete=True)
     fetcher.assert_called_once_with("owner/repo", 42)
@@ -43,7 +46,7 @@ def test_fetch_threads_uses_the_paginated_fetcher():
 
 def test_fetch_threads_prefers_prefetched_pr_data():
     pr_data = SimpleNamespace(review_threads=[{"id": "PRRT_cached"}], threads_complete=True)
-    with patch.object(pr_comments, "fetch_review_threads") as fetcher:
+    with patch.object(pr.comments, "fetch_review_threads") as fetcher:
         fetched = fetch_threads("owner", "repo", 42, pr_data)
     assert fetched.threads == [{"id": "PRRT_cached"}]
     assert fetched.complete
@@ -54,7 +57,7 @@ def test_fetch_threads_carries_a_short_prefetch_through():
     """The consolidated read knows the thread walk fell short; dropping that
     here is how the ledger came to be written from a partial set."""
     pr_data = SimpleNamespace(review_threads=[{"id": "PRRT_1"}], threads_complete=False)
-    with patch.object(pr_comments, "fetch_review_threads") as fetcher:
+    with patch.object(pr.comments, "fetch_review_threads") as fetcher:
         fetched = fetch_threads("owner", "repo", 42, pr_data)
     assert fetched.complete is False
     fetcher.assert_not_called()
@@ -70,26 +73,26 @@ _ISSUE_COMMENTS = [
 
 
 def _rest_listing():
-    return patch.object(pr_comments.gh_client, "api_json", return_value=_ISSUE_COMMENTS)
+    return patch.object(gh.client, "api_json", return_value=_ISSUE_COMMENTS)
 
 
 def test_fetch_issue_comments_drops_our_own_by_default():
     with _rest_listing():
-        got = pr_comments.fetch_issue_comments(REPO, 42, "me")
+        got = pr.comments.fetch_issue_comments(REPO, 42, "me")
     assert [c["user"] for c in got] == ["kgn"]
 
 
 def test_fetch_issue_comments_keeps_our_own_when_asked():
     """`include_self` is the contract `review-threads` reads its reply through."""
     with _rest_listing():
-        got = pr_comments.fetch_issue_comments(
+        got = pr.comments.fetch_issue_comments(
             REPO, 42, "me", include_self=True)
     assert [c["user"] for c in got] == ["me", "kgn"]
 
 
 def test_fetch_issue_comments_drops_bots_either_way():
     with _rest_listing():
-        got = pr_comments.fetch_issue_comments(
+        got = pr.comments.fetch_issue_comments(
             REPO, 42, "me", include_self=True)
     assert "bot" not in [c["user"] for c in got]
 
@@ -99,7 +102,7 @@ def test_fetch_issue_comments_passes_the_exclusion_on_to_pr_data(
         include_self, expected):
     """Prefetched data takes the same filter, so both paths answer alike."""
     pr_data = SimpleNamespace(non_self_issue_comments=lambda login: [{"user": login}])
-    got = pr_comments.fetch_issue_comments(
+    got = pr.comments.fetch_issue_comments(
         REPO, 42, "me", pr_data, include_self=include_self)
     assert got == [{"user": expected}]
 
@@ -219,7 +222,7 @@ def test_last_comment_is_mine_ignores_resolution():
     comments = _make_comments(("alice", "Use RunTx here"), ("isaacg", "Fixed."))
     state = compute_thread_state(comments, is_resolved=True, my_login="isaacg")
     assert state == "resolved"
-    assert pr_comments.last_comment_is_mine(comments, "isaacg")
+    assert pr.comments.last_comment_is_mine(comments, "isaacg")
 
 
 def test_last_comment_is_mine_is_false_when_a_reviewer_answered():
@@ -228,7 +231,7 @@ def test_last_comment_is_mine_is_false_when_a_reviewer_answered():
         ("isaacg", "Fixed."),
         ("alice", "Not quite"),
     )
-    assert not pr_comments.last_comment_is_mine(comments, "isaacg")
+    assert not pr.comments.last_comment_is_mine(comments, "isaacg")
 
 
 @pytest.mark.parametrize("comments,login", [
@@ -236,7 +239,7 @@ def test_last_comment_is_mine_is_false_when_a_reviewer_answered():
     (_make_comments(("isaacg", "mine")), ""),
 ])
 def test_last_comment_is_mine_needs_both_halves(comments, login):
-    assert not pr_comments.last_comment_is_mine(comments, login)
+    assert not pr.comments.last_comment_is_mine(comments, login)
 
 
 def test_sync_clears_summary_on_new_replies():
@@ -375,10 +378,10 @@ def _posted(url: str = "u") -> CmdResult:
 
 
 def test_post_issue_comment_posts_new_without_marker():
-    with patch.object(pr_comments, "_gh_post", return_value=_posted()) as post, \
-         patch.object(pr_comments, "find_marker_comment",
+    with patch.object(pr.comments, "_gh_post", return_value=_posted()) as post, \
+         patch.object(pr.comments, "find_marker_comment",
                       autospec=True) as find:
-        url = pr_comments.post_issue_comment(REPO, 1, "body")
+        url = pr.comments.post_issue_comment(REPO, 1, "body")
     assert url == "u"
     post.assert_called_once()
     find.assert_not_called()
@@ -390,7 +393,7 @@ def _pages(*pages):
 
 
 def _listing(value):
-    return patch.object(pr_comments.gh_client, "api_json", return_value=value)
+    return patch.object(gh.client, "api_json", return_value=value)
 
 
 def test_post_issue_comment_edits_existing_marked_comment():
@@ -400,9 +403,9 @@ def test_post_issue_comment_edits_existing_marked_comment():
         {"id": 11, "body": f"{MARKER}\nround one"},
     ])
     with _listing(listing), \
-         patch.object(pr_comments, "_patch_issue_comment", return_value="u2") as patch_fn, \
-         patch.object(pr_comments, "_gh_post") as post:
-        url = pr_comments.post_issue_comment(REPO, 1, "round two", marker=MARKER)
+         patch.object(pr.comments, "_patch_issue_comment", return_value="u2") as patch_fn, \
+         patch.object(pr.comments, "_gh_post") as post:
+        url = pr.comments.post_issue_comment(REPO, 1, "round two", marker=MARKER)
     assert url == "u2"
     patch_fn.assert_called_once_with(REPO, 11, "round two")
     post.assert_not_called()
@@ -411,14 +414,14 @@ def test_post_issue_comment_edits_existing_marked_comment():
 def test_post_issue_comment_posts_new_when_marker_absent():
     listing = _pages([{"id": 10, "body": "unrelated"}])
     with _listing(listing), \
-         patch.object(pr_comments, "_gh_post", return_value=_posted()) as post:
-        url = pr_comments.post_issue_comment(REPO, 1, "body", marker=MARKER)
+         patch.object(pr.comments, "_gh_post", return_value=_posted()) as post:
+        url = pr.comments.post_issue_comment(REPO, 1, "body", marker=MARKER)
     assert url == "u"
     post.assert_called_once()
 
 
 def _found(comment_id, body):
-    return pr_comments.MarkerComment(True, comment_id, body)
+    return pr.comments.MarkerComment(True, comment_id, body)
 
 
 def test_find_marker_comment_prefers_latest():
@@ -427,7 +430,7 @@ def test_find_marker_comment_prefers_latest():
         {"id": 11, "body": f"{MARKER}\nnew"},
     ])
     with _listing(listing):
-        found = pr_comments.find_marker_comment(REPO, 1, MARKER)
+        found = pr.comments.find_marker_comment(REPO, 1, MARKER)
     assert found == _found(11, f"{MARKER}\nnew")
 
 
@@ -438,7 +441,7 @@ def test_find_marker_comment_spans_pages():
         [{"id": 11, "body": "unrelated"}],
     )
     with _listing(listing):
-        found = pr_comments.find_marker_comment(REPO, 1, MARKER)
+        found = pr.comments.find_marker_comment(REPO, 1, MARKER)
     assert found == _found(10, f"{MARKER}\nround one")
 
 
@@ -449,7 +452,7 @@ def test_find_marker_comment_carries_the_timeline():
         {"id": 11, "body": "not so fast", "created_at": "2026-01-02T00:00:00Z"},
     ])
     with _listing(listing):
-        found = pr_comments.find_marker_comment(REPO, 1, MARKER)
+        found = pr.comments.find_marker_comment(REPO, 1, MARKER)
     assert found.created_at == "2026-01-01T00:00:00Z"
     assert found.newest_other_at == "2026-01-02T00:00:00Z"
 
@@ -461,7 +464,7 @@ def test_find_marker_comment_does_not_read_an_older_summary_as_an_answer():
         {"id": 11, "body": f"{MARKER}\nround two", "created_at": "2026-01-03T00:00:00Z"},
     ])
     with _listing(listing):
-        found = pr_comments.find_marker_comment(REPO, 1, MARKER)
+        found = pr.comments.find_marker_comment(REPO, 1, MARKER)
     assert found.comment_id == 11
     assert found.newest_other_at == ""
 
@@ -470,7 +473,7 @@ def test_find_marker_comment_accepts_flat_listing():
     """A single unslurped page must still be readable."""
     listing = [{"id": 12, "body": f"{MARKER}\nonly"}]
     with _listing(listing):
-        found = pr_comments.find_marker_comment(REPO, 1, MARKER)
+        found = pr.comments.find_marker_comment(REPO, 1, MARKER)
     assert found == _found(12, f"{MARKER}\nonly")
 
 
@@ -485,14 +488,14 @@ def test_find_marker_comment_reports_lookup_failure(payload):
     "the comment said nothing", so `found` has to carry the difference.
     """
     with _listing(payload):
-        assert pr_comments.find_marker_comment(REPO, 1, MARKER) == \
-            pr_comments.MarkerComment(found=False)
+        assert pr.comments.find_marker_comment(REPO, 1, MARKER) == \
+            pr.comments.MarkerComment(found=False)
 
 
 def test_find_marker_comment_reports_empty_listing():
     with _listing([]):
-        assert pr_comments.find_marker_comment(REPO, 1, MARKER) == \
-            pr_comments.MarkerComment(found=True)
+        assert pr.comments.find_marker_comment(REPO, 1, MARKER) == \
+            pr.comments.MarkerComment(found=True)
 
 
 def test_find_marker_comments_keeps_every_round_oldest_first():
@@ -503,7 +506,7 @@ def test_find_marker_comments_keeps_every_round_oldest_first():
         {"id": 12, "body": f"{MARKER}\nround two"},
     ])
     with _listing(listing):
-        history = pr_comments.find_marker_comments(REPO, 1, MARKER)
+        history = pr.comments.find_marker_comments(REPO, 1, MARKER)
     assert [c.comment_id for c in history.comments] == [10, 12]
     assert history.bodies == [f"{MARKER}\nround one", f"{MARKER}\nround two"]
     assert history.newest.comment_id == 12
@@ -515,7 +518,7 @@ def test_find_marker_comments_carries_each_comments_url():
         {"id": 10, "body": MARKER, "html_url": "https://gh/pull/1#issuecomment-10"},
     ])
     with _listing(listing):
-        history = pr_comments.find_marker_comments(REPO, 1, MARKER)
+        history = pr.comments.find_marker_comments(REPO, 1, MARKER)
     assert history.comments[0].url == "https://gh/pull/1#issuecomment-10"
 
 
@@ -528,7 +531,7 @@ def test_find_marker_comments_dates_the_body_as_well_as_the_comment():
          "updated_at": "2026-01-06T00:00:00Z"},
     ])
     with _listing(listing):
-        history = pr_comments.find_marker_comments(REPO, 1, MARKER)
+        history = pr.comments.find_marker_comments(REPO, 1, MARKER)
     assert history.comments[0].created_at == "2026-01-02T00:00:00Z"
     assert history.comments[0].updated_at == "2026-01-06T00:00:00Z"
 
@@ -536,24 +539,24 @@ def test_find_marker_comments_dates_the_body_as_well_as_the_comment():
 def test_find_marker_comments_reports_an_unread_listing_as_no_history():
     """`found` distinguishes it from a PR that genuinely has no summary yet."""
     with _listing(None):
-        history = pr_comments.find_marker_comments(REPO, 1, MARKER)
-    assert history == pr_comments.MarkerHistory(found=False)
-    assert history.newest == pr_comments.MarkerComment(found=False)
+        history = pr.comments.find_marker_comments(REPO, 1, MARKER)
+    assert history == pr.comments.MarkerHistory(found=False)
+    assert history.newest == pr.comments.MarkerComment(found=False)
 
 
 def test_marker_history_newest_stands_in_for_an_unmarked_pr():
     """The upsert target of a PR with no summary is an empty comment, not None."""
-    history = pr_comments.MarkerHistory(found=True, newest_other_at="2026-01-02T00:00:00Z")
-    assert history.newest == pr_comments.MarkerComment(
+    history = pr.comments.MarkerHistory(found=True, newest_other_at="2026-01-02T00:00:00Z")
+    assert history.newest == pr.comments.MarkerComment(
         found=True, newest_other_at="2026-01-02T00:00:00Z")
     assert history.bodies == []
 
 
 def test_post_issue_comment_reuses_a_supplied_lookup():
     """A caller that already read the comment must not pay for the listing twice."""
-    with patch.object(pr_comments.gh_client, "api_json") as listing, \
-         patch.object(pr_comments, "_patch_issue_comment", return_value="u2") as patch_fn:
-        url = pr_comments.post_issue_comment(
+    with patch.object(gh.client, "api_json") as listing, \
+         patch.object(pr.comments, "_patch_issue_comment", return_value="u2") as patch_fn:
+        url = pr.comments.post_issue_comment(
             REPO, 1, "round two", marker=MARKER,
             existing=_found(11, f"{MARKER}\nround one"),
         )
@@ -565,43 +568,43 @@ def test_post_issue_comment_reuses_a_supplied_lookup():
 def test_post_issue_comment_logs_when_lookup_fails():
     """Falling back to a new comment on lookup failure must not be silent."""
     with _listing(None), \
-         patch.object(pr_comments, "_gh_post", return_value=_posted()), \
-         patch.object(pr_comments.log, "error") as err:
-        url = pr_comments.post_issue_comment(REPO, 1, "body", marker=MARKER)
+         patch.object(pr.comments, "_gh_post", return_value=_posted()), \
+         patch.object(core.log, "error") as err:
+        url = pr.comments.post_issue_comment(REPO, 1, "body", marker=MARKER)
     assert url == "u"
     err.assert_called_once()
 
 
 def test_patch_issue_comment_uses_patch_method():
-    with patch.object(pr_comments, "_gh_post", return_value=_posted()) as post:
-        assert pr_comments._patch_issue_comment(REPO, 11, "body") == "u"
+    with patch.object(pr.comments, "_gh_post", return_value=_posted()) as post:
+        assert pr.comments._patch_issue_comment(REPO, 11, "body") == "u"
     assert post.call_args.kwargs["method"] == "PATCH"
     assert post.call_args[0][0] == f"repos/{REPO}/issues/comments/11"
 
 
 def test_patch_thread_reply_uses_patch_method():
-    with patch.object(pr_comments, "_gh_post", return_value=CmdResult(0)) as post:
-        assert pr_comments.patch_thread_reply(REPO, 99, "body") is True
+    with patch.object(pr.comments, "_gh_post", return_value=CmdResult(0)) as post:
+        assert pr.comments.patch_thread_reply(REPO, 99, "body") is True
     assert post.call_args.kwargs["method"] == "PATCH"
     assert post.call_args[0][0] == f"repos/{REPO}/pulls/comments/99"
 
 
 def test_patch_thread_reply_reports_failure():
-    with patch.object(pr_comments, "_gh_post", return_value=CmdResult(1)):
-        assert pr_comments.patch_thread_reply(REPO, 99, "body") is False
+    with patch.object(pr.comments, "_gh_post", return_value=CmdResult(1)):
+        assert pr.comments.patch_thread_reply(REPO, 99, "body") is False
 
 
 def test_update_pr_body_patches_the_pull_endpoint():
-    with patch.object(pr_comments, "_gh_post", return_value=CmdResult(0)) as post:
-        assert pr_comments.update_pr_body(REPO, 7, "new body") is True
+    with patch.object(pr.comments, "_gh_post", return_value=CmdResult(0)) as post:
+        assert pr.comments.update_pr_body(REPO, 7, "new body") is True
     assert post.call_args.kwargs["method"] == "PATCH"
     assert post.call_args[0][0] == f"repos/{REPO}/pulls/7"
     assert post.call_args[0][1] == "new body"
 
 
 def test_update_pr_body_reports_failure():
-    with patch.object(pr_comments, "_gh_post", return_value=CmdResult(1)):
-        assert pr_comments.update_pr_body(REPO, 7, "new body") is False
+    with patch.object(pr.comments, "_gh_post", return_value=CmdResult(1)):
+        assert pr.comments.update_pr_body(REPO, 7, "new body") is False
 
 
 # ── Publishing gate ──────────────────────────────────────────────────────────
@@ -613,33 +616,33 @@ def no_subprocess(monkeypatch):
     def boom(*a, **kw):
         raise AssertionError(f"a subprocess ran in draft mode: {a}")
     monkeypatch.setattr("core.proc.subprocess.run", boom)
-    monkeypatch.setattr(review_issue.proc, "run", boom)
+    monkeypatch.setattr(core.proc, "run", boom)
 
 
 class TestPublishingGate:
     """Nothing reaches GitHub until --post says so."""
 
     def test_defaults_to_drafts(self):
-        assert publishing.enabled() is False
+        assert core.publishing.enabled() is False
 
     def test_thread_reply_is_not_posted(self, no_subprocess):
-        assert pr_comments.post_thread_reply("o/r", 1, 99, "body") is False
+        assert pr.comments.post_thread_reply("o/r", 1, 99, "body") is False
 
     def test_issue_comment_is_not_posted(self, no_subprocess):
-        assert pr_comments.post_issue_comment("o/r", 1, "body") is None
+        assert pr.comments.post_issue_comment("o/r", 1, "body") is None
 
     def test_thread_is_not_resolved(self, no_subprocess):
-        assert pr_comments.resolve_thread("PRRT_1") is False
+        assert pr.comments.resolve_thread("PRRT_1") is False
 
     def test_pr_description_is_not_edited(self, no_subprocess):
-        assert pr_comments.update_pr_body("o/r", 1, "new body") is False
+        assert pr.comments.update_pr_body("o/r", 1, "new body") is False
 
     def test_pr_description_draft_goes_to_stderr(self, no_subprocess, capsys):
-        pr_comments.update_pr_body("o/r", 1, "the rewritten description")
+        pr.comments.update_pr_body("o/r", 1, "the rewritten description")
         assert "the rewritten description" in capsys.readouterr().err
 
     def test_draft_body_goes_to_stderr(self, no_subprocess, capsys):
-        pr_comments.post_thread_reply("o/r", 1, 99, "the reply text")
+        pr.comments.post_thread_reply("o/r", 1, 99, "the reply text")
         captured = capsys.readouterr()
         assert "the reply text" in captured.err
         assert captured.out == ""
@@ -652,8 +655,8 @@ class TestPublishingGate:
                 returncode=0, stdout='{"html_url": "u"}', stderr="",
             ),
         )
-        publishing.enable()
-        assert pr_comments.post_thread_reply("o/r", 1, 99, "body") is True
+        core.publishing.enable()
+        assert pr.comments.post_thread_reply("o/r", 1, 99, "body") is True
         assert len(calls) == 1
 
 
@@ -667,23 +670,23 @@ class TestTheGateIsScopedToOneRun:
     """
 
     def test_a_run_that_opens_the_gate_leaves_it_shut(self):
-        publishing.call_entry_point(
+        core.publishing.call_entry_point(
             "fake_entry_points:opens_the_gate", [])
-        assert publishing.enabled() is False
+        assert core.publishing.enabled() is False
 
     def test_the_next_run_does_not_inherit_the_open_gate(self):
         """The failure this exists to catch, stated as two runs in a row."""
-        publishing.call_entry_point(
+        core.publishing.call_entry_point(
             "fake_entry_points:opens_the_gate", [])
-        seen = publishing.call_entry_point(
+        seen = core.publishing.call_entry_point(
             "fake_entry_points:reports_the_gate", [])
         assert seen == 0, "the second run saw a gate the first one opened"
 
     def test_a_run_nested_in_an_open_one_restores_rather_than_closes(self):
         """Restores the previous value, so an outer --post survives its child."""
-        publishing.enable()
-        publishing.call_entry_point("fake_entry_points:reports_the_gate", [])
-        assert publishing.enabled() is True
+        core.publishing.enable()
+        core.publishing.call_entry_point("fake_entry_points:reports_the_gate", [])
+        assert core.publishing.enabled() is True
 
     def test_a_hold_is_not_restored_when_the_run_ends(self):
         """A hold outlives the run that reached it, unlike an enable.
@@ -692,16 +695,16 @@ class TestTheGateIsScopedToOneRun:
         gave, a hold is something the run *learned*, and an outer pass must
         not resume publishing because an inner one finished.
         """
-        publishing.enable()
-        publishing.call_entry_point("fake_entry_points:holds_the_gate", [])
-        assert publishing.held() == "a question this run could not answer"
-        assert publishing.enabled() is False
+        core.publishing.enable()
+        core.publishing.call_entry_point("fake_entry_points:holds_the_gate", [])
+        assert core.publishing.held() == "a question this run could not answer"
+        assert core.publishing.enabled() is False
 
     def test_the_gate_is_restored_even_when_the_run_raises(self):
         with pytest.raises(RuntimeError):
-            publishing.call_entry_point(
+            core.publishing.call_entry_point(
                 "fake_entry_points:opens_the_gate_then_raises", [])
-        assert publishing.enabled() is False
+        assert core.publishing.enabled() is False
 
 
 class TestHoweverARunEndsTheCallerGetsAnInt:
@@ -713,31 +716,31 @@ class TestHoweverARunEndsTheCallerGetsAnInt:
     """
 
     def test_a_returned_code_is_the_code(self):
-        assert publishing.call_entry_point(
+        assert core.publishing.call_entry_point(
             "fake_entry_points:returns_three", []) == 3
 
     def test_a_run_that_exits_zero_does_not_end_its_caller(self):
         after = []
-        assert publishing.call_entry_point(
+        assert core.publishing.call_entry_point(
             "fake_entry_points:exits_zero", []) == 0
         after.append("reached")
         assert after == ["reached"], "sys.exit(0) unwound past the seam"
 
     def test_a_run_that_exits_non_zero_reports_that_code(self):
         """`EXIT_SUPERSEDED` arrives this way: `review.preflight` exits 4."""
-        assert publishing.call_entry_point(
+        assert core.publishing.call_entry_point(
             "fake_entry_points:exits_four", []) == 4
 
     def test_a_bare_exit_is_success(self):
-        assert publishing.call_entry_point(
+        assert core.publishing.call_entry_point(
             "fake_entry_points:exits_bare", []) == 0
 
     def test_returning_nothing_is_success(self):
-        assert publishing.call_entry_point(
+        assert core.publishing.call_entry_point(
             "fake_entry_points:returns_none", []) == 0
 
     def test_exiting_with_a_message_prints_it_and_fails(self, capsys):
-        rc = publishing.call_entry_point(
+        rc = core.publishing.call_entry_point(
             "fake_entry_points:exits_with_a_message", [])
         assert rc == 1
         assert "could not read the review" in capsys.readouterr().err
@@ -746,13 +749,13 @@ class TestHoweverARunEndsTheCallerGetsAnInt:
         """Not caught here: the signal handler reports it once, for the whole
         invocation, and swallowing it would report an interrupt as an exit."""
         with pytest.raises(KeyboardInterrupt):
-            publishing.call_entry_point(
+            core.publishing.call_entry_point(
                 "fake_entry_points:interrupted", [])
 
     def test_the_argv_and_kwargs_reach_the_entry_point(self):
-        assert publishing.call_entry_point(
+        assert core.publishing.call_entry_point(
             "fake_entry_points:echoes_argv", ["--self", "--fix"]) == 2
-        assert publishing.call_entry_point(
+        assert core.publishing.call_entry_point(
             "fake_entry_points:requires_a_kwarg", [],
             install_signal_handler=False) == 0
 
@@ -761,23 +764,23 @@ class TestPublishingHold:
     """A hold outranks --post, and nothing reopens it."""
 
     def test_hold_shuts_a_gate_post_had_opened(self, no_subprocess):
-        publishing.enable()
-        publishing.hold("discussion open")
-        assert publishing.enabled() is False
-        assert pr_comments.post_thread_reply("o/r", 1, 99, "body") is False
+        core.publishing.enable()
+        core.publishing.hold("discussion open")
+        assert core.publishing.enabled() is False
+        assert pr.comments.post_thread_reply("o/r", 1, 99, "body") is False
 
     def test_enable_after_a_hold_does_not_reopen(self, no_subprocess):
-        publishing.hold("discussion open")
-        publishing.enable()
-        assert publishing.enabled() is False
+        core.publishing.hold("discussion open")
+        core.publishing.enable()
+        assert core.publishing.enabled() is False
 
     def test_the_first_reason_is_the_one_kept(self):
-        publishing.hold("discussion open")
-        publishing.hold("something else")
-        assert publishing.held() == "discussion open"
+        core.publishing.hold("discussion open")
+        core.publishing.hold("something else")
+        assert core.publishing.held() == "discussion open"
 
     def test_no_hold_by_default(self):
-        assert publishing.held() == ""
+        assert core.publishing.held() == ""
 
     def test_two_runs_in_one_process_do_not_leak_the_gate(self):
         """A hold taken inside one `run` must not outrank the next.
@@ -785,13 +788,13 @@ class TestPublishingHold:
         Proves production `run()` resets both halves, not the `_drafts_only`
         fixture: both runs happen in this test.
         """
-        with publishing.run(post=True):
-            publishing.hold("discussion open")
-            assert publishing.enabled() is False
-        assert publishing.enabled() is False
-        assert publishing.held() == ""
-        with publishing.run(post=True):
-            assert publishing.enabled() is True
+        with core.publishing.run(post=True):
+            core.publishing.hold("discussion open")
+            assert core.publishing.enabled() is False
+        assert core.publishing.enabled() is False
+        assert core.publishing.held() == ""
+        with core.publishing.run(post=True):
+            assert core.publishing.enabled() is True
 
     def test_a_rebase_opened_gate_does_not_authorise_a_describe_run(self):
         """#909 T7 4c: rebase then describe in one process.
@@ -799,12 +802,12 @@ class TestPublishingHold:
         A bare `pr rebase` opens the gate because push is the default. A
         describe that was not given `--post` must not inherit that.
         """
-        with publishing.run(post=True):
-            assert publishing.enabled() is True
-            with publishing.run(post=False):
-                assert publishing.enabled() is False
-            assert publishing.enabled() is True
-        assert publishing.enabled() is False
+        with core.publishing.run(post=True):
+            assert core.publishing.enabled() is True
+            with core.publishing.run(post=False):
+                assert core.publishing.enabled() is False
+            assert core.publishing.enabled() is True
+        assert core.publishing.enabled() is False
 
 
 class TestIssueTrackerGate:
@@ -815,25 +818,25 @@ class TestIssueTrackerGate:
     """
 
     def test_issue_is_not_created(self, no_subprocess):
-        created = review_issue.create_issue(
+        created = review.issue.create_issue(
             "linear", "ENG", "title", "description",
         )
         assert created.filed is False
-        assert created.issue == review_issue.CreatedIssue()
+        assert created.issue == review.issue.CreatedIssue()
 
     def test_a_declined_write_is_not_a_failed_one(self, no_subprocess):
         """The gate declining a write owes nothing — a refused tracker does."""
-        created = review_issue.create_issue(
+        created = review.issue.create_issue(
             "linear", "ENG", "title", "description",
         )
-        assert created.delivery is review_issue.IssueDelivery.SKIPPED
+        assert created.delivery is review.issue.IssueDelivery.SKIPPED
         assert created.owed is False
 
     def test_issue_is_not_updated(self, no_subprocess):
-        assert review_issue.update_issue("linear", "ENG-1", "description") is False
+        assert review.issue.update_issue("linear", "ENG-1", "description") is False
 
     def test_draft_names_the_provider_and_title(self, no_subprocess, capsys):
-        review_issue.create_issue("linear", "ENG", "the issue title", "body")
+        review.issue.create_issue("linear", "ENG", "the issue title", "body")
         assert "the issue title" in capsys.readouterr().err
 
 
@@ -925,19 +928,19 @@ class TestRestEditStamp:
 
     def test_an_unedited_comment_has_no_stamp(self):
         """`updated_at == created_at` is REST's way of saying "never edited"."""
-        assert pr_comments._rest_edit_stamp({
+        assert pr.comments._rest_edit_stamp({
             "created_at": "2026-01-01T00:00:00Z",
             "updated_at": "2026-01-01T00:00:00Z",
         }) == ""
 
     def test_an_edited_comment_carries_the_edit_time(self):
-        assert pr_comments._rest_edit_stamp({
+        assert pr.comments._rest_edit_stamp({
             "created_at": "2026-01-01T00:00:00Z",
             "updated_at": "2026-02-01T00:00:00Z",
         }) == "2026-02-01T00:00:00Z"
 
     def test_a_payload_missing_both_fields_has_no_stamp(self):
-        assert pr_comments._rest_edit_stamp({}) == ""
+        assert pr.comments._rest_edit_stamp({}) == ""
 
     # The payloads below are real, taken from cli/cli#9000: comment 2082656785
     # was edited, the other two were not. Both APIs were queried for the same
@@ -962,7 +965,7 @@ class TestRestEditStamp:
         """The regression this normalisation exists to prevent."""
         graphql_stamp = graphql_last_edited or ""   # non_self_issue_comments
         assert graphql_stamp == expected
-        assert pr_comments._rest_edit_stamp(rest) == expected
+        assert pr.comments._rest_edit_stamp(rest) == expected
 
 
 # ── A demand added by editing a comment is not "addressed" ──────────────────
@@ -1077,7 +1080,7 @@ class TestRewrittenAfterOurReply:
              "lastEditedAt": theirs},
             {"author": {"login": "me"}, "createdAt": ours},
         ]
-        assert pr_comments._rewritten_since_my_reply(thread, "me") is rewritten
+        assert pr.comments._rewritten_since_my_reply(thread, "me") is rewritten
 
     def test_an_unreadable_stamp_is_not_a_rewrite(self):
         thread = [
@@ -1085,4 +1088,4 @@ class TestRewrittenAfterOurReply:
              "lastEditedAt": "not a timestamp"},
             {"author": {"login": "me"}, "createdAt": "2026-01-02T00:00:00Z"},
         ]
-        assert pr_comments._rewritten_since_my_reply(thread, "me") is False
+        assert pr.comments._rewritten_since_my_reply(thread, "me") is False

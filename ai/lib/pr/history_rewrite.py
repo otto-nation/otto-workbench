@@ -26,17 +26,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from core import log
-from git import push
-from git import replay
-from git import client as git_client
+import core.log
+import git.push
+import git.replay
+import git.client
 from git.land import CommitStatus
-from pr import state as pr_state
+import pr.state
 from pr.attribution import CommitClaim, CommitPushResult, commit_unpushed
 from pr.fix import FixRecord
 
 
-def follow_history_rewrite(state: pr_state.PRState, wt_path: Path) -> None:
+def follow_history_rewrite(state: pr.state.PRState, wt_path: Path) -> None:
     """Re-point the snapshot at the commits a rewrite left in place of its own.
 
     A fix pass that holds its push records the SHA it committed, and the run
@@ -71,8 +71,8 @@ def follow_history_rewrite(state: pr_state.PRState, wt_path: Path) -> None:
             return sha
         if sha not in replays:
             replays[sha] = (
-                replay.replayed_commit(wt_path, sha)
-                if replay.rewritten_away(wt_path, sha) else sha
+                git.replay.replayed_commit(wt_path, sha)
+                if git.replay.rewritten_away(wt_path, sha) else sha
             )
         return replays[sha] or sha
 
@@ -88,13 +88,13 @@ def follow_history_rewrite(state: pr_state.PRState, wt_path: Path) -> None:
 
     moved = sum(1 for sha, replayed in replays.items() if replayed and replayed != sha)
     if moved:
-        log.info(
+        core.log.info(
             f"Followed {moved} rewritten commit(s) — the fix snapshot now cites "
             "the history on the branch"
         )
     if recorded and replays.get(recorded) == "" and commit_unpushed(
             record.commit_status):
-        log.warn(
+        core.log.warn(
             f"Fix commit {recorded} is no longer on this branch and no single "
             "commit on it carries that change — the closeout stays held. This "
             "also fires when the change now appears twice (a duplicated "
@@ -135,12 +135,12 @@ def reconciled_commit(
     """
     if record.commit_sha or not wt_path or not record.head_sha:
         return CommitPushResult(record.commit_sha or None, status, "")
-    current = git_client.head_sha(cwd=wt_path, short=True)
+    current = git.client.head_sha(cwd=wt_path, short=True)
     if not current or current == record.head_sha:
         return CommitPushResult(None, status, "")
-    if not push.holds(wt_path, current):
+    if not git.push.holds(wt_path, current):
         return CommitPushResult(None, CommitStatus.RECONCILED, "")
-    log.info(
+    core.log.info(
         "Work landed outside the fix pass — each row is attributed from its "
         "own line history, and left unattributed rather than credited to "
         f"{current} where that finds nothing"

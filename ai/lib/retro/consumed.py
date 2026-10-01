@@ -25,7 +25,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from core import serde, workbench_paths
+import core.serde
+import core.workbench_paths
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -69,7 +70,7 @@ class ConsumeRecord:
 
 def record_path() -> Path:
     """Where the consume record lives."""
-    return workbench_paths.state_dir() / CONSUMED_REVIEWS_NAME
+    return core.workbench_paths.state_dir() / CONSUMED_REVIEWS_NAME
 
 
 def write_record(record: ConsumeRecord, path: Path | None = None) -> None:
@@ -80,12 +81,12 @@ def write_record(record: ConsumeRecord, path: Path | None = None) -> None:
     claim — skipping the write on empty is what lets an abandoned retro's list
     survive into a later run that scanned nothing of its own.
     """
-    serde.write_json(path or record_path(), serde.to_dict(record))
+    core.serde.write_json(path or record_path(), core.serde.to_dict(record))
 
 
 def read_record(path: Path | None = None) -> ConsumeRecord | None:
     """The record on disk, or None when there is not a usable one."""
-    return serde.load_file(ConsumeRecord, path or record_path())
+    return core.serde.load_file(ConsumeRecord, path or record_path())
 
 
 def clear_record(path: Path | None = None) -> None:

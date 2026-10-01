@@ -25,8 +25,8 @@ from conftest import REPO_ROOT
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from config import workbench_config as wc
-from config import workbench_config_report as wcr
+import config.workbench_config
+import config.workbench_config_report
 
 
 @pytest.fixture
@@ -44,7 +44,7 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text.lstrip("\n"))
 
 
-def _row(status: wcr.ConfigStatus, key: str) -> wcr.ResolvedKey:
+def _row(status: config.workbench_config_report.ConfigStatus, key: str) -> config.workbench_config_report.ResolvedKey:
     return next(row for row in status.keys if row.key == key)
 
 
@@ -53,55 +53,55 @@ def _row(status: wcr.ConfigStatus, key: str) -> wcr.ResolvedKey:
 
 def test_scopes_are_reported_highest_precedence_first(roots):
     config_root, project = roots
-    status = wcr.config_status(project)
-    assert [s.name for s in status.scopes] == [wc.PROJECT_SCOPE, wc.GLOBAL_SCOPE]
+    status = config.workbench_config_report.config_status(project)
+    assert [s.name for s in status.scopes] == [config.workbench_config.PROJECT_SCOPE, config.workbench_config.GLOBAL_SCOPE]
     assert [s.path for s in status.scopes] == [
-        project / wc.PROJECT_CONFIG_NAME, config_root / wc.CONFIG_NAME,
+        project / config.workbench_config.PROJECT_CONFIG_NAME, config_root / config.workbench_config.CONFIG_NAME,
     ]
 
 
 def test_the_merge_and_the_report_read_the_same_files(roots):
     """`config_scopes` is the one owner, so neither can gain a file alone."""
     _, project = roots
-    reported = [s.path for s in wcr.config_status(project).scopes]
-    assert sorted(reported) == sorted(s.path for s in wc.config_scopes(project))
+    reported = [s.path for s in config.workbench_config_report.config_status(project).scopes]
+    assert sorted(reported) == sorted(s.path for s in config.workbench_config.config_scopes(project))
 
 
 def test_a_scope_with_no_file_is_reported_as_absent(roots):
     config_root, project = roots
     _write(config_root / "config.yml", "reuse:\n  level: ultra\n")
-    status = wcr.config_status(project)
+    status = config.workbench_config_report.config_status(project)
     by_name = {s.name: s for s in status.scopes}
-    assert by_name[wc.GLOBAL_SCOPE].exists
-    assert not by_name[wc.PROJECT_SCOPE].exists
+    assert by_name[config.workbench_config.GLOBAL_SCOPE].exists
+    assert not by_name[config.workbench_config.PROJECT_SCOPE].exists
 
 
 def test_outside_a_repo_there_is_only_the_global_scope(roots):
-    status = wcr.config_status()
-    assert [s.name for s in status.scopes] == [wc.GLOBAL_SCOPE]
+    status = config.workbench_config_report.config_status()
+    assert [s.name for s in status.scopes] == [config.workbench_config.GLOBAL_SCOPE]
 
 
 def test_a_value_names_the_file_that_supplied_it(roots):
     config_root, project = roots
     _write(config_root / "config.yml", "reuse:\n  level: ultra\n")
     _write(project / ".workbench.yml", "issues:\n  provider: github\n")
-    status = wcr.config_status(project)
-    assert _row(status, "reuse.level").scope.name == wc.GLOBAL_SCOPE
-    assert _row(status, "issues.provider").scope.name == wc.PROJECT_SCOPE
+    status = config.workbench_config_report.config_status(project)
+    assert _row(status, "reuse.level").scope.name == config.workbench_config.GLOBAL_SCOPE
+    assert _row(status, "issues.provider").scope.name == config.workbench_config.PROJECT_SCOPE
 
 
 def test_an_overridden_value_names_the_file_that_won(roots):
     config_root, project = roots
     _write(config_root / "config.yml", "reuse:\n  level: ultra\n")
     _write(project / ".workbench.yml", "reuse:\n  level: lite\n")
-    row = _row(wcr.config_status(project), "reuse.level")
+    row = _row(config.workbench_config_report.config_status(project), "reuse.level")
     assert row.value == "lite"
-    assert row.scope.name == wc.PROJECT_SCOPE
+    assert row.scope.name == config.workbench_config.PROJECT_SCOPE
 
 
 def test_a_key_no_file_sets_is_reported_as_a_default(roots):
     _, project = roots
-    row = _row(wcr.config_status(project), "reuse.default")
+    row = _row(config.workbench_config_report.config_status(project), "reuse.default")
     assert row.value == "full"
     assert row.is_default
 
@@ -114,15 +114,15 @@ agent:
     scout:
       model: haiku
 """)
-    row = _row(wcr.config_status(project), "agent.phases.scout.model")
+    row = _row(config.workbench_config_report.config_status(project), "agent.phases.scout.model")
     assert row.value == "haiku"
-    assert row.scope.name == wc.GLOBAL_SCOPE
+    assert row.scope.name == config.workbench_config.GLOBAL_SCOPE
 
 
 def test_a_phase_nobody_overrode_is_not_reported(roots):
     """Every phase would bury the ones a file actually names."""
     _, project = roots
-    keys = [row.key for row in wcr.config_status(project).keys]
+    keys = [row.key for row in config.workbench_config_report.config_status(project).keys]
     assert not [key for key in keys if key.startswith("agent.phases.")]
 
 
@@ -134,18 +134,18 @@ def test_the_reported_keys_are_the_documented_keys(roots):
     report expands those over the entries a file actually holds.
     """
     _, project = roots
-    documented = [key for key, _, _ in wcr._reference_rows(wc.WorkbenchConfig)
+    documented = [key for key, _, _ in config.workbench_config_report._reference_rows(config.workbench_config.WorkbenchConfig)
                   if "<" not in key]
-    assert [row.key for row in wcr.config_status(project).keys] == documented
+    assert [row.key for row in config.workbench_config_report.config_status(project).keys] == documented
 
 
 def test_a_key_the_surface_does_not_have_is_reported_as_a_stray(roots):
     """The incident this command exists for: the right value, the wrong key."""
     config_root, project = roots
     _write(config_root / "config.yml", "review:\n  issue_tracker:\n    provider: github\n")
-    status = wcr.config_status(project)
+    status = config.workbench_config_report.config_status(project)
     assert [(s.key, s.scope.name) for s in status.strays] == [
-        ("review.issue_tracker.provider", wc.GLOBAL_SCOPE),
+        ("review.issue_tracker.provider", config.workbench_config.GLOBAL_SCOPE),
     ]
     assert _row(status, "issues.provider").is_default
 
@@ -153,14 +153,14 @@ def test_a_key_the_surface_does_not_have_is_reported_as_a_stray(roots):
 def test_a_stray_key_does_not_make_the_report_a_failure(roots):
     config_root, project = roots
     _write(config_root / "config.yml", "reuse:\n  levl: ultra\n")
-    assert wcr.config_status(project).ok
+    assert config.workbench_config_report.config_status(project).ok
 
 
 def test_an_unreadable_scope_is_a_problem_and_the_rest_still_reports(roots):
     config_root, project = roots
     _write(config_root / "config.yml", "reuse:\n  level: ultra\n")
     _write(project / ".workbench.yml", "reuse: [unclosed\n")
-    status = wcr.config_status(project)
+    status = config.workbench_config_report.config_status(project)
     assert not status.ok
     assert str(project / ".workbench.yml") in status.problems[0]
     assert _row(status, "reuse.level").value == "ultra"
@@ -171,7 +171,7 @@ def test_a_rejected_value_names_the_one_file_holding_it(roots):
     config_root, project = roots
     _write(config_root / "config.yml", "reuse:\n  level: ultra\n")
     _write(project / ".workbench.yml", "reuse:\n  level: sideways\n")
-    status = wcr.config_status(project)
+    status = config.workbench_config_report.config_status(project)
     assert not status.ok
     assert status.problems == [
         f"{project / '.workbench.yml'}: 'sideways' is not a valid ReuseLevel",
@@ -182,8 +182,8 @@ def test_a_rejected_value_names_the_one_file_holding_it(roots):
 def test_a_rejected_value_still_reports_the_scopes_and_the_strays(roots):
     config_root, project = roots
     _write(config_root / "config.yml", "reuse:\n  levl: ultra\n  level: sideways\n")
-    status = wcr.config_status(project)
-    assert [s.name for s in status.scopes] == [wc.PROJECT_SCOPE, wc.GLOBAL_SCOPE]
+    status = config.workbench_config_report.config_status(project)
+    assert [s.name for s in status.scopes] == [config.workbench_config.PROJECT_SCOPE, config.workbench_config.GLOBAL_SCOPE]
     assert [s.key for s in status.strays] == ["reuse.levl"]
 
 
@@ -203,17 +203,17 @@ REAL_BOOL = "github:\n  ssh_over_443: true\n"
 def test_a_value_the_field_cannot_hold_is_reported_as_dropped(roots):
     config_root, project = roots
     _write(config_root / "config.yml", QUOTED_BOOL)
-    status = wcr.config_status(project)
+    status = config.workbench_config_report.config_status(project)
     assert [(d.key, d.held, d.read) for d in status.dropped] == [
-        (wc.GITHUB_SSH_443_KEY, "true", "false"),
+        (config.workbench_config.GITHUB_SSH_443_KEY, "true", "false"),
     ]
-    assert status.dropped[0].scope.path == config_root / wc.CONFIG_NAME
+    assert status.dropped[0].scope.path == config_root / config.workbench_config.CONFIG_NAME
 
 
 def test_a_value_the_field_does_hold_is_not_reported(roots):
     config_root, project = roots
     _write(config_root / "config.yml", REAL_BOOL)
-    assert wcr.config_status(project).dropped == []
+    assert config.workbench_config_report.config_status(project).dropped == []
 
 
 def test_a_value_the_loader_restores_is_not_a_dropped_one(roots):
@@ -224,7 +224,7 @@ def test_a_value_the_loader_restores_is_not_a_dropped_one(roots):
     """
     config_root, project = roots
     _write(config_root / "config.yml", "issues:\n  team: 42\n")
-    status = wcr.config_status(project)
+    status = config.workbench_config_report.config_status(project)
     assert status.dropped == []
     assert _row(status, "issues.team").value == "42"
 
@@ -234,43 +234,43 @@ def test_a_dropped_value_is_reported_against_the_file_that_won(roots):
     config_root, project = roots
     _write(config_root / "config.yml", QUOTED_BOOL)
     _write(project / ".workbench.yml", REAL_BOOL)
-    assert wcr.config_status(project).dropped == []
+    assert config.workbench_config_report.config_status(project).dropped == []
 
 
 def test_a_dropped_value_does_not_make_the_report_a_failure(roots):
     """Same cost as a stray key, and reported the same way: one value, not the scope."""
     config_root, project = roots
     _write(config_root / "config.yml", QUOTED_BOOL)
-    assert wcr.config_status(project).ok
+    assert config.workbench_config_report.config_status(project).ok
 
 
 def test_a_stray_key_is_not_also_reported_as_a_dropped_value(roots):
     """The two are disjoint by construction — a stray has no resolved row."""
     config_root, project = roots
     _write(config_root / "config.yml", "reuse:\n  levl: ultra\n")
-    status = wcr.config_status(project)
+    status = config.workbench_config_report.config_status(project)
     assert [s.key for s in status.strays] == ["reuse.levl"]
     assert status.dropped == []
 
 
 def test_render_value_writes_what_a_config_file_would_hold():
-    assert wcr.render_value(True) == "true"
-    assert wcr.render_value(wc.ReuseLevel.FULL) == "full"
-    assert wcr.render_value(None) == "—"
-    assert wcr.render_value("") == "—"
-    assert wcr.render_value(["follow-up"]) == "[follow-up]"
+    assert config.workbench_config_report.render_value(True) == "true"
+    assert config.workbench_config_report.render_value(config.workbench_config.ReuseLevel.FULL) == "full"
+    assert config.workbench_config_report.render_value(None) == "—"
+    assert config.workbench_config_report.render_value("") == "—"
+    assert config.workbench_config_report.render_value(["follow-up"]) == "[follow-up]"
 
 
 def test_a_mutable_default_is_reported_rather_than_read_as_none():
     """`default_factory` leaves `default` MISSING, which read as no default at all."""
     rows = dict((key, default) for key, _, default in
-                wcr._reference_rows(wc.IssuesConfig))
-    assert rows["labels"] == f"`[{wc.FOLLOW_UP_LABEL}]`"
+                config.workbench_config_report._reference_rows(config.workbench_config.IssuesConfig))
+    assert rows["labels"] == f"`[{config.workbench_config.FOLLOW_UP_LABEL}]`"
 
 
 def test_a_list_key_names_what_it_holds():
     """A list key names its element type — `any` told the reader nothing."""
-    assert wcr._values_column(list[str]) == "list of string"
+    assert config.workbench_config_report._values_column(list[str]) == "list of string"
 
 
 # ── Schema ──────────────────────────────────────────────────────────────────
@@ -283,8 +283,8 @@ def test_committed_schema_matches_the_generator():
     appear in two formats. This is that test: renaming a field or adding a
     Phase member fails here until `bin/local/generate-config-schema` is re-run.
     """
-    committed = json.loads((REPO_ROOT / wc.SCHEMA_PATH).read_text())
-    assert committed == json.loads(wcr.schema_json())
+    committed = json.loads((REPO_ROOT / config.workbench_config.SCHEMA_PATH).read_text())
+    assert committed == json.loads(config.workbench_config_report.schema_json())
 
 
 def test_composed_docs_carry_the_generated_reference():
@@ -295,8 +295,8 @@ def test_composed_docs_carry_the_generated_reference():
     freshness check cannot see — a doc with no directive is consistent with its
     source and simply has no key reference in it.
     """
-    text = (REPO_ROOT / wcr.DOCS_PATH).read_text()
-    assert wcr.docs_reference() in text
+    text = (REPO_ROOT / config.workbench_config_report.DOCS_PATH).read_text()
+    assert config.workbench_config_report.docs_reference() in text
 
 
 def test_the_module_header_asks_for_the_reference_block():
@@ -307,7 +307,7 @@ def test_the_module_header_asks_for_the_reference_block():
     unknown block. Naming it here means the pair is checked without composing.
     """
     header = (REPO_ROOT / "lib" / "config.sh").read_text()
-    assert f"<!-- include: {wcr.GENERATOR_PATH} --emit config-reference -->" in header
+    assert f"<!-- include: {config.workbench_config_report.GENERATOR_PATH} --emit config-reference -->" in header
 
 
 def test_every_written_key_resolves_to_a_field():
@@ -318,16 +318,16 @@ def test_every_written_key_resolves_to_a_field():
     docs table is built from, so a renamed field fails rather than silently
     stranding the value it used to hold.
     """
-    keys = {key for key, _, _ in wcr._reference_rows(wc.WorkbenchConfig)}
-    assert wc.REUSE_LEVEL_KEY in keys
-    assert wc.REUSE_DEFAULT_KEY in keys
-    assert wc.ISSUE_PROVIDER_KEY in keys
-    assert wc.ISSUE_TEAM_KEY in keys
-    assert wc.ISSUE_LABELS_KEY in keys
-    assert wc.GITHUB_SSH_443_KEY in keys
-    assert wc.WIKI_ROOT_KEY in keys
-    assert wc.FIX_VERIFY_COMMAND_KEY in keys
-    assert wc.FIX_VERIFY_TIMEOUT_KEY in keys
+    keys = {key for key, _, _ in config.workbench_config_report._reference_rows(config.workbench_config.WorkbenchConfig)}
+    assert config.workbench_config.REUSE_LEVEL_KEY in keys
+    assert config.workbench_config.REUSE_DEFAULT_KEY in keys
+    assert config.workbench_config.ISSUE_PROVIDER_KEY in keys
+    assert config.workbench_config.ISSUE_TEAM_KEY in keys
+    assert config.workbench_config.ISSUE_LABELS_KEY in keys
+    assert config.workbench_config.GITHUB_SSH_443_KEY in keys
+    assert config.workbench_config.WIKI_ROOT_KEY in keys
+    assert config.workbench_config.FIX_VERIFY_COMMAND_KEY in keys
+    assert config.workbench_config.FIX_VERIFY_TIMEOUT_KEY in keys
 
 
 def test_the_generator_banner_names_a_script_that_exists():
@@ -338,9 +338,9 @@ def test_the_generator_banner_names_a_script_that_exists():
     fails for everyone, which is what a banner pointing at nothing deserves.
     The docs half is the `--emit` directive, checked above.
     """
-    generator = REPO_ROOT / wcr.GENERATOR_PATH
+    generator = REPO_ROOT / config.workbench_config_report.GENERATOR_PATH
     assert generator.is_file() and os.access(generator, os.X_OK)
-    assert wcr.GENERATOR_PATH in json.loads(wcr.schema_json())["description"]
+    assert config.workbench_config_report.GENERATOR_PATH in json.loads(config.workbench_config_report.schema_json())["description"]
 
 
 def test_the_docs_link_to_the_schema_resolves_from_the_docs_directory():
@@ -349,7 +349,7 @@ def test_the_docs_link_to_the_schema_resolves_from_the_docs_directory():
     The `../` depth is derived from `DOCS_PATH`, so moving the doc keeps the
     link pointing at the schema instead of quietly pointing above the repo.
     """
-    docs_dir = (REPO_ROOT / wcr.DOCS_PATH).parent
-    link = f"({wcr._DOCS_TO_ROOT}{wc.SCHEMA_PATH})"
-    assert link in wcr.docs_reference()
-    assert (docs_dir / f"{wcr._DOCS_TO_ROOT}{wc.SCHEMA_PATH}").resolve().is_file()
+    docs_dir = (REPO_ROOT / config.workbench_config_report.DOCS_PATH).parent
+    link = f"({config.workbench_config_report._DOCS_TO_ROOT}{config.workbench_config.SCHEMA_PATH})"
+    assert link in config.workbench_config_report.docs_reference()
+    assert (docs_dir / f"{config.workbench_config_report._DOCS_TO_ROOT}{config.workbench_config.SCHEMA_PATH}").resolve().is_file()

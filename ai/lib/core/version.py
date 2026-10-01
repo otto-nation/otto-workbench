@@ -31,7 +31,7 @@ import subprocess
 from functools import cache
 from pathlib import Path
 
-from core import timeouts
+import core.timeouts
 
 UNKNOWN = "unknown"
 
@@ -67,7 +67,7 @@ def _short_sha() -> str:
     try:
         return subprocess.check_output(
             ["git", "-C", str(_ROOT), "rev-parse", "--short", "HEAD"],
-            stderr=subprocess.DEVNULL, text=True, timeout=timeouts.LOCAL,
+            stderr=subprocess.DEVNULL, text=True, timeout=core.timeouts.LOCAL,
         ).strip() or UNKNOWN
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
             FileNotFoundError, OSError):

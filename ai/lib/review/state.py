@@ -21,8 +21,8 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from core import log
-from core import serde
+import core.log
+import core.serde
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import SCAN_PHASES
 from core.phases import Phase
@@ -99,7 +99,7 @@ class PipelineState:
         """
         if not review_dir:
             return None
-        return serde.load_file(cls, review_dir / FILENAME_PIPELINE_STATE)
+        return core.serde.load_file(cls, review_dir / FILENAME_PIPELINE_STATE)
 
     @property
     def group_count(self):
@@ -239,7 +239,7 @@ def _pipeline_state_path(job: ReviewJob) -> str:
 
 
 def _write_pipeline_state(job: ReviewJob, state: PipelineState):
-    serde.write_json(Path(_pipeline_state_path(job)), serde.to_dict(state))
+    core.serde.write_json(Path(_pipeline_state_path(job)), core.serde.to_dict(state))
 
 
 def _read_pipeline_state(job: ReviewJob) -> "PipelineState | None":
@@ -412,7 +412,7 @@ def _resolve_recovery(job: ReviewJob, groups: list[Group]) -> RecoveryPlan:
     if not state:
         return RecoveryPlan()
     if not _validate_resume_state(state, job.pr.head_sha, groups):
-        log.warn("Pipeline state is stale (SHA or groups changed) — starting fresh")
+        core.log.warn("Pipeline state is stale (SHA or groups changed) — starting fresh")
         Path(_pipeline_state_path(job)).unlink(missing_ok=True)
         return RecoveryPlan()
 
@@ -426,9 +426,9 @@ def _resolve_recovery(job: ReviewJob, groups: list[Group]) -> RecoveryPlan:
         # done with nothing failed otherwise hides a process killed inside the
         # gate, and `--recover` declines the one phase it had left to run.
         if state.finished:
-            log.info("Prior review completed successfully — nothing to recover")
+            core.log.info("Prior review completed successfully — nothing to recover")
             return RecoveryPlan(already_complete=True)
-        log.info("Prior review stopped in the disprove gate — resuming there")
+        core.log.info("Prior review stopped in the disprove gate — resuming there")
         return RecoveryPlan(
             state=state, cost_so_far=_sum_existing_costs(job, state),
             skip_groups=set(state.groups_done), resume_at_gate=True,
@@ -437,12 +437,12 @@ def _resolve_recovery(job: ReviewJob, groups: list[Group]) -> RecoveryPlan:
     cost_so_far = _sum_existing_costs(job, state)
 
     if is_complete:
-        log.info("Prior review had failures — recovering")
+        core.log.info("Prior review had failures — recovering")
         skip_groups = set(state.groups_done)
         if has_failed_groups:
             failed_count = len(state.groups_failed)
             state.groups_failed.clear()
-            log.info(f"  Re-running {failed_count} failed groups")
+            core.log.info(f"  Re-running {failed_count} failed groups")
         if has_failed_phases:
             # A phase that failed is no longer done — the two record the same
             # attempt, so clearing one without the other leaves a run that
@@ -450,13 +450,13 @@ def _resolve_recovery(job: ReviewJob, groups: list[Group]) -> RecoveryPlan:
             retrying = sorted(str(phase) for phase in state.failed)
             state.done -= set(state.failed)
             state.failed.clear()
-            log.info(f"  Re-running {', '.join(retrying)}")
+            core.log.info(f"  Re-running {', '.join(retrying)}")
         return RecoveryPlan(
             state=state, cost_so_far=cost_so_far, skip_groups=skip_groups,
         )
 
     # Incomplete pipeline — resume from where it left off
-    log.info("Resuming incomplete pipeline")
+    core.log.info("Resuming incomplete pipeline")
     return RecoveryPlan(
         state=state, cost_so_far=cost_so_far,
         skip_groups=set(state.groups_done) if state.groups_done else None,

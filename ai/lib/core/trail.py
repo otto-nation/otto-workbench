@@ -74,9 +74,9 @@ from enum import Enum
 from pathlib import Path
 from uuid import uuid4
 
-from core import proc
-from core import timeouts
-from core import workbench_paths
+import core.proc
+import core.timeouts
+import core.workbench_paths
 
 
 # ── Enums ─────────────────────────────────────────────────────────────────
@@ -270,7 +270,7 @@ def _parent_command(ppid: int) -> str:
     left out rather than bringing down the run whose first record this is.
     """
     try:
-        r = proc.run([*_PARENT_PROBE, str(ppid)], timeout=timeouts.QUICK)
+        r = core.proc.run([*_PARENT_PROBE, str(ppid)], timeout=core.timeouts.QUICK)
     except OSError:
         return ""
     return r.stdout.strip() if r.ok else ""
@@ -342,7 +342,7 @@ def artifacts_dir() -> Path:
     whichever root was live when the first importer loaded this module, and
     every test that re-points the state root would have to patch it by name.
     """
-    return workbench_paths.trail_dir() / ARTIFACT_DIRNAME
+    return core.workbench_paths.trail_dir() / ARTIFACT_DIRNAME
 
 
 def prune_trail(keep_months: int = TRAIL_KEEP_MONTHS) -> list[Path]:
@@ -356,7 +356,7 @@ def prune_trail(keep_months: int = TRAIL_KEEP_MONTHS) -> list[Path]:
     """
     cutoff = oldest_kept_month(datetime.now(timezone.utc), keep_months)
     try:
-        files = sorted(workbench_paths.trail_dir().glob("*.jsonl"))
+        files = sorted(core.workbench_paths.trail_dir().glob("*.jsonl"))
     except OSError:
         # Same reading as `otto-log`'s discovery: a root that is not there yet
         # holds nothing to drop, and a root that cannot be read is not one to
@@ -511,7 +511,7 @@ class Trail:
         """
         debug = debug or os.environ.get("WORKBENCH_DEBUG", "") == "1"
         if record:
-            workbench_paths.trail_dir().mkdir(parents=True, exist_ok=True)
+            core.workbench_paths.trail_dir().mkdir(parents=True, exist_ok=True)
             prune_trail()
         invocation = uuid4().hex[:INVOCATION_HEX_WIDTH]
         root = inherited_root()
@@ -539,7 +539,7 @@ class Trail:
     def _append(self, event: TrailEvent) -> None:
         # The month comes from the event, not from the run: a run crossing a
         # month boundary writes each record to the file its timestamp names.
-        path = workbench_paths.trail_dir() / f"{event.ts[TS_MONTH]}.jsonl"
+        path = core.workbench_paths.trail_dir() / f"{event.ts[TS_MONTH]}.jsonl"
         # The flock covers the other processes appending to the same file —
         # `pr` and the script it spawned. A short write — NFS, a signal, an
         # rlimit — splits a record across two write() calls, and without the
@@ -653,11 +653,11 @@ class Trail:
         """
         path = self._write_artifact(action, output)
         recorded = {
-            "error": proc.tail(output, limit=EXCERPT_LIMIT),
+            "error": core.proc.tail(output, limit=EXCERPT_LIMIT),
             "output_lines": len(output.splitlines()),
         }
         if path is not None:
-            recorded["log"] = str(path.relative_to(workbench_paths.trail_dir()))
+            recorded["log"] = str(path.relative_to(core.workbench_paths.trail_dir()))
         self.error(action, detail, data={**(data or {}), **recorded})
         return path
 

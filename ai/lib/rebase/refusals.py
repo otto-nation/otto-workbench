@@ -11,12 +11,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-from core import log
+import core.log
 from core.trail import Trail, terr
-from gh import budget as gh_budget
-from gh import landed as branch_landed
-from git import client as git_client
-from pr import context as pr_context
+import gh.budget
+import gh.landed
+import git.client
+import pr.context
 from pr.domains import RebaseStatus
 
 from . import inspect as rebase_inspect
@@ -53,7 +53,7 @@ class BudgetBreach:
 
 
 def as_refusal(
-    landed: branch_landed.Landed | None, branch: str,
+    landed: gh.landed.Landed | None, branch: str,
 ) -> RefusalReport | None:
     """`branch_landed`'s evidence as this script's refusal payload, or None.
 
@@ -70,7 +70,7 @@ def as_refusal(
 
 
 def tracker_landed_check(
-    cwd: str, ctx: pr_context.ResolvedContext,
+    cwd: str, ctx: pr.context.ResolvedContext,
     snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
 ) -> RefusalReport | None:
     """Evidence from GitHub that the branch's PR merged, or None.
@@ -119,10 +119,10 @@ def tracker_landed_check(
             return _refused_report(ctx, snapshot.remedy)
         if not snapshot.merged:
             return None
-        return as_refusal(branch_landed.merged_report(
-            branch_landed.MergedPR(number=snapshot.number, url=snapshot.url),
+        return as_refusal(gh.landed.merged_report(
+            gh.landed.MergedPR(number=snapshot.number, url=snapshot.url),
         ), ctx.branch)
-    verdict = branch_landed.by_tracker(
+    verdict = gh.landed.by_tracker(
         cwd, branch=ctx.branch, repo=ctx.repo, pr_number=ctx.pr_number,
     )
     if not verdict.looked:
@@ -130,7 +130,7 @@ def tracker_landed_check(
     return as_refusal(verdict.landed, ctx.branch)
 
 
-def _refused_report(ctx: pr_context.ResolvedContext, remedy: str) -> RefusalReport:
+def _refused_report(ctx: pr.context.ResolvedContext, remedy: str) -> RefusalReport:
     """The refusal for a tracker read the budget breaker declined to make.
 
     *remedy* is the one `PRSnapshot.fetch` captured from the latch at read
@@ -138,7 +138,7 @@ def _refused_report(ctx: pr_context.ResolvedContext, remedy: str) -> RefusalRepo
     remedy of its own — a live read always carries one, since it is captured
     in the same instant the latch is observed.
     """
-    remedy = remedy or gh_budget.BUDGET_EXHAUSTED_HINT
+    remedy = remedy or gh.budget.BUDGET_EXHAUSTED_HINT
     return RefusalReport(
         branch=ctx.branch, signal=RefusalSignal.TRACKER_REFUSED.value,
         detail=f"GitHub was not asked whether the PR merged — {remedy}",
@@ -147,7 +147,7 @@ def _refused_report(ctx: pr_context.ResolvedContext, remedy: str) -> RefusalRepo
 
 
 def git_landed_check(
-    cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str,
+    cwd: str, ctx: pr.context.ResolvedContext, *, target_ref: str,
 ) -> RefusalReport | None:
     """Evidence from git that the branch's work is in the target ref, or None.
 
@@ -156,12 +156,12 @@ def git_landed_check(
     check rather than `branch_landed.check`'s single ladder.
     """
     return as_refusal(
-        branch_landed.by_git(cwd, target_ref=target_ref), ctx.branch,
+        gh.landed.by_git(cwd, target_ref=target_ref), ctx.branch,
     )
 
 
 def partially_landed_check(
-    cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str,
+    cwd: str, ctx: pr.context.ResolvedContext, *, target_ref: str,
 ) -> RefusalReport | None:
     """Refuse a branch whose leading commits are already in the target ref.
 
@@ -182,7 +182,7 @@ def partially_landed_check(
     becomes `git rebase --onto <base> <fork-point>`. See
     `branch_landed.partial_landing` for how the prefix is identified.
     """
-    partial = branch_landed.partial_landing(cwd, target_ref=target_ref)
+    partial = gh.landed.partial_landing(cwd, target_ref=target_ref)
     if partial is None:
         return None
     return RefusalReport(
@@ -200,7 +200,7 @@ def partially_landed_check(
 
 
 def unrelated_history_check(
-    cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str,
+    cwd: str, ctx: pr.context.ResolvedContext, *, target_ref: str,
 ) -> RefusalReport | None:
     """Refuse a branch that shares no history with the ref it would rebase onto.
 
@@ -251,26 +251,26 @@ REFUSAL_HINTS = {
 
 
 def refuse(
-    ctx: pr_context.ResolvedContext, report: RefusalReport, *, target_ref: str,
+    ctx: pr.context.ResolvedContext, report: RefusalReport, *, target_ref: str,
     trail: Trail | None = None,
 ) -> int:
     """Report a refused rebase and stop, on the shared exit code."""
     terr(trail, "preflight", f"refusing to rebase ({report.signal})", data=asdict(report))
-    log.error(f"Refusing to rebase {report.branch} — {report.detail}.")
-    log.dim(REFUSAL_HINTS[report.status].format(ref=target_ref))
+    core.log.error(f"Refusing to rebase {report.branch} — {report.detail}.")
+    core.log.dim(REFUSAL_HINTS[report.status].format(ref=target_ref))
     # The narrower way out before the blunt one, where there is a narrower way.
     # `--force` waives every check at once, so offering it first to a refusal
     # that has an exact remedy trains the operator to reach past the fix.
     if report.remedy:
-        log.dim(f"Re-run with {report.remedy} to replay only what is left.")
-    log.dim(f"Pass {REFUSAL_OVERRIDE_FLAG} to rebase it anyway.")
+        core.log.dim(f"Re-run with {report.remedy} to replay only what is left.")
+    core.log.dim(f"Pass {REFUSAL_OVERRIDE_FLAG} to rebase it anyway.")
     RebaseOutcome(status=RebaseStatus(report.status), target_base=target_ref).save(ctx)
     report.emit()
     return REFUSAL_EXIT
 
 
 def refuse_over_budget(
-    cwd: str, ctx: pr_context.ResolvedContext, breach: BudgetBreach, *,
+    cwd: str, ctx: pr.context.ResolvedContext, breach: BudgetBreach, *,
     target_ref: str, trail: Trail | None = None,
 ) -> int:
     """Abort a rebase conflicting too widely, or too often, to resolve unattended.
@@ -285,7 +285,7 @@ def refuse_over_budget(
     operator's options are identical, and differ in ``signal``, which is what
     says which count ran out.
     """
-    git_client.run("rebase", "--abort", cwd=cwd)
+    git.client.run("rebase", "--abort", cwd=cwd)
     return refuse(ctx, RefusalReport(
         branch=ctx.branch, signal=breach.signal.value, detail=breach.detail,
         status=RebaseStatus.CONFLICTS_OVER_BUDGET.value,

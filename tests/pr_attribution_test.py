@@ -26,10 +26,10 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest  # noqa: E402
 
-from git import topology as git_topology  # noqa: E402
-from pr import attribution  # noqa: E402
-from pr import summary_model  # noqa: E402
-from pr import summary_render  # noqa: E402
+import git.topology  # noqa: E402
+import pr.attribution  # noqa: E402
+import pr.summary_model  # noqa: E402
+import pr.summary_render  # noqa: E402
 from pr.fix import FixOutcome, SettledBy  # noqa: E402
 from pr.thread_models import CommentItem, ReportThread  # noqa: E402
 
@@ -87,7 +87,7 @@ def branch(worktree):
 def on_main():
     """`origin/main` as the base every `git log -L` in these tests reads from."""
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(git_topology, "default_branch_cached", lambda *a, **k: "main")
+        mp.setattr(git.topology, "default_branch_cached", lambda *a, **k: "main")
         yield
 
 
@@ -119,7 +119,7 @@ class TestDatingAnItemAgainstItsSourceComment:
     def test_a_commit_after_the_source_comment_reads_as_in_response(
         self, branch, on_main,
     ):
-        history = attribution.AddressingHistory(
+        history = pr.attribution.AddressingHistory(
             branch.path, {SOURCE_ID: THE_REVIEW_COMMENT})
         framing = history.framing(_item(2), None)
         assert framing.in_response
@@ -127,7 +127,7 @@ class TestDatingAnItemAgainstItsSourceComment:
 
     def test_a_commit_before_it_keeps_the_flat_wording(self, branch, on_main):
         """An item that genuinely predates the comment is the "already" case."""
-        history = attribution.AddressingHistory(
+        history = pr.attribution.AddressingHistory(
             branch.path, {SOURCE_ID: THE_REVIEW_COMMENT})
         framing = history.framing(_item(1), None)
         assert not framing.in_response
@@ -139,19 +139,19 @@ class TestDatingAnItemAgainstItsSourceComment:
         Claiming credit for a fix is the assertion that needs evidence, so a run
         that cannot date the comment keeps the wording it had before.
         """
-        history = attribution.AddressingHistory(branch.path, {})
+        history = pr.attribution.AddressingHistory(branch.path, {})
         assert not history.framing(_item(2), None).in_response
 
     def test_a_history_built_without_timestamps_declines(self, branch, on_main):
         """The default: a caller with no comment listing claims nothing new."""
-        history = attribution.AddressingHistory(branch.path)
+        history = pr.attribution.AddressingHistory(branch.path)
         assert not history.framing(_item(2), None).in_response
 
     def test_an_entry_that_is_not_a_comment_item_is_unaffected(
         self, branch, on_main,
     ):
         """A thread id parses to no source, so there is nothing to look up."""
-        history = attribution.AddressingHistory(
+        history = pr.attribution.AddressingHistory(
             branch.path, {SOURCE_ID: THE_REVIEW_COMMENT})
         entry = CommentItem(id="t1", file="a.py", line=2, reviewer="kgn")
         assert not history.framing(entry, None).in_response
@@ -162,14 +162,14 @@ class TestDatingAnItemAgainstItsSourceComment:
         The source timestamp here is far in the future, so reading it instead of
         the thread's own open time would flip the answer.
         """
-        history = attribution.AddressingHistory(
+        history = pr.attribution.AddressingHistory(
             branch.path, {SOURCE_ID: "2099-01-01T00:00:00Z"})
         entry = CommentItem(id="t1", file="a.py", line=2, reviewer="kgn")
         assert history.framing(entry, _thread()).in_response
 
     def test_a_review_body_item_is_dated_the_same_way(self, branch, on_main):
         """`rb-` and `ic-` are one shape — both parse to a source comment id."""
-        history = attribution.AddressingHistory(
+        history = pr.attribution.AddressingHistory(
             branch.path, {"88": THE_REVIEW_COMMENT})
         assert history.framing(_item(2, id="rb-88-1"), None).in_response
 
@@ -183,13 +183,13 @@ class TestTheSummaryRowReadsTheSameAnswer:
     """
 
     def _body(self, branch, entries, comments):
-        content = summary_model.RoundContent(
+        content = pr.summary_model.RoundContent(
             by_outcome={FixOutcome.ALREADY_ADDRESSED: entries},
             issue_comments=comments,
             review_body_comments=[],
         )
-        cp = attribution.CommitPushResult("abc1234", "pushed", "")
-        return summary_render.build_summary_body(
+        cp = pr.attribution.CommitPushResult("abc1234", "pushed", "")
+        return pr.summary_render.build_summary_body(
             content, cp, "owner/repo", 42, {}, wt_path=branch.path,
         )
 
@@ -246,7 +246,7 @@ class TestAPublishedFixVerdictSurvivesAReplay:
         return CommentItem(**defaults)
 
     def _framing(self, branch, entry):
-        history = attribution.AddressingHistory(branch.path)
+        history = pr.attribution.AddressingHistory(branch.path)
         return history.framing(entry, _thread())
 
     def test_the_replayed_round_reaches_the_same_verdict(self, branch, on_main):
@@ -301,10 +301,10 @@ class TestReadingATimestamp:
     """`posix_seconds` is the one parser both dating surfaces go through."""
 
     def test_a_github_stamp_parses(self):
-        assert attribution.posix_seconds("2025-01-01T00:00:00Z") > 0
+        assert pr.attribution.posix_seconds("2025-01-01T00:00:00Z") > 0
 
     def test_an_unparseable_stamp_is_zero(self):
-        assert attribution.posix_seconds("last tuesday") == 0.0
+        assert pr.attribution.posix_seconds("last tuesday") == 0.0
 
     def test_an_empty_stamp_is_zero(self):
-        assert attribution.posix_seconds("") == 0.0
+        assert pr.attribution.posix_seconds("") == 0.0

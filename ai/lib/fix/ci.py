@@ -12,13 +12,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agent import retry as agent_retry
-from fix import engine as fix_engine
-from fix import suite as fix_suite
-from fix import types as fix_types
-from pr import ci_failures as ci
-from pr import ci_report
-from pr import state as pr_state
+import agent.retry
+import fix.engine
+import fix.suite
+import fix.types
+import pr.ci_failures
+import pr.ci_report
+import pr.state
 from core.phases import Phase
 from pr.fix import FixOutcome, FixRecord, ItemOutcome
 
@@ -33,7 +33,7 @@ from pr.fix import FixOutcome, FixRecord, ItemOutcome
 # Each is still reported, and still blocks readiness — it is diagnosis that is
 # skipped, not the failure.
 _SKIP_KINDS = frozenset((
-    ci.FailureKind.INFRA, ci.FailureKind.FLAKY, ci.FailureKind.EXTERNAL,
+    pr.ci_failures.FailureKind.INFRA, pr.ci_failures.FailureKind.FLAKY, pr.ci_failures.FailureKind.EXTERNAL,
 ))
 
 
@@ -46,9 +46,9 @@ class CIFailure:
     arrived in is not what it iterates over.
     """
 
-    item: ci.FailureItem
-    group: ci.FailureGroup
-    outcome: ci.Outcome
+    item: pr.ci_failures.FailureItem
+    group: pr.ci_failures.FailureGroup
+    outcome: pr.ci_failures.Outcome
 
     @property
     def id(self) -> str:
@@ -56,11 +56,11 @@ class CIFailure:
 
 
 def flatten(
-    failures: dict[str, ci.FailureGroup], progression: dict[str, ci.Outcome],
+    failures: dict[str, pr.ci_failures.FailureGroup], progression: dict[str, pr.ci_failures.Outcome],
 ) -> list[CIFailure]:
     """Pair each item in a run with its group and its progression outcome."""
     return [
-        CIFailure(item=item, group=group, outcome=progression.get(item.id, ci.Outcome.NEW))
+        CIFailure(item=item, group=group, outcome=progression.get(item.id, pr.ci_failures.Outcome.NEW))
         for group in failures.values()
         for item in group.items
     ]
@@ -69,7 +69,7 @@ def flatten(
 def _failure_body(failure: CIFailure) -> str:
     """The diagnosis this domain puts under one failure's heading.
 
-    The heading, the id marker and the outcome boxes belong to `fix_tracking`,
+    The heading, the id marker and the outcome boxes belong to `fix.tracking`,
     which is also what reads them back, so the two halves of the format cannot
     drift apart.
     """
@@ -81,12 +81,12 @@ def _failure_body(failure: CIFailure) -> str:
         body += f"**Details:** {item.annotation}\n"
     if item.context:
         body += f"**Context:** {item.context}\n"
-    if failure.outcome is not ci.Outcome.NEW:
+    if failure.outcome is not pr.ci_failures.Outcome.NEW:
         body += f"**Progression:** {failure.outcome.value}\n"
     return body
 
 
-class CIFixAdapter(fix_engine.FixAdapter):
+class CIFixAdapter(fix.engine.FixAdapter):
     """CI's half of a fix pass: the failures, the commit, and the state write.
 
     Infra and flaky failures never reach the agent — nothing it could edit would
@@ -100,9 +100,9 @@ class CIFixAdapter(fix_engine.FixAdapter):
     item_noun = "failure"
     # The shared hint is written for review findings. This one names the same
     # mechanism in CI's terms; both point the agent at the three boxes below.
-    fix_hint = agent_retry.CI_FIX_RETRY_HINT
+    fix_hint = agent.retry.CI_FIX_RETRY_HINT
 
-    def __init__(self, report: ci_report.CIReport, ctx, state) -> None:
+    def __init__(self, report: pr.ci_report.CIReport, ctx, state) -> None:
         self.workdir = ctx.require_worktree()
         # Under the run's own target directory, not inside the worktree. The
         # tracking file and the session log are this pass's bookkeeping, not
@@ -121,9 +121,9 @@ class CIFixAdapter(fix_engine.FixAdapter):
         self.skipped = [f for f in failures if f.group.kind in _SKIP_KINDS]
         self.fixable = [f for f in failures if f.group.kind not in _SKIP_KINDS]
 
-    def items(self) -> list[fix_types.FixItem]:
+    def items(self) -> list[fix.types.FixItem]:
         return [
-            fix_types.FixItem(
+            fix.types.FixItem(
                 id=f.item.id, file=f.item.file or "", line=f.item.line or 0,
                 label=f.group.job, body=_failure_body(f),
             )
@@ -136,7 +136,7 @@ class CIFixAdapter(fix_engine.FixAdapter):
 
     def landing(
         self, outcomes: list[ItemOutcome], changed: set[str] | None,
-    ) -> fix_engine.LandSpec:
+    ) -> fix.engine.LandSpec:
         """Commit what the agent touched, and only that.
 
         Not the whole tree: the pass edits a branch worktree it does not own,
@@ -153,17 +153,17 @@ class CIFixAdapter(fix_engine.FixAdapter):
         fixed = sum(1 for o in outcomes if o.outcome.counts_as_fixed)
         msg = "fix: address CI failures"
         if fixed:
-            msg += "\n\n" + fix_suite.qualify_tally(
+            msg += "\n\n" + fix.suite.qualify_tally(
                 f"{fixed} fixed, {len(outcomes) - fixed} skipped", self.suite)
-        detail = fix_suite.detail_lines(self.suite)
+        detail = fix.suite.detail_lines(self.suite)
         if detail:
             msg += "\n\n" + "\n".join(detail)
-        return fix_engine.LandSpec(
+        return fix.engine.LandSpec(
             message=msg, regen="chore: regenerate after CI fixes",
             paths=changed if changed else set(),
         )
 
-    def record(self, run: fix_engine.FixRun) -> None:
+    def record(self, run: fix.engine.FixRun) -> None:
         """Fold the pass into `state.ci.fix` and save it.
 
         The held-back failures go in alongside the agent's answers: a run that
@@ -185,7 +185,7 @@ class CIFixAdapter(fix_engine.FixAdapter):
             commit_sha=landed.sha if landed else "",
             commit_status=landed.status if landed else None,
             head_sha=(landed.sha if landed else "") or run.head_before,
-            updated_at=pr_state.now_iso(),
+            updated_at=pr.state.now_iso(),
         )
         self.state.ci.fix = fresh.merge_into(self.state.ci.fix)
-        pr_state.save_state(self.ctx.target_dir, self.state)
+        pr.state.save_state(self.ctx.target_dir, self.state)

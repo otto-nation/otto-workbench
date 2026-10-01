@@ -50,8 +50,8 @@ WORKBENCH_DIR = Path(__file__).resolve().parents[3]
 # project as the working directory, so the workbench's Python has to be named
 # before it can be imported.
 sys.path.insert(0, str(WORKBENCH_DIR / "ai" / "lib"))
-from core import proc  # noqa: E402
-from core import timeouts  # noqa: E402
+import core.proc  # noqa: E402
+import core.timeouts  # noqa: E402
 from config.tool_registry import RegistryEntry, load_registry_entries, registry_files  # noqa: E402
 
 # Seconds a tool call gets before the client is told it timed out. Not a tier
@@ -74,7 +74,7 @@ POLL_INTERVAL = 2.0
 # ── Spawning ──────────────────────────────────────────────────────────────
 
 
-def _run_script(argv: list[str], timeout: float) -> proc.CmdResult:
+def _run_script(argv: list[str], timeout: float) -> core.proc.CmdResult:
     """Run *argv* to completion under *timeout*, isolated from this process.
 
     Every script this server executes goes through here — the discovery probe
@@ -99,7 +99,7 @@ def _run_script(argv: list[str], timeout: float) -> proc.CmdResult:
     ``bin/local/validate-magic-values`` holds that code's monopoly under
     ``ai/`` — so the two cannot be confused in practice.
     """
-    return proc.run(argv, timeout=timeout, kill_process_group=True,
+    return core.proc.run(argv, timeout=timeout, kill_process_group=True,
                     env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
 
 
@@ -464,7 +464,7 @@ def create_server() -> RunningServer:
 
         # Ahead of ok_exit_codes, so a schema listing 124 among its own codes
         # cannot turn an expired budget into a success the client acts on.
-        if result.returncode == proc.TIMEOUT_RETURNCODE:
+        if result.returncode == core.proc.TIMEOUT_RETURNCODE:
             return CallToolResult(
                 content=[TextContent(type="text", text=(
                     f"Tool execution timed out ({TOOL_CALL_BUDGET}s)"))],

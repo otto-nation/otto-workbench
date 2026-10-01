@@ -14,7 +14,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from rebase import lease as rebase_lease
+import rebase.lease
 
 GIT_TIMEOUT = 30  # seconds; a hang here should fail the test, not stall the suite
 
@@ -88,23 +88,23 @@ class TestPushLease:
     """The flag a lease renders to."""
 
     def test_it_names_the_full_ref_and_the_expected_commit(self):
-        lease = rebase_lease.PushLease(branch="isaac/feat/x", expect="abc123")
+        lease = rebase.lease.PushLease(branch="isaac/feat/x", expect="abc123")
         assert lease.args == (
             "--force-with-lease=refs/heads/isaac/feat/x:abc123",
         )
 
     def test_it_is_one_argument_because_that_is_the_syntax_git_parses(self):
-        assert len(rebase_lease.PushLease(branch="f", expect="a1").args) == 1
+        assert len(rebase.lease.PushLease(branch="f", expect="a1").args) == 1
 
     def test_an_empty_expect_renders_the_create_form(self):
-        lease = rebase_lease.PushLease(
-            branch="feat", expect=rebase_lease.CREATES_THE_REF,
+        lease = rebase.lease.PushLease(
+            branch="feat", expect=rebase.lease.CREATES_THE_REF,
         )
         assert lease.args == ("--force-with-lease=refs/heads/feat:",)
         assert lease.creates_the_ref
 
     def test_a_named_commit_is_not_the_create_form(self):
-        assert not rebase_lease.PushLease(branch="feat", expect="a1").creates_the_ref
+        assert not rebase.lease.PushLease(branch="feat", expect="a1").creates_the_ref
 
 
 class TestRememberedTip:
@@ -118,7 +118,7 @@ class TestRememberedTip:
         _git(hub, "add", "local.txt")
         _git(hub, "commit", "-q", "-m", "unpushed")
 
-        remembered = rebase_lease.remembered_tip(str(hub), "feat")
+        remembered = rebase.lease.remembered_tip(str(hub), "feat")
 
         tracking = _git(hub, "rev-parse", "refs/remotes/origin/feat").stdout.strip()
         local = _git(hub, "rev-parse", "refs/heads/feat").stdout.strip()
@@ -129,7 +129,7 @@ class TestRememberedTip:
         _origin, hub = _remote_with_branch(tmp_path)
         _git(hub, "checkout", "-q", "-b", "brand-new")
 
-        remembered = rebase_lease.remembered_tip(str(hub), "brand-new")
+        remembered = rebase.lease.remembered_tip(str(hub), "brand-new")
 
         assert remembered == _git(
             hub, "rev-parse", "refs/heads/brand-new",
@@ -137,7 +137,7 @@ class TestRememberedTip:
 
     def test_it_is_empty_for_a_branch_that_exists_nowhere(self, tmp_path):
         _origin, hub = _remote_with_branch(tmp_path)
-        assert rebase_lease.remembered_tip(str(hub), "no-such-branch") == ""
+        assert rebase.lease.remembered_tip(str(hub), "no-such-branch") == ""
 
 
 class TestResolve:
@@ -145,16 +145,16 @@ class TestResolve:
 
     def test_a_published_branch_leases_against_the_remembered_tip(self, tmp_path):
         _origin, hub = _remote_with_branch(tmp_path)
-        remembered = rebase_lease.remembered_tip(str(hub), "feat")
+        remembered = rebase.lease.remembered_tip(str(hub), "feat")
 
-        lease = rebase_lease.resolve(str(hub), "feat", remembered)
+        lease = rebase.lease.resolve(str(hub), "feat", remembered)
 
         assert lease is not None
         assert lease.expect == remembered
 
     def test_a_branch_the_remote_lacks_leases_on_creation(self, tmp_path):
         _origin, hub = _remote_with_branch(tmp_path)
-        lease = rebase_lease.resolve(str(hub), "never-pushed", "")
+        lease = rebase.lease.resolve(str(hub), "never-pushed", "")
         assert lease is not None
         assert lease.creates_the_ref
 
@@ -162,7 +162,7 @@ class TestResolve:
         # The ref is on the remote but this run never read where it was. Both
         # fallbacks are wrong, so there is no lease to give.
         _origin, hub = _remote_with_branch(tmp_path)
-        assert rebase_lease.resolve(str(hub), "feat", "") is None
+        assert rebase.lease.resolve(str(hub), "feat", "") is None
 
 
 class TestAgainstRealGit:
@@ -176,7 +176,7 @@ class TestAgainstRealGit:
     @staticmethod
     def _run_the_tool(hub):
         """Remember, fetch, rebase: everything up to the push."""
-        remembered = rebase_lease.remembered_tip(str(hub), "feat")
+        remembered = rebase.lease.remembered_tip(str(hub), "feat")
         _git(hub, "fetch", "-q", "--prune", "origin")
         _git(hub, "rebase", "-q", "origin/main", check=False)
         return remembered
@@ -186,7 +186,7 @@ class TestAgainstRealGit:
         _colleague_pushes(tmp_path, origin)
 
         remembered = self._run_the_tool(hub)
-        lease = rebase_lease.resolve(str(hub), "feat", remembered)
+        lease = rebase.lease.resolve(str(hub), "feat", remembered)
         ok, output = _push(hub, *lease.args)
 
         assert not ok
@@ -211,7 +211,7 @@ class TestAgainstRealGit:
         _origin, hub = _remote_with_branch(tmp_path)
 
         remembered = self._run_the_tool(hub)
-        lease = rebase_lease.resolve(str(hub), "feat", remembered)
+        lease = rebase.lease.resolve(str(hub), "feat", remembered)
         ok, output = _push(hub, *lease.args)
 
         assert ok, output
@@ -228,7 +228,7 @@ class TestAgainstRealGit:
         _git(hub, "worktree", "add", "-q", str(fresh), "feat")
 
         remembered = self._run_the_tool(fresh)
-        lease = rebase_lease.resolve(str(fresh), "feat", remembered)
+        lease = rebase.lease.resolve(str(fresh), "feat", remembered)
         ok, output = _push(fresh, *lease.args)
 
         assert ok, output
@@ -241,8 +241,8 @@ class TestAgainstRealGit:
         _git(hub, "add", "n")
         _git(hub, "commit", "-q", "-m", "new work")
 
-        remembered = rebase_lease.remembered_tip(str(hub), "brand-new")
-        lease = rebase_lease.resolve(str(hub), "brand-new", remembered)
+        remembered = rebase.lease.remembered_tip(str(hub), "brand-new")
+        lease = rebase.lease.resolve(str(hub), "brand-new", remembered)
         ok, output = _push(hub, *lease.args, "origin", "brand-new")
 
         assert lease.creates_the_ref
@@ -256,7 +256,7 @@ class TestAgainstRealGit:
         _git(hub, "checkout", "-q", "-b", "brand-new")
         local = _git(hub, "rev-parse", "refs/heads/brand-new").stdout.strip()
 
-        wrong = rebase_lease.PushLease(branch="brand-new", expect=local)
+        wrong = rebase.lease.PushLease(branch="brand-new", expect=local)
         ok, output = _push(hub, *wrong.args, "origin", "brand-new")
 
         assert not ok

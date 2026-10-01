@@ -1,4 +1,4 @@
-"""Tests for review_grouping: tier classification, file grouping, and profiles."""
+"""Tests for review.grouping: tier classification, file grouping, and profiles."""
 
 import sys
 from pathlib import Path

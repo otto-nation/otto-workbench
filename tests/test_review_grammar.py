@@ -134,7 +134,7 @@ class TestBoldLabelsKeepTheirColons:
 
 
 class TestStripLineSuffix:
-    """Pins what `review_verify` and `review_dedup` take off a captured path.
+    """Pins what `review.verify` and `review.dedup` take off a captured path.
 
     Both readers match `LINE_SUFFIX` inside the span they capture and have to
     remove it afterwards. Truncating at the last colon — what each did for
@@ -199,9 +199,9 @@ class TestStableIdIsUnchanged:
 class TestSidMarkerIsWrittenAndReadTheSameWay:
     """One spelling for the marker, across the writer, the readers and the strip.
 
-    The marker was written in `review_merge`, matched inline four times here,
+    The marker was written in `review.merge`, matched inline four times here,
     tested for with a bare substring, and captured by a regex of
-    `review_reconcile`'s own. A writer and a reader that disagree leave a
+    `review.reconcile`'s own. A writer and a reader that disagree leave a
     finding whose identity nothing can recover.
     """
 
@@ -233,7 +233,7 @@ class TestThePostedSpellingIsWrittenAndReadTheSameWay:
 
     The review file writes `**[M1]**` and a posted comment writes
     `**[M1] [must-fix]**`. Only the first had an owner: the second was spelled
-    twice in `review_format` and read by nobody, so every reader below returned
+    twice in `review.format` and read by nobody, so every reader below returned
     nothing on a posted body and the thread-state annotation never fired.
     """
 

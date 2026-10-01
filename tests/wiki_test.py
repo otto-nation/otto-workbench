@@ -19,12 +19,12 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from cli import wiki  # noqa: E402
+import cli.wiki  # noqa: E402
 from config.workbench_config import WikiConfig, WorkbenchConfig  # noqa: E402
 
 # Comfortably past the 180-day `staleness_threshold_days` default, so a test
 # reading the default and one overriding it both turn on the same offset.
-STALE_DAYS = wiki.DEFAULT_SETTINGS["staleness_threshold_days"] + 220
+STALE_DAYS = cli.wiki.DEFAULT_SETTINGS["staleness_threshold_days"] + 220
 
 
 def make_wiki(
@@ -77,27 +77,27 @@ def write_manifest(root: Path, entries: dict[str, str]) -> None:
 
 
 def hash_of(content: str) -> str:
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()[: wiki.HASH_PREFIX_LEN]
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()[: cli.wiki.HASH_PREFIX_LEN]
 
 
 def findings_for(root: Path, check: str) -> list[dict]:
-    return [f for f in wiki.collect_lint(wiki.Wiki(root)) if f["check"] == check]
+    return [f for f in cli.wiki.collect_lint(cli.wiki.Wiki(root)) if f["check"] == check]
 
 
 class TestResolution:
     def test_finds_wiki_in_cwd(self, tmp_path):
         root = make_wiki(tmp_path)
-        assert wiki.find_wiki(root) == root
+        assert cli.wiki.find_wiki(root) == root
 
     def test_finds_wiki_subdirectory_from_project_root(self, tmp_path):
         root = make_wiki(tmp_path)
-        assert wiki.find_wiki(tmp_path) == root
+        assert cli.wiki.find_wiki(tmp_path) == root
 
     def test_walks_up_to_find_wiki(self, tmp_path):
         root = make_wiki(tmp_path)
         nested = tmp_path / "src" / "deep"
         nested.mkdir(parents=True)
-        assert wiki.find_wiki(nested) == root
+        assert cli.wiki.find_wiki(nested) == root
 
     def test_an_index_alone_is_not_a_wiki(self, tmp_path):
         """The index is generated and can be rebuilt; the schema is authored.
@@ -108,27 +108,27 @@ class TestResolution:
         root = tmp_path / "wiki"
         (root / "articles").mkdir(parents=True)
         (root / "_index.md").write_text("# Index\n", encoding="utf-8")
-        assert wiki.find_wiki(tmp_path) is None
+        assert cli.wiki.find_wiki(tmp_path) is None
 
     def test_explicit_path_wins(self, tmp_path):
         make_wiki(tmp_path)
         other = make_wiki(tmp_path / "elsewhere")
-        assert wiki.find_wiki(tmp_path, explicit=str(other)) == other
+        assert cli.wiki.find_wiki(tmp_path, explicit=str(other)) == other
 
     def test_explicit_path_that_is_not_a_wiki_resolves_to_nothing(self, tmp_path):
         make_wiki(tmp_path)
-        assert wiki.find_wiki(tmp_path, explicit=str(tmp_path / "nope")) is None
+        assert cli.wiki.find_wiki(tmp_path, explicit=str(tmp_path / "nope")) is None
 
     def test_search_stops_at_repo_root(self, tmp_path):
         """A project without a wiki must not inherit the one above it."""
         outer = make_wiki(tmp_path)
         project = tmp_path / "project"
         (project / ".git").mkdir(parents=True)
-        assert wiki.find_wiki(project) is None
+        assert cli.wiki.find_wiki(project) is None
         assert outer.exists()
 
     def test_missing_wiki_exits_two(self, tmp_path, capsys):
-        assert wiki.main(["status", str(tmp_path)]) == 2
+        assert cli.wiki.main(["status", str(tmp_path)]) == 2
         assert "no knowledge base found" in capsys.readouterr().err
 
 
@@ -142,41 +142,41 @@ class TestIsWiki:
     """
 
     def test_the_full_layout_is_a_wiki(self, tmp_path):
-        assert wiki.is_wiki(make_wiki(tmp_path))
+        assert cli.wiki.is_wiki(make_wiki(tmp_path))
 
     def test_a_foreign_schema_alone_is_not_a_wiki(self, tmp_path):
         foreign = tmp_path / "lib-schema"
         foreign.mkdir()
         (foreign / "SCHEMA.md").write_text("# Database Schema\n", encoding="utf-8")
-        assert not wiki.is_wiki(foreign)
+        assert not cli.wiki.is_wiki(foreign)
 
     def test_a_foreign_schema_does_not_resolve_from_within(self, tmp_path, capsys):
         """The reported repro: cwd inside the foreign directory itself."""
         foreign = tmp_path / "lib-schema"
         foreign.mkdir()
         (foreign / "SCHEMA.md").write_text("# Database Schema\n", encoding="utf-8")
-        assert wiki.find_wiki(foreign) is None
-        assert wiki.main(["path", str(foreign)]) == 2
+        assert cli.wiki.find_wiki(foreign) is None
+        assert cli.wiki.main(["path", str(foreign)]) == 2
         assert "no knowledge base found" in capsys.readouterr().err
 
     def test_articles_alone_is_not_enough(self, tmp_path):
         root = tmp_path / "wiki"
         (root / "articles").mkdir(parents=True)
         (root / "SCHEMA.md").write_text("# Wiki Schema\n", encoding="utf-8")
-        assert not wiki.is_wiki(root)
+        assert not cli.wiki.is_wiki(root)
 
     def test_raw_alone_is_not_enough(self, tmp_path):
         root = tmp_path / "wiki"
         (root / "raw").mkdir(parents=True)
         (root / "SCHEMA.md").write_text("# Wiki Schema\n", encoding="utf-8")
-        assert not wiki.is_wiki(root)
+        assert not cli.wiki.is_wiki(root)
 
     def test_a_file_named_articles_does_not_count(self, tmp_path):
         root = tmp_path / "wiki"
         (root / "raw").mkdir(parents=True)
         (root / "articles").write_text("", encoding="utf-8")
         (root / "SCHEMA.md").write_text("# Wiki Schema\n", encoding="utf-8")
-        assert not wiki.is_wiki(root)
+        assert not cli.wiki.is_wiki(root)
 
 
 class TestConfiguredDirectory:
@@ -184,22 +184,22 @@ class TestConfiguredDirectory:
 
     def test_configured_name_is_found(self, tmp_path):
         root = make_wiki(tmp_path, dirname="knowledge")
-        assert wiki.find_wiki(tmp_path, dirname="knowledge") == root
+        assert cli.wiki.find_wiki(tmp_path, dirname="knowledge") == root
 
     def test_configured_name_is_found_from_a_nested_directory(self, tmp_path):
         root = make_wiki(tmp_path, dirname="knowledge")
         nested = tmp_path / "src" / "deep"
         nested.mkdir(parents=True)
-        assert wiki.find_wiki(nested, dirname="knowledge") == root
+        assert cli.wiki.find_wiki(nested, dirname="knowledge") == root
 
     def test_default_name_is_ignored_when_another_is_configured(self, tmp_path):
         """Configuring a name means that name, not that name as well as `wiki/`."""
         make_wiki(tmp_path)
-        assert wiki.find_wiki(tmp_path, dirname="knowledge") is None
+        assert cli.wiki.find_wiki(tmp_path, dirname="knowledge") is None
 
     def test_explicit_path_ignores_the_setting(self, tmp_path):
         root = make_wiki(tmp_path, dirname="elsewhere")
-        assert wiki.find_wiki(tmp_path, explicit=str(root), dirname="knowledge") == root
+        assert cli.wiki.find_wiki(tmp_path, explicit=str(root), dirname="knowledge") == root
 
 
 class TestVaultSubpath:
@@ -212,11 +212,11 @@ class TestVaultSubpath:
         ("acme/widget.js", "acme/widget.js"),
     ])
     def test_a_usable_label_nests_by_segment(self, label, expected):
-        assert wiki.vault_subpath(label) == expected
+        assert cli.wiki.vault_subpath(label) == expected
 
     @pytest.mark.parametrize("label", ["", ".", "..", "acme/", "/widget", "a//b"])
     def test_an_unusable_label_is_refused(self, label):
-        assert wiki.vault_subpath(label) is None
+        assert cli.wiki.vault_subpath(label) is None
 
     @pytest.mark.parametrize("label", ["../evil", "acme/../../etc/passwd", "acme/.."])
     def test_a_traversal_segment_is_refused(self, label):
@@ -226,11 +226,11 @@ class TestVaultSubpath:
         and would climb out of the vault. A simplification to slug-only fails
         here rather than in a directory above the vault.
         """
-        assert wiki.vault_subpath(label) is None
+        assert cli.wiki.vault_subpath(label) is None
 
     def test_a_segment_that_slugs_away_is_refused(self, label="acme/\u6587\u6863"):
         """Dropping an empty segment would merge two repos into one folder."""
-        assert wiki.vault_subpath(label) is None
+        assert cli.wiki.vault_subpath(label) is None
 
 
 class TestVaultResolution:
@@ -248,7 +248,7 @@ class TestVaultResolution:
         """Point `wiki.root` at a vault, and optionally put acme/widget in it."""
         root = tmp_path / "vault"
         monkeypatch.setattr(
-            wiki, "load_config_or_default",
+            cli.wiki, "load_config_or_default",
             lambda _root: WorkbenchConfig(wiki=WikiConfig(root=str(root))),
         )
         entry = root / "acme" / "widget"
@@ -259,7 +259,7 @@ class TestVaultResolution:
     def test_a_vault_base_resolves_from_the_repo(self, tmp_path, monkeypatch, capsys):
         repo = self._repo(tmp_path)
         entry = self._vault(tmp_path, monkeypatch)
-        assert wiki.main(["path", str(repo)]) == 0
+        assert cli.wiki.main(["path", str(repo)]) == 0
         assert capsys.readouterr().out.strip() == str(entry)
 
     def test_it_resolves_the_same_from_a_nested_directory(self, tmp_path, monkeypatch, capsys):
@@ -268,7 +268,7 @@ class TestVaultResolution:
         entry = self._vault(tmp_path, monkeypatch)
         nested = repo / "src" / "deep"
         nested.mkdir(parents=True)
-        assert wiki.main(["path", str(nested)]) == 0
+        assert cli.wiki.main(["path", str(nested)]) == 0
         assert capsys.readouterr().out.strip() == str(entry)
 
     def test_the_vault_wins_over_an_in_tree_base(self, tmp_path, monkeypatch, capsys):
@@ -281,7 +281,7 @@ class TestVaultResolution:
         repo = self._repo(tmp_path)
         entry = self._vault(tmp_path, monkeypatch)
         make_wiki(repo)
-        assert wiki.main(["path", str(repo)]) == 0
+        assert cli.wiki.main(["path", str(repo)]) == 0
         assert capsys.readouterr().out.strip() == str(entry)
 
     def test_a_dangling_link_still_resolves_from_config(self, tmp_path, monkeypatch, capsys):
@@ -295,20 +295,20 @@ class TestVaultResolution:
         repo = self._repo(tmp_path)
         entry = self._vault(tmp_path, monkeypatch)
         (repo / "wiki").symlink_to(tmp_path / "gone", target_is_directory=True)
-        assert not wiki.is_wiki(repo / "wiki")
-        assert wiki.main(["path", str(repo)]) == 0
+        assert not cli.wiki.is_wiki(repo / "wiki")
+        assert cli.wiki.main(["path", str(repo)]) == 0
         assert capsys.readouterr().out.strip() == str(entry)
 
     def test_no_vault_configured_falls_through_to_the_walk(self, tmp_path, monkeypatch, capsys):
         """An unset `wiki.root` is no vault, not a default one."""
         repo = self._repo(tmp_path)
         monkeypatch.setattr(
-            wiki, "load_config_or_default", lambda _root: WorkbenchConfig(),
+            cli.wiki, "load_config_or_default", lambda _root: WorkbenchConfig(),
         )
         root = make_wiki(repo)
-        assert wiki.main(["path", str(repo)]) == 0
+        assert cli.wiki.main(["path", str(repo)]) == 0
         assert capsys.readouterr().out.strip() == str(root)
-        assert wiki.vault_dir(repo) is None
+        assert cli.wiki.vault_dir(repo) is None
 
     def test_a_repo_with_no_remote_gets_no_vault_folder(self, tmp_path, monkeypatch):
         """No identity, no folder — two local `notes` repos must not share one."""
@@ -316,19 +316,19 @@ class TestVaultResolution:
         repo.mkdir()
         git_in(repo, "init", "-b", "main", "-q")
         self._vault(tmp_path, monkeypatch, create=False)
-        assert wiki.vault_dir(repo) is None
+        assert cli.wiki.vault_dir(repo) is None
 
     def test_an_empty_vault_reports_the_path_it_checked(self, tmp_path, monkeypatch, capsys):
         repo = self._repo(tmp_path)
         entry = self._vault(tmp_path, monkeypatch, create=False)
-        assert wiki.main(["path", str(repo)]) == 2
+        assert cli.wiki.main(["path", str(repo)]) == 2
         assert str(entry) in capsys.readouterr().err
 
     def test_an_explicit_wiki_beats_the_vault(self, tmp_path, monkeypatch, capsys):
         repo = self._repo(tmp_path)
         self._vault(tmp_path, monkeypatch)
         named = make_wiki(tmp_path / "elsewhere", dirname="kb")
-        assert wiki.main(["path", "--wiki", str(named), str(repo)]) == 0
+        assert cli.wiki.main(["path", "--wiki", str(named), str(repo)]) == 0
         assert capsys.readouterr().out.strip() == str(named)
 
 
@@ -346,15 +346,15 @@ class TestInitModes:
     def _vault_root(self, tmp_path: Path, monkeypatch) -> Path:
         """Point the data root at a temp dir and record what init should adopt."""
         root = tmp_path / "data" / "wiki"
-        monkeypatch.setattr(wiki, "default_vault_root", lambda: root)
+        monkeypatch.setattr(cli.wiki, "default_vault_root", lambda: root)
         return root
 
     def test_no_mode_refuses_and_names_every_option(self, tmp_path, capsys, monkeypatch):
         repo = self._repo(tmp_path)
         self._vault_root(tmp_path, monkeypatch)
-        monkeypatch.setattr(wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
-        monkeypatch.setattr(wiki, "wiki_dir_is_declared", lambda _r: False)
-        assert wiki.main(["init", str(repo)]) == 2
+        monkeypatch.setattr(cli.wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
+        monkeypatch.setattr(cli.wiki, "wiki_dir_is_declared", lambda _r: False)
+        assert cli.wiki.main(["init", str(repo)]) == 2
         err = capsys.readouterr().err
         assert "--vault" in err
         assert "--in-repo" in err
@@ -364,11 +364,11 @@ class TestInitModes:
     def test_vault_creates_under_the_data_root(self, tmp_path, capsys, monkeypatch):
         repo = self._repo(tmp_path)
         vault = self._vault_root(tmp_path, monkeypatch)
-        monkeypatch.setattr(wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
+        monkeypatch.setattr(cli.wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
         recorded = []
-        monkeypatch.setattr(wiki, "set_value", lambda key, value: recorded.append((key, value)))
-        assert wiki.main(["init", "--vault", str(repo)]) == 0
-        assert wiki.is_wiki(vault / "acme" / "widget")
+        monkeypatch.setattr(cli.wiki, "set_value", lambda key, value: recorded.append((key, value)))
+        assert cli.wiki.main(["init", "--vault", str(repo)]) == 0
+        assert cli.wiki.is_wiki(vault / "acme" / "widget")
         assert not (repo / "wiki").exists()
         assert recorded == [("wiki.root", str(vault))]
 
@@ -383,26 +383,26 @@ class TestInitModes:
         """
         repo = self._repo(tmp_path)
         vault = self._vault_root(tmp_path, monkeypatch)
-        monkeypatch.setattr(wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
+        monkeypatch.setattr(cli.wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
 
         def refuse(key, value):
-            raise wiki.ConfigWriteError("installed workbench does not define it")
+            raise cli.wiki.ConfigWriteError("installed workbench does not define it")
 
-        monkeypatch.setattr(wiki, "set_value", refuse)
-        assert wiki.main(["init", "--vault", str(repo)]) == 1
+        monkeypatch.setattr(cli.wiki, "set_value", refuse)
+        assert cli.wiki.main(["init", "--vault", str(repo)]) == 1
         assert not vault.exists()
         assert "unreachable" in capsys.readouterr().err
 
     def test_in_repo_creates_in_the_tree_and_records_nothing(self, tmp_path, monkeypatch):
         repo = self._repo(tmp_path)
         vault = self._vault_root(tmp_path, monkeypatch)
-        monkeypatch.setattr(wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
+        monkeypatch.setattr(cli.wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
         monkeypatch.setattr(
-            wiki, "set_value",
+            cli.wiki, "set_value",
             lambda *a: pytest.fail("--in-repo must not write machine config"),
         )
-        assert wiki.main(["init", "--in-repo", str(repo)]) == 0
-        assert wiki.is_wiki(repo / "wiki")
+        assert cli.wiki.main(["init", "--in-repo", str(repo)]) == 0
+        assert cli.wiki.is_wiki(repo / "wiki")
         assert not vault.exists()
 
     def test_a_declared_wiki_dir_needs_no_flag(self, tmp_path, monkeypatch):
@@ -410,16 +410,16 @@ class TestInitModes:
         repo = self._repo(tmp_path)
         self._vault_root(tmp_path, monkeypatch)
         (repo / ".workbench.yml").write_text("wiki:\n  dir: knowledge\n", encoding="utf-8")
-        assert wiki.main(["init", str(repo)]) == 0
-        assert wiki.is_wiki(repo / "knowledge")
+        assert cli.wiki.main(["init", str(repo)]) == 0
+        assert cli.wiki.is_wiki(repo / "knowledge")
 
     def test_vault_refuses_a_repo_with_no_origin_remote(self, tmp_path, capsys, monkeypatch):
         repo = tmp_path / "repo"
         repo.mkdir()
         git_in(repo, "init", "-b", "main", "-q")
         vault = self._vault_root(tmp_path, monkeypatch)
-        monkeypatch.setattr(wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
-        assert wiki.main(["init", "--vault", str(repo)]) == 2
+        monkeypatch.setattr(cli.wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
+        assert cli.wiki.main(["init", "--vault", str(repo)]) == 2
         assert "no origin remote" in capsys.readouterr().err
         assert not vault.exists()
 
@@ -429,10 +429,10 @@ class TestInitModes:
         vault = self._vault_root(tmp_path, monkeypatch)
         make_wiki(vault / "acme", dirname="widget")
         monkeypatch.setattr(
-            wiki, "load_config_or_default",
+            cli.wiki, "load_config_or_default",
             lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(vault))),
         )
-        assert wiki.main(["init", "--in-repo", str(repo)]) == 1
+        assert cli.wiki.main(["init", "--in-repo", str(repo)]) == 1
         assert "already has a knowledge base" in capsys.readouterr().err
         assert not (repo / "wiki").exists()
 
@@ -442,12 +442,12 @@ class TestInitModes:
         vault = self._vault_root(tmp_path, monkeypatch)
         make_wiki(vault / "acme", dirname="widget")
         monkeypatch.setattr(
-            wiki, "load_config_or_default",
+            cli.wiki, "load_config_or_default",
             lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(vault))),
         )
         second = tmp_path / "second"
-        assert wiki.main(["init", "--wiki", str(second), str(repo)]) == 0
-        assert wiki.is_wiki(second)
+        assert cli.wiki.main(["init", "--wiki", str(second), str(repo)]) == 0
+        assert cli.wiki.is_wiki(second)
 
     def test_an_explicit_wiki_wins_over_a_placement_flag(self, tmp_path, monkeypatch):
         """`--wiki` is not in the mutually-exclusive group, so the pair is legal.
@@ -458,10 +458,10 @@ class TestInitModes:
         """
         repo = self._repo(tmp_path)
         vault = self._vault_root(tmp_path, monkeypatch)
-        monkeypatch.setattr(wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
+        monkeypatch.setattr(cli.wiki, "load_config_or_default", lambda _r: WorkbenchConfig())
         named = tmp_path / "named"
-        assert wiki.main(["init", "--wiki", str(named), "--vault", str(repo)]) == 0
-        assert wiki.is_wiki(named)
+        assert cli.wiki.main(["init", "--wiki", str(named), "--vault", str(repo)]) == 0
+        assert cli.wiki.is_wiki(named)
         assert not vault.exists()
 
     def test_no_subcommand_removes_a_vault_base(self, tmp_path, monkeypatch):
@@ -475,7 +475,7 @@ class TestInitModes:
         vault = self._vault_root(tmp_path, monkeypatch)
         entry = make_wiki(vault / "acme", dirname="widget")
         monkeypatch.setattr(
-            wiki, "load_config_or_default",
+            cli.wiki, "load_config_or_default",
             lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(vault))),
         )
         write_article(entry, "kept", tags=["x"])
@@ -486,8 +486,8 @@ class TestInitModes:
             ["path"], ["status"], ["lint"], ["signals"], ["sources"], ["index"],
             ["link"], ["ingest", "--stage", str(source)], ["archive", "kept"],
         ):
-            wiki.main([*argv, str(repo)])
-            assert wiki.is_wiki(entry), f"{argv[0]} damaged the vault base"
+            cli.wiki.main([*argv, str(repo)])
+            assert cli.wiki.is_wiki(entry), f"{argv[0]} damaged the vault base"
         assert (entry / "archive" / "kept.md").is_file()
 
 
@@ -507,13 +507,13 @@ class TestBackup:
         monkeypatch.setenv("WORKBENCH_STATE_DIR", str(state))
         monkeypatch.setenv("WORKBENCH_DATA_DIR", str(data))
         root = self._base(tmp_path)
-        archive = wiki.snapshot(root)
+        archive = cli.wiki.snapshot(root)
         assert state in archive.parents
         assert data not in archive.parents
 
     def test_the_snapshot_holds_what_the_base_held(self, tmp_path):
         root = self._base(tmp_path)
-        archive = wiki.snapshot(root)
+        archive = cli.wiki.snapshot(root)
         with tarfile.open(archive, "r:gz") as tar:
             names = tar.getnames()
         assert f"{root.name}/SCHEMA.md" in names
@@ -524,31 +524,31 @@ class TestBackup:
         """The restore path, exercised rather than assumed."""
         root = self._base(tmp_path)
         original = (root / "raw" / "source.md").read_bytes()
-        archive = wiki.snapshot(root)
+        archive = cli.wiki.snapshot(root)
         shutil.rmtree(root / "raw")
         (root / "raw").mkdir()
 
-        landed = wiki.restore(root, archive)
-        assert wiki.is_wiki(landed)
+        landed = cli.wiki.restore(root, archive)
+        assert cli.wiki.is_wiki(landed)
         assert (landed / "raw" / "source.md").read_bytes() == original
 
     def test_restore_leaves_the_live_base_alone(self, tmp_path):
         """A restore runs after something went wrong; it must not cause another."""
         root = self._base(tmp_path)
-        archive = wiki.snapshot(root)
+        archive = cli.wiki.snapshot(root)
         (root / "articles" / "kept.md").write_text("newer", encoding="utf-8")
-        landed = wiki.restore(root, archive)
+        landed = cli.wiki.restore(root, archive)
         assert landed != root
         assert (root / "articles" / "kept.md").read_text(encoding="utf-8") == "newer"
 
     def test_retention_keeps_the_newest_and_drops_the_rest(self, tmp_path):
         root = self._base(tmp_path)
-        directory = wiki.backups_dir(root)
+        directory = cli.wiki.backups_dir(root)
         directory.mkdir(parents=True)
         for day in range(1, 6):
             (directory / f"2026010{day}T000000Z.tar.gz").write_bytes(b"old")
-        wiki.prune(root, keep=2)
-        survivors = [a.name for a in wiki.snapshots(root)]
+        cli.wiki.prune(root, keep=2)
+        survivors = [a.name for a in cli.wiki.snapshots(root)]
         assert survivors == ["20260104T000000Z.tar.gz", "20260105T000000Z.tar.gz"]
 
     def test_an_interrupted_snapshot_leaves_nothing_behind(self, tmp_path, monkeypatch):
@@ -559,22 +559,22 @@ class TestBackup:
             raise OSError("disk full")
 
         # Patches the `tarfile` module directly, imported by this file, rather than
-        # reaching it through `wiki.wiki_backup.tarfile` — two levels of indirection
+        # reaching it through `wiki.wiki.backup.tarfile` — two levels of indirection
         # that would break silently if `backup.py`'s import structure changed.
         monkeypatch.setattr(tarfile, "open", explode)
         with pytest.raises(OSError):
-            wiki.snapshot(root)
-        assert wiki.snapshots(root) == []
-        assert list(wiki.backups_dir(root).glob("*")) == []
+            cli.wiki.snapshot(root)
+        assert cli.wiki.snapshots(root) == []
+        assert list(cli.wiki.backups_dir(root).glob("*")) == []
 
     def test_two_snapshots_in_one_second_are_both_kept(self, tmp_path):
         """The stamp is per-second, so the second would otherwise overwrite the first."""
         root = self._base(tmp_path)
         when = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
-        first = wiki.snapshot(root, now=when)
-        second = wiki.snapshot(root, now=when)
+        first = cli.wiki.snapshot(root, now=when)
+        second = cli.wiki.snapshot(root, now=when)
         assert first != second
-        assert len(wiki.snapshots(root)) == 2
+        assert len(cli.wiki.snapshots(root)) == 2
 
     def test_retention_within_one_second_drops_the_earlier_snapshot(self, tmp_path):
         """Retention deletes from the front, so a wrong order deletes the newest.
@@ -587,13 +587,13 @@ class TestBackup:
         """
         root = self._base(tmp_path)
         when = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
-        first = wiki.snapshot(root, now=when)
-        second = wiki.snapshot(root, now=when)
+        first = cli.wiki.snapshot(root, now=when)
+        second = cli.wiki.snapshot(root, now=when)
         first.write_bytes(b"earlier")
         second.write_bytes(b"later")
 
-        wiki.prune(root, keep=1)
-        survivors = wiki.snapshots(root)
+        cli.wiki.prune(root, keep=1)
+        survivors = cli.wiki.snapshots(root)
         assert len(survivors) == 1
         assert survivors[0].read_bytes() == b"later"
 
@@ -601,28 +601,28 @@ class TestBackup:
         """An unparsed stamp would read as never-backed-up and always prompt."""
         root = self._base(tmp_path)
         when = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
-        wiki.snapshot(root, now=when)
-        wiki.snapshot(root, now=when)
-        assert not wiki.is_overdue(root, now=datetime(2026, 5, 2, tzinfo=timezone.utc))
+        cli.wiki.snapshot(root, now=when)
+        cli.wiki.snapshot(root, now=when)
+        assert not cli.wiki.is_overdue(root, now=datetime(2026, 5, 2, tzinfo=timezone.utc))
 
     def test_restoring_twice_in_one_second_does_not_collide(self, tmp_path):
         """The second restore raised FileExistsError at the user rather than landing."""
         root = self._base(tmp_path)
-        archive = wiki.snapshot(root)
-        first = wiki.restore(root, archive)
-        second = wiki.restore(root, archive)
+        archive = cli.wiki.snapshot(root)
+        first = cli.wiki.restore(root, archive)
+        second = cli.wiki.restore(root, archive)
         assert first != second
-        assert wiki.is_wiki(first) and wiki.is_wiki(second)
+        assert cli.wiki.is_wiki(first) and cli.wiki.is_wiki(second)
 
     def test_two_bases_with_one_name_do_not_share_a_directory(self, tmp_path):
         first = make_wiki(tmp_path / "one", dirname="notes")
         second = make_wiki(tmp_path / "two", dirname="notes")
-        assert wiki.backups_dir(first) != wiki.backups_dir(second)
+        assert cli.wiki.backups_dir(first) != cli.wiki.backups_dir(second)
 
     def test_the_backup_directory_is_the_same_on_every_call(self, tmp_path):
         """A process-randomised hash would send one base to a new directory a run."""
         root = self._base(tmp_path)
-        assert wiki.backups_dir(root) == wiki.backups_dir(root)
+        assert cli.wiki.backups_dir(root) == cli.wiki.backups_dir(root)
 
     def test_reaching_a_base_through_a_symlink_gets_the_same_directory(self, tmp_path):
         """A caller that skips `.resolve()` must not land on a second directory.
@@ -635,48 +635,48 @@ class TestBackup:
         root = self._base(tmp_path)
         link = tmp_path / "link-to-wiki"
         link.symlink_to(root, target_is_directory=True)
-        assert wiki.backups_dir(link) == wiki.backups_dir(root)
+        assert cli.wiki.backups_dir(link) == cli.wiki.backups_dir(root)
 
     def test_a_base_with_no_snapshot_is_overdue(self, tmp_path):
-        assert wiki.is_overdue(self._base(tmp_path))
+        assert cli.wiki.is_overdue(self._base(tmp_path))
 
     def test_a_freshly_snapshotted_base_is_not_overdue(self, tmp_path):
         root = self._base(tmp_path)
-        wiki.snapshot(root)
-        assert not wiki.is_overdue(root)
+        cli.wiki.snapshot(root)
+        assert not cli.wiki.is_overdue(root)
 
     def test_an_old_snapshot_is_overdue_again(self, tmp_path):
         root = self._base(tmp_path)
-        wiki.snapshot(root, now=datetime(2026, 1, 1, tzinfo=timezone.utc))
-        assert wiki.is_overdue(root, now=datetime(2026, 6, 1, tzinfo=timezone.utc))
+        cli.wiki.snapshot(root, now=datetime(2026, 1, 1, tzinfo=timezone.utc))
+        assert cli.wiki.is_overdue(root, now=datetime(2026, 6, 1, tzinfo=timezone.utc))
 
     def test_status_prompts_when_a_base_has_never_been_snapshotted(self, tmp_path, capsys):
         root = self._base(tmp_path)
-        assert wiki.main(["status", str(root)]) == 0
+        assert cli.wiki.main(["status", str(root)]) == 0
         assert "wiki backup" in capsys.readouterr().out
 
     def test_status_stops_prompting_once_a_snapshot_exists(self, tmp_path, capsys):
         root = self._base(tmp_path)
-        wiki.snapshot(root)
-        assert wiki.main(["status", str(root)]) == 0
+        cli.wiki.snapshot(root)
+        assert cli.wiki.main(["status", str(root)]) == 0
         assert "wiki backup" not in capsys.readouterr().out
 
     def test_status_json_carries_no_backup_key(self, tmp_path, capsys):
         root = self._base(tmp_path)
-        assert wiki.main(["status", "--json", str(root)]) == 0
-        assert set(json.loads(capsys.readouterr().out)) == set(wiki.collect_status(wiki.Wiki(root)))
+        assert cli.wiki.main(["status", "--json", str(root)]) == 0
+        assert set(json.loads(capsys.readouterr().out)) == set(cli.wiki.collect_status(cli.wiki.Wiki(root)))
 
     def test_restoring_by_name_picks_that_snapshot(self, tmp_path, capsys):
         root = self._base(tmp_path)
-        first = wiki.snapshot(root, now=datetime(2026, 1, 1, tzinfo=timezone.utc))
-        wiki.snapshot(root, now=datetime(2026, 2, 1, tzinfo=timezone.utc))
-        assert wiki.main(["backup", "--restore", first.name, str(root)]) == 0
+        first = cli.wiki.snapshot(root, now=datetime(2026, 1, 1, tzinfo=timezone.utc))
+        cli.wiki.snapshot(root, now=datetime(2026, 2, 1, tzinfo=timezone.utc))
+        assert cli.wiki.main(["backup", "--restore", first.name, str(root)]) == 0
         assert first.name in capsys.readouterr().out
 
     def test_restoring_an_unknown_name_is_refused(self, tmp_path, capsys):
         root = self._base(tmp_path)
-        wiki.snapshot(root)
-        assert wiki.main(["backup", "--restore", "nosuch.tar.gz", str(root)]) == 1
+        cli.wiki.snapshot(root)
+        assert cli.wiki.main(["backup", "--restore", "nosuch.tar.gz", str(root)]) == 1
         assert "no snapshot named" in capsys.readouterr().err
 
 
@@ -693,14 +693,14 @@ class TestBrowsingLink:
         git_in(container / ".git", "remote", "set-url", "origin", "git@github.com:acme/widget.git")
         vault = tmp_path / "vault"
         monkeypatch.setattr(
-            wiki, "load_config_or_default",
+            cli.wiki, "load_config_or_default",
             lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(vault), link=True)),
         )
         return make_wiki(vault / "acme", dirname="widget").resolve()
 
     def test_the_link_is_placed_beside_the_worktrees(self, container, tmp_path, monkeypatch):
         entry = self._linked_container(container, tmp_path, monkeypatch)
-        assert wiki.main(["link", str(container / "main")]) == 0
+        assert cli.wiki.main(["link", str(container / "main")]) == 0
         link = container / "wiki"
         assert link.is_symlink()
         assert link.resolve() == entry
@@ -709,16 +709,16 @@ class TestBrowsingLink:
     def test_a_second_worktree_shares_the_one_link(self, container, tmp_path, monkeypatch):
         entry = self._linked_container(container, tmp_path, monkeypatch)
         second = add_worktree(container, "second")
-        assert wiki.main(["link", str(second)]) == 0
+        assert cli.wiki.main(["link", str(second)]) == 0
         assert (container / "wiki").resolve() == entry
         assert not (second / "wiki").exists()
 
     def test_linking_twice_changes_nothing(self, container, tmp_path, monkeypatch, capsys):
         self._linked_container(container, tmp_path, monkeypatch)
-        assert wiki.main(["link", str(container / "main")]) == 0
+        assert cli.wiki.main(["link", str(container / "main")]) == 0
         first = os.readlink(container / "wiki")
         capsys.readouterr()
-        assert wiki.main(["link", str(container / "main")]) == 0
+        assert cli.wiki.main(["link", str(container / "main")]) == 0
         assert "already linked" in capsys.readouterr().out
         assert os.readlink(container / "wiki") == first
 
@@ -727,7 +727,7 @@ class TestBrowsingLink:
     ):
         """The container is where the link appears, so it is where people will cd."""
         entry = self._linked_container(container, tmp_path, monkeypatch)
-        assert wiki.main(["link", str(container)]) == 0
+        assert cli.wiki.main(["link", str(container)]) == 0
         assert (container / "wiki").resolve() == entry
 
     def test_a_symlink_pointing_elsewhere_is_refused_not_replaced(
@@ -736,7 +736,7 @@ class TestBrowsingLink:
         self._linked_container(container, tmp_path, monkeypatch)
         other = make_wiki(tmp_path / "other", dirname="kb")
         (container / "wiki").symlink_to(other, target_is_directory=True)
-        assert wiki.main(["link", str(container / "main")]) == 1
+        assert cli.wiki.main(["link", str(container / "main")]) == 1
         assert "already points at" in capsys.readouterr().err
         assert (container / "wiki").resolve() == other.resolve()
 
@@ -748,18 +748,18 @@ class TestBrowsingLink:
         occupied = container / "wiki"
         occupied.mkdir()
         (occupied / "keep.md").write_text("mine", encoding="utf-8")
-        assert wiki.main(["link", str(container / "main")]) == 1
+        assert cli.wiki.main(["link", str(container / "main")]) == 1
         assert "not a symlink" in capsys.readouterr().err
         assert (occupied / "keep.md").read_text(encoding="utf-8") == "mine"
 
     def test_the_key_being_off_removes_a_link_we_made(self, container, tmp_path, monkeypatch):
         entry = self._linked_container(container, tmp_path, monkeypatch)
-        assert wiki.main(["link", str(container / "main")]) == 0
+        assert cli.wiki.main(["link", str(container / "main")]) == 0
         monkeypatch.setattr(
-            wiki, "load_config_or_default",
+            cli.wiki, "load_config_or_default",
             lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(entry.parent.parent), link=False)),
         )
-        assert wiki.main(["link", str(container / "main")]) == 0
+        assert cli.wiki.main(["link", str(container / "main")]) == 0
         assert not (container / "wiki").exists()
         assert not (container / "wiki").is_symlink()
 
@@ -770,32 +770,32 @@ class TestBrowsingLink:
         other = make_wiki(tmp_path / "other", dirname="kb")
         (container / "wiki").symlink_to(other, target_is_directory=True)
         monkeypatch.setattr(
-            wiki, "load_config_or_default",
+            cli.wiki, "load_config_or_default",
             lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(entry.parent.parent), link=False)),
         )
-        assert wiki.main(["link", str(container / "main")]) == 0
+        assert cli.wiki.main(["link", str(container / "main")]) == 0
         assert (container / "wiki").resolve() == other.resolve()
 
     def test_a_plain_clone_says_it_has_nowhere_to_put_one(self, tmp_path, monkeypatch, capsys):
         repo = remote_repo(tmp_path / "repo")
         vault = tmp_path / "vault"
         monkeypatch.setattr(
-            wiki, "load_config_or_default",
+            cli.wiki, "load_config_or_default",
             lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(vault), link=True)),
         )
         make_wiki(vault / "acme", dirname="widget")
-        assert wiki.main(["link", str(repo)]) == 0
+        assert cli.wiki.main(["link", str(repo)]) == 0
         assert "plain clone" in capsys.readouterr().out
         assert not (repo / "wiki").exists()
 
     def test_an_in_tree_base_has_nothing_to_link_to(self, container, capsys, monkeypatch):
         """A link beside the worktrees would point inside one of them."""
         monkeypatch.setattr(
-            wiki, "load_config_or_default",
+            cli.wiki, "load_config_or_default",
             lambda _r: WorkbenchConfig(wiki=WikiConfig(link=True)),
         )
         make_wiki(container / "main")
-        assert wiki.main(["link", str(container / "main")]) == 1
+        assert cli.wiki.main(["link", str(container / "main")]) == 1
         assert "not this repo's vault base" in capsys.readouterr().err
         assert not (container / "wiki").exists()
 
@@ -805,10 +805,10 @@ class TestBrowsingLink:
         git_in(container / ".git", "remote", "set-url", "origin", "git@github.com:acme/widget.git")
         vault = tmp_path / "vault"
         monkeypatch.setattr(
-            wiki, "load_config_or_default",
+            cli.wiki, "load_config_or_default",
             lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(vault), link=True)),
         )
-        assert wiki.main(["init", "--vault", str(container / "main")]) == 0
+        assert cli.wiki.main(["init", "--vault", str(container / "main")]) == 0
         assert (container / "wiki").resolve() == (vault / "acme" / "widget").resolve()
 
     def test_init_still_succeeds_when_the_link_cannot_be_placed(
@@ -818,12 +818,12 @@ class TestBrowsingLink:
         git_in(container / ".git", "remote", "set-url", "origin", "git@github.com:acme/widget.git")
         vault = tmp_path / "vault"
         monkeypatch.setattr(
-            wiki, "load_config_or_default",
+            cli.wiki, "load_config_or_default",
             lambda _r: WorkbenchConfig(wiki=WikiConfig(root=str(vault), link=True)),
         )
         (container / "wiki").mkdir()
-        assert wiki.main(["init", "--vault", str(container / "main")]) == 0
-        assert wiki.is_wiki(vault / "acme" / "widget")
+        assert cli.wiki.main(["init", "--vault", str(container / "main")]) == 0
+        assert cli.wiki.is_wiki(vault / "acme" / "widget")
         assert "not a symlink" in capsys.readouterr().err
 
 
@@ -847,25 +847,25 @@ class TestSymlinkedEntry:
 
     def test_entering_above_the_link_returns_the_real_path(self, tmp_path):
         repo, target = self._linked(tmp_path)
-        assert wiki.find_wiki(repo) == target
+        assert cli.wiki.find_wiki(repo) == target
 
     def test_both_entry_points_agree_on_one_path(self, tmp_path):
         repo, _ = self._linked(tmp_path)
-        assert wiki.find_wiki(repo) == wiki.find_wiki(repo / "wiki")
+        assert cli.wiki.find_wiki(repo) == cli.wiki.find_wiki(repo / "wiki")
 
     def test_path_prints_the_real_path(self, tmp_path, capsys):
         repo, target = self._linked(tmp_path)
-        assert wiki.main(["path", str(repo)]) == 0
+        assert cli.wiki.main(["path", str(repo)]) == 0
         assert capsys.readouterr().out.strip() == str(target)
 
     def test_status_reports_the_real_path(self, tmp_path, capsys):
         repo, target = self._linked(tmp_path)
-        assert wiki.main(["status", "--json", str(repo)]) == 0
+        assert cli.wiki.main(["status", "--json", str(repo)]) == 0
         assert json.loads(capsys.readouterr().out)["path"] == str(target)
 
     def test_an_explicit_link_resolves_to_the_same_path(self, tmp_path):
         repo, target = self._linked(tmp_path)
-        assert wiki.find_wiki(tmp_path, explicit=str(repo / "wiki")) == target
+        assert cli.wiki.find_wiki(tmp_path, explicit=str(repo / "wiki")) == target
 
     def test_a_dangling_link_is_not_a_wiki(self, tmp_path):
         """Why config has to be consulted before the walk, once a vault exists.
@@ -876,8 +876,8 @@ class TestSymlinkedEntry:
         """
         repo, target = self._linked(tmp_path)
         shutil.move(str(target), str(tmp_path / "moved"))
-        assert not wiki.is_wiki(repo / "wiki")
-        assert wiki.find_wiki(repo) is None
+        assert not cli.wiki.is_wiki(repo / "wiki")
+        assert cli.wiki.find_wiki(repo) is None
 
 
 class TestConfiguredDirnameResolvesTheRepoRoot:
@@ -900,13 +900,13 @@ class TestConfiguredDirnameResolvesTheRepoRoot:
 
     def test_read_from_the_repo_root(self, tmp_path):
         repo = self._repo(tmp_path, "knowledge")
-        assert wiki.configured_dirname(repo) == "knowledge"
+        assert cli.wiki.configured_dirname(repo) == "knowledge"
 
     def test_read_from_a_nested_directory(self, tmp_path):
         repo = self._repo(tmp_path, "knowledge")
         nested = repo / "src" / "deep"
         nested.mkdir(parents=True)
-        assert wiki.configured_dirname(nested) == "knowledge"
+        assert cli.wiki.configured_dirname(nested) == "knowledge"
 
     def test_the_walk_honours_it_from_a_nested_directory(self, tmp_path, capsys):
         """End to end through the CLI: the setting reaches the walk.
@@ -918,28 +918,28 @@ class TestConfiguredDirnameResolvesTheRepoRoot:
         root = make_wiki(repo, dirname="knowledge")
         nested = repo / "src" / "deep"
         nested.mkdir(parents=True)
-        assert wiki.main(["path", str(nested)]) == 0
+        assert cli.wiki.main(["path", str(nested)]) == 0
         assert capsys.readouterr().out.strip() == str(root)
 
     def test_outside_a_repo_falls_back_to_the_start_directory(self, tmp_path):
         """No git toplevel to resolve; the search start stands in for it."""
         (tmp_path / ".workbench.yml").write_text("wiki:\n  dir: knowledge\n", encoding="utf-8")
-        assert wiki.configured_dirname(tmp_path) == "knowledge"
+        assert cli.wiki.configured_dirname(tmp_path) == "knowledge"
 
 
 class TestConfiguredDirname:
     """`configured_dirname` reads `wiki.dir`, defaulting when it is unset or blank."""
 
     def test_blank_setting_falls_back_to_the_default(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(wiki, "load_config_or_default", lambda _root: _config("   "))
-        assert wiki.configured_dirname(tmp_path) == wiki.DEFAULT_WIKI_DIRNAME
+        monkeypatch.setattr(cli.wiki, "load_config_or_default", lambda _root: _config("   "))
+        assert cli.wiki.configured_dirname(tmp_path) == cli.wiki.DEFAULT_WIKI_DIRNAME
 
 
 class TestFrontmatter:
     def test_parses_scalars_and_inline_lists(self, tmp_path):
         root = make_wiki(tmp_path)
         write_article(root, "a", title="Auth Flow", tags=["auth", "api"])
-        article = wiki.Wiki(root).articles[0]
+        article = cli.wiki.Wiki(root).articles[0]
         assert article.title == "Auth Flow"
         assert article.tags == ["auth", "api"]
 
@@ -948,22 +948,22 @@ class TestFrontmatter:
         (root / "articles" / "a.md").write_text(
             "---\ntags:\n  - auth\n  - api\n---\nbody\n", encoding="utf-8"
         )
-        assert wiki.Wiki(root).articles[0].tags == ["auth", "api"]
+        assert cli.wiki.Wiki(root).articles[0].tags == ["auth", "api"]
 
     def test_title_falls_back_to_slug(self, tmp_path):
         root = make_wiki(tmp_path)
         write_article(root, "token-refresh")
-        assert wiki.Wiki(root).articles[0].title == "token-refresh"
+        assert cli.wiki.Wiki(root).articles[0].title == "token-refresh"
 
     def test_body_excludes_frontmatter_from_word_count(self, tmp_path):
         root = make_wiki(tmp_path)
         write_article(root, "a", body="one two three", title="A Very Long Title Here")
-        assert wiki.Wiki(root).articles[0].word_count == 3
+        assert cli.wiki.Wiki(root).articles[0].word_count == 3
 
     def test_wikilink_aliases_resolve_to_the_target(self, tmp_path):
         root = make_wiki(tmp_path)
         write_article(root, "a", body="see [[token-refresh|the refresh flow]]")
-        assert wiki.Wiki(root).articles[0].links == ["token-refresh"]
+        assert cli.wiki.Wiki(root).articles[0].links == ["token-refresh"]
 
 
 class TestSourceHashing:
@@ -976,18 +976,18 @@ class TestSourceHashing:
         """
         root = make_wiki(tmp_path)
         write_source(root, "note.md", "known content")
-        assert wiki.Wiki(root).sources[0].content_hash == hash_of("known content")
+        assert cli.wiki.Wiki(root).sources[0].content_hash == hash_of("known content")
 
     def test_unrecorded_source_is_new(self, tmp_path):
         root = make_wiki(tmp_path)
         write_source(root, "note.md")
-        assert wiki.Wiki(root).recorded_source_hashes() == {}
+        assert cli.wiki.Wiki(root).recorded_source_hashes() == {}
 
     def test_changed_source_detected_by_hash(self, tmp_path):
         root = make_wiki(tmp_path)
         write_source(root, "note.md", "new text")
         write_manifest(root, {"raw/note.md": hash_of("old text")})
-        store = wiki.Wiki(root)
+        store = cli.wiki.Wiki(root)
         recorded = store.recorded_source_hashes()
         assert recorded[store.sources[0].rel] != store.sources[0].content_hash
 
@@ -1001,7 +1001,7 @@ class TestSourceHashing:
         root = make_wiki(tmp_path)
         write_source(root, "source", "content")
         write_manifest(root, {})
-        store = wiki.Wiki(root)
+        store = cli.wiki.Wiki(root)
         assert store.recorded_source_hashes() == {}
         assert findings_for(root, "orphan-source")
 
@@ -1010,7 +1010,7 @@ class TestSourceHashing:
         root = make_wiki(tmp_path)
         write_source(root, "source", "content")
         write_manifest(root, {"raw/source": hash_of("content")})
-        store = wiki.Wiki(root)
+        store = cli.wiki.Wiki(root)
         assert store.recorded_source_hashes() == {"raw/source": hash_of("content")}
 
     def test_manifest_keys_match_the_source_path_they_record(self, tmp_path):
@@ -1024,7 +1024,7 @@ class TestSourceHashing:
         write_source(root, "note.md", "text")
         for spelling in ("note.md", "raw/note.md", "./raw/note.md"):
             write_manifest(root, {spelling: hash_of("text")})
-            store = wiki.Wiki(root)
+            store = cli.wiki.Wiki(root)
             source = store.sources[0]
             assert store.recorded_source_hashes().get(source.rel) == source.content_hash
 
@@ -1035,7 +1035,7 @@ class TestLint:
         write_article(root, "a", body="word " * 200 + "[[b]]", updated=_today())
         write_article(root, "b", body="word " * 200 + "[[a]]", updated=_today())
         write_index(root, "a", "b")
-        assert wiki.collect_lint(wiki.Wiki(root)) == []
+        assert cli.wiki.collect_lint(cli.wiki.Wiki(root)) == []
 
     def test_detects_broken_link(self, tmp_path):
         root = make_wiki(tmp_path)
@@ -1174,12 +1174,12 @@ class TestLint:
     def test_lint_exits_one_on_findings(self, tmp_path, capsys):
         root = make_wiki(tmp_path)
         write_article(root, "a", body="see [[ghost]]")
-        assert wiki.main(["lint", str(root)]) == 1
+        assert cli.wiki.main(["lint", str(root)]) == 1
         assert "broken-link" in capsys.readouterr().out
 
     def test_lint_exits_zero_when_clean(self, tmp_path, capsys):
         root = make_wiki(tmp_path)
-        assert wiki.main(["lint", str(root)]) == 0
+        assert cli.wiki.main(["lint", str(root)]) == 0
         assert "clean" in capsys.readouterr().out
 
 
@@ -1190,7 +1190,7 @@ class TestStatus:
         write_article(root, "b")
         write_article(root, "d", subdir="drafts")
         write_source(root, "s.md")
-        status = wiki.collect_status(wiki.Wiki(root))
+        status = cli.wiki.collect_status(cli.wiki.Wiki(root))
         assert (status["articles"], status["drafts"], status["sources"]) == (2, 1, 1)
 
     def test_counts_uncompiled_sources(self, tmp_path):
@@ -1198,18 +1198,18 @@ class TestStatus:
         write_source(root, "done.md", "a")
         write_source(root, "todo.md", "b")
         write_manifest(root, {"raw/done.md": hash_of("a")})
-        assert wiki.collect_status(wiki.Wiki(root))["uncompiled_sources"] == 1
+        assert cli.wiki.collect_status(cli.wiki.Wiki(root))["uncompiled_sources"] == 1
 
     def test_reads_domain_from_schema(self, tmp_path):
         root = make_wiki(tmp_path, "# Schema\n\nPayments domain knowledge.\n")
-        assert wiki.collect_status(wiki.Wiki(root))["domain"] == "Payments domain knowledge."
+        assert cli.wiki.collect_status(cli.wiki.Wiki(root))["domain"] == "Payments domain knowledge."
 
     def test_reports_last_compile(self, tmp_path):
         root = make_wiki(tmp_path)
         (root / "_log.md").write_text(
             "[2024-01-01] COMPILE: first\n[2024-02-01] COMPILE: second\n", encoding="utf-8"
         )
-        assert "second" in wiki.collect_status(wiki.Wiki(root))["last_compile"]
+        assert "second" in cli.wiki.collect_status(cli.wiki.Wiki(root))["last_compile"]
 
     def test_longer_event_name_is_not_mistaken_for_the_event(self, tmp_path):
         """RECOMPILE is its own event, and must not answer for COMPILE.
@@ -1223,12 +1223,12 @@ class TestStatus:
             "[2024-01-01] COMPILE: real\n[2024-02-01] RECOMPILE: different event\n",
             encoding="utf-8",
         )
-        assert "real" in wiki.collect_status(wiki.Wiki(root))["last_compile"]
+        assert "real" in cli.wiki.collect_status(cli.wiki.Wiki(root))["last_compile"]
 
     def test_json_output_is_valid(self, tmp_path, capsys):
         root = make_wiki(tmp_path)
         write_article(root, "a")
-        assert wiki.main(["status", str(root), "--json"]) == 0
+        assert cli.wiki.main(["status", str(root), "--json"]) == 0
         assert json.loads(capsys.readouterr().out)["articles"] == 1
 
 
@@ -1239,7 +1239,7 @@ class TestSourcesCommand:
         write_source(root, "same.md", "s")
         write_source(root, "moved.md", "new")
         write_manifest(root, {"raw/same.md": hash_of("s"), "raw/moved.md": hash_of("old")})
-        assert wiki.main(["sources", str(root)]) == 0
+        assert cli.wiki.main(["sources", str(root)]) == 0
         out = capsys.readouterr().out
         assert "new       " in out and "compiled  " in out and "changed   " in out
 
@@ -1247,7 +1247,7 @@ class TestSourcesCommand:
         root = make_wiki(tmp_path)
         write_source(root, "same.md", "s")
         write_manifest(root, {"raw/same.md": hash_of("s")})
-        assert wiki.main(["sources", str(root), "--new"]) == 0
+        assert cli.wiki.main(["sources", str(root), "--new"]) == 0
         assert "no new or changed sources" in capsys.readouterr().out
 
 
@@ -1256,27 +1256,27 @@ class TestIndex:
         root = make_wiki(tmp_path)
         write_article(root, "a", title="Auth", tags=["auth"])
         write_article(root, "b", title="Billing", tags=["billing"])
-        rendered = wiki.build_index(wiki.Wiki(root))
+        rendered = cli.wiki.build_index(cli.wiki.Wiki(root))
         assert "## auth" in rendered and "[[a]]" in rendered and "[[b]]" in rendered
 
     def test_untagged_articles_are_grouped(self, tmp_path):
         root = make_wiki(tmp_path)
         write_article(root, "a")
-        assert "## untagged" in wiki.build_index(wiki.Wiki(root))
+        assert "## untagged" in cli.wiki.build_index(cli.wiki.Wiki(root))
 
     def test_excludes_drafts(self, tmp_path):
         root = make_wiki(tmp_path)
         write_article(root, "d", subdir="drafts")
-        assert "[[d]]" not in wiki.build_index(wiki.Wiki(root))
+        assert "[[d]]" not in cli.wiki.build_index(cli.wiki.Wiki(root))
 
     def test_empty_wiki_renders_placeholder(self, tmp_path):
         root = make_wiki(tmp_path)
-        assert "No articles yet" in wiki.build_index(wiki.Wiki(root))
+        assert "No articles yet" in cli.wiki.build_index(cli.wiki.Wiki(root))
 
     def test_rebuild_satisfies_the_missing_entry_check(self, tmp_path):
         root = make_wiki(tmp_path)
         write_article(root, "a")
-        wiki.main(["index", str(root)])
+        cli.wiki.main(["index", str(root)])
         assert findings_for(root, "missing-index-entry") == []
 
     def test_check_reports_stale_without_writing(self, tmp_path, capsys):
@@ -1284,29 +1284,29 @@ class TestIndex:
         write_article(root, "a")
         write_index(root)
         before = (root / "_index.md").read_text(encoding="utf-8")
-        assert wiki.main(["index", str(root), "--check"]) == 1
+        assert cli.wiki.main(["index", str(root), "--check"]) == 1
         assert "stale" in capsys.readouterr().out
         assert (root / "_index.md").read_text(encoding="utf-8") == before
 
     def test_check_passes_after_rebuild(self, tmp_path):
         root = make_wiki(tmp_path)
         write_article(root, "a")
-        wiki.main(["index", str(root)])
-        assert wiki.main(["index", str(root), "--check"]) == 0
+        cli.wiki.main(["index", str(root)])
+        assert cli.wiki.main(["index", str(root), "--check"]) == 0
 
     def test_index_is_idempotent(self, tmp_path):
         root = make_wiki(tmp_path)
         write_article(root, "a", tags=["x"])
-        wiki.main(["index", str(root)])
+        cli.wiki.main(["index", str(root)])
         first = (root / "_index.md").read_text(encoding="utf-8")
-        wiki.main(["index", str(root)])
+        cli.wiki.main(["index", str(root)])
         assert (root / "_index.md").read_text(encoding="utf-8") == first
 
 
 class TestPathCommand:
     def test_prints_resolved_root(self, tmp_path, capsys):
         root = make_wiki(tmp_path)
-        assert wiki.main(["path", str(tmp_path)]) == 0
+        assert cli.wiki.main(["path", str(tmp_path)]) == 0
         assert capsys.readouterr().out.strip() == str(root)
 
     def test_explicit_path_suppresses_the_walk_up(self, tmp_path):
@@ -1314,14 +1314,14 @@ class TestPathCommand:
         make_wiki(tmp_path)
         nested = tmp_path / "src" / "deep"
         nested.mkdir(parents=True)
-        assert wiki.find_wiki(nested, explicit=str(nested / "absent")) is None
+        assert cli.wiki.find_wiki(nested, explicit=str(nested / "absent")) is None
 
     def test_walk_up_stops_at_the_depth_limit(self, tmp_path):
         root = make_wiki(tmp_path)
-        deep = tmp_path.joinpath(*[f"d{i}" for i in range(wiki.MAX_PARENT_DEPTH + 2)])
+        deep = tmp_path.joinpath(*[f"d{i}" for i in range(cli.wiki.MAX_PARENT_DEPTH + 2)])
         deep.mkdir(parents=True)
-        assert wiki.find_wiki(deep) is None
-        assert wiki.find_wiki(deep.parent.parent) == root
+        assert cli.wiki.find_wiki(deep) is None
+        assert cli.wiki.find_wiki(deep.parent.parent) == root
 
 
 class TestIndexWriteFailure:
@@ -1333,7 +1333,7 @@ class TestIndexWriteFailure:
             raise OSError("read-only file system")
 
         monkeypatch.setattr(Path, "write_text", refuse)
-        assert wiki.main(["index", str(root)]) == 1
+        assert cli.wiki.main(["index", str(root)]) == 1
         assert "cannot write" in capsys.readouterr().err
 
 
@@ -1352,7 +1352,7 @@ def _config(dirname: str) -> WorkbenchConfig:
 
 class TestInit:
     def test_creates_the_full_layout(self, tmp_path, capsys):
-        assert wiki.main(["init", "--in-repo", str(tmp_path)]) == 0
+        assert cli.wiki.main(["init", "--in-repo", str(tmp_path)]) == 0
         root = tmp_path / "wiki"
         for name in ("raw", "articles", "drafts", "archive", "meta"):
             assert (root / name).is_dir(), name
@@ -1362,37 +1362,37 @@ class TestInit:
 
     def test_the_result_is_findable(self, tmp_path):
         """init and path must agree on what a knowledge base is."""
-        wiki.main(["init", "--in-repo", str(tmp_path)])
-        assert wiki.find_wiki(tmp_path) == tmp_path / "wiki"
+        cli.wiki.main(["init", "--in-repo", str(tmp_path)])
+        assert cli.wiki.find_wiki(tmp_path) == tmp_path / "wiki"
 
     def test_the_result_lints_clean(self, tmp_path):
-        wiki.main(["init", "--in-repo", str(tmp_path)])
-        assert wiki.collect_lint(wiki.Wiki(tmp_path / "wiki")) == []
+        cli.wiki.main(["init", "--in-repo", str(tmp_path)])
+        assert cli.wiki.collect_lint(cli.wiki.Wiki(tmp_path / "wiki")) == []
 
     def test_status_reports_an_empty_base(self, tmp_path):
-        wiki.main(["init", "--in-repo", str(tmp_path)])
-        status = wiki.collect_status(wiki.Wiki(tmp_path / "wiki"))
+        cli.wiki.main(["init", "--in-repo", str(tmp_path)])
+        status = cli.wiki.collect_status(cli.wiki.Wiki(tmp_path / "wiki"))
         assert (status["articles"], status["sources"]) == (0, 0)
 
     def test_refuses_an_existing_base(self, tmp_path, capsys):
-        wiki.main(["init", "--in-repo", str(tmp_path)])
-        assert wiki.main(["init", "--in-repo", str(tmp_path)]) == 1
+        cli.wiki.main(["init", "--in-repo", str(tmp_path)])
+        assert cli.wiki.main(["init", "--in-repo", str(tmp_path)]) == 1
         assert "already exists" in capsys.readouterr().err
 
     def test_domain_reaches_the_schema(self, tmp_path):
-        wiki.main(["init", "--in-repo", str(tmp_path), "--domain", "Payments", "--audience", "the team"])
+        cli.wiki.main(["init", "--in-repo", str(tmp_path), "--domain", "Payments", "--audience", "the team"])
         schema = (tmp_path / "wiki" / "SCHEMA.md").read_text(encoding="utf-8")
         assert "Payments" in schema and "the team" in schema
         assert "{DOMAIN}" not in schema and "{AUDIENCE}" not in schema
 
     def test_manifest_header_is_not_read_as_a_source(self, tmp_path):
         """The header init writes must not register as an entry."""
-        wiki.main(["init", "--in-repo", str(tmp_path)])
-        assert wiki.Wiki(tmp_path / "wiki").recorded_source_hashes() == {}
+        cli.wiki.main(["init", "--in-repo", str(tmp_path)])
+        assert cli.wiki.Wiki(tmp_path / "wiki").recorded_source_hashes() == {}
 
     def test_explicit_path_is_honoured(self, tmp_path):
         target = tmp_path / "somewhere" / "kb"
-        assert wiki.main(["init", str(tmp_path), "--wiki", str(target)]) == 0
+        assert cli.wiki.main(["init", str(tmp_path), "--wiki", str(target)]) == 0
         assert (target / "SCHEMA.md").is_file()
 
     def test_completes_a_half_created_base(self, tmp_path):
@@ -1400,7 +1400,7 @@ class TestInit:
         root = tmp_path / "wiki"
         (root / "raw").mkdir(parents=True)
         (root / "_log.md").write_text("# Activity Log\n\nkept\n", encoding="utf-8")
-        assert wiki.main(["init", "--in-repo", str(tmp_path)]) == 0
+        assert cli.wiki.main(["init", "--in-repo", str(tmp_path)]) == 0
         assert "kept" in (root / "_log.md").read_text(encoding="utf-8")
         assert (root / "SCHEMA.md").is_file()
 
@@ -1413,7 +1413,7 @@ class TestInit:
         target = tmp_path / "lib-schema"
         target.mkdir()
         (target / "SCHEMA.md").write_text("# Database Schema\n", encoding="utf-8")
-        assert wiki.main(["init", str(tmp_path), "--wiki", str(target)]) == 1
+        assert cli.wiki.main(["init", str(tmp_path), "--wiki", str(target)]) == 1
         assert "already exists" in capsys.readouterr().err
         assert (target / "SCHEMA.md").read_text(encoding="utf-8") == "# Database Schema\n"
         assert not (target / "articles").exists()
@@ -1421,14 +1421,14 @@ class TestInit:
 
 class TestIngestStage:
     def _base(self, tmp_path: Path) -> Path:
-        wiki.main(["init", "--in-repo", str(tmp_path)])
+        cli.wiki.main(["init", "--in-repo", str(tmp_path)])
         return tmp_path / "wiki"
 
     def test_stages_a_markdown_source(self, tmp_path, capsys):
         root = self._base(tmp_path)
         src = tmp_path / "notes.md"
         src.write_text("# Notes\n\nbody\n", encoding="utf-8")
-        assert wiki.main(["ingest", str(tmp_path), "--stage", str(src)]) == 0
+        assert cli.wiki.main(["ingest", str(tmp_path), "--stage", str(src)]) == 0
         staged = next((root / "raw").iterdir())
         text = staged.read_text(encoding="utf-8")
         # Every frontmatter value is a quoted scalar, so read it as one rather
@@ -1441,8 +1441,8 @@ class TestIngestStage:
         root = self._base(tmp_path)
         src = tmp_path / "notes.md"
         src.write_text("body\n", encoding="utf-8")
-        wiki.main(["ingest", str(tmp_path), "--stage", str(src)])
-        store = wiki.Wiki(root)
+        cli.wiki.main(["ingest", str(tmp_path), "--stage", str(src)])
+        store = cli.wiki.Wiki(root)
         assert len(store.sources) == 1
         assert store.recorded_source_hashes() == {}
 
@@ -1451,18 +1451,18 @@ class TestIngestStage:
         root = self._base(tmp_path)
         src = tmp_path / "notes.md"
         src.write_text("body\n", encoding="utf-8")
-        wiki.main(["ingest", str(tmp_path), "--stage", str(src)])
+        cli.wiki.main(["ingest", str(tmp_path), "--stage", str(src)])
         staged = next((root / "raw").iterdir())
-        row = wiki.manifest_row(root, staged, "file")
-        assert wiki.hash_file(staged) in row
-        assert wiki.Wiki(root).sources[0].content_hash == wiki.hash_file(staged)
+        row = cli.wiki.manifest_row(root, staged, "file")
+        assert cli.wiki.hash_file(staged) in row
+        assert cli.wiki.Wiki(root).sources[0].content_hash == cli.wiki.hash_file(staged)
 
     def test_no_content_hash_in_frontmatter(self, tmp_path):
         """One hash, computed on demand — a recorded copy would drift."""
         root = self._base(tmp_path)
         src = tmp_path / "notes.md"
         src.write_text("body\n", encoding="utf-8")
-        wiki.main(["ingest", str(tmp_path), "--stage", str(src)])
+        cli.wiki.main(["ingest", str(tmp_path), "--stage", str(src)])
         staged = next((root / "raw").iterdir())
         keys = [
             line.split(":", 1)[0]
@@ -1476,7 +1476,7 @@ class TestIngestStage:
         root = self._base(tmp_path)
         src = tmp_path / "paper.pdf"
         src.write_bytes(b"%PDF-1.4\nbinary\x00bytes")
-        wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--type", "pdf"])
+        cli.wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--type", "pdf"])
         staged = next((root / "raw").iterdir())
         assert staged.read_bytes() == b"%PDF-1.4\nbinary\x00bytes"
 
@@ -1485,7 +1485,7 @@ class TestIngestStage:
         for body in ("first\n", "second\n"):
             src = tmp_path / "README.md"
             src.write_text(body, encoding="utf-8")
-            wiki.main(["ingest", str(tmp_path), "--stage", str(src)])
+            cli.wiki.main(["ingest", str(tmp_path), "--stage", str(src)])
         staged = sorted((root / "raw").iterdir())
         assert len(staged) == 2
         bodies = {p.read_text(encoding="utf-8").strip().split("\n")[-1] for p in staged}
@@ -1500,7 +1500,7 @@ class TestIngestStage:
         root = self._base(tmp_path)
         src = tmp_path / "s.md"
         src.write_text("body\n", encoding="utf-8")
-        assert wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--type", "../../evil"]) == 0
+        assert cli.wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--type", "../../evil"]) == 0
         staged = list((root / "raw").iterdir())
         assert len(staged) == 1
         assert staged[0].parent == root / "raw"
@@ -1519,7 +1519,7 @@ class TestIngestStage:
         root = self._base(tmp_path)
         src = tmp_path / "s.md"
         src.write_text("body\n", encoding="utf-8")
-        wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--type", "file\ninjected: yes"])
+        cli.wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--type", "file\ninjected: yes"])
         assert self._staged_keys(root) == [
             "source_type",
             "title",
@@ -1532,7 +1532,7 @@ class TestIngestStage:
         root = self._base(tmp_path)
         src = tmp_path / "s.md"
         src.write_text("body\n", encoding="utf-8")
-        wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--title", 'x"\ninjected: yes'])
+        cli.wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--title", 'x"\ninjected: yes'])
         assert "injected" not in self._staged_keys(root)
 
     def test_a_quoted_title_stays_one_scalar(self, tmp_path):
@@ -1540,7 +1540,7 @@ class TestIngestStage:
         root = self._base(tmp_path)
         src = tmp_path / "s.md"
         src.write_text("body\n", encoding="utf-8")
-        wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--title", 'a "quoted" name'])
+        cli.wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--title", 'a "quoted" name'])
         staged = next((root / "raw").iterdir())
         title = [
             ln for ln in staged.read_text(encoding="utf-8").splitlines() if ln.startswith("title:")
@@ -1552,50 +1552,50 @@ class TestIngestStage:
         root = self._base(tmp_path)
         src = tmp_path / "s.md"
         src.write_text("body\n", encoding="utf-8")
-        wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--type", "../../evil"])
+        cli.wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--type", "../../evil"])
         staged = next((root / "raw").iterdir())
-        row = wiki.manifest_row(root, staged, "../../evil")
+        row = cli.wiki.manifest_row(root, staged, "../../evil")
         assert ".." not in row
 
     def test_title_drives_the_filename(self, tmp_path):
         root = self._base(tmp_path)
         src = tmp_path / "x.md"
         src.write_text("body\n", encoding="utf-8")
-        wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--title", "How Auth Works"])
+        cli.wiki.main(["ingest", str(tmp_path), "--stage", str(src), "--title", "How Auth Works"])
         assert (root / "raw" / "file-how-auth-works.md").is_file()
 
     def test_missing_source_reports_and_exits_one(self, tmp_path, capsys):
         self._base(tmp_path)
-        assert wiki.main(["ingest", str(tmp_path), "--stage", str(tmp_path / "gone.md")]) == 1
+        assert cli.wiki.main(["ingest", str(tmp_path), "--stage", str(tmp_path / "gone.md")]) == 1
         assert "no such file" in capsys.readouterr().err
 
     def test_ingest_is_logged(self, tmp_path):
         root = self._base(tmp_path)
         src = tmp_path / "notes.md"
         src.write_text("body\n", encoding="utf-8")
-        wiki.main(["ingest", str(tmp_path), "--stage", str(src)])
+        cli.wiki.main(["ingest", str(tmp_path), "--stage", str(src)])
         assert "INGEST:" in (root / "_log.md").read_text(encoding="utf-8")
 
 
 class TestSlugify:
     def test_lowercases_and_hyphenates(self):
-        assert wiki.slugify_title("How Auth Works") == "how-auth-works"
+        assert cli.wiki.slugify_title("How Auth Works") == "how-auth-works"
 
     def test_drops_punctuation(self):
-        assert wiki.slugify_title("What's a Token? (v2)") == "whats-a-token-v2"
+        assert cli.wiki.slugify_title("What's a Token? (v2)") == "whats-a-token-v2"
 
     def test_truncates_at_a_word_boundary(self):
         """Every word is the same, so the last segment must be a whole one."""
-        slug = wiki.slugify_title(" ".join(["alpha"] * 30))
+        slug = cli.wiki.slugify_title(" ".join(["alpha"] * 30))
         assert len(slug) <= 60
         assert slug.rsplit("-", 1)[-1] == "alpha"
 
     def test_a_single_long_word_is_cut_rather_than_emptied(self):
-        slug = wiki.slugify_title("x" * 200)
+        slug = cli.wiki.slugify_title("x" * 200)
         assert 0 < len(slug) <= 60
 
     def test_empty_title_still_yields_a_name(self):
-        assert wiki.slugify_title("!!!") == "untitled"
+        assert cli.wiki.slugify_title("!!!") == "untitled"
 
 
 class TestSchemaTemplateSubstitution:
@@ -1606,7 +1606,7 @@ class TestSchemaTemplateSubstitution:
         reader to replace them, so substitution produced 'Replace Payments and
         the team' in every new schema.
         """
-        wiki.main(["init", "--in-repo", str(tmp_path), "--domain", "Payments", "--audience", "the team"])
+        cli.wiki.main(["init", "--in-repo", str(tmp_path), "--domain", "Payments", "--audience", "the team"])
         body = (tmp_path / "wiki" / "SCHEMA.md").read_text(encoding="utf-8")
         prose = [ln for ln in body.splitlines() if not ln.strip().startswith("<!--")]
         assert not any("Replace" in ln for ln in prose)
@@ -1617,12 +1617,12 @@ class TestDomainSkipsNonProse:
     def test_html_comment_is_not_the_domain(self, tmp_path):
         """The shipped template opens with an editing note in a comment."""
         root = make_wiki(tmp_path, "<!-- an editing note -->\n\n# Wiki Schema\n\nPayments.\n")
-        assert wiki.Wiki(root).domain() == "Payments."
+        assert cli.wiki.Wiki(root).domain() == "Payments."
 
     def test_init_output_reports_the_real_domain(self, tmp_path):
         """End to end against the template init actually copies."""
-        wiki.main(["init", "--in-repo", str(tmp_path), "--domain", "Payments"])
-        status = wiki.collect_status(wiki.Wiki(tmp_path / "wiki"))
+        cli.wiki.main(["init", "--in-repo", str(tmp_path), "--domain", "Payments"])
+        status = cli.wiki.collect_status(cli.wiki.Wiki(tmp_path / "wiki"))
         assert status["domain"] == "A knowledge base about Payments, for whoever works on it."
 
 
@@ -1634,7 +1634,7 @@ class TestArchive:
     def test_moves_the_article_and_keeps_it_readable(self, tmp_path):
         root = make_wiki(tmp_path)
         write_article(root, "old-flow", body="the old way", title="Old Flow")
-        result = wiki.archive_article(wiki.Wiki(root), "old-flow")
+        result = cli.wiki.archive_article(cli.wiki.Wiki(root), "old-flow")
         assert result.path == root / "archive" / "old-flow.md"
         assert result.moved is True
         assert not (root / "articles" / "old-flow.md").exists()
@@ -1643,8 +1643,8 @@ class TestArchive:
     def test_archived_article_leaves_the_published_set(self, tmp_path):
         root = make_wiki(tmp_path)
         write_article(root, "old-flow", body="body")
-        wiki.archive_article(wiki.Wiki(root), "old-flow")
-        store = wiki.Wiki(root)
+        cli.wiki.archive_article(cli.wiki.Wiki(root), "old-flow")
+        store = cli.wiki.Wiki(root)
         assert [a.slug for a in store.published()] == []
         assert [a.slug for a in store.articles if a.is_archived] == ["old-flow"]
 
@@ -1653,8 +1653,8 @@ class TestArchive:
         write_article(root, "old-flow", body="body")
         write_article(root, "current", body="see [[old-flow]]")
         try:
-            wiki.archive_article(wiki.Wiki(root), "old-flow")
-        except wiki.ArticleReferencedError as exc:
+            cli.wiki.archive_article(cli.wiki.Wiki(root), "old-flow")
+        except cli.wiki.ArticleReferencedError as exc:
             assert exc.referrers == ["current"]
         else:
             raise AssertionError("expected ArticleReferencedError")
@@ -1664,7 +1664,7 @@ class TestArchive:
         root = make_wiki(tmp_path)
         write_article(root, "old-flow", body="body")
         write_article(root, "current", body="see [[old-flow]]")
-        wiki.archive_article(wiki.Wiki(root), "old-flow", force=True)
+        cli.wiki.archive_article(cli.wiki.Wiki(root), "old-flow", force=True)
         assert (root / "archive" / "old-flow.md").exists()
         assert "still linked from current" in (root / "_log.md").read_text(encoding="utf-8")
 
@@ -1673,14 +1673,14 @@ class TestArchive:
         root = make_wiki(tmp_path)
         write_article(root, "old-flow", body="body")
         write_article(root, "sketch", body="see [[old-flow]]", subdir="drafts")
-        wiki.archive_article(wiki.Wiki(root), "old-flow")
+        cli.wiki.archive_article(cli.wiki.Wiki(root), "old-flow")
         assert (root / "archive" / "old-flow.md").exists()
 
     def test_unknown_slug_is_an_error(self, tmp_path):
         root = make_wiki(tmp_path)
         try:
-            wiki.archive_article(wiki.Wiki(root), "nope")
-        except wiki.ArticleNotFoundError:
+            cli.wiki.archive_article(cli.wiki.Wiki(root), "nope")
+        except cli.wiki.ArticleNotFoundError:
             return
         raise AssertionError("expected ArticleNotFoundError")
 
@@ -1688,8 +1688,8 @@ class TestArchive:
         """The second call lands nowhere new and says so, rather than claiming a move."""
         root = make_wiki(tmp_path)
         write_article(root, "old-flow", body="body")
-        first = wiki.archive_article(wiki.Wiki(root), "old-flow")
-        again = wiki.archive_article(wiki.Wiki(root), "old-flow")
+        first = cli.wiki.archive_article(cli.wiki.Wiki(root), "old-flow")
+        again = cli.wiki.archive_article(cli.wiki.Wiki(root), "old-flow")
         assert again.path == first.path
         assert first.moved is True
         assert again.moved is False
@@ -1697,7 +1697,7 @@ class TestArchive:
     def test_cli_reports_an_already_archived_article_as_unchanged(self, tmp_path, capsys):
         root = make_wiki(tmp_path)
         write_article(root, "old-flow", body="body", subdir="archive")
-        assert wiki.main(["archive", "old-flow", "--wiki", str(root)]) == 0
+        assert cli.wiki.main(["archive", "old-flow", "--wiki", str(root)]) == 0
         out = capsys.readouterr().out
         assert "already archived" in out
         assert "wiki index" not in out
@@ -1706,7 +1706,7 @@ class TestArchive:
         root = make_wiki(tmp_path)
         write_article(root, "old-flow", body="second version")
         (root / "archive" / "old-flow.md").write_text("first version\n", encoding="utf-8")
-        target = wiki.archive_article(wiki.Wiki(root), "old-flow").path
+        target = cli.wiki.archive_article(cli.wiki.Wiki(root), "old-flow").path
         assert target.name == "old-flow-2.md"
         assert "first version" in (root / "archive" / "old-flow.md").read_text(encoding="utf-8")
 
@@ -1714,28 +1714,28 @@ class TestArchive:
         root = make_wiki(tmp_path)
         write_article(root, "old-flow", body="body")
         write_article(root, "current", body="see [[old-flow]]")
-        assert wiki.main(["archive", "old-flow", "--wiki", str(root)]) == 1
+        assert cli.wiki.main(["archive", "old-flow", "--wiki", str(root)]) == 1
         assert "still linked from current" in capsys.readouterr().err
 
     def test_cli_archives_on_force(self, tmp_path):
         root = make_wiki(tmp_path)
         write_article(root, "old-flow", body="body")
         write_article(root, "current", body="see [[old-flow]]")
-        assert wiki.main(["archive", "old-flow", "--force", "--wiki", str(root)]) == 0
+        assert cli.wiki.main(["archive", "old-flow", "--force", "--wiki", str(root)]) == 0
         assert (root / "archive" / "old-flow.md").exists()
 
     def test_cli_takes_the_slug_then_the_directory(self, tmp_path):
         """`wiki archive SLUG DIR` — the documented form every other subcommand takes."""
         root = make_wiki(tmp_path)
         write_article(root, "old-flow", body="body")
-        assert wiki.main(["archive", "old-flow", str(tmp_path)]) == 0
+        assert cli.wiki.main(["archive", "old-flow", str(tmp_path)]) == 0
         assert (root / "archive" / "old-flow.md").exists()
 
     def test_cli_defaults_the_directory_when_only_a_slug_is_given(self, tmp_path, monkeypatch):
         root = make_wiki(tmp_path)
         write_article(root, "old-flow", body="body")
         monkeypatch.chdir(tmp_path)
-        assert wiki.main(["archive", "old-flow"]) == 0
+        assert cli.wiki.main(["archive", "old-flow"]) == 0
         assert (root / "archive" / "old-flow.md").exists()
 
 
@@ -1746,7 +1746,7 @@ class TestArchivedArticlesInLint:
         write_article(root, "current", body="superseded [[old-flow]]")
         write_article(root, "old-flow", body="body", subdir="archive")
         write_index(root, "current")
-        found = wiki.collect_lint(wiki.Wiki(root))
+        found = cli.wiki.collect_lint(cli.wiki.Wiki(root))
         assert "broken-link" not in checks(found)
         archived = [f for f in found if f["check"] == "archived-link"]
         assert len(archived) == 1
@@ -1756,19 +1756,19 @@ class TestArchivedArticlesInLint:
     def test_archived_article_is_not_scanned_for_contradictions(self, tmp_path):
         root = make_wiki(tmp_path)
         write_article(root, "old", body="[CONTRADICTION] both sides", subdir="archive")
-        assert "contradiction" not in checks(wiki.collect_lint(wiki.Wiki(root)))
+        assert "contradiction" not in checks(cli.wiki.collect_lint(cli.wiki.Wiki(root)))
 
     def test_archived_article_does_not_need_an_index_entry(self, tmp_path):
         root = make_wiki(tmp_path)
         write_article(root, "old", body="body", subdir="archive")
         write_index(root)
-        assert "missing-index-entry" not in checks(wiki.collect_lint(wiki.Wiki(root)))
+        assert "missing-index-entry" not in checks(cli.wiki.collect_lint(cli.wiki.Wiki(root)))
 
     def test_archived_outbound_links_are_not_reported(self, tmp_path):
         """A retired article pointing at something since deleted is not a live defect."""
         root = make_wiki(tmp_path)
         write_article(root, "old", body="see [[also-gone]]", subdir="archive")
-        assert "broken-link" not in checks(wiki.collect_lint(wiki.Wiki(root)))
+        assert "broken-link" not in checks(cli.wiki.collect_lint(cli.wiki.Wiki(root)))
 
     def test_an_archived_inbound_link_does_not_rescue_an_orphan(self, tmp_path):
         """Only live articles count as inbound; otherwise archiving hides orphans."""
@@ -1776,12 +1776,12 @@ class TestArchivedArticlesInLint:
         write_article(root, "current", body="body")
         write_article(root, "old", body="see [[current]]", subdir="archive")
         write_index(root, "current")
-        assert "orphan-article" in checks(wiki.collect_lint(wiki.Wiki(root)))
+        assert "orphan-article" in checks(cli.wiki.collect_lint(cli.wiki.Wiki(root)))
 
     def test_index_omits_archived_articles(self, tmp_path):
         root = make_wiki(tmp_path)
         write_article(root, "old", body="body", subdir="archive", tags=["auth"])
-        assert "[[old]]" not in wiki.build_index(wiki.Wiki(root))
+        assert "[[old]]" not in cli.wiki.build_index(cli.wiki.Wiki(root))
 
 
 class TestQueryGapParsing:
@@ -1791,38 +1791,38 @@ class TestQueryGapParsing:
         the two commands would report different numbers for the same log."""
         root = make_wiki(tmp_path)
         write_log(root, "- QUERY_GAP no colon here")
-        assert wiki.Wiki(root).unprocessed_log_entries() == []
-        assert wiki.Wiki(root).query_gaps() == []
+        assert cli.wiki.Wiki(root).unprocessed_log_entries() == []
+        assert cli.wiki.Wiki(root).query_gaps() == []
 
     def test_prose_mentioning_a_marker_is_not_an_entry(self, tmp_path):
         root = make_wiki(tmp_path)
         write_log(root, "we should log a QUERY_GAP for this someday")
-        assert wiki.Wiki(root).unprocessed_log_entries() == []
+        assert cli.wiki.Wiki(root).unprocessed_log_entries() == []
 
     def test_dated_entries_are_recognised(self, tmp_path):
         """The documented format is date-prefixed, which the old anchor missed."""
         root = make_wiki(tmp_path)
         write_log(root, '[2026-01-05] QUERY_GAP: "how does token refresh work?"')
-        assert wiki.Wiki(root).unprocessed_log_entries() != []
+        assert cli.wiki.Wiki(root).unprocessed_log_entries() != []
 
     def test_gap_question_and_date_are_extracted(self, tmp_path):
         root = make_wiki(tmp_path)
         write_log(root, '[2026-01-05] QUERY_GAP: "how does token refresh work?"')
-        assert wiki.Wiki(root).query_gaps() == [
-            wiki.QueryGap(date="2026-01-05", question="how does token refresh work?")
+        assert cli.wiki.Wiki(root).query_gaps() == [
+            cli.wiki.QueryGap(date="2026-01-05", question="how does token refresh work?")
         ]
 
     def test_undated_and_bulleted_entries_still_parse(self, tmp_path):
         root = make_wiki(tmp_path)
         write_log(root, "- QUERY_GAP: what signs a release?")
-        assert wiki.Wiki(root).query_gaps() == [
-            wiki.QueryGap(date="", question="what signs a release?")
+        assert cli.wiki.Wiki(root).query_gaps() == [
+            cli.wiki.QueryGap(date="", question="what signs a release?")
         ]
 
     def test_other_log_lines_are_ignored(self, tmp_path):
         root = make_wiki(tmp_path)
         write_log(root, "[2026-01-05] COMPILE: Processed 2 sources")
-        assert wiki.Wiki(root).query_gaps() == []
+        assert cli.wiki.Wiki(root).query_gaps() == []
 
 
 class TestSignals:
@@ -1831,7 +1831,7 @@ class TestSignals:
         write_article(root, "a", body="body", tags=["auth", "api"])
         write_article(root, "b", body="body", tags=["authentication"])
         write_article(root, "c", body="body", tags=["auth"])
-        table = wiki.collect_signals(wiki.Wiki(root))["tags"]
+        table = cli.wiki.collect_signals(cli.wiki.Wiki(root))["tags"]
         assert [(r["tag"], r["count"]) for r in table] == [
             ("auth", 2),
             ("api", 1),
@@ -1842,14 +1842,14 @@ class TestSignals:
     def test_tag_table_excludes_archived_articles(self, tmp_path):
         root = make_wiki(tmp_path)
         write_article(root, "old", body="body", subdir="archive", tags=["retired"])
-        assert wiki.collect_signals(wiki.Wiki(root))["tags"] == []
+        assert cli.wiki.collect_signals(cli.wiki.Wiki(root))["tags"] == []
 
     def test_near_identical_articles_are_paired(self, tmp_path):
         root = make_wiki(tmp_path)
         shared = " ".join(f"word{i}" for i in range(60))
         write_article(root, "a", body=shared)
         write_article(root, "b", body=shared + " and one more clause here")
-        pairs = wiki.collect_signals(wiki.Wiki(root))["similar_articles"]
+        pairs = cli.wiki.collect_signals(cli.wiki.Wiki(root))["similar_articles"]
         assert len(pairs) == 1
         assert pairs[0]["articles"] == ["a", "b"]
         assert pairs[0]["similarity"] > 0.8
@@ -1858,14 +1858,14 @@ class TestSignals:
         root = make_wiki(tmp_path)
         write_article(root, "a", body=" ".join(f"alpha{i}" for i in range(60)))
         write_article(root, "b", body=" ".join(f"beta{i}" for i in range(60)))
-        assert wiki.collect_signals(wiki.Wiki(root))["similar_articles"] == []
+        assert cli.wiki.collect_signals(cli.wiki.Wiki(root))["similar_articles"] == []
 
     def test_short_articles_do_not_pair_on_nothing(self, tmp_path):
         """Below one shingle there is no evidence, so emit none rather than 1.0."""
         root = make_wiki(tmp_path)
         write_article(root, "a", body="too short")
         write_article(root, "b", body="also short")
-        assert wiki.collect_signals(wiki.Wiki(root))["similar_articles"] == []
+        assert cli.wiki.collect_signals(cli.wiki.Wiki(root))["similar_articles"] == []
 
     def test_gaps_on_one_topic_cluster_together(self, tmp_path):
         root = make_wiki(tmp_path)
@@ -1875,7 +1875,7 @@ class TestSignals:
             '[2026-01-06] QUERY_GAP: "does token refresh expire"',
             '[2026-01-07] QUERY_GAP: "which database stores invoices"',
         )
-        clusters = wiki.collect_signals(wiki.Wiki(root))["gap_clusters"]
+        clusters = cli.wiki.collect_signals(cli.wiki.Wiki(root))["gap_clusters"]
         assert [c["count"] for c in clusters] == [2, 1]
         assert "token" in clusters[0]["topics"]
         assert len(clusters[0]["gaps"]) == 2
@@ -1888,7 +1888,7 @@ class TestSignals:
             '[2026-01-05] QUERY_GAP: "alpha beta gamma"',
             '[2026-01-06] QUERY_GAP: "delta epsilon zeta"',
         )
-        clusters = wiki.collect_signals(wiki.Wiki(root))["gap_clusters"]
+        clusters = cli.wiki.collect_signals(cli.wiki.Wiki(root))["gap_clusters"]
         questions = {g["question"] for c in clusters for g in c["gaps"]}
         assert questions == {"alpha beta gamma", "delta epsilon zeta"}
 
@@ -1899,7 +1899,7 @@ class TestSignals:
         write_article(root, "stale-draft", body="body", subdir="drafts", updated=old,
                       origin="crystallized")
         write_article(root, "fresh-draft", body="body", subdir="drafts", updated=recent)
-        drafts = wiki.collect_signals(wiki.Wiki(root))["drafts"]
+        drafts = cli.wiki.collect_signals(cli.wiki.Wiki(root))["drafts"]
         assert [d["slug"] for d in drafts] == ["stale-draft", "fresh-draft"]
         assert drafts[0]["age_days"] == 90
         assert drafts[0]["origin"] == "crystallized"
@@ -1909,7 +1909,7 @@ class TestSignals:
         write_article(root, "dated", body="body", subdir="drafts",
                       updated=(datetime.now(timezone.utc) - timedelta(days=5)).date().isoformat())
         write_article(root, "undated", body="body", subdir="drafts")
-        drafts = wiki.collect_signals(wiki.Wiki(root))["drafts"]
+        drafts = cli.wiki.collect_signals(cli.wiki.Wiki(root))["drafts"]
         assert [d["slug"] for d in drafts] == ["dated", "undated"]
         assert drafts[-1]["age_days"] is None
 
@@ -1918,7 +1918,7 @@ class TestSignalsCLI:
     def test_json_carries_all_four_signals(self, tmp_path, capsys):
         root = make_wiki(tmp_path)
         write_article(root, "a", body="body", tags=["auth"])
-        assert wiki.main(["signals", "--json", "--wiki", str(root)]) == 0
+        assert cli.wiki.main(["signals", "--json", "--wiki", str(root)]) == 0
         payload = json.loads(capsys.readouterr().out)
         assert set(payload["signals"]) == {"tags", "similar_articles", "gap_clusters", "drafts"}
 
@@ -1927,25 +1927,25 @@ class TestSignalsCLI:
         root = make_wiki(tmp_path)
         write_article(root, "a", body="body", tags=["auth"])
         write_article(root, "b", body="body", tags=["authentication"])
-        assert wiki.main(["signals", "--wiki", str(root)]) == 0
+        assert cli.wiki.main(["signals", "--wiki", str(root)]) == 0
 
     def test_lint_json_omits_signals_by_default(self, tmp_path, capsys):
         root = make_wiki(tmp_path)
         write_article(root, "a", body="body")
-        wiki.main(["lint", "--json", "--wiki", str(root)])
+        cli.wiki.main(["lint", "--json", "--wiki", str(root)])
         assert "signals" not in json.loads(capsys.readouterr().out)
 
     def test_lint_signals_flag_includes_them(self, tmp_path, capsys):
         root = make_wiki(tmp_path)
         write_article(root, "a", body="body")
-        wiki.main(["lint", "--json", "--signals", "--wiki", str(root)])
+        cli.wiki.main(["lint", "--json", "--signals", "--wiki", str(root)])
         assert "signals" in json.loads(capsys.readouterr().out)
 
     def test_lint_signals_prints_the_tables_without_json(self, tmp_path, capsys):
         """The flag reports something in text mode too, rather than silently doing nothing."""
         root = make_wiki(tmp_path)
         write_article(root, "a", body="body", tags=["auth"])
-        wiki.main(["lint", "--signals", "--wiki", str(root)])
+        cli.wiki.main(["lint", "--signals", "--wiki", str(root)])
         out = capsys.readouterr().out
         assert "tags (1)" in out
         assert "query gap clusters" in out
@@ -1954,7 +1954,7 @@ class TestSignalsCLI:
         """Signals are additive; they must not mask a failing lint."""
         root = make_wiki(tmp_path)
         write_article(root, "a", body="see [[nowhere]]")
-        assert wiki.main(["lint", "--signals", "--wiki", str(root)]) == 1
+        assert cli.wiki.main(["lint", "--signals", "--wiki", str(root)]) == 1
 
 
 class TestPackageSurface:

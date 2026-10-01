@@ -32,7 +32,7 @@ going stale now that no `pr` code path would notice if it did.
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from cli import review_modes
+import cli.review_modes
 from cli.needs import LOCAL, REMOTE, Need
 
 
@@ -110,7 +110,7 @@ _SPECS: tuple[CommandSpec, ...] = (
     # shaping, and a consumer reading this field wants the callable that
     # performs the command.
     CommandSpec("review",   "Run code review",
-                review_modes.need_for,                  script="review",
+                cli.review_modes.need_for,              script="review",
                 handler="cli.review_entry:main"),
     CommandSpec("comments", "Fetch and manage PR review threads",
                 Need(REMOTE, update=True,  lock=True),  script="review-threads",

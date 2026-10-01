@@ -36,8 +36,9 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from core import log, proc
-from git import client as git_client
+import core.log
+import core.proc
+import git.client
 
 # Scratch files an agent leaves behind, which are not the pass's work.
 #
@@ -70,7 +71,7 @@ def _drop_scratch(paths: set[str], wt_path: str | Path) -> set[str]:
     """`paths` without the throwaway files an agent left in the worktree."""
     scratch = {p for p in paths if _SCRATCH_BASENAME.match(Path(p).name)}
     if scratch:
-        log.warn(
+        core.log.warn(
             f"not committing {len(scratch)} scratch file(s) an agent left in "
             f"{wt_path}: {', '.join(sorted(scratch))}. A scratch file belongs "
             f"under /tmp. Remove them, or rename one that is real work."
@@ -169,7 +170,7 @@ def drop_outside(
         if p not in allowed and not _is_test_for(p, set(sources))
     }
     if outside:
-        log.warn(
+        core.log.warn(
             f"not committing {len(outside)} file(s) outside this branch in "
             f"{wt_path}: {', '.join(sorted(outside))}. A path outside the "
             f"branch, the finding anchors, and their tests is left "
@@ -197,12 +198,12 @@ def rename_partners(
     """
     if not dropped:
         return set()
-    r = git_client.run(
+    r = git.client.run(
         "diff", "HEAD", "-M", "--name-status", "--diff-filter=R",
         cwd=wt_path,
     )
     if not r.ok:
-        log.warn(proc.failure_message(
+        core.log.warn(core.proc.failure_message(
             f"Could not check {wt_path} for renames; a renamed file may be "
             "left half-committed", r,
         ))
@@ -283,9 +284,9 @@ def changed_files(wt_path: str | Path) -> set[str] | None:
     # finding, and diff-only detection would report it as skipped.
     for args in (("diff", "HEAD", "--name-only"),
                  ("ls-files", "--others", "--exclude-standard")):
-        r = git_client.run(*args, cwd=wt_path)
+        r = git.client.run(*args, cwd=wt_path)
         if not r.ok:
-            log.warn(proc.failure_message(
+            core.log.warn(core.proc.failure_message(
                 f"Could not list what changed in {wt_path}", r,
             ))
             return None
@@ -339,7 +340,7 @@ def report_unattributable(wt_path: str | Path) -> None:
     unavailable. The edits are still in the worktree, so the honest end of this
     path is to say so and commit nothing.
     """
-    log.error(
+    core.log.error(
         f"could not read what the fix pass changed in {wt_path} — nothing was "
         f"committed or pushed. Any fixes it made are still in the worktree:\n"
         f"  git -C '{wt_path}' status"

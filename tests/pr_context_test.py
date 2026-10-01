@@ -1,4 +1,4 @@
-"""Tests for pr_context library."""
+"""Tests for pr.context library."""
 
 import os
 import subprocess
@@ -13,12 +13,13 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from core.proc import CmdResult
-from git import topology as git_topology
-from pr import context as pr_context
-from pr import target as pr_target
+import git.topology
+import pr.context
+import pr.target
 from pr.context import _parse_pr_input, PRHead, ResolvedContext
 
 from conftest import git_in, make_ctx, run_checked  # noqa: E402
+import gh.client
 
 
 # ── PR input parsing ────────────────────────────────────────────────────────
@@ -96,16 +97,16 @@ def test_require_worktree_exits_with_actionable_message(capsys):
 
 def test_resolve_exits_when_a_prs_head_branch_cannot_be_resolved(monkeypatch, capsys):
     """No borrowing the caller's branch — that is the bug this issue is about."""
-    monkeypatch.setattr(pr_context, "_resolve_worktree",
-                        lambda cwd, pr, branch: (Path("/wt"), "/wt"))
-    monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
-    monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "deadbeef")
-    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead())
-    monkeypatch.setattr(git_topology, "current_branch",
+    monkeypatch.setattr(pr.context, "_resolve_worktree",
+                        lambda cwd, pr_ref, branch: (Path("/wt"), "/wt"))
+    monkeypatch.setattr(pr.context, "detect_repo", lambda cwd=None: "acme/widget")
+    monkeypatch.setattr(pr.context, "_head_sha", lambda cwd=None: "deadbeef")
+    monkeypatch.setattr(pr.context, "_pr_head", lambda repo, n: PRHead())
+    monkeypatch.setattr(git.topology, "current_branch",
                         lambda cwd=None: pytest.fail("must not read the caller's branch"))
 
     with pytest.raises(SystemExit) as excinfo:
-        pr_context.resolve(pr="2973")
+        pr.context.resolve(pr_ref="2973")
 
     assert excinfo.value.code == 1
     assert "2973" in capsys.readouterr().err
@@ -113,16 +114,16 @@ def test_resolve_exits_when_a_prs_head_branch_cannot_be_resolved(monkeypatch, ca
 
 def test_resolve_exits_when_a_prs_head_sha_cannot_be_resolved(monkeypatch, capsys):
     """A branch with no SHA is a partial result too — never stamp the caller's."""
-    monkeypatch.setattr(pr_context, "_resolve_worktree",
-                        lambda cwd, pr, branch: (Path("/wt"), "/wt"))
-    monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
-    monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "caller-sha")
-    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/x"))
-    monkeypatch.setattr(git_topology, "current_branch",
+    monkeypatch.setattr(pr.context, "_resolve_worktree",
+                        lambda cwd, pr_ref, branch: (Path("/wt"), "/wt"))
+    monkeypatch.setattr(pr.context, "detect_repo", lambda cwd=None: "acme/widget")
+    monkeypatch.setattr(pr.context, "_head_sha", lambda cwd=None: "caller-sha")
+    monkeypatch.setattr(pr.context, "_pr_head", lambda repo, n: PRHead(branch="feat/x"))
+    monkeypatch.setattr(git.topology, "current_branch",
                         lambda cwd=None: pytest.fail("must not read the caller's branch"))
 
     with pytest.raises(SystemExit) as excinfo:
-        pr_context.resolve(pr="2973")
+        pr.context.resolve(pr_ref="2973")
 
     assert excinfo.value.code == 1
     assert "2973" in capsys.readouterr().err
@@ -130,17 +131,17 @@ def test_resolve_exits_when_a_prs_head_sha_cannot_be_resolved(monkeypatch, capsy
 
 def test_resolve_stamps_the_prs_head_sha_not_the_callers(monkeypatch, tmp_path):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
-    monkeypatch.setattr(pr_context, "_resolve_worktree",
-                        lambda cwd, pr, branch: (Path("/wt"), "/wt"))
-    monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
-    monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "caller-sha")
-    monkeypatch.setattr(git_topology, "current_branch_quiet", lambda cwd=None: "other")
-    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/login", sha="pr-sha"))
-    monkeypatch.setattr(pr_target, "repo_identity_from_origin",
-                        lambda cwd=None: pr_target.RepoIdentity(
+    monkeypatch.setattr(pr.context, "_resolve_worktree",
+                        lambda cwd, pr_ref, branch: (Path("/wt"), "/wt"))
+    monkeypatch.setattr(pr.context, "detect_repo", lambda cwd=None: "acme/widget")
+    monkeypatch.setattr(pr.context, "_head_sha", lambda cwd=None: "caller-sha")
+    monkeypatch.setattr(git.topology, "current_branch_quiet", lambda cwd=None: "other")
+    monkeypatch.setattr(pr.context, "_pr_head", lambda repo, n: PRHead(branch="feat/login", sha="pr-sha"))
+    monkeypatch.setattr(pr.target, "repo_identity_from_origin",
+                        lambda cwd=None: pr.target.RepoIdentity(
                             label="acme/widget", key="widget", host="github.com"))
 
-    ctx = pr_context.resolve(pr="2973")
+    ctx = pr.context.resolve(pr_ref="2973")
 
     assert ctx.head_sha == "pr-sha"
     assert ctx.branch == "feat/login"
@@ -149,19 +150,19 @@ def test_resolve_stamps_the_prs_head_sha_not_the_callers(monkeypatch, tmp_path):
 def test_resolve_targets_the_pr_not_the_invoking_directory(monkeypatch, tmp_path):
     """The whole point: two PRs from one CWD get two target dirs."""
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
-    monkeypatch.setattr(pr_context, "_resolve_worktree",
-                        lambda cwd, pr, branch: (Path("/repo-root"), "/repo-root"))
-    monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
-    monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "x")
-    monkeypatch.setattr(git_topology, "current_branch_quiet", lambda cwd=None: "main")
-    monkeypatch.setattr(pr_target, "repo_identity_from_origin",
-                        lambda cwd=None: pr_target.RepoIdentity(
+    monkeypatch.setattr(pr.context, "_resolve_worktree",
+                        lambda cwd, pr_ref, branch: (Path("/repo-root"), "/repo-root"))
+    monkeypatch.setattr(pr.context, "detect_repo", lambda cwd=None: "acme/widget")
+    monkeypatch.setattr(pr.context, "_head_sha", lambda cwd=None: "x")
+    monkeypatch.setattr(git.topology, "current_branch_quiet", lambda cwd=None: "main")
+    monkeypatch.setattr(pr.target, "repo_identity_from_origin",
+                        lambda cwd=None: pr.target.RepoIdentity(
                             label="acme/widget", key="widget", host="github.com"))
 
-    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/a", sha="sha-a"))
-    first = pr_context.resolve(pr="1")
-    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/b", sha="sha-b"))
-    second = pr_context.resolve(pr="2")
+    monkeypatch.setattr(pr.context, "_pr_head", lambda repo, n: PRHead(branch="feat/a", sha="sha-a"))
+    first = pr.context.resolve(pr_ref="1")
+    monkeypatch.setattr(pr.context, "_pr_head", lambda repo, n: PRHead(branch="feat/b", sha="sha-b"))
+    second = pr.context.resolve(pr_ref="2")
 
     assert first.target_dir != second.target_dir
     assert first.worktree_root == second.worktree_root
@@ -178,27 +179,27 @@ def test_resolve_targets_the_same_pr_from_any_invoking_directory(monkeypatch, tm
     from inside the PR's own worktree and `pr review 2973` run from the repo
     root take the same lock instead of two independent ones."""
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
-    monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
-    monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "x")
-    monkeypatch.setattr(git_topology, "current_branch_quiet", lambda cwd=None: "feat/login")
-    monkeypatch.setattr(pr_target, "repo_identity_from_origin",
-                        lambda cwd=None: pr_target.RepoIdentity(
+    monkeypatch.setattr(pr.context, "detect_repo", lambda cwd=None: "acme/widget")
+    monkeypatch.setattr(pr.context, "_head_sha", lambda cwd=None: "x")
+    monkeypatch.setattr(git.topology, "current_branch_quiet", lambda cwd=None: "feat/login")
+    monkeypatch.setattr(pr.target, "repo_identity_from_origin",
+                        lambda cwd=None: pr.target.RepoIdentity(
                             label="acme/widget", key="widget", host="github.com"))
-    monkeypatch.setattr(git_topology, "resolve_branch", lambda hint, cwd=None: hint)
-    monkeypatch.setattr(pr_context, "_pr_from_branch",
-                        lambda repo, branch: pr_context.BranchPR(number=2973))
+    monkeypatch.setattr(git.topology, "resolve_branch", lambda hint, cwd=None: hint)
+    monkeypatch.setattr(pr.context, "_pr_from_branch",
+                        lambda repo, branch: pr.context.BranchPR(number=2973))
 
-    monkeypatch.setattr(pr_context, "_resolve_worktree",
-                        lambda cwd, pr, branch: (Path("/repo-root"), "/repo-root"))
-    from_root = pr_context.resolve(branch="feat/login", repo_dir="/repo-root")
+    monkeypatch.setattr(pr.context, "_resolve_worktree",
+                        lambda cwd, pr_ref, branch: (Path("/repo-root"), "/repo-root"))
+    from_root = pr.context.resolve(branch="feat/login", repo_dir="/repo-root")
 
     monkeypatch.setattr(
-        pr_context, "_resolve_worktree",
-        lambda cwd, pr, branch: (
+        pr.context, "_resolve_worktree",
+        lambda cwd, pr_ref, branch: (
             Path("/repo-root/.worktrees/feat-login"), "/repo-root/.worktrees/feat-login",
         ),
     )
-    from_worktree = pr_context.resolve(branch="feat/login",
+    from_worktree = pr.context.resolve(branch="feat/login",
                                        repo_dir="/repo-root/.worktrees/feat-login")
 
     assert from_root.worktree_root != from_worktree.worktree_root
@@ -206,16 +207,16 @@ def test_resolve_targets_the_same_pr_from_any_invoking_directory(monkeypatch, tm
 
 
 def test_resolve_exits_without_an_origin_remote(monkeypatch, capsys):
-    monkeypatch.setattr(pr_context, "_resolve_worktree",
-                        lambda cwd, pr, branch: (Path("/wt"), "/wt"))
-    monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
-    monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "x")
-    monkeypatch.setattr(git_topology, "current_branch_quiet", lambda cwd=None: "main")
-    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(branch="feat/a", sha="sha"))
-    monkeypatch.setattr(pr_target, "repo_identity_from_origin", lambda cwd=None: None)
+    monkeypatch.setattr(pr.context, "_resolve_worktree",
+                        lambda cwd, pr_ref, branch: (Path("/wt"), "/wt"))
+    monkeypatch.setattr(pr.context, "detect_repo", lambda cwd=None: "acme/widget")
+    monkeypatch.setattr(pr.context, "_head_sha", lambda cwd=None: "x")
+    monkeypatch.setattr(git.topology, "current_branch_quiet", lambda cwd=None: "main")
+    monkeypatch.setattr(pr.context, "_pr_head", lambda repo, n: PRHead(branch="feat/a", sha="sha"))
+    monkeypatch.setattr(pr.target, "repo_identity_from_origin", lambda cwd=None: None)
 
     with pytest.raises(SystemExit) as excinfo:
-        pr_context.resolve(pr="1")
+        pr.context.resolve(pr_ref="1")
 
     assert excinfo.value.code == 1
     assert "origin" in capsys.readouterr().err
@@ -253,7 +254,7 @@ def _recorded_runs(monkeypatch) -> list[list[str]]:
         calls.append(list(cmd))
         return real(cmd, *args, **kwargs)
 
-    monkeypatch.setattr(pr_context.subprocess, "run", spy)
+    monkeypatch.setattr(pr.context.subprocess, "run", spy)
     return calls
 
 
@@ -264,12 +265,12 @@ def test_resolve_local_reads_the_whole_target_from_git(monkeypatch, tmp_path):
     wt = _git_repo(tmp_path / "wt")
     calls = _recorded_runs(monkeypatch)
 
-    ctx = pr_context.resolve_local(repo_dir=str(wt))
+    ctx = pr.context.resolve_local(repo_dir=str(wt))
 
     assert ctx.branch == "main"
     assert ctx.pr_number is None
     assert ctx.repo == "acme/widget"
-    assert ctx.target_dir == pr_target.target_dir("acme-widget-b9d71e86", "main")
+    assert ctx.target_dir == pr.target.target_dir("acme-widget-b9d71e86", "main")
     assert Path(ctx.worktree_root).resolve() == wt.resolve()
     assert ctx.head_sha
     assert [c for c in calls if c[0] == "gh"] == []
@@ -286,7 +287,7 @@ def test_resolve_local_carries_the_forge_host(monkeypatch, tmp_path, origin, exp
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
     wt = _git_repo(tmp_path / "wt", origin)
 
-    ctx = pr_context.resolve_local(repo_dir=str(wt))
+    ctx = pr.context.resolve_local(repo_dir=str(wt))
 
     assert ctx.host == expected
 
@@ -297,9 +298,9 @@ def test_resolve_local_host_does_not_move_the_target_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
     wt = _git_repo(tmp_path / "wt", "https://ghe.acme.com/acme/widget.git")
 
-    ctx = pr_context.resolve_local(repo_dir=str(wt))
+    ctx = pr.context.resolve_local(repo_dir=str(wt))
 
-    assert ctx.target_dir == pr_target.target_dir("acme-widget-b9d71e86", "main")
+    assert ctx.target_dir == pr.target.target_dir("acme-widget-b9d71e86", "main")
     assert ctx.host == "ghe.acme.com"
 
 
@@ -309,7 +310,7 @@ def test_resolve_local_names_the_repo_without_gh(monkeypatch, tmp_path):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
     wt = _git_repo(tmp_path / "wt", origin="https://github.com/Acme/Widget.git")
 
-    assert pr_context.resolve_local(repo_dir=str(wt)).repo == "acme/widget"
+    assert pr.context.resolve_local(repo_dir=str(wt)).repo == "acme/widget"
 
 
 def test_resolve_local_exits_without_an_origin_remote(monkeypatch, tmp_path, capsys):
@@ -319,7 +320,7 @@ def test_resolve_local_exits_without_an_origin_remote(monkeypatch, tmp_path, cap
     wt = _git_repo(tmp_path / "wt", origin=None)
 
     with pytest.raises(SystemExit) as excinfo:
-        pr_context.resolve_local(repo_dir=str(wt))
+        pr.context.resolve_local(repo_dir=str(wt))
 
     assert excinfo.value.code == 1
     assert "origin" in capsys.readouterr().err
@@ -327,33 +328,33 @@ def test_resolve_local_exits_without_an_origin_remote(monkeypatch, tmp_path, cap
 
 def test_resolve_local_does_not_create_a_worktree_in_a_bare_repo(monkeypatch):
     """`pr status` used to make a checkout as a side effect of being run."""
-    monkeypatch.setattr(pr_context, "_git_toplevel", lambda cwd=None: None)
-    monkeypatch.setattr(git_topology, "is_bare_repo", lambda cwd=None: True)
-    monkeypatch.setattr(git_topology, "find_bare_repo_worktree",
+    monkeypatch.setattr(pr.context, "_git_toplevel", lambda cwd=None: None)
+    monkeypatch.setattr(git.topology, "is_bare_repo", lambda cwd=None: True)
+    monkeypatch.setattr(git.topology, "find_bare_repo_worktree",
                         lambda cwd, branch: None)
-    monkeypatch.setattr(git_topology, "resolve_branch", lambda hint, cwd=None: hint)
+    monkeypatch.setattr(git.topology, "resolve_branch", lambda hint, cwd=None: hint)
     monkeypatch.setattr(
-        pr_target, "repo_identity_from_origin",
-        lambda cwd=None: pr_target.RepoIdentity(label="acme/widget", key="widget"),
+        pr.target, "repo_identity_from_origin",
+        lambda cwd=None: pr.target.RepoIdentity(label="acme/widget", key="widget"),
     )
     monkeypatch.setattr(
-        git_topology, "create_worktree_for_branch",
+        git.topology, "create_worktree_for_branch",
         lambda *a, **kw: pytest.fail("resolve_local must not create a worktree"),
     )
 
-    ctx = pr_context.resolve_local(branch="feat/login", repo_dir="/bare")
+    ctx = pr.context.resolve_local(branch="feat/login", repo_dir="/bare")
 
     assert ctx.worktree_root is None
     assert ctx.branch == "feat/login"
 
 
 def test_resolve_at_local_takes_the_local_rung(monkeypatch):
-    monkeypatch.setattr(pr_context, "resolve",
+    monkeypatch.setattr(pr.context, "resolve",
                         lambda **kw: pytest.fail("must not reach gh"))
-    monkeypatch.setattr(pr_context, "resolve_local",
+    monkeypatch.setattr(pr.context, "resolve_local",
                         lambda **kw: make_ctx(pr_number=None))
 
-    ctx = pr_context.resolve_at(pr_context.ContextDepth.LOCAL, branch="feat/x")
+    ctx = pr.context.resolve_at(pr.context.ContextDepth.LOCAL, branch="feat/x")
 
     assert ctx.pr_number is None
 
@@ -361,32 +362,32 @@ def test_resolve_at_local_takes_the_local_rung(monkeypatch):
 def test_resolve_at_local_escalates_for_an_explicit_pr(monkeypatch):
     """A PR number names a branch only gh can report, and the branch is half the
     target key — honouring LOCAL here would key the run on the wrong branch."""
-    monkeypatch.setattr(pr_context, "resolve_local",
+    monkeypatch.setattr(pr.context, "resolve_local",
                         lambda **kw: pytest.fail("a PR cannot be resolved locally"))
-    monkeypatch.setattr(pr_context, "resolve", lambda **kw: make_ctx(pr_number=42))
+    monkeypatch.setattr(pr.context, "resolve", lambda **kw: make_ctx(pr_number=42))
 
-    ctx = pr_context.resolve_at(pr_context.ContextDepth.LOCAL, pr="42")
+    ctx = pr.context.resolve_at(pr.context.ContextDepth.LOCAL, pr_ref="42")
 
     assert ctx.pr_number == 42
 
 
 def test_resolve_at_remote_always_takes_the_deep_rung(monkeypatch):
-    monkeypatch.setattr(pr_context, "resolve_local",
+    monkeypatch.setattr(pr.context, "resolve_local",
                         lambda **kw: pytest.fail("REMOTE must not resolve locally"))
-    monkeypatch.setattr(pr_context, "resolve", lambda **kw: make_ctx())
+    monkeypatch.setattr(pr.context, "resolve", lambda **kw: make_ctx())
 
-    assert pr_context.resolve_at(pr_context.ContextDepth.REMOTE).pr_number == 42
+    assert pr.context.resolve_at(pr.context.ContextDepth.REMOTE).pr_number == 42
 
 
 def test_resolve_at_none_resolves_nothing(monkeypatch):
     """NONE is not "resolve less" — there is nothing to resolve. A command at
     this depth answers from the state root, so neither rung may be reached."""
-    monkeypatch.setattr(pr_context, "resolve_local",
+    monkeypatch.setattr(pr.context, "resolve_local",
                         lambda **kw: pytest.fail("NONE must resolve nothing"))
-    monkeypatch.setattr(pr_context, "resolve",
+    monkeypatch.setattr(pr.context, "resolve",
                         lambda **kw: pytest.fail("NONE must resolve nothing"))
 
-    ctx = pr_context.resolve_at(pr_context.ContextDepth.NONE)
+    ctx = pr.context.resolve_at(pr.context.ContextDepth.NONE)
 
     assert ctx.repo == ""
     assert ctx.branch == ""
@@ -400,11 +401,11 @@ def test_resolve_at_none_is_not_escalated_by_an_explicit_pr(monkeypatch):
     one would spend a `gh` call on a value the handler never reads — and a
     command declared read-only would hit the network for a flag passed by
     habit."""
-    monkeypatch.setattr(pr_context, "resolve",
+    monkeypatch.setattr(pr.context, "resolve",
                         lambda **kw: pytest.fail("NONE must not escalate"))
 
-    assert pr_context.resolve_at(
-        pr_context.ContextDepth.NONE, pr="42",
+    assert pr.context.resolve_at(
+        pr.context.ContextDepth.NONE, pr_ref="42",
     ).pr_number is None
 
 
@@ -412,7 +413,7 @@ def test_an_unresolved_context_has_no_usable_target(tmp_path):
     """A handler that reads the target despite declaring it needed nothing
     fails at its first open, rather than writing a run's bookkeeping wherever
     the caller happened to be standing."""
-    target = pr_context.ResolvedContext.unresolved().target_dir
+    target = pr.context.ResolvedContext.unresolved().target_dir
 
     assert target != Path("")
     with pytest.raises(OSError):
@@ -425,7 +426,7 @@ def test_resolve_at_none_works_outside_a_git_repository(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     calls = _recorded_runs(monkeypatch)
 
-    pr_context.resolve_at(pr_context.ContextDepth.NONE)
+    pr.context.resolve_at(pr.context.ContextDepth.NONE)
 
     assert calls == []
 
@@ -440,9 +441,9 @@ def _stub_run(monkeypatch, returncode, stdout="", stderr=""):
     exercise the ``gh`` fallback rather than whichever repo the suite happens to
     be running inside. The parse is covered on its own below.
     """
-    monkeypatch.setattr(pr_target, "repo_identity_from_origin", lambda cwd=None: None)
+    monkeypatch.setattr(pr.target, "repo_identity_from_origin", lambda cwd=None: None)
     monkeypatch.setattr(
-        pr_context.subprocess, "run",
+        pr.context.subprocess, "run",
         lambda cmd, **kwargs: subprocess.CompletedProcess(
             cmd, returncode, stdout, stderr),
     )
@@ -450,7 +451,7 @@ def _stub_run(monkeypatch, returncode, stdout="", stderr=""):
 
 def test_detect_repo_returns_name_with_owner(monkeypatch):
     _stub_run(monkeypatch, 0, stdout="acme/widget\n")
-    assert pr_context.detect_repo() == "acme/widget"
+    assert pr.context.detect_repo() == "acme/widget"
 
 
 def test_detect_repo_quotes_what_gh_said(monkeypatch, capsys):
@@ -458,7 +459,7 @@ def test_detect_repo_quotes_what_gh_said(monkeypatch, capsys):
     _stub_run(monkeypatch, 1, stderr="gh: Bad credentials (HTTP 401)")
 
     with pytest.raises(SystemExit) as excinfo:
-        pr_context.detect_repo()
+        pr.context.detect_repo()
 
     err = capsys.readouterr().err
     assert excinfo.value.code == 1
@@ -474,7 +475,7 @@ def test_detect_repo_calls_a_5xx_transient(monkeypatch, capsys):
     ))
 
     with pytest.raises(SystemExit):
-        pr_context.detect_repo()
+        pr.context.detect_repo()
 
     err = capsys.readouterr().err
     assert "retry later" in err
@@ -486,7 +487,7 @@ def test_detect_repo_degrades_when_gh_says_nothing(monkeypatch, capsys):
     _stub_run(monkeypatch, 1)
 
     with pytest.raises(SystemExit):
-        pr_context.detect_repo()
+        pr.context.detect_repo()
 
     assert capsys.readouterr().err.strip().endswith("via `gh repo view` (exit 1)")
 
@@ -496,7 +497,7 @@ def test_detect_repo_rejects_an_empty_name_from_a_zero_exit(monkeypatch, capsys)
     _stub_run(monkeypatch, 0, stdout="\n", stderr="no git remotes found")
 
     with pytest.raises(SystemExit) as excinfo:
-        pr_context.detect_repo()
+        pr.context.detect_repo()
 
     assert excinfo.value.code == 1
     assert "no git remotes found" in capsys.readouterr().err
@@ -508,7 +509,7 @@ def test_detect_repo_rejects_an_empty_name_from_a_zero_exit(monkeypatch, capsys)
 def test_pr_head_resolves_both_halves(monkeypatch):
     _stub_run(monkeypatch, 0, stdout="feat/login abc123 main\n")
 
-    head = pr_context._pr_head("acme/widget", 42)
+    head = pr.context._pr_head("acme/widget", 42)
 
     assert head == PRHead(branch="feat/login", sha="abc123", base="main")
     assert head.resolved
@@ -519,7 +520,7 @@ def test_pr_head_carries_a_stacked_pr_s_own_base(monkeypatch):
     parent without a second call to learn what that parent is."""
     _stub_run(monkeypatch, 0, stdout="feat/child abc123 feat/parent\n")
 
-    assert pr_context._pr_head("acme/widget", 42).base == "feat/parent"
+    assert pr.context._pr_head("acme/widget", 42).base == "feat/parent"
 
 
 def test_pr_head_resolves_without_a_base(monkeypatch):
@@ -527,7 +528,7 @@ def test_pr_head_resolves_without_a_base(monkeypatch):
     where the head has none, so refusing the whole read would be worse."""
     _stub_run(monkeypatch, 0, stdout="feat/login abc123\n")
 
-    head = pr_context._pr_head("acme/widget", 42)
+    head = pr.context._pr_head("acme/widget", 42)
 
     assert head.resolved
     assert head.base == ""
@@ -537,7 +538,7 @@ def test_pr_head_carries_the_reason_gh_gave(monkeypatch):
     """The caller decides this is fatal, so the caller must be able to say why."""
     _stub_run(monkeypatch, 1, stderr="HTTP 503: No server is currently available")
 
-    head = pr_context._pr_head("acme/widget", 42)
+    head = pr.context._pr_head("acme/widget", 42)
 
     assert not head.resolved
     assert "acme/widget#42" in head.reason
@@ -549,7 +550,7 @@ def test_pr_head_reports_a_partial_answer_from_a_zero_exit(monkeypatch):
     """gh answered, but without the head SHA — say so rather than going quiet."""
     _stub_run(monkeypatch, 0, stdout="feat/x\n")
 
-    head = pr_context._pr_head("acme/widget", 42)
+    head = pr.context._pr_head("acme/widget", 42)
 
     assert not head.resolved
     assert "acme/widget#42" in head.reason
@@ -562,16 +563,16 @@ def test_pr_head_with_a_branch_but_no_sha_is_not_resolved():
 
 
 def test_resolve_prints_the_reason_gh_could_not_read_the_pr_head(monkeypatch, capsys):
-    monkeypatch.setattr(pr_context, "_resolve_worktree",
-                        lambda cwd, pr, branch: (Path("/wt"), "/wt"))
-    monkeypatch.setattr(pr_context, "detect_repo", lambda cwd=None: "acme/widget")
-    monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "deadbeef")
-    monkeypatch.setattr(pr_context, "_pr_head", lambda repo, n: PRHead(
+    monkeypatch.setattr(pr.context, "_resolve_worktree",
+                        lambda cwd, pr_ref, branch: (Path("/wt"), "/wt"))
+    monkeypatch.setattr(pr.context, "detect_repo", lambda cwd=None: "acme/widget")
+    monkeypatch.setattr(pr.context, "_head_sha", lambda cwd=None: "deadbeef")
+    monkeypatch.setattr(pr.context, "_pr_head", lambda repo, n: PRHead(
         reason="`gh pr view` could not read the head of acme/widget#2973 — "
                "server error, retry later: HTTP 503"))
 
     with pytest.raises(SystemExit) as excinfo:
-        pr_context.resolve(pr="2973")
+        pr.context.resolve(pr_ref="2973")
 
     err = capsys.readouterr().err
     assert excinfo.value.code == 1
@@ -595,35 +596,35 @@ def test_detect_repo_reads_the_origin_remote(monkeypatch):
     below; the budget property this protects is about the common path, which
     an empty or github.com host is.
     """
-    monkeypatch.setattr(pr_target, "repo_identity_from_origin",
-                        lambda cwd=None: pr_target.RepoIdentity(
+    monkeypatch.setattr(pr.target, "repo_identity_from_origin",
+                        lambda cwd=None: pr.target.RepoIdentity(
                             label="acme/widget", key="acme-widget-1234abcd"))
 
     def fail(*a, **k):
         raise AssertionError("detect_repo must not call gh when origin answers")
 
-    monkeypatch.setattr(pr_context.gh_client, "run", fail)
+    monkeypatch.setattr(gh.client, "run", fail)
 
-    assert pr_context.detect_repo("/wt") == "acme/widget"
+    assert pr.context.detect_repo("/wt") == "acme/widget"
 
 
 def test_detect_repo_falls_back_to_gh_without_an_origin(monkeypatch):
     """A remote the origin parse cannot name — GHES, a non-github forge — still
     resolves, because the parse folds case and drops the host."""
-    monkeypatch.setattr(pr_target, "repo_identity_from_origin", lambda cwd=None: None)
-    monkeypatch.setattr(pr_context.gh_client, "run",
+    monkeypatch.setattr(pr.target, "repo_identity_from_origin", lambda cwd=None: None)
+    monkeypatch.setattr(gh.client, "run",
                         lambda *a, **k: CmdResult(returncode=0, stdout="acme/widget\n"))
 
-    assert pr_context.detect_repo("/wt") == "acme/widget"
+    assert pr.context.detect_repo("/wt") == "acme/widget"
 
 
 def test_detect_repo_exits_when_neither_can_name_the_repo(monkeypatch, capsys):
-    monkeypatch.setattr(pr_target, "repo_identity_from_origin", lambda cwd=None: None)
-    monkeypatch.setattr(pr_context.gh_client, "run",
+    monkeypatch.setattr(pr.target, "repo_identity_from_origin", lambda cwd=None: None)
+    monkeypatch.setattr(gh.client, "run",
                         lambda *a, **k: CmdResult(returncode=1, stderr="not a repository"))
 
     with pytest.raises(SystemExit) as excinfo:
-        pr_context.detect_repo("/wt")
+        pr.context.detect_repo("/wt")
 
     assert excinfo.value.code == 1
     assert "Cannot determine repository" in capsys.readouterr().err
@@ -650,15 +651,15 @@ class TestANonPublicHostPrefersWhatTheAPICallsIt:
     @classmethod
     def _origin(cls, monkeypatch, host, label=LABEL):
         monkeypatch.setattr(
-            pr_target, "repo_identity_from_origin",
-            lambda cwd=None: pr_target.RepoIdentity(
+            pr.target, "repo_identity_from_origin",
+            lambda cwd=None: pr.target.RepoIdentity(
                 label=label, key="acme-widget-1234abcd", host=host))
 
     def test_an_enterprise_host_asks_gh_for_the_slug(self, monkeypatch):
         self._origin(monkeypatch, self.HOST)
-        monkeypatch.setattr(pr_context.gh_client, "repo_slug",
+        monkeypatch.setattr(gh.client, "repo_slug",
                             lambda cwd=None: "acme/Widget-API")
-        assert pr_context.detect_repo("/wt") == "acme/widget-api"
+        assert pr.context.detect_repo("/wt") == "acme/widget-api"
 
     def test_the_answer_is_folded(self, monkeypatch):
         """`nameWithOwner` preserves case; every comparison downstream folds it.
@@ -669,9 +670,9 @@ class TestANonPublicHostPrefersWhatTheAPICallsIt:
         path exists to enable.
         """
         self._origin(monkeypatch, self.HOST)
-        monkeypatch.setattr(pr_context.gh_client, "repo_slug",
+        monkeypatch.setattr(gh.client, "repo_slug",
                             lambda cwd=None: "ACME/WIDGET")
-        slug = pr_context.detect_repo("/wt")
+        slug = pr.context.detect_repo("/wt")
         assert slug == "acme/widget"
         # The API's own casing, not merely "some lowercase string": asserting
         # `slug == fold_case(slug)` would hold for any lowercase literal and so
@@ -687,22 +688,22 @@ class TestANonPublicHostPrefersWhatTheAPICallsIt:
         failing a command that has a usable name in hand.
         """
         self._origin(monkeypatch, self.HOST)
-        monkeypatch.setattr(pr_context.gh_client, "repo_slug", lambda cwd=None: "")
-        assert pr_context.detect_repo("/wt") == self.LABEL
+        monkeypatch.setattr(gh.client, "repo_slug", lambda cwd=None: "")
+        assert pr.context.detect_repo("/wt") == self.LABEL
 
     def test_it_goes_through_the_call_that_retries(self, monkeypatch):
         """`repo_slug` wraps `gh repo view` in `_with_retries`; the inline call
         below it in `detect_repo` does not, so a throttle on this path used to
         decide the repo's name."""
         self._origin(monkeypatch, self.HOST)
-        monkeypatch.setattr(pr_context.gh_client, "repo_slug",
+        monkeypatch.setattr(gh.client, "repo_slug",
                             lambda cwd=None: "acme/from-repo-slug")
 
         def fail(*a, **k):
             raise AssertionError("must go through repo_slug, not the bare run")
 
-        monkeypatch.setattr(pr_context.gh_client, "run", fail)
-        assert pr_context.detect_repo("/wt") == "acme/from-repo-slug"
+        monkeypatch.setattr(gh.client, "run", fail)
+        assert pr.context.detect_repo("/wt") == "acme/from-repo-slug"
 
     @pytest.mark.parametrize("host", ["", "github.com", "GitHub.com"])
     # passes-at-base: asserts the GraphQL-budget property the change preserves
@@ -713,9 +714,9 @@ class TestANonPublicHostPrefersWhatTheAPICallsIt:
         def fail(*a, **k):
             raise AssertionError(f"host {host!r} must not reach the API")
 
-        monkeypatch.setattr(pr_context.gh_client, "repo_slug", fail)
-        monkeypatch.setattr(pr_context.gh_client, "run", fail)
-        assert pr_context.detect_repo("/wt") == self.LABEL
+        monkeypatch.setattr(gh.client, "repo_slug", fail)
+        monkeypatch.setattr(gh.client, "run", fail)
+        assert pr.context.detect_repo("/wt") == self.LABEL
 
 
 # ── the LOCAL rung still names an open PR when it can ───────────────────────
@@ -724,34 +725,34 @@ class TestANonPublicHostPrefersWhatTheAPICallsIt:
 def test_pr_number_if_reachable_reports_an_open_pr(monkeypatch):
     """A self-review on a branch whose PR is open uses the number to fetch
     reply threads and skip findings already answered there."""
-    monkeypatch.setattr(pr_context, "_pr_from_branch",
-                        lambda repo, branch: pr_context.BranchPR(number=2973))
-    assert pr_context.pr_number_if_reachable("acme/widget", "feat/x").number == 2973
+    monkeypatch.setattr(pr.context, "_pr_from_branch",
+                        lambda repo, branch: pr.context.BranchPR(number=2973))
+    assert pr.context.pr_number_if_reachable("acme/widget", "feat/x").number == 2973
 
 
 def test_pr_number_if_reachable_carries_the_base_off_the_same_call(monkeypatch):
     """The base is what a stacked branch's diff is measured against, and it rides
     on the call that found the number rather than costing a second round trip."""
     monkeypatch.setattr(
-        pr_context, "_pr_from_branch",
-        lambda repo, branch: pr_context.BranchPR(number=2973, base="feat/parent"),
+        pr.context, "_pr_from_branch",
+        lambda repo, branch: pr.context.BranchPR(number=2973, base="feat/parent"),
     )
-    assert pr_context.pr_number_if_reachable("acme/widget", "feat/x").base == "feat/parent"
+    assert pr.context.pr_number_if_reachable("acme/widget", "feat/x").base == "feat/parent"
 
 
 def test_pr_number_if_reachable_degrades_when_github_is_unreachable(monkeypatch):
     """Best-effort by construction: an exhausted budget is indistinguishable
     here from a branch with no PR, and neither may end the run."""
-    monkeypatch.setattr(pr_context, "_pr_from_branch",
-                        lambda repo, branch: pr_context.BranchPR())
-    found = pr_context.pr_number_if_reachable("acme/widget", "feat/x")
+    monkeypatch.setattr(pr.context, "_pr_from_branch",
+                        lambda repo, branch: pr.context.BranchPR())
+    found = pr.context.pr_number_if_reachable("acme/widget", "feat/x")
     assert found.number is None
     assert found.base == ""
 
 
 def test_pr_lookup_is_skipped_without_a_branch():
     """Nothing to ask about, so nothing is asked."""
-    assert pr_context.pr_number_if_reachable("acme/widget", "") == pr_context.BranchPR()
+    assert pr.context.pr_number_if_reachable("acme/widget", "") == pr.context.BranchPR()
 
 
 def test_a_branch_with_no_pr_yields_no_base(monkeypatch):
@@ -760,30 +761,30 @@ def test_a_branch_with_no_pr_yields_no_base(monkeypatch):
     literal "null null" and exits 0. That is two fields, so it passed the arity
     check, and the base came back as the branch name "null" — which resolves to
     no ref, so a branch with no PR yet reviewed nothing at all."""
-    monkeypatch.setattr(pr_context.gh_client, "json_out", lambda *a, **kw: [])
+    monkeypatch.setattr(gh.client, "json_out", lambda *a, **kw: [])
 
-    assert pr_context._pr_from_branch("acme/widget", "feat/x") == pr_context.BranchPR()
+    assert pr.context._pr_from_branch("acme/widget", "feat/x") == pr.context.BranchPR()
 
 
 def test_a_branch_lookup_reads_both_fields_off_the_json(monkeypatch):
     monkeypatch.setattr(
-        pr_context.gh_client, "json_out",
+        gh.client, "json_out",
         lambda *a, **kw: [{"number": 7, "baseRefName": "feat/parent"}],
     )
 
-    found = pr_context._pr_from_branch("acme/widget", "feat/child")
+    found = pr.context._pr_from_branch("acme/widget", "feat/child")
 
-    assert found == pr_context.BranchPR(number=7, base="feat/parent")
+    assert found == pr.context.BranchPR(number=7, base="feat/parent")
 
 
 def test_a_pr_reporting_no_base_is_not_given_one(monkeypatch):
     """An absent base falls through the ladder; a placeholder would stop it."""
     monkeypatch.setattr(
-        pr_context.gh_client, "json_out",
+        gh.client, "json_out",
         lambda *a, **kw: [{"number": 7, "baseRefName": None}],
     )
 
-    assert pr_context._pr_from_branch("acme/widget", "feat/x").base == ""
+    assert pr.context._pr_from_branch("acme/widget", "feat/x").base == ""
 
 
 # ── the shared base ladder ──────────────────────────────────────────────────
@@ -791,48 +792,48 @@ def test_a_pr_reporting_no_base_is_not_given_one(monkeypatch):
 
 def test_base_branch_prefers_an_explicit_override(monkeypatch):
     """No derivation outranks the operator saying so."""
-    monkeypatch.setattr(git_topology, "default_branch", lambda cwd=None: "main")
-    monkeypatch.setattr(git_topology, "stack_parent",
+    monkeypatch.setattr(git.topology, "default_branch", lambda cwd=None: "main")
+    monkeypatch.setattr(git.topology, "stack_parent",
                         lambda cwd=None, default="": "derived")
 
     ctx = make_ctx(base="from-github")
 
-    assert pr_context.base_branch(ctx, override="mine", cwd="/wt") == "mine"
+    assert pr.context.base_branch(ctx, override="mine", cwd="/wt") == "mine"
 
 
 def test_base_branch_takes_githubs_base_over_a_derived_one(monkeypatch):
     """An open PR states its base as a fact; local ancestry only infers one."""
-    monkeypatch.setattr(git_topology, "default_branch", lambda cwd=None: "main")
-    monkeypatch.setattr(git_topology, "stack_parent",
+    monkeypatch.setattr(git.topology, "default_branch", lambda cwd=None: "main")
+    monkeypatch.setattr(git.topology, "stack_parent",
                         lambda cwd=None, default="": "derived")
 
     ctx = make_ctx(base="release/2.1")
 
-    assert pr_context.base_branch(ctx, cwd="/wt") == "release/2.1"
+    assert pr.context.base_branch(ctx, cwd="/wt") == "release/2.1"
 
 
 def test_base_branch_derives_a_stack_parent_when_github_cannot_say(monkeypatch):
     """The case this ladder exists for: a branch stacked on another feature
     branch that has no PR yet. Measuring against the trunk would report the
     parent's commits as this branch's own."""
-    monkeypatch.setattr(git_topology, "default_branch", lambda cwd=None: "main")
-    monkeypatch.setattr(git_topology, "stack_parent",
+    monkeypatch.setattr(git.topology, "default_branch", lambda cwd=None: "main")
+    monkeypatch.setattr(git.topology, "stack_parent",
                         lambda cwd=None, default="": "feat/parent")
 
     ctx = make_ctx(base="")
 
-    assert pr_context.base_branch(ctx, cwd="/wt") == "feat/parent"
+    assert pr.context.base_branch(ctx, cwd="/wt") == "feat/parent"
 
 
 def test_base_branch_falls_back_to_the_default_branch(monkeypatch):
     """An ordinary branch off the trunk derives nothing, and must keep the
     behaviour every caller had before the ladder existed."""
-    monkeypatch.setattr(git_topology, "default_branch", lambda cwd=None: "trunk")
-    monkeypatch.setattr(git_topology, "stack_parent", lambda cwd=None, default="": "")
+    monkeypatch.setattr(git.topology, "default_branch", lambda cwd=None: "trunk")
+    monkeypatch.setattr(git.topology, "stack_parent", lambda cwd=None, default="": "")
 
     ctx = make_ctx(base="")
 
-    assert pr_context.base_branch(ctx, cwd="/wt") == "trunk"
+    assert pr.context.base_branch(ctx, cwd="/wt") == "trunk"
 
 
 def test_base_branch_derives_against_the_worktree_when_given_no_cwd(monkeypatch):
@@ -840,14 +841,14 @@ def test_base_branch_derives_against_the_worktree_when_given_no_cwd(monkeypatch)
     checkout — asking in the directory the operator happened to stand in
     resolves some other branch's parent."""
     seen = {}
-    monkeypatch.setattr(git_topology, "default_branch", lambda cwd=None: "main")
+    monkeypatch.setattr(git.topology, "default_branch", lambda cwd=None: "main")
 
     def _parent(cwd=None, default=""):
         seen["cwd"] = cwd
         return ""
 
-    monkeypatch.setattr(git_topology, "stack_parent", _parent)
+    monkeypatch.setattr(git.topology, "stack_parent", _parent)
 
-    pr_context.base_branch(make_ctx(base="", worktree_root=Path("/checkout")))
+    pr.context.base_branch(make_ctx(base="", worktree_root=Path("/checkout")))
 
     assert seen["cwd"] == "/checkout"

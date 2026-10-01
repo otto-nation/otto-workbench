@@ -19,7 +19,7 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-from review import reconcile as review_reconcile
+import review.reconcile
 from review.document import SECTION_PRIOR_FINDINGS
 from review.paths import FILENAME_PRIOR_FINDINGS
 from review.grammar import FindingIdentity
@@ -106,13 +106,13 @@ class TestParsePriorFindings:
             + "  The call reads `rows, _ := db.Query(sql)` today.\n"
             + "- **[M2]** **`cache.go:9`** — stale entry\n"
         )
-        first, second = review_reconcile._parse_prior_findings(prior)
+        first, second = review.reconcile._parse_prior_findings(prior)
         assert "rows, _ := db.Query(sql)" in first.text
         assert "rows, _ := db.Query(sql)" not in second.text
 
     def test_a_findings_text_stops_at_the_next_section(self):
         prior = PRIOR_ONE_FINDING + "\n## Verdict\nRequest changes.\n"
-        first = review_reconcile._parse_prior_findings(prior)[0]
+        first = review.reconcile._parse_prior_findings(prior)[0]
         assert "Request changes" not in first.text
 
 
@@ -121,71 +121,71 @@ class TestParsePriorFindings:
 
 class TestAccountedByTheReview:
     def test_empty_prior_reconciles_nothing(self):
-        assert review_reconcile.reconcile("", "<!-- sid:abc -->").records == []
+        assert review.reconcile.reconcile("", "<!-- sid:abc -->").records == []
 
     def test_sid_marker_carries_finding_forward(self):
         sid = FindingIdentity("handler.go", None, "missing error check").stable_id
-        review = (
+        review_md = (
             "## Must fix\n"
             f"- **[M1]** <!-- sid:{sid} --> **`other.go:1`** — reworded\n"
         )
-        record = _by_id(review_reconcile.reconcile(PRIOR_ONE_FINDING, review), "M1")
+        record = _by_id(review.reconcile.reconcile(PRIOR_ONE_FINDING, review_md), "M1")
         assert record.disposition is PriorDisposition.STILL_OPEN
         assert record.source is DispositionSource.CARRIED
 
     def test_verbatim_carry_forward_without_marker(self):
-        review = (
+        review_md = (
             "## Must fix\n"
             "- **[M2]** **`handler.go:42`** — missing error check\n"
         )
-        assert review_reconcile.reconcile(PRIOR_ONE_FINDING, review).unaccounted == []
+        assert review.reconcile.reconcile(PRIOR_ONE_FINDING, review_md).unaccounted == []
 
     def test_ledger_entry_accounts_for_fixed_finding(self):
-        review = "## Summary\nAll prior findings addressed.\n" + _ledger(
+        review_path = "## Summary\nAll prior findings addressed.\n" + _ledger(
             "- **[M1]** `handler.go` — Fixed",
         )
-        record = _by_id(review_reconcile.reconcile(PRIOR_ONE_FINDING, review), "M1")
+        record = _by_id(review.reconcile.reconcile(PRIOR_ONE_FINDING, review_path), "M1")
         assert record.disposition is PriorDisposition.FIXED
         assert record.source is DispositionSource.LEDGER
 
     def test_a_verdict_ending_a_sentence_is_read_as_that_verdict(self):
         """The ledger form a synthesis agent writes when its detail is prose."""
-        review = _ledger("- **[M1]** `handler.go` — Fixed. The error is checked now.")
-        record = _by_id(review_reconcile.reconcile(PRIOR_ONE_FINDING, review), "M1")
+        review_md = _ledger("- **[M1]** `handler.go` — Fixed. The error is checked now.")
+        record = _by_id(review.reconcile.reconcile(PRIOR_ONE_FINDING, review_md), "M1")
         assert record.disposition is PriorDisposition.FIXED
         assert record.source is DispositionSource.LEDGER
 
     def test_a_prior_finding_citing_a_bare_file_is_still_matched(self):
         """A location a review wrote without a line number still names its file."""
         prior = "## Nit\n- [ ] **[N9]** `bin/otto-workbench` — the guard is unreachable\n"
-        review = _ledger("- **[N9]** `bin/otto-workbench` — Fixed")
-        record = _by_id(review_reconcile.reconcile(prior, review), "N9")
+        review_md = _ledger("- **[N9]** `bin/otto-workbench` — Fixed")
+        record = _by_id(review.reconcile.reconcile(prior, review_md), "N9")
         assert record.ref.path == "bin/otto-workbench"
         assert record.disposition is PriorDisposition.FIXED
 
     def test_a_bare_file_carries_forward_by_stable_id(self):
         """Without a path there is no stable ID, and no carry-forward to match."""
         prior = "## Nit\n- [ ] **[N9]** `bin/otto-workbench` — the guard is unreachable\n"
-        review = "## Nit\n- **[N3]** `bin/otto-workbench` — the guard is unreachable\n"
-        record = _by_id(review_reconcile.reconcile(prior, review), "N9")
+        review_md = "## Nit\n- **[N3]** `bin/otto-workbench` — the guard is unreachable\n"
+        record = _by_id(review.reconcile.reconcile(prior, review_md), "N9")
         assert record.disposition is PriorDisposition.STILL_OPEN
         assert record.source is DispositionSource.CARRIED
 
     def test_ledger_matches_reworded_finding_by_path(self):
-        review = (
+        review_path = (
             "## Must fix\n"
             "- **[M4]** **`handler.go:42`** — db.Query() error is discarded\n"
             + _ledger("- **[M1]** `handler.go` — Still open")
         )
-        assert review_reconcile.reconcile(PRIOR_ONE_FINDING, review).unaccounted == []
+        assert review.reconcile.reconcile(PRIOR_ONE_FINDING, review_path).unaccounted == []
 
     def test_ledger_entry_may_carry_a_line_number(self):
-        review = _ledger("- **[M1]** `handler.go:42` — Fixed")
-        assert review_reconcile.reconcile(PRIOR_ONE_FINDING, review).unaccounted == []
+        review_md = _ledger("- **[M1]** `handler.go:42` — Fixed")
+        assert review.reconcile.reconcile(PRIOR_ONE_FINDING, review_md).unaccounted == []
 
     def test_reports_finding_the_review_dropped(self):
-        review = "## Must fix\n- **[M1]** **`other.go:7`** — unrelated issue\n"
-        assert review_reconcile.reconcile(PRIOR_ONE_FINDING, review).unaccounted == [
+        review_md = "## Must fix\n- **[M1]** **`other.go:7`** — unrelated issue\n"
+        assert review.reconcile.reconcile(PRIOR_ONE_FINDING, review_md).unaccounted == [
             "M1 `handler.go`",
         ]
 
@@ -194,38 +194,38 @@ class TestAccountedByTheReview:
             PRIOR_ONE_FINDING
             + "- **[M2]** **`handler.go:88`** — unchecked type assertion\n"
         )
-        review = _ledger("- **[M1]** `handler.go` — Fixed")
-        assert review_reconcile.reconcile(prior, review).unaccounted == ["M2 `handler.go`"]
+        review_md = _ledger("- **[M1]** `handler.go` — Fixed")
+        assert review.reconcile.reconcile(prior, review_md).unaccounted == ["M2 `handler.go`"]
 
     def test_reports_only_the_unaccounted_one(self):
         prior = PRIOR_ONE_FINDING + "- **[M2]** **`cache.go:9`** — stale entry\n"
-        review = _ledger("- **[M1]** `handler.go` — Fixed")
-        assert review_reconcile.reconcile(prior, review).unaccounted == ["M2 `cache.go`"]
+        review_md = _ledger("- **[M1]** `handler.go` — Fixed")
+        assert review.reconcile.reconcile(prior, review_md).unaccounted == ["M2 `cache.go`"]
 
     def test_a_declined_verdict_is_recorded_as_stated(self):
-        review = _ledger("- **[M1]** `handler.go` — Declined — documented tradeoff")
-        record = _by_id(review_reconcile.reconcile(PRIOR_ONE_FINDING, review), "M1")
+        review_md = _ledger("- **[M1]** `handler.go` — Declined — documented tradeoff")
+        record = _by_id(review.reconcile.reconcile(PRIOR_ONE_FINDING, review_md), "M1")
         assert record.disposition is PriorDisposition.DECLINED
         assert record.source.stated
 
     def test_an_unreadable_ledger_verdict_is_undecided_but_attributed(self):
-        review = _ledger("- **[M1]** `handler.go` — moved to a follow-up")
-        record = _by_id(review_reconcile.reconcile(PRIOR_ONE_FINDING, review), "M1")
+        review_md = _ledger("- **[M1]** `handler.go` — moved to a follow-up")
+        record = _by_id(review.reconcile.reconcile(PRIOR_ONE_FINDING, review_md), "M1")
         assert record.disposition is None
         assert record.source is DispositionSource.LEDGER
         assert record.reason is UndecidedReason.UNREADABLE_VERDICT
         assert "moved to a follow-up" in record.basis
 
     def test_nothing_is_inferred_without_a_worktree(self):
-        review = "## Summary\nnothing to say.\n"
-        record = _by_id(review_reconcile.reconcile(PRIOR_ONE_FINDING, review), "M1")
+        review_md = "## Summary\nnothing to say.\n"
+        record = _by_id(review.reconcile.reconcile(PRIOR_ONE_FINDING, review_md), "M1")
         assert record.source is DispositionSource.NONE
         assert record.reason is UndecidedReason.NOT_CHECKABLE
         assert record.basis == "there was no worktree to check it against"
 
     def test_a_decided_finding_carries_no_undecided_reason(self):
-        review = _ledger("- **[M1]** `handler.go` — Fixed")
-        assert _by_id(review_reconcile.reconcile(PRIOR_ONE_FINDING, review), "M1").reason is None
+        review_md = _ledger("- **[M1]** `handler.go` — Fixed")
+        assert _by_id(review.reconcile.reconcile(PRIOR_ONE_FINDING, review_md), "M1").reason is None
 
 
 # ── What the tree settles on its own ─────────────────────────────────────────
@@ -241,7 +241,7 @@ class TestInferredFromTheTree:
         _commit(repo, "after")
 
         prior = _prior("- **[M1]** **`gone.go:4`** — leaky handle\n", sha=prior_sha)
-        record = _by_id(review_reconcile.reconcile(prior, "", str(repo)), "M1")
+        record = _by_id(review.reconcile.reconcile(prior, "", str(repo)), "M1")
         assert record.disposition is PriorDisposition.FIXED
         assert record.source is DispositionSource.TREE
         assert "no longer in the tree" in record.basis
@@ -252,7 +252,7 @@ class TestInferredFromTheTree:
         prior_sha = _commit(repo, "before")
 
         prior = _prior("- **[N1]** the retry loop never terminates\n", sha=prior_sha)
-        record = _by_id(review_reconcile.reconcile(prior, "", str(repo)), "N1")
+        record = _by_id(review.reconcile.reconcile(prior, "", str(repo)), "N1")
         assert record.reason is UndecidedReason.NO_LOCATION
         assert record.basis == "it names no file"
 
@@ -261,7 +261,7 @@ class TestInferredFromTheTree:
         prior_sha = _commit(repo, "before")
 
         prior = _prior("- **[M1]** **`imagined.go:4`** — invented\n", sha=prior_sha)
-        record = _by_id(review_reconcile.reconcile(prior, "", str(repo)), "M1")
+        record = _by_id(review.reconcile.reconcile(prior, "", str(repo)), "M1")
         assert record.disposition is None
         assert record.basis == "`imagined.go` is in neither tree"
 
@@ -286,7 +286,7 @@ class TestInferredFromTheTree:
 
         prior = _prior(
             "- **[M1]** **`latin1.sh:1`** — `func handle()` leaks\n", sha=prior_sha)
-        record = _by_id(review_reconcile.reconcile(prior, "", str(repo)), "M1")
+        record = _by_id(review.reconcile.reconcile(prior, "", str(repo)), "M1")
         assert record.disposition is PriorDisposition.FIXED
         assert record.source is DispositionSource.TREE
 
@@ -299,7 +299,7 @@ class TestInferredFromTheTree:
 
         prior = _prior(
             "- **[M1]** **`latin1.sh:1`** — `func handle()` leaks\n", sha=prior_sha)
-        record = _by_id(review_reconcile.reconcile(prior, "", str(repo)), "M1")
+        record = _by_id(review.reconcile.reconcile(prior, "", str(repo)), "M1")
         assert record.disposition is None
         assert record.basis == "the code it quotes is still in `latin1.sh`"
 
@@ -310,7 +310,7 @@ class TestInferredFromTheTree:
         _commit(repo, "after")
 
         prior = _prior("- **[M1]** **`gone.go:4`** — leaky handle\n")
-        record = _by_id(review_reconcile.reconcile(prior, "", str(repo)), "M1")
+        record = _by_id(review.reconcile.reconcile(prior, "", str(repo)), "M1")
         assert record.disposition is None
         assert record.basis == "the prior review names no commit to compare against"
 
@@ -324,7 +324,7 @@ class TestInferredFromTheTree:
             "- **[M1]** **`handler.go:4`** — `rows, _ := db.Query(sql)` drops the error\n",
             sha=prior_sha,
         )
-        record = _by_id(review_reconcile.reconcile(prior, "", str(repo)), "M1")
+        record = _by_id(review.reconcile.reconcile(prior, "", str(repo)), "M1")
         assert record.disposition is PriorDisposition.FIXED
         assert record.source is DispositionSource.TREE
         assert "`rows, _ := db.Query(sql)` is no longer in `handler.go`" in record.basis
@@ -339,7 +339,7 @@ class TestInferredFromTheTree:
             "- **[M1]** **`handler.go:5`** — `defer rows.Close()` runs before the check\n",
             sha=prior_sha,
         )
-        record = _by_id(review_reconcile.reconcile(prior, "", str(repo)), "M1")
+        record = _by_id(review.reconcile.reconcile(prior, "", str(repo)), "M1")
         assert record.disposition is None
         assert record.basis == "the code it quotes is still in `handler.go`"
 
@@ -354,7 +354,7 @@ class TestInferredFromTheTree:
             "- **[M1]** **`handler.go:4`** — should call `wrapAndAnnotateError(err)`\n",
             sha=prior_sha,
         )
-        record = _by_id(review_reconcile.reconcile(prior, "", str(repo)), "M1")
+        record = _by_id(review.reconcile.reconcile(prior, "", str(repo)), "M1")
         assert record.disposition is None
         assert record.basis.startswith("nothing it quotes was in `handler.go`")
 
@@ -365,7 +365,7 @@ class TestInferredFromTheTree:
         _commit(repo, "after")
 
         prior = _prior("- **[M1]** **`handler.go:4`** — `_` swallows it\n", sha=prior_sha)
-        record = _by_id(review_reconcile.reconcile(prior, "", str(repo)), "M1")
+        record = _by_id(review.reconcile.reconcile(prior, "", str(repo)), "M1")
         assert record.disposition is None
 
     def test_the_ledger_outranks_the_tree(self, repo):
@@ -379,8 +379,8 @@ class TestInferredFromTheTree:
             "- **[M1]** **`handler.go:4`** — `rows, _ := db.Query(sql)` drops the error\n",
             sha=prior_sha,
         )
-        review = _ledger("- **[M1]** `handler.go` — Declined — the caller checks it")
-        record = _by_id(review_reconcile.reconcile(prior, review, str(repo)), "M1")
+        review_md = _ledger("- **[M1]** `handler.go` — Declined — the caller checks it")
+        record = _by_id(review.reconcile.reconcile(prior, review_md, str(repo)), "M1")
         assert record.disposition is PriorDisposition.DECLINED
         assert record.source is DispositionSource.LEDGER
 
@@ -395,7 +395,7 @@ class TestInferredFromTheTree:
             "  The line reads `rows, _ := db.Query(sql)` today.\n",
             sha=prior_sha,
         )
-        record = _by_id(review_reconcile.reconcile(prior, "", str(repo)), "M1")
+        record = _by_id(review.reconcile.reconcile(prior, "", str(repo)), "M1")
         assert record.disposition is PriorDisposition.FIXED
 
     def test_the_next_findings_quotation_is_not_borrowed(self, repo):
@@ -410,7 +410,7 @@ class TestInferredFromTheTree:
             "- **[M2]** **`handler.go:4`** — `rows, _ := db.Query(sql)` drops the error\n",
             sha=prior_sha,
         )
-        reconciliation = review_reconcile.reconcile(prior, "", str(repo))
+        reconciliation = review.reconcile.reconcile(prior, "", str(repo))
         assert _by_id(reconciliation, "M1").disposition is None
         assert _by_id(reconciliation, "M2").disposition is PriorDisposition.FIXED
 
@@ -421,7 +421,7 @@ class TestInferredFromTheTree:
         head_sha = _commit(repo, "after")
 
         prior = _prior(PRIOR_ONE_FINDING, sha=prior_sha, date="2026-08-20")
-        reconciliation = review_reconcile.reconcile(prior, "", str(repo))
+        reconciliation = review.reconcile.reconcile(prior, "", str(repo))
         assert reconciliation.head_sha == head_sha
         assert reconciliation.prior_date == "2026-08-20"
         assert reconciliation.range_label == f"{prior_sha[:7]} → {head_sha[:7]}"
@@ -450,20 +450,20 @@ class TestPassedOver:
         )
 
     def test_a_finding_the_review_never_mentioned_comes_back_with_its_text(self, repo):
-        passed = review_reconcile.passed_over(self._intact(repo), "## Summary\nnothing.\n", str(repo))
+        passed = review.reconcile.passed_over(self._intact(repo), "## Summary\nnothing.\n", str(repo))
         assert [f.ref.finding_id for f in passed] == ["M1"]
         assert "drops the error" in passed[0].text
 
     def test_a_finding_the_review_carried_forward_is_settled(self, repo):
-        review = (
+        review_md = (
             "## Must fix\n"
             "- **[M4]** **`handler.go:4`** — `rows, _ := db.Query(sql)` drops the error\n"
         )
-        assert review_reconcile.passed_over(self._intact(repo), review, str(repo)) == []
+        assert review.reconcile.passed_over(self._intact(repo), review_md, str(repo)) == []
 
     def test_a_finding_the_ledger_ruled_on_is_settled(self, repo):
-        review = _ledger("- **[M1]** `handler.go` — Declined — documented tradeoff")
-        assert review_reconcile.passed_over(self._intact(repo), review, str(repo)) == []
+        review_md = _ledger("- **[M1]** `handler.go` — Declined — documented tradeoff")
+        assert review.reconcile.passed_over(self._intact(repo), review_md, str(repo)) == []
 
     def test_a_finding_the_tree_says_is_gone_is_settled(self, repo):
         (repo / "handler.go").write_text(_BEFORE)
@@ -475,19 +475,19 @@ class TestPassedOver:
             "- **[M1]** **`handler.go:4`** — `rows, _ := db.Query(sql)` drops the error\n",
             sha=prior_sha,
         )
-        assert review_reconcile.passed_over(prior, "## Summary\nnothing.\n", str(repo)) == []
+        assert review.reconcile.passed_over(prior, "## Summary\nnothing.\n", str(repo)) == []
 
     def test_an_unreadable_verdict_is_not_asked_about_again(self, repo):
         """Undecided, but not the review's omission — re-asking settles nothing."""
-        review = _ledger("- **[M1]** `handler.go` — moved to a follow-up")
-        assert review_reconcile.passed_over(self._intact(repo), review, str(repo)) == []
+        review_md = _ledger("- **[M1]** `handler.go` — moved to a follow-up")
+        assert review.reconcile.passed_over(self._intact(repo), review_md, str(repo)) == []
 
     def test_nothing_comes_back_when_there_is_no_tree_to_ask(self):
         """Without a worktree every finding is `NOT_CHECKABLE`, not passed over."""
-        assert review_reconcile.passed_over(PRIOR_ONE_FINDING, "## Summary\nnothing.\n") == []
+        assert review.reconcile.passed_over(PRIOR_ONE_FINDING, "## Summary\nnothing.\n") == []
 
     def test_no_prior_review_asks_the_tree_nothing(self, repo):
-        assert review_reconcile.passed_over("", "## Summary\nnothing.\n", str(repo)) == []
+        assert review.reconcile.passed_over("", "## Summary\nnothing.\n", str(repo)) == []
 
     def test_two_findings_in_one_file_are_matched_apart(self, repo):
         """Their labels differ only by ID, and one is accounted for."""
@@ -501,8 +501,8 @@ class TestPassedOver:
             "- **[M2]** **`handler.go:5`** — `defer rows.Close()` runs on a nil handle\n",
             sha=prior_sha,
         )
-        review = _ledger("- **[M1]** `handler.go:4` — Fixed")
-        passed = review_reconcile.passed_over(prior, review, str(repo))
+        review_md = _ledger("- **[M1]** `handler.go:4` — Fixed")
+        passed = review.reconcile.passed_over(prior, review_md, str(repo))
         assert [f.ref.finding_id for f in passed] == ["M2"]
 
 
@@ -548,11 +548,11 @@ class TestRecordPriorFindings:
         self, repo, capsys,
     ):
         prior_sha = self._observed(repo)
-        review = repo / "review.md"
-        review.write_text("## Summary\nThe change looks good.\n")
+        review_path = repo / "review.md"
+        review_path.write_text("## Summary\nThe change looks good.\n")
 
-        reconciliation = review_reconcile.record_prior_findings(
-            str(review), self._prior_text(prior_sha), str(repo),
+        reconciliation = review.reconcile.record_prior_findings(
+            str(review_path), self._prior_text(prior_sha), str(repo),
         )
         record = _by_id(reconciliation, "S1")
         assert record.disposition is PriorDisposition.FIXED
@@ -561,11 +561,11 @@ class TestRecordPriorFindings:
 
     def test_what_the_tree_cannot_settle_is_still_reported(self, repo, capsys):
         prior_sha = self._observed(repo)
-        review = repo / "review.md"
-        review.write_text("## Summary\nThe change looks good.\n")
+        review_path = repo / "review.md"
+        review_path.write_text("## Summary\nThe change looks good.\n")
 
-        review_reconcile.record_prior_findings(
-            str(review), self._prior_text(prior_sha), str(repo),
+        review.reconcile.record_prior_findings(
+            str(review_path), self._prior_text(prior_sha), str(repo),
         )
         err = capsys.readouterr().err
         assert "1 of 2 prior findings undecided" in err
@@ -574,11 +574,11 @@ class TestRecordPriorFindings:
 
     def test_the_warning_names_what_was_checked_and_the_counts(self, repo, capsys):
         prior_sha = self._observed(repo)
-        review = repo / "review.md"
-        review.write_text("## Summary\nThe change looks good.\n")
+        review_path = repo / "review.md"
+        review_path.write_text("## Summary\nThe change looks good.\n")
 
-        review_reconcile.record_prior_findings(
-            str(review), self._prior_text(prior_sha), str(repo),
+        review.reconcile.record_prior_findings(
+            str(review_path), self._prior_text(prior_sha), str(repo),
         )
         err = capsys.readouterr().err
         assert f"{prior_sha[:7]} → " in err
@@ -589,14 +589,14 @@ class TestRecordPriorFindings:
     ):
         """The two are different failures, and only one is the review's."""
         prior_sha = self._observed(repo)
-        review = repo / "review.md"
-        review.write_text(
+        review_path = repo / "review.md"
+        review_path.write_text(
             "## Summary\nBoth looked at.\n"
             + _ledger("- **[S2]** `docs.py` — moved to a follow-up")
         )
 
-        review_reconcile.record_prior_findings(
-            str(review), self._prior_text(prior_sha), str(repo),
+        review.reconcile.record_prior_findings(
+            str(review_path), self._prior_text(prior_sha), str(repo),
         )
         err = capsys.readouterr().err
         assert UndecidedReason.UNREADABLE_VERDICT.heading in err
@@ -607,25 +607,25 @@ class TestRecordPriorFindings:
         self, repo, capsys,
     ):
         prior_sha = self._observed(repo)
-        review = repo / "review.md"
-        review.write_text(
+        review_path = repo / "review.md"
+        review_path.write_text(
             "## Summary\nBoth looked at.\n"
             + _ledger("- **[S2]** `docs.py` — moved to a follow-up")
         )
 
-        review_reconcile.record_prior_findings(
-            str(review), self._prior_text(prior_sha), str(repo),
+        review.reconcile.record_prior_findings(
+            str(review_path), self._prior_text(prior_sha), str(repo),
         )
         err = capsys.readouterr().err
         assert "Fixed" in err and "Still open" in err and "Declined" in err
 
     def test_the_record_outlives_the_run(self, repo):
         prior_sha = self._observed(repo)
-        review = repo / "review.md"
-        review.write_text("## Summary\nThe change looks good.\n")
+        review_path = repo / "review.md"
+        review_path.write_text("## Summary\nThe change looks good.\n")
 
-        review_reconcile.record_prior_findings(
-            str(review), self._prior_text(prior_sha), str(repo),
+        review.reconcile.record_prior_findings(
+            str(review_path), self._prior_text(prior_sha), str(repo),
         )
         sidecar = json.loads((repo / FILENAME_PRIOR_FINDINGS).read_text())
         assert sidecar["prior_sha"] == prior_sha
@@ -639,30 +639,30 @@ class TestRecordPriorFindings:
         assert by_id["S2"]["reason"] == UndecidedReason.NOT_MENTIONED.value
 
     def test_no_prior_review_records_nothing(self, repo):
-        review = repo / "review.md"
-        review.write_text("## Summary\nFirst review.\n")
-        assert review_reconcile.record_prior_findings(str(review), "", str(repo)) is None
+        review_path = repo / "review.md"
+        review_path.write_text("## Summary\nFirst review.\n")
+        assert review.reconcile.record_prior_findings(str(review_path), "", str(repo)) is None
         assert not (repo / FILENAME_PRIOR_FINDINGS).exists()
 
     def test_a_prior_review_with_no_findings_records_nothing(self, repo):
-        review = repo / "review.md"
-        review.write_text("## Summary\nStill clean.\n")
+        review_path = repo / "review.md"
+        review_path.write_text("## Summary\nStill clean.\n")
         prior = _prior("## Summary\nNothing to report.\n", sha="a" * 40)
-        assert review_reconcile.record_prior_findings(str(review), prior, str(repo)) is None
+        assert review.reconcile.record_prior_findings(str(review_path), prior, str(repo)) is None
         assert not (repo / FILENAME_PRIOR_FINDINGS).exists()
 
     def test_a_fully_accounted_ledger_reports_without_warning(self, repo, capsys):
         prior_sha = self._observed(repo)
-        review = repo / "review.md"
-        review.write_text(
+        review_path = repo / "review.md"
+        review_path.write_text(
             "## Summary\nBoth prior findings addressed.\n"
             + _ledger(
                 "- **[S1]** `worker.py` — Fixed",
                 "- **[S2]** `docs.py` — Fixed",
             )
         )
-        review_reconcile.record_prior_findings(
-            str(review), self._prior_text(prior_sha), str(repo),
+        review.reconcile.record_prior_findings(
+            str(review_path), self._prior_text(prior_sha), str(repo),
         )
         err = capsys.readouterr().err
         assert "undecided" not in err

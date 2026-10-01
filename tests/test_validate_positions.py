@@ -7,7 +7,7 @@ from conftest import REPO_ROOT
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
-from cli import review_positions as vp  # noqa: E402
+import cli.review_positions  # noqa: E402
 from review.format import HunkRange  # noqa: E402
 
 SCRIPT = REPO_ROOT / "ai" / "bin" / "validate-review-positions"
@@ -60,7 +60,7 @@ class TestValidate:
     def test_finding_in_hunk_is_valid(self):
         hunks = {"src/app.py": [HunkRange(10, 15)]}
         findings = [{"path": "src/app.py", "line": 12, "body": "issue"}]
-        positions = vp.validate(hunks, findings)
+        positions = cli.review_positions.validate(hunks, findings)
         assert len(positions.valid) == 1
         assert positions.valid[0]["path"] == "src/app.py"
         assert not positions.file_level
@@ -70,7 +70,7 @@ class TestValidate:
     def test_finding_outside_hunk_is_file_level(self):
         hunks = {"src/app.py": [HunkRange(10, 15)]}
         findings = [{"path": "src/app.py", "line": 50, "body": "issue"}]
-        positions = vp.validate(hunks, findings)
+        positions = cli.review_positions.validate(hunks, findings)
         assert not positions.valid
         assert len(positions.file_level) == 1
         assert "not in any diff hunk" in positions.file_level[0]["reason"]
@@ -80,7 +80,7 @@ class TestValidate:
     def test_finding_for_missing_path_is_skipped(self):
         hunks = {"src/app.py": [HunkRange(10, 15)]}
         findings = [{"path": "src/other.py", "line": 5, "body": "issue"}]
-        positions = vp.validate(hunks, findings)
+        positions = cli.review_positions.validate(hunks, findings)
         assert not positions.valid
         assert not positions.file_level
         assert len(positions.skipped) == 1
@@ -90,7 +90,7 @@ class TestValidate:
     def test_finding_without_line_is_valid(self):
         hunks = {"src/app.py": [HunkRange(10, 15)]}
         findings = [{"path": "src/app.py", "body": "general comment"}]
-        positions = vp.validate(hunks, findings)
+        positions = cli.review_positions.validate(hunks, findings)
         assert len(positions.valid) == 1
         assert not positions.file_level
         assert not positions.skipped
@@ -102,15 +102,15 @@ class TestValidate:
             {"path": "src/app.py", "line": 50, "body": "outside hunk"},
             {"path": "src/missing.py", "line": 1, "body": "wrong file"},
         ]
-        positions = vp.validate(hunks, findings)
+        positions = cli.review_positions.validate(hunks, findings)
         assert len(positions.valid) == 1
         assert len(positions.file_level) == 1
         assert len(positions.skipped) == 1
 
     def test_empty_findings_list(self):
         hunks = {"src/app.py": [HunkRange(10, 15)]}
-        positions = vp.validate(hunks, [])
-        assert positions == vp.Positions()
+        positions = cli.review_positions.validate(hunks, [])
+        assert positions == cli.review_positions.Positions()
         assert positions.ok
 
 

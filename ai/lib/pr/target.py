@@ -132,9 +132,9 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from git import client as git_client
-from config import workbench_config
-from core import workbench_paths
+import git.client
+import config.workbench_config
+import core.workbench_paths
 
 TARGETS_DIR = "pr"
 
@@ -460,7 +460,7 @@ def _key_host(cwd: str | None = None) -> str:
     # load_config_or_default, not load_config: key derivation runs from the
     # statusline on every prompt, and a typo in config.yml must degrade to the
     # default key rather than raise where nobody can act on it.
-    cfg = workbench_config.load_config_or_default(cwd)
+    cfg = config.workbench_config.load_config_or_default(cwd)
     return fold_case(cfg.github.host.strip().rstrip("/"))
 
 
@@ -484,7 +484,7 @@ def _origin_url(cwd: str | None) -> str | None:
     The recorded value is what every other reader of this repo's config sees,
     and it is the one a mirror can reproduce without knowing the rewrite rules.
     """
-    return git_client.out("config", "--get", "remote.origin.url", cwd=cwd) or None
+    return git.client.out("config", "--get", "remote.origin.url", cwd=cwd) or None
 
 
 @dataclass(frozen=True)
@@ -566,7 +566,7 @@ def targets_root() -> Path:
     monkeypatching in tests. The sole owner of the join, so a second copy of
     it (e.g. in review.gc's gc sweep) cannot drift from this one.
     """
-    return workbench_paths.state_dir() / TARGETS_DIR
+    return core.workbench_paths.state_dir() / TARGETS_DIR
 
 
 def target_dir(repo_key: str, branch: str) -> Path:
@@ -588,7 +588,7 @@ def target_dir_for_checkout(path: Path) -> Path | None:
     # it fails on a freshly-init'd branch with nothing committed yet.
     # `symbolic-ref` reads the ref HEAD points at, unborn or not, and fails
     # cleanly on detached HEAD instead of resolving to the literal name "HEAD".
-    branch = git_client.out("symbolic-ref", "--short", "HEAD", cwd=str(path))
+    branch = git.client.out("symbolic-ref", "--short", "HEAD", cwd=str(path))
     if not branch:
         return None
     return target_dir(repo_key, branch)

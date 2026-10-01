@@ -1,4 +1,4 @@
-"""Tests for fix_engine — the pipeline every fix pass runs.
+"""Tests for fix.engine — the pipeline every fix pass runs.
 
 The domain halves live with their commands (`ci_check_test.py`,
 `test_review_threads.py`). What is held here is the half neither of them owns
@@ -21,27 +21,31 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from agent import invoke as agent_invoke  # noqa: E402
-from fix import engine as fix_engine  # noqa: E402
-from fix import gate as fix_gate  # noqa: E402
-from fix import tracking as fix_tracking  # noqa: E402
-from git import land  # noqa: E402
+import agent.invoke  # noqa: E402
+import fix.engine  # noqa: E402
+import fix.gate  # noqa: E402
+import fix.tracking  # noqa: E402
+import git.land  # noqa: E402
 from agent.diagnosis import Diagnosis, DiagnosisKind  # noqa: E402
 from agent.registry import PHASES  # noqa: E402
 from core.phases import Phase  # noqa: E402
 from fix.types import FixItem  # noqa: E402
 from git.land import CommitStatus  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
-from fix import suite as fix_suite  # noqa: E402
-from core import publishing  # noqa: E402
-from rebase import prepush as rebase_prepush  # noqa: E402
+import fix.suite  # noqa: E402
+import core.publishing  # noqa: E402
+import rebase.prepush  # noqa: E402
 from config.workbench_config import FixConfig, WorkbenchConfig  # noqa: E402
+import agent.phases
+import core.session_lock
+import fix.scope
+import git.client
 
 
 # ── the stub domain ─────────────────────────────────────────────────────────
 
 
-class StubAdapter(fix_engine.FixAdapter):
+class StubAdapter(fix.engine.FixAdapter):
     """A domain that hands over `count` items and records what came back.
 
     `ci_fix` is borrowed as the phase because its template asks for nothing
@@ -60,7 +64,7 @@ class StubAdapter(fix_engine.FixAdapter):
         self.branch = "isaac/feat/x"
         self.repo = "owner/repo"
         self._count = count
-        self._spec = spec or fix_engine.LandSpec(message="fix: stub")
+        self._spec = spec or fix.engine.LandSpec(message="fix: stub")
         self.recorded = None
 
     def items(self):
@@ -106,21 +110,21 @@ def _answer(adapter, *, tick="fixed", ids=None, reason=None):
                         else line.replace("- [ ]", "- [x]", 1))
             out.append(line)
         adapter.tracking_path.write_text("".join(out))
-        return agent_invoke.FixResult(0, None)
+        return agent.invoke.FixResult(0, None)
     return run_fix
 
 
 @pytest.fixture
 def landed():
     """Stub the landing owner out; `land_test.py` holds what it really does."""
-    with patch.object(fix_engine.land, "land",
-                      return_value=land.LandResult(CommitStatus.PUSHED, "abc1234")) as m:
+    with patch.object(git.land, "land",
+                      return_value=git.land.LandResult(CommitStatus.PUSHED, "abc1234")) as m:
         yield m
 
 
 @pytest.fixture
 def head():
-    with patch.object(fix_engine.git_client, "head_sha", return_value="9999999"):
+    with patch.object(git.client, "head_sha", return_value="9999999"):
         yield
 
 
@@ -132,7 +136,7 @@ def snapshots():
     agent, and `tmp_path` is not a repo — an unstubbed read fails, which the
     engine correctly treats as a reason not to run the pass at all.
     """
-    with patch.object(fix_engine.fix_scope, "changed_files",
+    with patch.object(fix.scope, "changed_files",
                       return_value=set()) as m:
         yield m
 
@@ -192,9 +196,9 @@ def _settles_at(baseline, final):
 
 
 def _run(adapter, **kwargs):
-    with patch.object(fix_engine.agent_invoke, "run_fix",
+    with patch.object(agent.invoke, "run_fix",
                       side_effect=kwargs.pop("run_fix", _answer(adapter))) as inv:
-        run = fix_engine.run(adapter, **kwargs)
+        run = fix.engine.run(adapter, **kwargs)
     return run, inv
 
 
@@ -218,7 +222,7 @@ def test_a_pass_with_no_items_runs_nothing(tmp_path, landed, head):
 
 def test_work_over_the_chunk_size_is_split(tmp_path, landed, head):
     """One prompt holding every item is what starved the pass of turns."""
-    chunk = fix_engine.agent_phases.phase_chunk_size(StubAdapter.phase)
+    chunk = agent.phases.phase_chunk_size(StubAdapter.phase)
     adapter = StubAdapter(tmp_path, count=chunk + 1)
     run, inv = _run(adapter)
 
@@ -228,7 +232,7 @@ def test_work_over_the_chunk_size_is_split(tmp_path, landed, head):
 
 def test_every_item_is_answered_exactly_once_across_batches(tmp_path, landed, head):
     """A batch rewrites the shared file, so a lost batch would read as deferred."""
-    chunk = fix_engine.agent_phases.phase_chunk_size(StubAdapter.phase)
+    chunk = agent.phases.phase_chunk_size(StubAdapter.phase)
     adapter = StubAdapter(tmp_path, count=chunk + 3)
     run, _ = _run(adapter)
 
@@ -238,7 +242,7 @@ def test_every_item_is_answered_exactly_once_across_batches(tmp_path, landed, he
 
 def test_a_batch_is_named_by_its_position(tmp_path, landed, head):
     """An operator watching the log has to be able to tell them apart."""
-    chunk = fix_engine.agent_phases.phase_chunk_size(StubAdapter.phase)
+    chunk = agent.phases.phase_chunk_size(StubAdapter.phase)
     adapter = StubAdapter(tmp_path, count=chunk + 1)
     _, inv = _run(adapter)
 
@@ -254,14 +258,14 @@ def test_a_single_batch_is_not_numbered(tmp_path, landed, head):
 
 def test_the_batch_budget_is_sized_to_the_batch(tmp_path, landed, head):
     """The remainder chunk must not be charged for the whole pass's items."""
-    chunk = fix_engine.agent_phases.phase_chunk_size(StubAdapter.phase)
+    chunk = agent.phases.phase_chunk_size(StubAdapter.phase)
     adapter = StubAdapter(tmp_path, count=chunk + 1)
     run, inv = _run(adapter)
 
     turns = [c.kwargs["max_turns"] for c in inv.call_args_list]
-    assert turns[0] == fix_engine.agent_phases.phase_turns(
+    assert turns[0] == agent.phases.phase_turns(
         StubAdapter.phase, items=chunk)
-    assert turns[1] == fix_engine.agent_phases.phase_turns(
+    assert turns[1] == agent.phases.phase_turns(
         StubAdapter.phase, items=1)
     # The pass reports the largest batch's budget, not the remainder's.
     assert run.max_turns == max(turns)
@@ -270,7 +274,7 @@ def test_the_batch_budget_is_sized_to_the_batch(tmp_path, landed, head):
 def test_a_phase_that_bounds_no_chunk_gets_one_batch(tmp_path, landed, head):
     """Zero is "undeclared", not "batch of zero" — which would never terminate."""
     adapter = StubAdapter(tmp_path, count=25)
-    with patch.object(fix_engine.agent_phases, "phase_chunk_size", return_value=0):
+    with patch.object(agent.phases, "phase_chunk_size", return_value=0):
         run, inv = _run(adapter)
 
     assert inv.call_count == 1
@@ -304,7 +308,7 @@ def test_the_retry_is_handed_only_what_is_left(tmp_path, landed, head):
     seen = []
 
     def run_fix(phase, prompt, **kwargs):
-        seen.append(fix_tracking.parse(adapter.tracking_path))
+        seen.append(fix.tracking.parse(adapter.tracking_path))
         return _answer(adapter, ids=["i0"])(phase, prompt, **kwargs)
 
     _run(adapter, run_fix=run_fix)
@@ -324,8 +328,8 @@ def test_the_retry_says_it_is_one(tmp_path, landed, head):
 
     _run(adapter, run_fix=run_fix)
 
-    assert not prompts[0].startswith(fix_engine._RESUME_HINT)
-    assert prompts[1].startswith(fix_engine._RESUME_HINT)
+    assert not prompts[0].startswith(fix.engine._RESUME_HINT)
+    assert prompts[1].startswith(fix.engine._RESUME_HINT)
 
 
 def test_a_settled_verdict_is_not_retried(tmp_path, landed, head):
@@ -351,7 +355,7 @@ def test_an_entry_no_item_stands_behind_survives_the_retry(tmp_path, landed, hea
             first[0] = False
             text = adapter.tracking_path.read_text().replace("fix:i1", "fix:ghost")
             adapter.tracking_path.write_text(text)
-            return agent_invoke.FixResult(0, None)
+            return agent.invoke.FixResult(0, None)
         return _answer(adapter)(phase, prompt, **kwargs)
 
     run, inv = _run(adapter, run_fix=run_fix)
@@ -365,7 +369,7 @@ def test_a_stalled_batch_has_already_had_its_retry(tmp_path, landed, head):
     adapter = StubAdapter(tmp_path, count=2)
 
     def run_fix(_phase, _prompt, **_kwargs):
-        return agent_invoke.FixResult(0, Diagnosis(DiagnosisKind.MAX_TURNS))
+        return agent.invoke.FixResult(0, Diagnosis(DiagnosisKind.MAX_TURNS))
 
     run, inv = _run(adapter, run_fix=run_fix)
 
@@ -382,7 +386,7 @@ def test_a_productive_turn_limit_is_recorded_without_stalling(
 
     def run_fix(phase, prompt, **kwargs):
         _answer(adapter, ids={"i0"})(phase, prompt, **kwargs)
-        return agent_invoke.FixResult(0, None, stop=stop)
+        return agent.invoke.FixResult(0, None, stop=stop)
 
     run, inv = _run(adapter, run_fix=run_fix)
 
@@ -394,14 +398,14 @@ def test_a_productive_turn_limit_is_recorded_without_stalling(
 
 def test_one_stalled_batch_does_not_cost_the_others_their_retry(tmp_path, landed, head):
     """The bug the partition exists for: a stalled batch swallowing the retry."""
-    chunk = fix_engine.agent_phases.phase_chunk_size(StubAdapter.phase)
+    chunk = agent.phases.phase_chunk_size(StubAdapter.phase)
     adapter = StubAdapter(tmp_path, count=chunk + 1)
     calls = []
 
     def run_fix(phase, prompt, **kwargs):
         calls.append(prompt)
         if len(calls) == 1:
-            return agent_invoke.FixResult(0, Diagnosis(DiagnosisKind.MAX_TURNS))
+            return agent.invoke.FixResult(0, Diagnosis(DiagnosisKind.MAX_TURNS))
         return _answer(adapter)(phase, prompt, **kwargs)
 
     run, inv = _run(adapter, run_fix=run_fix)
@@ -423,14 +427,14 @@ def test_deferred_work_over_the_chunk_size_is_retried_in_batches(
     retries = []
 
     def run_fix(phase, prompt, **kwargs):
-        ids = [o.id for o in fix_tracking.parse(adapter.tracking_path)]
-        if prompt.startswith(fix_engine._RESUME_HINT):
+        ids = [o.id for o in fix.tracking.parse(adapter.tracking_path)]
+        if prompt.startswith(fix.engine._RESUME_HINT):
             retries.append(ids)
             return _answer(adapter)(phase, prompt, **kwargs)
         first_pass.append(ids)
         return _answer(adapter, ids=[ids[0]])(phase, prompt, **kwargs)
 
-    with patch.object(fix_engine.agent_phases, "phase_chunk_size", return_value=2):
+    with patch.object(agent.phases, "phase_chunk_size", return_value=2):
         _run(adapter, run_fix=run_fix)
 
     assert first_pass == [["i0", "i1"], ["i2", "i3"], ["i4", "i5"], ["i6"]]
@@ -441,7 +445,7 @@ def test_deferred_work_over_the_chunk_size_is_retried_in_batches(
 
 
 def test_the_domain_s_spec_reaches_the_land_owner(tmp_path, landed, head):
-    adapter = StubAdapter(tmp_path, spec=fix_engine.LandSpec(
+    adapter = StubAdapter(tmp_path, spec=fix.engine.LandSpec(
         message="fix: the thing", regen="chore: regenerate",
     ))
     _run(adapter)
@@ -459,7 +463,7 @@ def test_the_domain_s_scope_reaches_the_land_owner(tmp_path, landed, head):
     stages the whole tree, so a domain whose scope was dropped on the way down
     commits everything dirty in the worktree and reports success.
     """
-    adapter = StubAdapter(tmp_path, spec=fix_engine.LandSpec(
+    adapter = StubAdapter(tmp_path, spec=fix.engine.LandSpec(
         message="fix: the thing", paths={"a.py"},
     ))
     _run(adapter)
@@ -499,13 +503,13 @@ def test_every_verify_chunk_is_taken_back_out_of_the_batch_scope(
     for chunk in (1, 2):
         adapter.verify_tracking_path(chunk).write_text("## answers\n")
     inside = {
-        fix_engine._relative_to(adapter.workdir, adapter.verify_tracking_path(n))
+        fix.engine._relative_to(adapter.workdir, adapter.verify_tracking_path(n))
         for n in (1, 2)
     }
     assert all(inside), "the stub's artifacts must sit inside the worktree"
     snapshots.return_value = {"ours.py", *inside}
 
-    scope = fix_engine._batch_scope(adapter, before=set())
+    scope = fix.engine._batch_scope(adapter, before=set())
 
     assert scope.files == {"ours.py"}
 
@@ -569,7 +573,7 @@ def test_a_domain_that_rewrote_its_branch_pushes_with_its_own_args(tmp_path, lan
     The engine cannot know this for the domain: only the pass that rewrote the
     branch knows the push needs a lease rather than an append.
     """
-    adapter = StubAdapter(tmp_path, spec=fix_engine.LandSpec(
+    adapter = StubAdapter(tmp_path, spec=fix.engine.LandSpec(
         message="fix: the thing", args=("--force-with-lease",),
     ))
     _run(adapter)
@@ -591,7 +595,7 @@ def test_the_commit_is_always_gated(tmp_path, landed, head):
 
 def test_recovery_compares_against_the_head_the_pass_started_from(tmp_path, landed, head):
     """The one thing a domain assembling a LandSpec cannot know for itself."""
-    adapter = StubAdapter(tmp_path, spec=fix_engine.LandSpec(
+    adapter = StubAdapter(tmp_path, spec=fix.engine.LandSpec(
         message="fix: the thing", recover=True,
     ))
     _run(adapter)
@@ -654,7 +658,7 @@ def test_a_backend_failure_reaches_the_caller(tmp_path, landed, head):
 
     def run_fix(phase, prompt, **kwargs):
         _answer(adapter)(phase, prompt, **kwargs)
-        return agent_invoke.FixResult(2, None)
+        return agent.invoke.FixResult(2, None)
 
     run, _ = _run(adapter, run_fix=run_fix)
 
@@ -663,14 +667,14 @@ def test_a_backend_failure_reaches_the_caller(tmp_path, landed, head):
 
 def test_the_worst_batch_s_exit_code_wins(tmp_path, landed, head):
     """A clean second batch must not paper over a first one that died."""
-    chunk = fix_engine.agent_phases.phase_chunk_size(StubAdapter.phase)
+    chunk = agent.phases.phase_chunk_size(StubAdapter.phase)
     adapter = StubAdapter(tmp_path, count=chunk + 1)
     calls = []
 
     def run_fix(phase, prompt, **kwargs):
         calls.append(prompt)
         _answer(adapter)(phase, prompt, **kwargs)
-        return agent_invoke.FixResult(3 if len(calls) == 1 else 0, None)
+        return agent.invoke.FixResult(3 if len(calls) == 1 else 0, None)
 
     run, _ = _run(adapter, run_fix=run_fix)
 
@@ -701,7 +705,7 @@ def test_the_prompt_asks_for_the_boxes_the_checklist_actually_has(tmp_path, land
     _, inv = _run(adapter)
 
     prompt = inv.call_args.args[1]
-    assert fix_tracking.instructions(adapter.item_noun) in prompt
+    assert fix.tracking.instructions(adapter.item_noun) in prompt
 
 
 def test_the_session_log_sits_beside_the_checklist(tmp_path, landed, head):
@@ -719,7 +723,7 @@ def test_a_ticked_box_is_what_counts_as_work(tmp_path, landed, head):
     _, inv = _run(adapter)
     produced = inv.call_args.kwargs["produced"]
 
-    fix_tracking.write(adapter.tracking_path, adapter.title, adapter.items())
+    fix.tracking.write(adapter.tracking_path, adapter.title, adapter.items())
     assert produced() is False
     _answer(adapter)(None, None)
     assert produced() is True
@@ -806,7 +810,7 @@ def test_a_decline_the_gate_falsifies_becomes_a_person_s_call(tmp_path, landed, 
 
     run, _ = _run(
         adapter,
-        verify=_verdicts(("i0", fix_gate.Verdict(
+        verify=_verdicts(("i0", fix.gate.Verdict(
             ok=False, detail="true only with the pass's own diff applied"))),
         run_fix=_answer(adapter, tick="declined",
                         reason="the code already does this"),
@@ -822,7 +826,7 @@ def test_a_decline_the_gate_upholds_stays_declined(tmp_path, landed, head):
 
     run, _ = _run(
         adapter,
-        verify=_verdicts(("i0", fix_gate.Verdict(ok=True, detail="scope holds"))),
+        verify=_verdicts(("i0", fix.gate.Verdict(ok=True, detail="scope holds"))),
         run_fix=_answer(adapter, tick="declined", reason="out of scope here"),
     )
 
@@ -853,7 +857,7 @@ def test_a_fix_the_gate_falsifies_does_not_reach_the_commit(tmp_path, landed, he
     adapter = StubAdapter(tmp_path, count=1)
     run, _ = _run(
         adapter,
-        verify=_verdicts(("i0", fix_gate.Verdict(ok=False, detail="repro still exits 3"))),
+        verify=_verdicts(("i0", fix.gate.Verdict(ok=False, detail="repro still exits 3"))),
     )
 
     assert run.outcomes[0].outcome is FixOutcome.NEEDS_HUMAN
@@ -865,7 +869,7 @@ def test_a_fix_the_gate_confirms_stays_fixed(tmp_path, landed, head):
     adapter = StubAdapter(tmp_path, count=1)
     run, _ = _run(
         adapter,
-        verify=_verdicts(("i0", fix_gate.Verdict(ok=True, detail="suite green"))),
+        verify=_verdicts(("i0", fix.gate.Verdict(ok=True, detail="suite green"))),
     )
 
     assert run.outcomes[0].outcome is FixOutcome.FIXED
@@ -880,7 +884,7 @@ def test_a_fix_the_gate_cannot_judge_stays_fixed_but_unverified(tmp_path, landed
     the claim that anything ran.
     """
     adapter = StubAdapter(tmp_path, count=1)
-    run, _ = _run(adapter, verify=_verdicts(("i0", fix_gate.Verdict(ok=None, detail="no runnable check"))))
+    run, _ = _run(adapter, verify=_verdicts(("i0", fix.gate.Verdict(ok=None, detail="no runnable check"))))
 
     assert run.outcomes[0].outcome is FixOutcome.FIXED
     assert run.outcomes[0].verified is False
@@ -894,7 +898,7 @@ def test_an_id_the_gate_never_answered_is_unverified_not_falsified(tmp_path, lan
     demoting on absence would punish a fix for the gate running out of turns.
     """
     adapter = StubAdapter(tmp_path, count=2)
-    run, _ = _run(adapter, verify=_verdicts(("i0", fix_gate.Verdict(ok=True))))
+    run, _ = _run(adapter, verify=_verdicts(("i0", fix.gate.Verdict(ok=True))))
 
     by_id = {o.id: o for o in run.outcomes}
     assert by_id["i1"].outcome is FixOutcome.FIXED
@@ -1002,7 +1006,7 @@ def test_the_gate_is_told_what_the_fix_pass_claimed(tmp_path, landed, head):
 
     body = seen["items"][0].body
     assert "test_foo_rejects_an_empty_name" in body
-    assert fix_gate._CLAIM_HEADING in body
+    assert fix.gate._CLAIM_HEADING in body
 
 
 def test_the_reviewers_words_survive_beside_the_claim(tmp_path, landed, head):
@@ -1047,7 +1051,7 @@ def test_a_fix_with_no_claim_says_so_to_the_gate(tmp_path, landed, head):
     _run(adapter, verify=run_verify, run_fix=_answer(adapter))
 
     body = seen["items"][0].body
-    assert fix_gate._CLAIM_HEADING not in body
+    assert fix.gate._CLAIM_HEADING not in body
     assert "named nothing that holds this change" in body
     # And it is not on its own grounds to call the fix broken.
     assert "not on its own a reason to call the fix broken" in body
@@ -1063,10 +1067,10 @@ def test_an_id_the_pass_never_handed_out_still_carries_its_claim():
     outcome = ItemOutcome(id="x", file="a.py", line=2,
                           outcome=FixOutcome.FIXED, reason="test_orphan")
 
-    item = fix_gate._verify_item(outcome, None, StubAdapter.item_noun)
+    item = fix.gate._verify_item(outcome, None, StubAdapter.item_noun)
 
     assert "test_orphan" in item.body
-    assert fix_gate._CLAIM_HEADING in item.body
+    assert fix.gate._CLAIM_HEADING in item.body
 
 
 def test_the_gate_is_asked_under_its_own_phase(tmp_path, landed, head):
@@ -1257,7 +1261,7 @@ class TestAfterVerifyRunsBeforeTheCommit:
         adapter.after_verify = lambda outcomes: calls.append("after_verify")
         landed.side_effect = lambda *a, **k: (
             calls.append("land")
-            or land.LandResult(CommitStatus.PUSHED, "abc1234")
+            or git.land.LandResult(CommitStatus.PUSHED, "abc1234")
         )
 
         _run(adapter)
@@ -1276,7 +1280,7 @@ class TestAfterVerifyRunsBeforeTheCommit:
         adapter.after_verify = lambda outcomes: seen.append(list(outcomes))
 
         _run(adapter, verify=_verdicts(
-            ("i0", fix_gate.Verdict(ok=False, detail="the repro fails"))))
+            ("i0", fix.gate.Verdict(ok=False, detail="the repro fails"))))
 
         assert [o.outcome for o in seen[0]] == [FixOutcome.NEEDS_HUMAN]
 
@@ -1334,7 +1338,7 @@ def test_a_deferral_the_gate_confirms_becomes_a_fix(tmp_path, landed, head, snap
 
     run, _ = _run(
         adapter,
-        verify=_verdicts(("i0", fix_gate.Verdict(ok=True, detail="the repro passes"))),
+        verify=_verdicts(("i0", fix.gate.Verdict(ok=True, detail="the repro passes"))),
         run_fix=_answer(adapter, tick="deferred"),
     )
 
@@ -1357,7 +1361,7 @@ def test_a_deferral_the_gate_cannot_settle_stands_as_recorded(
 
     run, _ = _run(
         adapter,
-        verify=_verdicts(("i0", fix_gate.Verdict(ok=None, detail="belongs to i1"))),
+        verify=_verdicts(("i0", fix.gate.Verdict(ok=None, detail="belongs to i1"))),
         run_fix=_answer(adapter, tick="deferred"),
     )
 
@@ -1379,7 +1383,7 @@ def test_a_deferral_the_gate_finds_half_applied_goes_to_a_person(
 
     run, _ = _run(
         adapter,
-        verify=_verdicts(("i0", fix_gate.Verdict(ok=False, detail="half applied"))),
+        verify=_verdicts(("i0", fix.gate.Verdict(ok=False, detail="half applied"))),
         run_fix=_answer(adapter, tick="deferred"),
     )
 
@@ -1480,7 +1484,7 @@ def test_a_contradiction_the_gate_could_not_settle_keeps_the_gate_s_words(
 
     run, _ = _run(
         adapter,
-        verify=_verdicts(("i0", fix_gate.Verdict(ok=None, detail="belongs to i1"))),
+        verify=_verdicts(("i0", fix.gate.Verdict(ok=None, detail="belongs to i1"))),
         run_fix=_answer(adapter, tick="deferred"),
     )
 
@@ -1687,7 +1691,7 @@ def test_the_pass_still_commits_over_a_tree_it_shares(
 
 def _holder(pid=4242, command="pi"):
     """One foreign session, as held_by_others would report it."""
-    return fix_engine.session_lock.SessionHolder(
+    return core.session_lock.SessionHolder(
         pid=pid,
         started="Tue Sep 29 10:00:00 2026",
         harness="pi",
@@ -1706,7 +1710,7 @@ def test_a_pass_refuses_a_worktree_an_interactive_session_holds(
     failure with an error message.
     """
     adapter = StubAdapter(tmp_path, count=2)
-    with patch.object(fix_engine.session_lock, "held_by_others",
+    with patch.object(core.session_lock, "held_by_others",
                       return_value=[_holder(command="pi --resume")]):
         run, inv = _run(adapter)
 
@@ -1729,7 +1733,7 @@ def test_a_pass_runs_when_the_only_session_is_its_own(tmp_path, landed, head):
     pass that silently did nothing would satisfy the weaker check.
     """
     adapter = StubAdapter(tmp_path, count=2)
-    with patch.object(fix_engine.session_lock, "held_by_others",
+    with patch.object(core.session_lock, "held_by_others",
                       return_value=[]):
         run, inv = _run(adapter)
 
@@ -1742,9 +1746,9 @@ def test_the_override_commits_past_a_held_worktree(
     tmp_path, landed, head, monkeypatch,
 ):
     """The escape hatch the refusal names, for a known-stale session."""
-    monkeypatch.setenv(fix_engine._LOCK_OVERRIDE_ENV, "1")
+    monkeypatch.setenv(fix.engine._LOCK_OVERRIDE_ENV, "1")
     adapter = StubAdapter(tmp_path, count=2)
-    with patch.object(fix_engine.session_lock, "held_by_others",
+    with patch.object(core.session_lock, "held_by_others",
                       return_value=[_holder()]):
         run, inv = _run(adapter)
 
@@ -1760,9 +1764,9 @@ def test_an_unset_override_does_not_count_as_set(
     A bare `in os.environ` check would read the empty string as consent, which
     is the difference between a guard and a guard-shaped comment.
     """
-    monkeypatch.setenv(fix_engine._LOCK_OVERRIDE_ENV, "")
+    monkeypatch.setenv(fix.engine._LOCK_OVERRIDE_ENV, "")
     adapter = StubAdapter(tmp_path, count=2)
-    with patch.object(fix_engine.session_lock, "held_by_others",
+    with patch.object(core.session_lock, "held_by_others",
                       return_value=[_holder()]):
         run, inv = _run(adapter)
 
@@ -1867,8 +1871,8 @@ class TestVerifySuite:
             tmp_path, self._script(tmp_path, f"touch {marker}; exit 0"))
         snapshots.side_effect = _reads(set(), {"a.py"})
 
-        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
-            fix_engine.run(adapter)
+        with patch.object(agent.invoke, "run_fix", _answer(adapter)):
+            fix.engine.run(adapter)
 
         assert marker.exists()
 
@@ -1888,10 +1892,10 @@ class TestVerifySuite:
             return original(outcomes, changed)
 
         adapter.landing = capture
-        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
-            fix_engine.run(adapter)
+        with patch.object(agent.invoke, "run_fix", _answer(adapter)):
+            fix.engine.run(adapter)
 
-        assert seen["status"] is fix_suite.SuiteStatus.RED
+        assert seen["status"] is fix.suite.SuiteStatus.RED
         assert seen["verified"] == [False]
 
     def test_a_red_run_withdraws_the_claim_before_the_commit(
@@ -1901,10 +1905,10 @@ class TestVerifySuite:
             tmp_path, self._script(tmp_path, "exit 1"))
         snapshots.side_effect = _reads(set(), {"a.py"})
 
-        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
-            run = fix_engine.run(adapter)
+        with patch.object(agent.invoke, "run_fix", _answer(adapter)):
+            run = fix.engine.run(adapter)
 
-        assert run.suite.status is fix_suite.SuiteStatus.RED
+        assert run.suite.status is fix.suite.SuiteStatus.RED
         assert run.outcomes[0].outcome is FixOutcome.FIXED
         assert run.outcomes[0].verified is False
 
@@ -1919,8 +1923,8 @@ class TestVerifySuite:
         adapter = self._configured(tmp_path, self._script(tmp_path, "exit 1"))
         snapshots.side_effect = _reads(set(), {"a.py"})
 
-        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
-            fix_engine.run(adapter)
+        with patch.object(agent.invoke, "run_fix", _answer(adapter)):
+            fix.engine.run(adapter)
 
         assert landed.called
 
@@ -1945,10 +1949,10 @@ class TestVerifySuite:
             suite=adapter.suite.status,
         )
 
-        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
-            fix_engine.run(adapter)
+        with patch.object(agent.invoke, "run_fix", _answer(adapter)):
+            fix.engine.run(adapter)
 
-        assert seen["suite"] is fix_suite.SuiteStatus.RED
+        assert seen["suite"] is fix.suite.SuiteStatus.RED
         assert seen["verified"] == [False], (
             "after_verify saw the per-item gate's verdict but not the suite's"
         )
@@ -1967,13 +1971,13 @@ class TestVerifySuite:
         """
         adapter = self._configured(tmp_path, self._script(tmp_path, "exit 1"))
         snapshots.side_effect = _reads(set(), {"a.py"})
-        assert publishing.enabled()
+        assert core.publishing.enabled()
 
-        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
-            fix_engine.run(adapter)
+        with patch.object(agent.invoke, "run_fix", _answer(adapter)):
+            fix.engine.run(adapter)
 
-        assert not publishing.enabled()
-        assert "checks are red" in publishing.held()
+        assert not core.publishing.enabled()
+        assert "checks are red" in core.publishing.held()
 
     def test_a_red_run_names_the_item_whose_file_lost_the_symbol(
         self, tmp_path, landed, head, snapshots, publishing_on,
@@ -1993,8 +1997,8 @@ class TestVerifySuite:
                                          label="x", body="b")]
         snapshots.side_effect = _reads(set(), {"a.py"})
 
-        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
-            run = fix_engine.run(adapter)
+        with patch.object(agent.invoke, "run_fix", _answer(adapter)):
+            run = fix.engine.run(adapter)
 
         assert [p.item_id for p in run.suite.pointers] == ["i0"]
         assert run.suite.pointers[0].symbols == ("LOST_SENTINEL",)
@@ -2016,9 +2020,9 @@ class TestVerifySuite:
                                          label="x", body="b")]
         snapshots.side_effect = _reads(set(), {"a.py"})
 
-        with patch.object(agent_invoke, "run_fix",
+        with patch.object(agent.invoke, "run_fix",
                           _answer(adapter, tick="declined", reason="no")):
-            run = fix_engine.run(adapter)
+            run = fix.engine.run(adapter)
 
         assert run.suite.pointers == ()
 
@@ -2029,10 +2033,10 @@ class TestVerifySuite:
         adapter = self._configured(tmp_path, self._script(tmp_path, "exit 0"))
         snapshots.side_effect = _reads(set(), {"a.py"})
 
-        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
-            fix_engine.run(adapter)
+        with patch.object(agent.invoke, "run_fix", _answer(adapter)):
+            fix.engine.run(adapter)
 
-        assert publishing.enabled()
+        assert core.publishing.enabled()
 
     def test_checks_that_did_not_answer_do_not_hold_publishing(
         self, tmp_path, landed, head, snapshots, publishing_on,
@@ -2041,10 +2045,10 @@ class TestVerifySuite:
         adapter = self._configured(tmp_path, str(tmp_path / "nope"))
         snapshots.side_effect = _reads(set(), {"a.py"})
 
-        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
-            fix_engine.run(adapter)
+        with patch.object(agent.invoke, "run_fix", _answer(adapter)):
+            fix.engine.run(adapter)
 
-        assert publishing.enabled()
+        assert core.publishing.enabled()
 
     def test_a_pass_that_claimed_nothing_does_not_pay_for_the_checks(
         self, tmp_path, landed, head, snapshots,
@@ -2055,12 +2059,12 @@ class TestVerifySuite:
             tmp_path, self._script(tmp_path, f"touch {marker}; exit 0"))
         snapshots.side_effect = _reads(set(), {"a.py"})
 
-        with patch.object(agent_invoke, "run_fix",
+        with patch.object(agent.invoke, "run_fix",
                           _answer(adapter, tick="declined", reason="wrong")):
-            run = fix_engine.run(adapter)
+            run = fix.engine.run(adapter)
 
         assert not marker.exists()
-        assert run.suite.status is fix_suite.SuiteStatus.NOT_ATTEMPTED
+        assert run.suite.status is fix.suite.SuiteStatus.NOT_ATTEMPTED
 
     def test_a_pass_that_wrote_no_files_does_not_pay_for_the_checks(
         self, tmp_path, landed, head, snapshots,
@@ -2070,8 +2074,8 @@ class TestVerifySuite:
             tmp_path, self._script(tmp_path, f"touch {marker}; exit 0"))
         snapshots.side_effect = _reads(set(), set())
 
-        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
-            fix_engine.run(adapter)
+        with patch.object(agent.invoke, "run_fix", _answer(adapter)):
+            fix.engine.run(adapter)
 
         assert not marker.exists()
 
@@ -2083,10 +2087,10 @@ class TestVerifySuite:
         adapter.config = WorkbenchConfig()
         snapshots.side_effect = _reads(set(), {"a.py"})
 
-        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
-            run = fix_engine.run(adapter)
+        with patch.object(agent.invoke, "run_fix", _answer(adapter)):
+            run = fix.engine.run(adapter)
 
-        assert run.suite.status is fix_suite.SuiteStatus.NOT_DECLARED
+        assert run.suite.status is fix.suite.SuiteStatus.NOT_DECLARED
         assert run.outcomes[0].verified is None
 
     def test_a_domain_can_opt_out_where_the_checks_run_right_after_it(
@@ -2105,11 +2109,11 @@ class TestVerifySuite:
         adapter.verifies_with_suite = False
         snapshots.side_effect = _reads(set(), {"a.py"})
 
-        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
-            run = fix_engine.run(adapter)
+        with patch.object(agent.invoke, "run_fix", _answer(adapter)):
+            run = fix.engine.run(adapter)
 
         assert not marker.exists()
-        assert run.suite.status is fix_suite.SuiteStatus.NOT_ATTEMPTED
+        assert run.suite.status is fix.suite.SuiteStatus.NOT_ATTEMPTED
 
     def test_every_other_domain_is_opted_in_without_saying_so(self):
         """The default is on: a domain gains the checks by declaring nothing.
@@ -2118,8 +2122,8 @@ class TestVerifySuite:
         of every domain but one. Defaulting off would reopen it for whichever
         adapter is written next.
         """
-        assert fix_engine.FixAdapter.verifies_with_suite is True
-        assert rebase_prepush.PrePushFixAdapter.verifies_with_suite is False
+        assert fix.engine.FixAdapter.verifies_with_suite is True
+        assert rebase.prepush.PrePushFixAdapter.verifies_with_suite is False
 
     def test_a_broken_declaration_does_not_take_the_pass_down_with_it(
         self, tmp_path, landed, head, snapshots,
@@ -2127,8 +2131,8 @@ class TestVerifySuite:
         adapter = self._configured(tmp_path, str(tmp_path / "does-not-exist"))
         snapshots.side_effect = _reads(set(), {"a.py"})
 
-        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
-            run = fix_engine.run(adapter)
+        with patch.object(agent.invoke, "run_fix", _answer(adapter)):
+            run = fix.engine.run(adapter)
 
-        assert run.suite.status is fix_suite.SuiteStatus.ERROR
+        assert run.suite.status is fix.suite.SuiteStatus.ERROR
         assert landed.called

@@ -15,14 +15,14 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
-from gh import client as gh_client
-from core import log
-from core import proc
-from core import prompt
-from core import publishing
-from core import timeouts
-from config import workbench_config
-from config import workbench_config_write
+import gh.client
+import core.log
+import core.proc
+import core.prompt
+import core.publishing
+import core.timeouts
+import config.workbench_config
+import config.workbench_config_write
 from config.workbench_config import yaml_dump
 # Imported rather than spelled again: see `pr.target` for what the value is.
 # Here it is the host that adds nothing to gh's own resolution, so a base_url
@@ -42,9 +42,9 @@ _GITHUB_CLOSE_PATTERN = re.compile(r"(closes|fixes|resolves)\s+#(\d+)", re.IGNOR
 # reader checking it against the enum, rather than leaving Jira as the only
 # entry with no default and Linear looking like an oversight.
 _DEFAULT_BASE_URL = {
-    str(workbench_config.IssueProvider.GITHUB): f"https://{PUBLIC_GITHUB_HOST}",
-    str(workbench_config.IssueProvider.JIRA): "",
-    str(workbench_config.IssueProvider.LINEAR): "",
+    str(config.workbench_config.IssueProvider.GITHUB): f"https://{PUBLIC_GITHUB_HOST}",
+    str(config.workbench_config.IssueProvider.JIRA): "",
+    str(config.workbench_config.IssueProvider.LINEAR): "",
 }
 
 _LEGACY_CONFIG_DIR = ".claude"
@@ -137,14 +137,14 @@ def adopt_project_review_yml(wt_path: str) -> bool:
     Idempotent — the new file existing is what stops a second conversion.
     """
     legacy = Path(wt_path) / _LEGACY_CONFIG_DIR / _LEGACY_CONFIG_FILE
-    target = workbench_config.project_config_path(wt_path)
+    target = config.workbench_config.project_config_path(wt_path)
     if not legacy.is_file() or target.exists():
         return False
 
     try:
-        legacy_data = workbench_config.read_yaml(legacy)
-    except workbench_config.ConfigError as exc:
-        log.warn(f"{legacy} is unreadable ({exc}) — not converting it")
+        legacy_data = config.workbench_config.read_yaml(legacy)
+    except config.workbench_config.ConfigError as exc:
+        core.log.warn(f"{legacy} is unreadable ({exc}) — not converting it")
         return False
 
     # The legacy file's own key, frozen: `.claude/review.yml` is a real file in
@@ -158,14 +158,14 @@ def adopt_project_review_yml(wt_path: str) -> bool:
     try:
         # The modeline every other creator seeds, so a converted file gets the
         # same schema completion a file `set_value` created would.
-        target.write_text(f"{workbench_config.CONFIG_HEADER}\n{body}")
+        target.write_text(f"{config.workbench_config.CONFIG_HEADER}\n{body}")
     except OSError as exc:
         # A read-only checkout still has the legacy file to fall back on, so a
         # failed conversion costs nothing but the conversion.
-        log.dim(f"could not write {target} ({exc}) — leaving {legacy} in place")
+        core.log.dim(f"could not write {target} ({exc}) — leaving {legacy} in place")
         return False
 
-    log.ok(f"Converted {legacy} to {target.name} — the old file can be removed")
+    core.log.ok(f"Converted {legacy} to {target.name} — the old file can be removed")
     return True
 
 
@@ -177,8 +177,8 @@ def load_issue_provider(wt_path: str | None = None) -> IssueProviderInfo:
     """
     if wt_path:
         adopt_project_review_yml(wt_path)
-    config = workbench_config.load_config_or_default(wt_path)
-    tracker = config.issues
+    cfg = config.workbench_config.load_config_or_default(wt_path)
+    tracker = cfg.issues
     # str() per scalar: asdict leaves an enum member as the member, and every
     # consumer of a scalar option reads it as a string. A None provider is
     # dropped by the same truthiness filter, so options never carries a "None"
@@ -198,7 +198,7 @@ def load_issue_provider(wt_path: str | None = None) -> IssueProviderInfo:
 # Jira branch, so gating it on a team key blames a missing key for a
 # creation that a key would not have enabled.
 _TEAM_KEY_PROVIDERS = frozenset({
-    str(workbench_config.IssueProvider.LINEAR),
+    str(config.workbench_config.IssueProvider.LINEAR),
 })
 
 
@@ -223,8 +223,8 @@ def _config_problem(wt_path: str | None) -> str:
     broken file may already hold.
     """
     try:
-        workbench_config.load_config(wt_path)
-    except workbench_config.ConfigError as exc:
+        config.workbench_config.load_config(wt_path)
+    except config.workbench_config.ConfigError as exc:
         return str(exc)
     return ""
 
@@ -248,32 +248,32 @@ def ensure_issue_provider(wt_path: str | None = None) -> IssueProviderInfo:
     where = wt_path or "this repo"
     problem = _config_problem(wt_path)
     if problem:
-        log.error(
+        core.log.error(
             f"Cannot read the issue tracker for {where}: {problem} — fix the "
             f"file; an answer given now would be shadowed by it",
         )
         return info
 
-    accepted = [str(p) for p in workbench_config.IssueProvider]
-    if not prompt.interactive():
-        log.warn(
+    accepted = [str(p) for p in config.workbench_config.IssueProvider]
+    if not core.prompt.interactive():
+        core.log.warn(
             f"No issue tracker configured for {where} — set "
-            f"{workbench_config.ISSUE_PROVIDER_KEY} to one of "
-            f"{', '.join(accepted)} in {workbench_config.PROJECT_CONFIG_NAME} "
-            f"or {workbench_config.global_config_path()}",
+            f"{config.workbench_config.ISSUE_PROVIDER_KEY} to one of "
+            f"{', '.join(accepted)} in {config.workbench_config.PROJECT_CONFIG_NAME} "
+            f"or {config.workbench_config.global_config_path()}",
         )
         return info
 
-    answer = prompt.ask(
+    answer = core.prompt.ask(
         f"Where does {where} file issues? ({'/'.join(accepted)}, Enter to skip): ",
     ).lower()
     if not answer:
-        log.warn(
+        core.log.warn(
             f"No issue tracker recorded for {where} — nothing was filed",
         )
         return info
     if answer not in accepted:
-        log.warn(f"'{answer}' is not one of {', '.join(accepted)} — nothing was recorded")
+        core.log.warn(f"'{answer}' is not one of {', '.join(accepted)} — nothing was recorded")
         return info
 
     _record_issue_provider(answer, wt_path)
@@ -297,7 +297,7 @@ def _record_issue_provider(provider: str, wt_path: str | None) -> None:
     if wt_path is None:
         scope = str(_Scope.ALL)
     else:
-        scope = prompt.ask(
+        scope = core.prompt.ask(
             f"Record for this repo or all repos? "
             f"({_Scope.REPO}/{_Scope.ALL}, Enter for {_Scope.REPO}): ",
         ).lower()
@@ -305,23 +305,23 @@ def _record_issue_provider(provider: str, wt_path: str | None) -> None:
     try:
         chosen = _Scope(scope or _Scope.REPO)
     except ValueError:
-        log.warn(f"'{scope}' is not {_Scope.REPO} or {_Scope.ALL} — nothing was recorded")
+        core.log.warn(f"'{scope}' is not {_Scope.REPO} or {_Scope.ALL} — nothing was recorded")
         return
     scope_all = chosen is _Scope.ALL
 
     try:
         if scope_all:
-            workbench_config_write.set_value(
-                workbench_config.ISSUE_PROVIDER_KEY, provider,
+            config.workbench_config_write.set_value(
+                config.workbench_config.ISSUE_PROVIDER_KEY, provider,
             )
-            log.ok(f"Recorded {provider} as the tracker for all repos")
+            core.log.ok(f"Recorded {provider} as the tracker for all repos")
             return
         _record_for_repo(provider, wt_path)
-    except workbench_config.ConfigKeyError as exc:
-        log.error(str(exc))
-        log.dim(f"using {provider} for this run — this checkout cannot record it")
-    except workbench_config.ConfigError as exc:
-        log.dim(f"could not record the tracker ({exc}) — using {provider} for this run")
+    except config.workbench_config.ConfigKeyError as exc:
+        core.log.error(str(exc))
+        core.log.dim(f"using {provider} for this run — this checkout cannot record it")
+    except config.workbench_config.ConfigError as exc:
+        core.log.dim(f"could not record the tracker ({exc}) — using {provider} for this run")
 
 
 def _record_for_repo(provider: str, wt_path: str) -> None:
@@ -336,20 +336,20 @@ def _record_for_repo(provider: str, wt_path: str) -> None:
 
     A plain clone has no container and keeps the committed file it always had.
     """
-    container = workbench_config.container_config_path(wt_path)
+    container = config.workbench_config.container_config_path(wt_path)
     if container is None:
-        workbench_config_write.set_project_value(
-            workbench_config.ISSUE_PROVIDER_KEY, provider, wt_path,
+        config.workbench_config_write.set_project_value(
+            config.workbench_config.ISSUE_PROVIDER_KEY, provider, wt_path,
         )
-        log.ok(
-            f"Recorded {provider} in {workbench_config.PROJECT_CONFIG_NAME} "
+        core.log.ok(
+            f"Recorded {provider} in {config.workbench_config.PROJECT_CONFIG_NAME} "
             f"— commit it so the repo keeps the answer",
         )
         return
-    workbench_config_write.set_container_value(
-        workbench_config.ISSUE_PROVIDER_KEY, provider, wt_path,
+    config.workbench_config_write.set_container_value(
+        config.workbench_config.ISSUE_PROVIDER_KEY, provider, wt_path,
     )
-    log.ok(f"Recorded {provider} in {container} — every worktree of this repo reads it")
+    core.log.ok(f"Recorded {provider} in {container} — every worktree of this repo reads it")
 
 
 def _search_jira_linear_id(branch: str, pr_body: str) -> str | None:
@@ -372,14 +372,14 @@ def extract_issue_id(provider: str, branch: str, pr_body: str = "") -> str | Non
         searched = [f"branch '{branch}'"]
         if pr_body:
             searched.append("PR body")
-        log.dim(f"No {provider} issue ID found in {' or '.join(searched)}")
+        core.log.dim(f"No {provider} issue ID found in {' or '.join(searched)}")
         return None
 
     if provider == "github" and pr_body:
         m = _GITHUB_CLOSE_PATTERN.search(pr_body)
         if m:
             return m.group(2)
-        log.dim("No closes/fixes/resolves keyword found in PR body")
+        core.log.dim("No closes/fixes/resolves keyword found in PR body")
         return None
 
     return None
@@ -393,11 +393,11 @@ def _issue_cli_ok(cmd: list[str]) -> bool:
     is indistinguishable from. Reading that as failure would drop a label that
     had in fact just been created, and say so in a warning.
 
-    ``gh_client.ok`` is this for the GitHub half; the tracker CLIs are optional
+    ``gh.client.ok`` is this for the GitHub half; the tracker CLIs are optional
     binaries, so a missing one is a failure rather than an exception.
     """
     try:
-        return proc.run(cmd, timeout=timeouts.NETWORK).ok
+        return core.proc.run(cmd, timeout=core.timeouts.NETWORK).ok
     except FileNotFoundError:
         return False
 
@@ -413,7 +413,7 @@ def _run_issue_cli(cmd: list[str]) -> str:
     missing-binary case still needs catching — the tracker CLI is optional.
     """
     try:
-        r = proc.run(cmd, timeout=timeouts.NETWORK)
+        r = core.proc.run(cmd, timeout=core.timeouts.NETWORK)
     except FileNotFoundError:
         return ""
     return r.stdout.strip() if r.ok else ""
@@ -425,9 +425,9 @@ def _fetch_linear(issue_id: str) -> IssueContext:
         ["linear", "issue", "view", issue_id, "--json", "--no-comments"],
     )
     if context:
-        log.ok(f"Found Linear issue: {issue_id}")
+        core.log.ok(f"Found Linear issue: {issue_id}")
     else:
-        log.dim(f"Linear issue {issue_id} not found or linear CLI unavailable")
+        core.log.dim(f"Linear issue {issue_id} not found or linear CLI unavailable")
     return IssueContext(context=context)
 
 
@@ -471,7 +471,7 @@ def warn_on_host_mismatch(
     which, so refusing would block a run over a disagreement it cannot resolve.
     Returns the message it logged, for a caller that wants to record it too.
     """
-    if provider != str(workbench_config.IssueProvider.GITHUB):
+    if provider != str(config.workbench_config.IssueProvider.GITHUB):
         return ""
     tracker_host = _github_host(opts)
     # Both are normalised to "" for the public instance, so this compares like
@@ -485,7 +485,7 @@ def warn_on_host_mismatch(
         f"{tracker_host} — links will point at one instance and issues "
         f"will be filed to the other"
     )
-    log.warn(message)
+    core.log.warn(message)
     return message
 
 
@@ -518,20 +518,20 @@ def _fetch_github(issue_id: str, repo: str, opts: dict | None) -> IssueContext:
     as the same empty context any other failed fetch does.
     """
     link = _issue_link(
-        str(workbench_config.IssueProvider.GITHUB), f"{repo}/issues/{issue_id}", opts,
+        str(config.workbench_config.IssueProvider.GITHUB), f"{repo}/issues/{issue_id}", opts,
     )
     target = _github_repo_arg(repo, opts)
-    context = gh_client.out(
+    context = gh.client.out(
         "issue", "view", issue_id,
         "--repo", target,
         "--json", "title,body,comments",
     )
     if context:
-        log.ok(f"Found GitHub issue: #{issue_id}")
+        core.log.ok(f"Found GitHub issue: #{issue_id}")
     else:
         # *target*, not *repo*: on an enterprise instance the host is the
         # likeliest thing to be wrong, and the miss is the only place it shows.
-        log.dim(f"GitHub issue #{issue_id} not found in {target}")
+        core.log.dim(f"GitHub issue #{issue_id} not found in {target}")
     return IssueContext(link=link, context=context)
 
 
@@ -540,8 +540,8 @@ def _fetch_jira(issue_id: str, opts: dict | None) -> IssueContext:
 
     No Jira CLI ships with this workbench, so the link is the whole context.
     """
-    link = _issue_link(str(workbench_config.IssueProvider.JIRA), f"browse/{issue_id}", opts)
-    log.ok(f"Found Jira issue: {issue_id}")
+    link = _issue_link(str(config.workbench_config.IssueProvider.JIRA), f"browse/{issue_id}", opts)
+    core.log.ok(f"Found Jira issue: {issue_id}")
     return IssueContext(link=link)
 
 
@@ -604,10 +604,10 @@ def _ensure_linear_labels(labels: list[str], team: str) -> list[str]:
             ["linear", "label", "create", "--name", label, "--team", team],
         )
         if created:
-            log.ok(f"Created Linear label '{label}' for team {team}")
+            core.log.ok(f"Created Linear label '{label}' for team {team}")
             usable.append(label)
         else:
-            log.warn(f"Could not create Linear label '{label}' — filing without it")
+            core.log.warn(f"Could not create Linear label '{label}' — filing without it")
     return usable
 
 
@@ -647,13 +647,13 @@ def _create_linear(
             return None
         m = _ISSUE_PATTERN_JIRA_LINEAR.search(output)
         if not m:
-            log.error(
+            core.log.error(
                 "Could not parse issue ID from linear output: "
-                f"{output[:proc.DETAIL_LIMIT]}")
+                f"{output[:core.proc.DETAIL_LIMIT]}")
             return None
         issue_id = m.group(0)
         url = _get_linear_issue_url(issue_id)
-        log.ok(f"Created Linear issue: {issue_id}")
+        core.log.ok(f"Created Linear issue: {issue_id}")
         return CreatedIssue(id=issue_id, url=url)
 
 
@@ -679,7 +679,7 @@ def get_issue_url(provider: str, issue_id: str) -> str:
 def _run_issue_cmd(cmd_prefix: list[str], description: str) -> bool:
     with _description_file(description) as desc_file:
         try:
-            return proc.run(cmd_prefix + [desc_file], timeout=timeouts.NETWORK).ok
+            return core.proc.run(cmd_prefix + [desc_file], timeout=core.timeouts.NETWORK).ok
         except FileNotFoundError:
             return False
 
@@ -690,7 +690,7 @@ def _update_linear(issue_id: str, description: str) -> bool:
         description,
     )
     if ok:
-        log.ok(f"Updated Linear issue: {issue_id}")
+        core.log.ok(f"Updated Linear issue: {issue_id}")
     return ok
 
 
@@ -718,11 +718,11 @@ def _ensure_github_labels(labels: list[str], repo: str) -> list[str]:
         if label.casefold() in existing:
             usable.append(label)
             continue
-        if gh_client.ok("label", "create", label, "--repo", repo):
-            log.ok(f"Created GitHub label '{label}' in {repo}")
+        if gh.client.ok("label", "create", label, "--repo", repo):
+            core.log.ok(f"Created GitHub label '{label}' in {repo}")
             usable.append(label)
         else:
-            log.warn(f"Could not create GitHub label '{label}' — filing without it")
+            core.log.warn(f"Could not create GitHub label '{label}' — filing without it")
     return usable
 
 
@@ -733,7 +733,7 @@ def _github_label_names(repo: str) -> frozenset[str]:
     missing, then fail to be created because it is not.
     """
     return _label_names(
-        gh_client.out(
+        gh.client.out(
             "label", "list", "--repo", repo, "--limit", "200", "--json", "name",
         ),
         "GitHub",
@@ -758,7 +758,7 @@ def _label_names(raw: str, tracker: str) -> frozenset[str]:
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        log.dim(f"Could not parse the {tracker} label list — treating it as empty")
+        core.log.dim(f"Could not parse the {tracker} label list — treating it as empty")
         return frozenset()
     if not isinstance(data, list):
         return frozenset()
@@ -795,13 +795,13 @@ def _create_github(
         ]
         for label in _ensure_github_labels(labels or [], target):
             cmd.extend(["--label", label])
-        output = gh_client.out(*cmd)
+        output = gh.client.out(*cmd)
         if not output:
             return None
         url = output.strip().splitlines()[-1].strip()
         m = re.search(r"/issues/(\d+)", url)
         issue_id = f"#{m.group(1)}" if m else url
-        log.ok(f"Created GitHub issue: {issue_id}")
+        core.log.ok(f"Created GitHub issue: {issue_id}")
         return CreatedIssue(id=issue_id, url=url)
 
 
@@ -812,11 +812,11 @@ def _update_github(
     num = issue_id.lstrip("#")
     target = _github_repo_arg(repo, opts)
     with _description_file(description) as desc_file:
-        ok = gh_client.ok(
+        ok = gh.client.ok(
             "issue", "edit", num, "--repo", target, "--body-file", desc_file,
         )
     if ok:
-        log.ok(f"Updated GitHub issue: {issue_id}")
+        core.log.ok(f"Updated GitHub issue: {issue_id}")
     return ok
 
 
@@ -856,8 +856,8 @@ def create_issue(
     passes the tracker's options, and which labels a repo puts on the issues
     its automation files is a property of the repo, not of the call site.
     """
-    if not publishing.enabled():
-        publishing.draft(f"create {provider} issue: {title}", description)
+    if not core.publishing.enabled():
+        core.publishing.draft(f"create {provider} issue: {title}", description)
         return IssueResult(IssueDelivery.SKIPPED)
     labels = _configured_labels(opts)
     if provider == "linear":
@@ -866,7 +866,7 @@ def create_issue(
     if provider == "github":
         return _creation_result(
             _create_github(repo, title, description, labels, opts))
-    log.dim(f"Issue creation not supported for provider: {provider}")
+    core.log.dim(f"Issue creation not supported for provider: {provider}")
     return IssueResult(IssueDelivery.UNDELIVERED)
 
 
@@ -885,12 +885,12 @@ def update_issue(
     opts: dict | None = None,
 ) -> bool:
     """Update an existing issue's description. Returns True on success."""
-    if not publishing.enabled():
-        publishing.draft(f"update {provider} issue {issue_id}", description)
+    if not core.publishing.enabled():
+        core.publishing.draft(f"update {provider} issue {issue_id}", description)
         return False
     if provider == "linear":
         return _update_linear(issue_id, description)
     if provider == "github":
         return _update_github(repo, issue_id, description, opts)
-    log.dim(f"Issue update not supported for provider: {provider}")
+    core.log.dim(f"Issue update not supported for provider: {provider}")
     return False

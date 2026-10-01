@@ -11,13 +11,13 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from pr import ci_annotations  # noqa: E402
-from pr import ci_failures as ci  # noqa: E402
+import pr.ci_annotations  # noqa: E402
+import pr.ci_failures  # noqa: E402
 
 
 def _no_log_fallback(kind):
     """A `log_fallback` result for a job whose logs yielded nothing."""
-    return ci_annotations.LogFallback([], "", kind, structured=False)
+    return pr.ci_annotations.LogFallback([], "", kind, structured=False)
 
 
 # ── fetch_job_failure ───────────────────────────────────────────────────
@@ -31,10 +31,10 @@ def test_fetch_job_failure_returns_correct_structure():
     job = {"name": "shellcheck", "conclusion": "failure", "databaseId": 10}
     run_data = {"databaseId": 100}
     with patch("gh.run_reads.fetch_annotations", return_value=annotations):
-        result = ci_annotations.fetch_job_failure("owner/repo", job, run_data)
+        result = pr.ci_annotations.fetch_job_failure("owner/repo", job, run_data)
     assert result is not None
     assert result.job_name == "shellcheck"
-    assert result.kind == ci.FailureKind.LINT
+    assert result.kind == pr.ci_failures.FailureKind.LINT
     assert len(result.items) == 1
     assert result.items[0].file == "bin/foo.sh"
     assert result.failed_step is None
@@ -45,8 +45,8 @@ def test_fetch_job_failure_with_no_annotations():
     job = {"name": "Build", "conclusion": "failure", "databaseId": 10}
     run_data = {"databaseId": 100}
     with patch("gh.run_reads.fetch_annotations", return_value=[]):
-        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(ci.FailureKind.BUILD)):
-            result = ci_annotations.fetch_job_failure("owner/repo", job, run_data)
+        with patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(pr.ci_failures.FailureKind.BUILD)):
+            result = pr.ci_annotations.fetch_job_failure("owner/repo", job, run_data)
     assert result is not None
     assert result.job_name == "Build"
     assert "no-annotation" in result.items[0].id
@@ -65,12 +65,12 @@ def test_extract_failed_step_from_steps():
             {"name": "Post Checkout", "conclusion": "skipped"},
         ],
     }
-    assert ci_annotations.extract_failed_step(job) == "Generate & check drift"
+    assert pr.ci_annotations.extract_failed_step(job) == "Generate & check drift"
 
 
 def test_extract_failed_step_no_steps():
     job = {"name": "Build"}
-    assert ci_annotations.extract_failed_step(job) is None
+    assert pr.ci_annotations.extract_failed_step(job) is None
 
 
 def test_extract_failed_step_all_success():
@@ -81,7 +81,7 @@ def test_extract_failed_step_all_success():
             {"name": "Run lint", "conclusion": "success"},
         ],
     }
-    assert ci_annotations.extract_failed_step(job) is None
+    assert pr.ci_annotations.extract_failed_step(job) is None
 
 
 def test_extract_failed_step_timed_out():
@@ -91,7 +91,7 @@ def test_extract_failed_step_timed_out():
             {"name": "Run tests", "conclusion": "timed_out"},
         ],
     }
-    assert ci_annotations.extract_failed_step(job) == "Run tests"
+    assert pr.ci_annotations.extract_failed_step(job) == "Run tests"
 
 
 # ── annotations_uninformative ──────────────────────────────────────────
@@ -102,7 +102,7 @@ def test_uninformative_no_paths():
     annotations = [
         {"annotation_level": "failure", "message": "Process completed with exit code 1", "path": ""},
     ]
-    assert ci_annotations.annotations_uninformative(annotations) is True
+    assert pr.ci_annotations.annotations_uninformative(annotations) is True
 
 
 def test_uninformative_with_path():
@@ -110,7 +110,7 @@ def test_uninformative_with_path():
     annotations = [
         {"annotation_level": "failure", "message": "SC2086: Double quote", "path": "bin/foo.sh", "start_line": 42},
     ]
-    assert ci_annotations.annotations_uninformative(annotations) is False
+    assert pr.ci_annotations.annotations_uninformative(annotations) is False
 
 
 def test_uninformative_ignores_notices():
@@ -119,7 +119,7 @@ def test_uninformative_ignores_notices():
         {"annotation_level": "notice", "message": "some notice", "path": "README.md"},
         {"annotation_level": "failure", "message": "Process completed with exit code 1", "path": ""},
     ]
-    assert ci_annotations.annotations_uninformative(annotations) is True
+    assert pr.ci_annotations.annotations_uninformative(annotations) is True
 
 
 def test_uninformative_mixed_informative_and_not():
@@ -128,7 +128,7 @@ def test_uninformative_mixed_informative_and_not():
         {"annotation_level": "failure", "message": "Process completed with exit code 1", "path": ""},
         {"annotation_level": "failure", "message": "error TS2304: Cannot find name 'foo'", "path": "src/app.ts", "start_line": 10},
     ]
-    assert ci_annotations.annotations_uninformative(annotations) is False
+    assert pr.ci_annotations.annotations_uninformative(annotations) is False
 
 
 def test_uninformative_generic_path_dot_github():
@@ -136,7 +136,7 @@ def test_uninformative_generic_path_dot_github():
     annotations = [
         {"annotation_level": "failure", "message": "Process completed with exit code 1.", "path": ".github", "start_line": 405},
     ]
-    assert ci_annotations.annotations_uninformative(annotations) is True
+    assert pr.ci_annotations.annotations_uninformative(annotations) is True
 
 
 def test_uninformative_generic_exit_code_message():
@@ -144,7 +144,7 @@ def test_uninformative_generic_exit_code_message():
     annotations = [
         {"annotation_level": "failure", "message": "Process completed with exit code 1.", "path": "src/main.go", "start_line": 1},
     ]
-    assert ci_annotations.annotations_uninformative(annotations) is True
+    assert pr.ci_annotations.annotations_uninformative(annotations) is True
 
 
 def test_uninformative_exited_with_code():
@@ -152,7 +152,7 @@ def test_uninformative_exited_with_code():
     annotations = [
         {"annotation_level": "failure", "message": "Step exited with code 1", "path": "src/main.go", "start_line": 1},
     ]
-    assert ci_annotations.annotations_uninformative(annotations) is True
+    assert pr.ci_annotations.annotations_uninformative(annotations) is True
 
 
 def test_uninformative_returned_non_zero():
@@ -160,7 +160,7 @@ def test_uninformative_returned_non_zero():
     annotations = [
         {"annotation_level": "failure", "message": "Command returned a non-zero code: 2", "path": "Makefile", "start_line": 10},
     ]
-    assert ci_annotations.annotations_uninformative(annotations) is True
+    assert pr.ci_annotations.annotations_uninformative(annotations) is True
 
 
 def test_uninformative_check_failure_on_line():
@@ -168,7 +168,7 @@ def test_uninformative_check_failure_on_line():
     annotations = [
         {"annotation_level": "failure", "message": "Check failure on line 42", "path": ".github/workflows/ci.yml", "start_line": 42},
     ]
-    assert ci_annotations.annotations_uninformative(annotations) is True
+    assert pr.ci_annotations.annotations_uninformative(annotations) is True
 
 
 def test_uninformative_failed_with_exit_code():
@@ -176,7 +176,7 @@ def test_uninformative_failed_with_exit_code():
     annotations = [
         {"annotation_level": "failure", "message": "Job failed with exit code 1", "path": ".github/workflows/ci.yml", "start_line": 1},
     ]
-    assert ci_annotations.annotations_uninformative(annotations) is True
+    assert pr.ci_annotations.annotations_uninformative(annotations) is True
 
 
 def test_informative_real_error_with_source_path():
@@ -184,7 +184,7 @@ def test_informative_real_error_with_source_path():
     annotations = [
         {"annotation_level": "failure", "message": "SC2086: Double quote to prevent globbing", "path": "bin/foo.sh", "start_line": 42},
     ]
-    assert ci_annotations.annotations_uninformative(annotations) is False
+    assert pr.ci_annotations.annotations_uninformative(annotations) is False
 
 
 def test_informative_mixed_generic_and_specific():
@@ -193,7 +193,7 @@ def test_informative_mixed_generic_and_specific():
         {"annotation_level": "failure", "message": "Process completed with exit code 1.", "path": ".github", "start_line": 405},
         {"annotation_level": "failure", "message": "error TS2304: Cannot find name 'foo'", "path": "src/app.ts", "start_line": 10},
     ]
-    assert ci_annotations.annotations_uninformative(annotations) is False
+    assert pr.ci_annotations.annotations_uninformative(annotations) is False
 
 
 # ── parse_test_artifact ─────────────────────────────────────────────────
@@ -212,7 +212,7 @@ def test_parse_test_artifact_jsonl(tmp_path):
     ]
     jsonl.write_text("\n".join(lines))
 
-    result = ci_annotations.parse_test_artifact(str(artifact_dir))
+    result = pr.ci_annotations.parse_test_artifact(str(artifact_dir))
     assert "--- FAIL: TestFoo" in result
     assert "expected 1, got 2" in result
 
@@ -228,7 +228,7 @@ def test_parse_test_artifact_returns_empty_on_no_failures(tmp_path):
     ]
     jsonl.write_text("\n".join(lines))
 
-    result = ci_annotations.parse_test_artifact(str(artifact_dir))
+    result = pr.ci_annotations.parse_test_artifact(str(artifact_dir))
     assert result == ""
 
 
@@ -243,7 +243,7 @@ def test_parse_test_artifact_keeps_the_records_a_truncated_artifact_did_finish(t
     ]
     (artifact_dir / "test-results.json").write_text("\n".join(lines))
 
-    assert "--- FAIL: TestFoo" in ci_annotations.parse_test_artifact(str(artifact_dir))
+    assert "--- FAIL: TestFoo" in pr.ci_annotations.parse_test_artifact(str(artifact_dir))
 
 
 # ── fetch_test_artifact ─────────────────────────────────────────────────
@@ -253,14 +253,14 @@ def test_fetch_test_artifact_asks_for_the_artifact_the_job_uploads():
     """A `Test: svc-payment` job uploads `test-results-svc-payment`."""
     with patch("gh.run_reads.download_artifact") as mock_download:
         mock_download.return_value.__enter__.return_value = None
-        ci_annotations.fetch_test_artifact("owner/repo", 100, "Test: svc-payment")
+        pr.ci_annotations.fetch_test_artifact("owner/repo", 100, "Test: svc-payment")
     assert mock_download.call_args.args[2] == "test-results-svc-payment"
 
 
 def test_fetch_test_artifact_is_empty_when_the_job_uploaded_none():
     with patch("gh.run_reads.download_artifact") as mock_download:
         mock_download.return_value.__enter__.return_value = None
-        assert ci_annotations.fetch_test_artifact("owner/repo", 100, "Test: svc-payment") == ""
+        assert pr.ci_annotations.fetch_test_artifact("owner/repo", 100, "Test: svc-payment") == ""
 
 
 # ── failure ids and the text behind them ───────────────────────────────
@@ -295,7 +295,7 @@ def test_an_annotation_with_an_empty_message_reports_its_title():
         {"annotation_level": "failure", "message": "", "title": "shellcheck SC2086"},
     ]
 
-    items = ci_annotations.annotations_to_items(annotations, "Lint")
+    items = pr.ci_annotations.annotations_to_items(annotations, "Lint")
 
     assert items[0].annotation == "shellcheck SC2086"
 
@@ -309,7 +309,7 @@ def test_annotations_to_items_headline_from_context():
         {"annotation_level": "failure", "message": "Process completed with exit code 1.", "path": ".github", "start_line": 405},
     ]
     context = "--- FAIL: TestFoo (0.01s)\n    foo_test.go:42: expected 1, got 2"
-    items = ci_annotations.annotations_to_items(annotations, "Test: svc-payment", source_run_id=100, context=context)
+    items = pr.ci_annotations.annotations_to_items(annotations, "Test: svc-payment", source_run_id=100, context=context)
     assert len(items) == 1
     assert "FAIL: TestFoo" in items[0].headline
 
@@ -325,13 +325,13 @@ _ARTIFACT_CONTEXT = "--- FAIL: TestFoo (0.01s)\n    foo_test.go:42: expected 1, 
 
 
 @patch("pr.ci_annotations.fetch_test_artifact", return_value=_ARTIFACT_CONTEXT)
-@patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(ci.FailureKind.TEST))
+@patch("pr.ci_annotations.log_fallback", return_value=_no_log_fallback(pr.ci_failures.FailureKind.TEST))
 @patch("gh.run_reads.fetch_annotations", return_value=_UNINFORMATIVE_ANNOTATIONS)
 def test_fetch_job_failure_uses_artifact_fallback(_mock_ann, _mock_log, _mock_art):
     """When annotations are uninformative and logs are empty, artifact fallback triggers."""
     job = {"name": "Test: svc-payment", "conclusion": "failure", "databaseId": 10,
            "_source_run_id": 100}
-    result = ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 100})
+    result = pr.ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 100})
     assert result is not None
     assert result.items[0].context == _ARTIFACT_CONTEXT
     assert "FAIL: TestFoo" in result.items[0].headline
@@ -344,11 +344,11 @@ def test_fetch_job_failure_skips_artifact_when_logs_succeed(_mock_ann, mock_log,
     """When log fallback produces context, artifact download is not attempted."""
     log_context = "--- FAIL: TestBar (0.02s)\n    bar_test.go:10: wrong result"
     log_annotations = [{"message": log_context, "path": "", "start_line": 0, "title": ""}]
-    mock_log.return_value = ci_annotations.LogFallback(
-        log_annotations, log_context, ci.FailureKind.TEST, structured=False,
+    mock_log.return_value = pr.ci_annotations.LogFallback(
+        log_annotations, log_context, pr.ci_failures.FailureKind.TEST, structured=False,
     )
     job = {"name": "Test: svc-payment", "conclusion": "failure", "databaseId": 10}
-    ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 100})
+    pr.ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 100})
     mock_artifact.assert_not_called()
 
 
@@ -361,7 +361,7 @@ def test_fetch_job_failure_no_artifact_for_lint(mock_ann, mock_log, mock_artifac
         {"annotation_level": "failure", "message": "Process completed with exit code 1.", "path": "", "start_line": 0},
     ]
     job = {"name": "shellcheck", "conclusion": "failure", "databaseId": 10}
-    ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 100})
+    pr.ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 100})
     mock_log.assert_not_called()
     mock_artifact.assert_not_called()
 
@@ -387,7 +387,7 @@ def _bats_items():
     """`fetch_job_failure` for a bats job whose only annotation is generic."""
     with patch("gh.run_reads.fetch_annotations", return_value=_UNINFORMATIVE_ANNOTATIONS), \
          patch("gh.run_reads.fetch_job_logs", return_value=_BATS_LOG):
-        return ci_annotations.fetch_job_failure("owner/repo", _BATS_JOB, {"databaseId": 100}).items
+        return pr.ci_annotations.fetch_job_failure("owner/repo", _BATS_JOB, {"databaseId": 100}).items
 
 
 def test_bats_failure_reports_the_failing_assertion():
@@ -420,7 +420,7 @@ def test_every_bats_failure_gets_its_own_item():
     ])
     with patch("gh.run_reads.fetch_annotations", return_value=_UNINFORMATIVE_ANNOTATIONS), \
          patch("gh.run_reads.fetch_job_logs", return_value=log):
-        result = ci_annotations.fetch_job_failure("owner/repo", _BATS_JOB, {"databaseId": 100})
+        result = pr.ci_annotations.fetch_job_failure("owner/repo", _BATS_JOB, {"databaseId": 100})
     assert [(i.file, i.line) for i in result.items] == [
         ("tests/a.bats", 10), ("tests/b.bats", 18),
     ]
@@ -431,7 +431,7 @@ def test_an_unlocated_tap_failure_keys_on_its_test_name():
     log = "2026-08-28T18:34:33.5541835Z not ok 1 setup_file failed in 2ms"
     with patch("gh.run_reads.fetch_annotations", return_value=_UNINFORMATIVE_ANNOTATIONS), \
          patch("gh.run_reads.fetch_job_logs", return_value=log):
-        result = ci_annotations.fetch_job_failure("owner/repo", _BATS_JOB, {"databaseId": 100})
+        result = pr.ci_annotations.fetch_job_failure("owner/repo", _BATS_JOB, {"databaseId": 100})
     assert result.items[0].id == "Tests (bats)-setup-file-failed"
 
 
@@ -458,7 +458,7 @@ def _pytest_items(log=_PYTEST_LOG):
     """`fetch_job_failure` for a pytest job whose only annotation is generic."""
     with patch("gh.run_reads.fetch_annotations", return_value=_UNINFORMATIVE_ANNOTATIONS), \
          patch("gh.run_reads.fetch_job_logs", return_value=log):
-        return ci_annotations.fetch_job_failure("owner/repo", _PYTEST_JOB, {"databaseId": 100}).items
+        return pr.ci_annotations.fetch_job_failure("owner/repo", _PYTEST_JOB, {"databaseId": 100}).items
 
 
 def test_pytest_failure_reports_the_frame_that_raised():
@@ -495,7 +495,7 @@ def test_a_non_tap_log_still_keeps_the_original_annotations():
     job = {"name": "Test: svc-payment", "conclusion": "failure", "databaseId": 10}
     with patch("gh.run_reads.fetch_annotations", return_value=_UNINFORMATIVE_ANNOTATIONS), \
          patch("gh.run_reads.fetch_job_logs", return_value=log):
-        result = ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 100})
+        result = pr.ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 100})
     assert result.items[0].file == _UNINFORMATIVE_ANNOTATIONS[0]["path"]
     assert "FAIL: TestFoo" in result.items[0].context
 
@@ -514,12 +514,12 @@ def test_an_app_check_never_reaches_the_log_ladder():
     with patch("gh.run_reads.fetch_annotations", return_value=[]), \
          patch("pr.ci_annotations.log_fallback") as ladder, \
          patch("pr.ci_annotations.fetch_test_artifact") as artifact:
-        result = ci_annotations.fetch_job_failure(
+        result = pr.ci_annotations.fetch_job_failure(
             "owner/repo", _external_job(summary="2 alerts"), {"databaseId": 1},
         )
     ladder.assert_not_called()
     artifact.assert_not_called()
-    assert result.kind is ci.FailureKind.EXTERNAL
+    assert result.kind is pr.ci_failures.FailureKind.EXTERNAL
     assert result.items[0].annotation == "2 alerts"
 
 
@@ -528,13 +528,13 @@ def test_an_app_checks_own_annotations_are_read():
     annotations = [{"message": "Hard-coded credential", "path": "app/db.py",
                     "start_line": 42, "title": "py/hardcoded-credentials"}]
     with patch("gh.run_reads.fetch_annotations", return_value=annotations) as fetch:
-        result = ci_annotations.fetch_job_failure(
+        result = pr.ci_annotations.fetch_job_failure(
             "owner/repo", _external_job(), {"databaseId": 1},
         )
     assert fetch.call_args.args[1] == 77
     assert result.items[0].file == "app/db.py"
     assert result.items[0].line == 42
-    assert result.kind is ci.FailureKind.EXTERNAL
+    assert result.kind is pr.ci_failures.FailureKind.EXTERNAL
 
 
 def test_a_status_context_has_no_id_to_look_annotations_up_by():
@@ -542,7 +542,7 @@ def test_a_status_context_has_no_id_to_look_annotations_up_by():
     job = _external_job(name="scalr/plan", db_id=0, summary="plan errored",
                         source="status_context")
     with patch("gh.run_reads.fetch_annotations") as fetch:
-        result = ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 1})
+        result = pr.ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 1})
     fetch.assert_not_called()
     assert result.job_name == "scalr/plan"
     assert result.items[0].annotation == "plan errored"
@@ -553,9 +553,9 @@ def test_an_external_check_that_says_nothing_still_becomes_an_item():
     job = _external_job(name="kubesec", db_id=0, summary="", source="status_context")
     job["_details_url"] = ""
     with patch("gh.run_reads.fetch_annotations", return_value=[]):
-        result = ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 1})
+        result = pr.ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 1})
     assert result is not None
-    assert result.kind is ci.FailureKind.EXTERNAL
+    assert result.kind is pr.ci_failures.FailureKind.EXTERNAL
     assert "kubesec" in result.items[0].annotation
 
 
@@ -565,17 +565,17 @@ def test_an_external_check_with_only_notice_annotations_falls_back_to_summary():
                 "start_line": 1, "title": "kubesec"}]
     job = _external_job(name="kubesec", db_id=77, summary="kubesec found issues")
     with patch("gh.run_reads.fetch_annotations", return_value=notices):
-        result = ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 1})
+        result = pr.ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 1})
     assert result is not None
-    assert result.kind is ci.FailureKind.EXTERNAL
+    assert result.kind is pr.ci_failures.FailureKind.EXTERNAL
     assert result.items[0].annotation == "kubesec found issues"
 
 
 def test_codeql_is_not_classified_as_a_build_failure():
     """`classify_job` matches on name and would read it as BUILD, and fix it as one."""
-    assert ci.classify_job("CodeQL", []) is ci.FailureKind.BUILD
+    assert pr.ci_failures.classify_job("CodeQL", []) is pr.ci_failures.FailureKind.BUILD
     with patch("gh.run_reads.fetch_annotations", return_value=[]):
-        result = ci_annotations.fetch_job_failure(
+        result = pr.ci_annotations.fetch_job_failure(
             "owner/repo", _external_job(summary="alert"), {"databaseId": 1},
         )
-    assert result.kind is ci.FailureKind.EXTERNAL
+    assert result.kind is pr.ci_failures.FailureKind.EXTERNAL

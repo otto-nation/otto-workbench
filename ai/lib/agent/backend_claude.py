@@ -20,10 +20,10 @@ import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from agent import usage as ai_usage
-from core import log
-from core import timeouts
-from agent import vertex_quota
+import agent.usage
+import core.log
+import core.timeouts
+import agent.vertex_quota
 from agent.backend import AgentInvocation, agent_env
 from agent.backend_events import _log_stderr_on_failure, claude_display_text, parse_claude_event
 from core.log import ANSI_DIM, ANSI_RESET, _print_lock
@@ -247,7 +247,7 @@ def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
     No-ops on the first-party API, where model availability is not a
     per-project allocation the client can inspect ahead of time.
     """
-    return vertex_quota.run_preflight(models, trail)
+    return agent.vertex_quota.run_preflight(models, trail)
 
 
 _FAILURE_DETAIL_MAX_CHARS = 2000
@@ -269,7 +269,7 @@ def _failure_detail(result: subprocess.CompletedProcess) -> str:
 def prompt(
     text: str, *, cwd: str, model: str | None = None,
     thinking: str | None = None, provider: str | None = None,
-) -> tuple[str, int, ai_usage.SessionUsage | None]:
+) -> tuple[str, int, agent.usage.SessionUsage | None]:
     """Stateless text-in/text-out via claude -p. Returns (text, exit_code, usage).
 
     usage is None when the reply carried no envelope to measure.
@@ -285,14 +285,14 @@ def prompt(
     """
     cmd = _build_prompt_cmd(model=model)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd,
-                            timeout=timeouts.UNBOUNDED)
+                            timeout=core.timeouts.UNBOUNDED)
     if result.returncode != 0:
-        log.dim(_failure_detail(result))
+        core.log.dim(_failure_detail(result))
     reply, usage = _unwrap_prompt_output(result.stdout)
     return reply, result.returncode, usage
 
 
-def _unwrap_prompt_output(stdout: str) -> tuple[str, ai_usage.SessionUsage | None]:
+def _unwrap_prompt_output(stdout: str) -> tuple[str, agent.usage.SessionUsage | None]:
     """Pull the reply text and usage out of a --output-format json envelope.
 
     Falls back to the raw stdout if it is not the expected envelope, so a CLI
@@ -306,7 +306,7 @@ def _unwrap_prompt_output(stdout: str) -> tuple[str, ai_usage.SessionUsage | Non
         return stdout, None
     if not isinstance(envelope, dict):
         return stdout, None
-    usage = ai_usage.usage_from_records([envelope])
+    usage = agent.usage.usage_from_records([envelope])
     reply = envelope.get("result")
     return (reply if isinstance(reply, str) else stdout), usage
 

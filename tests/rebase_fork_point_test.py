@@ -20,11 +20,12 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from gh import landed as branch_landed  # noqa: E402
+import gh.landed  # noqa: E402
 from pr.domains import RebaseStatus  # noqa: E402
-from rebase import lifecycle  # noqa: E402
-from rebase import refusals  # noqa: E402
-from rebase import types as rebase_types  # noqa: E402
+import rebase.lifecycle  # noqa: E402
+import rebase.refusals  # noqa: E402
+import rebase.types  # noqa: E402
+import git.topology
 
 _TARGET = "main"
 
@@ -40,19 +41,19 @@ def _ctx(branch="feat"):
 
 class TestTheRefusalCarriesAnExecutableRemedy:
     def _refusal(self, landed=3, unlanded=1, fork="abc1234"):
-        partial = branch_landed.PartialLanding(
+        partial = gh.landed.PartialLanding(
             landed=landed, unlanded=unlanded,
             fork_point=fork, fork_subject="feat: three",
         )
-        with mock.patch.object(branch_landed, "partial_landing",
+        with mock.patch.object(gh.landed, "partial_landing",
                                return_value=partial):
-            return refusals.partially_landed_check(
+            return rebase.refusals.partially_landed_check(
                 "/fake", _ctx(), target_ref=_TARGET,
             )
 
     def test_it_names_the_flag_and_the_ref_to_pass(self):
         report = self._refusal()
-        assert report.remedy == f"{refusals.FORK_POINT_FLAG} abc1234"
+        assert report.remedy == f"{rebase.refusals.FORK_POINT_FLAG} abc1234"
 
     def test_the_remedy_is_the_flag_the_cli_actually_accepts(self):
         """A remedy naming a flag that does not parse is the dead end.
@@ -60,10 +61,10 @@ class TestTheRefusalCarriesAnExecutableRemedy:
         Checked against the parser rather than against a second copy of the
         string, so renaming the flag in one place fails here.
         """
-        from cli import pr_rebase as pr_rebase_cli
+        import cli.pr_rebase
 
         flag, ref = self._refusal().remedy.split()
-        args = pr_rebase_cli.build_parser().parse_args([flag, ref])
+        args = cli.pr_rebase.build_parser().parse_args([flag, ref])
         assert args.fork_point == ref
 
     def test_the_status_is_not_already_landed(self):
@@ -76,16 +77,16 @@ class TestTheRefusalCarriesAnExecutableRemedy:
         assert "3 of 4" in report.detail
 
     def test_nothing_found_is_no_refusal(self):
-        with mock.patch.object(branch_landed, "partial_landing", return_value=None):
-            assert refusals.partially_landed_check(
+        with mock.patch.object(gh.landed, "partial_landing", return_value=None):
+            assert rebase.refusals.partially_landed_check(
                 "/fake", _ctx(), target_ref=_TARGET,
             ) is None
 
     def test_the_refusal_prints_the_remedy_before_the_override(self, capsys):
         """Offering `--force` first trains the operator past the actual fix."""
-        with mock.patch.object(rebase_types.RebaseOutcome, "save",
+        with mock.patch.object(rebase.types.RebaseOutcome, "save",
                                lambda self, c: None):
-            refusals.refuse(_ctx(), self._refusal(), target_ref=_TARGET)
+            rebase.refusals.refuse(_ctx(), self._refusal(), target_ref=_TARGET)
 
         err = capsys.readouterr().err
         assert err.index("--fork-point abc1234") < err.index("Pass --force")
@@ -122,26 +123,26 @@ class TestForkPointReplay:
         stubbed. The partially-landed check is deliberately live, since half
         of what these tests assert is which runs it stops.
         """
-        with mock.patch.object(lifecycle.git_topology, "default_branch",
+        with mock.patch.object(git.topology, "default_branch",
                                return_value="main"), \
-             mock.patch.object(lifecycle.rebase_lease, "remembered_tip",
+             mock.patch.object(rebase.lifecycle.rebase_lease, "remembered_tip",
                                return_value=""), \
-             mock.patch.object(lifecycle.rebase_lease, "resolve",
+             mock.patch.object(rebase.lifecycle.rebase_lease, "resolve",
                                return_value=None), \
-             mock.patch.object(lifecycle, "rebase_success", return_value=0), \
-             mock.patch.object(rebase_types.RebaseOutcome, "save",
+             mock.patch.object(rebase.lifecycle, "rebase_success", return_value=0), \
+             mock.patch.object(rebase.types.RebaseOutcome, "save",
                                lambda self, c: None), \
-             mock.patch.object(refusals, "tracker_landed_check", return_value=None), \
-             mock.patch.object(refusals, "git_landed_check", return_value=None), \
-             mock.patch.object(refusals, "unrelated_history_check", return_value=None):
-            return lifecycle.fresh(
-                str(repo), _ctx(), rebase_types.RunMode.REBASE_ONLY,
+             mock.patch.object(rebase.refusals, "tracker_landed_check", return_value=None), \
+             mock.patch.object(rebase.refusals, "git_landed_check", return_value=None), \
+             mock.patch.object(rebase.refusals, "unrelated_history_check", return_value=None):
+            return rebase.lifecycle.fresh(
+                str(repo), _ctx(), rebase.types.RunMode.REBASE_ONLY,
                 force=force, target_ref=_TARGET, fork_point=fork_point,
             )
 
     def test_only_the_commits_after_the_fork_point_are_replayed(self, tmp_path):
         repo = self._partially_landed(tmp_path)
-        partial = branch_landed.partial_landing(str(repo), target_ref=_TARGET)
+        partial = gh.landed.partial_landing(str(repo), target_ref=_TARGET)
         assert partial is not None
 
         assert self._fresh(repo, partial.fork_point) == 0
@@ -156,7 +157,7 @@ class TestForkPointReplay:
         """End to end: the same repo the flag fixes is the one that refuses."""
         repo = self._partially_landed(tmp_path)
 
-        assert self._fresh(repo, "") == rebase_types.REFUSAL_EXIT
+        assert self._fresh(repo, "") == rebase.types.REFUSAL_EXIT
         assert not (repo / ".git" / "rebase-merge").exists()
 
     def test_forcing_past_the_refusal_replays_the_prefix_and_conflicts(self, tmp_path):
@@ -203,18 +204,18 @@ class TestTheDetectionIsSkippedWhenTheRemedyIsAlreadyGiven:
         git_in(repo, "add", "b.txt")
         git_in(repo, "commit", "-q", "-m", "feat: b")
 
-        with mock.patch.object(refusals, "partially_landed_check") as check, \
-             mock.patch.object(lifecycle.git_topology, "default_branch",
+        with mock.patch.object(rebase.refusals, "partially_landed_check") as check, \
+             mock.patch.object(git.topology, "default_branch",
                                return_value="main"), \
-             mock.patch.object(lifecycle.rebase_lease, "remembered_tip",
+             mock.patch.object(rebase.lifecycle.rebase_lease, "remembered_tip",
                                return_value=""), \
-             mock.patch.object(lifecycle.rebase_lease, "resolve", return_value=None), \
-             mock.patch.object(lifecycle, "rebase_success", return_value=0), \
-             mock.patch.object(refusals, "tracker_landed_check", return_value=None), \
-             mock.patch.object(refusals, "git_landed_check", return_value=None), \
-             mock.patch.object(refusals, "unrelated_history_check", return_value=None):
-            lifecycle.fresh(
-                str(repo), _ctx(), rebase_types.RunMode.REBASE_ONLY,
+             mock.patch.object(rebase.lifecycle.rebase_lease, "resolve", return_value=None), \
+             mock.patch.object(rebase.lifecycle, "rebase_success", return_value=0), \
+             mock.patch.object(rebase.refusals, "tracker_landed_check", return_value=None), \
+             mock.patch.object(rebase.refusals, "git_landed_check", return_value=None), \
+             mock.patch.object(rebase.refusals, "unrelated_history_check", return_value=None):
+            rebase.lifecycle.fresh(
+                str(repo), _ctx(), rebase.types.RunMode.REBASE_ONLY,
                 target_ref="main", fork_point="main",
             )
 

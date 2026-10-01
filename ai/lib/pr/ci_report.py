@@ -16,15 +16,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from git import client as git_client
-from pr import ci_failures as ci
-from pr import ci_runs
+import git.client
+import pr.ci_failures
+import pr.ci_runs
 
 # ── Failure serialization ──────────────────────────────────────────────────
 
 
 def serialize_failures(
-    failures: dict[str, ci.FailureGroup], progression: dict[str, ci.Outcome] | None = None,
+    failures: dict[str, pr.ci_failures.FailureGroup], progression: dict[str, pr.ci_failures.Outcome] | None = None,
 ) -> list[dict]:
     """Flatten failure groups into the per-item dicts the report carries.
 
@@ -34,7 +34,7 @@ def serialize_failures(
     result = []
     for group in failures.values():
         for item in group.items:
-            outcome = progression.get(item.id, ci.Outcome.NEW).value if progression else "new"
+            outcome = progression.get(item.id, pr.ci_failures.Outcome.NEW).value if progression else "new"
             result.append({
                 "id": item.id,
                 "job": group.job,
@@ -75,8 +75,8 @@ class CIReport:
     head_sha: str
     conclusion: str | None
     behind_main: int
-    failures: dict[str, ci.FailureGroup]
-    progression: dict[str, ci.Outcome]
+    failures: dict[str, pr.ci_failures.FailureGroup]
+    progression: dict[str, pr.ci_failures.Outcome]
     resolved_since_prior: list[str]
     completed: int | None = None
     total: int | None = None
@@ -94,12 +94,12 @@ class CIReport:
         repo: str,
         branch: str,
         pr_number: int | None,
-        run_state: ci.RunState,
-        progression: dict[str, ci.Outcome],
-        prior_run: ci.RunState | None,
+        run_state: pr.ci_failures.RunState,
+        progression: dict[str, pr.ci_failures.Outcome],
+        prior_run: pr.ci_failures.RunState | None,
         run_ids: list[int],
         behind_main: int,
-        counts: ci_runs.JobCounts | None = None,
+        counts: pr.ci_runs.JobCounts | None = None,
     ) -> "CIReport":
         """Assemble the report for a parsed run.
 
@@ -111,9 +111,9 @@ class CIReport:
         """
         resolved = []
         if prior_run:
-            current_item_ids = ci.collect_item_ids(run_state.failures)
+            current_item_ids = pr.ci_failures.collect_item_ids(run_state.failures)
             resolved = [
-                item_id for item_id in ci.collect_item_ids(prior_run.failures)
+                item_id for item_id in pr.ci_failures.collect_item_ids(prior_run.failures)
                 if item_id not in current_item_ids
             ]
         return cls(
@@ -167,8 +167,8 @@ _MAX_DASHBOARD_ANNOTATION = 120
 
 
 def render_dashboard(
-    run: ci.RunState,
-    progression: dict[str, ci.Outcome],
+    run: pr.ci_failures.RunState,
+    progression: dict[str, pr.ci_failures.Outcome],
     run_ids: list[int] | None = None,
     show_status: bool = False,
 ) -> str:
@@ -176,7 +176,7 @@ def render_dashboard(
     # A commit can be checked by something that never ran a workflow, and there
     # is then no run to number. `Run #0` would name one that does not exist.
     header = (f"## CI Run #{run.run_number} " if run.run_number else "## CI Checks ") \
-        + f"({git_client.abbrev(run.head_sha)})"
+        + f"({git.client.abbrev(run.head_sha)})"
     if show_status:
         suffix = "in progress" if run.status != "completed" else "complete"
         header += f" — {suffix}"
@@ -209,13 +209,13 @@ def render_dashboard(
             lines.append("All checks passed.")
         return "\n".join(lines)
 
-    kind_counts: dict[ci.FailureKind, int] = {}
+    kind_counts: dict[pr.ci_failures.FailureKind, int] = {}
     for group in run.failures.values():
         kind_counts[group.kind] = kind_counts.get(group.kind, 0) + len(group.items)
 
     total = sum(kind_counts.values())
     lines.append(f"Failures: {total} total")
-    for kind in ci.FailureKind:
+    for kind in pr.ci_failures.FailureKind:
         count = kind_counts.get(kind, 0)
         if count:
             lines.append(f"  {kind.value}: {count}")
@@ -252,14 +252,14 @@ def render_dashboard(
         lines.append(f"  … and {overflow} more")
         lines.append("")
 
-    outcome_counts: dict[ci.Outcome, int] = {}
+    outcome_counts: dict[pr.ci_failures.Outcome, int] = {}
     for outcome in progression.values():
         outcome_counts[outcome] = outcome_counts.get(outcome, 0) + 1
 
     if outcome_counts:
         parts = [
             f"{outcome_counts[o]} {o.value}"
-            for o in ci.Outcome if outcome_counts.get(o, 0)
+            for o in pr.ci_failures.Outcome if outcome_counts.get(o, 0)
         ]
         lines.append("Progression: " + ", ".join(parts))
         lines.append("")

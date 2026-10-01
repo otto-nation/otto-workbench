@@ -13,7 +13,7 @@ if str(LIB_DIR) not in sys.path:
 import pytest
 from conftest import init_worktree
 
-from core import run_lock
+import core.run_lock
 from core.run_lock import (
     LOCK_ENV, LOCK_FILE, TREE_LOCK_ENV, TREE_LOCK_FILE, LockBusy, acquire,
 )
@@ -30,11 +30,11 @@ def _clear_lock_env():
     saved = os.environ.pop(LOCK_ENV, None)
     saved_tree = os.environ.pop(TREE_LOCK_ENV, None)
     yield
-    run_lock._release_all()
+    core.run_lock._release_all()
     for held in _DISOWNED:
         held.handle.close()
     _DISOWNED.clear()
-    run_lock._INHERITED.clear()
+    core.run_lock._INHERITED.clear()
     os.environ.pop(LOCK_ENV, None)
     os.environ.pop(TREE_LOCK_ENV, None)
     if saved is not None:
@@ -65,7 +65,7 @@ def _disown(*, target=None, git_dir=None):
         os.environ.pop(
             LOCK_ENV if name == LOCK_FILE else TREE_LOCK_ENV, None,
         )
-        held = run_lock._HELD.pop(str(Path(owner) / name), None)
+        held = core.run_lock._HELD.pop(str(Path(owner) / name), None)
         if held is not None:
             _DISOWNED.append(held)
 
@@ -166,7 +166,7 @@ def test_lock_released_when_body_raises(worktree):
 
 def test_report_busy_names_the_holder(tmp_path, capsys):
     exc = LockBusy({"pid": 4242, "command": "pr review", "started": "t"}, tmp_path)
-    run_lock.report_busy(exc)
+    core.run_lock.report_busy(exc)
     err = capsys.readouterr().err
     assert "pr review" in err
     assert "4242" in err
@@ -188,7 +188,7 @@ def test_lock_busy_tolerates_an_unreadable_holder_record(worktree):
 
 def test_claim_for_process_holds_without_a_context_manager(worktree):
     """Delegates lock for their whole run; the kernel releases it at exit."""
-    run_lock.claim_for_process(worktree, command="ci-check --fix", started="t")
+    core.run_lock.claim_for_process(worktree, command="ci-check --fix", started="t")
     assert os.environ[LOCK_ENV] == str(worktree)
     record = json.loads((worktree / LOCK_FILE).read_text())
     assert record["command"] == "ci-check --fix"
@@ -199,7 +199,7 @@ def test_claim_for_process_holds_without_a_context_manager(worktree):
 def test_claim_for_process_passes_through_when_pr_already_holds_it(worktree):
     """Launched by pr, a delegate inherits LOCK_ENV and must not deadlock."""
     with acquire(worktree, command="pr review --fix", started="t"):
-        run_lock.claim_for_process(worktree, command="review", started="t")
+        core.run_lock.claim_for_process(worktree, command="review", started="t")
         # The parent's ownership record has to survive the delegate.
         record = json.loads((worktree / LOCK_FILE).read_text())
         assert record["command"] == "pr review --fix"
@@ -211,7 +211,7 @@ def test_a_rewriting_delegate_is_guarded_on_its_own(worktree):
     It was reachable unguarded: only `pr rebase` took a lock, and invoking the
     backing script itself serialized against nothing.
     """
-    run_lock.claim_for_process(
+    core.run_lock.claim_for_process(
         worktree, command="pr-rebase --fix", started="t",
     )
     with pytest.raises(LockBusy):
@@ -226,7 +226,7 @@ def test_a_delegate_passes_through_the_lock_its_parent_holds(worktree):
     forwarding itself is pinned in pr_cli_test.
     """
     with acquire(worktree, command="pr rebase --fix", started="t"):
-        run_lock.claim_for_process(
+        core.run_lock.claim_for_process(
             worktree, command="pr-rebase --fix", started="t",
         )
         record = json.loads((worktree / LOCK_FILE).read_text())
@@ -242,10 +242,10 @@ def test_claim_for_process_stamps_released_at_exit(worktree, monkeypatch):
     """
     registered = []
     monkeypatch.setattr(
-        run_lock.atexit, "register",
+        core.run_lock.atexit, "register",
         lambda fn, *args: registered.append((fn, args)),
     )
-    run_lock.claim_for_process(worktree, command="pr-rebase --fix", started="t")
+    core.run_lock.claim_for_process(worktree, command="pr-rebase --fix", started="t")
     assert registered, "claim_for_process must register a release hook"
     for fn, args in registered:
         fn(*args)
@@ -258,7 +258,7 @@ def test_claim_for_process_exits_when_another_run_owns_the_target(worktree, caps
     with acquire(worktree, command="pr review --fix", started="t"):
         _disown(target=worktree)
         with pytest.raises(SystemExit) as excinfo:
-            run_lock.claim_for_process(worktree, command="ci-check", started="t")
+            core.run_lock.claim_for_process(worktree, command="ci-check", started="t")
     assert excinfo.value.code == 1
     assert "pr review --fix" in capsys.readouterr().err
 
@@ -280,8 +280,8 @@ def test_two_targets_and_a_re_claim_of_the_first_all_hold(tmp_path):
     first, second = tmp_path / "t-a", tmp_path / "t-b"
 
     with acquire(first, command="pr fix", started="t"):
-        run_lock.claim_for_process(second, command="ci-check", started="t")
-        run_lock.claim_for_process(first, command="pr-describe", started="t")
+        core.run_lock.claim_for_process(second, command="ci-check", started="t")
+        core.run_lock.claim_for_process(first, command="pr-describe", started="t")
 
         # Both still held, and the re-claim passed through rather than
         # overwriting the record the first holder wrote.
@@ -306,15 +306,15 @@ def test_the_marker_follows_a_re_claim_rather_than_the_order_taken(tmp_path):
     """
     first, second = tmp_path / "t-a", tmp_path / "t-b"
 
-    run_lock.claim_for_process(first, command="review", started="t")
-    run_lock.claim_for_process(second, command="ci-check", started="t")
+    core.run_lock.claim_for_process(first, command="review", started="t")
+    core.run_lock.claim_for_process(second, command="ci-check", started="t")
     assert os.environ[LOCK_ENV] == str(second)
 
-    run_lock.claim_for_process(first, command="pr-describe", started="t")
+    core.run_lock.claim_for_process(first, command="pr-describe", started="t")
     assert os.environ[LOCK_ENV] == str(first)
 
     # And back again: recency tracks every take, not just the first re-claim.
-    run_lock.claim_for_process(second, command="pr-describe", started="t")
+    core.run_lock.claim_for_process(second, command="pr-describe", started="t")
     assert os.environ[LOCK_ENV] == str(second)
 
 
@@ -327,7 +327,7 @@ def test_a_claim_passes_through_a_lock_this_process_holds_with_no_marker(worktre
     """
     with acquire(worktree, command="pr review --fix", started="t"):
         os.environ.pop(LOCK_ENV, None)
-        run_lock.claim_for_process(worktree, command="review", started="t")
+        core.run_lock.claim_for_process(worktree, command="review", started="t")
         record = json.loads((worktree / LOCK_FILE).read_text())
         assert record["command"] == "pr review --fix"
 
@@ -343,11 +343,11 @@ def test_a_second_checkout_does_not_displace_the_first(worktree, tmp_path):
 
     with acquire(tmp_path / "t-one", command="pr fix", started="t",
                  worktree=worktree):
-        run_lock.claim_for_process(
+        core.run_lock.claim_for_process(
             tmp_path / "t-two", command="review --self", started="t",
             worktree=second,
         )
-        run_lock.claim_for_process(
+        core.run_lock.claim_for_process(
             tmp_path / "t-three", command="pr-describe", started="t",
             worktree=worktree,
         )
@@ -371,9 +371,9 @@ def test_a_claim_inside_an_acquire_survives_the_block(worktree):
     claims the same target. The block ending must not retract the claim.
     """
     with acquire(worktree, command="pr review --fix", started="t"):
-        run_lock.claim_for_process(worktree, command="review", started="t")
+        core.run_lock.claim_for_process(worktree, command="review", started="t")
 
-    assert run_lock.is_held(worktree)
+    assert core.run_lock.is_held(worktree)
     assert os.environ[LOCK_ENV] == str(worktree)
 
 
@@ -386,7 +386,7 @@ def test_the_marker_names_the_innermost_lock_this_process_still_holds(tmp_path):
     first, second = tmp_path / "t-a", tmp_path / "t-b"
 
     with acquire(first, command="pr fix", started="t"):
-        run_lock.claim_for_process(second, command="ci-check", started="t")
+        core.run_lock.claim_for_process(second, command="ci-check", started="t")
         assert os.environ[LOCK_ENV] == str(second)
 
     # B is still held, so the marker must still name it — a subprocess spawned
@@ -413,9 +413,9 @@ def test_a_pass_through_adds_no_handle(worktree):
     that leaks a descriptor per phase in a long-lived process.
     """
     with acquire(worktree, command="pr review --fix", started="t"):
-        run_lock.claim_for_process(worktree, command="review", started="t")
-        run_lock.claim_for_process(worktree, command="ci-check", started="t")
-        assert len(run_lock._HELD) == 1
+        core.run_lock.claim_for_process(worktree, command="review", started="t")
+        core.run_lock.claim_for_process(worktree, command="ci-check", started="t")
+        assert len(core.run_lock._HELD) == 1
 
 
 def test_one_atexit_handler_is_registered_for_any_number_of_claims(
@@ -427,19 +427,19 @@ def test_one_atexit_handler_is_registered_for_any_number_of_claims(
     its phase finished, which is what the walker's ordering fixes.
     """
     registered = []
-    monkeypatch.setattr(run_lock, "_ATEXIT_REGISTERED", False)
+    monkeypatch.setattr(core.run_lock, "_ATEXIT_REGISTERED", False)
     monkeypatch.setattr(
-        run_lock.atexit, "register",
+        core.run_lock.atexit, "register",
         lambda fn, *args: registered.append((fn, args)),
     )
 
     targets = [tmp_path / f"t-{n}" for n in range(3)]
     for target in targets:
-        run_lock.claim_for_process(target, command=f"phase {target.name}", started="t")
+        core.run_lock.claim_for_process(target, command=f"phase {target.name}", started="t")
 
     assert len(registered) == 1
 
-    run_lock._release_all()
+    core.run_lock._release_all()
     for target in targets:
         record = json.loads((target / LOCK_FILE).read_text())
         assert record["released"], f"{target.name} was left looking like a live holder"
@@ -454,14 +454,14 @@ def test_the_exit_walker_releases_innermost_first(tmp_path, monkeypatch):
     """
     stamped = []
     first, second = tmp_path / "t-a", tmp_path / "t-b"
-    run_lock.claim_for_process(first, command="first", started="t")
-    run_lock.claim_for_process(second, command="second", started="t")
+    core.run_lock.claim_for_process(first, command="first", started="t")
+    core.run_lock.claim_for_process(second, command="second", started="t")
 
     monkeypatch.setattr(
-        run_lock, "_note_release",
+        core.run_lock, "_note_release",
         lambda handle, path: stamped.append(Path(path).parent.name),
     )
-    run_lock._release_all()
+    core.run_lock._release_all()
 
     assert stamped == [second.name, first.name]
 
@@ -490,13 +490,13 @@ def test_is_held_ignores_the_process_local_registry(tmp_path):
     target.mkdir()
     path = target / LOCK_FILE
     path.write_text("{}")
-    run_lock._HELD[str(path)] = run_lock._Held(
+    core.run_lock._HELD[str(path)] = core.run_lock._Held(
         handle=None, path=path, value=str(target), var=LOCK_ENV,
     )
     try:
-        assert not run_lock.is_held(target)
+        assert not core.run_lock.is_held(target)
     finally:
-        run_lock._HELD.pop(str(path), None)
+        core.run_lock._HELD.pop(str(path), None)
 
 
 # ── The checkout lock ────────────────────────────────────────────────────────
@@ -508,7 +508,7 @@ def test_is_held_ignores_the_process_local_registry(tmp_path):
 
 def _git_dir(worktree):
     """Where the checkout's lock lives, per git rather than per convention."""
-    return run_lock._git_dir(Path(worktree))
+    return core.run_lock._git_dir(Path(worktree))
 
 
 def _enter(target, command, worktree):
@@ -563,7 +563,7 @@ def test_two_checkouts_do_not_contend(worktree, tmp_path):
         # A different tree: this must simply enter the block.
         with acquire(tmp_path / "t-two", command="pr rebase 2", started="t",
                      worktree=second):
-            assert (run_lock._git_dir(second) / TREE_LOCK_FILE).exists()
+            assert (core.run_lock._git_dir(second) / TREE_LOCK_FILE).exists()
 
 
 def test_the_checkout_lock_lives_in_the_git_dir(worktree, tmp_path):
@@ -602,7 +602,7 @@ def test_the_checkout_lock_passes_through_to_a_child(worktree, tmp_path):
     with acquire(target, command="pr rebase --fix", started="t",
                  worktree=worktree):
         # The child clears neither marker: it inherits both through the env.
-        run_lock.claim_for_process(
+        core.run_lock.claim_for_process(
             target, command="pr-rebase --fix", started="t", worktree=worktree,
         )
         record = json.loads((_git_dir(worktree) / TREE_LOCK_FILE).read_text())
@@ -640,7 +640,7 @@ def test_a_contended_checkout_says_so_and_suggests_another_worktree(
                  worktree=worktree):
         _disown(target=tmp_path / "t-one", git_dir=_git_dir(worktree))
         with pytest.raises(SystemExit) as excinfo:
-            run_lock.claim_for_process(
+            core.run_lock.claim_for_process(
                 tmp_path / "t-two", command="pr review 2", started="t",
                 worktree=worktree,
             )
@@ -684,17 +684,17 @@ def test_the_release_stamp_does_not_overwrite_the_next_holder(worktree):
 
 def test_is_held_is_true_only_while_someone_holds_it(worktree):
     """Both directions: a guard that answers "free" to everything is useless."""
-    assert not run_lock.is_held(worktree)
+    assert not core.run_lock.is_held(worktree)
     with acquire(worktree, command="pr review --fix", started="t"):
-        assert run_lock.is_held(worktree)
-    assert not run_lock.is_held(worktree)
+        assert core.run_lock.is_held(worktree)
+    assert not core.run_lock.is_held(worktree)
 
 
 def test_is_held_is_false_for_a_target_never_run(tmp_path):
-    assert not run_lock.is_held(tmp_path / "never-used")
+    assert not core.run_lock.is_held(tmp_path / "never-used")
 
 
 def test_is_held_ignores_our_own_env_marker(worktree):
     """It asks the kernel, not our ancestry — a stray marker must not lie."""
     os.environ[LOCK_ENV] = str(worktree)
-    assert not run_lock.is_held(worktree)
+    assert not core.run_lock.is_held(worktree)

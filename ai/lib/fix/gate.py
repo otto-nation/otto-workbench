@@ -15,10 +15,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from core import log
+import core.log
 from core.trail import Trail
-from fix import reconcile as fix_reconcile
-from fix import scope as fix_scope
+import fix.reconcile
+import fix.scope
 from fix.types import FixItem
 from pr.fix import FixOutcome, ItemOutcome
 
@@ -169,7 +169,7 @@ def _undone_block(reason: str, noun: str) -> str:
 
 def _verify_item(
     outcome: ItemOutcome, source: FixItem | None, noun: str,
-    scope: fix_scope.BatchScope = fix_scope.UNKNOWN_SCOPE,
+    scope: fix.scope.BatchScope = fix.scope.UNKNOWN_SCOPE,
 ) -> FixItem:
     """One claimed fix as the gate is asked about it.
 
@@ -204,10 +204,10 @@ def _verify_item(
         _decline_block(outcome.reason, noun)
         if outcome.outcome is FixOutcome.DECLINED
         else _undone_block(outcome.reason, noun)
-        if outcome.outcome in fix_reconcile.CLAIMS_NO_WORK
+        if outcome.outcome in fix.reconcile.CLAIMS_NO_WORK
         else _claim_block(outcome.reason)
     )
-    seen = fix_reconcile.observed(outcome, scope)
+    seen = fix.reconcile.observed(outcome, scope)
     if seen:
         claim = f"{claim}\n\n{seen}"
     if source is None:
@@ -242,7 +242,7 @@ def _gated_decline(outcome: ItemOutcome) -> bool:
     return outcome.outcome is FixOutcome.DECLINED and bool(outcome.reason)
 
 
-def _no_scope(_outcome: ItemOutcome) -> fix_scope.BatchScope:
+def _no_scope(_outcome: ItemOutcome) -> fix.scope.BatchScope:
     """The scope lookup for a caller that supplied no observations.
 
     Keeps `verify_claims` callable without a `_Settled` — which the tests do,
@@ -250,13 +250,13 @@ def _no_scope(_outcome: ItemOutcome) -> fix_scope.BatchScope:
     an unobserved pass genuinely should: nothing is known, so nothing is
     contradicted and no observation block is rendered.
     """
-    return fix_scope.UNKNOWN_SCOPE
+    return fix.scope.UNKNOWN_SCOPE
 
 
 def verify_claims(
     outcomes: list[ItemOutcome], verify: VerifyFn | None, adapter: GateAdapter,
     by_id: dict[str, FixItem], trail: Trail | None,
-    scope_for: Callable[[ItemOutcome], fix_scope.BatchScope] = _no_scope,
+    scope_for: Callable[[ItemOutcome], fix.scope.BatchScope] = _no_scope,
 ) -> None:
     """Hold each claim against what actually runs, before anything lands.
 
@@ -293,7 +293,7 @@ def verify_claims(
     """
     contradicted = {
         o.id for o in outcomes
-        if fix_reconcile.contradiction(o, scope_for(o)) is not None
+        if fix.reconcile.contradiction(o, scope_for(o)) is not None
     }
     if verify is None:
         # A domain that runs no gate still gets the observation reported. The
@@ -313,7 +313,7 @@ def verify_claims(
     if not claimed:
         return
     if contradicted:
-        log.warn(
+        core.log.warn(
             f"{len(contradicted)} item(s) recorded as work not done, in a batch "
             "that changed the item's own file — sent to the verify gate"
         )
@@ -370,13 +370,13 @@ def verify_claims(
         falsified += 1
 
     if falsified:
-        log.warn(
+        core.log.warn(
             f"Verify gate: {falsified} of {len(claimed)} claimed "
             f"item{'s' if len(claimed) != 1 else ''} did not hold up — "
             "demoted, not recorded as the pass claimed them"
         )
     if promoted:
-        log.warn(
+        core.log.warn(
             f"Verify gate: {promoted} item(s) recorded as not done were "
             "confirmed fixed against the tree — recorded as fixed, not as the "
             "pass claimed them"
@@ -404,7 +404,7 @@ def _report_ungated(contradicted: set[str], trail: Trail | None) -> None:
     """
     if not contradicted:
         return
-    log.warn(
+    core.log.warn(
         f"{len(contradicted)} item(s) recorded as work not done, in a batch "
         "that changed the item's own file. No verify gate is configured for "
         "this pass, so the recorded answer stands — check these by hand: "

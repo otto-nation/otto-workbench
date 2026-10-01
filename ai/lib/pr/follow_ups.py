@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, ClassVar
 from enum import StrEnum
 
 from config.workbench_config import IssueProvider
-from core import log
+import core.log
 from core.serde import from_dict as _serde_from_dict
 from pr.domains import Domain, Readiness
 
@@ -185,7 +185,7 @@ class FollowUpDomain(Domain):
             try:
                 entries.append(_serde_from_dict(FollowUp, raw))
             except (TypeError, ValueError) as exc:
-                log.warn(f"dropping an unreadable follow-up entry: {exc}")
+                core.log.warn(f"dropping an unreadable follow-up entry: {exc}")
         domain.entries = entries
         return domain
 

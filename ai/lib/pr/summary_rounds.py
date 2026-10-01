@@ -23,10 +23,10 @@ import dataclasses
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from pr import comments as pc
-from pr import permalinks
-from pr import summary_model
-from pr import summary_scope
+import pr.comments
+import pr.permalinks
+import pr.summary_model
+import pr.summary_scope
 from pr.fix import FixOutcome, SettledBy
 from pr.thread_models import CommentItem, ReportThread
 
@@ -217,10 +217,10 @@ def entry_activity_at(
             ),
             default="",
         )
-    return sources_at.get(permalinks.comment_item_source(entry).id, "")
+    return sources_at.get(pr.permalinks.comment_item_source(entry).id, "")
 
 
-def round_scope(marked: pc.MarkerHistory, answered: bool) -> RoundScope:
+def round_scope(marked: pr.comments.MarkerHistory, answered: bool) -> RoundScope:
     """What this round's summary may leave to the comments already on the PR.
 
     ``answered`` is the publish decision, taken before the render because it
@@ -241,16 +241,16 @@ def round_scope(marked: pc.MarkerHistory, answered: bool) -> RoundScope:
     """
     target = marked.newest
     elsewhere = frozenset(
-        summary_scope.row_key(row)
+        pr.summary_scope.row_key(row)
         for comment in marked.comments[:-1]
-        for row in summary_scope.table_rows(comment.body)
+        for row in pr.summary_scope.table_rows(comment.body)
     )
     target_own = frozenset(
-        summary_scope.row_key(row) for row in summary_scope.table_rows(target.body))
+        pr.summary_scope.row_key(row) for row in pr.summary_scope.table_rows(target.body))
     outcomes: dict[str, FixOutcome | None] = {}
     for body in marked.bodies:
-        for row in summary_scope.table_rows(body):
-            outcomes[summary_scope.row_key(row)] = summary_model.action_outcome(summary_scope.row_action_cell(row))
+        for row in pr.summary_scope.table_rows(body):
+            outcomes[pr.summary_scope.row_key(row)] = pr.summary_model.action_outcome(pr.summary_scope.row_action_cell(row))
     return RoundScope(
         since=target.updated_at or target.created_at,
         published_keys=target_own | elsewhere,

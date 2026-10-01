@@ -18,7 +18,8 @@ if str(LIB_DIR) not in sys.path:
 
 from core.proc import CmdResult  # noqa: E402
 from gh.pr_reads import ThreadSet  # noqa: E402
-from retro import github  # noqa: E402
+import retro.github  # noqa: E402
+import gh.client
 
 # 2026-01-01 and 2026-06-01 as epoch seconds, for windows either side of a PR.
 _JAN = 1767225600
@@ -71,13 +72,13 @@ def test_a_pr_merged_before_the_window_costs_no_detail_call():
     comments up front and discarded the out-of-window ones in Python, so a scan
     paid full price for answers it threw away.
     """
-    with patch.object(github.gh_client, "graphql") as gql:
+    with patch.object(gh.client, "graphql") as gql:
         gql.side_effect = [
             _prs_page(_pr_node(1, "2026-08-01T00:00:00Z"),
                       _pr_node(2, "2026-02-01T00:00:00Z")),
             _detail(1, "2026-08-01T00:00:00Z"),
         ]
-        results = github.fetch_repo_review_data("owner/repo", _JUN)
+        results = retro.github.fetch_repo_review_data("owner/repo", _JUN)
 
     assert [r["number"] for r in results] == [1]
     assert gql.call_count == 2
@@ -85,28 +86,28 @@ def test_a_pr_merged_before_the_window_costs_no_detail_call():
 
 
 def test_every_in_window_pr_is_asked_about():
-    with patch.object(github.gh_client, "graphql") as gql:
+    with patch.object(gh.client, "graphql") as gql:
         gql.side_effect = [
             _prs_page(_pr_node(1, "2026-08-01T00:00:00Z"),
                       _pr_node(2, "2026-07-01T00:00:00Z")),
             _detail(1, "2026-08-01T00:00:00Z"),
             _detail(2, "2026-07-01T00:00:00Z"),
         ]
-        results = github.fetch_repo_review_data("owner/repo", _JUN)
+        results = retro.github.fetch_repo_review_data("owner/repo", _JUN)
 
     assert sorted(r["number"] for r in results) == [1, 2]
 
 
 def test_a_pr_whose_detail_fails_is_skipped_not_fatal(capsys):
     """One unreadable PR costs a rule signal, not the whole scan."""
-    with patch.object(github.gh_client, "graphql") as gql:
+    with patch.object(gh.client, "graphql") as gql:
         gql.side_effect = [
             _prs_page(_pr_node(1, "2026-08-01T00:00:00Z"),
                       _pr_node(2, "2026-08-02T00:00:00Z")),
             CmdResult(1, "", "upstream exploded"),
             _detail(2, "2026-08-02T00:00:00Z"),
         ]
-        results = github.fetch_repo_review_data("owner/repo", _JUN)
+        results = retro.github.fetch_repo_review_data("owner/repo", _JUN)
 
     assert [r["number"] for r in results] == [2]
     assert "owner/repo#1" in capsys.readouterr().err
@@ -114,11 +115,11 @@ def test_a_pr_whose_detail_fails_is_skipped_not_fatal(capsys):
 
 def test_a_failed_first_query_falls_back_to_rest():
     """The fallback still guards the phase that decides the window."""
-    with patch.object(github.gh_client, "graphql",
+    with patch.object(gh.client, "graphql",
                       return_value=CmdResult(1, "", "nope")), \
-         patch.object(github, "_fetch_repo_review_data_rest",
+         patch.object(retro.github, "_fetch_repo_review_data_rest",
                       return_value=[{"number": 9}]) as rest:
-        results = github.fetch_repo_review_data("owner/repo", _JUN)
+        results = retro.github.fetch_repo_review_data("owner/repo", _JUN)
 
     assert results == [{"number": 9}]
     rest.assert_called_once()
@@ -127,10 +128,10 @@ def test_a_failed_first_query_falls_back_to_rest():
 def test_a_pr_with_no_merge_date_is_not_asked_about():
     """`mergedAt` is how the window is decided, so a PR without one cannot be
     placed in it — and must not be paid for on the chance that it belongs."""
-    with patch.object(github.gh_client, "graphql") as gql:
+    with patch.object(gh.client, "graphql") as gql:
         gql.side_effect = [_prs_page({"number": 1, "title": "t",
                                       "mergedAt": None, "author": {"login": "a"}})]
-        results = github.fetch_repo_review_data("owner/repo", _JAN)
+        results = retro.github.fetch_repo_review_data("owner/repo", _JAN)
 
     assert results == []
     assert gql.call_count == 1
@@ -143,11 +144,11 @@ def test_the_detail_query_asks_for_one_pr_not_a_batch():
     query that nests 50 PRs by 100 threads by 50 comments is charged for all
     260,000 nodes whether or not they exist.
     """
-    assert "pullRequest(number: $pr)" in github._RETRO_PR_DETAIL_QUERY
-    assert "pullRequests(states: MERGED" not in github._RETRO_PR_DETAIL_QUERY
+    assert "pullRequest(number: $pr)" in retro.github._RETRO_PR_DETAIL_QUERY
+    assert "pullRequests(states: MERGED" not in retro.github._RETRO_PR_DETAIL_QUERY
     # The window query carries no nested connections at all.
-    assert "reviewThreads" not in github._RETRO_PRS_QUERY
-    assert "comments" not in github._RETRO_PRS_QUERY
+    assert "reviewThreads" not in retro.github._RETRO_PRS_QUERY
+    assert "comments" not in retro.github._RETRO_PRS_QUERY
 
 
 def test_the_window_is_paged_through_rather_than_truncated():
@@ -157,14 +158,14 @@ def test_the_window_is_paged_through_rather_than_truncated():
     the fiftieth, and a repo busy enough to merge that many in one window is
     the one whose review comments the retro most wants.
     """
-    with patch.object(github.gh_client, "graphql") as gql:
+    with patch.object(gh.client, "graphql") as gql:
         gql.side_effect = [
             _prs_page(_pr_node(1, "2026-08-01T00:00:00Z"), next_cursor="c1"),
             _prs_page(_pr_node(2, "2026-07-01T00:00:00Z")),
             _detail(1, "2026-08-01T00:00:00Z"),
             _detail(2, "2026-07-01T00:00:00Z"),
         ]
-        results = github.fetch_repo_review_data("owner/repo", _JUN)
+        results = retro.github.fetch_repo_review_data("owner/repo", _JUN)
 
     assert sorted(r["number"] for r in results) == [1, 2]
     assert gql.call_args_list[1].kwargs["variables"]["cursor"] == "c1"
@@ -178,14 +179,14 @@ def test_paging_stops_at_the_first_pr_older_than_the_window():
     the window began proves nothing after it can have merged inside one — so
     the walk stops rather than paging through the repo's whole history.
     """
-    with patch.object(github.gh_client, "graphql") as gql:
+    with patch.object(gh.client, "graphql") as gql:
         gql.side_effect = [
             _prs_page(_pr_node(1, "2026-08-01T00:00:00Z"),
                       _pr_node(2, "2026-02-01T00:00:00Z"),
                       next_cursor="c1"),
             _detail(1, "2026-08-01T00:00:00Z"),
         ]
-        results = github.fetch_repo_review_data("owner/repo", _JUN)
+        results = retro.github.fetch_repo_review_data("owner/repo", _JUN)
 
     assert [r["number"] for r in results] == [1]
     # Two calls, not three: the second page was never asked for.
@@ -200,7 +201,7 @@ def test_an_old_pr_updated_inside_the_window_does_not_end_the_walk():
     not in the window and must not be fetched, but it is also not proof that
     the PRs after it are out of window — stopping there would drop them.
     """
-    with patch.object(github.gh_client, "graphql") as gql:
+    with patch.object(gh.client, "graphql") as gql:
         gql.side_effect = [
             _prs_page(
                 _pr_node(1, "2026-01-15T00:00:00Z",
@@ -209,7 +210,7 @@ def test_an_old_pr_updated_inside_the_window_does_not_end_the_walk():
             ),
             _detail(2, "2026-08-01T00:00:00Z"),
         ]
-        results = github.fetch_repo_review_data("owner/repo", _JUN)
+        results = retro.github.fetch_repo_review_data("owner/repo", _JUN)
 
     assert [r["number"] for r in results] == [2]
 
@@ -220,14 +221,14 @@ def test_a_page_that_fails_mid_walk_falls_back_rather_than_reporting_short():
     The REST path can still answer completely, so a failure part-way through
     the walk hands over to it instead of reporting the pages it managed.
     """
-    with patch.object(github.gh_client, "graphql") as gql, \
-         patch.object(github, "_fetch_repo_review_data_rest",
+    with patch.object(gh.client, "graphql") as gql, \
+         patch.object(retro.github, "_fetch_repo_review_data_rest",
                       return_value=[{"number": 9}]) as rest:
         gql.side_effect = [
             _prs_page(_pr_node(1, "2026-08-01T00:00:00Z"), next_cursor="c1"),
             CmdResult(1, "", "nope"),
         ]
-        results = github.fetch_repo_review_data("owner/repo", _JUN)
+        results = retro.github.fetch_repo_review_data("owner/repo", _JUN)
 
     assert results == [{"number": 9}]
     rest.assert_called_once()
@@ -239,15 +240,15 @@ def test_the_walk_is_bounded_when_every_pr_is_in_the_window(capsys):
     Without a page bound this pages through the entire merge history. The bound
     reports what it skipped rather than going quiet about it.
     """
-    with patch.object(github.gh_client, "graphql") as gql, \
-         patch.object(github, "_fetch_pr_detail", return_value=None):
+    with patch.object(gh.client, "graphql") as gql, \
+         patch.object(retro.github, "_fetch_pr_detail", return_value=None):
         gql.side_effect = [
             _prs_page(_pr_node(n, "2026-08-01T00:00:00Z"), next_cursor=f"c{n}")
-            for n in range(github.GQL_MERGED_PRS_MAX_PAGES)
+            for n in range(retro.github.GQL_MERGED_PRS_MAX_PAGES)
         ]
-        github.fetch_repo_review_data("owner/repo", _JUN)
+        retro.github.fetch_repo_review_data("owner/repo", _JUN)
 
-    assert gql.call_count == github.GQL_MERGED_PRS_MAX_PAGES
+    assert gql.call_count == retro.github.GQL_MERGED_PRS_MAX_PAGES
     assert "may be missing" in capsys.readouterr().err
 
 
@@ -265,8 +266,8 @@ def test_the_rest_fallback_keeps_only_the_window():
         _rest_pr(1, "2026-08-01T00:00:00Z"),
         _rest_pr(2, "2026-02-01T00:00:00Z"),
     ]
-    with patch.object(github, "_gh_api", return_value=prs):
-        kept = github.fetch_merged_prs("owner/repo", _JUN)
+    with patch.object(retro.github, "_gh_api", return_value=prs):
+        kept = retro.github.fetch_merged_prs("owner/repo", _JUN)
 
     assert [p["number"] for p in kept] == [1]
 
@@ -280,8 +281,8 @@ def test_the_rest_fallback_drops_a_closed_pr_that_never_merged():
         {"number": 2, "title": "abandoned", "merged_at": None,
          "updated_at": "2026-08-02T00:00:00Z", "user": {"login": "alice"}},
     ]
-    with patch.object(github, "_gh_api", return_value=prs):
-        kept = github.fetch_merged_prs("owner/repo", _JUN)
+    with patch.object(retro.github, "_gh_api", return_value=prs):
+        kept = retro.github.fetch_merged_prs("owner/repo", _JUN)
 
     assert [p["number"] for p in kept] == [1]
 
@@ -292,16 +293,16 @@ def test_a_thread_with_more_comments_than_the_page_is_refetched():
     and it is the comments inside one of them that were cut off."""
     deep = json.loads(_detail(1, "2026-08-01T00:00:00Z").stdout)
     thread = deep["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0]
-    thread["comments"]["totalCount"] = github.RETRO_THREAD_COMMENTS_LIMIT + 5
+    thread["comments"]["totalCount"] = retro.github.RETRO_THREAD_COMMENTS_LIMIT + 5
 
-    with patch.object(github.gh_client, "graphql") as gql, \
-         patch.object(github, "fetch_review_threads") as refetch:
+    with patch.object(gh.client, "graphql") as gql, \
+         patch.object(retro.github, "fetch_review_threads") as refetch:
         gql.side_effect = [
             _prs_page(_pr_node(1, "2026-08-01T00:00:00Z")),
             CmdResult(0, json.dumps(deep)),
         ]
         refetch.return_value = ThreadSet([thread])
-        github.fetch_repo_review_data("owner/repo", _JUN)
+        retro.github.fetch_repo_review_data("owner/repo", _JUN)
 
     refetch.assert_called_once()
 
@@ -318,14 +319,14 @@ def test_a_failed_refetch_keeps_the_threads_already_in_hand():
     threads = deep["data"]["repository"]["pullRequest"]["reviewThreads"]
     threads["totalCount"] = 5
 
-    with patch.object(github.gh_client, "graphql") as gql, \
-         patch.object(github, "fetch_review_threads") as refetch:
+    with patch.object(gh.client, "graphql") as gql, \
+         patch.object(retro.github, "fetch_review_threads") as refetch:
         gql.side_effect = [
             _prs_page(_pr_node(1, "2026-08-01T00:00:00Z")),
             CmdResult(0, json.dumps(deep)),
         ]
         refetch.return_value = ThreadSet([], complete=False)
-        results = github.fetch_repo_review_data("owner/repo", _JUN)
+        results = retro.github.fetch_repo_review_data("owner/repo", _JUN)
 
     refetch.assert_called_once()
     assert [c["body"] for c in results[0]["comments"]] == ["drop the retry"]
@@ -350,14 +351,14 @@ def test_a_refetch_with_the_same_threads_but_fewer_comments_is_rejected():
             {"author": {"login": "kgn"}, "body": "drop the retry"}]}},
     ]
 
-    with patch.object(github.gh_client, "graphql") as gql, \
-         patch.object(github, "fetch_review_threads") as refetch:
+    with patch.object(gh.client, "graphql") as gql, \
+         patch.object(retro.github, "fetch_review_threads") as refetch:
         gql.side_effect = [
             _prs_page(_pr_node(1, "2026-08-01T00:00:00Z")),
             CmdResult(0, json.dumps(deep)),
         ]
         refetch.return_value = ThreadSet(thinner, complete=True)
-        results = github.fetch_repo_review_data("owner/repo", _JUN)
+        results = retro.github.fetch_repo_review_data("owner/repo", _JUN)
 
     bodies = [c["body"] for c in results[0]["comments"]]
     assert bodies == ["drop the retry", "and the follow-up"]
@@ -380,14 +381,14 @@ def test_a_refetch_that_found_more_replaces_what_was_in_hand():
             {"author": {"login": "kgn"}, "body": "a second one"}]}},
     ]
 
-    with patch.object(github.gh_client, "graphql") as gql, \
-         patch.object(github, "fetch_review_threads") as refetch:
+    with patch.object(gh.client, "graphql") as gql, \
+         patch.object(retro.github, "fetch_review_threads") as refetch:
         gql.side_effect = [
             _prs_page(_pr_node(1, "2026-08-01T00:00:00Z")),
             CmdResult(0, json.dumps(deep)),
         ]
         refetch.return_value = ThreadSet(fuller, complete=False)
-        results = github.fetch_repo_review_data("owner/repo", _JUN)
+        results = retro.github.fetch_repo_review_data("owner/repo", _JUN)
 
     bodies = [c["body"] for c in results[0]["comments"]]
     assert bodies == ["the deeper finding", "a second one"]
@@ -395,12 +396,12 @@ def test_a_refetch_that_found_more_replaces_what_was_in_hand():
 
 def test_a_thread_within_the_page_is_not_refetched():
     """The control: the common thread must not earn a second round trip."""
-    with patch.object(github.gh_client, "graphql") as gql, \
-         patch.object(github, "fetch_review_threads") as refetch:
+    with patch.object(gh.client, "graphql") as gql, \
+         patch.object(retro.github, "fetch_review_threads") as refetch:
         gql.side_effect = [
             _prs_page(_pr_node(1, "2026-08-01T00:00:00Z")),
             _detail(1, "2026-08-01T00:00:00Z"),
         ]
-        github.fetch_repo_review_data("owner/repo", _JUN)
+        retro.github.fetch_repo_review_data("owner/repo", _JUN)
 
     refetch.assert_not_called()

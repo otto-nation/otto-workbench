@@ -22,7 +22,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from git.land import CommitStatus  # noqa: E402
-from pr import fix_state  # noqa: E402
+import pr.fix_state  # noqa: E402
 from pr.comments_fix import FixSummary  # noqa: E402
 from pr.comments_state import ThreadState  # noqa: E402
 from pr.fix import (  # noqa: E402
@@ -71,7 +71,7 @@ class TestFixPassResolutionsReachTheTally:
         state.comments.by_state = dict(by_state)
         with patch("pr.state.load_or_init", return_value=state), \
              patch("pr.state.save_state") as save:
-            fix_state.persist(_fix(), _STATE_WORKTREE, ctx, None,
+            pr.fix_state.persist(_fix(), _STATE_WORKTREE, ctx, None,
                                   resolved=resolved)
         assert save.called, "the pass must still save what it persisted"
         return state.comments
@@ -95,7 +95,7 @@ class TestFixPassResolutionsReachTheTally:
         state.comments.by_state = {"new": 2}
         with patch("pr.state.load_or_init", return_value=state), \
              patch("pr.state.save_state"):
-            fix_state.persist(_fix(), _STATE_WORKTREE, ctx, None)
+            pr.fix_state.persist(_fix(), _STATE_WORKTREE, ctx, None)
         assert state.comments.by_state == {"new": 2}
 
 
@@ -112,7 +112,7 @@ class TestTheFixRecordCarriesEveryOutcome:
 
     def test_the_record_carries_the_already_addressed_outcome(self):
         entry = self._entry("already_addressed")
-        record = fix_state.fix_record_for(
+        record = pr.fix_state.fix_record_for(
             {FixOutcome.ALREADY_ADDRESSED: [entry]},
         )
         assert len(record.items) == 1
@@ -120,12 +120,12 @@ class TestTheFixRecordCarriesEveryOutcome:
 
     def test_an_outcome_the_caller_did_not_name_records_nothing(self):
         """The mapping is the whole vocabulary of a call — nothing is implied."""
-        assert fix_state.fix_record_for({}).items == []
+        assert pr.fix_state.fix_record_for({}).items == []
 
     def test_a_declined_thread_is_recorded_as_declined(self):
         """Not folded into needs-human: the state file keeps the two apart."""
         entry = CommentItem(id="t9", reviewer="kgn", reason="premise does not hold")
-        record = fix_state.fix_record_for({FixOutcome.DECLINED: [entry]})
+        record = pr.fix_state.fix_record_for({FixOutcome.DECLINED: [entry]})
         assert record.items[0].outcome == FixOutcome.DECLINED
         assert record.items[0].reason == "premise does not hold"
 
@@ -135,14 +135,14 @@ class TestTheFixRecordCarriesEveryOutcome:
             CommentItem(id="t9", reviewer="kgn"),
             CommentItem(id="t8"),
         ]}
-        assert fix_state.reviewers_for(by_outcome) == {"t9": "kgn"}
+        assert pr.fix_state.reviewers_for(by_outcome) == {"t9": "kgn"}
 
     def test_only_fixed_outcomes_carry_the_pass_commit(self):
         """A deferred thread was not fixed by this commit — or any."""
         fixed = self._entry("valid")
         deferred = CommentItem(id="t2", file="b.py", line=2, reviewer="kgn",
                                summary="too complex")
-        record = fix_state.fix_record_for({
+        record = pr.fix_state.fix_record_for({
             FixOutcome.FIXED: [fixed],
             FixOutcome.DEFERRED: [deferred],
         }, commit_sha="deadbee")
@@ -150,7 +150,7 @@ class TestTheFixRecordCarriesEveryOutcome:
         assert by_id == {"t1": "deadbee", "t2": ""}
 
     def test_no_commit_leaves_the_sha_empty(self):
-        record = fix_state.fix_record_for(
+        record = pr.fix_state.fix_record_for(
             {FixOutcome.FIXED: [self._entry("valid")]}, commit_sha="",
         )
         assert record.items[0].commit_sha == ""
@@ -171,7 +171,7 @@ class TestThePassWritesOnce:
         state.comments.by_state = {"new": 2}
         with patch("pr.state.load_or_init", return_value=state), \
              patch("pr.state.save_state") as save:
-            fix_state.persist(_fix(), _STATE_WORKTREE, make_ctx(), None,
+            pr.fix_state.persist(_fix(), _STATE_WORKTREE, make_ctx(), None,
                               resolved=resolved)
         return save, state
 
@@ -188,7 +188,7 @@ class TestThePassWritesOnce:
         with patch("pr.state.load_or_init", return_value=state), \
              patch("pr.state.save_state",
                    side_effect=lambda *_: seen.update(state.comments.by_state)):
-            fix_state.persist(_fix(), _STATE_WORKTREE, make_ctx(), None,
+            pr.fix_state.persist(_fix(), _STATE_WORKTREE, make_ctx(), None,
                               resolved=[ThreadState.NEW])
         assert seen.get(ThreadState.RESOLVED) == 1
 
@@ -203,13 +203,13 @@ class TestAFailedWriteDoesNotTakeThePassDown:
 
     def test_the_failure_is_logged_and_swallowed(self, capsys):
         with patch("pr.state.load_or_init", side_effect=OSError("disk full")):
-            fix_state.persist(_fix(), _STATE_WORKTREE, make_ctx(), None)
+            pr.fix_state.persist(_fix(), _STATE_WORKTREE, make_ctx(), None)
         assert "fix state update failed" in capsys.readouterr().err
 
     def test_the_failure_reaches_the_trail(self):
         trail = MagicMock()
         with patch("pr.state.load_or_init", side_effect=OSError("disk full")):
-            fix_state.persist(_fix(), _STATE_WORKTREE, make_ctx(), trail)
+            pr.fix_state.persist(_fix(), _STATE_WORKTREE, make_ctx(), trail)
         assert trail.error.called
         assert "disk full" in trail.error.call_args[0][1]
 
@@ -230,7 +230,7 @@ class TestTheRecordAndTheIdentityNameDifferentCommits:
         with patch("pr.state.load_or_init",
                    side_effect=lambda **kw: captured.update(kw) or state), \
              patch("pr.state.save_state"):
-            fix_state.persist(
+            pr.fix_state.persist(
                 _fix(head_sha="fff9999"), _STATE_WORKTREE,
                 make_ctx(head_sha="aaa1111"), None,
             )
@@ -240,7 +240,7 @@ class TestTheRecordAndTheIdentityNameDifferentCommits:
         state = _make_state(_fix())
         with patch("pr.state.load_or_init", return_value=state), \
              patch("pr.state.save_state"):
-            fix_state.persist(
+            pr.fix_state.persist(
                 _fix(head_sha="fff9999"), _STATE_WORKTREE,
                 make_ctx(head_sha="aaa1111"), None,
             )
@@ -258,13 +258,13 @@ class TestTheStampIsIdempotent:
 
     def test_an_entry_already_naming_a_commit_keeps_it(self):
         entry = CommentItem(id="t1", reviewer="kgn", commit_sha="olde123")
-        record = fix_state.fix_record_for(
+        record = pr.fix_state.fix_record_for(
             {FixOutcome.FIXED: [entry]}, commit_sha="newc456")
         assert record.items[0].commit_sha == "olde123"
 
     def test_an_unstamped_entry_takes_this_pass_s_commit(self):
         entry = CommentItem(id="t1", reviewer="kgn")
-        record = fix_state.fix_record_for(
+        record = pr.fix_state.fix_record_for(
             {FixOutcome.FIXED: [entry]}, commit_sha="newc456")
         assert record.items[0].commit_sha == "newc456"
 
@@ -333,7 +333,7 @@ class TestTheDischargeLandsOnTheMergedState:
         state = _make_state(prior)
         with patch("pr.state.load_or_init", return_value=state), \
              patch("pr.state.save_state"):
-            fix_state.persist(FixSummary(), _STATE_WORKTREE, make_ctx(), None, **kw)
+            pr.fix_state.persist(FixSummary(), _STATE_WORKTREE, make_ctx(), None, **kw)
         return state
 
     def test_a_delivered_reply_clears_the_queue_the_merge_re_armed(self):

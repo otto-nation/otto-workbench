@@ -25,11 +25,11 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from git import client as git_client  # noqa: E402
-from rebase import inspect as rebase_inspect  # noqa: E402
-from rebase import lifecycle  # noqa: E402
-from rebase import stash as rebase_stash  # noqa: E402
-from rebase import types as rebase_types  # noqa: E402
+import git.client  # noqa: E402
+import rebase.inspect  # noqa: E402
+import rebase.lifecycle  # noqa: E402
+import rebase.stash  # noqa: E402
+import rebase.types  # noqa: E402
 
 
 def _write(repo: Path, name: str, body: str) -> None:
@@ -63,7 +63,7 @@ def _resolve_and_continue(repo: Path, body: str) -> None:
     """
     _write(repo, "f.txt", body)
     git_in(repo, "add", "f.txt")
-    lifecycle.rebase_continue(str(repo))
+    rebase.lifecycle.rebase_continue(str(repo))
 
 
 def _rr_cache(repo: Path) -> Path:
@@ -110,9 +110,9 @@ class TestRerereIsHeldOff:
 
     def test_the_resolver_s_own_output_is_not_recorded(self, tmp_path):
         repo = _diverged(tmp_path)
-        git_client.run("rebase", "--autosquash", "main", cwd=str(repo),
-                       config=lifecycle.REBASE_CONFIG)
-        assert rebase_inspect.detect_conflicts(str(repo)) == ["f.txt"]
+        git.client.run("rebase", "--autosquash", "main", cwd=str(repo),
+                       config=rebase.lifecycle.REBASE_CONFIG)
+        assert rebase.inspect.detect_conflicts(str(repo)) == ["f.txt"]
         _resolve_and_continue(repo, "a\nMAIN+BRANCH\nc\n")
 
         assert _cached_resolutions(repo) == []
@@ -130,8 +130,8 @@ class TestRerereIsHeldOff:
         cache = cache if cache.is_absolute() else repo / cache
         cache.mkdir(parents=True, exist_ok=True)
 
-        git_client.run("rebase", "--autosquash", "main", cwd=str(repo),
-                       config=lifecycle.REBASE_CONFIG)
+        git.client.run("rebase", "--autosquash", "main", cwd=str(repo),
+                       config=rebase.lifecycle.REBASE_CONFIG)
         _resolve_and_continue(repo, "a\nMAIN+BRANCH\nc\n")
 
         assert _cached_resolutions(repo) == []
@@ -145,16 +145,16 @@ class TestRerereIsHeldOff:
         rather than about a directory.
         """
         repo = _diverged(tmp_path)
-        git_client.run("rebase", "--autosquash", "main", cwd=str(repo),
-                       config=lifecycle.REBASE_CONFIG)
+        git.client.run("rebase", "--autosquash", "main", cwd=str(repo),
+                       config=rebase.lifecycle.REBASE_CONFIG)
         _resolve_and_continue(repo, "a\nAI-WROTE-THIS\nc\n")
 
         git_in(repo, "checkout", "-q", "-b", "feat2", "main~1")
         _write(repo, "f.txt", "a\nBRANCH\nc\n")
         git_in(repo, "commit", "-q", "-am", "feat: branch edit again")
-        git_client.run("rebase", "main", cwd=str(repo))
+        git.client.run("rebase", "main", cwd=str(repo))
 
-        assert rebase_inspect.detect_conflicts(str(repo)) == ["f.txt"]
+        assert rebase.inspect.detect_conflicts(str(repo)) == ["f.txt"]
         assert "AI-WROTE-THIS" not in (repo / "f.txt").read_text()
 
 
@@ -187,7 +187,7 @@ class TestRerereIsHeldOffTheStashPopToo:
         _rr_cache(repo).mkdir(parents=True, exist_ok=True)
 
         _write(repo, "f.txt", "a\nSTASHED\nc\n")
-        git_in(repo, "stash", "push", "-u", "-m", rebase_stash.STASH_MSG)
+        git_in(repo, "stash", "push", "-u", "-m", rebase.stash.STASH_MSG)
 
         _write(repo, "f.txt", "a\nREBASED\nc\n")
         git_in(repo, "commit", "-q", "-am", "feat: moved under the stash")
@@ -201,33 +201,33 @@ class TestRerereIsHeldOffTheStashPopToo:
         does: a bare pop leaves a preimage in the shared cache.
         """
         repo = self._stash_conflict(tmp_path)
-        git_client.run("stash", "pop", cwd=str(repo))
+        git.client.run("stash", "pop", cwd=str(repo))
 
         assert _cached_resolutions(repo) != []
 
     def test_the_pop_records_nothing_under_the_hold_off(self, tmp_path):
         repo = self._stash_conflict(tmp_path)
-        git_client.run("stash", "pop", cwd=str(repo),
-                       config=rebase_stash.RERERE_CONFIG)
+        git.client.run("stash", "pop", cwd=str(repo),
+                       config=rebase.stash.RERERE_CONFIG)
 
         assert _cached_resolutions(repo) == []
 
     def test_the_unstash_path_passes_it(self, tmp_path):
         """Through `auto_unstash`, which is what a run actually calls."""
         repo = self._stash_conflict(tmp_path)
-        rebase_stash.auto_unstash(str(repo), rebase_types.RunMode.REBASE_ONLY)
+        rebase.stash.auto_unstash(str(repo), rebase.types.RunMode.REBASE_ONLY)
 
         assert _cached_resolutions(repo) == []
 
     def test_it_is_the_same_constant_the_rebase_steps_use(self):
         """One owner, so the next doorway cannot be held shut by a second copy."""
-        assert rebase_stash.RERERE_CONFIG is lifecycle.RERERE_CONFIG
+        assert rebase.stash.RERERE_CONFIG is rebase.lifecycle.RERERE_CONFIG
 
 
 class TestUnattendedEditor:
     """Nothing in the environment can hand an unattended rebase an editor.
 
-    What `unattended_env` does to the variables is `git_client`'s to assert — it
+    What `unattended_env` does to the variables is `git.client`'s to assert — it
     owns them now, because an AI agent's own git calls are owed the same
     treatment and two copies of the list would drift. What is asserted here is
     that the rebase driver still reaches for it, and that a real `--autosquash`
@@ -236,8 +236,8 @@ class TestUnattendedEditor:
 
     def test_the_driver_uses_the_client_s_pinned_env(self):
         """Re-exported, not re-implemented — a local copy is a place to drift."""
-        assert lifecycle.unattended_env is git_client.unattended_env
-        assert lifecycle.UNATTENDED_CONFIG == {"core.editor": git_client.NO_EDITOR}
+        assert rebase.lifecycle.unattended_env is git.client.unattended_env
+        assert rebase.lifecycle.UNATTENDED_CONFIG == {"core.editor": git.client.NO_EDITOR}
 
     def test_git_resolves_to_the_configured_editor_under_the_pinned_env(self, tmp_path):
         """The precedence this defends against, asserted against git itself.
@@ -247,18 +247,18 @@ class TestUnattendedEditor:
         """
         repo = init_repo(tmp_path / "repo")
         with mock.patch.dict(os.environ, {"GIT_EDITOR": "vim"}):
-            leaked = git_client.run(
+            leaked = git.client.run(
                 "var", "GIT_EDITOR", cwd=str(repo),
-                config=lifecycle.UNATTENDED_CONFIG,
+                config=rebase.lifecycle.UNATTENDED_CONFIG,
             )
-            pinned = git_client.run(
+            pinned = git.client.run(
                 "var", "GIT_EDITOR", cwd=str(repo),
-                config=lifecycle.UNATTENDED_CONFIG,
-                env=lifecycle.unattended_env(),
+                config=rebase.lifecycle.UNATTENDED_CONFIG,
+                env=rebase.lifecycle.unattended_env(),
             )
 
         assert leaked.stdout.strip() == "vim"
-        assert pinned.stdout.strip() == git_client.NO_EDITOR
+        assert pinned.stdout.strip() == git.client.NO_EDITOR
 
     def test_a_squash_does_not_block_when_the_operator_prefers_an_editor(self, tmp_path):
         """The regression: this hung indefinitely rather than failing.
@@ -326,7 +326,7 @@ class TestUnattendedEditor:
             )
 
         assert done.returncode == 0, done.stderr
-        assert not rebase_inspect.rebase_in_progress(str(repo))
+        assert not rebase.inspect.rebase_in_progress(str(repo))
         subjects = git_out(repo, "log", "--format=%s", "main..HEAD").split("\n")
         assert [s for s in subjects if s] == ["feat: thing"]
 
@@ -343,8 +343,8 @@ class TestAutosquash:
 
     def test_folds_a_fixup_commit(self, tmp_path):
         repo = self._with_fixup(tmp_path, "fixup")
-        git_client.run("rebase", "--autosquash", "main", cwd=str(repo),
-                       config=lifecycle.REBASE_CONFIG)
+        git.client.run("rebase", "--autosquash", "main", cwd=str(repo),
+                       config=rebase.lifecycle.REBASE_CONFIG)
         _resolve_and_continue(repo, "a\nMAIN+BRANCH\nc\n")
 
         subjects = git_out(repo, "log", "--format=%s", "main..HEAD").split("\n")
@@ -359,11 +359,11 @@ class TestAutosquash:
         with the editor" and leaves a rebase in progress.
         """
         repo = self._with_fixup(tmp_path, "squash")
-        git_client.run("rebase", "--autosquash", "main", cwd=str(repo),
-                       config=lifecycle.REBASE_CONFIG)
+        git.client.run("rebase", "--autosquash", "main", cwd=str(repo),
+                       config=rebase.lifecycle.REBASE_CONFIG)
         _resolve_and_continue(repo, "a\nMAIN+BRANCH\nc\n")
 
-        assert not rebase_inspect.rebase_in_progress(str(repo))
+        assert not rebase.inspect.rebase_in_progress(str(repo))
         subjects = git_out(repo, "log", "--format=%s", "main..HEAD").split("\n")
         assert [s for s in subjects if s] == ["feat: thing"]
 
@@ -374,8 +374,8 @@ class TestAutosquash:
         git_in(repo, "add", "g.txt")
         git_in(repo, "commit", "-q", "-m", "feat: second thing")
 
-        git_client.run("rebase", "--autosquash", "main", cwd=str(repo),
-                       config=lifecycle.REBASE_CONFIG)
+        git.client.run("rebase", "--autosquash", "main", cwd=str(repo),
+                       config=rebase.lifecycle.REBASE_CONFIG)
         _resolve_and_continue(repo, "a\nMAIN+BRANCH\nc\n")
 
         subjects = git_out(repo, "log", "--format=%s", "main..HEAD").split("\n")

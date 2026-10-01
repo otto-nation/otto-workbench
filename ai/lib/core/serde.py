@@ -20,7 +20,7 @@ from enum import Enum, StrEnum
 from pathlib import Path
 from typing import get_args, get_origin, get_type_hints
 
-from core import log
+import core.log
 
 
 _SCALARS = (bool, int, float, str)
@@ -140,7 +140,7 @@ def load_file(cls, path: Path):
     try:
         return from_dict(cls, json.loads(path.read_text()))
     except (OSError, TypeError, ValueError):
-        log.warn(f"{path} is unreadable — discarding it")
+        core.log.warn(f"{path} is unreadable — discarding it")
         return None
 
 

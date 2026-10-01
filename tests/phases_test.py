@@ -8,15 +8,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from core import phases  # noqa: E402
+import core.phases  # noqa: E402
 from core.phases import (  # noqa: E402
     AgentKind, Effort, Mode, Phase, PhaseDomain, PhaseShape, Thinking,
 )
 
 
 def test_phase_derives_both_env_keys_from_its_value():
-    assert phases.Phase.SYNTHESIS.model_env_key == "WORKBENCH_AI_SYNTHESIS_MODEL"
-    assert phases.Phase.SYNTHESIS.thinking_env_key == "WORKBENCH_AI_SYNTHESIS_THINKING"
+    assert core.phases.Phase.SYNTHESIS.model_env_key == "WORKBENCH_AI_SYNTHESIS_MODEL"
+    assert core.phases.Phase.SYNTHESIS.thinking_env_key == "WORKBENCH_AI_SYNTHESIS_THINKING"
 
 
 def test_the_vocabulary_reaches_nothing_above_core():

@@ -18,23 +18,23 @@ import argparse
 from pathlib import Path
 
 from core.trail import Trail, add_trail_args
-from gh import client as _gh
-from review import dedup as _rd
-from review import format as _rfmt
-from gh import pr_reads as _rg
-from review import paths as _rpath
-from review import posting as _rp
-from review import sections as _rs
+import gh.client
+import review.dedup
+import review.format
+import gh.pr_reads
+import review.paths
+import review.posting
+import review.sections
 
 # Most of what follows is never referenced in this file. The names are re-exported
 # so a test can reach them at `review_post.<name>` and patch one, which the proxy
 # installed below forwards to the module that actually defines it. An import an
 # editor calls unused is therefore load-bearing — deleting it silently turns the
 # patch it serves into a no-op.
-from git import client as git_client
-from core import log
-from core import module_proxy
-from core import proc
+import git.client
+import core.log
+import core.module_proxy
+import core.proc
 from review.dedup import dedup_against_posted
 from review.document import ReviewDocument
 from review.paths import read_review_meta
@@ -73,10 +73,10 @@ from review.sections import ReviewSections
 SCRIPT = "review-post"
 
 _SUBMODULES = (
-    _gh, _rd, _rfmt, _rg, _rpath, _rp, _rs, git_client, log, module_proxy, proc,
+    gh.client, review.dedup, review.format, gh.pr_reads, review.paths, review.posting, review.sections, git.client, core.log, core.module_proxy, core.proc,
 )
 
-module_proxy.install(__name__, _SUBMODULES)
+core.module_proxy.install(__name__, _SUBMODULES)
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -92,7 +92,7 @@ def _run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
 
     doc = ReviewDocument.parse(text)
     declared = doc.findings
-    log.info(f"Parsed {len(declared)} findings from review file")
+    core.log.info(f"Parsed {len(declared)} findings from review file")
     trail.info("parse_findings", f"parsed {len(declared)} findings",
                data={"total": len(declared), "review_sha": review_sha})
 
@@ -104,7 +104,7 @@ def _run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
     all_findings = doc.open_findings
     fixed = len(declared) - len(all_findings)
     if fixed:
-        log.info(f"Excluded {fixed} finding{plural(fixed)} the fix pass already resolved")
+        core.log.info(f"Excluded {fixed} finding{plural(fixed)} the fix pass already resolved")
     trail.decision(
         "filter_fixed",
         f"kept {len(all_findings)} of {len(declared)} findings",
@@ -115,7 +115,7 @@ def _run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
     findings = [f for f in all_findings if f.severity in severity_filter]
     filtered = len(all_findings) - len(findings)
     if filtered:
-        log.info(f"Filtered to {len(findings)} findings (excluded {filtered} by severity)")
+        core.log.info(f"Filtered to {len(findings)} findings (excluded {filtered} by severity)")
     trail.decision(
         "filter_severity",
         f"kept {len(findings)} of {len(all_findings)} findings",
@@ -124,7 +124,7 @@ def _run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
     )
 
     if not findings:
-        log.warn("No findings to post")
+        core.log.warn("No findings to post")
         return 0
 
     head_sha = sidecar.head_sha
@@ -141,22 +141,22 @@ def _run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
 
     sha_drifted = bool(review_sha and review_sha != head_sha)
     if sha_drifted:
-        log.warn(
-            f"Review was written against {git_client.abbrev(review_sha)}, "
-            f"PR HEAD is now {git_client.abbrev(head_sha)}")
-        log.info("Re-verifying positions against current diff")
+        core.log.warn(
+            f"Review was written against {git.client.abbrev(review_sha)}, "
+            f"PR HEAD is now {git.client.abbrev(head_sha)}")
+        core.log.info("Re-verifying positions against current diff")
         trail.info(
             "sha_drift",
-            f"review SHA {git_client.abbrev(review_sha) or '?'} "
-            f"!= HEAD {git_client.abbrev(head_sha) or '?'}",
+            f"review SHA {git.client.abbrev(review_sha) or '?'} "
+            f"!= HEAD {git.client.abbrev(head_sha) or '?'}",
             data={"review_sha": review_sha, "head_sha": head_sha},
         )
 
     if args.dry_run:
-        log.info("Fetching diff for classification...")
+        core.log.info("Fetching diff for classification...")
     diff_text = _get_diff(repo, args.pr)
     inline, file_level, skipped = classify_findings(findings, diff_text)
-    log.info(f"Classified: {len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped")
+    core.log.info(f"Classified: {len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped")
     trail.info("classify_findings",
                f"{len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped",
                data={"inline": len(inline), "file_level": len(file_level), "skipped": len(skipped)})
@@ -165,7 +165,7 @@ def _run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
     if not args.dry_run and all_postable:
         kept, deduped = dedup_against_posted(all_postable, repo, args.pr, pr_data)
         if deduped:
-            log.info(f"Skipped {len(deduped)} findings duplicating existing comments")
+            core.log.info(f"Skipped {len(deduped)} findings duplicating existing comments")
             skipped.extend(deduped)
             inline = [f for f in kept if f.classification == CLASS_INLINE]
             file_level = [f for f in kept if f.classification == CLASS_FILE_LEVEL]
@@ -237,12 +237,12 @@ def main(argv: list[str] | None = None) -> int:
 
     review_path = Path(args.review_file)
     if not review_path.exists():
-        log.error(f"Review file not found: {review_path}")
+        core.log.error(f"Review file not found: {review_path}")
         return 1
 
     sidecar = read_review_meta(review_path.parent)
     if not sidecar.repo:
-        log.error("Cannot determine repository — meta.json missing or has no 'repo' field")
+        core.log.error("Cannot determine repository — meta.json missing or has no 'repo' field")
         return 1
     repo = sidecar.repo
     args.repo = repo
@@ -263,10 +263,10 @@ def main(argv: list[str] | None = None) -> int:
     # refusing on that would strand every review already on disk; a caller that
     # does not pass the flag has not claimed a branch to check against.
     if args.expect_ref and sidecar.head_ref and sidecar.head_ref != args.expect_ref:
-        log.error(
+        core.log.error(
             f"This review was written for {sidecar.head_ref}, not "
             f"{args.expect_ref} — refusing to post another run's review")
-        log.dim(f"Review file: {review_path}")
+        core.log.dim(f"Review file: {review_path}")
         return 1
 
     trail = Trail.start(
@@ -278,7 +278,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return _run_post(trail, args, repo, sidecar, review_path)
     except KeyboardInterrupt:
-        return proc.INTERRUPT_RETURNCODE
+        return core.proc.INTERRUPT_RETURNCODE
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
         raise

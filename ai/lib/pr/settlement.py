@@ -37,18 +37,18 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from core import log
-from core import text
-from git import client as git_client
-from git import push
-from pr import attribution
-from pr import comments as pc
-from pr import comments_fix as pr_comments_fix
-from pr import context as pr_context
-from pr import permalinks
-from pr import state as pr_state
-from pr import summary_model
-from pr import thread_replies
+import core.log
+import core.text
+import git.client
+import git.push
+import pr.attribution
+import pr.comments
+import pr.comments_fix
+import pr.context
+import pr.permalinks
+import pr.state
+import pr.summary_model
+import pr.thread_replies
 from pr.comments_state import ThreadState
 from pr.fix import (
     RECONCILED_REASON, SETTLED_REASON, FixOutcome, FixRecord, ItemOutcome,
@@ -130,15 +130,15 @@ def _our_verdict(thread: ReportThread) -> FixOutcome | None:
         # else has to carry our login before its wording is read as a verdict,
         # and the root is excluded from that check since the root is never
         # ours.
-        if index == 0 and not body.startswith(thread_replies.HANDLED_REPLY_PREFIXES):
+        if index == 0 and not body.startswith(pr.thread_replies.HANDLED_REPLY_PREFIXES):
             continue
         author = ((comment.get("author") or {}).get("login") or "").lower()
-        ours = body.startswith(thread_replies.HANDLED_REPLY_PREFIXES) or (
+        ours = body.startswith(pr.thread_replies.HANDLED_REPLY_PREFIXES) or (
             bool(login) and author == login
         )
         if not ours:
             continue
-        return thread_replies.verdict_kind(body)
+        return pr.thread_replies.verdict_kind(body)
     return None
 
 
@@ -190,7 +190,7 @@ def answered_comment_sources(
     the one that decides it, same as `_our_verdict` reading a thread newest-first.
     """
     if not any(
-        o.outcome in UNSETTLED_OUTCOMES and permalinks.comment_item_source(o).ok
+        o.outcome in UNSETTLED_OUTCOMES and pr.permalinks.comment_item_source(o).ok
         for o in outcomes
     ):
         return {}
@@ -198,7 +198,7 @@ def answered_comment_sources(
         # Without a login there is no telling our reply from the reviewer
         # restating their own point, and reading theirs as an answer would
         # settle the item on the strength of the complaint.
-        log.warn(
+        core.log.warn(
             "Cannot identify our own comments — leaving comment items unreconciled"
         )
         return {}
@@ -206,7 +206,7 @@ def answered_comment_sources(
     # include_self, because the reply being looked for is ours and the listing
     # drops our own comments by default.
     answered: dict[str, FixOutcome | None] = {}
-    for comment in pc.fetch_issue_comments(
+    for comment in pr.comments.fetch_issue_comments(
         repo, pr_number, my_login, include_self=True,
     ):
         if str(comment.get("user", "")).lower() != mine:
@@ -220,7 +220,7 @@ def answered_comment_sources(
         # and the early return above refuses to run at all without a login.
         # `verdict_kind`, not `names_a_verdict`: the caller has to tell FIXED
         # apart from DISMISSED and ALREADY_ADDRESSED, not merely know one was named.
-        verdict = thread_replies.verdict_kind(body)
+        verdict = pr.thread_replies.verdict_kind(body)
         for anchor in anchors:
             answered[anchor] = verdict
     return {anchor: verdict for anchor, verdict in answered.items() if verdict is not None}
@@ -250,7 +250,7 @@ def entry_settlement(
     thread = threads_by_id.get(entry.id)
     if thread:
         return settlement_for(thread)
-    source = permalinks.comment_item_source(entry)
+    source = pr.permalinks.comment_item_source(entry)
     if not source.ok:
         return None
     verdict = answered_sources.get(source.id)
@@ -281,7 +281,7 @@ def settled_locations(
 
 
 def adopt_settled_threads(
-    state: pr_state.PRState, threads_by_id: dict[str, ReportThread],
+    state: pr.state.PRState, threads_by_id: dict[str, ReportThread],
 ) -> int:
     """Record the answered threads no round ever gave a disposition to. Returns the count.
 
@@ -301,7 +301,7 @@ def adopt_settled_threads(
     Idempotent by id: a thread already in the snapshot is skipped, so a second
     `--finish` adds nothing. `FixRecord.merge_into` cannot be relied on here —
     `_finish_deferred_work` mutates the record in place and saves it directly
-    rather than folding it through `pr_state.apply`.
+    rather than folding it through `pr.state.apply`.
 
     Resolved threads are deliberately out of scope. `settlement_for` grades one
     SETTLED_ELSEWHERE too, but a resolved thread is collapsed on GitHub and the
@@ -326,7 +326,7 @@ def adopt_settled_threads(
             outcome=settlement,
             settled_by=SettledBy.RECONCILIATION,
             reason=RECONCILED_REASON,
-            summary=text.summarize_comment_body(str(root.get("body", ""))),
+            summary=core.text.summarize_comment_body(str(root.get("body", ""))),
             file=thread.file,
             line=thread.line or 0,
         ))
@@ -336,12 +336,12 @@ def adopt_settled_threads(
             state.fix.reviewers[thread.id] = thread.reviewer
         adopted += 1
     if adopted:
-        log.info(f"Recorded {adopted} thread(s) answered outside the fix pass")
+        core.log.info(f"Recorded {adopted} thread(s) answered outside the fix pass")
     return adopted
 
 
 def reconcile_fix_snapshot(
-    state: pr_state.PRState, threads_by_id: dict[str, ReportThread],
+    state: pr.state.PRState, threads_by_id: dict[str, ReportThread],
     answered_sources: dict[str, FixOutcome] | None = None,
 ) -> int:
     """Flip snapshot outcomes that GitHub contradicts. Returns the flip count.
@@ -394,7 +394,7 @@ def reconcile_fix_snapshot(
         settlements[outcome.id] = settlement
     flipped = state.fix.fix.reconcile(settlements)
     if flipped:
-        log.info(f"Reconciled {flipped} stale outcome(s) against GitHub")
+        core.log.info(f"Reconciled {flipped} stale outcome(s) against GitHub")
     return flipped
 
 
@@ -420,7 +420,7 @@ def resolve_fixed_threads(
             continue
         if thread.is_resolved:
             continue
-        if pc.resolve_thread(entry.id):
+        if pr.comments.resolve_thread(entry.id):
             # Written back so a second caller over the same report skips it. A
             # combined --fix --finish run resolves the already-addressed bucket
             # in the fix pass and drains it again in the closeout, off the same
@@ -429,7 +429,7 @@ def resolve_fixed_threads(
             thread.is_resolved = True
             priors.append(thread.state)
     if priors:
-        log.info(f"Resolved {len(priors)} fixed thread(s)")
+        core.log.info(f"Resolved {len(priors)} fixed thread(s)")
     return priors
 
 
@@ -473,20 +473,20 @@ def resolve_settled_commit(
     tag or a branch name rather than a SHA at all.
     """
     if explicit:
-        sha = git_client.out(
+        sha = git.client.out(
             "rev-parse", "--verify", "--quiet", f"{explicit}^{{commit}}", cwd=wt_path,
         )
         if not sha:
             return SettledCommit(
                 error=f"--commit names no commit in this worktree: {explicit}"
             )
-        if not push.holds(wt_path, sha):
+        if not git.push.holds(wt_path, sha):
             return SettledCommit(error=(
-                f"--commit {git_client.abbrev(sha)} is not on the remote — push it "
+                f"--commit {git.client.abbrev(sha)} is not on the remote — push it "
                 f"first, or the reply citing it sends the reviewer to a 404"
             ))
-        return SettledCommit(sha=git_client.abbrev(sha))
-    if attribution.coordinate_went_stale(
+        return SettledCommit(sha=git.client.abbrev(sha))
+    if pr.attribution.coordinate_went_stale(
             wt_path, outcome, outcome.file, outcome.line):
         # The recorded line has stopped meaning what it meant when it was read,
         # so the walk below would answer about whatever code inherited the
@@ -496,9 +496,9 @@ def resolve_settled_commit(
         # `report_settlement` already tells the operator that an uncited row
         # takes `--commit` to name one.
         return SettledCommit()
-    sha = attribution.find_addressing_commit(wt_path, outcome.file, outcome.line) or ""
-    if sha and push.holds(wt_path, sha):
-        return SettledCommit(sha=git_client.abbrev(sha))
+    sha = pr.attribution.find_addressing_commit(wt_path, outcome.file, outcome.line) or ""
+    if sha and git.push.holds(wt_path, sha):
+        return SettledCommit(sha=git.client.abbrev(sha))
     return SettledCommit()
 
 
@@ -519,9 +519,9 @@ def settle_targets(record: FixRecord, targets: list[str]) -> list[ItemOutcome] |
     unknown = sorted({t for t in targets if t not in by_id})
     if not unknown:
         return [by_id[t] for t in targets]
-    log.error(f"--settle named threads the fix pass never recorded: {unknown}")
+    core.log.error(f"--settle named threads the fix pass never recorded: {unknown}")
     settleable = sorted(o.id for o in record.items if o.outcome in UNSETTLED_OUTCOMES)
-    log.info(
+    core.log.info(
         f"Threads a person still owes an answer: {', '.join(settleable)}"
         if settleable else "No thread in the fix snapshot is waiting on a person."
     )
@@ -574,7 +574,7 @@ def settled_commits(
     resolved = [resolve_settled_commit(wt_path, o, commit) for o in picked]
     failed = next((r for r in resolved if not r.ok), None)
     if failed:
-        log.error(failed.error)
+        core.log.error(failed.error)
         return None
     return [r.sha for r in resolved]
 
@@ -590,12 +590,12 @@ def report_settlement(
     """
     replaced = f" (was {was.value})" if was != kind else ""
     cited = f", fixed in {sha}" if sha else ""
-    log.info(f"{outcome.id}: recorded as {kind.value}{replaced}{cited}")
+    core.log.info(f"{outcome.id}: recorded as {kind.value}{replaced}{cited}")
     if kind.may_cite_a_commit and not sha:
-        log.info(
+        core.log.info(
             f"{outcome.id}: no pushed commit found for {outcome.file}:"
             f"{outcome.line} — the summary row will read "
-            f"\"{summary_model.ActionCell.RECONCILED}\". Push the fix and re-run "
+            f"\"{pr.summary_model.ActionCell.RECONCILED}\". Push the fix and re-run "
             f"--settle, or name it with --commit, to cite it"
         )
 
@@ -621,7 +621,7 @@ def settle_flag_error(kind: FixOutcome, reason: str, commit: str) -> str:
 
 
 def run_settle(
-    ctx: pr_context.ResolvedContext,
+    ctx: pr.context.ResolvedContext,
     targets: list[str],
     as_name: str,
     reason: str,
@@ -642,13 +642,13 @@ def run_settle(
     kind = FixOutcome(as_name)
     flag_error = settle_flag_error(kind, reason, commit)
     if flag_error:
-        log.error(flag_error)
+        core.log.error(flag_error)
         return 1
 
     wt_path = ctx.require_worktree()
-    state = pr_state.load_state(ctx.target_dir)
+    state = pr.state.load_state(ctx.target_dir)
     if state is None or not state.fix.fix.items:
-        log.error(
+        core.log.error(
             "No fix snapshot to settle against — run `pr comments --fix` first"
         )
         return 1
@@ -665,7 +665,7 @@ def run_settle(
     for outcome, sha in zip(picked, shas):
         was = outcome.outcome
         if not record_settlement(outcome, kind, reason, sha):
-            log.info(f"{outcome.id}: already recorded as {kind.value} — nothing to do")
+            core.log.info(f"{outcome.id}: already recorded as {kind.value} — nothing to do")
             continue
         settled += 1
         report_settlement(outcome, kind, was, sha)
@@ -674,9 +674,9 @@ def run_settle(
         return 0
 
     state.fix.rearm_closeout()
-    pr_state.save_state(ctx.target_dir, state)
-    log.info(
+    pr.state.save_state(ctx.target_dir, state)
+    core.log.info(
         f"Recorded {settled} settled thread(s) — next: "
-        f"{pr_comments_fix.CLOSEOUT_COMMAND}"
+        f"{pr.comments_fix.CLOSEOUT_COMMAND}"
     )
     return 0

@@ -19,11 +19,11 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from core import log
-from core import prompt
-from core import publishing
+import core.log
+import core.prompt
+import core.publishing
 from core.serde import load_file as serde_load_file, to_dict as serde_to_dict
-from gh import client as gh_client
+import gh.client
 from pr.state import PostTracking
 from review.paths import FILENAME_POST_SESSION
 
@@ -73,7 +73,7 @@ def post(pr_number: str, review_file: str, submit: bool, *, bin_dir: Path,
         post_args.append("--submit")
     if branch:
         post_args += ["--expect-ref", branch]
-    publishing.call_entry_point("cli.review_post:main", post_args)
+    core.publishing.call_entry_point("cli.review_post:main", post_args)
 
 
 def submit_pending(repo: str, pr_number: str, review_file: str) -> bool:
@@ -86,25 +86,25 @@ def submit_pending(repo: str, pr_number: str, review_file: str) -> bool:
     review_dir = Path(review_file).parent
     post_file = review_dir / FILENAME_POST_SESSION
     if not post_file.is_file():
-        log.error(f"No post tracking file found: {post_file}")
+        core.log.error(f"No post tracking file found: {post_file}")
         return False
 
     tracking = serde_load_file(PostTracking, post_file)
 
     if not tracking or not tracking.review_id:
-        log.error(f"Could not read review_id from {post_file}")
+        core.log.error(f"Could not read review_id from {post_file}")
         return False
 
-    log.info(f"Submitting review #{tracking.review_id}...")
-    r = gh_client.api(
+    core.log.info(f"Submitting review #{tracking.review_id}...")
+    r = gh.client.api(
         f"repos/{repo}/pulls/{pr_number}/reviews/{tracking.review_id}/events",
         method="POST", raw_fields={"event": "COMMENT"}, retry=False,
     )
     if not r.ok:
-        log.warn(f"Failed to submit review #{tracking.review_id}")
+        core.log.warn(f"Failed to submit review #{tracking.review_id}")
         return False
 
-    log.info(f"Review #{tracking.review_id} submitted")
+    core.log.info(f"Review #{tracking.review_id} submitted")
 
     # Best-effort bookkeeping: the submit call above already reached GitHub,
     # so a failure writing the local tracking file back has nothing left to
@@ -145,19 +145,19 @@ def resolve(
         post(pr_number, str(review_file), auto_submit, bin_dir=bin_dir, branch=branch)
         return PostResult(True, auto_submit, posted_log)
 
-    if not prompt.confirm("Satisfied with the review?"):
+    if not core.prompt.confirm("Satisfied with the review?"):
         return PostResult(False, False, "", (
             f"Edit the review:  $EDITOR {review_file}",
             _HINT_POST,
         ))
 
-    if not prompt.confirm("Post review to GitHub?"):
+    if not core.prompt.confirm("Post review to GitHub?"):
         return PostResult(False, False, "", (_HINT_POST,))
 
     post(pr_number, str(review_file), False, bin_dir=bin_dir, branch=branch)
 
     submitted = False
-    if prompt.confirm("Submit review now?"):
+    if core.prompt.confirm("Submit review now?"):
         submitted = submit_pending(repo, pr_number, str(review_file))
 
     return PostResult(True, submitted, posted_log)

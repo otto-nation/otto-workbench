@@ -14,8 +14,8 @@ from conftest import run_checked
 LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
 
-from core import workbench_paths
-from core import trail as trail_mod
+import core.workbench_paths
+import core.trail
 from core.trail import (
     ARTIFACT_LIMIT,
     EXCERPT_LIMIT,
@@ -56,7 +56,7 @@ def _months_ago(n: int) -> str:
 
 def _seed_month(stem: str) -> Path:
     """A trail file for one month, holding one record."""
-    root = workbench_paths.trail_dir()
+    root = core.workbench_paths.trail_dir()
     root.mkdir(parents=True, exist_ok=True)
     path = root / f"{stem}.jsonl"
     path.write_text('{"action":"old"}\n')
@@ -68,7 +68,7 @@ def _read_events() -> list[dict]:
 
     One run writes one file, so the test does not need to know its name.
     """
-    root = workbench_paths.trail_dir()
+    root = core.workbench_paths.trail_dir()
     if not root.is_dir():
         return []
     events = []
@@ -108,14 +108,14 @@ class TestTrailEvent:
 class TestTrailRoot:
     def test_start_creates_the_root(self):
         Trail.start(script="test-script", context={"repo": "org/repo"}).finish()
-        assert workbench_paths.trail_dir().is_dir()
+        assert core.workbench_paths.trail_dir().is_dir()
 
     def test_events_land_in_this_months_file(self):
         trail = Trail.start(script="test-script", context={})
         trail.info("fetch", "fetched")
         trail.finish()
         month = datetime.now(timezone.utc).strftime("%Y-%m")
-        names = [p.name for p in workbench_paths.trail_dir().glob("*.jsonl")]
+        names = [p.name for p in core.workbench_paths.trail_dir().glob("*.jsonl")]
         assert names == [f"{month}.jsonl"]
 
     def test_the_events_own_month_picks_the_file(self):
@@ -130,8 +130,8 @@ class TestTrailRoot:
         event = trail._make_event(Level.INFO, EventType.ACTION, "late", "after midnight")
         event.ts = f"{next_month}-01T00:00:01Z"
         trail._emit(event)
-        assert (workbench_paths.trail_dir() / f"{next_month}.jsonl").is_file()
-        assert not (workbench_paths.trail_dir() / f"{this_month}.jsonl").is_file()
+        assert (core.workbench_paths.trail_dir() / f"{next_month}.jsonl").is_file()
+        assert not (core.workbench_paths.trail_dir() / f"{this_month}.jsonl").is_file()
 
     def test_start_generates_invocation_id(self):
         trail = Trail.start(script="test-script", context={})
@@ -163,7 +163,7 @@ class TestTrailRetention:
         """A horizon that excluded the current month would delete the records
         of the invocation doing the deleting."""
         Trail.start(script="test", context={}).finish()
-        current = workbench_paths.trail_dir() / f"{_months_ago(0)}.jsonl"
+        current = core.workbench_paths.trail_dir() / f"{_months_ago(0)}.jsonl"
         assert current.is_file()
 
         assert prune_trail(0) == []
@@ -173,7 +173,7 @@ class TestTrailRetention:
     def test_a_stem_that_names_no_month_is_never_dropped(self):
         """`legacy.jsonl` cannot be placed in time by its name, and nothing
         appends to it — a fixed size, not a source of growth."""
-        root = workbench_paths.trail_dir()
+        root = core.workbench_paths.trail_dir()
         root.mkdir(parents=True, exist_ok=True)
         legacy = root / "legacy.jsonl"
         legacy.write_text('{"action":"pre-cutover"}\n')
@@ -190,7 +190,7 @@ class TestTrailRetention:
 
     def test_prune_without_a_root_yet_is_not_an_error(self):
         assert prune_trail() == []
-        assert not workbench_paths.trail_dir().exists()
+        assert not core.workbench_paths.trail_dir().exists()
 
 
 class TestCommandCorrelation:
@@ -285,7 +285,7 @@ class TestUnrecordedTrail:
 
     def test_it_creates_no_root(self):
         Trail.start(script="test", context={}, record=False).finish()
-        assert not workbench_paths.trail_dir().exists()
+        assert not core.workbench_paths.trail_dir().exists()
 
     def test_it_sweeps_nothing(self):
         """A run that writes no history has no business deleting any."""
@@ -616,7 +616,7 @@ class TestFailure:
         path = trail.failure("push", "refused", output="boom")
 
         event = _read_events()[-1]
-        assert event["data"]["log"] == str(path.relative_to(workbench_paths.trail_dir()))
+        assert event["data"]["log"] == str(path.relative_to(core.workbench_paths.trail_dir()))
         assert event["data"]["log"].startswith("artifacts/")
 
     def test_the_excerpt_is_the_tail_not_the_head(self):
@@ -774,14 +774,14 @@ class TestProcessOrigin:
         assert origin["ppid"] == os.getppid()
 
     def test_it_names_the_program_that_launched_the_run(self):
-        with mock.patch.object(trail_mod, "_parent_command", return_value="node"):
+        with mock.patch.object(core.trail, "_parent_command", return_value="node"):
             Trail.start(script="s", context={}).info("a", "d")
         assert _read_events()[0]["origin"]["parent"] == "node"
 
     def test_a_probe_that_cannot_answer_is_left_out(self):
         """Absent, not blank. Attribution naming the wrong parent is worse than
         none, so a failed probe must not read as an answer."""
-        with mock.patch.object(trail_mod, "_parent_command", return_value=""):
+        with mock.patch.object(core.trail, "_parent_command", return_value=""):
             Trail.start(script="s", context={}).info("a", "d")
         assert "parent" not in _read_events()[0]["origin"]
 
@@ -803,32 +803,32 @@ class TestProcessOrigin:
         """A `ps` absent from PATH raises `FileNotFoundError` out of
         `subprocess.run`, which `proc.run` does not catch. The probe must not
         let that escape and take the whole run down with it."""
-        with mock.patch.object(trail_mod, "_PARENT_PROBE", ("no-such-binary-xyz",)):
+        with mock.patch.object(core.trail, "_PARENT_PROBE", ("no-such-binary-xyz",)):
             Trail.start(script="s", context={}).info("a", "d")
         assert "parent" not in _read_events()[0]["origin"]
 
     def test_a_run_with_no_terminal_records_that_it_had_none(self):
         """The evidence the guard in `fix.engine` acts on, kept so a refusal or
         a failure to refuse can be read back afterwards."""
-        with mock.patch.object(trail_mod.os, "ttyname", side_effect=OSError):
+        with mock.patch.object(core.trail.os, "ttyname", side_effect=OSError):
             assert process_origin()["tty"] == ""
 
     def test_an_unaskable_terminal_is_absent_rather_than_blank(self):
         """"" is a run with no terminal; a missing key is a probe that could not
         be made. One blank string would spell both."""
-        with mock.patch.object(trail_mod.sys, "stdin", None):
+        with mock.patch.object(core.trail.sys, "stdin", None):
             assert "tty" not in process_origin()
 
     def test_the_command_is_bounded(self):
         """A prompt reaches some entry points as an argument, so this is the
         field most able to grow without bound."""
-        with mock.patch.object(trail_mod.sys, "argv", ["x" * 900]):
+        with mock.patch.object(core.trail.sys, "argv", ["x" * 900]):
             assert len(process_origin()["command"]) == ORIGIN_COMMAND_LIMIT
 
     def test_a_run_that_records_nothing_probes_nothing(self):
         """No record to carry the answer, so the subprocess would be spent on a
         field that reaches no file."""
-        with mock.patch.object(trail_mod, "_parent_command") as probe:
+        with mock.patch.object(core.trail, "_parent_command") as probe:
             Trail.start(script="s", context={}, record=False).info("a", "d")
         assert probe.call_count == 0
 

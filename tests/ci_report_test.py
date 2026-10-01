@@ -8,7 +8,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from pr import ci_report  # noqa: E402
+import pr.ci_report  # noqa: E402
 from pr.ci_failures import (  # noqa: E402
     FailureGroup, FailureItem, FailureKind, Outcome, RunState,
 )
@@ -283,8 +283,8 @@ def test_render_dashboard_truncates_a_long_annotation_it_falls_back_to():
     group = FailureGroup(job="lint", kind=FailureKind.LINT, items=(item,))
     run = _make_run(failures={"lint": group})
     dashboard = render_dashboard(run, {"a": Outcome.NEW})
-    assert "x" * ci_report._MAX_DASHBOARD_ANNOTATION in dashboard
-    assert "x" * (ci_report._MAX_DASHBOARD_ANNOTATION + 1) not in dashboard
+    assert "x" * pr.ci_report._MAX_DASHBOARD_ANNOTATION in dashboard
+    assert "x" * (pr.ci_report._MAX_DASHBOARD_ANNOTATION + 1) not in dashboard
 
 
 def test_a_commit_checked_without_a_workflow_names_no_run_number():

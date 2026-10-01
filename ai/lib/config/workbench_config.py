@@ -61,9 +61,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import get_type_hints
 
-from core import serde
-from core import timeouts
-from core import workbench_paths
+import core.serde
+import core.timeouts
+import core.workbench_paths
 from core.phases import Backend, Effort, Phase, Thinking
 
 # `git_layout` is a workbench-wide module rather than an `ai/lib` one, because
@@ -490,7 +490,7 @@ class WorkbenchConfig:
 
 
 def global_config_path() -> Path:
-    return workbench_paths.config_dir() / CONFIG_NAME
+    return core.workbench_paths.config_dir() / CONFIG_NAME
 
 
 def project_config_path(project_root: Path | str) -> Path:
@@ -552,7 +552,7 @@ def _parse_yaml(path: Path):
         raise ValueError("neither PyYAML nor yq is available to read YAML")
     result = subprocess.run(
         ["yq", "-o=json", ".", str(path)],
-        capture_output=True, text=True, timeout=timeouts.LOCAL,
+        capture_output=True, text=True, timeout=core.timeouts.LOCAL,
     )
     if result.returncode != 0:
         raise ValueError(result.stderr.strip() or "yq failed")
@@ -568,7 +568,7 @@ def yaml_dump(data: dict) -> str:
     try:
         result = subprocess.run(
             ["yq", "-P", "."], input=json.dumps(data),
-            capture_output=True, text=True, timeout=timeouts.LOCAL,
+            capture_output=True, text=True, timeout=core.timeouts.LOCAL,
         )
     except subprocess.SubprocessError as exc:
         raise ConfigError(f"could not render YAML: {exc}") from exc
@@ -653,7 +653,7 @@ def load_config(project_root: Path | str | None = None) -> WorkbenchConfig:
         merged = deep_merge(merged, read_yaml(path))
 
     try:
-        return serde.from_dict(WorkbenchConfig, merged)
+        return core.serde.from_dict(WorkbenchConfig, merged)
     except (TypeError, ValueError) as exc:
         named = " and ".join(str(p) for p in paths if p.is_file())
         raise ConfigError(f"{named or paths[0]}: {exc}") from exc
@@ -688,9 +688,9 @@ def surface_schema() -> dict:
     value; the schema walk is only wanted by the three readers above, and none
     of them is on that path.
     """
-    from core import schema_gen
+    import core.schema_gen
 
-    return schema_gen.dataclass_to_schema(WorkbenchConfig)
+    return core.schema_gen.dataclass_to_schema(WorkbenchConfig)
 
 
 def _object_branch(schema: dict) -> dict:
@@ -786,9 +786,9 @@ def scope_rules(cls=None, prefix: str = "") -> dict[str, ScopeRule]:
     rules: dict[str, ScopeRule] = {}
     hints = get_type_hints(cls)
     for f in dataclasses.fields(cls):
-        kind, _ = serde.classify(hints[f.name])
+        kind, _ = core.serde.classify(hints[f.name])
         key = f"{prefix}{f.name}"
-        if kind is serde.HintKind.DATACLASS:
+        if kind is core.serde.HintKind.DATACLASS:
             rules.update(scope_rules(hints[f.name], f"{key}."))
             continue
         rule = f.metadata.get("scope")

@@ -29,7 +29,7 @@ from conftest import synthetic_review
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from agent.types import EFFORT_PRESETS
-from cli import review_orchestrate as ro
+import cli.review_orchestrate
 from core.phases import Effort, Mode
 from gh.types import PRContext, PRMetadata
 from pr.domains import ReviewVerdict
@@ -139,14 +139,14 @@ def run_phases(monkeypatch):
         called.append("single")
         Path(job.review_file).write_text(synthetic_review())
 
-    monkeypatch.setattr(ro, "run_multi_phase", _multi)
-    monkeypatch.setattr(ro, "run_single_agent", _single)
-    monkeypatch.setattr(ro, "run_static_analysis", lambda *a, **k: [])
+    monkeypatch.setattr(cli.review_orchestrate, "run_multi_phase", _multi)
+    monkeypatch.setattr(cli.review_orchestrate, "run_single_agent", _single)
+    monkeypatch.setattr(cli.review_orchestrate, "run_static_analysis", lambda *a, **k: [])
 
     def _run(job) -> tuple[_Trail, list[str], Pipeline]:
         trail = _Trail()
         with redirect_stdout(io.StringIO()):
-            pipeline = ro._run_phases(trail, _args(), job)
+            pipeline = cli.review_orchestrate._run_phases(trail, _args(), job)
         return trail, called, pipeline
 
     return _run

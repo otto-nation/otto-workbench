@@ -19,7 +19,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from core import log
+import core.log
 from gh.types import PRMetadata
 from review.types import Group
 
@@ -131,7 +131,7 @@ def _subject_stem(path: str) -> str:
     """The source stem a test file is named for, else the file's own stem.
 
     Strips one test affix, so a compound name keeps whatever else it carries:
-    ``test_review_grouping.py`` yields ``review_grouping``, which no source
+    ``test_review_grouping.py`` yields ``review.grouping``, which no source
     stem matches, and the file falls back to its own top-level directory. That
     is the accepted cost of staying lexical — resolving it needs the import
     graph, which does not generalise past this repo.
@@ -347,7 +347,7 @@ def load_profiles(wt_path: str) -> list[ReviewProfile]:
         try:
             data = yaml.safe_load(path.read_text())
         except Exception:
-            log.warn(f"Skipping malformed profile: {path.name}")
+            core.log.warn(f"Skipping malformed profile: {path.name}")
             continue
         if not isinstance(data, dict):
             continue

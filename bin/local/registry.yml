@@ -84,6 +84,11 @@ tools:
     visibility: brief
     description: "Validates that every ai/lib package imports only what the layer declaration in its __init__.py permits"
 
+  - name: validate-import-form
+    permission: false
+    visibility: brief
+    description: "Validates that every ai/lib module is imported as `import pkg.mod` and named through its package"
+
   - name: validate-stat-portability
     permission: false
     visibility: brief

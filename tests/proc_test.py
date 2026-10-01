@@ -20,8 +20,8 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest
 
-from core import proc
-from core import timeouts
+import core.proc
+import core.timeouts
 from core.proc import CmdResult
 
 
@@ -78,18 +78,18 @@ class TestCmdResult:
 class TestFailureMessage:
     def test_the_exit_code_when_the_command_explained_nothing(self):
         """It is then the only evidence the failure left behind."""
-        assert proc.failure_message("Failed to fetch the diff", CmdResult(1)) == (
+        assert core.proc.failure_message("Failed to fetch the diff", CmdResult(1)) == (
             "Failed to fetch the diff (exit 1)"
         )
 
     def test_quotes_the_cause_the_command_gave(self):
         r = CmdResult(1, "", "fatal: not a git repository")
-        msg = proc.failure_message("Failed to read the remote", r)
+        msg = core.proc.failure_message("Failed to read the remote", r)
         assert msg == "Failed to read the remote: fatal: not a git repository"
 
     def test_a_server_error_says_to_wait(self):
         r = CmdResult(1, "", "gh: Service unavailable (HTTP 503)")
-        msg = proc.failure_message("Failed to fetch the PR", r)
+        msg = core.proc.failure_message("Failed to fetch the PR", r)
         assert "retry later" in msg
         assert "HTTP 503" in msg
 
@@ -97,19 +97,19 @@ class TestFailureMessage:
         # CmdResult.server_error reads both streams; the message must agree
         # with it or the retryable case renders as an ordinary failure.
         r = CmdResult(1, "HTTP 502 Bad Gateway")
-        msg = proc.failure_message("Failed to fetch the PR", r)
+        msg = core.proc.failure_message("Failed to fetch the PR", r)
         assert "retry later" in msg
         assert "HTTP 502 Bad Gateway" in msg
 
     def test_a_stdout_only_cause_is_capped(self):
         r = CmdResult(1, "HTTP 503 " + "x" * 500)
-        assert len(proc.failure_message("Failed", r)) < 300
+        assert len(core.proc.failure_message("Failed", r)) < 300
 
     def test_accepts_a_raw_completed_process(self):
         # Most of ai/ still calls subprocess.run directly; those call sites
         # report failures without converting first.
         r = subprocess.run(["sh", "-c", "echo nope >&2; exit 1"], capture_output=True, text=True)
-        assert proc.failure_message("Failed", r) == "Failed: nope"
+        assert core.proc.failure_message("Failed", r) == "Failed: nope"
 
 
 class TestFailureMessageForAKilledProcess:
@@ -122,78 +122,78 @@ class TestFailureMessageForAKilledProcess:
     """
 
     def test_the_signal_is_named(self):
-        msg = proc.failure_message("git commit failed", CmdResult(-signal.SIGKILL))
+        msg = core.proc.failure_message("git commit failed", CmdResult(-signal.SIGKILL))
         assert msg == (
             "git commit failed — killed by SIGKILL (signal 9); "
             "the machine ended it, not the command — re-run rather than bisect"
         )
 
     def test_a_broken_pipe_is_named_too(self):
-        msg = proc.failure_message("git fetch failed", CmdResult(-signal.SIGPIPE))
+        msg = core.proc.failure_message("git fetch failed", CmdResult(-signal.SIGPIPE))
         assert "SIGPIPE (signal 13)" in msg
         assert "re-run rather than bisect" in msg
 
     def test_a_fault_signal_points_at_the_command(self):
         """SIGSEGV is the command's problem, and saying otherwise misdirects."""
-        msg = proc.failure_message("the linter failed", CmdResult(-signal.SIGSEGV))
+        msg = core.proc.failure_message("the linter failed", CmdResult(-signal.SIGSEGV))
         assert "SIGSEGV (signal 11)" in msg
         assert "the machine ended it" not in msg
 
     def test_whatever_it_managed_to_say_is_still_quoted(self):
         r = CmdResult(-signal.SIGTERM, "", "warning: index is locked")
-        msg = proc.failure_message("git add failed", r)
+        msg = core.proc.failure_message("git add failed", r)
         assert msg.startswith("git add failed — killed by SIGTERM (signal 15)")
         assert msg.endswith(": warning: index is locked")
 
     def test_a_signal_this_platform_cannot_name_still_renders(self):
-        assert "signal 77" in proc.failure_message("Failed", CmdResult(-77))
+        assert "signal 77" in core.proc.failure_message("Failed", CmdResult(-77))
 
     def test_an_expired_bound_says_so_without_the_stderr(self):
         """A hand-built timeout result carries the code and nothing else."""
-        msg = proc.failure_message("git fetch failed", CmdResult(proc.TIMEOUT_RETURNCODE))
+        msg = core.proc.failure_message("git fetch failed", CmdResult(core.proc.TIMEOUT_RETURNCODE))
         assert msg == "git fetch failed — the bound expired before the command answered"
 
     def test_a_real_timeout_keeps_the_bound_run_quoted(self):
-        r = proc.run(["sleep", "5"], timeout=0.1)
-        assert proc.failure_message("git fetch failed", r) == (
+        r = core.proc.run(["sleep", "5"], timeout=0.1)
+        assert core.proc.failure_message("git fetch failed", r) == (
             "git fetch failed: timed out after 0.1s: sleep 5"
         )
 
     def test_a_real_signal_survives_the_round_trip(self):
         """Not a hand-built result — the negative code has to come from the OS."""
-        r = proc.run(["sh", "-c", "kill -PIPE $$"], timeout=timeouts.QUICK)
+        r = core.proc.run(["sh", "-c", "kill -PIPE $$"], timeout=core.timeouts.QUICK)
         assert r.signalled
-        assert "SIGPIPE (signal 13)" in proc.failure_message("git commit failed", r)
+        assert "SIGPIPE (signal 13)" in core.proc.failure_message("git commit failed", r)
 
 
 class TestRun:
     def test_captures_both_streams_and_the_exit_code(self):
-        r = proc.run(["sh", "-c", "echo out; echo err >&2; exit 3"], timeout=timeouts.QUICK)
+        r = core.proc.run(["sh", "-c", "echo out; echo err >&2; exit 3"], timeout=core.timeouts.QUICK)
         assert r.returncode == 3
         assert r.stdout == "out\n"
         assert r.detail == "err"
 
     def test_does_not_raise_on_a_non_zero_exit(self):
-        assert proc.run(["sh", "-c", "exit 1"], timeout=timeouts.QUICK).returncode == 1
+        assert core.proc.run(["sh", "-c", "exit 1"], timeout=core.timeouts.QUICK).returncode == 1
 
     def test_runs_in_the_given_directory(self, tmp_path):
-        r = proc.run(["pwd"], cwd=tmp_path, timeout=timeouts.QUICK)
+        r = core.proc.run(["pwd"], cwd=tmp_path, timeout=core.timeouts.QUICK)
         assert r.stdout.strip() == str(Path(tmp_path).resolve())
 
     def test_feeds_input_to_the_command(self):
-        assert proc.run(["cat"], input_text="hello", timeout=timeouts.QUICK).stdout == "hello"
+        assert core.proc.run(["cat"], input_text="hello", timeout=core.timeouts.QUICK).stdout == "hello"
 
     def test_env_is_handed_to_the_command(self):
-        r = proc.run(["sh", "-c", "echo $MARKER"], env={"MARKER": "set"},
-                     timeout=timeouts.QUICK)
+        r = core.proc.run(["sh", "-c", "echo $MARKER"], env={"MARKER": "set"},
+                     timeout=core.timeouts.QUICK)
         assert r.stdout.strip() == "set"
 
     def test_env_replaces_rather_than_extends(self):
         """The point of passing one is being able to take a variable away."""
         os.environ["PROC_TEST_LEAK"] = "inherited"
         try:
-            r = proc.run(["sh", "-c", "echo ${PROC_TEST_LEAK:-gone}"], env={},
-                         timeout=timeouts.QUICK)
+            r = core.proc.run(["sh", "-c", "echo ${PROC_TEST_LEAK:-gone}"], env={},
+                         timeout=core.timeouts.QUICK)
         finally:
             del os.environ["PROC_TEST_LEAK"]
         assert r.stdout.strip() == "gone"
@@ -201,7 +201,7 @@ class TestRun:
     def test_the_parent_environment_is_inherited_by_default(self):
         os.environ["PROC_TEST_KEEP"] = "kept"
         try:
-            r = proc.run(["sh", "-c", "echo ${PROC_TEST_KEEP:-gone}"], timeout=timeouts.QUICK)
+            r = core.proc.run(["sh", "-c", "echo ${PROC_TEST_KEEP:-gone}"], timeout=core.timeouts.QUICK)
         finally:
             del os.environ["PROC_TEST_KEEP"]
         assert r.stdout.strip() == "kept"
@@ -209,10 +209,10 @@ class TestRun:
     def test_a_bound_is_required(self):
         """An omitted bound reads as nobody having thought about one."""
         with pytest.raises(TypeError):
-            proc.run(["true"])
+            core.proc.run(["true"])
 
     def test_unbounded_is_spelled_out_and_runs(self):
-        assert proc.run(["true"], timeout=timeouts.UNBOUNDED).ok
+        assert core.proc.run(["true"], timeout=core.timeouts.UNBOUNDED).ok
 
 
 class TestRunUndecodableOutput:
@@ -231,30 +231,30 @@ class TestRunUndecodableOutput:
     BAD_BYTES = r"printf 'a\262b'"
 
     def test_stdout_that_will_not_decode_comes_back_as_a_result(self):
-        r = proc.run(["sh", "-c", self.BAD_BYTES], timeout=timeouts.QUICK)
+        r = core.proc.run(["sh", "-c", self.BAD_BYTES], timeout=core.timeouts.QUICK)
         assert r.ok
         assert r.stdout == "a\ufffdb"
 
     def test_stderr_that_will_not_decode_comes_back_as_a_result(self):
-        r = proc.run(["sh", "-c", f"{self.BAD_BYTES} >&2; exit 1"], timeout=timeouts.QUICK)
+        r = core.proc.run(["sh", "-c", f"{self.BAD_BYTES} >&2; exit 1"], timeout=core.timeouts.QUICK)
         assert r.returncode == 1
         assert r.stderr == "a\ufffdb"
 
     def test_the_group_path_decodes_the_same_way(self):
-        r = proc.run(["sh", "-c", self.BAD_BYTES], timeout=timeouts.QUICK,
+        r = core.proc.run(["sh", "-c", self.BAD_BYTES], timeout=core.timeouts.QUICK,
                      kill_process_group=True)
         assert r.ok
         assert r.stdout == "a\ufffdb"
 
     def test_the_group_path_decodes_stderr_the_same_way(self):
-        r = proc.run(["sh", "-c", f"{self.BAD_BYTES} >&2; exit 1"], timeout=timeouts.QUICK,
+        r = core.proc.run(["sh", "-c", f"{self.BAD_BYTES} >&2; exit 1"], timeout=core.timeouts.QUICK,
                      kill_process_group=True)
         assert r.returncode == 1
         assert r.stderr == "a\ufffdb"
 
     def test_decodable_output_is_untouched(self):
         """Replacement applies to what will not decode, not to what will."""
-        r = proc.run(["printf", "caf\u00e9 ✓"], timeout=timeouts.QUICK)
+        r = core.proc.run(["printf", "caf\u00e9 ✓"], timeout=core.timeouts.QUICK)
         assert r.stdout == "caf\u00e9 ✓"
 
 
@@ -268,42 +268,42 @@ class TestRunTimeout:
     """
 
     def test_an_expired_bound_comes_back_as_a_result(self):
-        r = proc.run(["sleep", "5"], timeout=0.1)
-        assert r.returncode == proc.TIMEOUT_RETURNCODE
+        r = core.proc.run(["sleep", "5"], timeout=0.1)
+        assert r.returncode == core.proc.TIMEOUT_RETURNCODE
         assert not r.ok
 
     def test_the_bound_and_the_command_are_named(self):
-        r = proc.run(["sleep", "5"], timeout=0.1)
+        r = core.proc.run(["sleep", "5"], timeout=0.1)
         assert "timed out after 0.1s" in r.stderr
         assert "sleep 5" in r.stderr
 
     def test_what_the_command_managed_to_say_is_kept(self):
         """A command that times out mid-answer often explains itself first."""
-        r = proc.run(["sh", "-c", "echo partial; echo why >&2; sleep 5"], timeout=0.5)
-        assert r.returncode == proc.TIMEOUT_RETURNCODE
+        r = core.proc.run(["sh", "-c", "echo partial; echo why >&2; sleep 5"], timeout=0.5)
+        assert r.returncode == core.proc.TIMEOUT_RETURNCODE
         assert r.stdout == "partial\n"
         assert "why" in r.stderr
 
     def test_a_timeout_is_distinguishable_from_an_ordinary_failure(self):
         """The eval scorers separate the two by this code."""
-        assert proc.run(["false"], timeout=timeouts.QUICK).returncode != proc.TIMEOUT_RETURNCODE
+        assert core.proc.run(["false"], timeout=core.timeouts.QUICK).returncode != core.proc.TIMEOUT_RETURNCODE
 
 
 class TestExternallyKilled:
     """One predicate for the machine-or-command split, asked from three places."""
 
     def test_a_signal_from_outside_is_the_machine(self):
-        assert proc.externally_killed(-signal.SIGKILL)
-        assert proc.externally_killed(-signal.SIGPIPE)
+        assert core.proc.externally_killed(-signal.SIGKILL)
+        assert core.proc.externally_killed(-signal.SIGPIPE)
 
     def test_a_fault_signal_still_points_at_the_command(self):
-        assert not proc.externally_killed(-signal.SIGSEGV)
-        assert not proc.externally_killed(-signal.SIGABRT)
+        assert not core.proc.externally_killed(-signal.SIGSEGV)
+        assert not core.proc.externally_killed(-signal.SIGABRT)
 
     def test_an_ordinary_exit_is_not_a_kill(self):
-        assert not proc.externally_killed(0)
-        assert not proc.externally_killed(1)
-        assert not proc.externally_killed(proc.TIMEOUT_RETURNCODE)
+        assert not core.proc.externally_killed(0)
+        assert not core.proc.externally_killed(1)
+        assert not core.proc.externally_killed(core.proc.TIMEOUT_RETURNCODE)
 
 
 class TestMachineKills:
@@ -316,55 +316,55 @@ class TestMachineKills:
     """
 
     def test_an_expired_bound_is_recorded(self):
-        proc.MACHINE_KILLS.clear()
+        core.proc.MACHINE_KILLS.clear()
 
-        proc.run(["sleep", "5"], timeout=0.1)
+        core.proc.run(["sleep", "5"], timeout=0.1)
 
-        assert [str(kill) for kill in proc.MACHINE_KILLS] == [
+        assert [str(kill) for kill in core.proc.MACHINE_KILLS] == [
             "sleep 5 — timed out after 0.1s"
         ]
 
     def test_an_external_signal_is_recorded(self):
-        proc.MACHINE_KILLS.clear()
+        core.proc.MACHINE_KILLS.clear()
 
-        proc.run(["bash", "-c", "kill -PIPE $$"], timeout=timeouts.QUICK)
+        core.proc.run(["bash", "-c", "kill -PIPE $$"], timeout=core.timeouts.QUICK)
 
-        assert str(proc.MACHINE_KILLS[-1]).endswith("— killed by SIGPIPE (signal 13)")
+        assert str(core.proc.MACHINE_KILLS[-1]).endswith("— killed by SIGPIPE (signal 13)")
 
     def test_a_fault_signal_is_not_recorded(self):
         """SIGABRT is the command's own doing, and naming the machine for it is
         the misdirection `externally_killed` exists to prevent."""
-        proc.MACHINE_KILLS.clear()
+        core.proc.MACHINE_KILLS.clear()
 
-        r = proc.run(["bash", "-c", "kill -ABRT $$"], timeout=timeouts.QUICK)
+        r = core.proc.run(["bash", "-c", "kill -ABRT $$"], timeout=core.timeouts.QUICK)
 
         assert r.signalled
-        assert not proc.MACHINE_KILLS
+        assert not core.proc.MACHINE_KILLS
 
     def test_an_ordinary_failure_is_not_recorded(self):
-        proc.MACHINE_KILLS.clear()
+        core.proc.MACHINE_KILLS.clear()
 
-        proc.run(["false"], timeout=timeouts.QUICK)
+        core.proc.run(["false"], timeout=core.timeouts.QUICK)
 
-        assert not proc.MACHINE_KILLS
+        assert not core.proc.MACHINE_KILLS
 
     def test_the_result_the_caller_gets_is_unchanged(self):
         """Nothing here is allowed to become a second way for `run` to answer."""
-        proc.MACHINE_KILLS.clear()
+        core.proc.MACHINE_KILLS.clear()
 
-        r = proc.run(["sleep", "5"], timeout=0.1)
+        r = core.proc.run(["sleep", "5"], timeout=0.1)
 
-        assert r.returncode == proc.TIMEOUT_RETURNCODE
+        assert r.returncode == core.proc.TIMEOUT_RETURNCODE
         assert "timed out after 0.1s: sleep 5" in r.stderr
 
     def test_the_record_is_bounded(self):
         """`run` is called by long-lived things, and nothing here drains it."""
-        proc.MACHINE_KILLS.clear()
+        core.proc.MACHINE_KILLS.clear()
 
-        for _ in range(proc.MACHINE_KILL_LIMIT + 3):
-            proc.MACHINE_KILLS.append(proc.MachineKill("git status", "timed out"))
+        for _ in range(core.proc.MACHINE_KILL_LIMIT + 3):
+            core.proc.MACHINE_KILLS.append(core.proc.MachineKill("git status", "timed out"))
 
-        assert len(proc.MACHINE_KILLS) == proc.MACHINE_KILL_LIMIT
+        assert len(core.proc.MACHINE_KILLS) == core.proc.MACHINE_KILL_LIMIT
 
 
 class TestRunStdin:
@@ -377,12 +377,12 @@ class TestRunStdin:
     """
 
     def test_a_command_that_reads_stdin_gets_eof(self):
-        r = proc.run(["cat"], timeout=timeouts.QUICK)
+        r = core.proc.run(["cat"], timeout=core.timeouts.QUICK)
         assert r.ok
         assert r.stdout == ""
 
     def test_input_text_is_the_way_to_give_it_something_to_read(self):
-        assert proc.run(["cat"], input_text="fed", timeout=timeouts.QUICK).stdout == "fed"
+        assert core.proc.run(["cat"], input_text="fed", timeout=core.timeouts.QUICK).stdout == "fed"
 
 
 # Long enough that a fixture still holding the pid is a fixture the kill
@@ -415,7 +415,7 @@ def short_reap_ceiling(monkeypatch):
     the reap, so the assertion keeps passing against a window twice as wide as
     the one it means to police — a test that loosened itself and said nothing.
     """
-    monkeypatch.setattr(timeouts, "QUICK", REAP_BOUND)
+    monkeypatch.setattr(core.timeouts, "QUICK", REAP_BOUND)
     return REAP_BOUND * 2
 
 
@@ -454,22 +454,22 @@ class TestRunKillProcessGroup:
 
     def test_a_backgrounded_grandchild_is_killed_with_the_group(self, tmp_path):
         pidfile = tmp_path / "grandchild.pid"
-        r = proc.run(
+        r = core.proc.run(
             ["sh", "-c", f"sleep {GRANDCHILD_LIFETIME} & echo $! > {pidfile}; "
                          f"sleep {GRANDCHILD_LIFETIME}"],
             timeout=1.0, kill_process_group=True)
 
-        assert r.returncode == proc.TIMEOUT_RETURNCODE
+        assert r.returncode == core.proc.TIMEOUT_RETURNCODE
         grandchild = int(pidfile.read_text())
         assert _wait_until_gone(grandchild), (
             f"pid {grandchild} outlived the call that spawned it")
 
     def test_the_direct_child_dies_too(self, tmp_path):
         pidfile = tmp_path / "child.pid"
-        r = proc.run(["sh", "-c", f"echo $$ > {pidfile}; sleep {GRANDCHILD_LIFETIME}"],
+        r = core.proc.run(["sh", "-c", f"echo $$ > {pidfile}; sleep {GRANDCHILD_LIFETIME}"],
                      timeout=1.0, kill_process_group=True)
 
-        assert r.returncode == proc.TIMEOUT_RETURNCODE
+        assert r.returncode == core.proc.TIMEOUT_RETURNCODE
         assert _wait_until_gone(int(pidfile.read_text()))
 
     def test_a_grandchild_survives_when_the_group_was_not_asked_for(self, tmp_path):
@@ -479,12 +479,12 @@ class TestRunKillProcessGroup:
         decorative if the behaviour without it were never pinned down.
         """
         pidfile = tmp_path / "grandchild.pid"
-        r = proc.run(
+        r = core.proc.run(
             ["sh", "-c", f"sleep {GRANDCHILD_LIFETIME} & echo $! > {pidfile}; "
                          f"sleep {GRANDCHILD_LIFETIME}"],
             timeout=1.0)
 
-        assert r.returncode == proc.TIMEOUT_RETURNCODE
+        assert r.returncode == core.proc.TIMEOUT_RETURNCODE
         grandchild = int(pidfile.read_text())
         try:
             assert _alive(grandchild)
@@ -505,14 +505,14 @@ class TestRunKillProcessGroup:
         def denied(pid, sig):
             raise PermissionError(1, "Operation not permitted")
 
-        monkeypatch.setattr(proc.os, "killpg", denied)
+        monkeypatch.setattr(core.proc.os, "killpg", denied)
         # Long-lived on purpose: nothing kills this one, so the call may only
         # return by bounding its own wait. A regression here does not fail the
         # assertions below, it hangs until the suite's own timeout.
-        r = proc.run(["sleep", str(GRANDCHILD_LIFETIME)], timeout=0.3,
+        r = core.proc.run(["sleep", str(GRANDCHILD_LIFETIME)], timeout=0.3,
                      kill_process_group=True)
 
-        assert r.returncode == proc.TIMEOUT_RETURNCODE
+        assert r.returncode == core.proc.TIMEOUT_RETURNCODE
         assert "could not be signalled and may still be running" in r.stderr
 
     # passes-at-base: the reap was already bounded, only the bound got shorter
@@ -534,17 +534,17 @@ class TestRunKillProcessGroup:
         unbounded wait back again, and anything between the two is a reap
         answering to something other than its bound, which is also a defect.
         """
-        monkeypatch.setattr(proc.os, "killpg", lambda pid, sig: None)
+        monkeypatch.setattr(core.proc.os, "killpg", lambda pid, sig: None)
 
         started = time.monotonic()
-        r = proc.run(["sleep", str(GRANDCHILD_LIFETIME)], timeout=0.3,
+        r = core.proc.run(["sleep", str(GRANDCHILD_LIFETIME)], timeout=0.3,
                      kill_process_group=True)
         elapsed = time.monotonic() - started
 
-        assert r.returncode == proc.TIMEOUT_RETURNCODE
+        assert r.returncode == core.proc.TIMEOUT_RETURNCODE
         assert elapsed < short_reap_ceiling, (
             f"the call waited {elapsed:.1f}s on a child that ignored SIGKILL, "
-            f"which is past the {timeouts.QUICK:g}s reap bound")
+            f"which is past the {core.timeouts.QUICK:g}s reap bound")
         assert "did not exit after SIGKILL" in r.stderr
 
     def test_what_outlived_the_kill_is_named_alongside_what_was_not_signalled(
@@ -559,8 +559,8 @@ class TestRunKillProcessGroup:
         def denied(pid, sig):
             raise PermissionError(1, "Operation not permitted")
 
-        monkeypatch.setattr(proc.os, "killpg", denied)
-        r = proc.run(["sleep", str(GRANDCHILD_LIFETIME)], timeout=0.3,
+        monkeypatch.setattr(core.proc.os, "killpg", denied)
+        r = core.proc.run(["sleep", str(GRANDCHILD_LIFETIME)], timeout=0.3,
                      kill_process_group=True)
 
         assert "could not be signalled" in r.stderr
@@ -580,7 +580,7 @@ class TestRunKillProcessGroup:
         would mask the defect; the function's own docstring names `ValueError`
         as a way out of `communicate`.
         """
-        monkeypatch.setattr(proc.os, "killpg", lambda pid, sig: None)
+        monkeypatch.setattr(core.proc.os, "killpg", lambda pid, sig: None)
         spawn = subprocess.Popen
 
         def refuses_to_communicate(*args, **kwargs):
@@ -588,17 +588,17 @@ class TestRunKillProcessGroup:
             process.communicate = _raise_value_error
             return process
 
-        monkeypatch.setattr(proc.subprocess, "Popen", refuses_to_communicate)
+        monkeypatch.setattr(core.proc.subprocess, "Popen", refuses_to_communicate)
 
         started = time.monotonic()
         with pytest.raises(ValueError):
-            proc.run(["sleep", str(GRANDCHILD_LIFETIME)],
-                     timeout=timeouts.QUICK, kill_process_group=True)
+            core.proc.run(["sleep", str(GRANDCHILD_LIFETIME)],
+                     timeout=core.timeouts.QUICK, kill_process_group=True)
         elapsed = time.monotonic() - started
 
         assert elapsed < short_reap_ceiling, (
             f"unwinding waited {elapsed:.1f}s on a child that ignored SIGKILL, "
-            f"which is past the {timeouts.QUICK:g}s reap bound")
+            f"which is past the {core.timeouts.QUICK:g}s reap bound")
 
     def test_the_group_goes_even_when_the_way_out_is_not_a_timeout(self, tmp_path,
                                                                    monkeypatch):
@@ -630,12 +630,12 @@ class TestRunKillProcessGroup:
             process.communicate = interrupted
             return process
 
-        monkeypatch.setattr(proc.subprocess, "Popen", interruptible)
+        monkeypatch.setattr(core.proc.subprocess, "Popen", interruptible)
         with pytest.raises(KeyboardInterrupt):
-            proc.run(
+            core.proc.run(
                 ["sh", "-c", f"sleep {GRANDCHILD_LIFETIME} & echo $! > {pidfile}; "
                              f"sleep {GRANDCHILD_LIFETIME}"],
-                timeout=timeouts.QUICK, kill_process_group=True)
+                timeout=core.timeouts.QUICK, kill_process_group=True)
 
         grandchild = int(pidfile.read_text())
         assert _wait_until_gone(grandchild), (
@@ -646,40 +646,40 @@ class TestRunKillProcessGroup:
         def already_gone(pid, sig):
             raise ProcessLookupError(3, "No such process")
 
-        monkeypatch.setattr(proc.os, "killpg", already_gone)
-        r = proc.run(["sh", "-c", "sleep 0.5"], timeout=0.1, kill_process_group=True)
+        monkeypatch.setattr(core.proc.os, "killpg", already_gone)
+        r = core.proc.run(["sh", "-c", "sleep 0.5"], timeout=0.1, kill_process_group=True)
 
-        assert r.returncode == proc.TIMEOUT_RETURNCODE
+        assert r.returncode == core.proc.TIMEOUT_RETURNCODE
         assert "could not be signalled" not in r.stderr
 
 
 class TestTail:
     def test_keeps_only_the_tail_of_a_long_gate_dump(self):
-        lines = proc.tail("\n".join(str(n) for n in range(50))).splitlines()
-        assert len(lines) == proc.TAIL_LINES
+        lines = core.proc.tail("\n".join(str(n) for n in range(50))).splitlines()
+        assert len(lines) == core.proc.TAIL_LINES
         assert lines[-1] == "49"
 
     def test_indents_every_line_when_asked(self):
-        assert proc.tail("a\nb", indent="  ") == "  a\n  b"
+        assert core.proc.tail("a\nb", indent="  ") == "  a\n  b"
 
     def test_drops_the_blank_a_missing_stream_leaves(self):
         """`combined_output` joins two streams; an empty one must not print."""
-        assert proc.tail("\n✗ Pytest failed\n\n") == "✗ Pytest failed"
+        assert core.proc.tail("\n✗ Pytest failed\n\n") == "✗ Pytest failed"
 
     def test_a_character_limit_drops_whole_lines_from_the_front(self):
         text = "\n".join(["aaaa", "bbbb", "cccc"])
-        assert proc.tail(text, limit=9) == "bbbb\ncccc"
+        assert core.proc.tail(text, limit=9) == "bbbb\ncccc"
 
     def test_a_single_line_over_the_limit_keeps_its_own_tail(self):
         """Dropping it would leave the record with nothing at all."""
-        assert proc.tail("x" * 10 + "END", limit=5) == "xxEND"[-5:]
+        assert core.proc.tail("x" * 10 + "END", limit=5) == "xxEND"[-5:]
 
     def test_the_limit_counts_the_newlines_between_lines(self):
-        assert proc.tail("aa\nbb", limit=4) == "bb"
+        assert core.proc.tail("aa\nbb", limit=4) == "bb"
 
     def test_no_output_renders_as_nothing(self):
-        assert proc.tail("") == ""
-        assert proc.tail("", limit=10) == ""
+        assert core.proc.tail("") == ""
+        assert core.proc.tail("", limit=10) == ""
 
 
 # passes-at-base: proc was stdlib-only before this branch too — the point is that it still is, after a commit that briefly made it not
@@ -694,17 +694,29 @@ def test_proc_imports_nothing_from_ai_lib_but_timeouts():
 
     `timeouts` is the one allowed edge and is itself stdlib-only.
     """
-    tree = ast.parse((Path(proc.__file__)).read_text())
-    reached = {
+    tree = ast.parse((Path(core.proc.__file__)).read_text())
+    # Both spellings are read. #1137 made `import core.timeouts` the form every
+    # module uses, and a check that only knew `from core import ...` would
+    # report this file as importing nothing at all — passing by blindness.
+    reached = ({
         node.module.split(".")[0]
         for node in ast.walk(tree)
         if isinstance(node, ast.ImportFrom) and node.module
-    } - {"__future__", "collections", "dataclasses", "pathlib", "typing"}
+    } | {
+        alias.name.split(".")[0]
+        for node in ast.walk(tree) if isinstance(node, ast.Import)
+        for alias in node.names
+    }) - {"__future__", "collections", "dataclasses", "pathlib", "typing",
+          "os", "re", "signal", "subprocess", "sys"}
     assert reached == {"core"}, reached
 
     workbench = {
         alias.name for node in ast.walk(tree)
         if isinstance(node, ast.ImportFrom) and node.module == "core"
         for alias in node.names
+    } | {
+        alias.name.split(".", 1)[1]
+        for node in ast.walk(tree) if isinstance(node, ast.Import)
+        for alias in node.names if alias.name.startswith("core.")
     }
     assert workbench == {"timeouts"}, workbench

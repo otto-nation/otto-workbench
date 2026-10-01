@@ -53,15 +53,16 @@ DATETIME_FMT = "%Y-%m-%d %H:%M"
 BODY_PREVIEW_LENGTH = 500
 
 
-from config import workbench_projects
-from core import log, memory
+import config.workbench_projects
+import core.log
+import core.memory
 
 
 # ── Core functions ───────────────────────────────────────────────────────────
 
 
-parse_frontmatter = memory.parse_frontmatter
-read_body = memory.read_body
+parse_frontmatter = core.memory.parse_frontmatter
+read_body = core.memory.read_body
 
 
 def first_heading(path: Path) -> str:
@@ -84,7 +85,7 @@ def _read_last_promote(repo_path: Path) -> str | None:
     The stamp is regenerable state and sits under the gates root with the
     other cooldowns, rather than among the authored topic files.
     """
-    stamp = memory.gate_stamp_file(repo_path, LAST_PROMOTE_STAMP)
+    stamp = core.memory.gate_stamp_file(repo_path, LAST_PROMOTE_STAMP)
     try:
         ts = int(stamp.read_text().strip())
     except (ValueError, OSError):
@@ -92,7 +93,7 @@ def _read_last_promote(repo_path: Path) -> str | None:
     return datetime.fromtimestamp(ts).strftime(DATETIME_FMT)
 
 
-def _topic_row(tf: memory.TopicFile) -> dict:
+def _topic_row(tf: core.memory.TopicFile) -> dict:
     return {
         "filename": tf.filename,
         "name": tf.name,
@@ -112,12 +113,12 @@ def scan_memory_state() -> list[dict]:
     slug plus a digest, so a directory name cannot say which repo it is.
     """
     states = []
-    for repo_path in workbench_projects.registered():
+    for repo_path in config.workbench_projects.registered():
         try:
-            directory = memory.memory_dir(repo_path)
+            directory = core.memory.memory_dir(repo_path)
         except ValueError:
             continue
-        state = memory.state_of(directory, with_body=True)
+        state = core.memory.state_of(directory, with_body=True)
         if state is None:
             continue
         states.append({
@@ -136,8 +137,8 @@ def scan_backed_up_memories(workbench: Path) -> list[dict]:
 
     now = datetime.now()
     results = []
-    for f in sorted(memory_dir.glob(memory.TOPIC_GLOB)):
-        tf = memory.scan_topic_file(f, now, with_body=True)
+    for f in sorted(memory_dir.glob(core.memory.TOPIC_GLOB)):
+        tf = core.memory.scan_topic_file(f, now, with_body=True)
         if tf is not None:
             results.append(_topic_row(tf))
     return results
@@ -183,7 +184,7 @@ def scan_hooks(workbench: Path) -> list[dict]:
     try:
         data = json.loads(settings_file.read_text())
     except (json.JSONDecodeError, OSError):
-        log.warn(f"Could not parse {settings_file}")
+        core.log.warn(f"Could not parse {settings_file}")
         return []
 
     hooks = data.get("hooks", {})
@@ -373,22 +374,22 @@ def main() -> None:
     )
 
     try:
-        log.info(f"Home: {home}")
-        log.info(f"Workbench: {workbench}")
+        core.log.info(f"Home: {home}")
+        core.log.info(f"Workbench: {workbench}")
 
         memory_states = scan_memory_state()
-        log.info(f"Found {len(memory_states)} project(s) with memory")
+        core.log.info(f"Found {len(memory_states)} project(s) with memory")
         trail.info("scan_memories", f"found {len(memory_states)} memory files across {sum(len(s.get('topic_files', [])) for s in memory_states)} topics")
 
         backed_up = scan_backed_up_memories(workbench)
-        log.info(f"Found {len(backed_up)} backed-up memory file(s)")
+        core.log.info(f"Found {len(backed_up)} backed-up memory file(s)")
         trail.info("scan_backed_up", f"found {len(backed_up)} backed-up memory files")
 
         rules = scan_rules(workbench)
         scripts = scan_scripts(workbench)
         hooks = scan_hooks(workbench)
         agents = scan_agents(workbench)
-        log.info(f"Artifacts: {len(rules)} rules, {len(scripts)} scripts, {len(hooks)} hooks, {len(agents)} agents")
+        core.log.info(f"Artifacts: {len(rules)} rules, {len(scripts)} scripts, {len(hooks)} hooks, {len(agents)} agents")
         trail.info("scan_artifacts", f"found {len(rules)} rules, {len(scripts)} scripts, {len(hooks)} hooks, {len(agents)} agents")
 
         report = format_report(memory_states, backed_up, rules, scripts, hooks, agents)

@@ -17,8 +17,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from agent import templates as agent_templates
-from core import log
+import agent.templates
+import core.log
 from agent.registry import PHASES
 from core.phases import Phase
 from agent.phases import phase_model
@@ -59,7 +59,7 @@ def _scout_leads(raw: str) -> str:
     the file rather than reaching the group phases having logged nothing.
     """
     leads, no_scrutiny = parse_scout_output(raw)
-    log.info(f"Scout found {len(leads)} investigation leads, {len(no_scrutiny)} no-scrutiny files")
+    core.log.info(f"Scout found {len(leads)} investigation leads, {len(no_scrutiny)} no-scrutiny files")
     return format_leads_block(leads, no_scrutiny)
 
 
@@ -132,7 +132,7 @@ def build_prompt(phase: Phase, job: ReviewJob, *, max_turns: int, **extra) -> st
     )
     built = entry.build(job, common, extra, output)
     template_vars = built.builder.vars
-    rendered = agent_templates.render(template_name, **template_vars)
+    rendered = agent.templates.render(template_name, **template_vars)
     prompt = _log_prompt_size(
         template_name, rendered, template_vars, job,
         label=built.label, cuts=built.builder.cuts, phase=phase,

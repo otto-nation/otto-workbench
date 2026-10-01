@@ -31,17 +31,21 @@ if LIB_DIR not in sys.path:
 
 from conftest import make_ctx, written_review  # noqa: E402
 
-from review import completion as review_completion  # noqa: E402
-from review import invoke as review_invoke  # noqa: E402
-from review import issue as review_issue  # noqa: E402
-from review import preflight as review_preflight  # noqa: E402
-from review import publish as review_publish  # noqa: E402
-from review import recover as review_recover  # noqa: E402
-from review import run as review_run  # noqa: E402
-from review import worktree as review_worktree  # noqa: E402
+import review.completion  # noqa: E402
+import review.invoke  # noqa: E402
+import review.issue  # noqa: E402
+import review.preflight  # noqa: E402
+import review.publish  # noqa: E402
+import review.recover  # noqa: E402
+import review.run  # noqa: E402
+import review.worktree  # noqa: E402
 
 
-from cli import review_entry  # noqa: E402
+import cli.review_entry  # noqa: E402
+import core.prompt
+import gh.client
+import core.run_lock
+import pr.context
 
 
 @pytest.fixture
@@ -52,7 +56,7 @@ def cr():
     module now, and importing it gives every caller the one module object the
     interpreter already holds.
     """
-    return review_entry
+    return cli.review_entry
 
 
 # ── the real parser ──────────────────────────────────────────────────────────
@@ -72,9 +76,9 @@ def test_main_dispatches_on_the_self_flag(cr, reviews_dir, monkeypatch, argv, ex
     self_flow, pr_flow = MagicMock(), MagicMock()
     monkeypatch.setattr(cr, "_run_self_review", self_flow)
     monkeypatch.setattr(cr, "_run_review", pr_flow)
-    monkeypatch.setattr(cr.pr_context, "classify_target", lambda c: (c, None))
-    monkeypatch.setattr(cr.pr_context, "resolve", lambda **kw: make_ctx())
-    monkeypatch.setattr(cr.run_lock, "claim_for_process", lambda *a, **kw: None)
+    monkeypatch.setattr(pr.context, "classify_target", lambda c: (c, None))
+    monkeypatch.setattr(pr.context, "resolve", lambda **kw: make_ctx())
+    monkeypatch.setattr(core.run_lock, "claim_for_process", lambda *a, **kw: None)
 
     cr.main(argv)
 
@@ -88,16 +92,16 @@ def test_main_parses_json_summary_as_a_flag_not_a_target(cr, reviews_dir, monkey
 
     def _capture(args, argv, ctx, generator_version):
         seen.update(args=args, argv=argv)
-        return review_run.ReviewOutcome("owner/repo", "42", Path("/dev/null"))
+        return review.run.ReviewOutcome("owner/repo", "42", Path("/dev/null"))
 
     def _classify(c):
         seen.setdefault("target", c)
         return (c, None)
 
     monkeypatch.setattr(cr, "_run_review", _capture)
-    monkeypatch.setattr(cr.pr_context, "classify_target", _classify)
-    monkeypatch.setattr(cr.pr_context, "resolve", lambda **kw: make_ctx())
-    monkeypatch.setattr(cr.run_lock, "claim_for_process", lambda *a, **kw: None)
+    monkeypatch.setattr(pr.context, "classify_target", _classify)
+    monkeypatch.setattr(pr.context, "resolve", lambda **kw: make_ctx())
+    monkeypatch.setattr(core.run_lock, "claim_for_process", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "json_summary", lambda *a, **kw: "{}")
 
     cr.main(["--json-summary", "42"])
@@ -126,9 +130,9 @@ def test_main_refuses_contradictory_flags(cr, reviews_dir, monkeypatch, argv, re
     """
     monkeypatch.setattr(cr, "_run_self_review", MagicMock())
     monkeypatch.setattr(cr, "_run_review", MagicMock())
-    monkeypatch.setattr(cr.pr_context, "classify_target", lambda c: (c, None))
-    monkeypatch.setattr(cr.pr_context, "resolve", lambda **kw: make_ctx())
-    monkeypatch.setattr(cr.run_lock, "claim_for_process", lambda *a, **kw: None)
+    monkeypatch.setattr(pr.context, "classify_target", lambda c: (c, None))
+    monkeypatch.setattr(pr.context, "resolve", lambda **kw: make_ctx())
+    monkeypatch.setattr(core.run_lock, "claim_for_process", lambda *a, **kw: None)
 
     assert cr.main(argv) == 1, reason
 
@@ -159,27 +163,27 @@ def _stub_pr_edges(cr, monkeypatch, tmp_path, tape, review_file, *, returncode=0
         review_file.write_text("## Must fix\n- **[M1]** boom\n")
         return 0
 
-    monkeypatch.setattr(review_worktree, "find_repo_root", lambda *a, **kw: str(tmp_path))
-    monkeypatch.setattr(review_run.gh_client, "pr_view",
+    monkeypatch.setattr(review.worktree, "find_repo_root", lambda *a, **kw: str(tmp_path))
+    monkeypatch.setattr(gh.client, "pr_view",
                         lambda *a, **kw: {"headRefName": "feat/x", "body": ""})
-    monkeypatch.setattr(review_issue, "load_issue_provider",
+    monkeypatch.setattr(review.issue, "load_issue_provider",
                         lambda *a, **kw: SimpleNamespace(name="", options={}))
-    monkeypatch.setattr(review_issue, "fetch_issue_context",
+    monkeypatch.setattr(review.issue, "fetch_issue_context",
                         lambda *a, **kw: SimpleNamespace(link="", context=""))
-    monkeypatch.setattr(review_preflight, "check_stale_review", lambda *a, **kw: None)
-    monkeypatch.setattr(review_preflight, "check_pending_review", lambda *a, **kw: None)
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(review_worktree, "setup_pr_worktree",
+    monkeypatch.setattr(review.preflight, "check_stale_review", lambda *a, **kw: None)
+    monkeypatch.setattr(review.preflight, "check_pending_review", lambda *a, **kw: None)
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.worktree, "setup_pr_worktree",
                         lambda *a, **kw: SimpleNamespace(path=str(tmp_path), is_fallback=False))
-    monkeypatch.setattr(review_recover, "pin_recover_worktree",
+    monkeypatch.setattr(review.recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), None))
-    monkeypatch.setattr(review_worktree, "cleanup_worktree", lambda *a, **kw: None)
-    monkeypatch.setattr(review_invoke, "run", _orchestrate)
-    monkeypatch.setattr(review_run.review_invoke, "run", _orchestrate)
-    monkeypatch.setattr(review_completion, "_display", lambda *a, **kw: None)
-    monkeypatch.setattr(review_completion, "summarise",
+    monkeypatch.setattr(review.worktree, "cleanup_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review.invoke, "run", _orchestrate)
+    monkeypatch.setattr(review.invoke, "run", _orchestrate)
+    monkeypatch.setattr(review.completion, "_display", lambda *a, **kw: None)
+    monkeypatch.setattr(review.completion, "summarise",
                         lambda *a, **kw: tape.append("print_summary"))
-    monkeypatch.setattr(review_completion, "record_domain",
+    monkeypatch.setattr(review.completion, "record_domain",
                         lambda *a, **kw: tape.append("domain_write"))
     monkeypatch.setattr(cr.Trail, "start", lambda **kw: MagicMock())
 
@@ -235,13 +239,13 @@ def test_the_pr_url_the_run_reports_names_the_repos_forge(
     _stub_pr_edges(cr, monkeypatch, tmp_path, tape, review_file)
     monkeypatch.setattr(cr, "review_file_path", lambda *a, **kw: review_file)
 
-    real_finish = review_run.finish_review
+    real_finish = review.run.finish_review
 
     def _capture(request, wall_ms, **kwargs):
         seen["pr_url"] = kwargs.get("pr_url")
         return real_finish(request, wall_ms, **kwargs)
 
-    monkeypatch.setattr(review_run, "finish_review", _capture)
+    monkeypatch.setattr(review.run, "finish_review", _capture)
 
     cr._run_review(
         _pr_args(),
@@ -290,10 +294,10 @@ def test_the_pr_path_records_the_domain_even_when_the_operator_declines_to_post(
     review_file = written_review(tmp_path / "reviews" / "widget-42")
     _stub_pr_edges(cr, monkeypatch, tmp_path, tape, review_file)
     monkeypatch.setattr(cr, "review_file_path", lambda *a, **kw: review_file)
-    monkeypatch.setattr(review_publish.prompt, "confirm", lambda *a, **kw: False)
-    monkeypatch.setattr(review_publish, "post",
+    monkeypatch.setattr(core.prompt, "confirm", lambda *a, **kw: False)
+    monkeypatch.setattr(review.publish, "post",
                         lambda *a, **kw: tape.append("posted"))
-    monkeypatch.setattr(review_run.prompt, "ask", lambda *a, **kw: "")
+    monkeypatch.setattr(core.prompt, "ask", lambda *a, **kw: "")
 
     cr._run_review(_pr_args(no_post=False), [], make_ctx(target_dir=tmp_path / "t"), "test 1.0")
 

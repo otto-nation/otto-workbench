@@ -27,7 +27,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from agent import usage as ai_usage
+import agent.usage
 from eval.scoring import RunOutcome, ScoringResult
 from eval.task import RunArtifacts, RunOptions, clean_env, create_temp_repo, outcome_for
 from review.document import ReviewDocument
@@ -204,11 +204,11 @@ def _run_orchestrate(repo_dir: str, review_file: str, opts: RunOptions) -> int:
 
 def parse_review_output(
     review_file: str, session_log: str,
-) -> tuple[list[Finding], ai_usage.SessionUsage]:
+) -> tuple[list[Finding], agent.usage.SessionUsage]:
     doc = ReviewDocument.read(review_file)
     if doc is None:
-        return [], ai_usage.SessionUsage()
-    return doc.findings, ai_usage.parse_session_log(session_log)
+        return [], agent.usage.SessionUsage()
+    return doc.findings, agent.usage.parse_session_log(session_log)
 
 
 class ReviewTask:

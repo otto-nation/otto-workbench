@@ -21,8 +21,8 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
     _AI_LIB_DIR = pinned_ai_lib_dir()
 sys.path.insert(0, str(_AI_LIB_DIR))
 
-from config import workbench_config  # noqa: E402
-from config import workbench_config_write  # noqa: E402
+import config.workbench_config  # noqa: E402
+import config.workbench_config_write  # noqa: E402
 from config.workbench_config import ConfigError, ReuseLevel  # noqa: E402
 
 # Re-exported: the writers below raise it, so a hook catching it should not
@@ -47,20 +47,20 @@ def read_default() -> str:
     env = os.environ.get("REUSE_DEFAULT_MODE", "").strip().lower()
     if env in VALID_LEVELS:
         return env
-    return str(workbench_config.load_config_or_default().reuse.default)
+    return str(config.workbench_config.load_config_or_default().reuse.default)
 
 
 def read_level() -> str:
     """The active level, falling back to the configured default."""
-    level = workbench_config.load_config_or_default().reuse.level
+    level = config.workbench_config.load_config_or_default().reuse.level
     return str(level) if level is not None else read_default()
 
 
 def write_level(level: str) -> None:
     """Persist the active level. Raises ``ConfigError`` when the write fails."""
-    workbench_config_write.set_value(workbench_config.REUSE_LEVEL_KEY, level)
+    config.workbench_config_write.set_value(config.workbench_config.REUSE_LEVEL_KEY, level)
 
 
 def write_default(level: str) -> None:
     """Persist the default level. Raises ``ConfigError`` when the write fails."""
-    workbench_config_write.set_value(workbench_config.REUSE_DEFAULT_KEY, level)
+    config.workbench_config_write.set_value(config.workbench_config.REUSE_DEFAULT_KEY, level)

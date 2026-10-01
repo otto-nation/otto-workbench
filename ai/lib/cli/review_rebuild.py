@@ -14,7 +14,8 @@ from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
-from core import log, proc
+import core.log
+import core.proc
 from core.trail import Trail, add_trail_args
 from agent.registry import PHASES
 from core.phases import Phase
@@ -56,14 +57,14 @@ def main(argv: list[str] | None = None) -> int:
 
     group_files = _discover_group_files(review_dir)
     if not group_files:
-        log.error(f"No group finding files in {review_dir}")
+        core.log.error(f"No group finding files in {review_dir}")
         return 1
 
-    log.info(f"Found {len(group_files)} group files")
+    core.log.info(f"Found {len(group_files)} group files")
 
     meta = read_review_meta(review_dir)
     if not meta.repo:
-        log.error("Cannot determine repository — meta.json missing or has no 'repo' field")
+        core.log.error("Cannot determine repository — meta.json missing or has no 'repo' field")
         return 1
     repo = meta.repo
     # A sidecar written before the field existed numbers no PR, so the operator's
@@ -110,14 +111,14 @@ def main(argv: list[str] | None = None) -> int:
 
         final = document.render()
         review_file.write_text(final)
-        log.info(f"Rebuilt {review_file}")
+        core.log.info(f"Rebuilt {review_file}")
 
         finding_lines = [line for line in final.splitlines() if line.startswith("- [")]
         trail.info("post_process", f"processed {len(finding_lines)} findings",
                    data={"finding_count": len(finding_lines), "review_file": str(review_file)})
         return 0
     except KeyboardInterrupt:
-        return proc.INTERRUPT_RETURNCODE
+        return core.proc.INTERRUPT_RETURNCODE
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
         raise

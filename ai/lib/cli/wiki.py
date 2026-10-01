@@ -47,56 +47,56 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from cli import wiki_placement
+import cli.wiki_placement
 from config.workbench_config import WIKI_ROOT_KEY, load_config_or_default
-from core import module_proxy
-from core import proc
-from wiki import backup as wiki_backup
-from wiki import create as wiki_create
-from wiki import model as wiki_model
-from wiki import parsing as wiki_parsing
-from wiki import paths as wiki_paths
-from wiki import report as wiki_report
+import core.module_proxy
+import core.proc
+import wiki.backup
+import wiki.create
+import wiki.model
+import wiki.parsing
+import wiki.paths
+import wiki.report
 
 
 # Bound here so the command bodies and this script's tests read the same
 # names, while the imports above stay in the `from <package> import <module>`
 # form the tarball's reachability walk follows.
-ARTICLES_DIR = wiki_paths.ARTICLES_DIR
-DEFAULT_SETTINGS = wiki_paths.DEFAULT_SETTINGS
-DEFAULT_WIKI_DIRNAME = wiki_paths.DEFAULT_WIKI_DIRNAME
-HASH_PREFIX_LEN = wiki_parsing.HASH_PREFIX_LEN
-INDEX_FILE = wiki_paths.INDEX_FILE
-MAX_PARENT_DEPTH = wiki_paths.MAX_PARENT_DEPTH
-RAW_DIR = wiki_paths.RAW_DIR
-SCHEMA_FILE = wiki_paths.SCHEMA_FILE
-ArchiveResult = wiki_create.ArchiveResult
-ArticleNotFoundError = wiki_create.ArticleNotFoundError
-ArticleReferencedError = wiki_create.ArticleReferencedError
-QueryGap = wiki_parsing.QueryGap
-Wiki = wiki_model.Wiki
-WikiExistsError = wiki_create.WikiExistsError
-archive_article = wiki_create.archive_article
-backups_dir = wiki_backup.backups_dir
-build_index = wiki_report.build_index
-is_overdue = wiki_backup.is_overdue
-latest = wiki_backup.latest
-collect_lint = wiki_report.collect_lint
-collect_signals = wiki_report.collect_signals
-collect_status = wiki_report.collect_status
-find_wiki = wiki_paths.find_wiki
-hash_file = wiki_parsing.hash_file
-init_wiki = wiki_create.init_wiki
-is_wiki = wiki_paths.is_wiki
-manifest_row = wiki_create.manifest_row
-prune = wiki_backup.prune
-read_text = wiki_parsing.read_text
-restore = wiki_backup.restore
-slugify_title = wiki_create.slugify_title
-snapshot = wiki_backup.snapshot
-snapshots = wiki_backup.snapshots
-stage_source = wiki_create.stage_source
-vault_subpath = wiki_paths.vault_subpath
+ARTICLES_DIR = wiki.paths.ARTICLES_DIR
+DEFAULT_SETTINGS = wiki.paths.DEFAULT_SETTINGS
+DEFAULT_WIKI_DIRNAME = wiki.paths.DEFAULT_WIKI_DIRNAME
+HASH_PREFIX_LEN = wiki.parsing.HASH_PREFIX_LEN
+INDEX_FILE = wiki.paths.INDEX_FILE
+MAX_PARENT_DEPTH = wiki.paths.MAX_PARENT_DEPTH
+RAW_DIR = wiki.paths.RAW_DIR
+SCHEMA_FILE = wiki.paths.SCHEMA_FILE
+ArchiveResult = wiki.create.ArchiveResult
+ArticleNotFoundError = wiki.create.ArticleNotFoundError
+ArticleReferencedError = wiki.create.ArticleReferencedError
+QueryGap = wiki.parsing.QueryGap
+Wiki = wiki.model.Wiki
+WikiExistsError = wiki.create.WikiExistsError
+archive_article = wiki.create.archive_article
+backups_dir = wiki.backup.backups_dir
+build_index = wiki.report.build_index
+is_overdue = wiki.backup.is_overdue
+latest = wiki.backup.latest
+collect_lint = wiki.report.collect_lint
+collect_signals = wiki.report.collect_signals
+collect_status = wiki.report.collect_status
+find_wiki = wiki.paths.find_wiki
+hash_file = wiki.parsing.hash_file
+init_wiki = wiki.create.init_wiki
+is_wiki = wiki.paths.is_wiki
+manifest_row = wiki.create.manifest_row
+prune = wiki.backup.prune
+read_text = wiki.parsing.read_text
+restore = wiki.backup.restore
+slugify_title = wiki.create.slugify_title
+snapshot = wiki.backup.snapshot
+snapshots = wiki.backup.snapshots
+stage_source = wiki.create.stage_source
+vault_subpath = wiki.paths.vault_subpath
 
 # The SCHEMA template ships with the skill, the layer that owns the prose. It is
 # absent when the CLI is installed without the skill, so init falls back to a
@@ -149,38 +149,38 @@ __all__ = [
 # script's tests read the same names. Tests patch several of these on this
 # module — the proxy below forwards the write so the functions that moved
 # still see it.
-SCRIPT = wiki_placement.SCRIPT
-ConfigWriteError = wiki_placement.ConfigWriteError
-InitPlacementError = wiki_placement.InitPlacementError
-LinkOutcome = wiki_placement.LinkOutcome
-apply_link = wiki_placement.apply_link
-configured_dirname = wiki_placement.configured_dirname
-container_link_path = wiki_placement.container_link_path
-default_vault_root = wiki_placement.default_vault_root
-repo_root = wiki_placement.repo_root
-resolve_wiki = wiki_placement.resolve_wiki
-set_value = wiki_placement.set_value
-vault_dir = wiki_placement.vault_dir
-vault_entry = wiki_placement.vault_entry
-wiki_dir_is_declared = wiki_placement.wiki_dir_is_declared
-_init_target = wiki_placement._init_target
-_link_resolves_to = wiki_placement._link_resolves_to
-_record_vault_root = wiki_placement._record_vault_root
+SCRIPT = cli.wiki_placement.SCRIPT
+ConfigWriteError = cli.wiki_placement.ConfigWriteError
+InitPlacementError = cli.wiki_placement.InitPlacementError
+LinkOutcome = cli.wiki_placement.LinkOutcome
+apply_link = cli.wiki_placement.apply_link
+configured_dirname = cli.wiki_placement.configured_dirname
+container_link_path = cli.wiki_placement.container_link_path
+default_vault_root = cli.wiki_placement.default_vault_root
+repo_root = cli.wiki_placement.repo_root
+resolve_wiki = cli.wiki_placement.resolve_wiki
+set_value = cli.wiki_placement.set_value
+vault_dir = cli.wiki_placement.vault_dir
+vault_entry = cli.wiki_placement.vault_entry
+wiki_dir_is_declared = cli.wiki_placement.wiki_dir_is_declared
+_init_target = cli.wiki_placement._init_target
+_link_resolves_to = cli.wiki_placement._link_resolves_to
+_record_vault_root = cli.wiki_placement._record_vault_root
 
-_SUBMODULES = (wiki_placement,)
-module_proxy.install(__name__, _SUBMODULES)
+_SUBMODULES = (cli.wiki_placement,)
+core.module_proxy.install(__name__, _SUBMODULES)
 
 
 # ── Commands ──────────────────────────────────────────────────────────────
 
 
-def cmd_path(wiki: Wiki, args: argparse.Namespace) -> int:
-    print(wiki.root)
+def cmd_path(kb: Wiki, args: argparse.Namespace) -> int:
+    print(kb.root)
     return 0
 
 
-def cmd_status(wiki: Wiki, args: argparse.Namespace) -> int:
-    status = collect_status(wiki)
+def cmd_status(kb: Wiki, args: argparse.Namespace) -> int:
+    status = collect_status(kb)
     if args.json:
         print(json.dumps(status, indent=2))
         return 0
@@ -206,8 +206,8 @@ def cmd_status(wiki: Wiki, args: argparse.Namespace) -> int:
         hints.append("/wiki promote — drafts awaiting review")
     # Text only: the JSON shape is a contract the skill reads, and a prompt is
     # for a person.
-    if wiki_backup.is_overdue(wiki.root):
-        hints.append(f"wiki backup — no snapshot in the last {wiki_backup.STALE_BACKUP_DAYS} days")
+    if wiki.backup.is_overdue(kb.root):
+        hints.append(f"wiki backup — no snapshot in the last {wiki.backup.STALE_BACKUP_DAYS} days")
     if hints:
         print()
         for hint in hints:
@@ -215,30 +215,30 @@ def cmd_status(wiki: Wiki, args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_lint(wiki: Wiki, args: argparse.Namespace) -> int:
-    findings = collect_lint(wiki)
+def cmd_lint(kb: Wiki, args: argparse.Namespace) -> int:
+    findings = collect_lint(kb)
     if args.json:
-        report = {"path": str(wiki.root), "findings": findings}
+        report = {"path": str(kb.root), "findings": findings}
         if args.signals:
-            report["signals"] = collect_signals(wiki)
+            report["signals"] = collect_signals(kb)
         print(json.dumps(report, indent=2))
         return 1 if findings else 0
 
     if not findings:
-        print(f"{wiki.root}: clean")
+        print(f"{kb.root}: clean")
     else:
-        _print_findings(wiki, findings)
+        _print_findings(kb, findings)
 
     if args.signals:
-        _print_signals(collect_signals(wiki))
+        _print_signals(collect_signals(kb))
     return 1 if findings else 0
 
 
-def _print_findings(wiki: Wiki, findings: list[dict]) -> None:
+def _print_findings(kb: Wiki, findings: list[dict]) -> None:
     """The lint findings as text, grouped by check in the order they were raised."""
     errors = sum(1 for f in findings if f["severity"] == "error")
     warnings = len(findings) - errors
-    print(f"{wiki.root}: {errors} error(s), {warnings} warning(s)")
+    print(f"{kb.root}: {errors} error(s), {warnings} warning(s)")
     for check in dict.fromkeys(f["check"] for f in findings):
         group = [f for f in findings if f["check"] == check]
         print(f"\n{check} ({len(group)})")
@@ -247,18 +247,18 @@ def _print_findings(wiki: Wiki, findings: list[dict]) -> None:
             print(f"  {where}{finding['message']}")
 
 
-def cmd_signals(wiki: Wiki, args: argparse.Namespace) -> int:
+def cmd_signals(kb: Wiki, args: argparse.Namespace) -> int:
     """Counted evidence for the judgements lint leaves to the reader.
 
     Exit 0 whichever way it comes out: a tag table and a gap log are not
     findings, and nothing here is a defect to be fixed.
     """
-    signals = collect_signals(wiki)
+    signals = collect_signals(kb)
     if args.json:
-        print(json.dumps({"path": str(wiki.root), "signals": signals}, indent=2))
+        print(json.dumps({"path": str(kb.root), "signals": signals}, indent=2))
         return 0
 
-    print(f"{wiki.root}")
+    print(f"{kb.root}")
     _print_signals(signals)
     return 0
 
@@ -291,10 +291,10 @@ def _print_signals(signals: dict) -> None:
         print(f"  {age:>8}  {draft['slug']}{origin}")
 
 
-def cmd_archive(wiki: Wiki, args: argparse.Namespace) -> int:
+def cmd_archive(kb: Wiki, args: argparse.Namespace) -> int:
     """Retire one article. The only `wiki` subcommand that moves content."""
     try:
-        result = archive_article(wiki, args.slug, force=args.force)
+        result = archive_article(kb, args.slug, force=args.force)
     except ArticleNotFoundError:
         print(f"{SCRIPT}: no article named '{args.slug}'", file=sys.stderr)
         return 1
@@ -309,7 +309,7 @@ def cmd_archive(wiki: Wiki, args: argparse.Namespace) -> int:
         print(f"{SCRIPT}: cannot archive {args.slug}: {exc}", file=sys.stderr)
         return 1
 
-    where = result.path.relative_to(wiki.root).as_posix()
+    where = result.path.relative_to(kb.root).as_posix()
     if not result.moved:
         print(f"{where}: already archived, nothing to do")
         return 0
@@ -319,10 +319,10 @@ def cmd_archive(wiki: Wiki, args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_sources(wiki: Wiki, args: argparse.Namespace) -> int:
-    recorded = wiki.recorded_source_hashes()
+def cmd_sources(kb: Wiki, args: argparse.Namespace) -> int:
+    recorded = kb.recorded_source_hashes()
     rows = []
-    for source in wiki.sources:
+    for source in kb.sources:
         known = recorded.get(source.rel)
         state = "new" if known is None else ("changed" if known != source.content_hash else "compiled")
         if args.new and state == "compiled":
@@ -330,7 +330,7 @@ def cmd_sources(wiki: Wiki, args: argparse.Namespace) -> int:
         rows.append({"path": source.rel, "hash": source.content_hash, "state": state})
 
     if args.json:
-        print(json.dumps({"path": str(wiki.root), "sources": rows}, indent=2))
+        print(json.dumps({"path": str(kb.root), "sources": rows}, indent=2))
         return 0
     if not rows:
         print("no sources" if not args.new else "no new or changed sources")
@@ -389,7 +389,7 @@ def cmd_init(start: Path, args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_backup(wiki: Wiki, args: argparse.Namespace) -> int:
+def cmd_backup(kb: Wiki, args: argparse.Namespace) -> int:
     """Snapshot the knowledge base, list snapshots, or restore one.
 
     Restoring extracts beside the base rather than over it, and prints where it
@@ -398,29 +398,29 @@ def cmd_backup(wiki: Wiki, args: argparse.Namespace) -> int:
     cannot be undone.
     """
     if args.list:
-        return _list_snapshots(wiki)
+        return _list_snapshots(kb)
     if args.restore:
-        return _restore_snapshot(wiki, args.restore)
-    return _take_snapshot(wiki, args.keep)
+        return _restore_snapshot(kb, args.restore)
+    return _take_snapshot(kb, args.keep)
 
 
-def _list_snapshots(wiki: Wiki) -> int:
-    found = wiki_backup.snapshots(wiki.root)
+def _list_snapshots(kb: Wiki) -> int:
+    found = wiki.backup.snapshots(kb.root)
     if not found:
-        print(f"no snapshots yet: {wiki_backup.backups_dir(wiki.root)}")
+        print(f"no snapshots yet: {wiki.backup.backups_dir(kb.root)}")
         return 0
     for archive in found:
         print(f"{archive.name}  {archive.stat().st_size:>10,}  {archive.parent}")
     return 0
 
 
-def _restore_snapshot(wiki: Wiki, name: str) -> int:
-    archive = _named_snapshot(wiki, name)
+def _restore_snapshot(kb: Wiki, name: str) -> int:
+    archive = _named_snapshot(kb, name)
     if archive is None:
         print(f"{SCRIPT}: no snapshot named '{name}'", file=sys.stderr)
         return 1
     try:
-        landed = wiki_backup.restore(wiki.root, archive)
+        landed = wiki.backup.restore(kb.root, archive)
     except OSError as exc:
         print(f"{SCRIPT}: cannot restore {archive.name}: {exc}", file=sys.stderr)
         return 1
@@ -429,28 +429,28 @@ def _restore_snapshot(wiki: Wiki, name: str) -> int:
     return 0
 
 
-def _take_snapshot(wiki: Wiki, keep: int) -> int:
+def _take_snapshot(kb: Wiki, keep: int) -> int:
     try:
-        created = wiki_backup.snapshot(wiki.root, keep=keep)
+        created = wiki.backup.snapshot(kb.root, keep=keep)
     except OSError as exc:
-        print(f"{SCRIPT}: cannot snapshot {wiki.root}: {exc}", file=sys.stderr)
+        print(f"{SCRIPT}: cannot snapshot {kb.root}: {exc}", file=sys.stderr)
         return 1
     print(f"{created}: {created.stat().st_size:,} bytes")
     print("  same disk as the base — it survives a bad edit, not a lost drive")
     return 0
 
 
-def _named_snapshot(wiki: Wiki, name: str) -> Path | None:
+def _named_snapshot(kb: Wiki, name: str) -> Path | None:
     """The snapshot *name* refers to, where `latest` means the newest."""
     if name == "latest":
-        return wiki_backup.latest(wiki.root)
+        return wiki.backup.latest(kb.root)
     return next(
-        (a for a in wiki_backup.snapshots(wiki.root) if a.name == name),
+        (a for a in wiki.backup.snapshots(kb.root) if a.name == name),
         None,
     )
 
 
-def cmd_link(wiki: Wiki, args: argparse.Namespace) -> int:
+def cmd_link(kb: Wiki, args: argparse.Namespace) -> int:
     """Create or remove the browsing symlink from this repo to its base.
 
     Honours `wiki.link` rather than taking a flag: there is one answer to
@@ -463,9 +463,9 @@ def cmd_link(wiki: Wiki, args: argparse.Namespace) -> int:
     """
     root = repo_root(Path(args.directory))
     entry = vault_dir(root)
-    if entry != wiki.root:
+    if entry != kb.root:
         print(
-            f"{SCRIPT}: {wiki.root} is not this repo's vault base, so there is"
+            f"{SCRIPT}: {kb.root} is not this repo's vault base, so there is"
             " nothing to link to",
             file=sys.stderr,
         )
@@ -477,10 +477,10 @@ def cmd_link(wiki: Wiki, args: argparse.Namespace) -> int:
     return 0 if outcome.ok else 1
 
 
-def cmd_ingest(wiki: Wiki, args: argparse.Namespace) -> int:
+def cmd_ingest(kb: Wiki, args: argparse.Namespace) -> int:
     """Stage one source. Reading it and compiling it is the skill's work."""
     try:
-        staged = stage_source(wiki.root, Path(args.stage).expanduser(), args.source_type, args.title)
+        staged = stage_source(kb.root, Path(args.stage).expanduser(), args.source_type, args.title)
     except FileNotFoundError:
         print(f"{SCRIPT}: no such file: {args.stage}", file=sys.stderr)
         return 1
@@ -488,14 +488,14 @@ def cmd_ingest(wiki: Wiki, args: argparse.Namespace) -> int:
         print(f"{SCRIPT}: cannot stage {args.stage}: {exc}", file=sys.stderr)
         return 1
 
-    print(f"{staged.relative_to(wiki.root).as_posix()}: staged")
-    print(f"  manifest row: {manifest_row(wiki.root, staged, args.source_type).strip()}")
+    print(f"{staged.relative_to(kb.root).as_posix()}: staged")
+    print(f"  manifest row: {manifest_row(kb.root, staged, args.source_type).strip()}")
     return 0
 
 
-def cmd_index(wiki: Wiki, args: argparse.Namespace) -> int:
-    rendered = build_index(wiki)
-    target = wiki.root / INDEX_FILE
+def cmd_index(kb: Wiki, args: argparse.Namespace) -> int:
+    rendered = build_index(kb)
+    target = kb.root / INDEX_FILE
     if args.check:
         current = read_text(target)
         if current == rendered:
@@ -508,7 +508,7 @@ def cmd_index(wiki: Wiki, args: argparse.Namespace) -> int:
     except OSError as exc:
         print(f"{SCRIPT}: cannot write {target}: {exc}", file=sys.stderr)
         return 1
-    print(f"{target}: rebuilt from {len(wiki.published())} article(s)")
+    print(f"{target}: rebuilt from {len(kb.published())} article(s)")
     return 0
 
 
@@ -576,7 +576,7 @@ def build_parser(version_string: Callable[[str], str] | None = None) -> argparse
                 help="Extract a snapshot beside the base; NAME or 'latest'",
             )
             sub.add_argument(
-                "--keep", type=int, default=wiki_backup.KEEP_DEFAULT,
+                "--keep", type=int, default=wiki.backup.KEEP_DEFAULT,
                 help="How many snapshots to keep (default: %(default)s)",
             )
         if name == "init":
@@ -604,7 +604,7 @@ def main_entry(version_string: Callable[[str], str] | None = None) -> None:
     try:
         sys.exit(main(version_string=version_string))
     except KeyboardInterrupt:
-        sys.exit(proc.INTERRUPT_RETURNCODE)
+        sys.exit(core.proc.INTERRUPT_RETURNCODE)
 
 
 def main(argv: list[str] | None = None, *,

@@ -4,7 +4,7 @@ The PR's own metadata, its surrounding conversation, the diff, the
 pending-review check, and the consolidated review-thread query. Used by the
 pipeline before any agent runs, and by review.posting and review.dedup after.
 
-The transport is not here. ``gh_client`` owns running gh, the timeout tiers and
+The transport is not here. ``gh.client`` owns running gh, the timeout tiers and
 the rate-limit ladder; this module owns what the review system asks for and how
 it reads the answer. Nothing here decides how a call is made, so a change to
 retry or to a bound is made once, in the client, for every caller.
@@ -23,11 +23,11 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
-from gh import client as gh_client
-from git import client as git_client
-from core import log
-from git import numstat
-from core import proc
+import gh.client
+import git.client
+import core.log
+import git.numstat
+import core.proc
 from gh.types import PRContext, PRMetadata
 
 
@@ -88,14 +88,14 @@ def fetch_pr_metadata(
     ``pin_sha`` is the commit a --recover run must complete against; ``wt_path``
     is a checkout of it. Both must be set for pinning to take effect.
     """
-    data = gh_client.pr_view(
+    data = gh.client.pr_view(
         pr_number, "title", "body", "headRefName", "baseRefName", "headRefOid",
         "additions", "deletions", "changedFiles", "files",
         "isDraft", "labels", "author",
         repo=repo,
     )
     if not data:
-        log.error(f"failed to fetch PR #{pr_number} from {repo}")
+        core.log.error(f"failed to fetch PR #{pr_number} from {repo}")
         sys.exit(1)
     head_sha = data["headRefOid"]
     additions = data["additions"]
@@ -109,7 +109,7 @@ def fetch_pr_metadata(
     # --recover completes a run against the commit it started from, so the
     # changeset must come from the pinned checkout rather than the moved PR head.
     if pin_sha and pin_sha != head_sha and wt_path:
-        counts = numstat.parse_numstat(git_client.out(
+        counts = git.numstat.parse_numstat(git.client.out(
             "diff", "--numstat", f"origin/{data['baseRefName']}...HEAD", cwd=wt_path,
         ))
         files = counts.files
@@ -166,7 +166,7 @@ def fetch_pr_context(
     }
     results = {}
     with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = {pool.submit(gh_client.out, *cmd): name for name, cmd in cmds.items()}
+        futures = {pool.submit(gh.client.out, *cmd): name for name, cmd in cmds.items()}
         for future in as_completed(futures):
             results[futures[future]] = future.result()
     return PRContext(
@@ -240,14 +240,14 @@ def _fetch_pr_refs(repo: str, pr: str, pr_data: PRData | None = None) -> dict:
     """Fetch the PR's refs (head SHA, head ref, base ref) in one call."""
     if pr_data is not None:
         return {"head_sha": pr_data.head_sha, "head_ref": pr_data.head_ref, "base_ref": pr_data.base_ref}
-    r = gh_client.api(f"repos/{repo}/pulls/{pr}")
+    r = gh.client.api(f"repos/{repo}/pulls/{pr}")
     if not r.ok:
-        log.error(proc.failure_message(f"Failed to fetch metadata for {repo}#{pr}", r))
+        core.log.error(core.proc.failure_message(f"Failed to fetch metadata for {repo}#{pr}", r))
         sys.exit(1)
     try:
         data = json.loads(r.stdout)
     except (json.JSONDecodeError, TypeError):
-        log.error("Failed to parse PR metadata from API response")
+        core.log.error("Failed to parse PR metadata from API response")
         sys.exit(1)
     return {
         "head_sha": data.get("head", {}).get("sha", ""),
@@ -259,12 +259,12 @@ def _fetch_pr_refs(repo: str, pr: str, pr_data: PRData | None = None) -> dict:
 def _get_diff(repo: str, pr: str) -> str:
     """Get the PR diff. Returns empty string if the diff is unavailable
     (e.g. PRs exceeding GitHub's 300-file limit)."""
-    r = gh_client.api(
+    r = gh.client.api(
         f"repos/{repo}/pulls/{pr}",
         headers={"Accept": "application/vnd.github.v3.diff"},
     )
     if not r.ok:
-        log.warn(proc.failure_message(
+        core.log.warn(core.proc.failure_message(
             "Failed to get diff from API — inline positioning unavailable", r))
         return ""
     return r.stdout
@@ -291,18 +291,18 @@ def _check_existing_pending(
     """The PR's PENDING review, and whether we managed to ask."""
     if pr_data is not None:
         return PendingReview(pr_data.pending_review_id)
-    r = gh_client.api(f"repos/{repo}/pulls/{pr}/reviews")
+    r = gh.client.api(f"repos/{repo}/pulls/{pr}/reviews")
     if not r.ok:
         # Warned rather than silent: a caller that reads None as "no pending
         # review" opens a second one, and the reason it could not look is the
         # only thing that explains the duplicate.
-        log.warn(proc.failure_message(
+        core.log.warn(core.proc.failure_message(
             f"Could not check {repo}#{pr} for an existing pending review", r))
         return PendingReview(looked=False)
     try:
         reviews = json.loads(r.stdout)
     except (json.JSONDecodeError, TypeError):
-        log.warn(f"Could not parse {repo}#{pr}'s reviews — treating the check as unanswered")
+        core.log.warn(f"Could not parse {repo}#{pr}'s reviews — treating the check as unanswered")
         return PendingReview(looked=False)
     for review in reviews:
         if review.get("state") == REVIEW_STATE_PENDING:
@@ -329,14 +329,14 @@ def _count_new_commits(
     """Commits on the PR since the review SHA, and whether we managed to count."""
     if pr_data is not None:
         return NewCommits(pr_data.new_commit_count(review_sha))
-    r = gh_client.api(f"repos/{repo}/pulls/{pr}/commits?per_page=100")
+    r = gh.client.api(f"repos/{repo}/pulls/{pr}/commits?per_page=100")
     if not r.ok:
-        log.warn(proc.failure_message(f"Could not count new commits on {repo}#{pr}", r))
+        core.log.warn(core.proc.failure_message(f"Could not count new commits on {repo}#{pr}", r))
         return NewCommits(counted=False)
     try:
         commits = json.loads(r.stdout)
     except (json.JSONDecodeError, TypeError):
-        log.warn(f"Could not parse {repo}#{pr}'s commits — the drift count is unknown")
+        core.log.warn(f"Could not parse {repo}#{pr}'s commits — the drift count is unknown")
         return NewCommits(counted=False)
     for i, c in enumerate(commits):
         sha = c.get("sha", "")
@@ -490,7 +490,7 @@ def warn_if_truncated(
     nodes = connection.get("nodes", [])
     if total <= len(nodes):
         return False
-    log.warn(f"{what}: {total} exist but only the newest {len(nodes)} were read "
+    core.log.warn(f"{what}: {total} exist but only the newest {len(nodes)} were read "
              f"— {consequence}")
     return True
 
@@ -515,7 +515,7 @@ def _complete_truncated_comments(threads: list[dict]) -> bool:
         full = _drain_thread_comments(thread["id"], nodes, comments_data)
         if full is None:
             path = thread.get("path", "?")
-            log.warn(
+            core.log.warn(
                 f"Thread at {path} has {total} comments and the refetch failed — "
                 f"only {len(nodes)} are available")
             ok = False
@@ -544,7 +544,7 @@ def _drain_thread_comments(
         if not cursor or cursor in seen:
             return None
         seen.add(cursor)
-        r = gh_client.graphql(
+        r = gh.client.graphql(
             _THREAD_COMMENTS_QUERY, variables={"threadId": thread_id, "endCursor": cursor},
         )
         if not r.ok:
@@ -592,18 +592,18 @@ def _drain_issue_comments(
         if not cursor or cursor in seen:
             return nodes, False
         seen.add(cursor)
-        r = gh_client.graphql(
+        r = gh.client.graphql(
             _ISSUE_COMMENTS_QUERY,
             variables={"owner": owner, "name": name, "pr": pr, "endCursor": cursor},
         )
         if not r.ok:
-            log.warn(proc.failure_message(
+            core.log.warn(core.proc.failure_message(
                 "Failed to fetch a page of issue comments — the set is incomplete", r))
             return nodes, False
         try:
             data = json.loads(r.stdout)
         except (json.JSONDecodeError, TypeError):
-            log.warn("Failed to parse a page of issue comments — the set is incomplete")
+            core.log.warn("Failed to parse a page of issue comments — the set is incomplete")
             return nodes, False
         pr_node = data.get("data", {}).get("repository", {}).get("pullRequest") or {}
         page = pr_node.get("comments") or {}
@@ -611,7 +611,7 @@ def _drain_issue_comments(
         page_info = page.get("pageInfo", {})
 
     if page_info.get("hasNextPage"):
-        log.warn(
+        core.log.warn(
             f"Issue comments hit the {GQL_MAX_ISSUE_COMMENT_PAGES}-page ceiling — "
             f"stopping at {len(nodes)}")
         return nodes, False
@@ -625,15 +625,15 @@ def _threads_page(owner: str, name: str, pr: int, cursor: str | None) -> dict | 
     and the caller has to tell that from a page it failed to fetch.
     """
     variables = {"owner": owner, "name": name, "pr": pr, "endCursor": cursor}
-    r = gh_client.graphql(_THREADS_PAGE_QUERY, variables=variables)
+    r = gh.client.graphql(_THREADS_PAGE_QUERY, variables=variables)
     if not r.ok:
-        log.warn(proc.failure_message(
+        core.log.warn(core.proc.failure_message(
             "Failed to fetch a page of review threads (fetch) — the thread set is incomplete", r))
         return None
     try:
         data = json.loads(r.stdout)
     except (json.JSONDecodeError, TypeError):
-        log.warn("Failed to fetch a page of review threads (parse) — the thread set is incomplete")
+        core.log.warn("Failed to fetch a page of review threads (parse) — the thread set is incomplete")
         return None
     pr_node = data.get("data", {}).get("repository", {}).get("pullRequest") or {}
     return pr_node.get("reviewThreads") or {}
@@ -662,10 +662,10 @@ def _drain_thread_pages(
             return ThreadSet(threads)
         cursor = page_info.get("endCursor")
         if not cursor:
-            log.warn(f"Review threads report another page but no cursor — stopping at {len(threads)} threads")
+            core.log.warn(f"Review threads report another page but no cursor — stopping at {len(threads)} threads")
             return ThreadSet(threads, complete=False)
         if cursor in seen:
-            log.warn(f"Review thread pagination repeated cursor {cursor} — stopping at {len(threads)} threads")
+            core.log.warn(f"Review thread pagination repeated cursor {cursor} — stopping at {len(threads)} threads")
             return ThreadSet(threads, complete=False)
         seen.add(cursor)
         page = _threads_page(owner, name, pr, cursor)
@@ -675,7 +675,7 @@ def _drain_thread_pages(
         page_info = page.get("pageInfo", {})
 
     if page_info.get("hasNextPage"):
-        log.warn(f"Review thread pagination hit the {GQL_MAX_THREAD_PAGES}-page ceiling — stopping at {len(threads)} threads")
+        core.log.warn(f"Review thread pagination hit the {GQL_MAX_THREAD_PAGES}-page ceiling — stopping at {len(threads)} threads")
         return ThreadSet(threads, complete=False)
     return ThreadSet(threads)
 
@@ -906,17 +906,17 @@ class PRData:
 def fetch_pr_data(repo: str, pr: str) -> PRData:
     """Fetch all PR review data in a single GraphQL query."""
     owner, name = repo.split("/", 1)
-    r = gh_client.graphql(
+    r = gh.client.graphql(
         _PR_DATA_QUERY, variables={"owner": owner, "name": name, "pr": int(pr)},
     )
     if not r.ok:
-        log.error(proc.failure_message(
+        core.log.error(core.proc.failure_message(
             f"Failed to fetch data for {repo}#{pr} via GraphQL", r))
         sys.exit(1)
     try:
         data = json.loads(r.stdout)
     except (json.JSONDecodeError, TypeError):
-        log.error("Failed to parse PR data from GraphQL response")
+        core.log.error("Failed to parse PR data from GraphQL response")
         sys.exit(1)
 
     viewer = data.get("data", {}).get("viewer", {})

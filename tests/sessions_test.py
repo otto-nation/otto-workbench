@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
 
-from core import sessions  # noqa: E402
+import core.sessions  # noqa: E402
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -53,8 +53,8 @@ def pi_user(text: str, when: str = "2026-09-16T14:30:00.000Z") -> dict:
     }
 
 
-def messages_of(path: Path, harness: str) -> list[sessions.UserMessage]:
-    return list(sessions.iter_user_messages(sessions.Session(path=path, harness=harness)))
+def messages_of(path: Path, harness: str) -> list[core.sessions.UserMessage]:
+    return list(core.sessions.iter_user_messages(core.sessions.Session(path=path, harness=harness)))
 
 
 # ── Record shapes ────────────────────────────────────────────────────────────
@@ -126,7 +126,7 @@ def test_missing_file_yields_nothing(tmp_path):
     "# Update Config Skill\n\nWalk the config surface and update the skill",
 ])
 def test_rejects_automation_prompts(text):
-    assert sessions.is_automation_prompt(text)
+    assert core.sessions.is_automation_prompt(text)
 
 
 @pytest.mark.parametrize("text", [
@@ -141,7 +141,7 @@ def test_rejects_automation_prompts(text):
     "the doc needs a title:\n\n# Session Handling\n\nwhat do you think?",
 ])
 def test_keeps_human_prompts(text):
-    assert not sessions.is_automation_prompt(text)
+    assert not core.sessions.is_automation_prompt(text)
 
 
 # ── Coverage of the prompt templates ─────────────────────────────────────────
@@ -193,7 +193,7 @@ def test_every_prompt_template_is_recognised_as_automation():
     """
     uncovered = [
         name for name, opening in _rendered_openings()
-        if not sessions.is_automation_prompt(opening)
+        if not core.sessions.is_automation_prompt(opening)
     ]
     assert not uncovered, (
         f"prompt templates not covered by AUTOMATION_PREFIXES: {uncovered}. "
@@ -207,8 +207,8 @@ def test_template_openings_are_not_matched_by_accident():
     Guards the other direction: a prefix broad enough to match anything would
     pass the coverage test above while dropping human turns.
     """
-    assert not sessions.is_automation_prompt("Fix the flaky test in push_test.py")
-    assert not sessions.is_automation_prompt("Review PR feedback with me before I reply")
+    assert not core.sessions.is_automation_prompt("Fix the flaky test in push_test.py")
+    assert not core.sessions.is_automation_prompt("Review PR feedback with me before I reply")
 
 
 def test_quoting_a_preamble_mid_sentence_survives(tmp_path):
@@ -278,8 +278,8 @@ def test_utc_instants_are_dated_by_local_calendar_day(tmp_path):
     ]
     p = write_transcript(tmp_path, "pi", "--repo--", "s", records)
     expected = {
-        sessions._parse_iso("2026-09-15T23:50:00.000Z").strftime("%Y-%m-%d"),
-        sessions._parse_iso("2026-09-16T00:10:00.000Z").strftime("%Y-%m-%d"),
+        core.sessions._parse_iso("2026-09-15T23:50:00.000Z").strftime("%Y-%m-%d"),
+        core.sessions._parse_iso("2026-09-16T00:10:00.000Z").strftime("%Y-%m-%d"),
     }
     assert {m.date for m in messages_of(p, "pi")} == expected
 
@@ -303,15 +303,15 @@ def test_falls_back_to_mtime_when_a_record_has_no_timestamp(tmp_path):
 def test_project_path_read_from_pi_session_record(tmp_path):
     records = [{"type": "session", "cwd": "/Users/dev/git/repo"}, pi_user("a prompt here")]
     p = write_transcript(tmp_path, "pi", "--repo--", "s", records)
-    session = sessions.Session(path=p, harness="pi")
-    assert sessions.project_path_of(session) == Path("/Users/dev/git/repo")
+    session = core.sessions.Session(path=p, harness="pi")
+    assert core.sessions.project_path_of(session) == Path("/Users/dev/git/repo")
 
 
 def test_project_path_read_from_claude_record(tmp_path):
     p = write_transcript(tmp_path, "claude", "-repo", "s",
                          [claude_user("a prompt here", cwd="/Users/dev/git/other")])
-    session = sessions.Session(path=p, harness="claude")
-    assert sessions.project_path_of(session) == Path("/Users/dev/git/other")
+    session = core.sessions.Session(path=p, harness="claude")
+    assert core.sessions.project_path_of(session) == Path("/Users/dev/git/other")
 
 
 def test_project_path_is_not_guessed_from_an_ambiguous_slug(tmp_path):
@@ -324,8 +324,8 @@ def test_project_path_is_not_guessed_from_an_ambiguous_slug(tmp_path):
     record = {"type": "message", "message": {"role": "user",
               "content": [{"type": "text", "text": "a prompt with no cwd"}]}}
     p = write_transcript(tmp_path, "claude", "-Users-dev-git-a-b", "s", [record])
-    session = sessions.Session(path=p, harness="claude")
-    assert sessions.project_path_of(session) is None
+    session = core.sessions.Session(path=p, harness="claude")
+    assert core.sessions.project_path_of(session) is None
 
 
 # ── Discovery ────────────────────────────────────────────────────────────────
@@ -334,7 +334,7 @@ def test_project_path_is_not_guessed_from_an_ambiguous_slug(tmp_path):
 def test_discovers_both_harnesses(tmp_path):
     write_transcript(tmp_path, "claude", "-repo", "a", [claude_user("one prompt here")])
     write_transcript(tmp_path, "pi", "--repo--", "b", [pi_user("another prompt here")])
-    assert len(sessions.discover_sessions(tmp_path)) == 2
+    assert len(core.sessions.discover_sessions(tmp_path)) == 2
 
 
 def test_discovery_reports_the_harness_that_wrote_each_transcript(tmp_path):
@@ -349,7 +349,7 @@ def test_discovery_reports_the_harness_that_wrote_each_transcript(tmp_path):
     write_transcript(tmp_path, "pi", "--repo--", "b", [pi_user("two prompt here")])
     write_transcript(tmp_path, "pi", "--repo--", "c", [pi_user("three prompt here")])
 
-    discovered = sessions.discover_sessions(tmp_path)
+    discovered = core.sessions.discover_sessions(tmp_path)
     assert Counter(s.harness for s in discovered) == {"claude": 1, "pi": 2}
 
 
@@ -357,7 +357,7 @@ def test_pi_flat_subagent_files_are_not_sessions(tmp_path):
     write_transcript(tmp_path, "pi", "--repo--", "real", [pi_user("a real prompt")])
     flat = tmp_path / ".pi/agent/sessions/subagent-123.jsonl"
     flat.write_text("{}\n")
-    assert len(sessions.discover_sessions(tmp_path)) == 1
+    assert len(core.sessions.discover_sessions(tmp_path)) == 1
 
 
 def test_since_filters_on_modification_time(tmp_path):
@@ -368,4 +368,4 @@ def test_since_filters_on_modification_time(tmp_path):
     os.utime(p, (old, old))
     write_transcript(tmp_path, "pi", "--repo--", "new", [pi_user("a new prompt")])
     recent = datetime.fromtimestamp(time.time() - 60 * 60 * 24)
-    assert len(sessions.discover_sessions(tmp_path, since=recent)) == 1
+    assert len(core.sessions.discover_sessions(tmp_path, since=recent)) == 1

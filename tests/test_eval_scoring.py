@@ -1,4 +1,4 @@
-"""Tests for eval_scoring: aggregation, baseline schema, and baseline comparison."""
+"""Tests for eval.scoring: aggregation, baseline schema, and baseline comparison."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from eval import scoring as eval_scoring
+import eval.scoring
 from eval.scoring import (
     RunOutcome,
     ScoringResult,
@@ -466,7 +466,7 @@ class TestTokenAggregation:
 class TestSchemaVersion:
     def test_current_version_is_accepted(self):
         data = _valid_baseline()
-        data["schema_version"] = eval_scoring.SCHEMA_VERSION
+        data["schema_version"] = eval.scoring.SCHEMA_VERSION
         assert validate_baseline_schema(data) == []
 
     def test_the_previous_version_still_loads(self):
@@ -494,38 +494,38 @@ class TestRunCensus:
     """
 
     @staticmethod
-    def _runs(*outcomes: eval_scoring.RunOutcome) -> list[ScoringResult]:
+    def _runs(*outcomes: eval.scoring.RunOutcome) -> list[ScoringResult]:
         """One run per outcome. A measured run scores 1.0, a dead one 0.0."""
         return [
             ScoringResult(
                 "e", "m", i,
-                recall=1.0 if o is eval_scoring.RunOutcome.MEASURED else 0.0,
-                precision=1.0 if o is eval_scoring.RunOutcome.MEASURED else 0.0,
-                cost_usd=0.05 if o is eval_scoring.RunOutcome.MEASURED else 0.0,
+                recall=1.0 if o is eval.scoring.RunOutcome.MEASURED else 0.0,
+                precision=1.0 if o is eval.scoring.RunOutcome.MEASURED else 0.0,
+                cost_usd=0.05 if o is eval.scoring.RunOutcome.MEASURED else 0.0,
                 outcome=o,
             )
             for i, o in enumerate(outcomes)
         ]
 
     def test_a_dead_run_is_not_averaged_into_the_mean(self):
-        measured, not_run = eval_scoring.RunOutcome.MEASURED, eval_scoring.RunOutcome.NOT_RUN
+        measured, not_run = eval.scoring.RunOutcome.MEASURED, eval.scoring.RunOutcome.NOT_RUN
         agg = aggregate_runs(self._runs(measured, not_run, not_run))
         assert agg["recall_mean"] == 1.0
         assert agg["cost_mean"] == 0.05
 
     def test_the_census_reports_what_survived(self):
-        measured, not_run = eval_scoring.RunOutcome.MEASURED, eval_scoring.RunOutcome.NOT_RUN
+        measured, not_run = eval.scoring.RunOutcome.MEASURED, eval.scoring.RunOutcome.NOT_RUN
         agg = aggregate_runs(self._runs(measured, not_run, not_run))
         assert (agg["runs_measured"], agg["runs_attempted"]) == (1, 3)
 
     def test_a_dead_run_does_not_manufacture_a_standard_deviation(self):
         """Averaging a zero in reads as variance the model never showed."""
-        measured, not_run = eval_scoring.RunOutcome.MEASURED, eval_scoring.RunOutcome.NOT_RUN
+        measured, not_run = eval.scoring.RunOutcome.MEASURED, eval.scoring.RunOutcome.NOT_RUN
         agg = aggregate_runs(self._runs(measured, measured, not_run))
         assert agg["recall_std"] == 0.0
 
     def test_all_runs_dead_yields_zeros_and_says_so(self):
-        not_run = eval_scoring.RunOutcome.NOT_RUN
+        not_run = eval.scoring.RunOutcome.NOT_RUN
         agg = aggregate_runs(self._runs(not_run, not_run))
         assert agg["recall_mean"] == 0.0
         assert (agg["runs_measured"], agg["runs_attempted"]) == (0, 2)
@@ -535,7 +535,7 @@ class TestRunCensus:
         assert ScoringResult("e", "m", 0).measured
 
     def test_the_summary_table_shows_the_census(self):
-        measured, not_run = eval_scoring.RunOutcome.MEASURED, eval_scoring.RunOutcome.NOT_RUN
+        measured, not_run = eval.scoring.RunOutcome.MEASURED, eval.scoring.RunOutcome.NOT_RUN
         table = format_summary_table({("e", "m"): self._runs(measured, not_run, not_run)})
         assert "| 1/3 |" in table
 
@@ -548,14 +548,14 @@ class TestUnmeasuredEntries:
         }}}}
 
     def test_a_complete_pass_reports_nothing(self):
-        assert eval_scoring.incomplete_entries(self._output(3, 3)) == []
+        assert eval.scoring.incomplete_entries(self._output(3, 3)) == []
 
     def test_a_short_pass_is_named_with_its_counts(self):
-        assert eval_scoring.incomplete_entries(self._output(1, 3)) == [("e", "m", 1, 3)]
+        assert eval.scoring.incomplete_entries(self._output(1, 3)) == [("e", "m", 1, 3)]
 
     def test_an_entry_with_no_census_is_taken_at_face_value(self):
         """A results file written before the census still compares."""
-        assert eval_scoring.incomplete_entries(
+        assert eval.scoring.incomplete_entries(
             {"entries": {"e": {"m": {"recall_mean": 1.0}}}}) == []
 
 
@@ -622,7 +622,7 @@ class TestBaselineCensusSchema:
 
     def test_the_current_schema_version_is_accepted(self):
         data = _baseline_data()
-        data["schema_version"] = eval_scoring.SCHEMA_VERSION
+        data["schema_version"] = eval.scoring.SCHEMA_VERSION
         assert validate_baseline_schema(data) == []
 
 
@@ -631,7 +631,7 @@ def test_the_session_output_nests_condition_under_model(em):
         {("e", "sonnet", "full"): [_r()], ("e", "sonnet", "trimmed"): [_r()]},
         "low", 1,
     )
-    assert out["schema_version"] == eval_scoring.SESSION_SCHEMA_VERSION
+    assert out["schema_version"] == eval.scoring.SESSION_SCHEMA_VERSION
     assert set(out["entries"]["e"]["sonnet"]) == {"full", "trimmed"}
     assert "billed_input_mean" in out["entries"]["e"]["sonnet"]["full"]
 
@@ -663,7 +663,7 @@ def test_a_baseline_file_keeps_the_flat_schema_3_shape(em, tmp_path):
     assert em._run_post_eval(_save_baseline_args(tmp_path), session, tmp_path) == 0
     base = json.loads((tmp_path / "results" / "claude-sonnet.json").read_text())
     assert base["backend"] == "claude"
-    assert base["schema_version"] == eval_scoring.SCHEMA_VERSION
+    assert base["schema_version"] == eval.scoring.SCHEMA_VERSION
     assert base["entries"]["e"]["recall_mean"] == 0.9
     assert "full" not in base["entries"]["e"]
     assert "trimmed" not in base["entries"]["e"]

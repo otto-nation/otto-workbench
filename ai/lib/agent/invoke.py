@@ -5,7 +5,7 @@ shape is, ``agent.registry`` says which phases there are, ``agent.phases``
 says what one resolves to here, and ``agent.backend`` knows how to talk to a
 CLI. This module is what sits between them: given a phase and
 a prompt, it builds the invocation from the phase's resolved model, thinking
-level and provider, runs it, and hands the result to ``agent_retry``'s guard.
+level and provider, runs it, and hands the result to ``agent.retry``'s guard.
 
 One function per ``PhaseShape``, and a phase reaches exactly the one its spec
 names — ``run_prompt`` for a stateless call, ``run_agent`` for a tool-using
@@ -27,12 +27,12 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from agent import phases as agent_phases
-from agent import retry as agent_retry
-from agent import backend as ai_backend
-from core import log
+import agent.phases
+import agent.retry
+import agent.backend
+import core.log
 from core.quota_throttle import QuotaThrottle
-from agent import session as review_agent
+import agent.session
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import PHASES
 from core.phases import Effort, Phase, PhaseShape
@@ -75,9 +75,9 @@ def _resolved(
     resolution this made before they existed.
     """
     return _Knobs(
-        model=agent_phases.phase_model(phase, model, config),
-        thinking=agent_phases.phase_thinking(phase, effort, config),
-        provider=agent_phases.phase_provider(config),
+        model=agent.phases.phase_model(phase, model, config),
+        thinking=agent.phases.phase_thinking(phase, effort, config),
+        provider=agent.phases.phase_provider(config),
     )
 
 
@@ -115,7 +115,7 @@ def run_prompt(
     repo: str | None = None,
     pr: str | None = None,
     config: WorkbenchConfig | None = None,
-    retry_hint: agent_retry.RetryHint = agent_retry.BLANK_RESPONSE_HINT,
+    retry_hint: agent.retry.RetryHint = agent.retry.BLANK_RESPONSE_HINT,
 ) -> PromptResult:
     """Run a stateless phase, retrying once if its answer cannot be parsed.
 
@@ -146,8 +146,8 @@ def run_prompt(
     knobs = _resolved(phase, config)
     ledger_task = task or str(phase)
 
-    text, exit_code = agent_retry.retry_blank_response(
-        lambda attempt: ai_backend.prompt(
+    text, exit_code = agent.retry.retry_blank_response(
+        lambda attempt: agent.backend.prompt(
             attempt, cwd=work_dir, model=knobs.model, thinking=knobs.thinking,
             provider=knobs.provider, task=ledger_task, repo=repo, pr=pr,
         ),
@@ -160,9 +160,9 @@ def run_prompt(
 
 
 def _invoke_once(inv: AgentInvocation) -> int:
-    prior_log = agent_retry.preserve_log(inv.session_log)
-    rc = ai_backend.invoke_agent(inv)
-    agent_retry.restore_preserved(inv.session_log, prior_log)
+    prior_log = agent.retry.preserve_log(inv.session_log)
+    rc = agent.backend.invoke_agent(inv)
+    agent.retry.restore_preserved(inv.session_log, prior_log)
     return rc
 
 
@@ -185,13 +185,13 @@ def run_agent(
     if throttle:
         throttle.wait_if_needed()
 
-    rc = ai_backend.invoke_agent(inv)
-    if rc != 0 and inv.model and review_agent.is_quota_error(inv.session_log):
+    rc = agent.backend.invoke_agent(inv)
+    if rc != 0 and inv.model and agent.session.is_quota_error(inv.session_log):
         if throttle:
             wait = throttle.report_exhausted(inv.model)
             time.sleep(wait)
         else:
-            log.warn(f"Quota exhausted on {inv.model} — retrying once after 30s backoff")
+            core.log.warn(f"Quota exhausted on {inv.model} — retrying once after 30s backoff")
             time.sleep(30)
         rc = _invoke_once(inv)
     return rc
@@ -202,7 +202,7 @@ def run_agent(
 
 def _truncation(session_log: str) -> Diagnosis | None:
     """MAX_TURNS from the last attempt, or None for any other ending."""
-    diagnosis = review_agent.diagnose_missing_output(session_log)
+    diagnosis = agent.session.diagnose_missing_output(session_log)
     if diagnosis.kind is DiagnosisKind.MAX_TURNS:
         return diagnosis
     return None
@@ -241,7 +241,7 @@ def run_fix(
     max_budget: float | None = None,
     label: str = "",
     task: str = "",
-    hint_select: Callable[[Diagnosis], str] = agent_retry.hint_for,
+    hint_select: Callable[[Diagnosis], str] = agent.retry.hint_for,
     repo: str | None = None,
     pr: str | None = None,
     config: WorkbenchConfig | None = None,
@@ -268,8 +268,8 @@ def run_fix(
     spec = _require_shape(phase, PhaseShape.FIX, "run_fix")
 
     work_dir = str(cwd)
-    turns = agent_phases.phase_turns(phase) if max_turns is None else max_turns
-    budget = agent_phases.phase_budget(phase) if max_budget is None else max_budget
+    turns = agent.phases.phase_turns(phase) if max_turns is None else max_turns
+    budget = agent.phases.phase_budget(phase) if max_budget is None else max_budget
     dirs = [str(d) for d in add_dirs] if add_dirs else [work_dir]
     name = label or spec.label
     knobs = _resolved(phase, config, effort=effort, model=model)
@@ -278,7 +278,7 @@ def run_fix(
 
     def invoke(text: str, attempt_turns: int) -> int:
         nonlocal exit_code
-        exit_code = ai_backend.invoke_fix(ai_backend.AgentInvocation(
+        exit_code = agent.backend.invoke_fix(agent.backend.AgentInvocation(
             prompt=text,
             cwd=work_dir,
             session_log=session_log,
@@ -303,9 +303,9 @@ def run_fix(
     def retry_turns(diagnosis: Diagnosis, original: int) -> int:
         if diagnosis.kind is not DiagnosisKind.MAX_TURNS:
             return original
-        return agent_phases.phase_retry_turns(phase, original)
+        return agent.phases.phase_retry_turns(phase, original)
 
-    unproductive = agent_retry.run_guarded(
+    unproductive = agent.retry.run_guarded(
         invoke, prompt, session_log,
         label=name, max_turns=turns,
         produced=produced, hint_select=hint_select,

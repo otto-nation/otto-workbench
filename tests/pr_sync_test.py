@@ -11,9 +11,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from git import topology as git_topology  # noqa: E402
-from pr import context as pr_context  # noqa: E402
-from pr import sync as pr_sync  # noqa: E402
+import git.topology  # noqa: E402
+import pr.context  # noqa: E402
+import pr.sync  # noqa: E402
 from pr.sync import fetch_and_reset, update_to_remote  # noqa: E402
 
 from conftest import make_ctx  # noqa: E402
@@ -25,7 +25,7 @@ from conftest import make_ctx  # noqa: E402
 def _safe_reset_runs():
     """subprocess.run results for a worktree that is safe to hard-reset.
 
-    Patching `pr_sync.subprocess.run` also serves `git_topology.current_branch_quiet`'s
+    Patching `pr.sync.subprocess.run` also serves `git.topology.current_branch_quiet`'s
     own `rev-parse --abbrev-ref` call below (the second result in this list) — both
     modules import the same `subprocess` module object, so a patch on its `run`
     attribute reaches every caller regardless of which module name it was applied
@@ -55,7 +55,7 @@ def test_fetch_and_reset_issues_fetch_then_reset_in_call_order(mock_run):
     assert "origin/feat/x" in reset_call
 
 
-@patch("pr.sync.log")
+@patch("core.log")
 @patch("pr.sync.subprocess.run")
 def test_fetch_and_reset_regression_skips_wrong_branch(mock_run, mock_log):
     """Regression: resetting main/ while a feature branch sits in it ate two commits."""
@@ -67,7 +67,7 @@ def test_fetch_and_reset_regression_skips_wrong_branch(mock_run, mock_log):
     assert "not main" in mock_log.warn.call_args.args[0]
 
 
-@patch("pr.sync.log")
+@patch("core.log")
 @patch("pr.sync.subprocess.run")
 def test_fetch_and_reset_skips_on_uncommitted_changes(mock_run, mock_log):
     runs = _safe_reset_runs()
@@ -78,7 +78,7 @@ def test_fetch_and_reset_skips_on_uncommitted_changes(mock_run, mock_log):
     assert "uncommitted" in mock_log.warn.call_args.args[0]
 
 
-@patch("pr.sync.log")
+@patch("core.log")
 @patch("pr.sync.subprocess.run")
 def test_fetch_and_reset_skips_on_unpushed_commits(mock_run, mock_log):
     runs = _safe_reset_runs()
@@ -89,7 +89,7 @@ def test_fetch_and_reset_skips_on_unpushed_commits(mock_run, mock_log):
     assert "2 unpushed" in mock_log.warn.call_args.args[0]
 
 
-@patch("pr.sync.log")
+@patch("core.log")
 @patch("pr.sync.subprocess.run")
 def test_fetch_and_reset_skips_on_detached_head(mock_run, mock_log):
     runs = _safe_reset_runs()
@@ -105,7 +105,7 @@ def test_fetch_and_reset_survives_fetch_exception(mock_run):
     fetch_and_reset("/wt", "feat/x")
 
 
-@patch("pr.sync.log")
+@patch("core.log")
 @patch("pr.sync.subprocess.run")
 def test_fetch_and_reset_blocks_when_the_status_read_failed(mock_run, mock_log):
     """Regression: a `status` that failed is not a worktree that came back clean.
@@ -122,7 +122,7 @@ def test_fetch_and_reset_blocks_when_the_status_read_failed(mock_run, mock_log):
     assert "could not be read" in mock_log.warn.call_args.args[0]
 
 
-@patch("pr.sync.log")
+@patch("core.log")
 @patch("pr.sync.subprocess.run")
 def test_fetch_and_reset_blocks_when_the_status_read_timed_out(mock_run, mock_log):
     """A timeout raises rather than returning, and must not escape the guard.
@@ -139,7 +139,7 @@ def test_fetch_and_reset_blocks_when_the_status_read_timed_out(mock_run, mock_lo
     assert "could not be read" in mock_log.warn.call_args.args[0]
 
 
-@patch("pr.sync.log")
+@patch("core.log")
 @patch("pr.sync.subprocess.run")
 def test_fetch_and_reset_blocks_when_unpushed_commits_cannot_be_counted(mock_run, mock_log):
     """The other half of the same guard: a rev-list that never ran counted nothing."""
@@ -189,7 +189,7 @@ def test_update_to_remote_noop_without_branch():
     assert update_to_remote(ctx) is ctx
 
 
-@patch("pr.sync.log")
+@patch("core.log")
 @patch("git.topology.current_branch_quiet", return_value="other-branch")
 def test_update_to_remote_skips_on_branch_mismatch(mock_branch, mock_log):
     ctx = _make_ctx()
@@ -199,7 +199,7 @@ def test_update_to_remote_skips_on_branch_mismatch(mock_branch, mock_log):
 
 
 @patch("git.topology.current_branch_quiet", return_value="feat/x")
-@patch("pr.sync.log")
+@patch("core.log")
 @patch("pr.sync.subprocess.run")
 def test_update_to_remote_skips_on_uncommitted_changes(mock_run, mock_log, _mock_branch):
     mock_run.return_value = MagicMock(returncode=0, stdout="M dirty.py\n")
@@ -210,7 +210,7 @@ def test_update_to_remote_skips_on_uncommitted_changes(mock_run, mock_log, _mock
 
 
 @patch("git.topology.current_branch_quiet", return_value="feat/x")
-@patch("pr.sync.log")
+@patch("core.log")
 @patch("pr.sync.subprocess.run")
 def test_update_to_remote_skips_when_the_status_read_failed(mock_run, mock_log, _mock_branch):
     """The same guard from the other entry point — no fetch, and no reset."""
@@ -224,7 +224,7 @@ def test_update_to_remote_skips_when_the_status_read_failed(mock_run, mock_log, 
 
 
 @patch("git.topology.current_branch_quiet", return_value="feat/x")
-@patch("pr.sync.log")
+@patch("core.log")
 @patch("pr.context._head_sha", return_value="local111")
 @patch("pr.sync.subprocess.run")
 def test_update_to_remote_skips_when_unpushed_commits_cannot_be_counted(
@@ -289,7 +289,7 @@ def test_update_to_remote_skips_when_already_current(mock_run, mock_sha, _mock_b
 
 
 @patch("git.topology.current_branch_quiet", return_value="feat/x")
-@patch("pr.sync.log")
+@patch("core.log")
 @patch("pr.context._head_sha", return_value="local111")
 @patch("pr.sync.subprocess.run")
 def test_update_to_remote_skips_on_unpushed_commits(mock_run, mock_sha, mock_log, _mock_branch):
@@ -306,7 +306,7 @@ def test_update_to_remote_skips_on_unpushed_commits(mock_run, mock_sha, mock_log
 
 
 @patch("git.topology.current_branch_quiet", return_value="feat/x")
-@patch("pr.sync.log")
+@patch("core.log")
 @patch("pr.context._head_sha", return_value="old111")
 @patch("pr.sync.subprocess.run")
 def test_update_to_remote_resets_when_safe(mock_run, mock_sha, mock_log, _mock_branch):
@@ -328,15 +328,15 @@ def test_update_to_remote_resets_when_safe(mock_run, mock_sha, mock_log, _mock_b
 
 def test_update_to_remote_preserves_the_target_dir(monkeypatch, tmp_path):
     """dataclasses.replace, so a new field cannot be dropped by hand-retyping."""
-    ctx = pr_context.ResolvedContext(
+    ctx = pr.context.ResolvedContext(
         repo="acme/widget", branch="feat/a", pr_number=1,
         worktree_root=tmp_path, head_sha="old", current_branch="feat/a",
         target_dir=tmp_path / "target",
     )
-    monkeypatch.setattr(git_topology, "current_branch_quiet", lambda cwd=None: "feat/a")
-    monkeypatch.setattr(pr_sync, "_worktree_is_dirty", lambda cwd: False)
-    monkeypatch.setattr(pr_sync, "_unpushed_count", lambda cwd, branch: 0)
-    monkeypatch.setattr(pr_context, "_head_sha", lambda cwd=None: "old")
+    monkeypatch.setattr(git.topology, "current_branch_quiet", lambda cwd=None: "feat/a")
+    monkeypatch.setattr(pr.sync, "_worktree_is_dirty", lambda cwd: False)
+    monkeypatch.setattr(pr.sync, "_unpushed_count", lambda cwd, branch: 0)
+    monkeypatch.setattr(pr.context, "_head_sha", lambda cwd=None: "old")
 
     calls = {"n": 0}
 
@@ -345,8 +345,8 @@ def test_update_to_remote_preserves_the_target_dir(monkeypatch, tmp_path):
         out = "new-sha" if "rev-parse" in cmd else ""
         return subprocess.CompletedProcess(cmd, 0, out, "")
 
-    monkeypatch.setattr(pr_sync.subprocess, "run", fake_run)
-    updated = pr_sync.update_to_remote(ctx)
+    monkeypatch.setattr(pr.sync.subprocess, "run", fake_run)
+    updated = pr.sync.update_to_remote(ctx)
 
     assert updated.head_sha == "new-sha"
     assert updated.target_dir == ctx.target_dir

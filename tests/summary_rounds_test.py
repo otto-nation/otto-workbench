@@ -20,7 +20,7 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest  # noqa: E402
 
-from pr import summary_rounds  # noqa: E402
+import pr.summary_rounds  # noqa: E402
 from pr.comments import MarkerComment, MarkerHistory  # noqa: E402
 from pr.comments_state import ThreadState  # noqa: E402
 from pr.fix import FixOutcome, SettledBy  # noqa: E402
@@ -58,18 +58,18 @@ class TestWhatTheRecordAlreadyHolds:
     """`published_keys` is every row on every summary comment, not just the target."""
 
     def test_a_row_on_the_target_is_published(self):
-        scope = summary_rounds.round_scope(_history(_comment(_body(_row(T1)))), False)
+        scope = pr.summary_rounds.round_scope(_history(_comment(_body(_row(T1)))), False)
         assert T1 in scope.published_keys
 
     def test_a_row_on_an_earlier_comment_is_published_too(self):
-        scope = summary_rounds.round_scope(
+        scope = pr.summary_rounds.round_scope(
             _history(_comment(_body(_row(T1)), cid=1),
                      _comment(_body(_row(T2)), cid=2)), False)
         assert {T1, T2} <= scope.published_keys
 
     def test_a_row_nothing_holds_is_always_written(self):
         """The guarantee underneath the whole scoping rule."""
-        scope = summary_rounds.round_scope(_history(_comment(_body(_row(T1)))), False)
+        scope = pr.summary_rounds.round_scope(_history(_comment(_body(_row(T1)))), False)
         assert scope.covers("#discussion_r999", activity_at="")
 
 
@@ -77,19 +77,19 @@ class TestTheEditedCommentIsNotAllowedToShrink:
     """An in-place edit rewrites its target wholesale, so its rows stay in scope."""
 
     def test_a_row_only_the_target_holds_is_re_rendered(self):
-        scope = summary_rounds.round_scope(_history(_comment(_body(_row(T1)))), False)
+        scope = pr.summary_rounds.round_scope(_history(_comment(_body(_row(T1)))), False)
         assert T1 in scope.target_keys
         assert scope.covers(T1, activity_at="")
 
     def test_a_fresh_post_protects_nothing(self):
         """Answered: the earlier comments stay where they are, so none is at risk."""
-        scope = summary_rounds.round_scope(
+        scope = pr.summary_rounds.round_scope(
             _history(_comment(_body(_row(T1)))), True)
         assert scope.target_keys == frozenset()
 
     def test_a_row_an_earlier_comment_also_holds_is_not_protected(self):
         """It is one link back, so dropping it from this body loses nothing."""
-        scope = summary_rounds.round_scope(
+        scope = pr.summary_rounds.round_scope(
             _history(_comment(_body(_row(T1)), cid=1),
                      _comment(_body(_row(T1)), cid=2)), False)
         assert T1 not in scope.target_keys
@@ -100,34 +100,34 @@ class TestTheNewestWordOnARowWins:
     """Outcomes are read oldest comment first, so the newest overwrites."""
 
     def test_the_later_comment_supplies_the_outcome(self):
-        scope = summary_rounds.round_scope(
+        scope = pr.summary_rounds.round_scope(
             _history(_comment(_body(_row(T1, "Deferred")), cid=1),
                      _comment(_body(_row(T1, "Already addressed")), cid=2)), False)
         assert scope.published_outcomes[T1] is FixOutcome.ALREADY_ADDRESSED
 
     def test_a_hand_written_cell_states_no_outcome(self):
         """It must not fall back to the generated cell an earlier round wrote."""
-        scope = summary_rounds.round_scope(
+        scope = pr.summary_rounds.round_scope(
             _history(_comment(_body(_row(T1, "Deferred")), cid=1),
                      _comment(_body(_row(T1, "I disagree, leaving open")), cid=2)),
             False)
         assert T1 not in scope.published_outcomes
 
     def test_a_changed_outcome_is_written_whoever_holds_the_row(self):
-        scope = summary_rounds.round_scope(
+        scope = pr.summary_rounds.round_scope(
             _history(_comment(_body(_row(T1, "Deferred")), cid=1),
                      _comment(_body(_row(T1, "Deferred")), cid=2)), False)
         assert scope.covers(T1, activity_at="", outcome=FixOutcome.FIXED)
 
     def test_an_unchanged_outcome_is_left_where_it_was_published(self):
-        scope = summary_rounds.round_scope(
+        scope = pr.summary_rounds.round_scope(
             _history(_comment(_body(_row(T1, "Deferred")), cid=1),
                      _comment(_body(_row(T1, "Deferred")), cid=2)), False)
         assert not scope.covers(T1, activity_at="", outcome=FixOutcome.DEFERRED)
 
     def _published_as_fixed(self):
         """A row two comments already carry as a fix, citing a commit."""
-        return summary_rounds.round_scope(
+        return pr.summary_rounds.round_scope(
             _history(_comment(_body(_row(T1, "Fixed in `abc1234`")), cid=1),
                      _comment(_body(_row(T1, "Fixed in `abc1234`")), cid=2)), False)
 
@@ -164,7 +164,7 @@ class TestTheNewestWordOnARowWins:
 
     def test_an_already_addressed_row_becoming_fixed_is_still_written(self):
         """The other direction is news: the branch moved after the reviewer asked."""
-        scope = summary_rounds.round_scope(
+        scope = pr.summary_rounds.round_scope(
             _history(_comment(_body(_row(T1, "Already addressed")), cid=1)), False)
         assert scope.covers(T1, activity_at="", outcome=FixOutcome.FIXED)
 
@@ -180,13 +180,13 @@ class TestTheScopeDatesTheBodyNotTheComment:
     """`since` has to describe the moment the keys beside it were written."""
 
     def test_the_edit_time_wins_when_there_is_one(self):
-        scope = summary_rounds.round_scope(
+        scope = pr.summary_rounds.round_scope(
             _history(_comment(_body(_row(T1)), created="2026-01-01T00:00:00Z",
                               updated="2026-06-01T00:00:00Z")), False)
         assert scope.since == "2026-06-01T00:00:00Z"
 
     def test_it_falls_back_to_the_post_time(self):
-        scope = summary_rounds.round_scope(
+        scope = pr.summary_rounds.round_scope(
             _history(_comment(_body(_row(T1)), created="2026-01-01T00:00:00Z")), False)
         assert scope.since == "2026-01-01T00:00:00Z"
 
@@ -206,7 +206,7 @@ class TestDatingAnEntry:
             {"createdAt": "2026-03-01T00:00:00Z", "author": {"login": "kgn"}},
         ])
         entry = CommentItem(id="t1", summary="s", file="a.py", line=2)
-        assert summary_rounds.entry_activity_at(
+        assert pr.summary_rounds.entry_activity_at(
             entry, {"t1": thread}, {}) == "2026-03-01T00:00:00Z"
 
     def test_our_own_reply_does_not_date_the_thread(self):
@@ -216,24 +216,24 @@ class TestDatingAnEntry:
             {"createdAt": "2026-09-01T00:00:00Z", "author": {"login": "me"}},
         ])
         entry = CommentItem(id="t1", summary="s", file="a.py", line=2)
-        assert summary_rounds.entry_activity_at(
+        assert pr.summary_rounds.entry_activity_at(
             entry, {"t1": thread}, {}) == "2026-01-01T00:00:00Z"
 
     def test_an_entry_with_no_thread_reads_its_source_comment(self):
         entry = CommentItem(id="ic-500-0", summary="s", file="a.py", line=2)
-        assert summary_rounds.entry_activity_at(
+        assert pr.summary_rounds.entry_activity_at(
             entry, {}, {"500": "2026-04-01T00:00:00Z"}) == "2026-04-01T00:00:00Z"
 
     def test_an_undatable_entry_returns_empty(self):
         entry = CommentItem(id="ic-999-0", summary="s", file="a.py", line=2)
-        assert summary_rounds.entry_activity_at(entry, {}, {}) == ""
+        assert pr.summary_rounds.entry_activity_at(entry, {}, {}) == ""
 
 
 class TestCommentTimestamps:
     """Both listings, keyed the way an entry's source id is spelled."""
 
     def test_both_kinds_are_keyed_as_strings(self):
-        stamps = summary_rounds.comment_timestamps(
+        stamps = pr.summary_rounds.comment_timestamps(
             [{"id": 500, "created_at": "2026-01-01T00:00:00Z"}],
             [{"id": 600, "submitted_at": "2026-02-01T00:00:00Z"}],
         )
@@ -241,7 +241,7 @@ class TestCommentTimestamps:
                           "600": "2026-02-01T00:00:00Z"}
 
     def test_a_review_body_uses_its_submission_time(self):
-        stamps = summary_rounds.comment_timestamps(
+        stamps = pr.summary_rounds.comment_timestamps(
             [], [{"id": 1, "submitted_at": "2026-02-01T00:00:00Z"}])
         assert stamps["1"] == "2026-02-01T00:00:00Z"
 
@@ -251,7 +251,7 @@ class TestAQuietRowIsLeftWhereItWasPublished:
 
     @pytest.fixture
     def scope(self):
-        return summary_rounds.round_scope(
+        return pr.summary_rounds.round_scope(
             _history(_comment(_body(_row(T1)), cid=1, created="2026-05-01T00:00:00Z"),
                      _comment(_body(_row(T1)), cid=2, created="2026-05-01T00:00:00Z")),
             False)

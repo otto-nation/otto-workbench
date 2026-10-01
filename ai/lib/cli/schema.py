@@ -32,8 +32,8 @@ from __future__ import annotations
 
 import sys
 
-from core import log
-from cli import review_modes
+import core.log
+import cli.review_modes
 from cli.dispatch import PARSER_FACTORIES, resolve
 from cli.registry import COMMANDS
 from core.tool_parser import ToolParser
@@ -118,7 +118,7 @@ def schema_contracts() -> list[str]:
     invocation that no longer serves one. `review` is the only command with
     modes today; a second one gets a branch here rather than a second table.
     """
-    return [f"{SCRIPT} review {flag}" for flag, mode in review_modes.MODES.items()
+    return [f"{SCRIPT} review {flag}" for flag, mode in cli.review_modes.MODES.items()
             if mode.schema_versions]
 
 
@@ -126,8 +126,8 @@ def served_schema_versions(command: str, argv: list[str]) -> tuple[int, ...]:
     """The row-schema versions *command* can serve for this argv, if any."""
     if command != "review":
         return ()
-    modes = review_modes.flags_given(argv)
-    return review_modes.MODES[modes[0]].schema_versions if modes else ()
+    modes = cli.review_modes.flags_given(argv)
+    return cli.review_modes.MODES[modes[0]].schema_versions if modes else ()
 
 
 def checked_schema_version(value: str, command: str, argv: list[str]) -> int:
@@ -147,11 +147,11 @@ def checked_schema_version(value: str, command: str, argv: list[str]) -> int:
     """
     served = served_schema_versions(command, argv)
     if not served:
-        log.error(f"{SCRIPT}: --schema-version is served by "
+        core.log.error(f"{SCRIPT}: --schema-version is served by "
                   f"{', '.join(schema_contracts())}, not by this command")
         sys.exit(EXIT_USAGE)
     if value not in {str(v) for v in served}:
-        log.error(f"{SCRIPT}: unsupported --schema-version {value!r} — "
+        core.log.error(f"{SCRIPT}: unsupported --schema-version {value!r} — "
                   f"this build serves {', '.join(str(v) for v in served)}")
         sys.exit(EXIT_USAGE)
     return int(value)

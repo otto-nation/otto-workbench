@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core import session_lock
+import core.session_lock
 
 
 def _check(worktree: Path) -> int:
@@ -32,7 +32,7 @@ def _check(worktree: Path) -> int:
     wants the answer including its own session. The fix pass's own exemption
     is `session_lock.held_by_others`, not this.
     """
-    held = session_lock.holders(worktree)
+    held = core.session_lock.holders(worktree)
     if not held:
         print(f"{worktree}: no interactive session")
         return 1
@@ -75,10 +75,10 @@ def main(argv: list[str] | None = None) -> int:
         # Return value discarded on purpose, unlike --acquire below: a release
         # that finds nothing to drop (already gone, already released) is not
         # a failure worth a stderr diagnostic, only a failed *acquire* is.
-        session_lock.release(worktree, pid)
+        core.session_lock.release(worktree, pid)
         return 0
 
-    ok = session_lock.acquire(
+    ok = core.session_lock.acquire(
         worktree,
         pid=pid,
         harness=args.harness,

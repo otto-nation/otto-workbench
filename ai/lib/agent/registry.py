@@ -106,7 +106,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
     #
     # Not `optional`, for the reason COMMENTS_VERIFY is not: the flag and the
     # effort skips it would earn are the review pipeline's own, and what makes
-    # this gate skippable is a pass declining to hand `fix_engine.run` a
+    # this gate skippable is a pass declining to hand `fix.engine.run` a
     # `verify=` at all.
     #
     # The engine chunks the fix pass; the gate chunks itself via the same
@@ -142,7 +142,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # Not `optional`: that flag is the review pipeline's own, driving its --no-X
     # flags and effort skips (`optional_review_phases`), and nothing reads it
     # outside REVIEW_PHASES. What makes this gate skippable is the `verify`
-    # argument to `fix_engine.run` — a pass that does not pass one never reaches
+    # argument to `fix.engine.run` — a pass that does not pass one never reaches
     # the phase at all.
     PhaseSpec(
         Phase.COMMENTS_VERIFY, PhaseDomain.COMMENTS, "Verify gate",

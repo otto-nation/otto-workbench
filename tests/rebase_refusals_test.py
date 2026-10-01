@@ -12,12 +12,12 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from gh import landed as branch_landed
-from git import client as git_client
+import gh.landed
+import git.client
 from pr.domains import RebaseStatus
-from rebase import inspect as rebase_inspect
-from rebase import refusals
-from rebase import types as rebase_types
+import rebase.inspect
+import rebase.refusals
+import rebase.types
 
 _TARGET = "origin/main"
 
@@ -32,35 +32,35 @@ class TestAsRefusal:
     """`Landed` carries no branch name, so naming it is what this adds."""
 
     def test_it_names_the_branch_the_evidence_is_about(self):
-        landed = branch_landed.Landed(
-            signal=branch_landed.LandedSignal.PR_MERGED,
+        landed = gh.landed.Landed(
+            signal=gh.landed.LandedSignal.PR_MERGED,
             detail="PR #7 merged", commits_ahead=0, pr_number=7,
         )
-        report = refusals.as_refusal(landed, "isaac/feat/x")
+        report = rebase.refusals.as_refusal(landed, "isaac/feat/x")
         assert report.branch == "isaac/feat/x"
-        assert report.signal == branch_landed.LandedSignal.PR_MERGED.value
+        assert report.signal == gh.landed.LandedSignal.PR_MERGED.value
         assert report.detail == "PR #7 merged"
         assert report.pr_number == 7
 
     def test_no_evidence_is_no_refusal(self):
-        assert refusals.as_refusal(None, "isaac/feat/x") is None
+        assert rebase.refusals.as_refusal(None, "isaac/feat/x") is None
 
 
 class TestUnrelatedHistoryCheck:
     """Exact rather than heuristic — git either finds a merge base or it does not."""
 
     def test_a_shared_history_is_not_refused(self):
-        with mock.patch.object(rebase_inspect, "shares_history", return_value=True):
-            assert refusals.unrelated_history_check(
+        with mock.patch.object(rebase.inspect, "shares_history", return_value=True):
+            assert rebase.refusals.unrelated_history_check(
                 "/fake", _ctx(), target_ref=_TARGET) is None
 
     def test_no_merge_base_is_refused_against_the_resolved_ref(self):
-        with mock.patch.object(rebase_inspect, "shares_history", return_value=False):
-            report = refusals.unrelated_history_check(
+        with mock.patch.object(rebase.inspect, "shares_history", return_value=False):
+            report = rebase.refusals.unrelated_history_check(
                 "/fake", _ctx(), target_ref="origin/release/1.2")
 
         assert report.status == RebaseStatus.UNRELATED_HISTORY.value
-        assert report.signal == rebase_types.RefusalSignal.NO_MERGE_BASE.value
+        assert report.signal == rebase.types.RefusalSignal.NO_MERGE_BASE.value
         assert "origin/release/1.2" in report.detail
 
 
@@ -69,7 +69,7 @@ class TestRefuse:
 
     @staticmethod
     def _report(status):
-        return rebase_types.RefusalReport(
+        return rebase.types.RefusalReport(
             branch="isaac/feat/x", signal="merged_pr", detail="PR #7 merged",
             status=status,
         )
@@ -82,11 +82,11 @@ class TestRefuse:
     def test_every_status_has_a_hint_naming_the_resolved_ref(self, status, capsys):
         """A hint keyed by status cannot be paired with another refusal's text."""
         ctx = _ctx()
-        with mock.patch.object(rebase_types.RebaseOutcome, "save"):
-            rc = refusals.refuse(
+        with mock.patch.object(rebase.types.RebaseOutcome, "save"):
+            rc = rebase.refusals.refuse(
                 ctx, self._report(status), target_ref="origin/release/1.2")
 
-        assert rc == refusals.REFUSAL_EXIT
+        assert rc == rebase.refusals.REFUSAL_EXIT
         assert "origin/release/1.2" in capsys.readouterr().err
 
     def test_it_records_the_refusal_against_the_resolved_ref(self):
@@ -94,10 +94,10 @@ class TestRefuse:
         ctx = _ctx()
         recorded = []
         with mock.patch.object(
-            rebase_types.RebaseOutcome, "save", autospec=True,
+            rebase.types.RebaseOutcome, "save", autospec=True,
             side_effect=lambda self, c: recorded.append((self, c)),
         ):
-            refusals.refuse(
+            rebase.refusals.refuse(
                 ctx, self._report(RebaseStatus.ALREADY_LANDED.value),
                 target_ref="origin/release/1.2")
 
@@ -107,11 +107,11 @@ class TestRefuse:
         assert outcome.status is RebaseStatus.ALREADY_LANDED
 
 
-def _spread_breach(spread: int = 40) -> refusals.BudgetBreach:
-    return refusals.BudgetBreach(
-        signal=rebase_types.RefusalSignal.CONFLICTS_OVER_BUDGET,
+def _spread_breach(spread: int = 40) -> rebase.refusals.BudgetBreach:
+    return rebase.refusals.BudgetBreach(
+        signal=rebase.types.RefusalSignal.CONFLICTS_OVER_BUDGET,
         detail=f"conflicts in {spread} files, over the "
-               f"{rebase_types.CONFLICT_FILE_BUDGET}-file budget",
+               f"{rebase.types.CONFLICT_FILE_BUDGET}-file budget",
     )
 
 
@@ -125,33 +125,33 @@ class TestRefuseOverBudget:
             commands.append(args)
             return mock.Mock(ok=True, returncode=0, stdout="", stderr="")
 
-        with mock.patch.object(git_client, "run", side_effect=fake_run), \
-             mock.patch.object(rebase_types.RebaseOutcome, "save"):
-            rc = refusals.refuse_over_budget(
+        with mock.patch.object(git.client, "run", side_effect=fake_run), \
+             mock.patch.object(rebase.types.RebaseOutcome, "save"):
+            rc = rebase.refusals.refuse_over_budget(
                 "/fake", _ctx(), _spread_breach(), target_ref=_TARGET)
 
-        assert rc == refusals.REFUSAL_EXIT
+        assert rc == rebase.refusals.REFUSAL_EXIT
         assert ("rebase", "--abort") in commands
 
     def test_the_detail_names_the_spread_and_the_budget(self, capsys):
-        with mock.patch.object(git_client, "run",
+        with mock.patch.object(git.client, "run",
                                return_value=mock.Mock(ok=True, returncode=0)), \
-             mock.patch.object(rebase_types.RebaseOutcome, "save"):
-            refusals.refuse_over_budget(
+             mock.patch.object(rebase.types.RebaseOutcome, "save"):
+            rebase.refusals.refuse_over_budget(
                 "/fake", _ctx(), _spread_breach(), target_ref=_TARGET)
 
         err = capsys.readouterr().err
-        assert "40" in err and str(rebase_types.CONFLICT_FILE_BUDGET) in err
+        assert "40" in err and str(rebase.types.CONFLICT_FILE_BUDGET) in err
 
     def test_the_resolution_budget_carries_its_own_signal(self, capsys):
         """One status, two signals — the caller must not have to guess."""
-        with mock.patch.object(git_client, "run",
+        with mock.patch.object(git.client, "run",
                                return_value=mock.Mock(ok=True, returncode=0)), \
-             mock.patch.object(rebase_types.RebaseOutcome, "save"):
-            refusals.refuse_over_budget("/fake", _ctx(), refusals.BudgetBreach(
-                signal=rebase_types.RefusalSignal.RESOLUTIONS_OVER_BUDGET,
+             mock.patch.object(rebase.types.RebaseOutcome, "save"):
+            rebase.refusals.refuse_over_budget("/fake", _ctx(), rebase.refusals.BudgetBreach(
+                signal=rebase.types.RefusalSignal.RESOLUTIONS_OVER_BUDGET,
                 detail="63 conflict resolutions across 9 file(s), over the "
-                       f"{rebase_types.CONFLICT_RESOLUTION_BUDGET}-resolution budget",
+                       f"{rebase.types.CONFLICT_RESOLUTION_BUDGET}-resolution budget",
             ), target_ref=_TARGET)
 
         payload = json.loads(capsys.readouterr().out)

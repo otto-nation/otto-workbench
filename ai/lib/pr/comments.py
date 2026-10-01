@@ -51,9 +51,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from gh import client as gh_client
-from core import log
-from core import publishing
+import gh.client
+import core.log
+import core.publishing
 from pr.comments_state import ThreadRecord, ThreadState
 from core.proc import CmdResult
 from gh.pr_reads import PRData, ThreadSet, fetch_review_threads
@@ -251,18 +251,18 @@ def fetch_threads(
 def _gh_post(endpoint: str, body: str, method: str = "POST") -> CmdResult:
     """Send *body* as a JSON `{"body": …}` payload to a gh api REST endpoint.
 
-    The publishing gate lives here rather than in `gh_client`: it is a policy
+    The publishing gate lives here rather than in `gh.client`: it is a policy
     this module owns, and a transport that consulted it would gate every read
     in `ai/` on a flag about writes. A draft reports failure rather than
     success, because every "posted" counter downstream reads this result and
     nothing was posted.
     """
-    if not publishing.enabled():
-        publishing.draft(endpoint, body)
+    if not core.publishing.enabled():
+        core.publishing.draft(endpoint, body)
         return CmdResult(returncode=1, stderr=f"{endpoint} not published — publishing is off")
-    r = gh_client.api(endpoint, method=method, input_text=json.dumps({"body": body}))
+    r = gh.client.api(endpoint, method=method, input_text=json.dumps({"body": body}))
     if not r.ok and r.detail:
-        log.error(f"gh api error: {r.detail}")
+        core.log.error(f"gh api error: {r.detail}")
     return r
 
 
@@ -377,7 +377,7 @@ def deliver_pr_body(artifacts: Path, repo: str, pr_number: int) -> bool:
         return False
     if not update_pr_body(repo, pr_number, body):
         return True
-    log.info("Updated the PR description")
+    core.log.info("Updated the PR description")
     draft_file.unlink()
     return False
 
@@ -476,7 +476,7 @@ def post_issue_comment(
         if not target.found:
             # The lookup failed rather than came back empty, so an earlier
             # comment may exist. Posting a duplicate beats dropping the update.
-            log.error("could not list PR comments — posting a new one instead of editing")
+            core.log.error("could not list PR comments — posting a new one instead of editing")
     endpoint = f"repos/{repo}/issues/{pr_number}/comments"
     return _posted_url(_gh_post(endpoint, body))
 
@@ -498,7 +498,7 @@ def find_marker_comments(repo: str, pr_number: int, marker: str) -> MarkerHistor
     a caller that needs both would otherwise list the PR twice and let the two
     reads disagree about which comment is which.
     """
-    pages = gh_client.api_json(
+    pages = gh.client.api_json(
         f"repos/{repo}/issues/{pr_number}/comments?per_page=100",
         paginate=True, slurp=True,
     )
@@ -537,7 +537,7 @@ def fetch_reviewer_verdicts(
     if pr_data is not None:
         return pr_data.reviewer_verdicts()
 
-    reviews = gh_client.api_json(f"repos/{repo}/pulls/{pr_number}/reviews?per_page=100", default=[])
+    reviews = gh.client.api_json(f"repos/{repo}/pulls/{pr_number}/reviews?per_page=100", default=[])
     by_user: dict[str, dict] = {}
     for r in reviews:
         user = r.get("user", {}).get("login", "")
@@ -579,7 +579,7 @@ def fetch_issue_comments(
         # the sentinel has one home and one contract.
         return pr_data.non_self_issue_comments("" if include_self else my_login)
 
-    comments = gh_client.api_json(f"repos/{repo}/issues/{pr_number}/comments?per_page=100", default=[])
+    comments = gh.client.api_json(f"repos/{repo}/issues/{pr_number}/comments?per_page=100", default=[])
     result = []
     my_login_lower = my_login.lower()
     for c in comments:
@@ -630,14 +630,14 @@ def fetch_review_body_comments(
 
 def resolve_thread(thread_id: str) -> bool:
     """Resolve a review thread on GitHub via GraphQL mutation."""
-    if not publishing.enabled():
-        publishing.draft(f"resolve thread {thread_id}")
+    if not core.publishing.enabled():
+        core.publishing.draft(f"resolve thread {thread_id}")
         return False
     document = json.dumps({
         "query": GRAPHQL_RESOLVE,
         "variables": {"threadId": thread_id},
     })
-    return gh_client.graphql("", input_text=document).ok
+    return gh.client.graphql("", input_text=document).ok
 
 
 # ── State sync ─────────────────────────────────────────────────────────────

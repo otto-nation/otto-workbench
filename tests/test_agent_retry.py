@@ -1,6 +1,6 @@
 """Tests for the thrash guard shared across the pr scripts.
 
-review_retry's own retry behaviour is covered in test_review_pipeline_retry;
+review.retry's own retry behaviour is covered in test_review_pipeline_retry;
 these cover the generalisations the other pr scripts depend on — an arbitrary
 `produced` predicate and the log-less prompt path.
 """
@@ -14,15 +14,15 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from conftest import write_thrash_log
-from agent import backend as ai_backend
-from agent import retry as agent_retry
-from agent import templates as agent_templates
-from agent import usage as ai_usage
+import agent.backend
+import agent.retry
+import agent.templates
+import agent.usage
 from agent.registry import PHASES
 from agent.types import DEFAULT_RETRY_CEILING
 from core.phases import Backend, Phase
-from review import phases as review_phases
-from review import retry as review_retry
+import review.phases
+import review.retry
 from agent.diagnosis import Diagnosis, DiagnosisKind
 
 _TURNS = 15
@@ -38,20 +38,20 @@ def _write_log(tmp_path: Path, payload: dict) -> str:
 
 
 class TestPipelineDelegatesToSharedGuard:
-    """review_retry must not carry a second copy of the guard."""
+    """review.retry must not carry a second copy of the guard."""
 
     def test_retryability_is_the_same_function(self):
-        assert review_retry._is_retryable is agent_retry.is_retryable
+        assert review.retry._is_retryable is agent.retry.is_retryable
 
     def test_retry_driver_is_the_same_function(self):
-        assert review_retry._retry_missing_output is agent_retry.retry_missing_output
+        assert review.retry._retry_missing_output is agent.retry.retry_missing_output
 
     def test_hints_are_the_same_strings(self):
-        assert review_retry._no_write_hint is agent_retry.no_write_hint
-        assert review_retry._RETRY_HINT is agent_retry.RETRY_HINT
+        assert review.retry._no_write_hint is agent.retry.no_write_hint
+        assert review.retry._RETRY_HINT is agent.retry.RETRY_HINT
 
     def test_group_retry_ceiling_comes_from_the_group_spec(self):
-        assert review_phases.RETRY_MAX_TURNS_GROUP == PHASES[Phase.GROUP].retry.ceiling
+        assert review.phases.RETRY_MAX_TURNS_GROUP == PHASES[Phase.GROUP].retry.ceiling
 
 
 class TestRetryUnproductive:
@@ -59,7 +59,7 @@ class TestRetryUnproductive:
 
     def test_no_retry_when_the_predicate_is_already_satisfied(self, tmp_path):
         calls = []
-        diagnosis = agent_retry.retry_unproductive(
+        diagnosis = agent.retry.retry_unproductive(
             lambda p, t: calls.append((p, t)) or 0,
             "PROMPT", write_thrash_log(tmp_path / "session.jsonl"),
             label="fix", max_turns=_TURNS, produced=lambda: True,
@@ -78,15 +78,15 @@ class TestRetryUnproductive:
             "type": "result", "subtype": "max_turns", "num_turns": _TURNS,
         })
         diagnosed = []
-        real = agent_retry.diagnose_missing_output
+        real = agent.retry.diagnose_missing_output
 
         def spy(path):
             diagnosed.append(path)
             return real(path)
 
-        monkeypatch.setattr(agent_retry, "diagnose_missing_output", spy)
+        monkeypatch.setattr(agent.retry, "diagnose_missing_output", spy)
         calls = []
-        diagnosis = agent_retry.retry_unproductive(
+        diagnosis = agent.retry.retry_unproductive(
             lambda p, t: calls.append((p, t)) or 0,
             "PROMPT", log_path,
             label="fix", max_turns=_TURNS, produced=lambda: True,
@@ -106,7 +106,7 @@ class TestRetryUnproductive:
             output.append(True)
             return 0
 
-        diagnosis = agent_retry.retry_unproductive(
+        diagnosis = agent.retry.retry_unproductive(
             invoke, "PROMPT", log_path,
             label="fix", max_turns=_TURNS,
             produced=lambda: bool(output),
@@ -117,7 +117,7 @@ class TestRetryUnproductive:
     def test_a_retry_that_also_produces_nothing_is_not_retried_again(self, tmp_path):
         """One retry is the cap — and the second diagnosis is reported, not swallowed."""
         calls = []
-        diagnosis = agent_retry.retry_unproductive(
+        diagnosis = agent.retry.retry_unproductive(
             lambda p, t: calls.append(p) or 0,
             "PROMPT", write_thrash_log(tmp_path / "session.jsonl"),
             label="fix", max_turns=_TURNS, produced=lambda: False,
@@ -128,19 +128,19 @@ class TestRetryUnproductive:
     def test_retry_prompt_carries_the_selected_hint(self, tmp_path):
         log_path = write_thrash_log(tmp_path / "session.jsonl")
         calls = []
-        agent_retry.retry_unproductive(
+        agent.retry.retry_unproductive(
             lambda p, t: calls.append((p, t)) or 0,
             "PROMPT", log_path,
             label="fix", max_turns=_TURNS, produced=lambda: False,
-            hint_select=lambda diagnosis: agent_retry.FIX_RETRY_HINT,
+            hint_select=lambda diagnosis: agent.retry.FIX_RETRY_HINT,
         )
         assert len(calls) == 1
-        assert calls[0][0] == agent_retry.FIX_RETRY_HINT + "PROMPT"
+        assert calls[0][0] == agent.retry.FIX_RETRY_HINT + "PROMPT"
 
     def test_recover_runs_before_the_run_is_written_off(self, tmp_path):
         salvaged = []
         calls = []
-        diagnosis = agent_retry.retry_unproductive(
+        diagnosis = agent.retry.retry_unproductive(
             lambda p, t: calls.append(p) or 0,
             "PROMPT", write_thrash_log(tmp_path / "session.jsonl"),
             label="fix", max_turns=_TURNS,
@@ -156,7 +156,7 @@ class TestRetryUnproductive:
             "result": "permission denied",
         })
         calls = []
-        diagnosis = agent_retry.retry_unproductive(
+        diagnosis = agent.retry.retry_unproductive(
             lambda p, t: calls.append(p) or 0,
             "PROMPT", log_path,
             label="fix", max_turns=_TURNS, produced=lambda: False,
@@ -173,7 +173,7 @@ class TestRunGuarded:
     def test_first_attempt_runs_even_when_the_predicate_is_satisfied(self, tmp_path):
         """A leftover artifact from an earlier pass must not skip the run."""
         calls = []
-        diagnosis = agent_retry.run_guarded(
+        diagnosis = agent.retry.run_guarded(
             lambda p, t: calls.append((p, t)) or 0,
             "PROMPT", write_thrash_log(tmp_path / "session.jsonl"),
             label="fix", max_turns=_TURNS, produced=lambda: True,
@@ -183,13 +183,13 @@ class TestRunGuarded:
 
     def test_unproductive_first_attempt_is_followed_by_a_hinted_retry(self, tmp_path):
         calls = []
-        agent_retry.run_guarded(
+        agent.retry.run_guarded(
             lambda p, t: calls.append(p) or 0,
             "PROMPT", write_thrash_log(tmp_path / "session.jsonl"),
             label="fix", max_turns=_TURNS, produced=lambda: False,
-            hint_select=lambda diagnosis: agent_retry.FIX_RETRY_HINT,
+            hint_select=lambda diagnosis: agent.retry.FIX_RETRY_HINT,
         )
-        assert calls == ["PROMPT", agent_retry.FIX_RETRY_HINT + "PROMPT"]
+        assert calls == ["PROMPT", agent.retry.FIX_RETRY_HINT + "PROMPT"]
 
     def test_turns_fn_replaces_the_shared_doubling(self, tmp_path):
         """A phase keeps one retry policy across both paths by supplying this."""
@@ -198,7 +198,7 @@ class TestRunGuarded:
             "type": "result", "subtype": "error_max_turns", "num_turns": 30,
         }) + "\n")
         calls = []
-        agent_retry.retry_unproductive(
+        agent.retry.retry_unproductive(
             lambda p, t: calls.append(t) or 0,
             "PROMPT", str(log),
             label="fix", max_turns=30, produced=lambda: False,
@@ -217,7 +217,7 @@ class TestRetryBlankResponse:
             calls.append(prompt)
             return "{}", 0
 
-        assert agent_retry.retry_blank_response(
+        assert agent.retry.retry_blank_response(
             call, "PROMPT", label="triage", usable=lambda s: True,
         ) == ("{}", 0)
         assert calls == ["PROMPT"]
@@ -229,11 +229,11 @@ class TestRetryBlankResponse:
             calls.append(prompt)
             return ("{}", 0) if len(calls) == 2 else ("sorry", 0)
 
-        out, rc = agent_retry.retry_blank_response(
+        out, rc = agent.retry.retry_blank_response(
             call, "PROMPT", label="triage", usable=lambda s: s == "{}",
         )
         assert (out, rc) == ("{}", 0)
-        assert calls[1] == agent_retry.BLANK_RESPONSE_HINT + "PROMPT"
+        assert calls[1] == agent.retry.BLANK_RESPONSE_HINT + "PROMPT"
 
     def test_retries_at_most_once(self):
         calls = []
@@ -242,7 +242,7 @@ class TestRetryBlankResponse:
             calls.append(prompt)
             return "sorry", 0
 
-        out, rc = agent_retry.retry_blank_response(
+        out, rc = agent.retry.retry_blank_response(
             call, "PROMPT", label="triage", usable=lambda s: False,
         )
         assert (out, rc) == ("sorry", 0)
@@ -256,7 +256,7 @@ class TestRetryBlankResponse:
             calls.append(prompt)
             return "", 1
 
-        assert agent_retry.retry_blank_response(
+        assert agent.retry.retry_blank_response(
             call, "PROMPT", label="triage", usable=lambda s: False,
         ) == ("", 1)
         assert len(calls) == 1
@@ -274,12 +274,12 @@ class TestRetryBlankResponse:
             calls.append(prompt)
             return ("{}", 0) if len(calls) == 2 else ("sorry", 0)
 
-        agent_retry.retry_blank_response(
+        agent.retry.retry_blank_response(
             call, "PROMPT", label="triage", usable=lambda s: s == "{}",
             hint="FIX THIS: ",
         )
         assert calls[1] == "FIX THIS: PROMPT"
-        assert agent_retry.BLANK_RESPONSE_HINT not in calls[1]
+        assert agent.retry.BLANK_RESPONSE_HINT not in calls[1]
 
     # passes-at-base: asserts the behaviour this change was careful not to break
     def test_the_marker_hint_is_what_a_caller_gets_by_default(self):
@@ -290,23 +290,23 @@ class TestRetryBlankResponse:
             calls.append(prompt)
             return ("{}", 0) if len(calls) == 2 else ("sorry", 0)
 
-        agent_retry.retry_blank_response(
+        agent.retry.retry_blank_response(
             call, "PROMPT", label="describe", usable=lambda s: s == "{}",
         )
-        assert calls[1] == agent_retry.BLANK_RESPONSE_HINT + "PROMPT"
-        assert "markers" in agent_retry.BLANK_RESPONSE_HINT
+        assert calls[1] == agent.retry.BLANK_RESPONSE_HINT + "PROMPT"
+        assert "markers" in agent.retry.BLANK_RESPONSE_HINT
 
     def test_the_json_hint_names_json_and_not_markers(self):
         """The hint triage passes must correct the mistake triage makes."""
-        assert "JSON" in agent_retry.JSON_RESPONSE_HINT
-        assert "marker" not in agent_retry.JSON_RESPONSE_HINT.lower()
+        assert "JSON" in agent.retry.JSON_RESPONSE_HINT
+        assert "marker" not in agent.retry.JSON_RESPONSE_HINT.lower()
 
 
 # Every kind, and what the three retry decisions make of it. Adding a kind
 # without a row here fails `test_every_kind_is_covered` — the guard exists
 # because a kind that nobody classified silently defaults to "give up".
 _RETRY_POLICY = {
-    DiagnosisKind.MAX_TURNS: (True, agent_retry.RETRY_HINT, DEFAULT_RETRY_CEILING),
+    DiagnosisKind.MAX_TURNS: (True, agent.retry.RETRY_HINT, DEFAULT_RETRY_CEILING),
     # Retryable on the same reading as MAX_TURNS, but with neither of its two
     # concessions. The hint tells an agent it ran out of turns and to write
     # first, which is false here and would push a run that had plenty of
@@ -341,26 +341,26 @@ class TestSharedRetryability:
     def test_policy_matches_the_table(self, kind, policy):
         retryable, hint, turns = policy
         diagnosis = Diagnosis(kind)
-        assert agent_retry.is_retryable(diagnosis) is retryable
-        assert agent_retry.hint_for(diagnosis) == hint
-        assert agent_retry.turns_for(diagnosis, _TURNS) == turns
+        assert agent.retry.is_retryable(diagnosis) is retryable
+        assert agent.retry.hint_for(diagnosis) == hint
+        assert agent.retry.turns_for(diagnosis, _TURNS) == turns
 
     def test_clean_completion_without_a_write_is_retryable(self):
         """The flag overrides the kind — COMPLETED alone is not retryable."""
-        assert not agent_retry.is_retryable(Diagnosis(DiagnosisKind.COMPLETED))
-        assert agent_retry.is_retryable(_NO_WRITE)
+        assert not agent.retry.is_retryable(Diagnosis(DiagnosisKind.COMPLETED))
+        assert agent.retry.is_retryable(_NO_WRITE)
 
     def test_turn_budget_is_never_lowered_below_what_the_caller_asked_for(self):
         """A phase already scaled above the shared ceiling keeps its budget."""
         generous = DEFAULT_RETRY_CEILING + 10
-        assert agent_retry.turns_for(_MAX_TURNS, generous) == generous
+        assert agent.retry.turns_for(_MAX_TURNS, generous) == generous
 
     # hint_for priority order: no-write > max-turns > nothing.
     # These three tests pin that ordering — changing precedence must update all three.
 
     def test_no_write_hint_beats_the_max_turns_hint(self):
         both = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS, no_write_tool=True)
-        assert agent_retry.hint_for(both) == agent_retry.no_write_hint()
+        assert agent.retry.hint_for(both) == agent.retry.no_write_hint()
 
     def test_the_no_write_hint_does_not_cost_the_doubled_budget(self):
         """Regression: a flat NO_WRITE_TOOL kind would have lost the turn bump.
@@ -369,14 +369,14 @@ class TestSharedRetryability:
         earns a bigger retry when the run also never wrote anything.
         """
         both = Diagnosis(DiagnosisKind.MAX_TURNS, num_turns=_TURNS, no_write_tool=True)
-        assert agent_retry.turns_for(both, _TURNS) == DEFAULT_RETRY_CEILING
+        assert agent.retry.turns_for(both, _TURNS) == DEFAULT_RETRY_CEILING
 
     def test_max_turns_alone_still_gets_the_max_turns_hint(self):
         """The priority above must not have swallowed the less specific case."""
-        assert agent_retry.hint_for(_MAX_TURNS) == agent_retry.RETRY_HINT
+        assert agent.retry.hint_for(_MAX_TURNS) == agent.retry.RETRY_HINT
 
     def test_a_diagnosis_with_no_matching_hint_adds_nothing(self):
-        assert agent_retry.hint_for(
+        assert agent.retry.hint_for(
             Diagnosis(DiagnosisKind.AGENT_ERROR, detail="overloaded"),
         ) == ""
 
@@ -397,7 +397,7 @@ class TestSharedRetryability:
         diagnosis = diagnose_missing_output(str(log), output_path="/out/review.md")
         assert diagnosis.kind is DiagnosisKind.COMPLETED
         assert diagnosis.no_write_tool
-        assert agent_retry.is_retryable(diagnosis)
+        assert agent.retry.is_retryable(diagnosis)
 
 
 class TestCIFixRetryHint:
@@ -405,41 +405,41 @@ class TestCIFixRetryHint:
 
     def _select(self, diagnosis: Diagnosis) -> str:
         """The selector ci-check installs — kept in sync with its call site."""
-        return agent_retry.hint_for(diagnosis) or agent_retry.CI_FIX_RETRY_HINT
+        return agent.retry.hint_for(diagnosis) or agent.retry.CI_FIX_RETRY_HINT
 
     def test_a_diagnosed_reason_still_wins(self):
         """The fallback must not mask a hint that names the actual mechanism."""
-        assert self._select(_MAX_TURNS) == agent_retry.RETRY_HINT
-        assert self._select(_NO_WRITE) == agent_retry.no_write_hint()
+        assert self._select(_MAX_TURNS) == agent.retry.RETRY_HINT
+        assert self._select(_NO_WRITE) == agent.retry.no_write_hint()
 
     def test_an_undiagnosed_reason_falls_back_to_the_ci_wording(self):
-        assert self._select(Diagnosis(DiagnosisKind.UNKNOWN)) == agent_retry.CI_FIX_RETRY_HINT
+        assert self._select(Diagnosis(DiagnosisKind.UNKNOWN)) == agent.retry.CI_FIX_RETRY_HINT
 
     def test_the_fallback_is_not_the_review_fix_hint(self):
         """ci-check used to fall back to FIX_RETRY_HINT, phrased for review findings.
 
         Pointing it back at that constant is the regression this guards.
         """
-        assert self._select(Diagnosis(DiagnosisKind.UNKNOWN)) != agent_retry.FIX_RETRY_HINT
+        assert self._select(Diagnosis(DiagnosisKind.UNKNOWN)) != agent.retry.FIX_RETRY_HINT
 
 
 class TestTurnsForCeiling:
     """The ceiling belongs to the caller — 30 fits group phases, not the fix pass."""
 
     def test_default_ceiling_preserves_group_phase_doubling(self):
-        assert agent_retry.turns_for(_MAX_TURNS, 15) == 30
+        assert agent.retry.turns_for(_MAX_TURNS, 15) == 30
 
     def test_default_ceiling_does_not_lower_a_larger_budget(self):
-        assert agent_retry.turns_for(_MAX_TURNS, 40) == 40
+        assert agent.retry.turns_for(_MAX_TURNS, 40) == 40
 
     def test_explicit_ceiling_lets_a_large_budget_grow(self):
-        assert agent_retry.turns_for(_MAX_TURNS, 60, ceiling=120) == 120
+        assert agent.retry.turns_for(_MAX_TURNS, 60, ceiling=120) == 120
 
     def test_explicit_ceiling_caps_the_doubling(self):
-        assert agent_retry.turns_for(_MAX_TURNS, 60, ceiling=100) == 100
+        assert agent.retry.turns_for(_MAX_TURNS, 60, ceiling=100) == 100
 
     def test_non_turn_failures_ignore_the_ceiling(self):
-        assert agent_retry.turns_for(_TRANSIENT, 60, ceiling=120) == 60
+        assert agent.retry.turns_for(_TRANSIENT, 60, ceiling=120) == 60
 
 
 class TestPreserveLog:
@@ -460,7 +460,7 @@ class TestPreserveLog:
         }) + "\n"
         log.write_text(first)
 
-        prior = agent_retry.preserve_log(str(log))
+        prior = agent.retry.preserve_log(str(log))
         assert prior == first
 
         second = json.dumps({
@@ -471,22 +471,22 @@ class TestPreserveLog:
         }) + "\n"
         log.write_text(second)
 
-        agent_retry.restore_preserved(str(log), prior)
+        agent.retry.restore_preserved(str(log), prior)
 
-        usage = ai_usage.parse_session_log(str(log))
+        usage = agent.usage.parse_session_log(str(log))
         assert usage.cost == pytest.approx(3.0)
         assert usage.input_tokens == 400
         assert usage.output_tokens == 600
         assert usage.duration_ms == 90000
 
     def test_preserve_nonexistent_file(self, tmp_path):
-        assert agent_retry.preserve_log(str(tmp_path / "missing.jsonl")) == ""
+        assert agent.retry.preserve_log(str(tmp_path / "missing.jsonl")) == ""
 
     def test_restore_empty_prior_is_noop(self, tmp_path):
         log = tmp_path / "session.jsonl"
         content = '{"type":"result","total_cost_usd":1.0}\n'
         log.write_text(content)
-        agent_retry.restore_preserved(str(log), "")
+        agent.retry.restore_preserved(str(log), "")
         assert log.read_text() == content
 
 
@@ -504,18 +504,18 @@ class TestWriteRecipesMatchTheBackend:
     @pytest.mark.parametrize("backend", list(Backend))
     def test_every_backend_has_a_recipe(self, backend):
         """A new backend must not silently inherit another's tools."""
-        assert backend in agent_templates._WRITE_RECIPES
-        assert backend in agent_retry._NO_WRITE_MECHANISM
+        assert backend in agent.templates._WRITE_RECIPES
+        assert backend in agent.retry._NO_WRITE_MECHANISM
 
     def test_pi_is_told_to_write_and_claude_to_edit(self):
-        pi = agent_templates.build_output_block("/tmp/out.md", backend=Backend.PI)
-        claude = agent_templates.build_output_block("/tmp/out.md", backend=Backend.CLAUDE)
+        pi = agent.templates.build_output_block("/tmp/out.md", backend=Backend.PI)
+        claude = agent.templates.build_output_block("/tmp/out.md", backend=Backend.CLAUDE)
         assert "`write` tool" in pi and "old_string" not in pi
         assert "old_string" in claude
 
     def test_the_pi_recipe_avoids_the_call_pi_rejects(self):
         """An empty `oldText` is refused by Pi's edit tool, so nothing may ask."""
-        pi = agent_templates.build_output_block("/tmp/out.md", backend=Backend.PI)
+        pi = agent.templates.build_output_block("/tmp/out.md", backend=Backend.PI)
         assert "empty `old_string`" not in pi
         assert "Write tool is NOT available" not in pi
 
@@ -526,8 +526,8 @@ class TestWriteRecipesMatchTheBackend:
         the recipe told it that write was its only one. Deferring the write
         is the rational response to being told both.
         """
-        pi = agent_templates.build_output_block("/tmp/out.md", backend=Backend.PI)
-        claude = agent_templates.build_output_block(
+        pi = agent.templates.build_output_block("/tmp/out.md", backend=Backend.PI)
+        claude = agent.templates.build_output_block(
             "/tmp/out.md", backend=Backend.CLAUDE,
         )
         for text in (pi, claude):
@@ -537,8 +537,8 @@ class TestWriteRecipesMatchTheBackend:
 
     def test_the_retry_hint_follows_the_same_split(self):
         """A hint naming the other CLI re-issues the recipe that just failed."""
-        pi = agent_retry.no_write_hint(Backend.PI)
-        claude = agent_retry.no_write_hint(Backend.CLAUDE)
+        pi = agent.retry.no_write_hint(Backend.PI)
+        claude = agent.retry.no_write_hint(Backend.CLAUDE)
         assert "`write` tool" in pi and "old_string" not in pi
         assert "old_string" in claude
 
@@ -554,16 +554,16 @@ class TestWriteRecipesMatchTheBackend:
     ):
         """No argument means ask the backend layer, not assume one."""
         monkeypatch.setenv("AI_BACKEND", env_value)
-        assert expected in agent_templates.build_output_block("/tmp/out.md")
-        assert expected in agent_retry.no_write_hint()
+        assert expected in agent.templates.build_output_block("/tmp/out.md")
+        assert expected in agent.retry.no_write_hint()
 
     def test_an_unselected_backend_still_renders_a_prompt(self, monkeypatch):
         """Dispatch raises on that run; prompt assembly must not raise first."""
         monkeypatch.delenv("AI_BACKEND", raising=False)
-        monkeypatch.setattr(ai_backend, "_configured_backend", lambda: None)
+        monkeypatch.setattr(agent.backend, "_configured_backend", lambda: None)
         # The documented fallback is Claude's recipe, not merely any recipe.
-        assert "old_string" in agent_templates.build_output_block("/tmp/out.md")
-        assert "old_string" in agent_retry.no_write_hint()
+        assert "old_string" in agent.templates.build_output_block("/tmp/out.md")
+        assert "old_string" in agent.retry.no_write_hint()
 
 
 class TestANarratedRunEndToEnd:
@@ -602,7 +602,7 @@ class TestANarratedRunEndToEnd:
             'I already wrote it.\n\nwrite review.md "# Rev\n\n## Must fix\n- [M1] x\n"',
         )
         attempts = []
-        result = agent_retry.retry_unproductive(
+        result = agent.retry.retry_unproductive(
             lambda prompt, turns: attempts.append(prompt) or 0,
             "ORIGINAL", str(log),
             label="single", max_turns=15,
@@ -630,7 +630,7 @@ class TestANarratedRunEndToEnd:
             "<write><path>review.md</path><content>see above</content></write>",
         )
         attempts = []
-        agent_retry.retry_unproductive(
+        agent.retry.retry_unproductive(
             lambda prompt, turns: attempts.append(prompt) or 0,
             "ORIGINAL", str(log),
             label="single", max_turns=15,

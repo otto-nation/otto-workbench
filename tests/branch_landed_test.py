@@ -8,7 +8,7 @@ three merge shapes are built here — unlanded, squashed, cherry-picked onto a
 target that moved on — because telling them apart is the whole contract.
 
 The tracker signal has no local equivalent, so its transport is stubbed under
-`gh_client` and the argv the client builds stays observable from the call.
+`gh.client` and the argv the client builds stays observable from the call.
 """
 
 import subprocess
@@ -23,8 +23,8 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from gh import landed as branch_landed  # noqa: E402
-from core import timeouts  # noqa: E402
+import gh.landed  # noqa: E402
+import core.timeouts  # noqa: E402
 
 from conftest import git_in, latch_graphql, seed_repo  # noqa: E402
 
@@ -98,7 +98,7 @@ def replayed(repo: Path) -> Path:
 def _gh_response(payload: str, returncode: int = 0):
     """Patch the transport so the gh call answers with *payload*.
 
-    Stubbed under `gh_client` rather than at it, so the argv the client builds
+    Stubbed under `gh.client` rather than at it, so the argv the client builds
     and the tier it picks are both still observable from the call.
     """
     return mock.patch(
@@ -113,11 +113,11 @@ def test_merged_pr_reports_a_merged_pull_request():
     payload = f'{{"state": "MERGED", "number": {_PR}, "url": "{_URL}"}}'
 
     with _gh_response(payload) as mock_try:
-        answer = branch_landed.merged_pr(
+        answer = gh.landed.merged_pr(
             "/fake", branch=_BRANCH, repo="owner/repo", pr_number=_PR,
         )
 
-    assert answer.merged == branch_landed.MergedPR(number=_PR, url=_URL)
+    assert answer.merged == gh.landed.MergedPR(number=_PR, url=_URL)
     assert answer.looked
 
     cmd = mock_try.call_args[0][0]
@@ -127,16 +127,16 @@ def test_merged_pr_reports_a_merged_pull_request():
 
 def test_merged_pr_falls_back_to_the_branch_without_a_pr_number():
     with _gh_response('{"state": "MERGED", "number": 1, "url": ""}') as mock_try:
-        answer = branch_landed.merged_pr("/fake", branch=_BRANCH)
+        answer = gh.landed.merged_pr("/fake", branch=_BRANCH)
 
-    assert answer.merged == branch_landed.MergedPR(number=1)
+    assert answer.merged == gh.landed.MergedPR(number=1)
     assert mock_try.call_args[0][0][3] == _BRANCH
 
 
 def test_merged_pr_omits_repo_when_the_caller_names_none():
     """gh infers the repo from the remote — an empty --repo value would not."""
     with _gh_response('{"state": "MERGED", "number": 1, "url": ""}') as mock_try:
-        branch_landed.merged_pr("/fake", branch=_BRANCH, repo="")
+        gh.landed.merged_pr("/fake", branch=_BRANCH, repo="")
 
     assert "--repo" not in mock_try.call_args[0][0]
 
@@ -146,17 +146,17 @@ def test_merged_pr_bounds_the_gh_call():
     this file picked for itself.
     """
     with _gh_response('{"state": "OPEN"}') as mock_try:
-        branch_landed.merged_pr("/fake", branch=_BRANCH)
+        gh.landed.merged_pr("/fake", branch=_BRANCH)
 
-    assert mock_try.call_args.kwargs["timeout"] == timeouts.NETWORK
+    assert mock_try.call_args.kwargs["timeout"] == core.timeouts.NETWORK
 
 
 def test_merged_pr_degrades_when_gh_times_out():
     """A timeout is "the tracker has nothing to say", not a crash."""
-    expired = subprocess.TimeoutExpired(cmd=["gh"], timeout=timeouts.NETWORK)
+    expired = subprocess.TimeoutExpired(cmd=["gh"], timeout=core.timeouts.NETWORK)
 
     with mock.patch("subprocess.run", side_effect=expired):
-        answer = branch_landed.merged_pr("/fake", branch=_BRANCH)
+        answer = gh.landed.merged_pr("/fake", branch=_BRANCH)
 
     assert answer.merged is None
     # A timeout is the tracker declining to answer, not us declining to ask:
@@ -174,7 +174,7 @@ def test_merged_pr_degrades_when_gh_times_out():
 def test_merged_pr_stays_silent_unless_github_says_merged(payload, returncode):
     """Anything short of MERGED is "the tracker has nothing to say"."""
     with _gh_response(payload, returncode=returncode):
-        answer = branch_landed.merged_pr("/fake", branch=_BRANCH)
+        answer = gh.landed.merged_pr("/fake", branch=_BRANCH)
 
     assert answer.merged is None
     assert answer.looked
@@ -183,7 +183,7 @@ def test_merged_pr_stays_silent_unless_github_says_merged(payload, returncode):
 def test_merged_pr_survives_gh_being_absent():
     """The client answers a missing gh with a result, not an exception."""
     with mock.patch("core.proc.subprocess.run", side_effect=FileNotFoundError):
-        answer = branch_landed.merged_pr("/fake", branch=_BRANCH)
+        answer = gh.landed.merged_pr("/fake", branch=_BRANCH)
 
     assert answer.merged is None
     # A machine with no gh cannot answer this at any point. Clearing `looked`
@@ -200,7 +200,7 @@ def test_merged_pr_reports_a_read_the_budget_breaker_declined():
     apart, and the remedy comes from the latch in the same instant.
     """
     with latch_graphql():
-        answer = branch_landed.merged_pr("/fake", branch=_BRANCH)
+        answer = gh.landed.merged_pr("/fake", branch=_BRANCH)
 
     assert answer.merged is None
     assert not answer.looked
@@ -215,7 +215,7 @@ def test_merged_pr_asks_nothing_when_it_has_no_branch_and_no_number():
     here that answer decides whether a force-push is refused.
     """
     with mock.patch("core.proc.subprocess.run") as ran:
-        answer = branch_landed.merged_pr("/fake", branch="", pr_number=None)
+        answer = gh.landed.merged_pr("/fake", branch="", pr_number=None)
 
     ran.assert_not_called()
     assert answer.merged is None
@@ -226,7 +226,7 @@ def test_merged_pr_makes_no_call_once_the_budget_is_latched():
     """The refusal is the breaker's, so no round trip is spent proving it."""
     with latch_graphql(), \
          mock.patch("core.proc.subprocess.run") as ran:
-        branch_landed.merged_pr("/fake", branch=_BRANCH)
+        gh.landed.merged_pr("/fake", branch=_BRANCH)
 
     ran.assert_not_called()
 
@@ -235,35 +235,35 @@ def test_merged_pr_makes_no_call_once_the_budget_is_latched():
 
 
 def test_diff_is_empty_sees_the_tree_a_squash_merge_left(squashed):
-    assert branch_landed.diff_is_empty(squashed, target_ref=_TARGET, rev=_BRANCH)
+    assert gh.landed.diff_is_empty(squashed, target_ref=_TARGET, rev=_BRANCH)
 
 
 def test_diff_is_empty_is_false_for_a_branch_whose_work_is_not_there(repo):
-    assert not branch_landed.diff_is_empty(repo, target_ref=_TARGET, rev=_BRANCH)
+    assert not gh.landed.diff_is_empty(repo, target_ref=_TARGET, rev=_BRANCH)
 
 
 def test_diff_is_empty_misses_a_target_that_moved_on(replayed):
     """Why the patch-id signal exists: same work, and the trees still differ."""
-    assert not branch_landed.diff_is_empty(replayed, target_ref=_TARGET, rev=_BRANCH)
+    assert not gh.landed.diff_is_empty(replayed, target_ref=_TARGET, rev=_BRANCH)
 
 
 def test_diff_is_empty_compares_the_named_rev(squashed):
     """The rev is the caller's to name — `pr rebase` means HEAD, `push_intent`
     means the commit it recorded.
     """
-    assert branch_landed.diff_is_empty(squashed, target_ref=_TARGET, rev=f"{_BRANCH}~1") is False
+    assert gh.landed.diff_is_empty(squashed, target_ref=_TARGET, rev=f"{_BRANCH}~1") is False
 
 
 # ── all_commits_upstream ────────────────────────────────────────────────────
 
 
 def test_all_commits_upstream_matches_patch_ids_across_a_replay(replayed):
-    assert branch_landed.all_commits_upstream(replayed, target_ref=_TARGET, rev=_BRANCH)
+    assert gh.landed.all_commits_upstream(replayed, target_ref=_TARGET, rev=_BRANCH)
 
 
 def test_all_commits_upstream_misses_a_squash_merge(squashed):
     """Why the empty-diff signal exists: the work landed, no patch id survived."""
-    assert not branch_landed.all_commits_upstream(
+    assert not gh.landed.all_commits_upstream(
         squashed, target_ref=_TARGET, rev=_BRANCH,
     )
 
@@ -273,12 +273,12 @@ def test_all_commits_upstream_is_false_when_one_commit_is_missing(repo):
     _commit(repo, "d.txt", "d")
     git_in(repo, "-c", "user.email=t@t", "-c", "user.name=t",
            "cherry-pick", f"{_BRANCH}~1")
-    assert not branch_landed.all_commits_upstream(repo, target_ref=_TARGET, rev=_BRANCH)
+    assert not gh.landed.all_commits_upstream(repo, target_ref=_TARGET, rev=_BRANCH)
 
 
 def test_all_commits_upstream_is_false_when_git_cherry_cannot_answer(repo):
     """A ref this repo has never fetched is not evidence the work landed."""
-    assert not branch_landed.all_commits_upstream(
+    assert not gh.landed.all_commits_upstream(
         repo, target_ref="origin/never-fetched", rev=_BRANCH,
     )
 
@@ -288,17 +288,17 @@ def test_all_commits_upstream_is_false_when_git_cherry_cannot_answer(repo):
 
 def _run_by_tracker(merged=None, *, looked=True, remedy=""):
     """The tracker signal with gh's answer forced."""
-    answer = branch_landed.TrackerAnswer(
+    answer = gh.landed.TrackerAnswer(
         merged=merged, looked=looked, remedy=remedy,
     )
-    with mock.patch.object(branch_landed, "merged_pr", return_value=answer):
-        return branch_landed.by_tracker("/fake", branch=_BRANCH)
+    with mock.patch.object(gh.landed, "merged_pr", return_value=answer):
+        return gh.landed.by_tracker("/fake", branch=_BRANCH)
 
 
 def test_by_tracker_reports_a_merged_pr():
-    verdict = _run_by_tracker(branch_landed.MergedPR(number=_PR, url=_URL))
+    verdict = _run_by_tracker(gh.landed.MergedPR(number=_PR, url=_URL))
 
-    assert verdict.landed.signal == branch_landed.LandedSignal.PR_MERGED
+    assert verdict.landed.signal == gh.landed.LandedSignal.PR_MERGED
     assert verdict.landed.pr_number == _PR
     assert verdict.landed.detail == f"PR #{_PR} is merged ({_URL})"
     assert verdict.looked
@@ -306,7 +306,7 @@ def test_by_tracker_reports_a_merged_pr():
 
 def test_by_tracker_omits_the_link_when_gh_reports_no_url():
     """The detail sentence reaches an operator — no empty parentheses."""
-    verdict = _run_by_tracker(branch_landed.MergedPR(number=_PR))
+    verdict = _run_by_tracker(gh.landed.MergedPR(number=_PR))
 
     assert verdict.landed.detail == f"PR #{_PR} is merged"
 
@@ -315,7 +315,7 @@ def test_by_tracker_leaves_commits_ahead_unmeasured():
     """It can run before the checkout, so there is no honest count — null, not
     a number read off somebody else's HEAD.
     """
-    verdict = _run_by_tracker(branch_landed.MergedPR(number=_PR))
+    verdict = _run_by_tracker(gh.landed.MergedPR(number=_PR))
     assert verdict.landed.commits_ahead is None
 
 
@@ -342,13 +342,13 @@ def test_by_tracker_never_reads_the_worktree():
     """`pr rebase` runs it before the checkout, so reaching for HEAD here would
     answer about whatever branch the worktree is still on.
     """
-    answer = branch_landed.TrackerAnswer(
-        merged=branch_landed.MergedPR(number=_PR),
+    answer = gh.landed.TrackerAnswer(
+        merged=gh.landed.MergedPR(number=_PR),
     )
-    with mock.patch.object(branch_landed, "merged_pr", return_value=answer), \
-         mock.patch.object(branch_landed, "diff_is_empty") as diff, \
-         mock.patch.object(branch_landed, "all_commits_upstream") as cherry:
-        branch_landed.by_tracker("/fake", branch=_BRANCH)
+    with mock.patch.object(gh.landed, "merged_pr", return_value=answer), \
+         mock.patch.object(gh.landed, "diff_is_empty") as diff, \
+         mock.patch.object(gh.landed, "all_commits_upstream") as cherry:
+        gh.landed.by_tracker("/fake", branch=_BRANCH)
 
     diff.assert_not_called()
     cherry.assert_not_called()
@@ -358,49 +358,49 @@ def test_by_tracker_never_reads_the_worktree():
 
 
 def test_by_git_catches_a_squash_merge_by_empty_diff(squashed):
-    landed = branch_landed.by_git(squashed, target_ref=_TARGET, rev=_BRANCH)
+    landed = gh.landed.by_git(squashed, target_ref=_TARGET, rev=_BRANCH)
 
-    assert landed.signal == branch_landed.LandedSignal.EMPTY_DIFF
+    assert landed.signal == gh.landed.LandedSignal.EMPTY_DIFF
     assert landed.commits_ahead == 2
     assert landed.pr_number is None
     assert landed.detail == f"2 commit(s) ahead of {_TARGET} but no diff against it"
 
 
 def test_by_git_catches_a_replay_by_patch_id(replayed):
-    landed = branch_landed.by_git(replayed, target_ref=_TARGET, rev=_BRANCH)
+    landed = gh.landed.by_git(replayed, target_ref=_TARGET, rev=_BRANCH)
 
-    assert landed.signal == branch_landed.LandedSignal.COMMITS_UPSTREAM
+    assert landed.signal == gh.landed.LandedSignal.COMMITS_UPSTREAM
     assert landed.commits_ahead == 2
     assert landed.detail == f"all 2 commit(s) already have an equivalent in {_TARGET}"
 
 
 def test_by_git_passes_an_unlanded_branch(repo):
-    assert branch_landed.by_git(repo, target_ref=_TARGET, rev=_BRANCH) is None
+    assert gh.landed.by_git(repo, target_ref=_TARGET, rev=_BRANCH) is None
 
 
 def test_by_git_ignores_a_rev_with_no_commits_of_its_own(repo):
     """Both git signals read as landed for a freshly cut branch — an empty diff
     and an empty `git cherry` are vacuously true there.
     """
-    assert branch_landed.by_git(repo, target_ref=_TARGET, rev=_TARGET) is None
+    assert gh.landed.by_git(repo, target_ref=_TARGET, rev=_TARGET) is None
 
 
 def test_by_git_answers_none_for_a_ref_it_cannot_resolve(repo):
     """The count comes back 0, which is the same door the empty branch takes."""
-    assert branch_landed.by_git(repo, target_ref="origin/never-fetched") is None
+    assert gh.landed.by_git(repo, target_ref="origin/never-fetched") is None
 
 
 # ── check ───────────────────────────────────────────────────────────────────
 
 
 def test_check_spends_no_round_trip_when_git_can_see_it(squashed):
-    with mock.patch.object(branch_landed, "merged_pr") as gh:
-        verdict = branch_landed.check(
+    with mock.patch.object(gh.landed, "merged_pr") as merged_pr:
+        verdict = gh.landed.check(
             squashed, target_ref=_TARGET, branch=_BRANCH, rev=_BRANCH,
         )
 
-    assert verdict.landed.signal == branch_landed.LandedSignal.EMPTY_DIFF
-    gh.assert_not_called()
+    assert verdict.landed.signal == gh.landed.LandedSignal.EMPTY_DIFF
+    merged_pr.assert_not_called()
 
 
 def test_check_answered_by_git_is_never_marked_unread(squashed):
@@ -412,11 +412,11 @@ def test_check_answered_by_git_is_never_marked_unread(squashed):
     needed.
     """
     with latch_graphql():
-        verdict = branch_landed.check(
+        verdict = gh.landed.check(
             squashed, target_ref=_TARGET, branch=_BRANCH, rev=_BRANCH,
         )
 
-    assert verdict.landed.signal == branch_landed.LandedSignal.EMPTY_DIFF
+    assert verdict.landed.signal == gh.landed.LandedSignal.EMPTY_DIFF
     assert verdict.looked
 
 
@@ -424,22 +424,22 @@ def test_check_falls_back_to_the_tracker_when_git_cannot_see_it(repo):
     """The squash whose target moved on: no matching tree, no matching patch id,
     and the head ref the merge deleted. Only GitHub still knows.
     """
-    answer = branch_landed.TrackerAnswer(
-        merged=branch_landed.MergedPR(number=_PR),
+    answer = gh.landed.TrackerAnswer(
+        merged=gh.landed.MergedPR(number=_PR),
     )
-    with mock.patch.object(branch_landed, "merged_pr", return_value=answer):
-        verdict = branch_landed.check(
+    with mock.patch.object(gh.landed, "merged_pr", return_value=answer):
+        verdict = gh.landed.check(
             repo, target_ref=_TARGET, branch=_BRANCH, rev=_BRANCH,
         )
 
-    assert verdict.landed.signal == branch_landed.LandedSignal.PR_MERGED
+    assert verdict.landed.signal == gh.landed.LandedSignal.PR_MERGED
     assert verdict.landed.pr_number == _PR
 
 
 def test_check_answers_none_when_no_signal_does(repo):
-    answer = branch_landed.TrackerAnswer()
-    with mock.patch.object(branch_landed, "merged_pr", return_value=answer):
-        verdict = branch_landed.check(
+    answer = gh.landed.TrackerAnswer()
+    with mock.patch.object(gh.landed, "merged_pr", return_value=answer):
+        verdict = gh.landed.check(
             repo, target_ref=_TARGET, branch=_BRANCH, rev=_BRANCH,
         )
 
@@ -452,7 +452,7 @@ def test_check_reports_a_refused_tracker_read_the_git_signals_could_not_cover(re
     never asked — which is not the same as nothing having landed.
     """
     with latch_graphql():
-        verdict = branch_landed.check(
+        verdict = gh.landed.check(
             repo, target_ref=_TARGET, branch=_BRANCH, rev=_BRANCH,
         )
 

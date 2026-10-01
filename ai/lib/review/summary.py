@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent.usage import format_tokens, parse_session_log
-from core import log
+import core.log
 from pr.domains import ReviewVerdict
 from review.paths import (
     aggregate_session_usage,
@@ -218,31 +218,31 @@ def print_summary(
     branch_name: str = "",
     wall_clock_ms: int | None = None,
 ) -> None:
-    log.blank()
-    log.info("─── Summary ───")
+    core.log.blank()
+    core.log.info("─── Summary ───")
 
     findings = format_findings_line(report)
     if findings:
-        log.dim(f"Findings:        {findings}")
+        core.log.dim(f"Findings:        {findings}")
 
     verdict = format_verdict(report)
     if verdict:
-        log.dim(f"Verdict:         {verdict}")
+        core.log.dim(f"Verdict:         {verdict}")
 
     review_dir = Path(report.review_file).parent if report.review_file else None
     warnings = read_pipeline_warnings(review_dir)
     if warnings:
-        log.warn(f"Incomplete:      {', '.join(warnings)}")
+        core.log.warn(f"Incomplete:      {', '.join(warnings)}")
 
-    log.dim(f"Review:          {report.review_file}")
-    log.dim(f"Session log:     {session_log}")
+    core.log.dim(f"Review:          {report.review_file}")
+    core.log.dim(f"Session log:     {session_log}")
     if post_session_log and os.path.isfile(post_session_log):
-        log.dim(f"Post session:    {post_session_log}")
+        core.log.dim(f"Post session:    {post_session_log}")
     if pr_url:
-        log.dim(f"PR:              {pr_url}")
+        core.log.dim(f"PR:              {pr_url}")
     elif branch_name:
-        log.dim(f"Branch:          {branch_name}")
+        core.log.dim(f"Branch:          {branch_name}")
     usage_line = format_usage(session_log, post_session_log, wall_clock_ms=wall_clock_ms)
     if usage_line:
-        log.dim(usage_line.strip())
-    log.blank()
+        core.log.dim(usage_line.strip())
+    core.log.blank()

@@ -50,14 +50,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from fix import engine as fix_engine
-from gh import budget as gh_budget
-from gh import client as gh_client
-from core import log
-from pr import state as pr_state
-from pr import target as pr_target
-from core import run_lock
-from core import workbench_paths
+import fix.engine
+import gh.budget
+import gh.client
+import core.log
+import pr.state
+import pr.target
+import core.run_lock
+import core.workbench_paths
 from pr.domains import ReviewStatus
 from pr.state import PRClosure, PRCloseState
 from review.paths import (
@@ -139,8 +139,8 @@ def cleanup_intermediates(review_dir: Path) -> None:
     """
     cleanup = phase_artifacts(review_dir)
     cleanup.append(review_dir / FILENAME_PIPELINE_STATE)
-    cleanup.append(review_dir / fix_engine.TRACKING_FILENAME)
-    cleanup.extend(sorted(review_dir.glob(fix_engine.VERIFY_TRACKING_GLOB)))
+    cleanup.append(review_dir / fix.engine.TRACKING_FILENAME)
+    cleanup.extend(sorted(review_dir.glob(fix.engine.VERIFY_TRACKING_GLOB)))
     # A run that started before chunked names may have left the unsuffixed file.
     cleanup.append(review_dir / "verify-tracking.md")
     cleanup.extend(
@@ -183,7 +183,7 @@ def cleaned_on_success(review_dir: Path):
     try:
         cleanup_intermediates(review_dir)
     except OSError as exc:
-        log.warn(f"could not sweep {review_dir} ({exc}) — leaving its intermediates in place")
+        core.log.warn(f"could not sweep {review_dir} ({exc}) — leaving its intermediates in place")
 
 
 def _dir_is_all_stale(d: Path, stale_days: int = GC_STALE_DAYS) -> bool:
@@ -256,7 +256,7 @@ def _collect_stray(f: Path, stale_days: int = GC_STALE_DAYS) -> int:
     if _age_days(f, datetime.now().timestamp()) <= stale_days:
         return 0
     f.unlink(missing_ok=True)
-    log.info(f"GC: removed stray {f.name}")
+    core.log.info(f"GC: removed stray {f.name}")
     return 1
 
 
@@ -272,7 +272,7 @@ def _gc_one_review_dir(entry: ReviewEntry, stale_days: int = GC_STALE_DAYS) -> i
         if not _dir_is_all_stale(entry.path, stale_days):
             return 0
         shutil.rmtree(entry.path, ignore_errors=True)
-        log.info(f"GC: removed orphaned {entry.path.name}")
+        core.log.info(f"GC: removed orphaned {entry.path.name}")
         return 1
     if (entry.path / FILENAME_PIPELINE_STATE).is_file():
         return 0
@@ -286,7 +286,7 @@ def gc_reviews(reviews_dir: Path | None = None) -> int:
     they were two walks with two notions of what an entry at the root is, and
     the classification now belongs to the walk rather than to either sweep.
     """
-    reviews_dir = reviews_dir or workbench_paths.reviews_dir()
+    reviews_dir = reviews_dir or core.workbench_paths.reviews_dir()
     if not reviews_dir.is_dir():
         return 0
 
@@ -326,7 +326,7 @@ def prune_merged_reviews(
     record the answer per directory and skip re-asking rather than raising the
     cap — raising it spends more quota on the same dead questions.
     """
-    reviews_dir = reviews_dir or workbench_paths.reviews_dir()
+    reviews_dir = reviews_dir or core.workbench_paths.reviews_dir()
     if not reviews_dir.is_dir():
         return PruneOutcome()
 
@@ -336,7 +336,7 @@ def prune_merged_reviews(
     for entry in iter_review_entries(reviews_dir):
         if checked >= max_files:
             break
-        if gh_budget.latched(gh_budget.Resource.GRAPHQL):
+        if gh.budget.latched(gh.budget.Resource.GRAPHQL):
             return PruneOutcome(pruned, cut_short=True)
 
         # A stray file carries no meta, so this is also what keeps the loose
@@ -358,10 +358,10 @@ def prune_merged_reviews(
             continue
 
         shutil.rmtree(review_dir, ignore_errors=True)
-        log.info(f"Pruned {ended}")
+        core.log.info(f"Pruned {ended}")
         pruned += 1
 
-    return PruneOutcome(pruned, cut_short=bool(gh_budget.latched(gh_budget.Resource.GRAPHQL)))
+    return PruneOutcome(pruned, cut_short=bool(gh.budget.latched(gh.budget.Resource.GRAPHQL)))
 
 
 def _stale_days_for(review_dir: Path, meta: ReviewMeta) -> int:
@@ -445,17 +445,17 @@ def _branch_is_finished(repo: str, head_ref: str) -> bool:
     costs disk, and gc that deletes on a network blip is worse than gc that runs
     again tomorrow.
     """
-    r = gh_client.run(
+    r = gh.client.run(
         "pr", "list", "--repo", repo, "--head", head_ref,
         "--state", "all", "--json", "state",
     )
     if not r.ok:
-        log.warn(f"GC: could not ask about {repo} {head_ref} — leaving its review in place")
+        core.log.warn(f"GC: could not ask about {repo} {head_ref} — leaving its review in place")
         return False
     try:
         rows = json.loads(r.stdout or "[]")
     except json.JSONDecodeError:
-        log.warn(f"GC: could not parse gh's response for {repo} {head_ref} — leaving its review in place")
+        core.log.warn(f"GC: could not parse gh's response for {repo} {head_ref} — leaving its review in place")
         return False
     if not rows:
         return False
@@ -478,9 +478,9 @@ def _pr_closure(repo: str, pr_number: int) -> PRClosure | None:
     Which field carries it belongs to `PRCloseState`, so this reads the one the
     state names instead of choosing between `mergedAt` and `closedAt` itself.
     """
-    r = gh_client.run(
+    r = gh.client.run(
         "pr", "view", str(pr_number), "--repo", repo,
-        "--json", pr_state.GH_STATE_JSON_FIELDS,
+        "--json", pr.state.GH_STATE_JSON_FIELDS,
     )
     if not r.ok:
         # The answer stays None — the artifacts are kept either way — but a gh
@@ -492,10 +492,10 @@ def _pr_closure(repo: str, pr_number: int) -> PRClosure | None:
         # A latched call is not warned about here. It made no request, the
         # breaker has already said why once, and repeating it per PR is the
         # warning storm this sweep was the visible symptom of.
-        if r.returncode == gh_budget.BUDGET_LATCHED_RETURNCODE:
+        if r.returncode == gh.budget.BUDGET_LATCHED_RETURNCODE:
             return None
         detail = r.detail or f"exit {r.returncode}"
-        log.warn(f"GC: gh could not report {repo}#{pr_number} ({detail}) — leaving it in place")
+        core.log.warn(f"GC: gh could not report {repo}#{pr_number} ({detail}) — leaving it in place")
         return None
     try:
         fields = json.loads(r.stdout or "{}")
@@ -504,14 +504,14 @@ def _pr_closure(repo: str, pr_number: int) -> PRClosure | None:
         # unparseable" both keep the artifacts, and a bare except here would make
         # the second look exactly like the first — a response-format change would
         # then silently stop every future prune from asking a real question.
-        log.warn(f"GC: could not parse gh's response for {repo}#{pr_number} — leaving it in place")
+        core.log.warn(f"GC: could not parse gh's response for {repo}#{pr_number} — leaving it in place")
         return None
     state = PRCloseState.parse(fields.get("state"))
     if state is None:
         # A state the enum does not carry is the JSONDecodeError case wearing a
         # 0 exit: it parses cleanly and means nothing to us.
         detail = fields.get("state") or "no state field"
-        log.warn(f"GC: gh reported an unrecognized state for {repo}#{pr_number} ({detail}) — leaving it in place")
+        core.log.warn(f"GC: gh reported an unrecognized state for {repo}#{pr_number} ({detail}) — leaving it in place")
         return None
     if not state.is_terminal:
         return None
@@ -531,8 +531,8 @@ def _remove_target(target: Path) -> None:
     subtree walk reaches — and the guarantee that matters is the one below,
     where the lock goes last and the rmdir is non-recursive.
     """
-    lock_path = target / run_lock.LOCK_FILE
-    state_path = target / pr_state.STATE_FILE
+    lock_path = target / core.run_lock.LOCK_FILE
+    state_path = target / pr.state.STATE_FILE
     # state.json goes after this loop so a target we fail to empty keeps the
     # file the next sweep's glob finds it by.
     for entry in target.iterdir():
@@ -573,9 +573,9 @@ def _prune_one_target(target: Path) -> bool:
     still have a state.json.
     """
     try:
-        with run_lock.acquire(target, command="pr gc", started=pr_state.now_iso()):
+        with core.run_lock.acquire(target, command="pr gc", started=pr.state.now_iso()):
             _remove_target(target)
-    except run_lock.LockBusy:
+    except core.run_lock.LockBusy:
         return False
     except OSError as exc:
         # Reported, not raised: one target we could not empty must not abort
@@ -583,7 +583,7 @@ def _prune_one_target(target: Path) -> bool:
         # The exception rides along because the name alone does not distinguish
         # a target a live run recreated from one gc cannot read at all, and a
         # sweep that runs unattended is only ever read through this line.
-        log.warn(f"GC: could not remove {target.name} ({exc}) — leaving it in place")
+        core.log.warn(f"GC: could not remove {target.name} ({exc}) — leaving it in place")
     return not target.exists()
 
 
@@ -597,12 +597,12 @@ def _prune_and_count(target: Path, message: str) -> int:
     """
     if not _prune_one_target(target):
         return 0
-    log.info(message)
+    core.log.info(message)
     return 1
 
 
 def _emit_terminal_summary(
-    trail: Trail, state: pr_state.PRState, closure: PRClosure,
+    trail: Trail, state: pr.state.PRState, closure: PRClosure,
 ) -> None:
     """Record a pruned target's outcome. Reported, not raised, on failure.
 
@@ -613,10 +613,10 @@ def _emit_terminal_summary(
     """
     try:
         trail.summary(
-            pr_state.TERMINAL_SUMMARY_ACTION,
+            pr.state.TERMINAL_SUMMARY_ACTION,
             f"{state.identity.repo}#{state.identity.pr_number} "
             f"{closure.state.value.lower()}",
-            data=pr_state.terminal_summary(state, closure),
+            data=pr.state.terminal_summary(state, closure),
             context={
                 "repo": state.identity.repo,
                 "pr": state.identity.pr_number,
@@ -628,7 +628,7 @@ def _emit_terminal_summary(
     # change to terminal_summary could introduce: one unrecordable outcome must
     # not abort the sweep for every target behind it.
     except (OSError, TypeError, ValueError) as exc:
-        log.warn(
+        core.log.warn(
             f"GC: could not record {state.identity.repo}#{state.identity.pr_number}'s "
             f"outcome ({exc}) — continuing the sweep")
 
@@ -660,24 +660,24 @@ def prune_merged_targets(targets_dir: Path | None = None,
     learns a PR has ended, and it is about to delete the state that answers how
     it went. An optional trail is a summary that silently never fires.
     """
-    targets_dir = targets_dir or pr_target.targets_root()
+    targets_dir = targets_dir or pr.target.targets_root()
     if not targets_dir.is_dir():
         return PruneOutcome()
 
     pruned = 0
     checked = 0
-    for state_file in sorted(targets_dir.glob(f"*/{pr_state.STATE_FILE}")):
+    for state_file in sorted(targets_dir.glob(f"*/{pr.state.STATE_FILE}")):
         if checked >= max_files:
             break
         # Checked per iteration rather than once up front: the reviews sweep
         # runs first and may have armed the latch, and a budget can also run
         # out partway through this loop.
-        if gh_budget.latched(gh_budget.Resource.GRAPHQL):
+        if gh.budget.latched(gh.budget.Resource.GRAPHQL):
             return PruneOutcome(pruned, cut_short=True)
         target = state_file.parent
         if skip is not None and target == skip:
             continue
-        state = pr_state.load_state(target)
+        state = pr.state.load_state(target)
         if state is None:
             # The glob found the file, so this is corrupt rather than absent.
             # Nothing here is authoritative, so dropping it is a clean recovery.
@@ -716,4 +716,4 @@ def prune_merged_targets(targets_dir: Path | None = None,
         if removed:
             _emit_terminal_summary(trail, state, closure)
 
-    return PruneOutcome(pruned, cut_short=bool(gh_budget.latched(gh_budget.Resource.GRAPHQL)))
+    return PruneOutcome(pruned, cut_short=bool(gh.budget.latched(gh.budget.Resource.GRAPHQL)))

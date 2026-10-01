@@ -13,7 +13,7 @@ wants and what to do with the outcomes. Everything between those is here.
 
 Two rules the passes disagreed on, settled here:
 
-**A batch that stalled has already had its retry.** ``agent_invoke.run_fix``
+**A batch that stalled has already had its retry.** ``agent.invoke.run_fix``
 gives an unproductive pass a second attempt of its own, so handing that batch's
 deferrals to the partial-progress retry buys a third identical run. One stalled
 batch must not spend the whole pass's retry either, which is why the two are
@@ -41,17 +41,19 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from agent import invoke as agent_invoke
-from agent import phases as agent_phases
-from agent import retry as agent_retry
-from agent import templates as agent_templates
-from fix import blame as fix_blame
-from fix import scope as fix_scope
-from fix import suite as fix_suite
-from fix import tracking as fix_tracking
-from git import client as git_client
-from git import land
-from core import log, publishing, session_lock
+import agent.invoke
+import agent.phases
+import agent.retry
+import agent.templates
+import fix.blame
+import fix.scope
+import fix.suite
+import fix.tracking
+import git.client
+import git.land
+import core.log
+import core.publishing
+import core.session_lock
 from agent.diagnosis import Diagnosis
 from agent.registry import PHASES
 from core.phases import Effort, Phase
@@ -59,7 +61,7 @@ from fix.types import FixItem
 from pr.fix import FixOutcome, ItemOutcome
 from core.trail import Trail, tinfo
 from config.workbench_config import WorkbenchConfig, load_config_or_default
-from fix import gate as fix_gate
+import fix.gate
 from fix.gate import VerifyFn
 
 # The checklist's name inside a pass's artifact directory. Published because a
@@ -161,7 +163,7 @@ class FixRun:
     """
 
     outcomes: list[ItemOutcome] = field(default_factory=list)
-    landed: land.LandResult | None = None
+    landed: git.land.LandResult | None = None
     exit_code: int = 0
     stop: Diagnosis | None = None
     # HEAD before the agent ran, which is what `LandSpec.recover` compares
@@ -174,7 +176,7 @@ class FixRun:
     # caller reporting the pass after the fact. The commit body has it already:
     # `landing` reads the same result off the adapter before the message is
     # rendered, which is why it is not carried here for the domain's benefit.
-    suite: fix_suite.SuiteResult = field(default_factory=fix_suite.SuiteResult)
+    suite: fix.suite.SuiteResult = field(default_factory=fix.suite.SuiteResult)
 
 
 class FixAdapter(ABC):
@@ -217,12 +219,12 @@ class FixAdapter(ABC):
     config: WorkbenchConfig | None = None
     effort: Effort | None = None
     model: str = ""
-    # Deliberately not `agent_retry.hint_for`, whose hints are written for a
+    # Deliberately not `agent.retry.hint_for`, whose hints are written for a
     # phase that produces a document out of nothing: one tells the agent to
     # write its findings file immediately, the other that the file exists and is
     # empty. Neither is true of a tracking file that arrives populated, so a fix
     # pass is told to fix things rather than to write the file it already has.
-    fix_hint: str = agent_retry.FIX_RETRY_HINT
+    fix_hint: str = agent.retry.FIX_RETRY_HINT
     # Set by the engine before `landing`: MAX_TURNS when the last attempt hit
     # the cap, else None. The commit body is assembled in `landing`, which runs
     # before `FixRun` exists, so this is how a domain names a truncated pass.
@@ -238,7 +240,7 @@ class FixAdapter(ABC):
     # is a plain ABC and not a dataclass, so a `field()` here is a `Field`
     # object sitting where a result should be, and the first attribute read
     # off it raises. Safe to share because `SuiteResult` is frozen.
-    suite: fix_suite.SuiteResult = fix_suite.SuiteResult()
+    suite: fix.suite.SuiteResult = fix.suite.SuiteResult()
     # Whether this domain wants the repo's checks run over its work. On by
     # default: a pass that holds its push is a pass nothing else checks, which
     # is every domain but one. `rebase.prepush` turns it off and says why
@@ -406,7 +408,7 @@ class _Batch:
     # assembled without one carries "nobody looked" rather than "nothing
     # changed" — the two differ in whether they can be held against the agent,
     # and only one of them is safe as a default.
-    scope: fix_scope.BatchScope = fix_scope.UNKNOWN_SCOPE
+    scope: fix.scope.BatchScope = fix.scope.UNKNOWN_SCOPE
     # MAX_TURNS when this invocation hit the cap, even if it ticked boxes.
     # Distinct from `unproductive`, which is the retry decision.
     stop: Diagnosis | None = None
@@ -422,10 +424,10 @@ class _Settled:
     # than carried on the outcome because an outcome is persisted state and a
     # file list is not: the scope is evidence for a decision taken during the
     # pass, and what survives into the record is the decision.
-    scopes: dict[str, fix_scope.BatchScope] = field(default_factory=dict)
+    scopes: dict[str, fix.scope.BatchScope] = field(default_factory=dict)
     stop: Diagnosis | None = None
 
-    def scope_for(self, outcome: ItemOutcome) -> fix_scope.BatchScope:
+    def scope_for(self, outcome: ItemOutcome) -> fix.scope.BatchScope:
         """The observation behind one answer, or the unknown scope.
 
         Unknown for an id no batch claims — an answer the agent invented, or one
@@ -433,7 +435,7 @@ class _Settled:
         is genuinely no observation, and the consumers all treat unknown as
         "draw no conclusion".
         """
-        return self.scopes.get(outcome.id, fix_scope.UNKNOWN_SCOPE)
+        return self.scopes.get(outcome.id, fix.scope.UNKNOWN_SCOPE)
 
 
 def _chunks(items: list[FixItem], size: int) -> list[list[FixItem]]:
@@ -451,19 +453,19 @@ def _chunks(items: list[FixItem], size: int) -> list[list[FixItem]]:
 
 def _prompt(adapter: FixAdapter, turns: int, *, resume: bool = False) -> str:
     """Render this domain's template around the tracking file as it now stands."""
-    text = agent_templates.render(
+    text = agent.templates.render(
         PHASES[adapter.phase].template_for(),
         branch_name=adapter.branch,
         repo=adapter.repo,
         tracking_content=adapter.tracking_path.read_text(),
         tracking_file=str(adapter.tracking_path),
-        answer_format=fix_tracking.instructions(adapter.item_noun),
-        execution_claim_guard=agent_templates.build_execution_claim_guard(
-            occasion=agent_templates.ClaimOccasion.FIX_EVIDENCE,
+        answer_format=fix.tracking.instructions(adapter.item_noun),
+        execution_claim_guard=agent.templates.build_execution_claim_guard(
+            occasion=agent.templates.ClaimOccasion.FIX_EVIDENCE,
         ),
-        worktree_block=agent_templates.build_worktree_block(str(adapter.workdir)),
-        generated_block=agent_templates.GENERATED_BLOCK,
-        role_block=agent_templates.ROLE_BLOCK,
+        worktree_block=agent.templates.build_worktree_block(str(adapter.workdir)),
+        generated_block=agent.templates.GENERATED_BLOCK,
+        role_block=agent.templates.ROLE_BLOCK,
         max_turns=str(turns),
         **adapter.template_vars(),
     )
@@ -503,14 +505,14 @@ def _invoke(
     worktree should produce.
     """
     if before is None:
-        before = fix_scope.changed_files(adapter.workdir)
-    fix_tracking.write(adapter.tracking_path, adapter.title, items)
-    log.info(f"{label} — {adapter.action}...")
-    result = agent_invoke.run_fix(
+        before = fix.scope.changed_files(adapter.workdir)
+    fix.tracking.write(adapter.tracking_path, adapter.title, items)
+    core.log.info(f"{label} — {adapter.action}...")
+    result = agent.invoke.run_fix(
         adapter.phase, _prompt(adapter, turns, resume=resume),
         cwd=adapter.workdir,
         session_log=str(adapter.session_log),
-        produced=lambda: fix_tracking.checked(adapter.tracking_path) > 0,
+        produced=lambda: fix.tracking.checked(adapter.tracking_path) > 0,
         add_dirs=adapter.add_dirs(),
         max_turns=turns,
         max_budget=budget,
@@ -522,9 +524,9 @@ def _invoke(
         effort=adapter.effort,
         model=adapter.model or None,
     )
-    log.blank()
+    core.log.blank()
     return _Batch(
-        outcomes=fix_tracking.parse(adapter.tracking_path),
+        outcomes=fix.tracking.parse(adapter.tracking_path),
         unproductive=result.unproductive,
         exit_code=result.exit_code,
         max_turns=turns,
@@ -536,7 +538,7 @@ def _invoke(
 
 def _batch_scope(
     adapter: FixAdapter, before: set[str] | None,
-) -> fix_scope.BatchScope:
+) -> fix.scope.BatchScope:
     """This batch's difference, with the pass's own artifacts taken back out.
 
     Defence in depth rather than a live fix: every adapter today puts its
@@ -552,7 +554,7 @@ def _batch_scope(
     legitimately live in a file called `fix-tracking.md` somewhere else in the
     tree keeps its observation.
     """
-    scope = fix_scope.batch_scope(adapter.workdir, before)
+    scope = fix.scope.batch_scope(adapter.workdir, before)
     if not scope.known or not scope.files:
         return scope
     artifacts = {
@@ -562,7 +564,7 @@ def _batch_scope(
             + sorted(adapter.artifacts.glob(VERIFY_TRACKING_GLOB))
         )
     }
-    return fix_scope.BatchScope(files=scope.files - {a for a in artifacts if a})
+    return fix.scope.BatchScope(files=scope.files - {a for a in artifacts if a})
 
 
 def _relative_to(workdir: Path, path: Path) -> str:
@@ -586,8 +588,8 @@ def _run_batch(
     """Run one batch at the budget the phase gives work of that size."""
     return _invoke(
         adapter, items, label=label,
-        turns=agent_phases.phase_turns(adapter.phase, items=len(items)),
-        budget=agent_phases.phase_budget(
+        turns=agent.phases.phase_turns(adapter.phase, items=len(items)),
+        budget=agent.phases.phase_budget(
             adapter.phase, adapter.effort, items=len(items),
         ),
         before=before,
@@ -604,11 +606,11 @@ def _retry(
     sending every leftover in one invoke is how a partial-progress retry
     collapsed back to ~2 turns an item against the cap.
     """
-    chunk_size = agent_phases.phase_chunk_size(adapter.phase)
+    chunk_size = agent.phases.phase_chunk_size(adapter.phase)
     batched = _chunks(items, chunk_size)
     name = f"{PHASES[adapter.phase].label} retry"
     if len(batched) > 1:
-        log.info(
+        core.log.info(
             f"Retry pass — {len(items)} deferred item(s) in {len(batched)} "
             f"batches of up to {chunk_size}..."
         )
@@ -638,10 +640,10 @@ def _retry_chunk(
     announce: bool,
 ) -> _Batch:
     """One retry invoke, budgeted for this chunk's size rather than the pass's."""
-    original = agent_phases.phase_turns(adapter.phase, items=len(items))
-    retry_turns = agent_phases.phase_retry_turns(adapter.phase, original)
+    original = agent.phases.phase_turns(adapter.phase, items=len(items))
+    retry_turns = agent.phases.phase_retry_turns(adapter.phase, original)
     if announce:
-        log.info(
+        core.log.info(
             f"Retry pass — {len(items)} deferred item(s) "
             f"(max_turns={retry_turns})..."
         )
@@ -649,7 +651,7 @@ def _retry_chunk(
         adapter, items,
         label=label,
         turns=retry_turns,
-        budget=agent_phases.phase_budget(
+        budget=agent.phases.phase_budget(
             adapter.phase, adapter.effort, items=len(items),
         ),
         resume=True,
@@ -754,15 +756,15 @@ def _first_stop(batches: list[_Batch]) -> Diagnosis | None:
     return next((b.stop for b in batches if b.stop is not None), None)
 
 
-def _scopes(batches: list[_Batch]) -> dict[str, fix_scope.BatchScope]:
+def _scopes(batches: list[_Batch]) -> dict[str, fix.scope.BatchScope]:
     """Each answered id mapped to the observation of the run that answered it."""
     return {o.id: b.scope for b in batches for o in b.outcomes}
 
 
 def _merge_scopes(
-    first: dict[str, fix_scope.BatchScope],
-    retry: dict[str, fix_scope.BatchScope],
-) -> dict[str, fix_scope.BatchScope]:
+    first: dict[str, fix.scope.BatchScope],
+    retry: dict[str, fix.scope.BatchScope],
+) -> dict[str, fix.scope.BatchScope]:
     """One observation per id, accumulated across the runs that answered it.
 
     The union, not the later reading. A retried item's outcomes supersede — the
@@ -794,9 +796,9 @@ def _merge_scopes(
             merged[item_id] = scope
             continue
         merged[item_id] = (
-            fix_scope.UNKNOWN_SCOPE
+            fix.scope.UNKNOWN_SCOPE
             if not (prior.known and scope.known)
-            else fix_scope.BatchScope(files=prior.files | scope.files)
+            else fix.scope.BatchScope(files=prior.files | scope.files)
         )
     return merged
 
@@ -805,7 +807,7 @@ def _verify_suite(
     adapter: FixAdapter, outcomes: list[ItemOutcome],
     changed: set[str] | None, trail: Trail | None,
     by_id: dict[str, FixItem] | None = None,
-) -> fix_suite.SuiteResult:
+) -> fix.suite.SuiteResult:
     """Run the repo's declared checks over the pass's work and apply the verdict.
 
     The engine's half of `fix.suite`: resolve the command from the worktree's
@@ -819,21 +821,21 @@ def _verify_suite(
     An adapter that was given one still wins: it is the same file when the two
     agree, and the caller's explicit choice when they do not.
     """
-    if not adapter.verifies_with_suite or not fix_suite.should_run(outcomes, changed):
-        return fix_suite.SuiteResult()
+    if not adapter.verifies_with_suite or not fix.suite.should_run(outcomes, changed):
+        return fix.suite.SuiteResult()
     config = adapter.config or load_config_or_default(adapter.workdir)
-    result = fix_suite.run(
+    result = fix.suite.run(
         adapter.workdir, config.fix.verify_command,
         config.fix.verify_timeout, trail,
     )
-    fix_suite.apply_to(outcomes, result)
+    fix.suite.apply_to(outcomes, result)
     if result.demotes:
         # Only on red, and only as a lead. `fix.blame` reads the pass's own
         # diff against the failure text; it changes no outcome, because one
         # run over sixteen items still cannot say which broke the tree. What
         # it can say is which item's file lost the symbol the failure names,
         # which turns seven hedged rows into one worth reading first.
-        result = dataclasses.replace(result, pointers=fix_blame.pointers(
+        result = dataclasses.replace(result, pointers=fix.blame.pointers(
             adapter.workdir, _anchors(outcomes, by_id or {}), result.output_tail,
         ))
         # Held here rather than left to a domain's `after_verify`, because a
@@ -845,7 +847,7 @@ def _verify_suite(
         # domain and any future one. Holding centrally is also wider than the
         # one domain that overrides the hook: nothing should reply, resolve,
         # or push off a tree whose own checks are failing.
-        publishing.hold("the repo's checks are red with this pass's changes")
+        core.publishing.hold("the repo's checks are red with this pass's changes")
         for pointer in result.pointers:
             tinfo(trail, "fix_verify_pointer", pointer.describe(),
                   data={"item": pointer.item_id, "file": pointer.file,
@@ -913,22 +915,22 @@ def run(
     if not items:
         return FixRun()
 
-    head_before = git_client.head_sha(cwd=adapter.workdir)
+    head_before = git.client.head_sha(cwd=adapter.workdir)
     # The pre-agent half of the commit scope, taken at the same moment as the
     # HEAD it is the counterpart of: everything dirty here is somebody else's,
     # and what appears after the agent runs is the pass's own.
-    dirty_before = fix_scope.changed_files(adapter.workdir)
+    dirty_before = fix.scope.changed_files(adapter.workdir)
     if dirty_before is None:
         # Refused before the agent runs, so nothing is lost by refusing. With no
         # baseline the pass could not tell its own work from what was already
         # here, so every outcome is either committing the worktree wholesale or
         # committing none of it — and the agent's turns would be spent either
         # way. Better to spend nothing and say so.
-        log.error(
+        core.log.error(
             f"could not read the state of {adapter.workdir} — skipping fix pass"
         )
         return FixRun()
-    foreign = session_lock.held_by_others(adapter.workdir)
+    foreign = core.session_lock.held_by_others(adapter.workdir)
     if foreign and not _lock_override():
         # Refused before the agent runs. This is the observable the dirty-tree
         # comment below says is missing: a held record is a session declaring
@@ -937,11 +939,11 @@ def run(
         # inferred, so the operator is told who to wait for instead of being
         # left to work it out from a moved HEAD.
         holder = foreign[0]
-        log.error(
+        core.log.error(
             f"refusing to commit into {adapter.workdir}: {holder.describe()} "
             "is editing this worktree"
         )
-        log.info(
+        core.log.info(
             "wait for that session to finish, run this from the branch's own "
             f"worktree, or set {_LOCK_OVERRIDE_ENV}=1 to proceed anyway"
         )
@@ -965,11 +967,11 @@ def run(
               f"{len(dirty_before)} file(s) already modified before the pass",
               data={"paths": sorted(dirty_before), "workdir": str(adapter.workdir)})
 
-    chunk_size = agent_phases.phase_chunk_size(adapter.phase)
+    chunk_size = agent.phases.phase_chunk_size(adapter.phase)
     batched = _chunks(items, chunk_size)
     name = PHASES[adapter.phase].label
     if len(batched) > 1:
-        log.info(
+        core.log.info(
             f"{name} — {len(items)} items in {len(batched)} batches "
             f"of up to {chunk_size}..."
         )
@@ -1002,14 +1004,14 @@ def run(
     # Before the scope is read and before anything is committed: a fix the gate
     # falsifies must not reach `landing` as a fix, or the commit and the record
     # would disagree about what the pass did.
-    fix_gate.verify_claims(
+    fix.gate.verify_claims(
         settled.outcomes, verify, adapter, by_id, trail,
         scope_for=settled.scope_for,
     )
 
     # After the agent and before the commit — the one moment the difference is
     # the agent's work and nothing else's.
-    changed = fix_scope.agent_changed(adapter.workdir, dirty_before)
+    changed = fix.scope.agent_changed(adapter.workdir, dirty_before)
 
     # Between the agent's edits and everything that reports on them. The two
     # agents above check the pass's claims; this is the only thing that asks
@@ -1034,10 +1036,10 @@ def run(
         # operator this line — the fixes are loose in the worktree and only
         # this says so — and four copies of it is four chances for the next
         # adapter to be the one that stays quiet.
-        fix_scope.report_unattributable(adapter.workdir)
+        fix.scope.report_unattributable(adapter.workdir)
     adapter.stop = settled.stop
     spec = adapter.landing(settled.outcomes, changed)
-    landed = land.land(
+    landed = git.land.land(
         adapter.workdir,
         message=spec.message,
         gated=True,

@@ -22,8 +22,8 @@ from pathlib import Path
 
 from agent.session import read_jsonl
 from core.text import slugify
-from gh import run_reads
-from pr import ci_failures as ci
+import gh.run_reads
+import pr.ci_failures
 
 _GENERIC_MESSAGES = (
     "process completed with exit code",
@@ -62,9 +62,9 @@ def build_failure_id(annotation: dict, job_name: str) -> str:
 def annotations_to_items(
     annotations: list[dict], job_name: str, source_run_id: int | None = None,
     context: str | None = None,
-) -> list[ci.FailureItem]:
+) -> list[pr.ci_failures.FailureItem]:
     """Convert raw annotations to FailureItems, skipping notices."""
-    items: list[ci.FailureItem] = []
+    items: list[pr.ci_failures.FailureItem] = []
     for ann in annotations:
         if ann.get("annotation_level") == "notice":
             continue
@@ -72,7 +72,7 @@ def annotations_to_items(
         # An empty message is no message, the same reading build_failure_id
         # takes of it — an annotation carrying only a title reports the title.
         text = ann.get("message") or ann.get("title", "")
-        items.append(ci.FailureItem(
+        items.append(pr.ci_failures.FailureItem(
             id=item_id,
             annotation=text,
             file=ann.get("path") or None,
@@ -80,16 +80,16 @@ def annotations_to_items(
             diagnosis=None,
             fix_sha=None,
             outcome=None,
-            headline=ci.extract_headline(text) or ci.extract_headline(context),
+            headline=pr.ci_failures.extract_headline(text) or pr.ci_failures.extract_headline(context),
             source_run_id=source_run_id,
             context=context,
         ))
     return items
 
 
-def _fallback_item(job_name: str, source_run_id: int | None = None) -> ci.FailureItem:
+def _fallback_item(job_name: str, source_run_id: int | None = None) -> pr.ci_failures.FailureItem:
     """Create a placeholder item for a failed job with no annotations."""
-    return ci.FailureItem(
+    return pr.ci_failures.FailureItem(
         id=f"{job_name}-no-annotation",
         annotation=f"Job '{job_name}' failed with no annotations",
         file=None,
@@ -136,7 +136,7 @@ class LogFallback:
     """
     annotations: list[dict]
     context: str
-    kind: ci.FailureKind
+    kind: pr.ci_failures.FailureKind
     structured: bool
 
     @property
@@ -144,7 +144,7 @@ class LogFallback:
         return bool(self.annotations)
 
 
-def _test_annotation(failure: ci.TestFailure) -> dict:
+def _test_annotation(failure: pr.ci_failures.TestFailure) -> dict:
     """One test failure in the annotation shape `annotations_to_items` reads.
 
     A located failure withholds the title so its id stays `err-<path>-<line>`;
@@ -161,7 +161,7 @@ def _test_annotation(failure: ci.TestFailure) -> dict:
     }
 
 
-def log_fallback(repo: str, job: dict, run_data: dict, kind: ci.FailureKind) -> LogFallback:
+def log_fallback(repo: str, job: dict, run_data: dict, kind: pr.ci_failures.FailureKind) -> LogFallback:
     """Fetch job logs and extract failure context as synthetic annotations.
 
     A log in a format `ci.extract_test_failures` parses becomes one annotation
@@ -170,28 +170,28 @@ def log_fallback(repo: str, job: dict, run_data: dict, kind: ci.FailureKind) -> 
     the suite itself printed for it.
     """
     job_id = job.get("databaseId", 0)
-    log_text = run_reads.fetch_job_logs(repo, job_id) if job_id else ""
+    log_text = gh.run_reads.fetch_job_logs(repo, job_id) if job_id else ""
     if not log_text:
         source_run_id = job.get("_source_run_id", run_data["databaseId"])
-        log_text = run_reads.fetch_failed_logs(repo, source_run_id)
+        log_text = gh.run_reads.fetch_failed_logs(repo, source_run_id)
     if not log_text:
         return LogFallback([], "", kind, structured=False)
 
     job_name = job.get("name", "unknown")
-    tests = ci.extract_test_failures(log_text)
+    tests = pr.ci_failures.extract_test_failures(log_text)
     if tests:
         context = "\n\n".join(f.context for f in tests)
         return LogFallback(
             [_test_annotation(f) for f in tests], context,
-            ci.classify_job(job_name, [context]),
+            pr.ci_failures.classify_job(job_name, [context]),
             structured=True,
         )
 
-    context = ci.extract_failure_context(log_text, kind)
+    context = pr.ci_failures.extract_failure_context(log_text, kind)
     if not context:
         return LogFallback([], "", kind, structured=False)
     annotations = [{"message": context, "path": "", "start_line": 0, "title": ""}]
-    return LogFallback(annotations, context, ci.classify_job(job_name, [context]), structured=False)
+    return LogFallback(annotations, context, pr.ci_failures.classify_job(job_name, [context]), structured=False)
 
 
 def parse_test_artifact(artifact_dir: str) -> str:
@@ -210,7 +210,7 @@ def parse_test_artifact(artifact_dir: str) -> str:
     ]
     if not output_lines:
         return ""
-    return ci.extract_failure_context("\n".join(output_lines), ci.FailureKind.TEST)
+    return pr.ci_failures.extract_failure_context("\n".join(output_lines), pr.ci_failures.FailureKind.TEST)
 
 
 def _artifact_name(job_name: str) -> str:
@@ -225,7 +225,7 @@ def _artifact_name(job_name: str) -> str:
 
 def fetch_test_artifact(repo: str, run_id: int, job_name: str) -> str:
     """Download this job's test-results artifact and read the failure out of it."""
-    with run_reads.download_artifact(repo, run_id, _artifact_name(job_name)) as artifact_dir:
+    with gh.run_reads.download_artifact(repo, run_id, _artifact_name(job_name)) as artifact_dir:
         return parse_test_artifact(artifact_dir) if artifact_dir else ""
 
 
@@ -234,7 +234,7 @@ def fetch_test_artifact(repo: str, run_id: int, job_name: str) -> str:
 def extract_failed_step(job: dict) -> str | None:
     """Return the name of the first failed step in a job, if available."""
     for step in job.get("steps", []):
-        if step.get("conclusion") in run_reads.FAILURE_CONCLUSIONS:
+        if step.get("conclusion") in gh.run_reads.FAILURE_CONCLUSIONS:
             return step.get("name")
     return None
 
@@ -243,8 +243,8 @@ def extract_failed_step(job: dict) -> str | None:
 class JobFailure:
     """Everything one failed job contributes to a run's `FailureGroup`."""
     job_name: str
-    kind: ci.FailureKind
-    items: list[ci.FailureItem]
+    kind: pr.ci_failures.FailureKind
+    items: list[pr.ci_failures.FailureItem]
     failed_step: str | None
 
 
@@ -274,7 +274,7 @@ def _external_failure(repo: str, job: dict) -> JobFailure | None:
     """
     job_name = job.get("name", "unknown")
     job_id = job.get("databaseId", 0)
-    annotations = run_reads.fetch_annotations(repo, job_id) if job_id else []
+    annotations = gh.run_reads.fetch_annotations(repo, job_id) if job_id else []
     # Annotations that are all notice-level filter down to nothing in
     # annotations_to_items, which is indistinguishable from never having
     # fetched any — fall back on the filtered result, not the raw one.
@@ -283,7 +283,7 @@ def _external_failure(repo: str, job: dict) -> JobFailure | None:
         if summary:
             annotations = [{"message": summary, "path": "", "start_line": 0,
                             "title": job_name}]
-    return _make_result(job_name, ci.FailureKind.EXTERNAL, annotations, None, None)
+    return _make_result(job_name, pr.ci_failures.FailureKind.EXTERNAL, annotations, None, None)
 
 
 def fetch_job_failure(repo: str, job: dict, run_data: dict) -> JobFailure | None:
@@ -296,11 +296,11 @@ def fetch_job_failure(repo: str, job: dict, run_data: dict) -> JobFailure | None
     source_run_id = job.get("_source_run_id") or run_data.get("databaseId")
     failed_step = extract_failed_step(job)
 
-    annotations = run_reads.fetch_annotations(repo, job_id) if job_id else []
+    annotations = gh.run_reads.fetch_annotations(repo, job_id) if job_id else []
     annotation_texts = [a.get("message", "") for a in annotations]
-    kind = ci.classify_job(job_name, annotation_texts)
+    kind = pr.ci_failures.classify_job(job_name, annotation_texts)
 
-    if kind not in (ci.FailureKind.BUILD, ci.FailureKind.TEST):
+    if kind not in (pr.ci_failures.FailureKind.BUILD, pr.ci_failures.FailureKind.TEST):
         return _make_result(job_name, kind, annotations, source_run_id, failed_step)
 
     if annotations and not annotations_uninformative(annotations):
@@ -321,5 +321,5 @@ def fetch_job_failure(repo: str, job: dict, run_data: dict) -> JobFailure | None
         return _make_result(job_name, fallback.kind if fallback.ok else kind, annotations, source_run_id, failed_step, context=ctx)
     if ctx:
         annotations = [{"message": ctx, "path": "", "start_line": 0, "title": ""}]
-        kind = ci.classify_job(job_name, [ctx])
+        kind = pr.ci_failures.classify_job(job_name, [ctx])
     return _make_result(job_name, kind, annotations, source_run_id, failed_step)

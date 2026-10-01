@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-from conftest import load_script, run_checked
+from conftest import exec_fresh, load_script, run_checked
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
@@ -15,24 +15,24 @@ if str(LIB_DIR) not in sys.path:
 
 statusline = load_script("workbench_statusline", BIN_DIR / "workbench-statusline")
 
-from pr import domains as pr_domains  # noqa: E402
-from pr import state as pr_state  # noqa: E402
-from pr import target as pr_target  # noqa: E402
+import pr.domains  # noqa: E402
+import pr.state  # noqa: E402
+import pr.target  # noqa: E402
 
 
 def _at(root: Path):
     """Make _pr_piece resolve its target dir to `root`, without touching git."""
     return patch.object(
-        statusline.pr_target, "target_dir_for_checkout", return_value=root,
+        pr.target, "target_dir_for_checkout", return_value=root,
     )
 
 
 def _save(root: Path, *domains, pr_number: int | None = 42):
-    state = pr_state.new_state("owner/repo", "feat", pr_number=pr_number,
+    state = pr.state.new_state("owner/repo", "feat", pr_number=pr_number,
                                head_sha="abc", worktree_root=str(root))
     for domain in domains:
-        pr_state.apply(state, domain)
-    pr_state.save_state(root, state)
+        pr.state.apply(state, domain)
+    pr.state.save_state(root, state)
 
 
 def test_statusline_reads_the_target_dir_for_the_checkout(tmp_path, monkeypatch):
@@ -46,8 +46,8 @@ def test_statusline_reads_the_target_dir_for_the_checkout(tmp_path, monkeypatch)
 
     # Derived, not a literal: the repo key is <readable>-<digest> and a
     # hardcoded one here would pin this test to a key shape it does not own.
-    target = pr_target.target_dir(pr_target.repo_key_from_origin(str(wt)), "feat/a")
-    pr_state.save_state(target, pr_state.new_state(
+    target = pr.target.target_dir(pr.target.repo_key_from_origin(str(wt)), "feat/a")
+    pr.state.save_state(target, pr.state.new_state(
         repo="acme/widget", branch="feat/a", pr_number=7,
         head_sha="sha", worktree_root=str(wt)))
 
@@ -67,11 +67,11 @@ def test_statusline_is_silent_without_an_origin(tmp_path, monkeypatch):
     _save(wt)
 
     assert statusline._pr_piece() == ""
-    assert pr_target.target_dir_for_checkout(wt) is None
+    assert pr.target.target_dir_for_checkout(wt) is None
 
 
 def test_pr_piece_renders_ci_failures(tmp_path):
-    _save(tmp_path, pr_domains.CIDomain(conclusion="failure", failure_count=3))
+    _save(tmp_path, pr.domains.CIDomain(conclusion="failure", failure_count=3))
 
     with _at(tmp_path):
         assert statusline._pr_piece() == "PR#42 CI:3F"
@@ -85,7 +85,7 @@ def test_pr_piece_is_blank_without_a_state_file(tmp_path):
 def test_pr_piece_is_blank_for_a_corrupt_state_file(tmp_path, capsys):
     """The status line renders or it does not. It never tracebacks, and it
     never leaks load_state's warning into the terminal."""
-    path = tmp_path / pr_state.STATE_FILE
+    path = tmp_path / pr.state.STATE_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{ not json")
 
@@ -99,7 +99,7 @@ def test_pr_piece_survives_null_behind_a_scalar_field(tmp_path):
     behind an int or dict field used to load successfully and then crash in
     `_pr_details` — `failure_count > 0` on a `None`, `by_state.get()` on a
     `None`. serde now degrades a `null` there to the field's default."""
-    path = tmp_path / pr_state.STATE_FILE
+    path = tmp_path / pr.state.STATE_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
         "identity": {
@@ -123,7 +123,7 @@ def test_pr_piece_survives_a_wrong_typed_scalar_field(tmp_path):
     """Regression: `"failure_count": "many"` parsed cleanly and then raised
     TypeError on `failure_count > 0`, which killed the whole line rather than
     the segment. serde now degrades an unrecoverable value to the default."""
-    path = tmp_path / pr_state.STATE_FILE
+    path = tmp_path / pr.state.STATE_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
         "identity": {
@@ -153,9 +153,26 @@ def test_main_keeps_the_reuse_segment_when_the_pr_segment_raises(capsys):
 def test_pr_details_reads_typed_fields(tmp_path):
     """Regression: the status line hand-parsed the JSON, so a rename on
     PRState blanked the segment with nothing to catch it."""
-    state = pr_state.new_state("owner/repo", "feat", pr_number=42,
+    state = pr.state.new_state("owner/repo", "feat", pr_number=42,
                                head_sha="abc", worktree_root=str(tmp_path))
-    pr_state.apply(state, pr_domains.ReviewSummary(verdict="approve"))
-    pr_state.apply(state, pr_domains.CommentsSummary(by_state={"open": 2}))
+    pr.state.apply(state, pr.domains.ReviewSummary(verdict="approve"))
+    pr.state.apply(state, pr.domains.CommentsSummary(by_state={"open": 2}))
 
     assert statusline._pr_details(state) == "review:approve 2open"
+
+
+def test_a_broken_ai_lib_blanks_the_pr_segment_instead_of_crashing(monkeypatch):
+    """Regression: the script used to carry an unconditional `import pr.target`
+    ahead of the guarded try/except that imports the same module to catch
+    exactly this failure. The unconditional pair ran first, so a broken ai/lib
+    raised at module import time instead of being caught, and `pr` never got
+    the chance to degrade to None. Setting `sys.modules["pr.target"] = None`
+    makes the next `import pr.target` raise ImportError, standing in for a
+    broken ai/lib without touching the real module on disk."""
+    monkeypatch.setitem(sys.modules, "pr.target", None)
+
+    broken = exec_fresh("workbench_statusline_broken_import",
+                         BIN_DIR / "workbench-statusline")
+
+    assert broken.pr is None
+    assert broken._pr_piece() == ""

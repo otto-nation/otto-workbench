@@ -19,13 +19,13 @@ import subprocess
 import sys
 from dataclasses import dataclass
 
-from gh import client as gh_client
-from git import client as git_client
-from git import topology as git_topology
-from core import log
-from core import timeouts
-from pr import sync as pr_sync
-from core import proc
+import gh.client
+import git.client
+import git.topology
+import core.log
+import core.timeouts
+import pr.sync
+import core.proc
 
 
 WORKTREE_FALLBACK_DIR = ".worktrees"
@@ -40,30 +40,30 @@ class WorktreeResult:
 
 def setup_pr_worktree(repo: str, pr_number: int | str, repo_dir: str, pr_head: str = "") -> WorktreeResult:
     if _is_shallow(repo_dir):
-        log.info("Unshallowing repository...")
-        git_client.run("fetch", "--unshallow", cwd=repo_dir)
+        core.log.info("Unshallowing repository...")
+        git.client.run("fetch", "--unshallow", cwd=repo_dir)
 
-    log.info(f"Setting up worktree for PR #{pr_number}...")
+    core.log.info(f"Setting up worktree for PR #{pr_number}...")
 
-    wt_path = git_topology.wt_switch(f"pr:{pr_number}", repo_dir)
+    wt_path = git.topology.wt_switch(f"pr:{pr_number}", repo_dir)
     if wt_path:
         if pr_head:
-            pr_sync.fetch_and_reset(wt_path, pr_head)
+            pr.sync.fetch_and_reset(wt_path, pr_head)
         return WorktreeResult(path=wt_path, cleanup_ref=f"pr:{pr_number}", is_fallback=False)
 
-    log.info("Branch deleted, fetching via PR ref...")
-    r = git_client.run("fetch", "origin", f"pull/{pr_number}/head", cwd=repo_dir)
+    core.log.info("Branch deleted, fetching via PR ref...")
+    r = git.client.run("fetch", "origin", f"pull/{pr_number}/head", cwd=repo_dir)
     if not r.ok:
-        raise RuntimeError(proc.failure_message(f"Failed to fetch PR #{pr_number} ref", r))
+        raise RuntimeError(core.proc.failure_message(f"Failed to fetch PR #{pr_number} ref", r))
 
     fallback_path = f"{repo_dir}/{WORKTREE_FALLBACK_DIR}/pr-{pr_number}-review"
 
-    git_client.run("worktree", "remove", "--force", fallback_path, cwd=repo_dir)
+    git.client.run("worktree", "remove", "--force", fallback_path, cwd=repo_dir)
 
-    r = git_client.run(
+    r = git.client.run(
         "worktree", "add", "--detach", fallback_path, "FETCH_HEAD", cwd=repo_dir)
     if not r.ok:
-        raise RuntimeError(proc.failure_message(
+        raise RuntimeError(core.proc.failure_message(
             f"Failed to create worktree for PR #{pr_number}", r))
 
     return WorktreeResult(path=fallback_path, cleanup_ref=fallback_path, is_fallback=True)
@@ -76,40 +76,40 @@ def detached_worktree_at(sha: str, repo_dir: str, label: str) -> WorktreeResult 
     started from. Detaching leaves every branch ref untouched, so this is safe to
     run against a repo whose worktrees hold the user's live development state.
     """
-    if not git_client.commit_exists(sha, cwd=repo_dir):
+    if not git.client.commit_exists(sha, cwd=repo_dir):
         # A force-push can leave the recorded commit unreferenced locally while
         # the remote still serves it by SHA, so try one fetch before giving up.
-        git_client.run("fetch", "origin", sha, cwd=repo_dir)
-        if not git_client.commit_exists(sha, cwd=repo_dir):
+        git.client.run("fetch", "origin", sha, cwd=repo_dir)
+        if not git.client.commit_exists(sha, cwd=repo_dir):
             return None
 
     path = f"{repo_dir}/{WORKTREE_FALLBACK_DIR}/{label.replace('/', '-')}"
 
-    git_client.run("worktree", "remove", "--force", path, cwd=repo_dir)
+    git.client.run("worktree", "remove", "--force", path, cwd=repo_dir)
 
-    if not git_client.run("worktree", "add", "--detach", path, sha, cwd=repo_dir).ok:
+    if not git.client.run("worktree", "add", "--detach", path, sha, cwd=repo_dir).ok:
         return None
 
     return WorktreeResult(path=path, cleanup_ref=path, is_fallback=True)
 
 
 def switch_to_branch(branch: str, repo_dir: str) -> WorktreeResult | None:
-    log.info(f"Switching to branch {branch}...")
+    core.log.info(f"Switching to branch {branch}...")
 
-    wt_path = git_topology.wt_switch(branch, repo_dir)
+    wt_path = git.topology.wt_switch(branch, repo_dir)
     if wt_path:
         return WorktreeResult(path=wt_path, cleanup_ref=branch, is_fallback=False)
 
     sanitized = branch.replace("/", "-")
     fallback_dir = f"{repo_dir}/self-review-{sanitized}"
 
-    git_client.run(
+    git.client.run(
         "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
         cwd=repo_dir)
 
-    git_client.run("worktree", "remove", fallback_dir, "--force", cwd=repo_dir)
+    git.client.run("worktree", "remove", fallback_dir, "--force", cwd=repo_dir)
 
-    added = git_client.run(
+    added = git.client.run(
         "worktree", "add", "--detach", fallback_dir, f"origin/{branch}", cwd=repo_dir)
     if not added.ok:
         return None
@@ -118,11 +118,11 @@ def switch_to_branch(branch: str, repo_dir: str) -> WorktreeResult | None:
 
 
 def switch_to_pr_branch(pr_number: int | str, repo: str, repo_dir: str) -> WorktreeResult | None:
-    pr_head = gh_client.pr_view(pr_number, "headRefName", repo=repo).get("headRefName", "")
+    pr_head = gh.client.pr_view(pr_number, "headRefName", repo=repo).get("headRefName", "")
     if not pr_head:
         return None
 
-    if git_client.current_branch(cwd=repo_dir) == pr_head:
+    if git.client.current_branch(cwd=repo_dir) == pr_head:
         return None
 
     return switch_to_branch(pr_head, repo_dir)
@@ -138,7 +138,7 @@ def cleanup_worktree(result: WorktreeResult | None, repo_dir: str) -> None:
         return
 
     try:
-        git_client.run("worktree", "remove", "--force", result.path, cwd=repo_dir)
+        git.client.run("worktree", "remove", "--force", result.path, cwd=repo_dir)
     except OSError:
         # Cleanup runs on the way out of a failing review, and a second failure
         # here would replace the error the caller is already reporting. A
@@ -148,7 +148,7 @@ def cleanup_worktree(result: WorktreeResult | None, repo_dir: str) -> None:
 
 
 def _is_shallow(repo_dir: str) -> bool:
-    return git_client.out("rev-parse", "--is-shallow-repository", cwd=repo_dir) == "true"
+    return git.client.out("rev-parse", "--is-shallow-repository", cwd=repo_dir) == "true"
 
 
 def cleanup_self_review_worktree(wt_cleanup: WorktreeResult | None, repo_dir: str) -> None:
@@ -156,7 +156,7 @@ def cleanup_self_review_worktree(wt_cleanup: WorktreeResult | None, repo_dir: st
     # operator needs to see, so raising here would replace it with something
     # about git. Leaving the worktree behind is the lesser loss.
     try:
-        original_repo_dir = repo_dir or git_client.out("rev-parse", "--show-toplevel")
+        original_repo_dir = repo_dir or git.client.out("rev-parse", "--show-toplevel")
     except OSError:
         return
     if original_repo_dir:
@@ -166,27 +166,27 @@ def cleanup_self_review_worktree(wt_cleanup: WorktreeResult | None, repo_dir: st
 def resolve_wt_path(repo_dir: str, branch: str) -> str:
     cwd = repo_dir or None
     try:
-        toplevel = git_client.out("rev-parse", "--show-toplevel", cwd=cwd)
+        toplevel = git.client.out("rev-parse", "--show-toplevel", cwd=cwd)
     except OSError:
         toplevel = ""
     if toplevel:
         return toplevel
 
-    if not repo_dir and git_topology.is_bare_repo(cwd):
+    if not repo_dir and git.topology.is_bare_repo(cwd):
         # branch or None: an empty string is "no branch requested", which
         # topology spells as None — passed through it would be a request for a
         # branch named "".
-        wt = git_topology.resolve_bare_repo_worktree(None, branch or None)
+        wt = git.topology.resolve_bare_repo_worktree(None, branch or None)
         if wt:
             return str(wt)
-        display_branch = branch or git_topology.default_branch()
-        log.error(f"Bare repository — no worktree found for {display_branch}. Pass --repo-dir to specify a worktree")
+        display_branch = branch or git.topology.default_branch()
+        core.log.error(f"Bare repository — no worktree found for {display_branch}. Pass --repo-dir to specify a worktree")
         sys.exit(1)
 
     if repo_dir:
-        log.error(f"Not a git repository: {repo_dir}")
+        core.log.error(f"Not a git repository: {repo_dir}")
     else:
-        log.error("Not in a git repository — pass --repo-dir to specify the repo")
+        core.log.error("Not in a git repository — pass --repo-dir to specify the repo")
     sys.exit(1)
 
 
@@ -195,7 +195,7 @@ def resolve_branch_input(pr_input: str, repo_dir: str) -> str:
     try:
         r = subprocess.run(
             ["resolve-branch", pr_input],
-            capture_output=True, text=True, cwd=resolve_dir, timeout=timeouts.LOCAL,
+            capture_output=True, text=True, cwd=resolve_dir, timeout=core.timeouts.LOCAL,
         )
         if r.returncode == 0 and r.stdout.strip():
             return r.stdout.strip()
@@ -224,7 +224,7 @@ def find_repo_root(repo: str, explicit_dir: str = "") -> str:
 
     The match is case-insensitive: ``repo`` can be the canonical, case-folded
     label ``pr.context.detect_repo`` returns for an ordinary origin remote
-    (see ``pr_target.RepoIdentity``), while a checkout's directory name keeps
+    (see ``pr.target.RepoIdentity``), while a checkout's directory name keeps
     whatever case it was cloned with. GitHub itself treats the two as the same
     repo, so this does too.
     """
@@ -242,7 +242,7 @@ def find_repo_root(repo: str, explicit_dir: str = "") -> str:
     # same call) because a permissions error on the git binary should fall
     # through here too, not surface as an unhandled exception.
     try:
-        git_toplevel = git_client.out("rev-parse", "--show-toplevel")
+        git_toplevel = git.client.out("rev-parse", "--show-toplevel")
     except OSError:
         git_toplevel = ""
 
@@ -264,7 +264,7 @@ def find_repo_root(repo: str, explicit_dir: str = "") -> str:
     try:
         r2 = subprocess.run(
             ["find", home_git, "-maxdepth", "2", "-iname", repo_name, "-type", "d"],
-            capture_output=True, text=True, timeout=timeouts.LOCAL,
+            capture_output=True, text=True, timeout=core.timeouts.LOCAL,
         )
         found = r2.stdout.strip().splitlines()
     except (subprocess.TimeoutExpired, OSError):

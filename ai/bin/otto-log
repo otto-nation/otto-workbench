@@ -39,9 +39,9 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
     _AI_LIB_DIR = pinned_ai_lib_dir()
 sys.path.insert(0, str(_AI_LIB_DIR))
 
-from agent import usage as ai_usage
-from core import log
-from core import workbench_paths
+import agent.usage
+import core.log
+import core.workbench_paths
 from core.trail import (
     EVENT_TYPE_WIDTH,
     FINISH_ACTION,
@@ -151,7 +151,7 @@ def _format_event_line(e: dict, script_width: int = 0) -> str:
     if artifact:
         # Absolute, because the reader's next move is to open it, and the record
         # stores it relative so a state root that moves still resolves.
-        full = workbench_paths.trail_dir() / artifact
+        full = core.workbench_paths.trail_dir() / artifact
         parts.append(f"\n{'':>{hang}}log: {full}")
     return "".join(parts)
 
@@ -484,7 +484,7 @@ def aggregate_usage(records: list[dict], by: str) -> list[UsageRow]:
 def _fmt_tokens(n: int | None) -> str:
     if n is None:
         return _NO_GROUP
-    return ai_usage.format_tokens(n)
+    return agent.usage.format_tokens(n)
 
 
 def _fmt_duration(ms: int | None) -> str:
@@ -721,7 +721,7 @@ def _record_data(pairs: list[str]) -> dict:
     for pair in pairs:
         key, sep, value = pair.partition("=")
         if not sep or not key:
-            log.error(f"--data expects key=value, got: {pair!r}")
+            core.log.error(f"--data expects key=value, got: {pair!r}")
             sys.exit(2)
         data[key] = _coerce(value)
     return data
@@ -781,13 +781,13 @@ def cmd_prune(args):
     if not removed:
         print(f"Trail: nothing older than the last {args.keep} month(s).")
         return
-    root = workbench_paths.trail_dir()
+    root = core.workbench_paths.trail_dir()
     for path in removed:
         print(f"Trail: dropped {path.relative_to(root)}")
 
 
 def cmd_stats(args):
-    records = ai_usage.read_ledger(since=_parse_since(args.since))
+    records = agent.usage.read_ledger(since=_parse_since(args.since))
     rows = aggregate_usage(records, args.by)
     if not rows:
         print(f"No AI usage recorded in the last {args.since}.")

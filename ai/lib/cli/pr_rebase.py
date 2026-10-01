@@ -36,73 +36,73 @@ import sys
 import traceback
 from pathlib import Path
 
-from core import log
-from core import publishing
-from core import run_lock
-from core import trail as core_trail
+import core.log
+import core.publishing
+import core.run_lock
+import core.trail
 from core.tool_parser import ToolParser
 from core.trail import Trail, add_trail_args
-from git import client as git_client
-from pr import context as pr_context
-from pr import state as pr_state
+import git.client
+import pr.context
+import pr.state
 from pr.domains import RebaseStatus, RebaseSummary
-from rebase import inspect as rebase_inspect
-from rebase import land as rebase_land
-from rebase import lease as rebase_lease
-from rebase import lifecycle
-from rebase import pr_snapshot as rebase_pr_snapshot
-from rebase import stash
-from rebase import target as rebase_target
-from rebase import types as rebase_types
+import rebase.inspect
+import rebase.land
+import rebase.lease
+import rebase.lifecycle
+import rebase.pr_snapshot
+import rebase.stash
+import rebase.target
+import rebase.types
 
 SCRIPT = "pr-rebase"
 
-RebaseOutcome = rebase_types.RebaseOutcome
-RunMode = rebase_types.RunMode
+RebaseOutcome = rebase.types.RebaseOutcome
+RunMode = rebase.types.RunMode
 
-REFUSAL_EXIT = rebase_types.REFUSAL_EXIT
-CONFLICTS_EXIT = rebase_types.CONFLICTS_EXIT
-REFUSAL_OVERRIDE_FLAG = rebase_types.REFUSAL_OVERRIDE_FLAG
+REFUSAL_EXIT = rebase.types.REFUSAL_EXIT
+CONFLICTS_EXIT = rebase.types.CONFLICTS_EXIT
+REFUSAL_OVERRIDE_FLAG = rebase.types.REFUSAL_OVERRIDE_FLAG
 
 
 # ── Subcommands ─────────────────────────────────────────────────────────────
 
 
 def cmd_abort(
-    cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str,
+    cwd: str, ctx: pr.context.ResolvedContext, *, target_ref: str,
 ) -> int:
     """Abort an in-progress rebase and reset state."""
-    log.info("Aborting rebase...")
-    r = git_client.run("rebase", "--abort", cwd=cwd)
+    core.log.info("Aborting rebase...")
+    r = git.client.run("rebase", "--abort", cwd=cwd)
     if r.ok:
         RebaseOutcome(status=RebaseStatus.ABORTED, target_base=target_ref).save(ctx)
-        log.ok("Rebase aborted.")
+        core.log.ok("Rebase aborted.")
     return r.returncode
 
 
 def cmd_push(
-    cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str,
-    snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
+    cwd: str, ctx: pr.context.ResolvedContext, *, target_ref: str,
+    snapshot: rebase.pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
 ) -> int:
     """Force-push after a completed rebase."""
-    if rebase_inspect.rebase_in_progress(cwd):
-        core_trail.terr(trail, "push", "rebase still in progress")
-        log.error("Cannot push — rebase still in progress.")
+    if rebase.inspect.rebase_in_progress(cwd):
+        core.trail.terr(trail, "push", "rebase still in progress")
+        core.log.error("Cannot push — rebase still in progress.")
         return 1
 
-    state = rebase_types.load_or_init(ctx)
+    state = rebase.types.load_or_init(ctx)
     if not state.rebase.updated_at:
-        core_trail.terr(trail, "push", "no recorded rebase to push")
-        log.error("Cannot push — no rebase recorded for this branch.")
-        log.dim("Run `pr rebase` first, or push by hand.")
+        core.trail.terr(trail, "push", "no recorded rebase to push")
+        core.log.error("Cannot push — no rebase recorded for this branch.")
+        core.log.dim("Run `pr rebase` first, or push by hand.")
         return 1
 
     # The lease the rebase recorded, not one rebuilt here. By now HEAD is the
     # rewritten tip and origin/<branch> is whatever the rebase's own fetch
     # brought down, so neither reading can say what the remote was at before
     # the replay — which is the only thing a lease may name.
-    lease = rebase_lease.PushLease(
+    lease = rebase.lease.PushLease(
         branch=ctx.branch, expect=state.rebase.lease_expect,
     )
     # An empty expect is a real value ("the remote must not have this ref
@@ -111,24 +111,24 @@ def cmd_push(
     # check the claim against the checkout's own view of the remote rather
     # than trusting it blindly — a branch this old cannot legitimately still
     # be unpushed.
-    if lease.creates_the_ref and rebase_inspect.ref_exists(
+    if lease.creates_the_ref and rebase.inspect.ref_exists(
         cwd, f"refs/remotes/origin/{ctx.branch}",
     ):
-        core_trail.terr(
+        core.trail.terr(
             trail, "push", "recorded lease is stale — origin already has this branch",
             data={"branch": ctx.branch},
         )
-        log.error("Cannot push — the recorded rebase has no lease, but origin "
+        core.log.error("Cannot push — the recorded rebase has no lease, but origin "
                   "already has this branch.")
-        log.dim("Run `pr rebase` again (without --no-push) to record a fresh "
+        core.log.dim("Run `pr rebase` again (without --no-push) to record a fresh "
                 "lease, or push by hand after checking what origin holds.")
         return 1
 
-    rebase_pr_snapshot.name_the_open_pr(snapshot, trail=trail)
-    log.info("Force-pushing...")
-    landed = rebase_land.land_rebased(cwd, args=lease.args, trail=trail)
+    rebase.pr_snapshot.name_the_open_pr(snapshot, trail=trail)
+    core.log.info("Force-pushing...")
+    landed = rebase.land.land_rebased(cwd, args=lease.args, trail=trail)
     if not landed.ok:
-        core_trail.terr(
+        core.trail.terr(
             trail, "push", "force-push failed",
             data={"status": str(landed.status), "resume": landed.resume},
         )
@@ -136,7 +136,7 @@ def cmd_push(
 
     RebaseOutcome(
         commits_replayed=(state.rebase.commits_replayed
-                          or git_client.commits_ahead(cwd, target_ref=target_ref)),
+                          or git.client.commits_ahead(cwd, target_ref=target_ref)),
         conflicts_resolved=state.rebase.conflicts_resolved,
         files_resolved=state.rebase.files_resolved,
         files_stale=state.rebase.files_stale,
@@ -144,14 +144,14 @@ def cmd_push(
         lease_expect=state.rebase.lease_expect,
         target_base=target_ref,
     ).save(ctx)
-    log.ok("Force-pushed successfully.")
+    core.log.ok("Force-pushed successfully.")
     return 0
 
 
 def cmd_start(
-    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
+    cwd: str, ctx: pr.context.ResolvedContext, mode: RunMode,
     force: bool = False, *, target_ref: str, fork_point: str = "",
-    snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
+    snapshot: rebase.pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
 ) -> int:
     """Start or resume a rebase onto the resolved target ref.
@@ -167,18 +167,18 @@ def cmd_start(
     commits git replays, and a resumed rebase's todo list was written by the
     run that started it.
     """
-    if rebase_inspect.rebase_in_progress(cwd):
-        target_ref = rebase_target.resume_target_ref(ctx, target_ref, trail=trail)
-        core_trail.tdecision(
+    if rebase.inspect.rebase_in_progress(cwd):
+        target_ref = rebase.target.resume_target_ref(ctx, target_ref, trail=trail)
+        core.trail.tdecision(
             trail, "rebase_state", "detected in-progress rebase",
             reason="rebase-merge or rebase-apply directory exists",
         )
         if fork_point:
-            log.warn(f"Ignoring --fork-point {fork_point} — the in-progress "
+            core.log.warn(f"Ignoring --fork-point {fork_point} — the in-progress "
                      "rebase already has its list of commits to replay.")
-        log.info("Detected in-progress rebase — resuming...")
+        core.log.info("Detected in-progress rebase — resuming...")
         try:
-            return lifecycle.drive_to_completion(
+            return rebase.lifecycle.drive_to_completion(
                 cwd, ctx, mode, target_ref=target_ref, force=True,
                 snapshot=snapshot, trail=trail,
             )
@@ -188,18 +188,18 @@ def cmd_start(
             # a conflicted index. This run is the one that finishes the rebase,
             # so it is the one that owes the restore — `restore` is a no-op
             # when there is no auto-stash or the rebase is still unfinished.
-            stash.restore(cwd, mode, trail=trail)
+            rebase.stash.restore(cwd, mode, trail=trail)
 
-    stashed = stash.auto_stash(cwd, trail=trail)
+    stashed = rebase.stash.auto_stash(cwd, trail=trail)
     if stashed is None:
         return 1
 
-    core_trail.tdecision(
+    core.trail.tdecision(
         trail, "rebase_state", "starting fresh rebase",
         reason="no in-progress rebase detected",
     )
     try:
-        return lifecycle.fresh(
+        return rebase.lifecycle.fresh(
             cwd, ctx, mode, force=force, target_ref=target_ref,
             fork_point=fork_point, snapshot=snapshot, trail=trail,
         )
@@ -209,7 +209,7 @@ def cmd_start(
         # skill itself warns about — left the user's uncommitted work sitting
         # on the stack with nothing on the console saying it was there.
         if stashed:
-            stash.restore(cwd, mode, trail=trail)
+            rebase.stash.restore(cwd, mode, trail=trail)
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
@@ -280,7 +280,7 @@ def _parse_args(argv: list[str] | None):
     return build_parser().parse_args(argv)
 
 
-def _run(args, ctx: pr_context.ResolvedContext, cwd: str, trail: Trail) -> int:
+def _run(args, ctx: pr.context.ResolvedContext, cwd: str, trail: Trail) -> int:
     if args.abort:
         trail.decision("mode", "selected abort", reason="--abort flag set")
         # Abort is the escape hatch for a broken or hung rebase — it should
@@ -288,8 +288,8 @@ def _run(args, ctx: pr_context.ResolvedContext, cwd: str, trail: Trail) -> int:
         # in the aborted outcome, so prefer what the run that started the
         # rebase already resolved and fall back to a fresh resolution only
         # when no prior state exists to read.
-        target_ref = rebase_types.recorded_target_base(ctx) or (
-            rebase_target.resolve_target_ref(cwd, ctx, args.onto, trail=trail)
+        target_ref = rebase.types.recorded_target_base(ctx) or (
+            rebase.target.resolve_target_ref(cwd, ctx, args.onto, trail=trail)
         )
         return cmd_abort(cwd, ctx, target_ref=target_ref)
 
@@ -302,8 +302,8 @@ def _run(args, ctx: pr_context.ResolvedContext, cwd: str, trail: Trail) -> int:
     # questions are about the branch rather than the base, and a run that names
     # its own target is no less able to land on a merged PR or to rewrite one
     # somebody is reviewing.
-    snapshot = rebase_pr_snapshot.fetch(cwd, ctx)
-    target_ref = rebase_target.resolve_target_ref(
+    snapshot = rebase.pr_snapshot.fetch(cwd, ctx)
+    target_ref = rebase.target.resolve_target_ref(
         cwd, ctx, args.onto, snapshot=snapshot, trail=trail,
     )
 
@@ -317,7 +317,7 @@ def _run(args, ctx: pr_context.ResolvedContext, cwd: str, trail: Trail) -> int:
     # Push is the default, so a bare `pr rebase` opens the gate. `run` scopes
     # that to this invocation: an in-process describe that was not given
     # `--post` must not inherit it.
-    with publishing.run(post=mode.reaches_remote):
+    with core.publishing.run(post=mode.reaches_remote):
         if args.force:
             trail.decision("preflight", "waiving the already-landed check",
                            reason=f"{REFUSAL_OVERRIDE_FLAG} flag set")
@@ -333,8 +333,8 @@ def _run(args, ctx: pr_context.ResolvedContext, cwd: str, trail: Trail) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
 
-    ctx = pr_context.resolve(
-        repo_dir=args.repo_dir, branch=args.branch, pr=args.pr,
+    ctx = pr.context.resolve(
+        repo_dir=args.repo_dir, branch=args.branch, pr_ref=args.pr,
     )
     cwd = str(ctx.require_worktree())
 
@@ -344,10 +344,10 @@ def main(argv: list[str] | None = None) -> int:
     # force-pushes the result, which is the last thing that should interleave
     # with another run against the same target.
     # Acquired before Trail.start so contention costs no trail artifacts.
-    run_lock.claim_for_process(
+    core.run_lock.claim_for_process(
         ctx.target_dir,
         command=" ".join([SCRIPT] + (argv if argv is not None else sys.argv[1:])),
-        started=pr_state.now_iso(),
+        started=pr.state.now_iso(),
         # The replay rewrites this checkout's history in place — the strongest
         # reason in the codebase for a tree to have one writer at a time.
         # `cwd` above is require_worktree()'s answer, so it is never None here.

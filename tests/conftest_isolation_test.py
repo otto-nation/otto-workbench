@@ -21,8 +21,8 @@ import pytest
 LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
 
-from core import proc
-from core import workbench_paths
+import core.proc
+import core.workbench_paths
 
 import conftest
 from conftest import (
@@ -38,7 +38,7 @@ def test_state_root_is_sandboxed_per_test(tmp_path):
 
 def test_state_dir_resolves_through_the_sandbox(tmp_path):
     """The env var is the whole mechanism — it reaches subprocesses too."""
-    assert workbench_paths.state_dir() == tmp_path / "state"
+    assert core.workbench_paths.state_dir() == tmp_path / "state"
 
 
 def test_cache_root_is_sandboxed_per_test(tmp_path):
@@ -56,8 +56,8 @@ def test_cache_root_is_sandboxed_per_test(tmp_path):
 
 def test_cache_dir_resolves_through_the_sandbox(tmp_path):
     """Resolved per call, so one setenv covers every consumer of the root."""
-    assert workbench_paths.cache_dir() == tmp_path / "cache"
-    assert workbench_paths.cache_dir("vertex-quota") == tmp_path / "cache" / "vertex-quota"
+    assert core.workbench_paths.cache_dir() == tmp_path / "cache"
+    assert core.workbench_paths.cache_dir("vertex-quota") == tmp_path / "cache" / "vertex-quota"
 
 
 def test_the_cache_sandbox_reaches_a_subprocess(tmp_path):
@@ -199,7 +199,7 @@ def _reported(*, failed: bool):
 
 def _starve():
     """A production `proc.run` the machine ends, as the code under test would."""
-    proc.run(["sleep", "5"], timeout=0.1)
+    core.proc.run(["sleep", "5"], timeout=0.1)
 
 
 def test_a_starved_production_command_is_named_on_the_failure():
@@ -273,11 +273,11 @@ def test_the_measured_path_takes_no_round_trip_when_it_is_patched():
     from unittest.mock import patch
 
     from core.phases import Phase
-    from review import prompt as review_prompt
+    import review.prompt
 
-    with patch.object(review_prompt, "count_tokens", return_value=123) as counter:
+    with patch.object(review.prompt, "count_tokens", return_value=123) as counter:
         with patch.dict(os.environ, {"WORKBENCH_AI_MEASURE_TOKENS": "1"}):
-            measured = review_prompt._measured_tokens(
+            measured = review.prompt._measured_tokens(
                 "prompt", Phase.SCOUT, "claude-sonnet-5",
             )
     assert measured == (123, "claude-sonnet-5")

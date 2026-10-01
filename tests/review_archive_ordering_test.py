@@ -34,20 +34,20 @@ if LIB_DIR not in sys.path:
 
 from conftest import make_ctx  # noqa: E402
 
-from review import completion as review_completion  # noqa: E402
-from review import invoke as review_invoke  # noqa: E402
-from review import issue as review_issue  # noqa: E402
-from review import preflight as review_preflight  # noqa: E402
-from review import recover as review_recover  # noqa: E402
-from review import run as review_run  # noqa: E402
-from review import worktree as review_worktree  # noqa: E402
+import review.completion  # noqa: E402
+import review.invoke  # noqa: E402
+import review.issue  # noqa: E402
+import review.preflight  # noqa: E402
+import review.recover  # noqa: E402
+import review.run  # noqa: E402
+import review.worktree  # noqa: E402
 
 
 def _flags(**overrides):
     base = dict(bin_dir=Path("/bin"), generator_version="test 1.0",
                 no_post=True, recover=True, fix=True)
     base.update(overrides)
-    return review_run.ReviewFlags(**base)
+    return review.run.ReviewFlags(**base)
 
 
 def _seeded_review_dir(tmp_path, *, pipeline_state=True):
@@ -81,7 +81,7 @@ def test_a_resumed_run_reuses_the_prior_review_rather_than_rotating_it(tmp_path)
     review_dir = _seeded_review_dir(tmp_path)
     (review_dir / "prior.md").write_text("## Must fix\n- **[M1]** from the failed run\n")
 
-    resolved = review_run.resolve_prior_review(
+    resolved = review.run.resolve_prior_review(
         review_dir / "review.md", str(review_dir / "session.jsonl"), True,
     )
 
@@ -102,15 +102,15 @@ def test_a_refused_fix_on_a_drifted_recover_leaves_the_review_in_place(
     review_dir = _seeded_review_dir(tmp_path)
     original = (review_dir / "review.md").read_text()
 
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(review_recover, "resolve_recover_sha", lambda *a, **kw: "abc1234")
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.recover, "resolve_recover_sha", lambda *a, **kw: "abc1234")
     # HEAD has moved on from the commit the failed review ran against.
-    monkeypatch.setattr(review_recover, "recover_drifted", lambda *a, **kw: True)
-    monkeypatch.setattr(review_issue, "load_issue_provider",
+    monkeypatch.setattr(review.recover, "recover_drifted", lambda *a, **kw: True)
+    monkeypatch.setattr(review.issue, "load_issue_provider",
                         lambda *a, **kw: SimpleNamespace(name="", options={}))
 
     with pytest.raises(SystemExit) as excinfo:
-        review_run.run_self_review(
+        review.run.run_self_review(
             make_ctx(target_dir=tmp_path / "t"), _flags(issue_link="issue-1"),
             review_dir, str(tmp_path), recover_head_sha="", trail=MagicMock(),
         )
@@ -133,19 +133,19 @@ def test_a_pin_that_cannot_find_its_commit_leaves_the_review_in_place(
     """
     review_dir = _seeded_review_dir(tmp_path)
 
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(review_recover, "resolve_recover_sha", lambda *a, **kw: "abc1234")
-    monkeypatch.setattr(review_recover, "recover_drifted", lambda *a, **kw: False)
-    monkeypatch.setattr(review_issue, "load_issue_provider",
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.recover, "resolve_recover_sha", lambda *a, **kw: "abc1234")
+    monkeypatch.setattr(review.recover, "recover_drifted", lambda *a, **kw: False)
+    monkeypatch.setattr(review.issue, "load_issue_provider",
                         lambda *a, **kw: SimpleNamespace(name="", options={}))
 
     def _pin_fails(*a, **kw):
         raise SystemExit(1)
 
-    monkeypatch.setattr(review_recover, "pin_recover_worktree", _pin_fails)
+    monkeypatch.setattr(review.recover, "pin_recover_worktree", _pin_fails)
 
     with pytest.raises(SystemExit):
-        review_run.run_self_review(
+        review.run.run_self_review(
             make_ctx(target_dir=tmp_path / "t"), _flags(fix=False, issue_link="issue-1"),
             review_dir, str(tmp_path), recover_head_sha="", trail=MagicMock(),
         )
@@ -173,24 +173,24 @@ def test_the_body_asks_whether_to_archive_rather_than_always_archiving(
     review_dir = _seeded_review_dir(tmp_path)
     (review_dir / "prior.md").write_text("## Must fix\n- **[M1]** from the failed run\n")
 
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(review_recover, "recover_drifted", lambda *a, **kw: False)
-    monkeypatch.setattr(review_recover, "pin_recover_worktree",
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.recover, "recover_drifted", lambda *a, **kw: False)
+    monkeypatch.setattr(review.recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), None))
-    monkeypatch.setattr(review_issue, "load_issue_provider",
+    monkeypatch.setattr(review.issue, "load_issue_provider",
                         lambda *a, **kw: SimpleNamespace(name="", options={}))
-    monkeypatch.setattr(review_worktree, "cleanup_worktree", lambda *a, **kw: None)
-    monkeypatch.setattr(review_completion, "_display", lambda *a, **kw: None)
-    monkeypatch.setattr(review_completion, "summarise", lambda *a, **kw: None)
-    monkeypatch.setattr(review_completion, "record_domain", lambda *a, **kw: None)
+    monkeypatch.setattr(review.worktree, "cleanup_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review.completion, "_display", lambda *a, **kw: None)
+    monkeypatch.setattr(review.completion, "summarise", lambda *a, **kw: None)
+    monkeypatch.setattr(review.completion, "record_domain", lambda *a, **kw: None)
 
     def _orchestrate(request):
         (review_dir / "review.md").write_text("## Must fix\n- **[M1]** a fresh finding\n")
         return 0
 
-    monkeypatch.setattr(review_invoke, "run", _orchestrate)
+    monkeypatch.setattr(review.invoke, "run", _orchestrate)
 
-    review_run.run_self_review(
+    review.run.run_self_review(
         make_ctx(target_dir=tmp_path / "t"),
         _flags(recover=False, fix=False, issue_link="issue-1"),
         review_dir, str(tmp_path), recover_head_sha="", trail=MagicMock(),
@@ -210,24 +210,24 @@ def test_a_fresh_review_rotates_the_one_it_replaces(tmp_path, monkeypatch):
     """
     review_dir = _seeded_review_dir(tmp_path, pipeline_state=False)
 
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(review_recover, "recover_drifted", lambda *a, **kw: False)
-    monkeypatch.setattr(review_recover, "pin_recover_worktree",
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.recover, "recover_drifted", lambda *a, **kw: False)
+    monkeypatch.setattr(review.recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), None))
-    monkeypatch.setattr(review_issue, "load_issue_provider",
+    monkeypatch.setattr(review.issue, "load_issue_provider",
                         lambda *a, **kw: SimpleNamespace(name="", options={}))
-    monkeypatch.setattr(review_worktree, "cleanup_worktree", lambda *a, **kw: None)
-    monkeypatch.setattr(review_completion, "_display", lambda *a, **kw: None)
-    monkeypatch.setattr(review_completion, "summarise", lambda *a, **kw: None)
-    monkeypatch.setattr(review_completion, "record_domain", lambda *a, **kw: None)
+    monkeypatch.setattr(review.worktree, "cleanup_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review.completion, "_display", lambda *a, **kw: None)
+    monkeypatch.setattr(review.completion, "summarise", lambda *a, **kw: None)
+    monkeypatch.setattr(review.completion, "record_domain", lambda *a, **kw: None)
 
     def _orchestrate(request):
         (review_dir / "review.md").write_text("## Must fix\n- **[M1]** a fresh finding\n")
         return 0
 
-    monkeypatch.setattr(review_invoke, "run", _orchestrate)
+    monkeypatch.setattr(review.invoke, "run", _orchestrate)
 
-    review_run.run_self_review(
+    review.run.run_self_review(
         make_ctx(target_dir=tmp_path / "t"),
         _flags(recover=False, fix=False, issue_link="issue-1"),
         review_dir, str(tmp_path), recover_head_sha="", trail=MagicMock(),

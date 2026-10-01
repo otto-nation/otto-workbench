@@ -14,7 +14,7 @@ free to write eight, and nothing reports that the two disagree.
 
 Three shapes are rejected:
 
-  sha[:7]                 an abbreviation length     -> git_client.abbrev(sha)
+  sha[:7]                 an abbreviation length     -> git.client.abbrev(sha)
   sys.exit(130)           an exit code               -> proc.INTERRUPT_RETURNCODE
   excerpt = out[:500]     a cap that already has an  -> trail.EXCERPT_LIMIT
                           owner
@@ -73,9 +73,9 @@ class Owner:
     The two are not derivable from each other: 76 of the 101 ai/lib modules
     were renamed, not merely relocated, when they moved into packages, so a
     module's package-relative file path can differ from the bare name a call
-    site still writes under the R41 alias rule.  `review_budget` is one —
+    site still writes under the R41 alias rule.  `review.budget` is one —
     the file is `review/budget.py`, but a call site still spells the constant
-    `review_budget.MAX_REVIEW_BODY_LEN`.  `proc` and `trail` kept their
+    `review.budget.MAX_REVIEW_BODY_LEN`.  `proc` and `trail` kept their
     basenames under `core/`, so `package` differs from their pre-move layout
     but `display` does not.
     """
@@ -87,7 +87,7 @@ class Owner:
 
 _PROC = Owner('core', 'proc', 'proc')
 _TRAIL = Owner('core', 'trail', 'trail')
-_REVIEW_BUDGET = Owner('review', 'budget', 'review_budget')
+_REVIEW_BUDGET = Owner('review', 'budget', 'review.budget')
 
 # The constants this check holds the monopoly for, as (owner, name) under
 # ai/lib.  Their values are read from the modules themselves rather than
@@ -104,7 +104,7 @@ CAP_OWNERS = (
     (_REVIEW_BUDGET, 'MAX_REVIEW_BODY_LEN'),
 )
 
-ABBREV = 'git_client.abbrev(...)'
+ABBREV = 'git.client.abbrev(...)'
 
 # A sha is sliced under many names — `sha`, `head_sha`, `commit["sha"]` — so the
 # expression being sliced is matched as text.  The boundaries keep `sha256` and

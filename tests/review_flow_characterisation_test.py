@@ -26,20 +26,22 @@ if LIB_DIR not in sys.path:
 
 from conftest import make_ctx  # noqa: E402
 
-from review import completion as review_completion  # noqa: E402
-from review import invoke as review_invoke  # noqa: E402
-from review import issue as review_issue  # noqa: E402
-from review import preflight as review_preflight  # noqa: E402
-from review import publish as review_publish  # noqa: E402
-from review import recover as review_recover  # noqa: E402
-from review import run as review_run  # noqa: E402
-from review import worktree as review_worktree  # noqa: E402
+import review.completion  # noqa: E402
+import review.invoke  # noqa: E402
+import review.issue  # noqa: E402
+import review.preflight  # noqa: E402
+import review.publish  # noqa: E402
+import review.recover  # noqa: E402
+import review.run  # noqa: E402
+import review.worktree  # noqa: E402
+import core.prompt
+import gh.client
 
 
 def _flags(**overrides):
     base = dict(bin_dir=Path("/bin"), generator_version="test 1.0", no_post=True)
     base.update(overrides)
-    return review_run.ReviewFlags(**base)
+    return review.run.ReviewFlags(**base)
 
 
 def _review_file(tmp_path, name="review"):
@@ -63,18 +65,18 @@ def _trace_common(monkeypatch, tape, *, returncode=0):
             raise SystemExit(1)
         return 0
 
-    monkeypatch.setattr(review_invoke, "run", _run)
-    monkeypatch.setattr(review_run.review_invoke, "run", _run)
-    monkeypatch.setattr(review_completion, "cleanup_prior_review", lambda *a, **kw: None)
-    monkeypatch.setattr(review_completion, "_display", lambda *a, **kw: None)
-    monkeypatch.setattr(review_completion, "summarise",
+    monkeypatch.setattr(review.invoke, "run", _run)
+    monkeypatch.setattr(review.invoke, "run", _run)
+    monkeypatch.setattr(review.completion, "cleanup_prior_review", lambda *a, **kw: None)
+    monkeypatch.setattr(review.completion, "_display", lambda *a, **kw: None)
+    monkeypatch.setattr(review.completion, "summarise",
                         lambda *a, **kw: tape.append("print_summary"))
-    monkeypatch.setattr(review_completion, "record_domain",
+    monkeypatch.setattr(review.completion, "record_domain",
                         lambda *a, **kw: tape.append("domain_write"))
-    monkeypatch.setattr(review_run, "resolve_prior_review", lambda *a, **kw: "")
-    monkeypatch.setattr(review_issue, "load_issue_provider",
+    monkeypatch.setattr(review.run, "resolve_prior_review", lambda *a, **kw: "")
+    monkeypatch.setattr(review.issue, "load_issue_provider",
                         lambda *a, **kw: SimpleNamespace(name="", options={}))
-    monkeypatch.setattr(review_issue, "fetch_issue_context",
+    monkeypatch.setattr(review.issue, "fetch_issue_context",
                         lambda *a, **kw: SimpleNamespace(link="", context=""))
 
 
@@ -93,12 +95,12 @@ def test_both_flows_write_the_domain_after_the_summary(tmp_path, monkeypatch):
     tape = []
     review_file = _review_file(tmp_path, "self")
     _trace_common(monkeypatch, tape)
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(review_recover, "pin_recover_worktree",
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), None))
-    monkeypatch.setattr(review_worktree, "cleanup_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review.worktree, "cleanup_worktree", lambda *a, **kw: None)
 
-    review_run.run_self_review(
+    review.run.run_self_review(
         make_ctx(target_dir=tmp_path / "t"), _flags(), review_file.parent,
         str(tmp_path), recover_head_sha="", trail=MagicMock(),
     )
@@ -125,16 +127,16 @@ def test_the_self_flow_refuses_a_superseded_review_before_doing_any_work(
     review_file = _review_file(tmp_path, "self")
     _trace_common(monkeypatch, tape)
 
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded",
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded",
                         lambda *a, **kw: tape.append("preflight"))
-    monkeypatch.setattr(review_recover, "pin_recover_worktree",
+    monkeypatch.setattr(review.recover, "pin_recover_worktree",
                         lambda *a, **kw: (tape.append("pin"), (str(tmp_path), None))[1])
-    monkeypatch.setattr(review_worktree, "cleanup_worktree", lambda *a, **kw: None)
-    monkeypatch.setattr(review_issue, "load_issue_provider",
+    monkeypatch.setattr(review.worktree, "cleanup_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review.issue, "load_issue_provider",
                         lambda *a, **kw: (tape.append("issue_provider"),
                                           SimpleNamespace(name="", options={}))[1])
 
-    review_run.run_self_review(
+    review.run.run_self_review(
         make_ctx(target_dir=tmp_path / "t"), _flags(), review_file.parent,
         str(tmp_path), recover_head_sha="", trail=MagicMock(),
     )
@@ -160,12 +162,12 @@ def test_the_pr_flow_refuses_inside_the_finally_that_owns_its_worktree(
     _trace_common(monkeypatch, tape)
     _stub_pr_edges(monkeypatch, tmp_path, tape)
 
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded",
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded",
                         lambda *a, **kw: (tape.append("preflight"),
                                           (_ for _ in ()).throw(SystemExit(3)))[0])
 
     with pytest.raises(SystemExit):
-        review_run.run_pr_review(
+        review.run.run_pr_review(
             make_ctx(target_dir=tmp_path / "t"), _flags(), review_file,
             trail=MagicMock(),
         )
@@ -194,13 +196,13 @@ def test_the_self_flow_releases_its_pin_before_rendering_the_review(
     review_file = _review_file(tmp_path, "self")
     _trace_common(monkeypatch, tape)
 
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(review_recover, "pin_recover_worktree",
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), object()))
-    monkeypatch.setattr(review_worktree, "cleanup_worktree",
+    monkeypatch.setattr(review.worktree, "cleanup_worktree",
                         lambda *a, **kw: tape.append("pin_cleanup"))
 
-    review_run.run_self_review(
+    review.run.run_self_review(
         make_ctx(target_dir=tmp_path / "t"), _flags(), review_file.parent,
         str(tmp_path), recover_head_sha="", trail=MagicMock(),
     )
@@ -215,26 +217,26 @@ def test_the_self_flow_releases_its_pin_before_rendering_the_review(
 
 def _stub_pr_edges(monkeypatch, tmp_path, tape):
     """The PR flow's own edges: clone lookup, gh, worktree, freshness."""
-    monkeypatch.setattr(review_worktree, "find_repo_root", lambda *a, **kw: str(tmp_path))
-    monkeypatch.setattr(review_run.gh_client, "pr_view",
+    monkeypatch.setattr(review.worktree, "find_repo_root", lambda *a, **kw: str(tmp_path))
+    monkeypatch.setattr(gh.client, "pr_view",
                         lambda *a, **kw: {"headRefName": "f", "body": ""})
-    monkeypatch.setattr(review_recover, "get_pr_head_sha", lambda *a, **kw: "sha")
-    monkeypatch.setattr(review_preflight, "check_stale_review",
+    monkeypatch.setattr(review.recover, "get_pr_head_sha", lambda *a, **kw: "sha")
+    monkeypatch.setattr(review.preflight, "check_stale_review",
                         lambda *a, **kw: tape.append("check_stale"))
-    monkeypatch.setattr(review_preflight, "check_pending_review",
+    monkeypatch.setattr(review.preflight, "check_pending_review",
                         lambda *a, **kw: tape.append("check_pending"))
-    monkeypatch.setattr(review_recover, "should_auto_recover",
+    monkeypatch.setattr(review.recover, "should_auto_recover",
                         lambda *a, **kw: tape.append("should_auto_recover"))
-    monkeypatch.setattr(review_worktree, "setup_pr_worktree",
+    monkeypatch.setattr(review.worktree, "setup_pr_worktree",
                         lambda *a, **kw: (tape.append("setup_worktree"),
                                           SimpleNamespace(path=str(tmp_path),
                                                           is_fallback=False))[1])
-    monkeypatch.setattr(review_recover, "pin_recover_worktree",
+    monkeypatch.setattr(review.recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), None))
-    monkeypatch.setattr(review_worktree, "cleanup_worktree",
+    monkeypatch.setattr(review.worktree, "cleanup_worktree",
                         lambda *a, **kw: tape.append("cleanup"))
-    monkeypatch.setattr(review_publish, "resolve",
-                        lambda *a, **kw: review_publish.PostResult(False, False, ""))
+    monkeypatch.setattr(review.publish, "resolve",
+                        lambda *a, **kw: review.publish.PostResult(False, False, ""))
 
 
 def test_the_pr_flow_holds_its_pin_across_the_whole_body(tmp_path, monkeypatch):
@@ -248,9 +250,9 @@ def test_the_pr_flow_holds_its_pin_across_the_whole_body(tmp_path, monkeypatch):
     review_file = _review_file(tmp_path, "pr")
     _trace_common(monkeypatch, tape)
     _stub_pr_edges(monkeypatch, tmp_path, tape)
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
 
-    review_run.run_pr_review(
+    review.run.run_pr_review(
         make_ctx(target_dir=tmp_path / "t"), _flags(), review_file, trail=MagicMock(),
     )
 
@@ -275,9 +277,9 @@ def test_the_pr_flow_checks_freshness_before_it_pays_for_a_worktree(
     (review_file.parent / "pipeline.json").write_text("{}")
     _trace_common(monkeypatch, tape)
     _stub_pr_edges(monkeypatch, tmp_path, tape)
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
 
-    review_run.run_pr_review(
+    review.run.run_pr_review(
         make_ctx(target_dir=tmp_path / "t"), _flags(), review_file, trail=MagicMock(),
     )
 
@@ -294,9 +296,9 @@ def test_the_pr_flow_builds_exactly_one_worktree(tmp_path, monkeypatch):
     review_file = _review_file(tmp_path, "pr")
     _trace_common(monkeypatch, tape)
     _stub_pr_edges(monkeypatch, tmp_path, tape)
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
 
-    review_run.run_pr_review(
+    review.run.run_pr_review(
         make_ctx(target_dir=tmp_path / "t"), _flags(), review_file, trail=MagicMock(),
     )
 
@@ -321,9 +323,9 @@ def test_the_stale_check_and_the_auto_recover_check_are_exclusive(
         state.write_text("{}") if has_state else state.unlink(missing_ok=True)
         _trace_common(monkeypatch, tape)
         _stub_pr_edges(monkeypatch, tmp_path, tape)
-        monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+        monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
 
-        review_run.run_pr_review(
+        review.run.run_pr_review(
             make_ctx(target_dir=tmp_path / "t"), _flags(), rf, trail=MagicMock(),
         )
 
@@ -340,12 +342,12 @@ def test_both_flows_run_the_same_ordered_spine(tmp_path, monkeypatch):
     self_tape, pr_tape = [], []
 
     _trace_common(monkeypatch, self_tape)
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded",
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded",
                         lambda *a, **kw: self_tape.append("preflight"))
-    monkeypatch.setattr(review_recover, "pin_recover_worktree",
+    monkeypatch.setattr(review.recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), None))
-    monkeypatch.setattr(review_worktree, "cleanup_worktree", lambda *a, **kw: None)
-    review_run.run_self_review(
+    monkeypatch.setattr(review.worktree, "cleanup_worktree", lambda *a, **kw: None)
+    review.run.run_self_review(
         make_ctx(target_dir=tmp_path / "t"), _flags(), review_file.parent,
         str(tmp_path), recover_head_sha="", trail=MagicMock(),
     )
@@ -353,9 +355,9 @@ def test_both_flows_run_the_same_ordered_spine(tmp_path, monkeypatch):
     pr_file = _review_file(tmp_path, "pr")
     _trace_common(monkeypatch, pr_tape)
     _stub_pr_edges(monkeypatch, tmp_path, pr_tape)
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded",
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded",
                         lambda *a, **kw: pr_tape.append("preflight"))
-    review_run.run_pr_review(
+    review.run.run_pr_review(
         make_ctx(target_dir=tmp_path / "t"), _flags(), pr_file, trail=MagicMock(),
     )
 
@@ -378,22 +380,22 @@ def test_a_failed_orchestration_stops_before_the_domain_is_written(
     tape = []
     review_file = _review_file(tmp_path, flow)
     _trace_common(monkeypatch, tape, returncode=1)
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(review_recover, "pin_recover_worktree",
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), None))
-    monkeypatch.setattr(review_worktree, "cleanup_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review.worktree, "cleanup_worktree", lambda *a, **kw: None)
 
     with pytest.raises(SystemExit):
         if flow == "self":
-            review_run.run_self_review(
+            review.run.run_self_review(
                 make_ctx(target_dir=tmp_path / "t"), _flags(), review_file.parent,
                 str(tmp_path), recover_head_sha="", trail=MagicMock(),
             )
         else:
             _stub_pr_edges(monkeypatch, tmp_path, tape)
-            monkeypatch.setattr(review_preflight, "refuse_if_superseded",
+            monkeypatch.setattr(review.preflight, "refuse_if_superseded",
                                 lambda *a, **kw: None)
-            review_run.run_pr_review(
+            review.run.run_pr_review(
                 make_ctx(target_dir=tmp_path / "t"), _flags(), review_file,
                 trail=MagicMock(),
             )
@@ -426,11 +428,11 @@ def test_an_unattended_pr_review_is_still_refused_when_superseded(
 
     seen = {}
     monkeypatch.setattr(
-        review_preflight, "refuse_if_superseded",
+        review.preflight, "refuse_if_superseded",
         lambda *a, **kw: seen.update(override=kw["override"]),
     )
 
-    review_run.run_pr_review(
+    review.run.run_pr_review(
         make_ctx(target_dir=tmp_path / "t"), _flags(force=False, **unattended),
         review_file, trail=MagicMock(),
     )
@@ -452,15 +454,15 @@ def test_the_freshness_prompts_are_skipped_when_nobody_can_answer_them(
     review_file = _review_file(tmp_path, "pr")
     _trace_common(monkeypatch, tape)
     _stub_pr_edges(monkeypatch, tmp_path, tape)
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
 
     seen = {}
     monkeypatch.setattr(
-        review_preflight, "check_pending_review",
+        review.preflight, "check_pending_review",
         lambda repo, pr, force: seen.update(force=force),
     )
 
-    review_run.run_pr_review(
+    review.run.run_pr_review(
         make_ctx(target_dir=tmp_path / "t"), _flags(force=False, no_post=True),
         review_file, trail=MagicMock(),
     )
@@ -495,18 +497,18 @@ def test_the_issue_prompt_comes_after_every_gate_that_can_abort(
     tape = []
     _trace_common(monkeypatch, tape)
     _stub_pr_edges(monkeypatch, tmp_path, tape)
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
 
-    monkeypatch.setattr(review_preflight, gate, stub)
-    monkeypatch.setattr(review_issue, "fetch_issue_context",
+    monkeypatch.setattr(review.preflight, gate, stub)
+    monkeypatch.setattr(review.issue, "fetch_issue_context",
                         lambda *a, **kw: SimpleNamespace(link="", context=""))
     monkeypatch.setattr(
-        review_run.prompt, "ask",
+        core.prompt, "ask",
         MagicMock(side_effect=AssertionError(f"asked for an issue link above {gate}")),
     )
 
     with pytest.raises(SystemExit):
-        review_run.run_pr_review(
+        review.run.run_pr_review(
             make_ctx(target_dir=tmp_path / "t"),
             _flags(no_post=False, auto_post=False), review_file, trail=MagicMock(),
         )
@@ -521,13 +523,13 @@ def test_an_attended_pr_review_still_asks_for_an_issue_link(tmp_path, monkeypatc
     tape = []
     _trace_common(monkeypatch, tape)
     _stub_pr_edges(monkeypatch, tmp_path, tape)
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(review_issue, "fetch_issue_context",
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.issue, "fetch_issue_context",
                         lambda *a, **kw: SimpleNamespace(link="", context=""))
     asked = MagicMock(return_value="ENG-1")
-    monkeypatch.setattr(review_run.prompt, "ask", asked)
+    monkeypatch.setattr(core.prompt, "ask", asked)
 
-    review_run.run_pr_review(
+    review.run.run_pr_review(
         make_ctx(target_dir=tmp_path / "t"),
         _flags(no_post=False, auto_post=False), review_file, trail=MagicMock(),
     )
@@ -548,17 +550,17 @@ def test_a_review_that_found_its_issue_context_does_not_ask_for_a_link(
     tape = []
     _trace_common(monkeypatch, tape)
     _stub_pr_edges(monkeypatch, tmp_path, tape)
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
     monkeypatch.setattr(
-        review_issue, "fetch_issue_context",
+        review.issue, "fetch_issue_context",
         lambda *a, **kw: SimpleNamespace(link="", context="ENG-1: do the thing"),
     )
     monkeypatch.setattr(
-        review_run.prompt, "ask",
+        core.prompt, "ask",
         MagicMock(side_effect=AssertionError("asked for a link it already had context for")),
     )
 
-    review_run.run_pr_review(
+    review.run.run_pr_review(
         make_ctx(target_dir=tmp_path / "t"),
         _flags(no_post=False, auto_post=False), review_file, trail=MagicMock(),
     )
@@ -571,15 +573,15 @@ def test_an_unattended_pr_review_is_never_prompted(tmp_path, monkeypatch, unatte
     tape = []
     _trace_common(monkeypatch, tape)
     _stub_pr_edges(monkeypatch, tmp_path, tape)
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(review_issue, "fetch_issue_context",
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.issue, "fetch_issue_context",
                         lambda *a, **kw: SimpleNamespace(link="", context=""))
     monkeypatch.setattr(
-        review_run.prompt, "ask",
+        core.prompt, "ask",
         MagicMock(side_effect=AssertionError("prompted an unattended run")),
     )
 
-    review_run.run_pr_review(
+    review.run.run_pr_review(
         make_ctx(target_dir=tmp_path / "t"), _flags(**unattended),
         review_file, trail=MagicMock(),
     )

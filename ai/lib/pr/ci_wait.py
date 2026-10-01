@@ -15,10 +15,10 @@ import sys
 import time
 from dataclasses import dataclass
 
-from core import report as core_report
-from gh import run_reads
-from pr import ci_report
-from pr import ci_runs
+import core.report
+import gh.run_reads
+import pr.ci_report
+import pr.ci_runs
 
 
 # How many extra polls a read that did not complete may buy. Enough for a
@@ -33,7 +33,7 @@ def _retry_incomplete(passes: int, elapsed: float, timeout: int) -> bool:
     return passes < _MAX_INCOMPLETE_RETRIES and elapsed < timeout
 
 
-def _nothing_came_back(discovery: run_reads.RunDiscovery) -> str:
+def _nothing_came_back(discovery: gh.run_reads.RunDiscovery) -> str:
     """Why this poll has nothing to report on, in words the caller can print."""
     return ("the workflow run list could not be read" if discovery.failed
             else "no run data came back")
@@ -45,7 +45,7 @@ class PollResult:
 
     run_ids: list[int]
     merged: dict
-    counts: ci_runs.JobCounts
+    counts: pr.ci_runs.JobCounts
 
 
 def emit_partial(repo: str, merged: dict, new_failed_jobs: list[dict],
@@ -58,11 +58,11 @@ def emit_partial(repo: str, merged: dict, new_failed_jobs: list[dict],
     """
     partial_merged = dict(merged)
     partial_merged["jobs"] = new_failed_jobs
-    partial_run = ci_runs.parse_run(repo, partial_merged)
+    partial_run = pr.ci_runs.parse_run(repo, partial_merged)
 
-    counts = ci_runs.count_job_states(merged)
+    counts = pr.ci_runs.count_job_states(merged)
 
-    failures = ci_report.serialize_failures(partial_run.failures)
+    failures = pr.ci_report.serialize_failures(partial_run.failures)
     if not failures:
         return
 
@@ -72,12 +72,12 @@ def emit_partial(repo: str, merged: dict, new_failed_jobs: list[dict],
         "failures": failures,
         "progression": {},
     }
-    core_report.emit_stream_json(partial_report, "partial")
+    core.report.emit_stream_json(partial_report, "partial")
     trail.info("partial_report", f"{len(failures)} new failure(s)")
     reported_job_ids.update(j.get("databaseId", 0) for j in new_failed_jobs)
 
 
-def _print_status(counts: ci_runs.JobCounts) -> None:
+def _print_status(counts: pr.ci_runs.JobCounts) -> None:
     """One line per poll on stderr, so someone watching sees it move."""
     parts = [f"{counts.completed}/{counts.total} jobs complete"]
     if counts.running:
@@ -104,15 +104,15 @@ def poll_until_complete(
     call per run per poll spent on an answer that cannot have changed.
     """
     reported_job_ids: set[int] = set()
-    settled = ci_runs.PollCache()
+    settled = pr.ci_runs.PollCache()
     start_time = time.monotonic()
     incomplete_passes = 0
 
     while True:
         elapsed = time.monotonic() - start_time
 
-        discovery = (run_reads.RunDiscovery(rows=(run_reads.RunRow(run_id=run_id),))
-                     if run_id else run_reads.fetch_latest_runs(repo, branch, head_sha))
+        discovery = (gh.run_reads.RunDiscovery(rows=(gh.run_reads.RunRow(run_id=run_id),))
+                     if run_id else gh.run_reads.fetch_latest_runs(repo, branch, head_sha))
         run_ids = [row.run_id for row in discovery.rows]
 
         # `head_sha` is the branch's current head, not the pinned run's commit
@@ -122,7 +122,7 @@ def poll_until_complete(
         # report about a different, pinned run.
         rollup_head_sha = "" if run_id else head_sha
 
-        fetched = ci_runs.fetch_merged(
+        fetched = pr.ci_runs.fetch_merged(
             repo, discovery, head_sha=rollup_head_sha, cache=settled,
         )
         if fetched is None and not discovery.failed and not discovery.rows:
@@ -130,11 +130,11 @@ def poll_until_complete(
             # from a listing that failed, which is the condition this loop
             # exists to outlast.
             trail.warn("no_runs", "no checks found")
-            raise ci_runs.RunUnavailable(f"No checks found for branch '{branch}'")
+            raise pr.ci_runs.RunUnavailable(f"No checks found for branch '{branch}'")
         if fetched is None and not _retry_incomplete(incomplete_passes, elapsed, timeout):
             reason = _nothing_came_back(discovery)
             trail.error("fetch_run_data", reason)
-            raise ci_runs.RunUnavailable(f"Gave up polling: {reason}")
+            raise pr.ci_runs.RunUnavailable(f"Gave up polling: {reason}")
         if fetched is None:
             incomplete_passes += 1
             trail.warn("incomplete_poll", f"{_nothing_came_back(discovery)} — retrying")
@@ -143,13 +143,13 @@ def poll_until_complete(
 
         merged = fetched.merged
         new_failed_jobs = [
-            j for j in ci_runs.failed_jobs(merged)
+            j for j in pr.ci_runs.failed_jobs(merged)
             if j.get("databaseId", 0) not in reported_job_ids
         ]
         if new_failed_jobs:
             emit_partial(repo, merged, new_failed_jobs, reported_job_ids, trail)
 
-        counts = ci_runs.count_job_states(merged)
+        counts = pr.ci_runs.count_job_states(merged)
         _print_status(counts)
 
         # Everything that can be read has settled. If something could not be

@@ -11,7 +11,9 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from gh import pr_reads as rg
+import gh.pr_reads
+import gh.client
+import git.client
 
 PR_PAYLOAD = {
     "title": "feat: something",
@@ -44,8 +46,8 @@ def _stub_run(monkeypatch, calls: list):
             return PINNED_NUMSTAT
         raise AssertionError(f"unexpected git command: {args}")
 
-    monkeypatch.setattr(rg.gh_client, "pr_view", fake_pr_view)
-    monkeypatch.setattr(rg.git_client, "out", fake_git_out)
+    monkeypatch.setattr(gh.client, "pr_view", fake_pr_view)
+    monkeypatch.setattr(git.client, "out", fake_git_out)
 
 
 class TestFetchPRMetadataPinned:
@@ -53,7 +55,7 @@ class TestFetchPRMetadataPinned:
         calls: list = []
         _stub_run(monkeypatch, calls)
 
-        pr = rg.fetch_pr_metadata(
+        pr = gh.pr_reads.fetch_pr_metadata(
             "owner/repo", "1", pin_sha="oldsha0", wt_path="/tmp/pinned",
         )
 
@@ -73,7 +75,7 @@ class TestFetchPRMetadataPinned:
         calls: list = []
         _stub_run(monkeypatch, calls)
 
-        pr = rg.fetch_pr_metadata(
+        pr = gh.pr_reads.fetch_pr_metadata(
             "owner/repo", "1", pin_sha="newsha0", wt_path="/tmp/pinned",
         )
 
@@ -86,7 +88,7 @@ class TestFetchPRMetadataPinned:
         calls: list = []
         _stub_run(monkeypatch, calls)
 
-        pr = rg.fetch_pr_metadata("owner/repo", "1")
+        pr = gh.pr_reads.fetch_pr_metadata("owner/repo", "1")
 
         assert pr.head_sha == "newsha0"
         assert pr.changed_files == 3

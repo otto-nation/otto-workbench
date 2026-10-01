@@ -18,10 +18,11 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from gh import client as gh_client
-from pr import state as pr_state
-from pr import supersession
+import gh.client
+import pr.state
+import pr.supersession
 from pr.domains import SupersessionDomain, SupersessionKind, SupersessionSignal
+import git.topology
 
 _CLEAN_LOG = "1700000000 1700000000\n"
 _SKEWED_LOG = "1700000000 1700864000\n"
@@ -37,7 +38,7 @@ def _completed(returncode, stdout=""):
 def _subcommand(cmd) -> str:
     """The git subcommand, past any `-c key=value` the client prefixes it with.
 
-    Mirrors how `git_client._argv` builds argv — a second way of prefixing the
+    Mirrors how `git.client._argv` builds argv — a second way of prefixing the
     subcommand there needs this to learn about it.
     """
     rest = cmd[1:]
@@ -80,7 +81,7 @@ def _detect(**kwargs):
     """`detect` against a stubbed git, with the default branch already known."""
     with patch("core.proc.subprocess.run",
                       side_effect=_git_stub(**kwargs)):
-        return supersession.detect(Path("/fake"), "owner/repo", base="origin/main")
+        return pr.supersession.detect(Path("/fake"), "owner/repo", base="origin/main")
 
 
 def _signals(**kwargs):
@@ -155,12 +156,12 @@ class TestDetect:
     ):
         """No network, or a network that never answers, is a reason to say less —
         not a reason to say nothing."""
-        # A TimeoutExpired earns gh_client's transient ladder, which serves a
+        # A TimeoutExpired earns gh.client's transient ladder, which serves a
         # real 2s + 4s before giving up. This asserts on the signals that
         # survive a failed search, never on the waiting, so the ladder is
         # collected rather than served — the same seam gh_client_test's
         # `no_sleep` fixture uses, and for the same reason.
-        monkeypatch.setattr(gh_client, "sleep", lambda _: None)
+        monkeypatch.setattr(gh.client, "sleep", lambda _: None)
         signals = _signals(
             diff=_READDS_DIFF, grep_rc=1, pickaxe="abc1234\n", **gh_kwargs,
         )
@@ -181,7 +182,7 @@ class TestDetect:
         signals = _signals(diff=diff, grep_rc=1, pickaxe="abc1234\n")
         readded = [s for s in signals
                    if s.kind == SupersessionKind.READDS_REMOVED_SYMBOL]
-        assert len(readded) == supersession._PREFLIGHT_SYMBOL_LIMIT
+        assert len(readded) == pr.supersession._PREFLIGHT_SYMBOL_LIMIT
 
     def test_the_search_is_capped_harder(self):
         diff = "+++ b/ai/lib/foo.py\n" + "".join(
@@ -191,13 +192,13 @@ class TestDetect:
         _detect(diff=diff, grep_rc=1, pickaxe="abc1234\n",
                 gh_out="#42 t\n", calls=calls)
         assert (len([c for c in calls if c[0] == "gh"])
-                == supersession._PREFLIGHT_SEARCH_LIMIT)
+                == pr.supersession._PREFLIGHT_SEARCH_LIMIT)
 
     def test_the_findings_reach_the_trail(self):
         trail = MagicMock()
         with patch("core.proc.subprocess.run",
                           side_effect=_git_stub(log_out=_SKEWED_LOG)):
-            supersession.detect(Path("/fake"), "owner/repo",
+            pr.supersession.detect(Path("/fake"), "owner/repo",
                                 base="origin/main", trail=trail)
         assert trail.info.call_args.kwargs["data"]["signals"] == [
             SupersessionKind.REBASE_SKEW,
@@ -205,11 +206,11 @@ class TestDetect:
 
     def test_the_base_is_resolved_when_the_caller_does_not_know_it(self):
         """The one caller that has already paid for it passes it; the rest don't."""
-        with patch.object(supersession.git_topology, "default_branch",
+        with patch.object(git.topology, "default_branch",
                           return_value="trunk") as resolve, \
              patch("core.proc.subprocess.run",
                           side_effect=_git_stub()):
-            supersession.detect(Path("/fake"), "owner/repo")
+            pr.supersession.detect(Path("/fake"), "owner/repo")
         assert resolve.called
 
     def test_the_verdict_carries_the_shas_it_was_computed_against(self):
@@ -220,7 +221,7 @@ class TestDetect:
         """Empty is what keeps a verdict computed against nothing from being reused."""
         with patch("core.proc.subprocess.run",
                           return_value=_completed(1)):
-            verdict = supersession.detect(Path("/fake"), "owner/repo",
+            verdict = pr.supersession.detect(Path("/fake"), "owner/repo",
                                           base="origin/main")
         assert (verdict.head_sha, verdict.base_sha) == ("", "")
 
@@ -230,10 +231,10 @@ class TestDetect:
 
 class TestVerdict:
     def test_nothing_found_is_not_superseded(self):
-        assert supersession.Verdict().superseded is False
+        assert pr.supersession.Verdict().superseded is False
 
     def test_context_alone_is_not_superseded(self):
-        verdict = supersession.Verdict([SupersessionSignal(
+        verdict = pr.supersession.Verdict([SupersessionSignal(
             SupersessionKind.REBASE_SKEW, "d", holds=False,
         )])
         assert verdict.superseded is False
@@ -241,7 +242,7 @@ class TestVerdict:
 
     def test_evidence_is_superseded(self):
         holds = SupersessionSignal(SupersessionKind.READDS_REMOVED_SYMBOL, "d")
-        verdict = supersession.Verdict([
+        verdict = pr.supersession.Verdict([
             SupersessionSignal(SupersessionKind.REBASE_SKEW, "d", holds=False),
             holds,
         ])
@@ -253,9 +254,9 @@ class TestVerdict:
 
 
 def _state_with(tmp_path, domain: SupersessionDomain) -> Path:
-    state = pr_state.new_state("owner/repo", "feat/x", 1, _HEAD_SHA, "/wt")
-    pr_state.apply(state, domain)
-    pr_state.save_state(tmp_path, state)
+    state = pr.state.new_state("owner/repo", "feat/x", 1, _HEAD_SHA, "/wt")
+    pr.state.apply(state, domain)
+    pr.state.save_state(tmp_path, state)
     return tmp_path
 
 
@@ -263,7 +264,7 @@ def _detect_cached(target_dir, **kwargs):
     calls = kwargs.pop("calls", [])
     with patch("core.proc.subprocess.run",
                       side_effect=_git_stub(calls=calls, **kwargs)):
-        return supersession.detect_cached(
+        return pr.supersession.detect_cached(
             Path("/fake"), "owner/repo", target_dir, base="origin/main",
         )
 
@@ -309,7 +310,7 @@ class TestDetectCached:
         """Empty SHAs are what an unresolvable ref stored — not a cache key."""
         with patch("core.proc.subprocess.run",
                           return_value=_completed(1)):
-            verdict = supersession.detect_cached(
+            verdict = pr.supersession.detect_cached(
                 Path("/fake"), "owner/repo",
                 self._stored(tmp_path, head_sha="", base_sha=""),
                 base="origin/main",
@@ -320,7 +321,7 @@ class TestDetectCached:
         _state_with(tmp_path, SupersessionDomain())
         _detect_cached(tmp_path, diff=_READDS_DIFF, grep_rc=1,
                        pickaxe="abc1234\n")
-        stored = pr_state.load_state(tmp_path).supersession
+        stored = pr.state.load_state(tmp_path).supersession
         assert stored.matches(_HEAD_SHA, _BASE_SHA)
         assert [s.kind for s in stored.signals] == [
             SupersessionKind.READDS_REMOVED_SYMBOL,
@@ -332,7 +333,7 @@ class TestDetectCached:
         assert [s.kind for s in verdict.signals] == [
             SupersessionKind.REBASE_SKEW,
         ]
-        assert pr_state.load_state(tmp_path) is None
+        assert pr.state.load_state(tmp_path) is None
 
     def test_no_target_dir_at_all_still_answers(self, tmp_path):
         """`pr comments` outside a resolved target is still owed a verdict."""
@@ -345,7 +346,7 @@ class TestDetectCached:
         trail = MagicMock()
         with patch("core.proc.subprocess.run",
                           side_effect=_git_stub()):
-            supersession.detect_cached(
+            pr.supersession.detect_cached(
                 Path("/fake"), "owner/repo", self._stored(tmp_path),
                 base="origin/main", trail=trail,
             )
@@ -357,11 +358,11 @@ class TestDetectCached:
 
 class TestReport:
     def test_nothing_found_says_nothing(self, capsys):
-        supersession.report(supersession.Verdict())
+        pr.supersession.report(pr.supersession.Verdict())
         assert capsys.readouterr().err == ""
 
     def test_the_output_names_the_signal_that_fired(self, capsys):
-        supersession.report(supersession.Verdict([
+        pr.supersession.report(pr.supersession.Verdict([
             SupersessionSignal(SupersessionKind.REBASE_SKEW,
                                "replayed onto a moved base", holds=False),
             SupersessionSignal(SupersessionKind.READDS_REMOVED_SYMBOL,
@@ -373,7 +374,7 @@ class TestReport:
 
     def test_context_alone_is_still_printed(self, capsys):
         """It does not hold anything, but it is why the branch looks the way it does."""
-        supersession.report(supersession.Verdict([SupersessionSignal(
+        pr.supersession.report(pr.supersession.Verdict([SupersessionSignal(
             SupersessionKind.REBASE_SKEW, "replayed", holds=False,
         )]))
         assert "[rebase_skew] replayed" in capsys.readouterr().err

@@ -47,10 +47,10 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
 
-from agent import usage as ai_usage
-from core import log
-from core import serde
-from core import workbench_paths
+import agent.usage
+import core.log
+import core.serde
+import core.workbench_paths
 from agent.registry import PHASES, REVIEW_PHASES
 from core.phases import Phase
 from agent.usage import SessionUsage, parse_session_log
@@ -154,7 +154,7 @@ def phase_artifacts(review_dir: Path) -> list[Path]:
 def review_file_path(repo: str, pr_number: str) -> Path:
     """Return the expected path for a review file given repo and PR number."""
     repo_name = repo.split("/")[-1]
-    return workbench_paths.reviews_dir() / f"{repo_name}-{pr_number}" / f"review{REVIEW_EXT}"
+    return core.workbench_paths.reviews_dir() / f"{repo_name}-{pr_number}" / f"review{REVIEW_EXT}"
 
 
 def _load_review_meta(review_dir: Path) -> ReviewMeta | None:
@@ -193,7 +193,7 @@ def write_review_meta(review_dir: Path, meta: ReviewMeta) -> None:
     review lookup on the machine walks these files and a half-written one reads
     as a review attributed to nothing.
     """
-    serde.write_json(review_dir / FILENAME_META, serde.to_dict(meta))
+    core.serde.write_json(review_dir / FILENAME_META, core.serde.to_dict(meta))
 
 
 def stamp_reviewed(review_dir: Path) -> None:
@@ -219,7 +219,7 @@ def stamp_reviewed(review_dir: Path) -> None:
         # runs at the very end of a run that worked. Losing the stamp costs a
         # reader the mtime fallback; failing here would cost the whole review.
         meta_file = review_dir / FILENAME_META
-        log.warn(f"could not stamp {meta_file} ({exc}) — its age will read from the file's mtime")
+        core.log.warn(f"could not stamp {meta_file} ({exc}) — its age will read from the file's mtime")
 
 
 # ── Walking the reviews tree ─────────────────────────────────────────────────
@@ -307,7 +307,7 @@ def iter_review_entries(reviews_dir: Path | None = None) -> Iterator[ReviewEntry
     without disturbing the iteration. A root that does not exist yields
     nothing — a machine that has never run a review is not an error.
     """
-    root = workbench_paths.reviews_dir() if reviews_dir is None else reviews_dir
+    root = core.workbench_paths.reviews_dir() if reviews_dir is None else reviews_dir
     try:
         entries = sorted(root.iterdir())
     except OSError:
@@ -387,7 +387,7 @@ def archive_review(review_file: Path, session_log: str) -> str:
     if review_file.is_file():
         prior_path = str(review_dir / FILENAME_PRIOR)
         shutil.copy2(str(review_file), prior_path)
-        log.info(f"Archived prior review to {ARCHIVES_DIRNAME}/{stamp}{REVIEW_EXT}")
+        core.log.info(f"Archived prior review to {ARCHIVES_DIRNAME}/{stamp}{REVIEW_EXT}")
 
     rotations = (
         (review_file, REVIEW_EXT),
@@ -409,7 +409,7 @@ def aggregate_session_usage(review_dir: Path | None) -> SessionUsage:
     """Aggregate usage from session and post-session logs."""
     if not review_dir:
         return SessionUsage()
-    return ai_usage.merge([
+    return agent.usage.merge([
         parse_session_log(str(review_dir / n))
         for n in (FILENAME_SESSION, FILENAME_POST_SESSION)
         if (review_dir / n).is_file()

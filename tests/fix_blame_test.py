@@ -22,7 +22,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from fix import blame as fix_blame  # noqa: E402
+import fix.blame  # noqa: E402
 
 
 @pytest.fixture
@@ -60,7 +60,7 @@ def test_a_deleted_symbol_the_failure_names_points_at_its_item(repo):
     (repo / "mod.py").write_text("from x import cmd_gc\n")
     failure = "AttributeError: module 'mod' has no attribute 'EXIT_BUDGET_EXHAUSTED'"
 
-    found = fix_blame.pointers(repo, {"N1": "mod.py"}, failure)
+    found = fix.blame.pointers(repo, {"N1": "mod.py"}, failure)
 
     assert [p.item_id for p in found] == ["N1"]
     assert found[0].symbols == ("EXIT_BUDGET_EXHAUSTED",)
@@ -72,7 +72,7 @@ def test_a_renamed_symbol_points_at_the_old_name(repo):
     (repo / "p.py").write_text('MSG = "teach positional_index in cli.dispatch"\n')
     failure = 'assert "_positional_index" in str(exc.value)'
 
-    found = fix_blame.pointers(repo, {"N2": "p.py"}, failure)
+    found = fix.blame.pointers(repo, {"N2": "p.py"}, failure)
 
     assert found[0].symbols == ("_positional_index",)
 
@@ -82,7 +82,7 @@ def test_the_new_name_is_not_reported_as_lost(repo):
     _commit(repo, "p.py", 'MSG = "see _old_helper here"\n')
     (repo / "p.py").write_text('MSG = "see new_helper_name here"\n')
 
-    found = fix_blame.pointers(repo, {"N1": "p.py"}, "new_helper_name missing")
+    found = fix.blame.pointers(repo, {"N1": "p.py"}, "new_helper_name missing")
 
     assert found == ()
 
@@ -92,7 +92,7 @@ def test_a_name_still_used_elsewhere_in_the_file_is_not_lost(repo):
     _commit(repo, "m.py", "CALL_ME()\nCALL_ME()\n")
     (repo / "m.py").write_text("CALL_ME()\n")
 
-    assert fix_blame.pointers(repo, {"N1": "m.py"}, "CALL_ME exploded") == ()
+    assert fix.blame.pointers(repo, {"N1": "m.py"}, "CALL_ME exploded") == ()
 
 
 def test_a_removed_line_that_itself_starts_with_dashes_is_still_read(repo):
@@ -105,7 +105,7 @@ def test_a_removed_line_that_itself_starts_with_dashes_is_still_read(repo):
     _commit(repo, "q.sql", "-- uses DROP_ME_SENTINEL here\nSELECT 1;\n")
     (repo / "q.sql").write_text("SELECT 1;\n")
 
-    found = fix_blame.pointers(repo, {"N1": "q.sql"}, "DROP_ME_SENTINEL missing")
+    found = fix.blame.pointers(repo, {"N1": "q.sql"}, "DROP_ME_SENTINEL missing")
 
     assert found and found[0].symbols == ("DROP_ME_SENTINEL",)
 
@@ -115,7 +115,7 @@ def test_a_removed_markdown_rule_line_is_still_read(repo):
     _commit(repo, "d.md", "--- RULE_SENTINEL ---\ntext\n")
     (repo / "d.md").write_text("text\n")
 
-    found = fix_blame.pointers(repo, {"N1": "d.md"}, "RULE_SENTINEL gone")
+    found = fix.blame.pointers(repo, {"N1": "d.md"}, "RULE_SENTINEL gone")
 
     assert found and found[0].symbols == ("RULE_SENTINEL",)
 
@@ -127,7 +127,7 @@ def test_the_file_header_itself_is_never_read_as_content(repo):
 
     # The header line is `--- a/My_Module.py`; if it were read as removed
     # content, `My_Module` would be offered as a lost symbol.
-    found = fix_blame.pointers(repo, {"N1": "My_Module.py"}, "My_Module blew up")
+    found = fix.blame.pointers(repo, {"N1": "My_Module.py"}, "My_Module blew up")
 
     assert found == ()
 
@@ -146,7 +146,7 @@ def test_prose_removed_from_a_comment_points_at_nothing(repo):
     (repo / "m.py").write_text("X = 1\n")
     failure = "the review gate could fail differently and that is the problem"
 
-    assert fix_blame.pointers(repo, {"N1": "m.py"}, failure) == ()
+    assert fix.blame.pointers(repo, {"N1": "m.py"}, failure) == ()
 
 
 def test_a_name_common_across_the_repo_points_at_nothing(repo):
@@ -160,14 +160,14 @@ def test_a_name_common_across_the_repo_points_at_nothing(repo):
     _commit(repo, "m.py", "data = path.read_text()\n")
     (repo / "m.py").write_text("data = None\n")
 
-    found = fix_blame.pointers(repo, {"N1": "m.py"}, "read_text blew up")
+    found = fix.blame.pointers(repo, {"N1": "m.py"}, "read_text blew up")
 
     assert found == (), "a repo-wide name was treated as a fingerprint"
 
 
 def _over_the_rarity_cap() -> int:
     """Enough sibling files to push a symbol past `_MAX_FILES`."""
-    return fix_blame._MAX_FILES + 2
+    return fix.blame._MAX_FILES + 2
 
 
 def test_a_rare_name_is_still_reported_when_the_repo_is_large(repo):
@@ -177,7 +177,7 @@ def test_a_rare_name_is_still_reported_when_the_repo_is_large(repo):
     _commit(repo, "m.py", "X = VERY_RARE_SENTINEL\n")
     (repo / "m.py").write_text("X = None\n")
 
-    found = fix_blame.pointers(repo, {"N1": "m.py"}, "VERY_RARE_SENTINEL missing")
+    found = fix.blame.pointers(repo, {"N1": "m.py"}, "VERY_RARE_SENTINEL missing")
 
     assert found[0].symbols == ("VERY_RARE_SENTINEL",)
 
@@ -190,7 +190,7 @@ def test_an_item_whose_file_the_pass_never_touched_is_not_pointed_at(repo):
     _commit(repo, "b.py", "OTHER = 2\n")
     (repo / "a.py").write_text("")
 
-    found = fix_blame.pointers(repo, {"N1": "a.py", "N2": "b.py"}, "LOST_SYMBOL")
+    found = fix.blame.pointers(repo, {"N1": "a.py", "N2": "b.py"}, "LOST_SYMBOL")
 
     assert [p.item_id for p in found] == ["N1"]
 
@@ -200,14 +200,14 @@ def test_an_empty_failure_text_points_at_nothing(repo):
     _commit(repo, "m.py", "LOST_SYMBOL = 1\n")
     (repo / "m.py").write_text("")
 
-    assert fix_blame.pointers(repo, {"N1": "m.py"}, "   ") == ()
+    assert fix.blame.pointers(repo, {"N1": "m.py"}, "   ") == ()
 
 
 def test_a_missing_anchor_file_is_skipped_rather_than_raising(repo):
     """An item can name a path that was never tracked; that is not a crash."""
     _commit(repo, "m.py", "X = 1\n")
 
-    assert fix_blame.pointers(repo, {"N1": "gone.py", "N2": ""}, "anything") == ()
+    assert fix.blame.pointers(repo, {"N1": "gone.py", "N2": ""}, "anything") == ()
 
 
 def test_a_wholesale_file_deletion_still_points_at_its_item(repo):
@@ -222,7 +222,7 @@ def test_a_wholesale_file_deletion_still_points_at_its_item(repo):
     (repo / "mod.py").unlink()
     failure = "AttributeError: module 'mod' has no attribute 'EXIT_BUDGET_EXHAUSTED'"
 
-    found = fix_blame.pointers(repo, {"N1": "mod.py"}, failure)
+    found = fix.blame.pointers(repo, {"N1": "mod.py"}, failure)
 
     assert [p.item_id for p in found] == ["N1"]
     assert found[0].symbols == ("EXIT_BUDGET_EXHAUSTED",)
@@ -238,7 +238,7 @@ def test_two_items_in_one_file_both_point_at_it(repo):
     _commit(repo, "m.py", "FIRST_GONE = 1\nSECOND_GONE = 2\n")
     (repo / "m.py").write_text("")
 
-    found = fix_blame.pointers(
+    found = fix.blame.pointers(
         repo, {"N1": "m.py", "N2": "m.py"}, "FIRST_GONE and SECOND_GONE")
 
     assert [p.item_id for p in found] == ["N1", "N2"]
@@ -249,8 +249,8 @@ def test_two_items_in_one_file_both_point_at_it(repo):
 
 def test_the_description_leads_rather_than_accuses():
     """It says where to start. It does not say the item is wrong."""
-    lines = fix_blame.describe((
-        fix_blame.Pointer("N1", "ai/lib/cli/pr.py", ("EXIT_BUDGET_EXHAUSTED",)),
+    lines = fix.blame.describe((
+        fix.blame.Pointer("N1", "ai/lib/cli/pr.py", ("EXIT_BUDGET_EXHAUSTED",)),
     ))
 
     assert "start here" in lines[0]
@@ -260,4 +260,4 @@ def test_the_description_leads_rather_than_accuses():
 
 
 def test_nothing_to_point_at_prints_nothing():
-    assert fix_blame.describe(()) == []
+    assert fix.blame.describe(()) == []

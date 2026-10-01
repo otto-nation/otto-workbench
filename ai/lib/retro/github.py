@@ -33,8 +33,8 @@ import json
 import re
 from datetime import datetime, timezone
 
-from gh import client as gh_client
-from core import log
+import gh.client
+import core.log
 from gh.pr_reads import fetch_review_threads
 from retro.report import COMMENT_BODY_MAX
 
@@ -184,14 +184,14 @@ def _gh_api(endpoint: str, repo: str) -> list[dict]:
     quietly — an empty answer here is indistinguishable from a repo with no
     review comments, which is the shape a rate-limited scan would take.
     """
-    r = gh_client.api(f"repos/{repo}/{endpoint}", paginate=True)
+    r = gh.client.api(f"repos/{repo}/{endpoint}", paginate=True)
     if not r.ok:
-        log.warn(f"gh api failed for {repo}/{endpoint}: {r.detail}")
+        core.log.warn(f"gh api failed for {repo}/{endpoint}: {r.detail}")
         return []
     try:
         return json.loads(r.stdout)
     except json.JSONDecodeError as e:
-        log.warn(f"gh api error for {repo}/{endpoint}: {e}")
+        core.log.warn(f"gh api error for {repo}/{endpoint}: {e}")
         return []
 
 
@@ -285,7 +285,7 @@ def _richer_of(have: list[dict], repo: str, number: int) -> list[dict]:
     refetched = fetch_review_threads(repo, number).threads
     mine, theirs = _comment_count(have), _comment_count(refetched)
     if theirs < mine or len(refetched) < len(have):
-        log.warn(
+        core.log.warn(
             f"{repo}#{number}: refetching threads returned {len(refetched)} thread(s) "
             f"carrying {theirs} comment(s) where the first read had {len(have)} "
             f"carrying {mine} — keeping the first read")
@@ -319,7 +319,7 @@ def _parse_pr_node(repo: str, pr_node: dict, since_date: str) -> dict | None:
     total_comments = comments_data.get("totalCount", 0)
     comment_nodes = comments_data.get("nodes", [])
     if total_comments > len(comment_nodes):
-        log.warn(f"PR #{pr_node['number']}: {total_comments} issue comments but only {len(comment_nodes)} fetched (limit: RETRO_ISSUE_COMMENTS_LIMIT={RETRO_ISSUE_COMMENTS_LIMIT})")
+        core.log.warn(f"PR #{pr_node['number']}: {total_comments} issue comments but only {len(comment_nodes)} fetched (limit: RETRO_ISSUE_COMMENTS_LIMIT={RETRO_ISSUE_COMMENTS_LIMIT})")
 
     all_comments = _flatten_thread_comments(thread_nodes)
     all_comments.extend(_flatten_issue_comments(comment_nodes))
@@ -397,7 +397,7 @@ def _in_window_prs(
         cursor = info.get("endCursor")
         if not cursor:
             return in_window
-    log.warn(
+    core.log.warn(
         f"{repo}: stopped after {GQL_MERGED_PRS_MAX_PAGES} pages of merged PRs — "
         "the report may be missing the oldest of them",
     )
@@ -436,17 +436,17 @@ def _prs_page(
     """One page of the merged-PR list, or None when GraphQL cannot answer."""
     # cursor is None on the first page; graphql() omits a None variable rather
     # than sending it, so no conditional guard is needed here.
-    r = gh_client.graphql(
+    r = gh.client.graphql(
         _RETRO_PRS_QUERY,
         variables={"owner": owner, "name": name, "cursor": cursor},
     )
     if not r.ok:
-        log.warn(f"GraphQL failed for {repo}: {r.detail}")
+        core.log.warn(f"GraphQL failed for {repo}: {r.detail}")
         return None
     try:
         data = json.loads(r.stdout)
     except json.JSONDecodeError as e:
-        log.warn(f"GraphQL error for {repo}: {e}")
+        core.log.warn(f"GraphQL error for {repo}: {e}")
         return None
     repository = data.get("data", {}).get("repository") or {}
     return repository.get("pullRequests") or {}
@@ -459,17 +459,17 @@ def _fetch_pr_detail(repo: str, owner: str, name: str, number: int) -> dict | No
     what it can and reports on that, and one unreadable PR costs a rule signal
     rather than the whole run. Said out loud so a short report has a reason.
     """
-    r = gh_client.graphql(
+    r = gh.client.graphql(
         _RETRO_PR_DETAIL_QUERY,
         variables={"owner": owner, "name": name, "pr": number},
     )
     if not r.ok:
-        log.warn(f"GraphQL failed for {repo}#{number}: {r.detail}")
+        core.log.warn(f"GraphQL failed for {repo}#{number}: {r.detail}")
         return None
     try:
         data = json.loads(r.stdout)
     except json.JSONDecodeError as e:
-        log.warn(f"GraphQL error for {repo}#{number}: {e}")
+        core.log.warn(f"GraphQL error for {repo}#{number}: {e}")
         return None
     return (data.get("data", {}).get("repository", {}) or {}).get("pullRequest")
 

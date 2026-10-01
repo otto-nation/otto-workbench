@@ -47,8 +47,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from core import log
-from core import workbench_paths
+import core.log
+import core.workbench_paths
 
 LEDGER_DIRNAME = "usage"
 
@@ -84,7 +84,7 @@ def ledger_dir() -> Path:
     gives: the state root is routinely re-pointed after this module loads, and
     a constant would capture whichever value was live for the first importer.
     """
-    return workbench_paths.state_dir() / LEDGER_DIRNAME
+    return core.workbench_paths.state_dir() / LEDGER_DIRNAME
 
 
 @dataclass(frozen=True)
@@ -279,7 +279,7 @@ def record(
     except (OSError, TypeError, ValueError):
         if not _warned:
             _warned = True
-            log.warn(f"usage ledger unavailable at {ledger} — telemetry not recorded")
+            core.log.warn(f"usage ledger unavailable at {ledger} — telemetry not recorded")
 
 
 def _ledger_record(line: str, cutoff_ts: str) -> dict | None:

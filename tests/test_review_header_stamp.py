@@ -35,9 +35,9 @@ from conftest import synthetic_review
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from core.phases import Mode
-from review import phases as review_phases
-from review import pipeline as review_pipeline
-from review import steps as review_steps
+import review.phases
+import review.pipeline
+import review.steps
 from review.document import ReviewHeader
 from review.types import PreflightData, ReviewType
 
@@ -78,13 +78,13 @@ def job(tmp_path):
     # Two files per top-level dir; 150 lines each keeps a/ and b/ above
     # MIN_GROUP_LINES so they remain separate groups.
     files = [{"path": p, "additions": 150, "deletions": 0} for p in _FILES]
-    return review_pipeline.ReviewJob(
+    return review.pipeline.ReviewJob(
         repo="org/repo", pr_number="1",
-        pr=review_pipeline.PRMetadata(
+        pr=review.pipeline.PRMetadata(
             title="t", body="", head="feat", base="main", head_sha=_HEAD_SHA,
             additions=600, deletions=0, changed_files=len(files), files=files,
         ),
-        ctx=review_pipeline.PRContext(),
+        ctx=review.pipeline.PRContext(),
         wt_path=str(tmp_path),
         review_file=str(tmp_path / "reviews" / "review.md"),
         session_log=str(tmp_path / "reviews" / "session.jsonl"),
@@ -100,10 +100,10 @@ def run_single(monkeypatch):
             Path(job.review_file).write_text(_review_body(meta))
             return 0
 
-        monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **k: "PROMPT")
-        monkeypatch.setattr(review_phases, "run_agent", _agent)
+        monkeypatch.setattr(review.pipeline, "build_prompt", lambda *a, **k: "PROMPT")
+        monkeypatch.setattr(review.phases, "run_agent", _agent)
         with contextlib.redirect_stdout(io.StringIO()):
-            review_pipeline.run_single_agent(job, disprove=False)
+            review.pipeline.run_single_agent(job, disprove=False)
         return job
 
     return _run
@@ -123,11 +123,11 @@ def run_multi(monkeypatch):
                 log_path.with_suffix(".md").write_text(_GROUP_FINDING)
             return 0
 
-        monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **k: "PROMPT")
-        monkeypatch.setattr(review_steps, "build_prompt", lambda *a, **k: "PROMPT")
-        monkeypatch.setattr(review_phases, "run_agent", _agent)
+        monkeypatch.setattr(review.phases, "build_prompt", lambda *a, **k: "PROMPT")
+        monkeypatch.setattr(review.steps, "build_prompt", lambda *a, **k: "PROMPT")
+        monkeypatch.setattr(review.phases, "run_agent", _agent)
         with contextlib.redirect_stdout(io.StringIO()):
-            review_pipeline.run_multi_phase(job)
+            review.pipeline.run_multi_phase(job)
         return job
 
     return _run
@@ -188,11 +188,11 @@ class TestTheStampSurvivesWhatIsWrittenAfterIt:
                 Path(job.review_file).write_text(body)
             return 0
 
-        monkeypatch.setattr(review_pipeline, "build_prompt", lambda *a, **k: "PROMPT")
-        monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **k: "PROMPT")
-        monkeypatch.setattr(review_phases, "run_agent", _agent)
+        monkeypatch.setattr(review.pipeline, "build_prompt", lambda *a, **k: "PROMPT")
+        monkeypatch.setattr(review.phases, "build_prompt", lambda *a, **k: "PROMPT")
+        monkeypatch.setattr(review.phases, "run_agent", _agent)
         with contextlib.redirect_stdout(io.StringIO()):
-            review_pipeline.run_single_agent(job, disprove=True)
+            review.pipeline.run_single_agent(job, disprove=True)
 
         assert "[M1]" not in Path(job.review_file).read_text()
         assert _stated_sha(job) == _HEAD_SHA

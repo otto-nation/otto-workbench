@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from conftest import load_script
+import config.workbench_projects
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / 'bin' / 'local' / 'validate-pi-extension-clones'
@@ -285,7 +286,7 @@ def test_discovery_finds_a_user_scope_clone(validator, tmp_path, monkeypatch):
     subprocess.run(['git', 'init', '-q', str(pkg)], check=True)
 
     monkeypatch.setattr(validator, 'USER_PACKAGE_ROOT', root)
-    monkeypatch.setattr(validator.workbench_projects, 'registered', lambda: [])
+    monkeypatch.setattr(config.workbench_projects, 'registered', lambda: [])
 
     found = validator.discover_clones()
     assert [('user', pkg)] == found
@@ -304,7 +305,7 @@ def test_discovery_finds_a_deeply_nested_registered_project(validator, tmp_path,
     subprocess.run(['git', 'init', '-q', str(pkg)], check=True)
 
     monkeypatch.setattr(validator, 'USER_PACKAGE_ROOT', tmp_path / 'agent' / 'git')
-    monkeypatch.setattr(validator.workbench_projects, 'registered', lambda: [project_root])
+    monkeypatch.setattr(config.workbench_projects, 'registered', lambda: [project_root])
 
     found = validator.discover_clones()
     assert [('project', pkg)] == found

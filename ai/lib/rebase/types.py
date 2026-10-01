@@ -11,16 +11,16 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 
-from core import report as core_report
-from gh import landed as branch_landed
-from git import regenerate as regen
-from pr import context as pr_context
-from pr import domains as pr_domains
-from pr import state as pr_state
-from rebase import inspect as rebase_inspect
+import core.report
+import gh.landed
+import git.regenerate
+import pr.context
+import pr.domains
+import pr.state
+import rebase.inspect
 
-RebaseStatus = pr_domains.RebaseStatus
-Regenerator = regen.Regenerator
+RebaseStatus = pr.domains.RebaseStatus
+Regenerator = git.regenerate.Regenerator
 
 
 # ── Enums ───────────────────────────────────────────────────────────────────
@@ -67,9 +67,9 @@ class RefusalSignal(StrEnum):
     signals, and a rename that reached only one of the two would leave the pair
     describing the same evidence in different words.
     """
-    PR_MERGED = branch_landed.LandedSignal.PR_MERGED.value
-    EMPTY_DIFF = branch_landed.LandedSignal.EMPTY_DIFF.value
-    COMMITS_UPSTREAM = branch_landed.LandedSignal.COMMITS_UPSTREAM.value
+    PR_MERGED = gh.landed.LandedSignal.PR_MERGED.value
+    EMPTY_DIFF = gh.landed.LandedSignal.EMPTY_DIFF.value
+    COMMITS_UPSTREAM = gh.landed.LandedSignal.COMMITS_UPSTREAM.value
     NO_MERGE_BASE = "no_merge_base"
     PARTIALLY_LANDED = "partially_landed"
     CONFLICTS_OVER_BUDGET = "conflicts_over_budget"
@@ -417,17 +417,17 @@ class ConflictReport:
     def from_repo(
         cls, cwd: str, status: str = RebaseStatus.CONFLICTS.value,
     ) -> "ConflictReport":
-        sha, subject = rebase_inspect.rebase_head_info(cwd)
+        sha, subject = rebase.inspect.rebase_head_info(cwd)
         return cls(
             status=status,
-            files=rebase_inspect.detect_conflicts(cwd),
+            files=rebase.inspect.detect_conflicts(cwd),
             rebase_head=sha,
             rebase_head_subject=subject,
-            remaining_commits=rebase_inspect.remaining_rebase_commits(cwd),
+            remaining_commits=rebase.inspect.remaining_rebase_commits(cwd),
         )
 
     def emit(self) -> None:
-        core_report.emit_json(asdict(self))
+        core.report.emit_json(asdict(self))
 
 
 @dataclass
@@ -450,9 +450,9 @@ class RebaseOutcome:
     # default here would let an outcome report a base the rebase never used.
     target_base: str = field(kw_only=True)
 
-    def save(self, ctx: pr_context.ResolvedContext) -> None:
+    def save(self, ctx: pr.context.ResolvedContext) -> None:
         state = load_or_init(ctx)
-        pr_state.apply(state, pr_domains.RebaseSummary(
+        pr.state.apply(state, pr.domains.RebaseSummary(
             status=self.status.value,
             target_base=self.target_base,
             commits_replayed=self.commits_replayed,
@@ -461,9 +461,9 @@ class RebaseOutcome:
             files_stale=self.files_stale,
             force_pushed=self.force_pushed is True,
             lease_expect=self.lease_expect,
-            updated_at=pr_state.now_iso(),
+            updated_at=pr.state.now_iso(),
         ))
-        pr_state.save_state(ctx.target_dir, state)
+        pr.state.save_state(ctx.target_dir, state)
 
     def emit(self) -> None:
         report: dict = {
@@ -475,7 +475,7 @@ class RebaseOutcome:
         }
         if self.force_pushed is not None:
             report["force_pushed"] = self.force_pushed
-        core_report.emit_json(report)
+        core.report.emit_json(report)
 
 
 @dataclass(frozen=True)
@@ -504,15 +504,15 @@ class RefusalReport:
     remedy: str = ""
 
     def emit(self) -> None:
-        core_report.emit_json(asdict(self))
+        core.report.emit_json(asdict(self))
 
 
 # ── State helpers ───────────────────────────────────────────────────────────
 
 
-def load_or_init(ctx: pr_context.ResolvedContext) -> pr_state.PRState:
+def load_or_init(ctx: pr.context.ResolvedContext) -> pr.state.PRState:
     """Load existing state or create a fresh one from resolved context."""
-    return pr_state.load_or_init(
+    return pr.state.load_or_init(
         target_dir=ctx.target_dir,
         repo=ctx.repo,
         branch=ctx.branch,
@@ -522,7 +522,7 @@ def load_or_init(ctx: pr_context.ResolvedContext) -> pr_state.PRState:
     )
 
 
-def recorded_target_base(ctx: pr_context.ResolvedContext) -> str | None:
+def recorded_target_base(ctx: pr.context.ResolvedContext) -> str | None:
     """The ``target_base`` a prior run of this command recorded, if any.
 
     Read-only — ``load_or_init`` never writes, so calling this to peek at state

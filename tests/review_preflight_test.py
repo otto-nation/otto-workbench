@@ -13,12 +13,16 @@ LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-from review import preflight as review_preflight
+import review.preflight
 
 from conftest import (
     commit_all, git_in, init_repo,
     supersession_context, supersession_evidence, supersession_verdict,
 )
+import core.prompt
+import gh.client
+import review.recover
+import pr.supersession
 
 
 # ── check_pending_review ──────────────────────────────────────────────────────
@@ -26,65 +30,65 @@ from conftest import (
 
 def test_check_pending_review_force_skips_github(monkeypatch):
     login = MagicMock(side_effect=AssertionError("login called"))
-    monkeypatch.setattr(review_preflight.gh_client, "login", login)
-    review_preflight.check_pending_review("owner/repo", "1", force=True)
+    monkeypatch.setattr(gh.client, "login", login)
+    review.preflight.check_pending_review("owner/repo", "1", force=True)
     assert not login.called
 
 
 def test_check_pending_review_no_pending_is_silent(monkeypatch):
-    monkeypatch.setattr(review_preflight.gh_client, "login", lambda: "me")
-    monkeypatch.setattr(review_preflight.gh_client, "api_json", lambda *a, **kw: {})
+    monkeypatch.setattr(gh.client, "login", lambda: "me")
+    monkeypatch.setattr(gh.client, "api_json", lambda *a, **kw: {})
     api = MagicMock(side_effect=AssertionError("api called"))
-    monkeypatch.setattr(review_preflight.gh_client, "api", api)
-    review_preflight.check_pending_review("owner/repo", "1", force=False)
+    monkeypatch.setattr(gh.client, "api", api)
+    review.preflight.check_pending_review("owner/repo", "1", force=False)
     assert not api.called
 
 
 def test_check_pending_review_non_dict_is_no_pending(monkeypatch):
     """`first // empty` leaves gh stdout empty; api_json's default is not a dict."""
-    monkeypatch.setattr(review_preflight.gh_client, "login", lambda: "me")
-    monkeypatch.setattr(review_preflight.gh_client, "api_json", lambda *a, **kw: [])
+    monkeypatch.setattr(gh.client, "login", lambda: "me")
+    monkeypatch.setattr(gh.client, "api_json", lambda *a, **kw: [])
     api = MagicMock(side_effect=AssertionError("api called"))
-    monkeypatch.setattr(review_preflight.gh_client, "api", api)
-    review_preflight.check_pending_review("owner/repo", "1", force=False)
+    monkeypatch.setattr(gh.client, "api", api)
+    review.preflight.check_pending_review("owner/repo", "1", force=False)
     assert not api.called
 
 
 def test_check_pending_review_decline_keeps_it(monkeypatch):
-    monkeypatch.setattr(review_preflight.gh_client, "login", lambda: "me")
+    monkeypatch.setattr(gh.client, "login", lambda: "me")
     monkeypatch.setattr(
-        review_preflight.gh_client, "api_json", lambda *a, **kw: {"id": 99},
+        gh.client, "api_json", lambda *a, **kw: {"id": 99},
     )
     api = MagicMock(return_value=SimpleNamespace(ok=True, stdout="3\n"))
-    monkeypatch.setattr(review_preflight.gh_client, "api", api)
-    monkeypatch.setattr(review_preflight.prompt, "confirm", lambda msg: False)
-    review_preflight.check_pending_review("owner/repo", "1", force=False)
+    monkeypatch.setattr(gh.client, "api", api)
+    monkeypatch.setattr(core.prompt, "confirm", lambda msg: False)
+    review.preflight.check_pending_review("owner/repo", "1", force=False)
     assert api.call_count == 1
     assert api.call_args.kwargs.get("method") is None
 
 
 def test_check_pending_review_confirm_deletes(monkeypatch):
-    monkeypatch.setattr(review_preflight.gh_client, "login", lambda: "me")
+    monkeypatch.setattr(gh.client, "login", lambda: "me")
     monkeypatch.setattr(
-        review_preflight.gh_client, "api_json", lambda *a, **kw: {"id": 99},
+        gh.client, "api_json", lambda *a, **kw: {"id": 99},
     )
     api = MagicMock(return_value=SimpleNamespace(ok=True, stdout="3\n"))
-    monkeypatch.setattr(review_preflight.gh_client, "api", api)
-    monkeypatch.setattr(review_preflight.prompt, "confirm", lambda msg: True)
-    review_preflight.check_pending_review("owner/repo", "1", force=False)
+    monkeypatch.setattr(gh.client, "api", api)
+    monkeypatch.setattr(core.prompt, "confirm", lambda msg: True)
+    review.preflight.check_pending_review("owner/repo", "1", force=False)
     assert api.call_count == 2
     assert api.call_args.kwargs.get("method") == "DELETE"
 
 
 def test_check_pending_review_delete_failure_warns(monkeypatch, capsys):
-    monkeypatch.setattr(review_preflight.gh_client, "login", lambda: "me")
+    monkeypatch.setattr(gh.client, "login", lambda: "me")
     monkeypatch.setattr(
-        review_preflight.gh_client, "api_json", lambda *a, **kw: {"id": 99},
+        gh.client, "api_json", lambda *a, **kw: {"id": 99},
     )
     api = MagicMock(return_value=SimpleNamespace(ok=False, stdout="3\n"))
-    monkeypatch.setattr(review_preflight.gh_client, "api", api)
-    monkeypatch.setattr(review_preflight.prompt, "confirm", lambda msg: True)
-    review_preflight.check_pending_review("owner/repo", "1", force=False)
+    monkeypatch.setattr(gh.client, "api", api)
+    monkeypatch.setattr(core.prompt, "confirm", lambda msg: True)
+    review.preflight.check_pending_review("owner/repo", "1", force=False)
     assert "Could not delete the pending review" in capsys.readouterr().err
 
 
@@ -100,15 +104,15 @@ def _write_review(tmp_path: Path, sha: str = "abc123") -> Path:
 def test_check_stale_review_force_skips(tmp_path, monkeypatch):
     review_file = _write_review(tmp_path)
     get_head = MagicMock(side_effect=AssertionError("get_pr_head_sha called"))
-    monkeypatch.setattr(review_preflight.review_recover, "get_pr_head_sha", get_head)
-    review_preflight.check_stale_review("owner/repo", "1", review_file, force=True)
+    monkeypatch.setattr(review.recover, "get_pr_head_sha", get_head)
+    review.preflight.check_stale_review("owner/repo", "1", review_file, force=True)
     assert not get_head.called
 
 
 def test_check_stale_review_missing_file_is_silent(tmp_path, monkeypatch):
     get_head = MagicMock(side_effect=AssertionError("get_pr_head_sha called"))
-    monkeypatch.setattr(review_preflight.review_recover, "get_pr_head_sha", get_head)
-    review_preflight.check_stale_review(
+    monkeypatch.setattr(review.recover, "get_pr_head_sha", get_head)
+    review.preflight.check_stale_review(
         "owner/repo", "1", tmp_path / "nope.md", force=False,
     )
     assert not get_head.called
@@ -123,14 +127,14 @@ def test_check_stale_review_auto_recovers_on_failures(tmp_path, monkeypatch):
         "groups_done": [1], "groups_failed": {"2": "quota exhausted (429)"},
     }))
     monkeypatch.setattr(
-        review_preflight.review_recover, "get_pr_head_sha",
+        review.recover, "get_pr_head_sha",
         lambda *a, **kw: "abc123",
     )
     monkeypatch.setattr(
-        review_preflight.prompt, "confirm",
+        core.prompt, "confirm",
         MagicMock(side_effect=AssertionError("confirm called unexpectedly")),
     )
-    review_preflight.check_stale_review("owner/repo", "1", review_file, force=False)
+    review.preflight.check_stale_review("owner/repo", "1", review_file, force=False)
 
 
 def test_check_stale_review_prompts_on_clean_same_head(tmp_path, monkeypatch):
@@ -142,12 +146,12 @@ def test_check_stale_review_prompts_on_clean_same_head(tmp_path, monkeypatch):
         "groups_done": [1], "groups_failed": {},
     }))
     monkeypatch.setattr(
-        review_preflight.review_recover, "get_pr_head_sha",
+        review.recover, "get_pr_head_sha",
         lambda *a, **kw: "abc123",
     )
-    monkeypatch.setattr(review_preflight.prompt, "confirm", lambda msg: False)
+    monkeypatch.setattr(core.prompt, "confirm", lambda msg: False)
     with pytest.raises(SystemExit) as exc:
-        review_preflight.check_stale_review(
+        review.preflight.check_stale_review(
             "owner/repo", "1", review_file, force=False,
         )
     assert exc.value.code == 0
@@ -156,14 +160,14 @@ def test_check_stale_review_prompts_on_clean_same_head(tmp_path, monkeypatch):
 def test_check_stale_review_incremental_does_not_prompt(tmp_path, monkeypatch, capsys):
     review_file = _write_review(tmp_path, sha="aaa111")
     monkeypatch.setattr(
-        review_preflight.review_recover, "get_pr_head_sha",
+        review.recover, "get_pr_head_sha",
         lambda *a, **kw: "bbb222",
     )
     monkeypatch.setattr(
-        review_preflight.prompt, "confirm",
+        core.prompt, "confirm",
         MagicMock(side_effect=AssertionError("confirm called unexpectedly")),
     )
-    review_preflight.check_stale_review("owner/repo", "1", review_file, force=False)
+    review.preflight.check_stale_review("owner/repo", "1", review_file, force=False)
     assert "Incremental review" in capsys.readouterr().err
 
 
@@ -173,10 +177,10 @@ def test_check_stale_review_incremental_does_not_prompt(tmp_path, monkeypatch, c
 def _refuse(monkeypatch, verdict, *, override=False, trail=None):
     """Run the refusal against a canned verdict, detection already answered."""
     monkeypatch.setattr(
-        review_preflight.supersession, "detect_cached",
+        pr.supersession, "detect_cached",
         MagicMock(return_value=verdict),
     )
-    review_preflight.refuse_if_superseded(
+    review.preflight.refuse_if_superseded(
         "/wt", "acme/widget", Path("/target"), "feat/x",
         override=override, trail=trail or MagicMock(),
     )
@@ -195,19 +199,19 @@ def test_context_alone_does_not_refuse(monkeypatch, capsys):
 
 def test_evidence_refuses_before_the_first_agent_call(monkeypatch, capsys):
     """The whole point of refusing here: a review is the largest spend in the repo."""
-    from pr import supersession
+    import pr.supersession
 
     with pytest.raises(SystemExit) as exc:
         _refuse(monkeypatch, supersession_verdict(supersession_evidence()))
-    assert exc.value.code == supersession.EXIT_SUPERSEDED
+    assert exc.value.code == pr.supersession.EXIT_SUPERSEDED
 
     out = capsys.readouterr()
     assert "Refusing to review feat/x" in out.err
-    assert supersession.OVERRIDE_FLAG in out.err
+    assert pr.supersession.OVERRIDE_FLAG in out.err
     payload = json.loads(out.out)
     assert payload["status"] == "superseded"
     assert payload["branch"] == "feat/x"
-    assert payload["override"] == supersession.OVERRIDE_FLAG
+    assert payload["override"] == pr.supersession.OVERRIDE_FLAG
     assert payload["signals"] == [{
         "kind": "readds_removed_symbol",
         "detail": "`foo` is gone from origin/main",
@@ -227,8 +231,8 @@ def test_the_refusal_reaches_the_trail(monkeypatch):
 def test_the_override_skips_the_check_entirely(monkeypatch):
     """The override has to cost nothing, or it is not an override."""
     detect = MagicMock()
-    monkeypatch.setattr(review_preflight.supersession, "detect_cached", detect)
-    review_preflight.refuse_if_superseded(
+    monkeypatch.setattr(pr.supersession, "detect_cached", detect)
+    review.preflight.refuse_if_superseded(
         "/wt", "acme/widget", Path("/target"), "feat/x",
         override=True, trail=MagicMock(),
     )
@@ -243,13 +247,13 @@ def test_only_the_users_own_force_overrides_the_refusal():
     reach here would disarm the check on exactly the runs that post findings to
     a PR with no operator reading them first.
     """
-    assert review_preflight.supersession_override(False, False) is False
-    assert review_preflight.supersession_override(True, False) is True
+    assert review.preflight.supersession_override(False, False) is False
+    assert review.preflight.supersession_override(True, False) is True
 
 
 def test_recover_overrides_the_refusal_on_both_paths():
     """Recovery finishes a run whose spend was already made."""
-    assert review_preflight.supersession_override(False, True) is True
+    assert review.preflight.supersession_override(False, True) is True
 
 
 # ── an unresolvable base ─────────────────────────────────────────────────────
@@ -282,7 +286,7 @@ def test_a_mistyped_base_is_refused_before_the_review_is_spent(tmp_path, capsys)
     repo = _repo_with_a_pushed_base(tmp_path)
 
     with pytest.raises(SystemExit) as exc:
-        review_preflight.refuse_unresolvable_base(
+        review.preflight.refuse_unresolvable_base(
             str(repo), "mian", trail=MagicMock())
 
     assert exc.value.code == 1
@@ -294,7 +298,7 @@ def test_a_mistyped_base_is_refused_before_the_review_is_spent(tmp_path, capsys)
 def test_a_base_that_resolves_is_left_alone(tmp_path):
     repo = _repo_with_a_pushed_base(tmp_path)
 
-    review_preflight.refuse_unresolvable_base(str(repo), "main", trail=MagicMock())
+    review.preflight.refuse_unresolvable_base(str(repo), "main", trail=MagicMock())
 
 
 def test_an_unpushed_stack_parent_is_not_refused(tmp_path):
@@ -305,7 +309,7 @@ def test_an_unpushed_stack_parent_is_not_refused(tmp_path):
     (repo / "child.go").write_text("package main\n")
     commit_all(repo, "add child")
 
-    review_preflight.refuse_unresolvable_base(str(repo), "feat", trail=MagicMock())
+    review.preflight.refuse_unresolvable_base(str(repo), "feat", trail=MagicMock())
 
 
 def test_no_base_is_not_a_refusal(tmp_path):
@@ -313,7 +317,7 @@ def test_no_base_is_not_a_refusal(tmp_path):
     own. That is the pre-existing path, not an operator error."""
     repo = _repo_with_a_pushed_base(tmp_path)
 
-    review_preflight.refuse_unresolvable_base(str(repo), "", trail=MagicMock())
+    review.preflight.refuse_unresolvable_base(str(repo), "", trail=MagicMock())
 
 
 def test_a_base_pushed_after_this_clone_is_fetched_before_being_refused(tmp_path):
@@ -337,7 +341,7 @@ def test_a_base_pushed_after_this_clone_is_fetched_before_being_refused(tmp_path
 
     # `repo` has never fetched `newly-pushed`; only the check's own fetch can
     # make it resolvable here.
-    review_preflight.refuse_unresolvable_base(
+    review.preflight.refuse_unresolvable_base(
         str(repo), "newly-pushed", trail=MagicMock())
 
 
@@ -352,14 +356,14 @@ def test_the_supersession_gate_reads_an_unpushed_parent(tmp_path, monkeypatch):
 
     seen = {}
     monkeypatch.setattr(
-        review_preflight.supersession, "detect_cached",
+        pr.supersession, "detect_cached",
         lambda wt, repo_name, target, base="", trail=None: (
             seen.__setitem__("base", base) or supersession_verdict()
         ),
     )
-    monkeypatch.setattr(review_preflight.supersession, "report", lambda v: None)
+    monkeypatch.setattr(pr.supersession, "report", lambda v: None)
 
-    review_preflight.refuse_if_superseded(
+    review.preflight.refuse_if_superseded(
         str(repo), "acme/widget", tmp_path, "child",
         override=False, base="feat", trail=MagicMock(),
     )

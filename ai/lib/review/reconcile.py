@@ -48,9 +48,9 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
-from git import client as git_client
-from core import log
-from core import serde
+import git.client
+import core.log
+import core.serde
 from review.document import SECTION_PRIOR_FINDINGS, ReviewDocument, ReviewHeader
 from review.grammar import (
     ANNOTATE_FINDING_RE, BOLD_FINDING_ID_RE, SID_MARKER_RE, FindingIdentity,
@@ -267,7 +267,7 @@ class Reconciliation:
     @property
     def range_label(self) -> str:
         """The pair of trees the reconciliation compared, as far as it knows them."""
-        ends = [git_client.abbrev(sha) for sha in (self.prior_sha, self.head_sha) if sha]
+        ends = [git.client.abbrev(sha) for sha in (self.prior_sha, self.head_sha) if sha]
         return " → ".join(ends) if len(ends) == 2 else (ends[0] if ends else "an unnamed commit")
 
 
@@ -331,11 +331,11 @@ class _Tree:
         return _Inference(PriorDisposition.FIXED, f"`{path}` is no longer in the tree")
 
     def _existed(self, path: str) -> bool:
-        return git_client.ok("cat-file", "-e", f"{self.prior_sha}:{path}", cwd=self.wt_path)
+        return git.client.ok("cat-file", "-e", f"{self.prior_sha}:{path}", cwd=self.wt_path)
 
     def _before_text(self, path: str) -> str:
         if path not in self._before:
-            blob = git_client.out("show", f"{self.prior_sha}:{path}", cwd=self.wt_path)
+            blob = git.client.out("show", f"{self.prior_sha}:{path}", cwd=self.wt_path)
             self._before[path] = _norm(blob)
         return self._before[path]
 
@@ -362,7 +362,7 @@ class _Tree:
         quoted = self._quoted(finding, path)
         if not quoted:
             return _Inference(
-                basis=f"nothing it quotes was in `{path}` at {git_client.abbrev(self.prior_sha)}")
+                basis=f"nothing it quotes was in `{path}` at {git.client.abbrev(self.prior_sha)}")
         after = _norm((Path(self.wt_path) / path).read_text(errors="replace"))
         gone = [span for span in quoted if _norm(span) not in after]
         if not gone:
@@ -458,7 +458,7 @@ def _reconcile_findings(
     return Reconciliation(
         prior_sha=tree.prior_sha,
         prior_date=prior.date,
-        head_sha=head_sha or (git_client.head_sha(wt_path) if wt_path else ""),
+        head_sha=head_sha or (git.client.head_sha(wt_path) if wt_path else ""),
         records=[_settle(finding, carried, ledger, tree) for finding in findings],
     )
 
@@ -472,7 +472,7 @@ def passed_over(
     finding, and a caller asking for a disposition needs the finding itself —
     the lines the prior review wrote, to put back in front of an agent.
 
-    `head_sha` only reaches `reconcile()` to skip its own `git_client.head_sha`
+    `head_sha` only reaches `reconcile()` to skip its own `git.client.head_sha`
     lookup — this function never reads `Reconciliation.head_sha` itself, so a
     caller that already has the value in hand should pass it.
 
@@ -499,7 +499,7 @@ def passed_over(
 def _write(review_file: str, reconciliation: Reconciliation) -> str:
     """Record `reconciliation` beside `review_file`, returning the sidecar's path."""
     path = review_artifact_path(review_file, FILENAME_PRIOR_FINDINGS)
-    serde.write_json(Path(path), serde.to_dict(reconciliation))
+    core.serde.write_json(Path(path), core.serde.to_dict(reconciliation))
     return path
 
 
@@ -526,23 +526,23 @@ def _report(reconciliation: Reconciliation, sidecar: str = "") -> None:
     )
     undecided = reconciliation.undecided
     if not undecided:
-        log.info(f"Reconciled {scope}")
+        core.log.info(f"Reconciled {scope}")
         return
-    log.warn(f"{len(undecided)} of {total} prior finding{plural(total)} undecided")
-    log.dim(f"checked {scope}")
+    core.log.warn(f"{len(undecided)} of {total} prior finding{plural(total)} undecided")
+    core.log.dim(f"checked {scope}")
     for reason, records in reconciliation.undecided_groups:
         _report_group(reason, records)
     if sidecar:
-        log.dim(f"recorded in {sidecar}")
+        core.log.dim(f"recorded in {sidecar}")
 
 
 def _report_group(reason: UndecidedReason, records: list[PriorRecord]) -> None:
     """Print one reason's findings under a heading saying what the reason means."""
-    log.dim(f"{reason.heading} ({len(records)}):")
+    core.log.dim(f"{reason.heading} ({len(records)}):")
     for record in records:
-        log.dim(f"  {record.ref.label} — {record.basis}")
+        core.log.dim(f"  {record.ref.label} — {record.basis}")
     if reason is UndecidedReason.UNREADABLE_VERDICT:
-        log.dim(f"  {_VERDICT_SHAPE}")
+        core.log.dim(f"  {_VERDICT_SHAPE}")
 
 
 # What to write instead, for the reader who has just been shown a line that did

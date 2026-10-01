@@ -64,9 +64,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from gh import budget as gh_budget
-from gh import client as gh_client
-from git import client as git_client
+import gh.budget
+import gh.client
+import git.client
 
 
 class LandedSignal(StrEnum):
@@ -182,9 +182,9 @@ def merged_pr(
     # line for the same reason.
     if not target:
         return TrackerAnswer()
-    data = gh_client.pr_view(target, "state", "number", "url", repo=repo, cwd=cwd)
+    data = gh.client.pr_view(target, "state", "number", "url", repo=repo, cwd=cwd)
     if not data:
-        latch = gh_budget.latched(gh_budget.Resource.GRAPHQL)
+        latch = gh.budget.latched(gh.budget.Resource.GRAPHQL)
         if latch is not None:
             return TrackerAnswer(looked=False, remedy=latch.remedy())
         return TrackerAnswer()
@@ -202,7 +202,7 @@ def diff_is_empty(cwd: str | Path, *, target_ref: str, rev: str = "HEAD") -> boo
     branch's own commits are unreachable from the squashed commit, so nothing
     that compares commits notices the work landed.
     """
-    return git_client.ok("diff", "--quiet", target_ref, rev, cwd=cwd)
+    return git.client.ok("diff", "--quiet", target_ref, rev, cwd=cwd)
 
 
 def all_commits_upstream(
@@ -214,7 +214,7 @@ def all_commits_upstream(
     rebased or amended on its way into the target ref — the case an empty diff
     misses once the target has moved on with unrelated work.
     """
-    lines = git_client.lines("cherry", target_ref, rev, cwd=cwd)
+    lines = git.client.lines("cherry", target_ref, rev, cwd=cwd)
     return bool(lines) and all(ln.startswith("-") for ln in lines)
 
 
@@ -248,7 +248,7 @@ def branch_commits(
     cwd: str | Path, *, target_ref: str, rev: str = "HEAD",
 ) -> list[BranchCommit]:
     """The commits *rev* adds over *target_ref*, oldest first."""
-    lines = git_client.lines(
+    lines = git.client.lines(
         "log", "--reverse", "--no-merges", "--format=%H%x1f%s",
         f"{target_ref}..{rev}", cwd=cwd,
     )
@@ -265,7 +265,7 @@ def _patch_equivalent(
 ) -> frozenset[str]:
     """Shas of *rev*'s commits that `git cherry` finds equivalent upstream."""
     equivalent = set()
-    for line in git_client.lines("cherry", target_ref, rev, cwd=cwd):
+    for line in git.client.lines("cherry", target_ref, rev, cwd=cwd):
         mark, _, sha = line.partition(" ")
         if mark == "-" and sha:
             equivalent.add(sha)
@@ -282,7 +282,7 @@ def _same_subject_upstream(
     `--grep` matches a substring of the message, so "fix: auth" would otherwise
     match "fix: auth token refresh" and claim a landing that never happened.
     """
-    lines = git_client.lines(
+    lines = git.client.lines(
         "log", "--reverse", "--fixed-strings", f"--grep={subject}",
         "--format=%H%x1f%s", f"{since}..{target_ref}", cwd=cwd,
     )
@@ -335,7 +335,7 @@ def partial_landing(
     `by_git`'s finding, not this one, and nothing landed is the ordinary
     rebase.
     """
-    base = git_client.out("merge-base", target_ref, rev, cwd=cwd)
+    base = git.client.out("merge-base", target_ref, rev, cwd=cwd)
     if not base:
         return None
 
@@ -425,7 +425,7 @@ def by_git(cwd: str | Path, *, target_ref: str, rev: str = "HEAD") -> Landed | N
     every merge style — and both are tracker-agnostic, so they are what answers
     in a repo where gh cannot.
     """
-    ahead = git_client.commits_ahead(cwd, target_ref=target_ref, rev=rev)
+    ahead = git.client.commits_ahead(cwd, target_ref=target_ref, rev=rev)
 
     # A rev with no commits of its own has nothing that could have landed, and
     # both signals below read as "already upstream" for it — vacuously, for the

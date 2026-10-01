@@ -79,12 +79,12 @@ from enum import Enum
 from pathlib import Path
 from typing import NoReturn
 
-from gh import client as gh_client
-from git import topology as git_topology
-from core import log
+import gh.client
+import git.topology
+import core.log
 from core.trail import Trail, tdecision
-from pr import target as pr_target
-from core import timeouts
+import pr.target
+import core.timeouts
 # Re-exported rather than called through the module: this file's own call sites
 # read as `failure_message(...)`, and proc.py is stdlib-only so the import costs
 # consumers nothing.
@@ -228,7 +228,7 @@ class ResolvedContext:
         read the field directly and are visibly opted out.
         """
         if self.worktree_root is None:
-            log.error(
+            core.log.error(
                 f"No worktree for {self.branch!r} — "
                 f"run: wt switch {self.branch} (or pass --repo-dir)"
             )
@@ -258,7 +258,7 @@ class ContextDepth(Enum):
 def resolve_at(
     depth: ContextDepth,
     *,
-    pr: str | None = None,
+    pr_ref: str | None = None,
     branch: str | None = None,
     repo_dir: str | None = None,
 ) -> ResolvedContext:
@@ -276,14 +276,14 @@ def resolve_at(
     """
     if depth is ContextDepth.NONE:
         return ResolvedContext.unresolved()
-    if depth is ContextDepth.LOCAL and pr is None:
+    if depth is ContextDepth.LOCAL and pr_ref is None:
         return resolve_local(branch=branch, repo_dir=repo_dir)
-    return resolve(pr=pr, branch=branch, repo_dir=repo_dir)
+    return resolve(pr_ref=pr_ref, branch=branch, repo_dir=repo_dir)
 
 
 def resolve(
     *,
-    pr: str | None = None,
+    pr_ref: str | None = None,
     branch: str | None = None,
     repo_dir: str | None = None,
 ) -> ResolvedContext:
@@ -296,25 +296,25 @@ def resolve(
 
     Raises ValueError if both pr and branch are given.
     """
-    if pr is not None and branch is not None:
+    if pr_ref is not None and branch is not None:
         raise ValueError("--pr and --branch are mutually exclusive")
 
     cwd = repo_dir
 
-    worktree_root, cwd = _resolve_worktree(cwd, pr=pr, branch=branch)
+    worktree_root, cwd = _resolve_worktree(cwd, pr_ref=pr_ref, branch=branch)
 
     repo = detect_repo(cwd)
 
-    if pr:
-        pr_number = _parse_pr_input(pr)
+    if pr_ref:
+        pr_number = _parse_pr_input(pr_ref)
         head = _pr_head(repo, pr_number)
         if not head.resolved:
             # PRHead's contract says an unresolved head carries a reason, but
             # the guard outlives the contract: a partial result must never fall
             # through to the caller's own branch, reason or no reason.
-            log.error(head.reason
+            core.log.error(head.reason
                       or f"Cannot resolve the head branch of {repo}#{pr_number}")
-            log.dim("pr keys a run's state and lock on its target branch and "
+            core.log.dim("pr keys a run's state and lock on its target branch and "
                     "stamps state with its head SHA")
             sys.exit(1)
         branch_name = head.branch
@@ -323,18 +323,18 @@ def resolve(
         head_sha = head.sha
         base = head.base
     elif branch:
-        branch_name = git_topology.resolve_branch(branch, cwd)
+        branch_name = git.topology.resolve_branch(branch, cwd)
         found = _pr_from_branch(repo, branch_name)
         pr_number, base = found.number, found.base
     else:
-        branch_name = git_topology.current_branch(cwd)
+        branch_name = git.topology.current_branch(cwd)
         found = _pr_from_current(cwd)
         pr_number, base = found.number, found.base
 
-    if not pr:
+    if not pr_ref:
         head_sha = _head_sha(cwd) if worktree_root else ""
 
-    current = git_topology.current_branch_quiet(cwd) if worktree_root else None
+    current = git.topology.current_branch_quiet(cwd) if worktree_root else None
 
     # One read for both: the key and the host come off the same origin, so this
     # cannot name one repo's directory and another's forge.
@@ -349,7 +349,7 @@ def resolve(
         current_branch=current,
         base=base,
         host=identity.host,
-        target_dir=pr_target.target_dir(identity.key, branch_name),
+        target_dir=pr.target.target_dir(identity.key, branch_name),
     )
 
 
@@ -366,7 +366,7 @@ def resolve_local(
 
     * ``pr_number`` is always None and ``repo`` is the canonical form behind the
       repo key (``acme/widget``), not ``gh``'s ``owner/repo`` — see
-      ``pr_target.RepoIdentity``. A caller that wants the branch's PR without
+      ``pr.target.RepoIdentity``. A caller that wants the branch's PR without
       giving up this rung's no-network guarantee asks for it separately, with
       ``pr_number_if_reachable``.
     * A bare repo hands back an existing worktree but never creates one, so
@@ -379,12 +379,12 @@ def resolve_local(
     cwd = repo_dir
 
     worktree_root, cwd = _resolve_worktree(
-        cwd, pr=None, branch=branch, create_missing=False,
+        cwd, pr_ref=None, branch=branch, create_missing=False,
     )
 
     branch_name = (
-        git_topology.resolve_branch(branch, cwd) if branch
-        else git_topology.current_branch(cwd)
+        git.topology.resolve_branch(branch, cwd) if branch
+        else git.topology.current_branch(cwd)
     )
 
     identity = _target_identity(cwd)
@@ -395,9 +395,9 @@ def resolve_local(
         branch=branch_name,
         worktree_root=worktree_root,
         head_sha=_head_sha(cwd) if worktree_root else "",
-        current_branch=git_topology.current_branch_quiet(cwd) if worktree_root else None,
+        current_branch=git.topology.current_branch_quiet(cwd) if worktree_root else None,
         host=identity.host,
-        target_dir=pr_target.target_dir(identity.key, branch_name),
+        target_dir=pr.target.target_dir(identity.key, branch_name),
     )
 
 
@@ -448,8 +448,8 @@ def base_branch(
         return decide(stated, f"PR #{ctx.pr_number} targets {stated}")
 
     where = cwd or (str(ctx.worktree_root) if ctx.worktree_root else None)
-    default = git_topology.default_branch(where)
-    parent = git_topology.stack_parent(where, default=default)
+    default = git.topology.default_branch(where)
+    parent = git.topology.stack_parent(where, default=default)
     if parent:
         return decide(parent, "nearest local ancestor of HEAD — this branch is stacked")
     return decide(default, "no stack parent and no PR base — the repo's default branch")
@@ -470,7 +470,7 @@ def pr_number_if_reachable(repo: str, branch: str) -> BranchPR:
     is measured against, and without it the review covers the parent's commits
     as well as its own. Both come off one call — see :class:`BranchPR`.
 
-    Best-effort by construction — ``gh_client.out`` returns "" for a failed
+    Best-effort by construction — ``gh.client.out`` returns "" for a failed
     call, so an unreachable or exhausted API is indistinguishable here from a
     branch with no PR, and both give an empty ``BranchPR``. Callers must read
     that as "no PR known", never as "no PR exists".
@@ -480,7 +480,7 @@ def pr_number_if_reachable(repo: str, branch: str) -> BranchPR:
     return _pr_from_branch(repo, branch)
 
 
-def _target_identity(cwd: str | None) -> pr_target.RepoIdentity:
+def _target_identity(cwd: str | None) -> pr.target.RepoIdentity:
     """Every name for the target repo from one read of ``origin``, or exit 1.
 
     Both rungs use it. ``resolve_local`` shows the repo *and* keys the target on
@@ -493,7 +493,7 @@ def _target_identity(cwd: str | None) -> pr_target.RepoIdentity:
     keys its state and lock on the origin, so a checkout without one has no
     target to hold.
     """
-    identity = pr_target.repo_identity_from_origin(cwd)
+    identity = pr.target.repo_identity_from_origin(cwd)
     if identity:
         return identity
     _exit_without_an_origin()
@@ -501,7 +501,7 @@ def _target_identity(cwd: str | None) -> pr_target.RepoIdentity:
 
 def _exit_without_an_origin() -> NoReturn:
     """Fail the run the same way whichever name the caller was asking for."""
-    log.error(
+    core.log.error(
         "Cannot read the origin remote — pr keys a run's state and lock on "
         "(origin repo, branch)"
     )
@@ -521,16 +521,16 @@ def _redirect_to_branch_worktree(
     branch: str, effective_cwd: str,
 ) -> Path | None:
     """If CWD's branch differs from the target, find the target's worktree."""
-    current = git_topology.current_branch_quiet(effective_cwd)
+    current = git.topology.current_branch_quiet(effective_cwd)
     if current is None or current == branch:
         return None
-    return git_topology.find_worktree_by_branch(branch, effective_cwd)
+    return git.topology.find_worktree_by_branch(branch, effective_cwd)
 
 
 def _resolve_worktree(
     cwd: str | None,
     *,
-    pr: str | None,
+    pr_ref: str | None,
     branch: str | None,
     create_missing: bool = True,
 ) -> tuple[Path | None, str | None]:
@@ -543,7 +543,7 @@ def _resolve_worktree(
     toplevel = _git_toplevel(cwd)
     if toplevel is None:
         return _resolve_non_worktree(
-            cwd, pr=pr, branch=branch, create_missing=create_missing,
+            cwd, pr_ref=pr_ref, branch=branch, create_missing=create_missing,
         )
 
     if branch:
@@ -556,18 +556,18 @@ def _resolve_worktree(
 def _resolve_non_worktree(
     cwd: str | None,
     *,
-    pr: str | None,
+    pr_ref: str | None,
     branch: str | None,
     create_missing: bool = True,
 ) -> tuple[Path | None, str | None]:
     """Handle bare repos and non-git directories."""
-    if git_topology.is_bare_repo(cwd):
+    if git.topology.is_bare_repo(cwd):
         return _resolve_bare(
-            cwd, pr=pr, branch=branch, create_missing=create_missing,
+            cwd, pr_ref=pr_ref, branch=branch, create_missing=create_missing,
         )
 
-    if not pr and not branch:
-        log.error("Not in a git repository")
+    if not pr_ref and not branch:
+        core.log.error("Not in a git repository")
         sys.exit(1)
     return None, cwd
 
@@ -575,17 +575,17 @@ def _resolve_non_worktree(
 def _resolve_bare(
     cwd: str | None,
     *,
-    pr: str | None,
+    pr_ref: str | None,
     branch: str | None,
     create_missing: bool = True,
 ) -> tuple[Path | None, str | None]:
     """Resolve worktree from a bare repo."""
-    wt = (git_topology.resolve_bare_repo_worktree(cwd, branch) if create_missing
-          else git_topology.find_bare_repo_worktree(cwd, branch))
+    wt = (git.topology.resolve_bare_repo_worktree(cwd, branch) if create_missing
+          else git.topology.find_bare_repo_worktree(cwd, branch))
     if wt:
         return wt, str(wt)
-    if not pr and not branch:
-        log.error("Bare repository — pass --branch or --repo-dir")
+    if not pr_ref and not branch:
+        core.log.error("Bare repository — pass --branch or --repo-dir")
         sys.exit(1)
     return None, cwd
 
@@ -620,8 +620,8 @@ def detect_repo(cwd: str | None = None) -> str:
     to the label rather than exiting, because the origin *did* name the repo
     and a throttled API is not evidence that it named it wrongly.
     """
-    identity = pr_target.repo_identity_from_origin(cwd)
-    if identity and pr_target.is_public_github(identity.host):
+    identity = pr.target.repo_identity_from_origin(cwd)
+    if identity and pr.target.is_public_github(identity.host):
         return identity.label
     if identity:
         # `repo_slug` rather than the `gh repo view` below: it is the same call
@@ -640,13 +640,13 @@ def detect_repo(cwd: str | None = None) -> str:
         # return `microsoft/TypeScript`. The origin path has folded since
         # before this branch, so the fold is what the rest of the pipeline
         # already assumes rather than something this call introduces.
-        slug = pr_target.fold_case(gh_client.repo_slug(cwd))
+        slug = pr.target.fold_case(gh.client.repo_slug(cwd))
         return slug or identity.label
 
-    r = gh_client.run("repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner", cwd=cwd)
+    r = gh.client.run("repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner", cwd=cwd)
     slug = r.stdout.strip()
     if not r.ok or not slug:
-        log.error(failure_message("Cannot determine repository via `gh repo view`", r))
+        core.log.error(failure_message("Cannot determine repository via `gh repo view`", r))
         sys.exit(1)
     return slug
 
@@ -654,7 +654,7 @@ def detect_repo(cwd: str | None = None) -> str:
 def _git_toplevel(cwd: str | None = None) -> Path | None:
     r = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
+        capture_output=True, text=True, cwd=cwd, timeout=core.timeouts.LOCAL,
     )
     if r.returncode != 0:
         return None
@@ -664,7 +664,7 @@ def _git_toplevel(cwd: str | None = None) -> Path | None:
 def _head_sha(cwd: str | None = None) -> str:
     r = subprocess.run(
         ["git", "rev-parse", "HEAD"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
+        capture_output=True, text=True, cwd=cwd, timeout=core.timeouts.LOCAL,
     )
     return r.stdout.strip()
 
@@ -685,7 +685,7 @@ def _as_pr_number(said: str) -> int | None:
     """A PR number gh printed, or None when it printed anything else.
 
     An empty answer is the routine one: a branch with no PR yet 404s, and
-    `gh_client` returns that on the first attempt rather than retrying a 4xx.
+    `gh.client` returns that on the first attempt rather than retrying a 4xx.
     """
     try:
         return int(said.strip())
@@ -694,7 +694,7 @@ def _as_pr_number(said: str) -> int | None:
 
 
 def _pr_from_current(cwd: str | None = None) -> BranchPR:
-    data = gh_client.pr_view("", "number", "baseRefName", cwd=cwd)
+    data = gh.client.pr_view("", "number", "baseRefName", cwd=cwd)
     return BranchPR(
         number=_as_pr_number(str(data.get("number", ""))),
         base=data.get("baseRefName") or "",
@@ -711,7 +711,7 @@ def _pr_from_branch(repo: str, branch: str) -> BranchPR:
     resolves to nothing, and a branch with no PR yet — the ordinary case for
     `--self` — is reviewed against a ref that does not exist.
     """
-    found = gh_client.json_out(
+    found = gh.client.json_out(
         "pr", "list", "--repo", repo, "--head", branch,
         "--json", "number,baseRefName", default=[],
     )
@@ -731,7 +731,7 @@ def _pr_from_branch(repo: str, branch: str) -> BranchPR:
 
 def _pr_head(repo: str, pr_number: int) -> PRHead:
     """The PR's head branch, head SHA and base branch, in one API call."""
-    r = gh_client.run(
+    r = gh.client.run(
         "pr", "view", str(pr_number), "--repo", repo,
         "--json", "headRefName,headRefOid,baseRefName",
         "-q", '.headRefName + " " + .headRefOid + " " + .baseRefName',

@@ -57,9 +57,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from agent import usage as ai_usage
-from core import log
-from core import timeouts
+import agent.usage
+import core.log
+import core.timeouts
 from core.proc import _kill_group
 from agent.backend import AgentInvocation, agent_env
 from agent.rule_prefix import (
@@ -164,24 +164,24 @@ def _spawn_env(inv: AgentInvocation) -> dict[str, str]:
     return agent_env(inv)
 
 
-def _read_agent_prompt(agent: str) -> str | None:
+def _read_agent_prompt(agent_name: str) -> str | None:
     """Read an agent's system prompt from ~/.claude/agents/<name>.md."""
-    agent_file = AGENTS_DIR / f"{agent}.md"
+    agent_file = AGENTS_DIR / f"{agent_name}.md"
     if agent_file.is_file():
         return agent_file.read_text()
-    log.warn(f"agent file not found: {agent_file}")
+    core.log.warn(f"agent file not found: {agent_file}")
     return None
 
 
 AGENT_PROTOCOL_PLACEHOLDER = "AGENT_PROTOCOL_PLACEHOLDER"
 
 
-def _resolve_skill_path(agent: str) -> Path | None:
+def _resolve_skill_path(agent_name: str) -> Path | None:
     """Check if a Pi-format SKILL.md exists for the given agent name.
 
     Returns None if the file is missing or still contains the unresolved placeholder.
     """
-    skill_file = AGENTS_SKILLS_DIR / agent / "SKILL.md"
+    skill_file = AGENTS_SKILLS_DIR / agent_name / "SKILL.md"
     if not skill_file.is_file():
         return None
     if AGENT_PROTOCOL_PLACEHOLDER in skill_file.read_text():
@@ -417,7 +417,7 @@ def _rpc_response_error(data: dict) -> str | None:
     detail = detail[:_RPC_ERROR_MAX_CHARS]
     if command in _FATAL_RPC_COMMANDS:
         return detail
-    log.warn(f"pi rpc {command or 'command'} failed: {detail}")
+    core.log.warn(f"pi rpc {command or 'command'} failed: {detail}")
     return None
 
 
@@ -450,16 +450,16 @@ def _wait_for_exit(proc: subprocess.Popen, *, abandoned: bool) -> bool:
     is told to skip it.
     """
     if not abandoned:
-        proc.wait(timeout=timeouts.UNBOUNDED)
+        proc.wait(timeout=core.timeouts.UNBOUNDED)
         return True
     try:
-        proc.wait(timeout=timeouts.LOCAL)
+        proc.wait(timeout=core.timeouts.LOCAL)
     except subprocess.TimeoutExpired:
         _kill_group(proc)
         try:
-            proc.wait(timeout=timeouts.QUICK)
+            proc.wait(timeout=core.timeouts.QUICK)
         except subprocess.TimeoutExpired:
-            log.warn(f"pi process group {proc.pid} did not reap after SIGKILL")
+            core.log.warn(f"pi process group {proc.pid} did not reap after SIGKILL")
             return False
     return True
 
@@ -646,7 +646,7 @@ def _ask_for_deliverable(
     """
     if not due:
         return True
-    log.warn(f"{prefix}run ended with no deliverable — asking once for it")
+    core.log.warn(f"{prefix}run ended with no deliverable — asking once for it")
     return _send(process, {"type": "prompt", "message": _WRITE_FIRST})
 
 
@@ -706,7 +706,7 @@ def _steer_if_looping(
     count = tool_repeats[signature]
     if count < REPEAT_TOOL_LIMIT:
         return False
-    log.warn(f"{prefix}no progress: {signature} repeated {count}x with no write — steering")
+    core.log.warn(f"{prefix}no progress: {signature} repeated {count}x with no write — steering")
     _send(process, {"type": "steer", "message": _NO_PROGRESS.format(count=count)})
     return True
 
@@ -773,7 +773,7 @@ def _undelivered_prompt(log_file) -> StreamResult:
     Logged into the session file in Pi's own response shape, so the record that
     explains the failure is where every other refusal leaves one.
     """
-    log.error(f"pi refused the run: {_PROMPT_UNDELIVERED}")
+    core.log.error(f"pi refused the run: {_PROMPT_UNDELIVERED}")
     log_file.write(json.dumps({
         "type": "response", "command": "prompt", "success": False,
         "error": _PROMPT_UNDELIVERED,
@@ -907,10 +907,10 @@ def _consume_events(
             # the stop_reason it earned and let the no-write diagnosis stand.
             # Reporting it as an error would hide a retryable ending behind a
             # crash nobody can act on.
-            log.warn(f"{prefix}pi refused the deliverable prompt: {response_error}")
+            core.log.warn(f"{prefix}pi refused the deliverable prompt: {response_error}")
             break
         if response_error:
-            log.error(f"{prefix}pi refused the run: {response_error}")
+            core.log.error(f"{prefix}pi refused the run: {response_error}")
             stop_reason, error = "error", response_error
             break
         if event_type == "response":
@@ -1084,7 +1084,7 @@ def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
 def prompt(
     text: str, *, cwd: str, model: str | None = None,
     thinking: str | None = None, provider: str | None = None,
-) -> tuple[str, int, ai_usage.SessionUsage | None]:
+) -> tuple[str, int, agent.usage.SessionUsage | None]:
     """Stateless text-in/text-out via pi -p. Returns (text, exit_code, usage).
 
     Usage is read from the JSON stream — see `pi_prompt_result`. It was reported
@@ -1098,7 +1098,7 @@ def prompt(
     """
     cmd = _build_prompt_cmd(model=model, provider=provider, thinking=thinking)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd,
-                            timeout=timeouts.UNBOUNDED)
+                            timeout=core.timeouts.UNBOUNDED)
     reply, usage = pi_prompt_result(result.stdout)
     return reply, result.returncode, usage
 

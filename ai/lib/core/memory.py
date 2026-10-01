@@ -19,7 +19,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
-from core import sessions, workbench_paths
+import core.sessions
+import core.workbench_paths
 
 _WORKBENCH_LIB = Path(__file__).resolve().parent.parent.parent.parent / "lib"
 if _WORKBENCH_LIB.is_dir() and str(_WORKBENCH_LIB) not in sys.path:
@@ -53,14 +54,14 @@ def repo_key(repo_path: Path | str) -> str:
     # so one repo has two spellings. Slugging the argument would vary the
     # readable half while the digest held, which is the per-cwd keying this
     # store exists to end.
-    slug = sessions.canonical_slug(identity)[:_SLUG_MAX]
+    slug = core.sessions.canonical_slug(identity)[:_SLUG_MAX]
     digest = hashlib.sha256(identity.encode()).hexdigest()[:_DIGEST_LEN]
     return f"{slug}-{digest}"
 
 
 def memory_dir(repo_path: Path | str) -> Path:
     """Where this repository's topic files live under the data root."""
-    return workbench_paths.memory_dir() / repo_key(repo_path)
+    return core.workbench_paths.memory_dir() / repo_key(repo_path)
 
 
 def parse_frontmatter(path: str | Path) -> dict:
@@ -179,7 +180,7 @@ def gate_stamp_file(repo_path: Path | str, name: str) -> Path:
     identity = shared_dir(directory)
     if identity is not None:
         directory = identity[: -len("/.git")] if identity.endswith("/.git") else identity
-    return workbench_paths.gates_dir() / f"{sessions.canonical_slug(directory)}.{name}"
+    return core.workbench_paths.gates_dir() / f"{core.sessions.canonical_slug(directory)}.{name}"
 
 
 def read_body(path: Path) -> str:
@@ -193,7 +194,7 @@ def read_body(path: Path) -> str:
 
 def memory_dirs() -> Iterator[Path]:
     """Every per-repo memory directory under the data root, in name order."""
-    root = workbench_paths.memory_dir()
+    root = core.workbench_paths.memory_dir()
     if not root.is_dir():
         return
     for entry in sorted(root.iterdir()):

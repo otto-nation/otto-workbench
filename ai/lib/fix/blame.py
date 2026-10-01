@@ -113,18 +113,25 @@ def lost_symbols(diff: str, post_image: str) -> set[str]:
     survives elsewhere in the file (removing one of five references is not a
     deletion), and anything not symbol-shaped (prose).
     """
-    # ceiling: a deleted source line that itself starts with two dashes (a
-    # SQL/Lua comment, a markdown rule) reads as a `---` file header and is
-    # dropped rather than counted as removed. Narrow enough — it needs a
-    # dash-prefixed line carrying a real symbol — that it is left unhandled
-    # rather than disambiguated against the real header, which only ever
-    # appears once per file in a single-file diff.
+    # Content lines are recognised by position, not by counting dashes. A
+    # removed `-- note` (SQL, Lua) arrives as `--- note` and a removed `--- x`
+    # (a markdown rule, a YAML separator) as `---- x`, both of which a
+    # prefix test reads as the `--- a/path` header and silently drops. The
+    # header only ever appears before the first `@@`, so tracking that is
+    # both cheaper and exact.
     removed: list[str] = []
     added: list[str] = []
+    in_hunk = False
     for line in diff.splitlines():
-        if line.startswith("-") and not line.startswith("---"):
+        if line.startswith("@@"):
+            in_hunk = True
+        elif line.startswith("diff --git "):
+            in_hunk = False
+        elif not in_hunk:
+            continue
+        elif line.startswith("-"):
             removed.append(line[1:])
-        elif line.startswith("+") and not line.startswith("+++"):
+        elif line.startswith("+"):
             added.append(line[1:])
 
     gone = {t for line in removed for t in _TOKEN.findall(line)}
@@ -186,10 +193,12 @@ def pointers(
         diff = _diff_of(Path(workdir), anchor)
         if not diff:
             continue
-        # A fix can delete the file outright rather than edit it — the
-        # motivating regression's shape. The diff still carries what was
-        # removed; there is just no post-image left to subtract survivors
-        # from, so an absent file reads as empty rather than being skipped.
+        # A fix can delete the file outright rather than edit it. The diff
+        # still carries what was removed; there is just no post-image left to
+        # subtract survivors from, so an absent file reads as empty rather
+        # than being skipped. (Not what the motivating regression did — that
+        # one removed an import line — but the same evidence is available and
+        # skipping would throw it away.)
         anchor_path = Path(workdir) / anchor
         post = anchor_path.read_text(errors="ignore") if anchor_path.exists() else ""
 

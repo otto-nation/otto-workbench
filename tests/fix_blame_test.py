@@ -95,6 +95,43 @@ def test_a_name_still_used_elsewhere_in_the_file_is_not_lost(repo):
     assert fix_blame.pointers(repo, {"N1": "m.py"}, "CALL_ME exploded") == ()
 
 
+def test_a_removed_line_that_itself_starts_with_dashes_is_still_read(repo):
+    """A `--` comment line arrives in the diff as `---` and looked like a header.
+
+    Counting dashes cannot tell a removed `-- DROP_ME` from the `--- a/path`
+    header, so the symbol was dropped and the item went unattributed. The
+    parse keys off the `@@` boundary instead, where the distinction is exact.
+    """
+    _commit(repo, "q.sql", "-- uses DROP_ME_SENTINEL here\nSELECT 1;\n")
+    (repo / "q.sql").write_text("SELECT 1;\n")
+
+    found = fix_blame.pointers(repo, {"N1": "q.sql"}, "DROP_ME_SENTINEL missing")
+
+    assert found and found[0].symbols == ("DROP_ME_SENTINEL",)
+
+
+def test_a_removed_markdown_rule_line_is_still_read(repo):
+    """The four-dash case: a removed `--- X` becomes `---- X` in the diff."""
+    _commit(repo, "d.md", "--- RULE_SENTINEL ---\ntext\n")
+    (repo / "d.md").write_text("text\n")
+
+    found = fix_blame.pointers(repo, {"N1": "d.md"}, "RULE_SENTINEL gone")
+
+    assert found and found[0].symbols == ("RULE_SENTINEL",)
+
+
+def test_the_file_header_itself_is_never_read_as_content(repo):
+    """The reason the dash test existed: `a/path` must not become a symbol."""
+    _commit(repo, "My_Module.py", "X = 1\n")
+    (repo / "My_Module.py").write_text("Y = 2\n")
+
+    # The header line is `--- a/My_Module.py`; if it were read as removed
+    # content, `My_Module` would be offered as a lost symbol.
+    found = fix_blame.pointers(repo, {"N1": "My_Module.py"}, "My_Module blew up")
+
+    assert found == ()
+
+
 # ── the filters that were measured, not guessed ─────────────────────────────
 
 

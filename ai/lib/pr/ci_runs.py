@@ -211,13 +211,14 @@ def _apply_external(merged: dict, external: tuple[dict, ...]) -> dict:
     if not external:
         return merged
     merged["jobs"] = [*merged.get("jobs", []), *external]
-    # Whitelisted, not blacklisted: a finished external check passes only if
-    # it concluded in one of the words that mean passing. Asking instead
-    # whether it is in `FAILURE_CONCLUSIONS` let `cancelled` through as green,
-    # and would let through whatever GitHub adds to the enum next.
-    if any(job.get("status") == "completed"
-           and job.get("conclusion") not in run_reads.GREEN_CONCLUSIONS
-           for job in external):
+    # The same question `failed_jobs` asks, deliberately, and not a second
+    # test of its own. An external check that did not conclude green is
+    # handed over already saying `failure` (`run_reads._as_failure_unless_
+    # green`), so one definition serves every reader. Asking a *different*
+    # question here is what produced the last defect: this said failure for a
+    # cancelled check while `failed_jobs` found nothing to name, and a
+    # verdict no job supports is one `_claims_failure` clears again.
+    if any(job.get("conclusion") in FAILURE_CONCLUSIONS for job in external):
         merged["conclusion"] = "failure"
         return merged
     if any(job.get("status") != "completed" for job in external):

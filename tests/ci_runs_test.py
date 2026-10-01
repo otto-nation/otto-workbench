@@ -877,3 +877,22 @@ def test_a_cancelled_external_check_becomes_a_named_failure():
                                            source="status_context"),))
     fetched = _merged(_discovery(row), checks)
     assert [j["name"] for j in ci_runs.failed_jobs(fetched.merged)] == ["scalr/plan"]
+
+
+def test_a_cancelled_external_check_reaches_every_reader_of_a_conclusion():
+    """One definition means the job counts agree with the verdict and the list.
+
+    `count_job_states` asks `FAILURE_CONCLUSIONS` like everything else, so a
+    check normalised at the boundary is counted without that counter having
+    to learn the rule. Asserted because it is the reader furthest from the
+    normalisation and the one no earlier test covered.
+    """
+    row = run_reads.RunRow(run_id=200, number=5, head_sha="abc", conclusion="success")
+    checks = run_reads.CommitChecks(
+        answered=True, external=(_external("scalr/plan", "cancelled",
+                                           source="status_context"),))
+    fetched = _merged(_discovery(row), checks)
+    counts = ci_runs.count_job_states(fetched.merged)
+    assert counts.failed == 1
+    assert fetched.merged["conclusion"] == "failure"
+    assert [j["name"] for j in ci_runs.failed_jobs(fetched.merged)] == ["scalr/plan"]

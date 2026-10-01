@@ -426,9 +426,11 @@ _pi_build_models() {
 
 # _pi_default_provider — prints the provider prefix model ids are built and
 # checked against: the template's defaultProvider, or the hardcoded fallback
-# every caller shares.
+# every caller shares. jq's stderr is left alone so a malformed template fails
+# loudly on the build path; the warn path, which must never fail, silences it
+# at its own call.
 _pi_default_provider() {
-  jq -r '.defaultProvider // "google-vertex-claude"' "$PI_SETTINGS_SRC" 2>/dev/null
+  jq -r '.defaultProvider // "google-vertex-claude"' "$PI_SETTINGS_SRC"
 }
 
 # _pi_warn_unknown_models — warn when a set model env var names an id pi does
@@ -436,8 +438,8 @@ _pi_default_provider() {
 # `pi` is skipped, because pi may be absent or offline and a 404 mid-review is
 # still how those machines find out. Quiet when every set value is listed.
 #
-# Kept out of _pi_build_models because that function's stdout is captured as
-# JSON; a warning printed there would corrupt the merge.
+# Kept out of _pi_build_models because it needs `pi`, which building the model
+# list does not, and a missing or offline `pi` must not touch the merge.
 _pi_warn_unknown_models() {
   [[ -f "$ENV_LOCAL_FILE" ]] || return 0
 
@@ -467,7 +469,7 @@ _pi_warn_unknown_models() {
   [[ -n "$listing" ]] || return 0
 
   local provider
-  provider=$(_pi_default_provider) || return 0
+  provider=$(_pi_default_provider 2>/dev/null) || return 0
 
   local -A listed=()
   local col1 col2

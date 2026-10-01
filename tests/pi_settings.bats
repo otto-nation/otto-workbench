@@ -675,3 +675,25 @@ YAML2
   [[ "$output" == *"AI_MODEL=claude-opus-5"* ]]
   _teardown_env_local
 }
+
+@test "a malformed template surfaces jq's error on the build path" {
+  _seed_env_local 'export AI_MODEL=claude-opus-5'
+  printf '{ not json' > "$TEMPLATE"
+
+  run --separate-stderr bash -c '
+    set -e
+    warn() { :; }
+    PI_SETTINGS_SRC="$2"
+    ENV_LOCAL_FILE="$3"
+    LIB_SRC_DIR="$1/lib"
+    WORKBENCH_STABLE_DIR="$1"
+    . "$1/lib/env.sh"
+    . "$1/ai/pi/steps.sh"
+    _pi_build_models out
+    echo "built: $out"
+  ' _ "$REPO_ROOT" "$TEMPLATE" "$ENV_LOCAL_FILE"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"parse error"* ]]
+  [[ "$output" != *"built:"* ]]
+  _teardown_env_local
+}

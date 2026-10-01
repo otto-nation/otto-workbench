@@ -83,7 +83,7 @@ refused at the step that crosses the line rather than never.
 
 `resolutions_over_budget` counts the calls themselves, and exists because the
 first count is deliberately blind to repetition. Nine files conflicting in each
-of seven replayed commits is a spread of nine — a quarter of the file budget —
+of seven replayed commits is a spread of nine — well inside the file budget —
 while the run spends sixty-three AI calls. One measures how much of the tree is
 at risk; the other measures how much the run is spending to find out.
 

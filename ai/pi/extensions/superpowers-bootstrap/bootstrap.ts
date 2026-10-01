@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 /**
  * Builds the superpowers bootstrap as a system-prompt section.
@@ -69,11 +70,17 @@ export function bootstrapSection(
 
 Pi has no \`Skill\` tool. Where a Superpowers instruction says to invoke a skill, read that skill's SKILL.md with the \`read\` tool when it applies.
 
+Pi ships no standard subagent tool. If one such as \`subagent\` is available, use it for Superpowers subagent workflows; otherwise do the work in this session or explain the missing capability, rather than inventing \`Task\` calls.
+
+Pi ships no standard task-list tool. If an installed todo/task tool is available, use it; otherwise track work in a plan file or a repo-local \`TODO.md\`. Treat \`TodoWrite\` references as this task-tracking action.
+
+Relative paths in the skill below, such as \`references/pi-tools.md\`, resolve against ${dirname(skill.filePath)}.
+
 ${body}`;
 }
 
 /** The skill body with its YAML frontmatter removed, trimmed. */
 export function stripFrontmatter(content: string): string {
-  const match = content.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/);
-  return (match ? match[1] : content).trim();
+  const match = content.match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n([\s\S]*))?$/);
+  return (match ? (match[1] ?? "") : content).trim();
 }

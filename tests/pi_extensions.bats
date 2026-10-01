@@ -2446,6 +2446,36 @@ _section() {
   [[ "$output" != *'description: x'* ]]
 }
 
+@test "superpowers-bootstrap: the section carries Pi's subagent and task-list mapping" {
+  mkdir -p "$TMPDIR/sp"
+  printf -- '---\nname: using-superpowers\n---\nBody.\n' > "$TMPDIR/sp/SKILL.md"
+
+  _section "[{\"name\":\"using-superpowers\",\"filePath\":\"$TMPDIR/sp/SKILL.md\"}]"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'subagent tool'* ]]
+  [[ "$output" == *'task-list tool'* ]]
+}
+
+@test "superpowers-bootstrap: the section names the skill directory relative paths resolve against" {
+  # The skill links references/pi-tools.md by relative path; read from the
+  # system prompt it has no directory to resolve that against unless told.
+  mkdir -p "$TMPDIR/sp"
+  printf -- '---\nname: using-superpowers\n---\nSee references/pi-tools.md.\n' > "$TMPDIR/sp/SKILL.md"
+
+  _section "[{\"name\":\"using-superpowers\",\"filePath\":\"$TMPDIR/sp/SKILL.md\"}]"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"resolve against $TMPDIR/sp."* ]]
+}
+
+@test "superpowers-bootstrap: frontmatter closed at end of file without a newline is stripped" {
+  run node --input-type=module -e "
+    const { stripFrontmatter } = await import('$REPO_ROOT/ai/pi/extensions/superpowers-bootstrap/bootstrap.ts');
+    process.stdout.write(JSON.stringify(stripFrontmatter('---\nname: x\n---')));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = '""' ]
+}
+
 @test "superpowers-bootstrap: no skills loaded means no section" {
   # The review pipeline runs Pi with --no-skills; its parsed-JSON answers must
   # not be told to announce a skill first.

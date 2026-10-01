@@ -7,9 +7,10 @@ the only one that is true. :func:`upsert_thread_reply` is that replacement.
 The constraint the module is built around is that a human may have rewritten
 what we wrote. `--fix` re-drains every fixed thread on later rounds, so without
 a check the three-line template would overwrite reasoning somebody typed, with
-no undo but the edit history. :func:`is_generated_reply` measures divergence
-against the template rather than tracking a round number, because the round a
-reply was written in says nothing about whether it is still ours.
+no undo but the edit history. :func:`is_generated_reply` compares the reply
+against the digest its marker recorded rather than tracking a round number,
+because the round a reply was written in says nothing about whether it is still
+ours.
 
 Four builders sit on one driver. They look alike and are not: each reads a
 different field, links through a different permalink helper with a different
@@ -40,6 +41,7 @@ import pr.attribution
 import pr.comments
 import pr.context
 import pr.permalinks
+import pr.published_record
 from pr.fix import UNVERIFIED_NOTE, FixOutcome
 from pr.thread_models import THREAD_ANCHOR, CommentItem, ReportThread
 
@@ -168,10 +170,10 @@ def names_a_verdict(body: str) -> bool:
     return verdict_kind(body) is not None
 
 
-# Every trailing paragraph a generated reply can have: one sentence naming a
-# commit, a file, or an issue. Kept in step with the four body_fn builders
-# below — a new trailing line there needs its opening added here, or the reply
-# it appears in stops being recognised as ours.
+# Every trailing paragraph a generated reply written before the marker could
+# have: one sentence naming a commit, a file, or an issue. Frozen: it only reads
+# replies created before `GENERATED_MARKER_SINCE`, so a new trailing line in a
+# builder below needs nothing here — the marker recognises it.
 _GENERATED_FOLLOWUP_RE = re.compile(
     r"(?:Fixed in|Result is in|Current behaviour is at|Addressed in|See|"
     r"Tracked in|Unchanged at|Not verified) .+\.$",
@@ -246,27 +248,50 @@ def upsert_thread_reply(
     return pr.comments.post_thread_reply(repo, pr_number, root_id, body)
 
 
-def is_generated_reply(body: str) -> bool:
-    """Whether a standing reply is still one of ours, in template shape.
+# Replies created before this instant were written by code that did not stamp
+# them, so a reply without a marker is read by the legacy template match only if
+# it predates it. After it, a reply without a marker is a person's — including
+# one whose marker a person deleted. Compared as an ISO-8601 string, which is the
+# form GitHub's `createdAt` arrives in.
+GENERATED_MARKER_SINCE = "2026-10-02T00:00:00Z"
+
+
+def is_generated_reply(body: str, created_at: str = "") -> bool:
+    """Whether a standing reply is still one of ours, exactly as we wrote it.
 
     The upsert replaces our standing reply wholesale, and the fix queue
     re-drains every fixed thread on later rounds — so a reply someone rewrote
     by hand, with reasoning or an explicit decision not to do what the reviewer
-    asked, would otherwise be overwritten by the three-line template with no
-    undo but the edit history.
+    asked, would otherwise be overwritten by the template with no undo but the
+    edit history.
 
-    Divergence is measured against the template rather than tracked by round
-    number: the round a reply was written in says nothing about whether it is
-    still ours. Regenerating an identical body is harmless; replacing a
-    divergent one is not.
+    Every generated reply carries a marker holding the digest of its text (see
+    `published_record.stamp_reply`), so any edit — an added sentence, a changed
+    word, text after the marker — reads as a person's. Regenerating an
+    identical body is harmless; replacing a divergent one is not.
 
-    ceiling: a hand edit still reads as generated when it stays inside the
-    template's own free text — prose in the opening paragraph, or a trailing
-    sentence that happens to start with one of the followup openings. Tightening
-    the followup pattern is not the fix, since the linkless generated shapes
-    would stop matching and their replies could never be updated again. Add an
-    HTML marker to generated bodies and key off that if either case ever costs
-    someone a reply.
+    A reply with no marker is dated rather than guessed at: before
+    `GENERATED_MARKER_SINCE` it was written by code that did not stamp, and goes
+    to the template match below; after it, it is a person's. ``created_at`` empty
+    — a caller that cannot date the reply — reads as before the cutover, which
+    is the behaviour every caller had until the marker existed.
+    """
+    intact = pr.published_record.reply_marker_intact(body)
+    if intact is not None:
+        return intact
+    if created_at and created_at >= GENERATED_MARKER_SINCE:
+        return False
+    return _legacy_generated_reply(body)
+
+
+def _legacy_generated_reply(body: str) -> bool:
+    """Whether an unstamped reply written before the marker is in template shape.
+
+    ceiling: authorship is inferred from the template's prose, so a hand edit
+    that stays inside the template's own free text still reads as generated.
+    Confined to replies created before `GENERATED_MARKER_SINCE`. Upgrade
+    trigger: once `gh search prs --author @me --state open --created
+    "<2026-10-02"` returns nothing, delete this and `_GENERATED_FOLLOWUP_RE`.
     """
     paragraphs = [p.strip() for p in body.strip().split("\n\n") if p.strip()]
     if not paragraphs or not paragraphs[0].startswith(GENERATED_REPLY_PREFIXES):
@@ -302,7 +327,8 @@ def has_hand_written_reply(thread: ReportThread | None) -> bool:
     for comment in reversed(thread.comments[1:]):
         author = ((comment.get("author") or {}).get("login") or "").lower()
         if author == login:
-            return not is_generated_reply(str(comment.get("body", "")))
+            return not is_generated_reply(
+                str(comment.get("body", "")), str(comment.get("createdAt") or ""))
     return False
 
 
@@ -336,7 +362,8 @@ def _post_thread_replies(
         # to one thread within a single run would still stack. Unreachable while
         # the reply categories stay a partition of the triage verdicts; refetch
         # the thread here if that ever stops holding.
-        if not upsert_thread_reply(thread, repo, pr_number, body_fn(entry), existing_id):
+        body = pr.published_record.stamp_reply(body_fn(entry))
+        if not upsert_thread_reply(thread, repo, pr_number, body, existing_id):
             continue
         replied += 1
         edited += existing_id is not None

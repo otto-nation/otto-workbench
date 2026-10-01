@@ -711,10 +711,11 @@ def finding_location(entry: CommentItem | ReportThread) -> str:
     Every use of the heuristic reads the tradeoff below:
     `summary_model.duplicate_item_ids` folds the pair out of a fresh render,
     and `summary_scope.carried_over_rows` reads the same keys so it does not
-    reinstate a row this render folded. It recovers the published side's keys
-    from rendered markdown with `summary_scope.row_location_key`, which is why
-    that function strips the `@` the Reviewer cell is written with — the two
-    forms are compared and must spell the login alike.
+    reinstate a row this render folded. The published side's keys come from
+    the row's cells through `summary_model.location_from_cells` — recorded in the
+    row's marker when it is written, recovered from a legacy row's markdown —
+    which is why that function strips the `@` the Reviewer cell is written with:
+    the two forms are compared and must spell the login alike.
 
     "" is not "no match", it is "cannot answer", and the fold treats it that
     way: an entry with no line falls to `summary_model.ThreadRestatement`

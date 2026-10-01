@@ -1766,6 +1766,31 @@ good as both: *where does this link point*, and *is there anything there*.
 :func:`evidence_is_real` is the second, and it sits beside the linkers rather
 than beside triage because the thing it guards is the link.
 
+### pr/published_record.py
+
+What we published, recorded inside what we published.
+
+The summary comment and our thread replies are read back on later rounds to
+answer two questions: which row is which, and did a person rewrite what we
+wrote. Local state cannot answer either — it is per target and per worktree,
+and absent after `pr gc`, after a worktree is recreated, and for a round run on
+another machine — so the published text is the only record there is.
+
+Recovering those answers from the rendered prose is what this replaces. Every
+row and every generated reply now carries an invisible HTML comment declaring
+its identity and a digest of the exact text we wrote. Identity is read off the
+marker rather than re-derived from cells a renderer is free to change, and
+authorship is a digest comparison: any edit to the text a person can see,
+anywhere in it, is a mismatch.
+
+Every value a marker holds is hex, a `FixOutcome` value, or empty, so a marker
+can contain neither the `|` that would split its cell nor the `-->` that would
+close it early.
+
+What is not here: what a row's identity *is* (`summary_model.row_key_from_cells`)
+and the reading of a comment written before markers existed
+(`summary_scope.published_rows`, `thread_replies.is_generated_reply`).
+
 ### pr/settlement.py
 
 How a review thread ends when the fix pass is not what ended it.
@@ -1891,9 +1916,14 @@ Treating state as authoritative would silently delete rounds nobody can recover,
 so the published comment is read as the record it is and anything this render
 cannot account for is kept verbatim.
 
-That reading is this module. It parses rows out of a rendered body, decides
-which of them a fresh render did not reproduce, and decides which carry an
-Action cell a human wrote and must not be overwritten.
+That reading is this module. `published_rows` turns a body into typed rows,
+and every other reader goes through it: which rows a fresh render did not
+reproduce, and which a person edited and must not be overwritten.
+
+A body this code wrote declares each row's identity and digest in a marker
+(`pr.published_record`), so those rows are read, not re-derived. A body written
+before the marker is read the old way, from its cells, and that path is
+confined to `_legacy_row`.
 
 What is not here: what a row's identity *is* (`summary_model.row_key_from_cells`
 owns that, and both this path and the freshly-rendered one go through it), and
@@ -1937,9 +1967,10 @@ the only one that is true. :func:`upsert_thread_reply` is that replacement.
 The constraint the module is built around is that a human may have rewritten
 what we wrote. `--fix` re-drains every fixed thread on later rounds, so without
 a check the three-line template would overwrite reasoning somebody typed, with
-no undo but the edit history. :func:`is_generated_reply` measures divergence
-against the template rather than tracking a round number, because the round a
-reply was written in says nothing about whether it is still ours.
+no undo but the edit history. :func:`is_generated_reply` compares the reply
+against the digest its marker recorded rather than tracking a round number,
+because the round a reply was written in says nothing about whether it is still
+ours.
 
 Four builders sit on one driver. They look alike and are not: each reads a
 different field, links through a different permalink helper with a different

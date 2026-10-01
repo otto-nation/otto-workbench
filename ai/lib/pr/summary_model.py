@@ -419,6 +419,42 @@ def row_key_from_cells(cells: list[str]) -> str:
     )
 
 
+def location_from_cells(cells: list[str]) -> str:
+    """Reviewer and file cell of a row, stripped of decoration.
+
+    The cell-level counterpart of `finding_location`: what two rows about one
+    point at one line still share once the anchors, the pinned SHAs and the
+    outcome cell are taken away. "" for a row naming no line, which can never
+    establish that two rows are the same finding.
+
+    Same coarsening, same tradeoff — see the ceiling comment on
+    `finding_location` — and one step coarser again, because the reviewer and
+    file cells are all a row carries to match on.
+
+    The `@` the Reviewer cell is rendered with is stripped, because these keys
+    are compared against `finding_location`'s, which carry the bare login. The
+    two forms are only interchangeable if they spell the reviewer the same way.
+    """
+    if len(cells) < len(TABLE_COLUMNS):
+        return ""
+    location = core.markdown.plain_cell(cells[2])
+    if ":" not in location:
+        return ""
+    reviewer = core.markdown.plain_cell(cells[1]).removeprefix("@")
+    return f"{reviewer}|{location}"
+
+
+def text_key_from_cells(cells: list[str]) -> str:
+    """The Thread cell of a row, in the form the text fold compares.
+
+    The cell-level counterpart of `normalised_finding_text`, for the half of the
+    fold that has no location to key on.
+    """
+    if len(cells) < len(TABLE_COLUMNS):
+        return ""
+    return normalised_finding_text(core.markdown.plain_cell(cells[0]))
+
+
 class _ActionVocabulary(StrEnum):
     """Shared shape for the two halves of the Action-cell vocabulary.
 
@@ -682,15 +718,17 @@ def action_outcome(cell: str) -> FixOutcome | None:
 
 
 def is_generated_action(cell: str) -> bool:
-    """Whether an Action cell is still one of ours, in template shape.
+    """Whether an Action cell on a legacy row is still one of ours, in template shape.
+
+    Read only for rows of a comment written before rows were marked — a marked
+    row's authorship is its digest (`published_record.row_is_intact`).
 
     ceiling: an opening is the whole test, so a hand edit that appends to a
     generated cell ("Fixed in `abc` — but see below") still reads as generated
-    and is overwritten on the next round. Matching the whole cell instead is not
-    the fix: the commit SHA and the deferral issue link vary per round, so an
-    exact set cannot be written down. Upgrade trigger: if an appended note is
-    ever lost this way, mark generated cells with an HTML comment and key off
-    that instead of the opening.
+    and is overwritten on the next round. Confined to legacy comments. Upgrade
+    trigger: once `gh search prs --author @me --state open --created
+    "<2026-10-02"` returns nothing, delete this with
+    `summary_scope._legacy_row`.
     """
     return cell.startswith(GENERATED_ACTION_PREFIXES)
 

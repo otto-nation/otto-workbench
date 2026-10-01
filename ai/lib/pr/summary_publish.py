@@ -32,12 +32,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import core.log
+import core.markdown
 import core.publishing
 import git.push
 from git.land import CommitStatus
 import pr.attribution
 import pr.comments
 import pr.history_rewrite
+import pr.published_record
 import pr.state
 import pr.summary_model
 import pr.summary_render
@@ -212,13 +214,9 @@ def publish_summary(
 
     `build_body(carried_over=..., scope=..., chain=...)` renders from local
     state. It is called again when the published comments hold rows this render
-    must not write — rows it did not cover at all, and rows whose Action cell a
-    human rewrote — because those rows have to reach the reader through the same
+    must not write — rows it did not cover at all, and rows a person edited —
+    because those rows have to reach the reader through the same
     body: the counts line and the table are one artifact, not two.
-
-    Held rows are resolved before carried ones, and the carry-forward set is
-    then computed against the body that already holds them, so a hand-written
-    row is kept once rather than emitted twice.
 
     ``folded`` is passed through to `summary_scope.carried_over_rows` rather
     than read off the body this renders. Only the caller has the typed entries
@@ -240,10 +238,80 @@ def publish_summary(
     patching, on the standing trade that a duplicate comment beats a lost
     update — the earlier rounds stay readable in the comments this run could
     not reach.
+
+    An edit that would take the comment past GitHub's size limit is posted
+    fresh instead. That is the same trade the answered path makes: the rows the
+    target holds stay where they were published, and this round links back to
+    them. Only a body too large even scoped to its own round is refused, loudly,
+    since GitHub would refuse it anyway.
     """
     marked = pr.comments.find_marker_comments(repo, pr_number, SUMMARY_MARKER)
     existing = marked.newest
     answered = _answered_since(existing, activity_at)
+    reconciled = _reconcile(marked, answered, build_body, folded, folded_texts)
+    overflowed = not answered and len(reconciled.body) > GITHUB_COMMENT_LIMIT
+    if overflowed:
+        core.log.warn(
+            f"Editing the published summary in place would make it "
+            f"{len(reconciled.body)} characters, over GitHub's {GITHUB_COMMENT_LIMIT} "
+            "— posting a fresh one scoped to this round instead"
+        )
+        answered = True
+        reconciled = _reconcile(marked, answered, build_body, folded, folded_texts)
+    if len(reconciled.body) > GITHUB_COMMENT_LIMIT:
+        core.log.error(
+            f"This round's summary is {len(reconciled.body)} characters, over "
+            f"GitHub's {GITHUB_COMMENT_LIMIT} even scoped to this round — not posting it"
+        )
+        return None
+    for row in reconciled.held:
+        core.log.warn(
+            f"Keeping the hand-written row {_row_label(row.published)}: "
+            f"{pr.summary_scope.row_action_cell(row.published)!r} — this round would have "
+            f"rendered {pr.summary_scope.row_action_cell(row.replaced_by)!r}"
+        )
+    if reconciled.carried:
+        core.log.warn(
+            f"Published summary has {reconciled.carried} row(s) this run cannot account "
+            "for — carrying them forward rather than dropping them"
+        )
+    if answered:
+        if not overflowed:
+            core.log.info(
+                "The published summary has been answered since it was posted — "
+                "posting a fresh one scoped to this round rather than editing a "
+                "comment nobody will re-read"
+            )
+        return pr.comments.post_issue_comment(repo, pr_number, reconciled.body)
+    return pr.comments.post_issue_comment(
+        repo, pr_number, reconciled.body, marker=SUMMARY_MARKER, existing=existing,
+    )
+
+
+# GitHub refuses an issue comment body longer than this, counted in characters.
+GITHUB_COMMENT_LIMIT = 65_536
+
+
+@dataclass(frozen=True)
+class _Reconciled:
+    """A rendered summary body, and what it kept that this round did not write."""
+
+    body: str
+    held: list[pr.summary_model.HeldRow]
+    carried: int
+
+
+def _reconcile(
+    marked: pr.comments.MarkerHistory, answered: bool, build_body: Callable[..., str],
+    folded: frozenset[str], folded_texts: frozenset[str],
+) -> _Reconciled:
+    """Render the round, then re-render around the rows it must not write.
+
+    Held rows are resolved before carried ones, and the carry-forward set is
+    then computed against the body that already holds them, so a hand-edited
+    row is kept once rather than emitted twice.
+    """
+    existing = marked.newest
     scope = pr.summary_rounds.round_scope(marked, answered)
     render = functools.partial(
         build_body,
@@ -252,12 +320,6 @@ def publish_summary(
     )
     body = render(carried_over=[])
     hand_held = pr.summary_scope.hand_written_rows(marked.bodies, body)
-    for row in hand_held:
-        core.log.warn(
-            f"Keeping the hand-written Action cell on {row.key}: "
-            f"{pr.summary_scope.row_action_cell(row.published)!r} — this round would have "
-            f"rendered {pr.summary_scope.row_action_cell(row.replaced_by)!r}"
-        )
     if hand_held:
         body = render(carried_over=[], hand_held=hand_held)
     # Only against the comment being replaced. A row on any other summary
@@ -267,21 +329,22 @@ def publish_summary(
         "" if answered else existing.body, body, scope.elsewhere_keys, folded,
         folded_texts)
     if carried:
-        core.log.warn(
-            f"Published summary has {len(carried)} row(s) this run cannot account "
-            "for — carrying them forward rather than dropping them"
-        )
         body = render(carried_over=carried, hand_held=hand_held)
-    if answered:
-        core.log.info(
-            "The published summary has been answered since it was posted — "
-            "posting a fresh one scoped to this round rather than editing a "
-            "comment nobody will re-read"
-        )
-        return pr.comments.post_issue_comment(repo, pr_number, body)
-    return pr.comments.post_issue_comment(
-        repo, pr_number, body, marker=SUMMARY_MARKER, existing=existing,
-    )
+    return _Reconciled(body, hand_held, len(carried))
+
+
+def _row_label(row: str) -> str:
+    """A published row named for a log line: its Thread cell and its anchor.
+
+    The key a row is matched on is a hash, which tells the operator nothing, so
+    the line names the row the way they would find it in the comment.
+    """
+    line = pr.published_record.unmarked(row)
+    cells = core.markdown.row_cells(line)
+    label = repr(core.markdown.plain_cell(cells[0])) if cells else repr(line)
+    anchor = (pr.summary_model.THREAD_ANCHOR_RE.search(line)
+              or pr.summary_model.ITEM_ANCHOR_RE.search(line))
+    return f"{label} ({anchor.group(0)})" if anchor else label
 
 
 def post_fix_summary(

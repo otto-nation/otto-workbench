@@ -167,10 +167,28 @@ def test_an_empty_failure_text_points_at_nothing(repo):
 
 
 def test_a_missing_anchor_file_is_skipped_rather_than_raising(repo):
-    """An item can name a path the agent deleted; that is not a crash."""
+    """An item can name a path that was never tracked; that is not a crash."""
     _commit(repo, "m.py", "X = 1\n")
 
     assert fix_blame.pointers(repo, {"N1": "gone.py", "N2": ""}, "anything") == ()
+
+
+def test_a_wholesale_file_deletion_still_points_at_its_item(repo):
+    """The fix can delete the whole file rather than edit it.
+
+    That is exactly the shape of the motivating regression if the deleted
+    symbol lived in a module the pass removed outright: the anchor file no
+    longer exists, but the diff still shows what it used to contain. A
+    missing post-image must read as empty, not as a reason to skip.
+    """
+    _commit(repo, "mod.py", "from x import EXIT_BUDGET_EXHAUSTED, cmd_gc\n")
+    (repo / "mod.py").unlink()
+    failure = "AttributeError: module 'mod' has no attribute 'EXIT_BUDGET_EXHAUSTED'"
+
+    found = fix_blame.pointers(repo, {"N1": "mod.py"}, failure)
+
+    assert [p.item_id for p in found] == ["N1"]
+    assert found[0].symbols == ("EXIT_BUDGET_EXHAUSTED",)
 
 
 def test_two_items_in_one_file_both_point_at_it(repo):

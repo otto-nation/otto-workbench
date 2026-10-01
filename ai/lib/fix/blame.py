@@ -113,6 +113,12 @@ def lost_symbols(diff: str, post_image: str) -> set[str]:
     survives elsewhere in the file (removing one of five references is not a
     deletion), and anything not symbol-shaped (prose).
     """
+    # ceiling: a deleted source line that itself starts with two dashes (a
+    # SQL/Lua comment, a markdown rule) reads as a `---` file header and is
+    # dropped rather than counted as removed. Narrow enough — it needs a
+    # dash-prefixed line carrying a real symbol — that it is left unhandled
+    # rather than disambiguated against the real header, which only ever
+    # appears once per file in a single-file diff.
     removed: list[str] = []
     added: list[str] = []
     for line in diff.splitlines():
@@ -175,17 +181,30 @@ def pointers(
     found: list[Pointer] = []
     rarity: dict[str, bool] = {}
     for item_id, anchor in sorted(anchors.items()):
-        if not anchor or not (Path(workdir) / anchor).exists():
+        if not anchor:
             continue
         diff = _diff_of(Path(workdir), anchor)
         if not diff:
             continue
-        post = (Path(workdir) / anchor).read_text(errors="ignore")
+        # A fix can delete the file outright rather than edit it — the
+        # motivating regression's shape. The diff still carries what was
+        # removed; there is just no post-image left to subtract survivors
+        # from, so an absent file reads as empty rather than being skipped.
+        anchor_path = Path(workdir) / anchor
+        post = anchor_path.read_text(errors="ignore") if anchor_path.exists() else ""
 
         # Intersect before asking the repo anything. The failure text filters
         # a loss set of dozens down to nought or one in the measured corpus,
         # so the rarity check below runs a couple of greps rather than a scan
         # proportional to the size of the diff.
+        # ceiling: truncated alphabetically before the rarity check runs, so
+        # a loss past `_MAX_CANDIDATES` drops whichever symbols sort last
+        # rather than whichever would have failed `_distinctive` — the cap
+        # could discard the one rare symbol in favor of twelve common ones.
+        # Unreached in the measured corpus (losing more than a dozen symbols
+        # the failure text also names), so left ordered for determinism
+        # rather than ranked by a rarity check this loop exists to avoid
+        # running until the cheap intersection has already narrowed things.
         named = sorted(t for t in lost_symbols(diff, post) if t in failure_text)
         hits = _distinctive(Path(workdir), named[:_MAX_CANDIDATES], rarity)
         if hits:

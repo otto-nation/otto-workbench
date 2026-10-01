@@ -342,6 +342,17 @@ run_bats() {
   # without it, so the flag is only worth passing when parallel is installed.
   command -v parallel >/dev/null 2>&1 && jobs_flag=(--jobs "$(granted_jobs)")
 
+  # --print-output-on-failure: bats prints only the failing assertion's source
+  # line by default, so a test whose diagnostic value sits in the command's
+  # output reports the assertion and swallows the evidence. `fix.blame` reads
+  # that output to say which item a red suite is complaining about, and
+  # without this it has nothing to read on the bats half of the suite.
+  #
+  # Declared out here rather than in a branch: all three invocations below
+  # use it, and a `local` inside the shard branch leaves the other two
+  # expanding an unset array.
+  local -a bats_flags=(--timing --print-output-on-failure)
+
   if [[ -n "${SHARD:-}" ]]; then
     local shard_n="${SHARD%/*}"
     local shard_m="${SHARD#*/}"
@@ -353,7 +364,7 @@ run_bats() {
       err "--shard $SHARD: produced an empty file list"
       return 1
     fi
-    bats "${shard_test_files[@]}" --timing "${jobs_flag[@]}" "$@"
+    bats "${shard_test_files[@]}" "${bats_flags[@]}" "${jobs_flag[@]}" "$@"
   elif [[ -n "${BATS_FILES:-}" ]]; then
     local -a file_list=()
     while IFS= read -r f; do
@@ -363,9 +374,9 @@ run_bats() {
       err "--files: no files provided"
       return 1
     fi
-    bats "${file_list[@]}" --timing "${jobs_flag[@]}" "$@"
+    bats "${file_list[@]}" "${bats_flags[@]}" "${jobs_flag[@]}" "$@"
   else
-    bats "$WORKBENCH_DIR/tests/" --recursive --timing "${jobs_flag[@]}" "$@"
+    bats "$WORKBENCH_DIR/tests/" --recursive "${bats_flags[@]}" "${jobs_flag[@]}" "$@"
   fi
 }
 

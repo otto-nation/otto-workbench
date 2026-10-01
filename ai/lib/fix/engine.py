@@ -34,6 +34,7 @@ be a fix pass asserting something outward nobody approved.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
@@ -44,6 +45,7 @@ from agent import invoke as agent_invoke
 from agent import phases as agent_phases
 from agent import retry as agent_retry
 from agent import templates as agent_templates
+from fix import blame as fix_blame
 from fix import scope as fix_scope
 from fix import suite as fix_suite
 from fix import tracking as fix_tracking
@@ -802,6 +804,7 @@ def _merge_scopes(
 def _verify_suite(
     adapter: FixAdapter, outcomes: list[ItemOutcome],
     changed: set[str] | None, trail: Trail | None,
+    by_id: dict[str, FixItem] | None = None,
 ) -> fix_suite.SuiteResult:
     """Run the repo's declared checks over the pass's work and apply the verdict.
 
@@ -825,6 +828,14 @@ def _verify_suite(
     )
     fix_suite.apply_to(outcomes, result)
     if result.demotes:
+        # Only on red, and only as a lead. `fix.blame` reads the pass's own
+        # diff against the failure text; it changes no outcome, because one
+        # run over sixteen items still cannot say which broke the tree. What
+        # it can say is which item's file lost the symbol the failure names,
+        # which turns seven hedged rows into one worth reading first.
+        result = dataclasses.replace(result, pointers=fix_blame.pointers(
+            adapter.workdir, _anchors(outcomes, by_id or {}), result.output_tail,
+        ))
         # Held here rather than left to a domain's `after_verify`, because a
         # red suite is a fact about the pass and not about any item in it.
         # `hold_after_verify` cannot reach it by construction: it selects on
@@ -835,7 +846,36 @@ def _verify_suite(
         # one domain that overrides the hook: nothing should reply, resolve,
         # or push off a tree whose own checks are failing.
         publishing.hold("the repo's checks are red with this pass's changes")
+        for pointer in result.pointers:
+            tinfo(trail, "fix_verify_pointer", pointer.describe(),
+                  data={"item": pointer.item_id, "file": pointer.file,
+                        "symbols": list(pointer.symbols)})
     return result
+
+
+def _anchors(
+    outcomes: list[ItemOutcome], by_id: dict[str, FixItem],
+) -> dict[str, str]:
+    """The anchor file behind each item this pass claimed to have fixed.
+
+    Claimed fixes only. An item the pass deferred or declined asserted nothing
+    for the suite to contradict, and pointing a red run at one would send a
+    reader to the one place the pass says it did not touch.
+
+    The outcome carries a `file` of its own and the item carries the one the
+    domain rendered; the outcome's wins where it has one, because a
+    reconciliation can move it and the item is fixed at the moment the pass
+    was assembled.
+    """
+    anchors: dict[str, str] = {}
+    for outcome in outcomes:
+        if not outcome.outcome.counts_as_fixed:
+            continue
+        item = by_id.get(outcome.id)
+        anchor = outcome.file or (item.file if item else "")
+        if anchor:
+            anchors[outcome.id] = anchor
+    return anchors
 
 
 def _stamp(outcomes: list[ItemOutcome], read_sha: str, commit_sha: str) -> None:
@@ -980,7 +1020,8 @@ def run(
     # ordering is necessary and is not what stops a red tree being reported
     # as fixed: no per-item hook can see a suite demotion, because the item
     # stays FIXED. `_verify_suite` holds publishing itself for that.
-    adapter.suite = _verify_suite(adapter, settled.outcomes, changed, trail)
+    adapter.suite = _verify_suite(
+        adapter, settled.outcomes, changed, trail, by_id)
 
     # Between the verdicts and the push, which is the only window that works:
     # both gates have spoken here — the per-item one above and the batch suite

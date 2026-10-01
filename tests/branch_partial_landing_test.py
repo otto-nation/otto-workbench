@@ -196,16 +196,52 @@ class TestPartialLandingStaysQuietWhereItShould:
 
         assert branch_landed.partial_landing(str(repo), target_ref="main") is None
 
-    def test_a_repeated_subject_out_of_order_is_not_a_prefix(self, tmp_path):
-        """The ordering constraint on the loose signal, exercised.
+    def test_a_subject_that_is_only_a_prefix_of_an_upstream_one_does_not_match(
+        self, tmp_path,
+    ):
+        """`--grep` matches a substring, so the whole subject is re-checked."""
+        repo = _base_repo(tmp_path)
+        _branch_of(repo, ["fix: auth", "feat: two"])
 
-        The branch's first commit lands for real (by subject, not patch id, so
-        the watermark moves), which puts an unrelated, decoy `chore:
-        regenerate` commit *before* that watermark on main. The branch's own
-        `chore: regenerate` never lands anywhere after it. Matching by subject
-        without the `since` bound would find the decoy anyway — it is still
-        reachable from `target_ref` — and wrongly report the whole branch as
-        landed instead of a one-commit prefix.
+        git_in(repo, "checkout", "-q", "main")
+        _commit(repo, "other.txt", "x\n", "fix: auth token refresh")
+        git_in(repo, "checkout", "-q", "feat")
+
+        assert branch_landed.partial_landing(str(repo), target_ref="main") is None
+
+    def test_an_unresolvable_target_answers_none_rather_than_raising(self, tmp_path):
+        repo = _base_repo(tmp_path)
+        _branch_of(repo, ["feat: one", "feat: two"])
+
+        assert branch_landed.partial_landing(
+            str(repo), target_ref="origin/nope",
+        ) is None
+
+
+class TestTheSubjectSignalIsBoundedByOrder:
+    """What the `since` watermark is for, and the only test that reaches it.
+
+    A prefix that landed landed in order, so each subject match has to be a
+    descendant of the last. Without that bound `--grep` searches the whole of
+    `target_ref` and any older commit sharing a subject will do — which is how
+    a repeated subject like "chore: regenerate" manufactures a landing out of
+    an unrelated commit, and overstates the prefix a `--fork-point` would skip.
+
+    This sits apart from the quiet cases above because it asserts a finding:
+    the bound's job is not to silence the signal, it is to stop the signal
+    claiming more of the branch than actually landed.
+    """
+
+    def test_a_decoy_behind_the_watermark_does_not_extend_the_prefix(self, tmp_path):
+        """One commit landed, so one commit is the prefix — not both.
+
+        The branch's first commit lands for real, by subject rather than patch
+        id, which is what moves the watermark. That leaves an unrelated decoy
+        `chore: regenerate` sitting *before* the watermark on main, while the
+        branch's own `chore: regenerate` never lands anywhere after it.
+        Unbounded, the search finds the decoy — it is still reachable from
+        `target_ref` — and reports a two-commit prefix for a branch that
+        landed one.
         """
         repo = _base_repo(tmp_path)
         _commit(repo, "gen.txt", "v0\n", "chore: regenerate")
@@ -227,27 +263,6 @@ class TestPartialLandingStaysQuietWhereItShould:
         assert partial.unlanded == 1
         assert partial.fork_point == branch_feat_one
         assert partial.fork_subject == "feat: one"
-
-    def test_a_subject_that_is_only_a_prefix_of_an_upstream_one_does_not_match(
-        self, tmp_path,
-    ):
-        """`--grep` matches a substring, so the whole subject is re-checked."""
-        repo = _base_repo(tmp_path)
-        _branch_of(repo, ["fix: auth", "feat: two"])
-
-        git_in(repo, "checkout", "-q", "main")
-        _commit(repo, "other.txt", "x\n", "fix: auth token refresh")
-        git_in(repo, "checkout", "-q", "feat")
-
-        assert branch_landed.partial_landing(str(repo), target_ref="main") is None
-
-    def test_an_unresolvable_target_answers_none_rather_than_raising(self, tmp_path):
-        repo = _base_repo(tmp_path)
-        _branch_of(repo, ["feat: one", "feat: two"])
-
-        assert branch_landed.partial_landing(
-            str(repo), target_ref="origin/nope",
-        ) is None
 
 
 class TestPatchIdsStillCarryThePrefixWhereTheyCan:

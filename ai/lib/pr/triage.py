@@ -21,17 +21,17 @@ import json
 import re
 from pathlib import Path
 
-from agent import invoke as agent_invoke
-from agent import retry as agent_retry
-from core import log
-from core import proc
+import agent.invoke
+import agent.retry
+import core.log
+import core.proc
 from core.phases import Phase
 from core.trail import Trail
-from pr import domains as pr_domains
-from pr import permalinks
-from pr import state as pr_state
-from pr import thread_context
-from pr import triage_prompt
+import pr.domains
+import pr.permalinks
+import pr.state
+import pr.thread_context
+import pr.triage_prompt
 from pr.comments_state import ThreadState
 from pr.thread_models import (
     CommentItem, CommentSourceKind, Complexity, PRReport, TriageResult, TriageStats,
@@ -146,12 +146,12 @@ def downgrade_unsupported_verdicts(
     for entry in entries:
         if not entry.verification.needs_evidence:
             continue
-        if permalinks.evidence_is_real(repo_dir, entry):
+        if pr.permalinks.evidence_is_real(repo_dir, entry):
             continue
         reason = _DOWNGRADE_REASON.format(verdict=entry.verification)
         if trail:
             trail.info("triage_downgrade", reason, data={"thread": entry.id})
-        log.warn(f"{entry.id}: {reason} — routing to needs_discussion")
+        core.log.warn(f"{entry.id}: {reason} — routing to needs_discussion")
         entry.verification = Verification.NEEDS_DISCUSSION
         entry.complexity = Complexity.UNSET
         entry.evidence_file = ""
@@ -176,38 +176,38 @@ def run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
     if not non_resolved and not unseen_comments:
         return TriageResult(), 0
 
-    code_context = thread_context.gather_code_context(non_resolved, repo_dir)
-    prompt = triage_prompt.build_triage_prompt(
+    code_context = pr.thread_context.gather_code_context(non_resolved, repo_dir)
+    prompt = pr.triage_prompt.build_triage_prompt(
         non_resolved, code_context,
         unseen_comments=unseen_comments or None,
-        commit_log=thread_context.branch_commit_log(repo_dir),
+        commit_log=pr.thread_context.branch_commit_log(repo_dir),
     )
 
     pr_number = ctx_args.get("pr_number")
-    answer = agent_invoke.run_prompt(
+    answer = agent.invoke.run_prompt(
         Phase.COMMENTS_TRIAGE, prompt,
         cwd=repo_dir, usable=parses_as_json, task="comment-triage",
         repo=ctx_args.get("repo"), pr=str(pr_number) if pr_number else None,
         # This prompt asks for a bare JSON object, so the default retry hint —
         # which asks for markers — would name a format it never mentioned.
-        retry_hint=agent_retry.JSON_RESPONSE_HINT,
+        retry_hint=agent.retry.JSON_RESPONSE_HINT,
     )
     if answer.exit_code != 0:
         if trail:
             trail.error("triage", "AI prompt failed",
                         data={"exit_code": answer.exit_code})
-        log.error("ai prompt failed")
+        core.log.error("ai prompt failed")
         return None, 1
 
     stdout = answer.text
     try:
         raw = json.loads(extract_json(stdout))
     except (json.JSONDecodeError, TypeError):
-        preview = (stdout or "")[:proc.DETAIL_LIMIT]
+        preview = (stdout or "")[:core.proc.DETAIL_LIMIT]
         if trail:
             trail.failure("triage", "AI returned non-JSON output",
                           output=stdout or "")
-        log.error(f"ai returned non-JSON output ({len(stdout or '')} chars): {preview}")
+        core.log.error(f"ai returned non-JSON output ({len(stdout or '')} chars): {preview}")
         return None, 1
 
     triage_result = triage_result_from_dict(raw)
@@ -225,20 +225,20 @@ def run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
     # Update triage state
     try:
         stats = triage_result.stats
-        st = pr_state.load_or_init(**ctx_args)
-        pr_state.apply(st, pr_domains.TriageSummary(
+        st = pr.state.load_or_init(**ctx_args)
+        pr.state.apply(st, pr.domains.TriageSummary(
             total=stats.total,
             actionable=stats.actionable,
             valid=stats.valid,
             questions=stats.questions,
             comment_items_total=stats.comment_items_total,
             comment_items_actionable=stats.comment_items_actionable,
-            updated_at=pr_state.now_iso(),
+            updated_at=pr.state.now_iso(),
         ))
-        pr_state.save_state(ctx_args["target_dir"], st)
+        pr.state.save_state(ctx_args["target_dir"], st)
     except Exception as exc:
         if trail:
             trail.error("triage", f"state update failed: {exc}")
-        log.error(f"triage state update failed: {exc}")
+        core.log.error(f"triage state update failed: {exc}")
 
     return triage_result, 0

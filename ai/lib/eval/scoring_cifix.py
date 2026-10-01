@@ -23,8 +23,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from agent import backend as ai_backend
-from agent import usage as ai_usage
+import agent.backend
+import agent.usage
 from eval.scoring import RunOutcome, ScoringResult
 from eval.task import RunArtifacts, RunOptions, clean_env, create_temp_repo, outcome_for
 
@@ -101,7 +101,7 @@ class CiFixTask:
         if pre_code == 0:
             return _unfixable(repo_dir, log_dir, pre_output)
 
-        rc = ai_backend.invoke_fix(ai_backend.AgentInvocation(
+        rc = agent.backend.invoke_fix(agent.backend.AgentInvocation(
             prompt=_PROMPT.format(
                 repo_dir=repo_dir,
                 command=" ".join(verify_command(manifest)),
@@ -120,7 +120,7 @@ class CiFixTask:
         ))
 
         post_code, post_output = run_verify(repo_dir, manifest, opts.timeout)
-        usage = ai_usage.parse_session_log(session_log)
+        usage = agent.usage.parse_session_log(session_log)
         return RunArtifacts(
             exit_code=rc,
             usage=usage,

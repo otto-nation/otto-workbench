@@ -28,7 +28,7 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
     _AI_LIB_DIR = pinned_ai_lib_dir()
 sys.path.insert(0, str(_AI_LIB_DIR))
 
-from agent import usage as ai_usage
+import agent.usage
 from agent.backend_events import claude_display_text
 
 
@@ -87,12 +87,12 @@ def cmd_unwrap(args: argparse.Namespace) -> int:
     return 0
 
 
-def _usage_from(path: str) -> ai_usage.SessionUsage | None:
+def _usage_from(path: str) -> agent.usage.SessionUsage | None:
     """Read usage from a teed file, whether it holds JSONL or one JSON envelope."""
     if not path or not Path(path).is_file():
         return None
-    usage = ai_usage.parse_session_log(path)
-    if usage != ai_usage.SessionUsage():
+    usage = agent.usage.parse_session_log(path)
+    if usage != agent.usage.SessionUsage():
         return usage
     try:
         envelope = json.loads(Path(path).read_text())
@@ -100,8 +100,8 @@ def _usage_from(path: str) -> ai_usage.SessionUsage | None:
         return None
     if not isinstance(envelope, dict):
         return None
-    envelope_usage = ai_usage.usage_from_records([envelope])
-    return envelope_usage if envelope_usage != ai_usage.SessionUsage() else None
+    envelope_usage = agent.usage.usage_from_records([envelope])
+    return envelope_usage if envelope_usage != agent.usage.SessionUsage() else None
 
 
 def cmd_record(args: argparse.Namespace) -> int:
@@ -109,7 +109,7 @@ def cmd_record(args: argparse.Namespace) -> int:
     usage = _usage_from(args.from_log)
     if usage is None:
         return 0
-    ai_usage.record(
+    agent.usage.record(
         script=args.script, entry_point=args.entry_point, backend=args.backend,
         model=args.model, usage=usage, exit_code=args.exit_code,
         task=args.task, repo=args.repo, pr=args.pr,

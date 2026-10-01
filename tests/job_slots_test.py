@@ -20,8 +20,8 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest
 
-from core import job_slots
-from core import signal_relay
+import core.job_slots
+import core.signal_relay
 from core.job_slots import LOCK_ENV, claim, holders, pool_size
 from core.job_slots_cli import GRANT_ENV
 
@@ -171,7 +171,7 @@ def test_a_released_slot_still_has_its_record():
 def test_holders_ignores_a_malformed_record():
     with claim(want=2, floor=1, cores=18, command="real"):
         pass
-    (job_slots.slots_dir() / "slot-999.lock").write_text("{not json")
+    (core.job_slots.slots_dir() / "slot-999.lock").write_text("{not json")
     assert all(r["command"] == "real" for r in holders())
 
 
@@ -185,7 +185,7 @@ def test_holders_ignores_a_slot_file_from_an_older_naming():
     """
     with claim(want=1, floor=1, cores=18, command="current"):
         pass
-    (job_slots.slots_dir() / "slot-04.lock").write_text('{"slot": 4, "pid": 1}')
+    (core.job_slots.slots_dir() / "slot-04.lock").write_text('{"slot": 4, "pid": 1}')
     assert [r["command"] for r in holders()] == ["current"]
 
 
@@ -386,7 +386,7 @@ def test_a_signal_racing_the_spawn_still_reaches_the_child(monkeypatch):
     open, which is the one moment the old ordering cannot survive and the new
     one must.
     """
-    from core import job_slots_cli
+    import core.job_slots_cli
 
     real_popen = subprocess.Popen
     delivered: list[int] = []
@@ -402,13 +402,13 @@ def test_a_signal_racing_the_spawn_still_reaches_the_child(monkeypatch):
     # is the shared `os` module, not a private reference, so this patches
     # `os.killpg` process-wide for the duration of the test; monkeypatch
     # reverts it on teardown regardless of outcome.
-    monkeypatch.setattr(job_slots_cli.subprocess, "Popen", signalling_popen)
+    monkeypatch.setattr(core.job_slots_cli.subprocess, "Popen", signalling_popen)
     monkeypatch.setattr(
-        signal_relay.os, "killpg",
+        core.signal_relay.os, "killpg",
         lambda _pgid, signum: delivered.append(signum),
     )
 
-    code = job_slots_cli._run_child([sys.executable, "-c", "pass"], 1)
+    code = core.job_slots_cli._run_child([sys.executable, "-c", "pass"], 1)
 
     assert delivered == [signal.SIGTERM], (
         "the signal taken before the child existed was dropped rather than "
@@ -425,13 +425,13 @@ def test_the_relay_is_uninstalled_once_the_child_is_gone():
     process that has already exited, so the restore is part of the contract
     rather than tidiness.
     """
-    from core import job_slots_cli
+    import core.job_slots_cli
 
     before = {
         signum: signal.getsignal(signum)
         for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
     }
-    job_slots_cli._run_child([sys.executable, "-c", "pass"], 1)
+    core.job_slots_cli._run_child([sys.executable, "-c", "pass"], 1)
     after = {signum: signal.getsignal(signum) for signum in before}
 
     assert after == before
@@ -532,5 +532,5 @@ def _await(path: Path, message: str, seconds: float = 30) -> None:
 
 def test_a_record_survives_as_json():
     with claim(want=1, floor=1, cores=18, command="x"):
-        text = (job_slots.slots_dir() / "slot-000.lock").read_text()
+        text = (core.job_slots.slots_dir() / "slot-000.lock").read_text()
     assert json.loads(text)["slot"] == 0

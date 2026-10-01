@@ -15,9 +15,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
-from core import version
-from core import workbench_paths
-from pr import context as pr_context
+import core.version
+import core.workbench_paths
+import pr.context
 from pr.domains import ReviewStatus, ReviewVerdict
 from review.paths import (
     ReviewEntryKind, find_review_file,
@@ -28,22 +28,26 @@ from review.summary import (
     build_review_summary, format_findings_line, format_usage, format_verdict,
     json_summary,
 )
-from review import completion as review_completion
-from review import gc as review_gc
-from review import invoke as review_invoke
-from review import issue as review_issue
-from review import preflight as review_preflight
-from review import publish as review_publish
-from review import recover as review_recover
-from review import run as review_run
-from review import worktree as review_worktree
+import review.completion
+import review.gc
+import review.invoke
+import review.issue
+import review.preflight
+import review.publish
+import review.recover
+import review.run
+import review.worktree
 
 from conftest import (
     commit_all, git_in, init_repo,
     make_ctx, run_checked, supersession_evidence, supersession_verdict,
 )
 
-from cli import review_entry  # noqa: E402
+import cli.review_entry  # noqa: E402
+import core.prompt
+import gh.client
+import core.run_lock
+import pr.supersession
 
 
 @pytest.fixture
@@ -54,7 +58,7 @@ def cr():
     module now, and importing it gives every caller the one module object the
     interpreter already holds.
     """
-    return review_entry
+    return cli.review_entry
 
 
 @pytest.fixture
@@ -65,7 +69,7 @@ def reviews_dir(tmp_path, monkeypatch):
     root: every consumer resolves it per call, so there is nothing to patch.
     """
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
-    d = workbench_paths.reviews_dir()
+    d = core.workbench_paths.reviews_dir()
     d.mkdir(parents=True)
     return d
 
@@ -90,23 +94,23 @@ def _make_session_log(
 
 
 def test_is_pr_ref_bare_number():
-    assert pr_context.is_pr_ref("42") is True
+    assert pr.context.is_pr_ref("42") is True
 
 
 def test_is_pr_ref_github_url():
-    assert pr_context.is_pr_ref("https://github.com/org/repo/pull/123") is True
+    assert pr.context.is_pr_ref("https://github.com/org/repo/pull/123") is True
 
 
 def test_is_pr_ref_branch_name():
-    assert pr_context.is_pr_ref("isaac/feat/dream_scripts") is False
+    assert pr.context.is_pr_ref("isaac/feat/dream_scripts") is False
 
 
 def test_is_pr_ref_branch_with_numbers():
-    assert pr_context.is_pr_ref("isaac/fix/PR-123-review") is False
+    assert pr.context.is_pr_ref("isaac/fix/PR-123-review") is False
 
 
 def test_is_pr_ref_empty():
-    assert pr_context.is_pr_ref("") is False
+    assert pr.context.is_pr_ref("") is False
 
 
 # ── review_file_path ─────────────────────────────────────────────────────────
@@ -1045,7 +1049,7 @@ def test_resolve_prior_resume_true_returns_existing_prior(tmp_path):
     review_file.write_text("## Review")
     prior_file.write_text("## Prior")
 
-    result = review_run.resolve_prior_review(review_file, "", True)
+    result = review.run.resolve_prior_review(review_file, "", True)
     assert result == str(prior_file)
 
 
@@ -1055,7 +1059,7 @@ def test_resolve_prior_resume_true_no_prior_returns_empty(tmp_path):
     review_file = review_dir / "review.md"
     review_file.write_text("## Review")
 
-    result = review_run.resolve_prior_review(review_file, "", True)
+    result = review.run.resolve_prior_review(review_file, "", True)
     assert result == ""
 
 
@@ -1067,7 +1071,7 @@ def test_resolve_prior_resume_false_archives(tmp_path):
     review_file.write_text("## Review")
     session_log.write_text("{}")
 
-    result = review_run.resolve_prior_review(review_file, str(session_log), False)
+    result = review.run.resolve_prior_review(review_file, str(session_log), False)
 
     assert not review_file.exists()
     assert result != ""
@@ -1083,7 +1087,7 @@ def test_cleanup_prior_removes_when_no_pipeline(tmp_path):
     prior = review_dir / "prior.md"
     prior.write_text("prior content")
 
-    review_completion.cleanup_prior_review(review_file, str(prior))
+    review.completion.cleanup_prior_review(review_file, str(prior))
     assert not prior.exists()
 
 
@@ -1096,13 +1100,13 @@ def test_cleanup_prior_keeps_when_pipeline_exists(tmp_path):
     prior.write_text("prior content")
     pipeline.write_text("{}")
 
-    review_completion.cleanup_prior_review(review_file, str(prior))
+    review.completion.cleanup_prior_review(review_file, str(prior))
     assert prior.exists()
 
 
 def test_cleanup_prior_empty_path_is_noop(tmp_path):
     review_file = tmp_path / "review.md"
-    review_completion.cleanup_prior_review(review_file, "")
+    review.completion.cleanup_prior_review(review_file, "")
 
 
 # ── gc_reviews ─────────────────────────────────────────────────────────────────
@@ -1121,7 +1125,7 @@ def test_gc_removes_orphaned_stale_dirs(cr, reviews_dir):
     (has_review / "review.md").write_text("## Review")
     (has_review / "pipeline.json").write_text("{}")
 
-    review_gc.gc_reviews(reviews_dir)
+    review.gc.gc_reviews(reviews_dir)
 
     assert not orphan.exists()
     assert has_review.exists()
@@ -1136,7 +1140,7 @@ def test_gc_removes_stale_intermediates(cr, reviews_dir):
         p.write_text("{}")
         os.utime(str(p), (1622505600, 1622505600))
 
-    review_gc.gc_reviews(reviews_dir)
+    review.gc.gc_reviews(reviews_dir)
 
     assert (d / "review.md").exists()
     assert not (d / "group-1.md").exists()
@@ -1158,7 +1162,7 @@ def test_gc_removes_stale_logs_for_every_phase(cr, reviews_dir):
         p.write_text("{}")
         os.utime(str(p), (1622505600, 1622505600))
 
-    review_gc.gc_reviews(reviews_dir)
+    review.gc.gc_reviews(reviews_dir)
 
     assert (d / "review.md").exists()
     for f_name in log_names:
@@ -1172,7 +1176,7 @@ def test_gc_preserves_recent_intermediates(cr, reviews_dir):
     for f_name in ("group-1.md", "group-1.jsonl", "holistic.md", "holistic.jsonl", "synthesis.jsonl"):
         (d / f_name).write_text("{}")
 
-    review_gc.gc_reviews(reviews_dir)
+    review.gc.gc_reviews(reviews_dir)
 
     assert (d / "review.md").exists()
     for f_name in ("group-1.md", "group-1.jsonl", "holistic.md", "holistic.jsonl", "synthesis.jsonl"):
@@ -1185,7 +1189,7 @@ def test_gc_preserves_active_pipeline(cr, reviews_dir):
     (d / "pipeline.json").write_text("{}")
     (d / "group-1.jsonl").write_text("{}")
 
-    review_gc.gc_reviews(reviews_dir)
+    review.gc.gc_reviews(reviews_dir)
 
     assert d.exists()
     assert (d / "group-1.jsonl").exists()
@@ -1203,7 +1207,7 @@ def test_gc_removes_stale_stray_files(cr, reviews_dir):
         p.write_text("scratch")
         os.utime(str(p), STALE_MTIME)
 
-    cleaned = review_gc.gc_reviews(reviews_dir)
+    cleaned = review.gc.gc_reviews(reviews_dir)
 
     assert cleaned == len(strays)
     for name in strays:
@@ -1216,7 +1220,7 @@ def test_gc_removes_stranded_flat_artifacts(cr, reviews_dir):
     stranded.write_text("{}")
     os.utime(str(stranded), STALE_MTIME)
 
-    review_gc.gc_reviews(reviews_dir)
+    review.gc.gc_reviews(reviews_dir)
 
     assert not stranded.exists()
 
@@ -1228,7 +1232,7 @@ def test_gc_keeps_flat_artifacts_the_migration_still_claims(cr, reviews_dir):
         p.write_text("{}")
         os.utime(str(p), STALE_MTIME)
 
-    review_gc.gc_reviews(reviews_dir)
+    review.gc.gc_reviews(reviews_dir)
 
     assert (reviews_dir / "maximum-1403.md").exists()
     assert (reviews_dir / "maximum-1403.holistic.jsonl").exists()
@@ -1239,7 +1243,7 @@ def test_gc_preserves_recent_stray_files(cr, reviews_dir):
     stray = reviews_dir / "check_hunks.py"
     stray.write_text("scratch")
 
-    review_gc.gc_reviews(reviews_dir)
+    review.gc.gc_reviews(reviews_dir)
 
     assert stray.exists()
 
@@ -1274,7 +1278,7 @@ def test_prune_removes_merged_pr(mock_run, cr, reviews_dir):
         return m
 
     mock_run.side_effect = side_effect
-    review_gc.prune_merged_reviews(reviews_dir)
+    review.gc.prune_merged_reviews(reviews_dir)
 
     assert not d.exists()
 
@@ -1303,7 +1307,7 @@ def test_prune_keeps_open_pr(mock_run, cr, reviews_dir):
         return m
 
     mock_run.side_effect = side_effect
-    review_gc.prune_merged_reviews(reviews_dir)
+    review.gc.prune_merged_reviews(reviews_dir)
 
     assert d.exists()
     assert (d / "review.md").exists()
@@ -1318,7 +1322,7 @@ def test_prune_keeps_recent_merged_pr(mock_run, cr, reviews_dir):
         "repo": "org/my-repo", "pr_number": "50", "head_sha": "abc",
     }))
 
-    review_gc.prune_merged_reviews(reviews_dir)
+    review.gc.prune_merged_reviews(reviews_dir)
 
     assert d.exists(), "recently-modified merged review should be retained"
     mock_run.assert_not_called()
@@ -1344,7 +1348,7 @@ def test_prune_keeps_recent_failed_review(mock_run, cr, reviews_dir):
         returncode=0, stdout=json.dumps({
             "state": "MERGED", "mergedAt": "2026-08-01T00:00:00Z", "closedAt": None,
         }))
-    review_gc.prune_merged_reviews(reviews_dir)
+    review.gc.prune_merged_reviews(reviews_dir)
 
     assert d.exists(), "failed review within 30-day window should be retained"
 
@@ -1369,7 +1373,7 @@ def test_prune_removes_old_failed_review(mock_run, cr, reviews_dir):
         returncode=0, stdout=json.dumps({
             "state": "MERGED", "mergedAt": "2026-08-01T00:00:00Z", "closedAt": None,
         }))
-    review_gc.prune_merged_reviews(reviews_dir)
+    review.gc.prune_merged_reviews(reviews_dir)
 
     assert not d.exists(), "failed review older than 30 days should be pruned"
 
@@ -1404,7 +1408,7 @@ def test_prune_removes_a_self_review_whose_branch_has_only_merged_prs(
     d = _seed_self_review(reviews_dir, "my-repo-self-done", head_ref="x/done", age_days=40)
     mock_run.side_effect = _pr_list_returning("MERGED")
 
-    review_gc.prune_merged_reviews(reviews_dir)
+    review.gc.prune_merged_reviews(reviews_dir)
 
     assert not d.exists(), "a branch whose every PR has ended leaves nothing to keep"
 
@@ -1421,7 +1425,7 @@ def test_prune_keeps_a_self_review_whose_branch_never_opened_a_pr(
     d = _seed_self_review(reviews_dir, "my-repo-self-wip", head_ref="x/wip", age_days=400)
     mock_run.side_effect = _pr_list_returning()
 
-    review_gc.prune_merged_reviews(reviews_dir)
+    review.gc.prune_merged_reviews(reviews_dir)
 
     assert d.exists(), "a branch with no PR history is indistinguishable from unpushed work"
 
@@ -1433,7 +1437,7 @@ def test_prune_keeps_a_self_review_whose_branch_still_has_an_open_pr(
     d = _seed_self_review(reviews_dir, "my-repo-self-open", head_ref="x/open", age_days=40)
     mock_run.side_effect = _pr_list_returning("MERGED", "OPEN")
 
-    review_gc.prune_merged_reviews(reviews_dir)
+    review.gc.prune_merged_reviews(reviews_dir)
 
     assert d.exists(), "a reopened branch is live however many earlier PRs ended"
 
@@ -1443,7 +1447,7 @@ def test_prune_keeps_a_self_review_inside_the_unlinked_window(mock_run, cr, revi
     """A PR-less review gets 30 days, not the 7 a PR-attributed one gets."""
     d = _seed_self_review(reviews_dir, "my-repo-self-recent", head_ref="x/recent", age_days=10)
 
-    review_gc.prune_merged_reviews(reviews_dir)
+    review.gc.prune_merged_reviews(reviews_dir)
 
     assert d.exists(), "10 days is inside the unlinked window"
     # The age gate answers before anything is asked.
@@ -1455,7 +1459,7 @@ def test_prune_keeps_a_self_review_when_gh_cannot_be_asked(mock_run, cr, reviews
     d = _seed_self_review(reviews_dir, "my-repo-self-offline", head_ref="x/offline", age_days=40)
     mock_run.side_effect = lambda cmd, **kw: MagicMock(returncode=1, stdout="", stderr="boom")
 
-    review_gc.prune_merged_reviews(reviews_dir)
+    review.gc.prune_merged_reviews(reviews_dir)
 
     assert d.exists(), "a question we could not ask keeps the artifacts"
 
@@ -1471,7 +1475,7 @@ def test_prune_asks_about_the_head_ref_including_closed_prs(mock_run, cr, review
     _seed_self_review(reviews_dir, "my-repo-self-q", head_ref="x/asked", age_days=40)
     mock_run.side_effect = _pr_list_returning("MERGED")
 
-    review_gc.prune_merged_reviews(reviews_dir)
+    review.gc.prune_merged_reviews(reviews_dir)
 
     cmd = mock_run.call_args[0][0]
     assert "--head" in cmd and "x/asked" in cmd
@@ -1498,7 +1502,7 @@ def test_prune_asks_an_enterprise_host_by_name(mock_run, cr, reviews_dir):
         os.utime(f, (old, old))
     mock_run.side_effect = _pr_list_returning("MERGED")
 
-    review_gc.prune_merged_reviews(reviews_dir)
+    review.gc.prune_merged_reviews(reviews_dir)
 
     cmd = mock_run.call_args[0][0]
     assert cmd[cmd.index("--repo") + 1] == "ghe.example.com/org/my-repo"
@@ -1510,7 +1514,7 @@ def test_prune_leaves_a_public_repo_unqualified(mock_run, cr, reviews_dir):
     _seed_self_review(reviews_dir, "pub-self", head_ref="x/pub", age_days=40)
     mock_run.side_effect = _pr_list_returning("MERGED")
 
-    review_gc.prune_merged_reviews(reviews_dir)
+    review.gc.prune_merged_reviews(reviews_dir)
 
     cmd = mock_run.call_args[0][0]
     assert cmd[cmd.index("--repo") + 1] == "org/my-repo"
@@ -1638,7 +1642,7 @@ def test_gc_collects_strays_and_directories_in_one_pass(cr, reviews_dir):
     (orphan / "pipeline.json").write_text("{}")
     os.utime(str(orphan / "pipeline.json"), OLD_MTIME)
 
-    cleaned = review_gc.gc_reviews(reviews_dir)
+    cleaned = review.gc.gc_reviews(reviews_dir)
 
     assert cleaned == 2
     assert not stray.exists()
@@ -1760,7 +1764,7 @@ def test_gc_dir_all_stale(cr, tmp_path):
     f = d / "old.jsonl"
     f.write_text("{}")
     os.utime(str(f), (1622505600, 1622505600))
-    assert review_gc._dir_is_all_stale(d) is True
+    assert review.gc._dir_is_all_stale(d) is True
 
 
 def test_gc_dir_has_recent_files(cr, tmp_path):
@@ -1770,7 +1774,7 @@ def test_gc_dir_has_recent_files(cr, tmp_path):
     old.write_text("{}")
     os.utime(str(old), (1622505600, 1622505600))
     (d / "new.jsonl").write_text("{}")
-    assert review_gc._dir_is_all_stale(d) is False
+    assert review.gc._dir_is_all_stale(d) is False
 
 
 def test_gc_dir_empty_and_just_created(cr, tmp_path):
@@ -1785,7 +1789,7 @@ def test_gc_dir_empty_and_just_created(cr, tmp_path):
     """
     d = tmp_path / "empty-dir"
     d.mkdir()
-    assert review_gc._dir_is_all_stale(d) is False
+    assert review.gc._dir_is_all_stale(d) is False
 
 
 def test_gc_dir_empty_and_long_abandoned(cr, tmp_path):
@@ -1798,7 +1802,7 @@ def test_gc_dir_empty_and_long_abandoned(cr, tmp_path):
     d = tmp_path / "abandoned-dir"
     d.mkdir()
     os.utime(str(d), (1622505600, 1622505600))
-    assert review_gc._dir_is_all_stale(d) is True
+    assert review.gc._dir_is_all_stale(d) is True
 
 
 # ── _clean_stale_intermediates ───────────────────────────────────────────────
@@ -1813,7 +1817,7 @@ def test_gc_clean_stale_intermediates_removes_stale(cr, tmp_path):
         os.utime(str(f), (1622505600, 1622505600))
     (d / "meta.json").write_text("{}")
 
-    count = review_gc._clean_stale_intermediates(d)
+    count = review.gc._clean_stale_intermediates(d)
     assert count == 3
     assert not (d / "group-1.md").exists()
     assert (d / "meta.json").exists()
@@ -1834,7 +1838,7 @@ def test_gc_clean_stale_intermediates_collects_every_phase_artifact(cr, tmp_path
     keep.write_text("review")
     os.utime(str(keep), (1622505600, 1622505600))
 
-    count = review_gc._clean_stale_intermediates(d)
+    count = review.gc._clean_stale_intermediates(d)
 
     assert count == len(stale)
     for name in stale:
@@ -1848,7 +1852,7 @@ def test_gc_clean_stale_intermediates_preserves_recent(cr, tmp_path):
     for name in ("group-1.md", "holistic.jsonl"):
         (d / name).write_text("{}")
 
-    count = review_gc._clean_stale_intermediates(d)
+    count = review.gc._clean_stale_intermediates(d)
     assert count == 0
     assert (d / "group-1.md").exists()
 
@@ -1870,7 +1874,7 @@ def _finished_review(tmp_path):
 def test_cleaned_on_success_sweeps_after_the_last_phase(cr, tmp_path):
     d = _finished_review(tmp_path)
 
-    with review_gc.cleaned_on_success(d):
+    with review.gc.cleaned_on_success(d):
         pass
 
     assert sorted(p.name for p in d.iterdir()) == ["review.md"]
@@ -1880,7 +1884,7 @@ def test_cleaned_on_success_keeps_everything_after_an_exception(cr, tmp_path):
     d = _finished_review(tmp_path)
 
     with pytest.raises(RuntimeError):
-        with review_gc.cleaned_on_success(d):
+        with review.gc.cleaned_on_success(d):
             raise RuntimeError("phase blew up")
 
     assert (d / "disprove.md").exists()
@@ -1892,7 +1896,7 @@ def test_cleaned_on_success_propagates_a_non_zero_exit(cr, tmp_path):
     d = _finished_review(tmp_path)
 
     with pytest.raises(SystemExit) as exc:
-        with review_gc.cleaned_on_success(d):
+        with review.gc.cleaned_on_success(d):
             sys.exit(1)
 
     assert exc.value.code == 1
@@ -1907,7 +1911,7 @@ def test_cleaned_on_success_keeps_a_partial_run_for_recover(cr, tmp_path):
         "groups_done": [1], "groups_failed": {"2": "agent hit max turns (20)"},
     }))
 
-    with review_gc.cleaned_on_success(d):
+    with review.gc.cleaned_on_success(d):
         pass
 
     assert (d / "pipeline.json").exists()
@@ -1925,9 +1929,9 @@ def test_cleaned_on_success_survives_a_sweep_that_cannot_delete(cr, tmp_path, ca
     def _explode(review_dir):
         raise OSError(30, "Read-only file system", str(review_dir / "disprove.md"))
 
-    monkeypatch.setattr(review_gc, "cleanup_intermediates", _explode)
+    monkeypatch.setattr(review.gc, "cleanup_intermediates", _explode)
 
-    with review_gc.cleaned_on_success(d):
+    with review.gc.cleaned_on_success(d):
         pass
 
     err = capsys.readouterr().err
@@ -1949,8 +1953,8 @@ def test_the_generator_version_is_resolved_not_injected(cr, reviews_dir, monkeyp
     seen = {}
     monkeypatch.setattr(cr, "_run_self_review",
                         lambda args, argv, gv: seen.setdefault("gv", gv))
-    monkeypatch.setattr(version, "tool_version", lambda: "9.9.9")
-    monkeypatch.setattr(version, "workbench_version", lambda: "1.0 (abc)")
+    monkeypatch.setattr(core.version, "tool_version", lambda: "9.9.9")
+    monkeypatch.setattr(core.version, "workbench_version", lambda: "1.0 (abc)")
 
     cr.main(["--self"])
 
@@ -1972,8 +1976,8 @@ def test_the_generator_version_names_the_tool_even_with_no_workbench_manifest(
     seen = {}
     monkeypatch.setattr(cr, "_run_self_review",
                         lambda args, argv, gv: seen.setdefault("gv", gv))
-    monkeypatch.setattr(version, "tool_version", lambda: "9.9.9")
-    monkeypatch.setattr(version, "workbench_version", lambda: "")
+    monkeypatch.setattr(core.version, "tool_version", lambda: "9.9.9")
+    monkeypatch.setattr(core.version, "workbench_version", lambda: "")
 
     cr.main(["--self"])
 
@@ -1985,8 +1989,8 @@ def test_the_generator_version_names_the_tool_even_with_no_workbench_manifest(
 
 def test_constants_match_expected(cr):
     from review.types import SEVERITIES
-    assert review_gc.GC_STALE_DAYS == 7
-    assert review_gc.PRUNE_MAX_FILES == 10
+    assert review.gc.GC_STALE_DAYS == 7
+    assert review.gc.PRUNE_MAX_FILES == 10
     assert len(SEVERITIES) == 4
 
 
@@ -2035,23 +2039,23 @@ def test_self_review_recover_reads_head_after_worktree_switch(
         repo="owner/repo", pr_number=None, branch="feat/x", head_sha="stale00",
         worktree_root=tmp_path, target_dir=tmp_path / "pr" / "owner-repo-x-feat-x",
     )
-    monkeypatch.setattr(review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/orig/wt")
-    monkeypatch.setattr(review_worktree, "resolve_branch_input", lambda pr_input, repo_dir: pr_input)
-    monkeypatch.setattr(pr_context, "resolve_at", lambda depth, **kw: ctx)
-    monkeypatch.setattr(pr_context, "pr_number_if_reachable",
-                        lambda repo, branch: pr_context.BranchPR())
+    monkeypatch.setattr(review.worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/orig/wt")
+    monkeypatch.setattr(review.worktree, "resolve_branch_input", lambda pr_input, repo_dir: pr_input)
+    monkeypatch.setattr(pr.context, "resolve_at", lambda depth, **kw: ctx)
+    monkeypatch.setattr(pr.context, "pr_number_if_reachable",
+                        lambda repo, branch: pr.context.BranchPR())
     monkeypatch.setattr(
-        review_worktree, "switch_to_branch",
-        lambda branch, wt: review_worktree.WorktreeResult(
+        review.worktree, "switch_to_branch",
+        lambda branch, wt: review.worktree.WorktreeResult(
             path="/switched/wt", cleanup_ref=branch, is_fallback=False),
     )
     monkeypatch.setattr(
-        pr_context, "head_sha",
+        pr.context, "head_sha",
         lambda cwd=None: "fresh11" if cwd == "/switched/wt" else "stale00",
     )
-    monkeypatch.setattr(review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review.worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
     body = MagicMock()
-    monkeypatch.setattr(review_run, "run_self_review", body)
+    monkeypatch.setattr(review.run, "run_self_review", body)
 
     cr._run_self_review(SimpleNamespace(
         positional=["feat/x"], issue=None, max_parallel=1, skip_user_verification=True,
@@ -2073,21 +2077,21 @@ def test_pr_review_reads_the_tracker_from_the_repo_config(tmp_path, monkeypatch)
     (tmp_path / ".workbench.yml").write_text(
         "issues:\n  provider: github\n",
     )
-    monkeypatch.setattr(review_worktree, "find_repo_root", lambda repo, repo_dir="": str(tmp_path))
+    monkeypatch.setattr(review.worktree, "find_repo_root", lambda repo, repo_dir="": str(tmp_path))
     # Only the PR lookup is stubbed — the config reader still shells out to yq.
-    monkeypatch.setattr(review_run.gh_client, "pr_view", lambda *a, **kw: {})
+    monkeypatch.setattr(gh.client, "pr_view", lambda *a, **kw: {})
     seen = []
 
     def _record(provider, *args):
         seen.append(provider)
         raise SystemExit(7)
 
-    monkeypatch.setattr(review_issue, "extract_issue_id", _record)
+    monkeypatch.setattr(review.issue, "extract_issue_id", _record)
 
     with pytest.raises(SystemExit) as exc:
-        review_run.run_pr_review(
+        review.run.run_pr_review(
             make_ctx(),
-            review_run.ReviewFlags(bin_dir=Path("/bin"), generator_version="test 1.0",
+            review.run.ReviewFlags(bin_dir=Path("/bin"), generator_version="test 1.0",
                                    no_post=True),
             tmp_path / "review.md", trail=MagicMock(),
         )
@@ -2107,14 +2111,14 @@ def _self_ctx(tmp_path, branch="feat/x"):
 def _self_flags(**overrides):
     base = dict(bin_dir=Path("/bin"), generator_version="test 1.0")
     base.update(overrides)
-    return review_run.ReviewFlags(**base)
+    return review.run.ReviewFlags(**base)
 
 
 def test_self_review_body_validates_recover(tmp_path, monkeypatch):
     """recover=True reaches resolve_recover_sha — no pipeline state aborts the run."""
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
     with pytest.raises(SystemExit) as exc:
-        review_run.run_self_review(
+        review.run.run_self_review(
             _self_ctx(tmp_path), _self_flags(recover=True),
             tmp_path, str(tmp_path),
             recover_head_sha="abc1234", trail=MagicMock(),
@@ -2125,26 +2129,26 @@ def test_self_review_body_validates_recover(tmp_path, monkeypatch):
 def test_self_review_body_runs_recover_in_pinned_worktree(tmp_path, monkeypatch):
     """New commits since the failed run: orchestrate runs against the pinned checkout."""
     _write_partial_pipeline(tmp_path)
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(pr_context, "head_sha", lambda cwd=None: "def5678")
-    pinned = review_worktree.WorktreeResult(
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(pr.context, "head_sha", lambda cwd=None: "def5678")
+    pinned = review.worktree.WorktreeResult(
         path="/pinned/wt", cleanup_ref="/pinned/wt", is_fallback=True)
     monkeypatch.setattr(
-        review_worktree, "detached_worktree_at",
+        review.worktree, "detached_worktree_at",
         lambda sha, repo_dir, label: pinned,
     )
     cleanup = MagicMock()
-    monkeypatch.setattr(review_worktree, "cleanup_worktree", cleanup)
-    monkeypatch.setattr(review_issue, "load_issue_provider",
+    monkeypatch.setattr(review.worktree, "cleanup_worktree", cleanup)
+    monkeypatch.setattr(review.issue, "load_issue_provider",
                         lambda wt: SimpleNamespace(name="none", options={}))
-    monkeypatch.setattr(review_issue, "extract_issue_id", lambda *a: "")
-    monkeypatch.setattr(review_issue, "fetch_issue_context",
+    monkeypatch.setattr(review.issue, "extract_issue_id", lambda *a: "")
+    monkeypatch.setattr(review.issue, "fetch_issue_context",
                         lambda *a: SimpleNamespace(link="", context=""))
     run = MagicMock(side_effect=SystemExit(1))
-    monkeypatch.setattr(review_invoke, "run", run)
+    monkeypatch.setattr(review.invoke, "run", run)
 
     with pytest.raises(SystemExit):
-        review_run.run_self_review(
+        review.run.run_self_review(
             _self_ctx(tmp_path), _self_flags(recover=True),
             tmp_path, str(tmp_path),
             recover_head_sha="def5678", trail=MagicMock(),
@@ -2159,16 +2163,16 @@ def test_self_review_body_runs_recover_in_pinned_worktree(tmp_path, monkeypatch)
 def test_self_review_body_rejects_fix_on_drifted_recover(tmp_path, monkeypatch):
     """Fixes written to a throwaway checkout would be discarded — refuse up front."""
     _write_partial_pipeline(tmp_path)
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(pr_context, "head_sha", lambda cwd=None: "def5678")
-    monkeypatch.setattr(review_issue, "load_issue_provider",
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(pr.context, "head_sha", lambda cwd=None: "def5678")
+    monkeypatch.setattr(review.issue, "load_issue_provider",
                         lambda wt: SimpleNamespace(name="none", options={}))
-    monkeypatch.setattr(review_issue, "extract_issue_id", lambda *a: "")
-    monkeypatch.setattr(review_issue, "fetch_issue_context",
+    monkeypatch.setattr(review.issue, "extract_issue_id", lambda *a: "")
+    monkeypatch.setattr(review.issue, "fetch_issue_context",
                         lambda *a: SimpleNamespace(link="", context=""))
 
     with pytest.raises(SystemExit) as exc:
-        review_run.run_self_review(
+        review.run.run_self_review(
             _self_ctx(tmp_path), _self_flags(recover=True, fix=True),
             tmp_path, str(tmp_path),
             recover_head_sha="def5678", trail=MagicMock(),
@@ -2179,21 +2183,21 @@ def test_self_review_body_rejects_fix_on_drifted_recover(tmp_path, monkeypatch):
 def test_self_review_body_allows_fix_when_recover_has_not_drifted(tmp_path, monkeypatch):
     """No drift means no throwaway checkout, so --fix edits the real worktree."""
     _write_partial_pipeline(tmp_path)
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(pr_context, "head_sha", lambda cwd=None: "abc1234")
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(pr.context, "head_sha", lambda cwd=None: "abc1234")
     detach = MagicMock()
-    monkeypatch.setattr(review_worktree, "detached_worktree_at", detach)
-    monkeypatch.setattr(review_worktree, "cleanup_worktree", MagicMock())
-    monkeypatch.setattr(review_issue, "load_issue_provider",
+    monkeypatch.setattr(review.worktree, "detached_worktree_at", detach)
+    monkeypatch.setattr(review.worktree, "cleanup_worktree", MagicMock())
+    monkeypatch.setattr(review.issue, "load_issue_provider",
                         lambda wt: SimpleNamespace(name="none", options={}))
-    monkeypatch.setattr(review_issue, "extract_issue_id", lambda *a: "")
-    monkeypatch.setattr(review_issue, "fetch_issue_context",
+    monkeypatch.setattr(review.issue, "extract_issue_id", lambda *a: "")
+    monkeypatch.setattr(review.issue, "fetch_issue_context",
                         lambda *a: SimpleNamespace(link="", context=""))
     run = MagicMock(side_effect=SystemExit(1))
-    monkeypatch.setattr(review_invoke, "run", run)
+    monkeypatch.setattr(review.invoke, "run", run)
 
     with pytest.raises(SystemExit):
-        review_run.run_self_review(
+        review.run.run_self_review(
             _self_ctx(tmp_path), _self_flags(recover=True, fix=True),
             tmp_path, str(tmp_path),
             recover_head_sha="abc1234", trail=MagicMock(),
@@ -2232,9 +2236,9 @@ def test_a_review_that_produced_no_file_is_not_recorded(tmp_path, monkeypatch):
     show a clean review for a run that produced nothing.
     """
     wrote = MagicMock()
-    monkeypatch.setattr(review_completion, "sync_review_domain", wrote)
+    monkeypatch.setattr(review.completion, "sync_review_domain", wrote)
 
-    review_completion.record_domain(
+    review.completion.record_domain(
         make_ctx(), tmp_path / "nonexistent" / "review.md", trail=MagicMock(),
     )
 
@@ -2254,14 +2258,14 @@ def test_update_pr_state_writes_to_the_prs_target_not_the_callers(
     Both targets are built through `pr_target` — the repo key is opaque and no
     test may reconstruct one.
     """
-    from pr import state as ps
-    from pr import target as pr_target
+    import pr.state
+    import pr.target
 
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
     caller = _caller_checkout(tmp_path / "caller", branch="main")
-    repo_key = pr_target.repo_key_from_origin(str(caller))
-    callers_target = pr_target.target_dir(repo_key, "main")
-    prs_target = pr_target.target_dir(repo_key, "feat/x")
+    repo_key = pr.target.repo_key_from_origin(str(caller))
+    callers_target = pr.target.target_dir(repo_key, "main")
+    prs_target = pr.target.target_dir(repo_key, "feat/x")
 
     review_dir = tmp_path / "review"
     review_dir.mkdir()
@@ -2271,49 +2275,49 @@ def test_update_pr_state_writes_to_the_prs_target_not_the_callers(
     def _refuse(**kwargs):
         raise AssertionError("the run's identity is resolved once, at entry")
 
-    monkeypatch.setattr(pr_context, "resolve", _refuse)
+    monkeypatch.setattr(pr.context, "resolve", _refuse)
     monkeypatch.chdir(caller)
 
     ctx = make_ctx(repo="acme/widget", branch="feat/x", pr_number=2973,
                    worktree_root=caller, head_sha="deadbee",
                    target_dir=prs_target)
-    review_completion.record_domain(ctx, review_file, trail=MagicMock())
+    review.completion.record_domain(ctx, review_file, trail=MagicMock())
 
-    state = ps.load_state(prs_target)
+    state = pr.state.load_state(prs_target)
     assert state is not None, "summary did not land with the PR under review"
     assert state.review.finding_counts == {"must_fix": 1}
     assert state.review.verdict == ReviewVerdict.CHANGES_REQUESTED.value
     assert state.identity.pr_number == 2973
     assert state.identity.branch == "feat/x"
-    assert not (callers_target / ps.STATE_FILE).exists()
+    assert not (callers_target / pr.state.STATE_FILE).exists()
 
 
 def _stub_pr_flow(monkeypatch, tmp_path):
     """The PR flow's edges, so a test can reach the posting decision."""
-    monkeypatch.setattr(review_worktree, "find_repo_root", lambda *a, **kw: str(tmp_path))
-    monkeypatch.setattr(review_run.gh_client, "pr_view",
+    monkeypatch.setattr(review.worktree, "find_repo_root", lambda *a, **kw: str(tmp_path))
+    monkeypatch.setattr(gh.client, "pr_view",
                         lambda *a, **kw: {"headRefName": "feat/x", "body": ""})
-    monkeypatch.setattr(review_issue, "load_issue_provider",
+    monkeypatch.setattr(review.issue, "load_issue_provider",
                         lambda *a, **kw: SimpleNamespace(name="", options={}))
-    monkeypatch.setattr(review_issue, "fetch_issue_context",
+    monkeypatch.setattr(review.issue, "fetch_issue_context",
                         lambda *a, **kw: SimpleNamespace(link="", context=""))
-    monkeypatch.setattr(review_preflight, "check_stale_review", lambda *a, **kw: None)
-    monkeypatch.setattr(review_preflight, "check_pending_review", lambda *a, **kw: None)
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(review_worktree, "setup_pr_worktree",
+    monkeypatch.setattr(review.preflight, "check_stale_review", lambda *a, **kw: None)
+    monkeypatch.setattr(review.preflight, "check_pending_review", lambda *a, **kw: None)
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.worktree, "setup_pr_worktree",
                         lambda *a, **kw: SimpleNamespace(path=str(tmp_path), is_fallback=False))
-    monkeypatch.setattr(review_recover, "pin_recover_worktree",
+    monkeypatch.setattr(review.recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), None))
-    monkeypatch.setattr(review_worktree, "cleanup_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review.worktree, "cleanup_worktree", lambda *a, **kw: None)
     # The real one would flock a tmp_path that is not a git repo; what it is
     # handed is asserted directly in the test below.
-    monkeypatch.setattr(review_run.run_lock, "claim_for_process",
+    monkeypatch.setattr(core.run_lock, "claim_for_process",
                         lambda *a, **kw: None)
-    monkeypatch.setattr(review_invoke, "run", lambda request: 0)
-    monkeypatch.setattr(review_completion, "_display", lambda *a, **kw: None)
-    monkeypatch.setattr(review_completion, "summarise", lambda *a, **kw: None)
-    monkeypatch.setattr(review_completion, "record_domain", lambda *a, **kw: None)
-    monkeypatch.setattr(review_run, "resolve_prior_review", lambda *a, **kw: "")
+    monkeypatch.setattr(review.invoke, "run", lambda request: 0)
+    monkeypatch.setattr(review.completion, "_display", lambda *a, **kw: None)
+    monkeypatch.setattr(review.completion, "summarise", lambda *a, **kw: None)
+    monkeypatch.setattr(review.completion, "record_domain", lambda *a, **kw: None)
+    monkeypatch.setattr(review.run, "resolve_prior_review", lambda *a, **kw: "")
 
 
 def test_an_unsatisfying_review_is_still_recorded(tmp_path, monkeypatch):
@@ -2333,14 +2337,14 @@ def test_an_unsatisfying_review_is_still_recorded(tmp_path, monkeypatch):
 
     _stub_pr_flow(monkeypatch, tmp_path)
     # False is "not satisfied" — the branch under test.
-    monkeypatch.setattr(review_publish.prompt, "confirm", lambda *a, **kw: False)
+    monkeypatch.setattr(core.prompt, "confirm", lambda *a, **kw: False)
     posted = MagicMock()
-    monkeypatch.setattr(review_publish, "post", posted)
-    monkeypatch.setattr(review_run.prompt, "ask", lambda *a, **kw: "")
+    monkeypatch.setattr(review.publish, "post", posted)
+    monkeypatch.setattr(core.prompt, "ask", lambda *a, **kw: "")
 
-    review_run.run_pr_review(
+    review.run.run_pr_review(
         make_ctx(target_dir=tmp_path / "t"),
-        review_run.ReviewFlags(bin_dir=Path("/bin"), generator_version="test 1.0"),
+        review.run.ReviewFlags(bin_dir=Path("/bin"), generator_version="test 1.0"),
         review_file, trail=MagicMock(),
     )
 
@@ -2360,13 +2364,13 @@ def test_an_unsatisfying_review_does_not_exit_the_process(tmp_path, monkeypatch)
     review_file.write_text("## Must fix\n- **[M1]** boom\n")
 
     _stub_pr_flow(monkeypatch, tmp_path)
-    monkeypatch.setattr(review_publish.prompt, "confirm", lambda *a, **kw: False)
-    monkeypatch.setattr(review_run.prompt, "ask", lambda *a, **kw: "")
+    monkeypatch.setattr(core.prompt, "confirm", lambda *a, **kw: False)
+    monkeypatch.setattr(core.prompt, "ask", lambda *a, **kw: "")
 
     try:
-        review_run.run_pr_review(
+        review.run.run_pr_review(
             make_ctx(target_dir=tmp_path / "t"),
-            review_run.ReviewFlags(bin_dir=Path("/bin"), generator_version="test 1.0"),
+            review.run.ReviewFlags(bin_dir=Path("/bin"), generator_version="test 1.0"),
             review_file, trail=MagicMock(),
         )
     except SystemExit as exc:  # pragma: no cover - the regression itself
@@ -2378,7 +2382,7 @@ def test_update_pr_state_reports_a_failed_write_on_both_channels(
     tmp_path, monkeypatch, capsys,
 ):
     """A lost summary is a cache miss, not a failed review — but never silent."""
-    from pr import state as pr_state
+    import pr.state
 
     review_file = tmp_path / "review.md"
     review_file.write_text("## Findings\n")
@@ -2386,13 +2390,13 @@ def test_update_pr_state_reports_a_failed_write_on_both_channels(
     def _boom(*args, **kwargs):
         raise OSError("read-only file system")
 
-    monkeypatch.setattr(pr_state, "save_state", _boom)
+    monkeypatch.setattr(pr.state, "save_state", _boom)
     trail = MagicMock()
     ctx = make_ctx(repo="acme/widget", branch="feat/x", pr_number=1,
                    worktree_root=None, head_sha="deadbee",
                    target_dir=tmp_path / "target")
 
-    review_completion.record_domain(ctx, review_file, trail=trail)
+    review.completion.record_domain(ctx, review_file, trail=trail)
 
     assert "read-only file system" in trail.error.call_args[0][1]
     assert "read-only file system" in capsys.readouterr().err
@@ -2425,12 +2429,12 @@ def _stub_self_review(cr, monkeypatch, target, reviews_dir):
         repo="acme/widget", pr_number=None, branch="feat/x", head_sha="abc1234",
         worktree_root=target.parent / "wt", target_dir=target,
     )
-    monkeypatch.setattr(review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
-    monkeypatch.setattr(pr_context, "resolve_at", lambda depth, **kw: ctx)
-    monkeypatch.setattr(pr_context, "pr_number_if_reachable",
-                        lambda repo, branch: pr_context.BranchPR())
-    monkeypatch.setattr(review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
-    monkeypatch.setattr(review_run, "run_self_review", MagicMock())
+    monkeypatch.setattr(review.worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
+    monkeypatch.setattr(pr.context, "resolve_at", lambda depth, **kw: ctx)
+    monkeypatch.setattr(pr.context, "pr_number_if_reachable",
+                        lambda repo, branch: pr.context.BranchPR())
+    monkeypatch.setattr(review.worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review.run, "run_self_review", MagicMock())
     return ctx
 
 
@@ -2440,14 +2444,14 @@ def test_self_review_takes_the_run_lock(cr, tmp_path, reviews_dir, monkeypatch):
     The lock is what stops that, and this branch's docs claim it covers a direct
     `--self` invocation — so a second, unrelated run has to be refused.
     """
-    from core import run_lock
+    import core.run_lock
 
     target = tmp_path / "pr" / "target"
     _stub_self_review(cr, monkeypatch, target, reviews_dir)
 
     cr._run_self_review(_self_review_args(), ["--self", "--fix"], "test 1.0")
 
-    record = json.loads((target / run_lock.LOCK_FILE).read_text())
+    record = json.loads((target / core.run_lock.LOCK_FILE).read_text())
     assert record["command"].startswith("review")
     assert record["started"]
     # The argv the flow was handed, not `sys.argv`. Called in-process from
@@ -2462,11 +2466,11 @@ def test_self_review_takes_the_run_lock(cr, tmp_path, reviews_dir, monkeypatch):
     # through as the holder rather than letting the flock decide. The popped
     # entry stays bound — it is the only reference to the open file, and a
     # collected handle would close the descriptor and free the lock.
-    monkeypatch.delenv(run_lock.LOCK_ENV, raising=False)
-    disowned = run_lock._HELD.pop(str(target / run_lock.LOCK_FILE), None)
+    monkeypatch.delenv(core.run_lock.LOCK_ENV, raising=False)
+    disowned = core.run_lock._HELD.pop(str(target / core.run_lock.LOCK_FILE), None)
     assert disowned is not None
     with pytest.raises(SystemExit) as exc:
-        run_lock.claim_for_process(target, command="review --self", started="t")
+        core.run_lock.claim_for_process(target, command="review --self", started="t")
     assert exc.value.code == 1
 
 
@@ -2474,15 +2478,15 @@ def test_self_review_passes_through_the_lock_pr_already_holds(
     cr, tmp_path, reviews_dir, monkeypatch,
 ):
     """Launched by `pr`, a --self run inherits WORKBENCH_RUN_LOCK, not a deadlock."""
-    from core import run_lock
+    import core.run_lock
 
     target = tmp_path / "pr" / "target"
     _stub_self_review(cr, monkeypatch, target, reviews_dir)
 
-    with run_lock.acquire(target, command="pr review --self --fix", started="t"):
+    with core.run_lock.acquire(target, command="pr review --self --fix", started="t"):
         cr._run_self_review(_self_review_args(), [], "test 1.0")
         # Passed through: the parent's ownership record is untouched.
-        record = json.loads((target / run_lock.LOCK_FILE).read_text())
+        record = json.loads((target / core.run_lock.LOCK_FILE).read_text())
         assert record["command"] == "pr review --self --fix"
 
 
@@ -2504,21 +2508,21 @@ def test_self_review_on_a_branch_locks_the_worktree_it_switches_to(
         repo="acme/widget", pr_number=None, branch="feat/x", head_sha="abc1234",
         worktree_root=tmp_path / "launch-wt", target_dir=target,
     )
-    monkeypatch.setattr(review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/orig/wt")
-    monkeypatch.setattr(review_worktree, "resolve_branch_input", lambda pr_input, repo_dir: pr_input)
-    monkeypatch.setattr(pr_context, "resolve_at", lambda depth, **kw: ctx)
-    monkeypatch.setattr(pr_context, "pr_number_if_reachable",
-                        lambda repo, branch: pr_context.BranchPR())
+    monkeypatch.setattr(review.worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/orig/wt")
+    monkeypatch.setattr(review.worktree, "resolve_branch_input", lambda pr_input, repo_dir: pr_input)
+    monkeypatch.setattr(pr.context, "resolve_at", lambda depth, **kw: ctx)
+    monkeypatch.setattr(pr.context, "pr_number_if_reachable",
+                        lambda repo, branch: pr.context.BranchPR())
     monkeypatch.setattr(
-        review_worktree, "switch_to_branch",
-        lambda branch, wt: review_worktree.WorktreeResult(
+        review.worktree, "switch_to_branch",
+        lambda branch, wt: review.worktree.WorktreeResult(
             path=str(switched), cleanup_ref=branch, is_fallback=False),
     )
-    monkeypatch.setattr(review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
-    monkeypatch.setattr(review_run, "run_self_review", MagicMock())
+    monkeypatch.setattr(review.worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review.run, "run_self_review", MagicMock())
 
     claim = MagicMock()
-    monkeypatch.setattr(review_entry.run_lock, "claim_for_process", claim)
+    monkeypatch.setattr(core.run_lock, "claim_for_process", claim)
 
     cr._run_self_review(SimpleNamespace(
         positional=["feat/x"], issue=None, max_parallel=1, skip_user_verification=True,
@@ -2552,19 +2556,19 @@ def test_self_review_on_a_branch_already_checked_out_still_locks_it(
         worktree_root=tmp_path / "launch-wt", target_dir=target,
     )
     monkeypatch.setattr(
-        review_worktree, "resolve_wt_path",
+        review.worktree, "resolve_wt_path",
         lambda repo_dir, pr_input: str(already_checked_out),
     )
-    monkeypatch.setattr(review_worktree, "resolve_branch_input", lambda pr_input, repo_dir: pr_input)
-    monkeypatch.setattr(pr_context, "resolve_at", lambda depth, **kw: ctx)
-    monkeypatch.setattr(pr_context, "pr_number_if_reachable",
-                        lambda repo, branch: pr_context.BranchPR())
-    monkeypatch.setattr(review_worktree, "switch_to_branch", lambda branch, wt: None)
-    monkeypatch.setattr(review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
-    monkeypatch.setattr(review_run, "run_self_review", MagicMock())
+    monkeypatch.setattr(review.worktree, "resolve_branch_input", lambda pr_input, repo_dir: pr_input)
+    monkeypatch.setattr(pr.context, "resolve_at", lambda depth, **kw: ctx)
+    monkeypatch.setattr(pr.context, "pr_number_if_reachable",
+                        lambda repo, branch: pr.context.BranchPR())
+    monkeypatch.setattr(review.worktree, "switch_to_branch", lambda branch, wt: None)
+    monkeypatch.setattr(review.worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review.run, "run_self_review", MagicMock())
 
     claim = MagicMock()
-    monkeypatch.setattr(review_entry.run_lock, "claim_for_process", claim)
+    monkeypatch.setattr(core.run_lock, "claim_for_process", claim)
 
     cr._run_self_review(SimpleNamespace(
         positional=["feat/x"], issue=None, max_parallel=1, skip_user_verification=True,
@@ -2585,37 +2589,37 @@ def test_self_review_on_a_branch_already_checked_out_still_locks_it(
 
 def test_self_review_refuses_before_it_fetches_anything(tmp_path, monkeypatch):
     """Ordering, not just presence: the check has to precede the issue lookup."""
-    from pr import supersession
+    import pr.supersession
 
     monkeypatch.setattr(
-        review_preflight.supersession, "detect_cached",
+        pr.supersession, "detect_cached",
         MagicMock(return_value=supersession_verdict(supersession_evidence())),
     )
     monkeypatch.setattr(
-        review_issue, "load_issue_provider",
+        review.issue, "load_issue_provider",
         MagicMock(side_effect=AssertionError("fetched issue context anyway")),
     )
 
     with pytest.raises(SystemExit) as exc:
-        review_run.run_self_review(
+        review.run.run_self_review(
             make_ctx(branch="feat/x", pr_number=None),
             _self_flags(), tmp_path, str(tmp_path),
             recover_head_sha="", trail=MagicMock(),
         )
-    assert exc.value.code == supersession.EXIT_SUPERSEDED
+    assert exc.value.code == pr.supersession.EXIT_SUPERSEDED
 
 
 def test_self_review_recovery_is_not_refused(tmp_path, monkeypatch):
     """A recovery run must not be stranded by a signal that appeared after it started."""
     monkeypatch.setattr(
-        review_preflight.supersession, "detect_cached",
+        pr.supersession, "detect_cached",
         MagicMock(side_effect=AssertionError("checked a recovery run")),
     )
-    monkeypatch.setattr(review_recover, "resolve_recover_sha",
+    monkeypatch.setattr(review.recover, "resolve_recover_sha",
                         MagicMock(side_effect=SystemExit(99)))
 
     with pytest.raises(SystemExit) as exc:
-        review_run.run_self_review(
+        review.run.run_self_review(
             make_ctx(branch="feat/x", pr_number=None),
             _self_flags(recover=True), tmp_path, str(tmp_path),
             recover_head_sha="", trail=MagicMock(),
@@ -2639,16 +2643,16 @@ def test_self_review_resolves_locally(cr, tmp_path, reviews_dir, monkeypatch):
         seen["depth"] = depth
         return ctx
 
-    monkeypatch.setattr(cr.review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
-    monkeypatch.setattr(cr.pr_context, "resolve_at", record)
-    monkeypatch.setattr(cr.pr_context, "pr_number_if_reachable",
-                        lambda repo, branch: pr_context.BranchPR())
-    monkeypatch.setattr(cr.review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review.worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
+    monkeypatch.setattr(pr.context, "resolve_at", record)
+    monkeypatch.setattr(pr.context, "pr_number_if_reachable",
+                        lambda repo, branch: pr.context.BranchPR())
+    monkeypatch.setattr(review.worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "_run_self_review_body", MagicMock())
 
     cr._run_self_review(_self_review_args(), [])
 
-    assert seen["depth"] is cr.pr_context.ContextDepth.LOCAL
+    assert seen["depth"] is pr.context.ContextDepth.LOCAL
 
 
 def test_self_review_still_finds_an_open_pr(cr, tmp_path, reviews_dir, monkeypatch):
@@ -2664,11 +2668,11 @@ def test_self_review_still_finds_an_open_pr(cr, tmp_path, reviews_dir, monkeypat
                    head_sha="abc1234", worktree_root=tmp_path, target_dir=target)
     body = MagicMock()
 
-    monkeypatch.setattr(cr.review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
-    monkeypatch.setattr(cr.pr_context, "resolve_at", lambda depth, **kw: ctx)
-    monkeypatch.setattr(cr.pr_context, "pr_number_if_reachable",
-                        lambda repo, branch: pr_context.BranchPR(number=2973))
-    monkeypatch.setattr(cr.review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review.worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
+    monkeypatch.setattr(pr.context, "resolve_at", lambda depth, **kw: ctx)
+    monkeypatch.setattr(pr.context, "pr_number_if_reachable",
+                        lambda repo, branch: pr.context.BranchPR(number=2973))
+    monkeypatch.setattr(review.worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "_run_self_review_body", body)
 
     cr._run_self_review(_self_review_args(), [])
@@ -2688,13 +2692,13 @@ def test_self_review_carries_the_open_prs_base_into_the_run(
                    head_sha="abc1234", worktree_root=tmp_path, target_dir=target)
     body = MagicMock()
 
-    monkeypatch.setattr(cr.review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
-    monkeypatch.setattr(cr.pr_context, "resolve_at", lambda depth, **kw: ctx)
+    monkeypatch.setattr(review.worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
+    monkeypatch.setattr(pr.context, "resolve_at", lambda depth, **kw: ctx)
     monkeypatch.setattr(
-        cr.pr_context, "pr_number_if_reachable",
-        lambda repo, branch: pr_context.BranchPR(number=2973, base="feat/parent"),
+        pr.context, "pr_number_if_reachable",
+        lambda repo, branch: pr.context.BranchPR(number=2973, base="feat/parent"),
     )
-    monkeypatch.setattr(cr.review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review.worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "_run_self_review_body", body)
 
     cr._run_self_review(_self_review_args(), [])
@@ -2712,11 +2716,11 @@ def test_self_review_proceeds_when_no_pr_can_be_named(cr, tmp_path, reviews_dir,
                    head_sha="abc1234", worktree_root=tmp_path, target_dir=target)
     body = MagicMock()
 
-    monkeypatch.setattr(cr.review_worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
-    monkeypatch.setattr(cr.pr_context, "resolve_at", lambda depth, **kw: ctx)
-    monkeypatch.setattr(cr.pr_context, "pr_number_if_reachable",
-                        lambda repo, branch: pr_context.BranchPR())
-    monkeypatch.setattr(cr.review_worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
+    monkeypatch.setattr(review.worktree, "resolve_wt_path", lambda repo_dir, pr_input: "/wt")
+    monkeypatch.setattr(pr.context, "resolve_at", lambda depth, **kw: ctx)
+    monkeypatch.setattr(pr.context, "pr_number_if_reachable",
+                        lambda repo, branch: pr.context.BranchPR())
+    monkeypatch.setattr(review.worktree, "cleanup_self_review_worktree", lambda *a, **kw: None)
     monkeypatch.setattr(cr, "_run_self_review_body", body)
 
     cr._run_self_review(_self_review_args(), [])
@@ -2739,22 +2743,22 @@ def test_a_pr_review_locks_the_worktree_it_actually_writes_to(tmp_path, monkeypa
     reviewed = tmp_path / "pr-worktree"
     reviewed.mkdir()
     _stub_pr_flow(monkeypatch, tmp_path)
-    monkeypatch.setattr(review_worktree, "setup_pr_worktree",
+    monkeypatch.setattr(review.worktree, "setup_pr_worktree",
                         lambda *a, **kw: SimpleNamespace(path=str(reviewed),
                                                          is_fallback=False))
-    monkeypatch.setattr(review_recover, "pin_recover_worktree",
+    monkeypatch.setattr(review.recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(reviewed), None))
-    monkeypatch.setattr(review_publish.prompt, "confirm", lambda *a, **kw: False)
-    monkeypatch.setattr(review_publish, "post", MagicMock())
-    monkeypatch.setattr(review_run.prompt, "ask", lambda *a, **kw: "")
+    monkeypatch.setattr(core.prompt, "confirm", lambda *a, **kw: False)
+    monkeypatch.setattr(review.publish, "post", MagicMock())
+    monkeypatch.setattr(core.prompt, "ask", lambda *a, **kw: "")
 
     claim = MagicMock()
-    monkeypatch.setattr(review_run.run_lock, "claim_for_process", claim)
+    monkeypatch.setattr(core.run_lock, "claim_for_process", claim)
 
     ctx = make_ctx(target_dir=tmp_path / "t")
-    review_run.run_pr_review(
+    review.run.run_pr_review(
         ctx,
-        review_run.ReviewFlags(bin_dir=Path("/bin"), generator_version="test 1.0"),
+        review.run.ReviewFlags(bin_dir=Path("/bin"), generator_version="test 1.0"),
         review_file, trail=MagicMock(),
     )
 
@@ -2777,21 +2781,21 @@ def test_a_pr_review_refuses_a_mistyped_base_too(tmp_path, monkeypatch):
     commit_all(reviewed, "init")
 
     _stub_pr_flow(monkeypatch, tmp_path)
-    monkeypatch.setattr(review_worktree, "setup_pr_worktree",
+    monkeypatch.setattr(review.worktree, "setup_pr_worktree",
                         lambda *a, **kw: SimpleNamespace(path=str(reviewed),
                                                          is_fallback=False))
-    monkeypatch.setattr(review_recover, "pin_recover_worktree",
+    monkeypatch.setattr(review.recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(reviewed), None))
-    monkeypatch.setattr(review_run.prompt, "ask", lambda *a, **kw: "")
+    monkeypatch.setattr(core.prompt, "ask", lambda *a, **kw: "")
     monkeypatch.setattr(
-        review_invoke, "run",
+        review.invoke, "run",
         MagicMock(side_effect=AssertionError("spent a review on an unresolvable base")),
     )
 
     with pytest.raises(SystemExit) as exc:
-        review_run.run_pr_review(
+        review.run.run_pr_review(
             make_ctx(target_dir=tmp_path / "t"),
-            review_run.ReviewFlags(bin_dir=Path("/bin"), generator_version="test 1.0",
+            review.run.ReviewFlags(bin_dir=Path("/bin"), generator_version="test 1.0",
                                    base="relase/1.2"),
             review_file, trail=MagicMock(),
         )
@@ -2816,22 +2820,22 @@ def test_a_pr_review_checkout_lock_reuses_the_target_locks_command(tmp_path, mon
     reviewed = tmp_path / "pr-worktree"
     reviewed.mkdir()
     _stub_pr_flow(monkeypatch, tmp_path)
-    monkeypatch.setattr(review_worktree, "setup_pr_worktree",
+    monkeypatch.setattr(review.worktree, "setup_pr_worktree",
                         lambda *a, **kw: SimpleNamespace(path=str(reviewed),
                                                          is_fallback=False))
-    monkeypatch.setattr(review_recover, "pin_recover_worktree",
+    monkeypatch.setattr(review.recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(reviewed), None))
-    monkeypatch.setattr(review_publish.prompt, "confirm", lambda *a, **kw: False)
-    monkeypatch.setattr(review_publish, "post", MagicMock())
-    monkeypatch.setattr(review_run.prompt, "ask", lambda *a, **kw: "")
+    monkeypatch.setattr(core.prompt, "confirm", lambda *a, **kw: False)
+    monkeypatch.setattr(review.publish, "post", MagicMock())
+    monkeypatch.setattr(core.prompt, "ask", lambda *a, **kw: "")
 
     claim = MagicMock()
-    monkeypatch.setattr(review_run.run_lock, "claim_for_process", claim)
+    monkeypatch.setattr(core.run_lock, "claim_for_process", claim)
 
     ctx = make_ctx(target_dir=tmp_path / "t")
-    review_run.run_pr_review(
+    review.run.run_pr_review(
         ctx,
-        review_run.ReviewFlags(bin_dir=Path("/bin"), generator_version="test 1.0",
+        review.run.ReviewFlags(bin_dir=Path("/bin"), generator_version="test 1.0",
                                command="review 42 --fix --push"),
         review_file, trail=MagicMock(),
     )
@@ -2846,23 +2850,23 @@ def test_a_stacked_self_review_measures_against_its_parent(tmp_path, monkeypatch
     parent made, and if it survives, reviewed against the wrong base."""
     seen = {}
     monkeypatch.setattr(
-        review_preflight, "refuse_if_superseded",
+        review.preflight, "refuse_if_superseded",
         lambda *a, **kw: seen.__setitem__("gate_base", kw.get("base")),
     )
-    monkeypatch.setattr(review_issue, "load_issue_provider",
+    monkeypatch.setattr(review.issue, "load_issue_provider",
                         lambda wt: SimpleNamespace(name="none", options={}))
-    monkeypatch.setattr(review_issue, "extract_issue_id", lambda *a: "")
-    monkeypatch.setattr(review_issue, "fetch_issue_context",
+    monkeypatch.setattr(review.issue, "extract_issue_id", lambda *a: "")
+    monkeypatch.setattr(review.issue, "fetch_issue_context",
                         lambda *a: SimpleNamespace(link="", context=""))
-    monkeypatch.setattr(review_invoke, "run",
+    monkeypatch.setattr(review.invoke, "run",
                         lambda request: seen.__setitem__("sent_base", request.base) or 0)
-    monkeypatch.setattr(review_run, "finish_review", lambda *a, **kw: None)
+    monkeypatch.setattr(review.run, "finish_review", lambda *a, **kw: None)
 
     ctx = make_ctx(repo="owner/repo", pr_number=None, branch="feat/child",
                    head_sha="abc1234", worktree_root=tmp_path,
                    target_dir=tmp_path / "state", base="feat/parent")
 
-    review_run.run_self_review(
+    review.run.run_self_review(
         ctx, _self_flags(), tmp_path, str(tmp_path),
         recover_head_sha="", trail=MagicMock(),
     )
@@ -2875,15 +2879,15 @@ def test_an_explicit_base_overrides_the_one_github_reports(tmp_path, monkeypatch
     """The escape hatch: derivation picks a stale branch parked between this one
     and its real parent, and `--base` is how an operator says otherwise."""
     seen = {}
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(review_issue, "load_issue_provider",
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.issue, "load_issue_provider",
                         lambda wt: SimpleNamespace(name="none", options={}))
-    monkeypatch.setattr(review_issue, "extract_issue_id", lambda *a: "")
-    monkeypatch.setattr(review_issue, "fetch_issue_context",
+    monkeypatch.setattr(review.issue, "extract_issue_id", lambda *a: "")
+    monkeypatch.setattr(review.issue, "fetch_issue_context",
                         lambda *a: SimpleNamespace(link="", context=""))
-    monkeypatch.setattr(review_invoke, "run",
+    monkeypatch.setattr(review.invoke, "run",
                         lambda request: seen.__setitem__("sent_base", request.base) or 0)
-    monkeypatch.setattr(review_run, "finish_review", lambda *a, **kw: None)
+    monkeypatch.setattr(review.run, "finish_review", lambda *a, **kw: None)
 
     # A real repo holding the branch `--base` names: an override that resolves
     # to nothing is refused before it gets here, which is its own test.
@@ -2899,7 +2903,7 @@ def test_an_explicit_base_overrides_the_one_github_reports(tmp_path, monkeypatch
                    head_sha="abc1234", worktree_root=repo,
                    target_dir=tmp_path / "state", base="feat/wrong")
 
-    review_run.run_self_review(
+    review.run.run_self_review(
         ctx, _self_flags(base="feat/right"), tmp_path, str(repo),
         recover_head_sha="", trail=MagicMock(),
     )
@@ -2912,7 +2916,7 @@ def test_a_mistyped_base_stops_the_run_before_it_spends_anything(tmp_path, monke
     would anchor to a ref that does not exist, the diff would come back empty,
     and the review would report no findings for a branch it never read."""
     monkeypatch.setattr(
-        review_invoke, "run",
+        review.invoke, "run",
         MagicMock(side_effect=AssertionError("spent a review on an unresolvable base")),
     )
     repo = init_repo(tmp_path / "repo")
@@ -2923,7 +2927,7 @@ def test_a_mistyped_base_stops_the_run_before_it_spends_anything(tmp_path, monke
                    worktree_root=repo, target_dir=tmp_path / "state")
 
     with pytest.raises(SystemExit) as exc:
-        review_run.run_self_review(
+        review.run.run_self_review(
             ctx, _self_flags(base="feat/parnet"), tmp_path, str(repo),
             recover_head_sha="", trail=MagicMock(),
         )
@@ -2936,21 +2940,21 @@ def test_a_derived_base_that_does_not_resolve_is_not_refused(tmp_path, monkeypat
     cannot answer for is a gap in the tool, not a typo — refusing there would
     fail every worktree with no origin, which the range fallbacks handle."""
     seen = {}
-    monkeypatch.setattr(review_preflight, "refuse_if_superseded", lambda *a, **kw: None)
-    monkeypatch.setattr(review_issue, "load_issue_provider",
+    monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
+    monkeypatch.setattr(review.issue, "load_issue_provider",
                         lambda wt: SimpleNamespace(name="none", options={}))
-    monkeypatch.setattr(review_issue, "extract_issue_id", lambda *a: "")
-    monkeypatch.setattr(review_issue, "fetch_issue_context",
+    monkeypatch.setattr(review.issue, "extract_issue_id", lambda *a: "")
+    monkeypatch.setattr(review.issue, "fetch_issue_context",
                         lambda *a: SimpleNamespace(link="", context=""))
-    monkeypatch.setattr(review_invoke, "run",
+    monkeypatch.setattr(review.invoke, "run",
                         lambda request: seen.__setitem__("ran", True) or 0)
-    monkeypatch.setattr(review_run, "finish_review", lambda *a, **kw: None)
+    monkeypatch.setattr(review.run, "finish_review", lambda *a, **kw: None)
 
     ctx = make_ctx(repo="owner/repo", pr_number=None, branch="feat/child",
                    worktree_root=tmp_path, target_dir=tmp_path / "state",
                    base="a-branch-that-is-not-here")
 
-    review_run.run_self_review(
+    review.run.run_self_review(
         ctx, _self_flags(), tmp_path, str(tmp_path),
         recover_head_sha="", trail=MagicMock(),
     )

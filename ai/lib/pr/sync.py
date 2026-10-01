@@ -17,10 +17,10 @@ from __future__ import annotations
 import subprocess
 from dataclasses import replace as dataclass_replace
 
-from git import topology as git_topology
-from core import log
-from pr import context as pr_context
-from core import timeouts
+import git.topology
+import core.log
+import pr.context
+import core.timeouts
 from core.proc import failure_message
 
 
@@ -36,7 +36,7 @@ def _reset_guard_read(cwd: str, *args: str) -> subprocess.CompletedProcess:
     argv = ["git", "-C", cwd, *args]
     try:
         return subprocess.run(
-            argv, capture_output=True, text=True, timeout=timeouts.LOCAL,
+            argv, capture_output=True, text=True, timeout=core.timeouts.LOCAL,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return subprocess.CompletedProcess(argv, 1, "", f"{type(exc).__name__}: {exc}")
@@ -52,7 +52,7 @@ def _worktree_is_dirty(cwd: str) -> bool:
     """
     r = _reset_guard_read(cwd, "status", "--porcelain")
     if r.returncode != 0:
-        log.warn(failure_message(
+        core.log.warn(failure_message(
             f"Could not read the state of {cwd} — treating it as dirty", r,
         ))
         return True
@@ -71,11 +71,11 @@ def _unpushed_count(cwd: str, branch: str) -> int | None:
     """
     r = _reset_guard_read(cwd, "rev-list", f"origin/{branch}..HEAD", "--count")
     if r.returncode != 0:
-        log.warn(failure_message(f"Could not count unpushed commits in {cwd}", r))
+        core.log.warn(failure_message(f"Could not count unpushed commits in {cwd}", r))
         return None
     count = r.stdout.strip()
     if not count.isdigit():
-        log.warn(f"Could not count unpushed commits in {cwd} — git answered {count!r}")
+        core.log.warn(f"Could not count unpushed commits in {cwd} — git answered {count!r}")
         return None
     return int(count)
 
@@ -90,7 +90,7 @@ def _reset_blocker(wt_path: str, branch: str) -> str | None:
     strings stay true either way, and the read that could not answer has
     already logged git's own account of why.
     """
-    current = git_topology.current_branch_quiet(wt_path)
+    current = git.topology.current_branch_quiet(wt_path)
     if current != branch:
         return f"it is on {current or 'detached HEAD'}, not {branch}"
     if _worktree_is_dirty(wt_path):
@@ -115,24 +115,24 @@ def fetch_and_reset(wt_path: str, branch: str) -> None:
     try:
         subprocess.run(
             ["git", "-C", wt_path, "fetch", "origin", branch],
-            capture_output=True, text=True, check=True, timeout=timeouts.TRANSFER,
+            capture_output=True, text=True, check=True, timeout=core.timeouts.TRANSFER,
         )
     except Exception:
         return
     blocker = _reset_blocker(wt_path, branch)
     if blocker:
-        log.warn(f"Not resetting {wt_path} to origin/{branch} — {blocker}")
+        core.log.warn(f"Not resetting {wt_path} to origin/{branch} — {blocker}")
         return
     try:
         subprocess.run(
             ["git", "-C", wt_path, "reset", "--hard", f"origin/{branch}"],
-            capture_output=True, text=True, timeout=timeouts.UNBOUNDED,
+            capture_output=True, text=True, timeout=core.timeouts.UNBOUNDED,
         )
     except Exception:
         pass
 
 
-def update_to_remote(ctx: pr_context.ResolvedContext) -> pr_context.ResolvedContext:
+def update_to_remote(ctx: pr.context.ResolvedContext) -> pr.context.ResolvedContext:
     """Fetch branch from remote and reset worktree to match, safely.
 
     Skips when the worktree has uncommitted changes or unpushed commits, and
@@ -145,13 +145,13 @@ def update_to_remote(ctx: pr_context.ResolvedContext) -> pr_context.ResolvedCont
 
     cwd = str(ctx.worktree_root)
 
-    current = git_topology.current_branch_quiet(cwd)
+    current = git.topology.current_branch_quiet(cwd)
     if current != ctx.branch:
-        log.info(f"Worktree is on {current}, not {ctx.branch} — skipping update to remote")
+        core.log.info(f"Worktree is on {current}, not {ctx.branch} — skipping update to remote")
         return ctx
 
     if _worktree_is_dirty(cwd):
-        log.warn(
+        core.log.warn(
             "Worktree has uncommitted changes, or its state could not be read "
             "— skipping update to remote"
         )
@@ -163,11 +163,11 @@ def update_to_remote(ctx: pr_context.ResolvedContext) -> pr_context.ResolvedCont
     # is whatever the last full fetch left behind and the branch reports
     # itself nearer the trunk than it is, which is the direction that does
     # harm: too small a number is a rebase that never fires.
-    default = git_topology.default_branch(cwd)
+    default = git.topology.default_branch(cwd)
     refs = [ctx.branch] if default == ctx.branch else [ctx.branch, default]
     r = subprocess.run(
         ["git", "-C", cwd, "fetch", "origin", *refs],
-        capture_output=True, text=True, timeout=timeouts.TRANSFER,
+        capture_output=True, text=True, timeout=core.timeouts.TRANSFER,
     )
     if r.returncode != 0 and len(refs) > 1:
         # `default_branch` falls back to a literal guess ("main") when no
@@ -178,39 +178,39 @@ def update_to_remote(ctx: pr_context.ResolvedContext) -> pr_context.ResolvedCont
         # with it.
         r = subprocess.run(
             ["git", "-C", cwd, "fetch", "origin", ctx.branch],
-            capture_output=True, text=True, timeout=timeouts.TRANSFER,
+            capture_output=True, text=True, timeout=core.timeouts.TRANSFER,
         )
     if r.returncode != 0:
         return ctx
 
     r = subprocess.run(
         ["git", "-C", cwd, "rev-parse", "--verify", f"origin/{ctx.branch}"],
-        capture_output=True, text=True, timeout=timeouts.LOCAL,
+        capture_output=True, text=True, timeout=core.timeouts.LOCAL,
     )
     if r.returncode != 0:
         return ctx
     remote_sha = r.stdout.strip()
 
-    local_sha = pr_context.head_sha(cwd)
+    local_sha = pr.context.head_sha(cwd)
     if local_sha == remote_sha:
         return ctx
 
     unpushed = _unpushed_count(cwd, ctx.branch)
     if unpushed is None:
-        log.dim("skipping update to remote")
+        core.log.dim("skipping update to remote")
         return ctx
     if unpushed > 0:
-        log.warn(f"Branch has {unpushed} unpushed commit(s) — skipping update to remote")
+        core.log.warn(f"Branch has {unpushed} unpushed commit(s) — skipping update to remote")
         return ctx
 
     r = subprocess.run(
         ["git", "-C", cwd, "reset", "--hard", f"origin/{ctx.branch}"],
-        capture_output=True, text=True, timeout=timeouts.UNBOUNDED,
+        capture_output=True, text=True, timeout=core.timeouts.UNBOUNDED,
     )
     if r.returncode != 0:
-        log.warn(failure_message(f"git reset --hard origin/{ctx.branch} failed", r))
-        log.dim("keeping the existing worktree state")
+        core.log.warn(failure_message(f"git reset --hard origin/{ctx.branch} failed", r))
+        core.log.dim("keeping the existing worktree state")
         return ctx
 
-    log.info(f"Updated worktree to origin/{ctx.branch}")
+    core.log.info(f"Updated worktree to origin/{ctx.branch}")
     return dataclass_replace(ctx, head_sha=remote_sha)

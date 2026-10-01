@@ -24,11 +24,11 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from git import client as git_client  # noqa: E402
-from core import proc  # noqa: E402
-from git import push  # noqa: E402
-from core import timeouts  # noqa: E402
-from core import workbench_paths  # noqa: E402
+import git.client  # noqa: E402
+import core.proc  # noqa: E402
+import git.push  # noqa: E402
+import core.timeouts  # noqa: E402
+import core.workbench_paths  # noqa: E402
 from core.trail import Trail  # noqa: E402
 
 from conftest import _last_event, git_in, run_checked, seed_repo  # noqa: E402
@@ -51,12 +51,12 @@ def _never_runs(*cmd, **kwargs):
 
 def _commit(wt: Path, message: str) -> str:
     """An empty commit in *wt*, returning its SHA."""
-    result = git_client.run(
+    result = git.client.run(
         "commit", "-q", "--allow-empty", "-m", message, cwd=wt,
         config={"user.email": "t@t", "user.name": "t"},
     )
     assert result.ok, f"commit failed: {result.detail}"
-    return git_client.head_sha(cwd=wt)
+    return git.client.head_sha(cwd=wt)
 
 
 @pytest.fixture
@@ -89,7 +89,7 @@ def _lose_pushes(remote: Path) -> Path:
 
 def test_ls_remote_takes_the_transfer_tier():
     """A network read on the 10s local budget would expire on a slow remote."""
-    assert git_client._timeout_for(("ls-remote",)) == timeouts.TRANSFER
+    assert git.client._timeout_for(("ls-remote",)) == core.timeouts.TRANSFER
 
 
 # ── remote_head ─────────────────────────────────────────────────────────────
@@ -97,15 +97,15 @@ def test_ls_remote_takes_the_transfer_tier():
 
 def test_remote_head_reports_the_pushed_commit(pushable):
     wt, _ = pushable
-    assert push.remote_head(wt, "main") == git_client.head_sha(cwd=wt)
+    assert git.push.remote_head(wt, "main") == git.client.head_sha(cwd=wt)
 
 
 def test_remote_head_distinguishes_absent_from_unaskable(pushable):
     """"" means the remote has no such ref; None means it could not be asked."""
     wt, _ = pushable
-    assert push.remote_head(wt, "no-such-branch") == ""
+    assert git.push.remote_head(wt, "no-such-branch") == ""
     git_in(wt, "remote", "set-url", "origin", str(wt / "nope.git"))
-    assert push.remote_head(wt, "main") is None
+    assert git.push.remote_head(wt, "main") is None
 
 
 def test_remote_head_is_not_fooled_by_a_branch_ending_in_the_same_name(pushable):
@@ -117,12 +117,12 @@ def test_remote_head_is_not_fooled_by_a_branch_ending_in_the_same_name(pushable)
     landed push as lost or, worse, the reverse.
     """
     wt, _ = pushable
-    on_main = git_client.head_sha(cwd=wt)
+    on_main = git.client.head_sha(cwd=wt)
     git_in(wt, "checkout", "-q", "-b", "alt/main")
     _commit(wt, "the impostor")
     git_in(wt, "push", "-q", "origin", "alt/main")
 
-    assert push.remote_head(wt, "main") == on_main
+    assert git.push.remote_head(wt, "main") == on_main
 
 
 # ── holds ───────────────────────────────────────────────────────────────────
@@ -130,37 +130,37 @@ def test_remote_head_is_not_fooled_by_a_branch_ending_in_the_same_name(pushable)
 
 def test_holds_answers_for_the_commit_the_remote_has(pushable):
     wt, _ = pushable
-    assert push.holds(wt, git_client.head_sha(cwd=wt)) is True
+    assert git.push.holds(wt, git.client.head_sha(cwd=wt)) is True
 
 
 def test_holds_answers_for_an_earlier_commit_a_later_push_carried_out(pushable):
     """Ancestry, not equality — a round's commit rides out on the next one's push."""
     wt, _ = pushable
-    earlier = git_client.head_sha(cwd=wt)
+    earlier = git.client.head_sha(cwd=wt)
     _commit(wt, "a later round")
     git_in(wt, "push", "-q", "origin", "main")
 
-    assert push.holds(wt, earlier) is True
+    assert git.push.holds(wt, earlier) is True
 
 
 def test_holds_declines_a_commit_that_never_left(pushable):
     wt, _ = pushable
     local = _commit(wt, "not pushed")
-    assert push.holds(wt, local) is False
+    assert git.push.holds(wt, local) is False
 
 
 def test_holds_declines_a_branch_the_remote_does_not_have(pushable):
     wt, _ = pushable
     git_in(wt, "checkout", "-q", "-b", "feat/unpushed")
-    assert push.holds(wt, _commit(wt, "on a new branch")) is False
+    assert git.push.holds(wt, _commit(wt, "on a new branch")) is False
 
 
 def test_an_unreachable_remote_reads_as_pending(pushable):
     """Deferring a citation is the safe answer; publishing a dead link is not."""
     wt, _ = pushable
-    sha = git_client.head_sha(cwd=wt)
+    sha = git.client.head_sha(cwd=wt)
     git_in(wt, "remote", "set-url", "origin", str(wt / "nope.git"))
-    assert push.holds(wt, sha) is False
+    assert git.push.holds(wt, sha) is False
 
 
 def test_holds_reads_the_remote_rather_than_the_tracking_ref(pushable):
@@ -174,8 +174,8 @@ def test_holds_reads_the_remote_rather_than_the_tracking_ref(pushable):
     lost = _commit(wt, "the push that vanishes")
     git_in(wt, "push", "-q", "origin", "main")
 
-    assert git_client.out("rev-parse", "origin/main", cwd=wt) == lost
-    assert push.holds(wt, lost) is False
+    assert git.client.out("rev-parse", "origin/main", cwd=wt) == lost
+    assert git.push.holds(wt, lost) is False
 
 
 # ── the five outcomes ───────────────────────────────────────────────────────
@@ -184,8 +184,8 @@ def test_holds_reads_the_remote_rather_than_the_tracking_ref(pushable):
 def test_push_that_lands_is_pushed(pushable):
     wt, _ = pushable
     sha = _commit(wt, "work")
-    result = push.push(wt, gated=False)
-    assert result.status is push.PushStatus.PUSHED
+    result = git.push.push(wt, gated=False)
+    assert result.status is git.push.PushStatus.PUSHED
     assert result.ok
     assert result.sha == sha
     assert result.branch == "main"
@@ -197,8 +197,8 @@ def test_push_that_vanishes_is_lost(pushable):
     wt, remote = pushable
     sha = _commit(wt, "work")
     _lose_pushes(remote)
-    result = push.push(wt, gated=False)
-    assert result.status is push.PushStatus.LOST
+    result = git.push.push(wt, gated=False)
+    assert result.status is git.push.PushStatus.LOST
     assert not result.ok
     assert result.sha == sha
     assert result.remote_sha != sha
@@ -211,18 +211,18 @@ def test_rejected_push_is_refused_not_lost(pushable):
     git_in(wt, "push", "-q", "origin", "main")
     git_in(wt, "reset", "-q", "--hard", "HEAD~1")
     _commit(wt, "mine")
-    result = push.push(wt, gated=False)
-    assert result.status is push.PushStatus.REFUSED
-    assert result.refusal is push.Refusal.DIVERGED
+    result = git.push.push(wt, gated=False)
+    assert result.status is git.push.PushStatus.REFUSED
+    assert result.refusal is git.push.Refusal.DIVERGED
 
 
 def test_unreachable_remote_is_unverified_not_lost(pushable, monkeypatch):
     """A remote that could not answer has not answered "no"."""
     wt, _ = pushable
     sha = _commit(wt, "work")
-    monkeypatch.setattr(push, "remote_head", lambda *a, **k: None)
-    result = push.push(wt, gated=False)
-    assert result.status is push.PushStatus.UNVERIFIED
+    monkeypatch.setattr(git.push, "remote_head", lambda *a, **k: None)
+    result = git.push.push(wt, gated=False)
+    assert result.status is git.push.PushStatus.UNVERIFIED
     assert not result.ok
     assert result.sha == sha
 
@@ -231,9 +231,9 @@ def test_gated_push_is_held_and_attempts_nothing(pushable):
     """The publishing gate is shut by default — see conftest's _drafts_only."""
     wt, _ = pushable
     sha = _commit(wt, "work")
-    result = push.push(wt, gated=True)
-    assert result.status is push.PushStatus.HELD
-    assert push.remote_head(wt, "main") != sha
+    result = git.push.push(wt, gated=True)
+    assert result.status is git.push.PushStatus.HELD
+    assert git.push.remote_head(wt, "main") != sha
 
 
 def test_a_held_push_reads_nothing_from_the_repository(pushable, monkeypatch):
@@ -245,11 +245,11 @@ def test_a_held_push_reads_nothing_from_the_repository(pushable, monkeypatch):
     """
     wt, _ = pushable
     _commit(wt, "work")
-    monkeypatch.setattr(push.git_client, "run", _never_runs)
-    result = push.push(wt, gated=True)
-    assert result.status is push.PushStatus.HELD
+    monkeypatch.setattr(git.client, "run", _never_runs)
+    result = git.push.push(wt, gated=True)
+    assert result.status is git.push.PushStatus.HELD
     assert result.sha == ""
-    assert push.push(wt, gated=True, sha="abc1234").sha == "abc1234"
+    assert git.push.push(wt, gated=True, sha="abc1234").sha == "abc1234"
 
 
 # ── what a refusal records ──────────────────────────────────────────────────
@@ -264,25 +264,25 @@ _HOOK_DUMP = (
 
 def test_a_refusal_records_the_verdict_not_the_banner(monkeypatch):
     """The banner is the first 500 characters; the verdict is the last line."""
-    monkeypatch.setattr(push.git_client, "run",
-                        lambda *a, **k: proc.CmdResult(1, "", _HOOK_DUMP))
+    monkeypatch.setattr(git.client, "run",
+                        lambda *a, **k: core.proc.CmdResult(1, "", _HOOK_DUMP))
     trail = Trail.start(script="test", context={})
 
-    result = push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x",
+    result = git.push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x",
                        trail=trail)
 
     recorded = _last_event()["data"]["error"]
     assert "✗ pre-commit: lint:ts failed" in recorded
     assert "Running pre-push checks" not in recorded
-    assert result.status is push.PushStatus.REFUSED
+    assert result.status is git.push.PushStatus.REFUSED
 
 
 def test_a_refusal_keeps_the_whole_hook_output(monkeypatch):
-    monkeypatch.setattr(push.git_client, "run",
-                        lambda *a, **k: proc.CmdResult(1, "", _HOOK_DUMP))
+    monkeypatch.setattr(git.client, "run",
+                        lambda *a, **k: core.proc.CmdResult(1, "", _HOOK_DUMP))
     trail = Trail.start(script="test", context={})
 
-    result = push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x",
+    result = git.push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x",
                        trail=trail)
 
     assert result.log is not None
@@ -291,11 +291,11 @@ def test_a_refusal_keeps_the_whole_hook_output(monkeypatch):
 
 
 def test_a_refusal_still_records_the_sha_and_branch(monkeypatch):
-    monkeypatch.setattr(push.git_client, "run",
-                        lambda *a, **k: proc.CmdResult(1, "", "denied"))
+    monkeypatch.setattr(git.client, "run",
+                        lambda *a, **k: core.proc.CmdResult(1, "", "denied"))
     trail = Trail.start(script="test", context={})
 
-    push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x", trail=trail)
+    git.push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x", trail=trail)
 
     data = _last_event()["data"]
     assert data["sha"] == "1a2b3c4d"
@@ -303,35 +303,35 @@ def test_a_refusal_still_records_the_sha_and_branch(monkeypatch):
 
 
 def test_a_push_without_a_trail_still_reports_the_refusal(monkeypatch):
-    monkeypatch.setattr(push.git_client, "run",
-                        lambda *a, **k: proc.CmdResult(1, "", "denied"))
+    monkeypatch.setattr(git.client, "run",
+                        lambda *a, **k: core.proc.CmdResult(1, "", "denied"))
 
-    result = push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x")
+    result = git.push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x")
 
-    assert result.status is push.PushStatus.REFUSED
+    assert result.status is git.push.PushStatus.REFUSED
     assert result.log is None
 
 
 def test_the_refused_report_names_the_full_output(capsys, tmp_path):
     artifact = tmp_path / "214e9758c739-1-push.log"
     artifact.write_text("everything the hook said")
-    result = push.PushResult(
-        push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
-        refusal=push.Refusal.HOOK, output="✗ lint:ts failed", log=artifact,
+    result = git.push.PushResult(
+        git.push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
+        refusal=git.push.Refusal.HOOK, output="✗ lint:ts failed", log=artifact,
     )
 
-    push.report(result, "/tmp/wt")
+    git.push.report(result, "/tmp/wt")
 
     assert f"full output: {artifact}" in capsys.readouterr().err
 
 
 def test_the_refused_report_omits_the_line_when_there_is_no_artifact(capsys):
-    result = push.PushResult(
-        push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
-        refusal=push.Refusal.HOOK, output="✗ lint:ts failed",
+    result = git.push.PushResult(
+        git.push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
+        refusal=git.push.Refusal.HOOK, output="✗ lint:ts failed",
     )
 
-    push.report(result, "/tmp/wt")
+    git.push.report(result, "/tmp/wt")
 
     assert "full output:" not in capsys.readouterr().err
 
@@ -340,35 +340,35 @@ def test_the_refused_report_omits_the_line_when_there_is_no_artifact(capsys):
 
 
 @pytest.mark.parametrize("output,expected", [
-    ("! [rejected]  main -> main (non-fast-forward)", push.Refusal.DIVERGED),
+    ("! [rejected]  main -> main (non-fast-forward)", git.push.Refusal.DIVERGED),
     ("Updates were rejected because the remote contains work.\nfetch first",
-     push.Refusal.DIVERGED),
-    ("! [rejected] main -> main (stale info)", push.Refusal.DIVERGED),
+     git.push.Refusal.DIVERGED),
+    ("! [rejected] main -> main (stale info)", git.push.Refusal.DIVERGED),
     ("Updates were rejected because the tip is behind its remote counterpart.",
-     push.Refusal.DIVERGED),
-    ("ssh: Could not resolve host: github.com", push.Refusal.UNREACHABLE),
+     git.push.Refusal.DIVERGED),
+    ("ssh: Could not resolve host: github.com", git.push.Refusal.UNREACHABLE),
     ("ssh: connect to host github.com port 22: Connection timed out",
-     push.Refusal.UNREACHABLE),
-    ("fatal: Could not read from remote repository.", push.Refusal.TRANSPORT),
-    ("Permission denied (publickey).", push.Refusal.AUTH),
-    ("ERROR: Repository not found.", push.Refusal.AUTH),
+     git.push.Refusal.UNREACHABLE),
+    ("fatal: Could not read from remote repository.", git.push.Refusal.TRANSPORT),
+    ("Permission denied (publickey).", git.push.Refusal.AUTH),
+    ("ERROR: Repository not found.", git.push.Refusal.AUTH),
     ("validate-all failed\nerror: failed to push some refs to 'origin'",
-     push.Refusal.HOOK),
-    ("something nobody has seen before", push.Refusal.OTHER),
+     git.push.Refusal.HOOK),
+    ("something nobody has seen before", git.push.Refusal.OTHER),
     ("Read from remote host github.com: Connection reset by peer",
-     push.Refusal.DROPPED),
-    ("client_loop: send disconnect: Broken pipe", push.Refusal.DROPPED),
-    ("fatal: The remote end hung up unexpectedly", push.Refusal.DROPPED),
+     git.push.Refusal.DROPPED),
+    ("client_loop: send disconnect: Broken pipe", git.push.Refusal.DROPPED),
+    ("fatal: The remote end hung up unexpectedly", git.push.Refusal.DROPPED),
 ])
 def test_classify_names_the_refusal(output, expected):
-    assert push.classify(output) == expected
+    assert git.push.classify(output) == expected
 
 
 def test_a_hook_rejection_outranks_nothing_it_shares_words_with():
     """A transport failure also prints the generic refusal line; it wins."""
     output = ("fatal: Could not read from remote repository.\n"
               "error: failed to push some refs to 'origin'")
-    assert push.classify(output) is push.Refusal.TRANSPORT
+    assert git.push.classify(output) is git.push.Refusal.TRANSPORT
 
 
 def test_an_auth_denial_outranks_the_generic_line_underneath_it():
@@ -383,7 +383,7 @@ def test_an_auth_denial_outranks_the_generic_line_underneath_it():
               "fatal: Could not read from remote repository.\n"
               "Please make sure you have the correct access rights\n"
               "and the repository exists.")
-    assert push.classify(output) is push.Refusal.AUTH
+    assert git.push.classify(output) is git.push.Refusal.AUTH
 
 
 # Everything a push killed by a mid-transfer reset prints — ssh's diagnostic,
@@ -404,7 +404,7 @@ def test_a_drop_outranks_the_refusal_line_it_prints_too():
     Classified as HOOK it tells the operator their checks failed, which is the
     misdirection this ordering removes — the gates had all printed a tick.
     """
-    assert push.classify(_RESET_DUMP_FULL) is push.Refusal.DROPPED
+    assert git.push.classify(_RESET_DUMP_FULL) is git.push.Refusal.DROPPED
 
 
 @pytest.mark.parametrize("output", [
@@ -421,7 +421,7 @@ def test_an_auth_failure_is_not_a_drop(output):
     parametrisation above's business; what matters here is that none is
     `DROPPED`.
     """
-    assert push.classify(output) is not push.Refusal.DROPPED
+    assert git.push.classify(output) is not git.push.Refusal.DROPPED
 
 
 # ── the drop predicate ──────────────────────────────────────────────────────
@@ -429,12 +429,12 @@ def test_an_auth_failure_is_not_a_drop(output):
 
 def test_a_signal_death_with_no_output_is_a_drop():
     """A git that took a signal on the way down usually says nothing at all."""
-    assert push._dropped(proc.CmdResult(-signal.SIGPIPE, "", ""))
+    assert git.push._dropped(core.proc.CmdResult(-signal.SIGPIPE, "", ""))
 
 
 def test_a_plain_refusal_is_not_a_drop():
-    assert not push._dropped(
-        proc.CmdResult(1, "", "error: failed to push some refs to 'origin'"))
+    assert not git.push._dropped(
+        core.proc.CmdResult(1, "", "error: failed to push some refs to 'origin'"))
 
 
 def test_a_shells_141_is_not_how_a_signal_arrives_here():
@@ -443,18 +443,18 @@ def test_a_shells_141_is_not_how_a_signal_arrives_here():
     141 is the shell's rendering of SIGPIPE and reaches no Python here, so a
     predicate written against it would be dead code that never fires.
     """
-    assert not push._dropped(proc.CmdResult(128 + signal.SIGPIPE, "", ""))
+    assert not git.push._dropped(core.proc.CmdResult(128 + signal.SIGPIPE, "", ""))
 
 
 def test_a_killed_push_speaks_through_the_signal_when_it_said_nothing():
     """An empty excerpt under the headline is a failure nobody can read."""
-    spoken = push._push_output(proc.CmdResult(-signal.SIGPIPE, "", ""))
+    spoken = git.push._push_output(core.proc.CmdResult(-signal.SIGPIPE, "", ""))
     assert "SIGPIPE" in spoken
 
 
 def test_a_killed_push_that_did_speak_is_quoted_rather_than_summarised():
-    assert push._push_output(
-        proc.CmdResult(-signal.SIGPIPE, "", _RESET_DUMP_FULL)) == _RESET_DUMP_FULL
+    assert git.push._push_output(
+        core.proc.CmdResult(-signal.SIGPIPE, "", _RESET_DUMP_FULL)) == _RESET_DUMP_FULL
 
 
 @pytest.mark.parametrize("sig", [signal.SIGKILL, signal.SIGINT, signal.SIGPIPE])
@@ -467,7 +467,7 @@ def test_a_killed_push_names_the_signal_without_asserting_a_cause(sig):
     What every signal death does establish is the same, narrower thing: git
     stopped before it could say what the remote received.
     """
-    spoken = push._push_output(proc.CmdResult(-sig, "", ""))
+    spoken = git.push._push_output(core.proc.CmdResult(-sig, "", ""))
 
     assert sig.name in spoken
     assert "connection" not in spoken.lower()
@@ -488,17 +488,17 @@ def drops_the_connection(monkeypatch):
     so `conftest` does not staple a contention section onto an unrelated
     failure here.
     """
-    real_run = git_client.run
+    real_run = git.client.run
     seen: list[tuple[str, ...]] = []
 
     def dropping(*args, **kwargs):
         result = real_run(*args, **kwargs)
         if args and args[0] == "push":
             seen.append(args)
-            return proc.CmdResult(-signal.SIGPIPE, "", _RESET_DUMP_FULL)
+            return core.proc.CmdResult(-signal.SIGPIPE, "", _RESET_DUMP_FULL)
         return result
 
-    monkeypatch.setattr(git_client, "run", dropping)
+    monkeypatch.setattr(git.client, "run", dropping)
     return seen
 
 
@@ -507,12 +507,12 @@ def test_a_dropped_push_the_remote_took_is_pushed(pushable, drops_the_connection
     wt, _ = pushable
     sha = _commit(wt, "work")
 
-    result = push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False)
 
-    assert result.status is push.PushStatus.PUSHED
-    assert result.refusal is push.Refusal.DROPPED
+    assert result.status is git.push.PushStatus.PUSHED
+    assert result.refusal is git.push.Refusal.DROPPED
     assert result.remote_sha == sha
-    assert result.retry is push.Retry.NONE
+    assert result.retry is git.push.Retry.NONE
     assert len(drops_the_connection) == 1
 
 
@@ -522,10 +522,10 @@ def test_a_dropped_push_the_remote_never_took_is_lost_and_retried(
     _commit(wt, "work")
     _lose_pushes(remote)
 
-    result = push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False)
 
-    assert result.status is push.PushStatus.LOST
-    assert result.retry is push.Retry.ATTEMPTED
+    assert result.status is git.push.PushStatus.LOST
+    assert result.retry is git.push.Retry.ATTEMPTED
     assert len(drops_the_connection) == 2
 
 
@@ -535,7 +535,7 @@ def test_a_dropped_push_recovers_when_the_retry_lands(pushable, monkeypatch):
     sha = _commit(wt, "work")
     hook = _lose_pushes(remote)
     seen: list[tuple[str, ...]] = []
-    real_run = git_client.run
+    real_run = git.client.run
 
     def drop_then_heal(*args, **kwargs):
         if args and args[0] == "push":
@@ -543,14 +543,14 @@ def test_a_dropped_push_recovers_when_the_retry_lands(pushable, monkeypatch):
             if len(seen) == 1:
                 real_run(*args, **kwargs)
                 hook.unlink()
-                return proc.CmdResult(-signal.SIGPIPE, "", _RESET_DUMP_FULL)
+                return core.proc.CmdResult(-signal.SIGPIPE, "", _RESET_DUMP_FULL)
         return real_run(*args, **kwargs)
 
-    monkeypatch.setattr(git_client, "run", drop_then_heal)
-    result = push.push(wt, gated=False)
+    monkeypatch.setattr(git.client, "run", drop_then_heal)
+    result = git.push.push(wt, gated=False)
 
-    assert result.status is push.PushStatus.PUSHED
-    assert result.retry is push.Retry.ATTEMPTED
+    assert result.status is git.push.PushStatus.PUSHED
+    assert result.retry is git.push.Retry.ATTEMPTED
     assert result.remote_sha == sha
     assert "--no-verify" in seen[1]
 
@@ -564,14 +564,14 @@ def test_a_dropped_push_the_remote_could_not_be_asked_about_is_unverified(
     """
     wt, _ = pushable
     sha = _commit(wt, "work")
-    monkeypatch.setattr(push, "remote_head", lambda *a, **k: None)
+    monkeypatch.setattr(git.push, "remote_head", lambda *a, **k: None)
 
-    result = push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False)
 
-    assert result.status is push.PushStatus.UNVERIFIED
-    assert result.refusal is push.Refusal.DROPPED
+    assert result.status is git.push.PushStatus.UNVERIFIED
+    assert result.refusal is git.push.Refusal.DROPPED
     assert result.sha == sha
-    assert result.retry is push.Retry.NONE
+    assert result.retry is git.push.Retry.NONE
 
 
 def test_a_retry_the_remote_could_not_be_asked_about_records_the_attempt(
@@ -581,12 +581,12 @@ def test_a_retry_the_remote_could_not_be_asked_about_records_the_attempt(
     _commit(wt, "work")
     _lose_pushes(remote)
     answers = ["", None]
-    monkeypatch.setattr(push, "remote_head", lambda *a, **k: answers.pop(0))
+    monkeypatch.setattr(git.push, "remote_head", lambda *a, **k: answers.pop(0))
 
-    result = push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False)
 
-    assert result.status is push.PushStatus.UNVERIFIED
-    assert result.retry is push.Retry.ATTEMPTED
+    assert result.status is git.push.PushStatus.UNVERIFIED
+    assert result.retry is git.push.Retry.ATTEMPTED
     assert len(drops_the_connection) == 2
 
 
@@ -597,26 +597,26 @@ def test_an_auth_failure_is_refused_without_asking_the_remote(monkeypatch):
     be reported as one that could not be confirmed.
     """
     monkeypatch.setattr(
-        push.git_client, "run",
-        lambda *a, **k: proc.CmdResult(128, "", "Permission denied (publickey)."))
-    monkeypatch.setattr(push, "remote_head", _never_runs)
+        git.client, "run",
+        lambda *a, **k: core.proc.CmdResult(128, "", "Permission denied (publickey)."))
+    monkeypatch.setattr(git.push, "remote_head", _never_runs)
 
-    result = push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x")
+    result = git.push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x")
 
-    assert result.status is push.PushStatus.REFUSED
-    assert result.refusal is push.Refusal.AUTH
+    assert result.status is git.push.PushStatus.REFUSED
+    assert result.refusal is git.push.Refusal.AUTH
 
 
 def test_a_hook_rejection_is_refused_without_asking_the_remote(monkeypatch):
     refused = f"{_HOOK_DUMP}error: failed to push some refs to 'origin'\n"
-    monkeypatch.setattr(push.git_client, "run",
-                        lambda *a, **k: proc.CmdResult(1, "", refused))
-    monkeypatch.setattr(push, "remote_head", _never_runs)
+    monkeypatch.setattr(git.client, "run",
+                        lambda *a, **k: core.proc.CmdResult(1, "", refused))
+    monkeypatch.setattr(git.push, "remote_head", _never_runs)
 
-    result = push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x")
+    result = git.push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x")
 
-    assert result.status is push.PushStatus.REFUSED
-    assert result.refusal is push.Refusal.HOOK
+    assert result.status is git.push.PushStatus.REFUSED
+    assert result.refusal is git.push.Refusal.HOOK
 
 
 def test_a_dropped_push_reaches_the_trail(pushable, drops_the_connection):
@@ -625,7 +625,7 @@ def test_a_dropped_push_reaches_the_trail(pushable, drops_the_connection):
     sha = _commit(wt, "work")
     trail = Trail.start(script="test", context={})
 
-    push.push(wt, gated=False, trail=trail)
+    git.push.push(wt, gated=False, trail=trail)
 
     event = _last_event()
     assert event["data"]["sha"] == sha
@@ -634,25 +634,25 @@ def test_a_dropped_push_reaches_the_trail(pushable, drops_the_connection):
 
 def test_a_dropped_refusal_is_not_repairable():
     """Nothing in the tree was rejected, so there is nothing for a fix pass."""
-    assert not push.PushResult(
-        push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
-        refusal=push.Refusal.DROPPED).repairable
+    assert not git.push.PushResult(
+        git.push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
+        refusal=git.push.Refusal.DROPPED).repairable
 
 
-@pytest.mark.parametrize("refusal", [push.Refusal.HOOK, push.Refusal.DIVERGED,
-                                     push.Refusal.TRANSPORT, push.Refusal.AUTH,
-                                     push.Refusal.UNREACHABLE, push.Refusal.OTHER])
+@pytest.mark.parametrize("refusal", [git.push.Refusal.HOOK, git.push.Refusal.DIVERGED,
+                                     git.push.Refusal.TRANSPORT, git.push.Refusal.AUTH,
+                                     git.push.Refusal.UNREACHABLE, git.push.Refusal.OTHER])
 def test_every_other_refusal_is_repairable(refusal):
-    assert push.PushResult(
-        push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
+    assert git.push.PushResult(
+        git.push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
         refusal=refusal).repairable
 
 
-@pytest.mark.parametrize("status", [push.PushStatus.PUSHED, push.PushStatus.HELD,
-                                    push.PushStatus.LOST,
-                                    push.PushStatus.UNVERIFIED])
+@pytest.mark.parametrize("status", [git.push.PushStatus.PUSHED, git.push.PushStatus.HELD,
+                                    git.push.PushStatus.LOST,
+                                    git.push.PushStatus.UNVERIFIED])
 def test_only_a_refusal_is_repairable(status):
-    assert not push.PushResult(status, sha="1a2b3c4d", branch="feat/x").repairable
+    assert not git.push.PushResult(status, sha="1a2b3c4d", branch="feat/x").repairable
 
 
 # ── the retry ───────────────────────────────────────────────────────────────
@@ -662,14 +662,14 @@ def test_only_a_refusal_is_repairable(status):
 def count_pushes(monkeypatch) -> list[tuple[str, ...]]:
     """Record every `git push` the owner issues, and let them all through."""
     seen: list[tuple[str, ...]] = []
-    real_run = git_client.run
+    real_run = git.client.run
 
     def counting(*args, **kwargs):
         if args and args[0] == "push":
             seen.append(args)
         return real_run(*args, **kwargs)
 
-    monkeypatch.setattr(git_client, "run", counting)
+    monkeypatch.setattr(git.client, "run", counting)
     return seen
 
 
@@ -679,7 +679,7 @@ def test_lost_push_retries_once_and_recovers(pushable, monkeypatch):
     sha = _commit(wt, "work")
     hook = _lose_pushes(remote)
     seen: list[tuple[str, ...]] = []
-    real_run = git_client.run
+    real_run = git.client.run
 
     def heal_after_first(*args, **kwargs):
         if args and args[0] == "push":
@@ -692,11 +692,11 @@ def test_lost_push_retries_once_and_recovers(pushable, monkeypatch):
                 return result
         return real_run(*args, **kwargs)
 
-    monkeypatch.setattr(git_client, "run", heal_after_first)
-    result = push.push(wt, gated=False)
+    monkeypatch.setattr(git.client, "run", heal_after_first)
+    result = git.push.push(wt, gated=False)
 
-    assert result.status is push.PushStatus.PUSHED
-    assert result.retry is push.Retry.ATTEMPTED
+    assert result.status is git.push.PushStatus.PUSHED
+    assert result.retry is git.push.Retry.ATTEMPTED
     assert result.remote_sha == sha
     assert "--no-verify" in seen[1]
 
@@ -707,10 +707,10 @@ def test_retry_is_bounded_at_one(pushable, count_pushes):
     _commit(wt, "work")
     _lose_pushes(remote)
 
-    result = push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False)
 
-    assert result.status is push.PushStatus.LOST
-    assert result.retry is push.Retry.ATTEMPTED
+    assert result.status is git.push.PushStatus.LOST
+    assert result.retry is git.push.Retry.ATTEMPTED
     assert len(count_pushes) == 2
 
 
@@ -718,10 +718,10 @@ def test_a_landed_push_is_not_retried(pushable, count_pushes):
     wt, _ = pushable
     _commit(wt, "work")
 
-    result = push.push(wt, gated=False)
+    result = git.push.push(wt, gated=False)
 
-    assert result.status is push.PushStatus.PUSHED
-    assert result.retry is push.Retry.NONE
+    assert result.status is git.push.PushStatus.PUSHED
+    assert result.retry is git.push.Retry.NONE
     assert len(count_pushes) == 1
 
 
@@ -730,7 +730,7 @@ def test_retry_blocked_when_head_moved(pushable, monkeypatch):
     wt, remote = pushable
     sha = _commit(wt, "work")
     _lose_pushes(remote)
-    real_run = git_client.run
+    real_run = git.client.run
 
     def move_head(*args, **kwargs):
         result = real_run(*args, **kwargs)
@@ -738,11 +738,11 @@ def test_retry_blocked_when_head_moved(pushable, monkeypatch):
             _commit(wt, "later work")
         return result
 
-    monkeypatch.setattr(git_client, "run", move_head)
-    result = push.push(wt, gated=False, sha=sha)
+    monkeypatch.setattr(git.client, "run", move_head)
+    result = git.push.push(wt, gated=False, sha=sha)
 
-    assert result.status is push.PushStatus.LOST
-    assert result.retry is push.Retry.HEAD_MOVED
+    assert result.status is git.push.PushStatus.LOST
+    assert result.retry is git.push.Retry.HEAD_MOVED
 
 
 def test_retry_blocked_when_tree_dirty(pushable, monkeypatch):
@@ -750,7 +750,7 @@ def test_retry_blocked_when_tree_dirty(pushable, monkeypatch):
     wt, remote = pushable
     _commit(wt, "work")
     _lose_pushes(remote)
-    real_run = git_client.run
+    real_run = git.client.run
 
     def dirty(*args, **kwargs):
         result = real_run(*args, **kwargs)
@@ -758,93 +758,93 @@ def test_retry_blocked_when_tree_dirty(pushable, monkeypatch):
             (wt / "regenerated.txt").write_text("hook output\n")
         return result
 
-    monkeypatch.setattr(git_client, "run", dirty)
-    result = push.push(wt, gated=False)
+    monkeypatch.setattr(git.client, "run", dirty)
+    result = git.push.push(wt, gated=False)
 
-    assert result.status is push.PushStatus.LOST
-    assert result.retry is push.Retry.DIRTY
+    assert result.status is git.push.PushStatus.LOST
+    assert result.retry is git.push.Retry.DIRTY
 
 
 # ── the resume command ──────────────────────────────────────────────────────
 
 
 def _result(status, refusal=None, sha="1a2b3c4d", branch="feat/x", args=()):
-    return push.PushResult(status, sha=sha, branch=branch, refusal=refusal, args=args)
+    return git.push.PushResult(status, sha=sha, branch=branch, refusal=refusal, args=args)
 
 
 def test_a_landed_push_needs_no_resume():
-    assert push.resume_command(_result(push.PushStatus.PUSHED), "/tmp/wt") == ""
+    assert git.push.resume_command(_result(git.push.PushStatus.PUSHED), "/tmp/wt") == ""
 
 
-@pytest.mark.parametrize("status", [s for s in push.PushStatus if s is not
-                                    push.PushStatus.PUSHED])
+@pytest.mark.parametrize("status", [s for s in git.push.PushStatus if s is not
+                                    git.push.PushStatus.PUSHED])
 def test_every_unfinished_status_names_a_command(status):
     """Rule 2 of the land owner: nothing falls short without saying what finishes it."""
-    resume = push.resume_command(_result(status), "/tmp/wt")
+    resume = git.push.resume_command(_result(status), "/tmp/wt")
     assert resume.startswith("git -C '/tmp/wt' ")
 
 
-@pytest.mark.parametrize("refusal", list(push.Refusal))
+@pytest.mark.parametrize("refusal", list(git.push.Refusal))
 def test_every_refusal_names_a_command(refusal):
     """A refusal kind with no answer would render an empty "Resume:" line."""
-    assert push.resume_command(
-        _result(push.PushStatus.REFUSED, refusal), "/tmp/wt",
+    assert git.push.resume_command(
+        _result(git.push.PushStatus.REFUSED, refusal), "/tmp/wt",
     ).startswith("git -C '/tmp/wt' push")
 
 
 def test_a_divergence_answers_force_with_lease():
-    assert push.resume_command(
-        _result(push.PushStatus.REFUSED, push.Refusal.DIVERGED), "/tmp/wt",
+    assert git.push.resume_command(
+        _result(git.push.PushStatus.REFUSED, git.push.Refusal.DIVERGED), "/tmp/wt",
     ) == "git -C '/tmp/wt' push --force-with-lease"
 
 
-@pytest.mark.parametrize("refusal", [push.Refusal.HOOK, push.Refusal.TRANSPORT,
-                                     push.Refusal.AUTH, push.Refusal.UNREACHABLE,
-                                     push.Refusal.DROPPED, push.Refusal.OTHER])
+@pytest.mark.parametrize("refusal", [git.push.Refusal.HOOK, git.push.Refusal.TRANSPORT,
+                                     git.push.Refusal.AUTH, git.push.Refusal.UNREACHABLE,
+                                     git.push.Refusal.DROPPED, git.push.Refusal.OTHER])
 def test_no_other_refusal_answers_a_force_push(refusal):
     """A pre-push hook rejection is not divergence — force-pushing is wrong advice."""
-    assert "--force" not in push.resume_command(
-        _result(push.PushStatus.REFUSED, refusal), "/tmp/wt",
+    assert "--force" not in git.push.resume_command(
+        _result(git.push.PushStatus.REFUSED, refusal), "/tmp/wt",
     )
 
 
 def test_an_unverified_push_is_checked_rather_than_repushed():
     """It has very likely landed; `ls-remote` answers in one round trip."""
-    result = push.PushResult(
-        push.PushStatus.UNVERIFIED, sha="1a2b3c4d", branch="feat/x", remote="upstream",
+    result = git.push.PushResult(
+        git.push.PushStatus.UNVERIFIED, sha="1a2b3c4d", branch="feat/x", remote="upstream",
     )
-    assert push.resume_command(result, "/tmp/wt") == (
+    assert git.push.resume_command(result, "/tmp/wt") == (
         "git -C '/tmp/wt' ls-remote upstream feat/x"
     )
 
 
 def test_the_resume_replays_what_the_push_was_given():
     """`pr rebase` pushes with a lease; a plain resume is refused a second time."""
-    result = _result(push.PushStatus.REFUSED, push.Refusal.HOOK,
+    result = _result(git.push.PushStatus.REFUSED, git.push.Refusal.HOOK,
                      args=("--force-with-lease",))
-    assert push.resume_command(result, "/tmp/wt") == (
+    assert git.push.resume_command(result, "/tmp/wt") == (
         "git -C '/tmp/wt' push --force-with-lease"
     )
 
 
 def test_a_divergence_does_not_repeat_a_lease_the_push_already_carried():
-    result = _result(push.PushStatus.REFUSED, push.Refusal.DIVERGED,
+    result = _result(git.push.PushStatus.REFUSED, git.push.Refusal.DIVERGED,
                      args=("--force-with-lease",))
-    assert push.resume_command(result, "/tmp/wt").count("--force-with-lease") == 1
+    assert git.push.resume_command(result, "/tmp/wt").count("--force-with-lease") == 1
 
 
 def test_a_push_records_the_arguments_it_was_given(monkeypatch):
     """Nothing can replay them later unless the result carried them out."""
-    monkeypatch.setattr(push.git_client, "run",
-                        lambda *a, **k: proc.CmdResult(1, "", "failed to push some refs"))
-    result = push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x",
+    monkeypatch.setattr(git.client, "run",
+                        lambda *a, **k: core.proc.CmdResult(1, "", "failed to push some refs"))
+    result = git.push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x",
                        args=["--force-with-lease"])
     assert result.args == ("--force-with-lease",)
 
 
 def test_the_resume_command_quotes_a_worktree_with_a_space():
     """Unquoted, the path splits and the command runs somewhere else or nowhere."""
-    resume = push.resume_command(_result(push.PushStatus.LOST), "/tmp/my wt")
+    resume = git.push.resume_command(_result(git.push.PushStatus.LOST), "/tmp/my wt")
     assert "'/tmp/my wt'" in resume
 
 
@@ -853,10 +853,10 @@ def test_the_resume_command_quotes_a_worktree_with_a_space():
 
 def test_an_unverified_push_git_reported_as_clean_says_it_was_pushed(capsys):
     """git did report success here, so the only open question is confirmation."""
-    result = push.PushResult(
-        push.PushStatus.UNVERIFIED, sha="1a2b3c4d", branch="feat/x",
+    result = git.push.PushResult(
+        git.push.PushStatus.UNVERIFIED, sha="1a2b3c4d", branch="feat/x",
     )
-    push.report(result, "/tmp/wt")
+    git.push.report(result, "/tmp/wt")
 
     printed = capsys.readouterr().err
     assert "pushed 1a2b3c4" in printed
@@ -871,11 +871,11 @@ def test_an_unverified_dropped_push_does_not_claim_it_was_pushed(capsys):
     the ordinary wording tells the reader git pushed it, which is the misreport
     this classification exists to remove.
     """
-    result = push.PushResult(
-        push.PushStatus.UNVERIFIED, sha="1a2b3c4d", branch="feat/x",
-        refusal=push.Refusal.DROPPED,
+    result = git.push.PushResult(
+        git.push.PushStatus.UNVERIFIED, sha="1a2b3c4d", branch="feat/x",
+        refusal=git.push.Refusal.DROPPED,
     )
-    push.report(result, "/tmp/wt")
+    git.push.report(result, "/tmp/wt")
 
     printed = capsys.readouterr().err
     assert "pushed 1a2b3c4" not in printed
@@ -889,21 +889,21 @@ def test_an_unverified_push_reports_the_retry_that_ran(capsys):
     Left unsaid, the reader counts one transfer where two were made and reads a
     `--no-verify` push as one that never happened.
     """
-    result = push.PushResult(
-        push.PushStatus.UNVERIFIED, sha="1a2b3c4d", branch="feat/x",
-        refusal=push.Refusal.DROPPED, retry=push.Retry.ATTEMPTED,
+    result = git.push.PushResult(
+        git.push.PushStatus.UNVERIFIED, sha="1a2b3c4d", branch="feat/x",
+        refusal=git.push.Refusal.DROPPED, retry=git.push.Retry.ATTEMPTED,
     )
-    push.report(result, "/tmp/wt")
+    git.push.report(result, "/tmp/wt")
 
     assert "Retried once" in capsys.readouterr().err
 
 
 def test_an_unverified_push_that_never_retried_says_nothing_about_retries(capsys):
     """The common warning stays one line; there is no retry to account for."""
-    result = push.PushResult(
-        push.PushStatus.UNVERIFIED, sha="1a2b3c4d", branch="feat/x",
+    result = git.push.PushResult(
+        git.push.PushStatus.UNVERIFIED, sha="1a2b3c4d", branch="feat/x",
     )
-    push.report(result, "/tmp/wt")
+    git.push.report(result, "/tmp/wt")
 
     assert "etried" not in capsys.readouterr().err
 
@@ -911,24 +911,24 @@ def test_an_unverified_push_that_never_retried_says_nothing_about_retries(capsys
 def test_refused_report_trims_a_whole_test_suite_to_its_tail(capsys):
     """A failing pre-push prints its entire suite; the tail is what named it."""
     output = "\n".join(f"line {n}" for n in range(200))
-    result = push.PushResult(
-        push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
-        refusal=push.Refusal.HOOK, output=output,
+    result = git.push.PushResult(
+        git.push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
+        refusal=git.push.Refusal.HOOK, output=output,
     )
-    push.report(result, "/tmp/wt")
+    git.push.report(result, "/tmp/wt")
 
     printed = capsys.readouterr().err
     assert "line 199" in printed
     assert "line 0" not in printed
-    assert printed.count("line ") == proc.TAIL_LINES
+    assert printed.count("line ") == core.proc.TAIL_LINES
 
 
 def test_lost_report_names_the_branch_the_commit_and_the_remote(capsys):
-    result = push.PushResult(
-        push.PushStatus.LOST, sha="1a2b3c4d5e", branch="feat/x",
-        remote_sha="9f8e7d6c5b", retry=push.Retry.ATTEMPTED,
+    result = git.push.PushResult(
+        git.push.PushStatus.LOST, sha="1a2b3c4d5e", branch="feat/x",
+        remote_sha="9f8e7d6c5b", retry=git.push.Retry.ATTEMPTED,
     )
-    push.report(result, "/tmp/wt")
+    git.push.report(result, "/tmp/wt")
 
     printed = capsys.readouterr().err
     assert "the remote did not move" in printed
@@ -939,10 +939,10 @@ def test_lost_report_names_the_branch_the_commit_and_the_remote(capsys):
 
 
 def test_lost_report_says_when_the_remote_holds_no_such_ref(capsys):
-    result = push.PushResult(
-        push.PushStatus.LOST, sha="1a2b3c4d", branch="feat/x", remote_sha="",
+    result = git.push.PushResult(
+        git.push.PushStatus.LOST, sha="1a2b3c4d", branch="feat/x", remote_sha="",
     )
-    push.report(result, "/tmp/wt")
+    git.push.report(result, "/tmp/wt")
 
     printed = capsys.readouterr().err
     assert "no such ref" in printed
@@ -951,11 +951,11 @@ def test_lost_report_says_when_the_remote_holds_no_such_ref(capsys):
 
 def test_a_dropped_push_that_landed_says_the_connection_dropped(capsys):
     """The terminal is full of red ssh diagnostics; the commit arrived anyway."""
-    result = push.PushResult(
-        push.PushStatus.PUSHED, sha="1a2b3c4d", branch="feat/x",
-        remote_sha="1a2b3c4d", refusal=push.Refusal.DROPPED,
+    result = git.push.PushResult(
+        git.push.PushStatus.PUSHED, sha="1a2b3c4d", branch="feat/x",
+        remote_sha="1a2b3c4d", refusal=git.push.Refusal.DROPPED,
     )
-    push.report(result, "/tmp/wt")
+    git.push.report(result, "/tmp/wt")
 
     printed = capsys.readouterr().err
     assert "connection dropped" in printed
@@ -964,11 +964,11 @@ def test_a_dropped_push_that_landed_says_the_connection_dropped(capsys):
 
 def test_a_dropped_push_does_not_claim_git_reported_success(capsys):
     """git reporting success is the one thing that did not happen here."""
-    result = push.PushResult(
-        push.PushStatus.LOST, sha="1a2b3c4d", branch="feat/x",
-        refusal=push.Refusal.DROPPED, retry=push.Retry.ATTEMPTED,
+    result = git.push.PushResult(
+        git.push.PushStatus.LOST, sha="1a2b3c4d", branch="feat/x",
+        refusal=git.push.Refusal.DROPPED, retry=git.push.Retry.ATTEMPTED,
     )
-    push.report(result, "/tmp/wt")
+    git.push.report(result, "/tmp/wt")
 
     printed = capsys.readouterr().err
     assert "reported success" not in printed
@@ -977,33 +977,33 @@ def test_a_dropped_push_does_not_claim_git_reported_success(capsys):
 
 def test_a_lost_push_git_reported_as_clean_still_says_so(capsys):
     """The classic lost push is the one git *did* report as a success."""
-    result = push.PushResult(
-        push.PushStatus.LOST, sha="1a2b3c4d", branch="feat/x",
+    result = git.push.PushResult(
+        git.push.PushStatus.LOST, sha="1a2b3c4d", branch="feat/x",
     )
-    push.report(result, "/tmp/wt")
+    git.push.report(result, "/tmp/wt")
 
     assert "reported success" in capsys.readouterr().err
 
 
 def test_a_dropped_refusal_does_not_claim_nothing_reached_the_remote(capsys):
     """Whether anything reached it is exactly what a drop leaves unestablished."""
-    result = push.PushResult(
-        push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
-        refusal=push.Refusal.DROPPED, output=_RESET_DUMP_FULL,
+    result = git.push.PushResult(
+        git.push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
+        refusal=git.push.Refusal.DROPPED, output=_RESET_DUMP_FULL,
     )
-    push.report(result, "/tmp/wt")
+    git.push.report(result, "/tmp/wt")
 
     assert "nothing reached the remote" not in capsys.readouterr().err
 
 
 def test_the_dropped_report_quotes_what_killed_the_push(capsys):
     """A LOST report prints no output normally; here the signal is the account."""
-    result = push.PushResult(
-        push.PushStatus.LOST, sha="1a2b3c4d", branch="feat/x",
-        refusal=push.Refusal.DROPPED,
+    result = git.push.PushResult(
+        git.push.PushStatus.LOST, sha="1a2b3c4d", branch="feat/x",
+        refusal=git.push.Refusal.DROPPED,
         output="git was killed by SIGPIPE (signal 13)",
     )
-    push.report(result, "/tmp/wt")
+    git.push.report(result, "/tmp/wt")
 
     assert "SIGPIPE" in capsys.readouterr().err
 
@@ -1011,7 +1011,7 @@ def test_the_dropped_report_quotes_what_killed_the_push(capsys):
 def test_every_retry_state_has_a_report_line():
     """A LOST report claiming a retry that never ran is the wrong-reporting
     failure this module exists to remove."""
-    assert set(push._RETRY_NOTE) == set(push.Retry)
+    assert set(git.push._RETRY_NOTE) == set(git.push.Retry)
 
 
 # ── the bash bridge ─────────────────────────────────────────────────────────
@@ -1019,20 +1019,20 @@ def test_every_retry_state_has_a_report_line():
 
 def test_cli_exit_codes_cover_every_status():
     """A status with no exit code would raise KeyError at the worst moment."""
-    assert set(push._EXIT_CODES) == set(push.PushStatus)
+    assert set(git.push._EXIT_CODES) == set(git.push.PushStatus)
 
 
 def test_cli_exits_zero_on_a_verified_push(pushable):
     wt, _ = pushable
     _commit(wt, "work")
-    assert push.main(["--cwd", str(wt), "--branch", "main"]) == 0
+    assert git.push.main(["--cwd", str(wt), "--branch", "main"]) == 0
 
 
 def test_cli_reports_a_lost_push(pushable, capsys):
     wt, remote = pushable
     _commit(wt, "work")
     _lose_pushes(remote)
-    assert push.main(["--cwd", str(wt), "--branch", "main"]) == 2
+    assert git.push.main(["--cwd", str(wt), "--branch", "main"]) == 2
     assert "the remote did not move" in capsys.readouterr().err
 
 
@@ -1041,18 +1041,18 @@ def test_cli_exits_one_when_git_refuses(pushable, monkeypatch):
     wt, _ = pushable
     _commit(wt, "work")
     monkeypatch.setattr(
-        push.git_client, "run",
-        lambda *cmd, **kw: proc.CmdResult(1, "", "error: failed to push some refs"),
+        git.client, "run",
+        lambda *cmd, **kw: core.proc.CmdResult(1, "", "error: failed to push some refs"),
     )
-    assert push.main(["--cwd", str(wt), "--branch", "main"]) == 1
+    assert git.push.main(["--cwd", str(wt), "--branch", "main"]) == 1
 
 
 def test_cli_exits_three_when_the_remote_cannot_be_asked(pushable, monkeypatch):
     """Unverified is its own code — the shell warns rather than aborting."""
     wt, _ = pushable
     _commit(wt, "work")
-    monkeypatch.setattr(push, "remote_head", lambda *a, **k: None)
-    assert push.main(["--cwd", str(wt), "--branch", "main"]) == 3
+    monkeypatch.setattr(git.push, "remote_head", lambda *a, **k: None)
+    assert git.push.main(["--cwd", str(wt), "--branch", "main"]) == 3
 
 
 def _trail_events() -> list[dict]:
@@ -1062,7 +1062,7 @@ def _trail_events() -> list[dict]:
     these assert that a particular event is *somewhere* in the run, which the
     last one alone cannot show — `finish` always follows it.
     """
-    root = workbench_paths.trail_dir()
+    root = core.workbench_paths.trail_dir()
     return [json.loads(line)
             for p in sorted(root.glob("*.jsonl"))
             for line in p.read_text().splitlines() if line.strip()]
@@ -1097,9 +1097,9 @@ def test_cli_keeps_the_whole_gate_output_when_the_hook_refuses(pushable):
     _commit(wt, "work")
     _refusing_gate(wt)
 
-    assert push.main(["--cwd", str(wt), "--branch", "main"]) == 1
+    assert git.push.main(["--cwd", str(wt), "--branch", "main"]) == 1
 
-    artifacts = sorted(workbench_paths.trail_dir().glob("artifacts/*/*-push.log"))
+    artifacts = sorted(core.workbench_paths.trail_dir().glob("artifacts/*/*-push.log"))
     assert len(artifacts) == 1, "the refusal left no artifact to diagnose from"
     kept = artifacts[0].read_text()
     assert "test_a_signal_racing_the_spawn" in kept, (
@@ -1114,7 +1114,7 @@ def test_cli_names_the_artifact_it_wrote(pushable, capsys):
     _commit(wt, "work")
     _refusing_gate(wt)
 
-    push.main(["--cwd", str(wt), "--branch", "main"])
+    git.push.main(["--cwd", str(wt), "--branch", "main"])
 
     assert "full output: " in capsys.readouterr().err
 
@@ -1125,7 +1125,7 @@ def test_cli_records_the_branch_it_pushed(pushable):
     _commit(wt, "work")
     _refusing_gate(wt)
 
-    push.main(["--cwd", str(wt), "--branch", "main"])
+    git.push.main(["--cwd", str(wt), "--branch", "main"])
 
     assert _last_event()["context"]["branch"] == "main"
 
@@ -1143,10 +1143,10 @@ def test_cli_records_an_unexpected_exception(pushable, monkeypatch):
     def boom(*_args, **_kwargs):
         raise RuntimeError("the remote fell over")
 
-    monkeypatch.setattr(push, "push", boom)
+    monkeypatch.setattr(git.push, "push", boom)
 
     with pytest.raises(RuntimeError):
-        push.main(["--cwd", str(wt), "--branch", "main"])
+        git.push.main(["--cwd", str(wt), "--branch", "main"])
 
     crashes = [e for e in _trail_events() if e["action"] == "unexpected_error"]
     assert crashes, "the crash left a trail indistinguishable from a clean run"
@@ -1162,7 +1162,7 @@ def test_script_imports_with_pythonpath_overwritten(tmp_path):
     shell therefore cannot be relied on, so the script puts it on sys.path itself.
     The hostile value here stands in for that overwrite.
     """
-    result = proc.run(
+    result = core.proc.run(
         [sys.executable, str(LIB_DIR / "git" / "push.py"), "--help"],
         timeout=30,
         env={"PYTHONPATH": str(tmp_path), "PATH": "/usr/bin:/bin"},
@@ -1183,9 +1183,9 @@ def test_script_imports_with_pythonpath_overwritten(tmp_path):
 
 def _ssh_probe(monkeypatch, output: str, *, url: str = "git@github.com:o/r.git"):
     """Stub the remote URL read and the ssh probe that follows it."""
-    monkeypatch.setattr(push.git_client, "out", lambda *a, **k: url)
+    monkeypatch.setattr(git.client, "out", lambda *a, **k: url)
     monkeypatch.setattr(
-        push.proc, "run", lambda *a, **k: proc.CmdResult(255, "", output),
+        core.proc, "run", lambda *a, **k: core.proc.CmdResult(255, "", output),
     )
 
 
@@ -1215,7 +1215,7 @@ def test_a_key_the_remote_accepted_names_the_agent(monkeypatch):
     own machine.
     """
     _ssh_probe(monkeypatch, _KEY_ACCEPTED_TRACE)
-    hint = push.diagnose_ssh_auth("/tmp/wt", "origin")
+    hint = git.push.diagnose_ssh_auth("/tmp/wt", "origin")
     assert "agent" in hint
     assert "not a key the remote rejected" in hint
 
@@ -1237,7 +1237,7 @@ def test_a_working_agent_is_not_blamed_for_a_missing_repository(monkeypatch):
     the remote path instead.
     """
     _ssh_probe(monkeypatch, _AUTH_WORKS_TRACE)
-    hint = push.diagnose_ssh_auth("/tmp/wt", "origin")
+    hint = git.push.diagnose_ssh_auth("/tmp/wt", "origin")
     assert "credentials are not the problem" in hint
     assert "agent" not in hint
 
@@ -1259,7 +1259,7 @@ def test_any_authenticated_host_clears_the_agent(monkeypatch, greeting):
     unrecognised greeting on the safe side.
     """
     _ssh_probe(monkeypatch, _KEY_ACCEPTED_LINE + greeting + "\n")
-    hint = push.diagnose_ssh_auth("/tmp/wt", "origin")
+    hint = git.push.diagnose_ssh_auth("/tmp/wt", "origin")
     assert "credentials are not the problem" in hint
     assert "agent" not in hint
 
@@ -1271,26 +1271,26 @@ def test_a_key_the_remote_never_took_says_nothing(monkeypatch):
     obvious reading is the correct one.
     """
     _ssh_probe(monkeypatch, _KEY_REJECTED_TRACE)
-    assert push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
+    assert git.push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
 
 
 def test_an_https_remote_is_not_probed(monkeypatch):
     """An ssh probe says nothing true about a credential helper's token."""
     _ssh_probe(monkeypatch, _KEY_ACCEPTED_TRACE,
                url="https://github.com/o/r.git")
-    assert push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
+    assert git.push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
 
 
 def test_a_probe_that_cannot_run_says_nothing(monkeypatch):
     """Best-effort: a silent probe leaves the real error as the only claim."""
     _ssh_probe(monkeypatch, "")
-    assert push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
+    assert git.push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
 
 
 def test_a_remote_with_no_url_is_not_probed(monkeypatch):
-    monkeypatch.setattr(push.git_client, "out", lambda *a, **k: "")
-    monkeypatch.setattr(push.proc, "run", _never_runs)
-    assert push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
+    monkeypatch.setattr(git.client, "out", lambda *a, **k: "")
+    monkeypatch.setattr(core.proc, "run", _never_runs)
+    assert git.push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
 
 
 @pytest.mark.parametrize("output", [
@@ -1309,7 +1309,7 @@ def test_a_probe_that_never_reached_auth_says_nothing(monkeypatch, output):
     that way from a machine that has never connected to them.
     """
     _ssh_probe(monkeypatch, output)
-    assert push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
+    assert git.push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
 
 
 def test_a_timed_out_probe_says_nothing(monkeypatch):
@@ -1319,14 +1319,14 @@ def test_a_timed_out_probe_says_nothing(monkeypatch):
     non-empty and carries no denial — which lands on the "credentials are fine"
     branch unless the code is checked.
     """
-    monkeypatch.setattr(push.git_client, "out",
+    monkeypatch.setattr(git.client, "out",
                          lambda *a, **k: "git@github.com:o/r.git")
     monkeypatch.setattr(
-        push.proc, "run",
-        lambda *a, **k: proc.CmdResult(
-            proc.TIMEOUT_RETURNCODE, "", "timed out after 30.0s"),
+        core.proc, "run",
+        lambda *a, **k: core.proc.CmdResult(
+            core.proc.TIMEOUT_RETURNCODE, "", "timed out after 30.0s"),
     )
-    assert push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
+    assert git.push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
 
 
 def test_the_probe_does_not_write_to_known_hosts(monkeypatch):
@@ -1337,15 +1337,15 @@ def test_the_probe_does_not_write_to_known_hosts(monkeypatch):
     the probe's second run behave differently from its first.
     """
     seen = {}
-    monkeypatch.setattr(push.git_client, "out",
+    monkeypatch.setattr(git.client, "out",
                          lambda *a, **k: "git@github.com:o/r.git")
 
     def _capture(cmd, **kwargs):
         seen["cmd"] = cmd
-        return proc.CmdResult(255, "", "Permission denied (publickey).")
+        return core.proc.CmdResult(255, "", "Permission denied (publickey).")
 
-    monkeypatch.setattr(push.proc, "run", _capture)
-    push.diagnose_ssh_auth("/tmp/wt", "origin")
+    monkeypatch.setattr(core.proc, "run", _capture)
+    git.push.diagnose_ssh_auth("/tmp/wt", "origin")
 
     assert "accept-new" not in seen["cmd"]
     assert "UserKnownHostsFile=/dev/null" in seen["cmd"]
@@ -1358,14 +1358,14 @@ def test_a_missing_ssh_binary_says_nothing_rather_than_raising(monkeypatch):
     so the caller must — otherwise a missing binary crashes the whole refusal
     report instead of leaving it as it was.
     """
-    monkeypatch.setattr(push.git_client, "out",
+    monkeypatch.setattr(git.client, "out",
                          lambda *a, **k: "git@github.com:o/r.git")
 
     def _raise(*a, **k):
         raise FileNotFoundError("ssh")
 
-    monkeypatch.setattr(push.proc, "run", _raise)
-    assert push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
+    monkeypatch.setattr(core.proc, "run", _raise)
+    assert git.push.diagnose_ssh_auth("/tmp/wt", "origin") == ""
 
 
 @pytest.mark.parametrize("url,host,port", [
@@ -1378,8 +1378,8 @@ def test_a_missing_ssh_binary_says_nothing_rather_than_raising(monkeypatch):
     ("/srv/local/repo.git", "", ""),
 ])
 def test_the_ssh_host_is_read_from_the_remote_url(monkeypatch, url, host, port):
-    monkeypatch.setattr(push.git_client, "out", lambda *a, **k: url)
-    target = push._ssh_host("/tmp/wt", "origin")
+    monkeypatch.setattr(git.client, "out", lambda *a, **k: url)
+    target = git.push._ssh_host("/tmp/wt", "origin")
     assert (target.host, target.port) == (host, port)
 
 
@@ -1391,24 +1391,24 @@ def test_a_port_reaches_ssh_as_a_flag_not_part_of_the_hostname():
     remote on a non-default port. That is the wrong-diagnosis class this change
     exists to remove, so it must not be reintroduced by the diagnosis itself.
     """
-    target = push.SshTarget("git@ghe.acme.com", "2222")
+    target = git.push.SshTarget("git@ghe.acme.com", "2222")
     assert target.args == ["-p", "2222", "git@ghe.acme.com"]
     assert not any(":" in arg for arg in target.args)
 
 
 def test_an_unprobeable_target_builds_no_ssh_arguments():
     """Empty rather than a destination of "", which ssh would try to resolve."""
-    assert push.SshTarget().args == []
-    assert not push.SshTarget().probeable
+    assert git.push.SshTarget().args == []
+    assert not git.push.SshTarget().probeable
 
 
 def test_an_auth_refusal_reports_the_agent_hint(monkeypatch, capsys):
     """The hint reaches the operator, under git's own words rather than instead."""
     _ssh_probe(monkeypatch, _KEY_ACCEPTED_TRACE)
-    push.report(
-        push.PushResult(
-            push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
-            refusal=push.Refusal.AUTH,
+    git.push.report(
+        git.push.PushResult(
+            git.push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
+            refusal=git.push.Refusal.AUTH,
             output="git@github.com: Permission denied (publickey).",
         ),
         "/tmp/wt",
@@ -1421,11 +1421,11 @@ def test_an_auth_refusal_reports_the_agent_hint(monkeypatch, capsys):
 
 def test_a_non_auth_refusal_runs_no_probe(monkeypatch, capsys):
     """A hook rejection costs no round trip to ssh."""
-    monkeypatch.setattr(push, "diagnose_ssh_auth", _never_runs)
-    push.report(
-        push.PushResult(
-            push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
-            refusal=push.Refusal.HOOK, output="validate-all failed",
+    monkeypatch.setattr(git.push, "diagnose_ssh_auth", _never_runs)
+    git.push.report(
+        git.push.PushResult(
+            git.push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
+            refusal=git.push.Refusal.HOOK, output="validate-all failed",
         ),
         "/tmp/wt",
     )

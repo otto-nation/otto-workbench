@@ -16,7 +16,7 @@ from conftest import load_script
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
 
-from agent import usage as ai_usage
+import agent.usage
 
 BIN = REPO_ROOT / "ai" / "bin" / "ai-usage-log"
 
@@ -64,7 +64,7 @@ class TestRender:
         raw = tmp_path / "raw.jsonl"
         stdin = json.dumps(ASSISTANT_TEXT) + "\n" + json.dumps(RESULT_RECORD) + "\n"
         _run(aul, ["render", "--tee", str(raw)], stdin, monkeypatch)
-        assert ai_usage.parse_session_log(str(raw)).cost == pytest.approx(0.5)
+        assert agent.usage.parse_session_log(str(raw)).cost == pytest.approx(0.5)
 
     def test_result_records_are_not_displayed(self, aul, monkeypatch, capsys):
         _run(aul, ["render"], json.dumps(RESULT_RECORD) + "\n", monkeypatch)
@@ -91,7 +91,7 @@ class TestRecord:
     @pytest.fixture
     def ledger(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
-        return tmp_path / ai_usage.LEDGER_DIRNAME
+        return tmp_path / agent.usage.LEDGER_DIRNAME
 
     def _record(self, aul, monkeypatch, path, extra=()):
         argv = [

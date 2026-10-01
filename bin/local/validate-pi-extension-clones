@@ -61,7 +61,7 @@ for _path in (os.path.join(_WORKBENCH_DIR, 'lib'), os.path.join(_WORKBENCH_DIR, 
     if _path not in sys.path:
         sys.path.insert(0, _path)
 from ansi import RED, GREEN, YELLOW, DIM, NC  # noqa: E402
-from config import workbench_projects  # noqa: E402
+import config.workbench_projects  # noqa: E402
 
 # The pi release that introduced TranscriptContext. A provider extension is
 # expected to carry the adapter below from this version on.
@@ -232,7 +232,7 @@ def _project_git_roots() -> list[Path]:
     a guessed-root scan was tried and abandoned before.
     """
     roots = []
-    for project_root in workbench_projects.registered():
+    for project_root in config.workbench_projects.registered():
         candidate = project_root / PROJECT_PACKAGE_GLOB
         if candidate.is_dir():
             roots.append(candidate)

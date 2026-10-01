@@ -28,11 +28,11 @@ import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from git import client as git_client
-from git import topology as git_topology
-from core import log
-from git import numstat
-from pr import context as pr_context
+import git.client
+import git.topology
+import core.log
+import git.numstat
+import pr.context
 from gh.types import PRMetadata
 from core.phases import Mode
 from review.budget import (
@@ -63,7 +63,7 @@ def fetch_base(wt_path: str, base: str) -> None:
     here: the fetch is best-effort on every path, and an offline run reaching a
     ref it already has must not be stopped.
     """
-    git_client.run("fetch", "origin", base, cwd=wt_path)
+    git.client.run("fetch", "origin", base, cwd=wt_path)
 
 
 def base_ref(wt_path: str, base: str) -> str:
@@ -98,7 +98,7 @@ def base_ref(wt_path: str, base: str) -> str:
     that as empty output — indistinguishable from an author who changed nothing.
     """
     remote = f"origin/{base}"
-    if git_client.ok("rev-parse", "--verify", "--quiet", f"{remote}^{{commit}}",
+    if git.client.ok("rev-parse", "--verify", "--quiet", f"{remote}^{{commit}}",
                      cwd=wt_path):
         return remote
     if _is_strict_ancestor(wt_path, base):
@@ -112,13 +112,13 @@ def _is_strict_ancestor(wt_path: str, ref: str) -> bool:
     Strict on purpose — see :func:`base_ref`. ``merge-base --is-ancestor`` is
     reflexive, so the equality check is what excludes a ref sitting at HEAD.
     """
-    if not git_client.ok("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}",
+    if not git.client.ok("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}",
                          cwd=wt_path):
         return False
-    if not git_client.ok("merge-base", "--is-ancestor", ref, "HEAD", cwd=wt_path):
+    if not git.client.ok("merge-base", "--is-ancestor", ref, "HEAD", cwd=wt_path):
         return False
-    resolved = git_client.out("rev-parse", f"{ref}^{{commit}}", cwd=wt_path)
-    return bool(resolved) and resolved != git_client.out("rev-parse", "HEAD", cwd=wt_path)
+    resolved = git.client.out("rev-parse", f"{ref}^{{commit}}", cwd=wt_path)
+    return bool(resolved) and resolved != git.client.out("rev-parse", "HEAD", cwd=wt_path)
 
 
 def fork_point(wt_path: str, base: str) -> str:
@@ -131,12 +131,12 @@ def fork_point(wt_path: str, base: str) -> str:
     ref = base_ref(wt_path, base)
     if not ref:
         return "HEAD"
-    return git_client.out("merge-base", ref, "HEAD", cwd=wt_path) or "HEAD"
+    return git.client.out("merge-base", ref, "HEAD", cwd=wt_path) or "HEAD"
 
 
 def _untracked_files(wt_path: str) -> list[str]:
     """Paths git does not track and .gitignore does not exclude."""
-    return git_client.lines("ls-files", "--others", "--exclude-standard", cwd=wt_path)
+    return git.client.lines("ls-files", "--others", "--exclude-standard", cwd=wt_path)
 
 
 def _diff_untracked(wt_path: str, paths: list[str], counts_only: bool = False) -> str:
@@ -146,7 +146,7 @@ def _diff_untracked(wt_path: str, paths: list[str], counts_only: bool = False) -
     for path in paths:
         # --no-index exits 1 whenever the two sides differ, which is always here,
         # so the exit code is read past rather than through `out`.
-        out = git_client.run(
+        out = git.client.run(
             "diff", "--no-index", *flags, "--", os.devnull, path, cwd=wt_path,
         ).stdout.strip()
         if not out:
@@ -175,7 +175,7 @@ def worktree_diff(wt_path: str, since: str, *, counts_only: bool = False) -> str
     # prior review's copy if repeated deltas start drowning in re-shown files.
     flags = ["--numstat"] if counts_only else []
     return _join_nonempty(
-        git_client.out("diff", *flags, since, cwd=wt_path),
+        git.client.out("diff", *flags, since, cwd=wt_path),
         _diff_untracked(wt_path, _untracked_files(wt_path), counts_only=counts_only),
     )
 
@@ -192,23 +192,23 @@ def fetch_branch_metadata(wt_path: str, base: str | None = None) -> PRMetadata:
     # no-PR self-review path, so nothing upstream has named a base, and a
     # `master` repository was previously fetched and diffed against a branch it
     # does not have.
-    base = base or git_topology.default_branch(wt_path)
+    base = base or git.topology.default_branch(wt_path)
     fetch_base(wt_path, base)
-    head_sha = git_client.head_sha(cwd=wt_path)
-    branch = git_client.current_branch(cwd=wt_path)
+    head_sha = git.client.head_sha(cwd=wt_path)
+    branch = git.client.current_branch(cwd=wt_path)
     # Through `base_ref`, not spelled here: a derived stack parent that has not
     # been pushed has no `origin/` ref, and the literal range would list every
     # commit on the branch as this one's own.
     ref = base_ref(wt_path, base)
     log_range = f"{ref}..HEAD" if ref else "HEAD"
 
-    log_output = git_client.out("log", log_range, "--oneline", cwd=wt_path)
+    log_output = git.client.out("log", log_range, "--oneline", cwd=wt_path)
     first_subject = log_output.split("\n")[0].split(" ", 1)[-1] if log_output else branch
 
     # Diffing from the fork point reaches the working tree, so the file list
     # matches the diff `worktree_diff` builds for self-review: committed,
     # uncommitted and untracked changes alike.
-    counts = numstat.parse_numstat(
+    counts = git.numstat.parse_numstat(
         worktree_diff(wt_path, fork_point(wt_path, base), counts_only=True)
     )
 
@@ -231,7 +231,7 @@ def _truncate_log(text: str, max_bytes: int, label: str = "Commit log") -> str:
     raw = text.encode()
     if len(raw) <= max_bytes:
         return text
-    log.warn(f"{label} too large ({len(raw) // 1024}KB), truncating to {max_bytes // 1024}KB")
+    core.log.warn(f"{label} too large ({len(raw) // 1024}KB), truncating to {max_bytes // 1024}KB")
     truncated = raw[:max_bytes].decode(errors="ignore").rsplit("\n", 1)[0]
     return truncated + "\n\n... (truncated — full log exceeded size limit)"
 
@@ -368,7 +368,7 @@ def truncate_diff(full_diff: str, max_bytes: int) -> TruncatedDiff:
         included_count = len(included_indices)
 
     if omitted_paths:
-        log.warn(
+        core.log.warn(
             f"Diff truncated: {included_count}/{len(sections)} file diffs included, "
             f"{len(omitted_paths)} omitted — agent can read via tools"
         )
@@ -452,7 +452,7 @@ _QUOTE_PATH_OFF = {"core.quotePath": "false"}
 
 def _author_delta(
     wt_path: str, prior_sha: str, base_ref: str,
-) -> numstat.Numstat | None:
+) -> git.numstat.Numstat | None:
     """What the author committed since ``prior_sha`` that the base did not give them.
 
     Two walks, because one commit shape carries author work that the other
@@ -476,24 +476,24 @@ def _author_delta(
     exit and a timeout alike as no output, and an empty delta is the answer
     that skips every group.
     """
-    walks = [git_client.run(
+    walks = [git.client.run(
         "log", "--no-merges", "--numstat", "--pretty=format:",
         f"{prior_sha}..HEAD", "--not", base_ref,
         cwd=wt_path, config=_QUOTE_PATH_OFF,
     )]
-    listed = git_client.run(
+    listed = git.client.run(
         "rev-list", "--merges", f"{prior_sha}..HEAD", "--not", base_ref, cwd=wt_path,
     )
     if not listed.ok:
         return None
     for merge_sha in listed.stdout.split():
-        walks.append(git_client.run(
+        walks.append(git.client.run(
             "show", "--diff-merges=remerge", "--numstat", "--pretty=format:",
             merge_sha, cwd=wt_path, config=_QUOTE_PATH_OFF,
         ))
     if not all(w.ok for w in walks):
         return None
-    return numstat.parse_numstat("\n".join(w.stdout for w in walks))
+    return git.numstat.parse_numstat("\n".join(w.stdout for w in walks))
 
 
 def _delta_log(job: ReviewJob, prior_sha: str, base_ref: str) -> str:
@@ -507,7 +507,7 @@ def _delta_log(job: ReviewJob, prior_sha: str, base_ref: str) -> str:
     """
     surface = ["--", *(f["path"] for f in job.pr.files)] if job.pr.files else []
     exclude = ["--no-merges", "--not", base_ref] if base_ref else []
-    raw_log = git_client.out(
+    raw_log = git.client.out(
         "log", "--stat", "--reverse", f"{prior_sha}..HEAD", *exclude, *surface,
         cwd=job.wt_path,
     )
@@ -532,7 +532,7 @@ def _delta_diff_and_log(
         # edits that have not been committed since the prior review.
         raw_diff = worktree_diff(job.wt_path, prior_sha)
     else:
-        raw_diff = git_client.out("diff", f"{prior_sha}..HEAD", cwd=job.wt_path)
+        raw_diff = git.client.out("diff", f"{prior_sha}..HEAD", cwd=job.wt_path)
     raw_diff = _scope_to_surface(raw_diff, job.pr.files)
     return (
         truncate_diff(raw_diff, MAX_DELTA_DIFF_BYTES).text,
@@ -549,18 +549,18 @@ def _prior_sha_for_delta(job: ReviewJob) -> str:
     resolve.
     """
     if not job.prior_review:
-        log.info("No prior review — running full review")
+        core.log.info("No prior review — running full review")
         return ""
     prior_sha = ReviewHeader.parse(job.prior_review).head_sha
     if not prior_sha:
-        log.info("Prior review has no SHA marker — running full review")
+        core.log.info("Prior review has no SHA marker — running full review")
         return ""
     if prior_sha == job.pr.head_sha:
-        log.info("Prior review is on current HEAD — running full review")
+        core.log.info("Prior review is on current HEAD — running full review")
         return ""
-    if git_client.out("cat-file", "-t", prior_sha, cwd=job.wt_path) != "commit":
-        log.warn(
-            f"Prior review SHA {git_client.abbrev(prior_sha)} not reachable "
+    if git.client.out("cat-file", "-t", prior_sha, cwd=job.wt_path) != "commit":
+        core.log.warn(
+            f"Prior review SHA {git.client.abbrev(prior_sha)} not reachable "
             "— running full review")
         return ""
     return prior_sha
@@ -581,7 +581,7 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
     if not prior_sha:
         return DeltaScope()
 
-    base = job.pr.base or git_topology.default_branch(Path(job.wt_path))
+    base = job.pr.base or git.topology.default_branch(Path(job.wt_path))
     ref = base_ref(job.wt_path, base) if job.mode != Mode.SELF else ""
     delta_diff, delta_log = _delta_diff_and_log(job, prior_sha, ref)
 
@@ -589,7 +589,7 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
         # Attributing the range needs a base to exclude. Without one the whole
         # range stands, over-reporting rather than reporting nothing.
         if job.mode != Mode.SELF:
-            log.warn(
+            core.log.warn(
                 f"No ref resolves {base} — the delta covers every commit "
                 "since the prior review, the base's included")
         files = [m.group(1) for m in _DIFF_HEADER_RE.finditer(delta_diff)]
@@ -600,7 +600,7 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
 
     authored = _author_delta(job.wt_path, prior_sha, ref)
     if authored is None:
-        log.warn(
+        core.log.warn(
             "Could not attribute the commits since the prior review — the delta "
             "covers every commit in the range, the base's included")
         # The log is rebuilt without the ancestry exclusion so that it and the
@@ -616,12 +616,12 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
     # merge resolving a conflict in it — and each consumer counts what it is
     # given: the group gate sets, the prompt lists, the line total sums.
     files = sorted({f["path"] for f in authored.files})
-    weighted = numstat.weighted_lines(authored.additions, authored.deletions)
-    span = f"{git_client.abbrev(prior_sha)}..{git_client.abbrev(job.pr.head_sha)}"
+    weighted = git.numstat.weighted_lines(authored.additions, authored.deletions)
+    span = f"{git.client.abbrev(prior_sha)}..{git.client.abbrev(job.pr.head_sha)}"
     if not files:
-        log.info(f"Incremental review: no author changes since prior review ({span})")
+        core.log.info(f"Incremental review: no author changes since prior review ({span})")
     else:
-        log.info(
+        core.log.info(
             f"Incremental review: {len(files)} files changed since prior review ({span})"
         )
     return DeltaScope(
@@ -638,7 +638,7 @@ def _collect_git_data(
     # One resolution for both ranges below, so the log and the diff cannot end
     # up measured from different commits.
     ref = base_ref(wt_path, base) or "HEAD"
-    commit_log = git_client.out(
+    commit_log = git.client.out(
         "log", "--stat", "--reverse", f"{ref}..HEAD", cwd=wt_path,
     )
     commit_log = _truncate_log(commit_log, MAX_COMMIT_LOG_BYTES)
@@ -646,9 +646,9 @@ def _collect_git_data(
     if include_worktree:
         return worktree_diff(wt_path, fork_point(wt_path, base)), commit_log
 
-    diff = git_client.out("diff", f"{ref}...HEAD", cwd=wt_path)
+    diff = git.client.out("diff", f"{ref}...HEAD", cwd=wt_path)
     if not diff and pr_files:
-        diff = git_client.out("diff", "HEAD", cwd=wt_path)
+        diff = git.client.out("diff", "HEAD", cwd=wt_path)
     return diff, commit_log
 
 
@@ -771,7 +771,7 @@ def _fit_to_budget(
 
     if omitted:
         omitted_kb = sum(sizes.get(p, 0) for p in omitted) // 1024
-        log.info(
+        core.log.info(
             f"Pre-collected {len(included)}/{len(all_contents)} files "
             f"({len(omitted)} omitted, ~{omitted_kb}KB) — "
             f"over budget by {max(0, overflow) // 1024}KB"
@@ -783,7 +783,7 @@ def _fit_to_budget(
 def collect_preflight_data(job: ReviewJob) -> PreflightData:
     """Everything a prompt for ``job`` can be built from, already within budget."""
     wt = Path(job.wt_path)
-    base = job.pr.base or git_topology.default_branch(wt)
+    base = job.pr.base or git.topology.default_branch(wt)
 
     diff, commit_log = _collect_git_data(
         job.wt_path, base, job.pr.files, include_worktree=job.mode == Mode.SELF,

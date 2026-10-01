@@ -20,11 +20,12 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from eval import scoring_cifix as eval_scoring_cifix
+import eval.scoring_cifix
 from agent.usage import SessionUsage
 from eval.scoring_cifix import CiFixTask, run_verify, verify_command
 from eval.scoring import RunOutcome, ScoringResult, aggregate_runs
 from eval.task import RunArtifacts, RunOptions, get_task, outcome_for
+import agent.backend
 
 CORPUS = REPO_ROOT / "eval" / "corpus"
 
@@ -145,7 +146,7 @@ class TestCiFixTaskRun:
     def test_skips_the_agent_when_the_fixture_already_passes(self, tmp_path, monkeypatch):
         """A fixture that does not fail proves nothing — it must not cost money."""
         calls = []
-        monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix",
+        monkeypatch.setattr(agent.backend, "invoke_fix",
                             lambda *a, **kw: calls.append(kw) or 0)
         case_dir = _case(tmp_path, "exit 0\n")
 
@@ -165,7 +166,7 @@ class TestCiFixTaskRun:
             Path(inv.add_dirs[0], "fixed").write_text("yes")
             return 0
 
-        monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix", fake_fix)
+        monkeypatch.setattr(agent.backend, "invoke_fix", fake_fix)
         case_dir = _case(tmp_path, "test -f fixed\n")
 
         artifacts = CiFixTask().run(case_dir, RunOptions(timeout=VERIFY_TIMEOUT))
@@ -183,7 +184,7 @@ class TestCiFixTaskRun:
             }) + "\n")
             return 0
 
-        monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix", fake_fix)
+        monkeypatch.setattr(agent.backend, "invoke_fix", fake_fix)
         case_dir = _case(tmp_path, "test -f fixed\n")
 
         artifacts = CiFixTask().run(case_dir, RunOptions(timeout=VERIFY_TIMEOUT))
@@ -202,7 +203,7 @@ class TestCiFixTaskRun:
             seen.update(vars(inv))
             return 0
 
-        monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix", fake_fix)
+        monkeypatch.setattr(agent.backend, "invoke_fix", fake_fix)
         case_dir = _case(tmp_path, "echo 'boom happened' >&2\nexit 2\n")
 
         artifacts = CiFixTask().run(
@@ -217,7 +218,7 @@ class TestCiFixTaskRun:
         _rm(artifacts)
 
     def test_cleans_up_nothing_itself_but_reports_its_temp_dirs(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix",
+        monkeypatch.setattr(agent.backend, "invoke_fix",
                             lambda *a, **kw: 0)
         case_dir = _case(tmp_path, "exit 1\n")
 
@@ -273,7 +274,7 @@ class TestCiFixOutcome:
     """A backend failure must not reach the baseline as a fix the model missed."""
 
     def test_a_dead_invocation_is_not_a_failed_fix(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix",
+        monkeypatch.setattr(agent.backend, "invoke_fix",
                             lambda *a, **kw: 1)
         case_dir = _case(tmp_path, "test -f fixed\n")
 
@@ -300,7 +301,7 @@ class TestConditionReachesAgent:
             seen["env"] = inv.env
             return 0
 
-        monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix",
+        monkeypatch.setattr(agent.backend, "invoke_fix",
                             fake_invoke_fix)
         opts = RunOptions(condition="trimmed",
                           rules_home=str(tmp_path / "cc-trimmed"))
@@ -324,7 +325,7 @@ class TestConditionReachesAgent:
             seen["rules_home"] = inv.rules_home
             return 0
 
-        monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix",
+        monkeypatch.setattr(agent.backend, "invoke_fix",
                             fake_invoke_fix)
         opts = RunOptions(condition="trimmed", rules_home=str(tmp_path / "cc"))
         _run_cifix_case(opts)
@@ -340,7 +341,7 @@ class TestConditionReachesAgent:
             seen["rules_home"] = inv.rules_home
             return 0
 
-        monkeypatch.setattr(eval_scoring_cifix.ai_backend, "invoke_fix",
+        monkeypatch.setattr(agent.backend, "invoke_fix",
                             fake_invoke_fix)
         _run_cifix_case(RunOptions())
         assert seen["env"] is None

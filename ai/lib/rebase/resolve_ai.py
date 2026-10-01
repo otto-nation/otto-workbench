@@ -10,12 +10,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent import invoke as agent_invoke
-from agent import retry as agent_retry
-from core import log
+import agent.invoke
+import agent.retry
+import core.log
 from core.phases import Phase
 from core.trail import Trail, billed_to, terr, tfail, tinfo, tspan
-from git import regenerate as regen
+import git.regenerate
 
 from . import conflicts
 from . import repo_regen
@@ -26,8 +26,8 @@ ConflictPlan = rebase_types.ConflictPlan
 ConflictStrategy = rebase_types.ConflictStrategy
 GeneratedSignal = rebase_types.GeneratedSignal
 ParseFailure = rebase_types.ParseFailure
-Regenerator = regen.Regenerator
-RegenQueue = regen.RegenQueue
+Regenerator = git.regenerate.Regenerator
+RegenQueue = git.regenerate.RegenQueue
 Resolution = rebase_types.Resolution
 
 
@@ -180,8 +180,8 @@ def build_chunked_prompt(
 # failure mode that is not listed falls through to the generic wording rather
 # than silently inheriting another failure's correction.
 _HINT_FOR_FAILURE = {
-    ParseFailure.WHOLLY_ECHOED: agent_retry.ECHOED_CONTEXT_HINT,
-    ParseFailure.SURVIVING_CONFLICT_MARKER: agent_retry.SURVIVING_MARKER_HINT,
+    ParseFailure.WHOLLY_ECHOED: agent.retry.ECHOED_CONTEXT_HINT,
+    ParseFailure.SURVIVING_CONFLICT_MARKER: agent.retry.SURVIVING_MARKER_HINT,
 }
 
 
@@ -197,7 +197,7 @@ def hint_for_reason(reason: str) -> str:
     for failure, hint in _HINT_FOR_FAILURE.items():
         if head == failure.value or head.startswith(f"{failure.value}_"):
             return hint
-    return agent_retry.BLANK_RESPONSE_HINT
+    return agent.retry.BLANK_RESPONSE_HINT
 
 
 # ── Resolution paths ─────────────────────────────────────────────────────
@@ -214,7 +214,7 @@ def resolve_full_file(
         filepath, content, sha, subject, target_ref=target_ref,
         ours_content=ours_content, commit_diff=commit_diff,
     )
-    answer = agent_invoke.run_prompt(
+    answer = agent.invoke.run_prompt(
         Phase.REBASE, prompt, cwd=cwd,
         label=f"conflict resolution for {filepath}",
         usable=conflicts.resolution_parses, task="conflict-resolve",
@@ -229,7 +229,7 @@ def resolve_full_file(
     if answer.exit_code != 0:
         terr(trail, "resolve_conflicts", f"AI prompt failed for {filepath}",
               data={"filepath": filepath, "exit_code": answer.exit_code})
-        log.error(f"ai prompt failed for {filepath} (exit {answer.exit_code})")
+        core.log.error(f"ai prompt failed for {filepath} (exit {answer.exit_code})")
         return None
 
     stdout = answer.text
@@ -241,13 +241,13 @@ def resolve_full_file(
             output=stdout,
             data={"filepath": filepath, "reason": failure_reason},
         )
-        log.error(f"Failed to parse resolution for {filepath} ({failure_reason})")
+        core.log.error(f"Failed to parse resolution for {filepath} ({failure_reason})")
         return None
 
     full_path.write_text(resolved_content)
     if not conflicts.git_add(filepath, cwd):
         return None
-    log.ok(f"Resolved: {filepath}")
+    core.log.ok(f"Resolved: {filepath}")
     return filepath
 
 
@@ -269,7 +269,7 @@ def resolve_chunked(
     )
     tinfo(trail, "chunked_resolve", f"using chunked resolution for {filepath}",
            data={"blocks": len(blocks), "total_lines": content.count("\n") + 1})
-    answer = agent_invoke.run_prompt(
+    answer = agent.invoke.run_prompt(
         Phase.REBASE, prompt, cwd=cwd,
         label=f"chunked resolution for {filepath}",
         usable=lambda s: conflicts.parse_chunked_resolutions(s, blocks).ok,
@@ -286,7 +286,7 @@ def resolve_chunked(
     if answer.exit_code != 0:
         terr(trail, "resolve_conflicts", f"AI prompt failed for {filepath}",
               data={"filepath": filepath, "exit_code": answer.exit_code})
-        log.error(f"ai prompt failed for {filepath} (exit {answer.exit_code})")
+        core.log.error(f"ai prompt failed for {filepath} (exit {answer.exit_code})")
         return None
 
     parsed = conflicts.parse_chunked_resolutions(answer.text, blocks)
@@ -297,7 +297,7 @@ def resolve_chunked(
             output=answer.text,
             data={"filepath": filepath, "reason": parsed.reason},
         )
-        log.error(f"Failed to parse chunked resolution for {filepath} ({parsed.reason})")
+        core.log.error(f"Failed to parse chunked resolution for {filepath} ({parsed.reason})")
         return None
 
     if parsed.repaired:
@@ -311,7 +311,7 @@ def resolve_chunked(
             data={"filepath": filepath, "repaired": parsed.repaired,
                   "blocks": len(blocks)},
         )
-        log.dim(f"Trimmed echoed context from {parsed.repaired} block(s) "
+        core.log.dim(f"Trimmed echoed context from {parsed.repaired} block(s) "
                 f"in {filepath}")
 
     resolved_content = conflicts.splice_resolutions(
@@ -320,7 +320,7 @@ def resolve_chunked(
     full_path.write_text(resolved_content)
     if not conflicts.git_add(filepath, cwd):
         return None
-    log.ok(f"Resolved: {filepath} ({len(blocks)} conflict(s), chunked)")
+    core.log.ok(f"Resolved: {filepath} ({len(blocks)} conflict(s), chunked)")
     return filepath
 
 
@@ -333,7 +333,7 @@ def resolve_single_file(
     try:
         content = full_path.read_text()
     except OSError as e:
-        log.error(f"Cannot read {filepath}: {e}")
+        core.log.error(f"Cannot read {filepath}: {e}")
         return None
 
     blocks = conflicts.extract_conflict_blocks(content)
@@ -355,7 +355,7 @@ def resolve_single_file(
             f"falling back to whole-file resolution for {filepath}",
             data={"filepath": filepath, "blocks": len(blocks)},
         )
-        log.warn(f"Chunked resolution failed for {filepath} — "
+        core.log.warn(f"Chunked resolution failed for {filepath} — "
                  "retrying as a whole file.")
     return resolve_full_file(
         filepath, full_path, content, sha, subject, cwd,
@@ -404,7 +404,7 @@ def dispatch_accept_theirs(
         return False
     if not repo_regen.queue_repo_regeneration(filepath, cwd, queue):
         queue.mark_unrebuildable(filepath)
-        log.warn(f"No regeneration command for {filepath} — staged stale")
+        core.log.warn(f"No regeneration command for {filepath} — staged stale")
         tinfo(
             trail, "generated_file", f"no regeneration command for {filepath}",
             data={"filepath": filepath, "signal": str(signal)},
@@ -434,7 +434,7 @@ def dispatch_conflict(
     if plan.strategy is ConflictStrategy.BINARY_ERROR:
         terr(trail, "resolve_conflicts", f"binary file: {filepath}",
               data={"filepath": filepath})
-        log.error(f"Cannot resolve binary file: {filepath}")
+        core.log.error(f"Cannot resolve binary file: {filepath}")
         return False
     if plan.strategy is not ConflictStrategy.AI_MERGE:
         raise ValueError(f"unhandled conflict strategy: {plan.strategy}")
@@ -455,7 +455,7 @@ def _run_deferred_regenerations(
     """Run deferred regeneration jobs and return files that failed."""
     failed: list[str] = []
     for job in queue:
-        if not regen.run_regeneration(job, cwd=cwd, trail=trail):
+        if not git.regenerate.run_regeneration(job, cwd=cwd, trail=trail):
             failed.extend(job.files)
     return failed
 
@@ -500,7 +500,7 @@ def resolve_file_conflicts(
 
     if failed:
         terr(trail, "regenerate", "regeneration failed", data={"files": failed})
-        log.warn(f"Regeneration failed for: {', '.join(failed)} — lockfiles may be stale")
+        core.log.warn(f"Regeneration failed for: {', '.join(failed)} — lockfiles may be stale")
 
     return Resolution(
         files=resolved, stale=queue.unrebuildable + failed, failed=unresolved,

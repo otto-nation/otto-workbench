@@ -27,28 +27,28 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from core import log
-from core import publishing
+import core.log
+import core.publishing
 from core.trail import Trail
-from git import client as git_client
-from git import land
-from git import push
+import git.client
+import git.land
+import git.push
 from git.land import CommitStatus
-from pr import attribution
-from pr import comments as pc
-from pr import context as pr_context
-from pr import history_rewrite
-from pr import settlement
-from pr import state as pr_state
-from pr import summary_publish
-from pr import thread_replies
+import pr.attribution
+import pr.comments
+import pr.context
+import pr.history_rewrite
+import pr.settlement
+import pr.state
+import pr.summary_publish
+import pr.thread_replies
 from pr.comments_state import ThreadState
 from pr.fix import FixOutcome
 from pr.thread_models import CommentItem, PRReport, ReportThread
-from review import deferred_issue
+import review.deferred_issue
 
 
-def warn_if_snapshot_stale(state: pr_state.PRState, wt_path: Path) -> None:
+def warn_if_snapshot_stale(state: pr.state.PRState, wt_path: Path) -> None:
     """Say so when the snapshot describes a tree that is no longer checked out.
 
     A warning rather than a refusal: reconciliation below re-derives every
@@ -58,17 +58,17 @@ def warn_if_snapshot_stale(state: pr_state.PRState, wt_path: Path) -> None:
     """
     if not state.fix.fix.items:
         return
-    current = git_client.head_sha(short=True, cwd=wt_path)
+    current = git.client.head_sha(short=True, cwd=wt_path)
     if state.fix.fix.head_sha and state.fix.fix.head_sha == current:
         return
-    log.warn(
+    core.log.warn(
         f"Fix snapshot was taken at {state.fix.fix.head_sha or '(unrecorded)'} "
         f"but HEAD is {current or '(unknown)'} — reconciling against GitHub"
     )
 
 
 def finish_deferred_work(
-    ctx: pr_context.ResolvedContext,
+    ctx: pr.context.ResolvedContext,
     report: PRReport,
     trail: Trail | None = None,
     *,
@@ -90,51 +90,51 @@ def finish_deferred_work(
     wt_path = ctx.require_worktree()
     if not ctx.pr_number:
         return True
-    state = pr_state.load_state(ctx.target_dir)
+    state = pr.state.load_state(ctx.target_dir)
     if state is None:
         return True
     threads_by_id = {t.id: t for t in report.threads}
-    history_rewrite.follow_history_rewrite(state, wt_path)
+    pr.history_rewrite.follow_history_rewrite(state, wt_path)
     push_held_commit(state, wt_path, trail)
     if state.fix.pr_body_pending:
-        state.fix.pr_body_pending = pc.deliver_pr_body(
-            pc.artifacts_dir(ctx.target_dir), ctx.repo, ctx.pr_number,
+        state.fix.pr_body_pending = pr.comments.deliver_pr_body(
+            pr.comments.artifacts_dir(ctx.target_dir), ctx.repo, ctx.pr_number,
         )
     post_pending_fix_replies(state, ctx.repo, ctx.pr_number, threads_by_id, ctx.host)
     warn_if_snapshot_stale(state, wt_path)
-    flipped = settlement.reconcile_fix_snapshot(state, threads_by_id, settlement.answered_comment_sources(
+    flipped = pr.settlement.reconcile_fix_snapshot(state, threads_by_id, pr.settlement.answered_comment_sources(
         state.fix.fix.items, ctx.repo, ctx.pr_number, report.my_login,
     ))
     # After reconciliation, not before: a row this writes is already settled, so
     # reconciling over it would re-examine a thread nothing owes and make the
     # flip count report work it did not do. Before the summary, because these
     # rows are exactly what that render is being re-armed for.
-    adopted = settlement.adopt_settled_threads(state, threads_by_id)
+    adopted = pr.settlement.adopt_settled_threads(state, threads_by_id)
     if flipped or adopted:
         state.fix.summary_deferred = True
-        state.fix.updated_at = pr_state.now_iso()
+        state.fix.updated_at = pr.state.now_iso()
     # Order is load-bearing twice over: `finalize_deferred` refuses a typo'd
     # --track, via `validate_track`, before `report_unfiled_deferrals` prints a
     # list the operator would read as the whole story; and the summary below
     # renders the issue link from the ids `finalize_deferred` writes into
     # `state.fix`.
-    if not deferred_issue.finalize_deferred(
+    if not review.deferred_issue.finalize_deferred(
             state, ctx, threads_by_id, trail=trail, track=track):
         # It refused and wrote nothing, so both of those would describe a run
         # that did not happen. The state above this line is settlement work
         # that did, and is saved on the way out.
-        pr_state.save_state(ctx.target_dir, state)
+        pr.state.save_state(ctx.target_dir, state)
         return False
-    deferred_issue.report_unfiled_deferrals(state, track)
-    summary_publish.render_deferred_summary(
+    review.deferred_issue.report_unfiled_deferrals(state, track)
+    pr.summary_publish.render_deferred_summary(
         state, report, ctx.repo, ctx.pr_number, threads_by_id, ctx.host,
     )
-    pr_state.save_state(ctx.target_dir, state)
+    pr.state.save_state(ctx.target_dir, state)
     return True
 
 
 def push_held_commit(
-    state: pr_state.PRState, wt_path: Path, trail: Trail | None = None,
+    state: pr.state.PRState, wt_path: Path, trail: Trail | None = None,
 ) -> None:
     """Send the commit the fix pass kept local, now that a run says publish.
 
@@ -146,10 +146,10 @@ def push_held_commit(
     the SHA they link to is somewhere the reviewer can follow it.
     """
     record = state.fix.fix
-    if not record.commit_sha or not attribution.commit_unpushed(record.commit_status):
+    if not record.commit_sha or not pr.attribution.commit_unpushed(record.commit_status):
         return
 
-    if push.holds(wt_path, record.commit_sha):
+    if git.push.holds(wt_path, record.commit_sha):
         record.commit_status = CommitStatus.PUSHED
         return
 
@@ -157,20 +157,20 @@ def push_held_commit(
     # `ls-remote` answers in full SHAs, so comparing one against the abbreviation
     # this state file carries reports every push as lost. `report` names the
     # force-push remedy for a divergence, so nothing is added on top of it.
-    result = push.push(wt_path, gated=True, trail=trail)
-    push.report(result, wt_path)
-    if result.status is push.PushStatus.HELD:
+    result = git.push.push(wt_path, gated=True, trail=trail)
+    git.push.report(result, wt_path)
+    if result.status is git.push.PushStatus.HELD:
         return
     if not result.ok:
-        record.commit_status = land.commit_status(result.status)
+        record.commit_status = git.land.commit_status(result.status)
         return
 
-    log.info(f"Pushed held fixes ({record.commit_sha})")
+    core.log.info(f"Pushed held fixes ({record.commit_sha})")
     record.commit_status = CommitStatus.PUSHED
 
 
 def post_pending_fix_replies(
-    state: pr_state.PRState,
+    state: pr.state.PRState,
     repo: str,
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
@@ -194,7 +194,7 @@ def post_pending_fix_replies(
     """
     fix = state.fix
     record = fix.fix
-    if not attribution.commit_unpushed(record.commit_status) and not fix.replies_pending:
+    if not pr.attribution.commit_unpushed(record.commit_status) and not fix.replies_pending:
         return
 
     wt_path = Path(state.identity.worktree_root) if state.identity.worktree_root else None
@@ -205,8 +205,8 @@ def post_pending_fix_replies(
     # committed nothing leaves entries citing the commits that did — already on
     # the remote — and the triage buckets cite HEAD rather than a fix commit,
     # so there is nothing for either to wait on.
-    if record.commit_sha and not push.holds(wt_path, record.commit_sha):
-        log.info("Push still pending — skipping deferred replies")
+    if record.commit_sha and not git.push.holds(wt_path, record.commit_sha):
+        core.log.info("Push still pending — skipping deferred replies")
         return
 
     resolved: list[ThreadState] = []
@@ -233,33 +233,33 @@ def post_pending_fix_replies(
         # resolver. A pass whose commit a hook rejected records no SHA of its
         # own, so an operator who then lands those fixes by hand would
         # otherwise be replied to with "Fixed in ``" over an empty link.
-        fix.replies_posted += thread_replies.reply_to_fixed(
+        fix.replies_posted += pr.thread_replies.reply_to_fixed(
             fixed, threads_by_id, repo, pr_number,
-            history_rewrite.reconciled_commit(record, record.commit_status, wt_path), wt_path,
+            pr.history_rewrite.reconciled_commit(record, record.commit_status, wt_path), wt_path,
             host,
         )
-        resolved += settlement.resolve_fixed_threads(fixed, threads_by_id)
+        resolved += pr.settlement.resolve_fixed_threads(fixed, threads_by_id)
 
     addressed = bucket(FixOutcome.ALREADY_ADDRESSED)
     if addressed:
-        fix.replies_posted += thread_replies.post_already_addressed_replies(
+        fix.replies_posted += pr.thread_replies.post_already_addressed_replies(
             addressed, threads_by_id, repo, pr_number, wt_path, host=host,
         )
-        resolved += settlement.resolve_fixed_threads(addressed, threads_by_id)
+        resolved += pr.settlement.resolve_fixed_threads(addressed, threads_by_id)
 
     # Not resolved, unlike the other two: telling a reviewer their premise does
     # not hold is the reply most likely to be argued with, so the thread stays
     # open for them to answer. Mirrors the triage phase.
     dismissed = bucket(FixOutcome.DISMISSED)
     if dismissed:
-        fix.replies_posted += thread_replies.post_dismissed_replies(
+        fix.replies_posted += pr.thread_replies.post_dismissed_replies(
             dismissed, threads_by_id, repo, pr_number, wt_path, host,
         )
 
-    state.comments.move_to_resolved(resolved, updated_at=pr_state.now_iso())
+    state.comments.move_to_resolved(resolved, updated_at=pr.state.now_iso())
 
     # A draft delivered nothing, so the queue has to survive for the next run.
-    if publishing.enabled():
-        if attribution.commit_unpushed(record.commit_status):
+    if core.publishing.enabled():
+        if pr.attribution.commit_unpushed(record.commit_status):
             record.commit_status = CommitStatus.PUSHED
         fix.replies_sent()

@@ -20,8 +20,9 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from git import client as git_client
-from core import job_slots, log
+import git.client
+import core.job_slots
+import core.log
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.types import EFFORT_PRESETS
 from gh.types import PRContext, PRMetadata
@@ -94,18 +95,18 @@ def hold_group_workers(
     """
     if requested is not None:
         workers = min(requested, group_count)
-        log.info(f"Group parallelism: {workers} worker(s) — set by --max-parallel")
+        core.log.info(f"Group parallelism: {workers} worker(s) — set by --max-parallel")
         yield workers
         return
 
     if cores is None:
         cores = os.cpu_count() or 1
     want = min(group_count, MAX_PARALLEL_CAP)
-    with job_slots.claim(
+    with core.job_slots.claim(
         want, MAX_PARALLEL_FLOOR, cores, command="pr review (group phase)",
     ) as granted:
         workers = min(granted, want)
-        log.info(
+        core.log.info(
             f"Group parallelism: {workers} worker(s) "
             f"(pool granted {granted} of {want}, capped at {MAX_PARALLEL_CAP})"
         )
@@ -125,12 +126,12 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
         # fall back on and nothing written yet to salvage, so this exits rather
         # than degrading. A PR this size wants the multi-phase path, which splits
         # it into groups small enough to prompt.
-        log.error(f"Review cannot be prompted: {exc}")
-        log.dim("Re-run at an effort level that reviews this PR in groups.")
+        core.log.error(f"Review cannot be prompted: {exc}")
+        core.log.dim("Re-run at an effort level that reviews this PR in groups.")
         sys.exit(1)
     label = f"branch {job.pr.head}" if job.mode == Mode.SELF else f"PR #{job.pr_number} ({job.pr.title})"
-    log.info(f"Running review agent on {label}...")
-    log.blank()
+    core.log.info(f"Running review agent on {label}...")
+    core.log.blank()
     _touch(job.review_file)
 
     # `rc` tracks the latest attempt so the failure message below reports the
@@ -143,7 +144,7 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
         return rc
 
     invoke(prompt, max_turns)
-    log.blank()
+    core.log.blank()
 
     diagnosis = _retry_missing_output(
         invoke, prompt, job.session_log, job.review_file,
@@ -152,11 +153,11 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
 
     if not _has_output(job.review_file):
         detail = f"exited with code {rc}" if rc != 0 else "completed"
-        log.error(
+        core.log.error(
             f"review agent {detail} and produced no review file "
             f"({_render_reason(diagnosis)})"
         )
-        log.dim(f"Session log: {job.session_log}")
+        core.log.dim(f"Session log: {job.session_log}")
         sys.exit(1)
 
     if _should_disprove(job, disprove):
@@ -216,11 +217,11 @@ def run_multi_phase(
         before = len(groups)
         groups = [g for g in groups if g.name != GROUP_TIER3]
         if len(groups) < before:
-            log.info("Skipping tier3-generated group (use --generated to include)")
+            core.log.info("Skipping tier3-generated group (use --generated to include)")
 
     group_count = len(groups)
 
-    log.info(f"Large PR ({job.pr.total_lines} lines, {job.pr.changed_files} files) — {group_count} file groups")
+    core.log.info(f"Large PR ({job.pr.total_lines} lines, {job.pr.changed_files} files) — {group_count} file groups")
 
     incremental = _is_incremental(job)
     incremental_skips: set[int] = set()
@@ -232,7 +233,7 @@ def run_multi_phase(
         )
         if incremental_skips:
             affected = group_count - len(incremental_skips)
-            log.info(
+            core.log.info(
                 f"Incremental: {affected}/{group_count} groups affected, "
                 f"{len(incremental_skips)} unchanged (findings carried forward)"
             )
@@ -242,7 +243,7 @@ def run_multi_phase(
 
     recovery = _resolve_recovery(job, groups)
     if recovery.already_complete:
-        log.info("Review already complete — use --force to re-run from scratch")
+        core.log.info("Review already complete — use --force to re-run from scratch")
         return
 
     cost_so_far = recovery.cost_so_far
@@ -272,10 +273,10 @@ def run_multi_phase(
     # deliberate skip reads the same as one from a crash.
     unrun: Diagnosis | None = None
     if Phase.GROUP in job.skipped:
-        log.warn("Group phase skipped (--no-group) — the review will be partial")
+        core.log.warn("Group phase skipped (--no-group) — the review will be partial")
         unrun = Diagnosis(DiagnosisKind.SKIPPED, detail="--no-group")
     elif cost_so_far > max_cost:
-        log.warn(f"Budget exceeded after holistic phase (${cost_so_far:.2f}/${max_cost:.2f}) — skipping groups")
+        core.log.warn(f"Budget exceeded after holistic phase (${cost_so_far:.2f}/${max_cost:.2f}) — skipping groups")
         unrun = Diagnosis(DiagnosisKind.BUDGET_EXCEEDED)
 
     if unrun:
@@ -307,7 +308,7 @@ def run_multi_phase(
         # The prior run synthesised cleanly and only the gate is outstanding, so
         # the review on disk is the one this run would write again. Re-checking
         # the file keeps the plan honest about a review deleted between runs.
-        log.info("Phase 4: Synthesis — the prior run's review stands, resuming at the gate")
+        core.log.info("Phase 4: Synthesis — the prior run's review stands, resuming at the gate")
         synthesis = PhaseResult()
     else:
         synthesis = _run_synthesis_or_fallback(
@@ -338,9 +339,9 @@ def _with_local_diff(pr: PRMetadata, local: PRMetadata) -> PRMetadata:
     never opens the files those commits touched.
     """
     if pr.head_sha != local.head_sha:
-        log.info(
-            f"Reviewing local HEAD {git_client.abbrev(local.head_sha)} "
-            f"(PR head is {git_client.abbrev(pr.head_sha)})"
+        core.log.info(
+            f"Reviewing local HEAD {git.client.abbrev(local.head_sha)} "
+            f"(PR head is {git.client.abbrev(pr.head_sha)})"
         )
     return replace(
         pr,
@@ -387,9 +388,9 @@ def fetch_metadata(
     it did before there was a ladder to consult.
     """
     if mode == Mode.SELF and not pr_number:
-        log.info("Gathering branch metadata...")
+        core.log.info("Gathering branch metadata...")
         return RunContext(fetch_branch_metadata(wt_path, base or None), PRContext(), None)
-    log.info("Fetching PR data...")
+    core.log.info("Fetching PR data...")
     if mode == Mode.SELF:
         # Sequential: the local read needs the PR's base branch to pick its range.
         pr = fetch_pr_metadata(repo, pr_number)

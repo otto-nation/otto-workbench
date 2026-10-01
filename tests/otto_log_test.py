@@ -16,9 +16,9 @@ LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
 sys.path.insert(0, str(BIN_DIR))
 
-from agent import usage as ai_usage
-from core import trail as trail_module
-from core import workbench_paths
+import agent.usage
+import core.trail
+import core.workbench_paths
 from core.trail import Trail
 # The read path is `core.trail_query`'s. Reaching for it here rather than
 # through the CLI keeps `otto-log` importing only the names it calls.
@@ -113,7 +113,7 @@ def _finish(**fields) -> dict:
 
 def _write_raw(name: str, *records: str) -> Path:
     """Put pre-built *records* in the trail root under *name*."""
-    root = workbench_paths.trail_dir()
+    root = core.workbench_paths.trail_dir()
     root.mkdir(parents=True, exist_ok=True)
     path = root / name
     path.write_text("".join(records))
@@ -125,7 +125,7 @@ class TestTrailDiscovery:
         _make_trail("ci-check", [("fetch", "fetched")])
         trails = discover_trails()
         assert len(trails) == 1
-        assert trails[0].parent == workbench_paths.trail_dir()
+        assert trails[0].parent == core.workbench_paths.trail_dir()
 
     def test_an_empty_root_has_no_trails(self):
         assert discover_trails() == []
@@ -226,7 +226,7 @@ class TestCommandCorrelation:
         """A row of unknowns would read as a probe that failed rather than as
         history written before the field existed."""
         root = _make_trail("pr", [("a", "first")])
-        path = next(iter(workbench_paths.trail_dir().glob("*.jsonl")))
+        path = next(iter(core.workbench_paths.trail_dir().glob("*.jsonl")))
         kept = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
         for e in kept:
             e.pop("origin", None)
@@ -604,7 +604,7 @@ class TestStatsCommand:
     @pytest.fixture
     def ledger(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
-        d = tmp_path / ai_usage.LEDGER_DIRNAME
+        d = tmp_path / agent.usage.LEDGER_DIRNAME
         d.mkdir()
         return d
 
@@ -671,7 +671,7 @@ class TestStatsCommand:
 
 class TestPruneCommand:
     def _write(self, name: str):
-        root = workbench_paths.trail_dir()
+        root = core.workbench_paths.trail_dir()
         root.mkdir(parents=True, exist_ok=True)
         path = root / name
         path.write_text('{"action":"old"}\n')
@@ -693,14 +693,14 @@ class TestPruneCommand:
 
     def test_an_already_bounded_root_says_so(self, capsys):
         self._write(f"{datetime.now(timezone.utc):%Y-%m}.jsonl")
-        self._run(trail_module.TRAIL_KEEP_MONTHS)
+        self._run(core.trail.TRAIL_KEEP_MONTHS)
         assert "nothing older" in capsys.readouterr().out
 
 
 class TestPrune:
     def test_it_names_a_swept_artifact_month_under_its_directory(self, capsys):
         stem = "2020-01"
-        month = trail_module.artifacts_dir() / stem
+        month = core.trail.artifacts_dir() / stem
         month.mkdir(parents=True)
         (month / "aaaaaaaaaaaa-1-push.log").write_text("old\n")
 
@@ -862,7 +862,7 @@ class TestLogPointerRendering:
 
         rendered = otto_log._format_event_line(event)
 
-        expected = workbench_paths.trail_dir() / "artifacts/2026-09/214e9758c739-1-push.log"
+        expected = core.workbench_paths.trail_dir() / "artifacts/2026-09/214e9758c739-1-push.log"
         assert f"log: {expected}" in rendered
 
     def test_an_event_without_one_renders_unchanged(self):

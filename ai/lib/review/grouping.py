@@ -19,7 +19,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from core import log
+import core.log
 from gh.types import PRMetadata
 from review.types import Group
 
@@ -347,7 +347,7 @@ def load_profiles(wt_path: str) -> list[ReviewProfile]:
         try:
             data = yaml.safe_load(path.read_text())
         except Exception:
-            log.warn(f"Skipping malformed profile: {path.name}")
+            core.log.warn(f"Skipping malformed profile: {path.name}")
             continue
         if not isinstance(data, dict):
             continue

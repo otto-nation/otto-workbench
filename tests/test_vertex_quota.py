@@ -18,7 +18,8 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from agent import vertex_quota as vq
+import agent.vertex_quota
+import core.log
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -69,18 +70,18 @@ def _vertex_env(monkeypatch) -> None:
 
 class TestIsCheckable:
     def test_concrete_model_id(self):
-        assert vq.is_checkable("claude-sonnet-5")
+        assert agent.vertex_quota.is_checkable("claude-sonnet-5")
 
     def test_versioned_model_id(self):
-        assert vq.is_checkable("claude-haiku-4-5@20251001")
+        assert agent.vertex_quota.is_checkable("claude-haiku-4-5@20251001")
 
     def test_already_prefixed(self):
-        assert vq.is_checkable("anthropic-claude-sonnet-5")
+        assert agent.vertex_quota.is_checkable("anthropic-claude-sonnet-5")
 
     def test_cli_shorthand_not_checkable(self):
-        assert not vq.is_checkable("sonnet")
-        assert not vq.is_checkable("opus")
-        assert not vq.is_checkable("haiku")
+        assert not agent.vertex_quota.is_checkable("sonnet")
+        assert not agent.vertex_quota.is_checkable("opus")
+        assert not agent.vertex_quota.is_checkable("haiku")
 
 
 # ── resolve_vertex_model_id ──────────────────────────────────────────────────
@@ -88,13 +89,13 @@ class TestIsCheckable:
 
 class TestResolveVertexModelId:
     def test_full_model_name(self):
-        assert vq.resolve_vertex_model_id("claude-sonnet-4-6") == "anthropic-claude-sonnet-4-6"
+        assert agent.vertex_quota.resolve_vertex_model_id("claude-sonnet-4-6") == "anthropic-claude-sonnet-4-6"
 
     def test_already_prefixed(self):
-        assert vq.resolve_vertex_model_id("anthropic-claude-sonnet-4-6") == "anthropic-claude-sonnet-4-6"
+        assert agent.vertex_quota.resolve_vertex_model_id("anthropic-claude-sonnet-4-6") == "anthropic-claude-sonnet-4-6"
 
     def test_version_suffix_stripped(self):
-        assert vq.resolve_vertex_model_id("claude-haiku-4-5@20251001") == "anthropic-claude-haiku-4-5"
+        assert agent.vertex_quota.resolve_vertex_model_id("claude-haiku-4-5@20251001") == "anthropic-claude-haiku-4-5"
 
 
 # ── _fetch_provisioned_models ────────────────────────────────────────────────
@@ -111,7 +112,7 @@ class TestFetchProvisionedModels:
     @patch("agent.vertex_quota.urllib.request.urlopen")
     def test_regional_filters_by_region(self, mock_urlopen):
         mock_urlopen.return_value = self._mock_urlopen(SAMPLE_REGIONAL_RESPONSE)
-        models = vq._fetch_provisioned_models("proj", "us-east5", "tok")
+        models = agent.vertex_quota._fetch_provisioned_models("proj", "us-east5", "tok")
         assert "anthropic-claude-sonnet-4-5" in models
         assert "anthropic-claude-sonnet-4-6" in models
         assert "anthropic-claude-opus-4-6" in models
@@ -120,21 +121,21 @@ class TestFetchProvisionedModels:
     @patch("agent.vertex_quota.urllib.request.urlopen")
     def test_regional_excludes_other_regions(self, mock_urlopen):
         mock_urlopen.return_value = self._mock_urlopen(SAMPLE_REGIONAL_RESPONSE)
-        models = vq._fetch_provisioned_models("proj", "us-central1", "tok")
+        models = agent.vertex_quota._fetch_provisioned_models("proj", "us-central1", "tok")
         assert len(models) == 1
         assert "anthropic-claude-sonnet-4-5" in models
 
     @patch("agent.vertex_quota.urllib.request.urlopen")
     def test_global_no_region_filter(self, mock_urlopen):
         mock_urlopen.return_value = self._mock_urlopen(SAMPLE_GLOBAL_RESPONSE)
-        models = vq._fetch_provisioned_models("proj", "global", "tok")
+        models = agent.vertex_quota._fetch_provisioned_models("proj", "global", "tok")
         assert len(models) == 4
         assert "anthropic-claude-sonnet-4-5" in models
 
     @patch("agent.vertex_quota.urllib.request.urlopen")
     def test_regional_uses_regional_metric(self, mock_urlopen):
         mock_urlopen.return_value = self._mock_urlopen(SAMPLE_REGIONAL_RESPONSE)
-        vq._fetch_provisioned_models("proj", "us-east5", "tok")
+        agent.vertex_quota._fetch_provisioned_models("proj", "us-east5", "tok")
         url = mock_urlopen.call_args[0][0].full_url
         assert "online_prediction_input_tokens" in url
         assert "global_online_prediction" not in url
@@ -142,7 +143,7 @@ class TestFetchProvisionedModels:
     @patch("agent.vertex_quota.urllib.request.urlopen")
     def test_global_uses_global_metric(self, mock_urlopen):
         mock_urlopen.return_value = self._mock_urlopen(SAMPLE_GLOBAL_RESPONSE)
-        vq._fetch_provisioned_models("proj", "global", "tok")
+        agent.vertex_quota._fetch_provisioned_models("proj", "global", "tok")
         url = mock_urlopen.call_args[0][0].full_url
         assert "global_online_prediction" in url
 
@@ -153,7 +154,7 @@ class TestFetchProvisionedModels:
             _regional_bucket("us-east5", "anthropic-claude-sonnet-4-6", "2000000"),
         ])
         mock_urlopen.return_value = self._mock_urlopen(response)
-        models = vq._fetch_provisioned_models("proj", "us-east5", "tok")
+        models = agent.vertex_quota._fetch_provisioned_models("proj", "us-east5", "tok")
         assert "anthropic-claude-sonnet-4-5" not in models
         assert "anthropic-claude-sonnet-4-6" in models
 
@@ -164,7 +165,7 @@ class TestFetchProvisionedModels:
             _regional_bucket("us-east5", "anthropic-claude-sonnet-4-6", "2000000"),
         ])
         mock_urlopen.return_value = self._mock_urlopen(response)
-        models = vq._fetch_provisioned_models("proj", "us-east5", "tok")
+        models = agent.vertex_quota._fetch_provisioned_models("proj", "us-east5", "tok")
         assert "google-gemini-pro" not in models
         assert len(models) == 1
 
@@ -182,21 +183,21 @@ class TestCoveringBucket:
     }
 
     def test_the_versioned_bucket_wins_when_it_exists(self):
-        assert vq._covering_bucket(
+        assert agent.vertex_quota._covering_bucket(
             "anthropic-claude-sonnet-4-6", self._BUCKETS,
         ) == "anthropic-claude-sonnet-4-6"
 
     def test_a_version_without_its_own_bucket_falls_back_to_the_family(self):
-        assert vq._covering_bucket(
+        assert agent.vertex_quota._covering_bucket(
             "anthropic-claude-sonnet-5", self._BUCKETS,
         ) == "anthropic-claude-sonnet"
 
     def test_a_family_with_no_bucket_at_all_matches_nothing(self):
         """opus has versioned buckets but no family bucket — 4-8 is unproven."""
-        assert vq._covering_bucket("anthropic-claude-opus-4-8", self._BUCKETS) is None
+        assert agent.vertex_quota._covering_bucket("anthropic-claude-opus-4-8", self._BUCKETS) is None
 
     def test_a_typo_matches_nothing(self):
-        assert vq._covering_bucket("anthropic-claude-sonnett-5", self._BUCKETS) is None
+        assert agent.vertex_quota._covering_bucket("anthropic-claude-sonnett-5", self._BUCKETS) is None
 
     def test_a_bucket_coarser_than_a_family_does_not_rescue_a_typo(self):
         """The walk stops at the family tier.
@@ -205,12 +206,12 @@ class TestCoveringBucket:
         misspelled family and the check would never block anything.
         """
         buckets = {"anthropic-claude": "1", "anthropic": "1"}
-        assert vq._covering_bucket("anthropic-claude-sonnett-5", buckets) is None
-        assert vq._covering_bucket("anthropic-claude-sonnet", buckets) is None
+        assert agent.vertex_quota._covering_bucket("anthropic-claude-sonnett-5", buckets) is None
+        assert agent.vertex_quota._covering_bucket("anthropic-claude-sonnet", buckets) is None
 
     def test_a_prefix_only_matches_on_a_segment_boundary(self):
         """"sonnet-4" must not match the "sonnet-4-6" bucket by string prefix."""
-        assert vq._covering_bucket(
+        assert agent.vertex_quota._covering_bucket(
             "anthropic-claude-sonnet-4", {"anthropic-claude-sonnet-4-6": "1"},
         ) is None
 
@@ -224,9 +225,9 @@ class TestCheckQuota:
     @patch("agent.vertex_quota._check_cache", return_value=None)
     def test_model_found_ok(self, _cache, _token, mock_fetch):
         mock_fetch.return_value = {"anthropic-claude-sonnet-4-6": "2000000"}
-        result = vq.check_quota("claude-sonnet-4-6", "proj", "us-east5")
+        result = agent.vertex_quota.check_quota("claude-sonnet-4-6", "proj", "us-east5")
         assert result.ok
-        assert result.verdict is vq.QuotaVerdict.PROVISIONED
+        assert result.verdict is agent.vertex_quota.QuotaVerdict.PROVISIONED
         assert result.model == "anthropic-claude-sonnet-4-6"
 
     @patch("agent.vertex_quota._fetch_provisioned_models")
@@ -238,7 +239,7 @@ class TestCheckQuota:
             "anthropic-claude-sonnet-4-5": "2000000",
             "anthropic-claude-sonnet-4-6": "2000000",
         }
-        result = vq.check_quota("claude-sonnet-5", "proj", "us-east5")
+        result = agent.vertex_quota.check_quota("claude-sonnet-5", "proj", "us-east5")
         assert not result.ok
         assert "claude-sonnet-5" in result.error
         assert "anthropic-claude-sonnet-4-5" in result.available_models
@@ -257,34 +258,34 @@ class TestCheckQuota:
             "anthropic-claude-sonnet": "50000000",
             "anthropic-claude-sonnet-4-6": "2000000",
         }
-        result = vq.check_quota("claude-sonnet-5", "proj", "us-east5")
+        result = agent.vertex_quota.check_quota("claude-sonnet-5", "proj", "us-east5")
         assert result.ok
-        assert result.verdict is vq.QuotaVerdict.PROVISIONED
+        assert result.verdict is agent.vertex_quota.QuotaVerdict.PROVISIONED
 
     @patch("agent.vertex_quota.access_token", return_value=None)
     @patch("agent.vertex_quota._check_cache", return_value=None)
     def test_no_token_degrades_gracefully(self, _cache, _token):
-        result = vq.check_quota("claude-sonnet-5", "proj", "us-east5")
+        result = agent.vertex_quota.check_quota("claude-sonnet-5", "proj", "us-east5")
         assert result.ok
-        assert result.verdict is vq.QuotaVerdict.UNKNOWN
+        assert result.verdict is agent.vertex_quota.QuotaVerdict.UNKNOWN
 
     @patch("agent.vertex_quota._check_cache")
     def test_cache_hit_found(self, mock_cache):
         mock_cache.return_value = {"anthropic-claude-sonnet-4-6": "2000000"}
-        assert vq.check_quota("claude-sonnet-4-6", "proj", "us-east5").ok
+        assert agent.vertex_quota.check_quota("claude-sonnet-4-6", "proj", "us-east5").ok
 
     @patch("agent.vertex_quota._check_cache")
     def test_cache_hit_not_found(self, mock_cache):
         mock_cache.return_value = {"anthropic-claude-sonnet-4-6": "2000000"}
-        assert not vq.check_quota("claude-sonnet-5", "proj", "us-east5").ok
+        assert not agent.vertex_quota.check_quota("claude-sonnet-5", "proj", "us-east5").ok
 
     @patch("agent.vertex_quota._fetch_provisioned_models", side_effect=urllib.error.URLError("network"))
     @patch("agent.vertex_quota.access_token", return_value="tok")
     @patch("agent.vertex_quota._check_cache", return_value=None)
     def test_api_error_degrades_gracefully(self, _cache, _token, _fetch):
-        result = vq.check_quota("claude-sonnet-5", "proj", "us-east5")
+        result = agent.vertex_quota.check_quota("claude-sonnet-5", "proj", "us-east5")
         assert result.ok
-        assert result.verdict is vq.QuotaVerdict.UNKNOWN
+        assert result.verdict is agent.vertex_quota.QuotaVerdict.UNKNOWN
 
 
 # ── Cache ────────────────────────────────────────────────────────────────────
@@ -299,7 +300,7 @@ def cache_root(tmp_path, monkeypatch) -> Path:
 
 class TestCache:
     def test_cache_lives_under_the_workbench_cache_root(self, cache_root):
-        vq._write_cache("proj", "us-east5", {"anthropic-claude-sonnet-4-6": "1"})
+        agent.vertex_quota._write_cache("proj", "us-east5", {"anthropic-claude-sonnet-4-6": "1"})
         written = list((cache_root / "vertex-quota").glob("*.json"))
         assert len(written) == 1
 
@@ -307,31 +308,31 @@ class TestCache:
         """The root moves after import, so nothing may freeze it at import time."""
         moved = tmp_path / "moved"
         monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(moved))
-        assert vq._cache_key("proj", "us-east5").parent == moved / "vertex-quota"
+        assert agent.vertex_quota._cache_key("proj", "us-east5").parent == moved / "vertex-quota"
 
     def test_fresh_cache_returns_models(self, cache_root):
         models = {"anthropic-claude-sonnet-4-6": "2000000"}
-        vq._write_cache("proj", "us-east5", models)
-        result = vq._check_cache("proj", "us-east5")
+        agent.vertex_quota._write_cache("proj", "us-east5", models)
+        result = agent.vertex_quota._check_cache("proj", "us-east5")
         assert result == models
 
     def test_stale_cache_returns_none(self, cache_root):
-        path = vq._cache_key("proj", "us-east5")
+        path = agent.vertex_quota._cache_key("proj", "us-east5")
         path.parent.mkdir(parents=True)
         path.write_text(json.dumps({"ts": time.time() - 600, "models": {}}))
-        result = vq._check_cache("proj", "us-east5")
+        result = agent.vertex_quota._check_cache("proj", "us-east5")
         assert result is None
 
     def test_missing_cache_returns_none(self, cache_root):
         """The cache dir does not exist yet on a first run — a read must not raise."""
-        result = vq._check_cache("proj", "us-east5")
+        result = agent.vertex_quota._check_cache("proj", "us-east5")
         assert result is None
 
     def test_corrupt_cache_returns_none(self, cache_root):
-        path = vq._cache_key("proj", "us-east5")
+        path = agent.vertex_quota._cache_key("proj", "us-east5")
         path.parent.mkdir(parents=True)
         path.write_text("not json")
-        result = vq._check_cache("proj", "us-east5")
+        result = agent.vertex_quota._check_cache("proj", "us-east5")
         assert result is None
 
     def test_unwritable_cache_root_is_survivable(self, cache_root, monkeypatch):
@@ -339,8 +340,8 @@ class TestCache:
         monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(cache_root / "wall" / "cache"))
         (cache_root / "wall").write_text("not a directory")
 
-        vq._write_cache("proj", "us-east5", {"anthropic-claude-sonnet-5": "1"})
-        assert vq._check_cache("proj", "us-east5") is None
+        agent.vertex_quota._write_cache("proj", "us-east5", {"anthropic-claude-sonnet-5": "1"})
+        assert agent.vertex_quota._check_cache("proj", "us-east5") is None
 
 
 # ── run_preflight ────────────────────────────────────────────────────────────
@@ -349,18 +350,18 @@ class TestCache:
 class TestRunPreflight:
     def test_skips_when_not_vertex(self, monkeypatch):
         monkeypatch.delenv("CLAUDE_CODE_USE_VERTEX", raising=False)
-        assert vq.run_preflight({"claude-sonnet-5": ["group"]}, MagicMock()) is True
+        assert agent.vertex_quota.run_preflight({"claude-sonnet-5": ["group"]}, MagicMock()) is True
 
     def test_skips_when_vertex_not_1(self, monkeypatch):
         monkeypatch.setenv("CLAUDE_CODE_USE_VERTEX", "0")
-        assert vq.run_preflight({"claude-sonnet-5": ["group"]}, MagicMock()) is True
+        assert agent.vertex_quota.run_preflight({"claude-sonnet-5": ["group"]}, MagicMock()) is True
 
     def test_warns_missing_project(self, monkeypatch):
         monkeypatch.setenv("CLAUDE_CODE_USE_VERTEX", "1")
         monkeypatch.delenv("ANTHROPIC_VERTEX_PROJECT_ID", raising=False)
         monkeypatch.setenv("CLOUD_ML_REGION", "us-east5")
         trail = MagicMock()
-        assert vq.run_preflight({"claude-sonnet-5": ["group"]}, trail) is True
+        assert agent.vertex_quota.run_preflight({"claude-sonnet-5": ["group"]}, trail) is True
         trail.info.assert_called()
 
     def test_warns_missing_region(self, monkeypatch):
@@ -368,48 +369,48 @@ class TestRunPreflight:
         monkeypatch.setenv("ANTHROPIC_VERTEX_PROJECT_ID", "proj")
         monkeypatch.delenv("CLOUD_ML_REGION", raising=False)
         trail = MagicMock()
-        assert vq.run_preflight({"claude-sonnet-5": ["group"]}, trail) is True
+        assert agent.vertex_quota.run_preflight({"claude-sonnet-5": ["group"]}, trail) is True
 
     @patch("agent.vertex_quota.check_quota")
     def test_passes_when_model_found(self, mock_check, monkeypatch):
         _vertex_env(monkeypatch)
-        mock_check.return_value = vq.VertexQuotaResult(
-            vq.QuotaVerdict.PROVISIONED, "anthropic-claude-sonnet-4-6")
+        mock_check.return_value = agent.vertex_quota.VertexQuotaResult(
+            agent.vertex_quota.QuotaVerdict.PROVISIONED, "anthropic-claude-sonnet-4-6")
         trail = MagicMock()
-        assert vq.run_preflight({"claude-sonnet-4-6": ["group"]}, trail) is True
+        assert agent.vertex_quota.run_preflight({"claude-sonnet-4-6": ["group"]}, trail) is True
         trail.info.assert_called()
 
     @patch("agent.vertex_quota.check_quota")
     def test_fails_when_model_not_provisioned(self, mock_check, monkeypatch):
         _vertex_env(monkeypatch)
-        mock_check.return_value = vq.VertexQuotaResult(
-            vq.QuotaVerdict.NOT_PROVISIONED, "anthropic-claude-sonnet-5",
+        mock_check.return_value = agent.vertex_quota.VertexQuotaResult(
+            agent.vertex_quota.QuotaVerdict.NOT_PROVISIONED, "anthropic-claude-sonnet-5",
             error="no quota",
             available_models=("anthropic-claude-sonnet-4-6",),
         )
         trail = MagicMock()
-        assert vq.run_preflight({"claude-sonnet-5": ["scout"]}, trail) is False
+        assert agent.vertex_quota.run_preflight({"claude-sonnet-5": ["scout"]}, trail) is False
         trail.decision.assert_called()
 
     @patch("agent.vertex_quota.check_quota")
     def test_failure_trail_names_requesting_phases(self, mock_check, monkeypatch):
         _vertex_env(monkeypatch)
-        mock_check.return_value = vq.VertexQuotaResult(
-            vq.QuotaVerdict.NOT_PROVISIONED, "anthropic-claude-sonnet-5",
+        mock_check.return_value = agent.vertex_quota.VertexQuotaResult(
+            agent.vertex_quota.QuotaVerdict.NOT_PROVISIONED, "anthropic-claude-sonnet-5",
             error="no quota")
         trail = MagicMock()
-        vq.run_preflight({"claude-sonnet-5": ["scout", "group"]}, trail)
+        agent.vertex_quota.run_preflight({"claude-sonnet-5": ["scout", "group"]}, trail)
         failures = trail.decision.call_args.kwargs["data"]["failures"]
         assert failures[0]["phases"] == ["scout", "group"]
 
     def test_failure_names_phase_model_env_keys(self, monkeypatch):
         lines = []
-        monkeypatch.setattr(vq.log, "dim", lines.append)
-        monkeypatch.setattr(vq.log, "error", lines.append)
-        vq._report_failure(
-            vq.VertexQuotaResult(
-                vq.QuotaVerdict.NOT_PROVISIONED, "anthropic-claude-sonnet-5"),
-            [vq.Phase.SCOUT, vq.Phase.GROUP], "proj", "us-east5",
+        monkeypatch.setattr(core.log, "dim", lines.append)
+        monkeypatch.setattr(core.log, "error", lines.append)
+        agent.vertex_quota._report_failure(
+            agent.vertex_quota.VertexQuotaResult(
+                agent.vertex_quota.QuotaVerdict.NOT_PROVISIONED, "anthropic-claude-sonnet-5"),
+            [agent.vertex_quota.Phase.SCOUT, agent.vertex_quota.Phase.GROUP], "proj", "us-east5",
         )
         assert "WORKBENCH_AI_SCOUT_MODEL, WORKBENCH_AI_GROUP_MODEL" in lines[-1]
 
@@ -418,15 +419,15 @@ class TestRunPreflight:
         """A bare alias has no Vertex base model name to match against."""
         _vertex_env(monkeypatch)
         trail = MagicMock()
-        assert vq.run_preflight({"sonnet": ["group"]}, trail) is True
+        assert agent.vertex_quota.run_preflight({"sonnet": ["group"]}, trail) is True
         mock_check.assert_not_called()
 
     @patch("agent.vertex_quota.check_quota")
     def test_checks_each_distinct_model_once(self, mock_check, monkeypatch):
         _vertex_env(monkeypatch)
-        mock_check.return_value = vq.VertexQuotaResult(
-            vq.QuotaVerdict.PROVISIONED, "x")
-        vq.run_preflight(
+        mock_check.return_value = agent.vertex_quota.VertexQuotaResult(
+            agent.vertex_quota.QuotaVerdict.PROVISIONED, "x")
+        agent.vertex_quota.run_preflight(
             {"claude-sonnet-5": ["group", "scout"], "claude-opus-5": ["fix"]},
             MagicMock(),
         )

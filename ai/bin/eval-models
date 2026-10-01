@@ -32,8 +32,8 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
     _AI_LIB_DIR = pinned_ai_lib_dir()
 sys.path.insert(0, str(_AI_LIB_DIR))
 
-from agent import backend as ai_backend  # noqa: E402
-from eval import conditions  # noqa: E402
+import agent.backend  # noqa: E402
+import eval.conditions  # noqa: E402
 from eval.floors import (  # noqa: E402
     FLOORS_FILENAME,
     SEED_FLOORS_WARNING,
@@ -132,7 +132,7 @@ def _backend_label() -> str | None:
     None is a missing identity, not the string "None": a file named
     ``None-sonnet.json`` would look like a recorded backend and compare as one.
     """
-    selected = ai_backend.selected_backend()
+    selected = agent.backend.selected_backend()
     if selected is None:
         return None
     return selected.value
@@ -401,19 +401,19 @@ def _dry_run(entries: list[dict], runs_per_entry: int) -> tuple[dict, int]:
 
 
 def _seed_kind() -> str:
-    return "pi" if ai_backend.selected_backend() is ai_backend.Backend.PI else "claude"
+    return "pi" if agent.backend.selected_backend() is agent.backend.Backend.PI else "claude"
 
 
 def _seed_arms(repo_root: Path, tmpdir: Path, arms: list[str]) -> dict[str, Path]:
     """One seeded tree per arm. Fails loudly when the backend's source is missing."""
     try:
-        source = conditions.prepare_seed_source(
+        source = eval.conditions.prepare_seed_source(
             _seed_kind(), tmpdir / "source", workbench_dir=repo_root,
         )
-    except conditions.MissingRuleSource as exc:
+    except eval.conditions.MissingRuleSource as exc:
         sys.exit(f"error: {exc}")
     return {
-        arm: conditions.seed_config_tree(source, tmpdir / f"cc-{arm}", arm)
+        arm: eval.conditions.seed_config_tree(source, tmpdir / f"cc-{arm}", arm)
         for arm in arms
     }
 
@@ -430,7 +430,7 @@ def run_eval(args: argparse.Namespace) -> tuple[dict, int]:
 
     arms = [c.strip() for c in args.conditions.split(",")]
     for arm in arms:
-        if arm not in conditions.CONDITIONS:
+        if arm not in eval.conditions.CONDITIONS:
             sys.exit(f"error: unknown condition: {arm}")
 
     print(f"Corpus: {len(entries)} entries", file=sys.stderr)

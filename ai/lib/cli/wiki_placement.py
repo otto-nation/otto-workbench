@@ -20,16 +20,16 @@ from git_layout import worktree_for
 from config.workbench_config_report import config_status
 from config.workbench_config_write import ConfigError as ConfigWriteError
 from config.workbench_config_write import set_value
-from core import workbench_paths
-from git import client as git_client
-from wiki import paths as wiki_paths
+import core.workbench_paths
+import git.client
+import wiki.paths
 
 # Bound here so the functions below keep their original names, while the import
 # above stays in the `from <package> import <module>` form the tarball's
 # reachability walk follows.
-DEFAULT_WIKI_DIRNAME = wiki_paths.DEFAULT_WIKI_DIRNAME
-find_wiki = wiki_paths.find_wiki
-is_wiki = wiki_paths.is_wiki
+DEFAULT_WIKI_DIRNAME = wiki.paths.DEFAULT_WIKI_DIRNAME
+find_wiki = wiki.paths.find_wiki
+is_wiki = wiki.paths.is_wiki
 
 SCRIPT = "wiki"
 
@@ -71,7 +71,7 @@ def repo_root(start: Path) -> Path:
     that is not there, and a `--project` setting is honoured only when the CLI
     runs from the repo root itself.
     """
-    toplevel = git_client.out("rev-parse", "--show-toplevel", cwd=start)
+    toplevel = git.client.out("rev-parse", "--show-toplevel", cwd=start)
     return Path(toplevel) if toplevel else start
 
 
@@ -141,12 +141,12 @@ def vault_entry(vault: Path, root: Path) -> Path | None:
     and `wiki path` runs on every session exit through the capture hook. The
     config module defers its schema generator the same way, for the same reason.
     """
-    from pr import target as pr_target
+    import pr.target
 
-    identity = pr_target.repo_identity_from_origin(str(root))
+    identity = pr.target.repo_identity_from_origin(str(root))
     if identity is None:
         return None
-    subpath = wiki_paths.vault_subpath(identity.label)
+    subpath = wiki.paths.vault_subpath(identity.label)
     if subpath is None:
         return None
     return (vault / subpath).resolve()
@@ -247,7 +247,7 @@ def default_vault_root() -> Path:
     a later change to XDG_DATA_HOME cannot move a vault that already holds
     articles.
     """
-    return workbench_paths.data_dir(DEFAULT_WIKI_DIRNAME)
+    return core.workbench_paths.data_dir(DEFAULT_WIKI_DIRNAME)
 
 
 class InitPlacementError(Exception):

@@ -25,14 +25,15 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest  # noqa: E402
 
-from git import topology as git_topology  # noqa: E402
-from pr import settlement  # noqa: E402
-from pr import state as pr_state  # noqa: E402
-from pr import thread_replies  # noqa: E402
+import git.topology  # noqa: E402
+import pr.settlement  # noqa: E402
+import pr.state  # noqa: E402
+import pr.thread_replies  # noqa: E402
 from pr.comments_fix import FixSummary  # noqa: E402
 from pr.comments_state import ThreadState  # noqa: E402
 from pr.fix import FixOutcome, FixRecord, ItemOutcome, SettledBy  # noqa: E402
 from pr.thread_models import CommentItem, ReportThread  # noqa: E402
+import git.push
 
 # The reviewer's finding, shared across every test below that needs a body for
 # the root comment — the wording itself is never the point of a test that uses
@@ -69,8 +70,8 @@ def _authored(*comments, my_login="me", **kw):
 
 def _state(*items, reviewers=None):
     """A PRState whose fix snapshot holds exactly these outcomes."""
-    return pr_state.PRState(
-        identity=pr_state.PRIdentity(
+    return pr.state.PRState(
+        identity=pr.state.PRIdentity(
             repo="owner/repo", branch="feat", pr_number=1, head_sha="abc1234",
             worktree_root="/tmp/wt",
         ),
@@ -94,34 +95,34 @@ class TestWhatGithubShowsBecameOfAThread:
     """
 
     def test_no_thread_shows_nothing(self):
-        assert settlement.settlement_for(None) is None
+        assert pr.settlement.settlement_for(None) is None
 
     def test_an_open_thread_with_no_reply_of_ours_shows_nothing(self):
-        assert settlement.settlement_for(_thread(bodies=["please fix this"])) is None
+        assert pr.settlement.settlement_for(_thread(bodies=["please fix this"])) is None
 
     @pytest.mark.parametrize("prefix, outcome", [
-        (thread_replies.APPLIED_REPLY_PREFIX, FixOutcome.FIXED),
-        (thread_replies.ADDRESSED_REPLY_PREFIX, FixOutcome.ALREADY_ADDRESSED),
-        (thread_replies.DISMISSED_REPLY_PREFIX, FixOutcome.DISMISSED),
+        (pr.thread_replies.APPLIED_REPLY_PREFIX, FixOutcome.FIXED),
+        (pr.thread_replies.ADDRESSED_REPLY_PREFIX, FixOutcome.ALREADY_ADDRESSED),
+        (pr.thread_replies.DISMISSED_REPLY_PREFIX, FixOutcome.DISMISSED),
     ])
     def test_a_reply_naming_the_verdict_reads_as_the_verdict_it_names(
         self, prefix, outcome,
     ):
         thread = _thread(bodies=[f"{prefix} — see abc1234."])
-        assert settlement.settlement_for(thread) is outcome
+        assert pr.settlement.settlement_for(thread) is outcome
 
     def test_a_deferred_reply_names_no_ending(self):
         """Deferring says work is still owed, which is the opposite of settled."""
-        thread = _thread(bodies=[f"{thread_replies.DEFERRED_REPLY_PREFIX} tracked."])
-        assert settlement.settlement_for(thread) is None
+        thread = _thread(bodies=[f"{pr.thread_replies.DEFERRED_REPLY_PREFIX} tracked."])
+        assert pr.settlement.settlement_for(thread) is None
 
     def test_the_resolve_button_alone_settles_without_crediting_a_fix(self):
         thread = _thread(is_resolved=True)
-        assert settlement.settlement_for(thread) is FixOutcome.SETTLED_ELSEWHERE
+        assert pr.settlement.settlement_for(thread) is FixOutcome.SETTLED_ELSEWHERE
 
     @pytest.mark.parametrize("state", [ThreadState.RESOLVED, ThreadState.ADDRESSED])
     def test_a_settled_lifecycle_state_counts_as_the_button(self, state):
-        assert settlement.settlement_for(_thread(state=state)) is (
+        assert pr.settlement.settlement_for(_thread(state=state)) is (
             FixOutcome.SETTLED_ELSEWHERE
         )
 
@@ -129,9 +130,9 @@ class TestWhatGithubShowsBecameOfAThread:
         """The reply names the verdict however the button stands."""
         thread = _thread(
             is_resolved=False,
-            bodies=[f"{thread_replies.APPLIED_REPLY_PREFIX}: dropped the guard."],
+            bodies=[f"{pr.thread_replies.APPLIED_REPLY_PREFIX}: dropped the guard."],
         )
-        assert settlement.settlement_for(thread) is FixOutcome.FIXED
+        assert pr.settlement.settlement_for(thread) is FixOutcome.FIXED
 
 
 # ── settled_locations: which thread wins a shared location ────────────────
@@ -146,41 +147,41 @@ class TestALocationTwoSettledThreadsShare:
     """
 
     def test_an_unsettled_thread_contributes_no_location(self):
-        located = settlement.settled_locations({"t1": _thread()})
+        located = pr.settlement.settled_locations({"t1": _thread()})
         assert located == {}
 
     def test_a_thread_with_no_location_is_skipped(self):
         thread = _thread(is_resolved=True, file="", line=None)
-        assert settlement.settled_locations({"t1": thread}) == {}
+        assert pr.settlement.settled_locations({"t1": thread}) == {}
 
     def test_a_settled_thread_reports_its_location(self):
         thread = _thread(is_resolved=True)
-        assert settlement.settled_locations({"t1": thread}) == {
+        assert pr.settlement.settled_locations({"t1": thread}) == {
             "kgn|a.py:10": FixOutcome.SETTLED_ELSEWHERE,
         }
 
     def test_a_reply_outranks_a_button_at_the_same_location(self):
         button = _thread(tid="t1", is_resolved=True)
         reply = _thread(
-            tid="t2", bodies=[f"{thread_replies.APPLIED_REPLY_PREFIX}: done."],
+            tid="t2", bodies=[f"{pr.thread_replies.APPLIED_REPLY_PREFIX}: done."],
         )
-        assert settlement.settled_locations({"t1": button, "t2": reply}) == {
+        assert pr.settlement.settled_locations({"t1": button, "t2": reply}) == {
             "kgn|a.py:10": FixOutcome.FIXED,
         }
 
     def test_the_reply_still_wins_when_it_is_seen_first(self):
         reply = _thread(
-            tid="t1", bodies=[f"{thread_replies.APPLIED_REPLY_PREFIX}: done."],
+            tid="t1", bodies=[f"{pr.thread_replies.APPLIED_REPLY_PREFIX}: done."],
         )
         button = _thread(tid="t2", is_resolved=True)
-        assert settlement.settled_locations({"t1": reply, "t2": button}) == {
+        assert pr.settlement.settled_locations({"t1": reply, "t2": button}) == {
             "kgn|a.py:10": FixOutcome.FIXED,
         }
 
     def test_two_reviewers_on_one_line_are_two_locations(self):
         mine = _thread(tid="t1", reviewer="kgn", is_resolved=True)
         theirs = _thread(tid="t2", reviewer="ana", is_resolved=True)
-        assert set(settlement.settled_locations({"t1": mine, "t2": theirs})) == {
+        assert set(pr.settlement.settled_locations({"t1": mine, "t2": theirs})) == {
             "kgn|a.py:10", "ana|a.py:10",
         }
 
@@ -207,7 +208,7 @@ class TestAReplyOfOursThatNamesAVerdictInItsOwnWords:
             ("kgn", _FINDING),
             ("me", "Fixed — renamed the guard, see abc1234."),
         )
-        assert settlement.settlement_for(thread) is FixOutcome.FIXED
+        assert pr.settlement.settlement_for(thread) is FixOutcome.FIXED
 
     @pytest.mark.parametrize(
         "body",
@@ -216,7 +217,7 @@ class TestAReplyOfOursThatNamesAVerdictInItsOwnWords:
     )
     def test_the_ways_a_person_spells_fixed(self, body):
         thread = _authored(("kgn", _FINDING), ("me", body))
-        assert settlement.settlement_for(thread) is FixOutcome.FIXED
+        assert pr.settlement.settlement_for(thread) is FixOutcome.FIXED
 
     def test_a_hand_typed_dismissal_reads_as_dismissed_not_fixed(self):
         """The bug this grading exists to prevent: a wave-off is not a fix.
@@ -228,7 +229,7 @@ class TestAReplyOfOursThatNamesAVerdictInItsOwnWords:
         thread = _authored(
             ("kgn", _FINDING), ("me", "Dismissed: the premise fails."),
         )
-        assert settlement.settlement_for(thread) is FixOutcome.DISMISSED
+        assert pr.settlement.settlement_for(thread) is FixOutcome.DISMISSED
 
     def test_a_reviewer_using_our_wording_is_not_our_verdict(self):
         """The negative the widening is bought with.
@@ -241,14 +242,14 @@ class TestAReplyOfOursThatNamesAVerdictInItsOwnWords:
             ("kgn", _FINDING),
             ("kgn", "Fixed in my branch — please rebase onto it."),
         )
-        assert settlement.settlement_for(thread) is None
+        assert pr.settlement.settlement_for(thread) is None
 
     def test_a_reviewer_verdict_does_not_even_settle_the_thread(self):
         """Not merely 'not FIXED' — nothing about their comment ends the thread."""
         thread = _authored(
             ("kgn", _FINDING), ("kgn", "Done, on my side."),
         )
-        assert settlement.settlement_for(thread) is None
+        assert pr.settlement.settlement_for(thread) is None
 
     @pytest.mark.parametrize(
         "body",
@@ -266,24 +267,24 @@ class TestAReplyOfOursThatNamesAVerdictInItsOwnWords:
         the anchor at the start of the body is half of what enforces it.
         """
         thread = _authored(("kgn", _FINDING), ("me", body))
-        assert settlement.settlement_for(thread) is None
+        assert pr.settlement.settlement_for(thread) is None
 
     def test_a_hand_written_deferral_still_says_the_opposite(self):
         """Counting it would settle every thread on the second --finish."""
         thread = _authored(
             ("kgn", _FINDING),
-            ("me", f"{thread_replies.DEFERRED_REPLY_PREFIX} tracked in ENG-1."),
+            ("me", f"{pr.thread_replies.DEFERRED_REPLY_PREFIX} tracked in ENG-1."),
         )
-        assert settlement.settlement_for(thread) is None
+        assert pr.settlement.settlement_for(thread) is None
 
     def test_a_template_is_ours_even_with_no_login_to_check(self):
         """Nothing but this tool writes one, so authorship needs no second source."""
         thread = _authored(
             ("kgn", _FINDING),
-            ("me", f"{thread_replies.APPLIED_REPLY_PREFIX}: renamed it."),
+            ("me", f"{pr.thread_replies.APPLIED_REPLY_PREFIX}: renamed it."),
             my_login="",
         )
-        assert settlement.settlement_for(thread) is FixOutcome.FIXED
+        assert pr.settlement.settlement_for(thread) is FixOutcome.FIXED
 
     def test_without_a_login_a_typed_verdict_belongs_to_nobody(self):
         """Ours and the reviewer's are indistinguishable, so neither counts."""
@@ -291,21 +292,21 @@ class TestAReplyOfOursThatNamesAVerdictInItsOwnWords:
             ("kgn", _FINDING), ("me", "Fixed — renamed it."),
             my_login="",
         )
-        assert settlement.settlement_for(thread) is None
+        assert pr.settlement.settlement_for(thread) is None
 
     def test_the_login_match_ignores_case(self):
         thread = _authored(
             ("kgn", _FINDING), ("Me", "Fixed — renamed it."),
             my_login="me",
         )
-        assert settlement.settlement_for(thread) is FixOutcome.FIXED
+        assert pr.settlement.settlement_for(thread) is FixOutcome.FIXED
 
     def test_a_typed_verdict_outranks_an_unresolved_button(self):
         thread = _authored(
             ("kgn", _FINDING), ("me", "Fixed — renamed it."),
             is_resolved=False,
         )
-        assert settlement.settlement_for(thread) is FixOutcome.FIXED
+        assert pr.settlement.settlement_for(thread) is FixOutcome.FIXED
 
     def test_a_lone_self_authored_root_naming_a_verdict_is_not_our_reply(self):
         """On self-review the root comment is the finding, not an answer to one.
@@ -318,7 +319,7 @@ class TestAReplyOfOursThatNamesAVerdictInItsOwnWords:
         thread = _authored(
             ("me", "Fixed casing is used inconsistently here."),
         )
-        assert settlement.settlement_for(thread) is None
+        assert pr.settlement.settlement_for(thread) is None
 
 
 # ── adopt_settled_threads: the thread no round ever saw ───────────────────
@@ -341,7 +342,7 @@ class TestAThreadNoRoundEverGaveADispositionTo:
 
     def test_an_answered_thread_becomes_a_row_nothing_had_before(self):
         state = _state()
-        assert settlement.adopt_settled_threads(
+        assert pr.settlement.adopt_settled_threads(
             state, {"t1": self._addressed()},
         ) == 1
         assert [o.id for o in state.fix.fix.items] == ["t1"]
@@ -349,7 +350,7 @@ class TestAThreadNoRoundEverGaveADispositionTo:
     def test_the_row_claims_only_what_the_evidence_supports(self):
         """Speaking last is not a fix — it says the thread is nobody's to answer."""
         state = _state()
-        settlement.adopt_settled_threads(state, {"t1": self._addressed()})
+        pr.settlement.adopt_settled_threads(state, {"t1": self._addressed()})
         assert state.fix.fix.items[0].outcome is FixOutcome.SETTLED_ELSEWHERE
 
     def test_a_reply_naming_the_verdict_is_graded_as_a_fix(self):
@@ -357,15 +358,15 @@ class TestAThreadNoRoundEverGaveADispositionTo:
         state = _state()
         thread = self._addressed(bodies=[
             _FINDING,
-            f"{thread_replies.APPLIED_REPLY_PREFIX}: renamed the guard.",
+            f"{pr.thread_replies.APPLIED_REPLY_PREFIX}: renamed the guard.",
         ])
-        settlement.adopt_settled_threads(state, {"t1": thread})
+        pr.settlement.adopt_settled_threads(state, {"t1": thread})
         assert state.fix.fix.items[0].outcome is FixOutcome.FIXED
 
     def test_the_row_is_not_credited_to_the_running_pass(self):
         """`attribution.handled_outside` reads this, and the Action cell reads that."""
         state = _state()
-        settlement.adopt_settled_threads(state, {"t1": self._addressed()})
+        pr.settlement.adopt_settled_threads(state, {"t1": self._addressed()})
         outcome = state.fix.fix.items[0]
         assert outcome.settled_by is SettledBy.RECONCILIATION
         assert "reconciled" in outcome.reason
@@ -373,33 +374,33 @@ class TestAThreadNoRoundEverGaveADispositionTo:
 
     def test_the_row_carries_the_location_the_table_renders(self):
         state = _state()
-        settlement.adopt_settled_threads(state, {"t1": self._addressed()})
+        pr.settlement.adopt_settled_threads(state, {"t1": self._addressed()})
         outcome = state.fix.fix.items[0]
         assert (outcome.file, outcome.line) == ("a.py", 10)
 
     def test_the_summary_comes_off_the_reviewer_s_own_words(self):
         """No round ran, so there is no model-written summary to read."""
         state = _state()
-        settlement.adopt_settled_threads(state, {"t1": self._addressed()})
+        pr.settlement.adopt_settled_threads(state, {"t1": self._addressed()})
         assert state.fix.fix.items[0].summary == _FINDING
 
     def test_a_thread_with_no_line_is_still_recorded(self):
         """`ReportThread.line` is optional; `ItemOutcome.line` is not."""
         state = _state()
-        settlement.adopt_settled_threads(
+        pr.settlement.adopt_settled_threads(
             state, {"t1": self._addressed(file="", line=None)},
         )
         assert state.fix.fix.items[0].line == 0
 
     def test_the_reviewer_login_lands_where_the_row_can_find_it(self):
         state = _state()
-        settlement.adopt_settled_threads(state, {"t1": self._addressed()})
+        pr.settlement.adopt_settled_threads(state, {"t1": self._addressed()})
         assert state.fix.reviewers == {"t1": "kgn"}
 
     def test_a_thread_github_named_no_reviewer_for_contributes_no_key(self):
         """A missing key misses; an empty one asserts an anonymous reviewer."""
         state = _state()
-        settlement.adopt_settled_threads(
+        pr.settlement.adopt_settled_threads(
             state, {"t1": self._addressed(reviewer="")},
         )
         assert state.fix.reviewers == {}
@@ -413,19 +414,19 @@ class TestAThreadNoRoundEverGaveADispositionTo:
         state = _state()
         resolved = _thread(state=ThreadState.RESOLVED, is_resolved=True,
                            bodies=[_FINDING])
-        assert settlement.adopt_settled_threads(state, {"t1": resolved}) == 0
+        assert pr.settlement.adopt_settled_threads(state, {"t1": resolved}) == 0
         assert state.fix.fix.items == []
 
     def test_a_thread_awaiting_a_reviewer_is_not_adopted(self):
         """Nobody has answered it, so there is nothing for this stage to record."""
         state = _state()
         open_thread = _thread(bodies=[_FINDING])
-        assert settlement.adopt_settled_threads(state, {"t1": open_thread}) == 0
+        assert pr.settlement.adopt_settled_threads(state, {"t1": open_thread}) == 0
 
     def test_a_thread_the_round_already_recorded_is_left_alone(self):
         """The round's own verdict outranks a grade inferred after the fact."""
         state = _state(ItemOutcome(id="t1", outcome=FixOutcome.DEFERRED))
-        assert settlement.adopt_settled_threads(
+        assert pr.settlement.adopt_settled_threads(
             state, {"t1": self._addressed()},
         ) == 0
         assert state.fix.fix.items[0].outcome is FixOutcome.DEFERRED
@@ -439,16 +440,16 @@ class TestAThreadNoRoundEverGaveADispositionTo:
         """
         state = _state()
         threads = {"t1": self._addressed()}
-        settlement.adopt_settled_threads(state, threads)
-        assert settlement.adopt_settled_threads(state, threads) == 0
+        pr.settlement.adopt_settled_threads(state, threads)
+        assert pr.settlement.adopt_settled_threads(state, threads) == 0
         assert len(state.fix.fix.items) == 1
 
     def test_a_row_this_wrote_is_never_reconciled_over(self):
         """Both grades sit outside UNSETTLED_OUTCOMES, so the row is stable."""
         state = _state()
         threads = {"t1": self._addressed()}
-        settlement.adopt_settled_threads(state, threads)
-        assert settlement.reconcile_fix_snapshot(state, threads) == 0
+        pr.settlement.adopt_settled_threads(state, threads)
+        assert pr.settlement.reconcile_fix_snapshot(state, threads) == 0
 
     def test_a_hand_answered_thread_keeps_the_reply_a_person_wrote(self):
         """The one outward act this stage enables, and its guard.
@@ -464,18 +465,18 @@ class TestAThreadNoRoundEverGaveADispositionTo:
             state=ThreadState.ADDRESSED,
         )
         state = _state()
-        settlement.adopt_settled_threads(state, {"t1": thread})
+        pr.settlement.adopt_settled_threads(state, {"t1": thread})
         assert state.fix.fix.items[0].outcome is FixOutcome.FIXED
-        assert thread_replies.has_hand_written_reply(thread)
+        assert pr.thread_replies.has_hand_written_reply(thread)
 
     def test_our_own_template_is_still_ours_to_rewrite(self):
         """The converse: a generated reply may be replaced, so the guard is off."""
         thread = _authored(
             ("kgn", _FINDING),
-            ("me", f"{thread_replies.APPLIED_REPLY_PREFIX}: renamed the guard."),
+            ("me", f"{pr.thread_replies.APPLIED_REPLY_PREFIX}: renamed the guard."),
             state=ThreadState.ADDRESSED,
         )
-        assert not thread_replies.has_hand_written_reply(thread)
+        assert not pr.thread_replies.has_hand_written_reply(thread)
 
 
 # ── entry_settlement: the three ways a row can be settled ─────────────────
@@ -494,44 +495,44 @@ class TestWhatSettledOneSnapshotRow:
     def test_a_row_with_a_thread_reads_the_thread(self):
         thread = _thread(tid="c1", is_resolved=True)
         entry = CommentItem(id="c1", file="a.py", line=10, reviewer="kgn")
-        assert settlement.entry_settlement(
+        assert pr.settlement.entry_settlement(
             entry, {"c1": thread}, {}, {},
         ) is FixOutcome.SETTLED_ELSEWHERE
 
     def test_a_row_with_neither_thread_nor_source_shows_nothing(self):
         entry = CommentItem(id="c1", file="a.py", line=10, reviewer="kgn")
-        assert settlement.entry_settlement(entry, {}, {}, {}) is None
+        assert pr.settlement.entry_settlement(entry, {}, {}, {}) is None
 
     def test_an_answered_source_reads_as_fixed(self):
         entry = CommentItem(id="ic-77-1", file="a.py", line=10, reviewer="kgn")
-        assert settlement.entry_settlement(
+        assert pr.settlement.entry_settlement(
             entry, {}, {"77": FixOutcome.FIXED}, {},
         ) is FixOutcome.FIXED
 
     def test_an_answered_source_reads_as_the_verdict_it_names(self):
         """A hand-typed dismissal is not promoted to FIXED regardless."""
         entry = CommentItem(id="ic-77-1", file="a.py", line=10, reviewer="kgn")
-        assert settlement.entry_settlement(
+        assert pr.settlement.entry_settlement(
             entry, {}, {"77": FixOutcome.DISMISSED}, {},
         ) is FixOutcome.DISMISSED
 
     def test_an_unanswered_source_falls_through_to_the_location(self):
         entry = CommentItem(id="ic-77-1", file="a.py", line=10, reviewer="kgn")
-        assert settlement.entry_settlement(
+        assert pr.settlement.entry_settlement(
             entry, {}, {}, {"kgn|a.py:10": FixOutcome.SETTLED_ELSEWHERE},
         ) is FixOutcome.SETTLED_ELSEWHERE
 
     def test_an_item_settled_through_a_thread_inherits_its_grade(self):
         """The evidence is the thread's, so the claim it supports is too."""
         entry = CommentItem(id="ic-77-1", file="a.py", line=10, reviewer="kgn")
-        settled = settlement.entry_settlement(
+        settled = pr.settlement.entry_settlement(
             entry, {}, {}, {"kgn|a.py:10": FixOutcome.SETTLED_ELSEWHERE},
         )
         assert settled is not FixOutcome.FIXED
 
     def test_a_location_nothing_settled_shows_nothing(self):
         entry = CommentItem(id="ic-77-1", file="a.py", line=10, reviewer="kgn")
-        assert settlement.entry_settlement(
+        assert pr.settlement.entry_settlement(
             entry, {}, {}, {"ana|b.py:3": FixOutcome.FIXED},
         ) is None
 
@@ -585,9 +586,9 @@ class TestASettlementWillNotCiteAStaleCoordinate:
         return SimpleNamespace(path=worktree, read=read)
 
     def _resolved(self, shifted, outcome, explicit=""):
-        with patch.object(git_topology, "default_branch_cached", return_value="main"), \
-             patch.object(settlement.push, "holds", return_value=True):
-            return settlement.resolve_settled_commit(
+        with patch.object(git.topology, "default_branch_cached", return_value="main"), \
+             patch.object(git.push, "holds", return_value=True):
+            return pr.settlement.resolve_settled_commit(
                 shifted.path, outcome, explicit)
 
     def test_a_stale_line_settles_without_a_citation(self, shifted):
@@ -634,36 +635,36 @@ class TestOneCitationPerSettlement:
         "kind", [FixOutcome.DISMISSED, FixOutcome.ALREADY_ADDRESSED],
     )
     def test_a_settlement_that_cites_nothing_never_asks_git(self, picked, kind):
-        with patch.object(settlement, "resolve_settled_commit") as resolve:
-            assert settlement.settled_commits(None, picked, kind, "") == ["", ""]
+        with patch.object(pr.settlement, "resolve_settled_commit") as resolve:
+            assert pr.settlement.settled_commits(None, picked, kind, "") == ["", ""]
         assert not resolve.called
 
     def test_a_fix_cites_one_commit_per_row(self, picked, tmp_path):
         answers = [
-            settlement.SettledCommit(sha="aaa1111"),
-            settlement.SettledCommit(sha="bbb2222"),
+            pr.settlement.SettledCommit(sha="aaa1111"),
+            pr.settlement.SettledCommit(sha="bbb2222"),
         ]
-        with patch.object(settlement, "resolve_settled_commit", side_effect=answers):
-            shas = settlement.settled_commits(
+        with patch.object(pr.settlement, "resolve_settled_commit", side_effect=answers):
+            shas = pr.settlement.settled_commits(
                 tmp_path, picked, FixOutcome.FIXED, "",
             )
         assert shas == ["aaa1111", "bbb2222"]
 
     def test_one_unresolvable_commit_discards_the_whole_run(self, picked, tmp_path):
         answers = [
-            settlement.SettledCommit(sha="aaa1111"),
-            settlement.SettledCommit(error="--commit names no commit"),
+            pr.settlement.SettledCommit(sha="aaa1111"),
+            pr.settlement.SettledCommit(error="--commit names no commit"),
         ]
-        with patch.object(settlement, "resolve_settled_commit", side_effect=answers):
-            assert settlement.settled_commits(
+        with patch.object(pr.settlement, "resolve_settled_commit", side_effect=answers):
+            assert pr.settlement.settled_commits(
                 tmp_path, picked, FixOutcome.FIXED, "",
             ) is None
 
     def test_the_failure_is_reported_rather_than_swallowed(self, picked, tmp_path):
-        answers = [settlement.SettledCommit(error="named no commit"), None]
-        with patch.object(settlement, "resolve_settled_commit", side_effect=answers), \
-             patch("pr.settlement.log.error") as err:
-            settlement.settled_commits(tmp_path, picked, FixOutcome.FIXED, "")
+        answers = [pr.settlement.SettledCommit(error="named no commit"), None]
+        with patch.object(pr.settlement, "resolve_settled_commit", side_effect=answers), \
+             patch("core.log.error") as err:
+            pr.settlement.settled_commits(tmp_path, picked, FixOutcome.FIXED, "")
         assert "named no commit" in err.call_args[0][0]
 
 
@@ -683,37 +684,37 @@ class TestWhatTheOperatorIsToldTheyRecorded:
         return ItemOutcome(id="c1", file="a.py", line=10)
 
     def test_the_prior_outcome_is_named_when_it_changed(self, outcome):
-        with patch("pr.settlement.log.info") as info:
-            settlement.report_settlement(
+        with patch("core.log.info") as info:
+            pr.settlement.report_settlement(
                 outcome, FixOutcome.FIXED, FixOutcome.DEFERRED, "abc1234",
             )
         assert "was deferred" in info.call_args_list[0][0][0]
 
     def test_nothing_is_named_when_the_outcome_is_unchanged(self, outcome):
-        with patch("pr.settlement.log.info") as info:
-            settlement.report_settlement(
+        with patch("core.log.info") as info:
+            pr.settlement.report_settlement(
                 outcome, FixOutcome.FIXED, FixOutcome.FIXED, "abc1234",
             )
         assert "was " not in info.call_args_list[0][0][0]
 
     def test_a_cited_commit_is_quoted_back(self, outcome):
-        with patch("pr.settlement.log.info") as info:
-            settlement.report_settlement(
+        with patch("core.log.info") as info:
+            pr.settlement.report_settlement(
                 outcome, FixOutcome.FIXED, FixOutcome.DEFERRED, "abc1234",
             )
         assert "fixed in abc1234" in info.call_args_list[0][0][0]
 
     def test_an_uncited_fix_says_how_to_cite_it(self, outcome):
-        with patch("pr.settlement.log.info") as info:
-            settlement.report_settlement(
+        with patch("core.log.info") as info:
+            pr.settlement.report_settlement(
                 outcome, FixOutcome.FIXED, FixOutcome.DEFERRED, "",
             )
         assert len(info.call_args_list) == 2
         assert "--commit" in info.call_args_list[1][0][0]
 
     def test_a_settlement_that_cites_nothing_owes_no_such_line(self, outcome):
-        with patch("pr.settlement.log.info") as info:
-            settlement.report_settlement(
+        with patch("core.log.info") as info:
+            pr.settlement.report_settlement(
                 outcome, FixOutcome.DISMISSED, FixOutcome.DEFERRED, "",
             )
         assert len(info.call_args_list) == 1
@@ -735,13 +736,13 @@ class TestSettleRearmsThroughTheOwner:
         )
         state = _state(item)
         state.fix.updated_at = "2026-07-14T00:00:00+00:00"
-        pr_state.save_state(ctx.target_dir, state)
+        pr.state.save_state(ctx.target_dir, state)
 
-        assert settlement.run_settle(
+        assert pr.settlement.run_settle(
             ctx, ["t1"], "dismissed", "not our layer", "",
         ) == 0
 
-        fix = pr_state.load_state(ctx.target_dir).fix
+        fix = pr.state.load_state(ctx.target_dir).fix
         assert fix.replies_pending is True
         assert fix.summary_deferred is True
         assert any("closeout owed" in line for line in fix.render_status())
@@ -776,19 +777,19 @@ class TestRewrittenThreadIsNotSettled:
     # passes-at-base: the grade that made the defect costly, pinned so the pair below reads as a contrast
     def test_an_addressed_thread_grades_as_settled(self):
         """The grade that made the defect costly \u2014 pinned so the pair reads."""
-        assert settlement.settlement_for(
+        assert pr.settlement.settlement_for(
             self._thread(ThreadState.ADDRESSED)) is FixOutcome.SETTLED_ELSEWHERE
 
     # passes-at-base: settlement_for is handed the state, so this grades the map rather than the new computation
     def test_a_rewritten_thread_grades_as_nothing(self):
         """AMBIGUOUS carries no settlement, so nothing closes it out."""
-        assert settlement.settlement_for(self._thread(ThreadState.AMBIGUOUS)) is None
+        assert pr.settlement.settlement_for(self._thread(ThreadState.AMBIGUOUS)) is None
 
     # passes-at-base: same — the state is constructed, so this holds adoption's contract for it
     def test_a_rewritten_thread_is_not_adopted_as_answered(self):
-        state = pr_state.new_state(
+        state = pr.state.new_state(
             "owner/repo", "feat", pr_number=1, head_sha="a", worktree_root="/wt")
         thread = self._thread(ThreadState.AMBIGUOUS)
-        adopted = settlement.adopt_settled_threads(state, {thread.id: thread})
+        adopted = pr.settlement.adopt_settled_threads(state, {thread.id: thread})
         assert adopted == 0
         assert state.fix.fix.items == []

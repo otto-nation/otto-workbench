@@ -32,15 +32,20 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
     _AI_LIB_DIR = pinned_ai_lib_dir()
 sys.path.insert(0, str(_AI_LIB_DIR))
 from _reuse_levels import read_default, read_level
+import pr.state
+import pr.target
 
 try:
-    from pr import state as pr_state
-    from pr import target as pr_target
+    import pr.state
+    import pr.target
 except Exception:
     # The status line renders on every turn and has no way to report a fault.
     # A broken ai/lib blanks the PR segment rather than killing the line.
-    pr_state = None
-    pr_target = None
+    #
+    # One name for both: `import pr.state` binds the package, so the package is
+    # what is missing when either import fails, and the guard below has one
+    # thing to test rather than two that can only fail together.
+    pr = None
 
 
 def _reuse_piece() -> str:
@@ -52,12 +57,12 @@ def _reuse_piece() -> str:
 
 
 def _pr_piece() -> str:
-    if pr_state is None or pr_target is None:
+    if pr is None:
         return ""
 
     # No `gh` and no network: this runs on every prompt render.
     try:
-        target = pr_target.target_dir_for_checkout(Path.cwd())
+        target = pr.target.target_dir_for_checkout(Path.cwd())
     except Exception:
         return ""
     if target is None:
@@ -67,7 +72,7 @@ def _pr_piece() -> str:
     # has nowhere to put that, so it is swallowed here; `pr status` and every
     # write path still surface it.
     with contextlib.redirect_stderr(io.StringIO()):
-        state = pr_state.load_state(target)
+        state = pr.state.load_state(target)
 
     if state is None or not state.identity.pr_number:
         return ""
@@ -79,7 +84,7 @@ def _pr_piece() -> str:
     return label
 
 
-def _pr_details(state: pr_state.PRState) -> str:
+def _pr_details(state: pr.state.PRState) -> str:
     parts: list[str] = []
 
     if state.ci.conclusion == "failure" and state.ci.failure_count > 0:

@@ -13,7 +13,7 @@ rather than collected, and nothing here asserts anything.
 
 import sys
 
-from core import publishing
+import core.publishing
 
 
 def returns_three(argv, **kwargs) -> int:
@@ -58,21 +58,21 @@ def requires_a_kwarg(argv, *, install_signal_handler) -> int:
 
 
 def opens_the_gate(argv, **kwargs) -> int:
-    publishing.enable()
+    core.publishing.enable()
     return 0
 
 
 def opens_the_gate_then_raises(argv, **kwargs) -> int:
     # Stands in for a bug in any real handler: `scope()` must restore the gate
     # on an uncaught exception, not just on a clean return or `sys.exit`.
-    publishing.enable()
+    core.publishing.enable()
     raise RuntimeError("the run failed after opening the gate")
 
 
 def holds_the_gate(argv, **kwargs) -> int:
-    publishing.hold("a question this run could not answer")
+    core.publishing.hold("a question this run could not answer")
     return 0
 
 
 def reports_the_gate(argv, **kwargs) -> int:
-    return 1 if publishing.enabled() else 0
+    return 1 if core.publishing.enabled() else 0

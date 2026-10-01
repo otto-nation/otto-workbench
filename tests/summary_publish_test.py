@@ -20,7 +20,8 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from git.land import CommitStatus  # noqa: E402
-from pr import attribution, summary_publish  # noqa: E402
+import pr.attribution
+import pr.summary_publish  # noqa: E402
 from pr.fix import FixOutcome  # noqa: E402
 from pr.summary_model import RoundContent  # noqa: E402
 from pr.summary_publish import SummaryOutcome  # noqa: E402
@@ -65,10 +66,10 @@ class TestPublishAsksBothHalvesOfOneRound:
 
     def _publish(self, content, *, status=CommitStatus.PUSHED,
                  has_unaccounted=False, url="https://u"):
-        cp = attribution.CommitPushResult("abc1234", status, "")
-        with patch.object(summary_publish, "post_or_defer_summary",
+        cp = pr.attribution.CommitPushResult("abc1234", status, "")
+        with patch.object(pr.summary_publish, "post_or_defer_summary",
                           return_value=url) as post:
-            outcome = summary_publish.publish(
+            outcome = pr.summary_publish.publish(
                 content, cp, "owner/repo", 1, {}, PRReport(),
                 has_comment_items=False, has_unaccounted=has_unaccounted,
                 head_sha="abc1234",

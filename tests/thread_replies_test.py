@@ -18,9 +18,11 @@ if str(LIB_DIR) not in sys.path:
 import pytest  # noqa: E402
 
 from git.land import CommitStatus  # noqa: E402
-from pr import attribution  # noqa: E402
-from pr import thread_replies  # noqa: E402
+import pr.attribution  # noqa: E402
+import pr.thread_replies  # noqa: E402
 from pr.thread_models import CommentItem, ReportThread  # noqa: E402
+import core.log
+import pr.comments
 
 _REPO = "owner/repo"
 _PR = 42
@@ -47,21 +49,21 @@ class TestHandledPrefixesTrackTheGeneratedSet:
     def test_only_the_openings_that_say_work_remains_are_excluded(self):
         """Both say the opposite of handled, so counting either would make the
         thread reconcile itself on the second --finish."""
-        assert set(thread_replies.GENERATED_REPLY_PREFIXES) - set(
-            thread_replies.HANDLED_REPLY_PREFIXES,
+        assert set(pr.thread_replies.GENERATED_REPLY_PREFIXES) - set(
+            pr.thread_replies.HANDLED_REPLY_PREFIXES,
         ) == {
-            thread_replies.DEFERRED_REPLY_PREFIX,
-            thread_replies.NEEDS_HUMAN_REPLY_PREFIX,
+            pr.thread_replies.DEFERRED_REPLY_PREFIX,
+            pr.thread_replies.NEEDS_HUMAN_REPLY_PREFIX,
         }
 
     def test_every_handled_opening_is_a_generated_one(self):
-        assert set(thread_replies.HANDLED_REPLY_PREFIXES) <= set(
-            thread_replies.GENERATED_REPLY_PREFIXES,
+        assert set(pr.thread_replies.HANDLED_REPLY_PREFIXES) <= set(
+            pr.thread_replies.GENERATED_REPLY_PREFIXES,
         )
 
     def test_deferring_is_not_handling(self):
-        assert thread_replies.DEFERRED_REPLY_PREFIX not in (
-            thread_replies.HANDLED_REPLY_PREFIXES
+        assert pr.thread_replies.DEFERRED_REPLY_PREFIX not in (
+            pr.thread_replies.HANDLED_REPLY_PREFIXES
         )
 
 
@@ -76,22 +78,22 @@ class TestWhatCountsAsNamingAVerdict:
     the caller, and `settlement._our_verdict` is where that is enforced.
     """
 
-    @pytest.mark.parametrize("prefix", thread_replies.HANDLED_REPLY_PREFIXES)
+    @pytest.mark.parametrize("prefix", pr.thread_replies.HANDLED_REPLY_PREFIXES)
     def test_every_handled_template_still_names_a_verdict(self, prefix):
-        assert thread_replies.names_a_verdict(f"{prefix}: dropped the guard.")
+        assert pr.thread_replies.names_a_verdict(f"{prefix}: dropped the guard.")
 
     def test_the_deferred_template_still_names_none(self):
-        assert not thread_replies.names_a_verdict(
-            f"{thread_replies.DEFERRED_REPLY_PREFIX} tracked in ENG-1.",
+        assert not pr.thread_replies.names_a_verdict(
+            f"{pr.thread_replies.DEFERRED_REPLY_PREFIX} tracked in ENG-1.",
         )
 
-    @pytest.mark.parametrize("word", thread_replies.HANDWRITTEN_VERDICT_WORDS)
+    @pytest.mark.parametrize("word", pr.thread_replies.HANDWRITTEN_VERDICT_WORDS)
     @pytest.mark.parametrize("tail", ["", ".", ":", " — and here is why", " in abc1234."])
     def test_each_word_stands_alone_and_before_a_delimiter(self, word, tail):
-        assert thread_replies.names_a_verdict(f"{word}{tail}")
+        assert pr.thread_replies.names_a_verdict(f"{word}{tail}")
 
     def test_leading_whitespace_does_not_hide_a_verdict(self):
-        assert thread_replies.names_a_verdict("\n  Fixed — dropped the guard.")
+        assert pr.thread_replies.names_a_verdict("\n  Fixed — dropped the guard.")
 
     @pytest.mark.parametrize(
         "body",
@@ -100,7 +102,7 @@ class TestWhatCountsAsNamingAVerdict:
     )
     def test_a_word_that_merely_starts_the_same_is_not_a_verdict(self, body):
         """The delimiter lookahead is what separates the verdict from the prefix."""
-        assert not thread_replies.names_a_verdict(body)
+        assert not pr.thread_replies.names_a_verdict(body)
 
     @pytest.mark.parametrize(
         "body",
@@ -112,7 +114,7 @@ class TestWhatCountsAsNamingAVerdict:
         """These open on a verdict and settle nothing. Only `Already addressed`
         — a template, and unambiguous — qualifies.
         """
-        assert not thread_replies.names_a_verdict(body)
+        assert not pr.thread_replies.names_a_verdict(body)
 
     @pytest.mark.parametrize(
         "body", ["Good catch — will sort it.", "Agreed, that needs doing.",
@@ -120,7 +122,7 @@ class TestWhatCountsAsNamingAVerdict:
     )
     def test_an_acknowledgement_is_not_a_verdict(self, body):
         """It says the reviewer was heard, not that anything changed."""
-        assert not thread_replies.names_a_verdict(body)
+        assert not pr.thread_replies.names_a_verdict(body)
 
     @pytest.mark.parametrize(
         "body", ["This is fixed now.", "Should be fixed — have a look.",
@@ -128,12 +130,12 @@ class TestWhatCountsAsNamingAVerdict:
     )
     def test_a_verdict_buried_mid_sentence_is_not_chased(self, body):
         """Anchoring at the start is the whole safety mechanism."""
-        assert not thread_replies.names_a_verdict(body)
+        assert not pr.thread_replies.names_a_verdict(body)
 
     def test_an_empty_body_names_nothing(self):
-        assert not thread_replies.names_a_verdict("")
+        assert not pr.thread_replies.names_a_verdict("")
 
-    @pytest.mark.parametrize("word", thread_replies.HANDWRITTEN_VERDICT_WORDS)
+    @pytest.mark.parametrize("word", pr.thread_replies.HANDWRITTEN_VERDICT_WORDS)
     def test_the_handwritten_match_is_case_sensitive(self, word):
         """Unlike the login match, a verdict word must be capitalised.
 
@@ -141,14 +143,14 @@ class TestWhatCountsAsNamingAVerdict:
         `thread_replies.HANDWRITTEN_VERDICT_WORDS`'s own comment. A lowercase
         opening reads as ordinary prose, not a verdict.
         """
-        assert not thread_replies.names_a_verdict(
+        assert not pr.thread_replies.names_a_verdict(
             f"{word.lower()} — dropped the guard.",
         )
 
     def test_deferring_is_still_no_part_of_the_typed_vocabulary(self):
         """Counting it would settle every thread on the second --finish."""
-        assert "Deferred" not in thread_replies.HANDWRITTEN_VERDICT_WORDS
-        assert not thread_replies.names_a_verdict("Deferred — tracked in ENG-1.")
+        assert "Deferred" not in pr.thread_replies.HANDWRITTEN_VERDICT_WORDS
+        assert not pr.thread_replies.names_a_verdict("Deferred — tracked in ENG-1.")
 
 
 class TestTheFollowupPatternKnowsEveryLead:
@@ -179,7 +181,7 @@ class TestTheFollowupPatternKnowsEveryLead:
             bodies.append(body)
             return True
 
-        with patch.object(thread_replies, "upsert_thread_reply", record):
+        with patch.object(pr.thread_replies, "upsert_thread_reply", record):
             yield bodies
 
     @pytest.fixture
@@ -214,12 +216,12 @@ class TestTheFollowupPatternKnowsEveryLead:
     def _assert_all_ours(self, bodies):
         assert bodies, "the builder wrote nothing — the case proves nothing"
         for body in bodies:
-            assert thread_replies.is_generated_reply(body) is True, body
+            assert pr.thread_replies.is_generated_reply(body) is True, body
 
     def test_a_fixed_reply_is_recognised(self, captured, entry, threads):
-        thread_replies.post_fix_replies(
+        pr.thread_replies.post_fix_replies(
             [entry], threads, _REPO, _PR,
-            attribution.CommitPushResult(_SHA, CommitStatus.PUSHED, ""))
+            pr.attribution.CommitPushResult(_SHA, CommitStatus.PUSHED, ""))
         self._assert_all_ours(captured)
         assert "Result is in" in captured[0]
 
@@ -234,22 +236,22 @@ class TestTheFollowupPatternKnowsEveryLead:
             id="t1", summary="s", reviewer="kgn", commit_sha=_SHA,
             verified=False, verify_detail="no runnable check for this path",
         )
-        thread_replies.post_fix_replies(
+        pr.thread_replies.post_fix_replies(
             [unverified], threads, _REPO, _PR,
-            attribution.CommitPushResult(_SHA, CommitStatus.PUSHED, ""))
+            pr.attribution.CommitPushResult(_SHA, CommitStatus.PUSHED, ""))
         self._assert_all_ours(captured)
 
     def test_a_fixed_reply_with_no_file_is_recognised(self, captured, threads):
         bare = CommentItem(id="t1", summary="s", reviewer="kgn", commit_sha=_SHA)
-        thread_replies.post_fix_replies(
+        pr.thread_replies.post_fix_replies(
             [bare], threads, _REPO, _PR,
-            attribution.CommitPushResult(_SHA, CommitStatus.PUSHED, ""))
+            pr.attribution.CommitPushResult(_SHA, CommitStatus.PUSHED, ""))
         self._assert_all_ours(captured)
 
     @pytest.mark.parametrize("acted", [True, False])
     def test_an_addressed_reply_is_recognised(
             self, captured, entry, threads, tree, acted):
-        thread_replies.post_already_addressed_replies(
+        pr.thread_replies.post_already_addressed_replies(
             [entry], threads, _REPO, _PR, tree, acted=acted)
         self._assert_all_ours(captured)
         assert "Current behaviour is at" in captured[0]
@@ -261,7 +263,7 @@ class TestTheFollowupPatternKnowsEveryLead:
                            reasoning=reasoning, file="f.py", line=2,
                            evidence_file="f.py", evidence_line=2,
                            read_sha=_SHA)
-        thread_replies.post_dismissed_replies(
+        pr.thread_replies.post_dismissed_replies(
             [item], threads, _REPO, _PR, tree)
         self._assert_all_ours(captured)
         assert "See " in captured[0]
@@ -269,7 +271,7 @@ class TestTheFollowupPatternKnowsEveryLead:
     @pytest.mark.parametrize("issue_url", ["https://linear.app/i/ENG-1", ""])
     def test_a_deferral_is_recognised(
             self, captured, entry, threads, tree, issue_url):
-        thread_replies.post_deferred_replies(
+        pr.thread_replies.post_deferred_replies(
             [entry], threads, _REPO, _PR, "ENG-1", issue_url, tree)
         self._assert_all_ours(captured)
         assert "Unchanged at" in captured[0]
@@ -280,7 +282,7 @@ class TestTheFollowupPatternKnowsEveryLead:
         A builder gaining "Landed in ..." without the pattern gaining it too
         writes a reply the next round refuses to touch.
         """
-        assert thread_replies.is_generated_reply(
+        assert pr.thread_replies.is_generated_reply(
             "Applied: x\n\nLanded in [`abc1234`](u).") is False
 
 
@@ -288,20 +290,20 @@ class TestUpsertThreadReply:
     """Three branches, none of which had a test naming this function."""
 
     def test_an_existing_reply_is_edited_in_place(self):
-        with patch.object(thread_replies.pc, "patch_thread_reply",
+        with patch.object(pr.comments, "patch_thread_reply",
                           return_value=True) as edit, \
-             patch.object(thread_replies.pc, "post_thread_reply") as post:
-            assert thread_replies.upsert_thread_reply(
+             patch.object(pr.comments, "post_thread_reply") as post:
+            assert pr.thread_replies.upsert_thread_reply(
                 _thread(), _REPO, _PR, "body", 999) is True
 
         edit.assert_called_once_with(_REPO, 999, "body")
         post.assert_not_called()
 
     def test_no_existing_reply_posts_under_the_thread_root(self):
-        with patch.object(thread_replies.pc, "post_thread_reply",
+        with patch.object(pr.comments, "post_thread_reply",
                           return_value=True) as post, \
-             patch.object(thread_replies.pc, "patch_thread_reply") as edit:
-            assert thread_replies.upsert_thread_reply(
+             patch.object(pr.comments, "patch_thread_reply") as edit:
+            assert pr.thread_replies.upsert_thread_reply(
                 _thread(db_id=222), _REPO, _PR, "body", None) is True
 
         post.assert_called_once_with(_REPO, _PR, 222, "body")
@@ -309,9 +311,9 @@ class TestUpsertThreadReply:
 
     def test_a_thread_whose_root_has_no_id_is_left_alone(self):
         """The one branch no end-to-end test reaches: nothing to reply under."""
-        with patch.object(thread_replies.pc, "post_thread_reply") as post, \
-             patch.object(thread_replies.pc, "patch_thread_reply") as edit:
-            assert thread_replies.upsert_thread_reply(
+        with patch.object(pr.comments, "post_thread_reply") as post, \
+             patch.object(pr.comments, "patch_thread_reply") as edit:
+            assert pr.thread_replies.upsert_thread_reply(
                 _thread(comments=[{"author": {"login": "kgn"}}]),
                 _REPO, _PR, "body", None) is False
 
@@ -331,7 +333,7 @@ class TestWhatTheDriverReports:
         return CommentItem(id="t1", summary="s", reviewer="kgn")
 
     def _run(self, entries, threads):
-        return thread_replies._post_thread_replies(
+        return pr.thread_replies._post_thread_replies(
             entries, threads, _REPO, _PR, lambda e: "generated body")
 
     def test_editing_one_reply_reads_as_singular(self, entry, caplog):
@@ -340,11 +342,11 @@ class TestWhatTheDriverReports:
             {"databaseId": 222, "author": {"login": "me"},
              "body": "Applied: earlier"},
         ])
-        with patch.object(thread_replies.pc, "patch_thread_reply",
+        with patch.object(pr.comments, "patch_thread_reply",
                           return_value=True), \
-             patch.object(thread_replies.pc, "last_comment_is_mine",
+             patch.object(pr.comments, "last_comment_is_mine",
                           return_value=True), \
-             patch.object(thread_replies.log, "info") as info:
+             patch.object(core.log, "info") as info:
             assert self._run([entry], {"t1": thread}) == 1
 
         assert any("Edited 1 standing reply in place" in c.args[0]
@@ -357,9 +359,9 @@ class TestWhatTheDriverReports:
             {"databaseId": 222, "author": {"login": "me"},
              "body": "I disagree, and here is why"},
         ])
-        with patch.object(thread_replies.pc, "patch_thread_reply") as edit, \
-             patch.object(thread_replies.pc, "post_thread_reply") as post, \
-             patch.object(thread_replies.log, "info") as info:
+        with patch.object(pr.comments, "patch_thread_reply") as edit, \
+             patch.object(pr.comments, "post_thread_reply") as post, \
+             patch.object(core.log, "info") as info:
             assert self._run([entry], {"t1": thread}) == 0
 
         edit.assert_not_called()
@@ -369,17 +371,17 @@ class TestWhatTheDriverReports:
         assert "--reply <id> --body-file <f>" in message
 
     def test_a_thread_the_report_does_not_carry_is_skipped(self, entry):
-        with patch.object(thread_replies.pc, "post_thread_reply") as post:
+        with patch.object(pr.comments, "post_thread_reply") as post:
             assert self._run([entry], {}) == 0
         post.assert_not_called()
 
     def test_a_thread_with_no_comments_is_skipped(self, entry):
-        with patch.object(thread_replies.pc, "post_thread_reply") as post:
+        with patch.object(pr.comments, "post_thread_reply") as post:
             assert self._run([entry], {"t1": _thread(comments=[])}) == 0
         post.assert_not_called()
 
     def test_a_failed_post_does_not_count_as_replied(self, entry):
-        with patch.object(thread_replies.pc, "post_thread_reply",
+        with patch.object(pr.comments, "post_thread_reply",
                           return_value=False):
             assert self._run([entry], {"t1": _thread()}) == 0
 
@@ -406,7 +408,7 @@ class TestAReplySaysWhatWasEstablished:
             bodies.append(body)
             return True
 
-        with patch.object(thread_replies, "upsert_thread_reply", record):
+        with patch.object(pr.thread_replies, "upsert_thread_reply", record):
             yield bodies
 
     @pytest.fixture
@@ -414,9 +416,9 @@ class TestAReplySaysWhatWasEstablished:
         return {"t1": _thread()}
 
     def _post(self, entry, captured, threads):
-        thread_replies.post_fix_replies(
+        pr.thread_replies.post_fix_replies(
             [entry], threads, _REPO, _PR,
-            attribution.CommitPushResult(_SHA, CommitStatus.PUSHED, ""))
+            pr.attribution.CommitPushResult(_SHA, CommitStatus.PUSHED, ""))
         return captured[0]
 
     def test_an_unverified_fix_says_so(self, captured, threads):

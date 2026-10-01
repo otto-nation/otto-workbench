@@ -19,7 +19,7 @@ import re
 from dataclasses import replace
 from pathlib import Path
 
-from core import log
+import core.log
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.backend_events import (
     PI_RPC_EVENT_TYPES, is_write_tool, pi_run_error, pi_wrote_output,
@@ -658,7 +658,7 @@ def try_recover_output(log_path: str, output_path: str) -> bool:
         if "## " not in content:
             continue
         Path(output_path).write_text(content + "\n")
-        log.warn(f"Recovered review from the session log — saved to {output_path}")
+        core.log.warn(f"Recovered review from the session log — saved to {output_path}")
         return True
     return False
 

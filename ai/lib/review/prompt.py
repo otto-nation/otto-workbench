@@ -27,10 +27,10 @@ from enum import StrEnum
 from pathlib import Path
 import threading
 
-from git import client as git_client
+import git.client
 import json
 import os
-from core import log
+import core.log
 from core.serde import write_json
 from agent.token_count import count_tokens
 from agent.templates import build_execution_claim_guard, build_output_block
@@ -554,7 +554,7 @@ def _append_prompt_stats(stats_file: str, stats: dict) -> None:
         try:
             write_json(path, existing)
         except OSError as exc:
-            log.warn(f"{path} could not be written ({exc})")
+            core.log.warn(f"{path} could not be written ({exc})")
 
 
 def _log_prompt_size(
@@ -584,7 +584,7 @@ def _log_prompt_size(
     over_budget = prompt_bytes > budget_bytes
     if over_budget:
         msg += f" — EXCEEDS budget by {(prompt_bytes - budget_bytes) // 1024}KB"
-    log.info(msg)
+    core.log.info(msg)
 
     suffix = f"-{label}" if label else ""
     prompt_file = review_artifact_path(job.review_file, f"prompt-{template_name}{suffix}")
@@ -664,8 +664,8 @@ def _incremental_prior_ctx(job: ReviewJob, base_ctx: str) -> str:
     if not _is_incremental(job):
         return base_ctx
     pf = job.preflight
-    prior_sha = git_client.abbrev(pf.prior_head_sha)
-    head_sha = git_client.abbrev(job.pr.head_sha)
+    prior_sha = git.client.abbrev(pf.prior_head_sha)
+    head_sha = git.client.abbrev(job.pr.head_sha)
     n_files = len(pf.delta_files)
     incremental_note = (
         f"\n\n**Incremental review note:** {n_files} file(s) changed since the "

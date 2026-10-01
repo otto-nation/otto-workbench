@@ -32,8 +32,8 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
 
-from core import log
-from core import serde
+import core.log
+import core.serde
 
 
 class ThreadState(StrEnum):
@@ -99,12 +99,12 @@ class ThreadRecord:
         if isinstance(raw, cls):
             return raw
         if raw is None:
-            log.warn("thread entry is null — re-triaging it")
+            core.log.warn("thread entry is null — re-triaging it")
             return cls()
         try:
-            return serde.from_dict(cls, raw)
+            return core.serde.from_dict(cls, raw)
         except (TypeError, ValueError) as exc:
-            log.warn(f"unreadable thread entry — re-triaging it: {exc}")
+            core.log.warn(f"unreadable thread entry — re-triaging it: {exc}")
             return cls()
 
     @classmethod
@@ -146,7 +146,7 @@ def load_state(path: Path) -> CommentsState | None:
     file that is missing or whose top level will not parse, never for one whose
     threads are individually damaged.
     """
-    return serde.load_file(CommentsState, path)
+    return core.serde.load_file(CommentsState, path)
 
 
 def save_state(path: Path, state: CommentsState) -> None:
@@ -157,4 +157,4 @@ def save_state(path: Path, state: CommentsState) -> None:
     """
     stamped = dataclass_replace(
         state, last_run=datetime.now(timezone.utc).isoformat())
-    serde.write_json(path, serde.to_dict(stamped))
+    core.serde.write_json(path, core.serde.to_dict(stamped))

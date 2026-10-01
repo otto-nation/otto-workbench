@@ -39,9 +39,9 @@ from __future__ import annotations
 import importlib
 
 from cli.registry import CommandSpec
-from core import publishing
-from core import tool_parser
-from pr import context as pr_context
+import core.publishing
+import core.tool_parser
+import pr.context
 
 # The parser factory that answers "which of this command's options consume a
 # following token", per subcommand. Not a CommandSpec field: the three
@@ -63,7 +63,7 @@ PARSER_FACTORIES = {
 }
 
 
-def target_flags(ctx: pr_context.ResolvedContext, *,
+def target_flags(ctx: pr.context.ResolvedContext, *,
                  original_pr: str | None = None,
                  original_branch: str | None = None) -> list[str]:
     """The one target flag a callee is told to resolve, in priority order.
@@ -119,7 +119,7 @@ def delegate_value_flags(spec: CommandSpec) -> frozenset[str]:
     factory = PARSER_FACTORIES.get(spec.name)
     if factory is None:
         return frozenset()
-    return frozenset(tool_parser.value_taking_options(resolve(factory)()))
+    return frozenset(core.tool_parser.value_taking_options(resolve(factory)()))
 
 
 def positional_index(extra: list[str], value_flags: frozenset[str]) -> int:
@@ -173,7 +173,7 @@ def resolve(handler: str):
 
 
 def delegate_argv(spec: CommandSpec, argv: list[str],
-                  ctx: pr_context.ResolvedContext, *,
+                  ctx: pr.context.ResolvedContext, *,
                   original_pr: str | None = None,
                   original_branch: str | None = None) -> list[str]:
     """The argv a delegate is called with, context flags injected.

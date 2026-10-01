@@ -10,13 +10,13 @@ a refusal, or an abort that leaves the branch where it started.
 
 from __future__ import annotations
 
-from agent import backend as ai_backend
-from core import log
+import agent.backend
+import core.log
 from core.proc import CmdResult
 from core.trail import Trail, tdecision, terr, tfail, tinfo, tspan
-from git import client as git_client
-from git import topology as git_topology
-from pr import context as pr_context
+import git.client
+import git.topology
+import pr.context
 from pr.domains import RebaseStatus
 
 from . import inspect as rebase_inspect
@@ -50,7 +50,7 @@ RERERE_CONFIG = rebase_types.RERERE_CONFIG
 # `--autosquash` a `squash!` commit asks for the combined message *during* the
 # initial replay, and without this the run halts there with "there was a problem
 # with the editor". A `fixup!` never asks, which is why the gap stayed hidden.
-UNATTENDED_CONFIG = {"core.editor": git_client.NO_EDITOR}
+UNATTENDED_CONFIG = {"core.editor": git.client.NO_EDITOR}
 
 REBASE_CONFIG = {**RERERE_CONFIG, **UNATTENDED_CONFIG}
 
@@ -63,19 +63,19 @@ REBASE_CONFIG = {**RERERE_CONFIG, **UNATTENDED_CONFIG}
 # every child that may reach git without this process choosing the argv, and an
 # AI agent holding a shell is the other one. Two copies of the variable list
 # would be two places for the next variable to be added to only one of.
-unattended_env = git_client.unattended_env
+unattended_env = git.client.unattended_env
 
 
 def rebase_continue(cwd: str) -> CmdResult:
     """Continue the rebase without stopping for a commit message."""
-    return git_client.run(
+    return git.client.run(
         "rebase", "--continue", cwd=cwd, config=REBASE_CONFIG,
         env=unattended_env(),
     )
 
 
 def drive_to_completion(
-    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode, *,
+    cwd: str, ctx: pr.context.ResolvedContext, mode: RunMode, *,
     target_ref: str, force: bool = False,
     tally: ResolutionTally | None = None,
     lease: rebase_lease.PushLease | None = None,
@@ -115,7 +115,7 @@ def drive_to_completion(
 
 
 def _drive_loop(
-    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode, *,
+    cwd: str, ctx: pr.context.ResolvedContext, mode: RunMode, *,
     target_ref: str, force: bool = False,
     tally: ResolutionTally | None = None,
     lease: rebase_lease.PushLease | None = None,
@@ -142,7 +142,7 @@ def _drive_loop(
     terr(trail, "drive_to_completion",
          f"rebase did not complete after {MAX_REBASE_STEPS} steps",
          data={"files_resolved": tally.files, "commits": tally.commits})
-    log.error(f"Rebase did not complete after {MAX_REBASE_STEPS} steps — aborting.")
+    core.log.error(f"Rebase did not complete after {MAX_REBASE_STEPS} steps — aborting.")
     # Recorded before the abort, which is what destroys the evidence. A runaway
     # loop is the one place an abort is still right — something is cycling and
     # leaving it half-replayed helps nobody — but the run must not also be
@@ -154,12 +154,12 @@ def _drive_loop(
         files_stale=tally.stale,
         target_base=target_ref,
     ).save(ctx)
-    git_client.run("rebase", "--abort", cwd=cwd)
+    git.client.run("rebase", "--abort", cwd=cwd)
     return 1
 
 
 def _drive_one_step(
-    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
+    cwd: str, ctx: pr.context.ResolvedContext, mode: RunMode,
     tally: ResolutionTally, *, target_ref: str, force: bool = False,
     trail: Trail | None = None,
 ) -> tuple[int | None, bool]:
@@ -179,7 +179,7 @@ def _drive_one_step(
 
 
 def _report_conflicts_and_stop(
-    cwd: str, ctx: pr_context.ResolvedContext, *, target_ref: str,
+    cwd: str, ctx: pr.context.ResolvedContext, *, target_ref: str,
     tally: ResolutionTally | None = None,
 ) -> int:
     """Persist status=conflicts, emit the report, and return the conflicts exit code.
@@ -231,7 +231,7 @@ def _over_budget(
 
 
 def _record_failed(
-    ctx: pr_context.ResolvedContext, tally: ResolutionTally, *, target_ref: str,
+    ctx: pr.context.ResolvedContext, tally: ResolutionTally, *, target_ref: str,
 ) -> None:
     """Persist what a failed run resolved before it stopped.
 
@@ -249,7 +249,7 @@ def _record_failed(
 
 
 def _halt_unresolved(
-    cwd: str, ctx: pr_context.ResolvedContext, unresolved: list[str],
+    cwd: str, ctx: pr.context.ResolvedContext, unresolved: list[str],
     tally: ResolutionTally, *, target_ref: str, trail: Trail | None = None,
 ) -> int:
     """Stop on files the AI could not resolve — without aborting the rebase.
@@ -268,12 +268,12 @@ def _halt_unresolved(
     terr(trail, "resolve_conflicts",
          f"{len(unresolved)} file(s) could not be resolved",
          data={"unresolved": unresolved, "resolved": tally.files})
-    log.error(f"Could not resolve {len(unresolved)} file(s): "
+    core.log.error(f"Could not resolve {len(unresolved)} file(s): "
               f"{', '.join(unresolved)}")
     if tally.files:
-        log.ok(f"Kept {len(tally.files)} resolution(s) already made — "
+        core.log.ok(f"Kept {len(tally.files)} resolution(s) already made — "
                "the rebase is paused, not aborted.")
-    log.dim("Resolve the listed files by hand and re-run `pr rebase --fix` to "
+    core.log.dim("Resolve the listed files by hand and re-run `pr rebase --fix` to "
             "continue, or `pr rebase --abort` to throw the whole replay away.")
     return _report_conflicts_and_stop(
         cwd, ctx, target_ref=target_ref, tally=tally,
@@ -281,7 +281,7 @@ def _halt_unresolved(
 
 
 def step_conflicts(
-    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
+    cwd: str, ctx: pr.context.ResolvedContext, mode: RunMode,
     conflicts: list[str], tally: ResolutionTally, *,
     target_ref: str, force: bool = False, trail: Trail | None = None,
 ) -> int | None:
@@ -291,9 +291,9 @@ def step_conflicts(
             cwd, ctx, target_ref=target_ref, tally=tally,
         )
 
-    if not ai_backend.is_available():
+    if not agent.backend.is_available():
         terr(trail, "resolve_conflicts", "AI backend unavailable")
-        log.error("Cannot resolve conflicts — AI backend unavailable.")
+        core.log.error("Cannot resolve conflicts — AI backend unavailable.")
         return _report_conflicts_and_stop(
             cwd, ctx, target_ref=target_ref, tally=tally,
         )
@@ -308,7 +308,7 @@ def step_conflicts(
     sha, subject = rebase_inspect.rebase_head_info(cwd)
     remaining = rebase_inspect.remaining_rebase_commits(cwd)
 
-    log.info(
+    core.log.info(
         f"Resolving {len(conflicts)} conflict(s) in {sha} — {subject} "
         f"({remaining} remaining)..."
     )
@@ -328,15 +328,15 @@ def step_conflicts(
         )
 
     # Stage any remaining unstaged changes from post-resolution fixups (e.g. go mod tidy)
-    if git_client.lines("diff", "--name-only", cwd=cwd):
-        git_client.run("add", "-u", cwd=cwd)
+    if git.client.lines("diff", "--name-only", cwd=cwd):
+        git.client.run("add", "-u", cwd=cwd)
 
     r = rebase_continue(cwd)
     if r.ok:
         return None
 
     if r.stderr.strip():
-        log.dim(r.stderr.strip())
+        core.log.dim(r.stderr.strip())
 
     # rebase --continue returns non-zero when the current commit is applied
     # but the *next* commit has conflicts — that's normal, not a failure.
@@ -351,13 +351,13 @@ def step_conflicts(
     tfail(trail, "step_conflicts", "rebase --continue failed after resolution",
            output=r.combined_output,
            data={"files_resolved": tally.files})
-    log.error("rebase --continue failed after conflict resolution.")
+    core.log.error("rebase --continue failed after conflict resolution.")
     _record_failed(ctx, tally, target_ref=target_ref)
     return 1
 
 
 def step_advance(
-    cwd: str, ctx: pr_context.ResolvedContext,
+    cwd: str, ctx: pr.context.ResolvedContext,
     tally: ResolutionTally | None = None, *,
     target_ref: str, trail: Trail | None = None,
 ) -> int | None:
@@ -365,7 +365,7 @@ def step_advance(
     tally = tally if tally is not None else ResolutionTally()
     if rebase_inspect.is_empty_patch(cwd):
         sha, subject = rebase_inspect.rebase_head_info(cwd)
-        log.info(f"Skipping empty commit {sha} — {subject}")
+        core.log.info(f"Skipping empty commit {sha} — {subject}")
         tdecision(
             trail, "step", f"skipping empty commit {sha}",
             reason="patch already applied upstream",
@@ -379,12 +379,12 @@ def step_advance(
         # Carries the same config as the other two: --skip drops the current
         # commit and goes straight on to apply the next, so the merges it runs
         # are as able to replay a recorded resolution as any other step's.
-        r = git_client.run(
+        r = git.client.run(
             "rebase", "--skip", cwd=cwd, config=REBASE_CONFIG,
             env=unattended_env(),
         )
         if not r.ok:
-            log.error(f"git rebase --skip failed (exit {r.returncode})")
+            core.log.error(f"git rebase --skip failed (exit {r.returncode})")
             return 1
         return None
 
@@ -393,7 +393,7 @@ def step_advance(
         return None
 
     if r.stderr.strip():
-        log.dim(r.stderr.strip())
+        core.log.dim(r.stderr.strip())
 
     # rebase --continue can return non-zero when the next commit has conflicts
     if rebase_inspect.rebase_in_progress(cwd):
@@ -402,7 +402,7 @@ def step_advance(
     tfail(trail, "step_advance", "rebase --continue failed without conflicts",
            output=r.combined_output,
            data={"exit_code": r.returncode, "files_resolved": tally.files})
-    log.error("rebase --continue failed without conflicts.")
+    core.log.error("rebase --continue failed without conflicts.")
     _record_failed(ctx, tally, target_ref=target_ref)
     return 1
 
@@ -416,17 +416,17 @@ def _resolved_fork_point(cwd: str, fork_point: str) -> str:
     HEAD silently replays a different set of commits than the operator asked
     for, which git reports as success.
     """
-    sha = git_client.out("rev-parse", "--verify", f"{fork_point}^{{commit}}",
+    sha = git.client.out("rev-parse", "--verify", f"{fork_point}^{{commit}}",
                          cwd=cwd)
     if not sha:
         return ""
-    if not git_client.ok("merge-base", "--is-ancestor", sha, "HEAD", cwd=cwd):
+    if not git.client.ok("merge-base", "--is-ancestor", sha, "HEAD", cwd=cwd):
         return ""
     return sha
 
 
 def fresh(
-    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
+    cwd: str, ctx: pr.context.ResolvedContext, mode: RunMode,
     force: bool = False, *, target_ref: str, fork_point: str = "",
     snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
@@ -442,10 +442,10 @@ def fresh(
     before this parameter existed the tool could not express the fix it was
     recommending.
     """
-    default = git_topology.default_branch(cwd)
+    default = git.topology.default_branch(cwd)
     if ctx.branch == default:
         terr(trail, "preflight", f"on protected branch {ctx.branch}")
-        log.error("Cannot rebase — currently on protected branch.")
+        core.log.error("Cannot rebase — currently on protected branch.")
         return 1
 
     # Before the fetch, which is the whole point: this is the remote tip as we
@@ -454,16 +454,16 @@ def fresh(
     # colleague's push be overwritten by the replay — see `rebase.lease`.
     remembered = rebase_lease.remembered_tip(cwd, ctx.branch)
 
-    log.info("Fetching origin...")
+    core.log.info("Fetching origin...")
     # --prune is defense in depth behind the already-landed preflight, not a
     # substitute for it: dropping the remote-tracking ref of a branch deleted
     # on merge is what tells the lease the branch is gone, rather than leaving
     # a stale tracking ref to name in an expect that would recreate it.
-    fetch = git_client.run("fetch", "--prune", "origin", cwd=cwd)
+    fetch = git.client.run("fetch", "--prune", "origin", cwd=cwd)
     if not fetch.ok:
-        log.warn(f"Fetch failed — rebasing against potentially stale {target_ref}.")
+        core.log.warn(f"Fetch failed — rebasing against potentially stale {target_ref}.")
         if fetch.stderr.strip():
-            log.dim(fetch.stderr.strip())
+            core.log.dim(fetch.stderr.strip())
 
     # Resolved here, between the fetch and the replay: the prune above is what
     # settles whether the remote still has the branch, which is the question
@@ -490,10 +490,10 @@ def fresh(
         # origin/<default> hard-resets the branch out from under it.
         if ctx.current_branch == default:
             terr(trail, "preflight", f"refusing to check out {ctx.branch} into the {display} worktree")
-            log.error(f"Refusing to check out {ctx.branch} into the {display} worktree.")
-            log.dim(f"Run 'wt switch {ctx.branch}' and retry with --repo-dir on that worktree.")
+            core.log.error(f"Refusing to check out {ctx.branch} into the {display} worktree.")
+            core.log.dim(f"Run 'wt switch {ctx.branch}' and retry with --repo-dir on that worktree.")
             return 1
-        log.info(f"Worktree on {display}, checking out {ctx.branch}...")
+        core.log.info(f"Worktree on {display}, checking out {ctx.branch}...")
         rc = rebase_target.checkout_target_branch(cwd, ctx, trail=trail)
         if rc != 0:
             return rc
@@ -530,9 +530,9 @@ def fresh(
         replay_from = _resolved_fork_point(cwd, fork_point)
         if not replay_from:
             terr(trail, "preflight", f"unusable fork point {fork_point}")
-            log.error(f"Cannot replay from {fork_point} — it is not a commit "
+            core.log.error(f"Cannot replay from {fork_point} — it is not a commit "
                       f"on {ctx.branch}.")
-            log.dim("Pass a commit the branch descends from; the "
+            core.log.dim("Pass a commit the branch descends from; the "
                     "partially-landed refusal names the one to use.")
             return 1
         tdecision(
@@ -540,9 +540,9 @@ def fresh(
             reason=f"{refusals.FORK_POINT_FLAG} {fork_point}",
             data={"fork_point": replay_from, "requested": fork_point},
         )
-        log.info(f"Replaying only the commits after {replay_from[:8]}.")
+        core.log.info(f"Replaying only the commits after {replay_from[:8]}.")
 
-    log.info(f"Rebasing onto {target_ref}...")
+    core.log.info(f"Rebasing onto {target_ref}...")
     # --autosquash unconditionally: it acts only on commits whose subject starts
     # with `fixup!` or `squash!`, which is a marker the author wrote to say
     # "fold this into that one". Honouring it replays fewer commits and drops a
@@ -560,7 +560,7 @@ def fresh(
     replay = (
         ["--onto", target_ref, replay_from] if replay_from else [target_ref]
     )
-    r = git_client.run(
+    r = git.client.run(
         "rebase", "--autosquash", *replay, cwd=cwd, config=REBASE_CONFIG,
         env=unattended_env(),
     )
@@ -577,9 +577,9 @@ def fresh(
 
     if not rebase_inspect.rebase_in_progress(cwd):
         tfail(trail, "rebase", f"git rebase failed (exit {r.returncode})", output=r.combined_output)
-        log.error(f"git rebase failed (exit {r.returncode})")
+        core.log.error(f"git rebase failed (exit {r.returncode})")
         if r.stderr.strip():
-            log.dim(r.stderr.strip())
+            core.log.dim(r.stderr.strip())
         return 1
 
     return drive_to_completion(
@@ -589,7 +589,7 @@ def fresh(
 
 
 def rebase_success(
-    cwd: str, ctx: pr_context.ResolvedContext, mode: RunMode,
+    cwd: str, ctx: pr.context.ResolvedContext, mode: RunMode,
     tally: ResolutionTally | None = None, *, target_ref: str,
     lease: rebase_lease.PushLease | None = None,
     snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
@@ -600,7 +600,7 @@ def rebase_success(
 
     # Counted before the push: its recovery paths add regeneration and
     # check-fix commits, which were never replayed from the old branch.
-    replayed = git_client.commits_ahead(cwd, target_ref=target_ref)
+    replayed = git.client.commits_ahead(cwd, target_ref=target_ref)
 
     # RunMode.PUSH lands from main() via cmd_push; every other mode lands here.
     # A mode that does not reach the remote still lands, because the publishing
@@ -621,8 +621,8 @@ def rebase_success(
         # recoverable; a wrong lease would not be.
         terr(trail, "force_push", "no lease could be named for the push",
              data={"branch": ctx.branch})
-        log.error("Refusing to force-push — cannot tell what the remote was at.")
-        log.dim("The rebase is complete in the worktree. Push it by hand after "
+        core.log.error("Refusing to force-push — cannot tell what the remote was at.")
+        core.log.dim("The rebase is complete in the worktree. Push it by hand after "
                 "checking what origin holds.")
         RebaseOutcome(
             commits_replayed=replayed,
@@ -640,7 +640,7 @@ def rebase_success(
         # same thing once at the end, through the label and the resume line.
         if mode.reaches_remote:
             rebase_pr_snapshot.name_the_open_pr(snapshot, trail=trail)
-            log.info(f"{label} — force-pushing...")
+            core.log.info(f"{label} — force-pushing...")
         # Deduplicated: this is the candidate set the pre-push repair matches a
         # failing hook's output against, and a file conflicting in several
         # replayed commits is listed once per commit in the tally.
@@ -674,17 +674,17 @@ def rebase_success(
 
     if landed is not None and not landed.held:
         if landed.ok:
-            log.ok("Force-pushed.")
+            core.log.ok("Force-pushed.")
             return 0
-        log.error("Force-push failed.")
+        core.log.error("Force-push failed.")
         return 1
 
     # The label holds in every mode that reaches here — the rebase finished.
     # Under FIX_ONLY the AI's work is the whole point of the run and the user is
     # about to push it by hand, so name it rather than reporting a bare "clean".
-    log.ok(label)
+    core.log.ok(label)
     if landed is not None:
-        log.ok(f"Run `{landed.resume}` to push, or re-run without --no-push.")
+        core.log.ok(f"Run `{landed.resume}` to push, or re-run without --no-push.")
     return 0
 
 

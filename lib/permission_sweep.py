@@ -62,7 +62,7 @@ for _path in (_LIB_DIR, os.path.join(_WORKBENCH_DIR, 'ai', 'lib')):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-from config import workbench_projects  # noqa: E402
+import config.workbench_projects  # noqa: E402
 from ansi import BOLD, CYAN, DIM, GREEN, NC, RED, YELLOW  # noqa: E402
 from permissions import (  # noqa: E402
     Drift, Grant, Settings, TrackedRules,
@@ -364,7 +364,7 @@ def main(argv: list[str] | None = None) -> int:
                         help='List every grant, not just the per-file counts')
     args = parser.parse_args(argv)
 
-    repos = [str(p) for p in workbench_projects.registered()]
+    repos = [str(p) for p in config.workbench_projects.registered()]
     if not repos:
         print('No repos registered yet — one joins the list the first time a workbench '
               'command runs in it')

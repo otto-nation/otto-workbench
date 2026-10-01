@@ -13,7 +13,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from core.proc import CmdResult
-from gh import pr_reads
+import gh.pr_reads
 from gh.pr_reads import (
     PRData, fetch_pr_data, fetch_review_threads, warn_if_truncated,
     GQL_MAX_THREAD_PAGES, GQL_THREAD_COMMENTS_LIMIT, GQL_THREAD_REFETCH_LIMIT,
@@ -610,12 +610,12 @@ class TestPageSizes:
         """
         assert GQL_THREAD_REFETCH_LIMIT > GQL_THREAD_COMMENTS_LIMIT
         assert f"comments(first: {GQL_THREAD_REFETCH_LIMIT}, after: $endCursor)" \
-            in pr_reads._THREAD_COMMENTS_QUERY
+            in gh.pr_reads._THREAD_COMMENTS_QUERY
 
     def test_the_nested_read_is_the_small_page(self):
         """The control: the connection inside `reviewThreads` stays cheap."""
         assert f"comments(first: {GQL_THREAD_COMMENTS_LIMIT})" \
-            in pr_reads._THREAD_NODE_FIELDS
+            in gh.pr_reads._THREAD_NODE_FIELDS
 
 
 # ── Truncation detection ────────────────────────────────────────────

@@ -25,14 +25,14 @@ import json
 import sys
 from pathlib import Path
 
-from gh import client as gh_client
-from git import client as git_client
-from core import log
-from core import prompt
+import gh.client
+import git.client
+import core.log
+import core.prompt
 from core.trail import Trail
-from pr import domains as pr_domains
-from pr import supersession
-from review import recover as review_recover
+import pr.domains
+import pr.supersession
+import review.recover
 from review.collect import base_ref, fetch_base
 from review.state import read_pipeline_status
 
@@ -41,8 +41,8 @@ def check_pending_review(repo: str, pr_number: str, force: bool) -> None:
     if force:
         return
 
-    gh_user = gh_client.login()
-    pending = gh_client.api_json(
+    gh_user = gh.client.login()
+    pending = gh.client.api_json(
         f"repos/{repo}/pulls/{pr_number}/reviews",
         jq=f'[.[] | select(.user.login == "{gh_user}" and .state == "PENDING")] | first // empty',
     )
@@ -53,22 +53,22 @@ def check_pending_review(repo: str, pr_number: str, force: bool) -> None:
     if pending_id is None:
         return
 
-    comment_count = gh_client.api(
+    comment_count = gh.client.api(
         f"repos/{repo}/pulls/{pr_number}/reviews/{pending_id}/comments", jq="length",
     ).stdout.strip() or "0"
 
-    log.warn(f"PENDING review exists with {comment_count} comments (not yet submitted)")
-    if not prompt.confirm("Delete the pending review before re-reviewing?"):
-        log.info("Keeping pending review — new review will replace it at post time")
+    core.log.warn(f"PENDING review exists with {comment_count} comments (not yet submitted)")
+    if not core.prompt.confirm("Delete the pending review before re-reviewing?"):
+        core.log.info("Keeping pending review — new review will replace it at post time")
         return
 
-    deleted = gh_client.api(
+    deleted = gh.client.api(
         f"repos/{repo}/pulls/{pr_number}/reviews/{pending_id}", method="DELETE",
     )
     if deleted.ok:
-        log.info("Deleted pending review")
+        core.log.info("Deleted pending review")
     else:
-        log.warn("Could not delete the pending review — it will be replaced at post time")
+        core.log.warn("Could not delete the pending review — it will be replaced at post time")
 
 
 def check_stale_review(repo: str, pr_number: str, review_file: Path, force: bool) -> None:
@@ -77,30 +77,30 @@ def check_stale_review(repo: str, pr_number: str, review_file: Path, force: bool
     if not review_file.is_file():
         return
 
-    review_sha = review_recover.read_review_sha(review_file)
+    review_sha = review.recover.read_review_sha(review_file)
     if not review_sha:
         return
-    pr_head_sha = review_recover.get_pr_head_sha(repo, pr_number)
+    pr_head_sha = review.recover.get_pr_head_sha(repo, pr_number)
     if not pr_head_sha:
         return
 
     if review_sha == pr_head_sha:
         review_dir = review_file.parent
         pipeline_status = read_pipeline_status(review_dir)
-        if pipeline_status in (pr_domains.ReviewStatus.PARTIAL.value, pr_domains.ReviewStatus.ERROR.value):
-            log.info(
+        if pipeline_status in (pr.domains.ReviewStatus.PARTIAL.value, pr.domains.ReviewStatus.ERROR.value):
+            core.log.info(
                 "Recovering failed review agents "
-                f"(HEAD unchanged at {git_client.abbrev(pr_head_sha)})")
+                f"(HEAD unchanged at {git.client.abbrev(pr_head_sha)})")
             return
 
-        log.warn(
-            f"No new commits since the last review (HEAD {git_client.abbrev(pr_head_sha)})")
-        if not prompt.confirm("Re-review anyway?"):
+        core.log.warn(
+            f"No new commits since the last review (HEAD {git.client.abbrev(pr_head_sha)})")
+        if not core.prompt.confirm("Re-review anyway?"):
             sys.exit(0)
     else:
-        log.info(
+        core.log.info(
             "Incremental review: new commits since last review "
-            f"({git_client.abbrev(review_sha)}..{git_client.abbrev(pr_head_sha)})")
+            f"({git.client.abbrev(review_sha)}..{git.client.abbrev(pr_head_sha)})")
 
 
 def refuse_unresolvable_base(wt_path: str, override: str, *, trail: Trail) -> None:
@@ -135,11 +135,11 @@ def refuse_unresolvable_base(wt_path: str, override: str, *, trail: Trail) -> No
         return
     base = override
 
-    log.error(f"Refusing to review against {base!r} — no such branch.")
-    log.dim(f"Neither origin/{base} nor a local {base} resolves to a commit in "
+    core.log.error(f"Refusing to review against {base!r} — no such branch.")
+    core.log.dim(f"Neither origin/{base} nor a local {base} resolves to a commit in "
             f"this worktree, so every range would be empty and the review "
             f"would report no findings for a branch it never read.")
-    log.dim("Check the spelling, or drop --base to derive the branch's own base.")
+    core.log.dim("Check the spelling, or drop --base to derive the branch's own base.")
     trail.decision(
         "unresolvable_base",
         f"refused review — {base!r} names no ref",
@@ -198,19 +198,19 @@ def refuse_if_superseded(
     """
     if override:
         return
-    verdict = supersession.detect_cached(
+    verdict = pr.supersession.detect_cached(
         Path(wt_path), repo, target_dir,
         base=base_ref(wt_path, base) if base else "",
         trail=trail,
     )
-    supersession.report(verdict)
+    pr.supersession.report(verdict)
     if not verdict.superseded:
         return
 
-    log.error(f"Refusing to review {branch} — it may already be superseded.")
-    log.dim("Reviewing a branch that re-adds code the default branch removed "
+    core.log.error(f"Refusing to review {branch} — it may already be superseded.")
+    core.log.dim("Reviewing a branch that re-adds code the default branch removed "
             "produces findings about code that should not exist.")
-    log.dim(f"Pass {supersession.OVERRIDE_FLAG} to review it anyway.")
+    core.log.dim(f"Pass {pr.supersession.OVERRIDE_FLAG} to review it anyway.")
     trail.decision(
         "supersession_refusal",
         f"refused review — {len(verdict.holding)} supersession signal(s)",
@@ -224,7 +224,7 @@ def refuse_if_superseded(
             {"kind": s.kind, "detail": s.detail, "holds": s.holds}
             for s in verdict.signals
         ],
-        "override": supersession.OVERRIDE_FLAG,
+        "override": pr.supersession.OVERRIDE_FLAG,
     }, sys.stdout, indent=2)
     print()
-    sys.exit(supersession.EXIT_SUPERSEDED)
+    sys.exit(pr.supersession.EXIT_SUPERSEDED)

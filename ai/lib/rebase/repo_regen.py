@@ -16,13 +16,13 @@ import shutil
 from functools import cache
 from pathlib import Path
 
-from config import workbench_config
-from core import timeouts
-from git import client as git_client
-from git import regenerate as regen
+import config.workbench_config
+import core.timeouts
+import git.client
+import git.regenerate
 
-Regenerator = regen.Regenerator
-RegenQueue = regen.RegenQueue
+Regenerator = git.regenerate.Regenerator
+RegenQueue = git.regenerate.RegenQueue
 
 # The conventional task name for "rebuild everything this repo generates".
 # Used when a repo declares no `rebase.regenerate`, which is most of them.
@@ -43,9 +43,9 @@ def mise_has_task(root: str, task: str) -> bool:
     """
     if not shutil.which("mise"):
         return False
-    r = regen.try_run(
+    r = git.regenerate.try_run(
         ["mise", "tasks", "ls", "--no-header"],
-        cwd=root, timeout=timeouts.QUICK,
+        cwd=root, timeout=core.timeouts.QUICK,
     )
     if r is None or r.returncode != 0:
         return False
@@ -55,7 +55,7 @@ def mise_has_task(root: str, task: str) -> bool:
 @cache
 def repo_root(cwd: str) -> str:
     """The toplevel of the repo `cwd` sits in, falling back to `cwd` itself."""
-    return git_client.out("rev-parse", "--show-toplevel", cwd=cwd) or cwd
+    return git.client.out("rev-parse", "--show-toplevel", cwd=cwd) or cwd
 
 
 @cache
@@ -74,7 +74,7 @@ def repo_regenerators(cwd: str) -> tuple[Regenerator, ...]:
     """
     root = repo_root(cwd)
 
-    declared = workbench_config.load_config_or_default(root).rebase.regenerate
+    declared = config.workbench_config.load_config_or_default(root).rebase.regenerate
     if declared:
         return tuple(Regenerator(tuple(shlex.split(cmd))) for cmd in declared)
 

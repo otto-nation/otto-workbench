@@ -21,8 +21,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from core import markdown
-from git import client as git_client
+import core.markdown
+import git.client
 from pr.fix import ItemOutcome
 from pr.target import forge_base_url
 from pr.thread_models import THREAD_ANCHOR, CommentItem, CommentSourceKind, ReportThread
@@ -95,7 +95,7 @@ def anchored_line(
         return line
     if not wt_path:
         return 0
-    unchanged = git_client.ok(
+    unchanged = git.client.ok(
         "diff", "--quiet", read_sha, sha, "--", filepath, cwd=wt_path)
     return line if unchanged else 0
 
@@ -286,6 +286,6 @@ def thread_cell(
     other empty cell uses: an empty cell reads as a table bug, a dash reads as
     nothing to say.
     """
-    summary = markdown.escape_cell(entry.summary or "—")
+    summary = core.markdown.escape_cell(entry.summary or "—")
     url = thread_permalink(entry, threads_by_id, repo, pr_number, host)
     return f"[{summary}]({url})" if url else summary

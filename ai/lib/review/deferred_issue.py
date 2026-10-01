@@ -26,21 +26,21 @@ dependency between that surface and this one.
 from __future__ import annotations
 
 
-from config import workbench_config
+import config.workbench_config
 from config.workbench_config import IssueProvider
-from core import log
-from core import markdown
-from core import publishing
+import core.log
+import core.markdown
+import core.publishing
 from core.trail import Trail
-from pr import context as pr_context
-from pr import follow_ups as pr_follow_ups
-from pr import permalinks
-from pr import state as pr_state
-from pr import target as pr_target
-from pr import thread_replies
+import pr.context
+import pr.follow_ups
+import pr.permalinks
+import pr.state
+import pr.target
+import pr.thread_replies
 from pr.fix import FixOutcome
 from pr.thread_models import CommentItem, ReportThread
-from review import issue as review_issue
+import review.issue
 from review.issue import CreatedIssue, IssueDelivery, IssueResult
 
 # The columns of the tracking issue's table. Three, not the summary comment's
@@ -81,7 +81,7 @@ TRACK_ALL = TrackAll()
 FILABLE_OUTCOMES = (FixOutcome.DEFERRED, FixOutcome.NEEDS_HUMAN)
 
 
-def deferred_outcomes(state: pr_state.PRState) -> list:
+def deferred_outcomes(state: pr.state.PRState) -> list:
     """Every outcome that left a thread outstanding, whatever became of it since.
 
     One reading of the record for the three questions asked of it — which
@@ -93,7 +93,7 @@ def deferred_outcomes(state: pr_state.PRState) -> list:
     return [o for o in state.fix.fix.items if o.outcome in FILABLE_OUTCOMES]
 
 
-def validate_track(state: pr_state.PRState, track) -> bool:
+def validate_track(state: pr.state.PRState, track) -> bool:
     """False once it has said that --track named a thread that is not deferred.
 
     A typo'd id would otherwise be indistinguishable from a thread the tool
@@ -115,13 +115,13 @@ def validate_track(state: pr_state.PRState, track) -> bool:
     unknown = set(track) - {o.id for o in deferred_outcomes(state)}
     if not unknown:
         return True
-    log.error(f"--track named threads that are not outstanding: {sorted(unknown)}")
+    core.log.error(f"--track named threads that are not outstanding: {sorted(unknown)}")
     return False
 
 
 def finalize_deferred(
-    state: pr_state.PRState,
-    ctx: pr_context.ResolvedContext,
+    state: pr.state.PRState,
+    ctx: pr.context.ResolvedContext,
     threads_by_id: dict,
     trail: Trail | None = None,
     *,
@@ -182,7 +182,7 @@ def finalize_deferred(
     issue = result.issue
 
     if issue.id:
-        thread_replies.post_deferred_replies(
+        pr.thread_replies.post_deferred_replies(
             deferred, threads_by_id, ctx.repo, ctx.pr_number,
             issue.id, issue.url, ctx.require_worktree(), ctx.host,
             # A CommentItem is built from an outcome and does not carry one, so
@@ -205,8 +205,8 @@ def finalize_deferred(
 
 
 def _record_in_ledger(
-    state: pr_state.PRState,
-    ctx: pr_context.ResolvedContext,
+    state: pr.state.PRState,
+    ctx: pr.context.ResolvedContext,
     issue,
     thread_count: int,
     trail: Trail | None,
@@ -229,33 +229,33 @@ def _record_in_ledger(
     # worktree falls back to the machine-wide scope, which is the same answer
     # the filing itself just used.
     wt = str(ctx.worktree_root) if ctx.worktree_root else None
-    provider = review_issue.load_issue_provider(wt).name
+    provider = review.issue.load_issue_provider(wt).name
     try:
-        ref = pr_follow_ups.IssueRef(
+        ref = pr.follow_ups.IssueRef(
             provider=IssueProvider(provider), id=issue.id, url=issue.url,
         )
     except ValueError:
         # An unconfigured or unknown tracker filed nothing we can name. The
         # issue exists either way, so the omission is reported rather than
         # raised past a filing that already happened.
-        log.warn(f"not recording follow-up {issue.id}: unknown provider {provider!r}")
+        core.log.warn(f"not recording follow-up {issue.id}: unknown provider {provider!r}")
         return
-    entry = pr_follow_ups.FollowUp(
+    entry = pr.follow_ups.FollowUp(
         ref=ref,
         title=f"deferred review comments — PR #{ctx.pr_number}",
-        source=pr_follow_ups.FollowUpSource.PR_COMMENTS,
-        filed_at=pr_state.now_iso(),
+        source=pr.follow_ups.FollowUpSource.PR_COMMENTS,
+        filed_at=pr.state.now_iso(),
         head_sha=state.identity.head_sha,
         invocation=trail.invocation if trail else "",
         trail_root=trail.root if trail else "",
         reason=f"{thread_count} review thread(s) deferred rather than fixed",
     )
-    pr_state.apply(state, pr_follow_ups.FollowUpDomain(
-        entries=[entry], updated_at=pr_state.now_iso(),
+    pr.state.apply(state, pr.follow_ups.FollowUpDomain(
+        entries=[entry], updated_at=pr.state.now_iso(),
     ))
 
 
-def report_unfiled_deferrals(state: pr_state.PRState, track) -> None:
+def report_unfiled_deferrals(state: pr.state.PRState, track) -> None:
     """Name the deferrals nobody asked to file, so the omission is visible.
 
     Filing nothing is the correct default, but a silent nothing reads as "there
@@ -272,7 +272,7 @@ def report_unfiled_deferrals(state: pr_state.PRState, track) -> None:
     still = [o for o in deferred_outcomes(state) if o.id not in track]
     if not still:
         return
-    log.info(
+    core.log.info(
         f"{len(still)} deferred thread(s) not filed — pass --track <id> for "
         f"each one to track, or --track-all: {', '.join(o.id for o in still)}"
     )
@@ -298,19 +298,19 @@ def build_deferred_issue_body(
     cells too, so a row's link and the heading above it name the same forge —
     an issue mixing the two would send a reader to a host the repo is not on.
     """
-    pr_url = f"{pr_target.forge_base_url(host)}/{repo}/pull/{pr_number}"
+    pr_url = f"{pr.target.forge_base_url(host)}/{repo}/pull/{pr_number}"
     parts = [
         f"## Deferred Review Comments — [PR #{pr_number}]({pr_url})",
         "",
-        markdown.render_row(list(_TABLE_COLUMNS)),
-        markdown.table_divider(len(_TABLE_COLUMNS)),
+        core.markdown.render_row(list(_TABLE_COLUMNS)),
+        core.markdown.table_divider(len(_TABLE_COLUMNS)),
     ]
     for entry in deferred:
         file_cell = f"`{entry.file}:{entry.line}`" if entry.file else "—"
-        parts.append(markdown.render_row([
-            permalinks.thread_cell(entry, threads_by_id, repo, pr_number, host),
+        parts.append(core.markdown.render_row([
+            pr.permalinks.thread_cell(entry, threads_by_id, repo, pr_number, host),
             file_cell,
-            markdown.escape_cell(entry.reason or "—"),
+            core.markdown.escape_cell(entry.reason or "—"),
         ]))
     parts.append("")
     return "\n".join(parts)
@@ -325,11 +325,11 @@ def update_deferred_issue(
     than missing, so the deferred threads still have the home the closeout debt
     exists to insist on.
     """
-    ok = review_issue.update_issue(provider, issue_id, body, repo=repo, opts=opts)
+    ok = review.issue.update_issue(provider, issue_id, body, repo=repo, opts=opts)
     if not ok:
-        log.error(f"Failed to update deferred issue {issue_id}")
+        core.log.error(f"Failed to update deferred issue {issue_id}")
         return IssueResult(IssueDelivery.FILED, CreatedIssue(id=issue_id))
-    url = review_issue.get_issue_url(provider, issue_id)
+    url = review.issue.get_issue_url(provider, issue_id)
     return IssueResult(IssueDelivery.FILED, CreatedIssue(id=issue_id, url=url))
 
 
@@ -351,10 +351,10 @@ def _no_team_key(
     what checks that name against the workbench doing the reading.
     """
     remedy = (
-        f"run otto-workbench config set {workbench_config.ISSUE_TEAM_KEY} TEAM --project"
+        f"run otto-workbench config set {config.workbench_config.ISSUE_TEAM_KEY} TEAM --project"
     )
     if not publishing_open:
-        log.dim(
+        core.log.dim(
             f"No team key for {provider} issue creation — skipping;"
             f" to file these, {remedy}",
         )
@@ -362,7 +362,7 @@ def _no_team_key(
             trail.info("deferred_issue", "skipped — no team key")
         return IssueResult(IssueDelivery.SKIPPED)
 
-    log.error(
+    core.log.error(
         f"No team key for {provider} — deferred tracking issue not filed;"
         f" {remedy}",
     )
@@ -374,7 +374,7 @@ def _no_team_key(
 def create_deferred_issue(
     provider: str,
     body: str,
-    ctx: pr_context.ResolvedContext,
+    ctx: pr.context.ResolvedContext,
     repo: str,
     pr_number: int,
     opts: dict | None,
@@ -385,17 +385,17 @@ def create_deferred_issue(
     # Kept for the tracker's own use rather than for the team key: Linear takes
     # it as `--parent`, so the tracking issue hangs off whatever issue the
     # branch names.
-    parent_id = review_issue.extract_issue_id(provider, ctx.branch)
+    parent_id = review.issue.extract_issue_id(provider, ctx.branch)
     # The team comes from configuration and nowhere else. Splitting it out of a
     # parent issue id made filing depend on what the run was invoked against
     # rather than on how the repo is configured, and assumed an id format that
     # `needs_team_key` deliberately keeps as a per-provider fact.
     team = (opts or {}).get("team", "")
-    if not team and review_issue.needs_team_key(provider):
+    if not team and review.issue.needs_team_key(provider):
         return _no_team_key(provider, trail, publishing_open=publishing_open)
 
     title = f"fix(review): deferred review comments — PR #{pr_number}"
-    result = review_issue.create_issue(
+    result = review.issue.create_issue(
         provider, team, title, body, parent_id=parent_id, repo=repo, opts=opts,
     )
     if result.filed:
@@ -407,7 +407,7 @@ def create_deferred_issue(
             )
         return result
     if result.owed:
-        log.error("Failed to create deferred tracking issue")
+        core.log.error("Failed to create deferred tracking issue")
         if trail:
             trail.error("deferred_issue", "creation failed")
         return result
@@ -415,7 +415,7 @@ def create_deferred_issue(
     # The publishing gate declined the write, which is the gate working. Saying
     # it failed here would put a spurious error in the closeout `pr status`
     # reads, on every draft run.
-    log.dim("Deferred tracking issue not filed — publishing is off")
+    core.log.dim("Deferred tracking issue not filed — publishing is off")
     if trail:
         trail.info("deferred_issue", "skipped — publishing off")
     return result
@@ -426,7 +426,7 @@ def create_or_update_deferred_issue(
     repo: str,
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
-    ctx: pr_context.ResolvedContext,
+    ctx: pr.context.ResolvedContext,
     existing_issue_id: str,
     trail: Trail | None,
     existing_issue_url: str = "",
@@ -441,13 +441,13 @@ def create_or_update_deferred_issue(
         return IssueResult(IssueDelivery.SKIPPED, CreatedIssue(id=existing_issue_id))
 
     worktree = str(ctx.require_worktree())
-    publishing_open = publishing.enabled()
+    publishing_open = core.publishing.enabled()
     # A draft run files nothing — create_issue gates on publishing.enabled() —
     # so asking which tracker to file to would be a question with no consequence.
     if publishing_open:
-        provider_info = review_issue.ensure_issue_provider(worktree)
+        provider_info = review.issue.ensure_issue_provider(worktree)
     else:
-        provider_info = review_issue.load_issue_provider(worktree)
+        provider_info = review.issue.load_issue_provider(worktree)
     if not provider_info.resolved:
         # ensure_issue_provider has already said why. The delivery is what the
         # caller records, and what `pr status` reads: with the gate open the
@@ -472,7 +472,7 @@ def create_or_update_deferred_issue(
     # one caller that cannot ask — a `review-post` spawned with a review file
     # and no remote — and reaching for it here would prefer a recorded answer
     # over a current one.
-    mismatch = review_issue.warn_on_host_mismatch(
+    mismatch = review.issue.warn_on_host_mismatch(
         provider, provider_info.options, ctx.host,
     )
     # Logged on an update too, not only on creation. A mismatch is a live

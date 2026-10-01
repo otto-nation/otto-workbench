@@ -23,8 +23,8 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from fix import blame as fix_blame  # noqa: E402
-from fix import suite as fix_suite  # noqa: E402
+import fix.blame  # noqa: E402
+import fix.suite  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 
 
@@ -62,7 +62,7 @@ def _fixed(item_id: str = "N1", **kwargs) -> ItemOutcome:
 def test_exit_zero_is_the_only_green(tmp_path):
     cmd = _script(tmp_path, "green", "exit 0")
 
-    assert fix_suite.run(tmp_path, cmd, 30).status is fix_suite.SuiteStatus.GREEN
+    assert fix.suite.run(tmp_path, cmd, 30).status is fix.suite.SuiteStatus.GREEN
 
 
 def test_a_non_zero_exit_is_red_even_when_it_printed_nothing_alarming(tmp_path):
@@ -73,30 +73,30 @@ def test_a_non_zero_exit_is_red_even_when_it_printed_nothing_alarming(tmp_path):
     """
     cmd = _script(tmp_path, "red", "echo 'all good'; exit 1")
 
-    result = fix_suite.run(tmp_path, cmd, 30)
+    result = fix.suite.run(tmp_path, cmd, 30)
 
-    assert result.status is fix_suite.SuiteStatus.RED
+    assert result.status is fix.suite.SuiteStatus.RED
     assert result.demotes is True
 
 
 def test_a_red_run_carries_its_output_so_the_commit_body_can_show_it(tmp_path):
     cmd = _script(tmp_path, "red", "echo 'E   AttributeError: no such attr'; exit 1")
 
-    assert "AttributeError" in fix_suite.run(tmp_path, cmd, 30).output_tail
+    assert "AttributeError" in fix.suite.run(tmp_path, cmd, 30).output_tail
 
 
 def test_a_green_run_carries_no_output(tmp_path):
     """Green output is noise in a commit body, and there is a lot of it."""
     cmd = _script(tmp_path, "green", "echo '500 passed'; exit 0")
 
-    assert fix_suite.run(tmp_path, cmd, 30).output_tail == ""
+    assert fix.suite.run(tmp_path, cmd, 30).output_tail == ""
 
 
 def test_stderr_reaches_the_tail_as_well_as_stdout(tmp_path):
     """Both bats and pytest put some of what failed on stderr."""
     cmd = _script(tmp_path, "red", "echo 'boom' >&2; exit 2")
 
-    assert "boom" in fix_suite.run(tmp_path, cmd, 30).output_tail
+    assert "boom" in fix.suite.run(tmp_path, cmd, 30).output_tail
 
 
 def test_stdout_and_stderr_are_labeled_when_both_have_something_to_say(tmp_path):
@@ -108,7 +108,7 @@ def test_stdout_and_stderr_are_labeled_when_both_have_something_to_say(tmp_path)
     """
     cmd = _script(tmp_path, "red", "echo 'out line'; echo 'err line' >&2; exit 1")
 
-    tail = fix_suite.run(tmp_path, cmd, 30).output_tail
+    tail = fix.suite.run(tmp_path, cmd, 30).output_tail
 
     assert tail.index("out line") < tail.index("--- stderr ---")
     assert tail.index("--- stderr ---") < tail.index("err line")
@@ -120,7 +120,7 @@ def test_the_command_runs_in_the_worktree_it_was_given(tmp_path):
     marker.write_text("x")
     cmd = _script(tmp_path, "check", "test -f only-here")
 
-    assert fix_suite.run(tmp_path, cmd, 30).status is fix_suite.SuiteStatus.GREEN
+    assert fix.suite.run(tmp_path, cmd, 30).status is fix.suite.SuiteStatus.GREEN
 
 
 def test_the_tail_is_clipped_from_the_end_not_the_start(tmp_path):
@@ -128,7 +128,7 @@ def test_the_tail_is_clipped_from_the_end_not_the_start(tmp_path):
     body = "for i in $(seq 1 4000); do echo \"line $i\"; done; exit 1"
     cmd = _script(tmp_path, "verbose", body)
 
-    tail = fix_suite.run(tmp_path, cmd, 30).output_tail
+    tail = fix.suite.run(tmp_path, cmd, 30).output_tail
 
     assert "line 4000" in tail
     assert "line 1\n" not in tail
@@ -145,9 +145,9 @@ def test_no_declared_command_is_reported_rather_than_passed_over(tmp_path):
     rendered identically before this, which is how `4 fixed, 0 skipped` got
     written over a suite that never ran.
     """
-    result = fix_suite.run(tmp_path, "", 30)
+    result = fix.suite.run(tmp_path, "", 30)
 
-    assert result.status is fix_suite.SuiteStatus.NOT_DECLARED
+    assert result.status is fix.suite.SuiteStatus.NOT_DECLARED
     assert result.reportable is True
     assert "fix.verify_command" in result.note
 
@@ -161,7 +161,7 @@ def test_not_declared_reaches_the_trail_like_every_other_reportable_status(tmp_p
     """
     trail = _RecordingTrail()
 
-    fix_suite.run(tmp_path, "", 30, trail)
+    fix.suite.run(tmp_path, "", 30, trail)
 
     assert len(trail.events) == 1
     kind, action, detail, _data = trail.events[0]
@@ -180,11 +180,11 @@ def test_a_declaration_that_parses_to_nothing_is_an_error_not_an_absence(tmp_pat
     test claimed to exercise an empty-argv guard; no input reaches one, which
     is why `run` no longer carries that branch.
     """
-    result = fix_suite.run(tmp_path, "   ", 30)
-    assert result.status is fix_suite.SuiteStatus.NOT_DECLARED
+    result = fix.suite.run(tmp_path, "   ", 30)
+    assert result.status is fix.suite.SuiteStatus.NOT_DECLARED
 
-    broken = fix_suite.run(tmp_path, "# nothing here", 30)
-    assert broken.status is fix_suite.SuiteStatus.ERROR
+    broken = fix.suite.run(tmp_path, "# nothing here", 30)
+    assert broken.status is fix.suite.SuiteStatus.ERROR
     assert broken.command == "# nothing here"
 
 
@@ -196,19 +196,19 @@ def test_a_non_positive_timeout_is_refused_rather_than_reported_as_timed_out(tmp
     """
     cmd = _script(tmp_path, "green", "exit 0")
 
-    zero = fix_suite.run(tmp_path, cmd, 0)
-    assert zero.status is fix_suite.SuiteStatus.ERROR
+    zero = fix.suite.run(tmp_path, cmd, 0)
+    assert zero.status is fix.suite.SuiteStatus.ERROR
     assert "fix.verify_timeout" in zero.output_tail
 
-    negative = fix_suite.run(tmp_path, cmd, -5)
-    assert negative.status is fix_suite.SuiteStatus.ERROR
+    negative = fix.suite.run(tmp_path, cmd, -5)
+    assert negative.status is fix.suite.SuiteStatus.ERROR
     assert "fix.verify_timeout" in negative.output_tail
 
 
 def test_an_unparseable_declaration_is_an_error_and_not_a_crash(tmp_path):
-    result = fix_suite.run(tmp_path, 'run --flag "unclosed', 30)
+    result = fix.suite.run(tmp_path, 'run --flag "unclosed', 30)
 
-    assert result.status is fix_suite.SuiteStatus.ERROR
+    assert result.status is fix.suite.SuiteStatus.ERROR
     assert result.demotes is False
 
 
@@ -218,9 +218,9 @@ def test_a_command_that_does_not_exist_is_an_error_not_a_red_suite(tmp_path):
     Reporting it as red would send a reader hunting a regression that is not
     there; reporting it as green would be the silence this replaces.
     """
-    result = fix_suite.run(tmp_path, str(tmp_path / "nope"), 30)
+    result = fix.suite.run(tmp_path, str(tmp_path / "nope"), 30)
 
-    assert result.status is fix_suite.SuiteStatus.ERROR
+    assert result.status is fix.suite.SuiteStatus.ERROR
     assert result.demotes is False
     assert result.ran is False
 
@@ -228,9 +228,9 @@ def test_a_command_that_does_not_exist_is_an_error_not_a_red_suite(tmp_path):
 def test_a_timeout_establishes_nothing_either_way(tmp_path):
     cmd = _script(tmp_path, "slow", "sleep 5")
 
-    result = fix_suite.run(tmp_path, cmd, 1)
+    result = fix.suite.run(tmp_path, cmd, 1)
 
-    assert result.status is fix_suite.SuiteStatus.TIMED_OUT
+    assert result.status is fix.suite.SuiteStatus.TIMED_OUT
     assert result.demotes is False
     assert result.ran is False
     assert "did not finish" in result.note
@@ -273,10 +273,10 @@ def test_a_timeout_reaps_the_whole_process_tree(tmp_path):
     )
 
     started = time.monotonic()
-    result = fix_suite.run(tmp_path, cmd, _FIXTURE_TIMEOUT_S)
+    result = fix.suite.run(tmp_path, cmd, _FIXTURE_TIMEOUT_S)
     elapsed = time.monotonic() - started
 
-    assert result.status is fix_suite.SuiteStatus.TIMED_OUT
+    assert result.status is fix.suite.SuiteStatus.TIMED_OUT
     assert elapsed < _REAP_BUDGET_S, (
         f"the run took {elapsed:.0f}s to come back from a "
         f"{_FIXTURE_TIMEOUT_S}s timeout — it waited out the orphan rather "
@@ -307,11 +307,11 @@ def _alive(pid: int) -> bool:
 
 def test_a_red_run_withdraws_every_claimed_fix(tmp_path):
     outcomes = [_fixed("N1"), _fixed("N2")]
-    red = fix_suite.SuiteResult(status=fix_suite.SuiteStatus.RED, command="c")
+    red = fix.suite.SuiteResult(status=fix.suite.SuiteStatus.RED, command="c")
 
-    assert fix_suite.apply_to(outcomes, red) == 2
+    assert fix.suite.apply_to(outcomes, red) == 2
     assert [o.verified for o in outcomes] == [False, False]
-    assert all(fix_suite.RED_DETAIL in o.verify_detail for o in outcomes)
+    assert all(fix.suite.RED_DETAIL in o.verify_detail for o in outcomes)
 
 
 def test_a_red_run_does_not_demote_an_item_out_of_fixed(tmp_path):
@@ -322,8 +322,8 @@ def test_a_red_run_does_not_demote_an_item_out_of_fixed(tmp_path):
     defect.
     """
     outcomes = [_fixed("N1")]
-    fix_suite.apply_to(
-        outcomes, fix_suite.SuiteResult(status=fix_suite.SuiteStatus.RED))
+    fix.suite.apply_to(
+        outcomes, fix.suite.SuiteResult(status=fix.suite.SuiteStatus.RED))
 
     assert outcomes[0].outcome is FixOutcome.FIXED
 
@@ -331,11 +331,11 @@ def test_a_red_run_does_not_demote_an_item_out_of_fixed(tmp_path):
 def test_a_red_run_keeps_the_gate_s_own_detail_beside_its_own(tmp_path):
     """Two different claims about two different things; neither replaces the other."""
     outcomes = [_fixed("N1", verify_detail="test_foo covers this")]
-    fix_suite.apply_to(
-        outcomes, fix_suite.SuiteResult(status=fix_suite.SuiteStatus.RED))
+    fix.suite.apply_to(
+        outcomes, fix.suite.SuiteResult(status=fix.suite.SuiteStatus.RED))
 
     assert "test_foo covers this" in outcomes[0].verify_detail
-    assert fix_suite.RED_DETAIL in outcomes[0].verify_detail
+    assert fix.suite.RED_DETAIL in outcomes[0].verify_detail
 
 
 def test_a_green_run_promotes_nothing(tmp_path):
@@ -345,17 +345,17 @@ def test_a_green_run_promotes_nothing(tmp_path):
     path-attribution ceiling walked from the other end.
     """
     outcomes = [_fixed("N1")]
-    green = fix_suite.SuiteResult(status=fix_suite.SuiteStatus.GREEN)
+    green = fix.suite.SuiteResult(status=fix.suite.SuiteStatus.GREEN)
 
-    assert fix_suite.apply_to(outcomes, green) == 0
+    assert fix.suite.apply_to(outcomes, green) == 0
     assert outcomes[0].verified is None
 
 
 def test_a_timeout_leaves_the_claims_where_the_gate_put_them(tmp_path):
     outcomes = [_fixed("N1", verified=True)]
-    timed_out = fix_suite.SuiteResult(status=fix_suite.SuiteStatus.TIMED_OUT)
+    timed_out = fix.suite.SuiteResult(status=fix.suite.SuiteStatus.TIMED_OUT)
 
-    assert fix_suite.apply_to(outcomes, timed_out) == 0
+    assert fix.suite.apply_to(outcomes, timed_out) == 0
     assert outcomes[0].verified is True
 
 
@@ -364,8 +364,8 @@ def test_only_claimed_fixes_are_withdrawn(tmp_path):
     deferred = ItemOutcome(id="N2", outcome=FixOutcome.DEFERRED)
     outcomes = [_fixed("N1"), deferred]
 
-    fix_suite.apply_to(
-        outcomes, fix_suite.SuiteResult(status=fix_suite.SuiteStatus.RED))
+    fix.suite.apply_to(
+        outcomes, fix.suite.SuiteResult(status=fix.suite.SuiteStatus.RED))
 
     assert deferred.verified is None
 
@@ -376,13 +376,13 @@ def test_a_pointer_is_printed_above_the_failing_output(tmp_path):
     Printed underneath, it is the line a reader scrolls past, which is the
     whole reason the pointer exists.
     """
-    result = fix_suite.SuiteResult(
-        status=fix_suite.SuiteStatus.RED, command="checks",
+    result = fix.suite.SuiteResult(
+        status=fix.suite.SuiteStatus.RED, command="checks",
         output_tail="E  AttributeError: no attribute 'EXIT_BUDGET_EXHAUSTED'",
-        pointers=(fix_blame.Pointer("N1", "cli/pr.py", ("EXIT_BUDGET_EXHAUSTED",)),),
+        pointers=(fix.blame.Pointer("N1", "cli/pr.py", ("EXIT_BUDGET_EXHAUSTED",)),),
     )
 
-    lines = fix_suite.detail_lines(result)
+    lines = fix.suite.detail_lines(result)
 
     assert "Checks RED" in lines[0]
     assert "start here" in lines[1]
@@ -392,10 +392,10 @@ def test_a_pointer_is_printed_above_the_failing_output(tmp_path):
 
 def test_a_red_run_with_nothing_to_point_at_reads_as_it_did_before(tmp_path):
     """An empty pointer set is the ordinary case, not a sign of trouble."""
-    result = fix_suite.SuiteResult(
-        status=fix_suite.SuiteStatus.RED, command="checks", output_tail="boom")
+    result = fix.suite.SuiteResult(
+        status=fix.suite.SuiteStatus.RED, command="checks", output_tail="boom")
 
-    assert fix_suite.detail_lines(result) == ["Checks RED: checks (0s)", "boom"]
+    assert fix.suite.detail_lines(result) == ["Checks RED: checks (0s)", "boom"]
 
 
 # ── when the checks are worth running at all ────────────────────────────────
@@ -417,7 +417,7 @@ def test_should_run_asks_whether_there_is_a_claim_and_a_tree(
 ):
     items = [ItemOutcome(id=f"i{n}", outcome=o) for n, o in enumerate(outcomes)]
 
-    assert fix_suite.should_run(items, changed) is expected, why
+    assert fix.suite.should_run(items, changed) is expected, why
 
 
 def test_a_pass_with_nothing_to_check_stays_silent(tmp_path):
@@ -426,6 +426,6 @@ def test_a_pass_with_nothing_to_check_stays_silent(tmp_path):
     A caveat printed on every pass that fixes nothing is a caveat nobody reads
     on the pass that earned one.
     """
-    assert fix_suite.SuiteResult().status is fix_suite.SuiteStatus.NOT_ATTEMPTED
-    assert fix_suite.SuiteResult().reportable is False
-    assert fix_suite.SuiteResult().note == ""
+    assert fix.suite.SuiteResult().status is fix.suite.SuiteStatus.NOT_ATTEMPTED
+    assert fix.suite.SuiteResult().reportable is False
+    assert fix.suite.SuiteResult().note == ""

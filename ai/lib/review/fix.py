@@ -57,13 +57,14 @@ from dataclasses import replace
 from pathlib import Path
 
 from agent.diagnosis import Diagnosis, DiagnosisKind
-from fix import engine as fix_engine
-from fix import scope as fix_scope
-from fix import suite as fix_suite
-from fix import types as fix_types
-from fix import verify as fix_verify
-from core import log, publishing
-from git import client as git_client
+import fix.engine
+import fix.scope
+import fix.suite
+import fix.types
+import fix.verify
+import core.log
+import core.publishing
+import git.client
 from core.phases import Phase
 from pr.fix import UNVERIFIED_NOTE_INLINE, FixOutcome, ItemOutcome
 from review.paths import phase_log_path, read_review_meta, write_review_meta
@@ -165,7 +166,7 @@ def _skip_reason(outcome: ItemOutcome, truncated: bool) -> str:
 def _summary(outcomes: list[ItemOutcome], described: dict[str, str],
              changed: set[str] | None = None, *,
              stop: Diagnosis | None = None,
-             suite: fix_suite.SuiteResult | None = None) -> str:
+             suite: fix.suite.SuiteResult | None = None) -> str:
     """What the pass did, for the commit message and the operator's terminal.
 
     Three blocks, because the three answers are worth telling apart: a fix is
@@ -213,7 +214,7 @@ def _summary(outcomes: list[ItemOutcome], described: dict[str, str],
     return "\n".join(lines)
 
 
-def _suite_block(lines: list[str], suite: fix_suite.SuiteResult | None) -> None:
+def _suite_block(lines: list[str], suite: fix.suite.SuiteResult | None) -> None:
     """Open the summary with what ran against this work, and what it said.
 
     Every reportable state gets a line, and the lines differ on purpose: a
@@ -225,7 +226,7 @@ def _suite_block(lines: list[str], suite: fix_suite.SuiteResult | None) -> None:
     `fix_suite.detail_lines` decides that, via `SuiteResult.reportable`; this
     forwards the decision rather than making a second one.
     """
-    detail = fix_suite.detail_lines(suite) if suite else []
+    detail = fix.suite.detail_lines(suite) if suite else []
     if detail:
         lines.extend([*detail, ""])
 
@@ -593,7 +594,7 @@ def _bullet_paths(paths: set[str]) -> str:
     return "\n".join(f"- {p}" for p in sorted(paths))
 
 
-class ReviewFixAdapter(fix_engine.FixAdapter):
+class ReviewFixAdapter(fix.engine.FixAdapter):
     """The findings pass, in the terms `fix_engine` runs one in.
 
     The open findings are the work; everything the review already settled — a
@@ -647,7 +648,7 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
             # exactly as two `SA1`s do, and an unaddressable violation is the
             # worse of the two to lose quietly — excluding it would have made
             # the guard silent on the case it is least able to explain.
-            log.warn(
+            core.log.warn(
                 f"Duplicate static violation ids {sorted(duplicate_ids)} — "
                 "keeping the last of each, dropping the rest"
             )
@@ -679,7 +680,7 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         """
         return super().add_dirs()
 
-    def items(self) -> list[fix_types.FixItem]:
+    def items(self) -> list[fix.types.FixItem]:
         """The findings and the static violations, as one work set.
 
         Findings first, because the template tells the agent to work in severity
@@ -688,14 +689,14 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         afterwards without carrying a flag through the engine.
         """
         items = [
-            fix_types.FixItem(
+            fix.types.FixItem(
                 id=f.id, file=f.path, line=f.line or 0,
                 label=severity_by_key(f.severity).section, body=f.body,
             )
             for f in self.findings.values()
         ]
         items.extend(
-            fix_types.FixItem(
+            fix.types.FixItem(
                 id=v.id, file=v.file, line=v.line,
                 label=_STATIC_LABEL, body=_static_body(v),
             )
@@ -725,7 +726,7 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         return paths | {v.file for v in self.violations.values() if v.file}
 
     def _allowed_paths(self) -> set[str]:
-        return fix_scope.commit_allowed(self._branch_files(), self._anchor_files())
+        return fix.scope.commit_allowed(self._branch_files(), self._anchor_files())
 
     def template_vars(self) -> dict[str, str]:
         """The branch file set and finding anchors `fix-findings.md` names.
@@ -743,7 +744,7 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
 
     def landing(
         self, outcomes: list[ItemOutcome], changed: set[str] | None,
-    ) -> fix_engine.LandSpec:
+    ) -> fix.engine.LandSpec:
         """Commit the files the agent touched that belong on this branch.
 
         A snapshot that failed arrives as None and lands an empty scope, which
@@ -763,10 +764,10 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         """
         if changed is not None:
             sources = self._branch_files() | self._anchor_files()
-            keep = fix_scope.drop_outside(
+            keep = fix.scope.drop_outside(
                 changed, self._allowed_paths(), self.workdir, sources,
             )
-            changed = keep | fix_scope.rename_partners(
+            changed = keep | fix.scope.rename_partners(
                 changed - keep, keep, self.workdir,
             )
         self.changed = changed
@@ -778,15 +779,15 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         skipped = sum(1 for o in outcomes if o.outcome in _STILL_OPEN)
         message = "fix: self-review findings"
         if fixed:
-            message += "\n\n" + fix_suite.qualify_tally(
+            message += "\n\n" + fix.suite.qualify_tally(
                 f"{fixed} fixed, {skipped} skipped", self.suite)
         if self.summary:
             message += f"\n\n{self.summary}"
-        return fix_engine.LandSpec(
+        return fix.engine.LandSpec(
             message=message, paths=self.changed if self.changed else set(),
         )
 
-    def record(self, run: fix_engine.FixRun) -> None:
+    def record(self, run: fix.engine.FixRun) -> None:
         """Report the pass, and write its answers into the review document.
 
         A pass whose work could not be attributed re-renders nothing. The
@@ -799,7 +800,7 @@ class ReviewFixAdapter(fix_engine.FixAdapter):
         if self.changed is None:
             return
         if self.summary:
-            log.info("Fix summary:")
+            core.log.info("Fix summary:")
             for line in self.summary.splitlines():
                 print(f"  {line}", file=sys.stderr)
         review_file = Path(self.job.review_file)
@@ -899,7 +900,7 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> None:
     """
     doc = ReviewDocument.read(job.review_file) if _has_output(job.review_file) else None
     if doc is None:
-        log.warn("No review file to fix — skipping fix pass")
+        core.log.warn("No review file to fix — skipping fix pass")
         return
 
     # A declined finding is not work: it was considered and rejected, so it is
@@ -910,13 +911,13 @@ def run_fix_pass(job: ReviewJob, trail: Trail | None = None) -> None:
         job.static_results, read_review_meta(review_dir).static_declined,
     )
     if not findings and not violations:
-        log.info("No findings left to fix — skipping fix pass")
+        core.log.info("No findings left to fix — skipping fix pass")
         _report_unpushed(job)
         return
 
-    run = fix_engine.run(
+    run = fix.engine.run(
         ReviewFixAdapter(job, findings, violations),
-        trail=trail, verify=fix_verify.run,
+        trail=trail, verify=fix.verify.run,
     )
     _record_commit(job, run)
 
@@ -945,7 +946,7 @@ def _static_items(
     """
     unscoped = [r for r in results if r.violations and not r.scoped_to_added]
     if unscoped:
-        log.warn(
+        core.log.warn(
             "Static analysis: "
             f"{', '.join(r.name for r in unscoped)} measured whole files — "
             "reporting those violations but not fixing them, since the branch "
@@ -958,7 +959,7 @@ def _static_items(
     )
     taken = addressable[:_MAX_STATIC_ITEMS]
     if len(addressable) > len(taken):
-        log.info(
+        core.log.info(
             f"Static analysis: taking {len(taken)} of {len(addressable)} "
             f"violations this pass — the rest stay open for the next review."
         )
@@ -1014,21 +1015,21 @@ def _report_unpushed(job: ReviewJob) -> None:
     Silent when publishing is off: a held gate is a run that was never going to
     push, so an unpushed branch is the outcome that was asked for.
     """
-    if not publishing.enabled():
+    if not core.publishing.enabled():
         return
     # No upstream is a branch that has never been pushed, which `commits_ahead`
     # reads as 0 — the same answer as "nothing to say", and the right one here:
     # a branch with no remote is not a branch whose remote is behind.
-    ahead = git_client.commits_ahead(cwd=job.wt_path, target_ref="@{u}")
+    ahead = git.client.commits_ahead(cwd=job.wt_path, target_ref="@{u}")
     if ahead:
-        log.warn(
+        core.log.warn(
             f"This pass pushed nothing — it had no fixes to make — but the "
             f"branch is {ahead} commit{'s' if ahead != 1 else ''} ahead of its "
             f"remote. Push them yourself if they are meant to be published."
         )
 
 
-def _record_commit(job: ReviewJob, run: fix_engine.FixRun) -> None:
+def _record_commit(job: ReviewJob, run: fix.engine.FixRun) -> None:
     """Record the fix pass's commit in the review's sidecar, and say what is owed.
 
     The push is gated and the commit is not, so the ordinary end of
@@ -1059,7 +1060,7 @@ def _record_commit(job: ReviewJob, run: fix_engine.FixRun) -> None:
     # serialisable takes the whole sidecar down — the attribution of a review
     # that was written correctly — rather than costing the one field it came in.
     if not isinstance(sha, str) or not isinstance(status, str):
-        log.warn(f"Fix pass reported an unrecordable commit ({status!r}) — not stamped")
+        core.log.warn(f"Fix pass reported an unrecordable commit ({status!r}) — not stamped")
         return
     review_dir = Path(job.artifact_dir)
     write_review_meta(review_dir, replace(
@@ -1068,4 +1069,4 @@ def _record_commit(job: ReviewJob, run: fix_engine.FixRun) -> None:
         fix_commit_status=str(status),
     ))
     if run.landed.resume:
-        log.info(f"Fix commit held locally — {run.landed.resume}")
+        core.log.info(f"Fix commit held locally — {run.landed.resume}")

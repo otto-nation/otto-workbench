@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 
-from git import client as git_client
+import git.client
 from agent.types import EFFORT_PRESETS
 from gh.types import FILE_STAT_FMT, PRContext, PRMetadata
 from core.phases import Effort
@@ -446,7 +446,7 @@ def _build_delta_section(
     """
     if not preflight or not preflight.prior_head_sha:
         return ""
-    prior = git_client.abbrev(preflight.prior_head_sha)
+    prior = git.client.abbrev(preflight.prior_head_sha)
     delta_files = preflight.delta_files
     if file_filter:
         filter_set = set(file_filter)

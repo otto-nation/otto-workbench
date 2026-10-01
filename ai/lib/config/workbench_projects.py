@@ -27,7 +27,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from core import workbench_paths
+import core.workbench_paths
 
 # Lines the shell half writes to mark its backfill as done. A reader that took
 # one for a path would hand a caller a directory that does not exist.
@@ -59,7 +59,7 @@ TEMP_ROOTS = ("/tmp", "/private/tmp", "/var/folders", "/private/var/folders")
 
 
 def registry_path() -> Path:
-    return workbench_paths.projects_registry()
+    return core.workbench_paths.projects_registry()
 
 
 def _resolved(path: Path) -> Path:
@@ -84,8 +84,8 @@ def excluded(repo_root: Path) -> bool:
     if not repo_root.is_absolute():
         return True
     roots = [Path(r) for r in TEMP_ROOTS]
-    roots += [workbench_paths.state_dir(), workbench_paths.cache_dir(),
-              workbench_paths.data_dir()]
+    roots += [core.workbench_paths.state_dir(), core.workbench_paths.cache_dir(),
+              core.workbench_paths.data_dir()]
     tmpdir = os.environ.get("TMPDIR")
     if tmpdir:
         roots.append(Path(tmpdir))

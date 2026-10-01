@@ -42,16 +42,16 @@ sys.path.insert(0, str(BIN_DIR))
 # belongs behind them, like ai/lib already is.
 sys.path.insert(0, str(BIN_DIR.parents[2] / "lib"))
 
-from core import pr_template  # noqa: E402
-from core import proc  # noqa: E402
-from core import timeouts  # noqa: E402
-from config import workbench_projects  # noqa: E402
+import core.pr_template  # noqa: E402
+import core.proc  # noqa: E402
+import core.timeouts  # noqa: E402
+import config.workbench_projects  # noqa: E402
 from _reuse_levels import (  # noqa: E402
     LEVEL_DESCRIPTIONS,
     read_default,
     read_level,
 )
-from config import workbench_config  # noqa: E402
+import config.workbench_config  # noqa: E402
 import git_layout  # noqa: E402
 
 
@@ -90,9 +90,9 @@ def _ceiling_counts(repo: str) -> dict | None:
     """
     ceiling_scan = AI_BIN_DIR / "ceiling-scan"
     try:
-        result = proc.run(
+        result = core.proc.run(
             [sys.executable, str(ceiling_scan), "--json", repo],
-            timeout=timeouts.LOCAL,
+            timeout=core.timeouts.LOCAL,
         )
     except FileNotFoundError:
         return None
@@ -117,12 +117,12 @@ def _issues_line(repo: str) -> str:
     worktree in front of it happens to use; the command is what checks that
     name against the workbench doing the reading.
     """
-    provider = workbench_config.load_config_or_default(repo).issues.provider
+    provider = config.workbench_config.load_config_or_default(repo).issues.provider
     if provider is None:
         return (
             "Issue tracker: not configured — ask before filing, then record the"
             " answer by running otto-workbench config set"
-            f" {workbench_config.ISSUE_PROVIDER_KEY} PROVIDER"
+            f" {config.workbench_config.ISSUE_PROVIDER_KEY} PROVIDER"
         )
     return f"Issue tracker: {provider}"
 
@@ -146,7 +146,7 @@ def _pr_template_line(repo: str) -> str:
     the sections are what an agent writing a PR body actually needs, and they
     are short enough to spend the context on.
     """
-    template = pr_template.load(Path(repo))
+    template = core.pr_template.load(Path(repo))
     sections = ", ".join(template.headers) or "no sections"
     if not template.found:
         return f"PR template: none in this repo — use the fallback ({sections})"
@@ -161,7 +161,7 @@ def main() -> None:
         lines.append(f"Reuse level: {level} — {LEVEL_DESCRIPTIONS.get(level, '')}")
 
     repo = _repo_root()
-    workbench_projects.register(repo)
+    config.workbench_projects.register(repo)
     counts = _ceiling_counts(repo) if repo else None
     if counts and counts.get("no_trigger", 0) > 0:
         total = counts["total"]

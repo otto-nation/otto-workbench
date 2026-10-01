@@ -261,14 +261,14 @@ class TestTheVocabularyEnums:
         assert Complexity("huge") is Complexity.UNSET
 
     def test_serde_keeps_the_rest_of_the_item_when_a_verdict_is_unknown(self):
-        from core import serde
+        import core.serde
 
         @dataclasses.dataclass
         class Holder:
             id: str = ""
             verification: Verification = Verification.UNSET
 
-        item = serde.from_dict(Holder, {"id": "t1", "verification": "banana"})
+        item = core.serde.from_dict(Holder, {"id": "t1", "verification": "banana"})
         assert item.verification is Verification.UNSET
         assert item.id == "t1"
 

@@ -13,9 +13,9 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from conftest import readiness_state
-from pr import comments_fix as pr_comments_fix
-from pr import domains as pr_domains
-from pr import state as pr_state
+import pr.comments_fix
+import pr.domains
+import pr.state
 from git.land import CommitStatus
 from pr.comments_fix import CLOSEOUT_COMMAND
 from pr.fix import FixOutcome, FixRecord, ItemOutcome
@@ -25,7 +25,7 @@ from pr.fix import FixOutcome, FixRecord, ItemOutcome
 _FIX_RUN = "2026-07-14T00:00:00+00:00"
 
 
-def _summary(*outcomes: FixOutcome, **kwargs) -> pr_comments_fix.FixSummary:
+def _summary(*outcomes: FixOutcome, **kwargs) -> pr.comments_fix.FixSummary:
     """A comment fix pass that recorded one outcome per argument, in order.
 
     Ids are positional, so a caller that only cares about the verdicts does not
@@ -41,11 +41,11 @@ def _summary(*outcomes: FixOutcome, **kwargs) -> pr_comments_fix.FixSummary:
         ItemOutcome(id=f"t{n}", outcome=outcome)
         for n, outcome in enumerate(outcomes, start=1)
     ]
-    return pr_comments_fix.FixSummary(fix=record, updated_at=_FIX_RUN, **kwargs)
+    return pr.comments_fix.FixSummary(fix=record, updated_at=_FIX_RUN, **kwargs)
 
 
 def test_fix_render_not_run():
-    assert pr_comments_fix.FixSummary().render_status() == ["**Fix**: not run yet"]
+    assert pr.comments_fix.FixSummary().render_status() == ["**Fix**: not run yet"]
 
 
 def test_fix_render_with_data():
@@ -83,7 +83,7 @@ def test_every_verdict_has_a_word_on_the_status_line():
     Swept over the enum rather than listed: the label table is in one module and
     the vocabulary in another, so a new verdict lands nowhere near this.
     """
-    assert set(pr_comments_fix.STATUS_LABELS) == set(FixOutcome)
+    assert set(pr.comments_fix.STATUS_LABELS) == set(FixOutcome)
 
 
 class TestCountLine:
@@ -96,14 +96,14 @@ class TestCountLine:
     """
 
     def test_only_what_happened_is_named(self):
-        line = pr_comments_fix.count_line({
+        line = pr.comments_fix.count_line({
             FixOutcome.FIXED: 2, FixOutcome.DEFERRED: 0,
         })
         assert line == "**2 fixed**"
 
     def test_the_order_is_the_published_one(self):
         """Pinned because it is already on every open PR."""
-        line = pr_comments_fix.count_line({
+        line = pr.comments_fix.count_line({
             FixOutcome.NEEDS_HUMAN: 1, FixOutcome.FIXED: 1,
             FixOutcome.DEFERRED: 1, FixOutcome.ALREADY_ADDRESSED: 1,
         })
@@ -112,15 +112,15 @@ class TestCountLine:
 
     def test_extras_are_appended_after_the_verdicts(self):
         """The summary counts two things no `FixOutcome` names."""
-        line = pr_comments_fix.count_line(
+        line = pr.comments_fix.count_line(
             {FixOutcome.FIXED: 1}, ["2 hand-written", "1 carried over"])
         assert line == "**1 fixed** · 2 hand-written · 1 carried over"
 
     def test_nothing_at_all_renders_nothing(self):
-        assert pr_comments_fix.count_line({}) == ""
+        assert pr.comments_fix.count_line({}) == ""
 
     def test_extras_alone_still_render(self):
-        assert pr_comments_fix.count_line({}, ["1 carried over"]) == "1 carried over"
+        assert pr.comments_fix.count_line({}, ["1 carried over"]) == "1 carried over"
 
 
 def test_the_status_line_counts_every_verdict_it_was_handed():
@@ -131,7 +131,7 @@ def test_the_status_line_counts_every_verdict_it_was_handed():
 
 def test_a_thread_settled_on_the_forge_owes_no_reply():
     """Nothing was decided here, so there is nothing to tell the reviewer."""
-    assert FixOutcome.SETTLED_ELSEWHERE not in pr_comments_fix._REPLY_OUTCOMES
+    assert FixOutcome.SETTLED_ELSEWHERE not in pr.comments_fix._REPLY_OUTCOMES
     assert _summary(
         FixOutcome.SETTLED_ELSEWHERE,
         fix=FixRecord(commit_sha="abc1234", commit_status=CommitStatus.PUSHED),
@@ -152,7 +152,7 @@ def test_fix_render_deferred_issue():
 # ── Closeout debt ─────────────────────────────────────────────────────────
 
 
-def _fix_with_closeout(**kwargs) -> pr_comments_fix.FixSummary:
+def _fix_with_closeout(**kwargs) -> pr.comments_fix.FixSummary:
     """A pushed fix pass with three reply-owing outcomes and one that owes none."""
     return _summary(
         FixOutcome.FIXED,
@@ -295,7 +295,7 @@ def test_fix_readiness_quotes_the_command_that_files_the_tracking_issue():
 
 
 def test_fix_readiness_clean_when_the_closeout_landed():
-    assert _fix_with_closeout().readiness(readiness_state()) == pr_domains.Readiness()
+    assert _fix_with_closeout().readiness(readiness_state()) == pr.domains.Readiness()
 
 
 class TestADebtSurvivesTheRoundThatDidNotRaiseIt:
@@ -308,10 +308,10 @@ class TestADebtSurvivesTheRoundThatDidNotRaiseIt:
     """
 
     def test_a_later_pass_does_not_wipe_a_settle_s_re_arm(self):
-        settled = pr_comments_fix.FixSummary(
+        settled = pr.comments_fix.FixSummary(
             replies_pending=True, summary_deferred=True,
         )
-        later_fix = pr_comments_fix.FixSummary(
+        later_fix = pr.comments_fix.FixSummary(
             fix=FixRecord(items=[ItemOutcome(id="t1", outcome=FixOutcome.FIXED)]),
         )
 
@@ -321,17 +321,17 @@ class TestADebtSurvivesTheRoundThatDidNotRaiseIt:
         assert merged.summary_deferred is True
 
     def test_a_pass_that_raises_the_debt_still_sets_it(self):
-        raised = pr_comments_fix.FixSummary(
+        raised = pr.comments_fix.FixSummary(
             replies_pending=True, summary_deferred=True,
         )
 
-        merged = raised.merge_into(pr_comments_fix.FixSummary())
+        merged = raised.merge_into(pr.comments_fix.FixSummary())
 
         assert merged.replies_pending is True
         assert merged.summary_deferred is True
 
     def test_draining_the_queue_is_what_clears_it(self):
-        summary = pr_comments_fix.FixSummary(replies_pending=True)
+        summary = pr.comments_fix.FixSummary(replies_pending=True)
 
         summary.replies_sent()
 
@@ -339,7 +339,7 @@ class TestADebtSurvivesTheRoundThatDidNotRaiseIt:
 
     def test_posting_the_summary_records_the_url_and_clears_the_debt(self):
         """Together, because either alone is a state that misreports itself."""
-        summary = pr_comments_fix.FixSummary(summary_deferred=True)
+        summary = pr.comments_fix.FixSummary(summary_deferred=True)
 
         summary.summary_posted("https://example.test/c/1")
 
@@ -348,10 +348,10 @@ class TestADebtSurvivesTheRoundThatDidNotRaiseIt:
 
     def test_a_cleared_debt_stays_cleared_through_a_later_round(self):
         """The discharge must not be undone by the sticky-OR it lives beside."""
-        paid = pr_comments_fix.FixSummary(replies_pending=True)
+        paid = pr.comments_fix.FixSummary(replies_pending=True)
         paid.replies_sent()
 
-        merged = pr_comments_fix.FixSummary().merge_into(paid)
+        merged = pr.comments_fix.FixSummary().merge_into(paid)
 
         assert merged.replies_pending is False
 
@@ -364,8 +364,8 @@ class TestADebtSurvivesTheRoundThatDidNotRaiseIt:
         the summary and sent the reply itself, so neither is owed — gets OR'd
         against `prior`'s stale ``True`` and comes out stuck true forever.
         """
-        prior = pr_comments_fix.FixSummary(replies_pending=True, summary_deferred=True)
-        later = pr_comments_fix.FixSummary()
+        prior = pr.comments_fix.FixSummary(replies_pending=True, summary_deferred=True)
+        later = pr.comments_fix.FixSummary()
 
         merged = later.merge_into(prior)
         assert merged.replies_pending is True
@@ -378,7 +378,7 @@ class TestADebtSurvivesTheRoundThatDidNotRaiseIt:
         assert merged.summary_deferred is False
 
     def test_re_arming_raises_both_debts_finish_reads(self):
-        summary = pr_comments_fix.FixSummary()
+        summary = pr.comments_fix.FixSummary()
 
         summary.rearm_closeout()
 
@@ -387,7 +387,7 @@ class TestADebtSurvivesTheRoundThatDidNotRaiseIt:
 
     def test_re_arming_does_not_stamp_the_domain(self):
         """A field-level write, like the discharges: the caller persists."""
-        summary = pr_comments_fix.FixSummary(updated_at="already")
+        summary = pr.comments_fix.FixSummary(updated_at="already")
 
         summary.rearm_closeout()
 
@@ -395,7 +395,7 @@ class TestADebtSurvivesTheRoundThatDidNotRaiseIt:
 
     def test_re_arming_leaves_the_summary_url_alone(self):
         """The inverse of the discharges, not of `summary_posted`'s url write."""
-        summary = pr_comments_fix.FixSummary(
+        summary = pr.comments_fix.FixSummary(
             summary_url="https://example.test/c/1",
         )
 

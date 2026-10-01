@@ -12,8 +12,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from core import schema_gen
-from core import serde
+import core.schema_gen
+import core.serde
 from core.schema_gen import dataclass_to_schema
 from core.serde import HintKind
 
@@ -237,8 +237,8 @@ def test_bare_list():
 
 @pytest.mark.parametrize("kind", list(HintKind), ids=lambda k: k.value)
 def test_both_walks_handle_every_hint_kind(kind):
-    assert kind in serde._COERCERS, f"serde._coerce cannot read a {kind.value} hint"
-    assert kind in schema_gen._EMITTERS, f"schema_gen cannot describe a {kind.value} hint"
+    assert kind in core.serde._COERCERS, f"serde._coerce cannot read a {kind.value} hint"
+    assert kind in core.schema_gen._EMITTERS, f"schema_gen cannot describe a {kind.value} hint"
 
 
 def test_dict_with_int_keys_says_the_keys_must_parse_as_integers():

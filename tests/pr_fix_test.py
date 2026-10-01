@@ -15,12 +15,12 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from git import land
+import git.land
 from conftest import readiness_state
-from pr import domains as pr_domains
-from pr import fix as pr_fix
-from pr import state as pr_state
-from core import serde
+import pr.domains
+import pr.fix
+import pr.state
+import core.serde
 
 
 # ── FixOutcome ────────────────────────────────────────────────────────────
@@ -43,7 +43,7 @@ def test_fix_outcome_keeps_the_strings_the_comment_pass_persisted():
         "declined": "DECLINED",
     }
     for value, name in persisted.items():
-        assert pr_fix.FixOutcome(value).name == name
+        assert pr.fix.FixOutcome(value).name == name
 
 
 def test_fix_outcome_adds_only_what_no_comment_thread_had():
@@ -51,16 +51,16 @@ def test_fix_outcome_adds_only_what_no_comment_thread_had():
     persisted = {
         "FIXED", "DEFERRED", "NEEDS_HUMAN", "DISMISSED", "ALREADY_ADDRESSED", "DECLINED",
     }
-    assert {o.name for o in pr_fix.FixOutcome} - persisted == {
+    assert {o.name for o in pr.fix.FixOutcome} - persisted == {
         "SKIPPED", "SETTLED_ELSEWHERE",
     }
 
 
 def test_fix_outcome_serializes_as_its_string():
-    item = pr_fix.ItemOutcome(id="i1", outcome=pr_fix.FixOutcome.DECLINED)
-    assert serde.to_dict(item)["outcome"] == "declined"
-    assert serde.from_dict(pr_fix.ItemOutcome, {"outcome": "declined"}) == pr_fix.ItemOutcome(
-        outcome=pr_fix.FixOutcome.DECLINED,
+    item = pr.fix.ItemOutcome(id="i1", outcome=pr.fix.FixOutcome.DECLINED)
+    assert core.serde.to_dict(item)["outcome"] == "declined"
+    assert core.serde.from_dict(pr.fix.ItemOutcome, {"outcome": "declined"}) == pr.fix.ItemOutcome(
+        outcome=pr.fix.FixOutcome.DECLINED,
     )
 
 
@@ -69,19 +69,19 @@ def test_fix_outcome_serializes_as_its_string():
 
 def test_only_a_fix_counts_as_one():
     """Every tally of fixed work reads this, so the answer lives in one place."""
-    counted = {o for o in pr_fix.FixOutcome if o.counts_as_fixed}
-    assert counted == {pr_fix.FixOutcome.FIXED}
+    counted = {o for o in pr.fix.FixOutcome if o.counts_as_fixed}
+    assert counted == {pr.fix.FixOutcome.FIXED}
 
 
 def test_only_a_fix_may_name_a_commit():
     """Stamping a SHA on anything else credits a commit with work it lacks."""
-    citing = {o for o in pr_fix.FixOutcome if o.may_cite_a_commit}
-    assert citing == {pr_fix.FixOutcome.FIXED}
+    citing = {o for o in pr.fix.FixOutcome if o.may_cite_a_commit}
+    assert citing == {pr.fix.FixOutcome.FIXED}
 
 
 def test_a_thread_settled_on_the_forge_is_neither_fixed_nor_attributable():
     """The point of the member: resolution is not evidence that code changed."""
-    settled = pr_fix.FixOutcome.SETTLED_ELSEWHERE
+    settled = pr.fix.FixOutcome.SETTLED_ELSEWHERE
     assert not settled.counts_as_fixed
     assert not settled.may_cite_a_commit
 
@@ -91,18 +91,18 @@ def test_a_thread_settled_on_the_forge_is_neither_fixed_nor_attributable():
 
 def test_an_outcome_written_before_provenance_existed_reads_as_the_pass():
     """A state file with no `settled_by` recorded the pass's own work."""
-    restored = serde.from_dict(pr_fix.ItemOutcome, {"id": "i1", "outcome": "fixed"})
-    assert restored.settled_by is pr_fix.SettledBy.PASS
+    restored = core.serde.from_dict(pr.fix.ItemOutcome, {"id": "i1", "outcome": "fixed"})
+    assert restored.settled_by is pr.fix.SettledBy.PASS
 
 
 def test_provenance_survives_the_round_trip():
-    item = pr_fix.ItemOutcome(
+    item = pr.fix.ItemOutcome(
         id="i1",
-        outcome=pr_fix.FixOutcome.SETTLED_ELSEWHERE,
-        settled_by=pr_fix.SettledBy.RECONCILIATION,
+        outcome=pr.fix.FixOutcome.SETTLED_ELSEWHERE,
+        settled_by=pr.fix.SettledBy.RECONCILIATION,
     )
-    assert serde.to_dict(item)["settled_by"] == "reconciliation"
-    assert serde.from_dict(pr_fix.ItemOutcome, serde.to_dict(item)) == item
+    assert core.serde.to_dict(item)["settled_by"] == "reconciliation"
+    assert core.serde.from_dict(pr.fix.ItemOutcome, core.serde.to_dict(item)) == item
 
 
 # ── ItemOutcome ───────────────────────────────────────────────────────────
@@ -110,23 +110,23 @@ def test_provenance_survives_the_round_trip():
 
 def test_an_outcome_nobody_set_is_still_owed():
     """A crashed pass leaves work deferred, never claimed as fixed."""
-    assert pr_fix.ItemOutcome().outcome is pr_fix.FixOutcome.DEFERRED
+    assert pr.fix.ItemOutcome().outcome is pr.fix.FixOutcome.DEFERRED
 
 
 def test_an_outcome_round_trips_through_serde():
-    item = pr_fix.ItemOutcome(
-        id="i1", outcome=pr_fix.FixOutcome.FIXED, summary="s",
+    item = pr.fix.ItemOutcome(
+        id="i1", outcome=pr.fix.FixOutcome.FIXED, summary="s",
         file="a.py", line=12, commit_sha="abc1234", read_sha="def5678",
     )
-    assert serde.from_dict(pr_fix.ItemOutcome, serde.to_dict(item)) == item
+    assert core.serde.from_dict(pr.fix.ItemOutcome, core.serde.to_dict(item)) == item
 
 
 # ── FixRecord.merge_into ──────────────────────────────────────────────────
 
 
-def _record(*ids, **kwargs) -> pr_fix.FixRecord:
-    return pr_fix.FixRecord(
-        items=[pr_fix.ItemOutcome(id=i) for i in ids],
+def _record(*ids, **kwargs) -> pr.fix.FixRecord:
+    return pr.fix.FixRecord(
+        items=[pr.fix.ItemOutcome(id=i) for i in ids],
         updated_at="2026-07-14T00:00:00+00:00",
         **kwargs,
     )
@@ -138,13 +138,13 @@ def test_a_later_round_keeps_the_items_it_did_not_touch():
 
 
 def test_a_later_round_supersedes_the_same_item():
-    later = pr_fix.FixRecord(
-        items=[pr_fix.ItemOutcome(id="a", outcome=pr_fix.FixOutcome.FIXED)],
+    later = pr.fix.FixRecord(
+        items=[pr.fix.ItemOutcome(id="a", outcome=pr.fix.FixOutcome.FIXED)],
         updated_at="t2",
     )
     merged = later.merge_into(_record("a"))
     assert [(i.id, i.outcome) for i in merged.items] == [
-        ("a", pr_fix.FixOutcome.FIXED),
+        ("a", pr.fix.FixOutcome.FIXED),
     ]
 
 
@@ -162,25 +162,25 @@ def test_items_without_an_id_are_kept_side_by_side():
 def test_an_empty_round_leaves_the_prior_record_alone():
     """A subcommand writing its own domain says nothing about the fix pass."""
     prior = _record("a", commit_sha="abc1234")
-    assert pr_fix.FixRecord().merge_into(prior) == prior
+    assert pr.fix.FixRecord().merge_into(prior) == prior
 
 
 # ── Domain carries one ────────────────────────────────────────────────────
 
 
 def test_every_domain_starts_with_an_empty_record():
-    assert pr_domains.Domain().fix == pr_fix.FixRecord()
+    assert pr.domains.Domain().fix == pr.fix.FixRecord()
 
 
 def test_a_domain_that_never_fixes_anything_says_nothing():
-    assert pr_domains.Domain(updated_at="t").render_status() == []
-    assert pr_domains.Domain(updated_at="t").readiness(readiness_state()) == pr_domains.Readiness()
+    assert pr.domains.Domain(updated_at="t").render_status() == []
+    assert pr.domains.Domain(updated_at="t").readiness(readiness_state()) == pr.domains.Readiness()
 
 
 def test_a_domain_write_folds_the_record_rather_than_replacing_it():
     """`apply` replaces a domain wholesale; the fix record is the exception."""
-    prior = pr_domains.CIDomain(fix=_record("a"), updated_at="t1")
-    written = pr_domains.CIDomain(conclusion="success", updated_at="t2")
+    prior = pr.domains.CIDomain(fix=_record("a"), updated_at="t1")
+    written = pr.domains.CIDomain(conclusion="success", updated_at="t2")
     merged = written.merge_into(prior)
     assert merged.conclusion == "success"
     assert [item.id for item in merged.fix.items] == ["a"]
@@ -193,22 +193,22 @@ def test_a_record_survives_the_state_file():
     unwritten record holds — so a serde gap here would read back as "no pass has
     run" rather than as an error, on every domain at once.
     """
-    state = pr_state.new_state(
+    state = pr.state.new_state(
         repo="o/r", pr_number=1, branch="b", head_sha="def5678", worktree_root="/tmp/wt",
     )
-    state.ci.fix = pr_fix.FixRecord(
-        items=[pr_fix.ItemOutcome(id="i1", outcome=pr_fix.FixOutcome.SKIPPED)],
+    state.ci.fix = pr.fix.FixRecord(
+        items=[pr.fix.ItemOutcome(id="i1", outcome=pr.fix.FixOutcome.SKIPPED)],
         commit_sha="abc1234",
-        commit_status=land.CommitStatus.PUSH_HELD,
+        commit_status=git.land.CommitStatus.PUSH_HELD,
         head_sha="def5678",
         updated_at="2026-07-14T00:00:00+00:00",
     )
-    restored = pr_state.state_from_dict(pr_state.state_to_dict(state))
+    restored = pr.state.state_from_dict(pr.state.state_to_dict(state))
     assert restored.ci.fix == state.ci.fix
-    assert restored.review.fix == pr_fix.FixRecord()
+    assert restored.review.fix == pr.fix.FixRecord()
 
 
-@pytest.mark.parametrize("name,cls", sorted(pr_state._domains().items()))
+@pytest.mark.parametrize("name,cls", sorted(pr.state._domains().items()))
 def test_no_domain_drops_the_record_on_the_way_through(name, cls):
     """An override that forgets to chain through `super()` loses the record.
 

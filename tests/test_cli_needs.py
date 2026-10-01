@@ -14,7 +14,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from cli import review_modes as review_modes_module  # noqa: E402
+import cli.review_modes  # noqa: E402
 from cli.needs import (  # noqa: E402
     LOCAL, NONE, REMOTE, REVIEW_DEFAULT_NEED, REVIEW_MODE_NEED, REVIEW_SELF_NEED,
     Need, ReviewMode, review_modes, review_need,
@@ -157,6 +157,6 @@ def test_every_pr_review_mode_declares_a_need():
     `cli.review_modes` in #909's T7 commit 3a, which is what let this file drop
     its last `load_script`.
     """
-    assert review_modes_module.MODES
-    for flag in review_modes_module.MODES:
-        assert isinstance(review_need([flag], review_modes_module.MODES), Need)
+    assert cli.review_modes.MODES
+    for flag in cli.review_modes.MODES:
+        assert isinstance(review_need([flag], cli.review_modes.MODES), Need)

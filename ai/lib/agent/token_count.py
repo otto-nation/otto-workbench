@@ -35,8 +35,8 @@ import json
 import urllib.error
 import urllib.request
 
-from core import log
-from core import timeouts
+import core.log
+import core.timeouts
 from agent.vertex_quota import access_token, is_checkable, vertex_env
 
 # The endpoint speaks the Anthropic message schema through Vertex's rawPredict
@@ -111,11 +111,11 @@ def count_tokens(
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeouts.NETWORK) as resp:
+        with urllib.request.urlopen(req, timeout=core.timeouts.NETWORK) as resp:
             return json.loads(resp.read())["input_tokens"]
     except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError) as exc:
         # Dim rather than warn: a run whose prompt cannot be counted still
         # proceeds on its planned estimate, and this is the note that says the
         # estimate was never checked — not a failure of the review.
-        log.dim(f"Token count unavailable ({type(exc).__name__}) — using estimate")
+        core.log.dim(f"Token count unavailable ({type(exc).__name__}) — using estimate")
         return None

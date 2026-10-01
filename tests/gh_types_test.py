@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from gh import types as gh_types  # noqa: E402
+import gh.types  # noqa: E402
 from agent.types import EFFORT_PRESETS  # noqa: E402
 from core.phases import Effort  # noqa: E402
 
@@ -17,7 +17,7 @@ def _metadata(**over):
         title="t", body="b", head="feat/x", base="main", head_sha="abc",
         additions=10, deletions=5, changed_files=2, files=[],
     )
-    return gh_types.PRMetadata(**(base | over))
+    return gh.types.PRMetadata(**(base | over))
 
 
 def test_total_lines_is_both_sides_of_the_churn():
@@ -25,7 +25,7 @@ def test_total_lines_is_both_sides_of_the_churn():
 
 
 def test_pr_context_defaults_to_empty_json_arrays():
-    ctx = gh_types.PRContext()
+    ctx = gh.types.PRContext()
 
     assert (ctx.reviews, ctx.review_comments, ctx.comments) == ("[]", "[]", "[]")
 

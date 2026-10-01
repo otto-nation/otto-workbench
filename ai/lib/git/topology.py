@@ -21,8 +21,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from core import log
-from core import timeouts
+import core.log
+import core.timeouts
 from core.proc import failure_message
 
 # `git_remote` is a workbench-wide module rather than an `ai/lib` one, because
@@ -60,7 +60,7 @@ def is_bare_repo(cwd: str | None = None) -> bool:
     try:
         r = subprocess.run(
             ["git", "rev-parse", "--is-bare-repository"],
-            capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
+            capture_output=True, text=True, cwd=cwd, timeout=core.timeouts.LOCAL,
         )
         return r.stdout.strip() == "true"
     except Exception:
@@ -96,7 +96,7 @@ def worktree_entries(cwd: str | None = None) -> list[WorktreeEntry]:
     try:
         r = subprocess.run(
             ["git", "worktree", "list", "--porcelain"],
-            capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
+            capture_output=True, text=True, cwd=cwd, timeout=core.timeouts.LOCAL,
         )
     except Exception:
         return []
@@ -159,7 +159,7 @@ def create_worktree_for_branch(
         # wt_switch names the cause on every failure path it has; a second,
         # vaguer line here would only bury the one that says something.
         return None
-    log.info(f"Created worktree for {branch} at {path}")
+    core.log.info(f"Created worktree for {branch} at {path}")
     return Path(path)
 
 
@@ -173,17 +173,17 @@ def wt_switch(ref: str, cwd: str | None = None) -> str | None:
         r = subprocess.run(
             ["wt", "switch", ref, "--no-cd", "--no-hooks", "--format", "json", "-y"]
             + (["-C", cwd] if cwd else []),
-            capture_output=True, text=True, timeout=timeouts.UNBOUNDED,
+            capture_output=True, text=True, timeout=core.timeouts.UNBOUNDED,
         )
     except FileNotFoundError:
-        log.warn("worktrunk (wt) is not installed — cannot switch worktrees")
+        core.log.warn("worktrunk (wt) is not installed — cannot switch worktrees")
         return None
     except OSError as e:
-        log.warn(f"Cannot run worktrunk (wt) — cannot switch worktrees: {e}")
+        core.log.warn(f"Cannot run worktrunk (wt) — cannot switch worktrees: {e}")
         return None
     path = parse_wt_switch_path(r.stdout)
     if not path:
-        log.warn(failure_message(f"wt switch {ref} reported no worktree path", r))
+        core.log.warn(failure_message(f"wt switch {ref} reported no worktree path", r))
     return path
 
 
@@ -337,7 +337,7 @@ def _git_out(args: list[str], cwd: str | None = None) -> str:
     try:
         r = subprocess.run(
             ["git", *args],
-            capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
+            capture_output=True, text=True, cwd=cwd, timeout=core.timeouts.LOCAL,
         )
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -423,14 +423,14 @@ def resolve_branch(hint: str, cwd: str | None = None) -> str:
     try:
         r = subprocess.run(
             [str(RESOLVE_BRANCH), hint],
-            capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
+            capture_output=True, text=True, cwd=cwd, timeout=core.timeouts.LOCAL,
         )
         if r.returncode == 0 and r.stdout.strip():
             return r.stdout.strip()
         # resolve-branch exited non-zero or returned nothing — use hint as-is
         # rather than silently discarding the user's explicit --branch value
-        log.warn(failure_message(f"resolve-branch could not resolve {hint!r}", r))
-        log.dim(f"using {hint!r} as-is")
+        core.log.warn(failure_message(f"resolve-branch could not resolve {hint!r}", r))
+        core.log.dim(f"using {hint!r} as-is")
         return hint
     # A resolver that hangs is a resolver that did not answer, which this
     # function already knows how to survive.
@@ -441,14 +441,14 @@ def resolve_branch(hint: str, cwd: str | None = None) -> str:
 def current_branch(cwd: str | None = None) -> str:
     r = subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
+        capture_output=True, text=True, cwd=cwd, timeout=core.timeouts.LOCAL,
     )
     branch = r.stdout.strip()
     if r.returncode != 0 or not branch:
-        log.error(failure_message("Cannot determine current branch", r))
+        core.log.error(failure_message("Cannot determine current branch", r))
         sys.exit(1)
     if branch == "HEAD":
-        log.error("Cannot determine current branch — HEAD is detached")
+        core.log.error("Cannot determine current branch — HEAD is detached")
         sys.exit(1)
     return branch
 
@@ -457,7 +457,7 @@ def current_branch_quiet(cwd: str | None = None) -> str | None:
     """Return current branch name, or None on failure (e.g. detached HEAD)."""
     r = subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-        capture_output=True, text=True, cwd=cwd, timeout=timeouts.LOCAL,
+        capture_output=True, text=True, cwd=cwd, timeout=core.timeouts.LOCAL,
     )
     if r.returncode != 0 or not r.stdout.strip() or r.stdout.strip() == "HEAD":
         return None

@@ -8,7 +8,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 from core.proc import CmdResult  # noqa: E402
-from review import dedup as review_dedup  # noqa: E402
+import review.dedup  # noqa: E402
 
 
 def test_posted_findings_are_typed_not_dicts():
@@ -17,7 +17,7 @@ def test_posted_findings_are_typed_not_dicts():
         "- **[M1] [must-fix]** `pkg/handler.go:42` — the lock is never released\n"
     )
 
-    found = review_dedup._extract_body_findings(body)
+    found = review.dedup._extract_body_findings(body)
 
     assert [f.path for f in found] == ["pkg/handler.go"]
     assert found[0].body.startswith("the lock is never released")
@@ -25,36 +25,36 @@ def test_posted_findings_are_typed_not_dicts():
 
 class TestWordSet:
     def test_extracts_lowercase_words(self):
-        assert review_dedup.word_set("Hello World_Foo 123") == {"hello", "world_foo", "123"}
+        assert review.dedup.word_set("Hello World_Foo 123") == {"hello", "world_foo", "123"}
 
     def test_empty_string(self):
-        assert review_dedup.word_set("") == set()
+        assert review.dedup.word_set("") == set()
 
     def test_strips_punctuation(self):
-        assert review_dedup.word_set("error — missing `check`") == {"error", "missing", "check"}
+        assert review.dedup.word_set("error — missing `check`") == {"error", "missing", "check"}
 
 
 class TestJaccard:
     def test_identical_sets(self):
-        assert review_dedup.jaccard({"a", "b"}, {"a", "b"}) == 1.0
+        assert review.dedup.jaccard({"a", "b"}, {"a", "b"}) == 1.0
 
     def test_disjoint_sets(self):
-        assert review_dedup.jaccard({"a"}, {"b"}) == 0.0
+        assert review.dedup.jaccard({"a"}, {"b"}) == 0.0
 
     def test_partial_overlap(self):
-        assert review_dedup.jaccard({"a", "b", "c"}, {"b", "c", "d"}) == pytest.approx(0.5)
+        assert review.dedup.jaccard({"a", "b", "c"}, {"b", "c", "d"}) == pytest.approx(0.5)
 
     def test_both_empty(self):
-        assert review_dedup.jaccard(set(), set()) == 1.0
+        assert review.dedup.jaccard(set(), set()) == 1.0
 
     def test_one_empty(self):
-        assert review_dedup.jaccard({"a"}, set()) == 0.0
+        assert review.dedup.jaccard({"a"}, set()) == 0.0
 
 
 class TestExtractBodyFindings:
     def test_standard_finding_in_body(self):
         body = "- **[M1]** **`handler.go:42`** — Fix the bug"
-        results = review_dedup._extract_body_findings(body)
+        results = review.dedup._extract_body_findings(body)
         assert len(results) == 1
         assert results[0].path == "handler.go"
         assert results[0].body == "Fix the bug"
@@ -64,19 +64,19 @@ class TestExtractBodyFindings:
             "- **[M1]** **`a.go:10`** — First issue\n"
             "- **[S1]** **`b.go:20`** — Second issue\n"
         )
-        results = review_dedup._extract_body_findings(body)
+        results = review.dedup._extract_body_findings(body)
         assert len(results) == 2
         assert results[0].path == "a.go"
         assert results[1].path == "b.go"
 
     def test_no_findings(self):
         body = "Just some regular text with no findings."
-        results = review_dedup._extract_body_findings(body)
+        results = review.dedup._extract_body_findings(body)
         assert len(results) == 0
 
     def test_path_extraction_with_line_number_suffix(self):
         body = "- **[M1]** **`handler.go:42`** — Fix bug"
-        results = review_dedup._extract_body_findings(body)
+        results = review.dedup._extract_body_findings(body)
         assert results[0].path == "handler.go"
 
     def test_a_colon_that_is_not_a_line_suffix_survives(self):
@@ -87,12 +87,12 @@ class TestExtractBodyFindings:
         finding — the same finding posted again on every re-review.
         """
         body = "- **[M1]** **`ns:module.py`** — Fix bug"
-        results = review_dedup._extract_body_findings(body)
+        results = review.dedup._extract_body_findings(body)
         assert results[0].path == "ns:module.py"
 
     def test_a_line_suffix_still_comes_off_a_path_carrying_a_colon(self):
         body = "- **[M1]** **`C:/src/x.py:12`** — Fix bug"
-        results = review_dedup._extract_body_findings(body)
+        results = review.dedup._extract_body_findings(body)
         assert results[0].path == "C:/src/x.py"
 
 
@@ -104,7 +104,7 @@ class TestCollectInlineComments:
             {"path": "c.go", "body": "issue", "user": {"login": "bot"}},
         ]
         with patch("gh.client.api_json", return_value=comments):
-            result = review_dedup._collect_inline_comments("org/repo", "1", "bot")
+            result = review.dedup._collect_inline_comments("org/repo", "1", "bot")
             assert result.looked
             assert len(result.findings) == 2
             assert all(r.path in ("a.go", "c.go") for r in result.findings)
@@ -113,7 +113,7 @@ class TestCollectInlineComments:
         """An answered lookup that found nothing. The pair to the failure below:
         both are empty, and only `looked` tells them apart."""
         with patch("gh.client.api_json", return_value=[]):
-            result = review_dedup._collect_inline_comments("org/repo", "1", "bot")
+            result = review.dedup._collect_inline_comments("org/repo", "1", "bot")
             assert result.looked
             assert result.findings == []
 
@@ -130,7 +130,7 @@ class TestCollectInlineComments:
             "user": {"login": "bot"},
         }]
         with patch("gh.client.api_json", return_value=comments):
-            result = review_dedup._collect_inline_comments("org/repo", "1", "bot")
+            result = review.dedup._collect_inline_comments("org/repo", "1", "bot")
         assert result.findings[0].body == "**[M1] [must-fix]** Fix bug"
 
 
@@ -141,7 +141,7 @@ class TestCollectReviewFindings:
             {"body": "no findings", "user": {"login": "human"}},
         ]
         with patch("gh.client.api_json", return_value=reviews):
-            result = review_dedup._collect_review_findings("org/repo", "1", "bot")
+            result = review.dedup._collect_review_findings("org/repo", "1", "bot")
             assert result.looked
             assert len(result.findings) == 1
             assert result.findings[0].path == "a.go"
@@ -151,7 +151,7 @@ class TestCollectReviewFindings:
             {"body": "", "user": {"login": "bot"}},
         ]
         with patch("gh.client.api_json", return_value=reviews):
-            result = review_dedup._collect_review_findings("org/repo", "1", "bot")
+            result = review.dedup._collect_review_findings("org/repo", "1", "bot")
             assert result.looked
             assert result.findings == []
 
@@ -165,14 +165,14 @@ class TestFetchBotComments:
                 [{"body": "- **[M1]** **`b.go:1`** — review", "user": {"login": "bot"}}],
             ]),
         ):
-            result = review_dedup._fetch_bot_comments("org/repo", "1")
+            result = review.dedup._fetch_bot_comments("org/repo", "1")
             assert result.looked
             assert len(result.findings) == 2
 
     def test_an_unknown_bot_login_is_not_an_empty_comment_set(self):
         """Without a login nothing could have been recognised as the bot's."""
         with patch("gh.client.login", return_value=""):
-            result = review_dedup._fetch_bot_comments("org/repo", "1")
+            result = review.dedup._fetch_bot_comments("org/repo", "1")
         assert not result.looked
         assert result.findings == []
 
@@ -186,7 +186,7 @@ class TestFetchBotComments:
                 [{"body": "- **[M1]** **`b.go:1`** — review", "user": {"login": "bot"}}],
             ]),
         ):
-            result = review_dedup._fetch_bot_comments("org/repo", "1")
+            result = review.dedup._fetch_bot_comments("org/repo", "1")
         assert not result.looked
 
     def test_a_failed_review_listing_makes_the_whole_set_unanswered(self):
@@ -197,12 +197,12 @@ class TestFetchBotComments:
                 None,
             ]),
         ):
-            result = review_dedup._fetch_bot_comments("org/repo", "1")
+            result = review.dedup._fetch_bot_comments("org/repo", "1")
         assert not result.looked
 
 
 def _make_finding(id_str, path, body):
-    return review_dedup.Finding(
+    return review.dedup.Finding(
         id=id_str, severity=id_str[0], seq=int(id_str[1:]),
         path=path, line=42, end_line=None, body=body,
     )
@@ -211,32 +211,32 @@ def _make_finding(id_str, path, body):
 class TestDedupAgainstPosted:
     @patch("review.dedup._fetch_bot_comments")
     def test_skips_duplicate(self, mock_fetch):
-        mock_fetch.return_value = review_dedup.PostedFindings([
-            review_dedup.PostedFinding("handler.go", "missing error check on db.Query result"),
+        mock_fetch.return_value = review.dedup.PostedFindings([
+            review.dedup.PostedFinding("handler.go", "missing error check on db.Query result"),
         ])
         f = _make_finding("M1", "handler.go", "missing error check on db.Query result")
-        kept, deduped = review_dedup.dedup_against_posted([f], "owner/repo", "123")
+        kept, deduped = review.dedup.dedup_against_posted([f], "owner/repo", "123")
         assert len(kept) == 0
         assert len(deduped) == 1
         assert deduped[0].skip_reason == "duplicate of existing comment"
 
     @patch("review.dedup._fetch_bot_comments")
     def test_keeps_non_duplicate(self, mock_fetch):
-        mock_fetch.return_value = review_dedup.PostedFindings([
-            review_dedup.PostedFinding("handler.go", "missing error check on db.Query result"),
+        mock_fetch.return_value = review.dedup.PostedFindings([
+            review.dedup.PostedFinding("handler.go", "missing error check on db.Query result"),
         ])
         f = _make_finding("S1", "handler.go", "unused import os")
-        kept, deduped = review_dedup.dedup_against_posted([f], "owner/repo", "123")
+        kept, deduped = review.dedup.dedup_against_posted([f], "owner/repo", "123")
         assert len(kept) == 1
         assert len(deduped) == 0
 
     @patch("review.dedup._fetch_bot_comments")
     def test_different_file_not_duplicate(self, mock_fetch):
-        mock_fetch.return_value = review_dedup.PostedFindings([
-            review_dedup.PostedFinding("handler.go", "missing error check"),
+        mock_fetch.return_value = review.dedup.PostedFindings([
+            review.dedup.PostedFinding("handler.go", "missing error check"),
         ])
         f = _make_finding("M1", "other.go", "missing error check")
-        kept, deduped = review_dedup.dedup_against_posted([f], "owner/repo", "123")
+        kept, deduped = review.dedup.dedup_against_posted([f], "owner/repo", "123")
         assert len(kept) == 1
 
     @patch("review.dedup._fetch_bot_comments")
@@ -248,9 +248,9 @@ class TestDedupAgainstPosted:
         the reviewer is the one who sees the duplicate, so the log is the only
         place the skipped dedup is recorded.
         """
-        mock_fetch.return_value = review_dedup.PostedFindings(looked=False)
+        mock_fetch.return_value = review.dedup.PostedFindings(looked=False)
         f = _make_finding("M1", "handler.go", "finding text")
-        kept, deduped = review_dedup.dedup_against_posted([f], "owner/repo", "123")
+        kept, deduped = review.dedup.dedup_against_posted([f], "owner/repo", "123")
         assert len(kept) == 1
         assert len(deduped) == 0
         assert "dedup is skipped" in capsys.readouterr().err
@@ -259,16 +259,16 @@ class TestDedupAgainstPosted:
     def test_an_answered_empty_lookup_is_quiet(self, mock_fetch, capsys):
         """The pair to the test above — a PR the bot has not commented on is
         the normal case and must not warn about anything."""
-        mock_fetch.return_value = review_dedup.PostedFindings([])
+        mock_fetch.return_value = review.dedup.PostedFindings([])
         f = _make_finding("M1", "handler.go", "finding text")
-        review_dedup.dedup_against_posted([f], "owner/repo", "123")
+        review.dedup.dedup_against_posted([f], "owner/repo", "123")
         assert "dedup is skipped" not in capsys.readouterr().err
 
     @patch("review.dedup._fetch_bot_comments")
     def test_no_existing_comments_keeps_all(self, mock_fetch):
-        mock_fetch.return_value = review_dedup.PostedFindings([])
+        mock_fetch.return_value = review.dedup.PostedFindings([])
         f = _make_finding("M1", "handler.go", "finding text")
-        kept, deduped = review_dedup.dedup_against_posted([f], "owner/repo", "123")
+        kept, deduped = review.dedup.dedup_against_posted([f], "owner/repo", "123")
         assert len(kept) == 1
         assert len(deduped) == 0
 
@@ -278,21 +278,21 @@ class TestDedupAgainstPostedEdgeCases:
     def test_jaccard_at_threshold_boundary(self, mock_fetch):
         # Build words so Jaccard is exactly 0.6: 3 shared out of 5 total
         # a = {"a", "b", "c"}, b = {"a", "b", "c", "d", "e"} => 3/5 = 0.6
-        mock_fetch.return_value = review_dedup.PostedFindings([
-            review_dedup.PostedFinding("file.go", "a b c d e"),
+        mock_fetch.return_value = review.dedup.PostedFindings([
+            review.dedup.PostedFinding("file.go", "a b c d e"),
         ])
         f = _make_finding("M1", "file.go", "a b c")
-        kept, deduped = review_dedup.dedup_against_posted([f], "owner/repo", "123")
+        kept, deduped = review.dedup.dedup_against_posted([f], "owner/repo", "123")
         assert len(deduped) == 1
         assert deduped[0].skip_reason == "duplicate of existing comment"
 
     @patch("review.dedup._fetch_bot_comments")
     def test_empty_path_on_both_sides_not_matched(self, mock_fetch):
-        mock_fetch.return_value = review_dedup.PostedFindings([
-            review_dedup.PostedFinding("", "missing error check"),
+        mock_fetch.return_value = review.dedup.PostedFindings([
+            review.dedup.PostedFinding("", "missing error check"),
         ])
         f = _make_finding("M1", "", "missing error check")
-        kept, deduped = review_dedup.dedup_against_posted([f], "owner/repo", "123")
+        kept, deduped = review.dedup.dedup_against_posted([f], "owner/repo", "123")
         assert len(kept) == 1
         assert len(deduped) == 0
 
@@ -305,7 +305,7 @@ class TestFetchBotReviews:
             {"id": 2, "user": {"login": "human"}, "state": "COMMENTED", "body": "human review"},
             {"id": 3, "user": {"login": "bot"}, "state": "PENDING", "body": "pending"},
         ])
-        result = review_dedup.fetch_bot_reviews("org/repo", "1")
+        result = review.dedup.fetch_bot_reviews("org/repo", "1")
         assert len(result.reviews) == 1
         assert result.reviews[0]["id"] == 1
         assert result.looked
@@ -315,27 +315,27 @@ class TestFetchBotReviews:
         monkeypatch.setattr("gh.client.api_json", lambda *a, **k: [
             {"id": 42, "body": "some body text here", "state": "PENDING", "user": {"login": "bot"}},
         ])
-        assert review_dedup.fetch_bot_reviews("org/repo", "1").reviews == []
+        assert review.dedup.fetch_bot_reviews("org/repo", "1").reviews == []
 
     def test_ignores_dismissed(self, monkeypatch):
         monkeypatch.setattr("gh.client.login", lambda *a, **k: "bot")
         monkeypatch.setattr("gh.client.api_json", lambda *a, **k: [
             {"id": 42, "body": "some body text here", "state": "DISMISSED", "user": {"login": "bot"}},
         ])
-        assert review_dedup.fetch_bot_reviews("org/repo", "1").reviews == []
+        assert review.dedup.fetch_bot_reviews("org/repo", "1").reviews == []
 
     def test_ignores_other_users(self, monkeypatch):
         monkeypatch.setattr("gh.client.login", lambda *a, **k: "bot")
         monkeypatch.setattr("gh.client.api_json", lambda *a, **k: [
             {"id": 42, "body": "some body text here", "state": "COMMENTED", "user": {"login": "alice"}},
         ])
-        assert review_dedup.fetch_bot_reviews("org/repo", "1").reviews == []
+        assert review.dedup.fetch_bot_reviews("org/repo", "1").reviews == []
 
     def test_an_unknown_bot_login_is_not_an_absence_of_reviews(self, monkeypatch):
         """Not knowing who the bot is means we could not have recognised its
         reviews — which the dedup guard reads as "nothing posted yet"."""
         monkeypatch.setattr("gh.client.login", lambda *a, **k: "")
-        found = review_dedup.fetch_bot_reviews("org/repo", "1")
+        found = review.dedup.fetch_bot_reviews("org/repo", "1")
         assert found.reviews == []
         assert found.looked is False
 
@@ -346,7 +346,7 @@ class TestFetchBotReviews:
         monkeypatch.setattr("gh.client.graphql",
                             lambda *a, **k: CmdResult(1, "", "nope"))
         monkeypatch.setattr("gh.client.api_json", lambda *a, **k: k.get("default"))
-        found = review_dedup.fetch_bot_reviews("org/repo", "1")
+        found = review.dedup.fetch_bot_reviews("org/repo", "1")
         assert found.reviews == []
         assert found.looked is False
         assert "nothing to match against" in capsys.readouterr().err
@@ -355,7 +355,7 @@ class TestFetchBotReviews:
         """The control: a PR the bot has genuinely not reviewed."""
         monkeypatch.setattr("gh.client.login", lambda *a, **k: "bot")
         monkeypatch.setattr("gh.client.api_json", lambda *a, **k: [])
-        found = review_dedup.fetch_bot_reviews("org/repo", "1")
+        found = review.dedup.fetch_bot_reviews("org/repo", "1")
         assert found.reviews == []
         assert found.looked is True
 
@@ -377,7 +377,7 @@ class TestFetchBotReviews:
               "author": {"login": "bot"}}],
             total=142,
         ))
-        result = review_dedup.fetch_bot_reviews("org/repo", "1")
+        result = review.dedup.fetch_bot_reviews("org/repo", "1")
         assert [r["id"] for r in result.reviews] == [1]
         assert "142" in capsys.readouterr().err
 
@@ -388,7 +388,7 @@ class TestFetchBotReviews:
               "author": {"login": "bot"}}],
             total=1,
         ))
-        review_dedup.fetch_bot_reviews("org/repo", "1")
+        review.dedup.fetch_bot_reviews("org/repo", "1")
         assert capsys.readouterr().err == ""
 
     def test_an_unreadable_response_says_so(self, monkeypatch, capsys):
@@ -400,7 +400,7 @@ class TestFetchBotReviews:
         """
         monkeypatch.setattr("gh.client.login", lambda *a, **k: "bot")
         monkeypatch.setattr("gh.client.graphql", lambda *a, **k: CmdResult(0, "not json"))
-        result = review_dedup.fetch_bot_reviews("org/repo", "1")
+        result = review.dedup.fetch_bot_reviews("org/repo", "1")
         assert result.looked is False
         assert result.reviews == []
         assert "dedup has nothing to match against" in capsys.readouterr().err
@@ -408,19 +408,19 @@ class TestFetchBotReviews:
 
 class TestCheckReviewAlreadyPosted:
     def test_no_reviews_returns_empty(self):
-        assert review_dedup.check_review_already_posted([], "some body") == []
+        assert review.dedup.check_review_already_posted([], "some body") == []
 
     def test_match_returns_ids(self):
         bot_reviews = [
             {"id": 42, "body": "some body text here", "state": "COMMENTED"},
         ]
-        assert review_dedup.check_review_already_posted(bot_reviews, "some body text here") == [42]
+        assert review.dedup.check_review_already_posted(bot_reviews, "some body text here") == [42]
 
     def test_zero_similarity_not_matched(self):
         bot_reviews = [
             {"id": 42, "body": "completely different content", "state": "COMMENTED"},
         ]
-        assert review_dedup.check_review_already_posted(bot_reviews, "unrelated words here") == []
+        assert review.dedup.check_review_already_posted(bot_reviews, "unrelated words here") == []
 
     def test_partial_overlap_below_threshold(self):
         shared = "alpha bravo charlie delta echo foxtrot golf hotel"
@@ -428,6 +428,6 @@ class TestCheckReviewAlreadyPosted:
         bot_reviews = [
             {"id": 42, "body": f"{shared} {different}", "state": "COMMENTED"},
         ]
-        assert review_dedup.check_review_already_posted(
+        assert review.dedup.check_review_already_posted(
             bot_reviews, f"{shared} unique words not in review",
         ) == []

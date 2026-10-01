@@ -18,14 +18,14 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from core import log
-from core import prompt
+import core.log
+import core.prompt
 from core.trail import Trail
-from gh import client as gh_client
-from pr import context as pr_context
+import gh.client
+import pr.context
 from pr.review_sync import sync_review_domain
-from review import invoke as review_invoke
-from review import publish as review_publish
+import review.invoke
+import review.publish
 from review.paths import FILENAME_PIPELINE_STATE, FILENAME_PRIOR, archive_review
 from review.summary import build_review_summary, print_summary
 
@@ -40,8 +40,8 @@ class ReviewOutcome:
 
 
 def _display(path: Path) -> None:
-    log.blank()
-    log.info("─── Review ───")
+    core.log.blank()
+    core.log.info("─── Review ───")
     print()
     print(path.read_text())
     print()
@@ -91,7 +91,7 @@ def summarise(
 
 
 def record_domain(
-    ctx: pr_context.ResolvedContext, review_file: Path, *, trail: Trail,
+    ctx: pr.context.ResolvedContext, review_file: Path, *, trail: Trail,
 ) -> None:
     """Record the review's outcome in the state of the target *ctx* names.
 
@@ -114,25 +114,25 @@ def verify_pr_ownership(pr_number: str, repo: str) -> None:
     reviewing, so running it against another author's PR writes to their work;
     a plain PR review reads and posts, which is what reviewing is for.
     """
-    author = gh_client.pr_view(pr_number, "author", repo=repo).get("author") or {}
+    author = gh.client.pr_view(pr_number, "author", repo=repo).get("author") or {}
     pr_author = author.get("login", "")
-    gh_user = gh_client.login()
+    gh_user = gh.client.login()
 
     if not pr_author or not gh_user or pr_author == gh_user:
         return
 
-    log.warn(f"PR #{pr_number} is owned by {pr_author}, not {gh_user}")
-    if not prompt.confirm("Continue with self-review?"):
+    core.log.warn(f"PR #{pr_number} is owned by {pr_author}, not {gh_user}")
+    if not core.prompt.confirm("Continue with self-review?"):
         raise SystemExit(0)
 
 
 def finish_review(
-    request: review_invoke.OrchestrateRequest,
+    request: review.invoke.OrchestrateRequest,
     wall_ms: int,
     *,
-    ctx: pr_context.ResolvedContext,
+    ctx: pr.context.ResolvedContext,
     trail: Trail,
-    posting: review_publish.PostResult,
+    posting: review.publish.PostResult,
     branch_name: str = "",
     pr_url: str = "",
 ) -> ReviewOutcome:
@@ -152,7 +152,7 @@ def finish_review(
         branch_name=branch_name, wall_clock_ms=wall_ms,
     )
     for hint in posting.hints:
-        log.dim(hint)
+        core.log.dim(hint)
 
     record_domain(ctx, request.review_file, trail=trail)
     return ReviewOutcome(request.repo, request.pr_number, request.review_file)

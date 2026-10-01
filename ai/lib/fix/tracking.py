@@ -36,7 +36,7 @@ import textwrap
 from pathlib import Path
 from typing import NamedTuple
 
-from core import log
+import core.log
 from fix.types import FixItem
 from pr.fix import FixOutcome, ItemOutcome
 
@@ -422,7 +422,7 @@ def _record_verdict(into: ItemOutcome, body: str) -> None:
         into.outcome = box.outcome
         into.reason = ticked[box.label]
         if box.outcome is FixOutcome.FIXED and not into.reason:
-            log.warn(f"{into.id}: ticked fixed with no test evidence")
+            core.log.warn(f"{into.id}: ticked fixed with no test evidence")
         return
 
 

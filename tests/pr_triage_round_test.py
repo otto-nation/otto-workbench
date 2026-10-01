@@ -30,7 +30,7 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest  # noqa: E402
 
-from pr import triage_round  # noqa: E402
+import pr.triage_round  # noqa: E402
 from pr.comments_state import ThreadState  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 from pr.domains import SupersessionKind  # noqa: E402
@@ -38,11 +38,13 @@ from pr.thread_models import (  # noqa: E402
     Classification, ClassificationResult, CommentItem, PRReport, ReplyOutcome,
     ReportThread, TriageResult, Verification,
 )
+import git.topology
+import pr.supersession
 
 
 def _fixable_count(entries):
     """What the trail reports fixable — the classifier's own answer."""
-    return len(triage_round.classify_entries(entries).fixable)
+    return len(pr.triage_round.classify_entries(entries).fixable)
 
 
 class TestClassifyTriageComplexity:
@@ -52,7 +54,7 @@ class TestClassifyTriageComplexity:
             summary="refactor", classification="actionable_suggestion",
             verification="valid", complexity="high", state=ThreadState.NEW,
         )]
-        result = triage_round.classify_entries(entries)
+        result = pr.triage_round.classify_entries(entries)
         assert len(result.fixable) == 0
         assert len(result.needs_human) == 1
         assert result.needs_human[0].reason == "complex"
@@ -63,7 +65,7 @@ class TestClassifyTriageComplexity:
             summary="rename", classification="actionable_suggestion",
             verification="valid", complexity="low", state=ThreadState.NEW,
         )]
-        result = triage_round.classify_entries(entries)
+        result = pr.triage_round.classify_entries(entries)
         assert len(result.fixable) == 1
         assert len(result.needs_human) == 0
 
@@ -73,7 +75,7 @@ class TestClassifyTriageComplexity:
             summary="add guard", classification="actionable_suggestion",
             verification="valid", complexity="medium", state=ThreadState.NEW,
         )]
-        result = triage_round.classify_entries(entries)
+        result = pr.triage_round.classify_entries(entries)
         assert len(result.fixable) == 1
         assert len(result.needs_human) == 0
 
@@ -83,7 +85,7 @@ class TestClassifyTriageComplexity:
             summary="fix", classification="actionable_suggestion",
             verification="valid", state=ThreadState.NEW,
         )]
-        result = triage_round.classify_entries(entries)
+        result = pr.triage_round.classify_entries(entries)
         assert len(result.fixable) == 1
         assert len(result.needs_human) == 0
 
@@ -120,7 +122,7 @@ class TestFixableCountMatchesTheClassifier:
             self._entry("medium", tid="t3"),
         ]
         assert _fixable_count(entries) == len(
-            triage_round.classify_entries(entries).fixable)
+            pr.triage_round.classify_entries(entries).fixable)
         assert _fixable_count(entries) == 2
 
     def test_a_question_is_not_counted(self):
@@ -150,14 +152,14 @@ class TestClassifyAlreadyAddressed:
         )
 
     def test_already_addressed_gets_own_bucket(self):
-        result = triage_round.classify_entries([self._entry("already_addressed")])
+        result = pr.triage_round.classify_entries([self._entry("already_addressed")])
         assert len(result.already_addressed) == 1
         assert result.dismissed == []
         assert result.fixable == []
         assert result.needs_human == []
 
     def test_invalid_still_dismissed(self):
-        result = triage_round.classify_entries([self._entry("invalid")])
+        result = pr.triage_round.classify_entries([self._entry("invalid")])
         assert len(result.dismissed) == 1
         assert result.already_addressed == []
 
@@ -172,23 +174,23 @@ class TestHoldIfSuperseded:
     """
 
     def test_evidence_shuts_the_gate(self, publishing_on):
-        from core import publishing
-        triage_round.hold_if_superseded(supersession_verdict(supersession_evidence()))
-        assert publishing.enabled() is False
-        assert "supersession signal" in publishing.held()
+        import core.publishing
+        pr.triage_round.hold_if_superseded(supersession_verdict(supersession_evidence()))
+        assert core.publishing.enabled() is False
+        assert "supersession signal" in core.publishing.held()
 
     def test_context_alone_leaves_it_open(self, publishing_on):
         """A rebase is how the problem becomes visible, not the problem."""
-        from core import publishing
-        triage_round.hold_if_superseded(supersession_verdict(supersession_context()))
-        assert publishing.enabled() is True
+        import core.publishing
+        pr.triage_round.hold_if_superseded(supersession_verdict(supersession_context()))
+        assert core.publishing.enabled() is True
 
     def test_nothing_found_says_nothing(self, publishing_on, capsys):
-        triage_round.hold_if_superseded(supersession_verdict())
+        pr.triage_round.hold_if_superseded(supersession_verdict())
         assert capsys.readouterr().err == ""
 
     def test_the_output_names_the_signal_that_fired(self, publishing_on, capsys):
-        triage_round.hold_if_superseded(supersession_verdict(
+        pr.triage_round.hold_if_superseded(supersession_verdict(
             supersession_context("replayed onto a moved base"),
             supersession_evidence("`foo` is gone from origin/main"),
         ))
@@ -198,7 +200,7 @@ class TestHoldIfSuperseded:
 
     def test_the_hold_is_recorded_on_the_trail(self, publishing_on):
         trail = MagicMock()
-        triage_round.hold_if_superseded(supersession_verdict(supersession_evidence()), trail)
+        pr.triage_round.hold_if_superseded(supersession_verdict(supersession_evidence()), trail)
         data = trail.decision.call_args.kwargs["data"]
         assert data["signals"] == [SupersessionKind.READDS_REMOVED_SYMBOL]
 
@@ -212,16 +214,16 @@ class TestHoldWhileContested:
                            summary="the root cause does not exist", reason=reason)
 
     def test_an_open_thread_shuts_the_gate(self, publishing_on):
-        from core import publishing
-        triage_round.hold_while_contested([self._entry("needs_discussion")])
-        assert publishing.enabled() is False
-        assert "1 thread(s)" in publishing.held()
+        import core.publishing
+        pr.triage_round.hold_while_contested([self._entry("needs_discussion")])
+        assert core.publishing.enabled() is False
+        assert "1 thread(s)" in core.publishing.held()
 
     def test_nothing_contested_leaves_the_gate_alone(self, publishing_on):
-        from core import publishing
-        triage_round.hold_while_contested([])
-        assert publishing.enabled() is True
-        assert publishing.held() == ""
+        import core.publishing
+        pr.triage_round.hold_while_contested([])
+        assert core.publishing.enabled() is True
+        assert core.publishing.held() == ""
 
     def test_every_needs_human_reason_holds(self, publishing_on):
         """Contested, conflicting, question, complex — all route to needs_human.
@@ -230,13 +232,13 @@ class TestHoldWhileContested:
         premise-invalidating question from a bikeshed is the problem this
         deliberately does not try to solve.
         """
-        from core import publishing
-        triage_round.hold_while_contested([self._entry("complex")])
-        assert publishing.enabled() is False
+        import core.publishing
+        pr.triage_round.hold_while_contested([self._entry("complex")])
+        assert core.publishing.enabled() is False
 
     def test_the_hold_is_recorded_on_the_trail(self, publishing_on):
         trail = MagicMock()
-        triage_round.hold_while_contested(
+        pr.triage_round.hold_while_contested(
             [self._entry("needs_discussion"), self._entry("question", id="t2")],
             trail,
         )
@@ -255,7 +257,7 @@ class TestTheRoundMergesItsTwoSides:
     """
 
     def _round(self, **kw):
-        return triage_round.TriagedRound(**kw)
+        return pr.triage_round.TriagedRound(**kw)
 
     def test_needs_human_is_threads_then_items(self):
         round_ = self._round(
@@ -307,13 +309,13 @@ class TestHasItemsCountsEveryBucket:
         "fixable", "needs_human", "dismissed", "already_addressed",
     ])
     def test_an_item_in_any_bucket_counts(self, bucket):
-        round_ = triage_round.TriagedRound(
+        round_ = pr.triage_round.TriagedRound(
             items=ClassificationResult(**{bucket: [CommentItem(id="ic-1")]}))
         assert round_.has_items is True
 
     def test_threads_alone_do_not_count(self):
         """The flag is about decomposed comments, not about the round having rows."""
-        round_ = triage_round.TriagedRound(
+        round_ = pr.triage_round.TriagedRound(
             threads=ClassificationResult(fixable=[CommentItem(id="t1")]))
         assert round_.has_items is False
 
@@ -330,11 +332,11 @@ class TestTheRoundIsMeasuredAgainstThePrsOwnThreads:
         ]
         report = PRReport(repo="owner/repo", pr_number=1, threads=report_threads)
         ctx = make_ctx(repo="owner/repo", pr_number=1)
-        with patch.object(triage_round.supersession, "detect_cached",
+        with patch.object(pr.supersession, "detect_cached",
                           return_value=supersession_verdict()), \
-             patch.object(triage_round.git_topology, "default_branch_cached",
+             patch.object(git.topology, "default_branch_cached",
                           return_value="main"):
-            return triage_round.triage_the_round(
+            return pr.triage_round.triage_the_round(
                 TriageResult(threads=entries), report, "/tmp/wt", ctx)
 
     def test_every_open_thread_disposed_of_is_accounted(self, publishing_on):
@@ -371,11 +373,11 @@ class TestTheRoundIsMeasuredAgainstThePrsOwnThreads:
         report = PRReport(repo="owner/repo", pr_number=1,
                           threads=[ReportThread(id="t1", state=ThreadState.NEW)])
         ctx = make_ctx(repo="owner/repo", pr_number=1)
-        with patch.object(triage_round.supersession, "detect_cached",
+        with patch.object(pr.supersession, "detect_cached",
                           return_value=supersession_verdict()), \
-             patch.object(triage_round.git_topology, "default_branch_cached",
+             patch.object(git.topology, "default_branch_cached",
                           return_value="main"):
-            round_ = triage_round.triage_the_round(
+            round_ = pr.triage_round.triage_the_round(
                 TriageResult(threads=[entry]), report, "/tmp/wt", ctx)
         assert round_.has_unaccounted is True
 
@@ -393,47 +395,47 @@ class TestTheHoldsArePlacedBeforeTheRoundExists:
     def _triage(self, entries, *, verdict=None):
         report = PRReport(repo="owner/repo", pr_number=1)
         ctx = make_ctx(repo="owner/repo", pr_number=1)
-        with patch.object(triage_round.supersession, "detect_cached",
+        with patch.object(pr.supersession, "detect_cached",
                           return_value=verdict or supersession_verdict()), \
-             patch.object(triage_round.git_topology, "default_branch_cached",
+             patch.object(git.topology, "default_branch_cached",
                           return_value="main"):
-            return triage_round.triage_the_round(
+            return pr.triage_round.triage_the_round(
                 TriageResult(threads=entries), report, "/tmp/wt", ctx)
 
     def test_a_contested_entry_holds_before_the_round_is_returned(self, publishing_on):
-        from core import publishing
+        import core.publishing
         self._triage([CommentItem(id="t1", state=ThreadState.CONTESTED)])
-        assert publishing.enabled() is False
+        assert core.publishing.enabled() is False
 
     def test_supersession_evidence_holds_too(self, publishing_on):
-        from core import publishing
+        import core.publishing
         self._triage([], verdict=supersession_verdict(supersession_evidence()))
-        assert publishing.enabled() is False
+        assert core.publishing.enabled() is False
 
     def test_a_clean_round_leaves_the_gate_open(self, publishing_on):
         """Pairs with the two above: proves those assertions are not vacuous."""
-        from core import publishing
+        import core.publishing
         entry = CommentItem(id="t1", classification="actionable_suggestion",
                             verification="valid", complexity="low",
                             file="f.go", line=1, summary="s")
         round_ = self._triage([entry])
-        assert publishing.enabled() is True
+        assert core.publishing.enabled() is True
         assert round_.has_fixables is True
 
     def test_an_item_side_contest_holds_as_well(self, publishing_on):
         """Both sides' needs-human feed the hold — an item can contest too."""
-        from core import publishing
+        import core.publishing
         report = PRReport(repo="owner/repo", pr_number=1)
         ctx = make_ctx(repo="owner/repo", pr_number=1)
         item = CommentItem(id="ic-1", classification="question",
                            file="f.go", line=1, summary="why?")
-        with patch.object(triage_round.supersession, "detect_cached",
+        with patch.object(pr.supersession, "detect_cached",
                           return_value=supersession_verdict()), \
-             patch.object(triage_round.git_topology, "default_branch_cached",
+             patch.object(git.topology, "default_branch_cached",
                           return_value="main"):
-            triage_round.triage_the_round(
+            pr.triage_round.triage_the_round(
                 TriageResult(comment_items=[item]), report, "/tmp/wt", ctx)
-        assert publishing.enabled() is False
+        assert core.publishing.enabled() is False
 
 
 class TestEveryDispositionCountsAsAccounted:
@@ -486,20 +488,20 @@ class TestEveryDispositionCopiesTheModelsEntry:
 
     def test_a_fixable_entry_is_a_copy(self):
         entry = self._entry(verification=Verification.VALID)
-        assert triage_round.classify_entries([entry]).fixable[0] is not entry
+        assert pr.triage_round.classify_entries([entry]).fixable[0] is not entry
 
     def test_an_already_addressed_entry_is_a_copy(self):
         entry = self._entry(verification=Verification.ALREADY_ADDRESSED)
-        result = triage_round.classify_entries([entry])
+        result = pr.triage_round.classify_entries([entry])
         assert result.already_addressed[0] is not entry
 
     def test_a_dismissed_entry_is_a_copy(self):
         entry = self._entry(verification=Verification.INVALID)
-        assert triage_round.classify_entries([entry]).dismissed[0] is not entry
+        assert pr.triage_round.classify_entries([entry]).dismissed[0] is not entry
 
     def test_a_needs_human_entry_is_a_copy(self):
         entry = self._entry(verification=Verification.NEEDS_DISCUSSION)
-        assert triage_round.classify_entries([entry]).needs_human[0] is not entry
+        assert pr.triage_round.classify_entries([entry]).needs_human[0] is not entry
 
     def test_stamping_a_bucket_leaves_the_models_entry_alone(self):
         """The behaviour the identity assertions are a proxy for."""
@@ -507,7 +509,7 @@ class TestEveryDispositionCopiesTheModelsEntry:
             self._entry(id="t1", verification=Verification.VALID),
             self._entry(id="t2", verification=Verification.INVALID),
         ]
-        result = triage_round.classify_entries(entries)
+        result = pr.triage_round.classify_entries(entries)
         for bucket in (result.fixable, result.dismissed):
             bucket[0].read_sha = "abc1234"
         assert [e.read_sha for e in entries] == ["", ""]
@@ -526,7 +528,7 @@ class TestAnUnroutableEntryIsDroppedAndSaid:
         entries = [CommentItem(
             id="t1", classification=Classification.APPROVAL, state=ThreadState.NEW,
         )]
-        assert not triage_round.classify_entries(entries, trail=trail).any_entry
+        assert not pr.triage_round.classify_entries(entries, trail=trail).any_entry
         trail.info.assert_called_once()
 
     def test_an_unroutable_verification_is_dropped(self):
@@ -535,14 +537,14 @@ class TestAnUnroutableEntryIsDroppedAndSaid:
             id="t1", classification=Classification.ACTIONABLE_SUGGESTION,
             verification=Verification.UNSET, state=ThreadState.NEW,
         )]
-        assert not triage_round.classify_entries(entries, trail=trail).any_entry
+        assert not pr.triage_round.classify_entries(entries, trail=trail).any_entry
         trail.info.assert_called_once()
         assert "verification=UNSET" in trail.info.call_args.args[1]
 
     def test_a_drop_without_a_trail_is_fine(self):
         """`trail` is optional everywhere else in this module; keep it so."""
         entries = [CommentItem(id="t1", classification=Classification.APPROVAL)]
-        assert not triage_round.classify_entries(entries).any_entry
+        assert not pr.triage_round.classify_entries(entries).any_entry
 
 
 class TestHoldAfterVerify:
@@ -561,25 +563,25 @@ class TestHoldAfterVerify:
 
     def test_a_falsified_fix_shuts_the_gate(self, publishing_on):
         """The sharpest case: something ran and the fix did not hold."""
-        from core import publishing
-        triage_round.hold_after_verify([
+        import core.publishing
+        pr.triage_round.hold_after_verify([
             self._outcome(FixOutcome.NEEDS_HUMAN, verified=False,
                           detail="the repro still fails"),
         ])
-        assert publishing.enabled() is False
-        assert "falsified" in publishing.held()
+        assert core.publishing.enabled() is False
+        assert "falsified" in core.publishing.held()
 
     def test_an_agent_handback_shuts_the_gate(self, publishing_on):
-        from core import publishing
-        triage_round.hold_after_verify([self._outcome(FixOutcome.NEEDS_HUMAN)])
-        assert publishing.enabled() is False
-        assert "needing a person" in publishing.held()
+        import core.publishing
+        pr.triage_round.hold_after_verify([self._outcome(FixOutcome.NEEDS_HUMAN)])
+        assert core.publishing.enabled() is False
+        assert "needing a person" in core.publishing.held()
 
     def test_a_declined_item_shuts_the_gate(self, publishing_on):
         """DECLINED travels with NEEDS_HUMAN to every reviewer-facing surface."""
-        from core import publishing
-        triage_round.hold_after_verify([self._outcome(FixOutcome.DECLINED)])
-        assert publishing.enabled() is False
+        import core.publishing
+        pr.triage_round.hold_after_verify([self._outcome(FixOutcome.DECLINED)])
+        assert core.publishing.enabled() is False
 
     def test_a_clean_round_is_left_alone(self, publishing_on):
         """The guard against a hook that holds unconditionally.
@@ -587,14 +589,14 @@ class TestHoldAfterVerify:
         Every other case here passes under one, so without this the hold could
         be `publishing.hold(...)` with no condition at all.
         """
-        from core import publishing
-        triage_round.hold_after_verify([
+        import core.publishing
+        pr.triage_round.hold_after_verify([
             self._outcome(FixOutcome.FIXED, verified=True),
             self._outcome(FixOutcome.FIXED, id="y", verified=False),
             self._outcome(FixOutcome.DEFERRED, id="z"),
         ])
-        assert publishing.enabled() is True
-        assert publishing.held() == ""
+        assert core.publishing.enabled() is True
+        assert core.publishing.held() == ""
 
     def test_an_unverified_fix_alone_does_not_hold(self, publishing_on):
         """`verified is False` on a FIXED row is a hedge, not a halt.
@@ -602,16 +604,16 @@ class TestHoldAfterVerify:
         A fix nobody could exercise still publishes, carrying its caveat. Only
         a falsified one — demoted out of FIXED by the gate — holds.
         """
-        from core import publishing
-        triage_round.hold_after_verify([
+        import core.publishing
+        pr.triage_round.hold_after_verify([
             self._outcome(FixOutcome.FIXED, verified=False,
                           detail="no runnable check"),
         ])
-        assert publishing.enabled() is True
+        assert core.publishing.enabled() is True
 
     def test_the_hold_is_recorded_on_the_trail(self, publishing_on):
         trail = MagicMock()
-        triage_round.hold_after_verify(
+        pr.triage_round.hold_after_verify(
             [self._outcome(FixOutcome.NEEDS_HUMAN, verified=False)], trail,
         )
         trail.decision.assert_called_once()
@@ -625,15 +627,15 @@ class TestHoldAfterVerify:
         gate" for one falsified fix plus one handback — overstating how many
         the gate itself caught.
         """
-        from core import publishing
-        triage_round.hold_after_verify([
+        import core.publishing
+        pr.triage_round.hold_after_verify([
             self._outcome(FixOutcome.NEEDS_HUMAN, id="x", verified=False),
             self._outcome(FixOutcome.NEEDS_HUMAN, id="y"),
         ])
-        assert "1 fix(es) falsified by the verify gate" in publishing.held()
-        assert "2 fix(es) falsified" not in publishing.held()
+        assert "1 fix(es) falsified by the verify gate" in core.publishing.held()
+        assert "2 fix(es) falsified" not in core.publishing.held()
 
     def test_no_outcomes_is_not_a_hold(self, publishing_on):
-        from core import publishing
-        triage_round.hold_after_verify([])
-        assert publishing.enabled() is True
+        import core.publishing
+        pr.triage_round.hold_after_verify([])
+        assert core.publishing.enabled() is True

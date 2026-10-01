@@ -111,8 +111,8 @@ from typing import TYPE_CHECKING, ClassVar
 # keeps this acyclic.
 from pr.ci_failures import RunState
 
-from core import log
-from git import client as git_client
+import core.log
+import git.client
 from pr.comments_state import ThreadState
 from pr.fix import FixRecord
 
@@ -584,7 +584,7 @@ class CommentsSummary(Domain):
             if self.by_state.get(prior, 0) > 0:
                 self.by_state[prior] -= 1
             else:
-                log.warn(
+                core.log.warn(
                     f"Thread tally has no {prior} left to move — "
                     "counts were snapshotted against a different thread set"
                 )
@@ -717,7 +717,7 @@ class PushDomain(Domain):
         ``Domain`` gives: the writer is what knows a write occurred, and a
         domain that stamps itself would claim one on every default construction.
         """
-        r = git_client.run("rev-list", "--count", f"origin/{branch}..HEAD",
+        r = git.client.run("rev-list", "--count", f"origin/{branch}..HEAD",
                            cwd=worktree_root)
         count = r.stdout.strip() if r.ok else ""
         return cls(ahead=int(count) if count.isdigit() else None,

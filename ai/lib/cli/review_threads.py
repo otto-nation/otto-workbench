@@ -33,26 +33,26 @@ import dataclasses
 import json
 import sys
 
-from core import log
-from core import publishing
-from core import run_lock
+import core.log
+import core.publishing
+import core.run_lock
 from core.trail import Trail, add_trail_args
-from fix import comments as fix_comments
+import fix.comments
 from gh.pr_reads import fetch_pr_data
-from pr import comments as pc
-from pr import comments_fix as pr_comments_fix
-from pr import comments_state as pcs
-from pr import context as pr_context
-from pr import domains as pr_domains
-from pr import settlement
-from pr import state as pr_state
-from pr import thread_replies
-from pr import triage
-from pr import triage_round
+import pr.comments
+import pr.comments_fix
+import pr.comments_state
+import pr.context
+import pr.domains
+import pr.settlement
+import pr.state
+import pr.thread_replies
+import pr.triage
+import pr.triage_round
 from pr.comments_state import ThreadRecord, ThreadState
 from pr.fix import FixOutcome
 from pr.thread_models import PRReport, ReportThread
-from review import closeout
+import review.closeout
 from review.deferred_issue import TRACK_ALL
 
 # A literal, not `Path(__file__).name`: this module is `review_threads.py` while
@@ -69,7 +69,7 @@ def _resolve_verified_threads(threads_raw: list, threads: dict[str, ThreadRecord
         record = threads.get(tid)
         if record is None or record.state != ThreadState.VERIFIED:
             continue
-        if not pc.resolve_thread(tid):
+        if not pr.comments.resolve_thread(tid):
             continue
         threads[tid] = dataclasses.replace(record, state=ThreadState.RESOLVED)
         resolved += 1
@@ -131,30 +131,30 @@ def _run_threads(trail, args, ctx) -> int:
     pr_data = fetch_pr_data(repo, str(pr_number))
     my_login = pr_data.viewer_login
 
-    state_path = pc.threads_state_path(ctx.target_dir)
+    state_path = pr.comments.threads_state_path(ctx.target_dir)
 
     # Load prior state
-    prior_state = pcs.load_state(state_path)
+    prior_state = pr.comments_state.load_state(state_path)
     prior_threads = prior_state.threads if prior_state else {}
 
     # Fetch from GitHub (served from pr_data, no extra API calls)
-    fetched = pc.fetch_threads(owner, repo_name, pr_number, pr_data)
+    fetched = pr.comments.fetch_threads(owner, repo_name, pr_number, pr_data)
     threads_raw = fetched.threads
-    verdicts = pc.fetch_reviewer_verdicts(repo, pr_number, pr_data)
-    issue_comments = pc.fetch_issue_comments(repo, pr_number, my_login, pr_data)
-    review_body_comments = pc.fetch_review_body_comments(
+    verdicts = pr.comments.fetch_reviewer_verdicts(repo, pr_number, pr_data)
+    issue_comments = pr.comments.fetch_issue_comments(repo, pr_number, my_login, pr_data)
+    review_body_comments = pr.comments.fetch_review_body_comments(
         repo, pr_number, my_login, pr_data,
     )
     trail.info("fetch_threads", f"fetched {len(threads_raw)} threads",
                data={"count": len(threads_raw), "complete": fetched.complete})
     if not fetched.complete:
-        log.warn(
+        core.log.warn(
             f"Only {len(threads_raw)} review threads could be read — the rest are "
             "unreachable right now, so their triage verdicts are being kept rather "
             "than treated as resolved")
 
     # Sync
-    threads = pc.sync_threads(fetched, prior_threads, my_login)
+    threads = pr.comments.sync_threads(fetched, prior_threads, my_login)
     synced_resolved = sum(1 for t in threads.values() if t.state == ThreadState.RESOLVED)
     synced_open = len(threads) - synced_resolved
     trail.info("sync_threads", f"{synced_resolved} resolved, {synced_open} open",
@@ -167,15 +167,15 @@ def _run_threads(trail, args, ctx) -> int:
     if args.triage or (args.finish and fetched.complete):
         resolved_count = _resolve_verified_threads(threads_raw, threads)
         if resolved_count:
-            log.info(f"Resolved {resolved_count} verified threads")
+            core.log.info(f"Resolved {resolved_count} verified threads")
 
     # Save state
-    pcs.save_state(state_path, pcs.CommentsState(
+    pr.comments_state.save_state(state_path, pr.comments_state.CommentsState(
         repo=repo, pr_number=pr_number, my_login=my_login, threads=threads,
     ))
 
     # Dashboard to stderr
-    dashboard = pc.render_dashboard(
+    dashboard = pr.comments.render_dashboard(
         pr_number, threads, verdicts, issue_comments,
         review_body_comments=review_body_comments,
     )
@@ -219,10 +219,10 @@ def _run_threads(trail, args, ctx) -> int:
         has_approvals = any(
             v.get("state") == "APPROVED" for v in report.verdicts
         )
-        st = pr_state.load_or_init(**ctx_args)
+        st = pr.state.load_or_init(**ctx_args)
         _mark_seen(issue_comments, st.comments.seen_issue_comments)
         _mark_seen(review_body_comments, st.comments.seen_review_body_comments)
-        pr_state.apply(st, pr_domains.CommentsSummary(
+        pr.state.apply(st, pr.domains.CommentsSummary(
             total_threads=len(report.threads),
             by_state=thread_states,
             blocking_reviewers=blocking,
@@ -230,13 +230,13 @@ def _run_threads(trail, args, ctx) -> int:
             seen_issue_comments=_seen_record(issue_comments),
             seen_review_body_comments=_seen_record(review_body_comments),
             complete=fetched.complete,
-            updated_at=pr_state.now_iso(),
+            updated_at=pr.state.now_iso(),
         ))
 
-        pr_state.save_state(ctx.target_dir, st)
+        pr.state.save_state(ctx.target_dir, st)
     except Exception as exc:
         trail.error("state_update", f"state update failed: {exc}")
-        log.error(f"state update failed: {exc}")
+        core.log.error(f"state update failed: {exc}")
 
     # Triage and/or fix mode
     if args.triage:
@@ -244,15 +244,15 @@ def _run_threads(trail, args, ctx) -> int:
         trail.decision("triage_mode", f"running {triage_mode}",
                        reason="--fix flag" if args.fix else "--triage flag",
                        data={"fix": args.fix, "triage": args.triage})
-        triage_result, rc = triage.run_triage(report, toplevel, ctx_args, trail=trail)
+        triage_result, rc = pr.triage.run_triage(report, toplevel, ctx_args, trail=trail)
         if rc != 0:
             return rc
 
         if args.fix and triage_result:
             fixable_count = len(
-                triage_round.classify_entries(triage_result.threads).fixable)
+                pr.triage_round.classify_entries(triage_result.threads).fixable)
             fixable_items_count = len(
-                triage_round.classify_entries(triage_result.comment_items).fixable)
+                pr.triage_round.classify_entries(triage_result.comment_items).fixable)
             trail.decision(
                 "fix_classification",
                 f"{fixable_count} fixable threads, {fixable_items_count} fixable items identified",
@@ -261,7 +261,7 @@ def _run_threads(trail, args, ctx) -> int:
                       "total": len(triage_result.threads),
                       "total_items": len(triage_result.comment_items)},
             )
-            fix_pass = fix_comments.run_pass(
+            fix_pass = fix.comments.run_pass(
                 triage_result, report, toplevel, ctx, trail=trail,
                 verify=not args.no_verify,
             )
@@ -295,7 +295,7 @@ def _run_threads(trail, args, ctx) -> int:
         # answered. Asserting that over a thread set we could not finish
         # reading is the same error as writing the ledger from it: the threads
         # we never saw are the ones most likely to be unanswered.
-        log.error(
+        core.log.error(
             "--finish needs the whole thread set and this fetch was short — "
             "nothing was published. Re-run once the threads are readable again "
             "(an exhausted GitHub API budget is the usual cause, and it refills "
@@ -304,7 +304,7 @@ def _run_threads(trail, args, ctx) -> int:
 
     if args.finish:
         track = TRACK_ALL if args.track_all else frozenset(args.track)
-        if not closeout.finish_deferred_work(ctx, report, trail=trail, track=track):
+        if not review.closeout.finish_deferred_work(ctx, report, trail=trail, track=track):
             return 1
 
     json.dump(output, sys.stdout, indent=2)
@@ -363,7 +363,7 @@ def build_parser() -> argparse.ArgumentParser:
                              "--finish then replies, resolves and reports it like "
                              "any other settled thread")
     parser.add_argument("--as", dest="settle_as", default=FixOutcome.FIXED.value,
-                        choices=[o.value for o in settlement.SETTLE_OUTCOMES],
+                        choices=[o.value for o in pr.settlement.SETTLE_OUTCOMES],
                         help="What --settle records (default: fixed)")
     parser.add_argument("--reason", metavar="TEXT",
                         help="Why, for --settle --as dismissed — it becomes the "
@@ -393,10 +393,10 @@ def main(argv: list[str] | None = None) -> int:
             ) if on
         ]
         if conflicting:
-            log.error(
+            core.log.error(
                 f"--settle records local state and publishes nothing, so it cannot "
                 f"run with {', '.join(conflicting)}. Record the settlement, read "
-                f"it back, then run `{pr_comments_fix.CLOSEOUT_COMMAND}`"
+                f"it back, then run `{pr.comments_fix.CLOSEOUT_COMMAND}`"
             )
             return 1
 
@@ -412,7 +412,7 @@ def main(argv: list[str] | None = None) -> int:
             ) if on
         ]
         if conflicting:
-            log.error(
+            core.log.error(
                 f"--reply writes one thread and nothing else, so it cannot run "
                 f"with {', '.join(conflicting)}. Post the reply, then run the "
                 f"phase as its own command"
@@ -421,23 +421,23 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.fix:
         args.triage = True
-    with publishing.run(post=args.post):
+    with core.publishing.run(post=args.post):
         if not args.post and not args.settle:
-            log.info("Draft mode — nothing is posted to GitHub. Re-run with --post to publish.")
+            core.log.info("Draft mode — nothing is posted to GitHub. Re-run with --post to publish.")
 
-        ctx = pr_context.resolve(
+        ctx = pr.context.resolve(
             pr_ref=args.pr, branch=args.branch, repo_dir=args.repo_dir,
         )
         repo = ctx.repo
         pr_number = ctx.pr_number
         if pr_number is None:
-            log.error("No PR found for current branch")
+            core.log.error("No PR found for current branch")
             return 1
 
         if args.reply:
-            return thread_replies.run_reply(ctx, args.reply, args.body_file)
+            return pr.thread_replies.run_reply(ctx, args.reply, args.body_file)
         if args.settle:
-            return settlement.run_settle(
+            return pr.settlement.run_settle(
                 ctx, args.settle, args.settle_as, args.reason or "", args.commit or "",
             )
         branch = ctx.branch
@@ -449,10 +449,10 @@ def main(argv: list[str] | None = None) -> int:
         # A no-op when pr launched us — we resolve the same target and find its key
         # already in WORKBENCH_RUN_LOCK.
         # Acquired before Trail.start so contention costs no trail artifacts.
-        run_lock.claim_for_process(
+        core.run_lock.claim_for_process(
             ctx.target_dir,
             command=" ".join([SCRIPT, *(argv if argv is not None else sys.argv[1:])]),
-            started=pr_state.now_iso(),
+            started=pr.state.now_iso(),
             # This run's --fix pass commits in that checkout; no worktree switch
             # happens on this path, so it is the tree that gets written to.
             worktree=worktree,

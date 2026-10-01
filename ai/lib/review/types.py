@@ -28,8 +28,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
-from core import serde
-from config import workbench_config
+import core.serde
+import config.workbench_config
 from agent.types import EFFORT_PRESETS
 from gh.types import PRContext, PRMetadata
 from core.phases import Effort, Mode, Phase
@@ -458,7 +458,7 @@ def review_meta_from_dict(d) -> ReviewMeta:
         k: v for k, v in d.items()
         if k not in _META_VOCABULARIES or meta_enum(_META_VOCABULARIES[k], v)
     }
-    return serde.from_dict(ReviewMeta, normalised)
+    return core.serde.from_dict(ReviewMeta, normalised)
 
 
 # ── Findings ─────────────────────────────────────────────────────────────────
@@ -740,7 +740,7 @@ class ReviewJob:
     started_at: str = field(default_factory=now_iso)
 
     @functools.cached_property
-    def config(self) -> workbench_config.WorkbenchConfig:
+    def config(self) -> config.workbench_config.WorkbenchConfig:
         """The merged workbench config for this job's worktree, read once.
 
         A review builds a ``PhaseRunner`` per phase and, in the group phase, one
@@ -748,7 +748,7 @@ class ReviewJob:
         from the same two files. Cached on the job so the read happens once per
         review rather than once per runner.
         """
-        return workbench_config.load_config_or_default(self.wt_path)
+        return config.workbench_config.load_config_or_default(self.wt_path)
 
     @property
     def skipped(self) -> frozenset[Phase]:

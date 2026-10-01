@@ -48,7 +48,9 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from core import serde, timeouts, tree_lock
+import core.serde
+import core.timeouts
+import core.tree_lock
 
 LOCK_FILE = "workbench-session.lock"
 
@@ -85,7 +87,7 @@ def lock_path(worktree: Path) -> Path | None:
     ``GIT_DIR``/``GIT_WORK_TREE`` a hook exports, which is the trap a fourth
     copy of that resolver would re-import.
     """
-    git_dir = tree_lock._git_dir(worktree)
+    git_dir = core.tree_lock._git_dir(worktree)
     return None if git_dir is None else git_dir / LOCK_FILE
 
 
@@ -102,7 +104,7 @@ def process_start(pid: int) -> str:
             ["ps", "-o", "lstart=", "-p", str(pid)],
             capture_output=True,
             text=True,
-            timeout=timeouts.LOCAL,
+            timeout=core.timeouts.LOCAL,
         )
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -188,7 +190,7 @@ def ancestor_pids() -> frozenset[int]:
                 ["ps", "-o", "ppid=", "-p", str(pid)],
                 capture_output=True,
                 text=True,
-                timeout=timeouts.LOCAL,
+                timeout=core.timeouts.LOCAL,
             )
         except (OSError, subprocess.SubprocessError):
             break
@@ -298,7 +300,7 @@ def _write(path: Path, lines: list[str]) -> bool:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp.write_text("".join(f"{line}\n" for line in lines))
-        serde.replace_file(tmp, path)
+        core.serde.replace_file(tmp, path)
     except OSError:
         try:
             tmp.unlink()

@@ -387,11 +387,11 @@ def _isolate_installed_schema(monkeypatch):
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from config import workbench_config_write
+    import config.workbench_config_write
 
     real_which = shutil.which
-    launcher = workbench_config_write.INSTALLED_LAUNCHER
-    monkeypatch.setattr(workbench_config_write.shutil, "which", lambda name, *a, **kw: (
+    launcher = config.workbench_config_write.INSTALLED_LAUNCHER
+    monkeypatch.setattr(config.workbench_config_write.shutil, "which", lambda name, *a, **kw: (
         None if name == launcher else real_which(name, *a, **kw)
     ))
 
@@ -409,15 +409,15 @@ def reset_trail_root():
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from core import trail
+    import core.trail
 
-    saved = os.environ.pop(trail.TRAIL_ROOT_ENV, None)
+    saved = os.environ.pop(core.trail.TRAIL_ROOT_ENV, None)
     try:
         yield
     finally:
-        os.environ.pop(trail.TRAIL_ROOT_ENV, None)
+        os.environ.pop(core.trail.TRAIL_ROOT_ENV, None)
         if saved is not None:
-            os.environ[trail.TRAIL_ROOT_ENV] = saved
+            os.environ[core.trail.TRAIL_ROOT_ENV] = saved
 
 
 @pytest.fixture(autouse=True)
@@ -450,19 +450,19 @@ def _clear_lock_env():
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from core import run_lock
+    import core.run_lock
 
-    saved = os.environ.pop(run_lock.LOCK_ENV, None)
-    saved_tree = os.environ.pop(run_lock.TREE_LOCK_ENV, None)
+    saved = os.environ.pop(core.run_lock.LOCK_ENV, None)
+    saved_tree = os.environ.pop(core.run_lock.TREE_LOCK_ENV, None)
     yield
-    run_lock._release_all()
-    run_lock._INHERITED.clear()
-    os.environ.pop(run_lock.LOCK_ENV, None)
-    os.environ.pop(run_lock.TREE_LOCK_ENV, None)
+    core.run_lock._release_all()
+    core.run_lock._INHERITED.clear()
+    os.environ.pop(core.run_lock.LOCK_ENV, None)
+    os.environ.pop(core.run_lock.TREE_LOCK_ENV, None)
     if saved is not None:
-        os.environ[run_lock.LOCK_ENV] = saved
+        os.environ[core.run_lock.LOCK_ENV] = saved
     if saved_tree is not None:
-        os.environ[run_lock.TREE_LOCK_ENV] = saved_tree
+        os.environ[core.run_lock.TREE_LOCK_ENV] = saved_tree
 
 
 @pytest.fixture
@@ -505,11 +505,11 @@ def _clear_gh_budget_latch():
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from gh import budget
+    import gh.budget
 
-    budget.reset_for_tests()
+    gh.budget.reset_for_tests()
     yield
-    budget.reset_for_tests()
+    gh.budget.reset_for_tests()
 
 
 @contextlib.contextmanager
@@ -523,13 +523,13 @@ def latch_graphql():
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from gh import budget
+    import gh.budget
 
     at = int(time.time()) + 600
     with mock.patch.dict(
-        "os.environ", {budget.LATCH_ENV: f"graphql:{at}:{at}:7399350"},
+        "os.environ", {gh.budget.LATCH_ENV: f"graphql:{at}:{at}:7399350"},
     ):
-        assert budget.latched(budget.Resource.GRAPHQL) is not None
+        assert gh.budget.latched(gh.budget.Resource.GRAPHQL) is not None
         yield
 
 
@@ -800,9 +800,9 @@ def _proc():
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from core import proc
+    import core.proc
 
-    return proc
+    return core.proc
 
 
 def pytest_runtest_setup(item):
@@ -1035,8 +1035,8 @@ def reviews_dir(tmp_path, monkeypatch) -> Path:
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from core import workbench_paths
-    d = workbench_paths.reviews_dir()
+    import core.workbench_paths
+    d = core.workbench_paths.reviews_dir()
     d.mkdir(parents=True)
     return d
 
@@ -1092,8 +1092,8 @@ def supersession_verdict(*signals):
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from pr import supersession
-    return supersession.Verdict(list(signals))
+    import pr.supersession
+    return pr.supersession.Verdict(list(signals))
 
 
 def supersession_evidence(detail="`foo` is gone from origin/main"):
@@ -1165,8 +1165,8 @@ def write_marker_file(directory, name: str, *lines: str) -> Path:
 def rp():
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from cli import review_post
-    return review_post
+    import cli.review_post
+    return cli.review_post
 
 
 @pytest.fixture(autouse=True)
@@ -1226,9 +1226,9 @@ def _last_event() -> dict:
     """The most recent record in the sandboxed trail root."""
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from core import workbench_paths
+    import core.workbench_paths
 
-    root = workbench_paths.trail_dir()
+    root = core.workbench_paths.trail_dir()
     lines = [line for p in sorted(root.glob("*.jsonl"))
              for line in p.read_text().splitlines() if line.strip()]
     return json.loads(lines[-1])
@@ -1312,16 +1312,16 @@ def _drafts_only(monkeypatch):
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from core import publishing
-    monkeypatch.setattr(publishing, "_enabled", False)
-    monkeypatch.setattr(publishing, "_held", "")
+    import core.publishing
+    monkeypatch.setattr(core.publishing, "_enabled", False)
+    monkeypatch.setattr(core.publishing, "_held", "")
 
 
 @pytest.fixture
 def publishing_on(monkeypatch):
     """Open the gate, for tests covering what a write does once it is allowed."""
-    from core import publishing
-    monkeypatch.setattr(publishing, "_enabled", True)
+    import core.publishing
+    monkeypatch.setattr(core.publishing, "_enabled", True)
 
 
 @pytest.fixture(autouse=True)
@@ -1330,8 +1330,8 @@ def _clear_bot_login_cache():
     yield
     if LIB_DIR in sys.path or "review.dedup" in sys.modules:
         try:
-            from review import dedup as review_dedup
-            review_dedup.get_bot_login.cache_clear()
+            import review.dedup
+            review.dedup.get_bot_login.cache_clear()
         except (ImportError, AttributeError):
             pass
 
@@ -1340,8 +1340,8 @@ def _clear_bot_login_cache():
 def ro():
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from cli import review_orchestrate
-    return review_orchestrate
+    import cli.review_orchestrate
+    return cli.review_orchestrate
 
 
 @pytest.fixture(scope="session")
@@ -1382,7 +1382,7 @@ def make_ctx(**overrides):
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from pr import context as pr_context
+    import pr.context
 
     defaults = dict(
         repo="owner/repo", branch="feat/test", pr_number=42,
@@ -1390,7 +1390,7 @@ def make_ctx(**overrides):
         target_dir=Path(_CTX_TARGET_ROOT.name) / f"target-{next(_ctx_target_seq)}",
     )
     defaults.update(overrides)
-    return pr_context.ResolvedContext(**defaults)
+    return pr.context.ResolvedContext(**defaults)
 
 
 def assert_no_worktree_exit(capsys, branch, fn, *args, **kwargs):
@@ -1443,9 +1443,9 @@ def readiness_state(pr_number=1):
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from pr import state as pr_state
+    import pr.state
 
-    return pr_state.new_state(
+    return pr.state.new_state(
         repo="owner/repo",
         branch="branch",
         pr_number=pr_number,

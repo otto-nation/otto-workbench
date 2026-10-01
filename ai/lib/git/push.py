@@ -113,11 +113,11 @@ _AI_LIB = Path(__file__).resolve().parent.parent
 if _AI_LIB.is_dir() and str(_AI_LIB) not in sys.path:
     sys.path.insert(0, str(_AI_LIB))
 
-from git import client as git_client
-from core import log
-from core import proc
-from core import publishing
-from core import timeouts
+import git.client
+import core.log
+import core.proc
+import core.publishing
+import core.timeouts
 from core.trail import Trail
 
 
@@ -323,7 +323,7 @@ def classify(output: str) -> Refusal:
     return Refusal.OTHER
 
 
-def _dropped(r: proc.CmdResult) -> bool:
+def _dropped(r: core.proc.CmdResult) -> bool:
     """The connection died mid-transfer, so only the remote knows what it kept.
 
     Two shapes of one failure. git usually says so, and the text is what tells
@@ -339,7 +339,7 @@ def _dropped(r: proc.CmdResult) -> bool:
     return r.signalled or classify(r.combined_output) is Refusal.DROPPED
 
 
-def _push_output(r: proc.CmdResult) -> str:
+def _push_output(r: core.proc.CmdResult) -> str:
     """What the push said, or what killed it when it said nothing.
 
     A killed git leaves an empty excerpt under the report's headline, which is
@@ -359,7 +359,7 @@ def _push_output(r: proc.CmdResult) -> str:
     """
     if r.combined_output.strip() or not r.signalled:
         return r.combined_output
-    return (f"git was killed by {proc.signal_description(r.returncode)} — "
+    return (f"git was killed by {core.proc.signal_description(r.returncode)} — "
             "what the remote received is unconfirmed")
 
 
@@ -385,7 +385,7 @@ def remote_head(
     an answer to the question.
     """
     ref = f"refs/heads/{branch}"
-    r = git_client.run("ls-remote", "--heads", remote, ref, cwd=wt_path)
+    r = git.client.run("ls-remote", "--heads", remote, ref, cwd=wt_path)
     if not r.ok:
         return None
     for line in r.stdout.splitlines():
@@ -411,10 +411,10 @@ def holds(wt_path: str | Path, sha: str, *, remote: str = "origin") -> bool:
     a later one carrying it is, so the question is whether the remote's tip
     descends from *sha*.
     """
-    tip = remote_head(wt_path, git_client.current_branch(cwd=wt_path), remote=remote)
+    tip = remote_head(wt_path, git.client.current_branch(cwd=wt_path), remote=remote)
     if not tip:
         return False
-    return git_client.ok("merge-base", "--is-ancestor", sha, tip, cwd=wt_path)
+    return git.client.ok("merge-base", "--is-ancestor", sha, tip, cwd=wt_path)
 
 
 def _verify(
@@ -441,9 +441,9 @@ def _retry_block(wt_path: str | Path, sha: str) -> Retry | None:
     the tree must be the one they validated. This repo's own pre-push
     regenerates files, so the dirty check is not hypothetical.
     """
-    if git_client.head_sha(cwd=wt_path) != sha:
+    if git.client.head_sha(cwd=wt_path) != sha:
         return Retry.HEAD_MOVED
-    if git_client.is_dirty(cwd=wt_path):
+    if git.client.is_dirty(cwd=wt_path):
         return Retry.DIRTY
     return None
 
@@ -468,9 +468,9 @@ def _retry_lost(
     if trail:
         trail.warn("push", "push did not land — retrying without the gates",
                    data={"sha": lost.sha, "branch": lost.branch})
-    log.warn("push did not land — retrying once without the gates")
+    core.log.warn("push did not land — retrying once without the gates")
 
-    r = git_client.run("push", "--no-verify", *args, cwd=wt_path)
+    r = git.client.run("push", "--no-verify", *args, cwd=wt_path)
     output = _push_output(r)
     if not r.ok and not _dropped(r):
         artifact = trail.failure(
@@ -514,14 +514,14 @@ def push(
     reads a SHA off one, and the gate's own draft names the command instead.
     """
     argv = tuple(args)
-    if gated and not publishing.enabled():
-        publishing.draft("push", _push_command(wt_path, argv))
+    if gated and not core.publishing.enabled():
+        core.publishing.draft("push", _push_command(wt_path, argv))
         return PushResult(PushStatus.HELD, sha, branch, remote=remote, args=argv)
 
-    sha = sha or git_client.head_sha(cwd=wt_path)
-    branch = branch or git_client.current_branch(cwd=wt_path)
+    sha = sha or git.client.head_sha(cwd=wt_path)
+    branch = branch or git.client.current_branch(cwd=wt_path)
 
-    r = git_client.run("push", *argv, cwd=wt_path)
+    r = git.client.run("push", *argv, cwd=wt_path)
     output = _push_output(r)
     if not r.ok and not _dropped(r):
         artifact = trail.failure(
@@ -663,7 +663,7 @@ def _ssh_host(wt_path: str | Path, remote: str) -> SshTarget:
     authority, while scp-style `host:path` uses the same colon for the path and
     cannot express one at all.
     """
-    url = git_client.out("remote", "get-url", remote, cwd=wt_path)
+    url = git.client.out("remote", "get-url", remote, cwd=wt_path)
     if not url:
         return SshTarget()
     if url.startswith("ssh://"):
@@ -707,7 +707,7 @@ def diagnose_ssh_auth(wt_path: str | Path, remote: str) -> str:
     if not target.probeable:
         return ""
     try:
-        probe = proc.run(
+        probe = core.proc.run(
             ["ssh", "-v", "-o", "BatchMode=yes",
              # `no` rather than `accept-new`: this is a diagnostic, and
              # `accept-new` writes an unknown host into known_hosts. Pinning
@@ -719,14 +719,14 @@ def diagnose_ssh_auth(wt_path: str | Path, remote: str) -> str:
              "-T", *target.args],
             # A round trip to a remote host, bounded by latency rather than by
             # payload — exactly what `timeouts.NETWORK` describes.
-            timeout=timeouts.NETWORK,
+            timeout=core.timeouts.NETWORK,
         )
     except FileNotFoundError:
         return ""
     output = probe.combined_output.lower()
     if not output:
         return ""
-    if probe.returncode == proc.TIMEOUT_RETURNCODE:
+    if probe.returncode == core.proc.TIMEOUT_RETURNCODE:
         return ""
     if any(marker in output for marker in _PROBE_INCONCLUSIVE):
         return ""
@@ -793,8 +793,8 @@ def _unverified_headline(result: PushResult) -> str:
     """
     if result.refusal is Refusal.DROPPED:
         return (f"the connection dropped and the remote could not be asked "
-                f"whether it holds {git_client.abbrev(result.sha)}")
-    return (f"pushed {git_client.abbrev(result.sha)} but could not reach the "
+                f"whether it holds {git.client.abbrev(result.sha)}")
+    return (f"pushed {git.client.abbrev(result.sha)} but could not reach the "
             f"remote to confirm it landed")
 
 
@@ -814,11 +814,11 @@ def _lost_headline(result: PushResult) -> str:
 def report(result: PushResult, wt_path: str | Path) -> None:
     """Say what happened, in the terms the reader has to act on."""
     if result.status is PushStatus.PUSHED:
-        log.ok(f"Pushed {git_client.abbrev(result.sha)} to {result.branch}")
+        core.log.ok(f"Pushed {git.client.abbrev(result.sha)} to {result.branch}")
         # The terminal is full of red ssh diagnostics at this point, and the one
         # thing the reader needs is that none of it cost them the push.
         if result.refusal is Refusal.DROPPED:
-            log.dim("the connection dropped during the transfer — the remote "
+            core.log.dim("the connection dropped during the transfer — the remote "
                     "holds it anyway, nothing to do")
         return
 
@@ -829,44 +829,44 @@ def report(result: PushResult, wt_path: str | Path) -> None:
     resume = resume_command(result, wt_path)
 
     if result.status is PushStatus.UNVERIFIED:
-        log.warn(f"{_unverified_headline(result)} — check with: {resume}")
+        core.log.warn(f"{_unverified_headline(result)} — check with: {resume}")
         # Only a push that was lost and then retried can reach here having made
         # two transfers, and the reader has to know that to read the check above:
         # what `ls-remote` answers is the fate of the retry, not of the push they
         # watched fail.
         if result.retry is not Retry.NONE:
-            log.dim(_RETRY_NOTE[result.retry])
+            core.log.dim(_RETRY_NOTE[result.retry])
         return
 
     if result.status is PushStatus.REFUSED:
-        log.error(_refused_headline(result))
-        for line in proc.tail(result.output).splitlines():
-            log.dim(line)
+        core.log.error(_refused_headline(result))
+        for line in core.proc.tail(result.output).splitlines():
+            core.log.dim(line)
         # After git's own words, not instead of them: the probe is a second
         # opinion about output the reader can still see for themselves.
         for line in _auth_hint(result, wt_path):
-            log.dim(line)
+            core.log.dim(line)
         if result.log:
-            log.dim(f"full output: {result.log}")
-        log.dim(f"Resume: {resume}")
+            core.log.dim(f"full output: {result.log}")
+        core.log.dim(f"Resume: {resume}")
         return
 
-    log.error(_lost_headline(result))
+    core.log.error(_lost_headline(result))
     # A lost push's output is a clean push's chatter and worth nothing to the
     # reader. A dropped one's is the only account of what killed it.
     if result.refusal is Refusal.DROPPED:
-        for line in proc.tail(result.output).splitlines():
-            log.dim(line)
+        for line in core.proc.tail(result.output).splitlines():
+            core.log.dim(line)
     # Named rather than left to the resume line below, because the reader is not
     # always standing in the repository this happened in: `push_intent` reports a
     # push made in another terminal, and a review fix pass pushes from a worktree
     # under the state root that nobody has seen.
-    log.dim(f"repo:     {wt_path}")
-    log.dim(f"branch:   {result.branch}")
-    log.dim(f"expected: {git_client.abbrev(result.sha)}")
-    log.dim(f"origin:   {git_client.abbrev(result.remote_sha) or 'no such ref'}")
-    log.dim(_RETRY_NOTE[result.retry])
-    log.dim(f"Resume: {resume}")
+    core.log.dim(f"repo:     {wt_path}")
+    core.log.dim(f"branch:   {result.branch}")
+    core.log.dim(f"expected: {git.client.abbrev(result.sha)}")
+    core.log.dim(f"origin:   {git.client.abbrev(result.remote_sha) or 'no such ref'}")
+    core.log.dim(_RETRY_NOTE[result.retry])
+    core.log.dim(f"Resume: {resume}")
 
 
 # The bash half of `pr:create` reads these rather than parsing output. HELD

@@ -66,7 +66,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from git import client as git_client
+import git.client
 
 # An identifier of at least four characters. The length floor is what keeps
 # `ai/bin/pr` from contributing `ai`, `bin` and `pr` when a path is reworded.
@@ -147,7 +147,7 @@ def _mentions(workdir: Path, symbol: str) -> int:
     substring of `_positional_index`, and counting the one against the other
     would make a renamed symbol look common enough to discard.
     """
-    result = git_client.run(
+    result = git.client.run(
         "grep", "--files-with-matches", "--fixed-strings", "--word-regexp",
         symbol, cwd=workdir,
     )
@@ -163,7 +163,7 @@ def _diff_of(workdir: Path, path: str) -> str:
     work is read the same as one that staged none. Zero context lines: the
     surrounding unchanged code is exactly what must not be read as removed.
     """
-    return git_client.run(
+    return git.client.run(
         "diff", "HEAD", "--unified=0", "--", path, cwd=workdir,
     ).stdout
 

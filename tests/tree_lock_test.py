@@ -15,8 +15,8 @@ if str(LIB_DIR) not in sys.path:
 import pytest
 
 from conftest import init_worktree, seed_repo  # noqa: E402
-from core import signal_relay  # noqa: E402
-from core import tree_lock_cli  # noqa: E402
+import core.signal_relay  # noqa: E402
+import core.tree_lock_cli  # noqa: E402
 from core.tree_lock import LOCK_ENV, LOCK_FILE, acquire, holders, is_locked, lock_path
 
 
@@ -249,13 +249,13 @@ def test_a_signal_racing_the_spawn_still_reaches_the_child(monkeypatch):
 
     # The relay lives in `core.signal_relay`, which both wrappers share, so the
     # delivery is stubbed there rather than on this module.
-    monkeypatch.setattr(tree_lock_cli.subprocess, "Popen", signalling_popen)
+    monkeypatch.setattr(core.tree_lock_cli.subprocess, "Popen", signalling_popen)
     monkeypatch.setattr(
-        signal_relay.os, "killpg",
+        core.signal_relay.os, "killpg",
         lambda _pgid, signum: delivered.append(signum),
     )
 
-    code = tree_lock_cli._run_child([sys.executable, "-c", "pass"])
+    code = core.tree_lock_cli._run_child([sys.executable, "-c", "pass"])
 
     assert delivered == [signal.SIGTERM], (
         "the signal taken before the child existed was dropped rather than "

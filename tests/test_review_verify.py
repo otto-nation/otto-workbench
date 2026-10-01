@@ -31,8 +31,8 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from review import spans as review_spans
-from review import verify as review_verify
+import review.spans
+import review.verify
 from review.document import SECTION_PRIOR_FINDINGS
 from review.types import SEVERITY_MUST, severity_by_key
 from review.verify import (
@@ -43,7 +43,7 @@ from review.verify import (
 
 def _verifies(path: str, evidence: str | None, wt_path: str) -> bool:
     """Whether a finding's evidence matches the file it was quoted from."""
-    return review_verify._match_evidence(path, evidence, wt_path)["match_result"]
+    return review.verify._match_evidence(path, evidence, wt_path)["match_result"]
 
 
 # ── Evidence verification ────────────────────────────────────────────────────
@@ -57,7 +57,7 @@ class TestExtractEvidence:
             "  > result := db.Query(query)\n"
             "  > ```"
         )
-        assert review_verify._extract_evidence(body) == "result := db.Query(query)"
+        assert review.verify._extract_evidence(body) == "result := db.Query(query)"
 
     def test_multiline_snippet(self):
         body = (
@@ -67,10 +67,10 @@ class TestExtractEvidence:
             "  > y = 2\n"
             "  > ```"
         )
-        assert review_verify._extract_evidence(body) == "x = 1\ny = 2"
+        assert review.verify._extract_evidence(body) == "x = 1\ny = 2"
 
     def test_returns_none_when_no_evidence(self):
-        assert review_verify._extract_evidence("just a description, no code block") is None
+        assert review.verify._extract_evidence("just a description, no code block") is None
 
     def test_handles_no_language_tag(self):
         body = (
@@ -79,18 +79,18 @@ class TestExtractEvidence:
             "  > some_code()\n"
             "  > ```"
         )
-        assert review_verify._extract_evidence(body) == "some_code()"
+        assert review.verify._extract_evidence(body) == "some_code()"
 
 
 class TestNormalizeCode:
     def test_strips_whitespace_and_blank_lines(self):
-        assert review_verify._normalize_code("  x = 1  \n\n  y = 2  ") == "x = 1\ny = 2"
+        assert review.verify._normalize_code("  x = 1  \n\n  y = 2  ") == "x = 1\ny = 2"
 
     def test_empty_string(self):
-        assert review_verify._normalize_code("") == ""
+        assert review.verify._normalize_code("") == ""
 
     def test_preserves_content(self):
-        assert review_verify._normalize_code("result := db.Query(q)") == "result := db.Query(q)"
+        assert review.verify._normalize_code("result := db.Query(q)") == "result := db.Query(q)"
 
 
 class TestMatchEvidence:
@@ -204,32 +204,32 @@ class TestMatchEvidence:
 
 class TestStripComments:
     def test_strips_go_comment(self):
-        assert review_verify._strip_comments("x = 1 // explanation") == "x = 1"
+        assert review.verify._strip_comments("x = 1 // explanation") == "x = 1"
 
     def test_strips_python_comment(self):
-        assert review_verify._strip_comments("x = 1 # explanation") == "x = 1"
+        assert review.verify._strip_comments("x = 1 # explanation") == "x = 1"
 
     def test_strips_template_comment(self):
-        assert review_verify._strip_comments("{{ end }}{{/* note */}}") == "{{ end }}"
+        assert review.verify._strip_comments("{{ end }}{{/* note */}}") == "{{ end }}"
 
     def test_preserves_comment_inside_string(self):
         line = 'msg := "value // not a comment"'
-        assert review_verify._strip_comments(line) == line
+        assert review.verify._strip_comments(line) == line
 
     def test_no_comment_unchanged(self):
-        assert review_verify._strip_comments("x = 1") == "x = 1"
+        assert review.verify._strip_comments("x = 1") == "x = 1"
 
     def test_drops_indented_whole_line_comment(self):
-        assert review_verify._strip_comments("    # why this matters\n    x = 1") == "\n    x = 1"
+        assert review.verify._strip_comments("    # why this matters\n    x = 1") == "\n    x = 1"
 
     def test_drops_column_zero_whole_line_comment(self):
-        assert review_verify._strip_comments("// why this matters\nx = 1") == "\nx = 1"
+        assert review.verify._strip_comments("// why this matters\nx = 1") == "\nx = 1"
 
     def test_keeps_directive_with_no_space_after_marker(self):
         # Not prose: dropping these would erase code from the comparison.
-        assert review_verify._strip_comments("#!/usr/bin/env bash") == "#!/usr/bin/env bash"
-        assert review_verify._strip_comments("#include <stdio.h>") == "#include <stdio.h>"
-        assert review_verify._strip_comments("\t//nolint:errcheck") == "\t//nolint:errcheck"
+        assert review.verify._strip_comments("#!/usr/bin/env bash") == "#!/usr/bin/env bash"
+        assert review.verify._strip_comments("#include <stdio.h>") == "#include <stdio.h>"
+        assert review.verify._strip_comments("\t//nolint:errcheck") == "\t//nolint:errcheck"
 
 
 class TestVerificationDetail:
@@ -237,7 +237,7 @@ class TestVerificationDetail:
         src = tmp_path / "handler.go"
         src.write_text("func foo() {\n\tresult := db.Query(q)\n}\n")
         finding = {"id": "S1", "severity": "S", "path": "handler.go", "body": ""}
-        detail = review_verify._verification_detail(finding, "result := db.Query(q)", str(tmp_path))
+        detail = review.verify._verification_detail(finding, "result := db.Query(q)", str(tmp_path))
         assert detail["match_result"] is True
         assert detail["file_exists"] is True
 
@@ -245,7 +245,7 @@ class TestVerificationDetail:
         src = tmp_path / "handler.go"
         src.write_text("func foo() {\n\tx := 1\n}\n")
         finding = {"id": "S1", "severity": "S", "path": "handler.go", "body": ""}
-        detail = review_verify._verification_detail(finding, "result := db.Query(q)", str(tmp_path))
+        detail = review.verify._verification_detail(finding, "result := db.Query(q)", str(tmp_path))
         assert detail["match_result"] is False
         assert "longest_match_prefix" in detail
         assert "first_mismatch" in detail
@@ -262,7 +262,7 @@ class TestVerifyFindings:
             "  > result := db.Query(q)\n"
             "  > ```\n"
         )
-        out_text, result = review_verify._verify_findings(text, str(tmp_path))
+        out_text, result = review.verify._verify_findings(text, str(tmp_path))
         assert result["dropped"] == []
         assert result["findings_checked"] == 1
         assert result["findings_passed"] == 1
@@ -279,7 +279,7 @@ class TestVerifyFindings:
             "  > result := db.Query(q)\n"
             "  > ```\n"
         )
-        out_text, result = review_verify._verify_findings(text, str(tmp_path))
+        out_text, result = review.verify._verify_findings(text, str(tmp_path))
         assert result["dropped"] == ["S1"]
         assert result["findings_dropped"] == 1
         assert result["details"][0]["match_result"] is False
@@ -289,17 +289,17 @@ class TestVerifyFindings:
 class TestParseVerificationStripsLine:
     def test_path_excludes_line_number(self):
         text = '- **[M1]** **`pkg/handler.go:42`** — missing error check\n'
-        findings = review_verify._parse_findings_for_verification(text)
+        findings = review.verify._parse_findings_for_verification(text)
         assert findings[0]["path"] == "pkg/handler.go"
 
     def test_path_excludes_line_range(self):
         text = '- **[S1]** **`pkg/handler.go:10-20`** — issue\n'
-        findings = review_verify._parse_findings_for_verification(text)
+        findings = review.verify._parse_findings_for_verification(text)
         assert findings[0]["path"] == "pkg/handler.go"
 
     def test_checkbox_path_excludes_line(self):
         text = '- [ ] **[M1]** `handler.go:42` — desc\n'
-        findings = review_verify._parse_findings_for_verification(text)
+        findings = review.verify._parse_findings_for_verification(text)
         assert findings[0]["path"] == "handler.go"
 
 
@@ -314,17 +314,17 @@ class TestParseVerificationKeepsAColonThatIsNotALineSuffix:
 
     def test_a_prefixed_path_survives(self):
         text = '- **[M1]** **`ns:module.py`** — missing error check\n'
-        findings = review_verify._parse_findings_for_verification(text)
+        findings = review.verify._parse_findings_for_verification(text)
         assert findings[0]["path"] == "ns:module.py"
 
     def test_a_drive_letter_survives(self):
         text = '- **[M1]** **`C:/src/x.py`** — missing error check\n'
-        findings = review_verify._parse_findings_for_verification(text)
+        findings = review.verify._parse_findings_for_verification(text)
         assert findings[0]["path"] == "C:/src/x.py"
 
     def test_a_line_suffix_still_comes_off_a_prefixed_path(self):
         text = '- **[M1]** **`C:/src/x.py:12`** — missing error check\n'
-        findings = review_verify._parse_findings_for_verification(text)
+        findings = review.verify._parse_findings_for_verification(text)
         assert findings[0]["path"] == "C:/src/x.py"
 
 
@@ -340,12 +340,12 @@ class TestParseVerificationReadsALineList:
 
     def test_a_comma_separated_pair_leaves_the_path(self):
         text = '- **[S2]** `ai/lib/review/run.py:64,82` — duplicate field\n'
-        findings = review_verify._parse_findings_for_verification(text)
+        findings = review.verify._parse_findings_for_verification(text)
         assert findings[0]["path"] == "ai/lib/review/run.py"
 
     def test_a_three_line_list_leaves_the_path(self):
         text = '- **[S2]** `ai/lib/review/run.py:12,18,24` — duplicate field\n'
-        findings = review_verify._parse_findings_for_verification(text)
+        findings = review.verify._parse_findings_for_verification(text)
         assert findings[0]["path"] == "ai/lib/review/run.py"
 
     def test_a_real_file_named_by_a_line_list_is_found(self, tmp_path):
@@ -357,8 +357,8 @@ class TestParseVerificationReadsALineList:
         """
         (tmp_path / "run.py").write_text('command: str = ""\n')
         text = '- **[S2]** `run.py:64,82` — duplicate field\n'
-        finding = review_verify._parse_findings_for_verification(text)[0]
-        detail = review_verify._match_evidence(finding["path"], None, str(tmp_path))
+        finding = review.verify._parse_findings_for_verification(text)[0]
+        detail = review.verify._match_evidence(finding["path"], None, str(tmp_path))
         assert detail["file_exists"]
         assert detail["match_result"]
 
@@ -371,24 +371,24 @@ class TestParseVerificationSpacedPaths:
             "- [ ] **[M2]** **`src/my notes.py:2`** — Second finding, spaced path\n"
             "- [ ] **[M3]** **`pkg/c.go:3`** — Third finding\n"
         )
-        findings = review_verify._parse_findings_for_verification(text)
+        findings = review.verify._parse_findings_for_verification(text)
         assert [f["id"] for f in findings] == ["M1", "M2", "M3"]
         assert findings[0]["body"] == "First finding"
         assert findings[1]["path"] == "src/my notes.py"
 
     def test_spaced_path_with_line_range(self):
         text = '- **[S1]** **`src/my notes.py:12-18`** — issue\n'
-        findings = review_verify._parse_findings_for_verification(text)
+        findings = review.verify._parse_findings_for_verification(text)
         assert findings[0]["path"] == "src/my notes.py"
 
     def test_non_ascii_spaced_path(self):
         text = '- [ ] **[M1]** **`src/café brûlé.py:42`** — desc\n'
-        findings = review_verify._parse_findings_for_verification(text)
+        findings = review.verify._parse_findings_for_verification(text)
         assert findings[0]["path"] == "src/café brûlé.py"
 
     def test_spaced_path_in_a_bare_code_span(self):
         text = '- **[N1]** `docs/release notes.md:3` — stale\n'
-        findings = review_verify._parse_findings_for_verification(text)
+        findings = review.verify._parse_findings_for_verification(text)
         assert findings[0]["path"] == "docs/release notes.md"
 
     def test_unchecked_and_plain_forms_both_parse(self):
@@ -396,13 +396,13 @@ class TestParseVerificationSpacedPaths:
             "- [ ] **[M1]** **`pkg/a.go:1`** — checkbox form\n"
             "- **[M2]** **`pkg/b.go:2`** — plain form\n"
         )
-        findings = review_verify._parse_findings_for_verification(text)
+        findings = review.verify._parse_findings_for_verification(text)
         assert [f["id"] for f in findings] == ["M1", "M2"]
         assert [f["body"] for f in findings] == ["checkbox form", "plain form"]
 
     def test_checked_finding_is_not_returned(self):
         text = '- [x] **[M1]** **`src/my notes.py:2`** — done\n'
-        assert review_verify._parse_findings_for_verification(text) == []
+        assert review.verify._parse_findings_for_verification(text) == []
 
 
 class TestVerificationReadsEachFindingsOwnBody:
@@ -428,12 +428,12 @@ class TestVerificationReadsEachFindingsOwnBody:
     )
 
     def test_an_unreadable_location_is_not_checked(self):
-        findings = review_verify._parse_findings_for_verification(self.UNREADABLE_LOCATION)
+        findings = review.verify._parse_findings_for_verification(self.UNREADABLE_LOCATION)
         assert [f["id"] for f in findings] == ["M1", "M3"]
 
     def test_an_unreadable_location_does_not_join_the_finding_above_it(self):
-        findings = review_verify._parse_findings_for_verification(self.UNREADABLE_LOCATION)
-        assert review_verify._extract_evidence(findings[0]["body"]) == "x := 1"
+        findings = review.verify._parse_findings_for_verification(self.UNREADABLE_LOCATION)
+        assert review.verify._extract_evidence(findings[0]["body"]) == "x := 1"
 
     def test_a_ledger_entry_is_not_checked(self):
         text = (
@@ -442,7 +442,7 @@ class TestVerificationReadsEachFindingsOwnBody:
             "## Prior findings\n"
             "- **[S1]** **`old.go:2`** — Fixed\n"
         )
-        findings = review_verify._parse_findings_for_verification(text)
+        findings = review.verify._parse_findings_for_verification(text)
         assert [f["id"] for f in findings] == ["M1"]
 
     def test_a_body_stops_at_the_resolved_finding_below_it(self):
@@ -457,7 +457,7 @@ class TestVerificationReadsEachFindingsOwnBody:
             "  > y := 2\n"
             "  > ```\n"
         )
-        findings = review_verify._parse_findings_for_verification(text)
+        findings = review.verify._parse_findings_for_verification(text)
         assert [f["id"] for f in findings] == ["M1"]
         assert "y := 2" not in findings[0]["body"]
 
@@ -473,7 +473,7 @@ class TestStripEvidenceBlocks:
             "## Nit\n"
             "- **[N1]** **`file.go:10`** — rename var\n"
         )
-        result = review_verify._strip_evidence_blocks(text)
+        result = review.verify._strip_evidence_blocks(text)
         assert "```go" not in result
         assert "result := db.Query" not in result
         assert "**[M1]**" in result
@@ -482,7 +482,7 @@ class TestStripEvidenceBlocks:
 
     def test_no_evidence_blocks_unchanged(self):
         content = "## Must fix\n- **[M1]** **`file.go:42`** — finding\n"
-        assert review_verify._strip_evidence_blocks(content) == content
+        assert review.verify._strip_evidence_blocks(content) == content
 
     def test_top_level_blockquote_preserved(self):
         content = (
@@ -493,7 +493,7 @@ class TestStripEvidenceBlocks:
             "## Must fix\n"
             "- **[M1]** **`file.go:42`** — finding\n"
         )
-        result = review_verify._strip_evidence_blocks(content)
+        result = review.verify._strip_evidence_blocks(content)
         assert "> ```go" in result
 
     def test_strips_unfenced_blockquote_evidence(self):
@@ -508,7 +508,7 @@ class TestStripEvidenceBlocks:
             "## Nit\n"
             "- **[N1]** **`file.go:10`** — rename var\n"
         )
-        result = review_verify._strip_evidence_blocks(text)
+        result = review.verify._strip_evidence_blocks(text)
         assert "Team roster" not in result
         assert "docker run" not in result
         assert "**[S1]**" in result
@@ -526,7 +526,7 @@ class TestStripEvidenceBlocks:
 
 def _by_evidence_gate(text: str, ids: list[str]) -> str:
     """What evidence verification leaves behind when it drops `ids`."""
-    return review_spans.drop_findings(text, ids)
+    return review.spans.drop_findings(text, ids)
 
 
 def _by_disprove_gate(text: str, ids: list[str]) -> str:

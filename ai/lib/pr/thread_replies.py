@@ -32,14 +32,14 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from core import log
-from core import publishing
+import core.log
+import core.publishing
 from gh.pr_reads import fetch_pr_data
-from git import client as git_client
-from pr import attribution
-from pr import comments as pc
-from pr import context as pr_context
-from pr import permalinks
+import git.client
+import pr.attribution
+import pr.comments
+import pr.context
+import pr.permalinks
 from pr.fix import UNVERIFIED_NOTE, FixOutcome
 from pr.thread_models import THREAD_ANCHOR, CommentItem, ReportThread
 
@@ -229,7 +229,7 @@ def our_last_reply_id(thread: ReportThread | None) -> int | None:
     """
     if not thread or len(thread.comments) < 2:
         return None
-    if not pc.last_comment_is_mine(thread.comments, thread.my_login):
+    if not pr.comments.last_comment_is_mine(thread.comments, thread.my_login):
         return None
     return thread.comments[-1].get("databaseId")
 
@@ -239,11 +239,11 @@ def upsert_thread_reply(
 ) -> bool:
     """Replace our standing reply on a thread, or post the first one."""
     if existing_id:
-        return pc.patch_thread_reply(repo, existing_id, body)
+        return pr.comments.patch_thread_reply(repo, existing_id, body)
     root_id = thread.comments[0].get("databaseId")
     if not root_id:
         return False
-    return pc.post_thread_reply(repo, pr_number, root_id, body)
+    return pr.comments.post_thread_reply(repo, pr_number, root_id, body)
 
 
 def is_generated_reply(body: str) -> bool:
@@ -328,7 +328,7 @@ def _post_thread_replies(
         if not thread or not thread.comments:
             continue
         if has_hand_written_reply(thread):
-            log.warn(f"{entry.id}: standing reply was hand-written — leaving it alone")
+            core.log.warn(f"{entry.id}: standing reply was hand-written — leaving it alone")
             kept += 1
             continue
         existing_id = our_last_reply_id(thread)
@@ -341,9 +341,9 @@ def _post_thread_replies(
         replied += 1
         edited += existing_id is not None
     if edited:
-        log.info(f"Edited {edited} standing repl{'y' if edited == 1 else 'ies'} in place")
+        core.log.info(f"Edited {edited} standing repl{'y' if edited == 1 else 'ies'} in place")
     if kept:
-        log.info(
+        core.log.info(
             f"Left {kept} hand-written repl{'y' if kept == 1 else 'ies'} untouched "
             f"— use --reply <id> --body-file <f> to replace one deliberately"
         )
@@ -355,7 +355,7 @@ def post_fix_replies(
     threads_by_id: dict[str, ReportThread],
     repo: str,
     pr_number: int,
-    cp: attribution.CommitPushResult,
+    cp: pr.attribution.CommitPushResult,
     history: "attribution.AddressingHistory | None" = None,
     host: str = "",
 ) -> int:
@@ -371,16 +371,16 @@ def post_fix_replies(
     partition exists to prevent.
     """
     def body_fn(entry: CommentItem) -> str:
-        sha = attribution.attribute_commit(entry, cp, history, threads_by_id.get(entry.id)).sha
+        sha = pr.attribution.attribute_commit(entry, cp, history, threads_by_id.get(entry.id)).sha
         parts = [
             f"{APPLIED_REPLY_PREFIX}: {entry.summary}",
-            f"Fixed in [`{sha}`]({permalinks.commit_permalink(repo, sha, host)}).",
+            f"Fixed in [`{sha}`]({pr.permalinks.commit_permalink(repo, sha, host)}).",
         ]
         # The file, not the line: the fix has just moved the lines around it,
         # and pointing a reviewer at the wrong line is worse than pointing them
         # at the file the change landed in.
         if entry.file:
-            url = permalinks.blob_permalink(repo, sha, entry.file, host=host)
+            url = pr.permalinks.blob_permalink(repo, sha, entry.file, host=host)
             parts.append(f"Result is in [`{entry.file}`]({url}).")
         note = unverified_note(entry)
         if note:
@@ -389,7 +389,7 @@ def post_fix_replies(
 
     posted = _post_thread_replies(fixed, threads_by_id, repo, pr_number, body_fn)
     if posted:
-        log.info(f"Replied on {posted} fixed thread(s)")
+        core.log.info(f"Replied on {posted} fixed thread(s)")
     return posted
 
 
@@ -417,8 +417,8 @@ def post_already_addressed_replies(
     # with no review thread, and `_post_thread_replies` skips exactly those — a
     # decomposed item has no thread to reply on, so it is reported in the
     # summary table instead. Every entry that reaches a body here dates itself.
-    history = attribution.AddressingHistory(wt_path)
-    head_sha = git_client.head_sha(short=True, cwd=wt_path)
+    history = pr.attribution.AddressingHistory(wt_path)
+    head_sha = git.client.head_sha(short=True, cwd=wt_path)
 
     def body_fn(entry: CommentItem) -> str:
         framing = history.framing(entry, threads_by_id.get(entry.id), acted=acted)
@@ -432,15 +432,15 @@ def post_already_addressed_replies(
         # let an already_addressed verdict through without a citation that
         # resolves. Checking again here would only overrule it with a weaker
         # link.
-        link = permalinks.code_link(
+        link = pr.permalinks.code_link(
             entry, repo, head_sha, wt_path, verify_evidence=False, host=host)
         if link:
             parts.append(f"Current behaviour is at {link}.")
         if framing.cited:
             sha = framing.sha
-            commit_url = permalinks.commit_permalink(repo, sha, host)
+            commit_url = pr.permalinks.commit_permalink(repo, sha, host)
             lead = "Fixed in" if framing.in_response else "Addressed in"
-            parts.append(f"{lead} [`{git_client.abbrev(sha)}`]({commit_url}).")
+            parts.append(f"{lead} [`{git.client.abbrev(sha)}`]({commit_url}).")
         # Only on the `acted` path: that half landed a change and is making the
         # same claim `post_fix_replies` makes, so it owes the same hedge. A true
         # already-addressed reply asserts the code was already right and the
@@ -459,7 +459,7 @@ def post_already_addressed_replies(
 
     posted = _post_thread_replies(fixed, threads_by_id, repo, pr_number, body_fn)
     if posted:
-        log.info(f"Replied on {posted} satisfied thread(s)")
+        core.log.info(f"Replied on {posted} satisfied thread(s)")
     return posted
 
 
@@ -468,7 +468,7 @@ def reply_to_fixed(
     threads_by_id: dict[str, ReportThread],
     repo: str,
     pr_number: int,
-    cp: attribution.CommitPushResult,
+    cp: pr.attribution.CommitPushResult,
     wt_path: Path,
     host: str = "",
 ) -> int:
@@ -487,10 +487,10 @@ def reply_to_fixed(
     # which rows can be cited and the reply then asks what to cite, and two
     # objects answering that could put a row in the citing bucket and then
     # decline to name the commit it was routed there for.
-    history = attribution.AddressingHistory(wt_path)
+    history = pr.attribution.AddressingHistory(wt_path)
     attributed, unattributed = [], []
     for entry in fixed:
-        cited = attribution.attribute_commit(
+        cited = pr.attribution.attribute_commit(
             entry, cp, history, threads_by_id.get(entry.id),
         ).cited
         bucket = attributed if cited else unattributed
@@ -526,18 +526,18 @@ def post_dismissed_replies(
     Telling a reviewer they misread the code is the one reply that most needs a
     line to point at, so the dismissal carries the permalink triage cited.
     """
-    head_sha = git_client.head_sha(short=True, cwd=wt_path)
+    head_sha = git.client.head_sha(short=True, cwd=wt_path)
 
     def body_fn(entry: CommentItem) -> str:
         reasoning = entry.reasoning
         body = DISMISSED_REPLY_PREFIX
         body = f"{body}: {reasoning}" if reasoning else f"{body}."
-        link = permalinks.evidence_link(entry, repo, head_sha, wt_path, host)
+        link = pr.permalinks.evidence_link(entry, repo, head_sha, wt_path, host)
         return f"{body}\n\nSee {link}." if link else body
 
     posted = _post_thread_replies(dismissed, threads_by_id, repo, pr_number, body_fn)
     if posted:
-        log.info(f"Dismissed {posted} invalid suggestion(s)")
+        core.log.info(f"Dismissed {posted} invalid suggestion(s)")
     return posted
 
 
@@ -562,7 +562,7 @@ def post_deferred_replies(
     anything but deferrals could be filed.
     """
     issue_ref = f"[{issue_id}]({issue_url})" if issue_url else issue_id
-    head_sha = git_client.head_sha(short=True, cwd=wt_path) if wt_path else ""
+    head_sha = git.client.head_sha(short=True, cwd=wt_path) if wt_path else ""
 
     def body_fn(entry: CommentItem) -> str:
         # The opening follows the outcome. A thread handed to a person is not a
@@ -576,14 +576,14 @@ def post_deferred_replies(
         parts = [f"{prefix} {entry.summary}", f"Tracked in {issue_ref}."]
         # Both outcomes say the code still stands as the reviewer found it,
         # which is a claim about the tree like any other — pin it.
-        link = permalinks.code_link(entry, repo, head_sha, wt_path, host=host)
+        link = pr.permalinks.code_link(entry, repo, head_sha, wt_path, host=host)
         if link:
             parts.append(f"Unchanged at {link}.")
         return "\n\n".join(parts)
 
     posted = _post_thread_replies(deferred, threads_by_id, repo, pr_number, body_fn)
     if posted:
-        log.info(f"Replied on {posted} deferred thread(s)")
+        core.log.info(f"Replied on {posted} deferred thread(s)")
     return posted
 
 
@@ -608,7 +608,7 @@ def find_reply_target(
         is_resolved = data.get("isResolved", False)
         return ReportThread.from_node(
             data, my_login,
-            state=pc.compute_thread_state(comments, is_resolved, my_login),
+            state=pr.comments.compute_thread_state(comments, is_resolved, my_login),
             reviewer=(comments[0].get("author") or {}).get("login", "") if comments else "",
         )
     return None
@@ -630,7 +630,7 @@ def read_reply_body(body_file: str | None) -> str | None:
     return path.read_text(encoding="utf-8").strip()
 
 
-def run_reply(ctx: pr_context.ResolvedContext, target: str, body_file: str | None) -> int:
+def run_reply(ctx: pr.context.ResolvedContext, target: str, body_file: str | None) -> int:
     """Post one hand-written reply through the same upsert the fix pass uses.
 
     Manual replies used to go straight to the REST replies endpoint, with no
@@ -641,17 +641,17 @@ def run_reply(ctx: pr_context.ResolvedContext, target: str, body_file: str | Non
     body = read_reply_body(body_file)
     if body is None:
         missing = f"--body-file not found: {body_file}" if body_file else "--reply needs --body-file"
-        log.error(missing)
+        core.log.error(missing)
         return 1
     if not body:
-        log.error(f"--body-file is empty: {body_file}")
+        core.log.error(f"--body-file is empty: {body_file}")
         return 1
 
     repo = ctx.repo
     pr_number = ctx.pr_number
     owner, repo_name = repo.split("/", 1)
     pr_data = fetch_pr_data(repo, str(pr_number))
-    fetched = pc.fetch_threads(owner, repo_name, pr_number, pr_data)
+    fetched = pr.comments.fetch_threads(owner, repo_name, pr_number, pr_data)
 
     thread = find_reply_target(fetched.threads, target, pr_data.viewer_login)
     if thread is None:
@@ -659,29 +659,29 @@ def run_reply(ctx: pr_context.ResolvedContext, target: str, body_file: str | Non
         # thread matches" sends the reader looking for a typo in their target,
         # and the thread may simply be on a page we could not read.
         if not fetched.complete:
-            log.error(
+            core.log.error(
                 f"no review thread on PR #{pr_number} matches {target!r} among the "
                 f"{len(fetched.threads)} we could read — the thread set is incomplete")
             return 1
-        log.error(f"no review thread on PR #{pr_number} matches {target!r}")
+        core.log.error(f"no review thread on PR #{pr_number} matches {target!r}")
         return 1
 
     if "/blob/" not in body:
-        log.warn(
+        core.log.warn(
             "reply cites no permalink — a claim about the code needs a link to "
             "the line that settles it"
         )
 
     existing_id = our_last_reply_id(thread)
     wrote = upsert_thread_reply(thread, repo, pr_number, body, existing_id)
-    if not publishing.enabled():
+    if not core.publishing.enabled():
         # The closing line is the one read as the outcome, so it carries the
         # same label the body was printed under rather than a past tense the
         # run never earned.
-        publishing.draft(f"{'edit' if existing_id else 'post'} reply on {thread.id}")
+        core.publishing.draft(f"{'edit' if existing_id else 'post'} reply on {thread.id}")
         return 0
     if not wrote:
-        log.error(f"failed to reply on {thread.id}")
+        core.log.error(f"failed to reply on {thread.id}")
         return 1
-    log.info(f"{'Edited' if existing_id else 'Posted'} reply on {thread.id}")
+    core.log.info(f"{'Edited' if existing_id else 'Posted'} reply on {thread.id}")
     return 0

@@ -67,9 +67,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from core import log
+import core.log
 from core.trail import Trail, tinfo, twarn
-from fix import blame as fix_blame
+import fix.blame
 from pr.fix import ItemOutcome
 
 # What of a failing run's output is worth carrying into a commit body and a
@@ -136,7 +136,7 @@ class SuiteResult:
     # and this module is handed only a command. Always empty on a green run,
     # and empty on a red one is the ordinary case — it means nothing could be
     # pointed at, never that nothing is wrong.
-    pointers: tuple[fix_blame.Pointer, ...] = ()
+    pointers: tuple[fix.blame.Pointer, ...] = ()
 
     @property
     def ran(self) -> bool:
@@ -244,7 +244,7 @@ def run(
             output_tail=f"fix.verify_timeout must be positive, got {timeout_s}",
         )
 
-    log.info(f"Verifying the pass against the repo's checks: {command}")
+    core.log.info(f"Verifying the pass against the repo's checks: {command}")
     started = time.monotonic()
     try:
         result = _invoke(argv, workdir, command, timeout_s, started)
@@ -354,10 +354,10 @@ def _report(result: SuiteResult, trail: Trail | None) -> None:
         "duration_s": round(result.duration_s, 1),
     }
     if result.status is SuiteStatus.GREEN:
-        log.info(result.note)
+        core.log.info(result.note)
         tinfo(trail, "fix_verify_suite", result.note, data=data)
         return
-    log.warn(result.note)
+    core.log.warn(result.note)
     twarn(trail, "fix_verify_suite", result.note,
           data={**data, "output_tail": result.output_tail})
 
@@ -392,7 +392,7 @@ def apply_to(outcomes: list[ItemOutcome], result: SuiteResult) -> int:
         )
         demoted += 1
     if demoted:
-        log.warn(
+        core.log.warn(
             f"The repo's checks are red — {demoted} claimed "
             f"fix{'es' if demoted != 1 else ''} recorded as unverified. "
             "At least one of them is wrong, or a test beside one is stale."
@@ -449,7 +449,7 @@ def detail_lines(result: SuiteResult) -> list[str]:
     # Before the output rather than after it. The tail can run to two thousand
     # characters and the pointer is the one line worth reading first; printed
     # underneath, it is the line a reader scrolls past.
-    lines.extend(fix_blame.describe(result.pointers))
+    lines.extend(fix.blame.describe(result.pointers))
     if result.output_tail:
         lines.append(result.output_tail)
     return lines

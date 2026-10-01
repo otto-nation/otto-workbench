@@ -13,7 +13,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from git import regenerate as regen
+import git.regenerate
 
 
 # ── Registry lookup ─────────────────────────────────────────────────────────
@@ -36,25 +36,25 @@ class TestFindRegenerator:
         ("Gemfile.lock", ("bundle", "lock")),
     ])
     def test_known_lockfile(self, basename, expected_cmd):
-        result = regen.find_regenerator(basename)
+        result = git.regenerate.find_regenerator(basename)
         assert result is not None
         assert result.cmd == expected_cmd
 
     def test_path_prefix_stripped(self):
-        result = regen.find_regenerator("packages/web/pnpm-lock.yaml")
+        result = git.regenerate.find_regenerator("packages/web/pnpm-lock.yaml")
         assert result is not None
         assert result.cmd == ("pnpm", "install", "--lockfile-only")
 
     def test_unknown_file(self):
-        assert regen.find_regenerator("main.go") is None
-        assert regen.find_regenerator("README.md") is None
+        assert git.regenerate.find_regenerator("main.go") is None
+        assert git.regenerate.find_regenerator("README.md") is None
 
     def test_go_sum_stages_dir(self):
-        result = regen.find_regenerator("go.sum")
+        result = git.regenerate.find_regenerator("go.sum")
         assert result is not None and result.stage_dir is True
 
     def test_non_go_does_not_stage_dir(self):
-        for name, entry in regen.LOCKFILE_REGENERATORS.items():
+        for name, entry in git.regenerate.LOCKFILE_REGENERATORS.items():
             if name != "go.sum":
                 assert not entry.stage_dir, f"{name} should not stage_dir"
 
@@ -68,39 +68,39 @@ class TestDetectMise:
     def test_mise_toml_in_dir(self, tmp_path):
         (tmp_path / "mise.toml").touch()
         with mock.patch("shutil.which", return_value="/usr/bin/mise"):
-            assert regen.detect_mise(str(tmp_path), str(tmp_path)) is True
+            assert git.regenerate.detect_mise(str(tmp_path), str(tmp_path)) is True
 
     def test_dotmise_toml_in_dir(self, tmp_path):
         (tmp_path / ".mise.toml").touch()
         with mock.patch("shutil.which", return_value="/usr/bin/mise"):
-            assert regen.detect_mise(str(tmp_path), str(tmp_path)) is True
+            assert git.regenerate.detect_mise(str(tmp_path), str(tmp_path)) is True
 
     def test_tool_versions_in_dir(self, tmp_path):
         (tmp_path / ".tool-versions").touch()
         with mock.patch("shutil.which", return_value="/usr/bin/mise"):
-            assert regen.detect_mise(str(tmp_path), str(tmp_path)) is True
+            assert git.regenerate.detect_mise(str(tmp_path), str(tmp_path)) is True
 
     def test_config_subdir(self, tmp_path):
         (tmp_path / ".config" / "mise").mkdir(parents=True)
         (tmp_path / ".config" / "mise" / "config.toml").touch()
         with mock.patch("shutil.which", return_value="/usr/bin/mise"):
-            assert regen.detect_mise(str(tmp_path), str(tmp_path)) is True
+            assert git.regenerate.detect_mise(str(tmp_path), str(tmp_path)) is True
 
     def test_parent_directory(self, tmp_path):
         subdir = tmp_path / "sub"
         subdir.mkdir()
         (tmp_path / "mise.toml").touch()
         with mock.patch("shutil.which", return_value="/usr/bin/mise"):
-            assert regen.detect_mise(str(subdir), str(tmp_path)) is True
+            assert git.regenerate.detect_mise(str(subdir), str(tmp_path)) is True
 
     def test_mise_not_installed(self, tmp_path):
         (tmp_path / "mise.toml").touch()
         with mock.patch("shutil.which", return_value=None):
-            assert regen.detect_mise(str(tmp_path), str(tmp_path)) is False
+            assert git.regenerate.detect_mise(str(tmp_path), str(tmp_path)) is False
 
     def test_no_config_file(self, tmp_path):
         with mock.patch("shutil.which", return_value="/usr/bin/mise"):
-            assert regen.detect_mise(str(tmp_path), str(tmp_path)) is False
+            assert git.regenerate.detect_mise(str(tmp_path), str(tmp_path)) is False
 
     def test_stops_at_repo_root(self, tmp_path):
         repo = tmp_path / "repo"
@@ -109,7 +109,7 @@ class TestDetectMise:
         # mise.toml is above the repo root — should not be found
         (tmp_path / "mise.toml").touch()
         with mock.patch("shutil.which", return_value="/usr/bin/mise"):
-            assert regen.detect_mise(str(subdir), str(repo)) is False
+            assert git.regenerate.detect_mise(str(subdir), str(repo)) is False
 
 
 # ── RegenQueue ──────────────────────────────────────────────────────────────
@@ -119,7 +119,7 @@ class TestRegenQueue:
     """RegenQueue deduplicates by (directory, command)."""
 
     def test_deduplication(self, tmp_path):
-        queue = regen.RegenQueue()
+        queue = git.regenerate.RegenQueue()
         cmd = ("go", "mod", "tidy")
         queue.add(tmp_path, "go.sum", cmd, stage_dir=True)
         queue.add(tmp_path, "go.mod", cmd, stage_dir=True)
@@ -128,14 +128,14 @@ class TestRegenQueue:
         assert jobs[0].files == ["go.sum", "go.mod"]
 
     def test_separate_dirs(self, tmp_path):
-        queue = regen.RegenQueue()
+        queue = git.regenerate.RegenQueue()
         cmd = ("go", "mod", "tidy")
         queue.add(tmp_path / "a", "go.sum", cmd)
         queue.add(tmp_path / "b", "go.sum", cmd)
         assert len(list(queue)) == 2
 
     def test_unrebuildable(self):
-        queue = regen.RegenQueue()
+        queue = git.regenerate.RegenQueue()
         queue.mark_unrebuildable("proto/gen.go")
         assert queue.unrebuildable == ["proto/gen.go"]
 
@@ -148,12 +148,12 @@ class TestRegistryInvariants:
 
     def test_find_regenerator_all_entries_have_cmd(self):
         """Every registry entry must carry a non-empty command tuple."""
-        for name, entry in regen.LOCKFILE_REGENERATORS.items():
+        for name, entry in git.regenerate.LOCKFILE_REGENERATORS.items():
             assert isinstance(entry.cmd, tuple) and len(entry.cmd) > 0, f"{name} has invalid cmd"
 
     def test_find_regenerator_all_keys_are_basenames(self):
         """Lookup is by basename — a key with a path separator could never match."""
-        for name in regen.LOCKFILE_REGENERATORS:
+        for name in git.regenerate.LOCKFILE_REGENERATORS:
             assert os.path.basename(name) == name, f"{name} is not a bare basename"
 
 
@@ -173,9 +173,9 @@ class TestRunRegeneration:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         with mock.patch("subprocess.run", side_effect=fake_run), \
-             mock.patch.object(regen, "detect_mise", return_value=False):
-            result = regen.run_regeneration(
-                regen.RegenJob(
+             mock.patch.object(git.regenerate, "detect_mise", return_value=False):
+            result = git.regenerate.run_regeneration(
+                git.regenerate.RegenJob(
                     regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
                 ),
                 cwd=str(tmp_path),
@@ -196,9 +196,9 @@ class TestRunRegeneration:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         with mock.patch("subprocess.run", side_effect=fake_run), \
-             mock.patch.object(regen, "detect_mise", return_value=True):
-            result = regen.run_regeneration(
-                regen.RegenJob(
+             mock.patch.object(git.regenerate, "detect_mise", return_value=True):
+            result = git.regenerate.run_regeneration(
+                git.regenerate.RegenJob(
                     regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
                 ),
                 cwd=str(tmp_path),
@@ -220,10 +220,10 @@ class TestRunRegeneration:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         with mock.patch("subprocess.run", side_effect=fake_run), \
-             mock.patch.object(regen, "detect_mise", return_value=False), \
+             mock.patch.object(git.regenerate, "detect_mise", return_value=False), \
              mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-            result = regen.run_regeneration(
-                regen.RegenJob(
+            result = git.regenerate.run_regeneration(
+                git.regenerate.RegenJob(
                     regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
                 ),
                 cwd=str(tmp_path),
@@ -245,10 +245,10 @@ class TestRunRegeneration:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         with mock.patch("subprocess.run", side_effect=fake_run), \
-             mock.patch.object(regen, "detect_mise", return_value=False), \
+             mock.patch.object(git.regenerate, "detect_mise", return_value=False), \
              mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-            result = regen.run_regeneration(
-                regen.RegenJob(
+            result = git.regenerate.run_regeneration(
+                git.regenerate.RegenJob(
                     regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
                 ),
                 cwd=str(tmp_path),
@@ -268,10 +268,10 @@ class TestRunRegeneration:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         with mock.patch("subprocess.run", side_effect=fake_run), \
-             mock.patch.object(regen, "detect_mise", return_value=False), \
+             mock.patch.object(git.regenerate, "detect_mise", return_value=False), \
              mock.patch("shutil.which", return_value=None):
-            result = regen.run_regeneration(
-                regen.RegenJob(
+            result = git.regenerate.run_regeneration(
+                git.regenerate.RegenJob(
                     regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
                 ),
                 cwd=str(tmp_path),
@@ -289,10 +289,10 @@ class TestRunRegeneration:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         with mock.patch("subprocess.run", side_effect=fake_run), \
-             mock.patch.object(regen, "detect_mise", return_value=False), \
+             mock.patch.object(git.regenerate, "detect_mise", return_value=False), \
              mock.patch("shutil.which", return_value=None):
-            result = regen.run_regeneration(
-                regen.RegenJob(
+            result = git.regenerate.run_regeneration(
+                git.regenerate.RegenJob(
                     regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
                 ),
                 cwd=str(tmp_path),
@@ -314,10 +314,10 @@ class TestRunRegeneration:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         with mock.patch("subprocess.run", side_effect=fake_run), \
-             mock.patch.object(regen, "detect_mise", return_value=True), \
+             mock.patch.object(git.regenerate, "detect_mise", return_value=True), \
              mock.patch("shutil.which", return_value="/usr/local/bin/mise"):
-            result = regen.run_regeneration(
-                regen.RegenJob(
+            result = git.regenerate.run_regeneration(
+                git.regenerate.RegenJob(
                     regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
                 ),
                 cwd=str(tmp_path),
@@ -333,9 +333,9 @@ class TestRunRegeneration:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         with mock.patch("subprocess.run", side_effect=fake_run), \
-             mock.patch.object(regen, "detect_mise", return_value=False):
-            result = regen.run_regeneration(
-                regen.RegenJob(
+             mock.patch.object(git.regenerate, "detect_mise", return_value=False):
+            result = git.regenerate.run_regeneration(
+                git.regenerate.RegenJob(
                     regen_dir=str(tmp_path), cmd=("go", "mod", "tidy"),
                     stage_dir=True, files=["go.sum"],
                 ),
@@ -353,10 +353,10 @@ class TestRunRegeneration:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         with mock.patch("subprocess.run", side_effect=fake_run), \
-             mock.patch.object(regen, "detect_mise", return_value=False), \
+             mock.patch.object(git.regenerate, "detect_mise", return_value=False), \
              mock.patch("shutil.which", return_value=None):
-            result = regen.run_regeneration(
-                regen.RegenJob(
+            result = git.regenerate.run_regeneration(
+                git.regenerate.RegenJob(
                     regen_dir=str(tmp_path), cmd=("pnpm", "install"), files=["pnpm-lock.yaml"],
                 ),
                 cwd=str(tmp_path),

@@ -5,35 +5,35 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from agent import phases as agent_phases
+import agent.phases
 
 
 class TestResolveThinking:
     def test_explicit_wins(self, monkeypatch):
         monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
-        assert agent_phases.resolve_thinking("high", "WORKBENCH_AI_GROUP_THINKING", "low") == "high"
+        assert agent.phases.resolve_thinking("high", "WORKBENCH_AI_GROUP_THINKING", "low") == "high"
 
     def test_phase_env_overrides_default(self, monkeypatch):
         monkeypatch.setenv("WORKBENCH_AI_GROUP_THINKING", "medium")
         monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
-        assert agent_phases.resolve_thinking(None, "WORKBENCH_AI_GROUP_THINKING", "low") == "medium"
+        assert agent.phases.resolve_thinking(None, "WORKBENCH_AI_GROUP_THINKING", "low") == "medium"
 
     def test_global_env_overrides_default(self, monkeypatch):
         monkeypatch.delenv("WORKBENCH_AI_GROUP_THINKING", raising=False)
         monkeypatch.setenv("WORKBENCH_AI_THINKING", "xhigh")
-        assert agent_phases.resolve_thinking(None, "WORKBENCH_AI_GROUP_THINKING", "low") == "xhigh"
+        assert agent.phases.resolve_thinking(None, "WORKBENCH_AI_GROUP_THINKING", "low") == "xhigh"
 
     def test_default_when_no_env(self, monkeypatch):
         monkeypatch.delenv("WORKBENCH_AI_GROUP_THINKING", raising=False)
         monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
-        assert agent_phases.resolve_thinking(None, "WORKBENCH_AI_GROUP_THINKING", "low") == "low"
+        assert agent.phases.resolve_thinking(None, "WORKBENCH_AI_GROUP_THINKING", "low") == "low"
 
     def test_phase_env_beats_global(self, monkeypatch):
         monkeypatch.setenv("WORKBENCH_AI_GROUP_THINKING", "medium")
         monkeypatch.setenv("WORKBENCH_AI_THINKING", "xhigh")
-        assert agent_phases.resolve_thinking(None, "WORKBENCH_AI_GROUP_THINKING", "low") == "medium"
+        assert agent.phases.resolve_thinking(None, "WORKBENCH_AI_GROUP_THINKING", "low") == "medium"
 
     def test_none_explicit_falls_through(self, monkeypatch):
         monkeypatch.delenv("WORKBENCH_AI_GROUP_THINKING", raising=False)
         monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
-        assert agent_phases.resolve_thinking(None, "WORKBENCH_AI_GROUP_THINKING", None) is None
+        assert agent.phases.resolve_thinking(None, "WORKBENCH_AI_GROUP_THINKING", None) is None

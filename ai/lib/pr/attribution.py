@@ -27,10 +27,10 @@ from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 
-from git import client as git_client
-from git import topology as git_topology
+import git.client
+import git.topology
 from git.land import CommitStatus, LandResult
-from pr import permalinks
+import pr.permalinks
 from pr.fix import ItemOutcome, SettledBy
 from pr.thread_models import CommentItem, ReportThread
 
@@ -111,7 +111,7 @@ def pass_commit(wt_path: Path, result: LandResult | None) -> CommitPushResult:
     """
     if result is None:
         return CommitPushResult(None, CommitStatus.NO_CHANGES, "")
-    short = git_client.out(
+    short = git.client.out(
         "rev-parse", "--short", result.sha, cwd=wt_path,
     ) if result.sha else ""
     return CommitPushResult(short or None, result.status, result.error)
@@ -265,12 +265,12 @@ def find_addressing_commit(
     """
     if not line:
         return None
-    base = f"origin/{git_topology.default_branch_cached(wt_path)}"
+    base = f"origin/{git.topology.default_branch_cached(wt_path)}"
     # A non-zero exit means the range does not resolve at HEAD — the file was
     # renamed away, or the line is past its end. Nothing here can say which
     # commit carried the change, so nothing is claimed, and the empty default
     # reads the same way as git answering with nothing.
-    sha = git_client.out(
+    sha = git.client.out(
         "log", "-1", "--format=%H", "--no-patch",
         f"-L{line},{line}:{filepath}", f"{base}..HEAD", cwd=wt_path,
     )
@@ -309,7 +309,7 @@ def coordinate_went_stale(
     """
     if not entry.read_sha:
         return False
-    return not permalinks.anchored_line(entry, filepath, line, "HEAD", wt_path)
+    return not pr.permalinks.anchored_line(entry, filepath, line, "HEAD", wt_path)
 
 
 def commit_timestamp(wt_path: Path, sha: str) -> float:
@@ -335,7 +335,7 @@ def commit_timestamp(wt_path: Path, sha: str) -> float:
     losing a citation costs a line of provenance, while inventing one sends a
     reviewer to a commit that does not contain the change.
     """
-    stamps = git_client.out("show", "-s", "--format=%ct %at", sha, cwd=wt_path)
+    stamps = git.client.out("show", "-s", "--format=%ct %at", sha, cwd=wt_path)
     try:
         return min(float(stamp) for stamp in stamps.split())
     except ValueError:
@@ -538,7 +538,7 @@ class AddressingHistory:
         """
         if thread:
             return thread_opened_at(thread)
-        source = permalinks.comment_item_source(entry)
+        source = pr.permalinks.comment_item_source(entry)
         if not source.ok:
             return 0.0
         return posix_seconds(self._sources_at.get(source.id, ""))

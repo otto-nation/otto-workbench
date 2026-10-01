@@ -18,6 +18,7 @@ sys.path.insert(0, str(REPO_ROOT / "lib"))
 
 import permission_sweep as ps  # noqa: E402
 import permissions as perms  # noqa: E402
+import config.workbench_projects
 
 # The two rule sources a grant can be covered by. `bin/*` stands in for a repo's
 # tracked .claude/settings.json and `gh pr:*` for ~/.claude/settings.json, which
@@ -289,7 +290,7 @@ def test_the_sweep_classifies_against_the_repo_it_found_the_file_under(container
 def test_main_exits_0_when_it_finds_drift(container, monkeypatch, capsys):
     """It reports; `otto-workbench maintenance` must not start failing over drift."""
     _local(container / ".claude", MACHINE_GRANT)
-    monkeypatch.setattr(ps.workbench_projects, "registered",
+    monkeypatch.setattr(config.workbench_projects, "registered",
                         lambda: [Path(container / "main")])
     monkeypatch.setattr(ps, "machine_rules", lambda home: MACHINE)
 
@@ -299,7 +300,7 @@ def test_main_exits_0_when_it_finds_drift(container, monkeypatch, capsys):
 
 def test_verbose_lists_every_grant(container, monkeypatch, capsys):
     _local(container / ".claude", MACHINE_GRANT)
-    monkeypatch.setattr(ps.workbench_projects, "registered",
+    monkeypatch.setattr(config.workbench_projects, "registered",
                         lambda: [Path(container / "main")])
     monkeypatch.setattr(ps, "machine_rules", lambda home: MACHINE)
 
@@ -310,7 +311,7 @@ def test_verbose_lists_every_grant(container, monkeypatch, capsys):
 
 def test_prune_from_the_cli_deletes_the_covered_class(container, monkeypatch, capsys):
     path = _local(container / ".claude", MACHINE_GRANT, ONE_OFF_GRANT)
-    monkeypatch.setattr(ps.workbench_projects, "registered",
+    monkeypatch.setattr(config.workbench_projects, "registered",
                         lambda: [Path(container / "main")])
     monkeypatch.setattr(ps, "machine_rules", lambda home: MACHINE)
 
@@ -320,6 +321,6 @@ def test_prune_from_the_cli_deletes_the_covered_class(container, monkeypatch, ca
 
 
 def test_an_empty_registry_says_so(monkeypatch, capsys):
-    monkeypatch.setattr(ps.workbench_projects, "registered", lambda: [])
+    monkeypatch.setattr(config.workbench_projects, "registered", lambda: [])
     assert ps.main([]) == 0
     assert "No repos registered yet" in capsys.readouterr().out

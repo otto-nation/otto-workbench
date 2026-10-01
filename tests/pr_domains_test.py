@@ -18,8 +18,8 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from conftest import readiness_state
-from pr import domains as pr_domains
-from pr import state as pr_state
+import pr.domains
+import pr.state
 from pr.ci_failures import RunState
 from pr.comments_state import ThreadState
 from core.proc import CmdResult
@@ -34,12 +34,12 @@ _REBASE_RUN = "2026-06-20T00:00:00Z"
 
 def test_a_domain_that_declares_nothing_says_nothing():
     """The default is silence, so a domain opts in to both by overriding."""
-    d = pr_domains.Domain(updated_at="t")
+    d = pr.domains.Domain(updated_at="t")
     assert d.render_status() == []
-    assert d.readiness(readiness_state()) == pr_domains.Readiness()
+    assert d.readiness(readiness_state()) == pr.domains.Readiness()
 
 
-@pytest.mark.parametrize("name,cls", sorted(pr_state._domains().items()))
+@pytest.mark.parametrize("name,cls", sorted(pr.state._domains().items()))
 def test_every_domain_is_handed_the_state_it_is_judging(name, cls):
     """The fold passes the state, so a rule may read a fact no domain owns.
 
@@ -55,15 +55,15 @@ def test_every_domain_is_handed_the_state_it_is_judging(name, cls):
     class _Probe(cls):
         def readiness(self, state):
             seen["pr_number"] = state.identity.pr_number
-            return pr_domains.Readiness()
+            return pr.domains.Readiness()
 
     state = readiness_state(pr_number=4321)
     setattr(state, name, _Probe())
-    pr_state.merge_readiness(state)
+    pr.state.merge_readiness(state)
     assert seen == {"pr_number": 4321}
 
 
-@pytest.mark.parametrize("name,cls", sorted(pr_state._domains().items()))
+@pytest.mark.parametrize("name,cls", sorted(pr.state._domains().items()))
 def test_an_unwritten_domain_blocks_nothing(name, cls):
     """A state nobody has written yet reports "not checked", never a blocker.
 
@@ -80,11 +80,11 @@ def test_an_unwritten_domain_blocks_nothing(name, cls):
 
 
 def test_readiness_render_ready():
-    assert pr_domains.Readiness().render() == "**Merge readiness**: ready"
+    assert pr.domains.Readiness().render() == "**Merge readiness**: ready"
 
 
 def test_readiness_render_blockers_are_the_wrong_we_looked_at():
-    line = pr_domains.Readiness(
+    line = pr.domains.Readiness(
         blockers=("CI failing", "2 must-fix finding(s)"),
     ).render()
     assert line == "**Merge readiness**: blocked — CI failing; 2 must-fix finding(s)"
@@ -92,7 +92,7 @@ def test_readiness_render_blockers_are_the_wrong_we_looked_at():
 
 def test_readiness_render_names_unchecked_last_as_one_clause():
     """"we did not look" is a different claim from "we looked and it is wrong"."""
-    line = pr_domains.Readiness(
+    line = pr.domains.Readiness(
         blockers=("CI failing",),
         unchecked=("review", "comments"),
     ).render()
@@ -102,7 +102,7 @@ def test_readiness_render_names_unchecked_last_as_one_clause():
 
 
 def test_readiness_render_unchecked_only():
-    line = pr_domains.Readiness(unchecked=("CI", "review")).render()
+    line = pr.domains.Readiness(unchecked=("CI", "review")).render()
     assert line == "**Merge readiness**: blocked — not checked: CI, review"
 
 
@@ -110,11 +110,11 @@ def test_readiness_render_unchecked_only():
 
 
 def test_ci_render_not_checked():
-    assert pr_domains.CIDomain().render_status() == ["**CI**: not checked yet"]
+    assert pr.domains.CIDomain().render_status() == ["**CI**: not checked yet"]
 
 
 def test_ci_render_success():
-    lines = pr_domains.CIDomain(
+    lines = pr.domains.CIDomain(
         conclusion="success", failure_count=0, updated_at="t",
     ).render_status()
     assert "green" in lines[0]
@@ -122,7 +122,7 @@ def test_ci_render_success():
 
 
 def test_ci_render_failure_with_kinds():
-    lines = pr_domains.CIDomain(
+    lines = pr.domains.CIDomain(
         conclusion="failure", failure_count=3,
         failure_kinds={"test": 2, "lint": 1}, updated_at="t",
     ).render_status()
@@ -133,29 +133,29 @@ def test_ci_render_failure_with_kinds():
 
 
 def test_ci_render_with_run_number():
-    lines = pr_domains.CIDomain(
+    lines = pr.domains.CIDomain(
         conclusion="failure", failure_count=1, last_run_number=42, updated_at="t",
     ).render_status()
     assert any("run #42" in l for l in lines)
 
 
 def test_ci_readiness_unchecked():
-    assert pr_domains.CIDomain().readiness(readiness_state()).unchecked == ("CI",)
+    assert pr.domains.CIDomain().readiness(readiness_state()).unchecked == ("CI",)
 
 
 def test_ci_readiness_failing():
-    ci = pr_domains.CIDomain(conclusion="failure", updated_at="t")
+    ci = pr.domains.CIDomain(conclusion="failure", updated_at="t")
     assert ci.readiness(readiness_state()).blockers == ("CI failing",)
 
 
 def test_ci_readiness_green():
-    ci = pr_domains.CIDomain(conclusion="success", updated_at="t")
-    assert ci.readiness(readiness_state()) == pr_domains.Readiness()
+    ci = pr.domains.CIDomain(conclusion="success", updated_at="t")
+    assert ci.readiness(readiness_state()) == pr.domains.Readiness()
 
 
 def test_ci_readiness_treats_a_non_success_conclusion_as_failing():
     """Cancelled and timed_out are not success, and neither may merge."""
-    ci = pr_domains.CIDomain(conclusion="cancelled", updated_at="t")
+    ci = pr.domains.CIDomain(conclusion="cancelled", updated_at="t")
     assert ci.readiness(readiness_state()).blockers == ("CI failing",)
 
 
@@ -163,69 +163,69 @@ def test_ci_readiness_treats_a_non_success_conclusion_as_failing():
 
 
 def test_review_render_not_run():
-    assert pr_domains.ReviewSummary().render_status() == ["**Review**: not run yet"]
+    assert pr.domains.ReviewSummary().render_status() == ["**Review**: not run yet"]
 
 
 def test_review_render_error():
-    lines = pr_domains.ReviewSummary(
-        review_type="full", verdict=pr_domains.ReviewVerdict.APPROVE.value,
-        status=pr_domains.ReviewStatus.ERROR.value, updated_at="t",
+    lines = pr.domains.ReviewSummary(
+        review_type="full", verdict=pr.domains.ReviewVerdict.APPROVE.value,
+        status=pr.domains.ReviewStatus.ERROR.value, updated_at="t",
     ).render_status()
     assert "[ERROR]" in lines[0]
 
 
 def test_review_render_completed():
-    lines = pr_domains.ReviewSummary(
-        review_type="full", verdict=pr_domains.ReviewVerdict.APPROVE.value,
-        status=pr_domains.ReviewStatus.COMPLETED.value, updated_at="t",
+    lines = pr.domains.ReviewSummary(
+        review_type="full", verdict=pr.domains.ReviewVerdict.APPROVE.value,
+        status=pr.domains.ReviewStatus.COMPLETED.value, updated_at="t",
     ).render_status()
     assert "[ERROR]" not in lines[0]
 
 
 def test_review_render_empty_status():
-    lines = pr_domains.ReviewSummary(
-        review_type="full", verdict=pr_domains.ReviewVerdict.APPROVE.value, updated_at="t",
+    lines = pr.domains.ReviewSummary(
+        review_type="full", verdict=pr.domains.ReviewVerdict.APPROVE.value, updated_at="t",
     ).render_status()
     assert "[ERROR]" not in lines[0]
 
 
 def test_review_render_disapprove():
-    lines = pr_domains.ReviewSummary(
-        review_type="full", verdict=pr_domains.ReviewVerdict.DISAPPROVE.value,
+    lines = pr.domains.ReviewSummary(
+        review_type="full", verdict=pr.domains.ReviewVerdict.DISAPPROVE.value,
         updated_at="t",
     ).render_status()
     assert "[DISAPPROVED]" in lines[0]
 
 
 def test_review_render_disapprove_and_error():
-    lines = pr_domains.ReviewSummary(
-        review_type="full", verdict=pr_domains.ReviewVerdict.DISAPPROVE.value,
-        status=pr_domains.ReviewStatus.ERROR.value, updated_at="t",
+    lines = pr.domains.ReviewSummary(
+        review_type="full", verdict=pr.domains.ReviewVerdict.DISAPPROVE.value,
+        status=pr.domains.ReviewStatus.ERROR.value, updated_at="t",
     ).render_status()
     assert "[ERROR]" in lines[0]
     assert "[DISAPPROVED]" in lines[0]
 
 
 def test_review_render_with_findings():
-    lines = pr_domains.ReviewSummary(
+    lines = pr.domains.ReviewSummary(
         review_type="pr", finding_counts={"M": 2, "S": 1},
-        verdict=pr_domains.ReviewVerdict.CHANGES_REQUESTED.value, updated_at="t",
+        verdict=pr.domains.ReviewVerdict.CHANGES_REQUESTED.value, updated_at="t",
     ).render_status()
     assert any("findings:" in l for l in lines)
     assert any("M: 2" in l for l in lines)
 
 
 def test_review_render_with_cost():
-    lines = pr_domains.ReviewSummary(
+    lines = pr.domains.ReviewSummary(
         review_type="pr", cost_usd=1.23, updated_at="t",
     ).render_status()
     assert any("$1.23" in l for l in lines)
 
 
 def test_review_render_partial_with_failure_detail():
-    lines = pr_domains.ReviewSummary(
-        review_type="pr", verdict=pr_domains.ReviewVerdict.CHANGES_REQUESTED.value,
-        status=pr_domains.ReviewStatus.PARTIAL.value,
+    lines = pr.domains.ReviewSummary(
+        review_type="pr", verdict=pr.domains.ReviewVerdict.CHANGES_REQUESTED.value,
+        status=pr.domains.ReviewStatus.PARTIAL.value,
         failure_detail="2/8 groups failed: quota exhausted (429), agent hit max turns (5)",
         finding_counts={"M": 3, "S": 2}, cost_usd=4.50, updated_at="t",
     ).render_status()
@@ -235,8 +235,8 @@ def test_review_render_partial_with_failure_detail():
 
 
 def test_review_render_error_with_failure_detail():
-    lines = pr_domains.ReviewSummary(
-        review_type="pr", status=pr_domains.ReviewStatus.ERROR.value,
+    lines = pr.domains.ReviewSummary(
+        review_type="pr", status=pr.domains.ReviewStatus.ERROR.value,
         failure_detail="all groups failed: quota exhausted (429)",
         cost_usd=2.10, updated_at="t",
     ).render_status()
@@ -251,8 +251,8 @@ def test_review_render_partial_without_recovery_omits_the_hint():
     The dashboard reads the same verdict the review document does, so the two
     cannot disagree about whether `--recover` is worth running.
     """
-    lines = pr_domains.ReviewSummary(
-        review_type="pr", status=pr_domains.ReviewStatus.PARTIAL.value,
+    lines = pr.domains.ReviewSummary(
+        review_type="pr", status=pr.domains.ReviewStatus.PARTIAL.value,
         failure_detail="1/8 groups failed: agent error: Prompt is too long",
         recoverable=False, cost_usd=4.50, updated_at="t",
     ).render_status()
@@ -262,8 +262,8 @@ def test_review_render_partial_without_recovery_omits_the_hint():
 
 def test_review_render_partial_keeps_the_hint_when_recovery_is_unknown():
     """State written before the field existed keeps the hint it always had."""
-    lines = pr_domains.ReviewSummary(
-        review_type="pr", status=pr_domains.ReviewStatus.PARTIAL.value,
+    lines = pr.domains.ReviewSummary(
+        review_type="pr", status=pr.domains.ReviewStatus.PARTIAL.value,
         failure_detail="2/8 groups failed: quota exhausted (429)",
         cost_usd=4.50, updated_at="t",
     ).render_status()
@@ -271,9 +271,9 @@ def test_review_render_partial_keeps_the_hint_when_recovery_is_unknown():
 
 
 def test_review_render_complete_no_recover_hint():
-    lines = pr_domains.ReviewSummary(
-        review_type="pr", verdict=pr_domains.ReviewVerdict.APPROVE.value,
-        status=pr_domains.ReviewStatus.COMPLETED.value,
+    lines = pr.domains.ReviewSummary(
+        review_type="pr", verdict=pr.domains.ReviewVerdict.APPROVE.value,
+        status=pr.domains.ReviewStatus.COMPLETED.value,
         finding_counts={}, cost_usd=3.00, updated_at="t",
     ).render_status()
     assert not any("recover" in line for line in lines)
@@ -281,31 +281,31 @@ def test_review_render_complete_no_recover_hint():
 
 
 def test_review_readiness_unchecked():
-    assert pr_domains.ReviewSummary().readiness(readiness_state()).unchecked == ("review",)
+    assert pr.domains.ReviewSummary().readiness(readiness_state()).unchecked == ("review",)
 
 
 def test_review_readiness_must_fix_findings():
-    rev = pr_domains.ReviewSummary(finding_counts={"M": 2, "S": 1}, updated_at="t")
+    rev = pr.domains.ReviewSummary(finding_counts={"M": 2, "S": 1}, updated_at="t")
     assert rev.readiness(readiness_state()).blockers == ("must-fix findings",)
 
 
 def test_review_readiness_ignores_non_blocking_findings():
-    rev = pr_domains.ReviewSummary(finding_counts={"S": 3, "N": 1}, updated_at="t")
-    assert rev.readiness(readiness_state()) == pr_domains.Readiness()
+    rev = pr.domains.ReviewSummary(finding_counts={"S": 3, "N": 1}, updated_at="t")
+    assert rev.readiness(readiness_state()) == pr.domains.Readiness()
 
 
 @pytest.mark.parametrize("status", [
-    pr_domains.ReviewStatus.PARTIAL.value, pr_domains.ReviewStatus.ERROR.value,
+    pr.domains.ReviewStatus.PARTIAL.value, pr.domains.ReviewStatus.ERROR.value,
 ])
 def test_review_readiness_incomplete_run(status):
     """A run that did not finish has not cleared the PR, whatever it found."""
-    rev = pr_domains.ReviewSummary(status=status, updated_at="t")
+    rev = pr.domains.ReviewSummary(status=status, updated_at="t")
     assert rev.readiness(readiness_state()).blockers == ("review incomplete",)
 
 
 def test_review_readiness_reports_findings_and_incompleteness_together():
-    rev = pr_domains.ReviewSummary(
-        finding_counts={"M": 1}, status=pr_domains.ReviewStatus.PARTIAL.value,
+    rev = pr.domains.ReviewSummary(
+        finding_counts={"M": 1}, status=pr.domains.ReviewStatus.PARTIAL.value,
         updated_at="t",
     )
     assert rev.readiness(readiness_state()).blockers == ("must-fix findings", "review incomplete")
@@ -315,11 +315,11 @@ def test_review_readiness_reports_findings_and_incompleteness_together():
 
 
 def test_comments_render_not_checked():
-    assert pr_domains.CommentsSummary().render_status() == ["**Comments**: not checked yet"]
+    assert pr.domains.CommentsSummary().render_status() == ["**Comments**: not checked yet"]
 
 
 def test_comments_render_with_threads():
-    lines = pr_domains.CommentsSummary(
+    lines = pr.domains.CommentsSummary(
         total_threads=5, by_state={"new": 2, "resolved": 3}, updated_at="t",
     ).render_status()
     assert "5 thread(s)" in lines[0]
@@ -328,31 +328,31 @@ def test_comments_render_with_threads():
 
 
 def test_comments_render_with_blocking_reviewers():
-    lines = pr_domains.CommentsSummary(
+    lines = pr.domains.CommentsSummary(
         total_threads=1, blocking_reviewers=["alice", "bob"], updated_at="t",
     ).render_status()
     assert any("blocking: alice, bob" in l for l in lines)
 
 
 def test_comments_readiness_unchecked():
-    assert pr_domains.CommentsSummary().readiness(readiness_state()).unchecked == ("comments",)
+    assert pr.domains.CommentsSummary().readiness(readiness_state()).unchecked == ("comments",)
 
 
 def test_comments_readiness_blocking_reviewers():
-    c = pr_domains.CommentsSummary(blocking_reviewers=["alice"], updated_at="t")
+    c = pr.domains.CommentsSummary(blocking_reviewers=["alice"], updated_at="t")
     assert c.readiness(readiness_state()).blockers == ("blocking reviewers",)
 
 
 def test_comments_readiness_clean():
-    c = pr_domains.CommentsSummary(total_threads=3, updated_at="t")
-    assert c.readiness(readiness_state()) == pr_domains.Readiness()
+    c = pr.domains.CommentsSummary(total_threads=3, updated_at="t")
+    assert c.readiness(readiness_state()) == pr.domains.Readiness()
 
 
 # ── CommentsSummary.move_to_resolved ──────────────────────────────────────
 
 
 def _tallied(**by_state):
-    return pr_domains.CommentsSummary(by_state=dict(by_state), updated_at="before")
+    return pr.domains.CommentsSummary(by_state=dict(by_state), updated_at="before")
 
 
 def test_a_resolved_thread_leaves_the_bucket_it_arrived_in():
@@ -393,7 +393,7 @@ def test_the_stamp_is_applied_only_when_something_moved():
 
 def test_a_bucket_with_nothing_left_warns_rather_than_going_negative():
     c = _tallied(new=0)
-    with patch("pr.domains.log.warn") as warn:
+    with patch("core.log.warn") as warn:
         c.move_to_resolved([ThreadState.NEW], updated_at="after")
     assert c.by_state == {"new": 0, "resolved": 1}
     assert "no new left to move" in warn.call_args[0][0]
@@ -401,14 +401,14 @@ def test_a_bucket_with_nothing_left_warns_rather_than_going_negative():
 
 def test_a_bucket_the_snapshot_never_had_warns_too():
     c = _tallied()
-    with patch("pr.domains.log.warn") as warn:
+    with patch("core.log.warn") as warn:
         c.move_to_resolved([ThreadState.NEW], updated_at="after")
     assert c.by_state == {"resolved": 1}
     assert warn.called
 
 
 def test_the_move_reads_back_through_render_status():
-    c = pr_domains.CommentsSummary(
+    c = pr.domains.CommentsSummary(
         total_threads=2, by_state={"new": 2}, updated_at="before",
     )
     c.move_to_resolved([ThreadState.NEW, ThreadState.NEW], updated_at="after")
@@ -421,11 +421,11 @@ def test_the_move_reads_back_through_render_status():
 
 
 def test_triage_render_not_run():
-    assert pr_domains.TriageSummary().render_status() == ["**Triage**: not run yet"]
+    assert pr.domains.TriageSummary().render_status() == ["**Triage**: not run yet"]
 
 
 def test_triage_render_with_data():
-    result = pr_domains.TriageSummary(
+    result = pr.domains.TriageSummary(
         total=5, actionable=2, valid=1, questions=1, updated_at="2024-01-01T00:00:00Z",
     ).render_status()
     assert len(result) == 1
@@ -439,11 +439,11 @@ def test_triage_render_with_data():
 
 
 def test_rebase_render_not_run():
-    assert pr_domains.RebaseSummary().render_status() == ["**Rebase**: not run yet"]
+    assert pr.domains.RebaseSummary().render_status() == ["**Rebase**: not run yet"]
 
 
 def test_rebase_render_completed_with_conflicts():
-    result = pr_domains.RebaseSummary(
+    result = pr.domains.RebaseSummary(
         status="completed", target_base="origin/main", commits_replayed=3,
         conflicts_resolved=2, files_resolved=["a.py", "b.py"],
         force_pushed=True, updated_at=_REBASE_RUN,
@@ -455,7 +455,7 @@ def test_rebase_render_completed_with_conflicts():
 
 
 def test_rebase_render_clean():
-    result = pr_domains.RebaseSummary(
+    result = pr.domains.RebaseSummary(
         status="completed", target_base="origin/main", commits_replayed=5,
         conflicts_resolved=0, files_resolved=[],
         force_pushed=True, updated_at=_REBASE_RUN,
@@ -465,7 +465,7 @@ def test_rebase_render_clean():
 
 
 def test_rebase_render_not_pushed():
-    result = pr_domains.RebaseSummary(
+    result = pr.domains.RebaseSummary(
         status="completed", target_base="origin/main", commits_replayed=3,
         conflicts_resolved=1, files_resolved=["a.py"],
         force_pushed=False, updated_at=_REBASE_RUN,
@@ -480,7 +480,7 @@ def test_rebase_render_counts_every_conflict_as_resolved_here():
     rerere is held off for the whole rebase, so a run resolves every conflict it
     meets and none is carried in from a recorded resolution.
     """
-    result = pr_domains.RebaseSummary(
+    result = pr.domains.RebaseSummary(
         status="completed", target_base="origin/main", commits_replayed=3,
         conflicts_resolved=1, files_resolved=["a.py"],
         force_pushed=True, updated_at=_REBASE_RUN,
@@ -492,7 +492,7 @@ def test_rebase_render_counts_every_conflict_as_resolved_here():
 # passes-at-base: the clean-rebase wording never carried a replay clause
 def test_rebase_render_says_nothing_about_replays_on_a_clean_run():
     """The clean-rebase wording, which never had a replay clause to drop."""
-    result = pr_domains.RebaseSummary(
+    result = pr.domains.RebaseSummary(
         status="completed", target_base="origin/main", commits_replayed=5,
         conflicts_resolved=0, files_resolved=[],
         force_pushed=True, updated_at=_REBASE_RUN,
@@ -502,7 +502,7 @@ def test_rebase_render_says_nothing_about_replays_on_a_clean_run():
 
 
 def test_rebase_render_conflicts():
-    result = pr_domains.RebaseSummary(
+    result = pr.domains.RebaseSummary(
         status="conflicts", updated_at=_REBASE_RUN,
     ).render_status()
     assert len(result) == 1
@@ -511,7 +511,7 @@ def test_rebase_render_conflicts():
 
 
 def test_rebase_render_stale_files():
-    result = pr_domains.RebaseSummary(
+    result = pr.domains.RebaseSummary(
         status="completed", target_base="origin/main", commits_replayed=3,
         conflicts_resolved=1, files_resolved=["pnpm-lock.yaml"],
         files_stale=["pnpm-lock.yaml"],
@@ -523,7 +523,7 @@ def test_rebase_render_stale_files():
 
 
 def test_rebase_render_no_stale_line_when_clean():
-    r = pr_domains.RebaseSummary(
+    r = pr.domains.RebaseSummary(
         status="completed", target_base="origin/main", commits_replayed=1,
         conflicts_resolved=0, files_resolved=[],
         force_pushed=True, updated_at=_REBASE_RUN,
@@ -532,7 +532,7 @@ def test_rebase_render_no_stale_line_when_clean():
 
 
 def test_rebase_render_aborted():
-    result = pr_domains.RebaseSummary(
+    result = pr.domains.RebaseSummary(
         status="aborted", updated_at=_REBASE_RUN,
     ).render_status()
     assert result == ["**Rebase**: aborted"]
@@ -540,8 +540,8 @@ def test_rebase_render_aborted():
 
 def test_rebase_render_already_landed():
     """A refusal is not a completed rebase — the dashboard has to say which."""
-    result = pr_domains.RebaseSummary(
-        status=pr_domains.RebaseStatus.ALREADY_LANDED.value,
+    result = pr.domains.RebaseSummary(
+        status=pr.domains.RebaseStatus.ALREADY_LANDED.value,
         updated_at=_REBASE_RUN,
     ).render_status()
     assert len(result) == 1
@@ -550,16 +550,16 @@ def test_rebase_render_already_landed():
 
 
 def test_rebase_render_unrelated_history():
-    r = pr_domains.RebaseSummary(
-        status=pr_domains.RebaseStatus.UNRELATED_HISTORY.value,
+    r = pr.domains.RebaseSummary(
+        status=pr.domains.RebaseStatus.UNRELATED_HISTORY.value,
         updated_at=_REBASE_RUN,
     )
     assert "shares no history" in r.render_status()[0]
 
 
 def test_rebase_render_conflicts_over_budget():
-    r = pr_domains.RebaseSummary(
-        status=pr_domains.RebaseStatus.CONFLICTS_OVER_BUDGET.value,
+    r = pr.domains.RebaseSummary(
+        status=pr.domains.RebaseStatus.CONFLICTS_OVER_BUDGET.value,
         updated_at=_REBASE_RUN,
     )
     assert "too many conflicts" in r.render_status()[0]
@@ -573,13 +573,13 @@ def test_every_refusal_status_renders_as_a_refusal():
     report a clean rebase that never ran.
     """
     non_refusals = {
-        pr_domains.RebaseStatus.COMPLETED,
-        pr_domains.RebaseStatus.CONFLICTS,
-        pr_domains.RebaseStatus.ABORTED,
+        pr.domains.RebaseStatus.COMPLETED,
+        pr.domains.RebaseStatus.CONFLICTS,
+        pr.domains.RebaseStatus.ABORTED,
     }
-    refusals = set(pr_domains.RebaseStatus) - non_refusals
+    refusals = set(pr.domains.RebaseStatus) - non_refusals
     for status in refusals:
-        r = pr_domains.RebaseSummary(
+        r = pr.domains.RebaseSummary(
             status=status.value, updated_at=_REBASE_RUN,
         )
         assert "refused" in r.render_status()[0], status
@@ -588,17 +588,17 @@ def test_every_refusal_status_renders_as_a_refusal():
 # ── PushDomain ────────────────────────────────────────────────────────────
 
 
-@patch("pr.domains.git_client.run")
+@patch("git.client.run")
 def test_push_observed_up_to_date(mock_run):
     mock_run.return_value = CmdResult(0, "0\n")
-    assert pr_domains.PushDomain.observed(Path("/repo"), "main", updated_at="t").ahead == 0
+    assert pr.domains.PushDomain.observed(Path("/repo"), "main", updated_at="t").ahead == 0
 
 
-@patch("pr.domains.git_client.run")
+@patch("git.client.run")
 def test_push_observed_counts_ahead_commits(mock_run):
     """Range direction matters — an inverted range counts the wrong side."""
     mock_run.return_value = CmdResult(0, "3\n")
-    push = pr_domains.PushDomain.observed(Path("/repo"), "feat/branch", updated_at="t")
+    push = pr.domains.PushDomain.observed(Path("/repo"), "feat/branch", updated_at="t")
     assert push.ahead == 3
     assert mock_run.call_args.args == (
         "rev-list", "--count", "origin/feat/branch..HEAD",
@@ -606,24 +606,24 @@ def test_push_observed_counts_ahead_commits(mock_run):
     assert mock_run.call_args.kwargs["cwd"] == Path("/repo")
 
 
-@patch("pr.domains.git_client.run")
+@patch("git.client.run")
 def test_push_observed_nonzero_returncode_is_unpushed(mock_run):
     """Branch never pushed — git rev-list exits non-zero."""
     mock_run.return_value = CmdResult(128, "", "fatal: unknown revision\n")
-    push = pr_domains.PushDomain.observed(Path("/repo"), "untracked", updated_at="t")
+    push = pr.domains.PushDomain.observed(Path("/repo"), "untracked", updated_at="t")
     assert push.ahead is None
 
 
-@patch("pr.domains.git_client.run")
+@patch("git.client.run")
 def test_push_observed_non_digit_output_is_unpushed(mock_run):
     mock_run.return_value = CmdResult(0, "not-a-number\n")
-    assert pr_domains.PushDomain.observed(Path("/repo"), "main", updated_at="t").ahead is None
+    assert pr.domains.PushDomain.observed(Path("/repo"), "main", updated_at="t").ahead is None
 
 
-@patch("pr.domains.git_client.run")
+@patch("git.client.run")
 def test_push_observed_stamps_the_write_it_was_given(mock_run):
     mock_run.return_value = CmdResult(0, "0\n")
-    push = pr_domains.PushDomain.observed(Path("/repo"), "main", updated_at="2026-08-01T00:00:00Z")
+    push = pr.domains.PushDomain.observed(Path("/repo"), "main", updated_at="2026-08-01T00:00:00Z")
     assert push.updated_at == "2026-08-01T00:00:00Z"
 
 
@@ -633,30 +633,30 @@ def test_push_observed_stamps_the_write_it_was_given(mock_run):
     (4, "**Push**: 4 commit(s) not pushed"),
 ])
 def test_push_renders_each_state(ahead, expected):
-    assert pr_domains.PushDomain(ahead=ahead, updated_at="t").render_status() == [expected]
+    assert pr.domains.PushDomain(ahead=ahead, updated_at="t").render_status() == [expected]
 
 
 def test_push_says_nothing_until_it_is_observed():
     """An unobserved push domain is silent, not "never pushed"."""
-    assert pr_domains.PushDomain().render_status() == []
+    assert pr.domains.PushDomain().render_status() == []
 
 
 def test_push_readiness_up_to_date():
-    assert pr_domains.PushDomain(ahead=0, updated_at="t").readiness(readiness_state()) == pr_domains.Readiness()
+    assert pr.domains.PushDomain(ahead=0, updated_at="t").readiness(readiness_state()) == pr.domains.Readiness()
 
 
 def test_push_readiness_counts_unpushed_commits():
-    push = pr_domains.PushDomain(ahead=2, updated_at="t")
+    push = pr.domains.PushDomain(ahead=2, updated_at="t")
     assert push.readiness(readiness_state()).blockers == ("2 unpushed commit(s)",)
 
 
 def test_push_readiness_branch_never_pushed():
-    push = pr_domains.PushDomain(ahead=None, updated_at="t")
+    push = pr.domains.PushDomain(ahead=None, updated_at="t")
     assert push.readiness(readiness_state()).blockers == ("branch not pushed",)
 
 
 def test_push_readiness_unobserved_blocks_nothing():
-    assert pr_domains.PushDomain().readiness(readiness_state()) == pr_domains.Readiness()
+    assert pr.domains.PushDomain().readiness(readiness_state()) == pr.domains.Readiness()
 
 
 # ── Which commit a verdict is about ─────────────────────────────────────────
@@ -667,7 +667,7 @@ def test_push_readiness_unobserved_blocks_nothing():
 
 
 def test_a_domain_that_records_no_commit_says_so():
-    assert pr_domains.Domain(updated_at="t").verdict_sha() == ""
+    assert pr.domains.Domain(updated_at="t").verdict_sha() == ""
 
 
 @pytest.mark.parametrize("mine,asked", [
@@ -677,20 +677,20 @@ def test_a_domain_that_records_no_commit_says_so():
     ("", ""),               # both unknown — must not read as equal
 ])
 def test_describes_is_false_unless_both_sides_name_the_same_commit(mine, asked):
-    assert not pr_domains.ReviewSummary(head_sha=mine, updated_at="t").describes(asked)
+    assert not pr.domains.ReviewSummary(head_sha=mine, updated_at="t").describes(asked)
 
 
 def test_describes_is_true_for_the_commit_it_was_measured_on():
-    assert pr_domains.ReviewSummary(head_sha="abc123", updated_at="t").describes("abc123")
+    assert pr.domains.ReviewSummary(head_sha="abc123", updated_at="t").describes("abc123")
 
 
 def test_review_reports_the_commit_it_reviewed():
-    assert pr_domains.ReviewSummary(head_sha="abc123").verdict_sha() == "abc123"
+    assert pr.domains.ReviewSummary(head_sha="abc123").verdict_sha() == "abc123"
 
 
 def test_ci_reports_the_commit_of_its_latest_run():
     """Read off the run, so it cannot drift from `latest_run_id`."""
-    ci = pr_domains.CIDomain(updated_at="t", latest_run_id=7)
+    ci = pr.domains.CIDomain(updated_at="t", latest_run_id=7)
     ci.runs[7] = RunState(run_id=7, run_number=1, head_sha="abc123",
                           status="completed", conclusion="success",
                           fetched_at="t", failures={})
@@ -704,18 +704,18 @@ def test_ci_says_nothing_when_the_run_its_pointer_names_is_gone():
     normally left dangling — this is the defensive read for a truncated or
     hand-edited state file, where the alternative is a KeyError on a cache.
     """
-    ci = pr_domains.CIDomain(updated_at="t", latest_run_id=999)
+    ci = pr.domains.CIDomain(updated_at="t", latest_run_id=999)
     assert ci.verdict_sha() == ""
     assert not ci.describes("abc123")
 
 
 def test_ci_says_nothing_before_any_run_is_stored():
-    assert pr_domains.CIDomain(updated_at="t").verdict_sha() == ""
+    assert pr.domains.CIDomain(updated_at="t").verdict_sha() == ""
 
 
 def test_ci_that_could_not_be_fully_read_is_unchecked_not_ready():
     """"Nobody can tell" is a different answer from "nothing failed"."""
-    domain = pr_domains.CIDomain(
+    domain = pr.domains.CIDomain(
         updated_at="2026-01-01T00:00:00Z", conclusion="success",
         unread=["the commit's check rollup could not be read"])
     answer = domain.readiness(readiness_state())
@@ -725,7 +725,7 @@ def test_ci_that_could_not_be_fully_read_is_unchecked_not_ready():
 
 def test_a_real_failure_outranks_an_incomplete_read():
     """A conclusion of "failure" is evidence; an unrelated unread reason must not soften it to merely unchecked."""
-    domain = pr_domains.CIDomain(
+    domain = pr.domains.CIDomain(
         updated_at="2026-01-01T00:00:00Z", conclusion="failure",
         unread=["a different run's payload could not be fetched"])
     answer = domain.readiness(readiness_state())
@@ -735,5 +735,5 @@ def test_a_real_failure_outranks_an_incomplete_read():
 
 # passes-at-base: back-compat — the green path must survive the unread guard
 def test_ci_read_in_full_and_green_is_ready():
-    domain = pr_domains.CIDomain(updated_at="2026-01-01T00:00:00Z", conclusion="success")
-    assert domain.readiness(readiness_state()) == pr_domains.Readiness()
+    domain = pr.domains.CIDomain(updated_at="2026-01-01T00:00:00Z", conclusion="success")
+    assert domain.readiness(readiness_state()) == pr.domains.Readiness()

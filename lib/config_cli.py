@@ -103,9 +103,9 @@ for _path in (_LIB_DIR, os.path.join(_WORKBENCH_DIR, 'ai', 'lib')):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-from config import workbench_config  # noqa: E402
-from config import workbench_config_report  # noqa: E402
-from config import workbench_config_write  # noqa: E402
+import config.workbench_config  # noqa: E402
+import config.workbench_config_report  # noqa: E402
+import config.workbench_config_write  # noqa: E402
 from ansi import BOLD, DIM, GREEN, NC, RED, YELLOW  # noqa: E402
 import git_layout  # noqa: E402
 
@@ -163,7 +163,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 # a person looking at a table. A record another program parses says it with an
 # empty value field, so the only marker in the output is the caller's own — the
 # machine profile's "unset", a bash caller's fallback.
-_NO_VALUE = workbench_config_report.render_value(None)
+_NO_VALUE = config.workbench_config_report.render_value(None)
 
 
 def _one_line(value: str) -> str:
@@ -186,24 +186,24 @@ def _resolve(key: str, project_root) -> tuple[str, str]:
     ``DEFAULT_SCOPE`` here rather than an error the batch would have to carry.
     """
     try:
-        status = workbench_config_report.config_status(project_root)
-    except (workbench_config.ConfigError, OSError):
-        return workbench_config.DEFAULT_SCOPE, ""
+        status = config.workbench_config_report.config_status(project_root)
+    except (config.workbench_config.ConfigError, OSError):
+        return config.workbench_config.DEFAULT_SCOPE, ""
     row = next((entry for entry in status.keys if entry.key == key), None)
     if row is None:
-        return workbench_config.DEFAULT_SCOPE, ""
+        return config.workbench_config.DEFAULT_SCOPE, ""
     value = _one_line(row.value)
     if value == _NO_VALUE:
         value = ""
     if row.is_default:
-        return workbench_config.DEFAULT_SCOPE, value
+        return config.workbench_config.DEFAULT_SCOPE, value
     return row.scope.name, value
 
 
 def _get(args: argparse.Namespace) -> int:
     """Print one record per DIR: the scope that answered, the value, the DIR."""
-    if not workbench_config.defines_key(args.key):
-        raise workbench_config.ConfigKeyError(
+    if not config.workbench_config.defines_key(args.key):
+        raise config.workbench_config.ConfigKeyError(
             f"{args.key} is not a key WorkbenchConfig defines",
         )
     for target in args.dir or [_project_root()]:
@@ -220,7 +220,7 @@ def _status(_args: argparse.Namespace) -> int:
     line explaining why a section is missing lands somewhere other than where
     the section would have been.
     """
-    status = workbench_config_report.config_status(_project_root())
+    status = config.workbench_config_report.config_status(_project_root())
 
     print(f"{BOLD}Scopes{NC} {DIM}— highest precedence first{NC}")
     name_width = max(len(scope.name) for scope in status.scopes)
@@ -237,7 +237,7 @@ def _status(_args: argparse.Namespace) -> int:
         value_width = max(len(row.value) for row in status.keys)
         print(f"\n{BOLD}Values{NC}")
         for row in status.keys:
-            source = (workbench_config.DEFAULT_SCOPE if row.is_default
+            source = (config.workbench_config.DEFAULT_SCOPE if row.is_default
                       else row.scope.name)
             tint = DIM if row.is_default else NC
             print(f"  {row.key:<{key_width}}  {row.value:<{value_width}}  "
@@ -263,8 +263,8 @@ def _status(_args: argparse.Namespace) -> int:
 
 def _write(args: argparse.Namespace) -> int:
     if not (args.project or args.container):
-        workbench_config_write.set_value(args.key, args.value)
-        return _wrote(args, workbench_config.global_config_path(), "every repo")
+        config.workbench_config_write.set_value(args.key, args.value)
+        return _wrote(args, config.workbench_config.global_config_path(), "every repo")
 
     root = _project_root()
     if root is None:
@@ -273,8 +273,8 @@ def _write(args: argparse.Namespace) -> int:
         return 1
     if args.container:
         return _write_container(args, root)
-    workbench_config_write.set_project_value(args.key, args.value, root)
-    return _wrote(args, workbench_config.project_config_path(root),
+    config.workbench_config_write.set_project_value(args.key, args.value, root)
+    return _wrote(args, config.workbench_config.project_config_path(root),
                   "commit it so the repo keeps the answer")
 
 
@@ -285,12 +285,12 @@ def _write_container(args: argparse.Namespace, root: Path) -> int:
     refusal so the message can name the flag the caller passed. The write still
     goes through that function, which is where the scope's rules live.
     """
-    target = workbench_config.container_config_path(root)
+    target = config.workbench_config.container_config_path(root)
     if target is None:
         print(f"{RED}✗{NC} --container needs a bare-repo worktree — {root} is a "
               f"plain checkout, whose repo has no container", file=sys.stderr)
         return 1
-    workbench_config_write.set_container_value(args.key, args.value, root)
+    config.workbench_config_write.set_container_value(args.key, args.value, root)
     return _wrote(args, target, "every worktree of this repo")
 
 
@@ -304,15 +304,15 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
     try:
         return args.run(args)
-    except workbench_config.ConfigKeyError as exc:
+    except config.workbench_config.ConfigKeyError as exc:
         print(f"{RED}✗{NC} {exc}", file=sys.stderr)
         print(
             f"  {DIM}every key the config accepts is listed at "
-            f"{workbench_config.SCHEMA_URL}{NC}",
+            f"{config.workbench_config.SCHEMA_URL}{NC}",
             file=sys.stderr,
         )
         return 1
-    except workbench_config.ConfigError as exc:
+    except config.workbench_config.ConfigError as exc:
         print(f"{RED}✗{NC} {exc}", file=sys.stderr)
         return 1
     except OSError as exc:

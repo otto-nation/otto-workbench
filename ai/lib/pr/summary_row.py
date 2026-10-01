@@ -21,16 +21,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from core import markdown
+import core.markdown
 from git.land import CommitStatus
-from pr import attribution
-from pr import permalinks
+import pr.attribution
+import pr.permalinks
 from pr.summary_model import ActionCell
 from pr.thread_models import CommentItem, ReportThread
 
 
 def fixed_status_text(
-    cp: attribution.CommitPushResult, repo: str, host: str = "",
+    cp: pr.attribution.CommitPushResult, repo: str, host: str = "",
 ) -> str:
     """Human-readable status for fixed threads in the summary table."""
     if cp.sha and cp.status == CommitStatus.PUSHED:
@@ -61,7 +61,7 @@ def fixed_status_text(
     return ActionCell.PENDING
 
 
-def settled_outside_the_pass(entry: CommentItem, cp: attribution.CommitPushResult) -> bool:
+def settled_outside_the_pass(entry: CommentItem, cp: pr.attribution.CommitPushResult) -> bool:
     """Whether this fixed row's work landed where the running pass cannot name it.
 
     Two ways that happens and one cell for both. The record says so — reconciled
@@ -75,14 +75,14 @@ def settled_outside_the_pass(entry: CommentItem, cp: attribution.CommitPushResul
     used to compare the rendered cell text, which made a reworded cell a silent
     change to what gets warned about.
     """
-    return attribution.handled_outside(entry) or cp.status == CommitStatus.RECONCILED
+    return pr.attribution.handled_outside(entry) or cp.status == CommitStatus.RECONCILED
 
 
 def fixed_status_for(
     entry: CommentItem,
-    cp: attribution.CommitPushResult,
+    cp: pr.attribution.CommitPushResult,
     repo: str,
-    history: attribution.AddressingHistory | None = None,
+    history: pr.attribution.AddressingHistory | None = None,
     thread: ReportThread | None = None,
     host: str = "",
 ) -> str:
@@ -99,7 +99,7 @@ def fixed_status_for(
     the cell reads the same as before; the thread reply has always passed one,
     so a table built without it contradicts the reply posted beside it.
     """
-    attributed = attribution.attribute_commit(entry, cp, history, thread)
+    attributed = pr.attribution.attribute_commit(entry, cp, history, thread)
     if attributed.cited:
         # Only the cited cell carries the hedge. The others already withhold the
         # claim for a different reason — they cannot name a commit at all — and
@@ -111,13 +111,13 @@ def fixed_status_for(
     # answered before the pass-level text gets a say.
     if settled_outside_the_pass(entry, cp):
         return ActionCell.RECONCILED
-    if attributed.claim is attribution.CommitClaim.PASS:
+    if attributed.claim is pr.attribution.CommitClaim.PASS:
         return fixed_status_text(cp, repo, host)
     return ActionCell.UNATTRIBUTED
 
 
 def addressed_status_for(
-    framing: attribution.AddressedFraming, repo: str, host: str = "",
+    framing: pr.attribution.AddressedFraming, repo: str, host: str = "",
     *, verified: bool | None = None,
 ) -> str:
     """Status cell for one satisfied row, in the framing its history earned.
@@ -167,12 +167,12 @@ def row_cells_for(
     ever reaches a published table again, type this parameter as `ActionCell`
     so a bare string cannot be passed at all.
     """
-    summary = permalinks.thread_cell(entry, threads_by_id, repo, pr_number, host)
+    summary = pr.permalinks.thread_cell(entry, threads_by_id, repo, pr_number, host)
     reviewer = f"@{entry.reviewer}" if entry.reviewer else "—"
     if entry.file and head_sha:
-        anchor = permalinks.anchored_line(entry, entry.file, entry.line, head_sha, wt_path)
+        anchor = pr.permalinks.anchored_line(entry, entry.file, entry.line, head_sha, wt_path)
         label = f"{entry.file}:{anchor}" if anchor else entry.file
-        url = permalinks.blob_permalink(repo, head_sha, entry.file, anchor, host)
+        url = pr.permalinks.blob_permalink(repo, head_sha, entry.file, anchor, host)
         file_loc = f"[`{label}`]({url})"
     elif entry.file and entry.line:
         file_loc = f"`{entry.file}:{entry.line}`"
@@ -180,7 +180,7 @@ def row_cells_for(
         file_loc = f"`{entry.file}`"
     else:
         file_loc = "—"
-    return [summary, reviewer, file_loc, markdown.escape_cell(status)]
+    return [summary, reviewer, file_loc, core.markdown.escape_cell(status)]
 
 
 def render_row(cells: list[str]) -> str:
@@ -191,4 +191,4 @@ def render_row(cells: list[str]) -> str:
     `row_cells` that reads it back — a row this writes is split by that
     splitter on the next round, so where the padding goes is one decision.
     """
-    return markdown.render_row(cells)
+    return core.markdown.render_row(cells)

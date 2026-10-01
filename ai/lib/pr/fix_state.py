@@ -23,13 +23,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from core import log
+import core.log
 from core.trail import Trail
 from git.land import CommitStatus
-from pr import attribution
-from pr import comments_fix as pr_comments_fix
-from pr import context as pr_context
-from pr import state as pr_state
+import pr.attribution
+import pr.comments_fix
+import pr.context
+import pr.state
 from pr.comments_state import ThreadState
 from pr.fix import FixOutcome, FixRecord
 from pr.thread_models import CommentItem
@@ -62,7 +62,7 @@ def fix_record_for(
     """
     for outcome, entries in by_outcome.items():
         if outcome.may_cite_a_commit:
-            attribution.stamp_pass_commit(entries, commit_sha)
+            pr.attribution.stamp_pass_commit(entries, commit_sha)
     return FixRecord(
         items=[
             entry.to_outcome(outcome)
@@ -72,7 +72,7 @@ def fix_record_for(
         commit_sha=commit_sha,
         commit_status=commit_status,
         head_sha=head_sha,
-        updated_at=pr_state.now_iso(),
+        updated_at=pr.state.now_iso(),
     )
 
 
@@ -94,9 +94,9 @@ def reviewers_for(
 
 
 def persist(
-    fix_summary: pr_comments_fix.FixSummary,
+    fix_summary: pr.comments_fix.FixSummary,
     wt_path: Path,
-    ctx: pr_context.ResolvedContext,
+    ctx: pr.context.ResolvedContext,
     trail: Trail | None,
     resolved: list[ThreadState] | None = None,
     summary_posted_url: str = "",
@@ -130,19 +130,19 @@ def persist(
     and unrecorded, which is worse than a state file one round behind.
     """
     try:
-        st = pr_state.load_or_init(
+        st = pr.state.load_or_init(
             target_dir=ctx.target_dir, repo=ctx.repo, branch=ctx.branch,
             pr_number=ctx.pr_number, head_sha=ctx.head_sha,
             worktree_root=str(wt_path),
         )
-        pr_state.apply(st, fix_summary)
+        pr.state.apply(st, fix_summary)
         if summary_posted_url:
             st.fix.summary_posted(summary_posted_url)
         if replies_delivered:
             st.fix.replies_sent()
-        st.comments.move_to_resolved(resolved or [], updated_at=pr_state.now_iso())
-        pr_state.save_state(ctx.target_dir, st)
+        st.comments.move_to_resolved(resolved or [], updated_at=pr.state.now_iso())
+        pr.state.save_state(ctx.target_dir, st)
     except Exception as exc:
         if trail:
             trail.error("fix_state", f"fix state update failed: {exc}")
-        log.error(f"fix state update failed: {exc}")
+        core.log.error(f"fix state update failed: {exc}")

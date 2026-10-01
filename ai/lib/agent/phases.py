@@ -35,7 +35,7 @@ import os
 from enum import StrEnum
 from pathlib import Path
 
-from config import workbench_config
+import config.workbench_config
 from agent.registry import PHASES, REVIEW_PHASES
 from agent.types import EFFORT_PRESETS
 from core.phases import ENV_PREFIX, Effort, Phase, Thinking
@@ -182,7 +182,7 @@ def _config(cfg: WorkbenchConfig | None) -> WorkbenchConfig:
     Callers resolving several values in a row pass the config they already
     loaded; the default is for the ones resolving a single value.
     """
-    return cfg if cfg is not None else workbench_config.load_config_or_default()
+    return cfg if cfg is not None else config.workbench_config.load_config_or_default()
 
 
 def _config_model(phase: Phase, cfg: WorkbenchConfig) -> str | None:
@@ -232,7 +232,7 @@ def collect_phase_models(
     it never runs.
     """
     models: dict[str, list[Phase]] = {}
-    cfg = workbench_config.load_config_or_default(project_root)
+    cfg = config.workbench_config.load_config_or_default(project_root)
     for phase in REVIEW_PHASES:
         models.setdefault(phase_model(phase, explicit, cfg), []).append(phase)
     return models

@@ -81,9 +81,9 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
-from core import log
-from core import proc
-from core import timeouts
+import core.log
+import core.proc
+import core.timeouts
 from core.proc import CmdResult
 
 # What git runs where an editor would otherwise open. `true` exits zero without
@@ -196,12 +196,12 @@ def _timeout_for(args: tuple[str, ...]) -> float | None:
     """
     subcommand = args[0] if args else ""
     if args[:2] in _LOCAL_FORMS:
-        return timeouts.LOCAL
+        return core.timeouts.LOCAL
     if subcommand in _UNBOUNDED:
-        return timeouts.UNBOUNDED
+        return core.timeouts.UNBOUNDED
     if subcommand in _TRANSFER:
-        return timeouts.TRANSFER
-    return timeouts.LOCAL
+        return core.timeouts.TRANSFER
+    return core.timeouts.LOCAL
 
 
 def _argv(args: tuple[str, ...], config: dict[str, str] | None) -> list[str]:
@@ -240,7 +240,7 @@ def run(
     pins rather than unsets, because an unset `GIT_EDITOR` leaves git to fall
     through its own precedence table to `vi`.
     """
-    return proc.run(
+    return core.proc.run(
         _argv(args, config), cwd=cwd, timeout=_timeout_for(args), env=env,
     )
 
@@ -322,7 +322,7 @@ def is_dirty(cwd: str | Path | None = None) -> bool:
     r = run("status", "--porcelain", cwd=cwd)
     if r.ok:
         return bool(r.stdout.strip())
-    log.warn(proc.failure_message(
+    core.log.warn(core.proc.failure_message(
         f"Could not read the state of {cwd or '.'} — treating it as dirty", r,
     ))
     return True

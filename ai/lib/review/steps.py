@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from core import log
+import core.log
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import PHASES, SCAN_PHASES, phase_skip_argv
 from core.phases import Phase
@@ -106,7 +106,7 @@ def _run_holistic_phase(
     phase = _scan_phase(job)
     reason = _holistic_skip_reason(job, incremental, group_count)
     if reason:
-        log.info(f"Holistic/scout phase skipped ({reason})")
+        core.log.info(f"Holistic/scout phase skipped ({reason})")
         if not state.scanned:
             state.done.add(phase)
             _write_pipeline_state(job, state)
@@ -115,7 +115,7 @@ def _run_holistic_phase(
     label = PHASES[phase].label
     output = phase_output_path(job.review_file, phase)
     if state.scanned and _has_output(output):
-        log.info(f"Phase 1: {label} skipped (exists)")
+        core.log.info(f"Phase 1: {label} skipped (exists)")
         return PhaseResult(
             log=phase_log_path(job.review_file, phase),
             content=read_scan(phase, Path(output).read_text()),
@@ -165,7 +165,7 @@ def _run_synthesis_or_fallback(
     all_groups_failed = len(failed_groups) == group_count
 
     if not ReviewDocument(body=merged_content).findings and not failed_groups:
-        log.info("No findings from any group — writing clean review")
+        core.log.info("No findings from any group — writing clean review")
         _write_clean_review(
             job, group_count, merged_content, skipped_groups=n_skipped,
         )
@@ -175,10 +175,10 @@ def _run_synthesis_or_fallback(
 
     if all_groups_failed:
         if Phase.GROUP in job.skipped:
-            log.warn("Group phase skipped — the review reports what it has")
+            core.log.warn("Group phase skipped — the review reports what it has")
             why = Diagnosis(DiagnosisKind.SKIPPED, detail="--no-group")
         else:
-            log.warn("All group agents failed — skipping synthesis")
+            core.log.warn("All group agents failed — skipping synthesis")
             why = Diagnosis(DiagnosisKind.ALL_GROUPS_FAILED)
         # Recorded before the fallback is built, not after: the meta header the
         # fallback carries reads the status back off this file, so a verdict
@@ -194,7 +194,7 @@ def _run_synthesis_or_fallback(
         return PhaseResult()
 
     if Phase.SYNTHESIS in job.skipped:
-        log.info("Synthesis skipped — using mechanical merge")
+        core.log.info("Synthesis skipped — using mechanical merge")
         _document(
             job,
             _no_synthesis_body(
@@ -210,7 +210,7 @@ def _run_synthesis_or_fallback(
         return PhaseResult()
 
     if cost_so_far > max_cost:
-        log.warn("Using merged group output as final review (synthesis skipped due to budget)")
+        core.log.warn("Using merged group output as final review (synthesis skipped due to budget)")
         # Post-processed like every other path that ships group output: the
         # budget that ran out buys agent turns, and evidence verification and
         # prior-finding reconciliation are local reads that cost none of it.
@@ -258,7 +258,7 @@ def _phase_synthesis(
     # thing left to do about a prior finding nobody accounted for is report it.
     unaccounted = passed_over(job.prior_review, merged_content, job.wt_path, job.pr.head_sha)
     if unaccounted:
-        log.dim(
+        core.log.dim(
             f"{len(unaccounted)} prior finding{plural(len(unaccounted))} unaccounted for "
             "— synthesis is asked to settle them"
         )
@@ -274,7 +274,7 @@ def _phase_synthesis(
         # every finding, which is the same trade the fallback below makes for
         # an agent that failed — and it is strictly better than discarding a
         # phase's worth of work because its cover letter would not fit.
-        log.warn(f"Synthesis cannot be prompted ({exc}) — falling back to mechanical merge")
+        core.log.warn(f"Synthesis cannot be prompted ({exc}) — falling back to mechanical merge")
         _write_mechanical_fallback(
             job, group_count, merged_content, skipped_groups=skipped_groups,
         )
@@ -282,8 +282,8 @@ def _phase_synthesis(
         return PhaseResult.of(
             synthesis_log, diagnosis=Diagnosis(DiagnosisKind.MECHANICAL_FALLBACK),
         )
-    log.info(f"Phase 4: Synthesis ({max_turns} turns)...")
-    log.blank()
+    core.log.info(f"Phase 4: Synthesis ({max_turns} turns)...")
+    core.log.blank()
 
     # `rc` tracks the latest attempt so the fallback warning below reports the
     # retry's exit code, not the first attempt's.
@@ -295,7 +295,7 @@ def _phase_synthesis(
         return rc
 
     invoke(prompt, max_turns)
-    log.blank()
+    core.log.blank()
 
     _retry_missing_output(
         invoke, prompt, synthesis_log, job.review_file,
@@ -310,7 +310,7 @@ def _phase_synthesis(
     else:
         reason = "no output" if not _has_output(job.review_file) else "incomplete output"
         detail = f"exited with code {rc} ({reason})" if rc != 0 else reason
-        log.warn(f"Synthesis agent {detail} — falling back to mechanical merge")
+        core.log.warn(f"Synthesis agent {detail} — falling back to mechanical merge")
         _write_mechanical_fallback(
             job, group_count, merged_content, skipped_groups=skipped_groups,
         )
@@ -377,7 +377,7 @@ def _phase_disprove(job: ReviewJob) -> PhaseResult:
     ms_count = counts[SEVERITY_MUST] + counts[SEVERITY_SHOULD]
     label = PHASES[Phase.DISPROVE].label
     if ms_count == 0:
-        log.info(f"{label} skipped — no must-fix or should-fix findings")
+        core.log.info(f"{label} skipped — no must-fix or should-fix findings")
         return PhaseResult()
 
     result = run_phase(
@@ -393,10 +393,10 @@ def _phase_disprove(job: ReviewJob) -> PhaseResult:
     falsified = summary.get("falsified", 0)
     if falsified > 0:
         Path(job.review_file).write_text(updated_text)
-        log.info(f"{label}: {summary['survived']} survived, {falsified} falsified")
+        core.log.info(f"{label}: {summary['survived']} survived, {falsified} falsified")
         _log_disprove_falsified(summary)
     else:
-        log.info(f"{label}: all {summary['survived']} findings survived")
+        core.log.info(f"{label}: all {summary['survived']} findings survived")
 
     return result
 
@@ -404,7 +404,7 @@ def _phase_disprove(job: ReviewJob) -> PhaseResult:
 def _log_disprove_falsified(summary: dict) -> None:
     for fid in summary.get("falsified_ids", []):
         reason = summary.get("reasons", {}).get(fid, "")
-        log.dim(f"  Falsified [{fid}]: {reason}")
+        core.log.dim(f"  Falsified [{fid}]: {reason}")
 
 
 def _run_disprove_gate(
@@ -427,9 +427,9 @@ def _run_disprove_gate(
     failure: Diagnosis | None = None
 
     if not _should_disprove(job, disprove):
-        log.info("Disprove gate off — keeping all findings")
+        core.log.info("Disprove gate off — keeping all findings")
     elif cost_so_far > max_cost:
-        log.warn(
+        core.log.warn(
             f"Budget exceeded before the disprove gate "
             f"(${cost_so_far:.2f}/${max_cost:.2f}) — findings go unchallenged"
         )
@@ -444,7 +444,7 @@ def _run_disprove_gate(
             # came back with nothing.
             failure = result.diagnosis
         else:
-            log.info(
+            core.log.info(
                 f"Skipping disprove — only {ms_count} M/S findings "
                 f"(threshold: {DISPROVE_MIN_FINDINGS})"
             )
@@ -458,7 +458,7 @@ def _run_disprove_gate(
 
 
 def _phase_merge(group_outputs: list[str], failed_groups: list[GroupFailure]) -> str:
-    log.info("Phase 3: Merging findings...")
+    core.log.info("Phase 3: Merging findings...")
     merged_content = merge_reviews(group_outputs)
 
     if failed_groups:

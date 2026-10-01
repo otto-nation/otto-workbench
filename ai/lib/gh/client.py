@@ -40,11 +40,11 @@ from pathlib import Path
 from time import sleep
 from typing import Any, Callable
 
-from core import log
-from core import proc
-from core import timeouts
+import core.log
+import core.proc
+import core.timeouts
 from core.proc import CmdResult
-from gh import budget
+import gh.budget
 
 # What `run` reports when `gh` is not installed. `proc.run` lets
 # `FileNotFoundError` escape, and three call sites caught it while forty-two
@@ -54,7 +54,7 @@ from gh import budget
 # Deliberately not pushed down into `proc.run`: git being absent is a broken
 # machine and should crash where it happens, whereas gh is optional tooling
 # that much of `ai/` already treats as best-effort.
-GH_MISSING_RETURNCODE = proc.MISSING_RETURNCODE
+GH_MISSING_RETURNCODE = core.proc.MISSING_RETURNCODE
 
 # Flags whose response size is the data's rather than one round trip's.
 # `--paginate` walks as many requests as the result set needs, and
@@ -154,7 +154,7 @@ def _ladder_for(r: CmdResult) -> _Ladder | None:
         return None
     if _is_rate_limited(r.combined_output):
         return RATE_LIMIT_LADDER
-    if r.server_error or r.returncode == proc.TIMEOUT_RETURNCODE:
+    if r.server_error or r.returncode == core.proc.TIMEOUT_RETURNCODE:
         return TRANSIENT_LADDER
     return None
 
@@ -179,7 +179,7 @@ def _error_message(r: CmdResult) -> str:
     except (json.JSONDecodeError, AttributeError):
         message, errors = "", []
     if not message:
-        message = (r.detail or r.combined_output.strip())[:proc.DETAIL_LIMIT]
+        message = (r.detail or r.combined_output.strip())[:core.proc.DETAIL_LIMIT]
     elif errors:
         message += " — " + "; ".join(str(e) for e in errors)
     return message
@@ -197,13 +197,13 @@ def _with_retries(attempt_call: Callable[[], CmdResult], label: str) -> CmdResul
         if r.ok:
             return r
         if _is_line_resolution_error(r.combined_output):
-            raise LineResolutionError(r.combined_output[:proc.DETAIL_LIMIT])
+            raise LineResolutionError(r.combined_output[:core.proc.DETAIL_LIMIT])
         ladder = _ladder_for(r)
         if ladder is None or attempt >= ladder.attempts - 1:
             return r
         wait = ladder.wait(attempt)
         cause = "Rate limited" if ladder is RATE_LIMIT_LADDER else "Transient failure"
-        log.warn(
+        core.log.warn(
             f"{cause} on {label} (attempt {attempt + 1}/{ladder.attempts}), "
             f"waiting {wait:g}s: {_error_message(r)}"
         )
@@ -223,12 +223,12 @@ def _timeout_for(args: tuple[str, ...]) -> float | None:
     principle separated those numbers.
     """
     if _TRANSFER_FLAGS.intersection(args):
-        return timeouts.TRANSFER
+        return core.timeouts.TRANSFER
     if args[:2] in _TRANSFER_COMMANDS:
-        return timeouts.TRANSFER
+        return core.timeouts.TRANSFER
     if args[:1] == ("api",) and len(args) > 1 and args[1].endswith(_TRANSFER_ENDPOINT_SUFFIX):
-        return timeouts.TRANSFER
-    return timeouts.NETWORK
+        return core.timeouts.TRANSFER
+    return core.timeouts.NETWORK
 
 
 def run(
@@ -258,13 +258,13 @@ def run(
     *_skip_breaker* is for the probe that reads the reset header, which is the
     one call that must go out while the latch is arming.
     """
-    resource = budget.resource_for(args)
+    resource = gh.budget.resource_for(args)
     if not _skip_breaker:
-        latch = budget.latched(resource)
+        latch = gh.budget.latched(resource)
         if latch is not None:
-            return budget.latched_result(latch)
+            return gh.budget.latched_result(latch)
     try:
-        r = proc.run(
+        r = core.proc.run(
             ["gh", *args], cwd=cwd, timeout=_timeout_for(args), input_text=input_text,
         )
     except FileNotFoundError:
@@ -272,8 +272,8 @@ def run(
             returncode=GH_MISSING_RETURNCODE,
             stderr="gh is not installed — install the GitHub CLI to use this",
         )
-    if not _skip_breaker and not r.ok and budget.is_budget_exhausted(r.combined_output):
-        budget.arm(r.combined_output, resource)
+    if not _skip_breaker and not r.ok and gh.budget.is_budget_exhausted(r.combined_output):
+        gh.budget.arm(r.combined_output, resource)
     return r
 
 

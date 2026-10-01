@@ -9,52 +9,53 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from agent import backend_claude as ai_backend_claude
+import agent.backend_claude
 from core.phases import Phase
 from test_ai_backend import _recording_popen
+import agent.vertex_quota
 
 _FIX_PHASE = Phase.FIX
 
 
 class TestLoadAgentDef:
     def test_returns_none_for_missing_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ai_backend_claude, "_AGENTS_DIR", tmp_path)
-        assert ai_backend_claude._load_agent_def("nonexistent") is None
+        monkeypatch.setattr(agent.backend_claude, "_AGENTS_DIR", tmp_path)
+        assert agent.backend_claude._load_agent_def("nonexistent") is None
 
     def test_parses_frontmatter(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ai_backend_claude, "_AGENTS_DIR", tmp_path)
+        monkeypatch.setattr(agent.backend_claude, "_AGENTS_DIR", tmp_path)
         (tmp_path / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: A test agent\n---\n\nYou are helpful."
         )
-        result = ai_backend_claude._load_agent_def("my-agent")
+        result = agent.backend_claude._load_agent_def("my-agent")
         assert result == {"description": "A test agent", "prompt": "You are helpful."}
 
     def test_no_frontmatter(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ai_backend_claude, "_AGENTS_DIR", tmp_path)
+        monkeypatch.setattr(agent.backend_claude, "_AGENTS_DIR", tmp_path)
         (tmp_path / "plain.md").write_text("Just a prompt with no frontmatter.")
-        result = ai_backend_claude._load_agent_def("plain")
+        result = agent.backend_claude._load_agent_def("plain")
         assert result == {"description": "plain", "prompt": "Just a prompt with no frontmatter."}
 
     def test_description_with_extra_fields(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ai_backend_claude, "_AGENTS_DIR", tmp_path)
+        monkeypatch.setattr(agent.backend_claude, "_AGENTS_DIR", tmp_path)
         (tmp_path / "full.md").write_text(
             "---\nname: full\ndescription: Full agent\nmodel: inherit\nsource: test\n---\n\nBody here."
         )
-        result = ai_backend_claude._load_agent_def("full")
+        result = agent.backend_claude._load_agent_def("full")
         assert result["description"] == "Full agent"
         assert result["prompt"] == "Body here."
 
 
 class TestBuildAgentCmd:
     def test_base_flags(self):
-        cmd = ai_backend_claude._build_agent_cmd(ai_backend_claude.AgentInvocation(prompt=""))
+        cmd = agent.backend_claude._build_agent_cmd(agent.backend_claude.AgentInvocation(prompt=""))
         assert "--bare" in cmd
         assert "--output-format" in cmd
         assert "stream-json" in cmd
 
     def test_builtin_agent_no_agents_json(self):
-        cmd = ai_backend_claude._build_agent_cmd(
-            ai_backend_claude.AgentInvocation(prompt="", agent="Explore"),
+        cmd = agent.backend_claude._build_agent_cmd(
+            agent.backend_claude.AgentInvocation(prompt="", agent="Explore"),
         )
         assert "--agent" in cmd
         idx = cmd.index("--agent")
@@ -62,12 +63,12 @@ class TestBuildAgentCmd:
         assert "--agents" not in cmd
 
     def test_custom_agent_injects_agents_json(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ai_backend_claude, "_AGENTS_DIR", tmp_path)
+        monkeypatch.setattr(agent.backend_claude, "_AGENTS_DIR", tmp_path)
         (tmp_path / "reviewer-lite.md").write_text(
             "---\nname: reviewer-lite\ndescription: Lightweight reviewer\n---\n\nReview code."
         )
-        cmd = ai_backend_claude._build_agent_cmd(
-            ai_backend_claude.AgentInvocation(prompt="", agent="reviewer-lite"),
+        cmd = agent.backend_claude._build_agent_cmd(
+            agent.backend_claude.AgentInvocation(prompt="", agent="reviewer-lite"),
         )
         assert "--agents" in cmd
         agents_idx = cmd.index("--agents")
@@ -80,15 +81,15 @@ class TestBuildAgentCmd:
         assert cmd[agent_idx + 1] == "reviewer-lite"
 
     def test_agents_json_before_agent_flag(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ai_backend_claude, "_AGENTS_DIR", tmp_path)
+        monkeypatch.setattr(agent.backend_claude, "_AGENTS_DIR", tmp_path)
         (tmp_path / "test.md").write_text("---\nname: test\ndescription: Test\n---\n\nPrompt.")
-        cmd = ai_backend_claude._build_agent_cmd(
-            ai_backend_claude.AgentInvocation(prompt="", agent="test"),
+        cmd = agent.backend_claude._build_agent_cmd(
+            agent.backend_claude.AgentInvocation(prompt="", agent="test"),
         )
         assert cmd.index("--agents") < cmd.index("--agent")
 
     def test_model_and_max_turns(self):
-        cmd = ai_backend_claude._build_agent_cmd(ai_backend_claude.AgentInvocation(
+        cmd = agent.backend_claude._build_agent_cmd(agent.backend_claude.AgentInvocation(
             prompt="", model="sonnet", max_turns=15, max_budget=5.0,
         ))
         assert "--model" in cmd
@@ -98,8 +99,8 @@ class TestBuildAgentCmd:
         assert "--max-budget-usd" in cmd
 
     def test_add_dirs(self):
-        cmd = ai_backend_claude._build_agent_cmd(
-            ai_backend_claude.AgentInvocation(prompt="", add_dirs=["/a", "/b"]),
+        cmd = agent.backend_claude._build_agent_cmd(
+            agent.backend_claude.AgentInvocation(prompt="", add_dirs=["/a", "/b"]),
         )
         pairs = [(cmd[i], cmd[i + 1]) for i in range(len(cmd) - 1) if cmd[i] == "--add-dir"]
         assert pairs == [("--add-dir", "/a"), ("--add-dir", "/b")]
@@ -109,10 +110,10 @@ class TestPromptStderr:
     def test_stderr_logged_on_failure(self, monkeypatch, capsys, tmp_path):
         fake_result = types.SimpleNamespace(stdout="", returncode=1, stderr="API rate limit exceeded")
         monkeypatch.setattr(
-            ai_backend_claude.subprocess, "run",
+            agent.backend_claude.subprocess, "run",
             lambda *a, **kw: fake_result,
         )
-        stdout, rc, _ = ai_backend_claude.prompt("test prompt", cwd=str(tmp_path))
+        stdout, rc, _ = agent.backend_claude.prompt("test prompt", cwd=str(tmp_path))
         assert rc == 1
         captured = capsys.readouterr()
         assert "API rate limit exceeded" in captured.err
@@ -127,10 +128,10 @@ class TestPromptStderr:
             stdout="Claude usage limit reached", returncode=1, stderr="",
         )
         monkeypatch.setattr(
-            ai_backend_claude.subprocess, "run",
+            agent.backend_claude.subprocess, "run",
             lambda *a, **kw: fake_result,
         )
-        _, rc, _ = ai_backend_claude.prompt("test prompt", cwd=str(tmp_path))
+        _, rc, _ = agent.backend_claude.prompt("test prompt", cwd=str(tmp_path))
         assert rc == 1
         assert "Claude usage limit reached" in capsys.readouterr().err
 
@@ -139,39 +140,39 @@ class TestPromptStderr:
             stdout="Claude usage limit reached", returncode=1, stderr="\n",
         )
         monkeypatch.setattr(
-            ai_backend_claude.subprocess, "run",
+            agent.backend_claude.subprocess, "run",
             lambda *a, **kw: fake_result,
         )
-        ai_backend_claude.prompt("test prompt", cwd=str(tmp_path))
+        agent.backend_claude.prompt("test prompt", cwd=str(tmp_path))
         assert "Claude usage limit reached" in capsys.readouterr().err
 
     def test_silent_failure_logs_the_exit_code(self, monkeypatch, capsys, tmp_path):
         fake_result = types.SimpleNamespace(stdout="", returncode=143, stderr="")
         monkeypatch.setattr(
-            ai_backend_claude.subprocess, "run",
+            agent.backend_claude.subprocess, "run",
             lambda *a, **kw: fake_result,
         )
-        _, rc, _ = ai_backend_claude.prompt("test prompt", cwd=str(tmp_path))
+        _, rc, _ = agent.backend_claude.prompt("test prompt", cwd=str(tmp_path))
         assert rc == 143
         assert "143" in capsys.readouterr().err
 
     def test_failure_detail_is_truncated(self, monkeypatch, capsys, tmp_path):
         fake_result = types.SimpleNamespace(stdout="", returncode=1, stderr="x" * 10000)
         monkeypatch.setattr(
-            ai_backend_claude.subprocess, "run",
+            agent.backend_claude.subprocess, "run",
             lambda *a, **kw: fake_result,
         )
-        ai_backend_claude.prompt("test prompt", cwd=str(tmp_path))
+        agent.backend_claude.prompt("test prompt", cwd=str(tmp_path))
         err = capsys.readouterr().err
-        assert err.count("x") == ai_backend_claude._FAILURE_DETAIL_MAX_CHARS
+        assert err.count("x") == agent.backend_claude._FAILURE_DETAIL_MAX_CHARS
 
     def test_stderr_not_logged_on_success(self, monkeypatch, capsys, tmp_path):
         fake_result = type("R", (), {"stdout": "response", "returncode": 0, "stderr": ""})()
         monkeypatch.setattr(
-            ai_backend_claude.subprocess, "run",
+            agent.backend_claude.subprocess, "run",
             lambda *a, **kw: fake_result,
         )
-        stdout, rc, _ = ai_backend_claude.prompt("test prompt", cwd=str(tmp_path))
+        stdout, rc, _ = agent.backend_claude.prompt("test prompt", cwd=str(tmp_path))
         assert rc == 0
         assert stdout == "response"
         captured = capsys.readouterr()
@@ -186,9 +187,9 @@ class TestPreflight:
             seen["models"] = models
             return False
 
-        monkeypatch.setattr(ai_backend_claude.vertex_quota, "run_preflight", fake_run)
+        monkeypatch.setattr(agent.vertex_quota, "run_preflight", fake_run)
         models = {"claude-sonnet-5": ["group"]}
-        assert ai_backend_claude.preflight(models, object()) is False
+        assert agent.backend_claude.preflight(models, object()) is False
         assert seen["models"] == models
 
 
@@ -209,8 +210,8 @@ class TestEveryCommandCarriesAnAddDir:
     """
 
     def _fix_cmd(self, **kwargs):
-        return ai_backend_claude._build_fix_cmd(
-            ai_backend_claude.AgentInvocation(prompt="", **kwargs),
+        return agent.backend_claude._build_fix_cmd(
+            agent.backend_claude.AgentInvocation(prompt="", **kwargs),
         )
 
     def test_a_fix_command_passes_every_directory_it_was_given(self):
@@ -220,8 +221,8 @@ class TestEveryCommandCarriesAnAddDir:
             assert cmd[cmd.index(d) - 1] == "--add-dir"
 
     def test_an_agent_command_passes_every_directory_it_was_given(self):
-        cmd = ai_backend_claude._build_agent_cmd(
-            ai_backend_claude.AgentInvocation(prompt="", add_dirs=["/tmp/wt"]),
+        cmd = agent.backend_claude._build_agent_cmd(
+            agent.backend_claude.AgentInvocation(prompt="", add_dirs=["/tmp/wt"]),
         )
         assert cmd.count("--add-dir") == 1
         assert cmd[cmd.index("/tmp/wt") - 1] == "--add-dir"
@@ -233,7 +234,7 @@ class TestEveryCommandCarriesAnAddDir:
         the rules, so the fallback is the thing worth pinning rather than the
         command builder's faithful rendering of whatever it is handed.
         """
-        from agent import invoke as agent_invoke
+        import agent.invoke
 
         captured = {}
 
@@ -245,7 +246,7 @@ class TestEveryCommandCarriesAnAddDir:
         original = ai_backend.invoke_fix
         ai_backend.invoke_fix = fake_invoke_fix
         try:
-            agent_invoke.run_fix(
+            agent.invoke.run_fix(
                 _FIX_PHASE, "prompt", cwd="/tmp/the-worktree",
                 session_log="", produced=lambda: True,
             )
@@ -272,31 +273,31 @@ class TestThePromptShapeGrantsNoTools:
     """
 
     def _prompt_cmd(self, **kwargs):
-        return ai_backend_claude._build_prompt_cmd(**kwargs)
+        return agent.backend_claude._build_prompt_cmd(**kwargs)
 
     def test_the_executing_tools_are_denied(self):
         cmd = self._prompt_cmd()
         denied = cmd[cmd.index("--disallowedTools") + 1:]
-        for tool in ai_backend_claude.PROMPT_DENIED_TOOLS:
+        for tool in agent.backend_claude.PROMPT_DENIED_TOOLS:
             assert tool in denied
 
     def test_bash_is_among_them(self):
         """The one that hung a rebase — named rather than left to the list."""
-        assert "Bash" in ai_backend_claude.PROMPT_DENIED_TOOLS
+        assert "Bash" in agent.backend_claude.PROMPT_DENIED_TOOLS
 
     def test_the_denial_survives_a_model(self):
         """`--model` takes a value, so it must not be parsed as another tool."""
         cmd = self._prompt_cmd(model="claude-opus-4-6")
         assert cmd[cmd.index("--model") + 1] == "claude-opus-4-6"
         denied = cmd[cmd.index("--disallowedTools") + 1:cmd.index("--model")]
-        assert list(ai_backend_claude.PROMPT_DENIED_TOOLS) == denied
+        assert list(agent.backend_claude.PROMPT_DENIED_TOOLS) == denied
 
     def test_the_agent_modes_keep_their_tools(self):
         """The contrast is the point — an agent with no tools does nothing."""
-        inv = ai_backend_claude.AgentInvocation(prompt="", add_dirs=["/tmp/wt"])
+        inv = agent.backend_claude.AgentInvocation(prompt="", add_dirs=["/tmp/wt"])
         for cmd in (
-            ai_backend_claude._build_agent_cmd(inv),
-            ai_backend_claude._build_fix_cmd(inv),
+            agent.backend_claude._build_agent_cmd(inv),
+            agent.backend_claude._build_fix_cmd(inv),
         ):
             assert "--allowedTools" in cmd
             assert cmd[cmd.index("--permission-mode") + 1] == "acceptEdits"
@@ -312,8 +313,8 @@ class TestRulesHome:
         home.mkdir()
         seen = {}
         monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
-        getattr(ai_backend_claude, entry_point)(
-            ai_backend_claude.AgentInvocation(
+        getattr(agent.backend_claude, entry_point)(
+            agent.backend_claude.AgentInvocation(
                 prompt="p", cwd=str(tmp_path),
                 session_log=str(tmp_path / "s.jsonl"),
                 add_dirs=[str(tmp_path)],
@@ -332,8 +333,8 @@ class TestRulesHome:
         monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
         seen = {}
         monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
-        getattr(ai_backend_claude, entry_point)(
-            ai_backend_claude.AgentInvocation(
+        getattr(agent.backend_claude, entry_point)(
+            agent.backend_claude.AgentInvocation(
                 prompt="p", cwd=str(tmp_path),
                 session_log=str(tmp_path / "s.jsonl"),
             ),
@@ -342,19 +343,19 @@ class TestRulesHome:
 
     def test_a_relative_rules_home_is_rejected(self, tmp_path):
         with pytest.raises(ValueError, match="must be absolute"):
-            ai_backend_claude._spawn_env(
-                ai_backend_claude.AgentInvocation(
+            agent.backend_claude._spawn_env(
+                agent.backend_claude.AgentInvocation(
                     prompt="p", cwd=str(tmp_path), rules_home="relative/cc",
                 ),
             )
 
     def test_add_dir_is_unchanged_when_rules_home_is_set(self):
-        inv = ai_backend_claude.AgentInvocation(
+        inv = agent.backend_claude.AgentInvocation(
             prompt="", add_dirs=["/tmp/wt"], rules_home="/tmp/cc",
         )
         for builder in (
-            ai_backend_claude._build_fix_cmd,
-            ai_backend_claude._build_agent_cmd,
+            agent.backend_claude._build_fix_cmd,
+            agent.backend_claude._build_agent_cmd,
         ):
             cmd = builder(inv)
             assert cmd.count("--add-dir") == 1

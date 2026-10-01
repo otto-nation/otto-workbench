@@ -25,11 +25,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace as dataclass_replace
 from typing import TYPE_CHECKING
 
-from core import publishing
+import core.publishing
 from core.trail import Trail
-from git import topology as git_topology
-from pr import summary_model
-from pr import supersession
+import git.topology
+import pr.summary_model
+import pr.supersession
 from pr.comments_state import ThreadState
 from pr.fix import FixOutcome
 from pr.thread_models import (
@@ -47,14 +47,14 @@ if TYPE_CHECKING:
 
 
 _HUMAN_CLASSIFICATIONS = {
-    Classification.CONFLICTING: summary_model.HumanReason.CONFLICTING,
-    Classification.QUESTION: summary_model.HumanReason.QUESTION,
+    Classification.CONFLICTING: pr.summary_model.HumanReason.CONFLICTING,
+    Classification.QUESTION: pr.summary_model.HumanReason.QUESTION,
 }
 
 _VERIFICATION_ROUTES = {
     Verification.VALID: (Disposition.FIXABLE, None),
     Verification.NEEDS_DISCUSSION: (
-        Disposition.NEEDS_HUMAN, summary_model.HumanReason.NEEDS_DISCUSSION,
+        Disposition.NEEDS_HUMAN, pr.summary_model.HumanReason.NEEDS_DISCUSSION,
     ),
     Verification.ALREADY_ADDRESSED: (Disposition.ALREADY_ADDRESSED, None),
     Verification.INVALID: (Disposition.DISMISSED, None),
@@ -63,14 +63,14 @@ _VERIFICATION_ROUTES = {
 
 def _route(
     tt: CommentItem,
-) -> tuple[Disposition, summary_model.HumanReason | None] | None:
+) -> tuple[Disposition, pr.summary_model.HumanReason | None] | None:
     """Where one entry goes, or None to drop it.
 
     Order is the rule. Contested state overrides the model; a question never
     reaches verification; valid + high is a person before VALID is fixable.
     """
     if tt.state == ThreadState.CONTESTED:
-        return (Disposition.NEEDS_HUMAN, summary_model.HumanReason.CONTESTED)
+        return (Disposition.NEEDS_HUMAN, pr.summary_model.HumanReason.CONTESTED)
     reason = _HUMAN_CLASSIFICATIONS.get(tt.classification)
     if reason is not None:
         return (Disposition.NEEDS_HUMAN, reason)
@@ -80,7 +80,7 @@ def _route(
         tt.verification is Verification.VALID
         and tt.complexity is Complexity.HIGH
     ):
-        return (Disposition.NEEDS_HUMAN, summary_model.HumanReason.COMPLEX)
+        return (Disposition.NEEDS_HUMAN, pr.summary_model.HumanReason.COMPLEX)
     return _VERIFICATION_ROUTES.get(tt.verification)
 
 
@@ -144,7 +144,7 @@ def classify_entries(
 
 
 def hold_if_superseded(
-    verdict: supersession.Verdict, trail: Trail | None = None,
+    verdict: pr.supersession.Verdict, trail: Trail | None = None,
 ) -> None:
     """Report what the preflight found, and hold if any of it is evidence.
 
@@ -159,11 +159,11 @@ def hold_if_superseded(
     summary. The local commit is not one of them — see `fix.engine`, whose gate
     is fixed at commit-but-do-not-push for exactly this reason.
     """
-    supersession.report(verdict)
+    pr.supersession.report(verdict)
     if not verdict.superseded:
         return
     holding = verdict.holding
-    publishing.hold(
+    core.publishing.hold(
         f"{len(holding)} supersession signal(s) suggest this branch is superseded"
     )
     if trail:
@@ -195,7 +195,7 @@ def hold_while_contested(
     """
     if not needs_human:
         return
-    publishing.hold(f"{len(needs_human)} thread(s) awaiting discussion")
+    core.publishing.hold(f"{len(needs_human)} thread(s) awaiting discussion")
     if trail:
         trail.decision(
             "publishing_hold",
@@ -231,7 +231,7 @@ def hold_after_verify(
     differs — a falsified fix wants the gate's own detail read, a declined item
     wants the agent's argument read.
     """
-    held = [o for o in outcomes if o.outcome in summary_model.NEEDS_A_PERSON]
+    held = [o for o in outcomes if o.outcome in pr.summary_model.NEEDS_A_PERSON]
     if not held:
         return
     # Falsification is the one an operator is least expecting: the pass ticked
@@ -248,7 +248,7 @@ def hold_after_verify(
     else:
         count = len(held)
         kind = "needing a person"
-    publishing.hold(f"{count} fix(es) {kind}")
+    core.publishing.hold(f"{count} fix(es) {kind}")
     if trail:
         trail.decision(
             "publishing_hold",
@@ -398,9 +398,9 @@ def triage_the_round(
     items = classify_entries(triage_result.comment_items, trail=trail)
 
     hold_if_superseded(
-        supersession.detect_cached(
+        pr.supersession.detect_cached(
             wt_path, ctx.repo, ctx.target_dir,
-            base=f"origin/{git_topology.default_branch_cached(wt_path)}",
+            base=f"origin/{git.topology.default_branch_cached(wt_path)}",
             trail=trail,
         ),
         trail,

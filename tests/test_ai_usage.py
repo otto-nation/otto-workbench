@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
-from agent import usage as ai_usage
+import agent.usage
 from agent.usage import SessionUsage, merge, normalize_usage, parse_session_log
 
 
@@ -192,7 +192,7 @@ def test_format_tokens_abbreviates_at_each_threshold(n, expected):
     They used to disagree — one wrote `12k` where the other wrote `12.3k` — so a
     figure read off one and quoted against the other did not match.
     """
-    assert ai_usage.format_tokens(n) == expected
+    assert agent.usage.format_tokens(n) == expected
 
 
 # ── merge ─────────────────────────────────────────────────────────────────────
@@ -221,8 +221,8 @@ def test_merge_empty_returns_zero_usage():
 @pytest.fixture
 def ledger(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
-    monkeypatch.setattr(ai_usage, "_warned", False)
-    return tmp_path / ai_usage.LEDGER_DIRNAME
+    monkeypatch.setattr(agent.usage, "_warned", False)
+    return tmp_path / agent.usage.LEDGER_DIRNAME
 
 
 def _records(ledger_dir):
@@ -234,7 +234,7 @@ def _records(ledger_dir):
 
 
 def test_record_appends_line(ledger):
-    ai_usage.record(
+    agent.usage.record(
         script="pr-rebase", entry_point="prompt", backend="claude",
         model="claude-sonnet-4-6", usage=SessionUsage(cost=0.42, input_tokens=1200),
         exit_code=0,
@@ -251,7 +251,7 @@ def test_record_appends_line(ledger):
 
 def test_record_appends_rather_than_truncates(ledger):
     for i in range(3):
-        ai_usage.record(
+        agent.usage.record(
             script="ci-check", entry_point="fix", backend="claude", model=None,
             usage=SessionUsage(input_tokens=i), exit_code=0,
         )
@@ -259,7 +259,7 @@ def test_record_appends_rather_than_truncates(ledger):
 
 
 def test_record_writes_monthly_file(ledger):
-    ai_usage.record(
+    agent.usage.record(
         script="s", entry_point="prompt", backend="claude", model=None,
         usage=SessionUsage(), exit_code=0,
     )
@@ -270,7 +270,7 @@ def test_record_writes_monthly_file(ledger):
 
 def test_record_creates_ledger_dir(ledger):
     assert not ledger.exists()
-    ai_usage.record(
+    agent.usage.record(
         script="s", entry_point="prompt", backend="claude", model=None,
         usage=SessionUsage(), exit_code=0,
     )
@@ -278,7 +278,7 @@ def test_record_creates_ledger_dir(ledger):
 
 
 def test_record_includes_optional_context(ledger):
-    ai_usage.record(
+    agent.usage.record(
         script="review-threads", entry_point="fix", backend="claude", model=None,
         usage=SessionUsage(), exit_code=1, task="comment-triage",
         repo="otto-workbench", pr="596",
@@ -291,7 +291,7 @@ def test_record_includes_optional_context(ledger):
 
 
 def test_record_omits_absent_optional_context(ledger):
-    ai_usage.record(
+    agent.usage.record(
         script="s", entry_point="prompt", backend="claude", model=None,
         usage=SessionUsage(), exit_code=0,
     )
@@ -304,7 +304,7 @@ def test_record_omits_absent_optional_context(ledger):
 
 
 def test_record_includes_phase_and_the_budget(ledger):
-    ai_usage.record(
+    agent.usage.record(
         script="s", entry_point="fix", backend="claude", model=None,
         usage=SessionUsage(), exit_code=0,
         phase="fix", max_turns=80,
@@ -323,7 +323,7 @@ def test_spent_and_allocated_turns_are_separate_keys(ledger):
     because only the pair shows they are no longer the same field: writing
     the budget into `num_turns` satisfies either assertion alone.
     """
-    ai_usage.record(
+    agent.usage.record(
         script="s", entry_point="fix", backend="claude", model=None,
         usage=SessionUsage(num_turns=17), exit_code=0,
         phase="fix", max_turns=80,
@@ -340,7 +340,7 @@ def test_an_unmeasured_run_records_no_spent_turns_rather_than_its_budget(ledger)
     produced a row indistinguishable from a run that genuinely spent its cap,
     which is the exact reading "did this phase hit its cap" depends on.
     """
-    ai_usage.record(
+    agent.usage.record(
         script="s", entry_point="fix", backend="claude", model=None,
         usage=SessionUsage(), exit_code=0,
         phase="fix", max_turns=80,
@@ -351,7 +351,7 @@ def test_an_unmeasured_run_records_no_spent_turns_rather_than_its_budget(ledger)
 
 
 def test_record_carries_per_model_cost(ledger):
-    ai_usage.record(
+    agent.usage.record(
         script="s", entry_point="agent", backend="claude", model=None,
         usage=SessionUsage(cost_by_model={"sonnet": 1.5}), exit_code=0,
     )
@@ -362,8 +362,8 @@ def test_record_never_raises_when_dir_unwritable(tmp_path, monkeypatch, capsys):
     blocked = tmp_path / "blocked"
     blocked.write_text("not a directory")
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(blocked))
-    monkeypatch.setattr(ai_usage, "_warned", False)
-    ai_usage.record(
+    monkeypatch.setattr(agent.usage, "_warned", False)
+    agent.usage.record(
         script="s", entry_point="prompt", backend="claude", model=None,
         usage=SessionUsage(), exit_code=0,
     )
@@ -374,9 +374,9 @@ def test_record_warns_only_once_per_process(tmp_path, monkeypatch, capsys):
     blocked = tmp_path / "blocked"
     blocked.write_text("not a directory")
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(blocked))
-    monkeypatch.setattr(ai_usage, "_warned", False)
+    monkeypatch.setattr(agent.usage, "_warned", False)
     for _ in range(3):
-        ai_usage.record(
+        agent.usage.record(
             script="s", entry_point="prompt", backend="claude", model=None,
             usage=SessionUsage(), exit_code=0,
         )
@@ -384,7 +384,7 @@ def test_record_warns_only_once_per_process(tmp_path, monkeypatch, capsys):
 
 
 def test_record_line_is_newline_terminated_and_single_line(ledger):
-    ai_usage.record(
+    agent.usage.record(
         script="s", entry_point="prompt", backend="claude", model=None,
         usage=SessionUsage(), exit_code=0,
     )
@@ -397,17 +397,17 @@ def test_read_ledger_returns_records_across_months(ledger):
     ledger.mkdir(parents=True)
     (ledger / "2026-07.jsonl").write_text(json.dumps({"script": "a"}) + "\n")
     (ledger / "2026-08.jsonl").write_text(json.dumps({"script": "b"}) + "\n")
-    assert [r["script"] for r in ai_usage.read_ledger()] == ["a", "b"]
+    assert [r["script"] for r in agent.usage.read_ledger()] == ["a", "b"]
 
 
 def test_read_ledger_missing_dir_returns_empty(ledger):
-    assert ai_usage.read_ledger() == []
+    assert agent.usage.read_ledger() == []
 
 
 def test_read_ledger_skips_malformed_lines(ledger):
     ledger.mkdir(parents=True)
     (ledger / "2026-08.jsonl").write_text("{bad\n" + json.dumps({"script": "b"}) + "\n")
-    assert [r["script"] for r in ai_usage.read_ledger()] == ["b"]
+    assert [r["script"] for r in agent.usage.read_ledger()] == ["b"]
 
 
 def _write_month(ledger, month, *records):
@@ -423,7 +423,7 @@ def test_read_ledger_since_drops_older_records(ledger):
         {"script": "new", "ts": "2026-08-20T00:00:00Z"},
     )
     since = datetime(2026, 8, 10, tzinfo=timezone.utc)
-    assert [r["script"] for r in ai_usage.read_ledger(since=since)] == ["new"]
+    assert [r["script"] for r in agent.usage.read_ledger(since=since)] == ["new"]
 
 
 def test_read_ledger_since_skips_month_files_before_cutoff(ledger):
@@ -431,11 +431,11 @@ def test_read_ledger_since_skips_month_files_before_cutoff(ledger):
     _write_month(ledger, "2026-06", {"script": "stale", "ts": "2026-08-20T00:00:00Z"})
     _write_month(ledger, "2026-08", {"script": "current", "ts": "2026-08-20T00:00:00Z"})
     since = datetime(2026, 8, 10, tzinfo=timezone.utc)
-    assert [r["script"] for r in ai_usage.read_ledger(since=since)] == ["current"]
+    assert [r["script"] for r in agent.usage.read_ledger(since=since)] == ["current"]
 
 
 def test_read_ledger_since_keeps_records_without_timestamps(ledger):
     """A record with no ts predates nothing knowable — dropping it would hide cost."""
     _write_month(ledger, "2026-08", {"script": "untimed"})
     since = datetime(2026, 8, 10, tzinfo=timezone.utc)
-    assert [r["script"] for r in ai_usage.read_ledger(since=since)] == ["untimed"]
+    assert [r["script"] for r in agent.usage.read_ledger(since=since)] == ["untimed"]

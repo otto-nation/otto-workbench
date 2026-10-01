@@ -78,9 +78,9 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from agent import backend as ai_backend
-from agent import usage as ai_usage
-from git import client as git_client
+import agent.backend
+import agent.usage
+import git.client
 from eval.scoring import RunOutcome, ScoringResult
 from eval.task import (
     RunArtifacts,
@@ -335,7 +335,7 @@ def fixture_substitutions(repo_dir: str) -> dict[str, str]:
     fixture stays consistent with the command it is standing in for.
     """
     head = fixture_head_sha(repo_dir)
-    return {"HEAD_SHA": head, "HEAD_SHORT": git_client.abbrev(head)}
+    return {"HEAD_SHA": head, "HEAD_SHORT": git.client.abbrev(head)}
 
 
 def _expand(name: str, text: str, substitutions: dict[str, str]) -> str:
@@ -532,7 +532,7 @@ class SkillTask:
                 p for p in (str(bin_dir), env.get("PATH", "")) if p
             )
 
-            rc = ai_backend.invoke_fix(ai_backend.AgentInvocation(
+            rc = agent.backend.invoke_fix(agent.backend.AgentInvocation(
                 prompt=_PROMPT.format(repo_dir=repo_dir, skill=skill, request=prompt),
                 cwd=repo_dir,
                 session_log=session_log,
@@ -545,7 +545,7 @@ class SkillTask:
                 repo="eval/corpus",
             ))
 
-            usage = ai_usage.parse_session_log(session_log)
+            usage = agent.usage.parse_session_log(session_log)
             lines = load_trace(str(trace_file))
             matches = match_required(manifest.get("requires", []), lines)
             violations = match_forbidden(manifest.get("forbids", []), lines)

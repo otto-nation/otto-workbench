@@ -17,21 +17,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agent import retry as agent_retry
+import agent.retry
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.session import CONSECUTIVE_FAIL_THRESHOLD, _is_model_error
 
-_has_output = agent_retry.has_output
+_has_output = agent.retry.has_output
 
-_RETRY_HINT = agent_retry.RETRY_HINT
+_RETRY_HINT = agent.retry.RETRY_HINT
 # A function rather than the constant it aliased: the hint names the write tool
 # the selected backend actually has, so it cannot be resolved at import time.
-_no_write_hint = agent_retry.no_write_hint
+_no_write_hint = agent.retry.no_write_hint
 
-_retry_hint_for = agent_retry.hint_for
-_retry_turns_for = agent_retry.turns_for
-_retry_missing_output = agent_retry.retry_missing_output
-_is_retryable = agent_retry.is_retryable
+_retry_hint_for = agent.retry.hint_for
+_retry_turns_for = agent.retry.turns_for
+_retry_missing_output = agent.retry.retry_missing_output
+_is_retryable = agent.retry.is_retryable
 
 
 def _render_reason(diagnosis: "Diagnosis | None") -> str:

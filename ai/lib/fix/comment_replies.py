@@ -23,13 +23,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from core import publishing
+import core.publishing
 from git.land import CommitStatus
-from pr import attribution
-from pr import context as pr_context
-from pr import settlement
-from pr import thread_replies
-from pr import triage_round
+import pr.attribution
+import pr.context
+import pr.settlement
+import pr.thread_replies
+import pr.triage_round
 from pr.thread_models import (
     CommentItem, PRReport, ReplyOutcome, ReportThread,
 )
@@ -40,7 +40,7 @@ def settle_fixed(
     threads_by_id: dict[str, ReportThread],
     repo: str,
     pr_number: int,
-    cp: attribution.CommitPushResult,
+    cp: pr.attribution.CommitPushResult,
     wt_path: Path,
     host: str = "",
 ) -> ReplyOutcome:
@@ -59,10 +59,10 @@ def settle_fixed(
     if not fixed or cp.status != CommitStatus.PUSHED:
         return ReplyOutcome()
     return ReplyOutcome(
-        posted=thread_replies.reply_to_fixed(
+        posted=pr.thread_replies.reply_to_fixed(
             fixed, threads_by_id, repo, pr_number, cp, wt_path, host,
         ),
-        resolved=tuple(settlement.resolve_fixed_threads(fixed, threads_by_id)),
+        resolved=tuple(pr.settlement.resolve_fixed_threads(fixed, threads_by_id)),
     )
 
 
@@ -77,14 +77,14 @@ def replies_drafted(
     `--finish --post` finds a drained queue and publishes nothing, and a whole
     approved round goes missing.
     """
-    return bool(already_addressed or dismissed) and not publishing.enabled()
+    return bool(already_addressed or dismissed) and not core.publishing.enabled()
 
 
 def post_triage_replies(
-    round_: triage_round.TriagedRound,
+    round_: pr.triage_round.TriagedRound,
     threads_by_id: dict[str, ReportThread],
     report: PRReport,
-    ctx: pr_context.ResolvedContext,
+    ctx: pr.context.ResolvedContext,
     wt_path: Path,
 ) -> ReplyOutcome:
     """The replies triage owes, sent before the agent runs.
@@ -106,18 +106,18 @@ def post_triage_replies(
     replies = ReplyOutcome()
     if round_.threads.dismissed:
         replies = replies.plus(ReplyOutcome(
-            posted=thread_replies.post_dismissed_replies(
+            posted=pr.thread_replies.post_dismissed_replies(
                 round_.threads.dismissed, threads_by_id, ctx.repo,
                 report.pr_number, wt_path, ctx.host,
             ),
         ))
     if round_.already_addressed:
         replies = replies.plus(ReplyOutcome(
-            posted=thread_replies.post_already_addressed_replies(
+            posted=pr.thread_replies.post_already_addressed_replies(
                 round_.already_addressed, threads_by_id, ctx.repo,
                 report.pr_number, wt_path, host=ctx.host,
             ),
-            resolved=tuple(settlement.resolve_fixed_threads(
+            resolved=tuple(pr.settlement.resolve_fixed_threads(
                 round_.already_addressed, threads_by_id)),
         ))
     return replies

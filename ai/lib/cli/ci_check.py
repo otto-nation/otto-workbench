@@ -23,26 +23,26 @@ from __future__ import annotations
 
 import sys
 
-from core import log
-from core import publishing
-from core import report as core_report
-from core import run_lock
+import core.log
+import core.publishing
+import core.report
+import core.run_lock
 from core.tool_parser import ToolParser
 from core.trail import Trail, add_trail_args
-from fix import ci as fix_ci
-from fix import engine as fix_engine
-from gh import run_reads
+import fix.ci
+import fix.engine
+import gh.run_reads
 from git.land import CommitStatus
-from pr import ci_failures as ci
-from pr import ci_report
-from pr import ci_runs
-from pr import ci_wait
-from pr import context as pr_context
-from pr import domains as pr_domains
-from pr import state as pr_state
-from rebase import inspect as rebase_inspect
-from rebase import target as rebase_target
-from rebase import types as rebase_types
+import pr.ci_failures
+import pr.ci_report
+import pr.ci_runs
+import pr.ci_wait
+import pr.context
+import pr.domains
+import pr.state
+import rebase.inspect
+import rebase.target
+import rebase.types
 
 from . import pr_rebase
 
@@ -52,7 +52,7 @@ from . import pr_rebase
 SCRIPT = "ci-check"
 
 
-def _report_run(trail, ctx, merged, run_ids, counts=None, show_status=False) -> ci_report.CIReport:
+def _report_run(trail, ctx, merged, run_ids, counts=None, show_status=False) -> pr.ci_report.CIReport:
     """Turn a merged run payload into the report, and record it against the branch.
 
     Both paths end here: a single-shot run and the last poll of a `--wait` run
@@ -60,12 +60,12 @@ def _report_run(trail, ctx, merged, run_ids, counts=None, show_status=False) -> 
     """
     repo = ctx.repo
     branch = ctx.branch
-    run_state = ci_runs.parse_run(repo, merged)
+    run_state = pr.ci_runs.parse_run(repo, merged)
 
     # Load unified PR state (or init fresh). Unconditional: the file is keyed on
     # the target, not on the caller's checkout, so a run from a bare repo has the
     # prior run's failures to compare against just like any other.
-    state = pr_state.load_or_init(
+    state = pr.state.load_or_init(
         target_dir=ctx.target_dir, repo=repo, branch=branch,
         pr_number=ctx.pr_number, head_sha=run_state.head_sha,
         worktree_root=str(ctx.worktree_root) if ctx.worktree_root else "",
@@ -85,50 +85,50 @@ def _report_run(trail, ctx, merged, run_ids, counts=None, show_status=False) -> 
         else None
     )
     prior_failures = prior_run.failures if prior_run else {}
-    progression = ci.compute_progression(run_state.failures, prior_failures)
+    progression = pr.ci_failures.compute_progression(run_state.failures, prior_failures)
 
     trail.info(
         "compute_progression",
         f"{len(progression)} items tracked",
-        data={"outcomes": {o.value: sum(1 for v in progression.values() if v == o) for o in ci.Outcome}},
+        data={"outcomes": {o.value: sum(1 for v in progression.values() if v == o) for o in pr.ci_failures.Outcome}},
     )
 
-    ci.sync_ci_domain(ci_domain, run_state)
+    pr.ci_failures.sync_ci_domain(ci_domain, run_state)
 
     trail.info("sync_state", f"state synced, {len(ci_domain.runs)} runs retained")
 
-    dashboard = ci_report.render_dashboard(
+    dashboard = pr.ci_report.render_dashboard(
         run_state, progression, run_ids=run_ids, show_status=show_status,
     )
     print(dashboard, file=sys.stderr)
 
     # Check how far behind origin/main the branch is — runs on every invocation
     # (not just --fix) because the JSON report includes behind_main for SKILL.md consumers
-    behind_main = run_reads.commits_behind_main(
+    behind_main = gh.run_reads.commits_behind_main(
         repo, branch, str(ctx.worktree_root) if ctx.worktree_root else None,
     )
 
-    report = ci_report.CIReport.build(
+    report = pr.ci_report.CIReport.build(
         repo=repo, branch=branch, pr_number=ctx.pr_number,
         run_state=run_state, progression=progression, prior_run=prior_run,
         run_ids=run_ids, behind_main=behind_main, counts=counts,
     )
 
     try:
-        pr_state.save_state(ctx.target_dir, state)
+        pr.state.save_state(ctx.target_dir, state)
     except Exception as exc:
         trail.error("state_update", f"state update failed: {exc}")
-        log.error(f"{SCRIPT}: state update failed: {exc}")
+        core.log.error(f"{SCRIPT}: state update failed: {exc}")
 
     return report
 
 
-def _run_ci(trail, args, ctx) -> ci_report.CIReport:
+def _run_ci(trail, args, ctx) -> pr.ci_report.CIReport:
     repo = ctx.repo
     branch = ctx.branch
 
-    discovery = (run_reads.RunDiscovery(rows=(run_reads.RunRow(run_id=args.run),))
-                 if args.run else run_reads.fetch_latest_runs(repo, branch, ctx.head_sha))
+    discovery = (gh.run_reads.RunDiscovery(rows=(gh.run_reads.RunRow(run_id=args.run),))
+                 if args.run else gh.run_reads.fetch_latest_runs(repo, branch, ctx.head_sha))
     run_ids = [row.run_id for row in discovery.rows]
 
     trail.info("fetch_runs", f"fetching {len(run_ids)} run(s)", data={"run_ids": run_ids})
@@ -145,16 +145,16 @@ def _run_ci(trail, args, ctx) -> ci_report.CIReport:
     # Not gated on there being a workflow run: a commit can be checked by
     # something that is not a workflow, and bailing here on an empty run list
     # is what made those checks unreportable rather than merely unseen.
-    fetched = ci_runs.fetch_merged(repo, discovery, head_sha=rollup_head_sha)
+    fetched = pr.ci_runs.fetch_merged(repo, discovery, head_sha=rollup_head_sha)
     if fetched is None:
         if discovery.failed:
             trail.error("list_runs", "could not list workflow runs")
-            raise ci_runs.RunUnavailable(f"Could not list workflow runs for '{branch}'")
+            raise pr.ci_runs.RunUnavailable(f"Could not list workflow runs for '{branch}'")
         if not discovery.rows:
             trail.warn("no_runs", "no checks found")
-            raise ci_runs.RunUnavailable(f"No checks found for branch '{branch}'")
+            raise pr.ci_runs.RunUnavailable(f"No checks found for branch '{branch}'")
         trail.error("fetch_run_data", "failed to fetch run data")
-        raise ci_runs.RunUnavailable("Failed to fetch run data")
+        raise pr.ci_runs.RunUnavailable("Failed to fetch run data")
 
     for payload in fetched.payloads:
         trail.info(
@@ -165,14 +165,14 @@ def _run_ci(trail, args, ctx) -> ci_report.CIReport:
     report = _report_run(trail, ctx, fetched.merged, run_ids)
 
     if report.failures:
-        core_report.emit_json(report.to_json())
+        core.report.emit_json(report.to_json())
 
     return report
 
 
-def _run_ci_wait(trail, args, ctx) -> ci_report.CIReport:
+def _run_ci_wait(trail, args, ctx) -> pr.ci_report.CIReport:
     """Poll CI until all jobs complete, emitting partial reports as failures arrive."""
-    poll = ci_wait.poll_until_complete(
+    poll = pr.ci_wait.poll_until_complete(
         ctx.repo, ctx.branch, run_id=args.run, head_sha=ctx.head_sha,
         timeout=args.wait_timeout, interval=args.wait_interval, trail=trail,
     )
@@ -180,7 +180,7 @@ def _run_ci_wait(trail, args, ctx) -> ci_report.CIReport:
     report = _report_run(
         trail, ctx, poll.merged, poll.run_ids, counts=poll.counts, show_status=True,
     )
-    core_report.emit_stream_json(report.to_json(), "final")
+    core.report.emit_stream_json(report.to_json(), "final")
 
     return report
 
@@ -188,7 +188,7 @@ def _run_ci_wait(trail, args, ctx) -> ci_report.CIReport:
 # ── Fix phase ────────────────────────────────────────────────────────────────
 
 
-def _rebase_if_behind(trail, report: ci_report.CIReport, ctx) -> bool:
+def _rebase_if_behind(trail, report: pr.ci_report.CIReport, ctx) -> bool:
     """Rebase onto origin/main if branch is behind. Returns True if rebased and pushed.
 
     Called in-process rather than spawned, so this run's publishing gate is the
@@ -211,71 +211,71 @@ def _rebase_if_behind(trail, report: ci_report.CIReport, ctx) -> bool:
         f"branch is {behind} commit(s) behind main",
         reason="stale branch may cause CI failures",
     )
-    log.info(f"Branch is {behind} commit(s) behind main — rebasing first...")
+    core.log.info(f"Branch is {behind} commit(s) behind main — rebasing first...")
 
     cwd = str(ctx.require_worktree())
-    target_ref = rebase_target.resolve_target_ref(cwd, ctx, None, trail=trail)
+    target_ref = rebase.target.resolve_target_ref(cwd, ctx, None, trail=trail)
     rc = pr_rebase.cmd_start(
-        cwd, ctx, rebase_types.RunMode.FIX, target_ref=target_ref, trail=trail,
+        cwd, ctx, rebase.types.RunMode.FIX, target_ref=target_ref, trail=trail,
     )
 
     # A refusal is not a failure: the rebase declined on purpose, having found
     # the work landed or having been unable to ask. Reported on its own so the
     # operator is not told a rebase broke when it deliberately stopped, and so
     # the fix pass that follows is known to be running on the un-rebased base.
-    if rc == rebase_types.REFUSAL_EXIT:
+    if rc == rebase.types.REFUSAL_EXIT:
         trail.warn("rebase_refused", "rebase refused its preflight")
-        log.warn("Rebase refused — continuing with CI fixes on current base")
+        core.log.warn("Rebase refused — continuing with CI fixes on current base")
         return False
 
     # A paused rebase is not a failure either: the replay stopped with its
     # resolved work staged in the worktree, waiting on `pr rebase --fix` or
     # `--abort`. The fix pass below checks for exactly this and refuses, so
     # saying here that fixes will continue would just be wrong.
-    if rc == rebase_types.CONFLICTS_EXIT:
+    if rc == rebase.types.CONFLICTS_EXIT:
         trail.warn("rebase_paused", "rebase paused with conflicts — not fixing")
-        log.warn("Rebase paused with conflicts — not applying CI fixes until it is resolved")
+        core.log.warn("Rebase paused with conflicts — not applying CI fixes until it is resolved")
         return False
 
     if rc != 0:
         trail.warn("rebase_failed", f"rebase failed (exit {rc})")
-        log.warn("Rebase failed — continuing with CI fixes on current base")
+        core.log.warn("Rebase failed — continuing with CI fixes on current base")
         return False
 
     # `cmd_start` in FIX mode lands through the same gate this run opened, so a
     # draft run reports what it would have pushed rather than pushing it.
-    if not publishing.enabled():
+    if not core.publishing.enabled():
         trail.info("rebase_done", "rebased; force-push drafted")
-        log.ok("Rebased onto main — force-push drafted, pass --post to send it")
+        core.log.ok("Rebased onto main — force-push drafted, pass --post to send it")
         return False
 
     trail.info("rebase_done", "rebased and force-pushed")
-    log.ok("Rebased onto main and force-pushed — CI will re-run on new HEAD")
+    core.log.ok("Rebased onto main and force-pushed — CI will re-run on new HEAD")
     return True
 
 
-def _run_fix(trail, report: ci_report.CIReport, ctx) -> int:
+def _run_fix(trail, report: pr.ci_report.CIReport, ctx) -> int:
     """Apply AI-driven fixes for CI failures. Returns exit code."""
     if not ctx.worktree_root:
-        log.error("--fix requires a worktree (use --repo-dir)")
+        core.log.error("--fix requires a worktree (use --repo-dir)")
         return 1
 
     if not report.failures:
-        log.info("No failures to fix")
+        core.log.info("No failures to fix")
         return 0
 
-    state = pr_state.load_or_init(
+    state = pr.state.load_or_init(
         target_dir=ctx.target_dir, repo=ctx.repo, branch=ctx.branch,
         pr_number=ctx.pr_number, head_sha=report.head_sha,
         worktree_root=str(ctx.worktree_root),
     )
-    adapter = fix_ci.CIFixAdapter(report, ctx, state)
+    adapter = fix.ci.CIFixAdapter(report, ctx, state)
     if not adapter.fixable:
         # `adapter.fixable` empty with `report.failures` non-empty means every
         # failure landed in `adapter.skipped` by elimination, so `kinds` is
         # never empty here.
         kinds = sorted({f.group.kind.value for f in adapter.skipped})
-        log.info(f"No fixable failures (all {'/'.join(kinds)})")
+        core.log.info(f"No fixable failures (all {'/'.join(kinds)})")
         return 0
 
     # Rebase before the pass, not before the report — the original run has the
@@ -289,17 +289,17 @@ def _run_fix(trail, report: ci_report.CIReport, ctx) -> int:
     # to abort itself on the way out of every failure, so "it failed, carry on"
     # was safe; now that a resolvable stop keeps the work it already did, this
     # is what keeps it safe.
-    if rebase_inspect.rebase_in_progress(str(ctx.require_worktree())):
+    if rebase.inspect.rebase_in_progress(str(ctx.require_worktree())):
         trail.error("rebase_paused", "a rebase is in progress — not fixing")
-        log.error("A rebase is paused in this worktree — not applying CI fixes.")
-        log.dim("Finish it with `pr rebase --fix`, or discard it with "
+        core.log.error("A rebase is paused in this worktree — not applying CI fixes.")
+        core.log.dim("Finish it with `pr rebase --fix`, or discard it with "
                 "`pr rebase --abort`, then re-run.")
         return 1
 
     trail.info("fix_start", f"{len(adapter.fixable)} fixable failure(s)")
-    log.info(f"Fixing {len(adapter.fixable)} CI failure(s)...")
+    core.log.info(f"Fixing {len(adapter.fixable)} CI failure(s)...")
 
-    run = fix_engine.run(adapter, trail=trail)
+    run = fix.engine.run(adapter, trail=trail)
 
     fixed = sum(1 for o in run.outcomes if o.outcome.counts_as_fixed)
     unresolved = len(run.outcomes) - fixed
@@ -315,7 +315,7 @@ def _run_fix(trail, report: ci_report.CIReport, ctx) -> int:
                          "resume": run.landed.resume})
 
     if unresolved > 0:
-        log.info(f"{unresolved} failure(s) could not be auto-fixed")
+        core.log.info(f"{unresolved} failure(s) could not be auto-fixed")
 
     # A refused commit leaves the pass's work loose in the worktree. The record
     # `CIFixAdapter.record` just saved says so, but an exit code of zero over it
@@ -336,7 +336,7 @@ def build_parser() -> ToolParser:
     parser = ToolParser(
         prog=SCRIPT,
         description="CI failure status",
-        output_schema=pr_domains.CIDomain,
+        output_schema=pr.domains.CIDomain,
     )
     parser.add_argument("--pr", help="PR number or URL")
     parser.add_argument("--branch", help="Branch name (overrides git detection)")
@@ -363,8 +363,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     # Before anything runs, so no code path can push ahead of the decision.
-    with publishing.run(post=args.post):
-        ctx = pr_context.resolve(
+    with core.publishing.run(post=args.post):
+        ctx = pr.context.resolve(
             pr_ref=args.pr, branch=args.branch, repo_dir=args.repo_dir,
         )
 
@@ -377,10 +377,10 @@ def main(argv: list[str] | None = None) -> int:
         # A no-op when pr launched us — we resolve the same target and find its key
         # already in WORKBENCH_RUN_LOCK.
         # Acquired before Trail.start so contention costs no trail artifacts.
-        run_lock.claim_for_process(
+        core.run_lock.claim_for_process(
             ctx.target_dir,
             command=" ".join([SCRIPT] + argv),
-            started=pr_state.now_iso(),
+            started=pr.state.now_iso(),
             worktree=worktree,
         )
 
@@ -392,10 +392,10 @@ def main(argv: list[str] | None = None) -> int:
         try:
             report = _run_ci_wait(trail, args, ctx) if args.wait else _run_ci(trail, args, ctx)
             return _run_fix(trail, report, ctx) if args.fix else 0
-        except ci_runs.RunUnavailable as exc:
+        except pr.ci_runs.RunUnavailable as exc:
             # Expected: there is no run to report on. Trailed where it was raised,
             # so it is the exit code that is left to decide.
-            log.error(str(exc))
+            core.log.error(str(exc))
             return 1
         except Exception as exc:
             trail.error("unexpected_error", str(exc))

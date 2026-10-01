@@ -38,7 +38,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from core import timeouts
+import core.timeouts
 
 LOCK_FILE = "workbench-validate.lock"
 LOCK_ENV = "WORKBENCH_TREE_LOCK"
@@ -63,7 +63,7 @@ def _git_dir(tree_root: Path) -> Path | None:
             capture_output=True,
             text=True,
             check=True,
-            timeout=timeouts.LOCAL,
+            timeout=core.timeouts.LOCAL,
             env=env,
         )
     except (OSError, subprocess.SubprocessError):

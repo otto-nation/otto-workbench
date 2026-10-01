@@ -22,7 +22,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "claude" / "mcps"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from core import proc
+import core.proc
 import server
 from server import (
     WORKBENCH_DIR,
@@ -177,7 +177,7 @@ class TestSpawnIsolation:
         reaches a grandchild is `proc.run`'s guarantee and is tested there;
         what this asserts is that the server asks for it on the tool-call path.
         """
-        with mock.patch.object(server.proc, "run") as run:
+        with mock.patch.object(core.proc, "run") as run:
             server._run_script(["/bin/true"], 30)
 
         assert run.call_args.kwargs["kill_process_group"] is True
@@ -191,7 +191,7 @@ class TestSpawnIsolation:
 
         result = server._run_script([str(script)], 0.3)
 
-        assert result.returncode == proc.TIMEOUT_RETURNCODE
+        assert result.returncode == core.proc.TIMEOUT_RETURNCODE
 
     def test_it_answers_with_what_the_script_printed(self, tmp_path):
         """The callers read `.returncode`, `.stdout` and `.stderr` off the result."""

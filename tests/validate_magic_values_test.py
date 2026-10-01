@@ -26,10 +26,10 @@ def _check(tmp_path, source):
 
 def test_the_watched_values_come_from_the_owning_modules():
     """The check must not carry its own copy of a number it polices."""
-    from core import proc
-    from core import trail
-    assert EXITS[proc.INTERRUPT_RETURNCODE] == ["proc.INTERRUPT_RETURNCODE"]
-    assert "trail.EXCERPT_LIMIT" in CAPS[trail.EXCERPT_LIMIT]
+    import core.proc
+    import core.trail
+    assert EXITS[core.proc.INTERRUPT_RETURNCODE] == ["proc.INTERRUPT_RETURNCODE"]
+    assert "trail.EXCERPT_LIMIT" in CAPS[core.trail.EXCERPT_LIMIT]
 
 
 def test_a_renamed_owner_fails_the_check_itself():

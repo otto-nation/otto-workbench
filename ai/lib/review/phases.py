@@ -30,9 +30,9 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 
-from agent import phases as agent_phases
-from agent import retry as agent_retry
-from core import log
+import agent.phases
+import agent.retry
+import core.log
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import PHASES
 from agent.types import EFFORT_PRESETS
@@ -78,7 +78,7 @@ def _omitted_files(job: ReviewJob) -> int:
 
 def _omitted_bump(phase: Phase, job: ReviewJob) -> int:
     """This job's omitted-file bump for a phase, zero when its spec opts out."""
-    return agent_phases.phase_omitted_bump(phase, job.effort, _omitted_files(job))
+    return agent.phases.phase_omitted_bump(phase, job.effort, _omitted_files(job))
 
 
 def job_turns(phase: Phase, job: ReviewJob) -> int:
@@ -89,7 +89,7 @@ def job_turns(phase: Phase, job: ReviewJob) -> int:
     files folded in — two names so the proxy in ``review-orchestrate`` can patch
     either without the other going with it.
     """
-    return agent_phases.phase_turns(phase, job.effort, _omitted_files(job))
+    return agent.phases.phase_turns(phase, job.effort, _omitted_files(job))
 
 
 def _phase_deliverable(
@@ -140,10 +140,10 @@ class PhaseRunner:
         # fix-shaped phase edits a tracking file instead and keeps the prior
         # any-write behaviour, because its deliverable is not one document.
         self.output_path = _phase_deliverable(job, phase, index, spec)
-        self.model = agent_phases.phase_model(phase, job.model, cfg)
-        self.thinking = agent_phases.phase_thinking(phase, job.effort, cfg)
-        self.provider = agent_phases.phase_provider(cfg)
-        self.budget = agent_phases.phase_budget(phase, job.effort)
+        self.model = agent.phases.phase_model(phase, job.model, cfg)
+        self.thinking = agent.phases.phase_thinking(phase, job.effort, cfg)
+        self.provider = agent.phases.phase_provider(cfg)
+        self.budget = agent.phases.phase_budget(phase, job.effort)
         self.agent = None if spec.shape is PhaseShape.FIX else (
             spec.agent if spec.agent is not None else preset.agent
         )
@@ -301,13 +301,13 @@ def run_phase(
         prompt = build_prompt(phase, job, max_turns=max_turns, **prompt_args)
     except PromptTooLarge as exc:
         diagnosis = Diagnosis(DiagnosisKind.PROMPT_TOO_LARGE, detail=str(exc))
-        log.warn(f"{PHASES[phase].label} not run ({diagnosis.message}) — {scan.without}")
+        core.log.warn(f"{PHASES[phase].label} not run ({diagnosis.message}) — {scan.without}")
         return PhaseResult.of(runner.session_log, output=output, diagnosis=diagnosis)
 
-    log.info(announce)
-    log.blank()
+    core.log.info(announce)
+    core.log.blank()
     runner.invoke(prompt)
-    log.blank()
+    core.log.blank()
 
     label = PHASES[phase].label
     diagnosis = _retry_missing_output(
@@ -321,7 +321,7 @@ def run_phase(
         # missing output it is: a result carrying no diagnosis is how a caller
         # tells a phase that fell short from one that was never asked to run.
         diagnosis = diagnosis or Diagnosis(DiagnosisKind.OUTPUT_MISSING)
-        log.warn(f"{label} produced no output ({diagnosis.message}) — {scan.without}")
+        core.log.warn(f"{label} produced no output ({diagnosis.message}) — {scan.without}")
         return PhaseResult.of(runner.session_log, output=output, diagnosis=diagnosis)
 
     content = read_scan(phase, Path(output).read_text())
@@ -355,7 +355,7 @@ def _validate_group_output(output_path: str, group_name: str) -> bool:
         if line.strip().startswith("## ")
     )
     if not has_section:
-        log.warn(f"Group {group_name} output has no recognized sections — findings may be lost")
+        core.log.warn(f"Group {group_name} output has no recognized sections — findings may be lost")
     return has_section
 
 
@@ -370,7 +370,7 @@ def _review_group(
     group_output = phase_output_path(job.review_file, Phase.GROUP, i)
 
     if skip is GroupSkip.CARRIED:
-        log.info(
+        core.log.info(
             f"Phase 2: Group {i}/{group_count} — {grp.name} skipped "
             f"(unchanged — findings carried forward)"
         )
@@ -378,9 +378,9 @@ def _review_group(
 
     if skip is GroupSkip.RECOVERY:
         if _has_output(group_output):
-            log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} skipped (exists)")
+            core.log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} skipped (exists)")
             return (i, group_output, None)
-        log.warn(f"Group {i} ({grp.name}) marked skip but output missing — reporting failure")
+        core.log.warn(f"Group {i} ({grp.name}) marked skip but output missing — reporting failure")
         return (i, group_output, GroupFailure(
             grp.name, Diagnosis(DiagnosisKind.OUTPUT_MISSING),
         ))
@@ -411,13 +411,13 @@ def _review_group(
         )
     except PromptTooLarge as exc:
         diagnosis = Diagnosis(DiagnosisKind.PROMPT_TOO_LARGE, detail=str(exc))
-        log.warn(f"Group {i} ({grp.name}) not run ({diagnosis.message})")
+        core.log.warn(f"Group {i} ({grp.name}) not run ({diagnosis.message})")
         if pipeline_state is not None:
             _update_group_failed(job, i, diagnosis, pipeline_state)
         return (i, group_output, GroupFailure(grp.name, diagnosis))
     group_prompt = retry_hint + group_prompt
 
-    log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
+    core.log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
     runner.invoke(group_prompt, max_turns, label=grp.name)
 
     failed = None
@@ -425,13 +425,13 @@ def _review_group(
         try_recover_output(group_log, group_output)
     if not _has_output(group_output):
         diagnosis = diagnose_missing_output(group_log, output_path=group_output)
-        log.warn(f"Group {i} ({grp.name}) produced no output ({diagnosis.message})")
+        core.log.warn(f"Group {i} ({grp.name}) produced no output ({diagnosis.message})")
         failed = GroupFailure(grp.name, diagnosis)
         if pipeline_state is not None:
             _update_group_failed(job, i, diagnosis, pipeline_state)
     else:
         _validate_group_output(group_output, grp.name)
-        log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} done")
+        core.log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} done")
         if pipeline_state is not None:
             _update_group_done(job, i, pipeline_state)
 
@@ -485,7 +485,7 @@ def _run_serial_reviews(
         )
         if not abort_msg:
             continue
-        log.warn(abort_msg)
+        core.log.warn(abort_msg)
         failed_groups.extend(
             GroupFailure(remaining.name, Diagnosis(DiagnosisKind.SKIPPED, detail=abort_msg))
             for remaining in groups[i:]
@@ -522,7 +522,7 @@ def _collect_parallel_result(
         consecutive, last,
     )
     if new_msg:
-        log.warn(new_msg)
+        core.log.warn(new_msg)
     return consecutive, last, new_msg or abort_msg
 
 
@@ -609,15 +609,15 @@ def _run_parallel_reviews(
     skip_groups: dict[int, GroupSkip],
     pipeline_state: PipelineState | None,
 ) -> list[GroupFailure]:
-    log.info(f"Phase 2: Reviewing {group_count} groups ({workers} parallel)...")
-    log.blank()
+    core.log.info(f"Phase 2: Reviewing {group_count} groups ({workers} parallel)...")
+    core.log.blank()
     failed_groups: list[GroupFailure] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
         _run_parallel_loop(
             pool, groups, job, group_count, holistic_content, skip_groups,
             pipeline_state, workers, failed_groups,
         )
-    log.blank()
+    core.log.blank()
     return failed_groups
 
 
@@ -663,12 +663,12 @@ def _retry_failed_groups(
         )
         if systemic:
             reason = reasons.pop()
-            log.warn(f"All {len(failed_groups)} groups failed with same error ({reason.message}) — skipping retries")
+            core.log.warn(f"All {len(failed_groups)} groups failed with same error ({reason.message}) — skipping retries")
             return failed_groups
 
     group_by_name = {g.name: (idx, g) for idx, g in enumerate(groups, 1)}
 
-    log.info(f"Retrying {len(retryable)} failed groups...")
+    core.log.info(f"Retrying {len(retryable)} failed groups...")
     still_failed: list[GroupFailure] = []
     for failed in retryable:
         name = failed.group
@@ -677,7 +677,7 @@ def _retry_failed_groups(
             continue
         idx, grp = group_by_name[name]
         turns = _retry_turns(failed.diagnosis, job)
-        log.info(f"  Retry: {name} (max_turns={turns})")
+        core.log.info(f"  Retry: {name} (max_turns={turns})")
         _, _, failure = _review_group(
             idx, grp, job, group_count, holistic_content,
             pipeline_state=pipeline_state,
@@ -706,7 +706,7 @@ def _run_skipped_groups(
     holistic_content: str,
     pipeline_state: PipelineState | None,
 ) -> list[GroupFailure]:
-    log.info(f"All retries succeeded — running {len(skipped)} previously-skipped groups...")
+    core.log.info(f"All retries succeeded — running {len(skipped)} previously-skipped groups...")
     failures: list[GroupFailure] = []
     for failed in skipped:
         name = failed.group
@@ -714,7 +714,7 @@ def _run_skipped_groups(
             failures.append(failed)
             continue
         idx, grp = group_by_name[name]
-        log.info(f"  Running skipped group: {name}")
+        core.log.info(f"  Running skipped group: {name}")
         _, _, failure = _review_group(
             idx, grp, job, group_count, holistic_content,
             pipeline_state=pipeline_state,

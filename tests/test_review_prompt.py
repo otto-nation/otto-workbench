@@ -38,7 +38,7 @@ from review.prompt_sections import (
     _build_ci_failure_items, _build_delta_section, _build_env_section,
     _build_omitted_guidance, _build_pr_header,
 )
-from review import registry as review_registry
+import review.registry
 from conftest import TEST_MODEL, model_budget_bytes
 from pr.ci_failures import FailureGroup, FailureItem, FailureKind, RunState
 from pr.domains import CIDomain
@@ -708,7 +708,7 @@ class TestSharedPromptBodies:
     def _vars(self, phase, output, mode=Mode.PR, **extra):
         job = _make_job(_make_preflight(), mode=mode)
         common = _build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
-        built = review_registry.for_phase(phase).build(job, common, extra, output)
+        built = review.registry.for_phase(phase).build(job, common, extra, output)
         return built.builder.vars
 
     def test_scout_and_holistic_are_the_same_prompt(self):
@@ -719,8 +719,8 @@ class TestSharedPromptBodies:
         added for both, and the file each writes is the spec's answer.
         """
         assert (
-            review_registry.for_phase(Phase.HOLISTIC).build
-            is review_registry.for_phase(Phase.SCOUT).build
+            review.registry.for_phase(Phase.HOLISTIC).build
+            is review.registry.for_phase(Phase.SCOUT).build
         )
         holistic = self._vars(Phase.HOLISTIC, "/tmp/h.md")
         scout = self._vars(Phase.SCOUT, "/tmp/s.md")
@@ -834,7 +834,7 @@ class TestTheRecordAccountsForWhatItRendered:
         return json.loads((tmp_path / "prompt-stats.json").read_text())[-1]
 
     def test_the_record_names_the_allowance_and_what_it_accounted_for(self, tmp_path):
-        review_registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
+        review.registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         stats = self._stats(tmp_path)
         assert stats["allowance_bytes"] > 0
         assert stats["accounted_bytes"] > 0
@@ -847,7 +847,7 @@ class TestTheRecordAccountsForWhatItRendered:
     def test_the_unaccounted_bytes_are_a_template_not_a_quarter_of_a_megabyte(
         self, tmp_path,
     ):
-        review_registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
+        review.registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         stats = self._stats(tmp_path)
         # A few KB of template text and block markup no lever sizes. The bound
         # is loose on purpose: the honest threshold is a question for the data.
@@ -858,7 +858,7 @@ class TestTheRecordAccountsForWhatItRendered:
 
     def test_a_phase_with_no_budgeted_section_records_no_accounting(self, tmp_path):
         job = self._job(tmp_path)
-        review_registry.build_prompt(
+        review.registry.build_prompt(
             Phase.DISPROVE, job, max_turns=10,
             extra={"findings_block": "- a finding"},
         )
@@ -896,7 +896,7 @@ class TestPromptTokenTelemetry:
         """
         monkeypatch.delenv("WORKBENCH_AI_MEASURE_TOKENS", raising=False)
         with patch("review.prompt.count_tokens", return_value=1000) as counter:
-            review_registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
+            review.registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         counter.assert_called_once()
         assert self._stats(tmp_path)["prompt_tokens"] == 1000
 
@@ -904,14 +904,14 @@ class TestPromptTokenTelemetry:
         """The round trip is small but not free, and a run may decline it."""
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "0")
         with patch("review.prompt.count_tokens") as counter:
-            review_registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
+            review.registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         counter.assert_not_called()
         assert "prompt_tokens" not in self._stats(tmp_path)
 
     def test_records_count_model_and_density_when_measured(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
         with patch("review.prompt.count_tokens", return_value=1000):
-            review_registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
+            review.registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         stats = self._stats(tmp_path)
         assert stats["prompt_tokens"] == 1000
         # A density without its tokenizer is not interpretable: sonnet-5 counts
@@ -923,7 +923,7 @@ class TestPromptTokenTelemetry:
         """None is not zero — a missing measurement must leave no density behind."""
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
         with patch("review.prompt.count_tokens", return_value=None):
-            review_registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
+            review.registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         stats = self._stats(tmp_path)
         assert "prompt_tokens" not in stats
         assert "bytes_per_token" not in stats
@@ -932,7 +932,7 @@ class TestPromptTokenTelemetry:
         """Zero is a count, but it is not a density — and must not divide."""
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
         with patch("review.prompt.count_tokens", return_value=0):
-            review_registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
+            review.registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         stats = self._stats(tmp_path)
         assert stats["prompt_tokens"] == 0
         assert "bytes_per_token" not in stats
@@ -941,7 +941,7 @@ class TestPromptTokenTelemetry:
         """A count against another tokenizer is worse than no count at all."""
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
         with patch("review.prompt.count_tokens", return_value=10) as counter:
-            review_registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
+            review.registry.build_prompt(Phase.SCOUT, self._job(tmp_path), max_turns=10)
         model = counter.call_args.args[1]
         assert model == self._stats(tmp_path)["token_model"]
 
@@ -990,14 +990,14 @@ class TestUnaccountedPriorSection:
             group_count=1, merged_content="m", holistic_content="h",
             unaccounted_prior=[self.M1],
         )
-        built = review_registry.for_phase(Phase.SYNTHESIS).build(job, common, extra, "/tmp/r.md")
+        built = review.registry.for_phase(Phase.SYNTHESIS).build(job, common, extra, "/tmp/r.md")
         assert "drops the error" in built.builder.vars["prior_section"]
 
     def test_a_synthesis_prompt_with_nothing_left_over_says_nothing(self):
         job = _make_job(_make_preflight())
         common = _build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
         extra = dict(group_count=1, merged_content="m", holistic_content="h")
-        built = review_registry.for_phase(Phase.SYNTHESIS).build(job, common, extra, "/tmp/r.md")
+        built = review.registry.for_phase(Phase.SYNTHESIS).build(job, common, extra, "/tmp/r.md")
         assert built.builder.vars["prior_section"] == ""
 
 
@@ -1175,10 +1175,10 @@ class TestTheBudgetComesFromTheModel:
         refuse every prompt, and the cause would be a table entry nobody would
         think to look at.
         """
-        from review import budget as review_budget
+        import review.budget
         from review.budget import UnknownModelWindow
 
-        monkeypatch.setitem(review_budget.MODEL_CONTEXT_TOKENS, "tiny", 50_000)
+        monkeypatch.setitem(review.budget.MODEL_CONTEXT_TOKENS, "tiny", 50_000)
         with pytest.raises(UnknownModelWindow, match="exhaust"):
             prompt_budget_bytes("tiny")
 
@@ -1272,19 +1272,19 @@ class TestCollectionBudgetsForEveryPhase:
     """
 
     def test_it_takes_the_tightest_phase_budget(self, monkeypatch):
-        from review import budget as review_budget
+        import review.budget
 
         # Patched on `review.budget`, which binds the name at import time —
         # patching `agent.phases` would leave this reading the real resolution
         # and asserting nothing.
         monkeypatch.setattr(
-            review_budget, "collect_phase_models",
+            review.budget, "collect_phase_models",
             lambda *_: {"claude-sonnet-5": [], "claude-sonnet-4-6": []},
         )
         # The ladder's target, since collection is sizing what the ladder will
         # later be handed rather than the ceiling it is refused at.
-        assert review_budget.collection_budget_bytes() == (
-            review_budget.ladder_target_bytes("claude-sonnet-4-6")
+        assert review.budget.collection_budget_bytes() == (
+            review.budget.ladder_target_bytes("claude-sonnet-4-6")
         )
 
     def test_it_resolves_against_the_worktree_it_is_given(self, monkeypatch):
@@ -1294,7 +1294,7 @@ class TestCollectionBudgetsForEveryPhase:
         the worktree is passed down, so dropping it here would size collection
         against a ceiling no phase budgets to.
         """
-        from review import budget as review_budget
+        import review.budget
 
         seen = {}
 
@@ -1302,8 +1302,8 @@ class TestCollectionBudgetsForEveryPhase:
             seen["explicit"], seen["root"] = explicit, project_root
             return {"claude-sonnet-5": []}
 
-        monkeypatch.setattr(review_budget, "collect_phase_models", _record)
-        review_budget.collection_budget_bytes("m", "/wt")
+        monkeypatch.setattr(review.budget, "collect_phase_models", _record)
+        review.budget.collection_budget_bytes("m", "/wt")
         assert seen == {"explicit": "m", "root": "/wt"}
 
 

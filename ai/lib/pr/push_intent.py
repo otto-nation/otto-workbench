@@ -72,12 +72,12 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
 
-from gh import landed as branch_landed
-from git import client as git_client
-from core import log
-from git import push
-from core import serde
-from core import workbench_paths
+import gh.landed
+import git.client
+import core.log
+import git.push
+import core.serde
+import core.workbench_paths
 
 # `git_remote` is a workbench-wide module rather than an `ai/lib` one, because
 # the pre-push hooks and the surface gate resolve the same default branch. In a
@@ -201,7 +201,7 @@ class Reconciled:
 
 def intents_path() -> Path:
     """The one file the hook writes and `reconcile` drains."""
-    return workbench_paths.state_dir() / INTENTS_FILENAME
+    return core.workbench_paths.state_dir() / INTENTS_FILENAME
 
 
 def parse_refs(text: str) -> list[PushedRef]:
@@ -280,7 +280,7 @@ def _answer(intent: PushIntent) -> Reconciled:
     """
     if not Path(intent.repo).is_dir():
         return Reconciled(intent, Outcome.GONE)
-    held = push.remote_head(intent.repo, intent.branch, remote=intent.remote)
+    held = git.push.remote_head(intent.repo, intent.branch, remote=intent.remote)
     if held is None:
         return Reconciled(intent, Outcome.UNANSWERED)
     if held == intent.sha or _built_upon(intent, held):
@@ -313,7 +313,7 @@ def _built_upon(intent: PushIntent, ref: str) -> bool:
     """
     if not ref:
         return False
-    return git_client.ok(
+    return git.client.ok(
         "merge-base", "--is-ancestor", intent.sha, ref, cwd=intent.repo,
     )
 
@@ -381,7 +381,7 @@ def _landed_elsewhere(intent: PushIntent) -> _Elsewhere:
         return _Elsewhere(landed=False)
     if _built_upon(intent, base):
         return _Elsewhere(landed=True)
-    verdict = branch_landed.check(
+    verdict = gh.landed.check(
         intent.repo, target_ref=base, branch=intent.branch, rev=intent.sha,
     )
     return _Elsewhere(landed=verdict.landed is not None, looked=verdict.looked)
@@ -415,8 +415,8 @@ def _worth_reporting(answer: Reconciled) -> bool:
 # or vanished record is never reported, and a status invented for one here would
 # be a claim about a push nobody is being told about.
 _STATUS = {
-    Outcome.LOST: push.PushStatus.LOST,
-    Outcome.UNANSWERED: push.PushStatus.UNVERIFIED,
+    Outcome.LOST: git.push.PushStatus.LOST,
+    Outcome.UNANSWERED: git.push.PushStatus.UNVERIFIED,
 }
 
 
@@ -431,16 +431,16 @@ def _report(answers: Sequence[Reconciled]) -> None:
     """
     if not answers:
         return
-    log.blank()
-    log.warn("pushes recorded by the pre-push hook that nothing has confirmed:")
+    core.log.blank()
+    core.log.warn("pushes recorded by the pre-push hook that nothing has confirmed:")
     for answer in answers:
-        push.report(_as_push_result(answer), answer.intent.repo)
+        git.push.report(_as_push_result(answer), answer.intent.repo)
 
 
-def _as_push_result(answer: Reconciled) -> push.PushResult:
+def _as_push_result(answer: Reconciled) -> git.push.PushResult:
     """The record, in the shape `push.report` reads."""
     intent = answer.intent
-    return push.PushResult(
+    return git.push.PushResult(
         status=_STATUS[answer.outcome],
         sha=intent.sha,
         branch=intent.branch,
@@ -455,7 +455,7 @@ def _as_push_result(answer: Reconciled) -> push.PushResult:
 
 def _load() -> list[PushIntent]:
     """Every pending record, or none when the file is absent or unreadable."""
-    return (serde.load_file(IntentFile, intents_path()) or IntentFile()).intents
+    return (core.serde.load_file(IntentFile, intents_path()) or IntentFile()).intents
 
 
 def _save(intents: Sequence[PushIntent]) -> None:
@@ -476,9 +476,9 @@ def _save(intents: Sequence[PushIntent]) -> None:
         if not intents:
             path.unlink(missing_ok=True)
             return
-        serde.write_json(path, serde.to_dict(IntentFile(list(intents[-_MAX_RECORDS:]))))
+        core.serde.write_json(path, core.serde.to_dict(IntentFile(list(intents[-_MAX_RECORDS:]))))
     except OSError as exc:
-        log.warn(f"could not update {path}: {exc}")
+        core.log.warn(f"could not update {path}: {exc}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -496,7 +496,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         record(parse_refs(sys.stdin.read()), repo=ns.repo, remote=ns.remote)
     except Exception as exc:
-        log.warn(f"could not record this push for later verification: {exc}")
+        core.log.warn(f"could not record this push for later verification: {exc}")
     return 0
 
 

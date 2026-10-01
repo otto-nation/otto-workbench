@@ -11,31 +11,32 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from fix import ci as fix_ci
-from fix import suite as fix_suite  # noqa: E402
-from fix import engine as fix_engine  # noqa: E402
-from git import land  # noqa: E402
+import fix.ci
+import fix.suite  # noqa: E402
+import fix.engine  # noqa: E402
+import git.land  # noqa: E402
 from git.land import CommitStatus  # noqa: E402
-from pr import ci_failures as ci  # noqa: E402
+import pr.ci_failures  # noqa: E402
 from pr.ci_report import CIReport  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 from pr.state import PRIdentity, PRState  # noqa: E402
+import pr.state
 
 
-def _item(item_id: str, **kwargs) -> ci.FailureItem:
+def _item(item_id: str, **kwargs) -> pr.ci_failures.FailureItem:
     defaults = dict(
         annotation=item_id, file=None, line=None, diagnosis=None,
         fix_sha=None, outcome=None, headline=item_id,
     )
     defaults.update(kwargs)
-    return ci.FailureItem(id=item_id, **defaults)
+    return pr.ci_failures.FailureItem(id=item_id, **defaults)
 
 
-def _group(job: str, kind: ci.FailureKind, *items: ci.FailureItem) -> ci.FailureGroup:
-    return ci.FailureGroup(job=job, kind=kind, items=items)
+def _group(job: str, kind: pr.ci_failures.FailureKind, *items: pr.ci_failures.FailureItem) -> pr.ci_failures.FailureGroup:
+    return pr.ci_failures.FailureGroup(job=job, kind=kind, items=items)
 
 
-def _report(failures: dict[str, ci.FailureGroup], progression=None, run_number=7) -> CIReport:
+def _report(failures: dict[str, pr.ci_failures.FailureGroup], progression=None, run_number=7) -> CIReport:
     """A finished report, as `_run_ci` hands it to the fix phase."""
     return CIReport(
         repo="owner/repo", branch="feat/test", pr_number=42,
@@ -54,7 +55,7 @@ def _state():
 
 def _adapter(tmp_path, failures, progression=None, run_number=7, state=None):
     """The CI adapter as `_run_fix` builds it, against a real worktree path."""
-    return fix_ci.CIFixAdapter(
+    return fix.ci.CIFixAdapter(
         _report(failures, progression, run_number),
         make_ctx(worktree_root=tmp_path, target_dir=tmp_path),
         state if state is not None else _state(),
@@ -66,11 +67,11 @@ def _adapter(tmp_path, failures, progression=None, run_number=7, state=None):
 
 def test_flatten_pairs_each_item_with_the_job_it_failed_in():
     failures = {
-        "shellcheck": _group("shellcheck", ci.FailureKind.LINT, _item("a"), _item("b")),
-        "pytest": _group("pytest", ci.FailureKind.TEST, _item("c")),
+        "shellcheck": _group("shellcheck", pr.ci_failures.FailureKind.LINT, _item("a"), _item("b")),
+        "pytest": _group("pytest", pr.ci_failures.FailureKind.TEST, _item("c")),
     }
 
-    flat = fix_ci.flatten(failures, {})
+    flat = fix.ci.flatten(failures, {})
 
     assert [(f.id, f.group.job) for f in flat] == [
         ("a", "shellcheck"), ("b", "shellcheck"), ("c", "pytest"),
@@ -79,11 +80,11 @@ def test_flatten_pairs_each_item_with_the_job_it_failed_in():
 
 def test_flatten_reports_an_untracked_item_as_new():
     """A run with no prior has no progression entry for anything in it."""
-    failures = {"lint": _group("lint", ci.FailureKind.LINT, _item("a"), _item("b"))}
+    failures = {"lint": _group("lint", pr.ci_failures.FailureKind.LINT, _item("a"), _item("b"))}
 
-    flat = fix_ci.flatten(failures, {"a": ci.Outcome.PERSISTING})
+    flat = fix.ci.flatten(failures, {"a": pr.ci_failures.Outcome.PERSISTING})
 
-    assert [f.outcome for f in flat] == [ci.Outcome.PERSISTING, ci.Outcome.NEW]
+    assert [f.outcome for f in flat] == [pr.ci_failures.Outcome.PERSISTING, pr.ci_failures.Outcome.NEW]
 
 
 # ── CIFixAdapter ────────────────────────────────────────────────────────
@@ -93,16 +94,16 @@ def test_only_fixable_failures_are_handed_to_the_agent(tmp_path):
     """Infra and flaky failures are held back — no edit would clear either."""
     failures = {
         "shellcheck": _group(
-            "shellcheck", ci.FailureKind.LINT,
+            "shellcheck", pr.ci_failures.FailureKind.LINT,
             _item("lint-1", annotation="SC2086", headline="SC2086",
                   file="bin/foo.sh", line=42),
         ),
         "docker": _group(
-            "docker", ci.FailureKind.INFRA,
+            "docker", pr.ci_failures.FailureKind.INFRA,
             _item("infra-1", annotation="connection refused"),
         ),
         "pytest": _group(
-            "pytest", ci.FailureKind.FLAKY,
+            "pytest", pr.ci_failures.FailureKind.FLAKY,
             _item("flaky-1", annotation="timeout", file="tests/slow.py", line=1),
         ),
     }
@@ -116,17 +117,17 @@ def test_each_item_carries_the_failure_the_agent_has_to_read(tmp_path):
     """Location, job and the failure text all reach the checklist entry."""
     failures = {
         "shellcheck": _group(
-            "shellcheck", ci.FailureKind.LINT,
+            "shellcheck", pr.ci_failures.FailureKind.LINT,
             _item("sc2086-bin-foo-42", annotation="SC2086: Double quote",
                   headline="SC2086: Double quote", file="bin/foo.sh", line=42),
         ),
         "pytest": _group(
-            "pytest", ci.FailureKind.TEST,
+            "pytest", pr.ci_failures.FailureKind.TEST,
             _item("pytest-test-auth-18", annotation="AssertionError",
                   headline="AssertionError", file="tests/auth.py", line=18),
         ),
     }
-    progression = {"pytest-test-auth-18": ci.Outcome.PERSISTING}
+    progression = {"pytest-test-auth-18": pr.ci_failures.Outcome.PERSISTING}
 
     lint, test = _adapter(tmp_path, failures, progression).items()
 
@@ -138,7 +139,7 @@ def test_each_item_carries_the_failure_the_agent_has_to_read(tmp_path):
 
 def test_a_new_failure_says_nothing_about_progression(tmp_path):
     """"new" under a Progression heading is a line that carries no information."""
-    failures = {"lint": _group("lint", ci.FailureKind.LINT, _item("a"))}
+    failures = {"lint": _group("lint", pr.ci_failures.FailureKind.LINT, _item("a"))}
 
     body, = [i.body for i in _adapter(tmp_path, failures).items()]
 
@@ -149,7 +150,7 @@ def test_an_item_repeating_its_headline_is_not_detailed_twice(tmp_path):
     """Most annotations are the headline — a second copy under Details is noise."""
     failures = {
         "lint": _group(
-            "lint", ci.FailureKind.LINT,
+            "lint", pr.ci_failures.FailureKind.LINT,
             _item("a", annotation="SC2086", headline="SC2086", context="line 3"),
         ),
     }
@@ -164,7 +165,7 @@ def test_a_failure_with_no_location_still_becomes_an_item(tmp_path):
     """A build failure names no file, and the em dash stands in for one."""
     failures = {
         "gradle": _group(
-            "gradle", ci.FailureKind.BUILD,
+            "gradle", pr.ci_failures.FailureKind.BUILD,
             _item("build-1", annotation="compilation failed"),
         ),
     }
@@ -178,7 +179,7 @@ def test_a_failure_with_no_location_still_becomes_an_item(tmp_path):
 def test_a_run_of_only_skipped_failures_hands_over_nothing(tmp_path):
     """`_run_fix` reads `fixable` to decide there is nothing to ask an agent."""
     failures = {
-        "docker": _group("docker", ci.FailureKind.INFRA, _item("infra-1", annotation="OOM")),
+        "docker": _group("docker", pr.ci_failures.FailureKind.INFRA, _item("infra-1", annotation="OOM")),
     }
     adapter = _adapter(tmp_path, failures)
 
@@ -205,7 +206,7 @@ def test_the_artifacts_are_not_written_inside_the_worktree(tmp_path):
     """The hazard in its own words: nothing this pass writes is in the tree."""
     worktree = tmp_path / "wt"
     worktree.mkdir()
-    adapter = fix_ci.CIFixAdapter(
+    adapter = fix.ci.CIFixAdapter(
         _report({}, {}, 7),
         make_ctx(worktree_root=worktree, target_dir=tmp_path / "state"),
         _state(),
@@ -237,8 +238,8 @@ def test_a_red_suite_qualifies_the_ci_tally(tmp_path):
     review pass was fixed for. No review round caught this one.
     """
     adapter = _adapter(tmp_path, {})
-    adapter.suite = fix_suite.SuiteResult(
-        status=fix_suite.SuiteStatus.RED, command="checks", output_tail="E   boom")
+    adapter.suite = fix.suite.SuiteResult(
+        status=fix.suite.SuiteStatus.RED, command="checks", output_tail="E   boom")
 
     message = adapter.landing([ItemOutcome(id="a", outcome=FixOutcome.FIXED)],
                               {"a.py"}).message
@@ -249,7 +250,7 @@ def test_a_red_suite_qualifies_the_ci_tally(tmp_path):
 
 def test_an_undeclared_command_qualifies_the_ci_tally(tmp_path):
     adapter = _adapter(tmp_path, {})
-    adapter.suite = fix_suite.SuiteResult(status=fix_suite.SuiteStatus.NOT_DECLARED)
+    adapter.suite = fix.suite.SuiteResult(status=fix.suite.SuiteStatus.NOT_DECLARED)
 
     message = adapter.landing([ItemOutcome(id="a", outcome=FixOutcome.FIXED)],
                               {"a.py"}).message
@@ -295,23 +296,23 @@ def test_held_back_failures_are_recorded_as_skipped(tmp_path):
     """A record holding only the agent's answers reads as if infra was never seen."""
     failures = {
         "shellcheck": _group(
-            "shellcheck", ci.FailureKind.LINT,
+            "shellcheck", pr.ci_failures.FailureKind.LINT,
             _item("lint-1", annotation="SC2086", file="bin/foo.sh", line=42),
         ),
         "docker": _group(
-            "docker", ci.FailureKind.INFRA,
+            "docker", pr.ci_failures.FailureKind.INFRA,
             _item("infra-1", annotation="connection refused"),
         ),
     }
     state = _state()
     adapter = _adapter(tmp_path, failures, state=state)
-    run = fix_engine.FixRun(
+    run = fix.engine.FixRun(
         outcomes=[ItemOutcome(id="lint-1", outcome=FixOutcome.FIXED)],
-        landed=land.LandResult(CommitStatus.PUSH_HELD, "deadbee"),
+        landed=git.land.LandResult(CommitStatus.PUSH_HELD, "deadbee"),
         head_before="cafe123",
     )
 
-    with patch.object(fix_ci.pr_state, "save_state") as saved:
+    with patch.object(pr.state, "save_state") as saved:
         adapter.record(run)
 
     recorded = {i.id: i for i in state.ci.fix.items}

@@ -12,10 +12,10 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from agent import invoke as agent_invoke
-from agent import phases as agent_phases
+import agent.invoke
+import agent.phases
 from core.phases import Phase
-from fix import verify as fix_verify
+import fix.verify
 from fix.types import FixItem
 
 
@@ -51,21 +51,21 @@ def _items(count):
 def test_work_over_the_chunk_size_is_split(tmp_path):
     """One invoke holding every claim is what starved the gate of turns."""
     adapter = _Adapter(tmp_path)
-    chunk = agent_phases.phase_chunk_size(Phase.FIX_VERIFY)
+    chunk = agent.phases.phase_chunk_size(Phase.FIX_VERIFY)
     calls = []
 
     def run_fix(_phase, _prompt, **kwargs):
         calls.append(kwargs["max_turns"])
-        return agent_invoke.FixResult(0, None)
+        return agent.invoke.FixResult(0, None)
 
-    with patch.object(fix_verify.agent_invoke, "run_fix", side_effect=run_fix):
-        fix_verify.run(
+    with patch.object(agent.invoke, "run_fix", side_effect=run_fix):
+        fix.verify.run(
             Phase.FIX_VERIFY, "", items=_items(chunk + 1), adapter=adapter,
         )
 
     assert len(calls) == 2
-    assert calls[0] == agent_phases.phase_turns(Phase.FIX_VERIFY, items=chunk)
-    assert calls[1] == agent_phases.phase_turns(Phase.FIX_VERIFY, items=1)
+    assert calls[0] == agent.phases.phase_turns(Phase.FIX_VERIFY, items=chunk)
+    assert calls[1] == agent.phases.phase_turns(Phase.FIX_VERIFY, items=1)
 
 
 def test_a_single_chunk_is_not_numbered(tmp_path):
@@ -74,10 +74,10 @@ def test_a_single_chunk_is_not_numbered(tmp_path):
 
     def run_fix(_phase, _prompt, **kwargs):
         labels.append(kwargs["label"])
-        return agent_invoke.FixResult(0, None)
+        return agent.invoke.FixResult(0, None)
 
-    with patch.object(fix_verify.agent_invoke, "run_fix", side_effect=run_fix):
-        fix_verify.run(
+    with patch.object(agent.invoke, "run_fix", side_effect=run_fix):
+        fix.verify.run(
             Phase.FIX_VERIFY, "", items=_items(1), adapter=adapter,
         )
 
@@ -86,7 +86,7 @@ def test_a_single_chunk_is_not_numbered(tmp_path):
 
 def test_each_chunk_writes_its_own_tracking_file(tmp_path):
     adapter = _Adapter(tmp_path)
-    chunk = agent_phases.phase_chunk_size(Phase.FIX_VERIFY)
+    chunk = agent.phases.phase_chunk_size(Phase.FIX_VERIFY)
     seen = []
     # Captured while each chunk is in flight. Checking existence after the run
     # would pass on two files written by one chunk; the point is that chunk 2
@@ -99,10 +99,10 @@ def test_each_chunk_writes_its_own_tracking_file(tmp_path):
         tracking.append(sorted(
             p.name for p in adapter.artifacts.glob("verify-tracking-*.md")
         ))
-        return agent_invoke.FixResult(0, None)
+        return agent.invoke.FixResult(0, None)
 
-    with patch.object(fix_verify.agent_invoke, "run_fix", side_effect=run_fix):
-        fix_verify.run(
+    with patch.object(agent.invoke, "run_fix", side_effect=run_fix):
+        fix.verify.run(
             Phase.FIX_VERIFY, "", items=_items(chunk + 1), adapter=adapter,
         )
 
@@ -122,10 +122,10 @@ def test_a_single_chunk_still_uses_the_suffixed_name(tmp_path):
 
     def run_fix(_phase, _prompt, **kwargs):
         assert kwargs["session_log"].endswith("verify-session-1.jsonl")
-        return agent_invoke.FixResult(0, None)
+        return agent.invoke.FixResult(0, None)
 
-    with patch.object(fix_verify.agent_invoke, "run_fix", side_effect=run_fix):
-        fix_verify.run(
+    with patch.object(agent.invoke, "run_fix", side_effect=run_fix):
+        fix.verify.run(
             Phase.FIX_VERIFY, "", items=_items(1), adapter=adapter,
         )
 

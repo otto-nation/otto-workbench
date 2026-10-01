@@ -22,12 +22,12 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from core import log
-from core import proc
-from core import timeouts
+import core.log
+import core.proc
+import core.timeouts
 from core.proc import CmdResult
 from core.trail import Trail
-from git import client as git_client
+import git.client
 
 
 # ── Data types ──────────────────────────────────────────────────────────────
@@ -140,7 +140,7 @@ def detect_mise(target_dir: str, repo_root: str) -> bool:
 
 
 def try_run(
-    cmd: list[str], *, cwd: str, timeout: float | None = timeouts.UNBOUNDED,
+    cmd: list[str], *, cwd: str, timeout: float | None = core.timeouts.UNBOUNDED,
 ) -> CmdResult | None:
     """Run a command, returning None if it could not be launched or finished.
 
@@ -160,10 +160,10 @@ def try_run(
         )
         return CmdResult(p.returncode, p.stdout or "", p.stderr or "")
     except OSError as exc:
-        log.dim(f"Could not launch {' '.join(cmd)}: {exc}")
+        core.log.dim(f"Could not launch {' '.join(cmd)}: {exc}")
         return None
     except subprocess.TimeoutExpired:
-        log.dim(f"Timed out after {timeout:g}s: {' '.join(cmd)}")
+        core.log.dim(f"Timed out after {timeout:g}s: {' '.join(cmd)}")
         return None
 
 
@@ -176,13 +176,13 @@ def _stage_regenerated(
     """Stage the files a regeneration produced. Returns True on success."""
     if not job.stage_dir:
         # Stage every file even if one fails — don't short-circuit.
-        results = [git_client.ok("add", f, cwd=cwd) for f in job.files]
+        results = [git.client.ok("add", f, cwd=cwd) for f in job.files]
         return all(results)
-    if git_client.ok("add", "-u", ".", cwd=job.regen_dir):
+    if git.client.ok("add", "-u", ".", cwd=job.regen_dir):
         return True
     if trail:
         trail.error("regeneration", f"git add -u failed in {job.regen_dir}")
-    log.warn(f"git add -u failed after regeneration in {Path(job.regen_dir).name}/")
+    core.log.warn(f"git add -u failed after regeneration in {Path(job.regen_dir).name}/")
     return False
 
 
@@ -190,30 +190,30 @@ def run_regeneration(
     job: RegenJob, *, cwd: str, trail: Trail | None = None,
 ) -> bool:
     """Run a regeneration command and stage the result. Returns success."""
-    repo_root = git_client.out("rev-parse", "--show-toplevel", cwd=cwd) or cwd
+    repo_root = git.client.out("rev-parse", "--show-toplevel", cwd=cwd) or cwd
 
     cmd = list(job.cmd)
     use_mise = detect_mise(job.regen_dir, repo_root)
     run_cmd = ["mise", "exec", "--"] + cmd if use_mise else cmd
 
-    log.info(f"Regenerating: {' '.join(run_cmd)} (in {Path(job.regen_dir).name}/)")
+    core.log.info(f"Regenerating: {' '.join(run_cmd)} (in {Path(job.regen_dir).name}/)")
     r = try_run(run_cmd, cwd=job.regen_dir)
 
     # A missing binary raises FileNotFoundError rather than reporting the
     # command-not-found code, and a tool-managed binary is only on PATH inside
     # `mise exec`. Retry there.
-    missing = r is None or r.returncode == proc.MISSING_RETURNCODE
+    missing = r is None or r.returncode == core.proc.MISSING_RETURNCODE
     if missing and not use_mise and shutil.which("mise"):
         use_mise = True
         run_cmd = ["mise", "exec", "--"] + cmd
-        log.info(f"Retrying with mise: {' '.join(run_cmd)}")
+        core.log.info(f"Retrying with mise: {' '.join(run_cmd)}")
         r = try_run(run_cmd, cwd=job.regen_dir)
 
     if r is None:
         if trail:
             trail.error("regeneration", f"could not run {cmd[0]} in {job.regen_dir}",
                         data={"cmd": cmd})
-        log.warn(f"Regeneration failed: could not run {cmd[0]}")
+        core.log.warn(f"Regeneration failed: could not run {cmd[0]}")
         return False
 
     if r.returncode != 0:
@@ -221,9 +221,9 @@ def run_regeneration(
             trail.failure("regeneration", f"{' '.join(cmd)} failed in {job.regen_dir}",
                           output=r.combined_output,
                           data={"cmd": cmd, "exit_code": r.returncode})
-        log.warn(f"Regeneration failed: {' '.join(cmd)} (exit {r.returncode})")
+        core.log.warn(f"Regeneration failed: {' '.join(cmd)} (exit {r.returncode})")
         if r.stderr.strip():
-            log.dim(r.stderr.strip()[:proc.DETAIL_LIMIT])
+            core.log.dim(r.stderr.strip()[:core.proc.DETAIL_LIMIT])
         return False
 
     if not _stage_regenerated(job, cwd=cwd, trail=trail):
@@ -232,5 +232,5 @@ def run_regeneration(
     if trail:
         trail.info("regeneration", f"regenerated {', '.join(job.files)}",
                    data={"cmd": cmd, "dir": job.regen_dir, "mise": use_mise})
-    log.ok(f"Regenerated: {', '.join(job.files)}")
+    core.log.ok(f"Regenerated: {', '.join(job.files)}")
     return True

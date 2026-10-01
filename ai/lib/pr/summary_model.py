@@ -29,8 +29,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum, StrEnum
 
-from core import markdown
-from pr import permalinks
+import core.markdown
+import pr.permalinks
 from pr.fix import FixOutcome
 from pr.thread_models import (
     THREAD_ANCHOR, CommentItem, CommentSourceKind, ReportThread, finding_location,
@@ -39,10 +39,10 @@ from pr.thread_models import (
 TABLE_COLUMNS = ("Thread", "Reviewer", "File", "Action")
 
 
-TABLE_HEADER = markdown.render_row(list(TABLE_COLUMNS))
+TABLE_HEADER = core.markdown.render_row(list(TABLE_COLUMNS))
 
 
-TABLE_DIVIDER = markdown.table_divider(len(TABLE_COLUMNS))
+TABLE_DIVIDER = core.markdown.table_divider(len(TABLE_COLUMNS))
 
 
 # The outcomes the summary shows a reviewer under one heading. A thread the
@@ -271,7 +271,7 @@ def duplicate_item_ids(
     return {
         e.id for e in entries
         if e.id not in threads_by_id
-        and permalinks.comment_item_source(e).ok
+        and pr.permalinks.comment_item_source(e).ok
         and (
             finding_location(e) in covered
             if finding_location(e)
@@ -413,9 +413,9 @@ def row_key_from_cells(cells: list[str]) -> str:
         # as a new row and the published one carries forward beside it.
         # Upgrade trigger: once a reworded item is seen rendering twice, write
         # the item's synthetic id into the row and key on that instead.
-        return f"{item.group(0)} | {markdown.plain_cell(cells[0])}"
+        return f"{item.group(0)} | {core.markdown.plain_cell(cells[0])}"
     return " | ".join(
-        markdown.plain_cell(cell) for cell in cells[:len(TABLE_COLUMNS) - 1]
+        core.markdown.plain_cell(cell) for cell in cells[:len(TABLE_COLUMNS) - 1]
     )
 
 
@@ -558,7 +558,7 @@ class ActionCell(_ActionVocabulary):
         including every satisfied row, where the reviewer themself confirmed the
         behaviour and no gate could say more than they did.
         """
-        cell = f"{cls.FIXED_IN}[`{sha}`]({permalinks.commit_permalink(repo, sha, host)})"
+        cell = f"{cls.FIXED_IN}[`{sha}`]({pr.permalinks.commit_permalink(repo, sha, host)})"
         return f"{cell} (unverified)" if verified is False else cell
 
     @classmethod

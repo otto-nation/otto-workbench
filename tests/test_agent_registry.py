@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from agent import registry as agent_registry
+import agent.registry
 from agent.registry import PHASES, REVIEW_PHASES
 from agent.types import EFFORT_PRESETS
 from core.phases import AgentKind, Phase, PhaseDomain, PhaseShape, Thinking
@@ -33,7 +33,7 @@ class TestPhasesRegistry:
         The cost is that a second spec for a phase already declared overwrites
         the first with no error — the count is the only place that shows.
         """
-        assert len(agent_registry._SPECS) == len(PHASES)
+        assert len(agent.registry._SPECS) == len(PHASES)
 
 
 class TestPhaseDomains:

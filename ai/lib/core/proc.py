@@ -126,7 +126,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from core import timeouts
+import core.timeouts
 
 # gh reports a transport failure as "HTTP 503: ..." on stderr, whether it came
 # from REST or GraphQL, and git over https reports one as "HTTP 502" too.
@@ -483,7 +483,7 @@ def _reap(process: subprocess.Popen) -> str:
     Nothing raises, for the same reason `_kill_group` does not.
     """
     try:
-        process.wait(timeout=timeouts.QUICK)
+        process.wait(timeout=core.timeouts.QUICK)
     except subprocess.TimeoutExpired:
         return (f"\nprocess {process.pid} did not exit after SIGKILL and may "
                 f"still be running")

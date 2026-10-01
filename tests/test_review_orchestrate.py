@@ -15,6 +15,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 from core.phases import Phase
 from conftest import TEST_MODEL as _TEST_MODEL, model_budget_bytes
 from review.verdict import BUDGET_SUMMARY, FALLBACK_SUMMARY, MECHANICAL_NOTE, SKIPPED_SUMMARY
+import agent.backend
+import pr.target
+import review.pipeline
+import pr.state
 
 _TEST_BUDGET = model_budget_bytes()
 
@@ -982,19 +986,19 @@ class TestPhaseSynthesis:
         this maps wrong lands the patch on a module the code under test never
         reads and the test passes having mocked nothing.
         """
-        from agent import retry as agent_retry
-        from review import outcome as review_outcome
-        from review import phases as review_phases
-        from review import steps as review_steps
+        import agent.retry
+        import review.outcome
+        import review.phases
+        import review.steps
         owners = {
-            "build_prompt": review_steps,
-            "post_process_findings": review_outcome,
-            "run_agent": review_phases,
+            "build_prompt": review.steps,
+            "post_process_findings": review.outcome,
+            "run_agent": review.phases,
             # `_retry_missing_output` is `agent_retry.retry_missing_output`
             # (aliased in `review_retry`), which recovers through its own
             # `try_recover_output` binding, not `review_phases`' — that one is
             # read only by `_review_group`, which this phase never calls.
-            "try_recover_output": agent_retry,
+            "try_recover_output": agent.retry,
         }
         defaults = {
             "build_prompt": lambda *a, **kw: "mock prompt",
@@ -1349,8 +1353,8 @@ class TestRunSynthesisOrFallback:
 
     def test_a_diagnosed_synthesis_lands_in_state_failed(self, ro, tmp_path, monkeypatch):
         """`_run_synthesis_or_fallback` copies a phase's diagnosis into `state.failed`."""
-        from review import pipeline as review_pipeline
-        from review import steps as review_steps
+        import review.pipeline
+        import review.steps
 
         job = self._make_job(ro, tmp_path, mode="self")
         state = self._make_state(ro)
@@ -1359,13 +1363,13 @@ class TestRunSynthesisOrFallback:
             ro._build_mechanical_fallback(
                 job, count, merged, skipped_groups=skipped_groups,
             ).write(job.review_file)
-            return review_pipeline.PhaseResult(
+            return review.pipeline.PhaseResult(
                 str(tmp_path / "synthesis.jsonl"),
                 diagnosis=ro.Diagnosis(ro.DiagnosisKind.MECHANICAL_FALLBACK),
             )
 
-        monkeypatch.setattr(review_steps, "_phase_synthesis", mock_synthesis)
-        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review.steps, "_phase_synthesis", mock_synthesis)
+        monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
 
         merged = self.MERGED
         ro._run_synthesis_or_fallback(
@@ -1382,8 +1386,8 @@ class TestRunSynthesisOrFallback:
         file, so a review discussing the fallback machinery is not diagnosed
         as one.
         """
-        from review import pipeline as review_pipeline
-        from review import steps as review_steps
+        import review.pipeline
+        import review.steps
 
         job = self._make_job(ro, tmp_path)
         state = self._make_state(ro)
@@ -1394,10 +1398,10 @@ class TestRunSynthesisOrFallback:
                 f"{MECHANICAL_NOTE} and {FALLBACK_SUMMARY} on the document.\n\n"
                 "## Verdict\nApprove\n"
             )
-            return review_pipeline.PhaseResult(str(tmp_path / "synthesis.jsonl"))
+            return review.pipeline.PhaseResult(str(tmp_path / "synthesis.jsonl"))
 
-        monkeypatch.setattr(review_steps, "_phase_synthesis", mock_synthesis)
-        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review.steps, "_phase_synthesis", mock_synthesis)
+        monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
 
         merged = self.MERGED
         ro._run_synthesis_or_fallback(
@@ -1406,8 +1410,8 @@ class TestRunSynthesisOrFallback:
         assert Phase.SYNTHESIS not in state.failed
 
     def test_synthesis_reports_what_its_log_records(self, ro, tmp_path, monkeypatch):
-        from review import pipeline as review_pipeline
-        from review import steps as review_steps
+        import review.pipeline
+        import review.steps
 
         job = self._make_job(ro, tmp_path)
         state = self._make_state(ro)
@@ -1416,10 +1420,10 @@ class TestRunSynthesisOrFallback:
             from pathlib import Path
             Path(job.review_file).write_text(
                 "# Review\n\n## Summary\nok\n\n## Verdict\nApprove\n")
-            return review_pipeline.PhaseResult(str(tmp_path / "synthesis.jsonl"), 1.25)
+            return review.pipeline.PhaseResult(str(tmp_path / "synthesis.jsonl"), 1.25)
 
-        monkeypatch.setattr(review_steps, "_phase_synthesis", mock_synthesis)
-        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review.steps, "_phase_synthesis", mock_synthesis)
+        monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
 
         merged = self.MERGED
         result = ro._run_synthesis_or_fallback(
@@ -1428,29 +1432,29 @@ class TestRunSynthesisOrFallback:
         assert result.cost == 1.25
 
     def test_a_clean_review_spends_nothing(self, ro, tmp_path, monkeypatch):
-        from review import pipeline as review_pipeline
-        from review import steps as review_steps
+        import review.pipeline
+        import review.steps
 
         job = self._make_job(ro, tmp_path)
         state = self._make_state(ro)
-        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
 
         result = ro._run_synthesis_or_fallback(
             job, state, "", 1, "No findings.\n", [], 0, 0.0, 20.0,
         )
-        assert result == review_pipeline.PhaseResult()
+        assert result == review.pipeline.PhaseResult()
 
     def test_a_mention_of_a_finding_id_is_not_a_finding(self, ro, tmp_path, monkeypatch):
         """The merge declares nothing, so the review is clean — a triage note
         naming a prior ID used to send the run to synthesis with no findings."""
-        from review import pipeline as review_pipeline
-        from review import steps as review_steps
+        import review.pipeline
+        import review.steps
 
         job = self._make_job(ro, tmp_path)
         state = self._make_state(ro)
-        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
         monkeypatch.setattr(
-            review_steps, "_phase_synthesis",
+            review.steps, "_phase_synthesis",
             lambda *a, **kw: pytest.fail("synthesis ran for a review with no findings"))
 
         result = ro._run_synthesis_or_fallback(
@@ -1458,21 +1462,21 @@ class TestRunSynthesisOrFallback:
             "## File Triage\n- `api.go` — reviewed, [M1] was fixed here\n", [],
             0, 0.0, 20.0,
         )
-        assert result == review_pipeline.PhaseResult()
+        assert result == review.pipeline.PhaseResult()
 
     def test_a_synthesis_skipped_on_budget_spends_nothing(self, ro, tmp_path, monkeypatch):
-        from review import pipeline as review_pipeline
-        from review import steps as review_steps
+        import review.pipeline
+        import review.steps
 
         job = self._make_job(ro, tmp_path)
         state = self._make_state(ro)
-        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
 
         merged = self.MERGED
         result = ro._run_synthesis_or_fallback(
             job, state, "", 1, merged, [], 0, 25.0, 20.0,
         )
-        assert result == review_pipeline.PhaseResult()
+        assert result == review.pipeline.PhaseResult()
 
     def test_no_group_reports_partial_not_a_failed_run(self, ro, tmp_path, monkeypatch):
         """A group phase the operator switched off is not the pipeline failing.
@@ -1481,13 +1485,13 @@ class TestRunSynthesisOrFallback:
         with `skipped` as the reason — `all groups failed` would blame the
         agents for a review nobody asked to run.
         """
-        from review import pipeline as review_pipeline
-        from review import steps as review_steps
+        import review.pipeline
+        import review.steps
 
         job = self._make_job(
             ro, tmp_path, skip_phases=frozenset({ro.Phase.GROUP}))
         state = self._make_state(ro)
-        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
 
         merged = self.MERGED
         skipped = ro.Diagnosis(ro.DiagnosisKind.SKIPPED, detail="--no-group")
@@ -1500,8 +1504,8 @@ class TestRunSynthesisOrFallback:
 
     def test_no_synthesis_writes_the_mechanical_merge(self, ro, tmp_path, monkeypatch):
         """`--no-synthesis` reaches the review file without an agent."""
-        from review import pipeline as review_pipeline
-        from review import steps as review_steps
+        import review.pipeline
+        import review.steps
 
         job = self._make_job(
             ro, tmp_path, skip_phases=frozenset({ro.Phase.SYNTHESIS}))
@@ -1510,16 +1514,16 @@ class TestRunSynthesisOrFallback:
         (tmp_path / "wt").mkdir()
         (tmp_path / "wt" / "api.go").write_text("\n" * 20)
         state = self._make_state(ro)
-        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
         monkeypatch.setattr(
-            review_steps, "_phase_synthesis",
+            review.steps, "_phase_synthesis",
             lambda *a, **kw: pytest.fail("synthesis ran despite --no-synthesis"))
 
         merged = self.MERGED
         result = ro._run_synthesis_or_fallback(
             job, state, "", 1, merged, [], 0, 0.0, 20.0,
         )
-        assert result == review_pipeline.PhaseResult()
+        assert result == review.pipeline.PhaseResult()
         assert Phase.SYNTHESIS in state.done
         assert state.failed == {}
         assert "api.go:10" in Path(job.review_file).read_text()
@@ -1532,15 +1536,15 @@ class TestRunSynthesisOrFallback:
         Without the section a run resumed at the disprove gate reads its own
         review as unfinished and re-enters synthesis to rewrite it.
         """
-        from review import pipeline as review_pipeline
-        from review import steps as review_steps
+        import review.pipeline
+        import review.steps
 
         job = self._make_job(
             ro, tmp_path, skip_phases=frozenset({ro.Phase.SYNTHESIS}))
         (tmp_path / "wt").mkdir()
         (tmp_path / "wt" / "api.go").write_text("\n" * 20)
         state = self._make_state(ro)
-        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
 
         ro._run_synthesis_or_fallback(
             job, state, "", 1, self.MERGED, [], 0, 0.0, 20.0,
@@ -1557,14 +1561,14 @@ class TestRunSynthesisOrFallback:
         self, ro, tmp_path, monkeypatch,
     ):
         """The budget path says why synthesis did not run, not that it failed."""
-        from review import pipeline as review_pipeline
-        from review import steps as review_steps
+        import review.pipeline
+        import review.steps
 
         job = self._make_job(ro, tmp_path)
         (tmp_path / "wt").mkdir()
         (tmp_path / "wt" / "api.go").write_text("\n" * 20)
         state = self._make_state(ro)
-        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
 
         ro._run_synthesis_or_fallback(
             job, state, "", 1, self.MERGED, [], 0, 25.0, 20.0,
@@ -1585,14 +1589,14 @@ class TestRunSynthesisOrFallback:
         tree and spend none of the budget that ran out, so the path that ships
         group output on a cut-off post-processes it like every other one.
         """
-        from review import pipeline as review_pipeline
-        from review import steps as review_steps
+        import review.pipeline
+        import review.steps
 
         job = self._make_job(ro, tmp_path)
         (tmp_path / "wt").mkdir()
         (tmp_path / "wt" / "api.go").write_text("\n" * 20)
         state = self._make_state(ro)
-        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
 
         ro._run_synthesis_or_fallback(
             job, state, "", 1, self.MERGED, [], 0, 25.0, 20.0,
@@ -1608,8 +1612,8 @@ class TestRunSynthesisOrFallback:
         self, ro, tmp_path, monkeypatch, skipped, cost_so_far,
     ):
         """Neither path weighed the review, so neither approves or blocks it."""
-        from review import pipeline as review_pipeline
-        from review import steps as review_steps
+        import review.pipeline
+        import review.steps
 
         job = self._make_job(
             ro, tmp_path,
@@ -1618,7 +1622,7 @@ class TestRunSynthesisOrFallback:
         (tmp_path / "wt").mkdir()
         (tmp_path / "wt" / "api.go").write_text("\n" * 20)
         state = self._make_state(ro)
-        monkeypatch.setattr(review_steps, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
 
         ro._run_synthesis_or_fallback(
             job, state, "", 1, self.MERGED, [], 0, cost_so_far, 20.0,
@@ -1753,7 +1757,7 @@ class TestRetryFailedGroups:
         )
 
     def test_retries_max_turns_failure(self, ro, tmp_path, monkeypatch):
-        from review import phases as review_phases
+        import review.phases
 
         job = self._make_job(ro, tmp_path)
         groups = [ro.Group(name="grp-a", files=["a.go"], lines=100)]
@@ -1767,9 +1771,9 @@ class TestRetryFailedGroups:
             Path(inv.session_log).write_text("")
             return 0
 
-        monkeypatch.setattr(review_phases, "run_agent", mock_invoke)
-        monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **kw: "mock prompt")
-        monkeypatch.setattr(review_phases, "_validate_group_output", lambda *a: None)
+        monkeypatch.setattr(review.phases, "run_agent", mock_invoke)
+        monkeypatch.setattr(review.phases, "build_prompt", lambda *a, **kw: "mock prompt")
+        monkeypatch.setattr(review.phases, "_validate_group_output", lambda *a: None)
 
         failed = [ro.GroupFailure("grp-a", _max_turns_16(ro))]
         result = ro._retry_failed_groups(failed, groups, job, 1, "", None)
@@ -1799,7 +1803,7 @@ class TestRetryFailedGroups:
         """
         from pathlib import Path
 
-        from review import phases as review_phases
+        import review.phases
 
         job = self._make_job(ro, tmp_path)
         groups = [
@@ -1820,9 +1824,9 @@ class TestRetryFailedGroups:
             Path(inv.session_log).write_text("")
             return 0
 
-        monkeypatch.setattr(review_phases, "run_agent", mock_invoke)
-        monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **kw: "p")
-        monkeypatch.setattr(review_phases, "_validate_group_output", lambda *a: None)
+        monkeypatch.setattr(review.phases, "run_agent", mock_invoke)
+        monkeypatch.setattr(review.phases, "build_prompt", lambda *a, **kw: "p")
+        monkeypatch.setattr(review.phases, "_validate_group_output", lambda *a: None)
 
         failed = [
             ro.GroupFailure(g.name, _max_turns_16(ro)) for g in groups
@@ -1860,7 +1864,7 @@ class TestRetryFailedGroups:
         assert result == failed
 
     def test_skipped_groups_run_after_retries_succeed(self, ro, tmp_path, monkeypatch):
-        from review import phases as review_phases
+        import review.phases
 
         job = self._make_job(ro, tmp_path)
         groups = [
@@ -1880,9 +1884,9 @@ class TestRetryFailedGroups:
             Path(inv.session_log).write_text("")
             return 0
 
-        monkeypatch.setattr(review_phases, "run_agent", mock_invoke)
-        monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **kw: "mock prompt")
-        monkeypatch.setattr(review_phases, "_validate_group_output", lambda *a: None)
+        monkeypatch.setattr(review.phases, "run_agent", mock_invoke)
+        monkeypatch.setattr(review.phases, "build_prompt", lambda *a, **kw: "mock prompt")
+        monkeypatch.setattr(review.phases, "_validate_group_output", lambda *a: None)
 
         failed = [
             ro.GroupFailure("grp-a", _max_turns_16(ro)),
@@ -1896,7 +1900,7 @@ class TestRetryFailedGroups:
         assert "grp-b" in calls
 
     def test_skipped_groups_kept_when_retries_fail(self, ro, tmp_path, monkeypatch):
-        from review import phases as review_phases
+        import review.phases
 
         job = self._make_job(ro, tmp_path)
         groups = [
@@ -1909,10 +1913,10 @@ class TestRetryFailedGroups:
             Path(inv.session_log).write_text("")
             return 1
 
-        monkeypatch.setattr(review_phases, "run_agent", mock_invoke)
-        monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **kw: "mock prompt")
+        monkeypatch.setattr(review.phases, "run_agent", mock_invoke)
+        monkeypatch.setattr(review.phases, "build_prompt", lambda *a, **kw: "mock prompt")
         monkeypatch.setattr(
-            review_phases, "diagnose_missing_output",
+            review.phases, "diagnose_missing_output",
             lambda *a, **kw: ro.Diagnosis(ro.DiagnosisKind.MAX_TURNS, num_turns=30),
         )
 
@@ -2484,7 +2488,7 @@ class TestFetchMetadataSelfMode:
         commit_all(repo, "add unpushed")
 
         monkeypatch.setattr(
-            ro._rpl, "fetch_pr_metadata",
+            review.pipeline, "fetch_pr_metadata",
             lambda repo_name, pr_number: _pr_metadata(ro),
         )
 
@@ -2516,7 +2520,7 @@ class TestFetchMetadataSelfMode:
         commit_all(repo, "add feat")
 
         monkeypatch.setattr(
-            ro._rpl, "fetch_pr_metadata",
+            review.pipeline, "fetch_pr_metadata",
             lambda repo_name, pr_number: _pr_metadata(ro, base="main"),
         )
 
@@ -3092,13 +3096,13 @@ class TestCleanupScope:
         Pass *out* to keep the result JSON the run prints; the default throws
         it away, since what most of these tests read is the directory.
         """
-        from fix import engine as fix_engine  # the `ro` fixture has already put `ai/lib` on the path
+        import fix.engine  # the `ro` fixture has already put `ai/lib` on the path
 
         review_dir = tmp_path / "review-dir"
         review_dir.mkdir()
         review_file = review_dir / "review.md"
 
-        pr = ro.PRMetadata(
+        pr_meta = ro.PRMetadata(
             title="t", body="", head="feat", base="main", head_sha="abc123",
             additions=10, deletions=0, changed_files=1,
             files=[{"path": "a.py", "additions": 10, "deletions": 0}],
@@ -3114,13 +3118,13 @@ class TestCleanupScope:
         def _fix(job, _trail=None, **_kwargs):
             artifacts = Path(job.artifact_dir)
             (artifacts / "fix.jsonl").write_text("{}\n")
-            (artifacts / fix_engine.TRACKING_FILENAME).write_text("## <!-- fix:M1 -->\n")
+            (artifacts / fix.engine.TRACKING_FILENAME).write_text("## <!-- fix:M1 -->\n")
 
-        monkeypatch.setattr(ro.ai_backend, "preflight", lambda *a, **k: True)
-        monkeypatch.setattr(ro.pr_state, "load_state", lambda *a, **k: None)
+        monkeypatch.setattr(agent.backend, "preflight", lambda *a, **k: True)
+        monkeypatch.setattr(pr.state, "load_state", lambda *a, **k: None)
         monkeypatch.setattr(
             ro, "fetch_metadata",
-            lambda *a, **k: ro.RunContext(pr, ro.PRContext(), None),
+            lambda *a, **k: ro.RunContext(pr_meta, ro.PRContext(), None),
         )
         # A real record rather than a mock: `_run_phases` sizes the run off
         # the preflight's delta fields, which a mock answers with objects that
@@ -3156,7 +3160,7 @@ class TestCleanupScope:
             Path(job.session_log).write_text("{}\n")
 
         monkeypatch.setattr(
-            ro.pr_target, "repo_identity_from_origin", lambda *a, **k: identity)
+            pr.target, "repo_identity_from_origin", lambda *a, **k: identity)
         self._run(ro, monkeypatch, tmp_path, pipeline=_capture)
         return seen["host"]
 
@@ -3164,7 +3168,7 @@ class TestCleanupScope:
         self, ro, monkeypatch, tmp_path,
     ):
         """The ordinary run: `--repo` and the checkout's origin agree."""
-        identity = ro.pr_target.RepoIdentity(
+        identity = pr.target.RepoIdentity(
             label="org/repo", key="org-repo", host="ghe.acme.com")
         assert self._host_for_origin(
             ro, monkeypatch, tmp_path, identity) == "ghe.acme.com"
@@ -3180,7 +3184,7 @@ class TestCleanupScope:
         served from, which is worse than the generic default: a wrong
         enterprise link looks authoritative and 404s.
         """
-        identity = ro.pr_target.RepoIdentity(
+        identity = pr.target.RepoIdentity(
             label="other/elsewhere", key="other-elsewhere", host="ghe.acme.com")
         assert self._host_for_origin(ro, monkeypatch, tmp_path, identity) == ""
 
@@ -3261,7 +3265,7 @@ class TestCleanupScope:
         `pr review --recover` resumes from pipeline.json and the outputs of the
         groups that did succeed, so a sweep here would strand the recovery.
         """
-        from core import serde
+        import core.serde
         from agent.diagnosis import Diagnosis, DiagnosisKind
         from review.paths import FILENAME_PIPELINE_STATE
         from review.state import PipelineState
@@ -3276,7 +3280,7 @@ class TestCleanupScope:
                 done={Phase.SYNTHESIS},
             )
             (review_dir / FILENAME_PIPELINE_STATE).write_text(
-                json.dumps(serde.to_dict(state)),
+                json.dumps(core.serde.to_dict(state)),
             )
 
         review_dir = self._run(ro, monkeypatch, tmp_path, pipeline=_partial, fix=True)
@@ -3293,12 +3297,12 @@ class TestCleanupScope:
         paid for out of this JSON, so failing to delete a log cannot be what
         loses it.
         """
-        from review import gc as review_gc
+        import review.gc
 
         def _explode(review_dir):
             raise OSError(30, "Read-only file system", str(review_dir / "disprove.jsonl"))
 
-        monkeypatch.setattr(review_gc, "cleanup_intermediates", _explode)
+        monkeypatch.setattr(review.gc, "cleanup_intermediates", _explode)
 
         out = io.StringIO()
         review_dir = self._run(ro, monkeypatch, tmp_path, out=out)
@@ -3321,12 +3325,12 @@ class TestThePublishingGate:
 
     def _gate_at_first_work(self, ro, monkeypatch, tmp_path, argv):
         """Whether the run could publish by the time it started doing anything."""
-        from core import publishing
+        import core.publishing
 
         seen = {}
 
         def stop(*args, **kwargs):
-            seen["enabled"] = publishing.enabled()
+            seen["enabled"] = core.publishing.enabled()
             raise SystemExit(0)
 
         monkeypatch.setattr(ro, "detect_repo", stop)

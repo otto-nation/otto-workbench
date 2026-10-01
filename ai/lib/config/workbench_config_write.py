@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from core import timeouts
+import core.timeouts
 from config.workbench_config import (
     CONFIG_HEADER,
     CONTAINER_SCOPE,
@@ -335,7 +335,7 @@ def set_value(key: str, value: str, path: Path | None = None, scope: str = GLOBA
         try:
             subprocess.run(
                 ["yq", "-i", _yq_assignment(key, typed), str(path)],
-                check=True, timeout=timeouts.LOCAL, env=env,
+                check=True, timeout=core.timeouts.LOCAL, env=env,
             )
         except subprocess.SubprocessError as exc:
             raise ConfigError(f"could not write {key} to {path}: {exc}") from exc

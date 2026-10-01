@@ -41,7 +41,7 @@ from pr.domains import (
     TriageSummary,
 )
 
-from core import text
+import core.text
 from core.serde import (
     from_dict as _serde_from_dict,
     load_file as _serde_load_file,
@@ -503,7 +503,7 @@ def _is_stale(domain: Domain) -> bool:
     """
     if not domain.updated_at:
         return False
-    age = text.age_of(domain.updated_at)
+    age = core.text.age_of(domain.updated_at)
     return age is None or age >= _AGE_STALE
 
 
@@ -528,7 +528,7 @@ def _last_checked(domain: Domain) -> str:
     is still not vouched for — `_is_stale` says so — so the clause says which
     of the two it is instead of leaving a blank.
     """
-    ago = text.relative_time(domain.updated_at)
+    ago = core.text.relative_time(domain.updated_at)
     return f"last checked {ago}" if ago else "last checked at an unreadable time"
 
 
@@ -566,13 +566,13 @@ def age_suffix(updated_at: str) -> str:
     """
     if not updated_at:
         return ""
-    age = text.age_of(updated_at)
+    age = core.text.age_of(updated_at)
     if age is None:
         return " [STALE — age unknown]"
     if age >= _AGE_STALE:
-        return f" [STALE — {text.relative_time(updated_at)}]"
+        return f" [STALE — {core.text.relative_time(updated_at)}]"
     if age >= _AGE_VISIBLE:
-        return f" (as of {text.relative_time(updated_at)})"
+        return f" (as of {core.text.relative_time(updated_at)})"
     return ""
 
 

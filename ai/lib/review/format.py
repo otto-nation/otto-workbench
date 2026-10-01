@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from pr import target as pr_target
+import pr.target
 from pr.domains import VERDICT_PROSE_PREFIX_RE
 from review.grammar import finding_tag, posted_finding_tag, sid_marker
 from review.sections import ReviewSections, SectionConfig
@@ -430,7 +430,7 @@ def _build_permalink(repo: str, ref: str, m: re.Match, host: str = "") -> str:
     review whose sidecar predates the field correctly means.
     """
     path, start, end = m.group(1), m.group(2), m.group(3)
-    url = f"{pr_target.forge_base_url(host)}/{repo}/blob/{ref}/{path}#L{start}"
+    url = f"{pr.target.forge_base_url(host)}/{repo}/blob/{ref}/{path}#L{start}"
     if end:
         url += f"-L{end}"
     display = f"`{path}:{start}{f'-{end}' if end else ''}`"

@@ -29,11 +29,11 @@ from conftest import synthetic_review
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from review import gc as review_gc
-from review import phases as review_phases
-from review import pipeline as review_pipeline
-from review import state as review_state
-from review import steps as review_steps
+import review.gc
+import review.phases
+import review.pipeline
+import review.state
+import review.steps
 
 _MAX_TURNS_RECORD = json.dumps({
     "type": "result", "subtype": "error_max_turns", "is_error": True,
@@ -125,13 +125,13 @@ def job(tmp_path):
     # Two files per top-level dir; 150 lines each keeps a/ and b/ above
     # MIN_GROUP_LINES so they remain separate groups.
     files = [{"path": p, "additions": 150, "deletions": 0} for p in _FILES]
-    return review_pipeline.ReviewJob(
+    return review.pipeline.ReviewJob(
         repo="org/repo", pr_number="1",
-        pr=review_pipeline.PRMetadata(
+        pr=review.pipeline.PRMetadata(
             title="t", body="", head="feat", base="main", head_sha="abc123",
             additions=600, deletions=0, changed_files=len(files), files=files,
         ),
-        ctx=review_pipeline.PRContext(),
+        ctx=review.pipeline.PRContext(),
         wt_path=str(tmp_path),
         review_file=str(tmp_path / "reviews" / "review.md"),
         session_log=str(tmp_path / "reviews" / "session.jsonl"),
@@ -143,8 +143,8 @@ def run(monkeypatch):
     """Run the pipeline with a scripted agent, returning that agent."""
     # Both modules bind build_prompt: the phases build the group prompts,
     # review_steps builds the synthesis one.
-    monkeypatch.setattr(review_phases, "build_prompt", lambda *a, **k: "PROMPT")
-    monkeypatch.setattr(review_steps, "build_prompt", lambda *a, **k: "PROMPT")
+    monkeypatch.setattr(review.phases, "build_prompt", lambda *a, **k: "PROMPT")
+    monkeypatch.setattr(review.steps, "build_prompt", lambda *a, **k: "PROMPT")
 
     def _run(
         job, fails=None, denied=None, costs=None,
@@ -154,20 +154,20 @@ def run(monkeypatch):
             job.review_file, fails=fails, denied=denied, costs=costs,
             review_body=review_body,
         )
-        monkeypatch.setattr(review_phases, "run_agent", agent)
+        monkeypatch.setattr(review.phases, "run_agent", agent)
         # The sweep belongs to the orchestrator's scope rather than to the
         # pipeline, so a run that leaves no state behind is only visible to a
         # harness that enters that scope too.
         with contextlib.redirect_stdout(io.StringIO()):
-            with review_gc.cleaned_on_success(Path(job.artifact_dir)):
-                review_pipeline.run_multi_phase(job, **pipeline_kwargs)
+            with review.gc.cleaned_on_success(Path(job.artifact_dir)):
+                review.pipeline.run_multi_phase(job, **pipeline_kwargs)
         return agent
 
     return _run
 
 
 def _state(job) -> dict:
-    return json.loads(Path(review_state._pipeline_state_path(job)).read_text())
+    return json.loads(Path(review.state._pipeline_state_path(job)).read_text())
 
 
 def _review(job) -> str:
@@ -190,7 +190,7 @@ class TestRecoverRerunsOnlyWhatFailed:
 
         run(job)
 
-        assert not Path(review_state._pipeline_state_path(job)).exists()
+        assert not Path(review.state._pipeline_state_path(job)).exists()
 
     def test_a_recovered_group_drops_the_failures_section(self, job, run):
         run(job, fails={"group-2"})
@@ -240,7 +240,7 @@ class TestRecoverAcrossASchemaChange:
 
     @staticmethod
     def _downgrade(job, reason: str):
-        path = Path(review_state._pipeline_state_path(job))
+        path = Path(review.state._pipeline_state_path(job))
         state = json.loads(path.read_text())
         state["groups_failed"] = {"2": reason}
         path.write_text(json.dumps(state))
@@ -253,7 +253,7 @@ class TestRecoverAcrossASchemaChange:
 
         assert "group-1" not in second.phases
         assert "group-2" in second.phases
-        assert not Path(review_state._pipeline_state_path(job)).exists()
+        assert not Path(review.state._pipeline_state_path(job)).exists()
 
     def test_a_legacy_string_failure_renders_verbatim(self, job, run):
         run(job, fails={"group-2"})
@@ -262,8 +262,8 @@ class TestRecoverAcrossASchemaChange:
         # from the prior run is not what is under test here.
         Path(job.review_file).write_text(_REVIEW_BODY)
 
-        review_state._inject_failures_and_status(
-            job.review_file, review_state._read_pipeline_state(job),
+        review.state._inject_failures_and_status(
+            job.review_file, review.state._read_pipeline_state(job),
         )
 
         assert "| group-2: b | agent error: model not available | failed |" in _review(job)
@@ -278,21 +278,21 @@ class TestTheRunningTotalChargesEveryPhase:
     """
 
     def test_synthesis_spend_closes_the_disprove_gate(self, job, run):
-        agent = run(
+        agent_spend = run(
             job, costs={"synthesis": 5.0}, review_body=_REVIEW_WITH_FINDING,
             max_cost=1.0, disprove=True,
         )
 
-        assert "synthesis" in agent.phases
-        assert "disprove" not in agent.phases
+        assert "synthesis" in agent_spend.phases
+        assert "disprove" not in agent_spend.phases
 
     def test_a_synthesis_within_budget_leaves_the_gate_open(self, job, run):
-        agent = run(
+        agent_spend = run(
             job, costs={"synthesis": 0.1}, review_body=_REVIEW_WITH_FINDING,
             max_cost=1.0, disprove=True,
         )
 
-        assert "disprove" in agent.phases
+        assert "disprove" in agent_spend.phases
 
 
 class TestTheDisproveGateRecordsItsOwnOutcome:
@@ -310,7 +310,7 @@ class TestTheDisproveGateRecordsItsOwnOutcome:
         Written by hand because a run that survives the gate sweeps its own
         state, and the pipeline offers no seam to die halfway through one.
         """
-        Path(review_state._pipeline_state_path(job)).write_text(json.dumps({
+        Path(review.state._pipeline_state_path(job)).write_text(json.dumps({
             "head_sha": "abc123", "group_names": ["a", "b"],
             "groups_done": [1, 2], "done": ["synthesis"],
         }))
@@ -392,7 +392,7 @@ class TestRecoverDeclinesTheWorkItShould:
         whose output had vanished.
         """
         run(job)
-        Path(review_state._pipeline_state_path(job)).write_text(json.dumps({
+        Path(review.state._pipeline_state_path(job)).write_text(json.dumps({
             "head_sha": "abc123", "group_names": ["a", "b"],
             "groups_done": [1, 2], "done": ["synthesis", "disprove"],
         }))

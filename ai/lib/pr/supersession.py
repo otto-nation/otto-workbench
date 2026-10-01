@@ -86,12 +86,12 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 
-from gh import client as gh_client
-from git import client as git_client
-from git import topology as git_topology
-from core import log
-from pr import domains as pr_domains
-from pr import state as pr_state
+import gh.client
+import git.client
+import git.topology
+import core.log
+import pr.domains
+import pr.state
 from pr.domains import SupersessionKind, SupersessionSignal
 from core.trail import Trail
 
@@ -168,7 +168,7 @@ def _rev(wt_path: Path, ref: str) -> str:
     Empty is a usable answer: it makes `SupersessionDomain.matches` fail, so a
     verdict computed against a ref that would not resolve is never reused.
     """
-    return git_client.out("rev-parse", ref, cwd=wt_path)
+    return git.client.out("rev-parse", ref, cwd=wt_path)
 
 
 def _rebase_skew_days(wt_path: Path, base: str) -> int:
@@ -179,7 +179,7 @@ def _rebase_skew_days(wt_path: Path, base: str) -> int:
     Unreadable output reads as no skew: this is a hint, and a hint that cannot
     be computed is not a finding.
     """
-    out = git_client.out(
+    out = git.client.out(
         "log", "--reverse", "--format=%at %ct", f"{base}..HEAD", cwd=wt_path)
     if not out:
         return 0
@@ -199,7 +199,7 @@ def _branch_added_symbols(wt_path: Path, base: str) -> list[AddedSymbol]:
     """
     found: dict[str, str] = {}
     path = ""
-    for line in git_client.lines("diff", f"{base}...HEAD", cwd=wt_path):
+    for line in git.client.lines("diff", f"{base}...HEAD", cwd=wt_path):
         if line.startswith("+++ b/"):
             path = line[len("+++ b/"):]
             continue
@@ -216,9 +216,9 @@ def _removed_from_base(wt_path: Path, base: str, symbol: str, path: str) -> str:
     signal: a symbol the base never had is simply new. Pinned to the file the
     branch adds it in, which keeps the pickaxe off the full history.
     """
-    if git_client.ok("grep", "-q", "-F", symbol, base, cwd=wt_path):
+    if git.client.ok("grep", "-q", "-F", symbol, base, cwd=wt_path):
         return ""
-    found = git_client.lines(
+    found = git.client.lines(
         "log", "--format=%h", "--max-count=1", f"-S{symbol}", base, "--", path,
         cwd=wt_path)
     return found[0] if found else ""
@@ -255,7 +255,7 @@ def _merged_pr_mentioning(repo: str, symbol: str) -> str:
     reason, so a throttle on this call is retried by nobody and latches
     nothing — it degrades to the same silence as any other failure.
     """
-    r = gh_client.api(
+    r = gh.client.api(
         f"search/issues?q=repo:{repo}+{symbol}+is:merged",
         jq='.items[0] // empty | "#\\(.number) \\(.title)"',
     )
@@ -271,7 +271,7 @@ def detect(
     knows the default branch does not pay for it twice; empty means resolve it
     here.
     """
-    base = base or f"origin/{git_topology.default_branch(wt_path)}"
+    base = base or f"origin/{git.topology.default_branch(wt_path)}"
     signals: list[SupersessionSignal] = []
 
     skew = _rebase_skew_days(wt_path, base)
@@ -327,10 +327,10 @@ def detect_cached(
     inventing a `PRIdentity` this module has no business deciding, and the
     command that owns the state writes it moments later anyway.
     """
-    base = base or f"origin/{git_topology.default_branch(wt_path)}"
+    base = base or f"origin/{git.topology.default_branch(wt_path)}"
     head_sha, base_sha = _rev(wt_path, "HEAD"), _rev(wt_path, base)
 
-    state = pr_state.load_state(target_dir) if target_dir else None
+    state = pr.state.load_state(target_dir) if target_dir else None
     if state and state.supersession.matches(head_sha, base_sha):
         if trail:
             trail.info("supersession_cache_hit", "reused cached verdict",
@@ -344,13 +344,13 @@ def detect_cached(
     verdict = detect(wt_path, repo, base, trail)
 
     if state:
-        pr_state.apply(state, pr_domains.SupersessionDomain(
-            updated_at=pr_state.now_iso(),
+        pr.state.apply(state, pr.domains.SupersessionDomain(
+            updated_at=pr.state.now_iso(),
             head_sha=verdict.head_sha,
             base_sha=verdict.base_sha,
             signals=list(verdict.signals),
         ))
-        pr_state.save_state(target_dir, state)
+        pr.state.save_state(target_dir, state)
     return verdict
 
 
@@ -364,6 +364,6 @@ def report(verdict: Verdict) -> None:
     """
     if not verdict.signals:
         return
-    log.warn("Supersession preflight — this branch may already be superseded:")
+    core.log.warn("Supersession preflight — this branch may already be superseded:")
     for signal in verdict.signals:
-        log.warn(f"  [{signal.kind}] {signal.detail}")
+        core.log.warn(f"  [{signal.kind}] {signal.detail}")

@@ -96,7 +96,9 @@ import time
 from collections.abc import Callable, Container, Mapping
 from dataclasses import dataclass, field
 
-from core import log, proc, timeouts
+import core.log
+import core.proc
+import core.timeouts
 
 # How long a tool call may emit nothing before liveness is even sampled. Only
 # arms suspicion, so it is set above the longest silence a healthy call
@@ -216,8 +218,8 @@ def _ps_rows() -> list[tuple[int, int, float]]:
     A tree walk also needs the global table regardless, since a subtree is only
     computable from every PPID edge.
     """
-    result = proc.run(
-        ["ps", "-A", "-o", "pid=,ppid=,time="], timeout=timeouts.LOCAL,
+    result = core.proc.run(
+        ["ps", "-A", "-o", "pid=,ppid=,time="], timeout=core.timeouts.LOCAL,
     )
     if not result.ok:
         return []
@@ -372,7 +374,7 @@ class StallWatch:
     def stop(self) -> None:
         self._wake.set()
         if self._thread is not None:
-            self._thread.join(timeout=timeouts.QUICK)
+            self._thread.join(timeout=core.timeouts.QUICK)
 
     def _state(self) -> tuple[int, float, float, frozenset[int], str]:
         with self._lock:
@@ -442,7 +444,7 @@ class StallWatch:
             self._armed_at = 0.0
             self.aborted_reason = template.format(tool=tool, seconds=seconds)
             reason = self.aborted_reason
-        log.warn(f"{self.prefix}stalled: {tool} idle {seconds:.0f}s — aborting")
+        core.log.warn(f"{self.prefix}stalled: {tool} idle {seconds:.0f}s — aborting")
         # A send that raises must not take the thread down with it. The
         # channel's own writer answers a dead pipe with False, but this is a
         # caller-supplied callable and the run it is watching is already in a
@@ -459,4 +461,4 @@ class StallWatch:
             try:
                 self.send(command)
             except Exception as exc:  # noqa: BLE001 - see above
-                log.warn(f"{self.prefix}could not deliver {command['type']}: {exc}")
+                core.log.warn(f"{self.prefix}could not deliver {command['type']}: {exc}")

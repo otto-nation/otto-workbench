@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     # Only under the type checker: agent.usage imports nothing from here, but
     # keeping the runtime import inside pi_prompt_result keeps this module free
     # of a module-level dependency the streaming parsers do not need.
-    from agent import usage as ai_usage
+    import agent.usage
 
 
 def _log_stderr_on_failure(proc: subprocess.Popen, session_log: str):
@@ -380,7 +380,7 @@ def _fold_pi_tokens(usage: dict, totals: dict[str, int]) -> None:
             totals[key] += int(value)
 
 
-def pi_prompt_result(stdout: str) -> tuple[str, ai_usage.SessionUsage | None]:
+def pi_prompt_result(stdout: str) -> tuple[str, agent.usage.SessionUsage | None]:
     """The reply text and the usage from one `pi -p --mode json` run.
 
     Print mode without `--mode json` emits the assistant's prose and nothing
@@ -403,7 +403,7 @@ def pi_prompt_result(stdout: str) -> tuple[str, ai_usage.SessionUsage | None]:
     output-format change should cost the measurement, not the call. This mirrors
     the Claude backend's raw-stdout fallback.
     """
-    from agent import usage as ai_usage
+    import agent.usage
 
     events = []
     for line in stdout.splitlines():
@@ -442,7 +442,7 @@ def pi_prompt_result(stdout: str) -> tuple[str, ai_usage.SessionUsage | None]:
         # which would read as a call that genuinely cost nothing.
         return (text or stdout), None
 
-    return text, ai_usage.SessionUsage(
+    return text, agent.usage.SessionUsage(
         cost=cost,
         input_tokens=totals["input"],
         output_tokens=totals["output"],

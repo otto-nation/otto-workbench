@@ -38,7 +38,9 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
 sys.path.insert(0, str(_AI_LIB_DIR))
 
 from _version import version_string as _version_string  # noqa: E402
-from core import log, proc, timeouts  # noqa: E402
+import core.log
+import core.proc
+import core.timeouts  # noqa: E402
 from eval.rules_canary import (  # noqa: E402
     CANARY_PROMPT,
     RULES_PREFIX_FLOOR,
@@ -86,15 +88,15 @@ def _run_half(cwd: Path, add_dir: str | None) -> CanaryRun:
     nothing.
     """
     try:
-        result = proc.run(
+        result = core.proc.run(
             _canary_cmd(add_dir),
-            timeout=timeouts.NETWORK,
+            timeout=core.timeouts.NETWORK,
             cwd=str(cwd),
             input_text=CANARY_PROMPT,
         )
     except (FileNotFoundError, PermissionError) as exc:
-        log.dim(f"claude could not be run: {exc}")
-        return CanaryRun(billed_input=0, exit_code=proc.MISSING_RETURNCODE)
+        core.log.dim(f"claude could not be run: {exc}")
+        return CanaryRun(billed_input=0, exit_code=core.proc.MISSING_RETURNCODE)
     return CanaryRun(
         billed_input=billed_input_from_envelope(result.stdout),
         exit_code=result.returncode,
@@ -151,9 +153,9 @@ def main() -> None:
             "ok": result.ok,
         }, indent=2))
     elif result.ok:
-        log.ok(result.summary)
+        core.log.ok(result.summary)
     else:
-        log.error(result.summary)
+        core.log.error(result.summary)
 
     if not result.measured:
         raise SystemExit(EXIT_UNMEASURED)

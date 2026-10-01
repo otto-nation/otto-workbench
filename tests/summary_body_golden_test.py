@@ -66,12 +66,12 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from git.land import CommitStatus  # noqa: E402
-from pr import attribution  # noqa: E402
+import pr.attribution  # noqa: E402
 from pr.fix import FixOutcome  # noqa: E402
 from pr.thread_models import CommentItem, ReportThread  # noqa: E402
-from pr import summary_model  # noqa: E402
-from pr import summary_render  # noqa: E402
-from pr import summary_rounds  # noqa: E402
+import pr.summary_model  # noqa: E402
+import pr.summary_render  # noqa: E402
+import pr.summary_rounds  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 GOLDEN_FULL = FIXTURES / "summary_body_full.md"
@@ -107,7 +107,7 @@ def _round_content(**buckets):
         k: list(buckets.pop(k, ()))
         for k in ("issue_comments", "review_body_comments")
     }
-    return summary_model.RoundContent(
+    return pr.summary_model.RoundContent(
         by_outcome={
             FixOutcome(name): list(entries) for name, entries in buckets.items()
         },
@@ -134,7 +134,7 @@ class _FrozenHistory:
         renderer; it is here so the stub cannot drift out of shape with the
         object it stands in for.
         """
-        return self._by_id.get(entry.id, attribution.AddressedFraming(False))
+        return self._by_id.get(entry.id, pr.attribution.AddressedFraming(False))
 
 
 def _threads():
@@ -245,7 +245,7 @@ def _full_body():
                     file="m.py", line=9),
     ])
     quiet = ["#discussion_r109", "#discussion_r110", "#discussion_r113"]
-    scope = summary_rounds.RoundScope(
+    scope = pr.summary_rounds.RoundScope(
         since=_SCOPE_SINCE,
         published_keys=frozenset(quiet),
         published_outcomes={
@@ -255,9 +255,9 @@ def _full_body():
         },
     )
 
-    return summary_render.build_summary_body(
+    return pr.summary_render.build_summary_body(
         content,
-        attribution.CommitPushResult(sha=_LINK_SHA, status=CommitStatus.PUSHED, error=""),
+        pr.attribution.CommitPushResult(sha=_LINK_SHA, status=CommitStatus.PUSHED, error=""),
         _REPO,
         _PR,
         _threads(),
@@ -275,7 +275,7 @@ def _full_body():
         # rewrote its Action cell, so the published text is re-emitted in place
         # and the entry behind it drops out of the counts.
         hand_held=[
-            summary_model.HeldRow(
+            pr.summary_model.HeldRow(
                 key="#discussion_r103",
                 published=(
                     "| [use the helper](https://github.com/owner/repo/pull/42"
@@ -288,14 +288,14 @@ def _full_body():
         ],
         wt_path=None,
         history=_FrozenHistory({
-            "t12": attribution.AddressedFraming(True, sha="def5678"),
+            "t12": pr.attribution.AddressedFraming(True, sha="def5678"),
         }),
         scope=scope,
         chain=[
-            summary_rounds.SummaryRound(
+            pr.summary_rounds.SummaryRound(
                 number=1,
                 url="https://github.com/owner/repo/pull/42#issuecomment-11"),
-            summary_rounds.SummaryRound(
+            pr.summary_rounds.SummaryRound(
                 number=2,
                 url="https://github.com/owner/repo/pull/42#issuecomment-12"),
         ],
@@ -309,9 +309,9 @@ def _empty_body():
     one whose only content is a comment triage has already split into rows — so
     it is the shape a reader sees when the pass has nothing to report.
     """
-    return summary_render.build_summary_body(
+    return pr.summary_render.build_summary_body(
         _round_content(),
-        attribution.CommitPushResult(sha="", status=CommitStatus.NO_CHANGES, error=""),
+        pr.attribution.CommitPushResult(sha="", status=CommitStatus.NO_CHANGES, error=""),
         _REPO,
         _PR,
         {},
@@ -338,7 +338,7 @@ def _raw_sections_body(*, has_comment_items: bool = False):
     line is behind a multi-line HTML comment, a blank line and a heading —
     `_summarize_comment_body`'s three skips in one value.
     """
-    return summary_render.build_summary_body(
+    return pr.summary_render.build_summary_body(
         _round_content(
             issue_comments=[
                 {"id": "901", "user": "kgn", "body": "Can we add tests?"},
@@ -353,7 +353,7 @@ def _raw_sections_body(*, has_comment_items: bool = False):
                  "state": "CHANGES_REQUESTED"},
             ],
         ),
-        attribution.CommitPushResult(sha="", status=CommitStatus.NO_CHANGES, error=""),
+        pr.attribution.CommitPushResult(sha="", status=CommitStatus.NO_CHANGES, error=""),
         _REPO,
         _PR,
         {},
@@ -374,7 +374,7 @@ def _uncommitted_body():
     unlinked, which is the one Action-cell wording neither
     `TestGeneratedActionCell` nor `TestActionCellOutcome` sweeps.
     """
-    return summary_render.build_summary_body(
+    return pr.summary_render.build_summary_body(
         _round_content(
             deferred=[
                 CommentItem(id="t1", summary="needs a plan", reviewer="kgn",
@@ -383,7 +383,7 @@ def _uncommitted_body():
                             file="b.py"),
             ],
         ),
-        attribution.CommitPushResult(sha="", status=CommitStatus.NO_CHANGES, error=""),
+        pr.attribution.CommitPushResult(sha="", status=CommitStatus.NO_CHANGES, error=""),
         _REPO,
         _PR,
         _threads(),
@@ -404,7 +404,7 @@ def _enterprise_body():
     and are *supposed* to re-emit unchanged whatever host this round runs on,
     so a body carrying them could never assert the absence of github.com.
     """
-    return summary_render.build_summary_body(
+    return pr.summary_render.build_summary_body(
         _round_content(
             fixed=[
                 CommentItem(id="t1", summary="fix the regex", reviewer="kgn",
@@ -417,7 +417,7 @@ def _enterprise_body():
                             read_sha=_LINK_SHA),
             ],
         ),
-        attribution.CommitPushResult(sha=_LINK_SHA, status=CommitStatus.PUSHED,
+        pr.attribution.CommitPushResult(sha=_LINK_SHA, status=CommitStatus.PUSHED,
                                      error=""),
         _REPO,
         _PR,
@@ -426,7 +426,7 @@ def _enterprise_body():
         head_sha=_LINK_SHA,
         wt_path=None,
         history=_FrozenHistory({
-            "t12": attribution.AddressedFraming(True, sha="def5678"),
+            "t12": pr.attribution.AddressedFraming(True, sha="def5678"),
         }),
         host=_HOST,
     )

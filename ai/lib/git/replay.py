@@ -29,9 +29,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from core import proc
-from core import timeouts
-from git import client as git_client
+import core.proc
+import core.timeouts
+import git.client
 
 
 def rewritten_away(wt_path: Path, sha: str) -> bool:
@@ -53,7 +53,7 @@ def rewritten_away(wt_path: Path, sha: str) -> bool:
     That last reading is why this cannot be written with `git_client.ok`, which
     collapses every non-zero exit into one answer.
     """
-    return git_client.run(
+    return git.client.run(
         "merge-base", "--is-ancestor", sha, "HEAD", cwd=wt_path,
     ).returncode == 1
 
@@ -77,15 +77,15 @@ def patch_ids(wt_path: Path, *revs: str) -> dict[str, list[str]]:
     range ever grows large enough that the LOCAL timeout expires — which
     degrades safely, since no ids means no match means the hold stands.
     """
-    patches = git_client.run(
+    patches = git.client.run(
         "log", "-p", "--no-merges", "--format=commit %H", *revs, cwd=wt_path,
     )
     if not patches.ok or not patches.stdout:
         return {}
     # Not git_client: this one reads a diff on stdin, and `run` deliberately
     # exposes no way to write to a child's input.
-    ids = proc.run(["git", "patch-id", "--stable"], cwd=wt_path,
-                   input_text=patches.stdout, timeout=timeouts.LOCAL)
+    ids = core.proc.run(["git", "patch-id", "--stable"], cwd=wt_path,
+                   input_text=patches.stdout, timeout=core.timeouts.LOCAL)
     if not ids.ok:
         return {}
     by_id: dict[str, list[str]] = {}
@@ -119,10 +119,10 @@ def replayed_commit(wt_path: Path, sha: str) -> str:
     the recorded commit's work is not on the branch under any name.
     """
     orphan = patch_ids(wt_path, "--no-walk", sha)
-    base = git_client.out("merge-base", sha, "HEAD", cwd=wt_path)
+    base = git.client.out("merge-base", sha, "HEAD", cwd=wt_path)
     if len(orphan) != 1 or not base:
         return ""
     replays = patch_ids(wt_path, f"{base}..HEAD").get(next(iter(orphan)), [])
     if len(replays) != 1:
         return ""
-    return git_client.out("rev-parse", "--short", replays[0], cwd=wt_path)
+    return git.client.out("rev-parse", "--short", replays[0], cwd=wt_path)

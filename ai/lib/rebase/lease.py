@@ -45,7 +45,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from git import client as git_client
+import git.client
 
 from . import inspect as rebase_inspect
 
@@ -92,7 +92,7 @@ def remembered_tip(cwd: str, branch: str) -> str:
     the remote has now, which is the value that cannot be trusted.
     """
     for ref in (f"refs/remotes/origin/{branch}", f"refs/heads/{branch}"):
-        sha = git_client.out("rev-parse", "--verify", "--quiet", ref, cwd=cwd)
+        sha = git.client.out("rev-parse", "--verify", "--quiet", ref, cwd=cwd)
         if sha:
             return sha
     return ""

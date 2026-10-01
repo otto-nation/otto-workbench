@@ -21,12 +21,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from core import text
-from pr import attribution
-from pr import comments_fix as pr_comments_fix
-from pr import summary_model
-from pr import summary_rounds
-from pr import summary_row
+import core.text
+import pr.attribution
+import pr.comments_fix
+import pr.summary_model
+import pr.summary_rounds
+import pr.summary_row
 from pr.fix import FixOutcome
 from pr.thread_models import CommentItem, ReportThread
 
@@ -35,12 +35,12 @@ SUMMARY_MARKER = "<!-- pr-comments:summary -->"
 # Re-exported rather than defined here: `pr.settlement` names a thread the same
 # way and sits below this module, so the one implementation lives in `core.text`
 # and this name stays the spelling the raw-comment sections below already use.
-summarize_comment_body = text.summarize_comment_body
+summarize_comment_body = core.text.summarize_comment_body
 
 
 def build_summary_body(
-    content: summary_model.RoundContent,
-    cp: attribution.CommitPushResult,
+    content: pr.summary_model.RoundContent,
+    cp: pr.attribution.CommitPushResult,
     repo: str,
     pr_number: int,
     threads_by_id: dict[str, ReportThread],
@@ -49,11 +49,11 @@ def build_summary_body(
     has_comment_items: bool = False,
     head_sha: str = "",
     carried_over: list[str] | None = None,
-    hand_held: list[summary_model.HeldRow] | None = None,
+    hand_held: list[pr.summary_model.HeldRow] | None = None,
     wt_path: Path | None = None,
-    history: attribution.AddressingHistory | None = None,
-    scope: summary_rounds.RoundScope | None = None,
-    chain: list[summary_rounds.SummaryRound] | None = None,
+    history: pr.attribution.AddressingHistory | None = None,
+    scope: pr.summary_rounds.RoundScope | None = None,
+    chain: list[pr.summary_rounds.SummaryRound] | None = None,
     host: str = "",
 ) -> str:
     """Build the markdown body for the fix summary comment.
@@ -88,15 +88,15 @@ def build_summary_body(
     already on the PR, linked in order.
     """
     carried_over = carried_over or []
-    scope = scope or summary_rounds.RoundScope()
+    scope = scope or pr.summary_rounds.RoundScope()
     chain = chain or []
     issue_comments = content.issue_comments
     review_body_comments = content.review_body_comments
-    sources_at = summary_rounds.comment_timestamps(issue_comments, review_body_comments)
+    sources_at = pr.summary_rounds.comment_timestamps(issue_comments, review_body_comments)
     held_by_key = {row.key: row.published for row in hand_held or []}
     # Ahead of the counts, not just the rows: a count with no row under it is a
     # claim the table cannot show the reader.
-    folded = summary_model.folded_item_ids(content, threads_by_id)
+    folded = pr.summary_model.folded_item_ids(content, threads_by_id)
 
     def unfolded(*outcomes: FixOutcome) -> list[CommentItem]:
         return [e for e in content.of(*outcomes) if e.id not in folded]
@@ -118,7 +118,7 @@ def build_summary_body(
     # The fix commit is the tree the table describes; fall back to the reviewed
     # head when nothing was committed.
     link_sha = cp.sha or head_sha
-    deferred_status = summary_model.ActionCell.deferred(
+    deferred_status = pr.summary_model.ActionCell.deferred(
         deferred_issue_id, deferred_issue_url)
 
     def emit(
@@ -143,13 +143,13 @@ def build_summary_body(
         — see `summary_rounds._decayed`. This is the frame that holds the entry,
         so it is the one that can answer.
         """
-        cells = summary_row.row_cells_for(
+        cells = pr.summary_row.row_cells_for(
             entry, status, threads_by_id, repo, pr_number, sha, wt_path, host)
-        row = summary_row.render_row(cells)
-        key = summary_model.row_key_from_cells(cells)
+        row = pr.summary_row.render_row(cells)
+        key = pr.summary_model.row_key_from_cells(cells)
         if not scope.covers(
-            key, summary_rounds.entry_activity_at(entry, threads_by_id, sources_at),
-            summary_model.action_outcome(status), entry.settled_by,
+            key, pr.summary_rounds.entry_activity_at(entry, threads_by_id, sources_at),
+            pr.summary_model.action_outcome(status), entry.settled_by,
         ):
             (open_earlier if open_thread else settled_earlier).append(key)
             return False
@@ -168,7 +168,7 @@ def build_summary_body(
     # `sources_at` reaches the resolver as well as the round scope: a decomposed
     # item has no thread, so the comment it was cut from is the only surface
     # that can date the point it makes.
-    history = history or attribution.AddressingHistory(wt_path, sources_at)
+    history = history or pr.attribution.AddressingHistory(wt_path, sources_at)
     addressed_framings = [
         history.framing(e, threads_by_id.get(e.id)) for e in already_addressed
     ]
@@ -179,7 +179,7 @@ def build_summary_body(
     fixed_count = sum([
         emit(
             e,
-            summary_row.fixed_status_for(
+            pr.summary_row.fixed_status_for(
                 e, cp, repo, history, threads_by_id.get(e.id), host),
             getattr(e, "commit_sha", "") or link_sha,
         )
@@ -190,7 +190,7 @@ def build_summary_body(
     addressed_shown = [
         (framing, emit(
             e,
-            summary_row.addressed_status_for(
+            pr.summary_row.addressed_status_for(
                 framing, repo, host, verified=e.verified),
             link_sha,
         ))
@@ -203,17 +203,17 @@ def build_summary_body(
         1 for f, shown in addressed_shown if shown and not f.in_response
     )
     dismissed_count = sum([
-        emit(e, summary_model.ActionCell.DISMISSED, link_sha) for e in dismissed
+        emit(e, pr.summary_model.ActionCell.DISMISSED, link_sha) for e in dismissed
     ])
     # Its own count, kept out of the fixed one. The row reports that the thread
     # is no longer owed, which is all its evidence supports: GitHub's resolve
     # button covers a reviewer who was answered or who withdrew the point as
     # readily as one whose fix landed.
     settled_count = sum([
-        emit(e, summary_model.ActionCell.RECONCILED, link_sha) for e in settled_elsewhere
+        emit(e, pr.summary_model.ActionCell.RECONCILED, link_sha) for e in settled_elsewhere
     ])
     human_count = sum([
-        emit(e, summary_model.HumanReason.prose_for(e.reason), link_sha, open_thread=True)
+        emit(e, pr.summary_model.HumanReason.prose_for(e.reason), link_sha, open_thread=True)
         for e in needs_human
     ])
     deferred_count = sum([emit(e, deferred_status, link_sha) for e in deferred])
@@ -232,7 +232,7 @@ def build_summary_body(
         extras.append(f"{held_count} hand-written")
     if carried_count:
         extras.append(f"{carried_count} carried over")
-    parts.append(pr_comments_fix.count_line({
+    parts.append(pr.comments_fix.count_line({
         FixOutcome.FIXED: fixed_count,
         FixOutcome.ALREADY_ADDRESSED: addressed_count,
         FixOutcome.DISMISSED: dismissed_count,
@@ -243,8 +243,8 @@ def build_summary_body(
     parts.append("")
 
     if rows:
-        parts.append(summary_model.TABLE_HEADER)
-        parts.append(summary_model.TABLE_DIVIDER)
+        parts.append(pr.summary_model.TABLE_HEADER)
+        parts.append(pr.summary_model.TABLE_DIVIDER)
         parts.extend(rows)
         parts.append("")
 
@@ -279,10 +279,10 @@ def _table_note(count: int, noun: str, rest: str) -> list[str]:
     """
     if not count:
         return []
-    return [f"> {count} {noun}{text.plural(count)} {rest}", ""]
+    return [f"> {count} {noun}{core.text.plural(count)} {rest}", ""]
 
 
-def _render_round_chain(chain: list[summary_rounds.SummaryRound]) -> list[str]:
+def _render_round_chain(chain: list[pr.summary_rounds.SummaryRound]) -> list[str]:
     """The footer linking every earlier summary comment on the PR, oldest first.
 
     What makes a scoped summary safe to read: the round it describes is the only
@@ -310,13 +310,13 @@ def _render_raw_comment_sections(
     would otherwise publish a table with nothing under it.
     """
     parts: list[str] = []
-    unseen_reviews = summary_model.unseen_comments(review_body_comments)
+    unseen_reviews = pr.summary_model.unseen_comments(review_body_comments)
     if unseen_reviews:
         parts.extend(["### Review-Level Comments", ""])
         parts.extend(_format_review_body_items(unseen_reviews))
         parts.append("")
 
-    unseen_issue = summary_model.unseen_comments(issue_comments)
+    unseen_issue = pr.summary_model.unseen_comments(issue_comments)
     if unseen_issue:
         parts.extend(["### Discussion Comments", ""])
         parts.extend(_format_issue_comment_items(unseen_issue))

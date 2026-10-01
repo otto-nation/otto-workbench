@@ -22,8 +22,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from git import client as git_client
-from git import topology as git_topology
+import git.client
+import git.topology
 from pr.thread_models import ReportThread
 
 # Lines either side of a cited line. Wide enough to show the construct the
@@ -169,8 +169,8 @@ def diff_context_for_file(
     """
     if not file_path:
         return ""
-    default_branch = default_branch or git_topology.default_branch_cached(wt_path)
-    diff = git_client.out(
+    default_branch = default_branch or git.topology.default_branch_cached(wt_path)
+    diff = git.client.out(
         "diff", f"origin/{default_branch}", "--", file_path, cwd=wt_path)
     if not diff:
         return ""
@@ -192,8 +192,8 @@ def branch_commit_log(wt_path: Path | None) -> str:
     """
     if not wt_path:
         return ""
-    base = f"origin/{git_topology.default_branch_cached(wt_path)}"
-    return git_client.out("log", "--format=%h %s", f"{base}..HEAD", cwd=wt_path)
+    base = f"origin/{git.topology.default_branch_cached(wt_path)}"
+    return git.client.out("log", "--format=%h %s", f"{base}..HEAD", cwd=wt_path)
 
 
 def thread_comment_text(comments: list) -> str:

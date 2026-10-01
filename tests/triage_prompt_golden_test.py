@@ -48,7 +48,7 @@ import pytest  # noqa: E402
 
 from pr.comments_state import ThreadState  # noqa: E402
 from pr.thread_models import ReportThread  # noqa: E402
-from pr import triage_prompt  # noqa: E402
+import pr.triage_prompt  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -81,10 +81,10 @@ DIFF = "diff --git a/x.py b/x.py\n+pass\n"
 def _render_both():
     """Both shapes the template renders: with and without the items block."""
     return {
-        "triage_prompt_threads_only.txt": triage_prompt.build_triage_prompt(
+        "triage_prompt_threads_only.txt": pr.triage_prompt.build_triage_prompt(
             THREADS, DIFF,
         ),
-        "triage_prompt_with_comments.txt": triage_prompt.build_triage_prompt(
+        "triage_prompt_with_comments.txt": pr.triage_prompt.build_triage_prompt(
             THREADS, DIFF, unseen_comments=COMMENTS,
         ),
     }

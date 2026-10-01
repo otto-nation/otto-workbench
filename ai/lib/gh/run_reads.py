@@ -27,9 +27,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
-from gh import client as gh_client
-from git import client as git_client
-from git import topology as git_topology
+import gh.client
+import git.client
+import git.topology
 
 SKIP_CONCLUSIONS = frozenset(("skipped",))
 FAILURE_CONCLUSIONS = frozenset(
@@ -115,7 +115,7 @@ def fetch_latest_runs(repo: str, branch: str, head_sha: str = "") -> RunDiscover
     but it claims no workflow name, so it can never shadow an older real run of
     the same workflow that would otherwise have been the one reported.
     """
-    runs = gh_client.json_out(
+    runs = gh.client.json_out(
         "run", "list", "--repo", repo, "--branch", branch,
         "--limit", "20",
         "--json", "databaseId,headSha,workflowName,conclusion,status,number,attempt",
@@ -155,7 +155,7 @@ def fetch_latest_runs(repo: str, branch: str, head_sha: str = "") -> RunDiscover
 
 def fetch_run_data(repo: str, run_id: int) -> dict | None:
     """Run metadata and job results for one run, or None when gh could not read it."""
-    return gh_client.json_out(
+    return gh.client.json_out(
         "run", "view", str(run_id), "--repo", repo,
         "--json", "databaseId,number,headSha,status,conclusion,jobs",
     )
@@ -163,7 +163,7 @@ def fetch_run_data(repo: str, run_id: int) -> dict | None:
 
 def fetch_annotations(repo: str, job_id: int) -> list[dict]:
     """Annotations for a check run (job), as GitHub returned them."""
-    return gh_client.api_json(
+    return gh.client.api_json(
         f"repos/{repo}/check-runs/{job_id}/annotations", paginate=True, default=[],
     )
 
@@ -176,7 +176,7 @@ def fetch_job_logs(repo: str, job_id: int) -> str:
     reads here as a job with no logs and silently demotes every such job to the
     per-run fallback. `ci_failures` strips them.
     """
-    r = gh_client.api(
+    r = gh.client.api(
         f"repos/{repo}/actions/jobs/{job_id}/logs", allow_escape_sequences=True,
     )
     return r.stdout if r.ok else ""
@@ -184,7 +184,7 @@ def fetch_job_logs(repo: str, job_id: int) -> str:
 
 def fetch_failed_logs(repo: str, run_id: int) -> str:
     """Raw log text for the run's failed steps."""
-    r = gh_client.run("run", "view", str(run_id), "--repo", repo, "--log-failed")
+    r = gh.client.run("run", "view", str(run_id), "--repo", repo, "--log-failed")
     return r.stdout if r.ok else ""
 
 
@@ -197,7 +197,7 @@ def download_artifact(repo: str, run_id: int, artifact_name: str) -> Iterator[st
     """
     tmpdir = tempfile.mkdtemp(prefix="ci-artifact-")
     try:
-        if not gh_client.ok(
+        if not gh.client.ok(
             "run", "download", str(run_id), "--repo", repo,
             "--name", artifact_name, "--dir", tmpdir,
         ):
@@ -233,14 +233,14 @@ def commits_behind_main(repo: str, branch: str, cwd: str | None = None) -> int:
     # extra call finding out what it already knows for one of the two names.
     if not cwd and branch in ("main", "master"):
         return 0
-    default = git_topology.default_branch(cwd) if cwd else _remote_default_branch(repo)
+    default = git.topology.default_branch(cwd) if cwd else _remote_default_branch(repo)
     if branch == default:
         return 0
     if cwd:
         local = _local_commits_behind(cwd, branch, default)
         if local is not None:
             return local
-    r = gh_client.api(f"repos/{repo}/compare/{branch}...{default}", jq=".ahead_by")
+    r = gh.client.api(f"repos/{repo}/compare/{branch}...{default}", jq=".ahead_by")
     val = r.stdout.strip()
     return int(val) if r.ok and val.isdigit() else 0
 
@@ -252,7 +252,7 @@ def _remote_default_branch(repo: str) -> str:
     :func:`git.topology.default_branch` uses when git cannot answer — every
     caller needs a base ref more than it needs an error.
     """
-    r = gh_client.api(f"repos/{repo}", jq=".default_branch")
+    r = gh.client.api(f"repos/{repo}", jq=".default_branch")
     val = r.stdout.strip()
     return val if r.ok and val else "main"
 
@@ -270,10 +270,10 @@ def _local_commits_behind(cwd: str, branch: str, default: str) -> int | None:
     a rebase rather than firing one that was not needed.
     """
     base, head = f"origin/{branch}", f"origin/{default}"
-    if not all(git_client.ok("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", cwd=cwd)
+    if not all(git.client.ok("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", cwd=cwd)
                for ref in (base, head)):
         return None
-    return git_client.commits_ahead(cwd, target_ref=base, rev=head)
+    return git.client.commits_ahead(cwd, target_ref=base, rev=head)
 
 
 # ── Every check on a commit, not only the Actions ones ──────────────────────
@@ -486,7 +486,7 @@ class _Page:
 def _rollup_page(repo: str, sha: str, after: str | None) -> _Page:
     """One page of the commit's rollup, or which way it came back empty."""
     owner, _, name = repo.partition("/")
-    r = gh_client.graphql(_ROLLUP_QUERY, variables={
+    r = gh.client.graphql(_ROLLUP_QUERY, variables={
         "owner": owner, "name": name, "oid": sha,
         "page": _ROLLUP_PAGE, "after": after,
     })

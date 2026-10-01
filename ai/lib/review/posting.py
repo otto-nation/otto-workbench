@@ -16,15 +16,15 @@ import sys
 import time
 from pathlib import Path
 
-from gh import client as gh_client
-from git import client as git_client
-from core import proc
-from review import dedup as review_dedup
-from review import format as review_format
-from gh import pr_reads as review_github
+import gh.client
+import git.client
+import core.proc
+import review.dedup
+import review.format
+import gh.pr_reads
 from review.sections import ReviewSections
 
-from core import log
+import core.log
 from gh.client import LineResolutionError
 from pr.state import PostedAs, PostEvent, PostTracking
 from gh.pr_reads import PRData
@@ -61,10 +61,10 @@ def _handle_chunk_failure(
     chunk_num: int, total_chunks: int, prior_results: list[dict],
 ) -> None:
     """Log chunk failure details and exit."""
-    log.error(f"Failed to post chunk {chunk_num}/{total_chunks}")
+    core.log.error(f"Failed to post chunk {chunk_num}/{total_chunks}")
     if prior_results:
         posted_ids = [r.get("id", "?") for r in prior_results]
-        log.warn(f"Partial post: chunks 1-{chunk_num - 1} succeeded (review IDs: {posted_ids})")
+        core.log.warn(f"Partial post: chunks 1-{chunk_num - 1} succeeded (review IDs: {posted_ids})")
     sys.exit(1)
 
 
@@ -85,16 +85,16 @@ def _post_chunked_review(
     is_chunked = len(chunks) > 1
     results: list[dict] = []
 
-    pending = review_github._check_existing_pending(repo, pr, pr_data)
+    pending = gh.pr_reads._check_existing_pending(repo, pr, pr_data)
     if pending.review_id:
-        log.warn(f"Deleting existing PENDING review #{pending.review_id}")
-        gh_client.api(
+        core.log.warn(f"Deleting existing PENDING review #{pending.review_id}")
+        gh.client.api(
             f"repos/{repo}/pulls/{pr}/reviews/{pending.review_id}", method="DELETE")
     elif not pending.looked:
         # Not the same as "there is no pending review": GitHub allows one per
         # user, so posting into an unanswered check is how a run collides with
         # a pending review it could not see.
-        log.warn(
+        core.log.warn(
             "Could not check for an existing PENDING review — if this posts a "
             "duplicate, that unanswered check is why")
 
@@ -116,11 +116,11 @@ def _post_chunked_review(
             payload["event"] = "COMMENT"
 
         if is_chunked:
-            log.info(f"Posting chunk {chunk_num}/{total_chunks} ({len(chunk)} comments)...")
+            core.log.info(f"Posting chunk {chunk_num}/{total_chunks} ({len(chunk)} comments)...")
         else:
-            log.info(f"Posting review ({len(chunk)} inline)...")
+            core.log.info(f"Posting review ({len(chunk)} inline)...")
 
-        result = gh_client.api_json(
+        result = gh.client.api_json(
             f"repos/{repo}/pulls/{pr}/reviews",
             method="POST",
             input_text=json.dumps(payload, ensure_ascii=False),
@@ -133,9 +133,9 @@ def _post_chunked_review(
 
         if not is_chunked:
             continue
-        log.info(f"  Chunk {chunk_num}/{total_chunks} posted: #{result.get('id', '?')}")
+        core.log.info(f"  Chunk {chunk_num}/{total_chunks} posted: #{result.get('id', '?')}")
         if i < len(chunks) - 1:
-            log.info(f"  Waiting {INTER_CHUNK_DELAY}s before next chunk...")
+            core.log.info(f"  Waiting {INTER_CHUNK_DELAY}s before next chunk...")
             time.sleep(INTER_CHUNK_DELAY)
 
     return results
@@ -161,13 +161,13 @@ def post_review(repo: str, pr: str, payload: dict, submit: bool = False) -> dict
 
 def _submit_review(repo: str, pr: str, review_id: int) -> bool:
     """Submit a PENDING review with event=COMMENT. Returns True on success."""
-    result = gh_client.api_json(
+    result = gh.client.api_json(
         f"repos/{repo}/pulls/{pr}/reviews/{review_id}/events",
         method="POST",
         input_text=json.dumps({"event": "COMMENT"}),
     )
     if result is None:
-        log.warn(f"Failed to submit review #{review_id}")
+        core.log.warn(f"Failed to submit review #{review_id}")
         return False
     return True
 
@@ -182,19 +182,19 @@ def write_post_tracking(review_file: str, entry: PostTracking):
             json.dump(serde_to_dict(entry), f)
             f.write("\n")
     except OSError as e:
-        log.warn(f"Failed to write post tracking ({post_file}): {e}")
+        core.log.warn(f"Failed to write post tracking ({post_file}): {e}")
 
 
 # ── SHA-drift fallback ──────────────────────────────────────────────────────
 
 def _format_comment_body(
     findings: list[Finding], severity_filter: set[str],
-    review_sha: str, head_sha: str, drift: review_github.NewCommits,
+    review_sha: str, head_sha: str, drift: gh.pr_reads.NewCommits,
     sections: ReviewSections | None = None,
 ) -> str:
     """Format findings as a single comment body for stale-SHA posting."""
-    _, body_findings = review_format.renumber_for_posting([], findings)
-    body = review_format.format_body_text(
+    _, body_findings = review.format.renumber_for_posting([], findings)
+    body = review.format.format_body_text(
         body_findings, False, severity_filter,
         sections=sections,
     )
@@ -208,8 +208,8 @@ def _format_comment_body(
     )
     header = (
         f"> **Note:** This review was written against commit "
-        f"`{git_client.abbrev(review_sha)}`. "
-        f"PR HEAD has since moved to `{git_client.abbrev(head_sha)}` "
+        f"`{git.client.abbrev(review_sha)}`. "
+        f"PR HEAD has since moved to `{git.client.abbrev(head_sha)}` "
         f"{moved}. "
         f"Inline positions may be inaccurate — posted as a comment instead of a review.\n"
     )
@@ -226,13 +226,13 @@ def _post_as_comment(
 ):
     """Post review as a single PR comment when SHA has drifted."""
     verdict = sections.get("verdict") if sections else ""
-    kept, deduped = review_dedup.dedup_against_posted(findings, args.repo, args.pr, pr_data)
+    kept, deduped = review.dedup.dedup_against_posted(findings, args.repo, args.pr, pr_data)
     if deduped:
-        log.info(f"Skipped {len(deduped)} findings duplicating existing comments")
+        core.log.info(f"Skipped {len(deduped)} findings duplicating existing comments")
     findings = kept
 
     if not findings:
-        log.warn("No findings to post after dedup")
+        core.log.warn("No findings to post after dedup")
         write_post_tracking(args.review_file, PostTracking(
             posted_as=PostedAs.COMMENT.value, status=PostEvent.COMMENT.value,
             commit_id=head_sha, skipped_count=len(deduped),
@@ -242,7 +242,7 @@ def _post_as_comment(
         ))
         return
 
-    diff_text = review_github._get_diff(args.repo, args.pr)
+    diff_text = gh.pr_reads._get_diff(args.repo, args.pr)
     # `main` stamps both onto `args` from the sidecar, which is the only thing
     # that knows the forge here: this process is spawned with a review file and
     # never reads a remote.
@@ -252,29 +252,29 @@ def _post_as_comment(
     # — only `main` puts it there. A caller that builds its own `args`, which
     # every test of this function does, would otherwise raise instead of
     # rendering the public-GitHub default this path had before the host existed.
-    review_format.resolve_permalinks(
+    review.format.resolve_permalinks(
         findings, args.repo, diff_text, head_ref, base_ref, getattr(args, "host", ""))
 
-    drift = review_github._count_new_commits(args.repo, args.pr, review_sha, pr_data)
+    drift = gh.pr_reads._count_new_commits(args.repo, args.pr, review_sha, pr_data)
     body = _format_comment_body(
         findings, severity_filter, review_sha, head_sha, drift,
         sections=sections,
     )
 
-    result = gh_client.api_json(
+    result = gh.client.api_json(
         f"repos/{args.repo}/issues/{args.pr}/comments",
         method="POST",
         input_text=json.dumps({"body": body}, ensure_ascii=False),
     )
 
     if result is None:
-        log.error("Failed to post review as comment")
+        core.log.error("Failed to post review as comment")
         sys.exit(1)
 
     comment_id = result.get("id", 0)
-    log.info(
+    core.log.info(
         f"Review posted as comment #{comment_id} "
-        f"(SHA drifted: {git_client.abbrev(review_sha)} → {git_client.abbrev(head_sha)})"
+        f"(SHA drifted: {git.client.abbrev(review_sha)} → {git.client.abbrev(head_sha)})"
     )
 
     write_post_tracking(args.review_file, PostTracking(
@@ -300,27 +300,27 @@ def _reclassify_and_retry(
 
     Returns (inline_comments, inline, body_findings, body_text, results).
     """
-    log.warn("Inline comments could not be resolved — re-fetching diff and retrying")
-    fresh_diff = review_github._get_diff(args.repo, args.pr)
+    core.log.warn("Inline comments could not be resolved — re-fetching diff and retrying")
+    fresh_diff = gh.pr_reads._get_diff(args.repo, args.pr)
     all_findings = list(inline) + [
-        f for f in body_findings if f.classification != review_format.CLASS_SKIPPED
+        f for f in body_findings if f.classification != review.format.CLASS_SKIPPED
     ]
     for f in all_findings:
         f.classification = ""
         f.full_path = ""
         f.skip_reason = ""
 
-    new_inline, new_file_level, new_skipped = review_format.classify_findings(
+    new_inline, new_file_level, new_skipped = review.format.classify_findings(
         all_findings, fresh_diff,
     )
-    skipped_body = [f for f in body_findings if f.classification == review_format.CLASS_SKIPPED]
+    skipped_body = [f for f in body_findings if f.classification == review.format.CLASS_SKIPPED]
     new_body = new_file_level + new_skipped + skipped_body
 
     if new_inline:
-        log.info(f"Reclassified: {len(new_inline)} inline, {len(new_body)} body")
-        new_inline, new_body = review_format.renumber_for_posting(new_inline, new_body)
-        new_inline_comments = [review_format.format_inline_comment(f) for f in new_inline]
-        new_body_text = review_format.format_body_text(
+        core.log.info(f"Reclassified: {len(new_inline)} inline, {len(new_body)} body")
+        new_inline, new_body = review.format.renumber_for_posting(new_inline, new_body)
+        new_inline_comments = [review.format.format_inline_comment(f) for f in new_inline]
+        new_body_text = review.format.format_body_text(
             new_body, True, severity_filter,
             sections=sections,
         )
@@ -332,10 +332,10 @@ def _reclassify_and_retry(
             )
             return new_inline_comments, new_inline, new_body, new_body_text, results
         except LineResolutionError:
-            log.warn("Retry still failed — demoting all to body-level")
+            core.log.warn("Retry still failed — demoting all to body-level")
 
-    _, new_body = review_format.renumber_for_posting([], list(inline) + list(body_findings))
-    new_body_text = review_format.format_body_text(
+    _, new_body = review.format.renumber_for_posting([], list(inline) + list(body_findings))
+    new_body_text = review.format.format_body_text(
         new_body, False, severity_filter,
         sections=sections,
     )
@@ -388,19 +388,19 @@ def _find_orphaned_chunks(bot_reviews: list[dict]) -> list[int]:
 def _mark_orphan_review(repo: str, pr: str, review_id: int) -> None:
     """Mark a single orphaned chunk review as duplicate."""
     body = {"body": "~~Duplicate — review reposted due to prior partial post.~~"}
-    r = gh_client.api(
+    r = gh.client.api(
         f"repos/{repo}/pulls/{pr}/reviews/{review_id}",
         method="PUT",
         input_text=json.dumps(body, ensure_ascii=False),
     )
     if not r.ok:
-        log.warn(proc.failure_message(
+        core.log.warn(core.proc.failure_message(
             f"Failed to mark review #{review_id} as duplicate", r))
 
 
 def _mark_orphaned_reviews(repo: str, pr: str, orphaned_ids: list[int]) -> None:
     """Mark orphaned chunk reviews as duplicates."""
-    log.warn(f"Marking {len(orphaned_ids)} orphaned chunk reviews as duplicates: {orphaned_ids}")
+    core.log.warn(f"Marking {len(orphaned_ids)} orphaned chunk reviews as duplicates: {orphaned_ids}")
     for rid in orphaned_ids:
         _mark_orphan_review(repo, pr, rid)
 
@@ -422,19 +422,19 @@ def _post_and_track(
     submit = getattr(args, "submit", False)
 
     # Fetch bot reviews once for both dedup and orphan detection
-    bot_reviews = review_dedup.fetch_bot_reviews(args.repo, args.pr, pr_data)
+    bot_reviews = review.dedup.fetch_bot_reviews(args.repo, args.pr, pr_data)
     if not bot_reviews.looked:
         # The dedup guard below matches against this list, so an unanswered
         # lookup reads as "nothing posted yet" and republishes the review.
-        log.warn(
+        core.log.warn(
             "Could not read the bot's existing reviews — dedup has nothing to "
             "match against, so a repost here would not be caught")
 
     # Check for already-posted duplicate
-    existing_ids = review_dedup.check_review_already_posted(
+    existing_ids = review.dedup.check_review_already_posted(
         bot_reviews.reviews, body_text)
     if existing_ids:
-        log.warn(f"Review already posted (review IDs: {existing_ids})")
+        core.log.warn(f"Review already posted (review IDs: {existing_ids})")
         write_post_tracking(args.review_file, PostTracking(
             posted_as=PostedAs.REVIEW.value, status=PostEvent.COMMENT.value,
             review_ids=list(existing_ids), commit_id=commit_id,
@@ -467,11 +467,11 @@ def _post_and_track(
     review_ids = [r.get("id", 0) for r in results]
 
     if is_chunked:
-        log.info(f"All {len(results)} chunks posted (review IDs: {review_ids})")
+        core.log.info(f"All {len(results)} chunks posted (review IDs: {review_ids})")
     elif submit:
-        log.info(f"Review submitted: #{review_ids[0]}")
+        core.log.info(f"Review submitted: #{review_ids[0]}")
     else:
-        log.info(f"Review created: #{review_ids[0]} (PENDING)")
+        core.log.info(f"Review created: #{review_ids[0]} (PENDING)")
         print()
         print(f"  Submit: {_format_submit_command(args.repo, args.pr, review_ids[0])}")
 
@@ -496,17 +496,17 @@ def _print_dry_run(
     comments = payload.get("comments", [])
     chunks = _chunk_comments(comments, chunk_size)
     if len(chunks) > 1:
-        log.info(f"Would post in {len(chunks)} chunks of <={chunk_size} comments")
+        core.log.info(f"Would post in {len(chunks)} chunks of <={chunk_size} comments")
         for i, chunk in enumerate(chunks):
-            log.info(f"  Chunk {i + 1}: {len(chunk)} comments")
+            core.log.info(f"  Chunk {i + 1}: {len(chunk)} comments")
 
     print()
     print(json.dumps(payload, indent=2, ensure_ascii=False))
     print()
-    log.info(f"Inline: {', '.join(f.posted_id for f in inline) or 'none'}")
-    log.info(f"Body: {', '.join(f.posted_id for f in body_findings) or 'none'}")
+    core.log.info(f"Inline: {', '.join(f.posted_id for f in inline) or 'none'}")
+    core.log.info(f"Body: {', '.join(f.posted_id for f in body_findings) or 'none'}")
     for f in skipped:
-        log.warn(f"Skipped {f.id}: {f.skip_reason} ({f.path})")
+        core.log.warn(f"Skipped {f.id}: {f.skip_reason} ({f.path})")
 
 
 def _format_submit_command(repo: str, pr: str, review_id: int) -> str:

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core import log
+import core.log
 from pr.comments import fetch_threads, is_acknowledgment, is_pushback
 from review.dedup import get_bot_login
 from gh.pr_reads import PRData
@@ -131,7 +131,7 @@ def fetch_reply_threads(
     if not bot_login:
         bot_login = pr_data.viewer_login if pr_data is not None else get_bot_login()
     if not bot_login:
-        log.warn("Could not detect bot login — skipping reply thread analysis")
+        core.log.warn("Could not detect bot login — skipping reply thread analysis")
         return ReplyThreads([], {})
 
     owner, name = repo.split("/", 1)
@@ -141,14 +141,14 @@ def fetch_reply_threads(
         # Context, not a prerequisite — but announced, for the same reason the
         # missing-login skip above is: a silent one is indistinguishable from a
         # PR that simply has no threads.
-        log.warn(f"Could not fetch reply threads — skipping thread analysis: {exc}")
+        core.log.warn(f"Could not fetch reply threads — skipping thread analysis: {exc}")
         return ReplyThreads([], {})
 
     # Said out loud for the same reason: this is prior-round context, so a
     # short set degrades the review rather than failing it, but a reader
     # comparing counts against the PR should know why they disagree.
     if not fetched.complete:
-        log.warn(
+        core.log.warn(
             f"Reply-thread analysis is working from {len(fetched.threads)} threads — "
             "the fetch did not reach them all")
 

@@ -11,12 +11,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent import backend as ai_backend
-from agent import invoke as agent_invoke
-from core import log
+import agent.backend
+import agent.invoke
+import core.log
 from core.phases import Phase
 from core.trail import Trail, billed_to, tfail, tinfo
-from git import client as git_client
+import git.client
 
 from . import conflicts as rebase_conflicts
 from . import inspect as rebase_inspect
@@ -51,15 +51,15 @@ def auto_stash(cwd: str, *, trail: Trail | None = None) -> bool | None:
     """
     dirty = rebase_inspect.status_lines(cwd)
     if dirty is None:
-        log.error("Cannot tell whether the worktree is dirty — not rebasing.")
+        core.log.error("Cannot tell whether the worktree is dirty — not rebasing.")
         return None
     if not dirty:
         return False
 
-    log.info("Stashing uncommitted changes...")
-    r = git_client.run("stash", "push", "-u", "-m", STASH_MSG, cwd=cwd)
+    core.log.info("Stashing uncommitted changes...")
+    r = git.client.run("stash", "push", "-u", "-m", STASH_MSG, cwd=cwd)
     if not r.ok:
-        log.error(f"git stash failed: {r.stderr.strip()}")
+        core.log.error(f"git stash failed: {r.stderr.strip()}")
         return None
     tinfo(trail, "stash", "auto-stashed uncommitted changes")
     return True
@@ -79,7 +79,7 @@ def auto_stash_ref(cwd: str) -> str:
     substring of the line: an operator's own stash named "before pr-rebase:
     auto-stash experiment" is not this one.
     """
-    for line in git_client.lines(
+    for line in git.client.lines(
         "stash", "list", "--format=%gd%x1f%gs", cwd=cwd,
     ):
         ref, _, subject = line.partition("\x1f")
@@ -107,9 +107,9 @@ def restore(cwd: str, mode: RunMode, *, trail: Trail | None = None) -> None:
         return
     if rebase_inspect.rebase_in_progress(cwd):
         tinfo(trail, "stash", "held the auto-stash — rebase still in progress")
-        log.warn(f"Your uncommitted changes stay stashed as '{STASH_MSG}' — "
+        core.log.warn(f"Your uncommitted changes stay stashed as '{STASH_MSG}' — "
                  "the rebase is still in progress.")
-        log.dim("They are restored by the run that finishes it: re-run "
+        core.log.dim("They are restored by the run that finishes it: re-run "
                 "`pr rebase --fix`, or `pr rebase --abort` then `git stash pop`.")
         return
     auto_unstash(cwd, mode, ref=stash_ref, trail=trail)
@@ -136,9 +136,9 @@ def auto_unstash(
     ref = ref or auto_stash_ref(cwd)
     if not ref:
         return
-    r = git_client.run("stash", "pop", ref, cwd=cwd, config=RERERE_CONFIG)
+    r = git.client.run("stash", "pop", ref, cwd=cwd, config=RERERE_CONFIG)
     if r.ok:
-        log.ok("Restored stashed changes.")
+        core.log.ok("Restored stashed changes.")
         return
 
     # Defense in depth behind `restore`'s guard: unmerged files during a rebase
@@ -151,20 +151,20 @@ def auto_unstash(
     )
     if not conflicts:
         tfail(trail, "unstash", "stash pop failed", output=r.combined_output)
-        log.error(f"git stash pop failed: {r.stderr.strip()}")
-        log.warn(f"Your changes are still stashed as '{STASH_MSG}' — "
+        core.log.error(f"git stash pop failed: {r.stderr.strip()}")
+        core.log.warn(f"Your changes are still stashed as '{STASH_MSG}' — "
                  "clear the blocking paths, then `git stash pop`.")
         return
 
-    if not mode.resolves_conflicts or not ai_backend.is_available():
-        log.warn(f"Stash pop has {len(conflicts)} conflict(s) — resolve manually, then `git stash drop`.")
+    if not mode.resolves_conflicts or not agent.backend.is_available():
+        core.log.warn(f"Stash pop has {len(conflicts)} conflict(s) — resolve manually, then `git stash drop`.")
         return
 
-    log.info(f"Resolving {len(conflicts)} stash conflict(s)...")
+    core.log.info(f"Resolving {len(conflicts)} stash conflict(s)...")
     for filepath in conflicts:
         full_path = Path(cwd) / filepath
         if rebase_conflicts.is_binary(full_path):
-            log.warn(f"Cannot resolve binary stash conflict: {filepath}")
+            core.log.warn(f"Cannot resolve binary stash conflict: {filepath}")
             continue
         try:
             content = full_path.read_text()
@@ -184,14 +184,14 @@ def auto_unstash(
             f"{rebase_conflicts.RESOLVE_BEGIN}\n(your resolved content here)\n{rebase_conflicts.RESOLVE_END}\n\n"
             f"--- FILE CONTENT WITH CONFLICT MARKERS ---\n{content}"
         )
-        answer = agent_invoke.run_prompt(
+        answer = agent.invoke.run_prompt(
             Phase.REBASE, prompt, cwd=cwd,
             label=f"stash conflict resolution for {filepath}",
             usable=rebase_conflicts.resolution_parses, task="stash-conflict-resolve",
             **billed_to(trail),
         )
         if answer.exit_code != 0:
-            log.error(f"AI resolution failed for stash conflict: {filepath}")
+            core.log.error(f"AI resolution failed for stash conflict: {filepath}")
             continue
         stdout = answer.text
         resolved_content, failure_reason = rebase_conflicts.parse_resolved_content(stdout)
@@ -202,21 +202,21 @@ def auto_unstash(
                 output=stdout,
                 data={"filepath": filepath, "reason": failure_reason},
             )
-            log.error(f"Failed to parse stash resolution for {filepath} ({failure_reason})")
+            core.log.error(f"Failed to parse stash resolution for {filepath} ({failure_reason})")
             continue
         full_path.write_text(resolved_content)
         if not rebase_conflicts.git_add(filepath, cwd):
-            log.error(f"Failed to stage resolved stash conflict: {filepath}")
+            core.log.error(f"Failed to stage resolved stash conflict: {filepath}")
             continue
-        log.ok(f"Resolved stash conflict: {filepath}")
+        core.log.ok(f"Resolved stash conflict: {filepath}")
 
     remaining = rebase_inspect.detect_conflicts(cwd)
     if remaining:
-        log.warn(f"{len(remaining)} stash conflict(s) remain — resolve manually, "
+        core.log.warn(f"{len(remaining)} stash conflict(s) remain — resolve manually, "
                  f"then `git stash drop {ref}`.")
         return
-    r = git_client.run("stash", "drop", ref, cwd=cwd)
+    r = git.client.run("stash", "drop", ref, cwd=cwd)
     if r.ok:
-        log.ok("Restored stashed changes.")
+        core.log.ok("Restored stashed changes.")
     else:
-        log.warn(f"git stash drop failed: {r.stderr.strip()}")
+        core.log.warn(f"git stash drop failed: {r.stderr.strip()}")

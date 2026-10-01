@@ -21,13 +21,13 @@ leaves no trace on the document to read back.
 
 from __future__ import annotations
 
-from core import log
-from core import markdown
-from core import publishing
+import core.log
+import core.markdown
+import core.publishing
 from core.trail import Trail
-from pr import comments as pr_comments
-from pr import target as pr_target
-from review import issue as review_issue
+import pr.comments
+import pr.target
+import review.issue
 from review.deferred_issue import TRACK_ALL
 from review.issue import IssueResult
 from review.paths import read_review_meta, write_review_meta
@@ -73,7 +73,7 @@ def validate_track(review_dir: Path, track) -> bool:
     unknown = set(track) - {f.id for f in filable(review_dir)}
     if not unknown:
         return True
-    log.error(f"--track named findings that are not open: {sorted(unknown)}")
+    core.log.error(f"--track named findings that are not open: {sorted(unknown)}")
     return False
 
 
@@ -88,7 +88,7 @@ def build_body(findings: list[OpenFinding], job: ReviewJob) -> str:
     number on a forge the repo is not on.
     """
     if job.pr_number:
-        url = f"{pr_target.forge_base_url(job.host)}/{job.repo}/pull/{job.pr_number}"
+        url = f"{pr.target.forge_base_url(job.host)}/{job.repo}/pull/{job.pr_number}"
         where = f"[PR #{job.pr_number}]({url})"
     else:
         # A self-review need not have a PR, and often does not: the findings
@@ -101,14 +101,14 @@ def build_body(findings: list[OpenFinding], job: ReviewJob) -> str:
         "recorded here because the review file is local state and the branch "
         "is about to merge.",
         "",
-        markdown.render_row(list(_TABLE_COLUMNS)),
-        markdown.table_divider(len(_TABLE_COLUMNS)),
+        core.markdown.render_row(list(_TABLE_COLUMNS)),
+        core.markdown.table_divider(len(_TABLE_COLUMNS)),
     ]
     for finding in findings:
-        parts.append(markdown.render_row([
-            markdown.escape_cell(finding.summary or finding.id),
+        parts.append(core.markdown.render_row([
+            core.markdown.escape_cell(finding.summary or finding.id),
             f"`{finding.location}`" if finding.location else "—",
-            markdown.escape_cell(finding.reason or _default_reason(finding)),
+            core.markdown.escape_cell(finding.reason or _default_reason(finding)),
         ]))
     parts.append("")
     return "\n".join(parts)
@@ -142,23 +142,23 @@ def file_findings(
         return None
 
     provider_info = (
-        review_issue.ensure_issue_provider(job.wt_path)
-        if publishing.enabled()
-        else review_issue.load_issue_provider(job.wt_path)
+        review.issue.ensure_issue_provider(job.wt_path)
+        if core.publishing.enabled()
+        else review.issue.load_issue_provider(job.wt_path)
     )
     if not provider_info.resolved:
-        log.warn("no issue provider configured — not filing the open findings")
+        core.log.warn("no issue provider configured — not filing the open findings")
         return None
 
     where = f"PR #{job.pr_number}" if job.pr_number else _branch_of(job)
-    result = review_issue.create_issue(
+    result = review.issue.create_issue(
         provider_info.name,
         provider_info.options.get("team", ""),
         f"fix(review): unresolved review findings — {where}",
         build_body(selected, job),
         # Linear links the follow-up under the branch's issue; GitHub has no
         # parent concept, and gets a comment instead — see `note_on_parent`.
-        parent_id=review_issue.extract_issue_id(provider_info.name, _branch_of(job)),
+        parent_id=review.issue.extract_issue_id(provider_info.name, _branch_of(job)),
         repo=job.repo,
         opts=provider_info.options,
     )
@@ -200,9 +200,9 @@ def note_on_parent(
         f"A review of `{_branch_of(job)}` left findings unresolved. "
         f"They are tracked in {result.issue.url or '#' + result.issue.id}."
     )
-    url = pr_comments.post_issue_comment(job.repo, int(parent_id), body)
+    url = pr.comments.post_issue_comment(job.repo, int(parent_id), body)
     if url is None:
-        log.warn(f"could not comment on the parent issue #{parent_id}")
+        core.log.warn(f"could not comment on the parent issue #{parent_id}")
         return
     if trail:
         trail.info("finding_issue", f"noted the deferral on #{parent_id}",
@@ -249,9 +249,9 @@ def file_and_link(
         # with the gate open can still file them.
         return True
 
-    provider = review_issue.load_issue_provider(job.wt_path).name
+    provider = review.issue.load_issue_provider(job.wt_path).name
     note_on_parent(
-        provider, review_issue.extract_issue_id(provider, _branch_of(job)) or "",
+        provider, review.issue.extract_issue_id(provider, _branch_of(job)) or "",
         result, job, trail,
     )
     clear_filed(review_dir, {f.id for f in selected})
@@ -269,7 +269,7 @@ def report_unfiled(review_dir: Path, track) -> None:
     if not unfiled:
         return
     ids = ", ".join(f.id for f in unfiled)
-    log.info(
+    core.log.info(
         f"{len(unfiled)} finding(s) left open and not filed: {ids}. "
         f"Pass --track <id> to file one, or --track-all for every one."
     )

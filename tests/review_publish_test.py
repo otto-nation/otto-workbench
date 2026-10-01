@@ -24,12 +24,14 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 from conftest import FAKE_REPO  # noqa: E402
-from review import publish as review_publish  # noqa: E402
+import review.publish  # noqa: E402
 from review.paths import FILENAME_POST_SESSION  # noqa: E402
+import core.prompt
+import core.publishing
 
 # Captured before the `posts` fixture replaces `review_publish.post` with a
 # recording stub, so the parameter names below still name the real function.
-_POST_SIGNATURE = inspect.signature(review_publish.post)
+_POST_SIGNATURE = inspect.signature(review.publish.post)
 
 
 @pytest.fixture
@@ -50,16 +52,16 @@ def posts(monkeypatch):
         calls.append(("submit", a, kw))
         return True
 
-    monkeypatch.setattr(review_publish, "post",
+    monkeypatch.setattr(review.publish, "post",
                         lambda *a, **kw: calls.append(("post", a, kw)))
-    monkeypatch.setattr(review_publish, "submit_pending", _submit_pending)
+    monkeypatch.setattr(review.publish, "submit_pending", _submit_pending)
     return calls
 
 
 def _answers(monkeypatch, *responses):
     """Answer the confirm prompts in order."""
     queue = list(responses)
-    monkeypatch.setattr(review_publish.prompt, "confirm",
+    monkeypatch.setattr(core.prompt, "confirm",
                         lambda *a, **kw: queue.pop(0))
     return queue
 
@@ -68,7 +70,7 @@ def _resolve(review_file, **overrides):
     kwargs = dict(no_post=False, auto_post=False, auto_submit=False,
                   bin_dir=Path("/bin"))
     kwargs.update(overrides)
-    return review_publish.resolve(FAKE_REPO, "42", review_file, **kwargs)
+    return review.publish.resolve(FAKE_REPO, "42", review_file, **kwargs)
 
 
 def test_no_post_skips_github_and_says_how_to_post_later(review_file, posts):
@@ -228,7 +230,7 @@ def test_every_path_returns_rather_than_exiting(
 
     result = _resolve(review_file, **kwargs)
 
-    assert isinstance(result, review_publish.PostResult)
+    assert isinstance(result, review.publish.PostResult)
 
 
 @pytest.mark.parametrize(
@@ -251,7 +253,7 @@ def test_submit_pending_survives_an_unreadable_post_tracking_file(
     review_dir.mkdir()
     (review_dir / FILENAME_POST_SESSION).write_bytes(content)
 
-    review_publish.submit_pending("owner/repo", "1", str(review_dir / "review.md"))
+    review.publish.submit_pending("owner/repo", "1", str(review_dir / "review.md"))
 
     assert "Could not read review_id" in capsys.readouterr().err
 
@@ -272,8 +274,8 @@ def _post_argv(monkeypatch, tmp_path, **kw):
         seen["argv"] = list(argv)
         return 0
 
-    monkeypatch.setattr(review_publish.publishing, "call_entry_point", _call)
-    review_publish.post("42", str(tmp_path / "review.md"), False,
+    monkeypatch.setattr(core.publishing, "call_entry_point", _call)
+    review.publish.post("42", str(tmp_path / "review.md"), False,
                         bin_dir=tmp_path, **kw)
     assert seen["handler"] == "cli.review_post:main"
     return seen["argv"]

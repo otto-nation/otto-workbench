@@ -37,8 +37,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from agent import usage as ai_usage
-from git import client as git_client
+import agent.usage
+import git.client
 # Backend is defined in core.phases so the config layer can type agent.backend
 # without importing this module, and re-exported here because this is where
 # callers have always read it from.
@@ -160,7 +160,7 @@ def _script_name() -> str:
 
 
 def _record(
-    *, entry_point: str, usage: ai_usage.SessionUsage | None, exit_code: int,
+    *, entry_point: str, usage: agent.usage.SessionUsage | None, exit_code: int,
     model: str | None, task: str | None, repo: str | None, pr: str | None,
     phase: str | None = None, max_turns: int | None = None,
 ) -> None:
@@ -169,7 +169,7 @@ def _record(
     if usage is None:
         return
     try:
-        ai_usage.record(
+        agent.usage.record(
             script=_script_name(), entry_point=entry_point,
             # "unknown" rather than a raise: this is inside the swallow-all
             # below, so raising here would drop the ledger row silently instead
@@ -182,7 +182,7 @@ def _record(
         pass
 
 
-def _usage_from_log(session_log: str) -> ai_usage.SessionUsage | None:
+def _usage_from_log(session_log: str) -> agent.usage.SessionUsage | None:
     """Read usage from a session log, or None when the log carries no result record.
 
     A log that exists but reports nothing — the agent died before its result record,
@@ -191,16 +191,16 @@ def _usage_from_log(session_log: str) -> ai_usage.SessionUsage | None:
     """
     if not session_log or not Path(session_log).is_file():
         return None
-    usage = ai_usage.parse_session_log(session_log)
-    return usage if usage != ai_usage.SessionUsage() else None
+    usage = agent.usage.parse_session_log(session_log)
+    return usage if usage != agent.usage.SessionUsage() else None
 
 
 def _get_module() -> types.ModuleType:
     if _require_backend() is Backend.PI:
-        from agent import backend_pi as mod
-    else:
-        from agent import backend_claude as mod
-    return mod
+        import agent.backend_pi
+        return agent.backend_pi
+    import agent.backend_claude
+    return agent.backend_claude
 
 
 def preflight(models: Mapping[str, Sequence[str]], trail) -> bool:
@@ -346,7 +346,7 @@ def agent_env(inv: AgentInvocation) -> dict[str, str]:
     this immediately before ``Popen``, so the two are indistinguishable in
     practice.
     """
-    return git_client.unattended_env(os.environ if inv.env is None else inv.env)
+    return git.client.unattended_env(os.environ if inv.env is None else inv.env)
 
 
 def _record_invocation(inv: AgentInvocation, *, entry_point: str, exit_code: int) -> None:

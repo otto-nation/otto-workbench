@@ -14,7 +14,7 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-from review import merge as review_merge
+import review.merge
 from review.document import SECTION_PRIOR_FINDINGS
 from review.grammar import FindingIdentity
 from review.types import SEVERITIES, PriorDisposition
@@ -54,64 +54,64 @@ class TestComputeStableId:
 class TestAnnotatePriorWithStableIds:
     def test_inserts_sid_comment(self):
         text = '- **[M1]** **`handler.go:42`** — missing error check\n'
-        result = review_merge.annotate_prior_with_stable_ids(text)
+        result = review.merge.annotate_prior_with_stable_ids(text)
         assert "<!-- sid:" in result
         assert "**[M1]**" in result
         assert "handler.go:42" in result
 
     def test_checkbox_format(self):
         text = '- [ ] **[S1]** `handler.go:42` — missing check\n'
-        result = review_merge.annotate_prior_with_stable_ids(text)
+        result = review.merge.annotate_prior_with_stable_ids(text)
         assert "<!-- sid:" in result
 
     def test_non_finding_lines_unchanged(self):
         text = "## Summary\nThis is a summary.\n"
-        result = review_merge.annotate_prior_with_stable_ids(text)
+        result = review.merge.annotate_prior_with_stable_ids(text)
         assert result == text
 
     def test_deterministic_ids(self):
         text = '- **[M1]** **`handler.go:42`** — missing error check\n'
-        a = review_merge.annotate_prior_with_stable_ids(text)
-        b = review_merge.annotate_prior_with_stable_ids(text)
+        a = review.merge.annotate_prior_with_stable_ids(text)
+        b = review.merge.annotate_prior_with_stable_ids(text)
         assert a == b
 
 
 class TestCleanSectionText:
     def test_strips_none_markers(self):
-        assert review_merge._clean_section_text("_None._") == ""
-        assert review_merge._clean_section_text("_(none)_") == ""
+        assert review.merge._clean_section_text("_None._") == ""
+        assert review.merge._clean_section_text("_(none)_") == ""
 
     def test_strips_horizontal_rules(self):
-        assert review_merge._clean_section_text("---") == ""
+        assert review.merge._clean_section_text("---") == ""
 
     def test_case_insensitive(self):
-        assert review_merge._clean_section_text("_NONE._") == ""
-        assert review_merge._clean_section_text("_None._") == ""
+        assert review.merge._clean_section_text("_NONE._") == ""
+        assert review.merge._clean_section_text("_None._") == ""
 
     def test_preserves_findings(self):
         text = "- **[M1]** **`file.go:42`** — finding"
-        assert review_merge._clean_section_text(text) == text
+        assert review.merge._clean_section_text(text) == text
 
     def test_strips_markers_around_findings(self):
         text = "_None._\n---\n- **[M1]** **`file.go:42`** — finding\n---\n_None._"
-        result = review_merge._clean_section_text(text)
+        result = review.merge._clean_section_text(text)
         assert result == "- **[M1]** **`file.go:42`** — finding"
 
     def test_empty_input(self):
-        assert review_merge._clean_section_text("") == ""
+        assert review.merge._clean_section_text("") == ""
 
     def test_only_markers_returns_empty(self):
-        assert review_merge._clean_section_text("_None._\n---\n_(none)_") == ""
+        assert review.merge._clean_section_text("_None._\n---\n_(none)_") == ""
 
     def test_strips_none_in_file_group(self):
-        assert review_merge._clean_section_text("_None in this file group._") == ""
+        assert review.merge._clean_section_text("_None in this file group._") == ""
 
     def test_strips_none_in_file_group_mixed_case(self):
-        assert review_merge._clean_section_text("_NONE IN THIS FILE GROUP._") == ""
+        assert review.merge._clean_section_text("_NONE IN THIS FILE GROUP._") == ""
 
     def test_preserves_findings_around_file_group_marker(self):
         text = "_None in this file group._\n- **[M1]** **`file.go:42`** — finding"
-        result = review_merge._clean_section_text(text)
+        result = review.merge._clean_section_text(text)
         assert result == "- **[M1]** **`file.go:42`** — finding"
 
 
@@ -130,7 +130,7 @@ class TestMergeReviewsCleanup:
             "## Idioms\n"
             "_(none)_\n"
         )
-        result = review_merge.merge_reviews([str(g1)])
+        result = review.merge.merge_reviews([str(g1)])
         assert "_None._" not in result
         assert "_(none)_" not in result
         assert "## Must fix" not in result
@@ -151,7 +151,7 @@ class TestMergeReviewsCleanup:
             "- **[N1]** **`file.go:10`** — finding\n"
             "---\n"
         )
-        result = review_merge.merge_reviews([str(g1)])
+        result = review.merge.merge_reviews([str(g1)])
         assert "---" not in result
 
 
@@ -249,9 +249,9 @@ def _sections(**by_key: str) -> dict[str, str]:
     return {s.key: by_key.get(s.key, "") for s in SEVERITIES}
 
 
-def _shift(offsets: dict[str, int], **by_key: str) -> review_merge._Merge:
+def _shift(offsets: dict[str, int], **by_key: str) -> review.merge._Merge:
     """A merge that has already used `offsets`, with one more group folded in."""
-    merge = review_merge._Merge()
+    merge = review.merge._Merge()
     merge.offsets.update(offsets)
     merge.sections = merge._shift(_sections(**by_key))
     return merge
@@ -340,11 +340,11 @@ def _decl(prefix: str, num: int, body: str = "finding") -> str:
 class TestRenumberFindings:
     def test_sequential_already(self):
         text = f"{_decl('S', 1, 'first')}\n{_decl('S', 2, 'second')}"
-        assert review_merge.renumber_findings(text) == text
+        assert review.merge.renumber_findings(text) == text
 
     def test_with_gaps(self):
         text = f"{_decl('S', 1, 'first')}\n{_decl('S', 3, 'third')}"
-        result = review_merge.renumber_findings(text)
+        result = review.merge.renumber_findings(text)
         assert "[S1]" in result
         assert "[S2]" in result
         assert "[S3]" not in result
@@ -353,13 +353,13 @@ class TestRenumberFindings:
         text = "\n".join([
             _decl("S", 3, "first"), _decl("S", 1, "second"), _decl("S", 3, "repeat"),
         ])
-        result = review_merge.renumber_findings(text)
+        result = review.merge.renumber_findings(text)
         assert result.count("[S1]") == 2  # S3 appears first -> becomes S1
         assert "[S2]" in result  # S1 appears second -> becomes S2
 
     def test_unbracketed_cross_refs(self):
         text = f"{_decl('S', 3)}\nsee S3 above"
-        result = review_merge.renumber_findings(text)
+        result = review.merge.renumber_findings(text)
         assert "see S1 above" in result
         assert "S3" not in result
 
@@ -367,13 +367,13 @@ class TestRenumberFindings:
         # S1 was dropped by verification, so only its reference is left. Closing
         # the gap on S2 frees up the number 1, and the reference must not take it.
         text = f"{_decl('S', 2, 'real problem')}\nblocked on [S1]"
-        result = review_merge.renumber_findings(text)
+        result = review.merge.renumber_findings(text)
         assert "- **[S1]** **`file.go:2`** — real problem" in result
         assert "blocked on [removed]" in result
 
     def test_bare_reference_to_a_dropped_finding_points_nowhere(self):
         text = f"{_decl('S', 2, 'real problem')}\nblocked on S1"
-        assert "blocked on [removed]" in review_merge.renumber_findings(text)
+        assert "blocked on [removed]" in review.merge.renumber_findings(text)
 
     def test_prose_that_merely_looks_like_an_id_is_left_alone(self):
         # S3 the object store, M1 the laptop. Nothing cites them, so nothing
@@ -382,30 +382,30 @@ class TestRenumberFindings:
             _decl("S", 3, "uploads to an S3 bucket on every M1 build"),
             _decl("S", 5, "second"),
         ])
-        result = review_merge.renumber_findings(text)
+        result = review.merge.renumber_findings(text)
         assert "uploads to an S3 bucket on every M1 build" in result
         assert "- **[S1]**" in result
         assert "- **[S2]**" in result
 
     def test_a_cited_bare_reference_is_still_rewritten(self):
         text = f"{_decl('S', 3, 'first')}\n{_decl('S', 5, 'second, duplicate of S3')}"
-        assert "duplicate of S1" in review_merge.renumber_findings(text)
+        assert "duplicate of S1" in review.merge.renumber_findings(text)
 
     def test_references_survive_a_second_pass(self):
         text = f"{_decl('S', 2, 'real problem')}\nblocked on [S1]"
-        once = review_merge.renumber_findings(text)
-        assert review_merge.renumber_findings(once) == once
+        once = review.merge.renumber_findings(text)
+        assert review.merge.renumber_findings(once) == once
 
     def test_text_that_declares_nothing_is_left_alone(self):
         # A section can mention IDs it does not own — the triage list, a prior
         # review's ledger. With no declaration there is no map to rewrite through.
         text = "carried over from [S4] and [S7]"
-        assert review_merge.renumber_findings(text) == text
+        assert review.merge.renumber_findings(text) == text
 
     def test_checklist_findings_declare_their_ids(self):
         # Self-review writes findings as checkboxes; they are declarations too.
         text = "- [ ] **[S3]** `file.go:1` — finding\nsee [S3]"
-        result = review_merge.renumber_findings(text)
+        result = review.merge.renumber_findings(text)
         assert "- [ ] **[S1]** `file.go:1` — finding" in result
         assert "see [S1]" in result
 
@@ -414,7 +414,7 @@ class TestRenumberFindings:
             _decl("M", 1, "first"), _decl("M", 3, "third"),
             _decl("S", 1, "s1"), _decl("S", 5, "s5"), "",
         ])
-        result = review_merge.renumber_findings(text)
+        result = review.merge.renumber_findings(text)
         assert "[M1]" in result
         assert "[M2]" in result
         assert "[M3]" not in result
@@ -429,16 +429,16 @@ class TestRenumberFindings:
             _decl("M", 2, "kept"),
             "- **[N1]** **`file.go:9`** — revisit once [M1] lands",
         ])
-        result = review_merge.renumber_findings(text)
+        result = review.merge.renumber_findings(text)
         assert "- **[M1]** **`file.go:2`** — kept" in result
         assert "revisit once [removed] lands" in result
 
     def test_empty_text(self):
-        assert review_merge.renumber_findings("") == ""
+        assert review.merge.renumber_findings("") == ""
 
     def test_no_findings_unchanged(self):
         content = "No findings here.\n"
-        assert review_merge.renumber_findings(content) == content
+        assert review.merge.renumber_findings(content) == content
 
 
 # ── 7. merge_reviews ────────────────────────────────────────────────────────
@@ -462,7 +462,7 @@ class TestMergeReviews:
             "## Nit\n_None._\n"
             "## Idioms\n_None._\n"
         )
-        result = review_merge.merge_reviews([str(g1), str(g2)])
+        result = review.merge.merge_reviews([str(g1), str(g2)])
         assert "[M1]" in result
         assert "[S1]" in result
         assert "`a.go`" in result
@@ -481,7 +481,7 @@ class TestMergeReviews:
             "## Must fix\n- **[M1]** **`a.go:1`** — same issue\n"
             "## Should fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
         )
-        result = review_merge.merge_reviews([str(g1), str(g2)])
+        result = review.merge.merge_reviews([str(g1), str(g2)])
         # Dedup should remove duplicate finding
         assert result.count("same issue") == 1
 
@@ -500,7 +500,7 @@ class TestMergeReviews:
             "## Should fix\n- **[S1]** **`b.go:5`** — issue b\n"
             "## Nit\n_None._\n## Idioms\n_None._\n"
         )
-        result = review_merge.merge_reviews([str(g1), str(g2)])
+        result = review.merge.merge_reviews([str(g1), str(g2)])
         assert "[S1]" in result
         assert "[S2]" in result
 
@@ -524,7 +524,7 @@ class TestMergeReviews:
             "- **[S2]** **`b.go:2`** — issue d, see S1 above\n"
             "## Must fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
         )
-        result = review_merge.merge_reviews([str(g1), str(g2)])
+        result = review.merge.merge_reviews([str(g1), str(g2)])
 
         assert "- **[S2]** **`a.go:2`** — issue b, related to [S1]" in result
         assert "- **[S4]** **`b.go:2`** — issue d, see S3 above" in result
@@ -551,7 +551,7 @@ class TestMergeReviews:
             "## Nit\n- **[N1]** **`b.go:3`** — issue f, see S1 above\n"
             "## Idioms\n_None._\n"
         )
-        result = review_merge.merge_reviews([str(g1), str(g2)])
+        result = review.merge.merge_reviews([str(g1), str(g2)])
 
         assert "- **[S3]** **`b.go:2`** — issue e" in result
         assert "- **[M2]** **`b.go:1`** — issue d, blocked on [S3]" in result
@@ -573,7 +573,7 @@ class TestMergeReviews:
             "## Nit\n_None._\n## Idioms\n_None._\n"
         )
         order = (citing, declaring) if citing_first else (declaring, citing)
-        return review_merge.merge_reviews([str(path) for path in order])
+        return review.merge.merge_reviews([str(path) for path in order])
 
     def test_merge_does_not_point_a_dangling_reference_at_another_group(self, tmp_path):
         # No group can name another group's finding — every group numbers from
@@ -606,7 +606,7 @@ class TestMergeReviews:
             "## Should fix\n- **[S1]** **`b.go:1`** — issue c\n"
             "## Must fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
         )
-        result = review_merge.merge_reviews([str(g1), str(g2)])
+        result = review.merge.merge_reviews([str(g1), str(g2)])
 
         # Offsetting by the count would put issue c on S3, where issue b already
         # sits; the gaps close afterwards, so all three come out distinct.
@@ -628,7 +628,7 @@ class TestMergeReviews:
             "- **[M3]** `a.go` — Fixed\n"
             "- **[S2]** `b.go` — Still open\n"
         )
-        result = review_merge.merge_reviews([str(g1), str(g2)])
+        result = review.merge.merge_reviews([str(g1), str(g2)])
         assert result.count("**[M3]** `a.go` — Fixed") == 1
         assert "**[S2]** `b.go` — Still open" in result
         # Ledger IDs name the prior review, so the merge must not renumber them
@@ -646,7 +646,7 @@ class TestMergeReviews:
             "## File Triage\n- `a.go` — reviewed\n"
             f"## {SECTION_PRIOR_FINDINGS}\n- **[M3]** `a.go` — Still open\n"
         )
-        result = review_merge.merge_reviews([str(g1), str(g2)])
+        result = review.merge.merge_reviews([str(g1), str(g2)])
         assert "**[M3]** `a.go` — Still open" in result
         assert "Fixed" not in result
 
@@ -660,7 +660,7 @@ class TestMergeReviews:
                 f"## {SECTION_PRIOR_FINDINGS}\n- **[M3]** `a.go` — {verdict}\n"
             )
             paths.append(str(path))
-        return review_merge.merge_reviews(paths)
+        return review.merge.merge_reviews(paths)
 
     def test_merge_does_not_reopen_a_declined_finding(self, tmp_path):
         """Still-open used to overwrite whatever was kept, declined included."""
@@ -681,7 +681,7 @@ class TestMergeReviews:
             "## File Triage\n- `a.go` — reviewed\n"
             "## Must fix\n- **[M1]** **`a.go:1`** — issue\n"
         )
-        assert SECTION_PRIOR_FINDINGS not in review_merge.merge_reviews([str(g1)])
+        assert SECTION_PRIOR_FINDINGS not in review.merge.merge_reviews([str(g1)])
 
     def test_missing_file_skipped(self, tmp_path):
         g1 = tmp_path / "g1.md"
@@ -690,13 +690,13 @@ class TestMergeReviews:
             "## Must fix\n- **[M1]** **`a.go:1`** — issue\n"
             "## Should fix\n_None._\n## Nit\n_None._\n## Idioms\n_None._\n"
         )
-        result = review_merge.merge_reviews([str(g1), str(tmp_path / "missing.md")])
+        result = review.merge.merge_reviews([str(g1), str(tmp_path / "missing.md")])
         assert "[M1]" in result
 
     def test_empty_group_file(self, tmp_path):
         g1 = tmp_path / "g1.md"
         g1.write_text("")
-        result = review_merge.merge_reviews([str(g1)])
+        result = review.merge.merge_reviews([str(g1)])
         assert "## File Triage" in result
 
     def test_merge_strips_narrative_from_triage(self, tmp_path):
@@ -713,7 +713,7 @@ class TestMergeReviews:
             "\n"
             "This file has a simple handler implementation.\n"
         )
-        result = review_merge.merge_reviews([str(g1)])
+        result = review.merge.merge_reviews([str(g1)])
         assert "`a.go`" in result
         assert "Both files" not in result
         assert "### a.go" not in result
@@ -728,7 +728,7 @@ class TestMergeReviews:
         g2.write_text(
             "## File Triage\n- `shared.go` — Tier 1\n- `b.go` — Tier 2\n"
         )
-        result = review_merge.merge_reviews([str(g1), str(g2)])
+        result = review.merge.merge_reviews([str(g1), str(g2)])
         assert result.count("`shared.go`") == 1
 
     def test_merge_strips_separators_from_triage(self, tmp_path):
@@ -739,7 +739,7 @@ class TestMergeReviews:
             "## File Triage\n- `b.go` — Tier 2\n"
             "\n---\n\nSome paragraph about the files above.\n"
         )
-        assert "---" not in review_merge.merge_reviews([str(g1), str(g2)])
+        assert "---" not in review.merge.merge_reviews([str(g1), str(g2)])
 
     def test_merge_closes_the_gap_a_cross_group_duplicate_leaves(self, tmp_path):
         # Four declarations, one of them a duplicate of another group's. The
@@ -758,7 +758,7 @@ class TestMergeReviews:
             "- **[M1]** **`a.go:20`** — Duplicate finding across groups\n"
             "- **[M2]** **`b.go:5`** — Second unique finding\n"
         )
-        result = review_merge.merge_reviews([str(g1), str(g2)])
+        result = review.merge.merge_reviews([str(g1), str(g2)])
         assert result.count("Duplicate finding") == 1
         assert "[M1]" in result
         assert "[M2]" in result
@@ -773,7 +773,7 @@ class TestMergeReviews:
             "## Must Fix\n- **[M1]** **`a.go:10`** — bug\n"
             "## NIT\n- **[N1]** **`a.go:20`** — style\n"
         )
-        result = review_merge.merge_reviews([str(g1)])
+        result = review.merge.merge_reviews([str(g1)])
         assert "[M1]" in result
         assert "[N1]" in result
 
@@ -784,19 +784,19 @@ class TestMergeReviews:
 class TestCleanTriage:
     def test_valid_triage_lines(self):
         text = "- `file.go` reviewed\n- `other.go` skimmed"
-        result = review_merge._clean_triage(text)
+        result = review.merge._clean_triage(text)
         assert "file.go" in result
         assert "other.go" in result
 
     def test_mixed_valid_invalid(self):
         text = "- `file.go` reviewed\nsome other text\n- `b.go` done"
-        result = review_merge._clean_triage(text)
+        result = review.merge._clean_triage(text)
         assert "file.go" in result
         assert "b.go" in result
         assert "some other text" not in result
 
     def test_empty_input(self):
-        assert review_merge._clean_triage("") == ""
+        assert review.merge._clean_triage("") == ""
 
 
 # ── 9. _dedup_triage ────────────────────────────────────────────────────────
@@ -805,17 +805,17 @@ class TestCleanTriage:
 class TestDedupTriage:
     def test_with_duplicates(self):
         text = "- `file.go` — reviewed\n- `file.go` — reviewed again"
-        result = review_merge._dedup_triage(text)
+        result = review.merge._dedup_triage(text)
         assert result.count("file.go") == 1
 
     def test_no_duplicates(self):
         text = "- `a.go` — reviewed\n- `b.go` — reviewed"
-        result = review_merge._dedup_triage(text)
+        result = review.merge._dedup_triage(text)
         assert "a.go" in result
         assert "b.go" in result
 
     def test_empty_input(self):
-        assert review_merge._dedup_triage("") == ""
+        assert review.merge._dedup_triage("") == ""
 
 
 # ── 10. FindingIdentity ─────────────────────────────────────────────────────
@@ -854,7 +854,7 @@ class TestDedupFindings:
             "- **[M1]** **`file.go:1`** — same issue\n"
             "- **[M2]** **`file.go:1`** — same issue\n"
         )
-        result = review_merge._dedup_findings(text)
+        result = review.merge._dedup_findings(text)
         assert result.text.count("same issue") == 1
 
     def test_no_duplicates(self):
@@ -862,7 +862,7 @@ class TestDedupFindings:
             "- **[M1]** **`a.go:1`** — issue a\n"
             "- **[M2]** **`b.go:2`** — issue b\n"
         )
-        result = review_merge._dedup_findings(text)
+        result = review.merge._dedup_findings(text)
         assert "issue a" in result.text
         assert "issue b" in result.text
         assert result.merged_into == {}
@@ -874,7 +874,7 @@ class TestDedupFindings:
             "- **[M2]** **`file.go:1`** — same issue\n"
             "  another continuation\n"
         )
-        result = review_merge._dedup_findings(text)
+        result = review.merge._dedup_findings(text)
         assert result.text.count("same issue") == 1
         assert "another continuation" not in result.text
 
@@ -885,8 +885,8 @@ class TestDedupFindings:
             "- **[M1]** **`file.go:1`** — same issue\n"
             "- **[M2]** **`file.go:1`** — same issue\n"
         )
-        assert review_merge._dedup_findings(text).merged_into == {
-            review_merge.FindingId("M", 2): review_merge.FindingId("M", 1),
+        assert review.merge._dedup_findings(text).merged_into == {
+            review.merge.FindingId("M", 2): review.merge.FindingId("M", 1),
         }
 
     def test_a_duplicate_filed_under_the_wrong_severity_still_declares_an_id(self):
@@ -897,8 +897,8 @@ class TestDedupFindings:
             "- **[S1]** **`file.go:1`** — same issue\n"
             "- **[M4]** **`file.go:1`** — same issue\n"
         )
-        assert review_merge._dedup_findings(text).merged_into == {
-            review_merge.FindingId("M", 4): review_merge.FindingId("S", 1),
+        assert review.merge._dedup_findings(text).merged_into == {
+            review.merge.FindingId("M", 4): review.merge.FindingId("S", 1),
         }
 
 
@@ -912,7 +912,7 @@ class TestDedupSections:
             "- **[M2]** **`file.go:1`** — same issue\n"
             "- **[M3]** **`other.go:2`** — see [M2] for context\n"
         ))
-        result = review_merge._dedup_sections(sections)
+        result = review.merge._dedup_sections(sections)
         assert "- **[M2]** **`other.go:2`** — see [M1] for context" in result["M"]
 
     def test_a_citation_across_severities_follows_the_gap_closing(self):
@@ -922,7 +922,7 @@ class TestDedupSections:
             M="- **[M1]** **`a.go:1`** — issue a, blocked on [S2]",
             S="- **[S2]** **`b.go:1`** — issue b",
         )
-        result = review_merge._dedup_sections(sections)
+        result = review.merge._dedup_sections(sections)
         assert "blocked on [S1]" in result["M"]
         assert "- **[S1]** **`b.go:1`** — issue b" in result["S"]
 
@@ -931,7 +931,7 @@ class TestDedupSections:
             M="- **[M1]** **`a.go:1`** — issue a, blocked on [S4]",
             S="- **[S1]** **`b.go:1`** — issue b",
         )
-        result = review_merge._dedup_sections(sections)
+        result = review.merge._dedup_sections(sections)
         assert "blocked on [removed]" in result["M"]
 
     def test_a_citation_of_a_misfiled_duplicate_follows_the_survivor(self):
@@ -945,7 +945,7 @@ class TestDedupSections:
                 "- **[M4]** **`file.go:1`** — same issue\n"
             ),
         )
-        result = review_merge._dedup_sections(sections)
+        result = review.merge._dedup_sections(sections)
         assert "- **[M1]** **`other.go:2`** — see [S1] for context" in result["M"]
         assert result["S"].count("same issue") == 1
 
@@ -953,7 +953,7 @@ class TestDedupSections:
         # No Should-fix finding anywhere, so every S in the text belongs to some
         # other document — the prior review, a quoted log line — and stays put.
         sections = _sections(M="- **[M1]** **`a.go:1`** — uploads to S4 buckets, see [S9]")
-        result = review_merge._dedup_sections(sections)
+        result = review.merge._dedup_sections(sections)
         assert "uploads to S4 buckets, see [S9]" in result["M"]
 
 
@@ -971,7 +971,7 @@ class TestReaderToleranceForIncrementalWrites:
     def test_a_short_complete_group_doc_merges(self, tmp_path):
         g = tmp_path / "group-1.md"
         g.write_text(self._SHORT)
-        result = review_merge.merge_reviews([str(g)])
+        result = review.merge.merge_reviews([str(g)])
         assert "## File Triage" in result
         assert "[M1]" in result
 
@@ -979,7 +979,7 @@ class TestReaderToleranceForIncrementalWrites:
     def test_an_empty_group_doc_merges(self, tmp_path):
         g = tmp_path / "group-1.md"
         g.write_text("")
-        result = review_merge.merge_reviews([str(g)])
+        result = review.merge.merge_reviews([str(g)])
         assert "## File Triage" in result
         assert "[M1]" not in result
 
@@ -987,12 +987,12 @@ class TestReaderToleranceForIncrementalWrites:
     def test_a_doc_rewritten_mid_run_merges_the_current_bytes(self, tmp_path):
         g = tmp_path / "group-1.md"
         g.write_text(self._SHORT)
-        first = review_merge.merge_reviews([str(g)])
+        first = review.merge.merge_reviews([str(g)])
         g.write_text(
             self._SHORT
             + "## Should fix\n- **[S1]** **`a.py:2`** — later finding\n"
         )
-        second = review_merge.merge_reviews([str(g)])
+        second = review.merge.merge_reviews([str(g)])
         assert "[M1]" in first
         assert "[S1]" not in first
         assert "[M1]" in second

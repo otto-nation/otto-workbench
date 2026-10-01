@@ -23,17 +23,17 @@ import json
 import sys
 from pathlib import Path
 
-from agent import invoke as agent_invoke
-from gh import client as gh_client
-from git import client as git_client
-from git import topology as git_topology
-from core import log
-from core import pr_template
-from core import publishing
-from core import run_lock
-from pr import context as pr_context
-from pr import follow_ups as pr_follow_ups
-from pr import state as pr_state
+import agent.invoke
+import gh.client
+import git.client
+import git.topology
+import core.log
+import core.pr_template
+import core.publishing
+import core.run_lock
+import pr.context
+import pr.follow_ups
+import pr.state
 from core.phases import Phase
 from pr.domains import DescribeSummary
 from core.tool_parser import ToolParser
@@ -55,28 +55,28 @@ _DESCRIBE_END = "<<<END_DESCRIPTION>>>"
 
 
 def _git(cwd: Path, *args: str) -> str:
-    r = git_client.run(*args, cwd=cwd)
+    r = git.client.run(*args, cwd=cwd)
     if not r.ok:
         # Silent fallback is intentional — the prompt degrades gracefully to
         # "(none)" for commits/changed files rather than aborting the pass.
         # Log so a bad revision (e.g. unfetched origin/<base>) is diagnosable.
-        log.warn(f"git {' '.join(args)} failed: {r.detail}")
+        core.log.warn(f"git {' '.join(args)} failed: {r.detail}")
         return ""
     return r.stdout.strip()
 
 
 def _fetch_pr_body(repo: str, pr_number: int) -> tuple[str, str] | None:
     """Return (title, body) for the PR, or None when gh cannot answer."""
-    r = gh_client.run(
+    r = gh.client.run(
         "pr", "view", str(pr_number), "--repo", repo, "--json", "title,body",
     )
     if not r.ok:
-        log.error(f"gh pr view failed: {r.detail}")
+        core.log.error(f"gh pr view failed: {r.detail}")
         return None
     try:
         data = json.loads(r.stdout)
     except json.JSONDecodeError:
-        log.error("gh pr view returned unparseable JSON")
+        core.log.error("gh pr view returned unparseable JSON")
         return None
     return data.get("title", ""), data.get("body", "") or ""
 
@@ -165,28 +165,28 @@ def _apply_body(repo: str, pr_number: int, body: str) -> bool:
     This is the write the gate most exists for — the text is AI-authored and
     replaces a description a human wrote.
     """
-    if not publishing.enabled():
-        publishing.draft(f"pr edit {repo}#{pr_number} --body-file -", body)
+    if not core.publishing.enabled():
+        core.publishing.draft(f"pr edit {repo}#{pr_number} --body-file -", body)
         return False
-    r = gh_client.run(
+    r = gh.client.run(
         "pr", "edit", str(pr_number), "--repo", repo, "--body-file", "-",
         input_text=body,
     )
     if not r.ok:
-        log.error(f"gh pr edit failed: {r.detail}")
+        core.log.error(f"gh pr edit failed: {r.detail}")
         return False
     return True
 
 
-def _persist(wt: Path, ctx: pr_context.ResolvedContext,
+def _persist(wt: Path, ctx: pr.context.ResolvedContext,
              summary: DescribeSummary) -> None:
-    state = pr_state.load_or_init(
+    state = pr.state.load_or_init(
         target_dir=ctx.target_dir, repo=ctx.repo, branch=ctx.branch,
         pr_number=ctx.pr_number, head_sha=ctx.head_sha,
         worktree_root=str(wt),
     )
-    pr_state.apply(state, summary)
-    pr_state.save_state(ctx.target_dir, state)
+    pr.state.apply(state, summary)
+    pr.state.save_state(ctx.target_dir, state)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -210,7 +210,7 @@ class Projection:
 
 
 def project_follow_ups(
-    ctx: pr_context.ResolvedContext, state, *, trail: Trail | None = None,
+    ctx: pr.context.ResolvedContext, state, *, trail: Trail | None = None,
 ) -> Projection:
     """Put the branch's follow-ups in the PR body.
 
@@ -229,11 +229,11 @@ def project_follow_ups(
 
     fetched = _fetch_pr_body(ctx.repo, ctx.pr_number)
     if fetched is None:
-        log.warn("could not read the PR body — leaving the follow-ups unprojected")
+        core.log.warn("could not read the PR body — leaving the follow-ups unprojected")
         return Projection()
     title, body = fetched
 
-    projected = pr_follow_ups.project(body, entries)
+    projected = pr.follow_ups.project(body, entries)
     if projected.strip() == body.strip():
         # Already there. Still mark the entries, because an earlier run may have
         # written the block and failed before recording that it had.
@@ -244,7 +244,7 @@ def project_follow_ups(
         # them, so the flags stay off and readiness keeps saying so.
         return Projection(False, title, body, True)
 
-    log.info(f"Projected {len(entries)} follow-up(s) into the PR description")
+    core.log.info(f"Projected {len(entries)} follow-up(s) into the PR description")
     if trail:
         trail.info("describe", f"projected {len(entries)} follow-up(s)",
                    data={"pr": ctx.pr_number})
@@ -262,15 +262,15 @@ def _mark_projected(state, entries) -> bool:
     unmarked = [e for e in entries if e.ref.id and not e.in_pr_body]
     if not unmarked:
         return False
-    pr_state.apply(state, pr_follow_ups.FollowUpDomain(
+    pr.state.apply(state, pr.follow_ups.FollowUpDomain(
         entries=[dataclasses.replace(e, in_pr_body=True) for e in unmarked],
-        updated_at=pr_state.now_iso(),
+        updated_at=pr.state.now_iso(),
     ))
     return True
 
 
 def run_describe(
-    ctx: pr_context.ResolvedContext, *,
+    ctx: pr.context.ResolvedContext, *,
     force: bool = False, dry_run: bool = False,
     trail: Trail | None = None,
 ) -> int:
@@ -284,11 +284,11 @@ def run_describe(
     it too rather than invoke this concurrently.
     """
     if not ctx.pr_number:
-        log.info("No PR for this branch — nothing to describe")
+        core.log.info("No PR for this branch — nothing to describe")
         return 0
 
     wt_path = ctx.require_worktree()
-    state = pr_state.load_state(ctx.target_dir)
+    state = pr.state.load_state(ctx.target_dir)
 
     # Ahead of the HEAD gate: see project_follow_ups. Skipped on a dry run,
     # which must not write to GitHub.
@@ -296,15 +296,15 @@ def run_describe(
     if state and not dry_run:
         projection = project_follow_ups(ctx, state, trail=trail)
         if projection.moved:
-            pr_state.save_state(ctx.target_dir, state)
+            pr.state.save_state(ctx.target_dir, state)
 
     last_sha = state.describe.head_sha if state else ""
     if last_sha and last_sha == ctx.head_sha and not force:
-        log.info(
-            f"Description already written for {git_client.abbrev(ctx.head_sha)} — skipping")
+        core.log.info(
+            f"Description already written for {git.client.abbrev(ctx.head_sha)} — skipping")
         return 0
 
-    template = pr_template.load(wt_path)
+    template = core.pr_template.load(wt_path)
     # Reuse the projection's read when it made one, rather than asking gh for
     # the same body twice.
     fetched = (
@@ -318,14 +318,14 @@ def run_describe(
         return 1
     title, body = fetched
 
-    base = git_topology.default_branch(wt_path)
+    base = git.topology.default_branch(wt_path)
     commits = _git(wt_path, "log", "--oneline", f"origin/{base}..HEAD")
     changed_files = _git(wt_path, "diff", "--name-only", f"origin/{base}...HEAD")
 
     prompt = _build_prompt(
         template.text, template.found, title, body, commits, changed_files,
     )
-    answer = agent_invoke.run_prompt(
+    answer = agent.invoke.run_prompt(
         Phase.DESCRIBE, prompt,
         cwd=wt_path, usable=_usable_revision, task=SCRIPT,
         repo=ctx.repo, pr=str(ctx.pr_number),
@@ -333,15 +333,15 @@ def run_describe(
     if not answer.ok:
         if trail:
             trail.error("describe", "AI prompt failed", data={"exit_code": answer.exit_code})
-        log.error("ai prompt failed")
+        core.log.error("ai prompt failed")
         return 1
 
     raw = answer.text.strip()
     if raw == _NO_CHANGE:
-        log.info("Description already matches the template — no change")
+        core.log.info("Description already matches the template — no change")
         _persist(wt_path, ctx, DescribeSummary(
             head_sha=ctx.head_sha, template_path=template.path,
-            changed=False, updated_at=pr_state.now_iso(),
+            changed=False, updated_at=pr.state.now_iso(),
         ))
         return 0
 
@@ -352,14 +352,14 @@ def run_describe(
         # for in the prompt: the prompt already asks for closing keywords
         # verbatim and `pr_preserve_close_refs` still exists as the backstop for
         # a one-line ref, so a multi-line block will not survive on instruction.
-        revised = pr_follow_ups.project(revised, state.follow_ups.entries)
+        revised = pr.follow_ups.project(revised, state.follow_ups.entries)
     if revised is None:
         # _usable_revision already passed, so this should not happen, but guard
         # against a caller that bypasses agent_invoke.run_prompt and so never
         # ran that check.
         if trail:
             trail.error("describe", "AI response missing extraction markers")
-        log.error("ai response missing extraction markers — not posting to GitHub")
+        core.log.error("ai response missing extraction markers — not posting to GitHub")
         return 1
 
     if dry_run:
@@ -367,7 +367,7 @@ def run_describe(
         return 0
 
     applied = _apply_body(ctx.repo, ctx.pr_number, revised)
-    if not applied and publishing.enabled():
+    if not applied and core.publishing.enabled():
         # The gate was open and the write still failed — a real error, not a
         # draft. publishing.enabled() is what tells the two apart: _apply_body
         # returns False for both, and a draft is not a failure.
@@ -377,7 +377,7 @@ def run_describe(
         return 1
 
     if applied:
-        log.info(f"Revised PR description against {template.path or 'the default template'}")
+        core.log.info(f"Revised PR description against {template.path or 'the default template'}")
         if trail:
             trail.info("describe", "description revised",
                        data={"template": template.path, "head_sha": ctx.head_sha})
@@ -386,7 +386,7 @@ def run_describe(
     # re-earn the AI call — see the module docstring's commit-awareness note.
     _persist(wt_path, ctx, DescribeSummary(
         head_sha=ctx.head_sha, template_path=template.path,
-        changed=True, updated_at=pr_state.now_iso(),
+        changed=True, updated_at=pr.state.now_iso(),
     ))
     return 0
 
@@ -422,7 +422,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    ctx = pr_context.resolve(
+    ctx = pr.context.resolve(
         repo_dir=args.repo_dir, branch=args.branch, pr_ref=args.pr,
     )
 
@@ -442,19 +442,19 @@ def main(argv: list[str] | None = None) -> int:
     # visible to it as the deliberate opt-out this is.
     worktree = ctx.worktree_root if ctx.worktree_root else None
 
-    run_lock.claim_for_process(
+    core.run_lock.claim_for_process(
         ctx.target_dir,
         command=" ".join([SCRIPT] + (argv if argv is not None else sys.argv[1:])),
-        started=pr_state.now_iso(),
+        started=pr.state.now_iso(),
         worktree=worktree,
     )
 
     # After the lock and before the work, matching every other gated command.
     # `--dry-run` is a narrower request than a draft — it prints the revision
     # and writes no state — so it stays its own flag rather than folding in.
-    with publishing.run(post=args.post):
+    with core.publishing.run(post=args.post):
         if not args.post and not args.dry_run:
-            log.info("Draft mode — the PR body is not edited. "
+            core.log.info("Draft mode — the PR body is not edited. "
                      "Re-run with --post to apply it.")
 
         trail = Trail.start(

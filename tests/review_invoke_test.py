@@ -20,7 +20,8 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 from conftest import FAKE_REPO  # noqa: E402
-from review import invoke as review_invoke  # noqa: E402
+import review.invoke  # noqa: E402
+import core.publishing
 
 
 def _request(tmp_path, **overrides):
@@ -31,12 +32,12 @@ def _request(tmp_path, **overrides):
         bin_dir=Path("/bin"), generator_version="review 1.2.3",
     )
     base.update(overrides)
-    return review_invoke.OrchestrateRequest(**base)
+    return review.invoke.OrchestrateRequest(**base)
 
 
 def test_the_pr_review_argv_is_exactly_this(tmp_path):
     """A golden for the PR shape: no --mode, no --fix, no --post."""
-    argv = review_invoke.build_argv(_request(tmp_path))
+    argv = review.invoke.build_argv(_request(tmp_path))
 
     assert argv == [
         "/bin/review-orchestrate",
@@ -58,7 +59,7 @@ def test_the_self_review_argv_carries_mode_fix_and_publish(tmp_path):
     The field is named `may_publish` for that reason — the argv spelling is an
     accident of the flag, and the two should not be confused at a call site.
     """
-    argv = review_invoke.build_argv(_request(
+    argv = review.invoke.build_argv(_request(
         tmp_path, mode="self", fix_pass=True, may_publish=True,
         base="feat/parent",
         model="sonnet", max_cost=12.5, effort="high", max_groups=3,
@@ -89,7 +90,7 @@ def test_the_self_review_argv_carries_mode_fix_and_publish(tmp_path):
 
 def test_a_self_review_without_a_pr_omits_the_pr_flag(tmp_path):
     """A branch with no PR still reviews; it just has no number to pass."""
-    argv = review_invoke.build_argv(_request(tmp_path, pr_number="", mode="self"))
+    argv = review.invoke.build_argv(_request(tmp_path, pr_number="", mode="self"))
 
     assert "--pr" not in argv
     assert argv[argv.index("--mode") + 1] == "self"
@@ -101,14 +102,14 @@ def test_an_unset_effort_is_omitted_rather_than_defaulted(tmp_path):
     Sending a default here would silently outrank the config file, which is the
     one thing the absent flag exists to avoid.
     """
-    assert "--effort" not in review_invoke.build_argv(_request(tmp_path))
-    assert "--effort" in review_invoke.build_argv(_request(tmp_path, effort="medium"))
+    assert "--effort" not in review.invoke.build_argv(_request(tmp_path))
+    assert "--effort" in review.invoke.build_argv(_request(tmp_path, effort="medium"))
 
 
 def test_an_unset_max_parallel_is_omitted_rather_than_defaulted(tmp_path):
     """No flag means review-orchestrate derives the worker count itself."""
-    assert "--max-parallel" not in review_invoke.build_argv(_request(tmp_path))
-    argv = review_invoke.build_argv(_request(tmp_path, max_parallel=2))
+    assert "--max-parallel" not in review.invoke.build_argv(_request(tmp_path))
+    argv = review.invoke.build_argv(_request(tmp_path, max_parallel=2))
     assert argv[argv.index("--max-parallel") + 1] == "2"
 
 
@@ -116,26 +117,26 @@ def test_a_prior_review_is_forwarded_only_when_it_exists(tmp_path):
     """The path is a file on disk, and a stale one must not reach the pipeline."""
     prior = tmp_path / "prior.md"
 
-    assert "--prior-review" not in review_invoke.build_argv(
+    assert "--prior-review" not in review.invoke.build_argv(
         _request(tmp_path, prior_review_path=str(prior)))
 
     prior.write_text("## Must fix\n")
-    assert "--prior-review" in review_invoke.build_argv(
+    assert "--prior-review" in review.invoke.build_argv(
         _request(tmp_path, prior_review_path=str(prior)))
 
 
 def test_a_zero_max_cost_is_forwarded_rather_than_dropped(tmp_path):
     """0 is a real cap ("stop now"), not the same as "unset"."""
-    argv = review_invoke.build_argv(_request(tmp_path, max_cost=0))
+    argv = review.invoke.build_argv(_request(tmp_path, max_cost=0))
 
     assert argv[argv.index("--max-cost") + 1] == "0"
 
 
 def test_disprove_is_forwarded_only_when_explicitly_true(tmp_path):
     """None means "let effort decide", which is not the same as False."""
-    assert "--disprove" not in review_invoke.build_argv(_request(tmp_path))
-    assert "--disprove" not in review_invoke.build_argv(_request(tmp_path, disprove=False))
-    assert "--disprove" in review_invoke.build_argv(_request(tmp_path, disprove=True))
+    assert "--disprove" not in review.invoke.build_argv(_request(tmp_path))
+    assert "--disprove" not in review.invoke.build_argv(_request(tmp_path, disprove=False))
+    assert "--disprove" in review.invoke.build_argv(_request(tmp_path, disprove=True))
 
 
 # ── the guards around the in-process call ───────────────────────────────────
@@ -146,7 +147,7 @@ def _spawn(monkeypatch, returncode):
         assert handler == "cli.review_orchestrate:main"
         return returncode
 
-    monkeypatch.setattr(review_invoke.publishing, "call_entry_point", _run)
+    monkeypatch.setattr(core.publishing, "call_entry_point", _run)
 
 
 def test_a_nonzero_return_code_stops_the_run(tmp_path, monkeypatch):
@@ -155,7 +156,7 @@ def test_a_nonzero_return_code_stops_the_run(tmp_path, monkeypatch):
     _spawn(monkeypatch, 1)
 
     with pytest.raises(SystemExit) as excinfo:
-        review_invoke.run(_request(tmp_path))
+        review.invoke.run(_request(tmp_path))
 
     assert excinfo.value.code == 1
 
@@ -169,7 +170,7 @@ def test_a_missing_review_file_stops_the_run(tmp_path, monkeypatch):
     _spawn(monkeypatch, 0)
 
     with pytest.raises(SystemExit) as excinfo:
-        review_invoke.run(_request(tmp_path))
+        review.invoke.run(_request(tmp_path))
 
     assert excinfo.value.code == 1
 
@@ -183,7 +184,7 @@ def test_a_successful_run_returns_its_wall_clock(tmp_path, monkeypatch):
     (tmp_path / "review.md").write_text("## Must fix\n")
     _spawn(monkeypatch, 0)
 
-    wall_ms = review_invoke.run(_request(tmp_path))
+    wall_ms = review.invoke.run(_request(tmp_path))
 
     assert isinstance(wall_ms, int)
     assert wall_ms >= 0
@@ -194,7 +195,7 @@ def test_the_base_crosses_the_spawn(tmp_path):
     the repo and PR number alone. A base resolved on this side and not put on
     the argv is one the pipeline never sees — it would re-derive the trunk and
     review a stacked branch against the wrong thing."""
-    argv = review_invoke.build_argv(_request(tmp_path, base="feat/parent"))
+    argv = review.invoke.build_argv(_request(tmp_path, base="feat/parent"))
 
     assert "--base" in argv
     assert argv[argv.index("--base") + 1] == "feat/parent"
@@ -204,4 +205,4 @@ def test_the_base_crosses_the_spawn(tmp_path):
 def test_an_unresolved_base_is_left_off_the_argv(tmp_path):
     """Absent rather than empty: review-orchestrate defaults it, and `--base ""`
     would override that default with nothing."""
-    assert "--base" not in review_invoke.build_argv(_request(tmp_path))
+    assert "--base" not in review.invoke.build_argv(_request(tmp_path))

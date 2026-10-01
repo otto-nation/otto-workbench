@@ -11,7 +11,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from review import types as rt
+import review.types
 from gh.types import PRContext, PRMetadata
 from review.types import ReviewJob
 
@@ -56,7 +56,7 @@ class TestArtifactDir:
 
 def test_the_module_constant_is_gone():
     """A second owner is what this change removed; it must not come back."""
-    assert not hasattr(rt, "MULTI_PHASE_LINE_THRESHOLD")
+    assert not hasattr(review.types, "MULTI_PHASE_LINE_THRESHOLD")
 
 
 class TestReplyStateIsAStringOnTheWire:
@@ -67,8 +67,8 @@ class TestReplyStateIsAStringOnTheWire:
     """
 
     def test_members_are_their_own_string_values(self):
-        assert rt.ReplyState.RESOLVED == "resolved"
-        assert {rt.ReplyState.RESOLVED: 1}["resolved"] == 1
+        assert review.types.ReplyState.RESOLVED == "resolved"
+        assert {review.types.ReplyState.RESOLVED: 1}["resolved"] == 1
 
     def test_no_member_collides_with_a_thread_state(self):
         # `pr_comments_state.ThreadState` answers the same question from the
@@ -76,5 +76,5 @@ class TestReplyStateIsAStringOnTheWire:
         # for one another, so a shared member has to mean the same thing.
         from pr.comments_state import ThreadState
 
-        shared = {s.value for s in rt.ReplyState} & {s.value for s in ThreadState}
+        shared = {s.value for s in review.types.ReplyState} & {s.value for s in ThreadState}
         assert shared == {"contested", "resolved"}

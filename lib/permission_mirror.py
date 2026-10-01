@@ -54,7 +54,7 @@ for _path in (_LIB_DIR, os.path.join(_WORKBENCH_DIR, 'ai', 'lib')):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-from config import workbench_projects  # noqa: E402
+import config.workbench_projects  # noqa: E402
 from ansi import CYAN, DIM, GREEN, NC, YELLOW  # noqa: E402
 from permissions import (  # noqa: E402
     MANIFEST_KEY, TRACKED_SETTINGS, TrackedRules,
@@ -319,7 +319,7 @@ def main(argv: list[str] | None = None) -> int:
                         help='Say so when every mirror is already current')
     args = parser.parse_args(argv)
 
-    repos = [str(p) for p in workbench_projects.registered()]
+    repos = [str(p) for p in config.workbench_projects.registered()]
     report(mirror(repos, args.dry_run), args.dry_run, args.verbose)
     return 0
 

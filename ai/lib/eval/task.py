@@ -46,8 +46,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from core import proc
-from core import timeouts
+import core.proc
+import core.timeouts
 from agent.usage import SessionUsage
 from eval.scoring import RunOutcome, ScoringResult
 
@@ -168,9 +168,9 @@ def _git_step(git: list[str], step: list[str], env: dict[str, str]) -> None:
     stripped. It also derives its bound from the subcommand, which would put
     `init` and `remote add` on `LOCAL`.
     """
-    r = proc.run(git + step, env=env, timeout=timeouts.UNBOUNDED)
+    r = core.proc.run(git + step, env=env, timeout=core.timeouts.UNBOUNDED)
     if not r.ok:
-        raise RuntimeError(proc.failure_message(f"git {' '.join(step)} failed", r))
+        raise RuntimeError(core.proc.failure_message(f"git {' '.join(step)} failed", r))
 
 
 def create_temp_repo(src_dir: str, prefix: str = "eval-") -> str:
@@ -240,12 +240,12 @@ def fixture_head_sha(repo_dir: str) -> str:
     graded run declines to act citing the commit's message or contents rather
     than its existence, give `create_temp_repo` a case-supplied subject.
     """
-    r = proc.run(
+    r = core.proc.run(
         ["git", "-C", repo_dir, "rev-parse", "HEAD"],
-        env=clean_env(), timeout=timeouts.LOCAL,
+        env=clean_env(), timeout=core.timeouts.LOCAL,
     )
     if not r.ok:
-        raise RuntimeError(proc.failure_message("git rev-parse HEAD failed", r))
+        raise RuntimeError(core.proc.failure_message("git rev-parse HEAD failed", r))
     sha = r.stdout.strip()
     if not sha:
         raise RuntimeError(f"git rev-parse HEAD printed no sha in {repo_dir}")

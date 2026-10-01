@@ -58,7 +58,7 @@ import time
 from dataclasses import dataclass
 from enum import StrEnum
 
-from core import log
+import core.log
 from core.proc import CmdResult
 
 # What `run` reports for a call it declined to make. Distinct from a real
@@ -283,14 +283,14 @@ def _probe_reset(resource: Resource) -> tuple[float | None, Resource]:
     consult the latch, so the dependency has to run one way at import time and
     the other way only when a probe fires.
     """
-    from gh import client as gh_client
+    import gh.client
 
     argv = (
         ("api", "graphql", "-i", "-f", "query=query { viewer { login } }")
         if resource is Resource.GRAPHQL
         else ("api", "-i", "user")
     )
-    r = gh_client.run(*argv, _skip_breaker=True)
+    r = gh.client.run(*argv, _skip_breaker=True)
     said = r.combined_output
     found = _RESOURCE_HEADER_RE.search(said)
     charged = resource
@@ -348,7 +348,7 @@ def arm(said: str, resource: Resource | None) -> None:
             _latched.pop(resource, None)
         _export()
 
-    log.warn(
+    core.log.warn(
         f"GitHub {charged.value} budget exhausted — no further {charged.value} "
         f"calls will be made this run ({latch.remedy()})"
     )

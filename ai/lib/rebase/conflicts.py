@@ -10,10 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from core import log
+import core.log
 from core.trail import Trail
-from git import client as git_client
-from git import regenerate as regen
+import git.client
+import git.regenerate
 
 from . import types as rebase_types
 
@@ -74,7 +74,7 @@ def is_generated_file(
 
     Returns the signal that identified the file, or None if not generated.
     """
-    r = git_client.run("check-attr", "linguist-generated", "--", filepath, cwd=cwd)
+    r = git.client.run("check-attr", "linguist-generated", "--", filepath, cwd=cwd)
     if r.ok and ": true" in r.stdout:
         return GeneratedSignal.GITATTRIBUTES
 
@@ -102,7 +102,7 @@ def detect_delete_conflict(filepath: str, cwd: str) -> DeleteSide | None:
         THEIRS_DELETED if branch commit deletes the file, target has it
         None if both stages present (normal content conflict)
     """
-    r = git_client.run("ls-files", "-u", "--stage", "--", filepath, cwd=cwd)
+    r = git.client.run("ls-files", "-u", "--stage", "--", filepath, cwd=cwd)
     if not r.ok or not r.stdout.strip():
         return None
 
@@ -140,10 +140,10 @@ def resolve_delete_conflict(
             reason=f"{reason} (modify/delete conflict)",
         )
 
-    if not git_client.ok("rm", "--force", filepath, cwd=cwd):
-        log.error(f"git rm failed for {filepath}")
+    if not git.client.ok("rm", "--force", filepath, cwd=cwd):
+        core.log.error(f"git rm failed for {filepath}")
         return False
-    log.info(f"Accepted deletion: {filepath} ({reason})")
+    core.log.info(f"Accepted deletion: {filepath} ({reason})")
     return True
 
 
@@ -156,7 +156,7 @@ def get_ours_content(filepath: str, cwd: str) -> str | None:
     state before the conflicting commit is applied. Returns None if unavailable
     (e.g. file is new on the branch).
     """
-    r = git_client.run("show", f":2:{filepath}", cwd=cwd)
+    r = git.client.run("show", f":2:{filepath}", cwd=cwd)
     return r.stdout if r.ok else None
 
 
@@ -166,7 +166,7 @@ def get_commit_diff(filepath: str, cwd: str) -> str | None:
     Shows what the commit being replayed intended to change, helping the AI
     understand the branch's intent separately from the conflict markers.
     """
-    return git_client.out("diff", "REBASE_HEAD^", "REBASE_HEAD", "--", filepath, cwd=cwd) or None
+    return git.client.out("diff", "REBASE_HEAD^", "REBASE_HEAD", "--", filepath, cwd=cwd) or None
 
 
 def is_binary(path: Path) -> bool:
@@ -512,20 +512,20 @@ def splice_resolutions(
 
 def git_add(filepath: str, cwd: str) -> bool:
     """Stage a file and return True on success."""
-    if git_client.ok("add", filepath, cwd=cwd):
+    if git.client.ok("add", filepath, cwd=cwd):
         return True
-    log.error(f"git add failed for {filepath}")
+    core.log.error(f"git add failed for {filepath}")
     return False
 
 
 def accept_theirs_and_stage(filepath: str, cwd: str) -> bool:
     """Accept theirs for a generated file and stage it."""
-    if not git_client.ok("checkout", "--theirs", filepath, cwd=cwd):
-        log.error(f"git checkout --theirs failed for {filepath}")
+    if not git.client.ok("checkout", "--theirs", filepath, cwd=cwd):
+        core.log.error(f"git checkout --theirs failed for {filepath}")
         return False
     if not git_add(filepath, cwd):
         return False
-    log.info(f"Accepted theirs: {filepath}")
+    core.log.info(f"Accepted theirs: {filepath}")
     return True
 
 
@@ -537,7 +537,7 @@ def classify_conflict(filepath: str, full_path: Path, cwd: str) -> ConflictPlan:
     if delete_side is not None:
         return ConflictPlan(ConflictStrategy.DELETE, delete_side=delete_side)
 
-    regenerator = regen.find_regenerator(filepath)
+    regenerator = git.regenerate.find_regenerator(filepath)
     if regenerator is not None:
         return ConflictPlan(ConflictStrategy.REGENERATE, regenerator=regenerator)
 

@@ -14,8 +14,8 @@ if str(LIB_DIR) not in sys.path:
 from pr.state import PostedAs, PostEvent, PostTracking
 from core.proc import CmdResult
 from core.serde import from_dict as serde_from_dict
-from review import dedup as review_dedup
-from review import posting as review_posting
+import review.dedup
+import review.posting
 
 
 # A GitHub outage as gh reports it: nothing on stdout, the status line on
@@ -1268,7 +1268,7 @@ class TestShaDriftReverify:
                             full_path="file.go")],
                 [],
             )),
-            patch.object(rp, "fetch_bot_reviews", return_value=review_dedup.BotReviews()),
+            patch.object(rp, "fetch_bot_reviews", return_value=review.dedup.BotReviews()),
             patch.object(rp, "check_review_already_posted", return_value=set()),
             patch.object(rp, "_check_existing_pending", return_value=rp.PendingReview()),
             patch("gh.client.api_json", side_effect=capture_post),
@@ -1305,7 +1305,7 @@ class TestShaDriftReverify:
             patch.object(rp, "fetch_pr_data", return_value=pr_data),
             patch.object(rp, "_get_diff", side_effect=capture_diff),
             patch.object(rp, "dedup_against_posted", return_value=([], [])),
-            patch.object(rp, "fetch_bot_reviews", return_value=review_dedup.BotReviews()),
+            patch.object(rp, "fetch_bot_reviews", return_value=review.dedup.BotReviews()),
             patch.object(rp, "check_review_already_posted", return_value=set()),
             patch.object(rp, "_check_existing_pending", return_value=rp.PendingReview()),
             patch("gh.client.api_json", return_value={"id": 42}),
@@ -1337,7 +1337,7 @@ class TestShaDriftReverify:
                             full_path="file.go")],
                 [],
             )),
-            patch.object(rp, "fetch_bot_reviews", return_value=review_dedup.BotReviews()),
+            patch.object(rp, "fetch_bot_reviews", return_value=review.dedup.BotReviews()),
             patch.object(rp, "check_review_already_posted", return_value=set()),
             patch.object(rp, "_check_existing_pending", return_value=rp.PendingReview()),
             patch("gh.client.api_json", return_value={"id": 42}),
@@ -2007,7 +2007,7 @@ class TestUnansweredLookupsAreAudible:
         with patch("gh.pr_reads._check_existing_pending",
                    return_value=rp.PendingReview(looked=False)), \
              patch("gh.client.api", return_value=CmdResult(0, "{}")):
-            review_posting._post_chunked_review(
+            review.posting._post_chunked_review(
                 "org/repo", "1", "abc", "body", [], 10, False)
 
         assert "Could not check for an existing PENDING review" in capsys.readouterr().err
@@ -2017,7 +2017,7 @@ class TestUnansweredLookupsAreAudible:
         with patch("gh.pr_reads._check_existing_pending",
                    return_value=rp.PendingReview()), \
              patch("gh.client.api", return_value=CmdResult(0, "{}")):
-            review_posting._post_chunked_review(
+            review.posting._post_chunked_review(
                 "org/repo", "1", "abc", "body", [], 10, False)
 
         assert "existing PENDING review" not in capsys.readouterr().err

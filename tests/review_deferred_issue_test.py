@@ -32,17 +32,18 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest  # noqa: E402
 
-from config import workbench_config  # noqa: E402
-from core import markdown  # noqa: E402
-from pr import summary_publish  # noqa: E402
-from pr import thread_replies  # noqa: E402
+import config.workbench_config  # noqa: E402
+import core.markdown  # noqa: E402
+import pr.summary_publish  # noqa: E402
+import pr.thread_replies  # noqa: E402
 from pr.comments_fix import FixSummary  # noqa: E402
 from pr.fix import FixOutcome, FixRecord, ItemOutcome  # noqa: E402
 from pr.state import PRIdentity, PRState  # noqa: E402
 from pr.thread_models import CommentItem, PRReport, ReportThread  # noqa: E402
-from review import deferred_issue  # noqa: E402
-from review import issue as review_issue  # noqa: E402
+import review.deferred_issue  # noqa: E402
+import review.issue  # noqa: E402
 from review.issue import CreatedIssue, IssueDelivery, IssueResult  # noqa: E402
+import core.log
 
 
 def _identity(worktree="/wt") -> PRIdentity:
@@ -86,10 +87,10 @@ class TestUpdatingAnIssueThatAlreadyExists:
     """
 
     def test_a_successful_update_carries_the_refreshed_url(self):
-        with patch.object(review_issue, "update_issue", return_value=True), \
-                patch.object(review_issue, "get_issue_url",
+        with patch.object(review.issue, "update_issue", return_value=True), \
+                patch.object(review.issue, "get_issue_url",
                              return_value="https://x/ENG-1"):
-            result = deferred_issue.update_deferred_issue(
+            result = review.deferred_issue.update_deferred_issue(
                 "linear", "ENG-1", "body", "owner/repo", None)
         assert result.delivery is IssueDelivery.FILED
         assert result.issue == CreatedIssue(id="ENG-1", url="https://x/ENG-1")
@@ -102,8 +103,8 @@ class TestUpdatingAnIssueThatAlreadyExists:
         there, and the operator would have nothing to do about it. Stale beats
         missing, and `owed` stays False.
         """
-        with patch.object(review_issue, "update_issue", return_value=False):
-            result = deferred_issue.update_deferred_issue(
+        with patch.object(review.issue, "update_issue", return_value=False):
+            result = review.deferred_issue.update_deferred_issue(
                 "linear", "ENG-1", "body", "owner/repo", None)
         assert result.delivery is IssueDelivery.FILED
         assert result.owed is False
@@ -111,9 +112,9 @@ class TestUpdatingAnIssueThatAlreadyExists:
 
     def test_a_failed_update_does_not_invent_a_url(self):
         """`get_issue_url` is not reached, so the caller's fallback decides."""
-        with patch.object(review_issue, "update_issue", return_value=False), \
-                patch.object(review_issue, "get_issue_url") as url:
-            result = deferred_issue.update_deferred_issue(
+        with patch.object(review.issue, "update_issue", return_value=False), \
+                patch.object(review.issue, "get_issue_url") as url:
+            result = review.deferred_issue.update_deferred_issue(
                 "linear", "ENG-1", "body", "owner/repo", None)
         url.assert_not_called()
         assert result.issue.url == ""
@@ -123,15 +124,15 @@ class TestTheSecondRoundUpdatesRatherThanRefiling:
     """The `existing_issue_id` path, which no prior test had ever executed."""
 
     def _run(self, worktree, *, existing_id, existing_url="", update_ok=True):
-        with patch.object(review_issue, "load_issue_provider") as load, \
-                patch.object(review_issue, "ensure_issue_provider") as ensure, \
-                patch.object(review_issue, "update_issue", return_value=update_ok), \
-                patch.object(review_issue, "get_issue_url",
+        with patch.object(review.issue, "load_issue_provider") as load, \
+                patch.object(review.issue, "ensure_issue_provider") as ensure, \
+                patch.object(review.issue, "update_issue", return_value=update_ok), \
+                patch.object(review.issue, "get_issue_url",
                              return_value="https://x/ENG-1" if update_ok else ""), \
-                patch.object(review_issue, "create_issue") as create:
-            info = review_issue.IssueProviderInfo(name="linear", options={"team": "ENG"})
+                patch.object(review.issue, "create_issue") as create:
+            info = review.issue.IssueProviderInfo(name="linear", options={"team": "ENG"})
             load.return_value = ensure.return_value = info
-            result = deferred_issue.create_or_update_deferred_issue(
+            result = review.deferred_issue.create_or_update_deferred_issue(
                 [_entry()], "owner/repo", 42, {}, _ctx(worktree),
                 existing_id, None, existing_url,
             )
@@ -172,7 +173,7 @@ class TestATrackerWithNoTeamKey:
             def error(self, event, msg, **kw):
                 records.append(("error", event, msg))
 
-        result = deferred_issue._no_team_key(
+        result = review.deferred_issue._no_team_key(
             "linear", _Trail(), publishing_open=publishing_open)
         return result, records
 
@@ -199,23 +200,23 @@ class TestATrackerWithNoTeamKey:
         """
         self._call(publishing_open=publishing_open)
         err = capsys.readouterr().err
-        assert workbench_config.ISSUE_TEAM_KEY in err
-        assert f"otto-workbench config set {workbench_config.ISSUE_TEAM_KEY}" in err
+        assert config.workbench_config.ISSUE_TEAM_KEY in err
+        assert f"otto-workbench config set {config.workbench_config.ISSUE_TEAM_KEY}" in err
 
 
 class TestTrackValidation:
     def test_an_unknown_id_is_refused(self):
-        assert not deferred_issue.validate_track(_state("t1"), {"nope"})
+        assert not review.deferred_issue.validate_track(_state("t1"), {"nope"})
 
     def test_track_all_validates_nothing(self):
-        assert deferred_issue.validate_track(_state("t1"), deferred_issue.TRACK_ALL)
+        assert review.deferred_issue.validate_track(_state("t1"), review.deferred_issue.TRACK_ALL)
 
     def test_a_non_deferred_id_is_unknown(self):
         """Membership is of the deferred set, not of the record."""
         state = _state("t1")
         state.fix.fix.items.append(
             ItemOutcome(id="t2", outcome=FixOutcome.FIXED))
-        assert not deferred_issue.validate_track(state, {"t2"})
+        assert not review.deferred_issue.validate_track(state, {"t2"})
 
     def test_an_empty_snapshot_rejects_an_id_that_cannot_exist(self, worktree):
         """#1319: the one case where "filed nothing" reads as agreement.
@@ -226,8 +227,8 @@ class TestTrackValidation:
         thread is now reported whether or not the snapshot has items.
         """
         state = PRState(identity=_identity())
-        with patch.object(deferred_issue, "create_or_update_deferred_issue") as create:
-            assert not deferred_issue.finalize_deferred(
+        with patch.object(review.deferred_issue, "create_or_update_deferred_issue") as create:
+            assert not review.deferred_issue.finalize_deferred(
                 state, _ctx(worktree), {}, track={"nope"})
         create.assert_not_called()
 
@@ -239,8 +240,8 @@ class TestTrackValidation:
         into a noisy one.
         """
         state = PRState(identity=_identity())
-        with patch.object(deferred_issue, "create_or_update_deferred_issue") as create:
-            assert deferred_issue.finalize_deferred(state, _ctx(worktree), {})
+        with patch.object(review.deferred_issue, "create_or_update_deferred_issue") as create:
+            assert review.deferred_issue.finalize_deferred(state, _ctx(worktree), {})
         create.assert_not_called()
         assert capsys.readouterr().err == ""
 
@@ -260,11 +261,11 @@ class TestTheIssueLinkReachesTheSummary:
         state.fix.summary_deferred = True
         result = IssueResult(IssueDelivery.FILED,
                              CreatedIssue(id=filed_id, url=filed_url))
-        with patch.object(deferred_issue, "create_or_update_deferred_issue",
+        with patch.object(review.deferred_issue, "create_or_update_deferred_issue",
                           return_value=result), \
-                patch.object(thread_replies, "post_deferred_replies"):
-            deferred_issue.finalize_deferred(
-                state, _ctx(worktree), {}, track=deferred_issue.TRACK_ALL)
+                patch.object(pr.thread_replies, "post_deferred_replies"):
+            review.deferred_issue.finalize_deferred(
+                state, _ctx(worktree), {}, track=review.deferred_issue.TRACK_ALL)
         return state
 
     def test_the_filed_issue_reaches_the_state_the_summary_reads(self, worktree):
@@ -286,7 +287,7 @@ class TestTheIssueLinkReachesTheSummary:
         with patch("pr.comments.post_issue_comment", return_value="https://url") as post, \
                 patch("pr.comments.find_marker_comment", return_value=None), \
                 patch("core.publishing.enabled", return_value=True):
-            summary_publish.render_deferred_summary(
+            pr.summary_publish.render_deferred_summary(
                 state, PRReport(), "owner/repo", 42, {})
         body = post.call_args[0][2]
         assert "ENG-1" in body
@@ -303,7 +304,7 @@ class TestTheIssueLinkReachesTheSummary:
         with patch("pr.comments.post_issue_comment", return_value="https://url") as post, \
                 patch("pr.comments.find_marker_comment", return_value=None), \
                 patch("core.publishing.enabled", return_value=True):
-            summary_publish.render_deferred_summary(
+            pr.summary_publish.render_deferred_summary(
                 state, PRReport(), "owner/repo", 42, {})
         body = post.call_args[0][2]
         assert "ENG-1" not in body
@@ -311,11 +312,11 @@ class TestTheIssueLinkReachesTheSummary:
 
     def test_an_undelivered_issue_leaves_the_debt_on_the_state(self, worktree):
         state = _state("t1")
-        with patch.object(deferred_issue, "create_or_update_deferred_issue",
+        with patch.object(review.deferred_issue, "create_or_update_deferred_issue",
                           return_value=IssueResult(IssueDelivery.UNDELIVERED)), \
-                patch.object(thread_replies, "post_deferred_replies") as reply:
-            deferred_issue.finalize_deferred(
-                state, _ctx(worktree), {}, track=deferred_issue.TRACK_ALL)
+                patch.object(pr.thread_replies, "post_deferred_replies") as reply:
+            review.deferred_issue.finalize_deferred(
+                state, _ctx(worktree), {}, track=review.deferred_issue.TRACK_ALL)
         assert state.fix.deferred_issue_pending is True
         reply.assert_not_called()
 
@@ -329,8 +330,8 @@ class TestReportingRunsAfterFiling:
         described a selection that never happened."""
         state = _state("t1")
         printed = []
-        with patch.object(deferred_issue.log, "info", side_effect=printed.append):
-            assert not deferred_issue.finalize_deferred(
+        with patch.object(core.log, "info", side_effect=printed.append):
+            assert not review.deferred_issue.finalize_deferred(
                 state, _ctx(worktree), {}, track={"nope"})
         assert printed == []
 
@@ -339,22 +340,22 @@ class TestTheTrackingIssueBody:
     """Only what the move changed. The rest stays in `test_review_threads.py`."""
 
     def test_the_table_is_three_columns_wide(self):
-        body = deferred_issue.build_deferred_issue_body(
+        body = review.deferred_issue.build_deferred_issue_body(
             [_entry()], "owner/repo", 42, {})
         header = next(line for line in body.splitlines() if "Thread" in line)
-        assert markdown.row_cells(header) == ["Thread", "File", "Reason"]
+        assert core.markdown.row_cells(header) == ["Thread", "File", "Reason"]
 
     def test_the_pr_link_points_at_the_repos_own_forge(self):
         """An enterprise repo's tracking issue must not link the PR on
         github.com, where the number is a different PR or none at all."""
-        body = deferred_issue.build_deferred_issue_body(
+        body = review.deferred_issue.build_deferred_issue_body(
             [_entry()], "owner/repo", 42, {}, "ghe.acme.com")
         assert "https://ghe.acme.com/owner/repo/pull/42" in body
         assert "github.com" not in body
 
     # passes-at-base: an unset host keeps rendering public GitHub, as before the parameter existed
     def test_the_pr_link_defaults_to_public_github(self):
-        body = deferred_issue.build_deferred_issue_body(
+        body = review.deferred_issue.build_deferred_issue_body(
             [_entry()], "owner/repo", 42, {})
         assert "https://github.com/owner/repo/pull/42" in body
 
@@ -368,7 +369,7 @@ class TestTheTrackingIssueBody:
         no link at all and it cannot see this.
         """
         threads = {"t1": ReportThread(id="t1", comments=[{"databaseId": 12345}])}
-        body = deferred_issue.build_deferred_issue_body(
+        body = review.deferred_issue.build_deferred_issue_body(
             [_entry()], "owner/repo", 42, threads, "ghe.acme.com")
         row = next(line for line in body.splitlines() if "#discussion_r12345" in line)
         assert "https://ghe.acme.com/owner/repo/pull/42#discussion_r12345" in row
@@ -377,11 +378,11 @@ class TestTheTrackingIssueBody:
     def test_the_divider_matches_the_header(self):
         """One column count, from `markdown.table_divider`. The two were spelled
         apart and the divider's dash counts did not match its own header."""
-        body = deferred_issue.build_deferred_issue_body(
+        body = review.deferred_issue.build_deferred_issue_body(
             [_entry()], "owner/repo", 42, {})
         lines = body.splitlines()
         header = next(i for i, line in enumerate(lines) if "Thread" in line)
-        assert lines[header + 1] == markdown.table_divider(3)
+        assert lines[header + 1] == core.markdown.table_divider(3)
 
     def test_the_thread_cell_is_the_shared_one(self):
         """The same builder the summary row uses — see `permalinks.thread_cell`.
@@ -391,10 +392,10 @@ class TestTheTrackingIssueBody:
         """
         entry = _entry(summary="use a | b")
         threads = {"t1": ReportThread(id="t1", comments=[{"databaseId": 12345}])}
-        body = deferred_issue.build_deferred_issue_body(
+        body = review.deferred_issue.build_deferred_issue_body(
             [entry], "owner/repo", 42, threads)
         row = next(line for line in body.splitlines() if "use a" in line)
-        assert len(markdown.row_cells(row)) == 3
+        assert len(core.markdown.row_cells(row)) == 3
         assert "[use a \\| b](" in row
         assert "#discussion_r12345" in row
 
@@ -405,10 +406,10 @@ class TestTheTrackingIssueBody:
         merge made this one decision for both — and a mutation emptying the
         placeholder passed every test either table had before this.
         """
-        body = deferred_issue.build_deferred_issue_body(
+        body = review.deferred_issue.build_deferred_issue_body(
             [_entry(summary="")], "owner/repo", 42, {})
         row = next(line for line in body.splitlines() if "a.go" in line)
-        assert markdown.row_cells(row)[0] == "—"
+        assert core.markdown.row_cells(row)[0] == "—"
 
 
 class TestDeferredOutcomes:
@@ -417,7 +418,7 @@ class TestDeferredOutcomes:
     def test_only_deferred_outcomes_are_returned(self):
         state = _state("t1", "t2")
         state.fix.fix.items.append(ItemOutcome(id="t3", outcome=FixOutcome.FIXED))
-        assert [o.id for o in deferred_issue.deferred_outcomes(state)] == ["t1", "t2"]
+        assert [o.id for o in review.deferred_issue.deferred_outcomes(state)] == ["t1", "t2"]
 
     def test_a_thread_handed_to_a_person_is_filable(self):
         """It ends the cycle with work outstanding and nothing in the tracker,
@@ -425,7 +426,7 @@ class TestDeferredOutcomes:
         state = _state("t1")
         state.fix.fix.items.append(
             ItemOutcome(id="t2", outcome=FixOutcome.NEEDS_HUMAN))
-        assert [o.id for o in deferred_issue.deferred_outcomes(state)] == ["t1", "t2"]
+        assert [o.id for o in review.deferred_issue.deferred_outcomes(state)] == ["t1", "t2"]
 
     # passes-at-base: DECLINED was excluded before this change too. Pinned
     # because widening past DEFERRED is what makes it a decision rather than an
@@ -436,21 +437,21 @@ class TestDeferredOutcomes:
         state = _state("t1")
         state.fix.fix.items.append(
             ItemOutcome(id="t2", outcome=FixOutcome.DECLINED))
-        assert [o.id for o in deferred_issue.deferred_outcomes(state)] == ["t1"]
+        assert [o.id for o in review.deferred_issue.deferred_outcomes(state)] == ["t1"]
 
     def test_an_empty_record_yields_nothing(self):
         state = PRState(identity=_identity())
-        assert deferred_issue.deferred_outcomes(state) == []
+        assert review.deferred_issue.deferred_outcomes(state) == []
 
 
 class TestTrackAllSelectsEverything:
     def test_every_id_is_a_member(self):
-        assert "anything" in deferred_issue.TRACK_ALL
+        assert "anything" in review.deferred_issue.TRACK_ALL
 
     def test_it_reports_itself_as_truthy(self):
         """Inherited from frozenset this would be False, and the sentinel that
         selects every id reporting itself as empty is the opposite of true."""
-        assert bool(deferred_issue.TRACK_ALL) is True
+        assert bool(review.deferred_issue.TRACK_ALL) is True
 
     def test_an_ordinary_set_is_unaffected(self):
         assert "t1" not in frozenset()

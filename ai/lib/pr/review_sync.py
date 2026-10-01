@@ -13,11 +13,11 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from core import log
+import core.log
 from core.trail import Trail
-from pr import context as pr_context
-from pr import domains as pr_domains
-from pr import state as pr_state
+import pr.context
+import pr.domains
+import pr.state
 
 
 class ReviewReport(Protocol):
@@ -44,11 +44,11 @@ class ReviewReport(Protocol):
 
 
 def sync_review_domain(
-    ctx: pr_context.ResolvedContext,
+    ctx: pr.context.ResolvedContext,
     report: ReviewReport,
     *,
     trail: Trail | None = None,
-) -> pr_domains.ReviewSummary | None:
+) -> pr.domains.ReviewSummary | None:
     """Write the review domain from a finished review's typed report.
 
     Accepts a pr.context.ResolvedContext and a report that carries the review's
@@ -62,7 +62,7 @@ def sync_review_domain(
     logged and swallowed: the review itself succeeded, and state.json is a cache.
     """
     try:
-        state = pr_state.load_or_init(
+        state = pr.state.load_or_init(
             target_dir=ctx.target_dir,
             repo=ctx.repo,
             branch=ctx.branch,
@@ -83,7 +83,7 @@ def sync_review_domain(
         domain.head_sha = report.head_sha or ""
         domain.finding_counts = finding_counts
         domain.verdict = report.verdict
-        domain.status = report.status or pr_domains.ReviewStatus.COMPLETED.value
+        domain.status = report.status or pr.domains.ReviewStatus.COMPLETED.value
         domain.failure_detail = report.failure_detail
         domain.recoverable = report.recoverable
         domain.unpushed_fix_commit = report.unpushed_fix_commit
@@ -92,8 +92,8 @@ def sync_review_domain(
             report.input_tokens + report.output_tokens
             + report.cache_read_tokens + report.cache_write_tokens
         )
-        domain.updated_at = pr_state.now_iso()
-        pr_state.save_state(ctx.target_dir, state)
+        domain.updated_at = pr.state.now_iso()
+        pr.state.save_state(ctx.target_dir, state)
         return domain
     except Exception as exc:
         # state.json is a cache and the review itself succeeded, so a failed
@@ -101,5 +101,5 @@ def sync_review_domain(
         # is why both channels report it, as ci-check and review-threads do.
         if trail is not None:
             trail.error("state_update", f"state update failed: {exc}")
-        log.error(f"review state update failed: {exc}")
+        core.log.error(f"review state update failed: {exc}")
         return None

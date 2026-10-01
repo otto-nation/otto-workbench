@@ -81,10 +81,10 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from git import client as git_client
-from core import log
-from core import proc
-from git import push
+import git.client
+import core.log
+import core.proc
+import git.push
 from core.proc import CmdResult
 from git.push import PushResult, PushStatus
 from core.trail import Trail
@@ -235,9 +235,9 @@ def _stage(wt_path: str | Path, scope: list[str], whole_tree: bool) -> None:
     fixed.
     """
     args = ["-A"] if whole_tree else ["--", *scope]
-    staged = git_client.run("add", *args, cwd=wt_path)
+    staged = git.client.run("add", *args, cwd=wt_path)
     if not staged.ok:
-        raise RuntimeError(proc.failure_message("Failed to stage the commit", staged))
+        raise RuntimeError(core.proc.failure_message("Failed to stage the commit", staged))
 
 
 def _landed(wt_path: str | Path, sha: str, result: PushResult) -> LandResult:
@@ -246,7 +246,7 @@ def _landed(wt_path: str | Path, sha: str, result: PushResult) -> LandResult:
         commit_status(result.status),
         sha=sha,
         error="" if result.ok else result.output.strip(),
-        resume=push.resume_command(result, wt_path),
+        resume=git.push.resume_command(result, wt_path),
         push=result,
     )
 
@@ -258,7 +258,7 @@ def _modified(wt_path: str | Path) -> set[str]:
     and stripping the output would take the leading space off the first line and
     leave it looking like anything but a modification.
     """
-    status = git_client.run(
+    status = git.client.run(
         "status", "--porcelain", "--untracked-files=no", cwd=wt_path,
     )
     return {line[3:] for line in status.stdout.splitlines() if line.startswith(" M ")}
@@ -305,9 +305,9 @@ def _validated(wt_path: str | Path, trail: Trail | None,
     gives: this answer gates a push, and "don't know" must not be spelled the
     same way as "clean".
     """
-    r = git_client.run("status", "--porcelain", cwd=wt_path)
+    r = git.client.run("status", "--porcelain", cwd=wt_path)
     if not r.ok:
-        log.error(proc.failure_message(
+        core.log.error(core.proc.failure_message(
             "Cannot tell whether the recovery left the worktree dirty — not pushing", r,
         ))
         if trail:
@@ -321,17 +321,17 @@ def _validated(wt_path: str | Path, trail: Trail | None,
     if trail:
         trail.error("push", "recovery left the worktree dirty",
                     data={"files": leftover, "pre_existing": yours})
-    log.error("Recovery left uncommitted changes — not pushing:")
+    core.log.error("Recovery left uncommitted changes — not pushing:")
     for path in leftover:
         # Marked per file rather than described in one line below the list:
         # the two kinds routinely appear together, and the operator's next move
         # differs per file.
-        log.dim(f"  {path}{'  (yours, already modified)' if path in yours else ''}")
+        core.log.dim(f"  {path}{'  (yours, already modified)' if path in yours else ''}")
     # The usual case, and the one the operator can act on. Without saying so the
     # refusal reads as a fault in the recovery rather than as a decision it made
     # on their behalf.
     if yours:
-        log.info("Marked files were already modified when the push started — "
+        core.log.info("Marked files were already modified when the push started — "
                  "yours to commit or discard. The pre-push hooks read them, so "
                  "pushing without them would send a HEAD nothing checked.")
     return False
@@ -362,15 +362,15 @@ def _retry_after_regen(
     if not modified:
         return None
 
-    log.info("Committing regenerated files...")
+    core.log.info("Committing regenerated files...")
     if trail:
         trail.info("push", "committing regenerated files before retry",
                    data={"files": modified})
     # Stage only the files `_regenerated()` found modified, not everything
     # `add -A`/`add -u` would sweep up.  The commit is hook-authored content
     # exclusively.
-    if not git_client.ok("add", "--", *_pathspecs(modified), cwd=wt_path):
-        log.error("Failed to stage regenerated files.")
+    if not git.client.ok("add", "--", *_pathspecs(modified), cwd=wt_path):
+        core.log.error("Failed to stage regenerated files.")
         return None
     # --no-verify: the only content in this commit is what a pre-push hook
     # just produced.  Re-running the pre-commit chain re-checks work that
@@ -383,7 +383,7 @@ def _retry_after_regen(
     # the index — including content the operator staged before the push began,
     # which would then be force-pushed under a message describing a
     # regeneration.
-    committed = git_client.run(
+    committed = git.client.run(
         "commit", "--no-verify", "-m", message, "--", *_pathspecs(modified),
         cwd=wt_path,
     )
@@ -396,8 +396,8 @@ def _retry_after_regen(
     # Reported whichever way it went: a second push happened, and the operator
     # who watched the first one refused is owed the same line about this one —
     # including the resume command, when it fell short too.
-    result = push.push(wt_path, gated=gated, args=args, trail=trail)
-    push.report(result, wt_path)
+    result = git.push.push(wt_path, gated=gated, args=args, trail=trail)
+    git.push.report(result, wt_path)
     return result
 
 
@@ -408,8 +408,8 @@ def _moved_head(wt_path: str | Path, before: str) -> str:
     caller that recorded a SHA for a reviewer has — still compares equal to the
     full HEAD it names.
     """
-    head = git_client.head_sha(cwd=wt_path)
-    if not head or head == git_client.out("rev-parse", before, cwd=wt_path):
+    head = git.client.head_sha(cwd=wt_path)
+    if not head or head == git.client.out("rev-parse", before, cwd=wt_path):
         return ""
     return head
 
@@ -426,7 +426,7 @@ def _unrecovered(wt_path: str | Path, prior: LandResult) -> LandResult:
     """
     if prior.status is not CommitStatus.NO_CHANGES:
         return prior
-    if git_client.is_dirty(wt_path):
+    if git.client.is_dirty(wt_path):
         return LandResult(
             CommitStatus.COMMIT_FAILED,
             error="changes remain uncommitted in the worktree",
@@ -448,12 +448,12 @@ def _recover(
     if not sha:
         return _unrecovered(wt_path, prior)
 
-    if push.holds(wt_path, sha):
+    if git.push.holds(wt_path, sha):
         return LandResult(CommitStatus.PUSHED, sha=sha)
 
-    log.info(f"Recovered {git_client.abbrev(sha)} — committed outside the pass")
-    result = push.push(wt_path, gated=gated, sha=sha, args=args, trail=trail)
-    push.report(result, wt_path)
+    core.log.info(f"Recovered {git.client.abbrev(sha)} — committed outside the pass")
+    result = git.push.push(wt_path, gated=gated, sha=sha, args=args, trail=trail)
+    git.push.report(result, wt_path)
     return _landed(wt_path, sha, result)
 
 
@@ -481,7 +481,7 @@ def _record_commit_failure(trail: Trail | None, output: str) -> None:
         return
     artifact = trail.failure("commit", "commit failed", output=output)
     if artifact:
-        log.dim(f"full output: {artifact}")
+        core.log.dim(f"full output: {artifact}")
 
 
 def _commit(
@@ -494,7 +494,7 @@ def _commit(
     """Stage the scope and commit it, or say why there is nothing to push."""
     whole_tree = paths is None
     scope = _pathspecs(paths)
-    if whole_tree and not git_client.is_dirty(wt_path):
+    if whole_tree and not git.client.is_dirty(wt_path):
         return _Commit(outcome=LandResult(CommitStatus.NO_CHANGES))
     if not whole_tree and not scope:
         return _Commit(outcome=LandResult(CommitStatus.NO_CHANGES))
@@ -504,26 +504,26 @@ def _commit(
     # A pathspec commit when the scope is explicit, so content the operator
     # staged before the pass started stays staged instead of riding along.
     limit = [] if whole_tree else ["--", *scope]
-    committed = git_client.run("commit", "-m", message, *limit, cwd=wt_path)
+    committed = git.client.run("commit", "-m", message, *limit, cwd=wt_path)
     if not committed.ok:
         if committed_nothing(committed):
             return _Commit(outcome=LandResult(CommitStatus.NO_CHANGES))
         error = committed.stderr.strip() or committed.stdout.strip()
-        log.error(f"commit failed: {error}")
+        core.log.error(f"commit failed: {error}")
         # combined, not `error`: a pre-commit chain prints its banner on
         # stdout and its verdict there too, so the stderr-first reading the
         # message takes is the wrong one for the record.
         _record_commit_failure(trail, committed.combined_output)
         return _Commit(outcome=LandResult(CommitStatus.COMMIT_FAILED, error=error))
 
-    sha = git_client.head_sha(cwd=wt_path)
+    sha = git.client.head_sha(cwd=wt_path)
     if not sha:
         # The commit above succeeded, so HEAD not reading back is the repo
         # saying something is wrong with it — louder than reporting no sha.
         raise RuntimeError("Committed, but could not read the new HEAD")
 
     subject = message.splitlines()[0] if message.strip() else "(no subject)"
-    log.info(f"Committed {git_client.abbrev(sha)} — {subject}")
+    core.log.info(f"Committed {git.client.abbrev(sha)} — {subject}")
     if trail:
         trail.info("commit", "committed the pass's work", data={"sha": sha})
     return _Commit(sha=sha)
@@ -554,8 +554,8 @@ def _push_and_retry(
     # no way to tell a file the hook rewrote from one the operator had already
     # edited, and the regeneration commit would carry both.
     dirty_before = _modified(wt_path) if regen is not None else set()
-    result = push.push(wt_path, gated=gated, sha=sha, args=args, trail=trail)
-    push.report(result, wt_path)
+    result = git.push.push(wt_path, gated=gated, sha=sha, args=args, trail=trail)
+    git.push.report(result, wt_path)
     # Only a repairable refusal can be a regenerating hook: a push the remote
     # dropped left nothing behind to commit, and `push` has already asked the
     # remote and retried that one itself.
@@ -627,6 +627,6 @@ def land_head(
     `gated`, `args`, `trail` and `regen` mean what they mean in `land`.
     """
     return _push_and_retry(
-        wt_path, git_client.head_sha(cwd=wt_path),
+        wt_path, git.client.head_sha(cwd=wt_path),
         gated=gated, args=args, trail=trail, regen=regen,
     )

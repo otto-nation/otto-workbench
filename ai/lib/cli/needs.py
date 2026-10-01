@@ -15,11 +15,11 @@ as an argument is also what lets a test declare a table of its own.
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
-from pr import context as pr_context
+import pr.context
 
-NONE = pr_context.ContextDepth.NONE
-LOCAL = pr_context.ContextDepth.LOCAL
-REMOTE = pr_context.ContextDepth.REMOTE
+NONE = pr.context.ContextDepth.NONE
+LOCAL = pr.context.ContextDepth.LOCAL
+REMOTE = pr.context.ContextDepth.REMOTE
 
 
 @dataclass(frozen=True)
@@ -43,7 +43,7 @@ class Need:
       the worktree, so it is safe alongside another run.
     """
 
-    depth: pr_context.ContextDepth
+    depth: pr.context.ContextDepth
     update: bool
     lock: bool
 
@@ -62,7 +62,7 @@ class Need:
         `otto-log` query then has to read — see `trail.TRAIL_KEEP_MONTHS`,
         which bounds that file for the writers this does not cover.
         """
-        resolves_nothing = self.depth is pr_context.ContextDepth.NONE
+        resolves_nothing = self.depth is pr.context.ContextDepth.NONE
         return self.lock or not resolves_nothing
 
 

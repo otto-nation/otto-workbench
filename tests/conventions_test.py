@@ -10,21 +10,21 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from core import conventions
+import core.conventions
 
 
 class TestCommitTypes:
     """commit_types reads from lib/conventions.sh."""
 
     def test_includes_standard_types(self):
-        types = conventions.commit_types()
+        types = core.conventions.commit_types()
         assert "fix" in types
         assert "feat" in types
         assert "test" in types
         assert "refactor" in types
 
     def test_returns_list(self):
-        assert isinstance(conventions.commit_types(), list)
+        assert isinstance(core.conventions.commit_types(), list)
 
 
 class TestValidCommitHeader:
@@ -45,7 +45,7 @@ class TestValidCommitHeader:
         ("feat(auth)!: remove legacy token support", True),
     ])
     def test_valid_commit_header(self, subject, expected):
-        assert conventions.valid_commit_header(subject) is expected
+        assert core.conventions.valid_commit_header(subject) is expected
 
     def test_max_length(self):
-        assert conventions.COMMIT_HEADER_MAX == 72
+        assert core.conventions.COMMIT_HEADER_MAX == 72

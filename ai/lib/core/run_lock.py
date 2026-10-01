@@ -104,8 +104,8 @@ from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from core import log
-from core import timeouts
+import core.log
+import core.timeouts
 
 LOCK_FILE = "run.lock"
 LOCK_ENV = "WORKBENCH_RUN_LOCK"
@@ -389,7 +389,7 @@ def _git_dir(worktree: Path) -> Path | None:
         out = subprocess.run(
             ["git", "-C", str(worktree), "rev-parse", "--absolute-git-dir"],
             capture_output=True, text=True, check=True,
-            timeout=timeouts.LOCAL, env=env,
+            timeout=core.timeouts.LOCAL, env=env,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -521,14 +521,14 @@ def is_held(target_dir: Path) -> bool:
 
 def report_busy(exc: LockBusy) -> None:
     """Print a contention error with the remediation hint."""
-    log.error(str(exc))
+    core.log.error(str(exc))
     if exc.subject == "checkout":
         # Not the same work twice: another target is being written to in this
         # tree, so waiting is one answer and running elsewhere is the other.
-        log.info("that run is writing to this working tree — wait for it, run "
+        core.log.info("that run is writing to this working tree — wait for it, run "
                  "this from the branch's own worktree, or stop it with: "
                  f"kill {exc.holder.get('pid', '<pid>')}")
         return
-    log.info(
+    core.log.info(
         f"wait for it to finish, or stop it with: kill {exc.holder.get('pid', '<pid>')}"
     )

@@ -15,21 +15,25 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from cli import ci_check  # noqa: E402
-from agent import retry as agent_retry  # noqa: E402
-from git import land  # noqa: E402
-from core import publishing  # noqa: E402
+import cli.ci_check  # noqa: E402
+import agent.retry  # noqa: E402
+import git.land  # noqa: E402
+import core.publishing  # noqa: E402
 from git.land import CommitStatus  # noqa: E402
-from pr import ci_annotations  # noqa: E402
-from pr import ci_failures as ci  # noqa: E402
-from gh import run_reads  # noqa: E402
-from pr import ci_runs  # noqa: E402
+import pr.ci_annotations  # noqa: E402
+import pr.ci_failures  # noqa: E402
+import gh.run_reads  # noqa: E402
+import pr.ci_runs  # noqa: E402
 from pr.ci_report import CIReport  # noqa: E402
+import core.run_lock
+import pr.context
+import rebase.target
+import rebase.types
 
 
 def _row(run_id, **kw):
     """A `gh run list` row for a run whose payload the test supplies itself."""
-    return run_reads.RunRow(run_id=run_id, **kw)
+    return gh.run_reads.RunRow(run_id=run_id, **kw)
 
 
 @pytest.fixture(autouse=True)
@@ -41,13 +45,13 @@ def _no_rollup():
     them reaches the network to find that out.
     """
     with patch("gh.run_reads.fetch_commit_checks",
-               return_value=run_reads.CommitChecks()):
+               return_value=gh.run_reads.CommitChecks()):
         yield
 
 
 def _no_log_fallback(kind):
     """A `log_fallback` result for a job whose logs yielded nothing."""
-    return ci_annotations.LogFallback([], "", kind, structured=False)
+    return pr.ci_annotations.LogFallback([], "", kind, structured=False)
 
 
 def _report(**kwargs) -> CIReport:
@@ -75,7 +79,7 @@ def _mock_ctx(worktree_root="/tmp/wt", branch="feat/auth"):
 
 def test_rebase_if_behind_skips_when_not_behind():
     trail = MagicMock()
-    assert ci_check._rebase_if_behind(trail, _report(), _mock_ctx()) is False
+    assert cli.ci_check._rebase_if_behind(trail, _report(), _mock_ctx()) is False
     trail.decision.assert_not_called()
 
 
@@ -86,10 +90,10 @@ def _rebase_returning(rc, *, posting):
     `publishing` is a process-wide flag, so a test that opens it has to shut it
     again or every later test in the session runs as if `--post` were given.
     """
-    with patch.object(ci_check.rebase_target, "resolve_target_ref",
+    with patch.object(rebase.target, "resolve_target_ref",
                       return_value="origin/main"), \
-         patch.object(ci_check.pr_rebase, "cmd_start", return_value=rc) as start, \
-         patch.object(ci_check.publishing, "enabled", return_value=posting):
+         patch.object(cli.ci_check.pr_rebase, "cmd_start", return_value=rc) as start, \
+         patch.object(core.publishing, "enabled", return_value=posting):
         yield start
 
 
@@ -97,13 +101,13 @@ def test_rebase_if_behind_rebases_in_process_on_success():
     """The rebase is a call, not a spawn — so it answers this run's gate."""
     trail = MagicMock()
     with _rebase_returning(0, posting=True) as start:
-        result = ci_check._rebase_if_behind(trail, _report(behind_main=5),
+        result = cli.ci_check._rebase_if_behind(trail, _report(behind_main=5),
                                             _mock_ctx())
 
     assert result is True
     trail.info.assert_called()
     assert start.call_args[0][0] == "/tmp/wt"
-    assert start.call_args[0][2] is ci_check.rebase_types.RunMode.FIX
+    assert start.call_args[0][2] is rebase.types.RunMode.FIX
     assert start.call_args.kwargs["target_ref"] == "origin/main"
     assert start.call_args.kwargs["trail"] is trail
 
@@ -118,7 +122,7 @@ def test_a_draft_run_rebases_but_does_not_move_the_remote():
     """
     trail = MagicMock()
     with _rebase_returning(0, posting=False) as start:
-        result = ci_check._rebase_if_behind(trail, _report(behind_main=5),
+        result = cli.ci_check._rebase_if_behind(trail, _report(behind_main=5),
                                             _mock_ctx())
 
     start.assert_called_once()
@@ -129,7 +133,7 @@ def test_a_draft_run_rebases_but_does_not_move_the_remote():
 def test_rebase_if_behind_continues_on_failure():
     trail = MagicMock()
     with _rebase_returning(1, posting=True):
-        result = ci_check._rebase_if_behind(trail, _report(behind_main=10),
+        result = cli.ci_check._rebase_if_behind(trail, _report(behind_main=10),
                                             _mock_ctx())
     assert result is False
     trail.warn.assert_called()
@@ -145,8 +149,8 @@ def test_a_refused_rebase_is_reported_apart_from_a_failed_one():
     spent quota.
     """
     trail = MagicMock()
-    with _rebase_returning(ci_check.rebase_types.REFUSAL_EXIT, posting=True):
-        result = ci_check._rebase_if_behind(trail, _report(behind_main=5),
+    with _rebase_returning(rebase.types.REFUSAL_EXIT, posting=True):
+        result = cli.ci_check._rebase_if_behind(trail, _report(behind_main=5),
                                             _mock_ctx())
 
     assert result is False
@@ -161,8 +165,8 @@ def test_a_paused_rebase_is_reported_apart_from_a_failed_one():
     top of `_run_fix` refuses to touch a paused rebase at all.
     """
     trail = MagicMock()
-    with _rebase_returning(ci_check.rebase_types.CONFLICTS_EXIT, posting=True):
-        result = ci_check._rebase_if_behind(trail, _report(behind_main=5),
+    with _rebase_returning(rebase.types.CONFLICTS_EXIT, posting=True):
+        result = cli.ci_check._rebase_if_behind(trail, _report(behind_main=5),
                                             _mock_ctx())
 
     assert result is False
@@ -176,8 +180,8 @@ def test_a_refused_rebase_does_not_report_a_moved_head():
     HEAD, when nothing was replayed and nothing was pushed.
     """
     trail = MagicMock()
-    with _rebase_returning(ci_check.rebase_types.REFUSAL_EXIT, posting=True):
-        assert ci_check._rebase_if_behind(
+    with _rebase_returning(rebase.types.REFUSAL_EXIT, posting=True):
+        assert cli.ci_check._rebase_if_behind(
             trail, _report(behind_main=5), _mock_ctx(),
         ) is False
 
@@ -189,7 +193,7 @@ def test_a_refused_rebase_does_not_report_a_moved_head():
 def test_rebase_if_behind_without_a_worktree_exits_with_guidance(capsys):
     """A rebase needs somewhere to run — "--repo-dir None" is not it."""
     ctx = make_ctx(branch="feat/auth", worktree_root=None, head_sha="abc1234")
-    assert_no_worktree_exit(capsys, "feat/auth", ci_check._rebase_if_behind,
+    assert_no_worktree_exit(capsys, "feat/auth", cli.ci_check._rebase_if_behind,
                             MagicMock(), _report(behind_main=3), ctx)
 
 
@@ -218,14 +222,14 @@ def test_run_ci_wait_emits_the_final_report(capsys):
         ],
     }
 
-    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery(rows=(_row(100),))), \
+    with patch("gh.run_reads.fetch_latest_runs", return_value=gh.run_reads.RunDiscovery(rows=(_row(100),))), \
          patch("gh.run_reads.fetch_run_data", return_value=run_data), \
          patch("gh.run_reads.fetch_annotations", return_value=[]), \
          patch("pr.ci_annotations.log_fallback",
-               return_value=_no_log_fallback(ci.FailureKind.BUILD)), \
+               return_value=_no_log_fallback(pr.ci_failures.FailureKind.BUILD)), \
          patch("gh.run_reads.commits_behind_main", return_value=0), \
          patch("pr.ci_wait.time.sleep"):
-        report = ci_check._run_ci_wait(MagicMock(), _wait_args(), make_ctx())
+        report = cli.ci_check._run_ci_wait(MagicMock(), _wait_args(), make_ctx())
 
     chunks = [c.strip() for c in capsys.readouterr().out.split("---") if c.strip()]
     final = json.loads(chunks[-1])
@@ -235,17 +239,17 @@ def test_run_ci_wait_emits_the_final_report(capsys):
 
 def test_run_ci_wait_leaves_nothing_to_poll_to_the_entry_point():
     """`RunUnavailable` travels to `main`, which owns the exit code."""
-    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery()):
-        with pytest.raises(ci_runs.RunUnavailable, match="No checks found"):
-            ci_check._run_ci_wait(MagicMock(), _wait_args(), make_ctx())
+    with patch("gh.run_reads.fetch_latest_runs", return_value=gh.run_reads.RunDiscovery()):
+        with pytest.raises(pr.ci_runs.RunUnavailable, match="No checks found"):
+            cli.ci_check._run_ci_wait(MagicMock(), _wait_args(), make_ctx())
 
 
 def test_run_ci_leaves_nothing_to_report_on_to_the_entry_point():
     """The single-shot path raises the same thing rather than exiting itself."""
     args = _wait_args()
-    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery()):
-        with pytest.raises(ci_runs.RunUnavailable, match="No checks found"):
-            ci_check._run_ci(MagicMock(), args, make_ctx())
+    with patch("gh.run_reads.fetch_latest_runs", return_value=gh.run_reads.RunDiscovery()):
+        with pytest.raises(pr.ci_runs.RunUnavailable, match="No checks found"):
+            cli.ci_check._run_ci(MagicMock(), args, make_ctx())
 
 
 def test_run_ci_asks_a_pinned_runs_rollup_at_that_runs_own_commit():
@@ -268,12 +272,12 @@ def test_run_ci_asks_a_pinned_runs_rollup_at_that_runs_own_commit():
         "status": "completed", "conclusion": "success", "jobs": [],
     }
     by_sha = {
-        "currenthead": run_reads.CommitChecks(
+        "currenthead": gh.run_reads.CommitChecks(
             answered=True,
             external=({"name": "CodeQL", "databaseId": 0, "status": "completed",
                        "conclusion": "failure", "steps": [],
                        "_check_source": "check_run"},)),
-        "runsha": run_reads.CommitChecks(answered=True),
+        "runsha": gh.run_reads.CommitChecks(answered=True),
     }
     args = _wait_args(run=555)
     ctx = make_ctx(head_sha="currenthead")
@@ -282,7 +286,7 @@ def test_run_ci_asks_a_pinned_runs_rollup_at_that_runs_own_commit():
          patch("gh.run_reads.fetch_commit_checks",
                side_effect=lambda repo, sha: by_sha[sha]) as fetch_checks, \
          patch("gh.run_reads.commits_behind_main", return_value=0):
-        report = ci_check._run_ci(MagicMock(), args, ctx)
+        report = cli.ci_check._run_ci(MagicMock(), args, ctx)
 
     assert [c.args[1] for c in fetch_checks.call_args_list] == ["runsha"]
     assert report.conclusion == "success"
@@ -294,7 +298,7 @@ def test_a_pinned_runs_own_external_failure_is_still_reported():
         "databaseId": 555, "number": 3, "headSha": "runsha",
         "status": "completed", "conclusion": "success", "jobs": [],
     }
-    checks = run_reads.CommitChecks(
+    checks = gh.run_reads.CommitChecks(
         answered=True,
         external=({"name": "CodeQL", "databaseId": 0, "status": "completed",
                    "conclusion": "failure", "steps": [],
@@ -305,7 +309,7 @@ def test_a_pinned_runs_own_external_failure_is_still_reported():
          patch("gh.run_reads.fetch_commit_checks", return_value=checks), \
          patch("gh.run_reads.fetch_annotations", return_value=[]), \
          patch("gh.run_reads.commits_behind_main", return_value=0):
-        report = ci_check._run_ci(MagicMock(), args, make_ctx(head_sha="currenthead"))
+        report = cli.ci_check._run_ci(MagicMock(), args, make_ctx(head_sha="currenthead"))
 
     assert report.conclusion == "failure"
 
@@ -313,11 +317,11 @@ def test_a_pinned_runs_own_external_failure_is_still_reported():
 def test_main_reports_a_missing_run_and_exits_one(capsys):
     """The library raises; the entry point is what a shell sees a status from."""
     with patch.object(sys, "argv", ["ci-check"]), \
-         patch.object(ci_check.pr_context, "resolve", return_value=make_ctx()), \
-         patch.object(ci_check.run_lock, "claim_for_process"), \
-         patch.object(ci_check.Trail, "start", return_value=MagicMock()), \
-         patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery()):
-        assert ci_check.main([]) == 1
+         patch.object(pr.context, "resolve", return_value=make_ctx()), \
+         patch.object(core.run_lock, "claim_for_process"), \
+         patch.object(cli.ci_check.Trail, "start", return_value=MagicMock()), \
+         patch("gh.run_reads.fetch_latest_runs", return_value=gh.run_reads.RunDiscovery()):
+        assert cli.ci_check.main([]) == 1
 
     assert "No checks found" in capsys.readouterr().err
 
@@ -329,11 +333,11 @@ def test_main_takes_no_checkout_lock_without_fix():
     that legitimately holds it.
     """
     with patch.object(sys, "argv", ["ci-check"]), \
-         patch.object(ci_check.pr_context, "resolve", return_value=make_ctx()), \
-         patch.object(ci_check.run_lock, "claim_for_process") as claim, \
-         patch.object(ci_check.Trail, "start", return_value=MagicMock()), \
-         patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery()):
-        ci_check.main([])
+         patch.object(pr.context, "resolve", return_value=make_ctx()), \
+         patch.object(core.run_lock, "claim_for_process") as claim, \
+         patch.object(cli.ci_check.Trail, "start", return_value=MagicMock()), \
+         patch("gh.run_reads.fetch_latest_runs", return_value=gh.run_reads.RunDiscovery()):
+        cli.ci_check.main([])
 
     assert claim.call_args.kwargs["worktree"] is None
 
@@ -342,11 +346,11 @@ def test_main_takes_the_checkout_lock_with_fix():
     """--fix rebases and commits in this checkout, so the tree needs locking too."""
     ctx = make_ctx()
     with patch.object(sys, "argv", ["ci-check", "--fix"]), \
-         patch.object(ci_check.pr_context, "resolve", return_value=ctx), \
-         patch.object(ci_check.run_lock, "claim_for_process") as claim, \
-         patch.object(ci_check.Trail, "start", return_value=MagicMock()), \
-         patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery()):
-        ci_check.main(["--fix"])
+         patch.object(pr.context, "resolve", return_value=ctx), \
+         patch.object(core.run_lock, "claim_for_process") as claim, \
+         patch.object(cli.ci_check.Trail, "start", return_value=MagicMock()), \
+         patch("gh.run_reads.fetch_latest_runs", return_value=gh.run_reads.RunDiscovery()):
+        cli.ci_check.main(["--fix"])
 
     assert claim.call_args.kwargs["worktree"] == ctx.worktree_root
 
@@ -355,9 +359,9 @@ def test_main_takes_the_checkout_lock_with_fix():
 
 
 _ONE_FAILURE = {
-    "build": ci.FailureGroup(
-        job="build", kind=ci.FailureKind.BUILD,
-        items=(ci.FailureItem(
+    "build": pr.ci_failures.FailureGroup(
+        job="build", kind=pr.ci_failures.FailureKind.BUILD,
+        items=(pr.ci_failures.FailureItem(
             id="build-1", annotation="compilation failed", file="src/main.go",
             line=3, diagnosis=None, fix_sha=None, outcome=None,
             headline="compilation failed",
@@ -390,13 +394,13 @@ def _drive_fix(tmp_path, *, tick, landed=None, exit_code=0):
     trail = MagicMock()
     report = _report(failures=_ONE_FAILURE, run_number=1)
     with patch("cli.ci_check._rebase_if_behind", return_value=False), \
-         patch("cli.ci_check.fix_engine.land.land",
-               return_value=landed or land.LandResult(CommitStatus.NO_CHANGES)), \
-         patch("cli.ci_check.fix_engine.git_client.head_sha", return_value="cafe123"), \
-         patch("cli.ci_check.fix_engine.fix_scope.changed_files", return_value=set()), \
-         patch("cli.ci_check.fix_engine.agent_invoke.ai_backend.invoke_fix",
+         patch("git.land.land",
+               return_value=landed or git.land.LandResult(CommitStatus.NO_CHANGES)), \
+         patch("git.client.head_sha", return_value="cafe123"), \
+         patch("fix.scope.changed_files", return_value=set()), \
+         patch("agent.backend.invoke_fix",
                side_effect=invoke) as inv:
-        rc = ci_check._run_fix(
+        rc = cli.ci_check._run_fix(
             trail, report,
             make_ctx(worktree_root=tmp_path, target_dir=tmp_path),
         )
@@ -416,10 +420,10 @@ def test_a_paused_rebase_stops_the_fix_pass(tmp_path):
     trail = MagicMock()
     report = _report(failures=_ONE_FAILURE, run_number=1)
     with patch("cli.ci_check._rebase_if_behind", return_value=False), \
-         patch("cli.ci_check.rebase_inspect.rebase_in_progress",
+         patch("rebase.inspect.rebase_in_progress",
                return_value=True), \
-         patch("cli.ci_check.fix_engine.run") as run:
-        rc = ci_check._run_fix(
+         patch("fix.engine.run") as run:
+        rc = cli.ci_check._run_fix(
             trail, report,
             make_ctx(worktree_root=tmp_path, target_dir=tmp_path),
         )
@@ -439,7 +443,7 @@ def test_ci_fix_pass_that_checks_nothing_off_is_retried_with_the_hint(tmp_path):
     prompts = [c.args[0].prompt for c in inv.call_args_list]
 
     assert len(prompts) == 2
-    assert prompts[1] == agent_retry.CI_FIX_RETRY_HINT + prompts[0]
+    assert prompts[1] == agent.retry.CI_FIX_RETRY_HINT + prompts[0]
 
 
 def test_ci_fix_pass_with_a_checked_box_is_not_retried(tmp_path):
@@ -459,14 +463,14 @@ def test_the_fix_prompt_names_the_failure_and_the_tracking_file(tmp_path):
 
 def test_a_refused_commit_fails_the_fix_run(tmp_path):
     """The fixes are loose in the worktree; exiting zero reports work nobody has."""
-    refused = land.LandResult(CommitStatus.COMMIT_FAILED, error="hook rejected it")
+    refused = git.land.LandResult(CommitStatus.COMMIT_FAILED, error="hook rejected it")
     rc, _, _ = _drive_fix(tmp_path, tick=True, landed=refused)
     assert rc == 1
 
 
 def test_a_held_push_still_passes_the_fix_run(tmp_path):
     """Drafting the push is the default, not a failure — the commit is real."""
-    held = land.LandResult(CommitStatus.PUSH_HELD, sha="abc1234",
+    held = git.land.LandResult(CommitStatus.PUSH_HELD, sha="abc1234",
                            resume="git -C '/fake' push")
     rc, _, trail = _drive_fix(tmp_path, tick=True, landed=held)
     assert rc == 0
@@ -485,12 +489,12 @@ def test_the_fix_pass_gives_the_land_owner_its_trail(tmp_path):
     artifacts = tmp_path / "ci-failures"
     artifacts.mkdir(parents=True)
     with patch("cli.ci_check._rebase_if_behind", return_value=False), \
-         patch("cli.ci_check.fix_engine.land.land",
-               return_value=land.LandResult(CommitStatus.NO_CHANGES)) as mock_land, \
-         patch("cli.ci_check.fix_engine.git_client.head_sha", return_value="cafe123"), \
-         patch("cli.ci_check.fix_engine.fix_scope.changed_files", return_value=set()), \
-         patch("cli.ci_check.fix_engine.agent_invoke.ai_backend.invoke_fix", return_value=0):
-        ci_check._run_fix(
+         patch("git.land.land",
+               return_value=git.land.LandResult(CommitStatus.NO_CHANGES)) as mock_land, \
+         patch("git.client.head_sha", return_value="cafe123"), \
+         patch("fix.scope.changed_files", return_value=set()), \
+         patch("agent.backend.invoke_fix", return_value=0):
+        cli.ci_check._run_fix(
             trail, _report(failures=_ONE_FAILURE, run_number=1),
             make_ctx(worktree_root=tmp_path, target_dir=tmp_path),
         )
@@ -500,12 +504,12 @@ def test_the_fix_pass_gives_the_land_owner_its_trail(tmp_path):
 def test_the_fix_pass_commits_gated_and_asks_for_the_recovery(tmp_path):
     """A run without `--post` commits and drafts the push; regeneration is retried."""
     with patch("cli.ci_check._rebase_if_behind", return_value=False), \
-         patch("cli.ci_check.fix_engine.land.land",
-               return_value=land.LandResult(CommitStatus.NO_CHANGES)) as mock_land, \
-         patch("cli.ci_check.fix_engine.git_client.head_sha", return_value="cafe123"), \
-         patch("cli.ci_check.fix_engine.fix_scope.changed_files", return_value=set()), \
-         patch("cli.ci_check.fix_engine.agent_invoke.ai_backend.invoke_fix", return_value=0):
-        ci_check._run_fix(
+         patch("git.land.land",
+               return_value=git.land.LandResult(CommitStatus.NO_CHANGES)) as mock_land, \
+         patch("git.client.head_sha", return_value="cafe123"), \
+         patch("fix.scope.changed_files", return_value=set()), \
+         patch("agent.backend.invoke_fix", return_value=0):
+        cli.ci_check._run_fix(
             MagicMock(), _report(failures=_ONE_FAILURE, run_number=1),
             make_ctx(worktree_root=tmp_path, target_dir=tmp_path),
         )
@@ -528,13 +532,13 @@ def _gate_at_first_work(argv):
     seen = {}
 
     def stop(*args, **kwargs):
-        seen["enabled"] = publishing.enabled()
+        seen["enabled"] = core.publishing.enabled()
         raise SystemExit(0)
 
     with patch.object(sys, "argv", ["ci-check", *argv]), \
-         patch.object(ci_check.pr_context, "resolve", side_effect=stop), \
+         patch.object(pr.context, "resolve", side_effect=stop), \
          pytest.raises(SystemExit):
-        ci_check.main()
+        cli.ci_check.main()
     return seen["enabled"]
 
 

@@ -11,53 +11,53 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from agent import backend_pi as ai_backend_pi
+import agent.backend_pi
 from conftest import FIXTURES_DIR
 from test_ai_backend import _recording_popen
 
 
 class TestBuildFixCmd:
     def test_base_command_uses_rpc_mode(self):
-        cmd = ai_backend_pi._build_fix_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_fix_cmd(agent.backend_pi.AgentInvocation(prompt=""))
         assert "--mode" in cmd
         assert "rpc" in cmd
         assert "-p" not in cmd
 
     def test_includes_tools(self):
-        cmd = ai_backend_pi._build_fix_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_fix_cmd(agent.backend_pi.AgentInvocation(prompt=""))
         assert "--tools" in cmd
         idx = cmd.index("--tools")
-        assert cmd[idx + 1] == ai_backend_pi.PI_FIX_TOOLS
+        assert cmd[idx + 1] == agent.backend_pi.PI_FIX_TOOLS
 
     def test_withholds_github_tools(self):
-        cmd = ai_backend_pi._build_fix_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_fix_cmd(agent.backend_pi.AgentInvocation(prompt=""))
         tools = cmd[cmd.index("--tools") + 1].split(",")
         assert [t for t in tools if t.startswith("gh_")] == []
 
     def test_grants_research_tools(self):
-        cmd = ai_backend_pi._build_fix_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_fix_cmd(agent.backend_pi.AgentInvocation(prompt=""))
         tools = cmd[cmd.index("--tools") + 1].split(",")
         assert "web_fetch" in tools
         assert "go_references" in tools
 
     def test_model_flag(self):
-        cmd = ai_backend_pi._build_fix_cmd(
-            ai_backend_pi.AgentInvocation(prompt="", model="sonnet"),
+        cmd = agent.backend_pi._build_fix_cmd(
+            agent.backend_pi.AgentInvocation(prompt="", model="sonnet"),
         )
         assert "--model" in cmd
         idx = cmd.index("--model")
         assert cmd[idx + 1] == "sonnet"
 
     def test_thinking_level_flag(self):
-        cmd = ai_backend_pi._build_fix_cmd(
-            ai_backend_pi.AgentInvocation(prompt="", thinking="low"),
+        cmd = agent.backend_pi._build_fix_cmd(
+            agent.backend_pi.AgentInvocation(prompt="", thinking="low"),
         )
         assert "--thinking" in cmd
         idx = cmd.index("--thinking")
         assert cmd[idx + 1] == "low"
 
     def test_no_optional_flags_when_none(self):
-        cmd = ai_backend_pi._build_fix_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_fix_cmd(agent.backend_pi.AgentInvocation(prompt=""))
         assert "--model" not in cmd
         assert "--thinking" not in cmd
         assert "--provider" not in cmd
@@ -66,25 +66,25 @@ class TestBuildFixCmd:
 
 class TestBuildAgentCmd:
     def test_includes_rpc_mode(self):
-        cmd = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_agent_cmd(agent.backend_pi.AgentInvocation(prompt=""))
         assert cmd[:2] == ["pi", "--mode"]
         assert cmd[2] == "rpc"
 
     def test_includes_tools(self):
-        cmd = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_agent_cmd(agent.backend_pi.AgentInvocation(prompt=""))
         assert "--tools" in cmd
         idx = cmd.index("--tools")
-        assert cmd[idx + 1] == ai_backend_pi.PI_AGENT_TOOLS
+        assert cmd[idx + 1] == agent.backend_pi.PI_AGENT_TOOLS
 
     def test_grants_read_only_github_tools(self):
-        cmd = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_agent_cmd(agent.backend_pi.AgentInvocation(prompt=""))
         tools = cmd[cmd.index("--tools") + 1].split(",")
         assert "gh_pr_unresolved_comments" in tools
         assert "gh_ci_failures" in tools
 
     def test_thinking_level(self):
-        cmd = ai_backend_pi._build_agent_cmd(
-            ai_backend_pi.AgentInvocation(prompt="", thinking="high"),
+        cmd = agent.backend_pi._build_agent_cmd(
+            agent.backend_pi.AgentInvocation(prompt="", thinking="high"),
         )
         assert "--thinking" in cmd
         idx = cmd.index("--thinking")
@@ -94,13 +94,13 @@ class TestBuildAgentCmd:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
         (agents_dir / "test.md").write_text("# Test Agent\nDo things.")
-        monkeypatch.setattr(ai_backend_pi, "AGENTS_DIR", agents_dir)
+        monkeypatch.setattr(agent.backend_pi, "AGENTS_DIR", agents_dir)
         # Ensure no skill file exists so fallback path is exercised
         empty_skills_dir = tmp_path / "skills"
         empty_skills_dir.mkdir()
-        monkeypatch.setattr(ai_backend_pi, "AGENTS_SKILLS_DIR", empty_skills_dir)
-        cmd = ai_backend_pi._build_agent_cmd(
-            ai_backend_pi.AgentInvocation(prompt="", agent="test"),
+        monkeypatch.setattr(agent.backend_pi, "AGENTS_SKILLS_DIR", empty_skills_dir)
+        cmd = agent.backend_pi._build_agent_cmd(
+            agent.backend_pi.AgentInvocation(prompt="", agent="test"),
         )
         assert "--append-system-prompt" in cmd
         idx = cmd.index("--append-system-prompt")
@@ -109,13 +109,13 @@ class TestBuildAgentCmd:
     def test_missing_agent_raises(self, tmp_path, monkeypatch):
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
-        monkeypatch.setattr(ai_backend_pi, "AGENTS_DIR", agents_dir)
+        monkeypatch.setattr(agent.backend_pi, "AGENTS_DIR", agents_dir)
         empty_skills_dir = tmp_path / "skills"
         empty_skills_dir.mkdir()
-        monkeypatch.setattr(ai_backend_pi, "AGENTS_SKILLS_DIR", empty_skills_dir)
+        monkeypatch.setattr(agent.backend_pi, "AGENTS_SKILLS_DIR", empty_skills_dir)
         with pytest.raises(FileNotFoundError):
-            ai_backend_pi._build_agent_cmd(
-                ai_backend_pi.AgentInvocation(prompt="", agent="nonexistent"),
+            agent.backend_pi._build_agent_cmd(
+                agent.backend_pi.AgentInvocation(prompt="", agent="nonexistent"),
             )
 
 
@@ -131,16 +131,16 @@ class TestToolAllowlists:
 
     @pytest.mark.parametrize("tool", POSTING_TOOLS)
     def test_agent_list_withholds_posting_tools(self, tool):
-        assert tool not in ai_backend_pi.PI_AGENT_TOOLS.split(",")
+        assert tool not in agent.backend_pi.PI_AGENT_TOOLS.split(",")
 
     @pytest.mark.parametrize("tool", POSTING_TOOLS)
     def test_fix_list_withholds_posting_tools(self, tool):
-        assert tool not in ai_backend_pi.PI_FIX_TOOLS.split(",")
+        assert tool not in agent.backend_pi.PI_FIX_TOOLS.split(",")
 
     def test_both_lists_keep_the_built_ins(self):
-        for name in ai_backend_pi.PI_TOOLS.split(","):
-            assert name in ai_backend_pi.PI_AGENT_TOOLS.split(",")
-            assert name in ai_backend_pi.PI_FIX_TOOLS.split(",")
+        for name in agent.backend_pi.PI_TOOLS.split(","):
+            assert name in agent.backend_pi.PI_AGENT_TOOLS.split(",")
+            assert name in agent.backend_pi.PI_FIX_TOOLS.split(",")
 
 
 class TestCheckLimits:
@@ -162,73 +162,73 @@ class TestCheckLimits:
 
     def test_no_action_within_limits(self):
         proc = self._make_proc()
-        stop, steered = ai_backend_pi._check_limits(proc, 5, 2.0, 10, 5.0)
+        stop, steered = agent.backend_pi._check_limits(proc, 5, 2.0, 10, 5.0)
         assert stop is None
         assert len(proc.stdin.commands) == 0
 
     def test_abort_at_max_turns(self):
         proc = self._make_proc()
-        stop, steered = ai_backend_pi._check_limits(proc, 10, 2.0, 10, 5.0)
+        stop, steered = agent.backend_pi._check_limits(proc, 10, 2.0, 10, 5.0)
         assert stop == "max_turns"
         assert any(c["type"] == "abort" for c in proc.stdin.commands)
 
     def test_abort_over_budget(self):
         proc = self._make_proc()
-        stop, steered = ai_backend_pi._check_limits(proc, 5, 5.1, 10, 5.0)
+        stop, steered = agent.backend_pi._check_limits(proc, 5, 5.1, 10, 5.0)
         assert stop == "max_budget"
         assert any(c["type"] == "abort" for c in proc.stdin.commands)
 
     def test_steer_at_80_pct_budget(self):
         proc = self._make_proc()
-        stop, steered = ai_backend_pi._check_limits(proc, 5, 4.1, 10, 5.0)
+        stop, steered = agent.backend_pi._check_limits(proc, 5, 4.1, 10, 5.0)
         assert stop is None
         assert any(c["type"] == "steer" for c in proc.stdin.commands)
 
     def test_steer_at_exact_80_pct_budget_boundary(self):
         proc = self._make_proc()
-        stop, steered = ai_backend_pi._check_limits(proc, 5, 4.0, 10, 5.0)
+        stop, steered = agent.backend_pi._check_limits(proc, 5, 4.0, 10, 5.0)
         assert stop is None
         assert steered is True
         assert any(c["type"] == "steer" for c in proc.stdin.commands)
 
     def test_steer_at_80_pct_turns(self):
         proc = self._make_proc()
-        stop, steered = ai_backend_pi._check_limits(proc, 8, 2.0, 10, 5.0)
+        stop, steered = agent.backend_pi._check_limits(proc, 8, 2.0, 10, 5.0)
         assert stop is None
         assert any(c["type"] == "steer" for c in proc.stdin.commands)
 
     def test_no_steer_when_no_limits(self):
         proc = self._make_proc()
-        stop, steered = ai_backend_pi._check_limits(proc, 100, 100.0, None, None)
+        stop, steered = agent.backend_pi._check_limits(proc, 100, 100.0, None, None)
         assert stop is None
         assert len(proc.stdin.commands) == 0
 
     def test_follow_up_on_abort(self):
         proc = self._make_proc()
-        stop, steered = ai_backend_pi._check_limits(proc, 10, 2.0, 10, 5.0)
+        stop, steered = agent.backend_pi._check_limits(proc, 10, 2.0, 10, 5.0)
         assert stop == "max_turns"
         assert any(c["type"] == "follow_up" for c in proc.stdin.commands)
 
     def test_no_duplicate_steer_when_steered_true(self):
         proc = self._make_proc()
         # First call triggers steer
-        stop, steered = ai_backend_pi._check_limits(proc, 8, 2.0, 10, 5.0, steered=False)
+        stop, steered = agent.backend_pi._check_limits(proc, 8, 2.0, 10, 5.0, steered=False)
         assert stop is None
         assert steered is True
         first_count = len(proc.stdin.commands)
         # Second call with steered=True should not send another steer
-        stop, steered = ai_backend_pi._check_limits(proc, 9, 2.0, 10, 5.0, steered=True)
+        stop, steered = agent.backend_pi._check_limits(proc, 9, 2.0, 10, 5.0, steered=True)
         assert stop is None
         assert len(proc.stdin.commands) == first_count
 
     def test_steered_flag_returned_true_after_steer(self):
         proc = self._make_proc()
-        stop, steered = ai_backend_pi._check_limits(proc, 8, 2.0, 10, 5.0, steered=False)
+        stop, steered = agent.backend_pi._check_limits(proc, 8, 2.0, 10, 5.0, steered=False)
         assert steered is True
 
     def test_steered_flag_unchanged_when_within_limits(self):
         proc = self._make_proc()
-        stop, steered = ai_backend_pi._check_limits(proc, 5, 2.0, 10, 5.0, steered=False)
+        stop, steered = agent.backend_pi._check_limits(proc, 5, 2.0, 10, 5.0, steered=False)
         assert steered is False
 
 
@@ -264,7 +264,7 @@ class TestStallWatchWiring:
         proc = TestConsumeStreamTracksWrites.MockProc(
             [json.dumps(line) + "\n" for line in lines],
         )
-        return proc, ai_backend_pi._consume_events(proc, io.StringIO(), "", watch)
+        return proc, agent.backend_pi._consume_events(proc, io.StringIO(), "", watch)
 
     def test_a_tool_call_arms_the_watch_and_its_turn_disarms_it(self):
         watch = self._Watch()
@@ -333,7 +333,7 @@ class TestStallWatchWiring:
         # keeps them running. That makes this the load-bearing case: if the
         # inert path were reached in production the detector would be off
         # everywhere and nothing else here would notice.
-        watch = ai_backend_pi.StallWatch(root_pid=0, send=lambda _c: True)
+        watch = agent.backend_pi.StallWatch(root_pid=0, send=lambda _c: True)
         watch.arm("bash")
         watch.start()
         try:
@@ -353,17 +353,17 @@ class TestStallWatchWiring:
         # reason: the construction is the subject, so a test that constructs
         # its own watch is testing the class, not the wiring.
         seen = {}
-        real = ai_backend_pi.StallWatch
+        real = agent.backend_pi.StallWatch
 
         def capture(**kwargs):
             seen.update(kwargs)
             return real(**kwargs)
 
-        monkeypatch.setattr(ai_backend_pi, "StallWatch", capture)
+        monkeypatch.setattr(agent.backend_pi, "StallWatch", capture)
         proc = subprocess.Popen(["sleep", "5"])
         proc.stdout = iter([json.dumps({"type": "agent_end"}) + "\n"])
         try:
-            ai_backend_pi._consume_stream(proc, io.StringIO(), "")
+            agent.backend_pi._consume_stream(proc, io.StringIO(), "")
         finally:
             proc.kill()
             proc.wait()
@@ -380,7 +380,7 @@ class TestLimitStopTurnCount:
             _event("turn_end"),
             _event("agent_end"),
         ])
-        stream = ai_backend_pi._consume_stream(
+        stream = agent.backend_pi._consume_stream(
             proc, io.StringIO(), "", max_turns=2,
         )
         assert stream.stop_reason == "max_turns"
@@ -395,14 +395,14 @@ class TestResolveSkillPath:
         reviewer_dir.mkdir(parents=True)
         skill_file = reviewer_dir / "SKILL.md"
         skill_file.write_text("---\nname: reviewer\n---\n# Reviewer")
-        monkeypatch.setattr(ai_backend_pi, "AGENTS_SKILLS_DIR", skills_dir)
-        assert ai_backend_pi._resolve_skill_path("reviewer") == skill_file
+        monkeypatch.setattr(agent.backend_pi, "AGENTS_SKILLS_DIR", skills_dir)
+        assert agent.backend_pi._resolve_skill_path("reviewer") == skill_file
 
     def test_returns_none_when_no_skill(self, tmp_path, monkeypatch):
         skills_dir = tmp_path / "pi" / "skills"
         skills_dir.mkdir(parents=True)
-        monkeypatch.setattr(ai_backend_pi, "AGENTS_SKILLS_DIR", skills_dir)
-        assert ai_backend_pi._resolve_skill_path("reviewer") is None
+        monkeypatch.setattr(agent.backend_pi, "AGENTS_SKILLS_DIR", skills_dir)
+        assert agent.backend_pi._resolve_skill_path("reviewer") is None
 
     def test_returns_none_when_placeholder_present(self, tmp_path, monkeypatch):
         skills_dir = tmp_path / "pi" / "skills"
@@ -410,8 +410,8 @@ class TestResolveSkillPath:
         reviewer_dir.mkdir(parents=True)
         skill_file = reviewer_dir / "SKILL.md"
         skill_file.write_text("---\nname: reviewer\n---\n<!-- AGENT_PROTOCOL_PLACEHOLDER: replaced by setup -->\n")
-        monkeypatch.setattr(ai_backend_pi, "AGENTS_SKILLS_DIR", skills_dir)
-        assert ai_backend_pi._resolve_skill_path("reviewer") is None
+        monkeypatch.setattr(agent.backend_pi, "AGENTS_SKILLS_DIR", skills_dir)
+        assert agent.backend_pi._resolve_skill_path("reviewer") is None
 
 
 class TestBuildAgentCmdWithSkills:
@@ -420,9 +420,9 @@ class TestBuildAgentCmdWithSkills:
         reviewer_dir = skills_dir / "reviewer"
         reviewer_dir.mkdir(parents=True)
         (reviewer_dir / "SKILL.md").write_text("---\nname: reviewer\n---\n# R")
-        monkeypatch.setattr(ai_backend_pi, "AGENTS_SKILLS_DIR", skills_dir)
-        cmd = ai_backend_pi._build_agent_cmd(
-            ai_backend_pi.AgentInvocation(prompt="", agent="reviewer"),
+        monkeypatch.setattr(agent.backend_pi, "AGENTS_SKILLS_DIR", skills_dir)
+        cmd = agent.backend_pi._build_agent_cmd(
+            agent.backend_pi.AgentInvocation(prompt="", agent="reviewer"),
         )
         assert "--skill" in cmd
         assert "--append-system-prompt" not in cmd
@@ -430,13 +430,13 @@ class TestBuildAgentCmdWithSkills:
     def test_falls_back_to_append_system_prompt(self, tmp_path, monkeypatch):
         skills_dir = tmp_path / "empty_skills"
         skills_dir.mkdir()
-        monkeypatch.setattr(ai_backend_pi, "AGENTS_SKILLS_DIR", skills_dir)
+        monkeypatch.setattr(agent.backend_pi, "AGENTS_SKILLS_DIR", skills_dir)
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
         (agents_dir / "reviewer.md").write_text("# Reviewer agent")
-        monkeypatch.setattr(ai_backend_pi, "AGENTS_DIR", agents_dir)
-        cmd = ai_backend_pi._build_agent_cmd(
-            ai_backend_pi.AgentInvocation(prompt="", agent="reviewer"),
+        monkeypatch.setattr(agent.backend_pi, "AGENTS_DIR", agents_dir)
+        cmd = agent.backend_pi._build_agent_cmd(
+            agent.backend_pi.AgentInvocation(prompt="", agent="reviewer"),
         )
         assert "--append-system-prompt" in cmd
         assert "--skill" not in cmd
@@ -444,27 +444,27 @@ class TestBuildAgentCmdWithSkills:
 
 class TestProviderFlag:
     def test_agent_cmd_with_provider(self):
-        cmd = ai_backend_pi._build_agent_cmd(
-            ai_backend_pi.AgentInvocation(prompt="", provider="bedrock"),
+        cmd = agent.backend_pi._build_agent_cmd(
+            agent.backend_pi.AgentInvocation(prompt="", provider="bedrock"),
         )
         assert "--provider" in cmd
         idx = cmd.index("--provider")
         assert cmd[idx + 1] == "bedrock"
 
     def test_agent_cmd_without_provider(self):
-        cmd = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_agent_cmd(agent.backend_pi.AgentInvocation(prompt=""))
         assert "--provider" not in cmd
 
     def test_fix_cmd_with_provider(self):
-        cmd = ai_backend_pi._build_fix_cmd(
-            ai_backend_pi.AgentInvocation(prompt="", provider="vertex"),
+        cmd = agent.backend_pi._build_fix_cmd(
+            agent.backend_pi.AgentInvocation(prompt="", provider="vertex"),
         )
         assert "--provider" in cmd
         idx = cmd.index("--provider")
         assert cmd[idx + 1] == "vertex"
 
     def test_prompt_cmd_with_provider(self):
-        cmd = ai_backend_pi._build_prompt_cmd(provider="bedrock")
+        cmd = agent.backend_pi._build_prompt_cmd(provider="bedrock")
         assert "--provider" in cmd
         idx = cmd.index("--provider")
         assert cmd[idx + 1] == "bedrock"
@@ -493,26 +493,26 @@ class TestPromptCmdHasNoTools:
     """
 
     def test_the_flag_is_on_the_command(self):
-        assert "--no-tools" in ai_backend_pi._build_prompt_cmd()
+        assert "--no-tools" in agent.backend_pi._build_prompt_cmd()
 
     def test_it_survives_every_other_knob(self):
         """A later flag added ahead of it must not displace it."""
-        cmd = ai_backend_pi._build_prompt_cmd(
+        cmd = agent.backend_pi._build_prompt_cmd(
             model="sonnet", provider="bedrock", thinking="high",
         )
         assert "--no-tools" in cmd
 
     def test_the_agent_modes_keep_their_tools(self):
         """Only the prompt shape loses them — an agent with no tools does nothing."""
-        inv = ai_backend_pi.AgentInvocation(prompt="")
-        assert "--no-tools" not in ai_backend_pi._build_agent_cmd(inv)
-        assert "--no-tools" not in ai_backend_pi._build_fix_cmd(inv)
+        inv = agent.backend_pi.AgentInvocation(prompt="")
+        assert "--no-tools" not in agent.backend_pi._build_agent_cmd(inv)
+        assert "--no-tools" not in agent.backend_pi._build_fix_cmd(inv)
 
     def test_it_reaches_the_subprocess(self, monkeypatch, tmp_path):
         seen = []
         monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: seen.append(cmd) or
                             subprocess.CompletedProcess(cmd, 0, "answer", ""))
-        ai_backend_pi.prompt("ask", cwd=str(tmp_path))
+        agent.backend_pi.prompt("ask", cwd=str(tmp_path))
         assert "--no-tools" in seen[0]
 
 
@@ -528,11 +528,11 @@ class TestPromptCmdThinking:
     """
 
     def test_the_thinking_level_reaches_the_flag(self):
-        cmd = ai_backend_pi._build_prompt_cmd(thinking="high")
+        cmd = agent.backend_pi._build_prompt_cmd(thinking="high")
         assert cmd[cmd.index("--thinking") + 1] == "high"
 
     def test_no_flags_when_nothing_was_resolved(self):
-        cmd = ai_backend_pi._build_prompt_cmd()
+        cmd = agent.backend_pi._build_prompt_cmd()
         assert "--thinking" not in cmd
         assert "--provider" not in cmd
         assert "--model" not in cmd
@@ -542,7 +542,7 @@ class TestPromptCmdThinking:
         seen = []
         monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: seen.append(cmd) or
                             subprocess.CompletedProcess(cmd, 0, "answer", ""))
-        ai_backend_pi.prompt(
+        agent.backend_pi.prompt(
             "ask", cwd=str(tmp_path), model="sonnet",
             thinking="low", provider="bedrock",
         )
@@ -554,25 +554,25 @@ class TestPromptCmdThinking:
 
 def _detect_source() -> str:
     """detect.ts, the SDK-free half of the guard that holds its predicates."""
-    return (ai_backend_pi.REVIEW_EXTENSION.parent / "detect.ts").read_text()
+    return (agent.backend_pi.REVIEW_EXTENSION.parent / "detect.ts").read_text()
 
 
 class TestExtensionFlag:
     def test_agent_cmd_with_extension(self):
-        cmd = ai_backend_pi._build_agent_cmd(
-            ai_backend_pi.AgentInvocation(prompt=""), extension="/path/to/review-guard.ts",
+        cmd = agent.backend_pi._build_agent_cmd(
+            agent.backend_pi.AgentInvocation(prompt=""), extension="/path/to/review-guard.ts",
         )
         assert "--extension" in cmd
         idx = cmd.index("--extension")
         assert cmd[idx + 1] == "/path/to/review-guard.ts"
 
     def test_agent_cmd_without_extension(self):
-        cmd = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_agent_cmd(agent.backend_pi.AgentInvocation(prompt=""))
         assert "--extension" not in cmd
 
     def test_fix_cmd_with_extension(self):
-        cmd = ai_backend_pi._build_fix_cmd(
-            ai_backend_pi.AgentInvocation(prompt=""), extension="/path/to/review-guard.ts",
+        cmd = agent.backend_pi._build_fix_cmd(
+            agent.backend_pi.AgentInvocation(prompt=""), extension="/path/to/review-guard.ts",
         )
         assert "--extension" in cmd
         idx = cmd.index("--extension")
@@ -581,13 +581,13 @@ class TestExtensionFlag:
     def test_prompt_cmd_does_not_accept_extension(self):
         """_build_prompt_cmd intentionally omits --extension (stateless, no tool gating)."""
         import inspect
-        sig = inspect.signature(ai_backend_pi._build_prompt_cmd)
+        sig = inspect.signature(agent.backend_pi._build_prompt_cmd)
         assert "extension" not in sig.parameters
 
     def test_review_extension_exists_on_disk(self):
         """Both call sites gate on is_file(), so a stale path drops the guard silently."""
-        assert ai_backend_pi.REVIEW_EXTENSION.is_file(), (
-            f"{ai_backend_pi.REVIEW_EXTENSION} is missing — the review agent would run ungated"
+        assert agent.backend_pi.REVIEW_EXTENSION.is_file(), (
+            f"{agent.backend_pi.REVIEW_EXTENSION} is missing — the review agent would run ungated"
         )
 
     def test_the_guard_is_written_against_pi_s_own_api(self):
@@ -599,7 +599,7 @@ class TestExtensionFlag:
         is a default-exported function, and the blocking key is `block` — so
         every review agent ran ungated while `is_file()` above passed.
         """
-        source = ai_backend_pi.REVIEW_EXTENSION.read_text()
+        source = agent.backend_pi.REVIEW_EXTENSION.read_text()
         assert "@anthropic-ai/pi" not in source
         assert "@earendil-works/pi-coding-agent" in source
         assert "export default function" in source
@@ -614,7 +614,7 @@ class TestExtensionFlag:
         machine. This one belongs to the review pipeline and is passed with
         --extension instead.
         """
-        assert ai_backend_pi.REVIEW_EXTENSION.parent.name == "extensions-cli"
+        assert agent.backend_pi.REVIEW_EXTENSION.parent.name == "extensions-cli"
 
     def test_the_guard_allows_the_dirs_the_invocation_named(self):
         """Gating on the worktree alone would refuse the review document.
@@ -624,7 +624,7 @@ class TestExtensionFlag:
         design. A guard armed with cwd alone blocks the one write every phase is
         dispatched to make, turning a fail-open into a fail-closed.
         """
-        source = ai_backend_pi.REVIEW_EXTENSION.read_text()
+        source = agent.backend_pi.REVIEW_EXTENSION.read_text()
         assert "REVIEW_ALLOWED_DIRS" in source
         assert "allowedDirs.some(" in source
 
@@ -645,7 +645,7 @@ class TestExtensionFlag:
         assert "realpathSync" in source
         assert "export function within(" in source
 
-        extension = ai_backend_pi.REVIEW_EXTENSION.read_text()
+        extension = agent.backend_pi.REVIEW_EXTENSION.read_text()
         assert "within(dir, event.input.path)" in extension
 
     def test_the_guard_matches_pi_s_tool_names_and_input_fields(self):
@@ -655,7 +655,7 @@ class TestExtensionFlag:
         `arguments.file_path`, so it would have matched nothing even had it
         loaded.
         """
-        source = ai_backend_pi.REVIEW_EXTENSION.read_text()
+        source = agent.backend_pi.REVIEW_EXTENSION.read_text()
         assert 'isToolCallEventType("write"' in source
         assert 'isToolCallEventType("bash"' in source
         assert "file_path" not in source
@@ -674,7 +674,7 @@ class TestGuardEnv:
         monkeypatch.delenv("REVIEW_WORKTREE_DIR", raising=False)
         seen = {}
         monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
-        getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+        getattr(agent.backend_pi, entry_point)(agent.backend_pi.AgentInvocation(
             prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
         ))
         assert seen["env"]["REVIEW_WORKTREE_DIR"] == str(tmp_path)
@@ -687,7 +687,7 @@ class TestGuardEnv:
         worktree = tmp_path / "wt"
         seen = {}
         monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
-        getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+        getattr(agent.backend_pi, entry_point)(agent.backend_pi.AgentInvocation(
             prompt="p", cwd=str(worktree), session_log=str(tmp_path / "s.jsonl"),
             add_dirs=[str(artifact), str(worktree)],
         ))
@@ -701,7 +701,7 @@ class TestGuardEnv:
         monkeypatch.delenv("REVIEW_ALLOWED_DIRS", raising=False)
         seen = {}
         monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
-        getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+        getattr(agent.backend_pi, entry_point)(agent.backend_pi.AgentInvocation(
             prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
         ))
         assert "REVIEW_ALLOWED_DIRS" not in seen["env"]
@@ -713,20 +713,20 @@ class TestWriteAwareSteer:
     def _steer_text(self, *args):
         """The message of the single steer command sent by _check_limits."""
         proc = TestCheckLimits.MockProc(TestCheckLimits.MockStdin)
-        ai_backend_pi._check_limits(proc, *args)
+        agent.backend_pi._check_limits(proc, *args)
         steers = [c for c in proc.stdin.commands if c["type"] == "steer"]
         assert len(steers) == 1
         return steers[0]["message"]
 
     def test_unwritten_agent_is_told_how_to_write(self):
         text = self._steer_text(8, 2.0, 10, 5.0, False, False)
-        assert ai_backend_pi._WRITE_FIRST in text
-        assert ai_backend_pi._WRAP_UP not in text
+        assert agent.backend_pi._WRITE_FIRST in text
+        assert agent.backend_pi._WRAP_UP not in text
 
     def test_written_agent_is_told_to_wrap_up(self):
         text = self._steer_text(8, 2.0, 10, 5.0, False, True)
-        assert ai_backend_pi._WRAP_UP in text
-        assert ai_backend_pi._WRITE_FIRST not in text
+        assert agent.backend_pi._WRAP_UP in text
+        assert agent.backend_pi._WRITE_FIRST not in text
 
     def test_warning_context_is_kept_in_both_messages(self):
         assert "8/10 turns" in self._steer_text(8, 2.0, 10, 5.0, False, False)
@@ -734,12 +734,12 @@ class TestWriteAwareSteer:
 
     def test_budget_steer_is_also_write_aware(self):
         text = self._steer_text(5, 4.1, 10, 5.0, False, False)
-        assert ai_backend_pi._WRITE_FIRST in text
+        assert agent.backend_pi._WRITE_FIRST in text
         assert "4.10/5.00 USD" in text
 
     def test_default_assumes_nothing_was_written(self):
         """Callers that cannot observe tool calls get the safe message."""
-        assert ai_backend_pi._WRITE_FIRST in self._steer_text(8, 2.0, 10, 5.0)
+        assert agent.backend_pi._WRITE_FIRST in self._steer_text(8, 2.0, 10, 5.0)
 
     def test_the_steer_names_a_tool_pi_actually_has(self):
         """Regression: this steer used to prescribe Claude's Edit recipe.
@@ -749,9 +749,9 @@ class TestWriteAwareSteer:
         turns on a call that could not succeed. It must name `write`, which is
         in the tool list this module passes.
         """
-        assert "old_string" not in ai_backend_pi._WRITE_FIRST
-        assert "`write`" in ai_backend_pi._WRITE_FIRST
-        assert "write" in ai_backend_pi.PI_TOOLS.split(",")
+        assert "old_string" not in agent.backend_pi._WRITE_FIRST
+        assert "`write`" in agent.backend_pi._WRITE_FIRST
+        assert "write" in agent.backend_pi.PI_TOOLS.split(",")
 
 
 class TestConsumeStreamTracksWrites:
@@ -777,7 +777,7 @@ class TestConsumeStreamTracksWrites:
         lines += [json.dumps({"type": "turn_end"})] * 8
         lines.append(json.dumps({"type": "agent_end"}))
         proc = self.MockProc([l + "\n" for l in lines])
-        ai_backend_pi._consume_stream(proc, io.StringIO(), "", max_turns=10)
+        agent.backend_pi._consume_stream(proc, io.StringIO(), "", max_turns=10)
         warnings = [
             c["message"] for c in proc.stdin.commands
             if c["type"] == "steer" and "Turn warning: 8/10" in c["message"]
@@ -786,10 +786,10 @@ class TestConsumeStreamTracksWrites:
         return warnings[0]
 
     def test_edit_call_earns_the_wrap_up_message(self):
-        assert ai_backend_pi._WRAP_UP in self._steer_message("edit")
+        assert agent.backend_pi._WRAP_UP in self._steer_message("edit")
 
     def test_read_only_run_earns_the_write_first_message(self):
-        assert ai_backend_pi._WRITE_FIRST in self._steer_message("read")
+        assert agent.backend_pi._WRITE_FIRST in self._steer_message("read")
 
 
 # The refusal from the incident this path exists for: an auth failure Pi
@@ -822,7 +822,7 @@ class TestFatalRpcResponse:
 
     def _stream(self, lines, log_file=None):
         proc = TestConsumeStreamTracksWrites.MockProc(lines)
-        return ai_backend_pi._consume_stream(proc, log_file or io.StringIO(), "")
+        return agent.backend_pi._consume_stream(proc, log_file or io.StringIO(), "")
 
     def test_a_rejected_prompt_ends_the_stream(self):
         stream = self._stream([
@@ -893,7 +893,7 @@ class TestNonFatalRpcResponse:
 
     def _stream(self, lines):
         proc = TestConsumeStreamTracksWrites.MockProc(lines)
-        return ai_backend_pi._consume_stream(proc, io.StringIO(), "")
+        return agent.backend_pi._consume_stream(proc, io.StringIO(), "")
 
     def test_a_failed_steer_does_not_end_the_run(self):
         stream = self._stream([
@@ -1015,7 +1015,7 @@ class TestRefusalReachesTheCaller:
 
     def _run(self, monkeypatch, tmp_path, proc, entry_point="invoke_agent"):
         monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: proc)
-        return getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+        return getattr(agent.backend_pi, entry_point)(agent.backend_pi.AgentInvocation(
             prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
         ))
 
@@ -1169,7 +1169,7 @@ class TestPiRunsInItsOwnGroup:
     def test_pi_is_started_as_a_group_leader(self, monkeypatch, tmp_path):
         seen = {}
         monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
-        ai_backend_pi.invoke_agent(ai_backend_pi.AgentInvocation(
+        agent.backend_pi.invoke_agent(agent.backend_pi.AgentInvocation(
             prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
         ))
         assert seen["start_new_session"] is True
@@ -1192,10 +1192,10 @@ class TestPiRunsInItsOwnGroup:
         def _interrupted(*a, **kw):
             raise KeyboardInterrupt
 
-        monkeypatch.setattr(ai_backend_pi, "_consume_stream", _interrupted)
+        monkeypatch.setattr(agent.backend_pi, "_consume_stream", _interrupted)
 
         with pytest.raises(KeyboardInterrupt):
-            getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+            getattr(agent.backend_pi, entry_point)(agent.backend_pi.AgentInvocation(
                 prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
             ))
         assert killpg_calls == [(proc.pid, signal.SIGKILL)]
@@ -1207,9 +1207,9 @@ class TestPiRunsInItsOwnGroup:
         def _interrupted(*a, **kw):
             raise KeyboardInterrupt
 
-        monkeypatch.setattr(ai_backend_pi, "_consume_stream", _interrupted)
+        monkeypatch.setattr(agent.backend_pi, "_consume_stream", _interrupted)
         with pytest.raises(KeyboardInterrupt):
-            ai_backend_pi.invoke_agent(ai_backend_pi.AgentInvocation(
+            agent.backend_pi.invoke_agent(agent.backend_pi.AgentInvocation(
                 prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
             ))
 
@@ -1268,25 +1268,25 @@ class TestWritingToADeadPi:
     def test_send_reports_a_broken_pipe_rather_than_raising(self):
         proc = _RefusingProc([])
         proc.stdin = self._DeadStdin()
-        assert ai_backend_pi._send(proc, {"type": "abort"}) is False
+        assert agent.backend_pi._send(proc, {"type": "abort"}) is False
 
     def test_send_reports_success_when_the_write_lands(self):
         proc = _RefusingProc([])
-        assert ai_backend_pi._send(proc, {"type": "abort"}) is True
+        assert agent.backend_pi._send(proc, {"type": "abort"}) is True
 
     def test_a_closed_stdin_is_not_a_traceback_either(self):
         # A file object closed under us raises ValueError, not BrokenPipeError.
         proc = _RefusingProc([])
         proc.stdin = io.StringIO()
         proc.stdin.close()
-        assert ai_backend_pi._send(proc, {"type": "abort"}) is False
+        assert agent.backend_pi._send(proc, {"type": "abort"}) is False
 
     def test_the_limit_abort_survives_a_pi_that_already_exited(self):
         # _check_limits fires after a turn_end Pi may have emitted on its way
         # out. An unguarded write here crashed the run at its turn ceiling.
         proc = _RefusingProc([])
         proc.stdin = self._DeadStdin()
-        stop, _ = ai_backend_pi._check_limits(proc, 10, 2.0, 10, 5.0)
+        stop, _ = agent.backend_pi._check_limits(proc, 10, 2.0, 10, 5.0)
         assert stop == "max_turns"
 
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
@@ -1303,26 +1303,26 @@ class TestWritingToADeadPi:
         def _must_not_run(*a, **kw):
             raise AssertionError("consumed a stream from a pi that never got the prompt")
 
-        monkeypatch.setattr(ai_backend_pi, "_consume_stream", _must_not_run)
+        monkeypatch.setattr(agent.backend_pi, "_consume_stream", _must_not_run)
         log = tmp_path / "s.jsonl"
-        code = getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+        code = getattr(agent.backend_pi, entry_point)(agent.backend_pi.AgentInvocation(
             prompt="p", cwd=str(tmp_path), session_log=str(log),
         ))
         assert code != 0
         assert "exited before the prompt" in log.read_text()
 
     def test_the_undelivered_prompt_diagnoses_as_an_error(self, monkeypatch, tmp_path):
-        from agent import session as agent_session
+        import agent.session
         from agent.diagnosis import DiagnosisKind
 
         proc = _RefusingProc([])
         proc.stdin = self._DeadStdin()
         monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: proc)
         log = tmp_path / "s.jsonl"
-        ai_backend_pi.invoke_agent(ai_backend_pi.AgentInvocation(
+        agent.backend_pi.invoke_agent(agent.backend_pi.AgentInvocation(
             prompt="p", cwd=str(tmp_path), session_log=str(log),
         ))
-        diagnosis = agent_session.diagnose_missing_output(str(log))
+        diagnosis = agent.session.diagnose_missing_output(str(log))
         assert diagnosis.kind is DiagnosisKind.AGENT_ERROR
 
     def test_stats_are_not_asked_of_a_pi_that_cannot_be_written_to(self):
@@ -1344,7 +1344,7 @@ class TestWritingToADeadPi:
                 pass
 
         proc.stdout = _NeverAnswers()
-        assert ai_backend_pi._get_stats_after_agent_end(proc) == {}
+        assert agent.backend_pi._get_stats_after_agent_end(proc) == {}
 
 
 class TestPromptCarriesReadableDirs:
@@ -1353,7 +1353,7 @@ class TestPromptCarriesReadableDirs:
     def _sent_prompt(self, monkeypatch, tmp_path, entry_point, add_dirs):
         proc = _RefusingProc([_response("prompt", False, _AUTH_ERROR)])
         monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: proc)
-        getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+        getattr(agent.backend_pi, entry_point)(agent.backend_pi.AgentInvocation(
             prompt="review this", cwd=str(tmp_path),
             session_log=str(tmp_path / "s.jsonl"), add_dirs=add_dirs,
         ))
@@ -1382,13 +1382,13 @@ class TestRefusalDiagnosis:
     """The session log says a refused run crashed, and why."""
 
     def _diagnose(self, tmp_path, error):
-        from agent import session as agent_session
+        import agent.session
 
         log = tmp_path / "session.jsonl"
-        ai_backend_pi._write_result_record(
+        agent.backend_pi._write_result_record(
             str(log), "error", 0, 0.0, 12, {}, None, error=error,
         )
-        return agent_session.diagnose_missing_output(str(log))
+        return agent.session.diagnose_missing_output(str(log))
 
     def test_a_refusal_diagnoses_as_an_agent_error(self, tmp_path):
         from agent.diagnosis import DiagnosisKind
@@ -1398,25 +1398,25 @@ class TestRefusalDiagnosis:
         assert "No API key found" in diagnosis.detail
 
     def test_a_refusal_is_not_retried(self, tmp_path):
-        from agent import retry as agent_retry
+        import agent.retry
 
         # A second attempt against a provider with no key fails identically,
         # and the whole point of the fix is not to spend a second timeout.
-        assert agent_retry.is_retryable(self._diagnose(tmp_path, _AUTH_ERROR)) is False
+        assert agent.retry.is_retryable(self._diagnose(tmp_path, _AUTH_ERROR)) is False
 
     def test_a_transient_refusal_is_retried(self, tmp_path):
-        from agent import retry as agent_retry
+        import agent.retry
         from agent.diagnosis import DiagnosisKind
 
         diagnosis = self._diagnose(tmp_path, "ECONNREFUSED connecting to the API")
         assert diagnosis.kind is DiagnosisKind.TRANSIENT
-        assert agent_retry.is_retryable(diagnosis) is True
+        assert agent.retry.is_retryable(diagnosis) is True
 
     def test_the_record_carries_the_error_text(self, tmp_path):
         from agent.session import read_jsonl
 
         log = tmp_path / "session.jsonl"
-        ai_backend_pi._write_result_record(
+        agent.backend_pi._write_result_record(
             str(log), "error", 0, 0.0, 12, {}, None, error=_AUTH_ERROR,
         )
         record = read_jsonl(str(log))[-1]
@@ -1430,7 +1430,7 @@ class TestRefusalDiagnosis:
         from agent.session import diagnose_missing_output, read_jsonl
 
         log = tmp_path / "session.jsonl"
-        ai_backend_pi._write_result_record(str(log), "max_turns", 10, 3.5, 1, {})
+        agent.backend_pi._write_result_record(str(log), "max_turns", 10, 3.5, 1, {})
         assert read_jsonl(str(log))[-1]["is_error"] is False
         assert diagnose_missing_output(str(log)).kind is DiagnosisKind.MAX_TURNS
 
@@ -1438,7 +1438,7 @@ class TestRefusalDiagnosis:
 class TestPreflight:
     def test_always_passes(self):
         """Pi resolves models itself — Vertex quota is not its config surface."""
-        assert ai_backend_pi.preflight({"claude-sonnet-5": ["group"]}, None) is True
+        assert agent.backend_pi.preflight({"claude-sonnet-5": ["group"]}, None) is True
 
 
 # ── Fixtures captured from a live Pi run ─────────────────────────────────────
@@ -1471,14 +1471,14 @@ def _parsed_result_record(tmp_path, model):
     _write_result_record — a new positional argument, a renamed field — is a
     one-place edit instead of three.
     """
-    from agent import usage as ai_usage
+    import agent.usage
 
     log = tmp_path / "session.jsonl"
-    ai_backend_pi._write_result_record(
+    agent.backend_pi._write_result_record(
         str(log), "completed", 1, 0.084319, 1234,
         _stats_response()["data"], model,
     )
-    return ai_usage.parse_session_log(str(log))
+    return agent.usage.parse_session_log(str(log))
 
 
 class TestSessionStatsEnvelope:
@@ -1497,7 +1497,7 @@ class TestSessionStatsEnvelope:
             def __init__(self):
                 self.stdout = io.StringIO(json.dumps(response) + "\n")
 
-        stats = ai_backend_pi._get_stats_after_agent_end(_Proc())
+        stats = agent.backend_pi._get_stats_after_agent_end(_Proc())
 
         assert stats["tokens"]["cacheWrite"] == 33710
         assert stats["cost"] == 0.084319
@@ -1515,7 +1515,7 @@ class TestSessionStatsEnvelope:
             def __init__(self):
                 self.stdout = io.StringIO(json.dumps(response) + "\n")
 
-        stats = ai_backend_pi._get_stats_after_agent_end(_Proc())
+        stats = agent.backend_pi._get_stats_after_agent_end(_Proc())
 
         assert stats is not None
         assert stats.get("tokens", {}) == {}
@@ -1532,7 +1532,7 @@ class TestSessionStatsEnvelope:
             def __init__(self):
                 self.stdout = io.StringIO(json.dumps(response) + "\n")
 
-        stats = ai_backend_pi._get_stats_after_agent_end(_Proc())
+        stats = agent.backend_pi._get_stats_after_agent_end(_Proc())
 
         assert stats == {}
         assert "success" not in stats, "the envelope was returned instead of its (empty) data"
@@ -1563,7 +1563,7 @@ class TestSessionStatsEnvelope:
         # run would land under two different cost_by_model keys depending on
         # whether it went through prompt() or invoke_agent() — splitting
         # `otto-log stats --by model` for the same model.
-        from agent import usage as ai_usage
+        import agent.usage
         from agent.backend_events import pi_prompt_result
 
         class _Proc:
@@ -1572,14 +1572,14 @@ class TestSessionStatsEnvelope:
             def __init__(self):
                 self.stdout = io.StringIO(_prompt_stream())
 
-        stream = ai_backend_pi._consume_stream(_Proc(), io.StringIO(), "")
+        stream = agent.backend_pi._consume_stream(_Proc(), io.StringIO(), "")
 
         log = tmp_path / "session.jsonl"
-        ai_backend_pi._write_result_record(
+        agent.backend_pi._write_result_record(
             str(log), stream.stop_reason, stream.turn_count,
             stream.accumulated_cost, 1234, {}, stream.model or "claude-opus-5",
         )
-        parsed = ai_usage.parse_session_log(str(log))
+        parsed = agent.usage.parse_session_log(str(log))
 
         _, prompt_usage = pi_prompt_result(_prompt_stream())
 
@@ -1593,7 +1593,7 @@ class TestPromptUsage:
     def test_prompt_command_asks_for_the_json_stream(self):
         # Bare `-p` emits prose and no usage, which is how 953 prompt-shaped
         # calls would have gone unrecorded.
-        cmd = ai_backend_pi._build_prompt_cmd(model="haiku")
+        cmd = agent.backend_pi._build_prompt_cmd(model="haiku")
         assert "--mode" in cmd and cmd[cmd.index("--mode") + 1] == "json"
         assert cmd.index("-p") < cmd.index("--mode")
 
@@ -1666,8 +1666,8 @@ class TestPromptUsage:
             stdout = captured
             returncode = 0
 
-        monkeypatch.setattr(ai_backend_pi.subprocess, "run", lambda *a, **k: _Result())
-        reply, code, usage = ai_backend_pi.prompt("anything", cwd=".")
+        monkeypatch.setattr(agent.backend_pi.subprocess, "run", lambda *a, **k: _Result())
+        reply, code, usage = agent.backend_pi.prompt("anything", cwd=".")
 
         assert code == 0
         assert reply.endswith("```")
@@ -1723,15 +1723,15 @@ class TestBareFlags:
     """
 
     def test_agent_cmd_disables_context_file_discovery(self):
-        cmd = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_agent_cmd(agent.backend_pi.AgentInvocation(prompt=""))
         assert "--no-context-files" in cmd
 
     def test_agent_cmd_disables_skill_discovery(self):
-        cmd = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_agent_cmd(agent.backend_pi.AgentInvocation(prompt=""))
         assert "--no-skills" in cmd
 
     def test_fix_cmd_disables_both_too(self):
-        cmd = ai_backend_pi._build_fix_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        cmd = agent.backend_pi._build_fix_cmd(agent.backend_pi.AgentInvocation(prompt=""))
         assert "--no-context-files" in cmd
         assert "--no-skills" in cmd
 
@@ -1740,7 +1740,7 @@ class TestBareFlags:
         # afford the interactive rulebook: its answer is parsed, not read, and
         # the superpowers bootstrap's "announce a skill first" turns a bare-JSON
         # contract into a prose preamble with no JSON in it at all.
-        cmd = ai_backend_pi._build_prompt_cmd()
+        cmd = agent.backend_pi._build_prompt_cmd()
         assert "--no-context-files" in cmd
         assert "--no-skills" in cmd
 
@@ -1748,8 +1748,8 @@ class TestBareFlags:
         # --no-extensions would deregister the provider that serves the run and
         # strip every gh_*/web_* tool the agent list grants, leaving a review
         # with no provider and a truncated toolset.
-        agent_cmd = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
-        fix = ai_backend_pi._build_fix_cmd(ai_backend_pi.AgentInvocation(prompt=""))
+        agent_cmd = agent.backend_pi._build_agent_cmd(agent.backend_pi.AgentInvocation(prompt=""))
+        fix = agent.backend_pi._build_fix_cmd(agent.backend_pi.AgentInvocation(prompt=""))
         assert "--no-extensions" not in agent_cmd
         assert "--no-extensions" not in fix
 
@@ -1759,9 +1759,9 @@ class TestBareFlags:
         skills = tmp_path / "skills" / "reviewer"
         skills.mkdir(parents=True)
         (skills / "SKILL.md").write_text("---\nname: reviewer\n---\nbody\n")
-        monkeypatch.setattr(ai_backend_pi, "AGENTS_SKILLS_DIR", tmp_path / "skills")
-        cmd = ai_backend_pi._build_agent_cmd(
-            ai_backend_pi.AgentInvocation(prompt="", agent="reviewer"),
+        monkeypatch.setattr(agent.backend_pi, "AGENTS_SKILLS_DIR", tmp_path / "skills")
+        cmd = agent.backend_pi._build_agent_cmd(
+            agent.backend_pi.AgentInvocation(prompt="", agent="reviewer"),
         )
         assert "--no-skills" in cmd
         assert "--skill" in cmd
@@ -1795,18 +1795,18 @@ class TestNoProgressSteer:
 
     def _run(self, lines, output_path=""):
         proc = self.MockProc([*lines, json.dumps({"type": "agent_end"}) + "\n"])
-        ai_backend_pi._consume_stream(
+        agent.backend_pi._consume_stream(
             proc, io.StringIO(), "", output_path=output_path,
         )
         return [c for c in proc.stdin.commands if c["type"] == "steer"]
 
     def test_repeating_one_read_earns_a_steer(self):
-        steers = self._run([self._read("/a.py")] * ai_backend_pi.REPEAT_TOOL_LIMIT)
+        steers = self._run([self._read("/a.py")] * agent.backend_pi.REPEAT_TOOL_LIMIT)
         assert len(steers) == 1
         assert "write" in steers[0]["message"]
 
     def test_below_the_limit_is_left_alone(self):
-        steers = self._run([self._read("/a.py")] * (ai_backend_pi.REPEAT_TOOL_LIMIT - 1))
+        steers = self._run([self._read("/a.py")] * (agent.backend_pi.REPEAT_TOOL_LIMIT - 1))
         assert steers == []
 
     def test_reading_different_files_is_progress(self):
@@ -1816,13 +1816,13 @@ class TestNoProgressSteer:
     def test_a_write_clears_the_count(self):
         # An agent that wrote is working, so what it repeated before does not
         # count against it.
-        lines = [self._read("/a.py")] * (ai_backend_pi.REPEAT_TOOL_LIMIT - 1)
+        lines = [self._read("/a.py")] * (agent.backend_pi.REPEAT_TOOL_LIMIT - 1)
         lines += [self._write("/out.md")]
-        lines += [self._read("/a.py")] * (ai_backend_pi.REPEAT_TOOL_LIMIT - 1)
+        lines += [self._read("/a.py")] * (agent.backend_pi.REPEAT_TOOL_LIMIT - 1)
         assert self._run(lines) == []
 
     def test_the_steer_fires_once(self):
-        steers = self._run([self._read("/a.py")] * (ai_backend_pi.REPEAT_TOOL_LIMIT * 3))
+        steers = self._run([self._read("/a.py")] * (agent.backend_pi.REPEAT_TOOL_LIMIT * 3))
         assert len(steers) == 1
 
     def test_a_scratch_write_does_not_pass_for_the_output(self):
@@ -1834,14 +1834,14 @@ class TestNoProgressSteer:
         one sweep spent their whole budget probing and wrote no findings.
         """
         lines = [self._write("/tmp/probe.py")]
-        lines += [self._read("/a.py")] * ai_backend_pi.REPEAT_TOOL_LIMIT
+        lines += [self._read("/a.py")] * agent.backend_pi.REPEAT_TOOL_LIMIT
         steers = self._run(lines, output_path="/out/review.md")
         assert len(steers) == 1
         assert "write" in steers[0]["message"]
 
     def test_writing_the_output_file_still_clears_the_count(self):
         lines = [self._write("/out/review.md")]
-        lines += [self._read("/a.py")] * ai_backend_pi.REPEAT_TOOL_LIMIT
+        lines += [self._read("/a.py")] * agent.backend_pi.REPEAT_TOOL_LIMIT
         assert self._run(lines, output_path="/out/review.md") == []
 
     def test_the_turn_warning_still_asks_for_the_output_after_a_scratch_write(
@@ -1851,27 +1851,27 @@ class TestNoProgressSteer:
         lines = [self._write("/tmp/probe.py")]
         lines += [json.dumps({"type": "turn_end"}) + "\n"] * 8
         proc = self.MockProc([*lines, json.dumps({"type": "agent_end"}) + "\n"])
-        ai_backend_pi._consume_stream(
+        agent.backend_pi._consume_stream(
             proc, io.StringIO(), "", max_turns=10,
             output_path="/out/review.md",
         )
         steers = [c for c in proc.stdin.commands if c["type"] == "steer"]
-        assert any(ai_backend_pi._WRITE_FIRST in s["message"] for s in steers)
+        assert any(agent.backend_pi._WRITE_FIRST in s["message"] for s in steers)
 
     def test_the_no_progress_steer_is_independent_of_the_turn_warning(self):
         # Different conditions, so a run that loops early and then nears its
         # turn cap earns both. Suppressing one behind the other would hide
         # whichever fired second. The unwritten-by-25% steer is a third such
         # condition and fires here too.
-        lines = [self._read("/a.py")] * ai_backend_pi.REPEAT_TOOL_LIMIT
+        lines = [self._read("/a.py")] * agent.backend_pi.REPEAT_TOOL_LIMIT
         lines += [json.dumps({"type": "turn_end"}) + "\n"] * 8
         proc = self.MockProc([*lines, json.dumps({"type": "agent_end"}) + "\n"])
-        ai_backend_pi._consume_stream(proc, io.StringIO(), "", max_turns=10)
+        agent.backend_pi._consume_stream(proc, io.StringIO(), "", max_turns=10)
         steers = [c["message"] for c in proc.stdin.commands if c["type"] == "steer"]
         assert len(steers) == 3
         assert sum("same tool call" in s for s in steers) == 1
         assert sum("Turn warning: 8/10" in s for s in steers) == 1
-        assert sum(s == ai_backend_pi._WRITE_FIRST for s in steers) == 1
+        assert sum(s == agent.backend_pi._WRITE_FIRST for s in steers) == 1
 
     def test_streaming_updates_do_not_count_as_repeats(self):
         # message_update repeats the same call many times over; counting those
@@ -1896,25 +1896,25 @@ class TestWriteFirstSteer:
         proc = TestConsumeStreamTracksWrites.MockProc(
             [line + "\n" for line in lines]
         )
-        ai_backend_pi._consume_stream(
+        agent.backend_pi._consume_stream(
             proc, io.StringIO(), "",
             max_turns=max_turns, output_path="/out/review.md",
         )
         return [c for c in proc.stdin.commands if c["type"] == "steer"]
 
     def test_threshold_at_group_medium_is_turn_four(self):
-        assert ai_backend_pi._write_first_turn(15) == 4
+        assert agent.backend_pi._write_first_turn(15) == 4
 
     def test_threshold_floors_at_three(self):
-        assert ai_backend_pi._write_first_turn(4) == 3
-        assert ai_backend_pi._write_first_turn(8) == 3
+        assert agent.backend_pi._write_first_turn(4) == 3
+        assert agent.backend_pi._write_first_turn(8) == 3
 
     def test_an_unwritten_run_is_steered_at_25_percent(self):
         lines = [json.dumps({"type": "turn_end"})] * 4
         lines.append(json.dumps({"type": "agent_end"}))
         steers = self._steers(lines)
         assert len(steers) == 1
-        assert ai_backend_pi._WRITE_FIRST in steers[0]["message"]
+        assert agent.backend_pi._WRITE_FIRST in steers[0]["message"]
 
     def test_a_written_run_is_not_steered_at_25_percent(self):
         lines = [
@@ -1941,7 +1941,7 @@ class TestWriteFirstSteer:
         lines.append(json.dumps({"type": "agent_end"}))
         steers = self._steers(lines)
         assert len(steers) == 1
-        assert ai_backend_pi._WRITE_FIRST in steers[0]["message"]
+        assert agent.backend_pi._WRITE_FIRST in steers[0]["message"]
 
     def test_the_25_percent_steer_is_one_shot(self):
         lines = [json.dumps({"type": "turn_end"})] * 6
@@ -1954,7 +1954,7 @@ class TestWriteFirstSteer:
         lines.append(json.dumps({"type": "agent_end"}))
         steers = self._steers(lines)
         assert len(steers) == 2
-        assert all(ai_backend_pi._WRITE_FIRST in s["message"] for s in steers)
+        assert all(agent.backend_pi._WRITE_FIRST in s["message"] for s in steers)
         assert "Turn warning: 12/15" in steers[1]["message"]
 
     def test_the_two_steers_never_share_a_turn(self):
@@ -1987,7 +1987,7 @@ class TestAskForDeliverableOnAgentEnd:
 
     def _run(self, lines, *, output_path=OUT, max_turns=None):
         proc = TestConsumeStreamTracksWrites.MockProc([l + "\n" for l in lines])
-        result = ai_backend_pi._consume_stream(
+        result = agent.backend_pi._consume_stream(
             proc, io.StringIO(), "", max_turns=max_turns, output_path=output_path,
         )
         return proc, result
@@ -2005,7 +2005,7 @@ class TestAskForDeliverableOnAgentEnd:
         ])
         prompts = self._prompts(proc)
         assert len(prompts) == 1
-        assert prompts[0]["message"] == ai_backend_pi._WRITE_FIRST
+        assert prompts[0]["message"] == agent.backend_pi._WRITE_FIRST
         assert result.stop_reason == "completed"
 
     def test_the_ask_is_a_prompt_not_a_steer(self):
@@ -2018,7 +2018,7 @@ class TestAskForDeliverableOnAgentEnd:
         after_end = [
             c for c in proc.stdin.commands
             if c["type"] in ("steer", "follow_up")
-            and c.get("message") == ai_backend_pi._WRITE_FIRST
+            and c.get("message") == agent.backend_pi._WRITE_FIRST
         ]
         assert after_end == []
 
@@ -2047,7 +2047,7 @@ class TestAskForDeliverableOnAgentEnd:
             raise AssertionError("the stream loop did not terminate")
 
         proc = TestConsumeStreamTracksWrites.MockProc(endless())
-        result = ai_backend_pi._consume_stream(
+        result = agent.backend_pi._consume_stream(
             proc, io.StringIO(), "", output_path=self.OUT,
         )
         assert len(self._prompts(proc)) == 1
@@ -2116,7 +2116,7 @@ class TestAskForDeliverableOnAgentEnd:
         ]
         proc = TestConsumeStreamTracksWrites.MockProc(lines)
         proc.stdin = DeadStdin()
-        result = ai_backend_pi._consume_stream(
+        result = agent.backend_pi._consume_stream(
             proc, io.StringIO(), "", output_path=self.OUT,
         )
         assert result.stop_reason == "completed"
@@ -2154,7 +2154,7 @@ class TestRulesHomeIsANoop:
         monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
         seen = {}
         monkeypatch.setattr(subprocess, "Popen", _recording_popen(seen))
-        getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+        getattr(agent.backend_pi, entry_point)(agent.backend_pi.AgentInvocation(
             prompt="p", cwd=str(tmp_path),
             session_log=str(tmp_path / "s.jsonl"),
             rules_home=str(_arm(tmp_path)),
@@ -2167,32 +2167,32 @@ class TestRulesHomePrefix:
     """``rules_home`` is injected as ``--append-system-prompt``, or omitted when empty."""
 
     def test_empty_rules_home_argv_is_byte_identical_to_today(self):
-        fix = ai_backend_pi._build_fix_cmd(ai_backend_pi.AgentInvocation(prompt=""))
-        agent_cmd = ai_backend_pi._build_agent_cmd(ai_backend_pi.AgentInvocation(prompt=""))
-        empty_fix = ai_backend_pi._build_fix_cmd(
-            ai_backend_pi.AgentInvocation(prompt="", rules_home=""),
+        fix = agent.backend_pi._build_fix_cmd(agent.backend_pi.AgentInvocation(prompt=""))
+        agent_cmd = agent.backend_pi._build_agent_cmd(agent.backend_pi.AgentInvocation(prompt=""))
+        empty_fix = agent.backend_pi._build_fix_cmd(
+            agent.backend_pi.AgentInvocation(prompt="", rules_home=""),
         )
-        empty_agent = ai_backend_pi._build_agent_cmd(
-            ai_backend_pi.AgentInvocation(prompt="", rules_home=""),
+        empty_agent = agent.backend_pi._build_agent_cmd(
+            agent.backend_pi.AgentInvocation(prompt="", rules_home=""),
         )
         assert fix == empty_fix
         assert agent_cmd == empty_agent
         assert fix == [
             "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
-            "--tools", ai_backend_pi.PI_FIX_TOOLS,
+            "--tools", agent.backend_pi.PI_FIX_TOOLS,
             "--no-context-files", "--no-skills",
         ]
         assert "--append-system-prompt" not in agent_cmd
         assert agent_cmd == [
             "pi", "--mode", "rpc", "--no-session", "--approve", "--verbose",
-            "--tools", ai_backend_pi.PI_AGENT_TOOLS,
+            "--tools", agent.backend_pi.PI_AGENT_TOOLS,
             "--no-context-files", "--no-skills",
         ]
 
     def test_rules_home_is_appended_as_a_file_and_keeps_bare_flags(self, tmp_path):
         home = _arm(tmp_path)
-        cmd = ai_backend_pi._build_fix_cmd(
-            ai_backend_pi.AgentInvocation(prompt="", rules_home=str(home)),
+        cmd = agent.backend_pi._build_fix_cmd(
+            agent.backend_pi.AgentInvocation(prompt="", rules_home=str(home)),
         )
         assert "--no-context-files" in cmd
         assert "--no-skills" in cmd
@@ -2206,8 +2206,8 @@ class TestRulesHomePrefix:
     def test_missing_rules_home_fails_loudly(self, tmp_path):
         from agent.rule_prefix import RulePrefixError
         with pytest.raises(RulePrefixError, match="rules/"):
-            ai_backend_pi._build_fix_cmd(
-                ai_backend_pi.AgentInvocation(
+            agent.backend_pi._build_fix_cmd(
+                agent.backend_pi.AgentInvocation(
                     prompt="", rules_home=str(tmp_path / "missing"),
                 ),
             )
@@ -2215,8 +2215,8 @@ class TestRulesHomePrefix:
     def test_relative_rules_home_is_rejected(self, tmp_path):
         from agent.rule_prefix import RulePrefixError
         with pytest.raises(RulePrefixError, match="absolute"):
-            ai_backend_pi._build_fix_cmd(
-                ai_backend_pi.AgentInvocation(
+            agent.backend_pi._build_fix_cmd(
+                agent.backend_pi.AgentInvocation(
                     prompt="", rules_home="relative/arm",
                 ),
             )
@@ -2233,7 +2233,7 @@ class TestRulesHomePrefix:
             return _recording_popen({})(cmd, **kwargs)
 
         monkeypatch.setattr(subprocess, "Popen", popen)
-        getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+        getattr(agent.backend_pi, entry_point)(agent.backend_pi.AgentInvocation(
             prompt="p", cwd=str(tmp_path),
             session_log=str(tmp_path / "s.jsonl"),
             rules_home=str(_arm(tmp_path)),
@@ -2253,7 +2253,7 @@ class TestRulesHomePrefix:
             return inner(cmd, **kwargs)
 
         monkeypatch.setattr(subprocess, "Popen", popen)
-        getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+        getattr(agent.backend_pi, entry_point)(agent.backend_pi.AgentInvocation(
             prompt="p", cwd=str(tmp_path),
             session_log=str(tmp_path / "s.jsonl"),
             rules_home=str(_arm(tmp_path)),
@@ -2265,21 +2265,21 @@ class TestRulesHomePrefix:
     def test_exception_between_materialize_and_spawn_still_removes_the_file(
             self, monkeypatch, tmp_path, entry_point):
         captured = {}
-        real = ai_backend_pi.materialize_rule_prefix
+        real = agent.backend_pi.materialize_rule_prefix
 
         def wrapping(home):
             path = real(home)
             captured["path"] = path
             return path
 
-        monkeypatch.setattr(ai_backend_pi, "materialize_rule_prefix", wrapping)
+        monkeypatch.setattr(agent.backend_pi, "materialize_rule_prefix", wrapping)
 
         def boom(*_a, **_k):
             raise RuntimeError("between materialize and spawn")
 
-        monkeypatch.setattr(ai_backend_pi, "_spawn_env", boom)
+        monkeypatch.setattr(agent.backend_pi, "_spawn_env", boom)
         with pytest.raises(RuntimeError, match="between materialize and spawn"):
-            getattr(ai_backend_pi, entry_point)(ai_backend_pi.AgentInvocation(
+            getattr(agent.backend_pi, entry_point)(agent.backend_pi.AgentInvocation(
                 prompt="p", cwd=str(tmp_path),
                 session_log=str(tmp_path / "s.jsonl"),
                 rules_home=str(_arm(tmp_path)),

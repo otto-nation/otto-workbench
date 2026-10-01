@@ -51,7 +51,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
-from core import log
+import core.log
 
 # ── Harness layouts ──────────────────────────────────────────────────────────
 
@@ -300,7 +300,7 @@ def _iter_records(session: Session) -> Iterator[dict]:
     try:
         raw = session.path.read_text(errors="replace")
     except OSError:
-        log.warn(f"Could not read {session.path}")
+        core.log.warn(f"Could not read {session.path}")
         return
     for line in raw.splitlines():
         line = line.strip()

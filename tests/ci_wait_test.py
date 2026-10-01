@@ -12,16 +12,16 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from pr import ci_annotations  # noqa: E402
-from pr import ci_failures as ci  # noqa: E402
-from gh import run_reads  # noqa: E402
-from pr import ci_runs  # noqa: E402
-from pr import ci_wait  # noqa: E402
+import pr.ci_annotations  # noqa: E402
+import pr.ci_failures  # noqa: E402
+import gh.run_reads  # noqa: E402
+import pr.ci_runs  # noqa: E402
+import pr.ci_wait  # noqa: E402
 
 
 def _row(run_id, **kw):
     """A `gh run list` row for a run whose payload the test supplies itself."""
-    return run_reads.RunRow(run_id=run_id, **kw)
+    return gh.run_reads.RunRow(run_id=run_id, **kw)
 
 
 @pytest.fixture(autouse=True)
@@ -33,7 +33,7 @@ def _no_rollup():
     them reaches the network to find that out.
     """
     with patch("gh.run_reads.fetch_commit_checks",
-               return_value=run_reads.CommitChecks()):
+               return_value=gh.run_reads.CommitChecks()):
         yield
 
 
@@ -45,7 +45,7 @@ def _external(name, conclusion, status="completed", db_id=0):
     green is applied at that boundary, and a double that restates the shape
     keeps passing after the code it stands for has stopped agreeing with it.
     """
-    return run_reads._as_failure_unless_green(
+    return gh.run_reads._as_failure_unless_green(
         {"name": name, "databaseId": db_id, "status": status,
          "conclusion": conclusion, "steps": [], "_check_source": "check_run",
          "_details_url": "", "_summary": ""})
@@ -53,7 +53,7 @@ def _external(name, conclusion, status="completed", db_id=0):
 
 def _no_log_fallback(kind):
     """A `log_fallback` result for a job whose logs yielded nothing."""
-    return ci_annotations.LogFallback([], "", kind, structured=False)
+    return pr.ci_annotations.LogFallback([], "", kind, structured=False)
 
 
 def _run(status, conclusion, jobs):
@@ -69,7 +69,7 @@ def _poll(**kwargs):
         run_id=None, timeout=120, interval=0, trail=MagicMock(),
     )
     defaults.update(kwargs)
-    return ci_wait.poll_until_complete("owner/repo", "feat/test", **defaults)
+    return pr.ci_wait.poll_until_complete("owner/repo", "feat/test", **defaults)
 
 
 def test_poll_emits_partial_on_new_failure(capsys):
@@ -84,11 +84,11 @@ def test_poll_emits_partial_on_new_failure(capsys):
     ])
     payloads = iter((cycle1, cycle2))
 
-    with patch("gh.run_reads.fetch_latest_runs", side_effect=[run_reads.RunDiscovery(rows=(_row(100),))] * 2), \
+    with patch("gh.run_reads.fetch_latest_runs", side_effect=[gh.run_reads.RunDiscovery(rows=(_row(100),))] * 2), \
          patch("gh.run_reads.fetch_run_data", side_effect=lambda repo, rid: next(payloads)), \
          patch("gh.run_reads.fetch_annotations", return_value=[]), \
          patch("pr.ci_annotations.log_fallback",
-               return_value=_no_log_fallback(ci.FailureKind.BUILD)), \
+               return_value=_no_log_fallback(pr.ci_failures.FailureKind.BUILD)), \
          patch("pr.ci_wait.time.sleep"):
         result = _poll()
 
@@ -112,11 +112,11 @@ def test_poll_reports_each_failed_job_once(capsys):
     ])
     payloads = iter((failed, failed, done))
 
-    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery(rows=(_row(100),))), \
+    with patch("gh.run_reads.fetch_latest_runs", return_value=gh.run_reads.RunDiscovery(rows=(_row(100),))), \
          patch("gh.run_reads.fetch_run_data", side_effect=lambda repo, rid: next(payloads)), \
          patch("gh.run_reads.fetch_annotations", return_value=[]), \
          patch("pr.ci_annotations.log_fallback",
-               return_value=_no_log_fallback(ci.FailureKind.BUILD)), \
+               return_value=_no_log_fallback(pr.ci_failures.FailureKind.BUILD)), \
          patch("pr.ci_wait.time.sleep"):
         _poll()
 
@@ -136,7 +136,7 @@ def test_poll_reads_new_failures_through_ci_runs_definition():
     weird_job = {"name": "Weird", "conclusion": "success", "databaseId": 20, "status": "completed"}
     run_data = _run("completed", "success", [weird_job])
 
-    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery(rows=(_row(100),))), \
+    with patch("gh.run_reads.fetch_latest_runs", return_value=gh.run_reads.RunDiscovery(rows=(_row(100),))), \
          patch("gh.run_reads.fetch_run_data", return_value=run_data), \
          patch("pr.ci_runs.failed_jobs", return_value=[weird_job]), \
          patch("pr.ci_wait.emit_partial") as emit_partial, \
@@ -154,7 +154,7 @@ def test_poll_emits_status_lines(capsys):
         {"name": "Test", "conclusion": "success", "databaseId": 11, "status": "completed"},
     ])
 
-    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery(rows=(_row(100),))), \
+    with patch("gh.run_reads.fetch_latest_runs", return_value=gh.run_reads.RunDiscovery(rows=(_row(100),))), \
          patch("gh.run_reads.fetch_run_data", return_value=run_data), \
          patch("pr.ci_wait.time.sleep"):
         result = _poll()
@@ -169,7 +169,7 @@ def test_poll_returns_what_it_has_when_it_times_out(capsys):
         {"name": "Test", "conclusion": None, "databaseId": 11, "status": "in_progress"},
     ])
 
-    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery(rows=(_row(100),))), \
+    with patch("gh.run_reads.fetch_latest_runs", return_value=gh.run_reads.RunDiscovery(rows=(_row(100),))), \
          patch("gh.run_reads.fetch_run_data", return_value=run_data), \
          patch("pr.ci_wait.time.sleep"):
         result = _poll(timeout=0)
@@ -181,8 +181,8 @@ def test_poll_returns_what_it_has_when_it_times_out(capsys):
 
 def test_poll_raises_when_the_branch_has_no_runs():
     trail = MagicMock()
-    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery()):
-        with pytest.raises(ci_runs.RunUnavailable, match="feat/test"):
+    with patch("gh.run_reads.fetch_latest_runs", return_value=gh.run_reads.RunDiscovery()):
+        with pytest.raises(pr.ci_runs.RunUnavailable, match="feat/test"):
             _poll(trail=trail)
     trail.warn.assert_called_once()
     assert trail.warn.call_args[0][0] == "no_runs"
@@ -198,9 +198,9 @@ def test_poll_retries_then_gives_up_when_no_run_data_comes_back():
     """
     trail = MagicMock()
     with patch("gh.run_reads.fetch_latest_runs",
-               return_value=run_reads.RunDiscovery(rows=(_row(100),))), \
+               return_value=gh.run_reads.RunDiscovery(rows=(_row(100),))), \
          patch("gh.run_reads.fetch_run_data", return_value=None) as view:
-        with pytest.raises(ci_runs.RunUnavailable, match="Gave up polling"):
+        with pytest.raises(pr.ci_runs.RunUnavailable, match="Gave up polling"):
             _poll(trail=trail)
     assert view.call_count == 3, "two retries, then the give-up"
     trail.error.assert_called_once()
@@ -210,8 +210,8 @@ def test_poll_retries_then_gives_up_when_no_run_data_comes_back():
 def test_a_failed_run_listing_mid_wait_is_retried_not_reported_as_no_checks():
     """`gh run list` failing is not the commit having no checks, and the loop
     exists to outlast exactly this."""
-    good = run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123"),))
-    discoveries = iter((run_reads.RunDiscovery(failed=True), good))
+    good = gh.run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123"),))
+    discoveries = iter((gh.run_reads.RunDiscovery(failed=True), good))
     done = _run("completed", "success", [
         {"name": "Lint", "conclusion": "success", "databaseId": 10, "status": "completed"},
     ])
@@ -230,12 +230,12 @@ def test_an_unread_poll_is_retried_before_the_wait_reports_it():
         {"name": "Lint", "conclusion": "success", "databaseId": 10, "status": "completed"},
     ])
     rollups = iter((
-        run_reads.CommitChecks(unreadable=True),
-        run_reads.CommitChecks(answered=True),
+        gh.run_reads.CommitChecks(unreadable=True),
+        gh.run_reads.CommitChecks(answered=True),
     ))
 
     with patch("gh.run_reads.fetch_latest_runs",
-               return_value=run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123"),))), \
+               return_value=gh.run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123"),))), \
          patch("gh.run_reads.fetch_run_data", return_value=done), \
          patch("gh.run_reads.fetch_commit_checks",
                side_effect=lambda repo, sha: next(rollups)) as rollup, \
@@ -254,10 +254,10 @@ def test_a_persistently_unread_poll_still_finishes():
     ])
 
     with patch("gh.run_reads.fetch_latest_runs",
-               return_value=run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123"),))), \
+               return_value=gh.run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123"),))), \
          patch("gh.run_reads.fetch_run_data", return_value=done), \
          patch("gh.run_reads.fetch_commit_checks",
-               return_value=run_reads.CommitChecks(unreadable=True)) as rollup, \
+               return_value=gh.run_reads.CommitChecks(unreadable=True)) as rollup, \
          patch("pr.ci_wait.time.sleep"):
         result = _poll(head_sha="abc123")
 
@@ -272,7 +272,7 @@ def test_poll_re_resolves_run_ids_unless_one_is_pinned():
         {"name": "Test", "conclusion": "success", "databaseId": 11, "status": "completed"},
     ])
 
-    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery(rows=(_row(100),))) as fetch_ids, \
+    with patch("gh.run_reads.fetch_latest_runs", return_value=gh.run_reads.RunDiscovery(rows=(_row(100),))) as fetch_ids, \
          patch("gh.run_reads.fetch_run_data", return_value=run_data), \
          patch("pr.ci_wait.time.sleep"):
         result = _poll(run_id=555)
@@ -308,7 +308,7 @@ def test_a_run_that_has_finished_is_not_fetched_again_next_poll():
     def serve(repo, rid):
         return finished if rid == 100 else next(state[200])
 
-    discovered = run_reads.RunDiscovery(rows=(_row(100), _row(200)))
+    discovered = gh.run_reads.RunDiscovery(rows=(_row(100), _row(200)))
     with patch("gh.run_reads.fetch_latest_runs", return_value=discovered), \
          patch("gh.run_reads.fetch_run_data", side_effect=serve) as view, \
          patch("pr.ci_wait.time.sleep"):
@@ -327,7 +327,7 @@ def test_the_held_payload_still_reaches_the_final_merge():
     def serve(repo, rid):
         return finished if rid == 100 else next(state[200])
 
-    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery(rows=(_row(100), _row(200)))), \
+    with patch("gh.run_reads.fetch_latest_runs", return_value=gh.run_reads.RunDiscovery(rows=(_row(100), _row(200)))), \
          patch("gh.run_reads.fetch_run_data", side_effect=serve), \
          patch("pr.ci_wait.time.sleep"):
         result = _poll()
@@ -350,10 +350,10 @@ def test_a_real_head_sha_reaches_the_rollup_short_circuit():
         {"name": "Lint", "conclusion": "success", "databaseId": 10, "status": "completed"},
     ])
 
-    with patch("gh.run_reads.fetch_latest_runs", return_value=run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123"),))), \
+    with patch("gh.run_reads.fetch_latest_runs", return_value=gh.run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123"),))), \
          patch("gh.run_reads.fetch_run_data", return_value=run_data), \
          patch("gh.run_reads.fetch_commit_checks",
-               return_value=run_reads.CommitChecks()) as fetch_checks, \
+               return_value=gh.run_reads.CommitChecks()) as fetch_checks, \
          patch("pr.ci_wait.time.sleep"):
         _poll(head_sha="abc123")
 
@@ -372,10 +372,10 @@ def test_a_pinned_run_asks_its_rollup_at_its_own_commit():
     """
     run_data = _run("completed", "success", [])
     by_sha = {
-        "currenthead": run_reads.CommitChecks(
+        "currenthead": gh.run_reads.CommitChecks(
             answered=True,
             external=(_external("CodeQL", "failure"),)),
-        "abc123": run_reads.CommitChecks(answered=True),
+        "abc123": gh.run_reads.CommitChecks(answered=True),
     }
 
     with patch("gh.run_reads.fetch_run_data", return_value=run_data), \
@@ -409,8 +409,8 @@ def test_a_rollup_with_a_check_still_running_is_asked_again():
     running_check = _external("CodeQL", "", status="in_progress", db_id=99)
     failed_check = _external("CodeQL", "failure", db_id=99)
     rollups = iter((
-        run_reads.CommitChecks(answered=True, external=(running_check,)),
-        run_reads.CommitChecks(answered=True, external=(failed_check,)),
+        gh.run_reads.CommitChecks(answered=True, external=(running_check,)),
+        gh.run_reads.CommitChecks(answered=True, external=(failed_check,)),
     ))
 
     with patch("gh.run_reads.fetch_run_data", side_effect=lambda repo, rid: next(run_payloads)), \
@@ -452,8 +452,8 @@ def test_a_truncated_poll_is_retried_and_the_fuller_answer_wins():
     completed_check = _external("CodeQL", "success", db_id=99)
     failed_check = _external("CodeQL", "failure", db_id=99)
     rollups = iter((
-        run_reads.CommitChecks(answered=True, truncated=True, external=(completed_check,)),
-        run_reads.CommitChecks(answered=True, truncated=False, external=(failed_check,)),
+        gh.run_reads.CommitChecks(answered=True, truncated=True, external=(completed_check,)),
+        gh.run_reads.CommitChecks(answered=True, truncated=False, external=(failed_check,)),
     ))
 
     with patch("gh.run_reads.fetch_run_data", return_value=done), \
@@ -487,10 +487,10 @@ def test_the_rollup_is_re_read_every_poll():
         {"name": "Test", "conclusion": "success", "databaseId": 11, "status": "completed"},
     ])
     payloads = iter((in_progress, done))
-    settled = run_reads.CommitChecks(answered=True)
+    settled = gh.run_reads.CommitChecks(answered=True)
 
     with patch("gh.run_reads.fetch_latest_runs",
-               return_value=run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123"),))), \
+               return_value=gh.run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123"),))), \
          patch("gh.run_reads.fetch_run_data", side_effect=lambda repo, rid: next(payloads)), \
          patch("gh.run_reads.fetch_commit_checks", return_value=settled) as rollup, \
          patch("pr.ci_wait.time.sleep"):
@@ -518,9 +518,9 @@ def test_a_re_run_is_not_served_from_the_previous_attempts_payload():
     # Poll 1 sees attempt 1 alongside a run still going; poll 2 sees the
     # re-run as attempt 2, and everything finished.
     discoveries = iter((
-        run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123"),
+        gh.run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123"),
                                      _row(200, head_sha="abc123"))),
-        run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123", attempt=2),)),
+        gh.run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123", attempt=2),)),
     ))
     running = {"databaseId": 200, "number": 2, "headSha": "abc123",
                "status": "in_progress", "conclusion": None,
@@ -534,7 +534,7 @@ def test_a_re_run_is_not_served_from_the_previous_attempts_payload():
          patch("gh.run_reads.fetch_run_data", side_effect=serve) as view, \
          patch("gh.run_reads.fetch_annotations", return_value=[]), \
          patch("pr.ci_annotations.log_fallback",
-               return_value=_no_log_fallback(ci.FailureKind.LINT)), \
+               return_value=_no_log_fallback(pr.ci_failures.FailureKind.LINT)), \
          patch("pr.ci_wait.time.sleep"):
         result = _poll(head_sha="abc123")
 
@@ -553,11 +553,11 @@ def test_a_cancelled_external_check_ends_the_wait_as_a_failure():
     done = _run("completed", "success", [
         {"name": "Lint", "conclusion": "success", "databaseId": 10, "status": "completed"},
     ])
-    checks = run_reads.CommitChecks(
+    checks = gh.run_reads.CommitChecks(
         answered=True, external=(_external("scalr/plan", "cancelled"),))
 
     with patch("gh.run_reads.fetch_latest_runs",
-               return_value=run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123"),))), \
+               return_value=gh.run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123"),))), \
          patch("gh.run_reads.fetch_run_data", return_value=done), \
          patch("gh.run_reads.fetch_commit_checks", return_value=checks), \
          patch("gh.run_reads.fetch_annotations", return_value=[]), \

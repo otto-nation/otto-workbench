@@ -4,10 +4,10 @@
 
 from __future__ import annotations
 
-from core import log
+import core.log
 from core.trail import Trail
-from git import land
-from git import push
+import git.land
+import git.push
 
 from . import prepush
 from . import types as rebase_types
@@ -19,7 +19,7 @@ def land_rebased(
     cwd: str, resolved_files: list[str] | None = None, *,
     args: tuple[str, ...],
     trail: Trail | None = None,
-) -> land.LandResult:
+) -> git.land.LandResult:
     """Force-push the replayed branch, auto-recovering from a hook rejection.
 
     Two recoveries sit under this and only the second is the rebase's. `land`
@@ -40,7 +40,7 @@ def land_rebased(
     know. A default here would be a bare lease, and a bare lease is satisfied by
     the tool's own fetch — see `rebase.lease`.
     """
-    landed = land.land_head(
+    landed = git.land.land_head(
         cwd, gated=True, args=tuple(args), trail=trail, regen=REGEN_MESSAGE,
     )
     # Only a refusal leaves something an agent could repair. A held, lost, or
@@ -51,7 +51,7 @@ def land_rebased(
     if not refused or not resolved_files or not landed.error:
         return landed
 
-    log.info("Attempting to fix pre-push check failures...")
+    core.log.info("Attempting to fix pre-push check failures...")
     # The same lease: a refused push left the remote where it was, so the tip
     # the repair is pushed against is still the one we named.
     repaired = prepush.fix_push_failures(

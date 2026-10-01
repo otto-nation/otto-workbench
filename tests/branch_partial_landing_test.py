@@ -17,7 +17,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from gh import landed as branch_landed  # noqa: E402
+import gh.landed  # noqa: E402
 
 
 # How a commit is copied onto main so that the copy is genuinely a *copy*.
@@ -118,7 +118,7 @@ class TestPartialLandingIsSeenWherePatchIdsAreNot:
 
     def test_the_prefix_is_found(self, tmp_path):
         repo = self._landed_prefix_with_an_amendment(tmp_path)
-        partial = branch_landed.partial_landing(str(repo), target_ref="main")
+        partial = gh.landed.partial_landing(str(repo), target_ref="main")
 
         assert partial is not None
         assert partial.landed == 3
@@ -133,22 +133,22 @@ class TestPartialLandingIsSeenWherePatchIdsAreNot:
         all-or-nothing signal above it sees nothing at all.
         """
         repo = self._landed_prefix_with_an_amendment(tmp_path)
-        commits = branch_landed.branch_commits(
+        commits = gh.landed.branch_commits(
             str(repo), target_ref="main", rev="HEAD",
         )
-        equivalent = branch_landed._patch_equivalent(
+        equivalent = gh.landed._patch_equivalent(
             str(repo), target_ref="main", rev="HEAD",
         )
         landed_by_patch_id = [c.subject for c in commits if c.sha in equivalent]
 
         assert "feat: one" not in landed_by_patch_id
         assert "feat: two" not in landed_by_patch_id
-        assert not branch_landed.all_commits_upstream(str(repo), target_ref="main")
+        assert not gh.landed.all_commits_upstream(str(repo), target_ref="main")
 
     def test_the_fork_point_is_what_replays_only_what_is_left(self, tmp_path):
         """The remedy is executable, which is the whole point of the finding."""
         repo = self._landed_prefix_with_an_amendment(tmp_path)
-        partial = branch_landed.partial_landing(str(repo), target_ref="main")
+        partial = gh.landed.partial_landing(str(repo), target_ref="main")
 
         git_in(repo, "rebase", "--onto", "main", partial.fork_point)
         subjects = git_out(repo, "log", "--format=%s", "main..HEAD").split("\n")
@@ -161,7 +161,7 @@ class TestPartialLandingStaysQuietWhereItShould:
         repo = _base_repo(tmp_path)
         _branch_of(repo, ["feat: one", "feat: two"])
 
-        assert branch_landed.partial_landing(str(repo), target_ref="main") is None
+        assert gh.landed.partial_landing(str(repo), target_ref="main") is None
 
     def test_a_wholly_landed_branch_is_not_partial(self, tmp_path):
         """That is `by_git`'s finding, with a different remedy."""
@@ -171,14 +171,14 @@ class TestPartialLandingStaysQuietWhereItShould:
         git_in(repo, "merge", "-q", "--ff-only", "feat")
         git_in(repo, "checkout", "-q", "feat")
 
-        assert branch_landed.partial_landing(str(repo), target_ref="main") is None
+        assert gh.landed.partial_landing(str(repo), target_ref="main") is None
 
     def test_a_one_commit_branch_is_never_partial(self, tmp_path):
         """All-or-nothing by construction, whichever way it goes."""
         repo = _base_repo(tmp_path)
         _branch_of(repo, ["feat: only"])
 
-        assert branch_landed.partial_landing(str(repo), target_ref="main") is None
+        assert gh.landed.partial_landing(str(repo), target_ref="main") is None
 
     def test_a_later_commit_landing_alone_is_not_a_prefix(self, tmp_path):
         """A cherry-pick out of the middle, which no fork point can express.
@@ -194,7 +194,7 @@ class TestPartialLandingStaysQuietWhereItShould:
         git_in(repo, *_COPY, second)
         git_in(repo, "checkout", "-q", "feat")
 
-        assert branch_landed.partial_landing(str(repo), target_ref="main") is None
+        assert gh.landed.partial_landing(str(repo), target_ref="main") is None
 
     def test_a_subject_that_is_only_a_prefix_of_an_upstream_one_does_not_match(
         self, tmp_path,
@@ -207,13 +207,13 @@ class TestPartialLandingStaysQuietWhereItShould:
         _commit(repo, "other.txt", "x\n", "fix: auth token refresh")
         git_in(repo, "checkout", "-q", "feat")
 
-        assert branch_landed.partial_landing(str(repo), target_ref="main") is None
+        assert gh.landed.partial_landing(str(repo), target_ref="main") is None
 
     def test_an_unresolvable_target_answers_none_rather_than_raising(self, tmp_path):
         repo = _base_repo(tmp_path)
         _branch_of(repo, ["feat: one", "feat: two"])
 
-        assert branch_landed.partial_landing(
+        assert gh.landed.partial_landing(
             str(repo), target_ref="origin/nope",
         ) is None
 
@@ -256,7 +256,7 @@ class TestTheSubjectSignalIsBoundedByOrder:
         _commit(repo, "main_feat_one.txt", "main feat one\n", "feat: one")
         git_in(repo, "checkout", "-q", "feat")
 
-        partial = branch_landed.partial_landing(str(repo), target_ref="main")
+        partial = gh.landed.partial_landing(str(repo), target_ref="main")
 
         assert partial is not None
         assert partial.landed == 1
@@ -278,7 +278,7 @@ class TestPatchIdsStillCarryThePrefixWhereTheyCan:
         git_in(repo, *_COPY, first, second)
         git_in(repo, "checkout", "-q", "feat")
 
-        partial = branch_landed.partial_landing(str(repo), target_ref="main")
+        partial = gh.landed.partial_landing(str(repo), target_ref="main")
         assert partial is not None
         assert partial.landed == 2
         assert partial.unlanded == 1

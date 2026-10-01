@@ -7,9 +7,14 @@ Treating state as authoritative would silently delete rounds nobody can recover,
 so the published comment is read as the record it is and anything this render
 cannot account for is kept verbatim.
 
-That reading is this module. It parses rows out of a rendered body, decides
-which of them a fresh render did not reproduce, and decides which carry an
-Action cell a human wrote and must not be overwritten.
+That reading is this module. `published_rows` turns a body into typed rows,
+and every other reader goes through it: which rows a fresh render did not
+reproduce, and which a person edited and must not be overwritten.
+
+A body this code wrote declares each row's identity and digest in a marker
+(`pr.published_record`), so those rows are read, not re-derived. A body written
+before the marker is read the old way, from its cells, and that path is
+confined to `_legacy_row`.
 
 What is not here: what a row's identity *is* (`summary_model.row_key_from_cells`
 owns that, and both this path and the freshly-rendered one go through it), and
@@ -21,37 +26,13 @@ which rows a round may leave to an earlier comment (`pr.summary_rounds`).
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import core.markdown
+import pr.published_record
 import pr.summary_model
+from pr.fix import FixOutcome
 from pr.summary_model import TABLE_COLUMNS
-
-
-def row_location_key(row: str) -> str:
-    """Reviewer and file cell of a rendered row, stripped of decoration.
-
-    The rendered counterpart of `finding_location`: what two rows about one
-    point at one line still share once the anchors, the pinned SHAs and the
-    outcome cell are taken away. "" for a row naming no line, which can never
-    establish that two rows are the same finding.
-
-    Same coarsening, same tradeoff — see the ceiling comment on
-    `finding_location` — and one step coarser again, because a published row
-    is markdown rather than a typed entry: the reviewer and file cells are all
-    that survive to match on.
-
-    The `@` the Reviewer cell is rendered with is stripped, because these keys
-    are compared against `finding_location`'s, which carry the bare login. The
-    two forms are only interchangeable if they spell the reviewer the same way.
-    """
-    cells = core.markdown.row_cells(row)
-    if len(cells) < len(TABLE_COLUMNS):
-        return ""
-    location = core.markdown.plain_cell(cells[2])
-    if ":" not in location:
-        return ""
-    reviewer = core.markdown.plain_cell(cells[1]).removeprefix("@")
-    return f"{reviewer}|{location}"
 
 
 def row_key(row: str) -> str:
@@ -90,19 +71,100 @@ def row_action_cell(row: str) -> str:
     return cells[len(TABLE_COLUMNS) - 1]
 
 
-def row_summary_key(row: str) -> str:
-    """The Thread cell of a rendered row, in the form the text fold compares.
+@dataclass(frozen=True)
+class PublishedRow:
+    """One row of a published summary, with what the record says about it.
 
-    The rendered counterpart of `summary_model.normalised_finding_text`, for the
-    half of the fold that has no location to key on. A published row keeps only
-    its summary cell of the entry behind it, so that cell is all there is to
-    recognise a folded item by — read through the same normaliser the entries
-    went through, or the two forms would never match.
+    ``key`` is the hashed identity every reader compares in, and "" for a row
+    whose identity nothing declares — a row a person added, or one whose marker
+    they deleted. Such a row can be carried but never matched, scoped or held.
+
+    ``ours`` is whether the row still reads as we wrote it. ``outcome`` is what
+    it reported when we wrote it, and None for any row that is not ours: a
+    person's cell states no outcome to differ from.
+
+    ``legacy`` marks a row read off a comment written before rows were marked.
+    Its record was recovered from its cells rather than declared, and it is
+    stamped with that record once, by `lifted`, if it is ever written again.
     """
-    cells = core.markdown.row_cells(row)
-    if len(cells) < len(TABLE_COLUMNS):
-        return ""
-    return pr.summary_model.normalised_finding_text(core.markdown.plain_cell(cells[0]))
+
+    line: str
+    key: str
+    location: str = ""
+    text_key: str = ""
+    outcome: FixOutcome | None = None
+    ours: bool = True
+    legacy: bool = False
+
+    def lifted(self) -> str:
+        """The row as it is re-emitted into a body this code writes.
+
+        A marked row goes back verbatim, marker and all — a held row's digest
+        still disagrees with its text, so it stays held with no extra state. A
+        legacy row is stamped here, the one point it crosses into the new
+        format, so the legacy reader never has to read a row we copied forward.
+        """
+        if not self.legacy:
+            return self.line
+        # No `digest=` here: `RowRecord.digest` is only ever an output, filled
+        # in by `read_row_marker` from a marker already on the line.
+        # `mark_row` recomputes it itself from `ours` and the current text, so
+        # a value set on the record passed in would be silently ignored.
+        record = pr.published_record.RowRecord(
+            self.key, self.location, self.text_key, self.outcome)
+        return pr.published_record.mark_row(self.line, record, ours=self.ours)
+
+
+def published_rows(body: str) -> list[PublishedRow]:
+    """Every row of a published summary body, in order, with its record."""
+    if pr.published_record.FORMAT_MARKER in body:
+        return [_marked_row(line) for line in table_rows(body)]
+    return [_legacy_row(line) for line in table_rows(body)]
+
+
+def _marked_row(line: str) -> PublishedRow:
+    record = pr.published_record.read_row_marker(line)
+    if record is None:
+        return PublishedRow(line, key="", ours=False)
+    ours = pr.published_record.row_is_intact(line, record)
+    return PublishedRow(
+        line, record.key, record.location, record.text_key,
+        record.outcome if ours else None, ours=ours,
+    )
+
+
+def _legacy_row(line: str) -> PublishedRow:
+    """A row of a comment written before rows were marked, recovered from its cells.
+
+    ceiling: identity and authorship are re-derived from rendered text here, with
+    every fragility the marker exists to remove. Confined to comments written
+    before the marker, and to this function. Upgrade trigger: once
+    `gh search prs --author @me --state open --created "<2026-10-02"` returns
+    nothing, delete this branch, `summary_model.is_generated_action`, and the
+    cell readers above it.
+
+    A row with no Action cell to read is not a hand edit but a row whose shape
+    this renderer no longer produces, so it reads as ours and re-rendering it is
+    the repair.
+    """
+    cells = core.markdown.row_cells(line)
+    cell = row_action_cell(line)
+    ours = not cell or pr.summary_model.is_generated_action(cell)
+    location = text_key = ""
+    if pr.summary_model.ITEM_ANCHOR_RE.search(line):
+        location = pr.published_record.fingerprint(pr.summary_model.location_from_cells(cells))
+        if not location:
+            text_key = pr.published_record.fingerprint(
+                pr.summary_model.text_key_from_cells(cells))
+    return PublishedRow(
+        line,
+        key=pr.published_record.fingerprint(row_key(line)),
+        location=location,
+        text_key=text_key,
+        outcome=pr.summary_model.action_outcome(cell) if ours else None,
+        ours=ours,
+        legacy=True,
+    )
 
 
 def carried_over_rows(
@@ -153,29 +215,35 @@ def carried_over_rows(
     item with no line has no location key at all, so `folded` can never name it
     and its published row would come back every round for the life of the PR.
 
-    The published side still has to be parsed: those rows have no live entry,
-    which is the whole reason carry-over exists. The ceiling on
-    `finding_location` therefore still bounds it — an item row colliding with
-    an unrelated fresh thread row is dropped rather than carried.
+    The ceiling on `finding_location` still bounds this — an item row colliding
+    with an unrelated fresh thread row is dropped rather than carried.
+
+    Folding is decided on the record's fold keys, which a marked row declares
+    and a legacy row recovers from its cells. Both are hashed, so ``folded`` and
+    ``folded_texts`` are hashed here to compare in the same space.
+
+    A row whose identity nothing declares — a person's row in a marked comment
+    — is always carried: nothing could have reproduced it, and dropping it would
+    delete what they wrote.
     """
     if not published:
         return []
-    fresh_rows = table_rows(fresh)
-    fresh_keys = {row_key(row) for row in fresh_rows}
+    fresh_keys = {row.key for row in published_rows(fresh) if row.key}
+    folded_hashed = {pr.published_record.fingerprint(f) for f in folded}
+    folded_texts_hashed = {pr.published_record.fingerprint(t) for t in folded_texts}
 
-    def was_folded(row: str) -> bool:
-        if not pr.summary_model.ITEM_ANCHOR_RE.search(row):
-            return False
-        location = row_location_key(row)
-        if location:
-            return location in folded
-        return row_summary_key(row) in folded_texts
+    def was_folded(row: PublishedRow) -> bool:
+        if row.location:
+            return row.location in folded_hashed
+        return bool(row.text_key) and row.text_key in folded_texts_hashed
 
     return [
-        row for row in table_rows(published)
-        if row_key(row) not in fresh_keys
-        and row_key(row) not in held_elsewhere
-        and not was_folded(row)
+        row.lifted() for row in published_rows(published)
+        if not row.key or (
+            row.key not in fresh_keys
+            and row.key not in held_elsewhere
+            and not was_folded(row)
+        )
     ]
 
 
@@ -195,12 +263,10 @@ def hand_written_rows(published: Sequence[str], fresh: str) -> list[pr.summary_m
 
     So the two questions are asked separately: carry-forward asks whether the
     render covers the row at all, and this asks whether the render may write the
-    row it covers. A cell no generated opening claims was written by a person,
-    and stays for the life of the PR — `gh api -X PATCH` on the summary comment
-    is the way to hand a row back to the renderer.
-
-    A row with no Action cell to read is not a hand edit but a row whose shape
-    this renderer no longer produces, and re-rendering it is the repair.
+    row it covers. A row whose digest no longer matches the text we wrote was
+    edited by a person — in any cell, not only the Action cell — and stays for
+    the life of the PR. Deleting the row from the comment is the way to hand it
+    back to the renderer: a key no comment holds is always written fresh.
 
     The Action cell is excluded from every form of the key, but that is not all
     the key is: a row cut out of a top-level comment carries its summary cell
@@ -217,15 +283,12 @@ def hand_written_rows(published: Sequence[str], fresh: str) -> list[pr.summary_m
     that is where the reader looks, and a generated cell there means the row was
     handed back deliberately.
     """
-    fresh_by_key = {row_key(row): row for row in table_rows(fresh)}
-    newest_by_key: dict[str, str] = {}
-    for body in published:
-        for row in table_rows(body):
-            newest_by_key[row_key(row)] = row
-    held = []
-    for key, row in newest_by_key.items():
-        cell = row_action_cell(row)
-        if not cell or key not in fresh_by_key or pr.summary_model.is_generated_action(cell):
-            continue
-        held.append(pr.summary_model.HeldRow(key, row, fresh_by_key[key]))
-    return held
+    fresh_by_key = {row.key: row.line for row in published_rows(fresh) if row.key}
+    newest_by_key = {
+        row.key: row for body in published for row in published_rows(body) if row.key
+    }
+    return [
+        pr.summary_model.HeldRow(key, row.lifted(), fresh_by_key[key])
+        for key, row in newest_by_key.items()
+        if not row.ours and key in fresh_by_key
+    ]

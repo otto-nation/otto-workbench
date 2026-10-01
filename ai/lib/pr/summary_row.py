@@ -19,12 +19,16 @@ comment already said.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import core.markdown
 from git.land import CommitStatus
 import pr.attribution
 import pr.permalinks
+import pr.published_record
+import pr.summary_model
+from pr.fix import FixOutcome
 from pr.summary_model import ActionCell
 from pr.thread_models import CommentItem, ReportThread
 
@@ -192,3 +196,49 @@ def render_row(cells: list[str]) -> str:
     splitter on the next round, so where the padding goes is one decision.
     """
     return core.markdown.render_row(cells)
+
+
+@dataclass(frozen=True)
+class MarkedRow:
+    """A row as published, and the hashed key its marker declares."""
+
+    line: str
+    key: str
+
+
+def record_for_cells(
+    cells: list[str], outcome: FixOutcome | None,
+) -> pr.published_record.RowRecord:
+    """The record a row built from `cells` declares, keys hashed.
+
+    The fold keys go on comment-item rows only, since only those can be folded
+    into a thread row, and only one of them: an item with a line is folded on
+    its location, and only an item with none falls back to its text — the same
+    order `summary_scope.carried_over_rows` asks in.
+    """
+    row = " | ".join(cells)
+    location = text_key = ""
+    if pr.summary_model.ITEM_ANCHOR_RE.search(row):
+        location = pr.published_record.fingerprint(
+            pr.summary_model.location_from_cells(cells))
+        if not location:
+            text_key = pr.published_record.fingerprint(
+                pr.summary_model.text_key_from_cells(cells))
+    return pr.published_record.RowRecord(
+        key=pr.published_record.fingerprint(pr.summary_model.row_key_from_cells(cells)),
+        location=location,
+        text_key=text_key,
+        outcome=outcome,
+    )
+
+
+def marked_row(cells: list[str], status: str) -> MarkedRow:
+    """One row as it is published: rendered, and marked as ours.
+
+    The key and the fold keys are derived from the cells before they become
+    markdown, and written into the row so a later round reads them back instead
+    of re-deriving them from text a person may have changed.
+    """
+    record = record_for_cells(cells, pr.summary_model.action_outcome(status))
+    line = pr.published_record.mark_row(render_row(cells), record, ours=True)
+    return MarkedRow(line, record.key)

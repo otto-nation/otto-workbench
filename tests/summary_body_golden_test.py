@@ -67,6 +67,7 @@ if str(LIB_DIR) not in sys.path:
 
 from git.land import CommitStatus  # noqa: E402
 import pr.attribution  # noqa: E402
+import pr.published_record  # noqa: E402
 from pr.fix import FixOutcome  # noqa: E402
 from pr.thread_models import CommentItem, ReportThread  # noqa: E402
 import pr.summary_model  # noqa: E402
@@ -244,7 +245,11 @@ def _full_body():
         CommentItem(id="t13", summary="quiet and also open", reviewer="kgn",
                     file="m.py", line=9),
     ])
-    quiet = ["#discussion_r109", "#discussion_r110", "#discussion_r113"]
+    # Row keys are hashed wherever they are compared — see `published_record.RowRecord`.
+    quiet = [
+        pr.published_record.fingerprint(anchor)
+        for anchor in ("#discussion_r109", "#discussion_r110", "#discussion_r113")
+    ]
     scope = pr.summary_rounds.RoundScope(
         since=_SCOPE_SINCE,
         published_keys=frozenset(quiet),
@@ -276,7 +281,7 @@ def _full_body():
         # and the entry behind it drops out of the counts.
         hand_held=[
             pr.summary_model.HeldRow(
-                key="#discussion_r103",
+                key=pr.published_record.fingerprint("#discussion_r103"),
                 published=(
                     "| [use the helper](https://github.com/owner/repo/pull/42"
                     "#discussion_r103) | @amp | [`c.py`](https://github.com/"
@@ -369,7 +374,7 @@ def _uncommitted_body():
     Two branches the full body cannot reach, both of which render *cells* and
     so are part of row identity. With no sha to link against, the File cell
     falls back to plain backticks rather than a blob permalink — the only
-    shape in which `summary_scope.row_location_key` sees a bare ``file:line``.
+    shape in which `summary_model.location_from_cells` sees a bare ``file:line``.
     And a deferral whose tracker id is known but whose URL is not renders the id
     unlinked, which is the one Action-cell wording neither
     `TestGeneratedActionCell` nor `TestActionCellOutcome` sweeps.

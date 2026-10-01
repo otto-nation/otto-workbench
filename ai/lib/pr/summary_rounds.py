@@ -74,8 +74,8 @@ class RoundScope:
     while the carry-forward step reads it as a round local state lost would put
     it straight back, verbatim.
 
-    ``published_outcomes`` is the outcome each published row last reported, per
-    `summary_model.action_outcome`. A round that changed a row's outcome writes it whoever
+    ``published_outcomes`` is the outcome each published row last reported, as
+    its record declares it — see `summary_scope.PublishedRow`. A round that changed a row's outcome writes it whoever
     else holds it — nobody has to speak for a deferred thread to become a fixed
     one, so the activity test alone would leave the new outcome on no summary at
     all and the record's newest word on the row the outcome it has replaced. A
@@ -241,16 +241,19 @@ def round_scope(marked: pr.comments.MarkerHistory, answered: bool) -> RoundScope
     """
     target = marked.newest
     elsewhere = frozenset(
-        pr.summary_scope.row_key(row)
+        row.key
         for comment in marked.comments[:-1]
-        for row in pr.summary_scope.table_rows(comment.body)
+        for row in pr.summary_scope.published_rows(comment.body)
+        if row.key
     )
     target_own = frozenset(
-        pr.summary_scope.row_key(row) for row in pr.summary_scope.table_rows(target.body))
-    outcomes: dict[str, FixOutcome | None] = {}
-    for body in marked.bodies:
-        for row in pr.summary_scope.table_rows(body):
-            outcomes[pr.summary_scope.row_key(row)] = pr.summary_model.action_outcome(pr.summary_scope.row_action_cell(row))
+        row.key for row in pr.summary_scope.published_rows(target.body) if row.key)
+    outcomes = {
+        row.key: row.outcome
+        for body in marked.bodies
+        for row in pr.summary_scope.published_rows(body)
+        if row.key
+    }
     return RoundScope(
         since=target.updated_at or target.created_at,
         published_keys=target_own | elsewhere,

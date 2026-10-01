@@ -57,6 +57,7 @@ import pr.triage_round
 from pr.triage_round import TriagedRound
 import pr.history_rewrite
 import pr.permalinks
+import pr.published_record
 import pr.summary_model
 import pr.summary_publish
 import pr.summary_render
@@ -6379,6 +6380,15 @@ ROUND_ONE_ROW = (
 )
 
 
+def _unmarked(rows) -> list[str]:
+    """Rows with the marker a re-emitted legacy row is stamped with taken out.
+
+    These cases are about which rows are kept, not about the stamp, which
+    `published_record_test.py` covers on its own.
+    """
+    return [pr.published_record.unmarked(row) for row in rows]
+
+
 def _published_summary(*rows: str) -> str:
     """A prior summary comment carrying the given rendered rows."""
     return "\n".join([
@@ -6450,7 +6460,8 @@ class TestCarriedOverRows:
         fresh = _published_summary(
             "| [new work](https://github.com/owner/repo/pull/1#discussion_r222) "
             "| @kgn | `new.go:1` | Fixed in `bbbbbbb` |")
-        assert pr.summary_scope.carried_over_rows(_published_summary(ROUND_ONE_ROW), fresh) == [ROUND_ONE_ROW]
+        assert _unmarked(pr.summary_scope.carried_over_rows(
+            _published_summary(ROUND_ONE_ROW), fresh)) == [ROUND_ONE_ROW]
 
     def test_a_row_state_still_holds_is_not_duplicated(self):
         fresh = _published_summary(ROUND_ONE_ROW.replace("Fixed in", "Deferred —"))
@@ -6619,7 +6630,7 @@ class TestGeneratedActionCell:
             "| [new work](https://github.com/owner/repo/pull/1#discussion_r222) "
             "| @kgn | `new.go:1` | Fixed in `bbbbbbb` |")
         assert pr.summary_scope.hand_written_rows([published], fresh) == []
-        assert pr.summary_scope.carried_over_rows(published, fresh) == [HAND_EDITED_ROW]
+        assert _unmarked(pr.summary_scope.carried_over_rows(published, fresh)) == [HAND_EDITED_ROW]
 
 
 class TestTheTwoOursVocabulariesAgree:
@@ -6943,7 +6954,7 @@ class TestActionCellOutcome:
         fresh = _published_summary(
             ROUND_ONE_ROW.replace(_GENERATED_ACTION_CELL, "Conflicting reviewer feedback"))
         held = pr.summary_scope.hand_written_rows([_published_summary(HAND_EDITED_ROW)], fresh)
-        assert [h.key for h in held] == ["#discussion_r111"]
+        assert [h.key for h in held] == [pr.published_record.fingerprint("#discussion_r111")]
         assert pr.summary_scope.row_action_cell(held[0].published) == _HAND_WRITTEN_ACTION_CELL
         assert pr.summary_scope.row_action_cell(held[0].replaced_by) == "Conflicting reviewer feedback"
 
@@ -6972,7 +6983,7 @@ class TestActionCellOutcome:
         held = pr.summary_scope.hand_written_rows(
             [_published_summary(ROUND_ONE_ROW),
              _published_summary(HAND_EDITED_ROW)], fresh)
-        assert [h.published for h in held] == [HAND_EDITED_ROW]
+        assert _unmarked(h.published for h in held) == [HAND_EDITED_ROW]
 
 
 class TestHandEditedCellsSurviveTheRender:
@@ -9664,7 +9675,7 @@ class TestALineLessItemFoldsOnItsText:
         threads = self._threads()
         assert pr.summary_model.folded_item_ids(round_content, threads) == {"ic-77-0"}
         # The thread's location, which is the one the fold kept. The published
-        # item row carries no line, so `row_location_key` reads "" off it and
+        # item row carries no line, so `summary_model.location_from_cells` reads "" off it and
         # this set can never recognise it — hence the second one.
         assert pr.summary_model.folded_locations(round_content, threads) == frozenset(
             {"kgn|a.go:7"})
@@ -9702,10 +9713,10 @@ class TestALineLessItemFoldsOnItsText:
             "| [the logging here is far too chatty](https://github.com/o/r/pull/1"
             "#issuecomment-77) | @kgn | `a.go` | contested |")
         published = f"{thread_row}\n{other}"
-        assert pr.summary_scope.carried_over_rows(
+        assert _unmarked(pr.summary_scope.carried_over_rows(
             published, thread_row,
             folded_texts=frozenset({"the retry loop is unbounded"}),
-        ) == [other]
+        )) == [other]
 
 
 class TestFoldedRowsAreNotCarriedBack:
@@ -9730,15 +9741,15 @@ class TestFoldedRowsAreNotCarriedBack:
     def test_an_item_row_elsewhere_is_still_carried(self):
         elsewhere = self.ITEM_ROW.replace("a.go:7", "b.go:3")
         published = f"{self.THREAD_ROW}\n{elsewhere}"
-        assert pr.summary_scope.carried_over_rows(
-            published, self.THREAD_ROW, folded=self.FOLDED) == [elsewhere]
+        assert _unmarked(pr.summary_scope.carried_over_rows(
+            published, self.THREAD_ROW, folded=self.FOLDED)) == [elsewhere]
 
     def test_a_published_thread_row_is_carried_as_before(self):
         """Only comment items fold; a thread row this render lost is still a loss."""
         other = self.THREAD_ROW.replace("discussion_r5", "discussion_r9")
         published = f"{self.THREAD_ROW}\n{other}"
-        assert pr.summary_scope.carried_over_rows(
-            published, self.THREAD_ROW, folded=self.FOLDED) == [other]
+        assert _unmarked(pr.summary_scope.carried_over_rows(
+            published, self.THREAD_ROW, folded=self.FOLDED)) == [other]
 
     def test_a_dropped_line_anchor_still_accounts_for_the_duplicate(self):
         """The fold is decided from entries, so the rendered File cell cannot undo it.
@@ -9753,17 +9764,19 @@ class TestFoldedRowsAreNotCarriedBack:
             published, self.UNANCHORED_THREAD_ROW, folded=self.FOLDED) == []
 
     def test_the_reviewer_cell_keys_without_its_at_sign(self):
-        """`row_location_key` and `finding_location` must spell the reviewer alike.
+        """`location_from_cells` and `finding_location` must spell the reviewer alike.
 
         The rendered cell is `@kgn` and the typed key is `kgn`; the two are
         compared against each other, so a key keeping the `@` matches nothing.
         """
-        assert pr.summary_scope.row_location_key(self.ITEM_ROW) == "kgn|a.go:7"
+        assert pr.summary_model.location_from_cells(
+            core.markdown.row_cells(self.ITEM_ROW)) == "kgn|a.go:7"
 
     def test_nothing_folded_carries_everything(self):
         """A round with no fold to report leaves the published rows alone."""
         published = f"{self.THREAD_ROW}\n{self.ITEM_ROW}"
-        assert pr.summary_scope.carried_over_rows(published, self.THREAD_ROW) == [self.ITEM_ROW]
+        assert _unmarked(pr.summary_scope.carried_over_rows(
+            published, self.THREAD_ROW)) == [self.ITEM_ROW]
 
     def test_the_publish_path_folds_without_a_placeable_line(self, content):
         """End to end: the fix pass posting against an unfetched SHA.

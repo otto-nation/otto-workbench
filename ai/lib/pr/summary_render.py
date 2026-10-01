@@ -24,6 +24,7 @@ from pathlib import Path
 import core.text
 import pr.attribution
 import pr.comments_fix
+import pr.published_record
 import pr.summary_model
 import pr.summary_rounds
 import pr.summary_row
@@ -61,7 +62,9 @@ def build_summary_body(
     ``carried_over`` holds rows lifted verbatim from the published comment that
     this render cannot account for — see `summary_scope.carried_over_rows`. They are already
     rendered, so they are re-emitted as-is rather than round-tripped through an
-    entry the state file does not have.
+    entry the state file does not have. Each already carries its marker: a row
+    off a comment written before markers existed is stamped as it is lifted —
+    see `summary_scope.PublishedRow.lifted`.
 
     ``hand_held`` holds rows this render *can* account for and still must not
     write: the Action cell was rewritten by hand — see `summary_scope.hand_written_rows`.
@@ -145,8 +148,8 @@ def build_summary_body(
         """
         cells = pr.summary_row.row_cells_for(
             entry, status, threads_by_id, repo, pr_number, sha, wt_path, host)
-        row = pr.summary_row.render_row(cells)
-        key = pr.summary_model.row_key_from_cells(cells)
+        marked = pr.summary_row.marked_row(cells, status)
+        key = marked.key
         if not scope.covers(
             key, pr.summary_rounds.entry_activity_at(entry, threads_by_id, sources_at),
             pr.summary_model.action_outcome(status), entry.settled_by,
@@ -155,7 +158,7 @@ def build_summary_body(
             return False
         published = held_by_key.get(key)
         if published is None:
-            rows.append(row)
+            rows.append(marked.line)
             return True
         rows.append(published)
         held.append(published)
@@ -221,7 +224,9 @@ def build_summary_body(
     held_count = len(held)
     carried_count = len(carried_over)
 
-    parts = [SUMMARY_MARKER, "## Review Comments Addressed", ""]
+    parts = [
+        SUMMARY_MARKER, pr.published_record.FORMAT_MARKER, "## Review Comments Addressed", "",
+    ]
     # The verdict wordings and their separator belong to `pr.comments_fix`,
     # which prints the same line on the state dashboard. Two of the counts
     # below name no verdict — a row a human rewrote and a row carried over

@@ -255,6 +255,42 @@ _is_merged() {
   return 1
 }
 
+# _is_unstarted WT_PATH BRANCH — whether BRANCH carries no commit of its own.
+#
+# A branch cut and not yet committed to has its tip *at* the default branch's,
+# so `⊂` reads true and `_git_signals_merged` calls it merged. It is not
+# merged, it is unstarted, and the difference is the whole point of the check:
+# a merged branch's work is in the default branch, while an unstarted branch's
+# work — if it has any — exists only in its worktree, uncommitted. Removing the
+# first discards a copy; removing the second discards the original.
+#
+# This is not covered by the dirty check above. `git status` does not report
+# ignored files, so a worktree holding nothing but a plan under `ignore/`
+# reads as clean, and nothing between the two guards notices that the branch
+# never had a chance to hold anything. The grace period is the only thing
+# standing in front of it, and ${GRACE_PERIOD_SECS}s is shorter than the
+# thinking that precedes a first commit.
+#
+# Compared against the local default branch, falling back to the remote-
+# tracking ref when no local one exists — the same two places the rest of this
+# script is willing to read it from.
+#
+# A worktree this cannot open, or a base it cannot resolve, is reported
+# *started*, which leaves the removal decision exactly where it is today. That
+# is the same choice `_default_ignored_paths` makes when there is no default
+# work tree to ask: a check that cannot see the thing it judges does not get to
+# overrule the rest of the script on a guess.
+_is_unstarted() {
+  local wt_path="$1" branch="$2" base ahead
+  [[ -n "$wt_path" && -d "$wt_path" ]] || return 1
+  for base in "$default_branch" "origin/$default_branch"; do
+    ahead=$(git -C "$wt_path" rev-list --count "$base".."$branch" 2>/dev/null) || continue
+    [[ "$ahead" == "0" ]] && return 0
+    return 1
+  done
+  return 1
+}
+
 _within_grace_period() {
   local wt_path="$1"
   [[ "$grace_period" != "true" ]] && return 1
@@ -438,6 +474,17 @@ main() {
 
     reason=$(_detect_reason "$main_state" "$symbols" "$pr_state" "$timestamp")
     [[ -z "$reason" ]] && continue
+
+    # An unstarted branch is kept, but only against a merge verdict. An --age
+    # reason is a statement about abandonment rather than about integration,
+    # and an empty worktree nobody has touched for weeks is exactly what --age
+    # is asked to collect.
+    if [[ "$reason" != *inactive ]] && _is_unstarted "$wt_path" "$branch"; then
+      _log "SKIP-UNSTARTED branch=$branch reason=$reason"
+      [[ "$quiet" != "true" && "$dry_run" == "true" ]] && \
+        echo "skipping: $branch (no commits of its own)"
+      continue
+    fi
 
     # The two force flags cover different things: `--force` lets the worktree go
     # despite uncommitted files, `--force-delete` lets the branch go despite

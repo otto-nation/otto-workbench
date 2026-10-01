@@ -294,7 +294,7 @@ class PhaseSpec:
     def _stem(self) -> str:
         """The filename stem this phase's artifacts share: the phase's own name.
 
-        ``group`` and ``fix.verify`` fan out, so their stems carry the index.
+        ``group`` and ``fix_verify`` fan out, so their stems carry the index.
         """
         if self.domain is not PhaseDomain.REVIEW:
             raise ValueError(
@@ -322,7 +322,7 @@ class PhaseSpec:
 
         Empty for a phase that writes no findings artifact of its own:
         ``single`` and ``synthesis`` produce ``review.md``, ``fix`` edits it in
-        place, and ``fix.verify`` answers on the fix engine's checklist. Raises
+        place, and ``fix_verify`` answers on the fix engine's checklist. Raises
         for a phase outside the review domain, as ``log_filename`` does.
         """
         return "" if self.phase in _NO_FINDINGS_ARTIFACT else f"{self._stem}.md"

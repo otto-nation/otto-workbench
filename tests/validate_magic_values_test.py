@@ -49,7 +49,7 @@ def line(commit):
     return commit["sha"][:7]
 """)
     assert [(v.line, v.found) for v in violations] == [(3, "commit['sha'][:7]")]
-    assert violations[0].suggestion == "git_client.abbrev(...)"
+    assert violations[0].suggestion == "git.client.abbrev(...)"
 
 
 @pytest.mark.parametrize("expr", [
@@ -98,7 +98,7 @@ def test_every_owner_of_a_shared_value_is_offered(tmp_path):
     """Which cap a site means is a question only its author can answer."""
     suggestion = _check(tmp_path, "x = body[:200]\n")[0].suggestion
     assert "proc.DETAIL_LIMIT" in suggestion
-    assert "review_budget.MAX_REVIEW_BODY_LEN" in suggestion
+    assert "review.budget.MAX_REVIEW_BODY_LEN" in suggestion
 
 
 def test_a_bound_no_owner_claims_is_clean(tmp_path):

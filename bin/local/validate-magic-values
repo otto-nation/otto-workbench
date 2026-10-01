@@ -87,7 +87,7 @@ class Owner:
 
 _PROC = Owner('core', 'proc', 'proc')
 _TRAIL = Owner('core', 'trail', 'trail')
-_REVIEW_BUDGET = Owner('review', 'budget', 'review_budget')
+_REVIEW_BUDGET = Owner('review', 'budget', 'review.budget')
 
 # The constants this check holds the monopoly for, as (owner, name) under
 # ai/lib.  Their values are read from the modules themselves rather than
@@ -104,7 +104,7 @@ CAP_OWNERS = (
     (_REVIEW_BUDGET, 'MAX_REVIEW_BODY_LEN'),
 )
 
-ABBREV = 'git_client.abbrev(...)'
+ABBREV = 'git.client.abbrev(...)'
 
 # A sha is sliced under many names — `sha`, `head_sha`, `commit["sha"]` — so the
 # expression being sliced is matched as text.  The boundaries keep `sha256` and

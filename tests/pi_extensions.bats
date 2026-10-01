@@ -2454,6 +2454,7 @@ _section() {
   [ "$status" -eq 0 ]
   [[ "$output" == *'subagent tool'* ]]
   [[ "$output" == *'task-list tool'* ]]
+  [[ "$output" == *'TodoWrite'* ]]
 }
 
 @test "superpowers-bootstrap: the section names the skill directory relative paths resolve against" {

@@ -348,21 +348,25 @@ step_pi_extensions() {
   return 0
 }
 
-# _pi_build_models — reads the model env vars the registries declare out of
-# ~/.env.local and prints a JSON object with defaultModel + enabledModels, or {}
-# when there is no default to build around. The provider prefix comes from the
-# template.
+# _pi_build_models OUT — reads the model env vars the registries declare out of
+# ~/.env.local and sets OUT to a JSON object with defaultModel + enabledModels,
+# or {} when there is no default to build around. The provider prefix comes from
+# the template. A nameref rather than stdout, so the registry scan it loads stays
+# in the caller's shell for step_pi_settings' reg_scan_hold to share — a
+# `$(...)` would load it in a subshell and throw it away.
 #
 # Which variables carry models is not written here: ai/models.env.yml declares
 # them with a `role`, and collect_model_env_vars reads it, so a tier added there
 # reaches Pi without this function changing. Claude Code's sync reads the same
 # file through collect_claude_env_vars.
 _pi_build_models() {
+  local -n __pbm_out=$1
+  __pbm_out='{}'
+
   # Before the registry read, so a machine with no ~/.env.local answers without
   # yq — there are no model values to be had either way, and this is the one
   # path through the function that needs nothing beyond jq.
   if [[ ! -f "$ENV_LOCAL_FILE" ]]; then
-    printf '{}'
     return 0
   fi
 
@@ -390,7 +394,6 @@ _pi_build_models() {
   done
 
   if [[ -z "$default_model" ]]; then
-    printf '{}'
     return 0
   fi
 
@@ -410,7 +413,7 @@ _pi_build_models() {
   # and sonnet both pointed at the same id is a normal way to pin a machine to
   # one model. `unique` would sort, and the list reads defaultModel-first, so
   # the fold below keeps first-seen order instead.
-  jq -n \
+  __pbm_out=$(jq -n \
     --arg default "$default_model" \
     --arg provider "$provider" \
     --argjson values "$values_json" \
@@ -418,7 +421,7 @@ _pi_build_models() {
        enabledModels: ([$default] + $values
          | map(select(. != ""))
          | map("\($provider)/\(.)")
-         | reduce .[] as $m ([]; if index($m) then . else . + [$m] end)) }'
+         | reduce .[] as $m ([]; if index($m) then . else . + [$m] end)) }')
 }
 
 # _pi_default_provider — prints the provider prefix model ids are built and
@@ -517,7 +520,7 @@ _step_pi_settings() {
   _pi_partition_packages allowed blocked
 
   local models
-  models=$(_pi_build_models)
+  _pi_build_models models
   _pi_warn_unknown_models
 
   local result

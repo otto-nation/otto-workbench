@@ -48,6 +48,9 @@ MODEL_CONTEXT_TOKENS = {
     # 1M is what the provider catalogue reports (`pi --list-models`), which is
     # the same place a session log's contextWindow comes from.
     "claude-opus-5": 1_000_000,
+    # Both 1M per the provider catalogue, the same source as the entries above.
+    "claude-sonnet-5-5": 1_000_000,
+    "claude-opus-5-5": 1_000_000,
     "claude-sonnet-4-6": 200_000,
     "claude-sonnet-4-5": 200_000,
     "claude-opus-4-6": 200_000,

@@ -12,6 +12,7 @@ about what a process is.
 """
 
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -292,7 +293,36 @@ def test_a_timeout_reaps_the_whole_process_tree(tmp_path):
 
 
 def _alive(pid: int) -> bool:
-    """Whether `pid` still exists. Signal 0 tests without delivering."""
+    """Whether `pid` is still running.
+
+    Signal 0 answers whether the pid exists, which is not the same question: a
+    killed orphan stays in the table as a zombie until its new parent reaps it.
+    On a CI runner that parent is a subreaper that only reaps at job end, so a
+    process the group signal did kill reads as alive. A zombie has run its
+    last instruction, so it counts as dead here.
+    """
+    if not _pid_exists(pid):
+        return False
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(pid)],
+            capture_output=True, text=True, check=False, timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        # No usable `ps` (minimal image) or a stalled one: fall back to the
+        # signal-0 answer, which said the pid exists.
+        return True
+    state = result.stdout.strip()
+    if not state:
+        # `ps` prints nothing both for a pid that exited after the signal-0
+        # probe and when it fails outright. Reading the latter as dead would
+        # pass the test on a broken `ps`, so ask signal 0 again instead.
+        return _pid_exists(pid)
+    return not state.startswith("Z")
+
+
+def _pid_exists(pid: int) -> bool:
+    """Whether `pid` is in the process table. Signal 0 tests without delivering."""
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

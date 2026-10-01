@@ -69,11 +69,20 @@ REBASE_CONFIG = {**RERERE_CONFIG, **UNATTENDED_CONFIG}
 unattended_env = git.client.unattended_env
 
 
-# What a refusal tells the operator to run once each listed change is confirmed
-# superseded, prefixed with `replay_audit.ALLOW_ENV=1`. The run's own command
-# rather than git's: a bare `git rebase --continue` would finish the replay
-# without the run that started it, leaving its state file describing a stop.
-_CONTINUE_COMMAND = "pr rebase --fix"
+def _continue_command(mode: RunMode) -> str:
+    """What a refusal tells the operator to run once each listed change is
+    confirmed superseded, prefixed with `replay_audit.ALLOW_ENV=1`.
+
+    The run's own command rather than git's: a bare `git rebase --continue`
+    would finish the replay without the run that started it, leaving its
+    state file describing a stop. Carries `--no-push` when the run that hit
+    the refusal was started with it — a resume ignores `--force` and
+    `--fork-point` (see `cmd_start`), so those two are never worth repeating
+    here, but `--no-push` still governs whether the resume pushes.
+    """
+    if mode is RunMode.FIX_ONLY:
+        return "pr rebase --fix --no-push"
+    return "pr rebase --fix"
 
 
 def rebase_continue(cwd: str) -> CmdResult:
@@ -176,7 +185,7 @@ def _drive_one_step(
     conflicts = rebase_inspect.detect_conflicts(cwd)
     if not conflicts:
         return step_advance(
-            cwd, ctx, tally, target_ref=target_ref, trail=trail,
+            cwd, ctx, tally, mode=mode, target_ref=target_ref, trail=trail,
         ), False
 
     rc = step_conflicts(
@@ -260,7 +269,8 @@ def _record_failed(
 
 def _halt_if_discarding(
     cwd: str, ctx: pr.context.ResolvedContext, tally: ResolutionTally, *,
-    target_ref: str, restore: bool, trail: Trail | None = None,
+    target_ref: str, restore: bool, mode: RunMode = RunMode.FIX,
+    trail: Trail | None = None,
 ) -> int | None:
     """Stop before a `--continue` that would commit a resolution discarding changes.
 
@@ -279,7 +289,15 @@ def _halt_if_discarding(
 
     None when the continue may go ahead.
     """
-    audit = replay_audit.audit_replay(cwd)
+    # Fail open, exactly like the hook entry point this mirrors
+    # (`replay_audit.main`): a bug in a ~400-line difflib-based audit must
+    # never cost somebody a step's worth of already-staged resolutions, let
+    # alone crash the whole run out from under them.
+    try:
+        audit = replay_audit.audit_replay(cwd)
+    except Exception as exc:
+        core.log.warn(f"replay audit could not run: {exc}")
+        return None
     if audit is None:
         return None
     if audit.flagged:
@@ -295,7 +313,7 @@ def _halt_if_discarding(
                          for f in audit.refused},
               "override": replay_audit.override_requested()},
     )
-    core.log.error(replay_audit.render_refusal(audit, _CONTINUE_COMMAND))
+    core.log.error(replay_audit.render_refusal(audit, _continue_command(mode)))
     if replay_audit.override_requested():
         core.log.warn(f"{replay_audit.ALLOW_ENV}=1 — continuing anyway.")
         return None
@@ -397,7 +415,7 @@ def step_conflicts(
         git.client.run("add", "-u", cwd=cwd)
 
     rc = _halt_if_discarding(
-        cwd, ctx, tally, target_ref=target_ref, restore=True, trail=trail,
+        cwd, ctx, tally, target_ref=target_ref, restore=True, mode=mode, trail=trail,
     )
     if rc is not None:
         return rc
@@ -430,7 +448,7 @@ def step_conflicts(
 def step_advance(
     cwd: str, ctx: pr.context.ResolvedContext,
     tally: ResolutionTally | None = None, *,
-    target_ref: str, trail: Trail | None = None,
+    target_ref: str, mode: RunMode = RunMode.FIX, trail: Trail | None = None,
 ) -> int | None:
     """Advance rebase when there are no conflicts. Returns exit code to stop, or None to continue."""
     tally = tally if tally is not None else ResolutionTally()
@@ -442,7 +460,7 @@ def step_advance(
     # log line saying nothing was lost. A commit genuinely upstream passes the
     # audit, because HEAD already holds its changes.
     rc = _halt_if_discarding(
-        cwd, ctx, tally, target_ref=target_ref, restore=False, trail=trail,
+        cwd, ctx, tally, target_ref=target_ref, restore=False, mode=mode, trail=trail,
     )
     if rc is not None:
         return rc

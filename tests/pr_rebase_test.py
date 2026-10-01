@@ -2296,6 +2296,52 @@ def test_step_advance_empty_commit_event_carries_remaining():
     assert fake_trail.decision.call_args.kwargs["data"]["remaining"] == 4
 
 
+def test_step_advance_survives_a_broken_audit():
+    """A crash inside the replay audit fails open rather than killing the run.
+
+    The same contract as the hook entry point, `replay_audit.main`: a bug in
+    the audit costs a warning, never the resolutions already staged.
+    """
+    with mock.patch.object(rebase.lifecycle.replay_audit, "audit_replay",
+                           side_effect=RuntimeError("boom")), \
+         mock.patch.object(rebase.inspect, "is_empty_patch", return_value=False), \
+         mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(
+             args=[], returncode=0, stdout="", stderr="")):
+        rc = rebase.lifecycle.step_advance("/fake", mock.MagicMock(), target_ref=_TARGET)
+
+    assert rc is None
+
+
+def test_step_advance_discard_refusal_names_no_push_when_the_run_held_it(capsys):
+    """The resume command a refusal prints carries --no-push along.
+
+    Resuming with a plain `pr rebase --fix` would push a run its operator
+    started with the push held.
+    """
+    loss = rebase.survival.Loss(
+        kind=rebase.survival.LossKind.FILE_TAKEN_WHOLE,
+        side=rebase.survival.Side.REPLAYED,
+    )
+    audit = rebase.replay_audit.CommitAudit(
+        commit="abc123", subject="subj",
+        files=(rebase.survival.FileAudit("f.txt", (loss,)),),
+    )
+
+    with mock.patch.object(rebase.lifecycle.replay_audit, "audit_replay", return_value=audit), \
+         mock.patch.object(rebase.types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(core.report, "emit_json"), \
+         mock.patch.object(rebase.inspect, "rebase_head_info", return_value=("abc123", "subj")), \
+         mock.patch.object(rebase.inspect, "detect_conflicts", return_value=[]), \
+         mock.patch.object(rebase.inspect, "remaining_rebase_commits", return_value=0):
+        rc = rebase.lifecycle.step_advance(
+            "/fake", mock.MagicMock(), target_ref=_TARGET,
+            mode=rebase.types.RunMode.FIX_ONLY,
+        )
+
+    assert rc == rebase.types.CONFLICTS_EXIT
+    assert "pr rebase --fix --no-push" in capsys.readouterr().err
+
+
 def test_step_advance_continue_succeeds():
     """Non-empty patch with successful --continue returns None."""
     with mock.patch.object(rebase.inspect, "is_empty_patch", return_value=False), \

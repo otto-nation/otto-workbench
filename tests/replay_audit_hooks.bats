@@ -112,6 +112,7 @@ rebase_in_progress() {
   stop_on_conflict
   take_ours
 
+  # A prefix assignment on `run`, a shell function, reaches the git it runs.
   WORKBENCH_ALLOW_DROPPED_CHANGES=1 run git -C "$W" rebase --continue
   [ "$status" -eq 0 ]
   [[ "$output" == *"committing anyway"* ]]
@@ -140,6 +141,9 @@ rebase_in_progress() {
 
   run git -C "$W" rebase main
   [ "$status" -ne 0 ]
+  # This exact wording is git's own rerere porcelain message, not this repo's —
+  # if a future git release rewords it, this assertion fails with nothing but
+  # a string mismatch to go on.
   [[ "$output" == *"Resolved 'f' using previous resolution"* ]]
   git -C "$W" add f
 

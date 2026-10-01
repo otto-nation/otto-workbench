@@ -78,11 +78,6 @@ class LossKind(StrEnum):
     REGION_ONE_SIDED = "region_one_sided"
 
 
-_BLOCKING_KINDS = frozenset({
-    LossKind.HUNK_REVERTED, LossKind.FILE_TAKEN_WHOLE, LossKind.FILE_PRESENCE,
-})
-
-
 @dataclass(frozen=True)
 class Loss:
     """One side's change that the resolution does not contain."""
@@ -103,16 +98,17 @@ class Loss:
     def describe(self) -> str:
         """One readable sentence, followed by the quoted lines."""
         where = f" at line {self.line}" if self.line else ""
-        what = {
-            LossKind.HUNK_REVERTED: f"{self.side.label}'s change{where} reads as the base "
-                                    "again, though git had merged it cleanly",
-            LossKind.FILE_TAKEN_WHOLE: f"the file is the other side verbatim; every change "
-                                       f"{self.side.label} made to it is gone",
-            LossKind.FILE_PRESENCE: f"{self.side.label} {self.note}, and the resolution "
-                                    "undid it",
-            LossKind.REGION_ONE_SIDED: f"a region both sides changed{where} keeps only the "
-                                       f"other side; {self.side.label}'s version is gone",
-        }[self.kind]
+        if self.kind is LossKind.HUNK_REVERTED:
+            what = (f"{self.side.label}'s change{where} reads as the base "
+                    "again, though git had merged it cleanly")
+        elif self.kind is LossKind.FILE_TAKEN_WHOLE:
+            what = (f"the file is the other side verbatim; every change "
+                    f"{self.side.label} made to it is gone")
+        elif self.kind is LossKind.FILE_PRESENCE:
+            what = f"{self.side.label} {self.note}, and the resolution undid it"
+        else:
+            what = (f"a region both sides changed{where} keeps only the "
+                    f"other side; {self.side.label}'s version is gone")
         quoted = "".join(f"\n      {line}" for line in self.excerpt)
         return what + quoted
 
@@ -369,19 +365,19 @@ def _one_sided(group: _Group, v: _Versions) -> Loss | None:
     span = _anchored(_Span(group.start, group.end), n, (v.u_ops, v.t_ops, v.r_ops))
     start, end = span.start, span.end
     base_text = v.b[start:end]
-    mine = _project(v.t_ops, v.t, start, end, n)
-    theirs = _project(v.u_ops, v.u, start, end, n)
+    replayed = _project(v.t_ops, v.t, start, end, n)
+    target = _project(v.u_ops, v.u, start, end, n)
     result = _project(v.r_ops, v.r, start, end, n)
-    if mine is None or theirs is None or result is None:
+    if replayed is None or target is None or result is None:
         return None
     replayed_line = next(c.at for c in group.changes if c.side is Side.REPLAYED) + 1
-    if result == theirs and mine != base_text:
+    if result == target and replayed != base_text:
         return Loss(LossKind.REGION_ONE_SIDED, Side.REPLAYED, replayed_line,
-                    tuple(f"+ {line}" for line in mine[:_EXCERPT_LINES]), blocking=False)
-    if result == mine and theirs != base_text:
+                    tuple(f"+ {line}" for line in replayed[:_EXCERPT_LINES]), blocking=False)
+    if result == replayed and target != base_text:
         target_line = next(c.at for c in group.changes if c.side is Side.TARGET) + 1
         return Loss(LossKind.REGION_ONE_SIDED, Side.TARGET, target_line,
-                    tuple(f"+ {line}" for line in theirs[:_EXCERPT_LINES]), blocking=False)
+                    tuple(f"+ {line}" for line in target[:_EXCERPT_LINES]), blocking=False)
     return None
 
 

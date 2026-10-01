@@ -192,6 +192,23 @@ class TestMain:
         with mock.patch.object(rebase.replay_audit, "replaying", side_effect=RuntimeError("x")):
             assert rebase.replay_audit.main(["commit"]) == 0
 
+    def test_the_recovery_command_quotes_a_path_with_a_space(self):
+        """A refused path can contain shell metacharacters; the suggested
+        recovery command must still mean what it says when copy-pasted.
+        """
+        loss = rebase.survival.Loss(
+            kind=rebase.survival.LossKind.FILE_TAKEN_WHOLE,
+            side=rebase.survival.Side.REPLAYED,
+        )
+        audit = rebase.replay_audit.CommitAudit(
+            commit="abc123", subject="subj",
+            files=(rebase.survival.FileAudit("my file.txt", (loss,)),),
+        )
+
+        rendered = rebase.replay_audit.render_refusal(audit, "pr rebase --fix")
+
+        assert "git checkout -m -- 'my file.txt'" in rendered
+
     def test_an_amend_rewrite_is_not_audited(self, monkeypatch):
         with mock.patch.object(rebase.replay_audit, "dropped_commits") as dropped:
             with mock.patch("sys.stdin.read", return_value="a b\n"):
@@ -204,6 +221,18 @@ def test_parse_rewrites_reads_old_new_pairs_and_ignores_extra_fields():
         rebase.replay_audit.Rewrite("a1", "b1"),
         rebase.replay_audit.Rewrite("a2", "b2"),
     ]
+
+
+def test_command_for_prefers_the_more_specific_sha_match():
+    """Two `done` entries can each be a startswith-match for the same commit
+    when one abbreviated sha happens to be a prefix of another — the longer,
+    more specific one is what should win, not whichever the dict iterates to
+    first.
+    """
+    commit = "ab12cdef1234"
+    commands = {"ab12": "pick", "ab12cdef1234": "edit"}
+
+    assert rebase.replay_audit._command_for(commands, commit) == "edit"
 
 
 class TestPrRebaseHalts:

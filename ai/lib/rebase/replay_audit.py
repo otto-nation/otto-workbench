@@ -40,10 +40,11 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
 
 import core.log
 import git.client
@@ -244,11 +245,19 @@ def _done_commands(state: Path) -> dict[str, str]:
 
 
 def _command_for(commands: dict[str, str], commit: str) -> str:
-    """*commit*'s todo command; `done` may abbreviate the sha."""
-    for sha, command in commands.items():
-        if commit.startswith(sha) or sha.startswith(commit):
-            return command
-    return ""
+    """*commit*'s todo command; `done` may abbreviate the sha.
+
+    The longest matching sha wins when more than one is a prefix match: it is
+    the more specific of the two, and the only tie-break available short of
+    talking to git again.
+    """
+    matches = [
+        (sha, command) for sha, command in commands.items()
+        if commit.startswith(sha) or sha.startswith(commit)
+    ]
+    if not matches:
+        return ""
+    return max(matches, key=lambda pair: len(pair[0]))[1]
 
 
 def dropped_commits(cwd: str, rewrites: Sequence[Rewrite]) -> tuple[CommitAudit, ...]:
@@ -312,7 +321,7 @@ def _file_lines(files: Sequence[rebase.survival.FileAudit], *, refused: bool) ->
 
 def render_refusal(audit: CommitAudit, continue_command: str) -> str:
     """Why the commit concluding a replay step was refused, and the way out."""
-    paths = " ".join(f.path for f in audit.refused)
+    paths = " ".join(shlex.quote(f.path) for f in audit.refused)
     return "\n".join([
         f"✗ This resolution throws away changes — refusing to commit "
         f"{git.client.abbrev(audit.commit)} {audit.subject}",

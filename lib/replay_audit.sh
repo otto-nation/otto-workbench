@@ -13,10 +13,13 @@
 # replay_audit "$_workbench" commit || exit 1
 # ```
 
+[[ -n "${_LIB_REPLAY_AUDIT_SH:-}" ]] && return
+_LIB_REPLAY_AUDIT_SH=1
+
 # The audit's own refusal code. Anything else non-zero is the audit failing to
 # run — an interpreter too old for the library, a moved checkout — and is
 # reported and waved through, never mistaken for a refusal.
-REPLAY_AUDIT_REFUSED=10
+readonly REPLAY_AUDIT_REFUSED=10
 
 # replay_audit WORKBENCH SUBCOMMAND [ARGS...] — returns 1 only on a refusal.
 #

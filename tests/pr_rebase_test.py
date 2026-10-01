@@ -1801,7 +1801,7 @@ def test_step_conflicts_fix_resolves():
 
     with mock.patch.object(rebase.inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
          mock.patch.object(rebase.inspect, "remaining_rebase_commits", return_value=2), \
-         mock.patch.object(rebase.lifecycle, "ai_backend") as mock_ai, \
+         mock.patch.object(agent, "backend") as mock_ai, \
          mock.patch.object(rebase.resolve_ai, "resolve_file_conflicts",
              return_value=rebase.types.Resolution(files=["a.py"]),
          ), \
@@ -1826,7 +1826,7 @@ def test_step_conflicts_records_stale_files():
 
     with mock.patch.object(rebase.inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
          mock.patch.object(rebase.inspect, "remaining_rebase_commits", return_value=0), \
-         mock.patch.object(rebase.lifecycle, "ai_backend") as mock_ai, \
+         mock.patch.object(agent, "backend") as mock_ai, \
          mock.patch.object(rebase.resolve_ai, "resolve_file_conflicts", return_value=resolution), \
          mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")):
         mock_ai.is_available.return_value = True
@@ -1846,7 +1846,7 @@ def _run_step_over_budget(*, force=False, already=None, conflicts=None):
     tally = rebase.types.ResolutionTally(
         files=already if already is not None else [f"f{i}.py" for i in range(over)],
     )
-    with mock.patch.object(rebase.lifecycle, "ai_backend") as mock_ai, \
+    with mock.patch.object(agent, "backend") as mock_ai, \
          mock.patch.object(rebase.refusals, "refuse_over_budget", return_value=4) as refuse, \
          mock.patch.object(rebase.resolve_ai, "resolve_file_conflicts",
              return_value=rebase.types.Resolution(files=["late.py"]),
@@ -2126,7 +2126,7 @@ def test_step_conflicts_unresolvable_file_pauses_without_aborting():
                            return_value=("abc123", "feat: thing")), \
          mock.patch.object(rebase.inspect, "remaining_rebase_commits", return_value=2), \
          mock.patch.object(rebase.inspect, "detect_conflicts", return_value=["bad.py"]), \
-         mock.patch.object(rebase.lifecycle, "ai_backend") as mock_ai, \
+         mock.patch.object(agent, "backend") as mock_ai, \
          mock.patch.object(rebase.resolve_ai, "resolve_file_conflicts",
                            return_value=resolution), \
          mock.patch.object(rebase.types.RebaseOutcome, "save",
@@ -2151,7 +2151,7 @@ def test_step_conflicts_unresolvable_file_pauses_without_aborting():
 def test_step_conflicts_fix_ai_unavailable():
     """With --fix but AI unavailable, reports conflicts and returns 3."""
     ctx = mock.MagicMock()
-    with mock.patch.object(rebase.lifecycle, "ai_backend") as mock_ai, \
+    with mock.patch.object(agent, "backend") as mock_ai, \
          mock.patch.object(rebase.lifecycle, "_report_conflicts_and_stop", return_value=3):
         mock_ai.is_available.return_value = False
         rc = rebase.lifecycle.step_conflicts(
@@ -2176,7 +2176,7 @@ def test_step_conflicts_continue_fails_but_rebase_in_progress():
 
     with mock.patch.object(rebase.inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
          mock.patch.object(rebase.inspect, "remaining_rebase_commits", return_value=2), \
-         mock.patch.object(rebase.lifecycle, "ai_backend") as mock_ai, \
+         mock.patch.object(agent, "backend") as mock_ai, \
          mock.patch.object(rebase.resolve_ai, "resolve_file_conflicts",
              return_value=rebase.types.Resolution(files=["a.py"]),
          ), \
@@ -2211,7 +2211,7 @@ def test_step_conflicts_continue_fails_records_instead_of_aborting():
     tally = rebase.types.ResolutionTally()
     with mock.patch.object(rebase.inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
          mock.patch.object(rebase.inspect, "remaining_rebase_commits", return_value=0), \
-         mock.patch.object(rebase.lifecycle, "ai_backend") as mock_ai, \
+         mock.patch.object(agent, "backend") as mock_ai, \
          mock.patch.object(rebase.resolve_ai, "resolve_file_conflicts",
              return_value=rebase.types.Resolution(files=["a.py"]),
          ), \
@@ -4518,7 +4518,7 @@ def test_fix_only_still_resolves_conflicts():
 
     with mock.patch.object(rebase.inspect, "rebase_head_info", return_value=("abc123", "feat: thing")), \
          mock.patch.object(rebase.inspect, "remaining_rebase_commits", return_value=2), \
-         mock.patch.object(rebase.lifecycle, "ai_backend") as mock_ai, \
+         mock.patch.object(agent, "backend") as mock_ai, \
          mock.patch.object(rebase.resolve_ai, "resolve_file_conflicts",
              return_value=rebase.types.Resolution(files=["a.py"]),
          ), \

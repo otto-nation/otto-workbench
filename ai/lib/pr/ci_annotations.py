@@ -274,7 +274,7 @@ def _external_failure(repo: str, job: dict) -> JobFailure | None:
     """
     job_name = job.get("name", "unknown")
     job_id = job.get("databaseId", 0)
-    annotations = run_reads.fetch_annotations(repo, job_id) if job_id else []
+    annotations = gh.run_reads.fetch_annotations(repo, job_id) if job_id else []
     # Annotations that are all notice-level filter down to nothing in
     # annotations_to_items, which is indistinguishable from never having
     # fetched any — fall back on the filtered result, not the raw one.
@@ -283,7 +283,7 @@ def _external_failure(repo: str, job: dict) -> JobFailure | None:
         if summary:
             annotations = [{"message": summary, "path": "", "start_line": 0,
                             "title": job_name}]
-    return _make_result(job_name, ci.FailureKind.EXTERNAL, annotations, None, None)
+    return _make_result(job_name, pr.ci_failures.FailureKind.EXTERNAL, annotations, None, None)
 
 
 def fetch_job_failure(repo: str, job: dict, run_data: dict) -> JobFailure | None:

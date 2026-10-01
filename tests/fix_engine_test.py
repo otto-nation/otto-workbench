@@ -1997,8 +1997,8 @@ class TestVerifySuite:
                                          label="x", body="b")]
         snapshots.side_effect = _reads(set(), {"a.py"})
 
-        with patch.object(agent_invoke, "run_fix", _answer(adapter)):
-            run = fix_engine.run(adapter)
+        with patch.object(agent.invoke, "run_fix", _answer(adapter)):
+            run = fix.engine.run(adapter)
 
         assert [p.item_id for p in run.suite.pointers] == ["i0"]
         assert run.suite.pointers[0].symbols == ("LOST_SENTINEL",)
@@ -2020,9 +2020,9 @@ class TestVerifySuite:
                                          label="x", body="b")]
         snapshots.side_effect = _reads(set(), {"a.py"})
 
-        with patch.object(agent_invoke, "run_fix",
+        with patch.object(agent.invoke, "run_fix",
                           _answer(adapter, tick="declined", reason="no")):
-            run = fix_engine.run(adapter)
+            run = fix.engine.run(adapter)
 
         assert run.suite.pointers == ()
 

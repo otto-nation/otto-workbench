@@ -514,12 +514,12 @@ def test_an_app_check_never_reaches_the_log_ladder():
     with patch("gh.run_reads.fetch_annotations", return_value=[]), \
          patch("pr.ci_annotations.log_fallback") as ladder, \
          patch("pr.ci_annotations.fetch_test_artifact") as artifact:
-        result = ci_annotations.fetch_job_failure(
+        result = pr.ci_annotations.fetch_job_failure(
             "owner/repo", _external_job(summary="2 alerts"), {"databaseId": 1},
         )
     ladder.assert_not_called()
     artifact.assert_not_called()
-    assert result.kind is ci.FailureKind.EXTERNAL
+    assert result.kind is pr.ci_failures.FailureKind.EXTERNAL
     assert result.items[0].annotation == "2 alerts"
 
 
@@ -528,13 +528,13 @@ def test_an_app_checks_own_annotations_are_read():
     annotations = [{"message": "Hard-coded credential", "path": "app/db.py",
                     "start_line": 42, "title": "py/hardcoded-credentials"}]
     with patch("gh.run_reads.fetch_annotations", return_value=annotations) as fetch:
-        result = ci_annotations.fetch_job_failure(
+        result = pr.ci_annotations.fetch_job_failure(
             "owner/repo", _external_job(), {"databaseId": 1},
         )
     assert fetch.call_args.args[1] == 77
     assert result.items[0].file == "app/db.py"
     assert result.items[0].line == 42
-    assert result.kind is ci.FailureKind.EXTERNAL
+    assert result.kind is pr.ci_failures.FailureKind.EXTERNAL
 
 
 def test_a_status_context_has_no_id_to_look_annotations_up_by():
@@ -542,7 +542,7 @@ def test_a_status_context_has_no_id_to_look_annotations_up_by():
     job = _external_job(name="scalr/plan", db_id=0, summary="plan errored",
                         source="status_context")
     with patch("gh.run_reads.fetch_annotations") as fetch:
-        result = ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 1})
+        result = pr.ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 1})
     fetch.assert_not_called()
     assert result.job_name == "scalr/plan"
     assert result.items[0].annotation == "plan errored"
@@ -553,9 +553,9 @@ def test_an_external_check_that_says_nothing_still_becomes_an_item():
     job = _external_job(name="kubesec", db_id=0, summary="", source="status_context")
     job["_details_url"] = ""
     with patch("gh.run_reads.fetch_annotations", return_value=[]):
-        result = ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 1})
+        result = pr.ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 1})
     assert result is not None
-    assert result.kind is ci.FailureKind.EXTERNAL
+    assert result.kind is pr.ci_failures.FailureKind.EXTERNAL
     assert "kubesec" in result.items[0].annotation
 
 
@@ -565,17 +565,17 @@ def test_an_external_check_with_only_notice_annotations_falls_back_to_summary():
                 "start_line": 1, "title": "kubesec"}]
     job = _external_job(name="kubesec", db_id=77, summary="kubesec found issues")
     with patch("gh.run_reads.fetch_annotations", return_value=notices):
-        result = ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 1})
+        result = pr.ci_annotations.fetch_job_failure("owner/repo", job, {"databaseId": 1})
     assert result is not None
-    assert result.kind is ci.FailureKind.EXTERNAL
+    assert result.kind is pr.ci_failures.FailureKind.EXTERNAL
     assert result.items[0].annotation == "kubesec found issues"
 
 
 def test_codeql_is_not_classified_as_a_build_failure():
     """`classify_job` matches on name and would read it as BUILD, and fix it as one."""
-    assert ci.classify_job("CodeQL", []) is ci.FailureKind.BUILD
+    assert pr.ci_failures.classify_job("CodeQL", []) is pr.ci_failures.FailureKind.BUILD
     with patch("gh.run_reads.fetch_annotations", return_value=[]):
-        result = ci_annotations.fetch_job_failure(
+        result = pr.ci_annotations.fetch_job_failure(
             "owner/repo", _external_job(summary="alert"), {"databaseId": 1},
         )
-    assert result.kind is ci.FailureKind.EXTERNAL
+    assert result.kind is pr.ci_failures.FailureKind.EXTERNAL

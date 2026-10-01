@@ -248,7 +248,7 @@ def branch_commits(
     cwd: str | Path, *, target_ref: str, rev: str = "HEAD",
 ) -> list[BranchCommit]:
     """The commits *rev* adds over *target_ref*, oldest first."""
-    lines = git_client.lines(
+    lines = git.client.lines(
         "log", "--reverse", "--no-merges", "--format=%H%x1f%s",
         f"{target_ref}..{rev}", cwd=cwd,
     )
@@ -265,7 +265,7 @@ def _patch_equivalent(
 ) -> frozenset[str]:
     """Shas of *rev*'s commits that `git cherry` finds equivalent upstream."""
     equivalent = set()
-    for line in git_client.lines("cherry", target_ref, rev, cwd=cwd):
+    for line in git.client.lines("cherry", target_ref, rev, cwd=cwd):
         mark, _, sha = line.partition(" ")
         if mark == "-" and sha:
             equivalent.add(sha)
@@ -282,7 +282,7 @@ def _same_subject_upstream(
     `--grep` matches a substring of the message, so "fix: auth" would otherwise
     match "fix: auth token refresh" and claim a landing that never happened.
     """
-    lines = git_client.lines(
+    lines = git.client.lines(
         "log", "--reverse", "--fixed-strings", f"--grep={subject}",
         "--format=%H%x1f%s", f"{since}..{target_ref}", cwd=cwd,
     )
@@ -335,7 +335,7 @@ def partial_landing(
     `by_git`'s finding, not this one, and nothing landed is the ordinary
     rebase.
     """
-    base = git_client.out("merge-base", target_ref, rev, cwd=cwd)
+    base = git.client.out("merge-base", target_ref, rev, cwd=cwd)
     if not base:
         return None
 

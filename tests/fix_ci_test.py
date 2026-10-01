@@ -346,8 +346,8 @@ def test_an_external_check_is_reported_but_not_handed_to_the_fix_pass(tmp_path):
     conclusion still blocks readiness.
     """
     adapter = _adapter(tmp_path, {
-        "codeql": _group("CodeQL", ci.FailureKind.EXTERNAL, _item("ext-1")),
-        "lint": _group("Lint", ci.FailureKind.LINT, _item("lint-1")),
+        "codeql": _group("CodeQL", pr.ci_failures.FailureKind.EXTERNAL, _item("ext-1")),
+        "lint": _group("Lint", pr.ci_failures.FailureKind.LINT, _item("lint-1")),
     })
     assert [f.item.id for f in adapter.fixable] == ["lint-1"]
     assert [f.item.id for f in adapter.skipped] == ["ext-1"]

@@ -258,7 +258,12 @@ def resolve_chunked(
     *, target_ref: str,
     trail: Trail | None = None,
 ) -> str | None:
-    """Resolve via chunked prompt (large files with small conflicts)."""
+    """Resolve via chunked prompt (large files with small conflicts).
+
+    Writes nothing until every block has parsed, which is what lets
+    ``resolve_single_file`` fall back to the whole-file prompt on a None:
+    the file on disk is exactly as this found it.
+    """
     commit_diff = conflicts.get_commit_diff(filepath, cwd)
     prompt = build_chunked_prompt(
         filepath, blocks, sha, subject, commit_diff, target_ref=target_ref,

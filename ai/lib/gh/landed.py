@@ -315,11 +315,21 @@ def partial_landing(
       exact signal cannot see it.
 
     The subject signal is the loose one, so it is constrained twice over. A
-    match must be the *whole* subject, and each match must be a descendant of
-    the previous one — a prefix that landed landed in order, and requiring the
-    upstream commits to be in that same order is what stops a repeated subject
-    like "chore: regenerate" from manufacturing a fork point out of two
-    unrelated commits.
+    match must be the *whole* subject, and each subject match must be a
+    descendant of the last one — a prefix that landed landed in order, and
+    requiring the upstream commits to be in that same order is what stops a
+    repeated subject like "chore: regenerate" from manufacturing a fork point
+    out of two unrelated commits.
+
+    A patch-id match does not advance that watermark, because `git cherry`
+    reports *that* a commit has an equivalent upstream and not which one. The
+    ordering is therefore enforced among subject matches rather than across
+    both kinds, which can only ever widen the search — and the fork point
+    stays safe either way, since every commit before it was found upstream by
+    one signal or the other.
+
+    Merge commits are excluded, as they are from `git cherry`, so a branch
+    carrying one has it counted on neither side.
 
     Returns None unless both sides are non-empty. Everything landed is
     `by_git`'s finding, not this one, and nothing landed is the ordinary

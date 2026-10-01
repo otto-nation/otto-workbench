@@ -20,6 +20,23 @@ if str(LIB_DIR) not in sys.path:
 from gh import landed as branch_landed  # noqa: E402
 
 
+# How a commit is copied onto main so that the copy is genuinely a *copy*.
+#
+# `--no-ff` alone is not enough, and the way it fails is intermittent. A
+# cherry-pick whose tree, parent, message and both dates match the original
+# produces the *identical* SHA — git is content-addressed, so there is no new
+# commit at all and main simply fast-forwards onto the branch's own history.
+# Whether that happens depends on whether the clock ticked between making the
+# commit and copying it, which on a fast machine it usually has not: the same
+# fixture passed one run in three.
+#
+# `-x` appends a "(cherry picked from commit ...)" trailer, which changes the
+# message and therefore the SHA, deterministically. It does not touch the diff,
+# so the patch id the signal under test reads is unaffected — which is the
+# property that makes it the right lever here rather than a slept-on clock.
+_COPY = ("cherry-pick", "--no-ff", "-x")
+
+
 def _commit(repo: Path, name: str, body: str, subject: str) -> str:
     (repo / name).write_text(body)
     git_in(repo, "add", name)
@@ -174,10 +191,7 @@ class TestPartialLandingStaysQuietWhereItShould:
         second = git_out(repo, "rev-parse", "HEAD~1").strip()
 
         git_in(repo, "checkout", "-q", "main")
-        # --no-ff because cherry-pick fast-forwards when the commit's parent is
-        # HEAD, which would move main onto the branch's own commits and leave
-        # nothing diverged to measure.
-        git_in(repo, "cherry-pick", "--no-ff", second)
+        git_in(repo, *_COPY, second)
         git_in(repo, "checkout", "-q", "feat")
 
         assert branch_landed.partial_landing(str(repo), target_ref="main") is None
@@ -231,7 +245,7 @@ class TestPatchIdsStillCarryThePrefixWhereTheyCan:
         second = git_out(repo, "rev-parse", "HEAD~1").strip()
 
         git_in(repo, "checkout", "-q", "main")
-        git_in(repo, "cherry-pick", "--no-ff", first, second)
+        git_in(repo, *_COPY, first, second)
         git_in(repo, "checkout", "-q", "feat")
 
         partial = branch_landed.partial_landing(str(repo), target_ref="main")

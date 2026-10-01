@@ -306,6 +306,32 @@ def _drive_fix(tmp_path, *, tick, landed=None, exit_code=0):
     return rc, inv, trail
 
 
+def test_a_paused_rebase_stops_the_fix_pass(tmp_path):
+    """A mid-rebase index is not something to turn an AI fixer loose on.
+
+    `pr rebase` used to abort on its way out of every failure, so "the rebase
+    failed, carry on with fixes" left a clean tree. It no longer does: a run
+    that cannot resolve one file now stops with the replay and everything it
+    already resolved intact. Carrying on from there would have the fix pass
+    edit files still carrying conflict markers and commit them onto a detached
+    HEAD.
+    """
+    trail = MagicMock()
+    report = _report(failures=_ONE_FAILURE, run_number=1)
+    with patch("cli.ci_check._rebase_if_behind", return_value=False), \
+         patch("cli.ci_check.rebase_inspect.rebase_in_progress",
+               return_value=True), \
+         patch("cli.ci_check.fix_engine.run") as run:
+        rc = ci_check._run_fix(
+            trail, report,
+            make_ctx(worktree_root=tmp_path, target_dir=tmp_path),
+        )
+
+    assert rc == 1
+    run.assert_not_called()
+    assert trail.error.call_args[0][0] == "rebase_paused"
+
+
 def test_ci_fix_pass_that_checks_nothing_off_is_retried_with_the_hint(tmp_path):
     """The hint is CI's own, not whichever one the diagnosis happens to name.
 

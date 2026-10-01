@@ -625,6 +625,8 @@ class TriageSummary(Domain):
 _REFUSAL_REASONS = {
     RebaseStatus.ALREADY_LANDED.value: "branch already landed",
     RebaseStatus.UNRELATED_HISTORY.value: "branch shares no history with its base",
+    RebaseStatus.PARTIALLY_LANDED.value:
+        "part of the branch already landed — replay from the fork point",
     RebaseStatus.CONFLICTS_OVER_BUDGET.value: "too many conflicts to resolve automatically",
     RebaseStatus.TRACKER_UNREAD.value: "GitHub was not asked whether the PR merged",
 }

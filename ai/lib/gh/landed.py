@@ -335,7 +335,7 @@ def partial_landing(
     `by_git`'s finding, not this one, and nothing landed is the ordinary
     rebase.
     """
-    base = git_client.out("merge-base", target_ref, rev, cwd=cwd).strip()
+    base = git_client.out("merge-base", target_ref, rev, cwd=cwd)
     if not base:
         return None
 

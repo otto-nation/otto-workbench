@@ -298,6 +298,46 @@ def _no_live_backend(monkeypatch):
     monkeypatch.setattr(subprocess, "Popen", guarded_popen)
 
 
+# The production runner, captured before tests stub it. A test that exercises
+# `_run_pi_list_models` fallbacks (missing binary, non-zero exit) rebinds this
+# rather than spawning `pi`.
+_REAL_RUN_PI_LIST_MODELS = None
+
+
+def pytest_configure(config):
+    """Budget lookups must not spawn `pi` during collection.
+
+    `model_window_tokens` consults the catalogue first, and several test
+    modules compute a ceiling at import time. Stubbing here — before
+    collection — keeps those imports on the fallback table. The autouse
+    fixture below re-applies the stub per test so a catalogue test cannot
+    leak a live listing into the next one.
+    """
+    global _REAL_RUN_PI_LIST_MODELS
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    import review.budget
+    _REAL_RUN_PI_LIST_MODELS = review.budget._run_pi_list_models
+    review.budget._run_pi_list_models = lambda: ""
+
+
+@pytest.fixture(autouse=True)
+def _empty_pi_catalogue(monkeypatch):
+    """Budget lookups do not spawn `pi --list-models`.
+
+    A test that cares about a live listing stubs `_run_pi_list_models` itself;
+    every other test gets the fallback table, which is what they already
+    asserted against.
+    """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    import review.budget
+    monkeypatch.setattr(review.budget, "_run_pi_list_models", lambda: "")
+    review.budget._pi_catalogue_windows.cache_clear()
+    yield
+    review.budget._pi_catalogue_windows.cache_clear()
+
+
 @pytest.fixture(autouse=True)
 def _unresolved_model_aliases(monkeypatch):
     """Run every test with the tier aliases unresolved, as CI does.

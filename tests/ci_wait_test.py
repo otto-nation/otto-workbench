@@ -37,6 +37,20 @@ def _no_rollup():
         yield
 
 
+def _external(name, conclusion, status="completed", db_id=0):
+    """An external check as `run_reads` would have handed it over.
+
+    Through the same normaliser the real rollup path uses rather than
+    hand-rolled: the rule that a finished check failed unless it concluded
+    green is applied at that boundary, and a double that restates the shape
+    keeps passing after the code it stands for has stopped agreeing with it.
+    """
+    return run_reads._as_failure_unless_green(
+        {"name": name, "databaseId": db_id, "status": status,
+         "conclusion": conclusion, "steps": [], "_check_source": "check_run",
+         "_details_url": "", "_summary": ""})
+
+
 def _no_log_fallback(kind):
     """A `log_fallback` result for a job whose logs yielded nothing."""
     return ci_annotations.LogFallback([], "", kind, structured=False)
@@ -360,9 +374,7 @@ def test_a_pinned_run_asks_its_rollup_at_its_own_commit():
     by_sha = {
         "currenthead": run_reads.CommitChecks(
             answered=True,
-            external=({"name": "CodeQL", "databaseId": 0, "status": "completed",
-                       "conclusion": "failure", "steps": [],
-                       "_check_source": "check_run"},)),
+            external=(_external("CodeQL", "failure"),)),
         "abc123": run_reads.CommitChecks(answered=True),
     }
 
@@ -394,9 +406,8 @@ def test_a_rollup_with_a_check_still_running_is_asked_again():
         {"name": "Test", "conclusion": "success", "databaseId": 11, "status": "completed"},
     ])
     run_payloads = iter((in_progress, done))
-    running_check = {"name": "CodeQL", "databaseId": 99, "status": "in_progress",
-                     "conclusion": "", "steps": [], "_check_source": "check_run"}
-    failed_check = {**running_check, "status": "completed", "conclusion": "failure"}
+    running_check = _external("CodeQL", "", status="in_progress", db_id=99)
+    failed_check = _external("CodeQL", "failure", db_id=99)
     rollups = iter((
         run_reads.CommitChecks(answered=True, external=(running_check,)),
         run_reads.CommitChecks(answered=True, external=(failed_check,)),
@@ -438,9 +449,8 @@ def test_a_truncated_poll_is_retried_and_the_fuller_answer_wins():
     # databaseId 99 rather than 0: `_external_failure` only looks up
     # annotations for a check that has an id, so a zero here would make any
     # `fetch_annotations` patch dead and read as coverage that is not there.
-    completed_check = {"name": "CodeQL", "databaseId": 99, "status": "completed",
-                       "conclusion": "success", "steps": [], "_check_source": "check_run"}
-    failed_check = {**completed_check, "conclusion": "failure"}
+    completed_check = _external("CodeQL", "success", db_id=99)
+    failed_check = _external("CodeQL", "failure", db_id=99)
     rollups = iter((
         run_reads.CommitChecks(answered=True, truncated=True, external=(completed_check,)),
         run_reads.CommitChecks(answered=True, truncated=False, external=(failed_check,)),
@@ -530,3 +540,29 @@ def test_a_re_run_is_not_served_from_the_previous_attempts_payload():
 
     assert [c.args[1] for c in view.call_args_list].count(100) == 2
     assert result.merged["conclusion"] == "failure"
+
+
+def test_a_cancelled_external_check_ends_the_wait_as_a_failure():
+    """The wait path's own cover for the word `FAILURE_CONCLUSIONS` is missing.
+
+    `cancelled` reaches this layer only after the boundary normaliser has
+    turned it into the word every reader uses. Asserted here, through the
+    same helper the other cases use, so the doubles in this file are tied to
+    that normaliser rather than merely shaped like its output.
+    """
+    done = _run("completed", "success", [
+        {"name": "Lint", "conclusion": "success", "databaseId": 10, "status": "completed"},
+    ])
+    checks = run_reads.CommitChecks(
+        answered=True, external=(_external("scalr/plan", "cancelled"),))
+
+    with patch("gh.run_reads.fetch_latest_runs",
+               return_value=run_reads.RunDiscovery(rows=(_row(100, head_sha="abc123"),))), \
+         patch("gh.run_reads.fetch_run_data", return_value=done), \
+         patch("gh.run_reads.fetch_commit_checks", return_value=checks), \
+         patch("gh.run_reads.fetch_annotations", return_value=[]), \
+         patch("pr.ci_wait.time.sleep"):
+        result = _poll(head_sha="abc123")
+
+    assert result.merged["conclusion"] == "failure"
+    assert result.counts.failed == 1

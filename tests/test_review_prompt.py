@@ -1366,6 +1366,16 @@ class TestTheWindowPrefersPisCatalogue:
             prompt_budget_bytes("gpt-5")
         assert "grok-4.6" in str(caught.value)
 
+    def test_an_unreadable_catalogue_is_not_blamed_on_the_model(self):
+        """With no catalogue (the autouse fixture's default), say it was unreadable."""
+        from review.budget import UnknownModelWindow, prompt_budget_bytes
+
+        with pytest.raises(UnknownModelWindow) as caught:
+            prompt_budget_bytes("gpt-5")
+        message = str(caught.value)
+        assert "could not be read" in message
+        assert "not in pi's provider catalogue" not in message
+
     def test_the_narrowest_window_wins_across_providers(self, monkeypatch):
         """The same id under two providers is only as wide as the smaller."""
         import review.budget

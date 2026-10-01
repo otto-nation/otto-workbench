@@ -7,7 +7,8 @@ collector deciding what to gather and a phase deciding what to send read the
 same figure rather than two that drifted apart.
 
 The ceiling is derived, not declared. It starts from the resolved model's
-context window, subtracts what the reply and the CLI's own system prompt need,
+context window — read from pi's provider catalogue, with `MODEL_CONTEXT_TOKENS`
+as the fallback when the catalogue cannot be read or lacks the model — subtracts what the reply and the CLI's own system prompt need,
 and prices the remainder in bytes at a density floor — so it is a property of
 the model a phase actually runs on rather than a constant that matched none of
 them. `prompt_budget_bytes` is that derivation. A tier alias that never resolved
@@ -280,11 +281,19 @@ class UnknownModelWindow(RuntimeError):
             # readable it usually knows more models than MODEL_CONTEXT_TOKENS
             # ever will, and a reader chasing a typo'd model name wants the
             # full list this process could actually have resolved against.
-            known = ", ".join(sorted(set(MODEL_CONTEXT_TOKENS) | set(_pi_catalogue_windows())))
+            catalogue = _pi_catalogue_windows()
+            known = ", ".join(sorted(set(MODEL_CONTEXT_TOKENS) | set(catalogue)))
+            # An empty catalogue means pi was absent, failed, or unparsed — not
+            # that it lacks the model — so the message must not claim it does.
+            where = (
+                "pi's provider catalogue or review.budget.MODEL_CONTEXT_TOKENS"
+                if catalogue else
+                "review.budget.MODEL_CONTEXT_TOKENS (pi's provider catalogue "
+                "could not be read)"
+            )
             detail = (
                 f"no context window on record for model {model!r} — not in "
-                f"pi's provider catalogue or "
-                f"review.budget.MODEL_CONTEXT_TOKENS. Known models: {known}"
+                f"{where}. Known models: {known}"
             )
         super().__init__(detail)
 

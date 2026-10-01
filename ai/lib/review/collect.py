@@ -384,7 +384,7 @@ def _scope_to_surface(raw_diff: str, pr_files: list[dict]) -> str:
     ``pr_files`` is the review's surface — `PRMetadata.files`. A diff with no
     file headers, or a job with no surface to narrow to, comes back untouched.
 
-    The delta diff's range is `prior_sha..HEAD`, which spans the base branch as
+    The delta diff's range is `prior_sha..<head>`, which spans the base branch as
     well as the branch: rebase onto a moved base and every commit the base
     gained lands in it. That is how a 107-file review came to report 4,974
     changed files — the list alone was 260KB, and it pushed the synthesis
@@ -450,8 +450,24 @@ class DeltaScope:
 _QUOTE_PATH_OFF = {"core.quotePath": "false"}
 
 
+def _delta_head(job: ReviewJob) -> str:
+    """The commit every delta range ends at: the one the review header records.
+
+    `job.pr.head_sha` is read once, before the delta is collected, and it is
+    what the written review stamps as reviewed. Ending a range at a live
+    ``HEAD`` instead lets a commit made while the run starts into the prompt's
+    commit list under a header that names its parent — the two then disagree
+    about what this review covered. Pinned, a commit landing mid-run is simply
+    left for the next re-review, which starts from the stamped SHA.
+
+    ``HEAD`` only when no SHA was resolved, which is the range every caller
+    used before there was a pin to take.
+    """
+    return job.pr.head_sha or "HEAD"
+
+
 def _author_delta(
-    wt_path: str, prior_sha: str, base_ref: str,
+    wt_path: str, prior_sha: str, base_ref: str, head: str,
 ) -> git.numstat.Numstat | None:
     """What the author committed since ``prior_sha`` that the base did not give them.
 
@@ -478,11 +494,11 @@ def _author_delta(
     """
     walks = [git.client.run(
         "log", "--no-merges", "--numstat", "--pretty=format:",
-        f"{prior_sha}..HEAD", "--not", base_ref,
+        f"{prior_sha}..{head}", "--not", base_ref,
         cwd=wt_path, config=_QUOTE_PATH_OFF,
     )]
     listed = git.client.run(
-        "rev-list", "--merges", f"{prior_sha}..HEAD", "--not", base_ref, cwd=wt_path,
+        "rev-list", "--merges", f"{prior_sha}..{head}", "--not", base_ref, cwd=wt_path,
     )
     if not listed.ok:
         return None
@@ -508,7 +524,7 @@ def _delta_log(job: ReviewJob, prior_sha: str, base_ref: str) -> str:
     surface = ["--", *(f["path"] for f in job.pr.files)] if job.pr.files else []
     exclude = ["--no-merges", "--not", base_ref] if base_ref else []
     raw_log = git.client.out(
-        "log", "--stat", "--reverse", f"{prior_sha}..HEAD", *exclude, *surface,
+        "log", "--stat", "--reverse", f"{prior_sha}..{_delta_head(job)}", *exclude, *surface,
         cwd=job.wt_path,
     )
     return _truncate_log(raw_log, MAX_DELTA_LOG_BYTES, "Delta commit log")
@@ -519,7 +535,7 @@ def _delta_diff_and_log(
 ) -> tuple[str, str]:
     """The delta's prompt context: the patch to read and the commits behind it.
 
-    The patch stays the whole `prior_sha..HEAD` range narrowed to the review's
+    The patch stays the whole `prior_sha..<head>` range narrowed to the review's
     surface, rather than the author's commits alone. It is context an agent
     reads, not a gate: a base-branch hunk in it costs a few hundred bytes of a
     budget that truncates anyway, while reassembling a patch out of per-commit
@@ -529,10 +545,15 @@ def _delta_diff_and_log(
     """
     if job.mode == Mode.SELF:
         # Self-review's surface reaches past HEAD, so a delta review still sees
-        # edits that have not been committed since the prior review.
+        # edits that have not been committed since the prior review. Not pinned
+        # to `_delta_head`: the working tree is the subject here, and the header
+        # recording the last commit under it errs toward re-reviewing, not
+        # toward skipping.
         raw_diff = worktree_diff(job.wt_path, prior_sha)
     else:
-        raw_diff = git.client.out("diff", f"{prior_sha}..HEAD", cwd=job.wt_path)
+        raw_diff = git.client.out(
+            "diff", f"{prior_sha}..{_delta_head(job)}", cwd=job.wt_path,
+        )
     raw_diff = _scope_to_surface(raw_diff, job.pr.files)
     return (
         truncate_diff(raw_diff, MAX_DELTA_DIFF_BYTES).text,
@@ -598,7 +619,7 @@ def _collect_delta(job: ReviewJob) -> DeltaScope:
             DeltaAttribution.UNATTRIBUTED,
         )
 
-    authored = _author_delta(job.wt_path, prior_sha, ref)
+    authored = _author_delta(job.wt_path, prior_sha, ref, _delta_head(job))
     if authored is None:
         core.log.warn(
             "Could not attribute the commits since the prior review — the delta "

@@ -1288,6 +1288,52 @@ class TestCollectDeltaAncestry:
         assert "caf\u00e9.go" in delta.files
 
 
+class TestCollectDeltaEndsAtTheStampedHead:
+    """The delta ends at the commit the review header will record, not live HEAD.
+
+    `job.pr.head_sha` is read before the delta is collected and is what the
+    written review stamps. A commit landing in between must not reach the
+    prompt's commit list or file list under a header naming its parent — the
+    review would then claim less than it was shown, and the commit list would
+    contradict the incremental note's `prior..head` span.
+    """
+
+    def _job_after_a_late_commit(self, tmp_path: Path) -> ReviewJob:
+        repo = init_repo(tmp_path / "repo")
+        (repo / "mine.go").write_text("package main\n")
+        commit_all(repo, "init")
+        add_self_origin(repo)
+        git_out(repo, "checkout", "-q", "-b", "feat")
+        (repo / "mine.go").write_text("package main\nfunc reviewed() {}\n")
+        commit_all(repo, "work the prior review saw")
+        prior_sha = git_out(repo, "rev-parse", "HEAD").strip()
+        (repo / "mine.go").write_text("package main\nfunc stamped() {}\n")
+        commit_all(repo, "work this review is stamped with")
+        stamped = git_out(repo, "rev-parse", "HEAD").strip()
+        (repo / "late.go").write_text("package main\n")
+        commit_all(repo, "a commit made after the snapshot")
+
+        job = _delta_job(
+            head_sha=stamped,
+            prior_review=f"<!-- head_sha: {prior_sha} -->\nprior",
+        )
+        surface = [
+            {"path": p, "additions": 1, "deletions": 0}
+            for p in ("mine.go", "late.go")
+        ]
+        return replace(job, wt_path=str(repo), pr=replace(job.pr, files=surface))
+
+    def test_a_commit_after_the_snapshot_is_left_out(self, tmp_path, capsys):
+        delta = review.collect._collect_delta(self._job_after_a_late_commit(tmp_path))
+        capsys.readouterr()
+
+        assert delta.attribution is DeltaAttribution.ATTRIBUTED
+        assert delta.files == ["mine.go"]
+        assert "work this review is stamped with" in delta.commit_log
+        assert "a commit made after the snapshot" not in delta.commit_log
+        assert "late.go" not in delta.diff
+
+
 # ── fetch_branch_metadata ─────────────────────────────────────────────
 
 

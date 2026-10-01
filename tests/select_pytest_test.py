@@ -142,8 +142,8 @@ def test_a_test_selects_itself_when_it_is_the_changed_file():
 
 def test_a_test_in_a_subpackage_selects_itself():
     """tests/ holds a package, and a flat glob once omitted all 83 of its tests."""
-    assert sp._selects("tests/test_nesting/test_python.py", set(),
-                       ["tests/test_nesting/test_python.py"]) is True
+    assert sp._selects("tests/test_nesting/python_test.py", set(),
+                       ["tests/test_nesting/python_test.py"]) is True
 
 
 def test_an_unrelated_change_selects_nothing():
@@ -228,13 +228,13 @@ def test_a_change_to_one_script_selects_its_own_test_and_the_sweepers():
     """The property the whole selector exists for.
 
     Only the test for that script, plus the ones whose subject is the whole
-    directory — test_python_compile byte-compiles every file under bin/, so a
+    directory — python_compile_test byte-compiles every file under bin/, so a
     change to any of them is genuinely its business.
     """
     mapping = sp.dependency_map()
     selected = [t for t, deps in mapping.items()
                 if sp._selects(t, deps, ["bin/local/validate-ceiling"])]
-    assert sorted(selected) == ["tests/test_python_compile.py",
+    assert sorted(selected) == ["tests/python_compile_test.py",
                                 "tests/validate_ceiling_test.py"]
 
 
@@ -318,7 +318,7 @@ def test_all_reaches_tests_in_a_subpackage():
     including the full-suite fallback, which prints this same list."""
     result = subprocess.run([str(SCRIPT), "--all"], capture_output=True,
                             text=True, timeout=120)
-    assert str(REPO_ROOT / "tests/test_nesting/test_python.py") in result.stdout.split()
+    assert str(REPO_ROOT / "tests/test_nesting/python_test.py") in result.stdout.split()
 
 
 def test_every_no_deps_entry_names_a_file_that_exists():

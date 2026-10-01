@@ -11,7 +11,7 @@ have no phase domain. `COMMENTS` owns three state fields. `push` and
 `supersession` have state and no subcommand.
 
 One clause of the join is deliberately absent: *every handler path imports*.
-It is asserted beside the field itself, in `tests/test_cli_registry.py`, which
+It is asserted beside the field itself, in `tests/cli_registry_test.py`, which
 is where it stays as long as any `CommandSpec.handler` is `None` — a join check
 that has to skip entries is the exemption list this file exists not to grow.
 The test that notices when that stops being true belongs here, and lands with

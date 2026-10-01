@@ -5326,7 +5326,7 @@ directly by `ai/bin/pr`'s `cmd_review`/`cmd_comments` and by
 `script` outlives the spawn it used to name. Nothing in `pr` runs it any
 more — dispatch imports `handler` instead — but MCP still executes the shim
 by path, so the field is the declaration of which `ai/bin` name that is. The
-command/domain/phase join in `tests/test_cli_join.py` is what keeps it from
+command/domain/phase join in `tests/cli_join_test.py` is what keeps it from
 going stale now that no `pr` code path would notice if it did.
 
 ### cli/review_entry.py

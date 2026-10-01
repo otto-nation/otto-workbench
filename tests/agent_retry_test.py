@@ -1,6 +1,6 @@
 """Tests for the thrash guard shared across the pr scripts.
 
-review.retry's own retry behaviour is covered in test_review_pipeline_retry;
+review.retry's own retry behaviour is covered in review_pipeline_retry_test;
 these cover the generalisations the other pr scripts depend on — an arbitrary
 `produced` predicate and the log-less prompt path.
 """

@@ -100,7 +100,7 @@ NO_DEPS_TESTS = {
     "tests/script_loading_test.py",
     # Reads the config modules' source through a path assembled at call time
     # from a dotted name, which no static map can follow.
-    "tests/test_workbench_config_layers.py",
+    "tests/workbench_config_layers_test.py",
 }
 
 _LOAD_LIB = re.compile(r'_load_lib\(\s*"([^"]+)"\s*\)')
@@ -471,7 +471,7 @@ def _is_parseable_source(ref: str) -> bool:
 def _test_package(relpath: str) -> str:
     """The package a test file sits in, for resolving its relative imports.
 
-    `tests/test_nesting/test_python.py` is in `test_nesting`; a file directly
+    `tests/test_nesting/python_test.py` is in `test_nesting`; a file directly
     under `tests/` is in no package, which is what the empty string means.
     """
     parts = Path(relpath).parts

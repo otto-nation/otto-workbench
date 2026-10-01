@@ -6,7 +6,7 @@ that aren't executed at import time.
 
 Dynamically discovers all Python files — adding a new module or script
 automatically adds coverage. Files using wildcard imports are skipped
-(they're covered by test_review_imports.py).
+(they're covered by review_imports_test.py).
 """
 
 from __future__ import annotations

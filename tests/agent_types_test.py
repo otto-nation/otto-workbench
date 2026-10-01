@@ -2,7 +2,7 @@
 
 Everything here is provable without knowing which phases exist: the rules a
 ``PhaseSpec`` applies to whatever it is handed. What the nine real phases are
-set to is ``test_agent_registry``; the vocabulary itself — ``Phase``,
+set to is ``agent_registry_test``; the vocabulary itself — ``Phase``,
 ``PhaseShape``, ``Mode``, ``Effort``, ``Thinking``, ``AgentKind``,
 ``PhaseDomain`` — is ``phases_test``.
 """

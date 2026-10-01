@@ -163,12 +163,12 @@ jobs:
           pipx install pytest==8.3.5
           pipx inject pytest pytest-xdist==3.8.0
 
-      # tests/test_tool_registry.py reads the registries through
+      # tests/tool_registry_test.py reads the registries through
       # ai/lib/config/workbench_config.py, which uses PyYAML when it is importable and
       # yq otherwise. pipx runs pytest in its own venv, so it is yq here.
       - uses: ./.github/actions/install-yq
 
-      # tests/test_mcp_server.py spawns the MCP server the way its launcher
+      # tests/mcp_server_test.py spawns the MCP server the way its launcher
       # does — `uv run --with mcp`. Without uv on PATH those cases skip
       # themselves and the transport goes untested.
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1

@@ -1,7 +1,7 @@
 """Tests for fix.engine — the pipeline every fix pass runs.
 
 The domain halves live with their commands (`ci_check_test.py`,
-`test_review_threads.py`). What is held here is the half neither of them owns
+`review_threads_test.py`). What is held here is the half neither of them owns
 any more: how the work is batched, what a retry is handed, and what the landing
 is asked for.
 

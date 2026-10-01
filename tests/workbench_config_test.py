@@ -5,7 +5,7 @@ nearly every assertion about a write is "write it, then load it back" — the
 scope a value lands in and the scope it is read from are the same question, and
 splitting them would leave two files that only make sense read side by side.
 The renderings in ``workbench_config_report`` read and nothing else, so they
-stand alone in ``test_workbench_config_report.py``.
+stand alone in ``workbench_config_report_test.py``.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ import config.workbench_config_write
 from core.phases import Effort, Phase, Thinking
 
 # The PyYAML write path only exists for a machine without yq, so the tests for
-# it only run where PyYAML is installed — the same shape test_review_grouping
+# it only run where PyYAML is installed — the same shape review_grouping_test
 # uses for the reader.
 needs_yaml = pytest.mark.skipif(config.workbench_config.yaml is None, reason="PyYAML not installed")
 

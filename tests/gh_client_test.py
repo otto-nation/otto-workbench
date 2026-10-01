@@ -436,7 +436,7 @@ def test_a_first_page_read_sends_no_cursor_to_gh(stub_gh):
 
     `_threads_page` used to carry its own `if cursor:` guard and dropped it
     once the helper omitted None centrally. Every test above this one asserts
-    on `graphql()` directly, and `test_pr_data.py` patches `gh.client.graphql`
+    on `graphql()` directly, and `pr_data_test.py` patches `gh.client.graphql`
     outright — so with the helper's omission removed, the real first-page read
     would send `endCursor=None` to gh and nothing would fail. This is the one
     test that watches the argv a paging caller actually produces.

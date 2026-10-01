@@ -159,7 +159,7 @@ class TestRunPromptResolution:
 class TestRunPromptSpendsNothingItCannotUse:
     """A stateless call has no turn loop and no cap the pipeline enforces.
 
-    ``test_agent_registry`` pins no ``max_turns`` or ``max_budget`` for a
+    ``agent_registry_test`` pins no ``max_turns`` or ``max_budget`` for a
     prompt-shaped phase on the grounds that nothing reads them. This is what
     makes that true — without it, the registry's silence would only mean the
     fields were never looked at *yet*.

@@ -229,7 +229,7 @@ def _registered(*scripts: Path, visibility: Visibility = Visibility.BRIEF,
 
     Discovery takes the registry as an argument so a case can describe a tree
     the checkout does not have. The real mapping is
-    tests/test_tool_registry.py's subject.
+    tests/tool_registry_test.py's subject.
     """
     return {script: _entry(script, visibility=visibility, description=description,
                            when_to_use=when_to_use, usage=usage)

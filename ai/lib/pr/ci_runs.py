@@ -228,7 +228,11 @@ class PollCache:
     sources and they are always carried together. Two loose dicts keyed
     differently — run id to payload, commit to rollup — is an argument pair a
     call site can cross over, and the older of them was called just `cache`,
-    which stopped being a name once there were two.
+    which stopped being a name once there were two. The two fields still key
+    differently from each other (`runs` by run id, `checks` by commit sha) —
+    that mismatch is inherent to what each answers and carries no risk of the
+    cross-over the merge fixes, since they are now one object rather than two
+    positional arguments.
 
     Only a wait loop has a next poll. A single-shot run passes nothing and
     every read is made fresh.
@@ -256,6 +260,7 @@ def _hold_finished(cache: dict[int, dict], payloads: list[dict], served: dict) -
 
 def _commit_checks(
     repo: str, rows: list[run_reads.RunRow], sha: str,
+    cache: PollCache | None = None,
 ) -> run_reads.CommitChecks:
     """The commit's full check list, asked for at a commit GitHub has heard of.
 
@@ -264,14 +269,22 @@ def _commit_checks(
     and reading that as "no checks" is the false green one layer down. The runs
     themselves name a commit GitHub definitely ran, so an unanswered rollup is
     retried there before the answer is believed.
+
+    `cache` holds a settled rollup across polls, keyed by `sha`, on the same
+    terms as `_late_checks`: a branch head does not change between polls, so
+    once its rollup has nothing left in flight (`_checks_settled`), re-asking
+    it on a later poll would spend a `statusCheckRollup` query on an answer
+    already in hand.
     """
+    if cache is not None and sha in cache.checks:
+        return cache.checks[sha]
     checks = run_reads.fetch_commit_checks(repo, sha)
-    if checks.answered or not rows:
-        return checks
-    ran_sha = rows[0].head_sha
-    if not ran_sha or ran_sha == sha:
-        return checks
-    return run_reads.fetch_commit_checks(repo, ran_sha)
+    ran_sha = rows[0].head_sha if rows else ""
+    if not checks.answered and rows and ran_sha and ran_sha != sha:
+        checks = run_reads.fetch_commit_checks(repo, ran_sha)
+    if cache is not None and _checks_settled(checks):
+        cache.checks[sha] = checks
+    return checks
 
 
 def _checks_settled(checks: run_reads.CommitChecks) -> bool:
@@ -279,11 +292,16 @@ def _checks_settled(checks: run_reads.CommitChecks) -> bool:
 
     An unanswered rollup might still be answered next time, and an external
     check that is not yet `completed` might still conclude — either one is
-    worth asking again. Only a rollup that answered and has nothing left
-    in flight is safe to hand back unasked on a later poll.
+    worth asking again. A truncated rollup is the same risk one layer down: a
+    later page the first attempt did not read could hold a check this one
+    never saw, completed or not, so the pages that did come back all reading
+    `completed` proves nothing about the ones that did not. Only a rollup that
+    answered, read every page, and has nothing left in flight is safe to hand
+    back unasked on a later poll.
     """
-    return checks.answered and all(
-        job.get("status") == "completed" for job in checks.external
+    return (
+        checks.answered and not checks.truncated
+        and all(job.get("status") == "completed" for job in checks.external)
     )
 
 
@@ -344,7 +362,7 @@ def fetch_merged(
     # runs are read first and asked about afterwards. One variable rather than
     # a field on the answer, so "was it asked" cannot drift from "what it said".
     sha = head_sha or (rows[0].head_sha if rows else "")
-    checks = _commit_checks(repo, rows, sha) if sha else run_reads.CommitChecks()
+    checks = _commit_checks(repo, rows, sha, cache) if sha else run_reads.CommitChecks()
     green = checks.green_run_ids()
     held = cache.runs if cache is not None else {}
 

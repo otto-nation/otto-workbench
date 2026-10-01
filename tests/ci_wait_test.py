@@ -278,6 +278,38 @@ def test_a_real_head_sha_reaches_the_rollup_short_circuit():
     fetch_checks.assert_called_once_with("owner/repo", "abc123")
 
 
+def test_a_known_heads_settled_rollup_is_not_reasked_next_poll():
+    """`_commit_checks` — the path used whenever the branch head is known up
+    front, which is the ordinary, far more common case than a pinned `--run`
+    — must cache a settled rollup across polls too, the same as `_late_checks`
+    does for the pinned path.
+
+    Regression test for the gap where `PollCache.checks` was wired into
+    `_late_checks` but not into `_commit_checks`, so a known-head poll kept
+    re-issuing the `statusCheckRollup` query every pass even once it had
+    nothing left in flight.
+    """
+    in_progress = _run("in_progress", "", [
+        {"name": "Test", "conclusion": None, "databaseId": 11, "status": "in_progress"},
+    ])
+    done = _run("completed", "success", [
+        {"name": "Test", "conclusion": "success", "databaseId": 11, "status": "completed"},
+    ])
+    run_payloads = iter((in_progress, done))
+    settled_checks = run_reads.CommitChecks(answered=True)
+
+    with patch("gh.run_reads.fetch_latest_runs", return_value=[_row(100, head_sha="abc123")]), \
+         patch("gh.run_reads.fetch_run_data", side_effect=lambda repo, rid: next(run_payloads)), \
+         patch("gh.run_reads.fetch_commit_checks",
+               return_value=settled_checks) as fetch_checks, \
+         patch("pr.ci_wait.time.sleep"):
+        result = _poll(head_sha="abc123")
+
+    # Asked once even though the loop polled twice.
+    assert fetch_checks.call_args_list == [(("owner/repo", "abc123"),)]
+    assert result.merged["status"] == "completed"
+
+
 def test_a_pinned_run_asks_its_rollup_at_its_own_commit():
     """`run_id` names a specific run; the rollup asked about it must be for
     that run's own commit, not whatever the branch head currently is.
@@ -357,7 +389,7 @@ def test_a_rollup_with_a_check_still_running_is_asked_again():
         {"name": "Test", "conclusion": "success", "databaseId": 11, "status": "completed"},
     ])
     run_payloads = iter((in_progress, done))
-    running_check = {"name": "CodeQL", "databaseId": 0, "status": "in_progress",
+    running_check = {"name": "CodeQL", "databaseId": 99, "status": "in_progress",
                      "conclusion": "", "steps": [], "_check_source": "check_run"}
     failed_check = {**running_check, "status": "completed", "conclusion": "failure"}
     rollups = iter((
@@ -368,9 +400,53 @@ def test_a_rollup_with_a_check_still_running_is_asked_again():
     with patch("gh.run_reads.fetch_run_data", side_effect=lambda repo, rid: next(run_payloads)), \
          patch("gh.run_reads.fetch_commit_checks",
                side_effect=lambda repo, sha: next(rollups)) as fetch_checks, \
+         patch("gh.run_reads.fetch_annotations", return_value=[]) as fetch_annotations, \
+         patch("pr.ci_wait.time.sleep"):
+        result = _poll(run_id=555, head_sha="currenthead")
+
+    # The failed check's own job id is a real id (unlike the running check
+    # that preceded it), so the external-failure path actually reaches
+    # `fetch_annotations` for it rather than short-circuiting to `[]`.
+    fetch_annotations.assert_called_once_with("owner/repo", 99)
+
+    assert [c.args[1] for c in fetch_checks.call_args_list] == ["abc123", "abc123"]
+    assert result.merged["conclusion"] == "failure"
+
+
+def test_a_truncated_rollup_is_not_cached_even_when_every_check_is_completed():
+    """A truncated rollup must not be cached just because every check it did
+    read is `completed` — the page it never reached could hold a check that
+    never got read at all, completed or not.
+
+    Regression test for the gap where `_checks_settled` cached on `answered`
+    and the external jobs it had without checking `truncated`, so a rollup cut
+    short by a transient page failure got treated as settled and a check on an
+    unread page was never surfaced for the rest of the wait.
+    """
+    in_progress = _run("in_progress", "", [
+        {"name": "Test", "conclusion": None, "databaseId": 11, "status": "in_progress"},
+    ])
+    done = _run("completed", "success", [
+        {"name": "Test", "conclusion": "success", "databaseId": 11, "status": "completed"},
+    ])
+    run_payloads = iter((in_progress, done))
+    completed_check = {"name": "CodeQL", "databaseId": 0, "status": "completed",
+                       "conclusion": "success", "steps": [], "_check_source": "check_run"}
+    failed_check = {**completed_check, "conclusion": "failure"}
+    rollups = iter((
+        run_reads.CommitChecks(answered=True, truncated=True, external=(completed_check,)),
+        run_reads.CommitChecks(answered=True, truncated=False, external=(failed_check,)),
+    ))
+
+    with patch("gh.run_reads.fetch_run_data", side_effect=lambda repo, rid: next(run_payloads)), \
+         patch("gh.run_reads.fetch_commit_checks",
+               side_effect=lambda repo, sha: next(rollups)) as fetch_checks, \
          patch("gh.run_reads.fetch_annotations", return_value=[]), \
          patch("pr.ci_wait.time.sleep"):
         result = _poll(run_id=555, head_sha="currenthead")
 
+    # The truncated first rollup must be re-asked on the second poll rather
+    # than served from cache — if it were cached, the second poll would reuse
+    # the "success" verdict and never see the check an unread page flipped.
     assert [c.args[1] for c in fetch_checks.call_args_list] == ["abc123", "abc123"]
     assert result.merged["conclusion"] == "failure"

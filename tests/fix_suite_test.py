@@ -301,24 +301,35 @@ def _alive(pid: int) -> bool:
     process the group signal did kill reads as alive. A zombie has run its
     last instruction, so it counts as dead here.
     """
+    if not _pid_exists(pid):
+        return False
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(pid)],
+            capture_output=True, text=True, check=False, timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        # No usable `ps` (minimal image) or a stalled one: fall back to the
+        # signal-0 answer, which said the pid exists.
+        return True
+    state = result.stdout.strip()
+    if not state:
+        # `ps` prints nothing both for a pid that exited after the signal-0
+        # probe and when it fails outright. Reading the latter as dead would
+        # pass the test on a broken `ps`, so ask signal 0 again instead.
+        return _pid_exists(pid)
+    return not state.startswith("Z")
+
+
+def _pid_exists(pid: int) -> bool:
+    """Whether `pid` is in the process table. Signal 0 tests without delivering."""
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
-    try:
-        state = subprocess.run(
-            ["ps", "-o", "stat=", "-p", str(pid)],
-            capture_output=True, text=True, check=False, timeout=10,
-        ).stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        # No usable `ps` (minimal image) or a stalled one: fall back to the
-        # signal-0 answer, which said the pid exists.
-        return True
-    # Empty output means no such pid: it exited between os.kill and ps, or ps
-    # failed (check=False ignores the return code). Either way, not alive.
-    return bool(state) and not state.startswith("Z")
+    return True
 
 
 # ── what a result does to the pass's claims ─────────────────────────────────

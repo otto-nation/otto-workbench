@@ -216,7 +216,9 @@ def commits_behind_main(repo: str, branch: str, cwd: str | None = None) -> int:
     counted rather than being asked for a comparison that 404s. That 404 read
     back as zero, which is the shape of the bug it hides — a branch reported
     current against a trunk it had never been compared to, and a rebase that
-    therefore never fired.
+    therefore never fired. Resolved from the worktree when there is one, and
+    from GitHub's own record of the repo when there is not, because a bare-repo
+    dashboard run is a legitimate invocation with no local git to ask instead.
 
     Counted locally where there is a worktree, because the REST comparison is
     an API call on every invocation to learn something git already knows. The
@@ -225,12 +227,14 @@ def commits_behind_main(repo: str, branch: str, cwd: str | None = None) -> int:
     means "current with the trunk", which is the one wrong answer that is
     silently acted on.
     """
-    default = git_topology.default_branch(cwd) if cwd else "main"
     # The trunk is not behind itself, and asking GitHub to compare it to itself
-    # is a call whose answer is always zero. Without a worktree the trunk
-    # cannot be resolved, so the two names it is usually spelled are both
-    # treated as one rather than spending that call to find out.
-    if branch == default or (not cwd and branch in ("main", "master")):
+    # is a call whose answer is always zero. Checked before resolving the real
+    # default branch so the common case of a bare-repo dashboard run spends no
+    # extra call finding out what it already knows for one of the two names.
+    if not cwd and branch in ("main", "master"):
+        return 0
+    default = git_topology.default_branch(cwd) if cwd else _remote_default_branch(repo)
+    if branch == default:
         return 0
     if cwd:
         local = _local_commits_behind(cwd, branch, default)
@@ -241,11 +245,29 @@ def commits_behind_main(repo: str, branch: str, cwd: str | None = None) -> int:
     return int(val) if r.ok and val.isdigit() else 0
 
 
+def _remote_default_branch(repo: str) -> str:
+    """The repo's default branch per GitHub, for when there is no worktree to ask locally.
+
+    Falls back to "main" on a failed or empty read, the same fallback
+    :func:`git.topology.default_branch` uses when git cannot answer — every
+    caller needs a base ref more than it needs an error.
+    """
+    r = gh_client.api(f"repos/{repo}", jq=".default_branch")
+    val = r.stdout.strip()
+    return val if r.ok and val else "main"
+
+
 def _local_commits_behind(cwd: str, branch: str, default: str) -> int | None:
     """The count from remote-tracking refs, or None when git cannot answer it.
 
     None rather than zero so the caller falls back to the API instead of
     reporting a branch current with a trunk it could not read.
+
+    Trusts whatever the remote-tracking refs currently resolve to and does not
+    fetch first — the caller is expected to have fetched recently, the same
+    way a stale `origin/HEAD` is an accepted risk elsewhere in this ladder.
+    A stale ref under-reports rather than over-reports, which silently skips
+    a rebase rather than firing one that was not needed.
     """
     base, head = f"origin/{branch}", f"origin/{default}"
     if not all(git_client.ok("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", cwd=cwd)

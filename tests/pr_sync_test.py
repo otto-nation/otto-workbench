@@ -156,10 +156,15 @@ def test_fetch_and_reset_blocks_when_unpushed_commits_cannot_be_counted(mock_run
 def _pin_default_branch():
     """Resolve the trunk without spending a subprocess call.
 
-    These cases drive `pr.sync` by queueing `subprocess.run` results in order,
-    and `patch("pr.sync.subprocess.run")` patches the real module rather than a
+    Autouse and file-scoped: every test in this file drives `pr.sync` by
+    queueing `subprocess.run` results in order, and
+    `patch("pr.sync.subprocess.run")` patches the real module rather than a
     local alias — so any git the resolver runs of its own would eat an entry
-    meant for the fetch and slide every later assertion by one.
+    meant for the fetch and slide every later assertion by one. Applied even
+    to tests earlier in the file that never call `default_branch` at all
+    (`fetch_and_reset` and friends): the patch is a no-op for those, but
+    narrowing the fixture to only the tests that need it would make it easy to
+    miss when the next test added here does.
     """
     with patch("git.topology.default_branch", return_value="main"):
         yield
@@ -242,10 +247,32 @@ def test_update_to_remote_skips_when_unpushed_commits_cannot_be_counted(
 def test_update_to_remote_skips_on_fetch_failure(mock_run, _mock_branch):
     mock_run.side_effect = [
         MagicMock(returncode=0, stdout=""),       # status --porcelain (clean)
-        MagicMock(returncode=1),                   # fetch fails
+        MagicMock(returncode=1),                   # combined fetch fails
+        MagicMock(returncode=1),                   # retry on branch alone also fails
     ]
     ctx = _make_ctx()
     assert update_to_remote(ctx) is ctx
+
+
+@patch("git.topology.current_branch_quiet", return_value="feat/x")
+@patch("pr.context._head_sha", return_value="aaa111")
+@patch("pr.sync.subprocess.run")
+def test_a_bad_guess_at_the_trunk_does_not_sink_the_branchs_own_fetch(
+        mock_run, mock_sha, _mock_branch):
+    """A combined fetch failing (e.g. a guessed trunk name absent on the remote) must retry the branch alone rather than abandoning the update."""
+    mock_run.side_effect = [
+        MagicMock(returncode=0, stdout=""),            # status --porcelain (clean)
+        MagicMock(returncode=1, stderr="fatal: couldn't find remote ref main"),  # combined fetch fails
+        MagicMock(returncode=0),                        # retry on branch alone succeeds
+        MagicMock(returncode=0, stdout="aaa111\n"),     # rev-parse origin/branch
+    ]
+    ctx = _make_ctx(head_sha="aaa111")
+    assert update_to_remote(ctx) is ctx
+    fetch_calls = [c.args[0] for c in mock_run.call_args_list if "fetch" in c.args[0]]
+    assert fetch_calls == [
+        ["git", "-C", "/wt", "fetch", "origin", "feat/x", "main"],
+        ["git", "-C", "/wt", "fetch", "origin", "feat/x"],
+    ]
 
 
 @patch("git.topology.current_branch_quiet", return_value="feat/x")

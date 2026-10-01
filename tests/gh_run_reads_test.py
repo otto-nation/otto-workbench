@@ -350,6 +350,7 @@ def test_a_second_page_is_followed_rather_than_cut_off():
         checks = run_reads.fetch_commit_checks("owner/repo", "abc")
     assert [c["name"] for c in checks.external] == ["CodeQL"]
     assert checks.truncated is False
+    assert gql.call_args_list[0].kwargs["variables"]["after"] is None
     assert gql.call_args_list[1].kwargs["variables"]["after"] == "c1"
 
 
@@ -432,11 +433,33 @@ def test_an_unreadable_ref_falls_back_to_the_api_rather_than_reporting_current()
 
 # passes-at-base: back-compat — a bare repo must still get a real answer, not the silent zero that reads as current with the trunk
 def test_without_a_worktree_the_api_is_still_asked():
-    """A bare-repo dashboard has no git to count with."""
-    with patch("gh.client.api", return_value=CmdResult(0, "9\n")) as api:
+    """A bare-repo dashboard has no git to count with, so GitHub is asked both for the trunk's name and the comparison."""
+    def fake_api(endpoint, jq="", **kwargs):
+        if endpoint == "repos/owner/repo":
+            return CmdResult(0, "main\n")
+        return CmdResult(0, "9\n")
+    with patch("gh.client.api", side_effect=fake_api) as api:
         result = run_reads.commits_behind_main("owner/repo", "feat/auth")
     assert result == 9
-    api.assert_called_once()
+    assert api.call_count == 2
+
+
+def test_without_a_worktree_a_non_default_name_is_resolved_from_github():
+    """A master-default repo with no worktree must not be hardcoded to "main".
+
+    Before this, the literal string "main" was compared against on this path,
+    so a repo whose trunk is "master" (or anything else) got a 404'd compare
+    that read back as zero — the exact bug this module's commit message
+    describes, but for the no-worktree path rather than the worktree one.
+    """
+    def fake_api(endpoint, jq="", **kwargs):
+        if endpoint == "repos/owner/repo":
+            return CmdResult(0, "master\n")
+        assert endpoint == "repos/owner/repo/compare/feat/auth...master"
+        return CmdResult(0, "5\n")
+    with patch("gh.client.api", side_effect=fake_api):
+        result = run_reads.commits_behind_main("owner/repo", "feat/auth")
+    assert result == 5
 
 
 def test_the_trunk_is_never_behind_itself():

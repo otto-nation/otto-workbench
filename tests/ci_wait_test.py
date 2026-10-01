@@ -346,7 +346,6 @@ def test_a_real_head_sha_reaches_the_rollup_short_circuit():
     fetch_checks.assert_called_once_with("owner/repo", "abc123")
 
 
-
 def test_a_pinned_run_asks_its_rollup_at_its_own_commit():
     """`run_id` names a specific run; the rollup asked about it must be for
     that run's own commit, not whatever the branch head currently is.
@@ -378,7 +377,6 @@ def test_a_pinned_run_asks_its_rollup_at_its_own_commit():
     # guards against — see the docstring above.
     assert [c.args[1] for c in fetch_checks.call_args_list] == ["abc123"]
     assert result.merged["conclusion"] == "success"
-
 
 
 def test_a_rollup_with_a_check_still_running_is_asked_again():

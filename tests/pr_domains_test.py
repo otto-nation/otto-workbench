@@ -723,6 +723,16 @@ def test_ci_that_could_not_be_fully_read_is_unchecked_not_ready():
     assert answer.blockers == ()
 
 
+def test_a_real_failure_outranks_an_incomplete_read():
+    """A conclusion of "failure" is evidence; an unrelated unread reason must not soften it to merely unchecked."""
+    domain = pr_domains.CIDomain(
+        updated_at="2026-01-01T00:00:00Z", conclusion="failure",
+        unread=["a different run's payload could not be fetched"])
+    answer = domain.readiness(readiness_state())
+    assert answer.blockers == ("CI failing",)
+    assert answer.unchecked == ()
+
+
 # passes-at-base: back-compat — the green path must survive the unread guard
 def test_ci_read_in_full_and_green_is_ready():
     domain = pr_domains.CIDomain(updated_at="2026-01-01T00:00:00Z", conclusion="success")

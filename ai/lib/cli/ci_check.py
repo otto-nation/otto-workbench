@@ -261,8 +261,11 @@ def _run_fix(trail, report: ci_report.CIReport, ctx) -> int:
     )
     adapter = fix_ci.CIFixAdapter(report, ctx, state)
     if not adapter.fixable:
+        # `adapter.fixable` empty with `report.failures` non-empty means every
+        # failure landed in `adapter.skipped` by elimination, so `kinds` is
+        # never empty here.
         kinds = sorted({f.group.kind.value for f in adapter.skipped})
-        log.info(f"No fixable failures (all {'/'.join(kinds) or 'infra/flaky'})")
+        log.info(f"No fixable failures (all {'/'.join(kinds)})")
         return 0
 
     # Rebase before the pass, not before the report — the original run has the

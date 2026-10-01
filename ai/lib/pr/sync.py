@@ -169,6 +169,17 @@ def update_to_remote(ctx: pr_context.ResolvedContext) -> pr_context.ResolvedCont
         ["git", "-C", cwd, "fetch", "origin", *refs],
         capture_output=True, text=True, timeout=timeouts.TRANSFER,
     )
+    if r.returncode != 0 and len(refs) > 1:
+        # `default_branch` falls back to a literal guess ("main") when no
+        # candidate has a local remote-tracking ref, and `git fetch` aborts the
+        # whole call — updating nothing, not even the branch — when any named
+        # ref cannot be resolved on the remote. Retried with the branch alone
+        # so a bad guess at the trunk's name cannot take its own fetch down
+        # with it.
+        r = subprocess.run(
+            ["git", "-C", cwd, "fetch", "origin", ctx.branch],
+            capture_output=True, text=True, timeout=timeouts.TRANSFER,
+        )
     if r.returncode != 0:
         return ctx
 

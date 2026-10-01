@@ -289,6 +289,13 @@ class CIDomain(Domain):
     def readiness(self, state: "PRState") -> Readiness:
         if not self.updated_at:
             return Readiness(unchecked=("CI",))
+        # A real failure outranks an incomplete read: a conclusion of
+        # "failure" only survives the merge in ci_runs._mark_unread when a
+        # failed job stands behind it, so it is evidence rather than a word
+        # with nothing to show for it, and it names the commit as broken
+        # before "unread" can soften that to "nobody can presently tell".
+        if self.conclusion == "failure":
+            return Readiness(blockers=("CI failing",))
         # Reported apart from a failure, because they are different questions
         # for whoever reads it: one says the commit is broken, the other says
         # nobody can presently tell. Treating the second as green is the whole

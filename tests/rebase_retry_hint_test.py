@@ -233,21 +233,33 @@ class TestAWholeFileAnswerMustKeepTheCleanChanges:
         return f"{rebase.conflicts.RESOLVE_BEGIN}\n{body}{rebase.conflicts.RESOLVE_END}\n"
 
     def test_an_answer_that_is_the_target_verbatim_is_unusable(self):
-        losses = rebase.resolve_ai.answer_losses(
+        verdict = rebase.resolve_ai.judge_answer(
             "f.txt", self._STAGES, self._answer(self._STAGES.target),
         )
 
-        assert [loss.kind for loss in losses] == [rebase.survival.LossKind.FILE_TAKEN_WHOLE]
+        assert not verdict.usable
+        assert [loss.kind for loss in verdict.losses] == [
+            rebase.survival.LossKind.FILE_TAKEN_WHOLE,
+        ]
 
     def test_an_answer_keeping_both_sides_is_usable(self):
-        assert rebase.resolve_ai.answer_losses(
+        verdict = rebase.resolve_ai.judge_answer(
             "f.txt", self._STAGES, self._answer("a\nBM+B\nc\nD\ne\nF\ng\n"),
-        ) == ()
+        )
+
+        assert verdict.usable and verdict.losses == ()
+
+    def test_an_unparseable_answer_reports_the_parse_failure_not_losses(self):
+        verdict = rebase.resolve_ai.judge_answer("f.txt", self._STAGES, "no markers at all")
+
+        assert not verdict.usable
+        assert verdict.losses == ()
+        assert verdict.reason == rebase.types.ParseFailure.MISSING_BOTH_MARKERS
 
     def test_the_retry_hint_names_what_went_missing(self):
-        losses = rebase.resolve_ai.answer_losses(
+        losses = rebase.resolve_ai.judge_answer(
             "f.txt", self._STAGES, self._answer("a\nBM+B\nc\nD\ne\nf\ng\n"),
-        )
+        ).losses
 
         hint = rebase.resolve_ai.dropped_change_hint(losses)
 
@@ -298,14 +310,7 @@ class TestAWholeFileAnswerMustKeepTheCleanChanges:
         assert retried == []
 
     def test_the_same_answer_is_audited_once_not_three_times(self, tmp_path):
-        """`usable`, `retry_hint`, and the post-loop check all judge the same text.
-
-        `_resolve`'s fake `run_prompt` calls `usable(answer_text)` and
-        `retry_hint(answer_text)` on the discarding answer, and
-        `resolve_full_file` then judges that same `stdout` a third time once the
-        loop returns. `survival.audit` is diff-based, so the three askers must
-        share one verdict per answer rather than recomputing it each time.
-        """
+        """`usable`, `retry_hint`, and the post-prompt check share one verdict."""
         retried = []
 
         with mock.patch.object(

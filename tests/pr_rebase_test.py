@@ -1302,7 +1302,7 @@ def _fake_run_with_context(extra_handler=None):
             arg = cmd[-1]
             # Every stage is given distinct, present content by default so a
             # test built on this helper that exercises survival/loss behavior
-            # (`answer_losses`, `stage_texts`) gets real base/replayed text
+            # (`judge_answer`, `stage_texts`) gets real base/replayed text
             # rather than the generic fallback's "empty file present", which
             # a real missing stage would never produce (git exits non-zero).
             if ":1:" in arg:

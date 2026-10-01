@@ -8,6 +8,7 @@ accepts a ``trail`` parameter for audit logging.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import agent.invoke
@@ -203,21 +204,31 @@ def hint_for_reason(reason: str) -> str:
 
 # ── Survival of the clean changes ────────────────────────────────────────
 
-def answer_losses(
-    filepath: str, stages: conflicts.StageTexts, text: str,
-) -> tuple[survival.Loss, ...]:
-    """The changes a parsed whole-file answer discarded that git had merged cleanly.
+@dataclass(frozen=True)
+class AnswerVerdict:
+    """What one whole-file answer amounts to: its content, or why there is none."""
+    # The resolved file, or None when the answer does not parse.
+    resolved: str | None
+    # The parser's failure reason; empty when the answer parsed.
+    reason: str
+    # Changes git had merged cleanly that the answer discards. Empty for an
+    # answer that does not parse: that is the parser's failure to report, and
+    # its own hint is the better correction.
+    losses: tuple[survival.Loss, ...]
 
-    Empty for an answer that does not parse: that is the parser's failure to
-    report, and its own hint is the better correction.
-    """
-    resolved, _ = conflicts.parse_resolved_content(text)
-    if resolved is None:
-        return ()
-    return survival.audit(
+    @property
+    def usable(self) -> bool:
+        return self.resolved is not None and not self.losses
+
+
+def judge_answer(filepath: str, stages: conflicts.StageTexts, text: str) -> AnswerVerdict:
+    """Parse a whole-file answer and audit it against the conflict's three stages."""
+    resolved, reason = conflicts.parse_resolved_content(text)
+    losses = () if resolved is None else survival.audit(
         filepath, base=stages.base, target=stages.target,
         replayed=stages.replayed, resolved=resolved,
     ).blocking
+    return AnswerVerdict(resolved, reason, losses)
 
 
 def dropped_change_hint(losses: tuple[survival.Loss, ...]) -> str:
@@ -246,32 +257,21 @@ def resolve_full_file(
     """
     stages = conflicts.stage_texts(filepath, cwd)
 
-    # `usable` and `retry_hint` are each asked about the same candidate answer
-    # more than once — `run_prompt` checks `usable` itself and again after its
-    # retry loop returns — and the code below asks a third time once that loop
-    # is done. Parsing is cheap, but `survival.audit` is diff-based, so each
-    # answer's verdict is computed once here and reused by every asker.
-    judged: dict[str, tuple[str | None, str, tuple[survival.Loss, ...]]] = {}
+    # One answer is judged by `usable`, by `retry_hint`, and once more after
+    # the prompt returns; `survival.audit` is diff-based, so each distinct
+    # answer is judged once and the verdict shared.
+    verdicts: dict[str, AnswerVerdict] = {}
 
-    def judge(text: str) -> tuple[str | None, str, tuple[survival.Loss, ...]]:
-        if text not in judged:
-            resolved, reason = conflicts.parse_resolved_content(text)
-            losses = () if resolved is None else survival.audit(
-                filepath, base=stages.base, target=stages.target,
-                replayed=stages.replayed, resolved=resolved,
-            ).blocking
-            judged[text] = (resolved, reason, losses)
-        return judged[text]
-
-    def usable(text: str) -> bool:
-        resolved, _, losses = judge(text)
-        return resolved is not None and not losses
+    def judge(text: str) -> AnswerVerdict:
+        if text not in verdicts:
+            verdicts[text] = judge_answer(filepath, stages, text)
+        return verdicts[text]
 
     def retry_hint(text: str) -> str:
-        _, reason, losses = judge(text)
-        if losses:
-            return dropped_change_hint(losses)
-        return hint_for_reason(reason)
+        verdict = judge(text)
+        if verdict.losses:
+            return dropped_change_hint(verdict.losses)
+        return hint_for_reason(verdict.reason)
 
     ours_content = stages.target
     commit_diff = conflicts.get_commit_diff(filepath, cwd)
@@ -282,7 +282,7 @@ def resolve_full_file(
     answer = agent.invoke.run_prompt(
         Phase.REBASE, prompt, cwd=cwd,
         label=f"conflict resolution for {filepath}",
-        usable=usable, task="conflict-resolve",
+        usable=lambda text: judge(text).usable, task="conflict-resolve",
         # The retry is told what this answer got wrong rather than the generic
         # marker wording: a resolution that copied the conflict markers through
         # needs to be told to merge them, not to emit markers it already did,
@@ -297,7 +297,8 @@ def resolve_full_file(
         return None
 
     stdout = answer.text
-    resolved_content, failure_reason, losses = judge(stdout)
+    verdict = judge(stdout)
+    resolved_content, failure_reason, losses = verdict.resolved, verdict.reason, verdict.losses
     if resolved_content is None:
         tfail(
             trail, "resolve_conflicts",

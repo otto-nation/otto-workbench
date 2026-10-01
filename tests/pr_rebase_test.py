@@ -402,3 +402,37 @@ def test_a_lease_recorded_before_the_field_existed_is_refused(capsys):
     assert rc == 1
     owner.assert_not_called()
     assert "origin already has this branch" in capsys.readouterr().err
+
+
+# ── --push-only ─────────────────────────────────────────────────────────────
+
+
+def test_push_only_pushes_with_the_lease_and_never_rebases(monkeypatch):
+    pushed = {}
+    monkeypatch.setattr(cli.pr_rebase, "cmd_start",
+                        lambda *a, **k: pytest.fail("--push-only must not rebase"))
+
+    def fake_push(cwd, ctx, *, target_ref, snapshot=None, trail=None):
+        pushed["cwd"], pushed["ref"] = cwd, target_ref
+        return 0
+
+    monkeypatch.setattr(cli.pr_rebase, "cmd_push", fake_push)
+    monkeypatch.setattr(cli.pr_rebase, "_resolve",
+                        lambda args: cli.pr_rebase.RebaseTarget(make_ctx(), "/wt", "origin/main"))
+    # main() still resolves context, claims the lock, and opens a trail before
+    # _run; stub those so this case does not need a real checkout.
+    fake_ctx = mock.MagicMock()
+    fake_ctx.require_worktree.return_value = Path("/fake")
+    fake_trail = mock.MagicMock()
+    monkeypatch.setattr(pr.context, "resolve", lambda **k: fake_ctx)
+    monkeypatch.setattr(core.run_lock, "claim_for_process", lambda *a, **k: None)
+    monkeypatch.setattr(cli.pr_rebase.Trail, "start", lambda **k: fake_trail)
+    assert cli.pr_rebase.main(["--push-only"]) == 0
+    assert pushed == {"cwd": "/wt", "ref": "origin/main"}
+
+
+@pytest.mark.parametrize("other", ["--fix", "--abort", "--no-push"])
+def test_push_only_refuses_other_modes(other):
+    with pytest.raises(SystemExit) as exc:
+        cli.pr_rebase.main(["--push-only", other])
+    assert exc.value.code == 2

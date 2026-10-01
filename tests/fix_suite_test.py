@@ -12,6 +12,7 @@ about what a process is.
 """
 
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -292,14 +293,25 @@ def test_a_timeout_reaps_the_whole_process_tree(tmp_path):
 
 
 def _alive(pid: int) -> bool:
-    """Whether `pid` still exists. Signal 0 tests without delivering."""
+    """Whether `pid` is still running.
+
+    Signal 0 answers whether the pid exists, which is not the same question: a
+    killed orphan stays in the table as a zombie until its new parent reaps it.
+    On a CI runner that parent is a subreaper that only reaps at job end, so a
+    process the group signal did kill reads as alive. A zombie has run its
+    last instruction, so it counts as dead here.
+    """
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
-    return True
+    state = subprocess.run(
+        ["ps", "-o", "stat=", "-p", str(pid)],
+        capture_output=True, text=True, check=False,
+    ).stdout.strip()
+    return bool(state) and not state.startswith("Z")
 
 
 # ── what a result does to the pass's claims ─────────────────────────────────

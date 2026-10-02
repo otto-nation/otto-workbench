@@ -708,7 +708,7 @@ _REREVIEW_CTX: dict[Mode, str] = {
 # Which numbered step adds cross-cutting findings, per synthesis template. The
 # execution-claim guard names it, and the two templates number their task
 # lists differently — a mismatch here sends the agent to the wrong step.
-# tests/review_contracts_test.py holds these against the templates themselves.
+# tests/review_contracts_template_prose_test.py holds these against the templates themselves.
 _SYNTHESIS_CROSS_CUTTING_STEP: dict[Mode, int] = {
     Mode.PR: 8,
     Mode.SELF: 9,

@@ -506,12 +506,12 @@ def test_an_unreadable_token_file_is_a_controlled_refusal(h, monkeypatch, capsys
 
 
 def _broken_config(monkeypatch):
-    import config.workbench_config as wc
+    import config.workbench_config
 
     def load_config(project_root=None):
-        raise wc.ConfigError("/cfg/config.yml is not readable YAML: boom")
+        raise config.workbench_config.ConfigError("/cfg/config.yml is not readable YAML: boom")
 
-    monkeypatch.setattr(wc, "load_config", load_config)
+    monkeypatch.setattr(config.workbench_config, "load_config", load_config)
 
 
 def test_a_broken_config_refuses_a_create_that_uses_closes(h, monkeypatch, capsys):

@@ -59,7 +59,9 @@ import pr.context
 import pr.state
 import pr.sync
 import pr.push_intent
+import core.cli_reference
 import core.log
+import core.tool_parser
 import core.proc
 import core.publishing
 import config.workbench_projects
@@ -183,6 +185,65 @@ _CUSTOM = {
     "batch":    cmd_batch,
     "gc":       cmd_gc,
 }
+
+def build_global_parser() -> argparse.ArgumentParser:
+    """The flags `pr` accepts around any command, parsed before the command is.
+
+    One parser for both the first pass of `main` and the reference rendered
+    from it, so the flags documented as global are the flags the first pass
+    consumes — `--worktree` included, which no hand-written usage ever named.
+    """
+    parser = argparse.ArgumentParser(prog=SCRIPT, add_help=False)
+    parser.add_argument("--repo-dir", "--worktree", dest="repo_dir", metavar="path",
+                        help="Git worktree to act on; detected from the current "
+                             "directory when omitted")
+    parser.add_argument("--branch", metavar="name",
+                        help="Branch to act on, resolved to the worktree it is "
+                             "checked out in")
+    parser.add_argument("--pr", metavar="num|url", help="PR number or URL to act on")
+    # Global rather than declared on the invocation that serves a contract,
+    # for three reasons. It describes the caller ("what do you speak"), not the
+    # subcommand ("what do you want"). It generalizes to `pr status`, which
+    # stamps a version nobody reads and is the obvious next document. And it is
+    # consumed by this first parse, so its value never reaches `extra`, where
+    # the positional scan below would read a bare `1` as PR #1 — `pr` has no
+    # arity source of truth for the flags it handles itself.
+    parser.add_argument("--schema-version", dest="schema_version", metavar="n",
+                        help="Serve a versioned JSON document on stdout instead of "
+                             "a human table, where the command has a contract")
+    add_trail_args(parser)
+    return parser
+
+
+def reference_shape() -> core.cli_reference.CLIShape:
+    """Everything `pr` accepts, for the rendered usage line and flag tables.
+
+    A command with a parser factory is documented from that parser — its
+    subparser here declares nothing and forwards argv whole — and every other
+    command from its subparser, which is where its flags (or their absence)
+    are declared. A command in COMMANDS with neither is a registry this module
+    cannot parse, and fails here rather than rendering as a command with no
+    flags.
+    """
+    subs = core.tool_parser.subparsers(_build_parser())
+    commands = []
+    for name, spec in COMMANDS.items():
+        if cli.dispatch.has_parser_factory(name):
+            parser = cli.dispatch.resolve(cli.dispatch.PARSER_FACTORIES[name])()
+            # `review`'s handler routes the mode flags before its parser runs,
+            # so `pr review` accepts more than `review` does — the one command
+            # whose dispatcher adds flags of its own.
+            if name == "review":
+                parser = cli.review_modes.reference_parser(parser)
+        elif name in subs:
+            parser = subs[name]
+        else:
+            raise RuntimeError(f"pr: '{name}' has neither a parser factory nor a subparser")
+        commands.append(core.cli_reference.Command(name, spec.help, parser))
+    return core.cli_reference.CLIShape(
+        prog=SCRIPT, globals=build_global_parser(), commands=tuple(commands),
+    )
+
 
 def _build_parser() -> argparse.ArgumentParser:
     """Build the command parser.
@@ -336,20 +397,7 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     # Two-pass parse: extract global flags first, then route the subcommand.
     # Argparse subparsers swallow flags after the subcommand name, so
     # `pr rebase --repo-dir /path` would lose --repo-dir without this.
-    _global = argparse.ArgumentParser(add_help=False)
-    _global.add_argument("--repo-dir", "--worktree", dest="repo_dir")
-    _global.add_argument("--branch")
-    _global.add_argument("--pr")
-    # Global rather than declared on the invocation that serves a contract,
-    # for three reasons. It describes the caller ("what do you speak"), not the
-    # subcommand ("what do you want"). It generalizes to `pr status`, which
-    # stamps a version nobody reads and is the obvious next document. And it is
-    # consumed by this first parse, so its value never reaches `extra`, where
-    # the positional scan below would read a bare `1` as PR #1 — `pr` has no
-    # arity source of truth for the flags it handles itself.
-    _global.add_argument("--schema-version", dest="schema_version")
-    add_trail_args(_global)
-    global_args, remaining = _global.parse_known_args(argv)
+    global_args, remaining = build_global_parser().parse_known_args(argv)
 
     parser = _build_parser()
 

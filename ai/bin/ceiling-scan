@@ -267,14 +267,16 @@ def marker_counts(markers: list[dict]) -> dict:
     }
 
 
-def main(argv: list[str] | None = None) -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
+        prog=SCRIPT,
         description="Scan for ceiling: markers and produce a debt ledger.",
     )
     parser.add_argument(
         "directory",
         nargs="?",
         default=".",
+        metavar="DIR",
         help="Directory to scan (default: current directory)",
     )
     parser.add_argument(
@@ -298,7 +300,11 @@ def main(argv: list[str] | None = None) -> None:
         action="version",
         version=_version_string(SCRIPT),
     )
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = build_parser().parse_args(argv)
 
     root = Path(args.directory).resolve()
     if not root.is_dir():

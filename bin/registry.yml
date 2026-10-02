@@ -158,6 +158,7 @@ tools:
     description: "Sweep lint violations across multiple Go repos — detect, report, and optionally create fix branches"
 
   - name: validate-nesting
+    parser: bin/validate-nesting:build_parser
     permission: true
     visibility: brief
     description: "Validate bash, Python, and Go script nesting depth to enforce flat control flow"

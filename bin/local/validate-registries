@@ -138,9 +138,20 @@ _check_required_fields() {
   has_wtu=$(reg_has "$file" tools "$i" when_to_use && echo true || echo false)
   has_usage=$(reg_has "$file" tools "$i" usage && echo true || echo false)
 
+  # A `parser:` is where the usage comes from instead: generate-cli-reference
+  # renders it from the parser, so a hand-written one beside it is a second
+  # copy free to drift from the first.
+  local has_parser
+  has_parser=$(reg_has "$file" tools "$i" parser && echo true || echo false)
+  if [[ "$has_parser" == "true" && "$has_usage" == "true" ]]; then
+    _fail "$(basename "$file") entry '$name': field 'usage' is not allowed beside 'parser' — the usage is rendered from the parser"
+  fi
+
   if [[ "$visibility" == "full" ]]; then
     [[ -n "$when_to_use" && "$when_to_use" != "null" ]] || _fail "$(basename "$file") entry '$name': missing required field: when_to_use (required when visibility: full)"
-    [[ -n "$usage" && "$usage" != "null" ]]             || _fail "$(basename "$file") entry '$name': missing required field: usage (required when visibility: full)"
+    if [[ "$has_parser" != "true" ]]; then
+      [[ -n "$usage" && "$usage" != "null" ]] || _fail "$(basename "$file") entry '$name': missing required field: usage or parser (one is required when visibility: full)"
+    fi
   else
     [[ "$has_wtu" != "true" ]]   || _fail "$(basename "$file") entry '$name': field 'when_to_use' is not allowed when visibility: $visibility"
     [[ "$has_usage" != "true" ]] || _fail "$(basename "$file") entry '$name': field 'usage' is not allowed when visibility: $visibility"
@@ -327,6 +338,22 @@ _check_reference_field() {
   fi
 }
 
+# _check_parser_field FILE INDEX — `parser` is `<module-or-path>:<attr>`, in a
+# bindir registry, where generate-cli-reference and the MCP server read it.
+_check_parser_field() {
+  local file="$1" i="$2"
+  reg_has "$file" tools "$i" parser || return 0
+  local name spec
+  name=$(_tool_label "$file" "$i")
+  spec=$(reg_get "$file" tools "$i" parser)
+  if [[ ! "$spec" =~ ^[^:[:space:]]+:[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+    _fail "$(basename "$file") entry '$name': parser must be <module-or-path>:<attr> (got '$spec')"
+  fi
+  if [[ "$(reg_get "$file" meta validation)" != bindir ]]; then
+    _fail "$(basename "$file") entry '$name': field 'parser' is read only in a bindir registry"
+  fi
+}
+
 # _validate_schema FILE VALIDATION
 # Runs required-field, allow-field, and duplicate checks for every entry in FILE.
 _validate_schema() {
@@ -340,6 +367,7 @@ _validate_schema() {
     _check_unknown_fields "$file" "$i"
     _check_commands_field "$file" "$i"
     _check_reference_field "$file" "$i"
+    _check_parser_field "$file" "$i"
     i=$(( i + 1 ))
   done
   _check_no_duplicates "$file" "$validation"

@@ -98,6 +98,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `validate-rules` | Validates rule frontmatter conventions — harness scoping resolves, no Claude-only tool vocabulary in a rule that reaches Pi |
 | `compose-docs` | Composes docs/*.md from docs/*.src.md by expanding include directives into generator output |
 | `generate-doc-reference` | Renders a module reference from the doc blocks of a source set's own modules |
+| `generate-cli-reference` | Renders a registered tool's usage line or flag tables from its own argparse parser |
 | `generate-tool-context` | Generates tools.generated*.md rule files from the domain registries |
 | `generate-config-schema` | Generates config.schema.json and the docs key reference from WorkbenchConfig |
 | `generate-public-surface` | Generates the per-package public surface snapshot from the registries, config schema, and shipped artifacts |
@@ -444,6 +445,15 @@ shebang. `--diff` is mutually exclusive with positional files.
 | `1` | Any file exceeds max depth |
 | `2` | Usage error (`--diff` with positional files, or `BASE_REF` did not resolve) |
 
+**Flags**
+
+| Flag | Description |
+|------|-------------|
+| `--quiet` | Only show failures and summary. |
+| `--max-depth` `<n>` | Maximum nesting depth (overrides per-language defaults). |
+| `--diff` `<base-ref>` | Only check violations in lines added since BASE_REF. |
+| `[<file> ...]` | Files to check (auto-discovers if omitted). |
+
 ### `wt-cleanup`
 
 Remove stale git worktrees — merged branches and optionally age-based cleanup.
@@ -542,6 +552,16 @@ the file when no markers remain.
 
 Exit code is always 0 (informational), including when DIR is not a directory.
 
+**Flags**
+
+| Flag | Description |
+|------|-------------|
+| `[<dir>]` | Directory to scan (default: current directory). |
+| `--summary-only` | Output only the summary line. |
+| `--json` | Output counts as JSON: {"total": N, "no_trigger": M, "permanent": P}. |
+| `--output` `<path>` | Write ledger to file instead of stdout; removes the file when no markers remain. |
+| `-V`, `--version` | show program's version number and exit. |
+
 ### `dream-scan`
 
 Scan session transcripts and memory state for dream consolidation.
@@ -567,6 +587,16 @@ preference, decision, pattern, review_feedback).
 
 `--list-transcripts` prints every transcript path in the window, one per line,
 and exits. `--memory-dir REPO` prints that repo's memory directory and exits.
+
+**Flags**
+
+| Flag | Description |
+|------|-------------|
+| `-V`, `--version` | print version and exit. |
+| `--days` `<n>` | scan sessions from last N days (default: 7). |
+| `--home` `<dir>` | home directory override (for testing). Default: `/Users/isaacg`. |
+| `--list-transcripts` | print transcript paths for the window, one per line, and exit. |
+| `--memory-dir` `<repo>` | print the memory directory for the repo at REPO, and exit. |
 
 ### `dream-verify`
 
@@ -635,6 +665,71 @@ trail already sweeps as it opens).
 What the ledger records, and what each stats column means, is on `agent/usage.py`
 in docs/ai-libraries.md.
 
+**`otto-log recent`** — Recent events (default: last 1h)
+
+| Flag | Description |
+|------|-------------|
+| `--since` `<since>` | Time window (e.g. 2h, 1d, 30m). Default: `1h`. |
+| `--repo` `<repo>` | Filter by repo (org/repo). |
+| `--json` | Output raw JSONL. |
+
+**`otto-log query`** — Filter events
+
+| Flag | Description |
+|------|-------------|
+| `--script` `<script>` | Filter by script name. |
+| `--level` `<level>` | Filter by level (debug, info, warn, error). |
+| `--event-type` `<event-type>` | Filter by event type. |
+| `--invocation` `<invocation>` | Filter by invocation ID (one process). |
+| `--root` `<root>` | Filter by root invocation ID (one whole user command). |
+| `--pr` `<pr>` | Filter by PR number. |
+| `--repo` `<repo>` | Filter by repo (org/repo). |
+| `--since` `<since>` | Time window (e.g. 2h, 1d). |
+| `--json` | Output raw JSONL. |
+
+**`otto-log show`** — Show one command's timeline
+
+| Flag | Description |
+|------|-------------|
+| `<invocation>` | Invocation ID — the command's own, or any process under it. |
+| `--only` | Just the named process, not the whole command it belongs to. |
+| `--json` | Output raw JSONL. |
+
+**`otto-log list`** — List invocations
+
+| Flag | Description |
+|------|-------------|
+| `--script` `<script>` | Filter by script name — lists the whole command that reached it. |
+| `--since` `<since>` | Time window (e.g. 2h, 1d) — selects commands active in it, each listed whole even if it started earlier. |
+| `--repo` `<repo>` | Filter by repo (org/repo). |
+| `--json` | Output raw JSONL. |
+
+**`otto-log record`** — Write one event to the trail (for shell and agent callers)
+
+| Flag | Description |
+|------|-------------|
+| `--script` `<script>` | Name the event is filed under. Required. |
+| `--action` `<action>` | What happened, as a short key. Required. |
+| `--detail` `<detail>` | One line of prose about it. |
+| `--level` `<info\|warn\|error>` | Severity (default: info). |
+| `--data` `<key=value>` | Structured field, repeatable — numeric values are stored as numbers. |
+| `--repo` `<repo>` | Subject repo (org/repo), recorded as context. |
+| `--pr` `<pr>` | Subject PR number, recorded as context. |
+
+**`otto-log prune`** — Drop trail months past the horizon
+
+| Flag | Description |
+|------|-------------|
+| `--keep` `<keep>` | Months of history to keep (default: 6). |
+
+**`otto-log stats`** — Aggregate AI cost and token usage
+
+| Flag | Description |
+|------|-------------|
+| `--since` `<since>` | Time window (e.g. 24h, 7d). Default: `7d`. |
+| `--by` `<script\|task\|model\|day\|phase>` | Group rows by. Default: `script`. |
+| `--json` | Output one JSON object per group. |
+
 ### `otto-mcp-server`
 
 MCP server launcher. Offers the tools the component registries declare, over
@@ -666,27 +761,135 @@ Requires: `uv`, the `mcp` Python package.
 
 ### `pr`
 
-Unified PR lifecycle CLI — CI, code review, comments, rebasing, and push state.
+Unified PR lifecycle CLI — creation, CI, code review, comments, rebasing, and push state.
 
-```
-pr [global flags] <command> [flags]
-pr status
-pr ci [--fix] [--post]
-pr review [--self] [--fix] [--push] [--post] [--repair] [--summary]
-pr comments [--triage] [--fix] [--finish] [--post]
-pr fix
-pr rebase [--fix] [--push] [--abort] [--onto <ref>]
-pr describe [--force] [--dry-run] [--post]
-pr gc
-```
+`pr [global flags] <command> [flags]`. The global flags work in any position and
+name which worktree, branch, or PR a command acts on; omit them and all three
+are resolved from the current directory. `pr <command> --help` prints that
+command's own flags, and `--tool-schema` prints a JSON document describing the
+tool (or, after a command, that command) and exits.
 
-Global flags (`--repo-dir`, `--branch`, `--pr`) apply to every command; omit them
-and the worktree, branch, and PR are resolved from the current directory.
-`--tool-schema` prints a JSON document describing the tool (or, after a
-subcommand, that command) and exits.
+The flag tables below are rendered from the parsers `pr` parses with. How each
+command behaves — phases, review modes, comment settlement, rebase conflict
+handling — is in [AI Automation](ai-automation.md), and each module's own account
+is in [AI Libraries](ai-libraries.md).
 
-Deeper behaviour — phases, review modes, comment settlement, rebase conflict
-handling — is in docs/ai-automation.md and the modules in docs/ai-libraries.md.
+**Global flags**
+
+| Flag | Description |
+|------|-------------|
+| `--repo-dir`, `--worktree` `<path>` | Git worktree to act on; detected from the current directory when omitted. |
+| `--branch` `<name>` | Branch to act on, resolved to the worktree it is checked out in. |
+| `--pr` `<num\|url>` | PR number or URL to act on. |
+| `--schema-version` `<n>` | Serve a versioned JSON document on stdout instead of a human table, where the command has a contract. |
+
+**`pr create`** — Create a PR, or preview it with --dry-run
+
+| Flag | Description |
+|------|-------------|
+| `--draft` | Open the PR as a draft. |
+| `--no-verify` | Skip the pre-push hook when pushing the branch. |
+| `--dry-run` | Print the title and body; push nothing, create nothing. |
+| `--base` `<branch>` | Branch the PR targets (default: the repo's default branch). |
+| `--title` `<text>` | Use this title instead of generating one. |
+| `--body` `<text>` | Use this body instead of generating one. Not with `--body-file`. |
+| `--body-file` `<path>` | Read the body from this file instead of generating one. Not with `--body`. |
+| `--issue` `<id>` | Issue to give the description context about; closes nothing. |
+| `--closes` `<id>` | Issue to close on merge (repeatable). |
+
+**`pr status`** — Show CI, review, and comment status dashboard
+
+Takes no flags.
+
+**`pr ci`** — Check CI failures
+
+| Flag | Description |
+|------|-------------|
+| `--run` `<id>` | Specific run ID. |
+| `--fix` | Invoke AI to fix failures after diagnosis. |
+| `--post` | Push the fixes; without it the push is drafted. |
+| `--wait` | Poll until all jobs complete, emitting incremental reports. |
+| `--wait-timeout` `<sec>` | Max wait time in seconds (default: 900). |
+| `--wait-interval` `<sec>` | Poll interval in seconds (default: 30). |
+
+**`pr review`** — Run code review
+
+| Flag | Description |
+|------|-------------|
+| `--no-post` | Do not post the review to GitHub. |
+| `--submit` | Submit the GitHub review after posting (default: leave PENDING). |
+| `--self` | Review the local checkout rather than a PR. |
+| `--fix` | Apply findings after the review (requires --self). |
+| `--push` | Push the --fix commit (requires --fix). |
+| `--skip-user-verification` | Skip the PR-ownership check when --self is given a PR ref. |
+| `--force` | Skip stale-review and pending-review prompts; not with --recover. |
+| `--no-holistic` | Skip the holistic scan phase. |
+| `--no-scout` | Skip the scout phase. |
+| `--no-group` | Skip the group review phase. |
+| `--no-synthesis` | Skip the synthesis phase. |
+| `--no-disprove` | Skip the disprove gate phase. |
+| `--disprove` | Enable the disprove-it gate (default: effort-based). |
+| `--json-summary` | Print a machine-readable summary on stdout. |
+| `--issue` `<url>` | Related issue to include in the review prompt. |
+| `--base`, `--onto` `<base>` | Branch to review against, as a bare name. Default: the PR's base, else the branch this one is stacked on, else the repo's default branch. |
+| `--max-parallel` `<max-parallel>` | Max concurrent group reviews (default: from the machine slot pool, cap 4). |
+| `--max-cost` `<usd>` | Max total review cost in USD. |
+| `--model` `<name>` | Override the model for all agents (e.g. sonnet, opus). |
+| `--effort` `<low\|medium\|high>` | Effort preset (default: review.effort in config.yml, else medium). |
+| `--max-groups` `<n>` | Max file groups in multi-phase reviews (default: effort-based). |
+| `--generated` | Include tier3-generated files (skipped by default). |
+| `-V`, `--version` | Print version and exit. |
+| `[<pr\|branch> ...]` | PR number, URL, or branch name. |
+| `--post` | Post an existing review to GitHub — a mode; excludes the other mode flags. |
+| `--repair` | Repair broken review artifacts via summary or rebuild — a mode; excludes the other mode flags. |
+| `--summary` | Print a JSON summary of an existing review — a mode; excludes the other mode flags. |
+| `--recover` | Finish a review whose agents failed, at the commit it started from — a mode; excludes the other mode flags. |
+| `--list` | List every review in the user's state root — a mode; excludes the other mode flags. |
+
+**`pr comments`** — Fetch and manage PR review threads
+
+| Flag | Description |
+|------|-------------|
+| `--triage` | Phase: classify threads via AI and auto-resolve verified. |
+| `--fix` | Phase: triage threads and apply mechanical fixes via Claude agent. |
+| `--no-verify` | Skip the verify gate after --fix. The gate runs the project's own checks against each claimed fix and demotes the ones that do not hold up; without it every fix publishes as unverified. |
+| `--finish` | Phase: close out deferred work — replies, tracking issue, summary. Drafts them unless --post is given. |
+| `--track` `<thread-id>` | File this deferred thread on the tracking issue (repeatable). Deferral is a per-thread decision, so --finish files nothing unless told which threads. |
+| `--track-all` | File every deferred thread. Only for a set the user has actually reviewed. |
+| `--post` | Gate, not a phase: publish whatever the chosen phase produced — replies, summaries, resolutions (default: print drafts to stderr and post nothing). |
+| `--reply` `<thread-or-comment-id>` | Reply to one thread, editing our standing reply if it is still the last comment. Accepts a thread node ID, a comment ID, or a #discussion_r... URL. A write like any other: needs --post to leave the machine. |
+| `--body-file` `<path>` | File holding the --reply body ('-' for stdin). |
+| `--settle` `<thread-id>` | Phase: record that you settled this thread by hand (repeatable). Writes local state and nothing else; --finish then replies, resolves and reports it like any other settled thread. |
+| `--as` `<fixed\|dismissed\|already_addressed>` | What --settle records (default: fixed). |
+| `--reason` `<text>` | Why, for --settle --as dismissed — it becomes the reply the reviewer reads. |
+| `--commit` `<sha>` | The commit carrying a --settle --as fixed change, for a fix that landed away from the line the thread is anchored to (default: inferred from that line). Applies to every --settle in the run, so a batch where only some threads need it takes two runs. |
+
+**`pr fix`** — Fix CI + review + comments
+
+Takes no flags.
+
+**`pr rebase`** — Rebase onto the branch's base
+
+| Flag | Description |
+|------|-------------|
+| `--onto`, `--base` `<ref>` | Ref to rebase onto — overrides the PR's base branch and the repo's default branch. |
+| `--fork-point` `<ref>` | Replay only the commits after REF, onto the target — for a branch whose earlier commits already landed. The partially-landed refusal names the ref to pass. |
+| `--fix` | Autonomous mode — resolve conflicts with AI and rebase (force-pushes unless --no-push). |
+| `--no-push` | Skip the force-push — print the command instead. |
+| `--force` | Rebase even when the branch's work already landed on the target ref. |
+| `--abort` | Abort in-progress rebase. |
+
+**`pr describe`** — Revise the PR description
+
+| Flag | Description |
+|------|-------------|
+| `--force` | Revise even when HEAD has not moved since the last pass. |
+| `--dry-run` | Print the revision instead of applying it. |
+| `--post` | Apply the revision to the PR; without it the edit is drafted. |
+
+**`pr gc`** — Clean up stale PR artifacts
+
+Takes no flags.
 
 ### `promote-scan`
 
@@ -707,6 +910,14 @@ Stdout is a markdown report with Memory State (topic files, last-promote stamp),
 Backed-Up Memories (`ai/memory` in the workbench), and Workbench Artifacts
 (rules, scripts, hooks, agents). Topic bodies are truncated to a preview.
 
+**Flags**
+
+| Flag | Description |
+|------|-------------|
+| `-V`, `--version` | print version and exit. |
+| `--home` `<dir>` | home directory override (for testing). Default: `/Users/isaacg`. |
+| `--workbench` `<dir>` | workbench directory (default: $OTTO_WORKBENCH or ~/git/personal/otto-nation/otto-workbench/main). |
+
 ### `retro-consume`
 
 Delete the local reviews a retro consumed, if the record answers to it.
@@ -725,6 +936,14 @@ No consume record is not an error — nothing to clean up. `--dry-run` reports
 targets and deletes nothing. The record is cleared only after the deletions it
 authorised have happened, so a crash mid-run can be retried with the same ID.
 `--scan-id` is required (exit 2 if omitted).
+
+**Flags**
+
+| Flag | Description |
+|------|-------------|
+| `-V`, `--version` | print version and exit. |
+| `--scan-id` `<id>` | the scan ID retro-scan --consume reported. |
+| `--dry-run` | report what would be deleted, delete nothing. |
 
 ### `retro-scan`
 
@@ -750,6 +969,16 @@ the report so the skill can quote the ID into `retro-consume`.
 resolves to a GitHub repo — the scan refuses to bank a window over local reviews
 alone.
 
+**Flags**
+
+| Flag | Description |
+|------|-------------|
+| `-V`, `--version` | print version and exit. |
+| `--home` `<dir>` | home directory override. Default: `/Users/isaacg`. |
+| `--workbench` `<dir>` | workbench directory (default: $OTTO_WORKBENCH or ~/git/personal/otto-nation/otto-workbench/main). |
+| `--since` `<duration>` | override scan window (e.g. 7d, 24h, 30m). |
+| `--consume` | record the local reviews read, so the retro may delete them when it completes. |
+
 ### `review`
 
 Run the configured review agent on a PR with local worktree checkout and iterative review support.
@@ -772,7 +1001,41 @@ read as the name of a branch to review.
 
 `--no-post` and `--post` are mutually exclusive. Pipeline phases, base-branch
 resolution, model selection, and Vertex quota preflight are in
-docs/ai-automation.md and the modules in docs/ai-libraries.md.
+[AI Automation](ai-automation.md) and the modules in [AI Libraries](ai-libraries.md).
+
+**Flags**
+
+| Flag | Description |
+|------|-------------|
+| `--no-post` | Do not post the review to GitHub. |
+| `--post` | Post the review to GitHub when it finishes. |
+| `--submit` | Submit the GitHub review after posting (default: leave PENDING). |
+| `--self` | Review the local checkout rather than a PR. |
+| `--fix` | Apply findings after the review (requires --self). |
+| `--push` | Push the --fix commit (requires --fix). |
+| `--skip-user-verification` | Skip the PR-ownership check when --self is given a PR ref. |
+| `--force` | Skip stale-review and pending-review prompts; not with --recover. |
+| `--recover` | Finish a review whose agents failed, at the commit it started from. |
+| `--no-holistic` | Skip the holistic scan phase. |
+| `--no-scout` | Skip the scout phase. |
+| `--no-group` | Skip the group review phase. |
+| `--no-synthesis` | Skip the synthesis phase. |
+| `--no-disprove` | Skip the disprove gate phase. |
+| `--disprove` | Enable the disprove-it gate (default: effort-based). |
+| `--json-summary` | Print a machine-readable summary on stdout. |
+| `--issue` `<url>` | Related issue to include in the review prompt. |
+| `--base`, `--onto` `<base>` | Branch to review against, as a bare name. Default: the PR's base, else the branch this one is stacked on, else the repo's default branch. |
+| `--max-parallel` `<max-parallel>` | Max concurrent group reviews (default: from the machine slot pool, cap 4). |
+| `--max-cost` `<usd>` | Max total review cost in USD. |
+| `--model` `<name>` | Override the model for all agents (e.g. sonnet, opus). |
+| `--effort` `<low\|medium\|high>` | Effort preset (default: review.effort in config.yml, else medium). |
+| `--max-groups` `<n>` | Max file groups in multi-phase reviews (default: effort-based). |
+| `--generated` | Include tier3-generated files (skipped by default). |
+| `--repo-dir`, `--worktree` `<path>` | Git worktree directory. |
+| `--branch` `<name>` | Branch to review (injected by the pr dispatcher). |
+| `--pr` `<num\|url>` | PR number or URL (injected by the pr dispatcher). |
+| `-V`, `--version` | Print version and exit. |
+| `[<pr\|branch> ...]` | PR number, URL, or branch name. |
 
 ### `serena-mcp`
 
@@ -833,6 +1096,108 @@ removed.
 `status`, `lint`, `signals`, and `sources` accept `--json`. `lint` and
 `index --check` exit 1 when they have findings. Exit 2 means the knowledge base
 could not be located — or, from `init` alone, no location was chosen.
+
+**Global flags**
+
+| Flag | Description |
+|------|-------------|
+| `-V`, `--version` | show program's version number and exit. |
+
+**`wiki init`** — Create a knowledge base
+
+| Flag | Description |
+|------|-------------|
+| `[<dir>]` | Where to start looking (default: cwd). |
+| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
+| `--domain` `<domain>` | What the knowledge base is about. |
+| `--audience` `<audience>` | Who will use it. |
+| `--vault` | Keep it in the machine-level vault, private to this machine. Not with `--in-repo`. |
+| `--in-repo` | Keep it in the repo, committed and shared with whoever clones it. Not with `--vault`. |
+
+**`wiki path`** — Print the resolved knowledge base directory
+
+| Flag | Description |
+|------|-------------|
+| `[<dir>]` | Where to start looking (default: cwd). |
+| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
+
+**`wiki status`** — Counts, uncompiled sources, and recent activity
+
+| Flag | Description |
+|------|-------------|
+| `[<dir>]` | Where to start looking (default: cwd). |
+| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
+| `--json` | Emit JSON. |
+
+**`wiki lint`** — Mechanical health checks over articles and sources
+
+| Flag | Description |
+|------|-------------|
+| `[<dir>]` | Where to start looking (default: cwd). |
+| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
+| `--json` | Emit JSON. |
+| `--signals` | Also report the counted signals. |
+
+**`wiki signals`** — Counted evidence for the judgements lint leaves open
+
+| Flag | Description |
+|------|-------------|
+| `[<dir>]` | Where to start looking (default: cwd). |
+| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
+| `--json` | Emit JSON. |
+
+**`wiki sources`** — Raw sources with their hashes and compile state
+
+| Flag | Description |
+|------|-------------|
+| `[<dir>]` | Where to start looking (default: cwd). |
+| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
+| `--json` | Emit JSON. |
+| `--new` | Only new or changed sources. |
+
+**`wiki index`** — Rebuild the master index from article frontmatter
+
+| Flag | Description |
+|------|-------------|
+| `[<dir>]` | Where to start looking (default: cwd). |
+| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
+| `--check` | Report staleness without writing. |
+
+**`wiki backup`** — Snapshot the knowledge base, list snapshots, or restore one
+
+| Flag | Description |
+|------|-------------|
+| `[<dir>]` | Where to start looking (default: cwd). |
+| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
+| `--list` | List snapshots instead of making one. |
+| `--restore` `<name>` | Extract a snapshot beside the base; NAME or 'latest'. |
+| `--keep` `<keep>` | How many snapshots to keep (default: 10). |
+
+**`wiki link`** — Create or remove the browsing symlink from this repo to its base
+
+| Flag | Description |
+|------|-------------|
+| `[<dir>]` | Where to start looking (default: cwd). |
+| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
+
+**`wiki ingest`** — Copy a source into raw/ with frontmatter and a real hash
+
+| Flag | Description |
+|------|-------------|
+| `[<dir>]` | Where to start looking (default: cwd). |
+| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
+| `--stage` `<src>` | File to copy into raw/. Required. |
+| `--type` `<type>` | Source type recorded in frontmatter. Default: `file`. |
+| `--title` `<title>` | Title, used for the filename and frontmatter. |
+
+**`wiki archive`** — Retire an article to archive/, keeping it readable
+
+| Flag | Description |
+|------|-------------|
+| `<slug>` | Article to retire. |
+| `[<dir>]` | Where to start looking (default: cwd). |
+| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
+| `--force` | Archive even while live articles link to it. |
 
 ### `workbench-reference`
 

@@ -19,7 +19,7 @@ read as the name of a branch to review.
 
 `--no-post` and `--post` are mutually exclusive. Pipeline phases, base-branch
 resolution, model selection, and Vertex quota preflight are in
-docs/ai-automation.md and the modules in docs/ai-libraries.md.
+[AI Automation](ai-automation.md) and the modules in [AI Libraries](ai-libraries.md).
 """
 
 import os

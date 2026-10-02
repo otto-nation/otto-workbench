@@ -448,6 +448,18 @@ _bash_script() {
   [ "$output" = "$(printf 'ai-tooling\nworkbench-scripts')" ]
 }
 
+@test "scripts: a tool with a parser gets its flag tables appended, from that parser" {
+  _registry ai/bin "AI Tooling" "" "$(_tool otto-log brief 'parser: ai/bin/otto-log:build_parser'; _tool plain brief)"
+  mkdir -p "$SOURCE_ROOT/ai/bin"
+  printf '#!/usr/bin/env python3\n"""Query the trail."""\n' > "$SOURCE_ROOT/ai/bin/otto-log"
+  _bash_script ai/bin/plain "No parser."
+
+  run main --set scripts --group ai-tooling
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'Query the trail.'$'\n\n''<!-- include: bin/local/generate-cli-reference --tool otto-log --emit tables -->'* ]]
+  [ "$(grep -c 'generate-cli-reference' <<< "$output")" -eq 1 ]
+}
+
 @test "scripts: a tool in the reference whose script has no header fails the render" {
   _registry bin "Workbench Scripts" "" "$(_tool bare brief)"
   printf '#!/usr/bin/env bash\nset -e\n' > "$SOURCE_ROOT/bin/bare"

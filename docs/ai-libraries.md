@@ -3834,6 +3834,39 @@ Nothing here raises. Registration is a side effect of a command that was run for
 some other reason, and a hook that failed because a state file was unwritable
 would cost the user their session for a bookkeeping entry.
 
+### core/cli_reference.py
+
+Usage lines and flag tables rendered from a CLI's own argparse parsers.
+
+A flag that is declared in a parser and described somewhere else drifts in one
+direction only: the parser gains it, the description does not, and the CLI
+ends up advertising less than it accepts. `pr rebase --base` worked for months
+while three of the four places that described `pr rebase` named `--onto`
+alone, and `pr create` was missing from the usage string agents read. Nothing
+checked the one against the other, and a check would only have reported the
+gap. This renders the description *from* the parser, so there is no second
+copy to fall behind.
+
+Two outputs, from one `CLIShape`:
+
+- `usage_line` — every invocation on one line, joined by `  |  `. It is the
+  `usage` a registry entry would otherwise hand-write, and it is what
+  `tools.generated.md` and the MCP tool description show.
+- `tables` — markdown: the global flags, then one table per command. It is
+  what `docs/tools.md` shows under the script's own header.
+
+A shape is a program name, an optional parser of global flags, and its
+commands, each with its own parser. `shape_of` builds one from a plain
+`ArgumentParser` — its subparsers become the commands and its own options the
+globals — so a CLI built the ordinary way needs nothing written for it. A
+dispatcher whose commands parse in other modules (`pr`, whose delegates each
+own a parser) assembles its `CLIShape` itself.
+
+What is shown is what argparse would accept and `--help` would print: an
+option whose help is `SUPPRESS` stays out, as do the framework flags every
+`ToolParser` script shares (`--help`, `--tool-schema`, `--debug`). Every
+option string is shown, so an alias is documented the moment it is declared.
+
 ### core/conventions.py
 
 Bridge to the repo's conventional-commit rules in lib/conventions.sh.

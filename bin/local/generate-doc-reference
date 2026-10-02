@@ -207,6 +207,11 @@ _section_slug() {
   printf '%s' "${slug%-}"
 }
 
+# The registry members whose entry declares `parser:`, keyed by script path,
+# valued by tool name. Filled by _registry_members, in the parent shell, and
+# read by _render_module to append the flag tables rendered from that parser.
+declare -gA _PARSER_TOOL_OF=()
+
 # _registry_members KEY ARRAY_REF — every tool a bindir registry under
 # SOURCE_ROOT puts in the reference, grouped by its registry's section and
 # titled by its name, ordered by name.
@@ -239,6 +244,9 @@ _registry_members() {
         [[ "$vis" == hidden ]] && ref=false
       fi
       [[ "$ref" == true ]] || continue
+      if [[ -n "$(reg_get "$reg" tools "$i" parser)" ]]; then
+        _PARSER_TOOL_OF["$SOURCE_ROOT/$source/$name"]="$name"
+      fi
       # shellcheck disable=SC2016  # backticks are markdown literals
       listed+=("$name"$'\t'"$SOURCE_ROOT/$source/$name"$'\t'"$group"$'\t'"$(printf '`%s`' "$name")")
     done
@@ -616,6 +624,12 @@ _render_module() {
   printf '### %s\n\n' "$rel"
   printf '%s\n' "$block"
   _functions_table "$key" "$file"
+  # A CLI's flags come from its parser, not its header: compose-docs expands
+  # this into the tables generate-cli-reference renders, so the header holds
+  # what the parser cannot say and nothing it can.
+  if [[ -n "${_PARSER_TOOL_OF[$file]:-}" ]]; then
+    printf '\n<!-- include: bin/local/generate-cli-reference --tool %s --emit tables -->\n' "${_PARSER_TOOL_OF[$file]}"
+  fi
   if [[ -n "${SET_FACADE[$key]}" ]] && _in_list "$rel" "$@"; then
     # shellcheck disable=SC2016  # backticks are markdown literals
     printf '\nLoaded via `%s`.\n' "${SET_FACADE[$key]}"

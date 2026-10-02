@@ -44,16 +44,18 @@ def build_parser() -> ToolParser:
     # Accepted and inert: nothing prompts for an issue any more, and rejecting
     # the flag would fail invocations already written with it.
     parser.add_argument("--no-issue", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--base", default="",
+    parser.add_argument("--base", default="", metavar="BRANCH",
                         help="Branch the PR targets (default: the repo's default branch)")
-    parser.add_argument("--title", default="", help="Use this title instead of generating one")
+    parser.add_argument("--title", default="", metavar="TEXT",
+                        help="Use this title instead of generating one")
     body = parser.add_mutually_exclusive_group()
-    body.add_argument("--body", default="", help="Use this body instead of generating one")
-    body.add_argument("--body-file", default="",
+    body.add_argument("--body", default="", metavar="TEXT",
+                      help="Use this body instead of generating one")
+    body.add_argument("--body-file", default="", metavar="PATH",
                       help="Read the body from this file instead of generating one")
-    parser.add_argument("--issue", default="",
+    parser.add_argument("--issue", default="", metavar="ID",
                         help="Issue to give the description context about; closes nothing")
-    parser.add_argument("--closes", action="append", default=[],
+    parser.add_argument("--closes", action="append", default=[], metavar="ID",
                         help="Issue to close on merge (repeatable)")
     return parser
 

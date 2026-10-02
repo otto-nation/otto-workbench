@@ -1,25 +1,16 @@
 #!/usr/bin/env python3
-"""Unified PR lifecycle CLI — CI, code review, comments, rebasing, and push state.
+"""Unified PR lifecycle CLI — creation, CI, code review, comments, rebasing, and push state.
 
-```
-pr [global flags] <command> [flags]
-pr status
-pr ci [--fix] [--post]
-pr review [--self] [--fix] [--push] [--post] [--repair] [--summary]
-pr comments [--triage] [--fix] [--finish] [--post]
-pr fix
-pr rebase [--fix] [--push] [--abort] [--onto <ref>]
-pr describe [--force] [--dry-run] [--post]
-pr gc
-```
+`pr [global flags] <command> [flags]`. The global flags work in any position and
+name which worktree, branch, or PR a command acts on; omit them and all three
+are resolved from the current directory. `pr <command> --help` prints that
+command's own flags, and `--tool-schema` prints a JSON document describing the
+tool (or, after a command, that command) and exits.
 
-Global flags (`--repo-dir`, `--branch`, `--pr`) apply to every command; omit them
-and the worktree, branch, and PR are resolved from the current directory.
-`--tool-schema` prints a JSON document describing the tool (or, after a
-subcommand, that command) and exits.
-
-Deeper behaviour — phases, review modes, comment settlement, rebase conflict
-handling — is in docs/ai-automation.md and the modules in docs/ai-libraries.md.
+The flag tables below are rendered from the parsers `pr` parses with. How each
+command behaves — phases, review modes, comment settlement, rebase conflict
+handling — is in [AI Automation](ai-automation.md), and each module's own account
+is in [AI Libraries](ai-libraries.md).
 """
 
 # `--tool-schema` is answered in cli.pr before context resolution; see

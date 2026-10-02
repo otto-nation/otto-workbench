@@ -46,15 +46,22 @@ from retro.consumed import clear_record, deletable, read_record  # noqa: E402
 SCRIPT = Path(__file__).name
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
+        prog=SCRIPT,
         description="Delete the local reviews a retro consumed.",
         usage="retro-consume --scan-id ID [--dry-run]",
     )
     parser.add_argument("-V", "--version", action="store_true", help="print version and exit")
-    parser.add_argument("--scan-id", type=str, default=None, help="the scan ID retro-scan --consume reported")
-    parser.add_argument("--dry-run", action="store_true", help="report what would be deleted, delete nothing")
-    args = parser.parse_args()
+    parser.add_argument("--scan-id", type=str, default=None, metavar="ID",
+                        help="the scan ID retro-scan --consume reported")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="report what would be deleted, delete nothing")
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
 
     if args.version:
         print(_version_string(SCRIPT))

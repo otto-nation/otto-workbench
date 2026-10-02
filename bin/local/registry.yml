@@ -194,6 +194,11 @@ tools:
     visibility: brief
     description: "Renders a module reference from the doc blocks of a source set's own modules"
 
+  - name: generate-cli-reference
+    permission: false
+    visibility: brief
+    description: "Renders a registered tool's usage line or flag tables from its own argparse parser"
+
   - name: generate-tool-context
     permission: false
     visibility: brief

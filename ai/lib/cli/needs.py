@@ -113,11 +113,13 @@ class ReviewMode:
       existing review takes; a mode that needs less says so.
     * ``schema_versions`` — the row-schema versions this mode can serve, empty
       for a mode with no versioned document to hand a caller.
+    * ``help`` — one-line description of the mode, for generated CLI reference.
     """
 
     handler: Callable[..., int] | None = None
     need: Need = REVIEW_MODE_NEED
     schema_versions: tuple[int, ...] = ()
+    help: str = ""
 
 
 def review_modes(argv: Sequence[str], modes: Mapping[str, ReviewMode]) -> list[str]:

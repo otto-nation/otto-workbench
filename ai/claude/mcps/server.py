@@ -74,6 +74,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import json
 import logging
 import os
@@ -184,7 +185,28 @@ def _described(schema: dict, entry: RegistryEntry) -> dict:
     schema — `input_schema`, `output_schema`, `ok_exit_codes` — passes through
     unchanged; only the one key is registry-driven.
     """
+    if entry.parser and not entry.usage:
+        entry = dataclasses.replace(entry, usage=_rendered_usage(entry))
     return {**schema, "description": entry.tool_description}
+
+
+def _rendered_usage(entry: RegistryEntry) -> str:
+    """The usage line an entry's `parser:` renders, as `tools.generated.md` shows it.
+
+    The registry's `parser:` replaces a hand-written `usage`, so the
+    description a client reads is rendered from the same parser the CLI parses
+    with — a flag the CLI gains reaches the tool description with no second
+    edit. Imported here rather than by `config.tool_registry`, which sits below
+    the layers a parser can live in.
+    """
+    # ceiling: the discovery fingerprint does not hash the modules parsers live
+    # in, so a flag added to a delegate reaches a running server's description
+    # only at its next restart or registry change. Upgrade trigger: once an MCP
+    # client relies on a tool description to choose flags mid-session, hash the
+    # files the entry's parser imports into `discovery_fingerprint`.
+    import core.cli_reference
+    return core.cli_reference.usage_line(
+        core.cli_reference.load(entry.parser, entry.name, WORKBENCH_DIR))
 
 
 def discover_tools(registry: dict[Path, RegistryEntry] | None = None) -> dict[str, dict]:

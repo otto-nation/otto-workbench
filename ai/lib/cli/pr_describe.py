@@ -418,10 +418,12 @@ def build_parser() -> ToolParser:
         description="Revise the PR description against the repo's PR template",
         output_schema=DescribeSummary,
     )
-    parser.add_argument("--repo-dir", "--worktree", dest="repo_dir",
+    parser.add_argument("--repo-dir", "--worktree", dest="repo_dir", metavar="PATH",
                         help="Git worktree directory")
-    parser.add_argument("--branch", help="Branch name (injected by pr dispatcher)")
-    parser.add_argument("--pr", help="PR number (injected by pr dispatcher)")
+    parser.add_argument("--branch", metavar="NAME",
+                        help="Branch name (injected by pr dispatcher)")
+    parser.add_argument("--pr", metavar="NUM",
+                        help="PR number (injected by pr dispatcher)")
     parser.add_argument("--force", action="store_true",
                         help="Revise even when HEAD has not moved since the last pass")
     parser.add_argument("--dry-run", action="store_true",

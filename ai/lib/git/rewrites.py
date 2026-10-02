@@ -208,7 +208,9 @@ def record(common: Path, rewrites: Sequence[Rewrite]) -> None:
     path = common / LOG_NAME
     payload = "".join(lines).encode("ascii")
     # One `write(2)` on an O_APPEND descriptor, so two rewrites finishing
-    # together cannot interleave their lines.
+    # together cannot interleave their lines. The return value is not checked: a
+    # short write to a regular file (disk full, a signal) is accepted, and a
+    # truncated tail is repaired by the newline check on the next `record`.
     fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o644)
     try:
         # A damaged log may end mid-line; appended to it, a new line would merge

@@ -281,7 +281,11 @@ cherry_pick_in_progress() {
   run git -C "$W" rebase --skip
   [ "$status" -eq 0 ]
   [[ "$output" == *"dropped 1 commit(s) whose changes are not in the result"* ]]
-  [ "$(cat "$W/.git/workbench-rewrites")" = "$kept $(git -C "$W" rev-parse HEAD)" ]
+  # The log's name comes from the module that writes it, so a rename cannot
+  # leave this test reading a file nothing writes.
+  local name
+  name="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import git.rewrites; print(git.rewrites.LOG_NAME)' "$REPO_ROOT/ai/lib")"
+  [ "$(cat "$(git -C "$W" rev-parse --absolute-git-dir)/$name")" = "$kept $(git -C "$W" rev-parse HEAD)" ]
 }
 
 @test "post-rewrite hands the repo-local hook the same stdin and arguments" {

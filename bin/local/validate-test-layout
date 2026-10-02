@@ -68,7 +68,6 @@ KNOWN_OVER = {
     "tests/otto_log_test.py": "#910",
     "tests/pr_cli_test.py": "#910",
     "tests/pr_comments_test.py": "#910",
-    "tests/pr_rebase_test.py": "#910",
     "tests/pr_state_test.py": "#910",
     "tests/push_test.py": "#910",
     "tests/review_agent_diagnostics_test.py": "#910",

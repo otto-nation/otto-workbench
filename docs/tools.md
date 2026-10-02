@@ -86,7 +86,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-permissions` | Validates that every Bash permission rule can match a command, that no untracked settings file duplicates a tracked grant or re-grants a gated one, and that a tracked allow bucket is in the codepoint order both ai sync and Claude Code write it back in — --fix prunes the duplicates and sorts the bucket |
 | `validate-ceiling` | Validates that every ceiling marker names an upgrade trigger or is marked permanent |
 | `validate-file-size` | Fails when a source file passes 600 code lines — blanks, comments and docstrings are not counted, so documenting a file never pushes it over. The files already over are named with the issue that splits each |
-| `validate-test-layout` | Fails when a Python module under tests/ is neither <subject>_test.py nor a declared support module, or passes the 600-code-line cap the source gate uses. No exemptions |
+| `validate-test-layout` | Fails when a Python module under tests/ is neither <subject>_test.py nor a declared support module, or when a Python or bats suite passes the 600-code-line cap the source gate uses. The bats suites already over are named with the issue that splits them |
 | `check-new-tests` | Runs the tests a change adds against a worktree at the merge base and reports any that pass without the change — the revert check the testing rule prescribes, done once from the diff |
 | `validate-yq-version` | Fails when this machine's yq is older than the one CI pins — an expression the older parser rejects fails every registry read at once |
 | `validate-eval-baselines` | Validates eval baseline files for schema correctness and corpus coverage |

@@ -477,6 +477,35 @@ def _kill_runner_group(pid_file: Path) -> None:
         pass
 
 
+def _pid_line_written(pid_file: Path) -> bool:
+    return pid_file.exists() and pid_file.read_text().endswith("\n")
+
+
+def _interrupt_once_started(pid_file, main, finished, runner_started):
+    """SIGINT the main thread once the runner has written its whole pid line.
+
+    Gives up waiting after 10s and signals anyway, so the run under test is
+    never left to its 60s bound; `finished` stops it firing into a later test.
+    """
+    deadline = time.monotonic() + 10
+    while not (finished.is_set() or _pid_line_written(pid_file)) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    if _pid_line_written(pid_file):
+        runner_started.set()
+    if not finished.is_set():
+        signal.pthread_kill(main, signal.SIGINT)
+
+
+def _run_until_interrupted(tmp_path, cmd, poller, finished):
+    """Run the suite and expect the poller's SIGINT; stop the poller either way."""
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            fix.suite.run(tmp_path, cmd, 60)
+    finally:
+        finished.set()
+        poller.join(timeout=5)
+
+
 def test_an_interrupt_mid_run_stops_the_runner_tree(tmp_path):
     """The runner leads its own session, so only this process can stop it.
 
@@ -499,26 +528,13 @@ def test_an_interrupt_mid_run_stops_the_runner_tree(tmp_path):
     finished = threading.Event()
     runner_started = threading.Event()
 
-    def interrupt_once_started():
-        deadline = time.monotonic() + 10
-        while not finished.is_set() and time.monotonic() < deadline:
-            if pid_file.exists() and pid_file.read_text().endswith("\n"):
-                runner_started.set()
-                break
-            time.sleep(0.02)
-        if not finished.is_set():
-            signal.pthread_kill(main, signal.SIGINT)
-
-    poller = threading.Thread(target=interrupt_once_started, daemon=True)
+    poller = threading.Thread(
+        target=_interrupt_once_started,
+        args=(pid_file, main, finished, runner_started), daemon=True)
     poller.start()
     started = time.monotonic()
     try:
-        try:
-            with pytest.raises(KeyboardInterrupt):
-                fix.suite.run(tmp_path, cmd, 60)
-        finally:
-            finished.set()
-            poller.join(timeout=5)
+        _run_until_interrupted(tmp_path, cmd, poller, finished)
         assert runner_started.is_set(), "the runner never wrote its pid"
         assert time.monotonic() - started < 30, "the interrupt waited out the timeout"
         pgid = int(pid_file.read_text())

@@ -241,12 +241,15 @@ def _sweep_group(proc: subprocess.Popen) -> None:
     is reaped, and could by now lead a stranger's group.
 
     The "or nobody" holds only while members remain. A group with no members
-    has released its id, and the pid could be reused by a process leading a
-    group of its own in the moment between the reap and this call. That window
-    is short, and nothing here can tell a group with members from one without,
-    short of the signal this sends, so the residual race is accepted rather
-    than guarded.
+    has released its id, and a process leading a new group could in principle
+    take that pid between the reap and this call. Both macOS and Linux hand out
+    pids sequentially, so that needs the whole pid space to wrap inside a window
+    of microseconds.
     """
+    # ceiling-permanent: sweeping while the leader is still an unreaped zombie
+    # (`waitid` with WNOWAIT) would close the window, but only where this module
+    # does the reaping — the owners that reap through `Popen.wait` would each
+    # need the same dance, for a race that requires the pid space to wrap.
     with contextlib.suppress(ProcessLookupError, PermissionError):
         os.killpg(proc.pid, signal.SIGKILL)
 

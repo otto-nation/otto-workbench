@@ -3,6 +3,7 @@
 Ported from tests/load_gh_token.bats when the bash resolver became a shim.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -261,3 +262,19 @@ def test_script_runs_from_any_cwd_with_a_hostile_pythonpath(tmp_path, home):
     r = _run_script(_repo(tmp_path), home, {"PYTHONPATH": str(tmp_path)})
     assert r.returncode == 0
     assert r.stdout == "ghp_default\n"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+def test_script_reports_an_unreadable_global_file_instead_of_a_traceback(tmp_path, home):
+    env_file = home / ".config" / "task" / "taskfile.env"
+    env_file.write_text("GH_TOKEN=ghp_default\n")
+    env_file.chmod(0o000)
+    try:
+        r = _run_script(_repo(tmp_path), home)
+    finally:
+        env_file.chmod(0o600)
+    assert r.returncode == 1
+    assert r.stdout == ""
+    assert "Traceback" not in r.stderr
+    assert str(env_file) in r.stderr
+    assert r.stderr.startswith("\u2717")

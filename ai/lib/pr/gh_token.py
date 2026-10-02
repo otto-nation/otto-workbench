@@ -171,6 +171,15 @@ def main(argv: list[str] | None = None) -> int:
     except TokenNotConfigured as exc:
         print(exc.guidance, file=sys.stderr)
         return 1
+    except OSError as exc:
+        # read_env_value lets anything but a missing file propagate (an
+        # unreadable credentials file is a fault to report, not a tier to
+        # skip) — report it the same way as every other failure here instead
+        # of letting a raw traceback out of the CLI entry point.
+        path = exc.filename or "a GH_TOKEN config file"
+        reason = exc.strerror or str(exc)
+        print(f"\u2717 Could not read {path}: {reason}", file=sys.stderr)
+        return 1
     print(token.value)
     return 0
 

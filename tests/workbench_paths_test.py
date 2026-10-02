@@ -214,6 +214,7 @@ class TestConsumers:
         assert not [p for p in paths if any(p.is_relative_to(root) for root in roots)]
 
 
+
 # ── The source checkout ──────────────────────────────────────────────────────
 
 def test_source_checkout_is_the_repo_this_code_runs_from():

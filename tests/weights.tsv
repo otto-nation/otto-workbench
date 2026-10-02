@@ -7,7 +7,6 @@ check_surface_compat.bats	66.00
 claude_env_vars.bats	2.63
 claude_rules_install.bats	2.63
 claude_settings.bats	314.29
-claude_wrapper.bats	9.16
 collect_component_registries.bats	0.82
 commit_breaking_change.bats	15.07
 compact_diff.bats	2.48
@@ -148,5 +147,6 @@ vertex_shim.bats	0.37
 workbench_roots.bats	6.86
 workbench_rules.bats	14.52
 worktree.bats	4.32
+worktree_launch.bats	9.16
 wt_cleanup.bats	78.69
 wt_fetch_default.bats	8.15

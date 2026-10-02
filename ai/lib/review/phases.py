@@ -129,6 +129,7 @@ class PhaseRunner:
         cfg = job.config
         self.job = job
         self.index = index
+        self._overhead_recorded = False
         # A phase that names no log of its own logs to the job's — that is
         # where the single-agent path already sends every record, and the
         # caller may have pointed it outside the review directory.
@@ -181,11 +182,17 @@ class PhaseRunner:
             self.invocation(prompt, max_turns, label=label),
             throttle=self.job.throttle,
         )
-        from review.prompt_fit import record_prompt_overhead
+        # Once, after the first attempt. The session log accumulates every
+        # attempt, so its first turn is always the first attempt's, while the
+        # stats row it is compared against is the latest render, which a
+        # hint-prefixed retry or an overflow rebuild has since replaced.
+        if not self._overhead_recorded:
+            self._overhead_recorded = True
+            from review.prompt_fit import record_prompt_overhead
 
-        record_prompt_overhead(
-            self.job, self.session_log, self.phase, index=self.index,
-        )
+            record_prompt_overhead(
+                self.job, self.session_log, self.phase, index=self.index,
+            )
         return rc
 
 

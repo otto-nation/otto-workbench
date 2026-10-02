@@ -297,9 +297,14 @@ def _phase_synthesis(
         rc = runner.invoke(text, turns)
         return rc
 
+    def invoke_first(text: str) -> int:
+        result = invoke(text, max_turns)
+        core.log.blank()
+        return result
+
     prompt, _diagnosis = run_with_overflow_recovery(
         prompt,
-        invoke=lambda text: invoke(text, max_turns),
+        invoke=invoke_first,
         after=lambda text: _retry_missing_output(
             invoke, text, synthesis_log, job.review_file,
             label="Synthesis", max_turns=max_turns,

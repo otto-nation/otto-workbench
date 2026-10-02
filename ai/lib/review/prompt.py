@@ -365,7 +365,7 @@ def _fixed_preflight_bytes(
         # nothing in this reserve — the caller already registered it.
         return 0
     return fixed_preflight_bytes(
-        pf.commit_log, pf.claude_md, pf.architecture_md, pf.review_checklists,
+        pf.claude_md, pf.architecture_md, pf.review_checklists,
         pf.review_profiles,
     )
 
@@ -453,10 +453,12 @@ def _fit_budget(
     files = FileFit(scoped, job.preflight.file_permissions if job.preflight else {}, [])
     delta = _build_delta_section(job.preflight, file_filter=file_filter)
     commit_log = job.preflight.commit_log if job.preflight else ""
+    log_bytes = len(commit_log.encode())
+    delta_bytes = len(delta.encode())
     cuts: list[Cut] = []
 
-    if contents and measured + contents + len(delta.encode()) + len(commit_log.encode()) + min_diff > budget_bytes:
-        room = max(0, budget_bytes - measured - len(delta.encode()) - len(commit_log.encode()) - min_diff)
+    if contents and measured + contents + delta_bytes + log_bytes + min_diff > budget_bytes:
+        room = max(0, budget_bytes - measured - delta_bytes - log_bytes - min_diff)
         files = fit_files(scoped, files.permissions, room)
         kept = _contents_bytes(files.included)
         cuts.append(Cut(
@@ -466,27 +468,29 @@ def _fit_budget(
         ))
         contents = kept
 
-    delta_room = max(0, budget_bytes - measured - contents - len(commit_log.encode()) - min_diff)
-    if len(delta.encode()) > delta_room:
+    delta_room = max(0, budget_bytes - measured - contents - log_bytes - min_diff)
+    if delta_bytes > delta_room:
         shrunk = _build_delta_section(
             job.preflight, file_filter=file_filter, max_bytes=delta_room,
         )
         cuts.append(Cut(
             BudgetLever.DELTA,
-            freed_bytes=len(delta.encode()) - len(shrunk.encode()),
+            freed_bytes=delta_bytes - len(shrunk.encode()),
         ))
         delta = shrunk
+        delta_bytes = len(delta.encode())
 
-    commit_room = max(0, budget_bytes - measured - contents - len(delta.encode()) - min_diff)
-    if len(commit_log.encode()) > commit_room:
+    commit_room = max(0, budget_bytes - measured - contents - delta_bytes - min_diff)
+    if log_bytes > commit_room:
         trimmed = trim_commit_log(commit_log, commit_room)
         cuts.append(Cut(
             BudgetLever.COMMIT_LOG,
-            freed_bytes=len(commit_log.encode()) - len(trimmed.encode()),
+            freed_bytes=log_bytes - len(trimmed.encode()),
         ))
         commit_log = trimmed
+        log_bytes = len(commit_log.encode())
 
-    diff_bytes = budget_bytes - measured - contents - len(delta.encode()) - len(commit_log.encode())
+    diff_bytes = budget_bytes - measured - contents - delta_bytes - log_bytes
     if diff_bytes < min_diff:
         # Recorded as a shortfall rather than as bytes freed, because the floor
         # frees nothing: it is what the ladder could not absorb, and so is also
@@ -504,7 +508,7 @@ def _fit_budget(
         files=files,
         cuts=tuple(cuts),
         measured_bytes=(
-            measured + contents + len(delta.encode()) + len(commit_log.encode())
+            measured + contents + delta_bytes + log_bytes
         ),
         commit_log=commit_log,
     )
@@ -520,6 +524,23 @@ def _fit_budget(
 # unreachable counter is free — `count_tokens` returns None without raising —
 # so a machine with no Vertex credentials pays nothing and records nothing.
 _MEASURE_TOKENS_ENV = "WORKBENCH_AI_MEASURE_TOKENS"
+
+
+def _measuring_disabled() -> bool:
+    return os.environ.get(_MEASURE_TOKENS_ENV, "1") == "0"
+
+
+def unverified_reason(phase: Phase | None) -> str:
+    """Why `_measured_tokens` has no count: the one owner of that vocabulary.
+
+    `disabled` is the opt-out, `no_phase` is a caller that named no phase, and
+    `unavailable` is everything else — the counter was asked and had no answer.
+    """
+    if _measuring_disabled():
+        return "disabled"
+    if phase is None:
+        return "no_phase"
+    return "unavailable"
 
 
 def _measured_tokens(
@@ -542,7 +563,7 @@ def _measured_tokens(
     deliberately not distinguished here: both leave the stats record without a
     token count, which is the only thing a reader can act on.
     """
-    if os.environ.get(_MEASURE_TOKENS_ENV, "1") == "0" or phase is None:
+    if _measuring_disabled() or phase is None:
         return None
     counted = count_tokens(prompt, model)
     return (counted, model) if counted is not None else None
@@ -675,10 +696,7 @@ def _log_prompt_size(
         measured = _measured_tokens(prompt, phase, model)
         stats["token_verified"] = measured is not None
         if measured is None:
-            stats["token_unverified_reason"] = (
-                "disabled" if os.environ.get(_MEASURE_TOKENS_ENV, "1") == "0"
-                else "unavailable"
-            )
+            stats["token_unverified_reason"] = unverified_reason(phase)
     if measured:
         # Both the count and the model are recorded: a density is meaningless
         # without the tokenizer it was measured against, and sonnet-5 counts the

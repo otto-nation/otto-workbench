@@ -25,6 +25,7 @@ from pathlib import Path
 import agent.templates
 import core.log
 from core.phases import Backend, Phase
+from core.serde import write_json
 from review.budget import (
     COMPLETION_RESERVE_TOKENS, ladder_target_bytes, model_window_tokens,
     overhead_reserve_tokens, prompt_budget_bytes,
@@ -32,9 +33,8 @@ from review.budget import (
 from review.paths import FILENAME_PROMPT_STATS, review_artifact_path
 from review.prompt import (
     BuiltPrompt, PromptTooLarge, _build_common_sections, _log_prompt_size,
-    _measured_tokens, _prompt_stats_lock,
+    _measured_tokens, _prompt_stats_lock, unverified_reason,
 )
-from core.serde import write_json
 from review.types import ReviewJob
 
 # Three renders is one opening guess and two corrections. Past that the
@@ -50,19 +50,23 @@ _RATCHET_MARGIN = 0.05
 class PromptVerification:
     """What one render was measured against, and whether it may be sent.
 
-    `tokens` is the exact count when one was taken. `token_verified` is True
-    only then; a missing count records `reason` and is neither pass nor fail.
+    `tokens` is the exact count when one was taken. `token_verified` is derived
+    from it, so the two cannot disagree; a missing count records `reason` and
+    is neither pass nor fail.
     `ok` is the send decision: bytes always, tokens only when verified.
     """
 
     prompt_bytes: int
     budget_bytes: int
     tokens: int | None
-    token_verified: bool
     reason: str
     ok: bool
     byte_overshoot: int
     token_overshoot: int
+
+    @property
+    def token_verified(self) -> bool:
+        return self.tokens is not None
 
 
 def verify_prompt(
@@ -76,14 +80,16 @@ def verify_prompt(
     """Bytes always; tokens when countable; missing count is unverified."""
     prompt_bytes = len(prompt.encode())
     byte_overshoot = max(0, prompt_bytes - budget_bytes)
+    # Counted even when the bytes already overshoot: the render is known not to
+    # fit, but the count still feeds `prompt-stats.json` and the token-density
+    # ratchet, which is worth the round trip.
     measured = _measured_tokens(prompt, phase, model)
     if measured is None:
         return PromptVerification(
             prompt_bytes=prompt_bytes,
             budget_bytes=budget_bytes,
             tokens=None,
-            token_verified=False,
-            reason=_unverified_reason(phase),
+            reason=unverified_reason(phase),
             ok=byte_overshoot == 0,
             byte_overshoot=byte_overshoot,
             token_overshoot=0,
@@ -97,24 +103,11 @@ def verify_prompt(
         prompt_bytes=prompt_bytes,
         budget_bytes=budget_bytes,
         tokens=counted,
-        token_verified=True,
         reason="",
         ok=byte_overshoot == 0 and token_overshoot == 0,
         byte_overshoot=byte_overshoot,
         token_overshoot=token_overshoot,
     )
-
-
-def _unverified_reason(phase: Phase | None) -> str:
-    import os
-
-    from review.prompt import _MEASURE_TOKENS_ENV
-
-    if os.environ.get(_MEASURE_TOKENS_ENV, "1") == "0":
-        return "disabled"
-    if phase is None:
-        return "no_phase"
-    return "unavailable"
 
 
 def ratchet_target(
@@ -164,7 +157,6 @@ def fit_rendered_prompt(
     default_ladder = ladder_target_bytes(model, backend)
     target = default_ladder if ladder_bytes is None else min(ladder_bytes, default_ladder)
 
-    last_built: BuiltPrompt | None = None
     last_verification: PromptVerification | None = None
     for render_i in range(MAX_PROMPT_RENDERS):
         common = _build_common_sections(
@@ -177,7 +169,6 @@ def fit_rendered_prompt(
             prompt, model=model, phase=phase, backend=backend,
             budget_bytes=budget_bytes,
         )
-        last_built = built
         last_verification = verification
         _log_prompt_size(
             template_name, prompt, built.builder.vars, job,
@@ -202,7 +193,7 @@ def fit_rendered_prompt(
         )
         target = next_target
 
-    assert last_built is not None and last_verification is not None
+    assert last_verification is not None
     raise PromptTooLarge(
         template_name, last_verification.prompt_bytes,
         budget_bytes=budget_bytes, model=model,

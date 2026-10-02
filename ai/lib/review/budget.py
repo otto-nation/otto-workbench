@@ -438,7 +438,6 @@ def collection_budget_bytes(
 
 
 def fixed_preflight_bytes(
-    commit_log: str,
     claude_md: str,
     architecture_md: str,
     review_checklists: dict[str, str],
@@ -452,10 +451,6 @@ def fixed_preflight_bytes(
     whole or not at all. The diff, the pre-collected file contents, the
     incremental delta and the commit log are all levers a fit can pull, so
     none of them is here.
-
-    `commit_log` is accepted so callers that still pass the five-tuple keep
-    compiling; it is not summed. The COMMIT_LOG lever trims it, and counting
-    it as fixed would hide the room that lever needs.
 
     Profiles are measured as `format_profiles_section` will render them, not as
     the sum of their source files: the rendered section carries a heading and a
@@ -471,7 +466,6 @@ def fixed_preflight_bytes(
     knowing that type would invert the dependency. A caller that has one reads
     the fields off it, and one that does not spends nothing.
     """
-    _ = commit_log
     return (
         len(claude_md.encode())
         + len(architecture_md.encode())

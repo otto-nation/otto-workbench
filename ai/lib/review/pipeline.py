@@ -28,13 +28,12 @@ from agent.types import EFFORT_PRESETS
 from gh.types import PRContext, PRMetadata
 from core.phases import Mode, Phase
 from review.paths import phase_log_path
-from review.collect import fetch_branch_metadata
 from gh.pr_data import PRData, fetch_pr_data
 from gh.pr_reads import fetch_pr_context, fetch_pr_metadata
 from agent.backend import selected_backend
 from agent.phases import phase_model
 from review.budget import ladder_target_bytes
-from review.collect import scope_diff
+from review.collect import diff_section_sizes, fetch_branch_metadata
 from review.grouping import (
     GROUP_TIER3, estimate_group_diff_bytes, group_files, merge_smallest_groups,
 )
@@ -224,9 +223,12 @@ def run_multi_phase(
     group_cap = ladder_target_bytes(group_model, selected_backend())
     collected_diff = job.preflight.diff if job.preflight else ""
 
+    # Scanned once: the merge loop asks for every candidate pair each round.
+    section_sizes = diff_section_sizes(collected_diff) if collected_diff else None
+
     def _group_diff_bytes(group):
-        if collected_diff:
-            return len(scope_diff(collected_diff, group.files).encode())
+        if section_sizes is not None:
+            return sum(section_sizes.get(f, 0) for f in group.files)
         return estimate_group_diff_bytes(group)
 
     groups = merge_smallest_groups(

@@ -129,12 +129,15 @@ class TestCountTokens:
             assert agent.token_count.count_tokens("some prompt", "claude-sonnet-5") is None
         urlopen.assert_not_called()
 
-    def test_transport_failure_is_none_not_an_exception(self, monkeypatch):
+    def test_transport_failure_is_none_not_an_exception(self, monkeypatch, capsys):
         """An uncounted prompt is a missing measurement, never a failed review."""
         _on_vertex(monkeypatch)
         with patch("agent.token_count.access_token", return_value="tok"), \
              patch("urllib.request.urlopen", side_effect=urllib.error.URLError("down")):
             assert agent.token_count.count_tokens("some prompt", "claude-sonnet-5") is None
+        err_text = capsys.readouterr().err
+        assert "using estimate" not in err_text
+        assert "count skipped" in err_text
 
     def test_malformed_response_is_none(self, monkeypatch):
         _on_vertex(monkeypatch)
@@ -203,16 +206,3 @@ class TestCountTokens:
         err_text = capsys.readouterr().err
         assert "HTTP 404" in err_text
         assert "using estimate" not in err_text
-
-    def test_transport_failure_does_not_claim_an_estimate(
-        self, monkeypatch, capsys,
-    ):
-        _on_vertex(monkeypatch)
-        with patch("agent.token_count.access_token", return_value="tok"), \
-             patch("urllib.request.urlopen", side_effect=urllib.error.URLError("down")):
-            assert agent.token_count.count_tokens(
-                "some prompt", "claude-sonnet-5",
-            ) is None
-        err_text = capsys.readouterr().err
-        assert "using estimate" not in err_text
-        assert "count skipped" in err_text

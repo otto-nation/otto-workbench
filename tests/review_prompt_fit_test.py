@@ -11,7 +11,10 @@ if str(LIB_DIR) not in sys.path:
 
 from review.budget import MIN_DIFF_BYTES, fixed_preflight_bytes
 from review.grouping import ReviewProfile, ReviewRule, format_profiles_section
-from review.collect import build_project_context, format_preflight_data
+from review.collect import (
+    _COMMIT_LOG_TRIMMED, build_project_context, format_preflight_data,
+    trim_commit_log,
+)
 from dataclasses import asdict
 
 from review.prompt import BudgetLever, Cut, _build_common_sections
@@ -124,18 +127,43 @@ class TestFitBudget:
         # Room for the newest commit and nothing else, so the lever has to fire.
         plan = _fit_budget(
             _make_job(pf), {"header": "x"},
-            budget_bytes=len(newest.encode()) + 50, min_diff=0,
+            budget_bytes=len(newest.encode()) + len(_COMMIT_LOG_TRIMMED.encode()) + 50,
+            min_diff=0,
         )
         assert any(c.lever is BudgetLever.COMMIT_LOG for c in plan.cuts)
         assert "zzz" in plan.commit_log
         assert "aaa" not in plan.commit_log
-        assert plan.commit_log.strip().startswith("commit zzz")
+        assert plan.commit_log.startswith(_COMMIT_LOG_TRIMMED)
+        assert plan.commit_log.endswith(newest)
 
-    def test_fixed_preflight_does_not_count_the_commit_log(self):
-        log = "commit abc\n" * 100
-        with_log = fixed_preflight_bytes(log, "c", "", {}, None)
-        without = fixed_preflight_bytes("", "c", "", {}, None)
-        assert with_log == without
+
+class TestTrimCommitLog:
+    def _log(self):
+        return "".join(
+            f"commit c{i}\n{'x' * 100}\n\n" for i in range(5)
+        )
+
+    def test_a_trimmed_log_keeps_the_same_oldest_first_order_as_an_untrimmed_one(self):
+        log = self._log()
+        assert trim_commit_log(log, len(log.encode())) == log
+        trimmed = trim_commit_log(log, 330 + len(_COMMIT_LOG_TRIMMED.encode()))
+        assert trimmed.index("commit c3") < trimmed.index("commit c4")
+        assert "commit c0" not in trimmed
+
+    def test_a_trimmed_log_says_commits_were_dropped_and_fits_the_cap(self):
+        log = self._log()
+        cap = 330 + len(_COMMIT_LOG_TRIMMED.encode())
+        trimmed = trim_commit_log(log, cap)
+        assert trimmed.startswith(_COMMIT_LOG_TRIMMED)
+        assert len(trimmed.encode()) <= cap
+
+    def test_an_oversized_newest_commit_keeps_its_head(self):
+        log = "commit old\nold\n\ncommit new\n" + "HEAD" + "y" * 5_000
+        cap = 200
+        trimmed = trim_commit_log(log, cap)
+        assert "commit new\nHEAD" in trimmed
+        assert "commit old" not in trimmed
+        assert len(trimmed.encode()) <= cap
 
 
 class TestProfilesAreCountedByTheBudget:
@@ -178,9 +206,9 @@ class TestProfilesAreCountedByTheBudget:
         assert without.diff_allowance_bytes - with_profile.diff_allowance_bytes == rendered
 
     def test_no_profiles_costs_nothing(self):
-        assert fixed_preflight_bytes("", "", "", {}, []) == 0
-        assert fixed_preflight_bytes("", "", "", {}, None) == 0
-        assert fixed_preflight_bytes("", "", "", {}) == 0
+        assert fixed_preflight_bytes("", "", {}, []) == 0
+        assert fixed_preflight_bytes("", "", {}, None) == 0
+        assert fixed_preflight_bytes("", "", {}) == 0
 
     def test_a_caller_that_rendered_the_context_is_not_charged_twice(self):
         """`_prompt_group` renders project context itself and registers it.
@@ -205,7 +233,7 @@ class TestProfilesAreCountedByTheBudget:
         # the reserve never counted, so the group pays a little more — tens of
         # bytes against the ~50KB it was previously charged twice for.
         wrapper = len(ctx.encode()) - fixed_preflight_bytes(
-            "", pf.claude_md, pf.architecture_md, pf.review_checklists,
+            pf.claude_md, pf.architecture_md, pf.review_checklists,
             pf.review_profiles,
         )
         assert 0 < wrapper < 1024
@@ -227,7 +255,7 @@ class TestProfilesAreCountedByTheBudget:
             skip_file_contents=True, skip_project_context=True,
         )
         reserve = fixed_preflight_bytes(
-            pf.commit_log, pf.claude_md, pf.architecture_md,
+            pf.claude_md, pf.architecture_md,
             pf.review_checklists, pf.review_profiles,
         )
         assert reserve > 50_000

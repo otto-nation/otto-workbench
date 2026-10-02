@@ -10,7 +10,10 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import pytest
+
 from agent.diagnosis import Diagnosis, DiagnosisKind
+from review.budget import COMPLETION_RESERVE_TOKENS
 from review.overflow import (
     MAX_OVERFLOW_RECOVERY, overflow_ladder_bytes, parse_prompt_overflow,
     recover_overflow_prompt, run_with_overflow_recovery,
@@ -37,8 +40,23 @@ class TestParsePromptOverflow:
 class TestOverflowLadder:
     def test_scales_rendered_bytes_by_the_api_ratio(self):
         rendered = 100_000
-        scaled = overflow_ladder_bytes(200_000, 200_000, rendered)
-        assert 0 < scaled < rendered
+        sent, maximum = 200_000, 100_000
+        scaled = overflow_ladder_bytes(sent, maximum, rendered)
+        usable = maximum - COMPLETION_RESERVE_TOKENS
+        # The fraction that fit, less a margin so the next render is not on the line.
+        fit_fraction = usable / sent
+        assert scaled < rendered * fit_fraction
+        assert scaled == pytest.approx(rendered * fit_fraction, rel=0.1)
+
+    def test_is_proportional_to_the_rendered_bytes(self):
+        small = overflow_ladder_bytes(200_000, 100_000, 50_000)
+        large = overflow_ladder_bytes(200_000, 100_000, 100_000)
+        assert large == pytest.approx(2 * small, abs=2)
+
+    def test_a_window_inside_the_completion_reserve_leaves_one_byte(self):
+        assert overflow_ladder_bytes(
+            200_000, COMPLETION_RESERVE_TOKENS, 100_000,
+        ) == 1
 
 
 class TestRecoverOverflowPrompt:
@@ -52,6 +70,18 @@ class TestRecoverOverflowPrompt:
         )
         assert rebuilt is not None
         assert rebuilt.startswith("small-")
+
+    def test_a_rebuild_no_smaller_than_the_rejected_prompt_is_not_resent(self):
+        diagnosis = Diagnosis(
+            DiagnosisKind.AGENT_ERROR,
+            detail="prompt is too long: 100 tokens > 80 maximum",
+        )
+        assert recover_overflow_prompt(
+            diagnosis, "x" * 100, rebuild=lambda n: "y" * 100, attempt=0,
+        ) is None
+        assert recover_overflow_prompt(
+            diagnosis, "x" * 100, rebuild=lambda n: "y" * 150, attempt=0,
+        ) is None
 
     def test_unparseable_is_not_retried(self):
         diagnosis = Diagnosis(DiagnosisKind.AGENT_ERROR, detail="boom")
@@ -95,7 +125,7 @@ class TestRunWithOverflowRecovery:
             )
 
         prompt, diagnosis = run_with_overflow_recovery(
-            "BIG",
+            "B" * 100,
             invoke=invoke,
             after=after,
             has_output=lambda: output["ready"],
@@ -103,7 +133,7 @@ class TestRunWithOverflowRecovery:
         )
         assert diagnosis is None
         assert len(prompts) == 2
-        assert prompts[0] == "BIG"
+        assert prompts[0] == "B" * 100
         assert prompts[1].startswith("SMALL-")
         assert prompt == prompts[1]
 
@@ -123,3 +153,43 @@ class TestRunWithOverflowRecovery:
         assert prompts == ["BIG"]
         assert diagnosis.detail == "nope"
         assert prompt == "BIG"
+
+    def test_stops_after_the_attempt_cap_when_every_rebuild_still_overflows(self):
+        prompts = []
+        sizes = iter(range(900, 0, -100))
+
+        def rebuild(_target):
+            return "r" * next(sizes)
+
+        prompt, diagnosis = run_with_overflow_recovery(
+            "B" * 1000,
+            invoke=prompts.append,
+            after=lambda _t: Diagnosis(
+                DiagnosisKind.AGENT_ERROR,
+                detail="prompt is too long: 200 tokens > 100 maximum",
+            ),
+            has_output=lambda: False,
+            rebuild=rebuild,
+        )
+        assert len(prompts) == 1 + MAX_OVERFLOW_RECOVERY
+        assert diagnosis is not None
+        assert prompt == prompts[-1]
+
+    def test_an_artifact_on_disk_ends_recovery_despite_a_diagnosis(self):
+        prompts = []
+        rebuilds = []
+
+        prompt, diagnosis = run_with_overflow_recovery(
+            "BIG",
+            invoke=prompts.append,
+            after=lambda _t: Diagnosis(
+                DiagnosisKind.AGENT_ERROR,
+                detail="prompt is too long: 200 tokens > 100 maximum",
+            ),
+            has_output=lambda: True,
+            rebuild=lambda n: rebuilds.append(n) or "S",
+        )
+        assert prompts == ["BIG"]
+        assert rebuilds == []
+        assert prompt == "BIG"
+        assert diagnosis is not None

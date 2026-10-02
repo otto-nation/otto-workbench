@@ -96,9 +96,16 @@ def recover_overflow_prompt(
         f"(recovery {attempt + 1}/{MAX_OVERFLOW_RECOVERY})"
     )
     try:
-        return rebuild(target)
+        rebuilt = rebuild(target)
     except PromptTooLarge:
         return None
+    # The fit loop accepts anything within the full budget, not within
+    # `target`. When the fixed sections already exceed the target the rebuild
+    # comes back about the same size, and re-sending it is a wasted agent run.
+    if len(rebuilt.encode()) >= len(prompt.encode()):
+        core.log.warn("Re-planned prompt is no smaller — not retrying")
+        return None
+    return rebuilt
 
 
 def run_with_overflow_recovery(

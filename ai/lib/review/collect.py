@@ -239,35 +239,44 @@ def _truncate_log(text: str, max_bytes: int, label: str = "Commit log") -> str:
 _COMMIT_SPLIT = re.compile(r"(?=^commit )", re.MULTILINE)
 
 
-def trim_commit_log(log: str, max_bytes: int) -> str:
-    """``log`` shrunk to ``max_bytes``, keeping the newest commits first.
+_COMMIT_LOG_TRIMMED = (
+    "... (older commits omitted — full log exceeded size limit)\n\n"
+)
 
-    Collection records `git log --reverse` (oldest first). The budget lever
-    spends its cap on what a reviewer sees first, so the kept commits are
-    emitted newest-first. A single commit larger than the cap is truncated
-    from its start rather than dropped, so the newest message is never empty
-    when there was anything to keep.
+
+def trim_commit_log(log: str, max_bytes: int) -> str:
+    """``log`` shrunk to ``max_bytes``, keeping the newest commits.
+
+    Collection records `git log --reverse` (oldest first) and the kept commits
+    stay in that order, so the section reads the same whether or not it was
+    trimmed. A trimmed log opens with a marker naming the omission, counted
+    inside ``max_bytes``. When even the newest commit exceeds the cap, the
+    first ``max_bytes`` bytes of it (its head) are kept rather than dropping it,
+    so the newest message is never empty when there was anything to keep.
     """
     if max_bytes <= 0 or not log:
         return ""
     if len(log.encode()) <= max_bytes:
         return log
+    room = max_bytes - len(_COMMIT_LOG_TRIMMED.encode())
+    if room <= 0:
+        return ""
     parts = [p for p in _COMMIT_SPLIT.split(log) if p]
     if not parts:
-        return log.encode()[:max_bytes].decode(errors="ignore")
+        return _COMMIT_LOG_TRIMMED + log.encode()[:room].decode(errors="ignore")
     kept: list[str] = []
     used = 0
     for part in reversed(parts):
         size = len(part.encode())
-        overflow = used + size > max_bytes
+        overflow = used + size > room
         if overflow and kept:
             break
         if overflow:
-            kept.append(part.encode()[:max_bytes].decode(errors="ignore"))
+            kept.append(part.encode()[:room].decode(errors="ignore"))
             break
         kept.append(part)
         used += size
-    return "".join(kept)
+    return _COMMIT_LOG_TRIMMED + "".join(reversed(kept))
 
 
 def _read_file_safe(path: Path) -> str:
@@ -345,6 +354,23 @@ def scope_diff(full_diff: str, file_filter: list[str]) -> str:
             end = matches[i + 1].start() if i + 1 < len(matches) else len(full_diff)
             sections.append(full_diff[m.start():end])
     return "".join(sections).strip()
+
+
+def diff_section_sizes(full_diff: str) -> dict[str, int]:
+    """Bytes of each file's section in ``full_diff``, keyed by path.
+
+    One scan of the diff, so a caller sizing many file sets sums these rather
+    than re-running `scope_diff` over the whole diff per set. A path that
+    appears twice is summed, as `scope_diff` would keep both sections.
+    """
+    matches = list(_DIFF_HEADER_RE.finditer(full_diff))
+    sizes: dict[str, int] = {}
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(full_diff)
+        sizes[m.group(1)] = (
+            sizes.get(m.group(1), 0) + len(full_diff[m.start():end].encode())
+        )
+    return sizes
 
 
 def truncate_diff(full_diff: str, max_bytes: int) -> TruncatedDiff:
@@ -862,7 +888,7 @@ def collect_preflight_data(job: ReviewJob) -> PreflightData:
     base_size = (
         len(diff.encode())
         + fixed_preflight_bytes(
-            commit_log, claude_md, architecture_md, review_checklists, profiles,
+            claude_md, architecture_md, review_checklists, profiles,
         )
         + TEMPLATE_OVERHEAD_BYTES
     )

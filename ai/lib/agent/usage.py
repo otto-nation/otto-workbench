@@ -181,6 +181,9 @@ def _first_turn_pi(records: list[dict]) -> FirstTurnUsage | None:
             + int(usage.get("cacheRead") or 0)
             + int(usage.get("cacheWrite") or 0)
         )
+        if billed == 0:
+            # An errored or aborted turn carries no usage; keep scanning.
+            continue
         served = str(message.get("model") or "")
         return FirstTurnUsage(served_model=served, input_tokens=billed)
     return None

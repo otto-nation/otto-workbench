@@ -297,6 +297,24 @@ class TestPhaseRunnerReachesBackend:
         assert seen[0].session_log == str(tmp_path / "group-1.jsonl")
 
 
+class TestOverheadIsRecordedForTheFirstAttemptOnly:
+    """The log's first turn is the first attempt's; later renders own later rows."""
+
+    def test_a_retry_does_not_record_overhead_again(self, tmp_path, monkeypatch):
+        import review.prompt_fit
+
+        calls = []
+        monkeypatch.setattr(
+            review.prompt_fit, "record_prompt_overhead",
+            lambda *a, **k: calls.append(a),
+        )
+        monkeypatch.setattr(review.phases, "run_agent", lambda inv, throttle=None: 0)
+        runner = review.pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, 1)
+        runner.invoke("PROMPT")
+        runner.invoke("HINT PROMPT")
+        assert len(calls) == 1
+
+
 class TestNoDuplicateDefaults:
     """One owner per default. A second copy drifts silently."""
 
@@ -583,6 +601,16 @@ class TestPromptTooLargeFailsThePhase:
 
         assert not Diagnosis(DiagnosisKind.PROMPT_TOO_LARGE, detail="x").recoverable
 
+
+
+class TestApiOverflowRecoversInPhase:
+    """An API `prompt is too long` rejection is re-planned inside the phase.
+
+    A different mechanism from the local `PROMPT_TOO_LARGE` above, which fails
+    before any agent runs: this one fires after the agent has already been
+    rejected, and rebuilds at the density that rejection just measured.
+    """
+
     def test_an_api_overflow_rebuilds_once_with_a_smaller_prompt(
         self, tmp_path, monkeypatch,
     ):
@@ -594,7 +622,7 @@ class TestPromptTooLargeFailsThePhase:
         def fake_build(*_args, **kwargs):
             if kwargs.get("ladder_bytes") is not None:
                 return "SMALL"
-            return "BIG"
+            return "BIG-AND-LONGER"
 
         def fake_invoke(inv, throttle=None):
             prompts.append(inv.prompt)
@@ -614,8 +642,35 @@ class TestPromptTooLargeFailsThePhase:
         )
 
         result = review.phases.run_phase(_job(tmp_path), Phase.SCOUT, "scanning...")
-        assert prompts == ["BIG", "SMALL"]
+        assert prompts == ["BIG-AND-LONGER", "SMALL"]
         assert result.diagnosis is None
+
+    def test_a_rebuild_that_is_no_smaller_is_not_resent(
+        self, tmp_path, monkeypatch,
+    ):
+        import agent.retry
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+
+        prompts = []
+
+        def fake_invoke(inv, throttle=None):
+            prompts.append(inv.prompt)
+            Path(inv.session_log).write_text("{}\n")
+            return 0
+
+        monkeypatch.setattr(review.phases, "build_prompt", lambda *a, **k: "SAME")
+        monkeypatch.setattr(review.phases, "run_agent", fake_invoke)
+        monkeypatch.setattr(
+            agent.retry, "diagnose_missing_output",
+            lambda *a, **k: Diagnosis(
+                DiagnosisKind.AGENT_ERROR,
+                detail="prompt is too long: 200 tokens > 100 maximum",
+            ),
+        )
+
+        result = review.phases.run_phase(_job(tmp_path), Phase.SCOUT, "scanning...")
+        assert prompts == ["SAME"]
+        assert result.diagnosis.kind is DiagnosisKind.AGENT_ERROR
 
     def test_an_unparseable_agent_error_is_not_retried(
         self, tmp_path, monkeypatch,

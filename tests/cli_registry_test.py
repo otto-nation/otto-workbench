@@ -108,7 +108,7 @@ def test_only_create_takes_no_target():
 # injection, mode routing — ahead of the callable named here.
 
 _HANDLERS = {
-    "create":   "cli.pr_commands:cmd_create",
+    "create":   "cli.pr_create:cmd_create",
     "status":   "cli.pr_commands:cmd_status",
     "ci":       "cli.ci_check:main",
     "review":   "cli.review_entry:main",
@@ -259,7 +259,7 @@ def test_rebase_carries_the_exit_codes_that_are_not_failures():
     assert cli.schema.subcommand_schema("rebase")["ok_exit_codes"] == [3, 4]
 
 
-@pytest.mark.parametrize("command", ["status", "fix", "create", "gc"])
+@pytest.mark.parametrize("command", ["status", "fix", "gc"])
 def test_a_command_pr_runs_itself_reports_no_subcommand_schema(command):
     """No delegate parser, so nothing to report — the union already answered."""
     assert cli.schema.subcommand_schema(command) is None

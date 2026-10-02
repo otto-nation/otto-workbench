@@ -1866,6 +1866,26 @@ missed one costs a pushed commit and a reply claiming work is done. Running
 `--fix` and `--finish` in the same invocation does not defeat it: the discussion
 is still open at both points, so the hold applies to both.
 
+### pr/create.py
+
+Open a pull request for the current branch — what ``pr create`` does.
+
+Ports ``task pr:create``: preflight (default-branch and base refusals, the
+``--closes`` contract, the publishing token), the nesting gate, the branch
+push, content generation and ``gh pr create``. ``--dry-run`` stops after the
+content is generated and prints it; it runs no gate, pushes nothing and never
+reaches ``gh``.
+
+The order is the contract. Every refusal that costs nothing comes before the
+nesting gate, the gate comes before anything leaves the machine, and the push
+comes before the AI call so a refused push never pays for one. ``--base`` is
+always passed to ``gh`` (D5): the base the gate and the content measured is
+the base the PR targets.
+
+Progress and ✗ lines go to stderr, like ``pr.branch_sync``'s; stdout carries
+only the answer — the PR URL, or the dry-run preview — so a caller can capture
+it.
+
 ### pr/create_content.py
 
 Generate a new PR's title and body.
@@ -5660,14 +5680,14 @@ answers no question anyone asks of it.
 `pr`'s parser, its dispatcher, and the two commands that shape argv.
 
 The entry point, and only the entry point. Every subcommand's work lives
-below this layer: four in `cli.pr_commands`, five behind a `CommandSpec`
+below this layer: three in `cli.pr_commands`, six behind a `CommandSpec`
 handler the registry names. What is here is the two-pass global parse, the
 usage text, the ordering of resolve/register/fetch/lock, and the routing.
 
 `cmd_review` and `cmd_comments` are here rather than in `cli.pr_commands`
 because neither is a command in its own right: both shape argv ahead of a
 delegate the registry already names — `--self` injection, mode routing — and
-`cli.pr_commands` holds the four that `pr` genuinely performs itself.
+`cli.pr_commands` holds the three that `pr` genuinely performs itself.
 
 `bin_dir` is a parameter, not something this module derives. Under
 `WORKBENCH_AI_LIB_DIR` this file resolves inside the pinned checkout while
@@ -5698,21 +5718,34 @@ Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions.
 
 ### cli/pr_commands.py
 
-The four `pr` subcommands that used to be defined inside the binary.
+The three `pr` subcommands that used to be defined inside the binary.
 
-`status`, `fix`, `create` and `gc` ran inside `ai/bin/pr`, which is not an
-importable module, so `CommandSpec.handler` could not name them. They live
-here so the field means one thing across the nine: a `"<module>:<attr>"`
-string that importlib can resolve, or None.
+`status`, `fix` and `gc` ran inside `ai/bin/pr`, which is not an importable
+module, so `CommandSpec.handler` could not name them. They live here so the
+field means one thing across the nine: a `"<module>:<attr>"` string that
+importlib can resolve, or None.
 
 `cmd_fix`'s three passes are in-process calls through `cli.dispatch`.
-`cmd_create` is the one surviving spawn in this module and stays one: it runs
-`task pr:create`, which is a Taskfile target and not a Python delegate.
+`create` has since moved to `cli.pr_create`, which owns its parser as well.
 
 `cmd_review` and `cmd_comments` stay in `ai/bin/pr`. Both are argv shaping
 ahead of a delegate the registry already names — `--self` injection, mode
 routing — rather than commands in their own right, which is why the registry
 points `review` and `comments` at the delegates themselves.
+
+### cli/pr_create.py
+
+`pr create`'s parser and handler.
+
+The parser is argparse over the argv the shell already split (D12), so a
+quoted title is one token because the shell said so — nothing re-parses a
+string. It is also `pr`'s parser factory for create, which is what answers
+`pr create --help` and `pr --tool-schema create`.
+
+`--body-file` is read here rather than in `pr.create`: an unreadable file is
+a usage error (exit 2, D11), and the orchestration only ever sees the body.
+The target comes from `pr`'s global `--branch`/`--repo-dir`, already resolved
+into the context — create declares no positional and no target flag.
 
 ### cli/pr_describe.py
 

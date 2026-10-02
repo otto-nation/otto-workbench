@@ -116,18 +116,18 @@ class TestSplit:
         """By position, not by value: the repeat maps onto its predecessor, the
         first does not, and filtering by value would remove both."""
         rewrites = [git.rewrites.Rewrite(A, B), git.rewrites.Rewrite(A, B)]
-        kept, dropped = git.rewrites.split(rewrites, self.ONTO, {A: "pick"})
-        assert (kept, dropped) == ([rewrites[0]], [rewrites[1]])
+        assert git.rewrites.split(rewrites, self.ONTO, {A: "pick"}) == git.rewrites.Split(
+            [rewrites[0]], [rewrites[1]])
 
     def test_a_line_whose_commit_the_todo_does_not_name_is_neither(self):
         rewrites = git.rewrites.parse(f"{A} {self.ONTO}\n{B} {C}\n")
-        assert git.rewrites.split(rewrites, self.ONTO, {B: "pick"}) == (
+        assert git.rewrites.split(rewrites, self.ONTO, {B: "pick"}) == git.rewrites.Split(
             [rewrites[1]], [])
 
     def test_the_rest_are_rewrites(self):
         rewrites = git.rewrites.parse(f"{A} {C}\n{B} {C}\n")
-        assert git.rewrites.split(rewrites, self.ONTO, {A: "pick", B: "fixup"}) == (
-            rewrites, [])
+        assert git.rewrites.split(
+            rewrites, self.ONTO, {A: "pick", B: "fixup"}) == git.rewrites.Split(rewrites, [])
 
 
 class TestDoneCommands:

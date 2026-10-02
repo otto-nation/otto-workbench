@@ -349,9 +349,9 @@ def _rewritten(cwd: str, kind: str, stdin: str) -> int:
     commands = git.rewrites.done_commands(state)
     if commands is None:
         return 0
-    kept, drops = git.rewrites.split(rewrites, onto, commands)
-    _record(cwd, kept)
-    dropped = dropped_commits(cwd, drops)
+    lines = git.rewrites.split(rewrites, onto, commands)
+    _record(cwd, lines.kept)
+    dropped = dropped_commits(cwd, lines.dropped)
     if dropped:
         try:
             orig_head = (state / "orig-head").read_text().strip()

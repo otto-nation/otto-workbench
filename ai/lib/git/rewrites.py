@@ -41,6 +41,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+import core.serde
 import git.client
 
 LOG_NAME = "workbench-rewrites"
@@ -149,13 +150,24 @@ def drops(
     predecessor was dropped. A `fixup`/`squash` maps there too, by folding into
     it, which is why the todo command is part of the rule.
     """
-    return split(rewrites, onto, commands)[1]
+    return split(rewrites, onto, commands).dropped
 
 
-def split(
-    rewrites: Sequence[Rewrite], onto: str, commands: dict[str, str],
-) -> tuple[list[Rewrite], list[Rewrite]]:
-    """*rewrites* as (rewrites, drops), each line in exactly one place or neither.
+@dataclass(frozen=True)
+class Split:
+    """A rebase's lines, sorted by what git meant by each.
+
+    *kept* are rewrites — a commit and the one it became. *dropped* are drops
+    git reported as mapped onto their predecessor. A line in neither could not
+    be told apart.
+    """
+
+    kept: list[Rewrite]
+    dropped: list[Rewrite]
+
+
+def split(rewrites: Sequence[Rewrite], onto: str, commands: dict[str, str]) -> Split:
+    """*rewrites* sorted into rewrites and drops, each line in one place or neither.
 
     Lines are told apart by position, not by value, so a pair git reports twice
     stays as many lines as it was. A line whose commit the todo does not name
@@ -171,7 +183,7 @@ def split(
         elif command:
             kept.append(rewrite)
         previous = rewrite.new
-    return kept, dropped
+    return Split(kept, dropped)
 
 
 def common_dir(cwd: str | Path) -> Path | None:
@@ -226,7 +238,7 @@ def _trim(path: Path) -> None:
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     try:
         tmp.write_bytes(b"".join(kept))
-        os.replace(tmp, path)
+        core.serde.replace_file(tmp, path)
     finally:
         tmp.unlink(missing_ok=True)
 

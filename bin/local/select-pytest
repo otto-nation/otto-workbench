@@ -101,6 +101,8 @@ NO_DEPS_TESTS = {
     "tests/workbench_config_layers_test.py",
     # Support module holding a stdlib-only helper; it imports nothing in-repo.
     "tests/review_document_support.py",
+    # Rule-corpus and registry fixture writers for the retro suites; stdlib only.
+    "tests/retro_support.py",
     # Pi RPC lines and fixture readers; the suites importing it carry the deps.
     "tests/ai_backend_pi_support.py",
     # Session-log line builders; the suites importing it carry the deps.

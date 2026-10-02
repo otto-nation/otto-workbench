@@ -11,7 +11,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import config.workbench_config
-import config.workbench_config_report
 import config.workbench_config_write
 
 from workbench_config_support import needs_yaml, roots, _write

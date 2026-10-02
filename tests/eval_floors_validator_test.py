@@ -12,7 +12,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from eval_floors_support import STEM, MODEL, INCIDENT_ENTRY
+from eval_floors_support import INCIDENT_ENTRY, MODEL, STEM
 
 VALIDATOR = REPO_ROOT / "bin" / "local" / "validate-eval-floors"
 

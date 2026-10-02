@@ -15,8 +15,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import config.workbench_config
-import config.workbench_config_report
-import config.workbench_config_write
 from core.phases import Effort, Phase, Thinking
 
 from workbench_config_support import roots, _write

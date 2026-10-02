@@ -25,7 +25,7 @@ from eval.floors import (
 )
 from eval.scoring import MIN_RECALL_TOLERANCE_RUNS, entry_recall_tolerance
 
-from eval_floors_support import STEM, MODEL, INCIDENT_ENTRY
+from eval_floors_support import INCIDENT_ENTRY, MODEL, STEM
 
 
 def _record(floor: float, best: float | None = None, lowered: str | None = None) -> FloorRecord:

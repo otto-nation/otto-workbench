@@ -96,8 +96,6 @@ BOOTSTRAP_REFS = {"ai/lib", "lib", "ai", "bin", "tests", ".git", "ai/bin"}
 NO_DEPS_TESTS = {
     # Asserts the sandbox in conftest, whose own changes trigger the full suite.
     "tests/git_sandbox_test.py",
-    # Asserts conftest's script loader, same.
-    "tests/script_loading_test.py",
     # Reads the config modules' source through a path assembled at call time
     # from a dotted name, which no static map can follow.
     "tests/workbench_config_layers_test.py",
@@ -122,7 +120,8 @@ def _module_index() -> dict[str, str]:
     """Dotted module name → repo-relative path, for every importable module.
 
     First root wins on a collision, matching the ``sys.path`` order a test
-    sees: ``ai/lib`` is inserted before ``lib``.
+    sees: ``ai/lib`` is inserted before ``lib``, both ahead of the bare-name
+    siblings a test itself can offer — see ``_test_sibling_index``.
     """
     index: dict[str, str] = {}
     for root, path in _module_files():
@@ -130,7 +129,32 @@ def _module_index() -> dict[str, str]:
         if dotted.endswith(".__init__"):
             dotted = dotted[: -len(".__init__")]
         index.setdefault(dotted, str(path.relative_to(REPO_ROOT)))
+    for name, relpath in _test_sibling_index().items():
+        index.setdefault(name, relpath)
     return index
+
+
+def _test_sibling_index() -> dict[str, str]:
+    """Bare module name → repo-relative path, for files directly under ``tests/``.
+
+    A suite split into ``tests/wiki_test.py`` plus a sibling
+    ``tests/wiki_support.py`` reaches the helper with
+    ``from wiki_support import ...`` — pytest's own rootdir insertion puts
+    ``tests/`` on ``sys.path`` the same way ``ai/lib`` and ``lib`` are, so the
+    same bare-name lookup resolves it. Without this, a support module with no
+    test of its own in the same file is invisible to every suite that imports
+    it: a change to ``tests/wiki_support.py`` alone matched nothing but itself,
+    so the six wiki suites built on it went unselected by a bug introduced
+    there.
+
+    Non-recursive: ``tests/test_nesting/`` is a package with its own
+    ``conftest.py``, and nothing outside it imports from inside it by name.
+    """
+    return {
+        path.stem: str(path.relative_to(REPO_ROOT))
+        for path in sorted(TESTS_DIR.glob("*.py"))
+        if path.name not in ("conftest.py", "__init__.py")
+    }
 
 
 def _module_files():

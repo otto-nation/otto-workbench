@@ -3135,10 +3135,11 @@ against the model that will actually serve the request.
 The `system` and `tools` arguments exist for that first property and no caller
 supplies them yet. `claude -p` assembles both inside the CLI, so a review has
 no handle on the text its agent will actually be sent; a count taken here is
-the prompt alone. Measured against session logs, a real request runs 9.5k to
-48.8k tokens above it — roughly 26k for a full review phase and 11k for a
-lighter one. A caller comparing a count against a context window owes itself
-that margin until the two are wired together.
+the prompt alone. A real request runs well above it, by an amount that differs
+per backend; `review.budget` owns the measured figures and the reserve built
+from them (see the comment above `OVERHEAD_RESERVE_TOKENS`). A caller comparing
+a count against a context window owes itself that margin until the two are
+wired together.
 
 ### agent/usage.py
 

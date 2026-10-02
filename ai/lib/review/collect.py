@@ -362,6 +362,11 @@ def diff_section_sizes(full_diff: str) -> dict[str, int]:
     One scan of the diff, so a caller sizing many file sets sums these rather
     than re-running `scope_diff` over the whole diff per set. A path that
     appears twice is summed, as `scope_diff` would keep both sections.
+
+    Keyed by the `a/` side of the header, as `scope_diff` is. A renamed file
+    is therefore found under its old path, and a caller looking it up by the
+    PR's current path (`Group.files`) reads 0 bytes — so a size summed over
+    many renames is an under-count, and a cap built on it is looser for them.
     """
     matches = list(_DIFF_HEADER_RE.finditer(full_diff))
     sizes: dict[str, int] = {}

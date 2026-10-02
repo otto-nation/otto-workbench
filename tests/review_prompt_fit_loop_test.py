@@ -158,7 +158,10 @@ class TestTheFitLoop:
         assert record["prompt_tokens"] == 100
         assert record["renders"] == 1
 
-    def test_byte_overshoot_replans_then_refuses(self, tmp_path, monkeypatch):
+    def test_byte_overshoot_at_the_diff_floor_refuses_without_replanning(
+        self, tmp_path, monkeypatch,
+    ):
+        """The floor means every lever is spent; a second render is the same prompt."""
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
         monkeypatch.setattr(
             "review.prompt_fit.prompt_budget_bytes", lambda *a, **k: 80,
@@ -173,9 +176,8 @@ class TestTheFitLoop:
             with pytest.raises(PromptTooLarge):
                 build_prompt(Phase.SCOUT, _job(tmp_path), max_turns=10)
         assert renders, "render was never looked up through agent.templates"
-        assert 2 <= len(renders) <= MAX_PROMPT_RENDERS
-        ladders = [row["ladder_bytes"] for row in _stats(tmp_path)]
-        assert all(later < earlier for earlier, later in zip(ladders, ladders[1:]))
+        assert len(renders) == 1
+        assert len(_stats(tmp_path)) == 1
 
     def test_three_renders_then_prompt_too_large(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
@@ -187,6 +189,15 @@ class TestTheFitLoop:
                 build_prompt(Phase.SCOUT, _job(tmp_path), max_turns=10)
         assert renders, "render was never looked up through agent.templates"
         assert len(renders) == MAX_PROMPT_RENDERS
+
+    def test_a_token_only_overshoot_says_tokens_not_bytes(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
+        with patch("review.prompt.count_tokens", return_value=10_000_000):
+            with pytest.raises(PromptTooLarge) as exc:
+                build_prompt(Phase.SCOUT, _job(tmp_path), max_turns=10)
+        assert exc.value.token_overshoot > 0
+        assert exc.value.prompt_bytes <= exc.value.budget_bytes
+        assert "tokens over" in str(exc.value)
 
     def test_token_overshoot_replans(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")

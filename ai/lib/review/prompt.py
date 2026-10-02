@@ -26,6 +26,7 @@ from dataclasses import asdict, dataclass, fields
 from enum import StrEnum
 from pathlib import Path
 import threading
+from typing import TYPE_CHECKING
 
 import git.client
 import json
@@ -53,6 +54,10 @@ from review.prompt_sections import (
     _build_state_context_section, _is_incremental,
 )
 from review.types import PreflightData, ReviewJob
+
+if TYPE_CHECKING:
+    # `prompt_fit` imports this module at runtime, so the type is annotation-only.
+    from review.prompt_fit import PromptVerification
 
 # The verdicts the prompt offers, written from the same members the review's
 # `## Verdict` line is parsed against — the wording an agent is asked for cannot
@@ -354,9 +359,10 @@ def _fixed_preflight_bytes(
     itself and registered it as its own template variable — `_prompt_group`
     does, scoped to its group's files. Those bytes are already in
     `known_bytes`, so reserving them here as well charges the phase twice for
-    one section and takes the difference out of the diff. Only the commit log
-    is left to reserve in that case; everything else `fixed_preflight_bytes`
-    counts is inside the context the caller already rendered.
+    one section and takes the difference out of the diff. Nothing is reserved in
+    that case: everything `fixed_preflight_bytes` counts is inside the context
+    the caller already rendered, and the commit log is a lever in `_fit_budget`
+    rather than a reserve.
     """
     if not pf:
         return 0
@@ -611,7 +617,7 @@ def _log_prompt_size(
     model: str,
     label: str = "", cuts: tuple[Cut, ...] = (), phase: Phase | None = None,
     accounting: BudgetAccounting | None = None,
-    verification=None,
+    verification: PromptVerification | None = None,
     renders: int = 1,
     ladder_bytes: int | None = None,
 ) -> str:
@@ -960,15 +966,25 @@ class PromptTooLarge(RuntimeError):
 
     def __init__(
         self, template: str, prompt_bytes: int,
-        budget_bytes: int = 0, model: str = "",
+        budget_bytes: int = 0, model: str = "", token_overshoot: int = 0,
     ):
         self.template = template
         self.prompt_bytes = prompt_bytes
         self.budget_bytes = budget_bytes
         self.model = model
+        self.token_overshoot = token_overshoot
         against = f"{budget_bytes // 1024}KB budget"
         if model:
             against += f" for {model}"
+        if token_overshoot and prompt_bytes <= budget_bytes:
+            # Bytes fit; the measured token count is what does not. Saying
+            # "N KB against a larger M KB budget" would read as a contradiction.
+            super().__init__(
+                f"{template} prompt is {prompt_bytes // 1024}KB, within the "
+                f"{against}, but {token_overshoot} tokens over the model "
+                f"window, with every lever already pulled"
+            )
+            return
         super().__init__(
             f"{template} prompt is {prompt_bytes // 1024}KB against a "
             f"{against}, with every lever already pulled"

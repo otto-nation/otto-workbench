@@ -306,13 +306,16 @@ class TestOverheadIsRecordedForTheFirstAttemptOnly:
         calls = []
         monkeypatch.setattr(
             review.prompt_fit, "record_prompt_overhead",
-            lambda *a, **k: calls.append(a),
+            lambda *a, **k: calls.append((a, k)),
         )
         monkeypatch.setattr(review.phases, "run_agent", lambda inv, throttle=None: 0)
         runner = review.pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, 1)
         runner.invoke("PROMPT")
         runner.invoke("HINT PROMPT")
         assert len(calls) == 1
+        args, kwargs = calls[0]
+        assert args[2] is Phase.GROUP
+        assert kwargs["index"] == 1
 
 
 class TestNoDuplicateDefaults:

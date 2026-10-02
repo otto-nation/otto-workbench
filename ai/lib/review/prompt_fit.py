@@ -32,7 +32,7 @@ from review.budget import (
 )
 from review.paths import FILENAME_PROMPT_STATS, review_artifact_path
 from review.prompt import (
-    BuiltPrompt, PromptTooLarge, _build_common_sections, _log_prompt_size,
+    BudgetLever, BuiltPrompt, PromptTooLarge, _build_common_sections, _log_prompt_size,
     _measured_tokens, _prompt_stats_lock, unverified_reason,
 )
 from review.types import ReviewJob
@@ -181,7 +181,14 @@ def fit_rendered_prompt(
         )
         if verification.ok:
             return prompt
+        # At the diff floor every lever is already spent, so a smaller target
+        # renders the same prompt: stop before paying for another count.
+        if any(c.lever is BudgetLever.DIFF_FLOOR for c in built.builder.cuts):
+            break
         next_target = ratchet_target(target, verification)
+        # `ratchet_target` always steps down by at least 1, so this only fires
+        # when `target` is already 0 and cannot go lower; it is not a general
+        # stalled-ratchet check.
         if next_target >= target or render_i == MAX_PROMPT_RENDERS - 1:
             break
         core.log.info(
@@ -197,6 +204,7 @@ def fit_rendered_prompt(
     raise PromptTooLarge(
         template_name, last_verification.prompt_bytes,
         budget_bytes=budget_bytes, model=model,
+        token_overshoot=last_verification.token_overshoot,
     )
 
 

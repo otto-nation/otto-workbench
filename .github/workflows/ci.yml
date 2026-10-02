@@ -168,7 +168,7 @@ jobs:
       # yq otherwise. pipx runs pytest in its own venv, so it is yq here.
       - uses: ./.github/actions/install-yq
 
-      # tests/mcp_server_test.py spawns the MCP server the way its launcher
+      # tests/mcp_server_transport_test.py spawns the MCP server the way its launcher
       # does — `uv run --with mcp`. Without uv on PATH those cases skip
       # themselves and the transport goes untested.
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1

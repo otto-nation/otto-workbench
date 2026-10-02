@@ -56,7 +56,6 @@ SUPPORT_NAMES = frozenset({"conftest.py", "__init__.py"})
 # is empty when #910 closes, and from then this gate is unconditional. The test
 # suite pins it to exactly the set of files over the cap, so it can only shrink.
 KNOWN_OVER = {
-    "tests/ai_backend_pi_test.py": "#910",
     "tests/ci_failures_test.py": "#910",
     "tests/ci_runs_test.py": "#910",
     "tests/conftest.py": "#910",
@@ -64,13 +63,11 @@ KNOWN_OVER = {
     "tests/eval_scoring_skill_test.py": "#910",
     "tests/eval_scoring_test.py": "#910",
     "tests/fix_engine_test.py": "#910",
-    "tests/mcp_server_test.py": "#910",
     "tests/otto_log_test.py": "#910",
     "tests/pr_cli_test.py": "#910",
     "tests/pr_comments_test.py": "#910",
     "tests/pr_state_test.py": "#910",
     "tests/push_test.py": "#910",
-    "tests/review_agent_diagnostics_test.py": "#910",
     "tests/review_collect_test.py": "#910",
     "tests/review_document_test.py": "#910",
     "tests/review_fix_pass_test.py": "#910",

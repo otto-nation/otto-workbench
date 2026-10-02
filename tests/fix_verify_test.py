@@ -1,7 +1,7 @@
 """Tests for fix.verify — the gate that checks claimed fixes.
 
-The engine's contract with the gate is tested in fix_engine_test. What is held
-here is the runner's own batching: a gate handed more claims than its cap
+The engine's contract with the gate is tested in fix_engine_gate_test. What is
+held here is the runner's own batching: a gate handed more claims than its cap
 covers used to spend ~1 turn an item, which is how 39 claimed fixes against a
 40-turn budget never reached most of them.
 """

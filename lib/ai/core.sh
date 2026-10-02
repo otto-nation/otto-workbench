@@ -125,11 +125,11 @@ load_ai_command() {
 # load_gh_token
 # Hands GitHub token resolution off to ai/lib/pr/gh_token.py and exports
 # GH_TOKEN. Returns 1 on failure, with the guidance already on stderr.
-# _gh_token is a plain global, not `local`: this file is sourced with `sh -c`
-# on the go-task path (see the header), and `local` inside a function run by
-# POSIX sh is non-standard. The `unset` on both the failure and success path
-# is what keeps a failed call from leaving `_gh_token` behind instead.
 load_gh_token() {
+  # _gh_token is a plain global, not `local`: this file is sourced with `sh -c`
+  # on the go-task path (see the header), and `local` inside a function run by
+  # POSIX sh is non-standard. The `unset` on both the failure and success path
+  # is what keeps a failed call from leaving `_gh_token` behind instead.
   _gh_token=$(python3 "$WORKBENCH_ROOT/ai/lib/pr/gh_token.py" --cwd .) || { unset _gh_token; return 1; }
   GH_TOKEN="$_gh_token"
   export GH_TOKEN

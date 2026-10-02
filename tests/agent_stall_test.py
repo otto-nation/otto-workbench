@@ -201,6 +201,14 @@ class TestSampleSubtree:
             sleeper.wait()
 
 
+def _is_zombie(pid: int) -> bool:
+    """A dead process nobody has reaped still answers `kill -0`; it is not running."""
+    state = subprocess.run(
+        ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True,
+    ).stdout.strip()
+    return state.startswith("Z")
+
+
 def _exits_within(pid: int, *, seconds: float) -> bool:
     """Whether *pid* is gone within *seconds*, killing it if it is not.
 
@@ -212,6 +220,8 @@ def _exits_within(pid: int, *, seconds: float) -> bool:
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
+            return True
+        if _is_zombie(pid):
             return True
         time.sleep(0.05)
     try:

@@ -66,6 +66,8 @@ _MAX_LINE_BYTES = 2 * 64 + 2
 _OBJECT_NAME = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 # A todo line's commit: full or abbreviated (`core.abbrev` allows down to 4).
 _TODO_SHA = re.compile(r"[0-9a-f]{4,64}")
+# Todo commands that fold into the commit before them, and may take a `-C`/`-c`.
+_FOLD_COMMANDS = {"fixup", "f", "squash", "s"}
 # Todo commands whose first argument is a commit, as opposed to a label name.
 _COMMIT_ARG_COMMANDS = OWN_COMMIT_COMMANDS | {"fixup", "f", "squash", "s", "drop", "d"}
 
@@ -119,13 +121,16 @@ def done_commands(state: Path) -> dict[str, str] | None:
     commands = {}
     for line in lines:
         fields = line.split()
-        # Only a hex word after a commit command is a commit: `label beef`,
-        # `exec make` and `fixup -C <sha>` carry other first arguments, and
-        # `command_for` prefix-matches the keys.
-        if (len(fields) >= 2 and not line.startswith("#")
-                and fields[0] in _COMMIT_ARG_COMMANDS
-                and _TODO_SHA.fullmatch(fields[1])):
-            commands[fields[1]] = fields[0]
+        if not fields or line.startswith("#") or fields[0] not in _COMMIT_ARG_COMMANDS:
+            continue
+        # `fixup -C <sha>` / `fixup -c <sha>` put a flag before the commit.
+        # Only a hex word is a commit: `label beef` and `exec make` carry other
+        # first arguments, and `command_for` prefix-matches the keys.
+        args = fields[1:]
+        if fields[0] in _FOLD_COMMANDS and args[:1] in (["-C"], ["-c"]):
+            args = args[1:]
+        if args and _TODO_SHA.fullmatch(args[0]):
+            commands[args[0]] = fields[0]
     return commands
 
 

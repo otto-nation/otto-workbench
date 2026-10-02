@@ -136,13 +136,23 @@ class TestDoneCommands:
         (tmp_path / "done").write_text("")
         assert git.rewrites.done_commands(tmp_path) == {}
 
-    def test_a_todo_line_whose_first_argument_is_not_a_sha_is_not_a_commit(
+    def test_a_todo_line_whose_commit_argument_is_not_a_sha_is_not_a_commit(
         self, tmp_path,
     ):
         (tmp_path / "done").write_text(
             f"pick {A} one\nlabel onto\nreset onto\nexec make\n"
-            f"fixup -C {B} two\nlabel beef\nlabel beefy\npick abc1234 three\n")
+            f"label beef\nlabel beefy\npick abc1234 three\n")
         assert git.rewrites.done_commands(tmp_path) == {A: "pick", "abc1234": "pick"}
+
+    def test_a_fixup_with_a_c_flag_records_the_commit_after_it(self, tmp_path):
+        (tmp_path / "done").write_text(
+            f"fixup -C {A} one\nfixup -c {B} two\nsquash -C {C} three\n")
+        assert git.rewrites.done_commands(tmp_path) == {
+            A: "fixup", B: "fixup", C: "squash"}
+
+    def test_a_flag_on_a_command_that_takes_none_hides_nothing(self, tmp_path):
+        (tmp_path / "done").write_text(f"pick -C {A} one\n")
+        assert git.rewrites.done_commands(tmp_path) == {}
 
 
 class TestRecordAndLoad:

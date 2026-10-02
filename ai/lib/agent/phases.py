@@ -71,7 +71,7 @@ class ModelAlias(StrEnum):
 
         Mirrors the ``var`` field of the matching ``ai/models.env.yml`` entry,
         which is the SSOT for model env var names; ``test_alias_env_keys_match_the_registry``
-        in tests/review_orchestrate_test.py fails if the two spellings drift apart again.
+        in tests/review_orchestrate_models_test.py fails if the two spellings drift apart again.
         """
         return f"AI_{self.upper()}_MODEL"
 

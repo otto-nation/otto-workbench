@@ -122,138 +122,15 @@ load_ai_command() {
   fi
 }
 
-# _detect_gh_org — extracts the org/owner from the current repo's origin remote.
-# Handles SSH (git@HOST:org/repo.git), HTTPS (https://HOST/org/repo.git) and the
-# ssh:// form, on any host.
-# Prints the org name to stdout. Returns empty (not failure) if detection is not possible.
-#
-# Host-agnostic on purpose. Matching the literal github.com meant a GitHub
-# Enterprise remote produced no org at all, so GH_TOKEN__<ORG> was never
-# consulted and the lookup fell through to the default GH_TOKEN silently — the
-# per-org scoping simply did not apply on the instance most likely to need it.
-# The same gap swallowed the ssh:// and https://user@ spellings on github.com.
-_detect_gh_org() {
-  local url
-  url=$(git remote get-url origin 2>/dev/null) || return 0
-  local rest="" org=""
-  case "$url" in
-    # A local clone names no org. Checked before the generic scheme arm, which
-    # would otherwise read the first path segment of file:///srv/git/widget.git
-    # as the org "srv".
-    file://*|/*|./*|../*) ;;
-    # Any scheme — https://, ssh://, git:// — as scheme://[user@]host[:port]/org/repo.
-    # Drop the scheme, then the authority up to the first slash.
-    *://*) rest="${url#*://}"; rest="${rest#*/}" ;;
-    # scp-style [user@]host:org/repo.git — the authority ends at the first colon.
-    # A dotless authority is an ssh alias whose real host lives in ssh_config;
-    # the org is still the segment after the colon either way.
-    *:*) rest="${url#*:}" ;;
-  esac
-  # Whatever remains is org/repo.git, or a bare path for a local remote. A
-  # value with no slash names no org and is left empty rather than guessed at.
-  case "$rest" in
-    */*) org="${rest%%/*}" ;;
-  esac
-  printf '%s' "$org"
-}
-
-# _origin_host — the host of the current repo's origin remote.
-# Prints github.com when there is no origin, when it names a local path, or when
-# its authority has no dot (an ssh alias, whose real host lives in ssh_config and
-# is not knowable here). The default keeps every message that interpolates this
-# reading exactly as it did before the host was consulted.
-_origin_host() {
-  local url host=""
-  url=$(git remote get-url origin 2>/dev/null) || url=""
-  case "$url" in
-    file://*|/*|./*|../*|"") ;;
-    *://*)
-      host="${url#*://}"
-      host="${host%%/*}"
-      ;;
-    *:*) host="${url%%:*}" ;;
-  esac
-  # Strip any user@ and :port, leaving the bare authority.
-  host="${host##*@}"
-  host="${host%%:*}"
-  # A dotless authority is an ssh alias, not a hostname anyone can visit.
-  case "$host" in
-    *.*) printf '%s' "$host" ;;
-    *) printf 'github.com' ;;
-  esac
-}
-
-# _normalize_org_to_env ORG — converts a GitHub org name to an env var suffix.
-# Uppercases the name and replaces hyphens with underscores.
-# Example: otto-nation → OTTO_NATION
-_normalize_org_to_env() {
-  local org="$1"
-  printf '%s' "$org" | tr '[:lower:]-' '[:upper:]_'
-}
-
 # load_gh_token
-# Resolves GH_TOKEN with per-org routing support. Returns 1 on failure.
-#
-# Resolution order (first match wins):
-#   1. GH_TOKEN in local .taskfile/taskfile.env (project-level pin)
-#   2. GH_TOKEN__<ORG> in global taskfile.env (org-specific)
-#   3. GH_TOKEN in global taskfile.env (default)
-#   4. GH_TOKEN already in the environment (e.g. CI, .env.local)
-#   5. Fail with actionable error
+# Resolves GH_TOKEN for AI automation and exports it. Returns 1 on failure, with
+# the guidance already on stderr. Resolution — local pin, GH_TOKEN__<ORG>,
+# default, environment — is owned by ai/lib/pr/gh_token.py; this only hands off.
 load_gh_token() {
-  local env_file
-  env_file=$(_resolve_env_file) || true
-
-  # Tier 1: local override (GH_TOKEN in .taskfile/taskfile.env)
-  if [ -f "$AI_LOCAL_ENV_PATH" ] && grep -q "^GH_TOKEN=" "$AI_LOCAL_ENV_PATH"; then
-    GH_TOKEN=$(grep "^GH_TOKEN=" "$AI_LOCAL_ENV_PATH" | head -1 | cut -d'=' -f2-)
-    export GH_TOKEN
-    return 0
-  fi
-
-  # Detect current org for org-specific token lookup
-  local org org_suffix org_token_var
-  org=$(_detect_gh_org)
-  if [ -n "$org" ]; then
-    org_suffix=$(_normalize_org_to_env "$org")
-    org_token_var="GH_TOKEN__${org_suffix}"
-
-    # Tier 2: org-specific token in global env file
-    if [ -n "${env_file:-}" ] && grep -q "^${org_token_var}=" "$env_file"; then
-      GH_TOKEN=$(grep "^${org_token_var}=" "$env_file" | head -1 | cut -d'=' -f2-)
-      export GH_TOKEN
-      return 0
-    fi
-  fi
-
-  # Tier 3: default GH_TOKEN in env file
-  if [ -n "${env_file:-}" ] && grep -q "^GH_TOKEN=" "$env_file"; then
-    GH_TOKEN=$(grep "^GH_TOKEN=" "$env_file" | head -1 | cut -d'=' -f2-)
-    export GH_TOKEN
-    return 0
-  fi
-
-  # Tier 4: accept a token already present in the environment (e.g. CI system
-  # or set manually) — as long as it was explicitly set, segmentation is maintained.
-  if [ -n "${GH_TOKEN:-}" ]; then
-    return 0
-  fi
-
-  # Tier 5: fail with actionable error
-  local cfg_path="${env_file:-$TASKFILE_ENV}"
-  printf "✗ GH_TOKEN not configured for AI automation.\n"
-  if [ -n "${org:-}" ]; then
-    printf "  Set %s (for %s) or GH_TOKEN (default) in %s\n" "$org_token_var" "$org" "$cfg_path"
-  else
-    printf "  Set GH_TOKEN in %s\n" "$cfg_path"
-  fi
-  # The PAT is issued by the instance the repo lives on, so the link follows
-  # origin's host. A GHES user sent to github.com/settings creates a token for
-  # the wrong instance and gets a 401 they have no reason to connect to this.
-  printf "  Create a fine-grained PAT: https://%s/settings/tokens/new\n" "$(_origin_host)"
-  printf "  Required: Contents (read/write), Pull requests (read/write) — scoped to specific repos\n"
-  printf "  Run: task --global ai:setup\n"
-  return 1
+  _gh_token=$(python3 "$WORKBENCH_ROOT/ai/lib/pr/gh_token.py" --cwd .) || return 1
+  GH_TOKEN="$_gh_token"
+  export GH_TOKEN
+  unset _gh_token
 }
 
 # ceiling: AI_COMMAND is deliberately pluggable to non-Claude binaries, so this path

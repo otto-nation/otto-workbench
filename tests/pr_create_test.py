@@ -1,6 +1,6 @@
 """Tests for `pr.create.run_create` — preflight, gate, push, content, `gh pr create`.
 
-Ported from `tests/create_pr.bats` (gh's exit code decides, only a real
+Ported from the bash `create_pr` suite (gh's exit code decides, only a real
 `/pull/<n>` URL is reported) and `tests/load_pr_context.bats` (default-branch
 and base refusals), plus D5, D7-order, D10 and D13 and the dry-run contract.
 
@@ -154,7 +154,7 @@ def _flag(argv: tuple[str, ...], flag: str) -> str:
     return argv[argv.index(flag) + 1]
 
 
-# ── tests/create_pr.bats ────────────────────────────────────────────────────
+# ── ported from the bash create_pr suite ───────────────────────────────────
 
 
 def test_reports_the_pr_url_when_gh_succeeds(h, capsys):

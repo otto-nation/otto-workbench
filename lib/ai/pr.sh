@@ -5,120 +5,18 @@
 #
 # ```bash
 # load_pr [ARGS]                     # sets SKIP_ISSUE, PR_BASE, AI_COMMAND, BRANCH, DEFAULT_BRANCH
-# push_branch BRANCH                 # pushes the branch if needed
 # generate_pr_content BRANCH DEFAULT # sets PR_TITLE, PR_DESCRIPTION
-# create_pr GH_ARGS...               # runs gh pr create, reports the PR URL
 # ```
 #
 # State set by its functions: `BRANCH`, `DEFAULT_BRANCH`, `SKIP_ISSUE`,
-# `PR_BASE`, `PR_ISSUE`, `PR_CLOSES`, `PR_NO_VERIFY`, `PR_TEMPLATE`,
-# `PR_TEMPLATE_PATH`, `PR_HAS_TEMPLATE`, `PR_TITLE`, `PR_DESCRIPTION`.
+# `PR_BASE`, `PR_ISSUE`, `PR_CLOSES`, `PR_TEMPLATE`, `PR_TEMPLATE_PATH`,
+# `PR_HAS_TEMPLATE`, `PR_TITLE`, `PR_DESCRIPTION`.
 
 # WORKBENCH_ROOT comes from ai/core.sh, which this file requires be sourced
 # first (see the header above). _pr_load_template asks git for the repo root,
 # which an inherited GIT_DIR would otherwise answer for the caller's repository.
 # shellcheck source=../gitenv.sh
 . "$WORKBENCH_ROOT/lib/gitenv.sh"
-
-# _push_verified BRANCH [--set-upstream]
-# Pushes BRANCH through the owner in ai/lib/git/push.py, which confirms the remote
-# ref actually moved. Returns non-zero on a refused, lost, or unverified push,
-# having already reported which of the three it was — nothing is echoed here,
-# because a second "Push failed" would say it worse and say it twice.
-_push_verified() {
-  local branch="$1"; shift
-  local gate=()
-  # PR_NO_VERIFY is the operator's answer to a pre-push gate they have already
-  # read — a flake, or a failure the branch did not cause. Passed through here
-  # rather than by exporting GIT_* or editing hooks, so it is visible in the
-  # invocation that used it and dies with that invocation.
-  [[ "${PR_NO_VERIFY:-false}" == true ]] && gate=(--no-verify)
-  # No PYTHONPATH here: push.py puts ai/lib on sys.path itself, because an
-  # exported one does not reach every interpreter this runs under — a mise shim
-  # assigns the workspace's own value over it before exec'ing python.
-  python3 "$WORKBENCH_ROOT/ai/lib/git/push.py" \
-    --cwd . --branch "$branch" --remote "$GIT_REMOTE" "${gate[@]}" "$@"
-}
-
-# push_branch BRANCH
-# Pushes BRANCH to remote, handling first-push and divergence cases.
-# Returns 1 on any failure that should abort the caller.
-push_branch() {
-  local branch="$1"
-
-  if ! git ls-remote --heads "$GIT_REMOTE" "$branch" | grep -q "$branch"; then
-    echo "→ Pushing new branch to remote..."
-    _push_verified "$branch" --set-upstream || return 1
-    return 0
-  fi
-
-  git fetch "$GIT_REMOTE" "$branch" --quiet
-
-  # If no tracking branch configured, just push
-  if ! git rev-parse --verify "@{u}" &>/dev/null 2>&1; then
-    _push_verified "$branch" || return 1
-    return 0
-  fi
-
-  local local_sha remote_sha base_sha
-  local_sha=$(git rev-parse @)
-  # shellcheck disable=SC1083  # @{u} is git's upstream shorthand, not a shell construct
-  remote_sha=$(git rev-parse @{u})
-  # shellcheck disable=SC1083
-  base_sha=$(git merge-base @ @{u})
-
-  if [ "$local_sha" = "$remote_sha" ]; then
-    echo "✓ Branch is up to date with remote"
-  elif [ "$local_sha" = "$base_sha" ]; then
-    echo "✗ Remote has commits not in local branch — please pull first: git pull"
-    return 1
-  elif [ "$remote_sha" = "$base_sha" ]; then
-    echo "→ Local has unpushed commits, pushing..."
-    _push_verified "$branch" || return 1
-  else
-    echo "✗ Branch has diverged from remote"
-    echo "→ Fix with: git pull --rebase or git reset"
-    return 1
-  fi
-}
-
-# Matches a pull request URL on any host. Pinned to github.com, this found
-# nothing on a GitHub Enterprise remote — gh creates the PR and prints an
-# enterprise URL, the scrape came up empty, and the user was told "PR creation
-# failed" for a PR that exists.
-#
-# The /pull/<number> path is what keeps a non-PR URL in gh's own output — such
-# as the https://githubstatus.com link in its connectivity error — from being
-# read as a created PR. The host never contributed to that: githubstatus.com
-# has no /pull/<number> either. A contrived docs or status URL that did carry
-# one would now match, but nothing reaches this scrape except the output of a
-# `gh pr create` that already exited 0.
-PR_URL_PATTERN='https://[^[:space:]]+/[^[:space:]]+/pull/[0-9]+'
-
-# create_pr GH_ARGS...
-# Runs `gh pr create` with the given arguments and reports the resulting PR URL.
-# gh's exit code is the authoritative success signal; a zero exit with no parsable
-# pull request URL is still treated as a failure. Returns 1 on any failure.
-create_pr() {
-  local output url status=0
-  output=$(gh pr create "$@" 2>&1) || status=$?
-
-  if [[ "$status" -ne 0 ]]; then
-    echo "✗ PR creation failed (gh exited $status)"
-    echo "$output"
-    return 1
-  fi
-
-  url=$(printf '%s\n' "$output" | grep -oE "$PR_URL_PATTERN" | head -1 || true)
-  if [[ -z "$url" ]]; then
-    echo "✗ PR creation failed — gh reported success but printed no pull request URL"
-    echo "$output"
-    return 1
-  fi
-
-  echo "✓ Pull request created"
-  echo "$url"
-}
 
 # _ensure_gh_repo_access
 # Verifies the current gh auth can access the repo. If the automation token
@@ -153,7 +51,7 @@ _ensure_gh_repo_access() {
 # the escape hatch for that case, so it must not be refused on the guess's behalf.
 #
 # Must be called after parse_pr_flags (so PR_BASE is populated) and before
-# generate_pr_content or push_branch — load_pr does both in order.
+# generate_pr_content — load_pr does both in order.
 load_pr_context() {
   load_ai_command || return 1
   load_gh_token || return 1
@@ -202,8 +100,8 @@ _set_pr_flag() {
 }
 
 # parse_pr_flags ARGS
-# Parses PR-specific flags from the CLI_ARGS string. Sets SKIP_ISSUE, PR_DRAFT,
-# PR_BASE, PR_TITLE_OVERRIDE, PR_BODY_OVERRIDE, PR_CLOSES. Returns 1 on unknown
+# Parses PR-specific flags from the CLI_ARGS string. Sets SKIP_ISSUE, PR_BASE,
+# PR_TITLE_OVERRIDE, PR_BODY_OVERRIDE, PR_CLOSES. Returns 1 on unknown
 # flag, missing value, or an unclosable --closes reference.
 #
 # Uses eval to re-parse so quoted multi-word values work:
@@ -211,8 +109,6 @@ _set_pr_flag() {
 parse_pr_flags() {
   local args="$1"
   SKIP_ISSUE=false
-  # shellcheck disable=SC2034  # PR_DRAFT read by Taskfile callers
-  PR_DRAFT=false
   # shellcheck disable=SC2034  # PR_BASE read by Taskfile callers
   PR_BASE=""
   # shellcheck disable=SC2034  # PR_TITLE_OVERRIDE read by generate_pr_content
@@ -220,8 +116,6 @@ parse_pr_flags() {
   # shellcheck disable=SC2034  # PR_BODY_OVERRIDE read by generate_pr_content
   PR_BODY_OVERRIDE=""
   PR_ISSUE_OVERRIDE=""
-  # shellcheck disable=SC2034  # PR_NO_VERIFY read by _push_verified
-  PR_NO_VERIFY=false
   # shellcheck disable=SC2034  # PR_CLOSES read by _pr_append_issue_link
   PR_CLOSES=()
 
@@ -238,16 +132,14 @@ parse_pr_flags() {
       expect_flag=""
       continue
     fi
-    # shellcheck disable=SC2034  # PR_DRAFT is read by Taskfile callers
+    # shellcheck disable=SC2034  # SKIP_ISSUE is part of the parse result callers read
     case "$arg" in
-      # Accepted and inert. Every documented pr:create invocation passes it to
-      # suppress an issue prompt that no longer exists.
+      # Accepted and inert. Long-standing PR invocations pass it to suppress an
+      # issue prompt that no longer exists.
       --no-issue) SKIP_ISSUE=true ;;
-      --draft)    PR_DRAFT=true ;;
-      # The pre-push gate, skipped. For a gate failure already understood — a
-      # flake, or one the branch did not cause. It does not skip the review:
-      # `pr review --self --fix` is a separate step and still owes its run.
-      --no-verify) PR_NO_VERIFY=true ;;
+      # Accepted and inert: creating and pushing belong to `pr create` now, and
+      # pr:update callers that still pass these must not be refused for it.
+      --draft|--no-verify) ;;
       --issue)    expect_flag="$arg" ;;
       --base|--title|--body|--body-file|--closes) expect_flag="$arg" ;;
       *) printf "✗ Unknown flag: %s\n" "$arg"; return 1 ;;
@@ -333,7 +225,7 @@ _pr_load_template() {
   root=$(git_env_clear; git rev-parse --show-toplevel 2> /dev/null) || root="."
 
   # No PYTHONPATH: the module is reached by its file path and imports nothing
-  # from ai/lib, being layer 1. Same reasoning as _push_verified's call.
+  # from ai/lib, being layer 1.
   record=$(python3 "$WORKBENCH_ROOT/ai/lib/core/pr_template.py" --root "$root") || {
     echo "✗ Could not resolve this repo's PR template" >&2
     return 1

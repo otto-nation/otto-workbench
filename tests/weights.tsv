@@ -15,7 +15,6 @@ compose_docs.bats	11.38
 config.bats	5.77
 config_cli.bats	19.01
 container_source.bats	5.71
-create_pr.bats	3.11
 docker_registry.bats	0.73
 docker_setup.bats	1.67
 dream_scan.bats	4.07
@@ -86,7 +85,6 @@ pre_push_hook.bats	26.74
 pre_push_open_pr_notice.bats	16.90
 projects.bats	28.13
 promote_scan.bats	3.22
-push_branch.bats	8.78
 registries_cache.bats	6.19
 registry_permissions.bats	1.60
 resolve_branch.bats	5.29

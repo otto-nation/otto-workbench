@@ -56,18 +56,18 @@ above it, which is what keeps this module's answer to "did it land" independent
 of any caller's idea of how to fix it. `holds` is the same question asked of a
 commit nobody is pushing right now: whether the remote already has it.
 
-`gated` is required and has no default. Every caller in `ai/` passes `True` and
-differs only in what opens the gate: `pr comments`, `pr ci --fix` and the review
-fix pass open it under `--post`, and `pr rebase` opens it unless `--no-push`,
-because there force-pushing is the command itself rather than a side effect. The
-gate is where that difference belongs — expressed as an entry point's decision
-rather than as an argument one caller passes differently, `--no-push` gets the
-drafted command and the resume line every other held push already gets. Only the
-`pr:create` bridge below still passes `False`, because it is bash reaching in
-from a command that has already decided to publish and has no gate to open. A
-`False` default would let the next call site inherit the ungated answer by
-omitting the argument, which is how three of those four came to push without
-ever asking.
+`gated` is required and has no default. Every caller in `ai/` but one passes
+`True` and differs only in what opens the gate: `pr comments`, `pr ci --fix` and
+the review fix pass open it under `--post`, and `pr rebase` opens it unless
+`--no-push`, because there force-pushing is the command itself rather than a
+side effect. The gate is where that difference belongs — expressed as an entry
+point's decision rather than as an argument one caller passes differently,
+`--no-push` gets the drafted command and the resume line every other held push
+already gets. The one is `pr create`, which passes `False` through
+`pr.branch_sync`, because creating the PR has already decided to publish and
+there is no gate to open. A `False` default would let the next call site
+inherit the ungated answer by omitting the argument, which is how three of
+those four came to push without ever asking.
 
 Every outcome but `PUSHED` names the command that would finish it, and
 `resume_command` is where that mapping lives — one place rather than a line of
@@ -80,38 +80,17 @@ nothing downstream may run: `pr comments` records it as `push_lost` rather than
 in the worktree — nothing may cite the SHA. `UNVERIFIED` records as
 `push_unverified` and is a warning: a remote that could not be asked has not said
 no, so the push has very likely landed and simply cannot be confirmed.
-
-Running this module as a script is how the bash half of `pr:create` reaches it,
-since a second implementation in shell is the thing being avoided. It takes
-`--cwd`, `--branch`, `--remote` and `--set-upstream`, runs ungated, and answers
-in exit codes — `0` pushed, `1` refused, `2` lost, `3` unverified.
 """
 
 # doc-group: platform
 
 from __future__ import annotations
 
-import argparse
 import dataclasses
-import sys
-import traceback
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-
-# `from git import client` and `from core import log` resolve against ai/lib,
-# one directory up from this file. The interpreter's automatic sys.path[0] is
-# this file's own directory, so the entry has to be added here rather than by
-# the caller: a PYTHONPATH exported by the shell does not survive every
-# interpreter this script is launched under. A mise shim assigns PYTHONPATH
-# from the workspace's own [env] before exec'ing python, replacing whatever the
-# caller set, so in a repo whose .mise.toml sets it these imports fail outright.
-# Prepended, not appended: `git` is also the top-level module name GitPython
-# installs, and a sibling must win over a same-named package on the path.
-_AI_LIB = Path(__file__).resolve().parent.parent
-if _AI_LIB.is_dir() and str(_AI_LIB) not in sys.path:
-    sys.path.insert(0, str(_AI_LIB))
 
 import git.client
 import core.log
@@ -867,85 +846,3 @@ def report(result: PushResult, wt_path: str | Path) -> None:
     core.log.dim(f"origin:   {git.client.abbrev(result.remote_sha) or 'no such ref'}")
     core.log.dim(_RETRY_NOTE[result.retry])
     core.log.dim(f"Resume: {resume}")
-
-
-# The bash half of `pr:create` reads these rather than parsing output. HELD
-# shares REFUSED's code: the CLI always runs ungated, so it is unreachable, and
-# a status this map did not answer for must not read as success.
-_EXIT_CODES = {
-    PushStatus.PUSHED: 0,
-    PushStatus.REFUSED: 1,
-    PushStatus.HELD: 1,
-    PushStatus.LOST: 2,
-    PushStatus.UNVERIFIED: 3,
-}
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    """Push and verify from the shell — see the module docstring.
-
-    The bridge for `lib/ai/pr.sh`, which is bash and cannot reach the owner any
-    other way. It stays ungated: the shell half runs under `pr:create`, where
-    pushing the branch is the point of the command rather than something the
-    publishing gate decides.
-    """
-    parser = argparse.ArgumentParser(description="Push a branch and verify it landed.")
-    parser.add_argument("--cwd", default=".")
-    parser.add_argument("--branch", required=True)
-    parser.add_argument("--remote", default="origin")
-    parser.add_argument("--set-upstream", action="store_true")
-    parser.add_argument(
-        "--no-verify", action="store_true",
-        help="Skip the pre-push hook. For a push whose gate failure is already "
-             "understood — a flake, or a failure the branch did not cause.",
-    )
-    ns = parser.parse_args(argv)
-
-    # The branch is named explicitly rather than left to git's push.default,
-    # because the shell caller has already decided which branch it means.
-    #
-    # `--no-verify` is the caller's to pass, not this script's to infer. The
-    # retry path below reaches for it on its own and can justify that — the
-    # gates passed for that exact commit moments earlier. Nothing here knows
-    # that, so skipping the hook is a decision an operator makes.
-    args = (["-u"] if ns.set_upstream else []) + [ns.remote, ns.branch]
-    if ns.no_verify:
-        args = ["--no-verify", *args]
-
-    # ceiling: the context names the branch and not the repo, so `otto-log
-    # --repo` cannot filter these events. Both things that can spell
-    # `owner/repo` sit above this layer — `pr.context.detect_repo` at layer 4
-    # and `gh.client.repo_slug` at layer 3 — and `git` may import only `core`.
-    # Reaching up for a filter key would invert the stack, and parsing origin a
-    # second time here would be a second definition of a repo's name.
-    # Upgrade trigger: if push events need repo filtering, have the bash caller
-    # pass `--repo`; it is the layer that is allowed to know.
-    #
-    # Started outside the `try` deliberately: there is nothing to `finish` if
-    # opening it is what failed, and moving it inside makes the `finally` a
-    # `NameError` path.
-    trail = Trail.start(script=SCRIPT, context={"branch": ns.branch})
-    try:
-        result = push(ns.cwd, gated=False, branch=ns.branch, remote=ns.remote,
-                      args=args, trail=trail)
-        report(result, ns.cwd)
-        return _EXIT_CODES[result.status]
-    except Exception as exc:
-        # `finish` writes one unconditional summary with no verdict in it, so
-        # without this an exception mid-push leaves a trail that reads exactly
-        # like a clean run. Every other entry point records the same event for
-        # the same reason.
-        trail.error("unexpected_error", str(exc),
-                    data={"traceback": traceback.format_exc()})
-        raise
-    finally:
-        trail.finish()
-
-
-# What the trail above is filed under. Beside its one consumer rather than at
-# the top of the module, which is where this file keeps its other constants.
-SCRIPT = "push"
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

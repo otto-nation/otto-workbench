@@ -398,7 +398,7 @@ Nothing declared here."
 
 @test "commit:reword reads the original message and preserves its footers" {
   local reword
-  reword=$(awk '/^  commit:reword:/{f=1} /^  pr:content:/{f=0} f' "$REPO_ROOT/Taskfile.global.yml")
+  reword=$(awk '/^  commit:reword:/{f=1} /^  pr:update:/{f=0} f' "$REPO_ROOT/Taskfile.global.yml")
   [[ "$reword" == *'ORIGINAL_MSG=$(git log -1 --format=%B "$TARGET_SHA")'* ]]
   [[ "$reword" == *'preserve_declared_footers "$ORIGINAL_MSG"'* ]]
 

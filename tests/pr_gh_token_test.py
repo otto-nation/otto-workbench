@@ -259,7 +259,7 @@ def test_script_failure_keeps_stdout_empty(tmp_path, home):
 
 
 def test_script_runs_from_any_cwd_with_a_hostile_pythonpath(tmp_path, home):
-    # The mise-shim case git/push.py documents: PYTHONPATH replaced wholesale.
+    # The mise-shim case gh_token.py documents: PYTHONPATH replaced wholesale.
     _global(home, "GH_TOKEN=ghp_default\n")
     r = _run_script(_repo(tmp_path), home, {"PYTHONPATH": str(tmp_path)})
     assert r.returncode == 0

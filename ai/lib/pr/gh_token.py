@@ -36,8 +36,11 @@ from enum import StrEnum
 from pathlib import Path
 
 # Run as a script, sys.path[0] is this file's directory. `pr.target` resolves
-# against ai/lib, one level up — added here rather than by the caller for the
-# reason git/push.py gives: a mise shim can replace PYTHONPATH before exec.
+# against ai/lib, one level up — added here rather than by the caller because a
+# PYTHONPATH exported by the shell does not survive every interpreter: a mise
+# shim assigns the workspace's own value over it before exec'ing python.
+# Prepended, not appended: `git` is also the top-level module name GitPython
+# installs, and a sibling must win over a same-named package on the path.
 _AI_LIB = Path(__file__).resolve().parent.parent
 if _AI_LIB.is_dir() and str(_AI_LIB) not in sys.path:
     sys.path.insert(0, str(_AI_LIB))

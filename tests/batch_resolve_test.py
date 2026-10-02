@@ -155,3 +155,21 @@ def test_open_chat_is_left_to_the_ui():
     run = _run(_d(m.DecisionKind.OPEN_FINDINGS, "review"))
     with pytest.raises(res.ResolveError, match="UI"):
         res.apply(run, res.Request("d1", "open-chat"), pr_bin="pr", runner=Recorder())
+
+
+def test_default_runner_keeps_child_stdout_off_the_event_stream(tmp_path, capfd):
+    script = tmp_path / "echo_json.py"
+    script.write_text("print('{\"event\": 1}')\n")
+    code = res.default_runner([sys.executable, str(script)])
+    assert code == 0
+    captured = capfd.readouterr()
+    assert captured.out == ""
+
+
+def test_failed_abort_leaves_a_failed_decision_and_does_not_skip_rebase():
+    run = _run(_d(m.DecisionKind.REBASE_CONFLICT, "rebase"))
+    run.items[0].step(m.Step.REBASE).status = m.StepStatus.NEEDS_DECISION
+    res.apply(run, res.Request("d1", "abort"), pr_bin="pr", runner=Recorder(code=1))
+    new = [d for d in run.open_decisions() if d.id != "d1"]
+    assert [(d.kind, d.step) for d in new] == [(m.DecisionKind.FAILED, "rebase")]
+    assert run.items[0].step(m.Step.REBASE).status is m.StepStatus.NEEDS_DECISION

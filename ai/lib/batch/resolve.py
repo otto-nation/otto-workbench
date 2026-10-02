@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import secrets
 import subprocess
+import sys
 from dataclasses import dataclass
 from typing import Callable
 
@@ -48,7 +49,8 @@ class Request:
 def default_runner(argv: list[str]) -> int:
     if argv[0] == GIT_PUSH:
         return 0 if git.push.push(argv[1], gated=False).ok else 1
-    return subprocess.run(argv, stdin=subprocess.DEVNULL, start_new_session=True).returncode
+    return subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=sys.stderr,
+                          start_new_session=True).returncode
 
 
 def _validate(decision: Decision, request: Request) -> None:
@@ -134,7 +136,10 @@ def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> 
     elif action == "skip-step" and step:
         item.step(step).status = StepStatus.SKIPPED
     elif action == "abort":
-        item.step(Step.REBASE).status = StepStatus.SKIPPED
+        if ok:
+            item.step(Step.REBASE).status = StepStatus.SKIPPED
+        else:
+            _fail(run, item, "rebase")
     elif action == "force":
         if ok:
             rec = item.step(Step.REBASE)

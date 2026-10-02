@@ -1340,6 +1340,25 @@ def live_git_hooks(monkeypatch):
         monkeypatch.delenv(key, raising=False)
 
 
+@pytest.fixture
+def record_rewrites(live_git_hooks, tmp_path_factory):
+    """Install the workbench `post-rewrite` hook, alone, into a repo.
+
+    Returns a function taking the repo. A hooks directory of its own rather
+    than the workbench's `git/hooks`, so the global pre-commit and pre-push — a
+    gitleaks scan, a push recorder — stay out of a test about rewrites. The
+    symlink is what lets the hook find its workbench, exactly as the installed
+    `~/.git-hooks` link does.
+    """
+    def install(repo: Path) -> Path:
+        hooks = tmp_path_factory.mktemp("hooks")
+        (hooks / "post-rewrite").symlink_to(REPO_ROOT / "git" / "hooks" / "post-rewrite")
+        git_in(repo, "config", "core.hooksPath", str(hooks))
+        return repo
+
+    return install
+
+
 @pytest.fixture(autouse=True)
 def _drafts_only(monkeypatch):
     """Close the publishing gate for every test.

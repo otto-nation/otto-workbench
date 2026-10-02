@@ -21,6 +21,8 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest  # noqa: E402
 
+import core.proc  # noqa: E402
+import git.client  # noqa: E402
 import git.replay  # noqa: E402
 
 # One static subject and one fixed date for every fix commit, which is the
@@ -181,3 +183,173 @@ class TestReplayedCommit:
 
         assert git.replay.rewritten_away(work, sha) is False
         assert git.replay.replayed_commit(work, sha) == ""
+
+
+def _conflicting_rebase(work) -> None:
+    """Rebase over an upstream edit to the same line, resolving to a third text.
+
+    The resolution changes the replayed commit's hunks, so its patch id is not
+    the original's: content alone cannot recognise it.
+    """
+    git_in(work, "checkout", "-q", "main")
+    (work / "base.txt").write_text("upstream\n")
+    git_in(work, "commit", "-q", "--no-verify", "-am", "upstream edit")
+    git_in(work, "push", "-q", "origin", "main")
+    git_in(work, "checkout", "-q", "feature")
+    stopped = run_checked(["git", "rebase", "-q", "origin/main"], cwd=work, check=False)
+    assert stopped.returncode != 0
+    (work / "base.txt").write_text("resolved\n")
+    git_in(work, "add", "base.txt")
+    git_in(work, "-c", "core.editor=true", "rebase", "--continue")
+
+
+class TestReplayFinder:
+    """The typed answer, and the evidence it rests on."""
+
+    def test_a_conflict_resolved_pick_is_found_from_gits_record(
+        self, work, record_rewrites,
+    ):
+        record_rewrites(work)
+        held = _commit(work, "base.txt", "feature\n")
+        _conflicting_rebase(work)
+
+        replay = git.replay.ReplayFinder(work).find(held)
+
+        assert replay.status is git.replay.ReplayStatus.FOUND
+        assert replay.source is git.replay.ReplaySource.REWRITE_LOG
+        assert replay.sha == _short(work)
+
+    def test_without_the_record_a_changed_patch_is_not_found(self, work):
+        """What the record adds: content matching cannot see this replay."""
+        held = _commit(work, "base.txt", "feature\n")
+        _conflicting_rebase(work)
+
+        assert git.replay.ReplayFinder(work).find(held).status is git.replay.ReplayStatus.NONE
+
+    def test_a_fixup_target_is_followed_to_the_commit_it_was_folded_into(
+        self, work, record_rewrites,
+    ):
+        record_rewrites(work)
+        held = _commit(work, "fix.txt", "first\n")
+        (work / "fix.txt").write_text("first, fixed\n")
+        git_in(work, "commit", "-q", "--no-verify", "-am", f"fixup! {_SUBJECT}")
+        git_in(work, "-c", "sequence.editor=true", "rebase", "-q", "-i",
+               "--autosquash", "origin/main")
+
+        replay = git.replay.ReplayFinder(work).find(held)
+
+        assert replay.found
+        assert replay.sha == _short(work)
+
+    def test_a_rebase_then_an_amend_is_followed_to_the_end(self, work, record_rewrites):
+        record_rewrites(work)
+        held = _commit(work, "fix.txt", "first\n")
+        _rebase_onto_moved_main(work)
+        (work / "fix.txt").write_text("amended\n")
+        git_in(work, "commit", "-q", "--no-verify", "-a", "--amend", "--no-edit")
+
+        replay = git.replay.ReplayFinder(work).find(held)
+
+        assert replay.source is git.replay.ReplaySource.REWRITE_LOG
+        assert replay.sha == _short(work)
+
+    def test_a_fix_that_landed_upstream_is_found_on_upstream(self, work):
+        """The rebase drops the branch copy, so the upstream one is the replay.
+
+        Only a search from the old merge base reaches it: a range limited to the
+        branch's own commits would report the work as gone.
+        """
+        held = _commit(work, "fix.txt")
+        git_in(work, "checkout", "-q", "main")
+        # Move main first: a cherry-pick onto the fix's own parent within the
+        # same second reproduces the very same commit, which orphans nothing.
+        (work / "upstream.txt").write_text("upstream\n")
+        git_in(work, "add", "-A")
+        git_in(work, "commit", "-q", "--no-verify", "-m", "upstream work")
+        git_in(work, "cherry-pick", held)
+        upstream_copy = _short(work)
+        git_in(work, "push", "-q", "origin", "main")
+        git_in(work, "checkout", "-q", "feature")
+        git_in(work, "rebase", "-q", "origin/main")
+        assert git_out(work, "rev-parse", "HEAD").strip() == git_out(
+            work, "rev-parse", "origin/main").strip()
+
+        replay = git.replay.ReplayFinder(work).find(held)
+
+        assert replay.status is git.replay.ReplayStatus.FOUND
+        assert replay.source is git.replay.ReplaySource.PATCH_ID
+        assert replay.sha == upstream_copy
+
+    def test_only_commits_sharing_a_path_are_diffed_in_full(self, work, monkeypatch):
+        """A big rebase drags in every upstream commit; most cannot match."""
+        held = _commit(work, "fix.txt")
+        git_in(work, "checkout", "-q", "main")
+        for n in range(25):
+            (work / f"upstream-{n}.txt").write_text(f"{n}\n")
+            git_in(work, "add", "-A")
+            git_in(work, "commit", "-q", "--no-verify", "-m", f"upstream {n}")
+        git_in(work, "push", "-q", "origin", "main")
+        git_in(work, "checkout", "-q", "feature")
+        git_in(work, "rebase", "-q", "origin/main")
+        diffed = []
+        real = git.replay._patch_ids
+        monkeypatch.setattr(git.replay, "_patch_ids",
+                            lambda wt, *revs: diffed.append(revs) or real(wt, *revs))
+
+        replay = git.replay.ReplayFinder(work).find(held)
+
+        assert replay.sha == _short(work)
+        candidate_calls = [revs for revs in diffed if held not in "".join(revs)]
+        assert candidate_calls == [("--no-walk", git_out(work, "rev-parse", "HEAD").strip())]
+
+    def test_a_range_git_cannot_list_in_time_is_unknown_not_none(
+        self, work, monkeypatch,
+    ):
+        """A timeout says nothing about the work, and must not read as "gone"."""
+        held = _commit(work, "fix.txt")
+        _rebase_onto_moved_main(work)
+        real = git.client.run
+
+        def slow_listing(*args, **kwargs):
+            if "--name-only" in args and any(a.endswith("..HEAD") for a in args):
+                return core.proc.CmdResult(
+                    returncode=core.proc.TIMEOUT_RETURNCODE,
+                    stderr="timed out after 10s: git log --name-only",
+                )
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(git.client, "run", slow_listing)
+        replay = git.replay.ReplayFinder(work).find(held)
+
+        assert replay.status is git.replay.ReplayStatus.UNKNOWN
+        assert "timed out" in replay.detail
+
+    def test_a_duplicated_patch_is_ambiguous_and_a_dropped_one_is_none(self, work):
+        held = _commit(work, "fix.txt")
+        _rebase_onto_moved_main(work)
+        git_in(work, "revert", "--no-edit", "HEAD")
+        git_in(work, "cherry-pick", held)
+        assert git.replay.ReplayFinder(work).find(held).status is (
+            git.replay.ReplayStatus.AMBIGUOUS)
+
+        git_in(work, "reset", "-q", "--hard", "origin/main")
+        assert git.replay.ReplayFinder(work).find(held).status is (
+            git.replay.ReplayStatus.NONE)
+
+    def test_one_finder_walks_a_shared_range_once(self, work, monkeypatch):
+        first = _commit(work, "one.txt")
+        second = _commit(work, "two.txt")
+        _rebase_onto_moved_main(work)
+        listings = []
+        real = git.client.run
+
+        def counting(*args, **kwargs):
+            if "--name-only" in args and any(a.endswith("..HEAD") for a in args):
+                listings.append(args)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(git.client, "run", counting)
+        finder = git.replay.ReplayFinder(work)
+
+        assert finder.find(first).found and finder.find(second).found
+        assert len(listings) == 1

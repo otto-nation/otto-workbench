@@ -1,23 +1,52 @@
 #!/usr/bin/env bash
-# Global post-rewrite hook: reports commits a rebase dropped whose changes are
-# not in the result, then delegates to the repo-local hook.
+# Global post-rewrite hook: records which commit each rewritten commit became,
+# reports commits a rebase dropped whose changes are not in the result, then
+# delegates to the repo-local hook.
 # Installed via step_global_hooks in git/steps.sh (symlinked to ~/.git-hooks/).
 #
-# A conflict resolved to nothing, or a `rebase --skip`, drops the commit
-# without committing anything, so prepare-commit-msg never sees it. The
-# old→new map git writes to this hook's stdin is the only record. post-rewrite
-# cannot stop anything — the rebase has finished — so this reports, with the
-# commands that recover the work, and always exits with the local hook's status.
+# git hands this hook the old→new map of an amend or a rebase and then deletes
+# it, so both jobs below read the one copy that exists:
+#
+# - Recording. `pr` reads the map back to follow a fix commit a rebase renamed,
+#   including through a conflict resolution or a fixup that changed its patch.
+#   See ai/lib/git/rewrites.py for the format and where it lives.
+# - Auditing. A conflict resolved to nothing, or a `rebase --skip`, drops the
+#   commit without committing anything, so prepare-commit-msg never sees it.
+#   post-rewrite cannot stop anything — the rebase has finished — so this
+#   reports, with the commands that recover the work.
+#
+# Fails open throughout, and always exits with the local hook's status: this
+# runs after every amend and rebase in every repository on this machine.
 
 set -euo pipefail
 
 _self="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 _workbench="$(cd "$(dirname "$_self")/../.." 2>/dev/null && pwd)" || _workbench=""
 
-# Read once and replayed to the local hook, which is owed the same bytes.
+# Read once and replayed to each consumer, which are owed the same bytes.
 _rewrites=""
 if [[ ! -t 0 ]]; then
   _rewrites="$(cat)" || true
+fi
+
+# Made absolute by hand rather than with `--path-format=absolute`, which git
+# older than 2.31 does not know and echoes to stdout as if it were an answer.
+# `--git-common-dir` is relative to the cwd git runs a hook in, so the `cd` is
+# what resolves it; an empty answer must not reach `cd`, which would succeed.
+_git_common=""
+_common_rel="$(git rev-parse --git-common-dir 2>/dev/null)" || _common_rel=""
+if [[ -n "$_common_rel" ]]; then
+  _git_common="$(cd "$_common_rel" 2>/dev/null && pwd)" || _git_common=""
+fi
+
+# Both kinds of rewrite: an amend renames a commit as surely as a rebase does.
+# `python3 -I` for the reason lib/replay_audit.sh gives — the cwd is somebody
+# else's repository, and isolated mode keeps it off sys.path.
+if [[ -n "$_rewrites" && -n "$_git_common" && -n "$_workbench" \
+      && -f "$_workbench/ai/lib/git/rewrites.py" ]]; then
+  printf '%s\n' "$_rewrites" | python3 -I -c \
+    'import sys; sys.path.insert(0, sys.argv[1]); from git.rewrites import main; sys.exit(main(sys.argv[2:]))' \
+    "$_workbench/ai/lib" --git-dir "$_git_common" || true
 fi
 
 # `amend` rewrites one commit the user is looking at; only a rebase drops any.
@@ -28,7 +57,8 @@ if [[ "${1:-}" == rebase && -n "$_rewrites" && -n "$_workbench" \
   printf '%s\n' "$_rewrites" | replay_audit "$_workbench" rewritten "$1" || true
 fi
 
-_local_hook="$(git rev-parse --git-common-dir)/hooks/post-rewrite"
+[[ -n "$_git_common" ]] || exit 0
+_local_hook="$_git_common/hooks/post-rewrite"
 # A here-string rather than `printf | exec`: in a pipeline the exec replaces
 # only the subshell, so the script would carry on and run the hook a second
 # time with no input. The here-string's trailing newline restores the one the

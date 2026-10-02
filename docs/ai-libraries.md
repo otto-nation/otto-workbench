@@ -4727,8 +4727,10 @@ Two questions, and the distinction between them is the whole module:
 
 - :func:`rewritten_away` — *was it orphaned?* Ancestry, read for the one exit
   code that means orphaned rather than for truthiness.
-- :func:`replayed_commit` — *which commit carries it now?* Patch equivalence,
-  refusing to answer when more than one candidate matches.
+- :class:`ReplayFinder` — *which commit carries it now?* git's own record of
+  the rewrite first (`git.rewrites`), patch equivalence for a rewrite nobody
+  recorded, and a typed answer either way — because "nothing carries it",
+  "two things do" and "git could not say" each call for a different remedy.
 
 `gh.landed` asks a neighbouring question of a whole branch — *is this work
 upstream at all?* — and answers it with `git cherry`, which is cheaper and
@@ -4738,6 +4740,42 @@ keeping: `landed` answers "is it there?", this answers "which one is it?".
 Layer 2 rather than beside its first caller, so `gh`, `pr`, `fix` and `rebase`
 can all reach it. The rebase subsystem is what *causes* the rewrites this
 recovers from and should be reading the same answer.
+
+### git/rewrites.py
+
+Which commit each rewritten commit became, as git itself reported it.
+
+A rebase knows exactly which commit it turned into which, and says so once: to
+the `post-rewrite` hook, as one `<old> <new>` line per rewritten commit, after
+every `commit --amend` and every `rebase`. That list covers what matching on
+content cannot — a pick whose conflict resolution changed its hunks, and every
+commit a `fixup`/`squash` folded, each listed against the commit it folded into.
+A commit the rebase dropped, by `drop` or because its change was already
+upstream, is not listed, because it was not rewritten into anything.
+
+Then git forgets it. `rebase-merge/rewritten-list` is deleted when the rebase
+finishes, so the only moment the answer exists is inside that hook. The global
+`git/hooks/post-rewrite` hands the list to :func:`record`, and :func:`load`
+reads it back for `git.replay`, which asks this first and falls back to patch
+equivalence only for a rewrite nobody recorded — one made before the hook was
+installed, or in a repository whose own `core.hooksPath` keeps the global hooks
+out.
+
+The log lives in the repository's common git directory rather than in the
+workbench state root. A commit belongs to the repository, every worktree of it
+rewrites into the same history, and the entry should go when the repository
+does; a machine-wide file would also let a busy repository evict a quiet one's
+entries before anything read them.
+
+Append-only text in git's own line format, so a rebase is one `write` with
+`O_APPEND` and two rewrites finishing together cannot drop each other's lines —
+the read-modify-write race `push_intent` accepts does not arise here. Only the
+trim reads and replaces the file.
+
+:func:`record` never raises. It runs from a hook in every repository on this
+machine, and although git ignores `post-rewrite`'s exit status, a traceback
+printed after every amend would be its own kind of breakage. A lost record costs
+a fallback to patch matching, never a wrong answer.
 
 ### git/topology.py
 

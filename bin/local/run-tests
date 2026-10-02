@@ -153,6 +153,11 @@ Environment:
                   and within that to whatever share of the machine this repo's
                   other test runs are not already holding. Set it to take the
                   sizing back; TEST_JOBS=1 restores the serial ordering.
+  TEST_HEARTBEAT_SECS
+                  Seconds between stderr progress lines while a suite runs.
+                  Default 60. 0 disables the supervisor and runs the child
+                  directly. Heartbeats never go to stdout (the TAP / pytest
+                  stream the pre-push hook parses).
 EOF
 }
 
@@ -364,7 +369,7 @@ run_bats() {
       err "--shard $SHARD: produced an empty file list"
       return 1
     fi
-    bats "${shard_test_files[@]}" "${bats_flags[@]}" "${jobs_flag[@]}" "$@"
+    _run_watched bats bats "${shard_test_files[@]}" "${bats_flags[@]}" "${jobs_flag[@]}" "$@"
   elif [[ -n "${BATS_FILES:-}" ]]; then
     local -a file_list=()
     while IFS= read -r f; do
@@ -374,9 +379,9 @@ run_bats() {
       err "--files: no files provided"
       return 1
     fi
-    bats "${file_list[@]}" "${bats_flags[@]}" "${jobs_flag[@]}" "$@"
+    _run_watched bats bats "${file_list[@]}" "${bats_flags[@]}" "${jobs_flag[@]}" "$@"
   else
-    bats "$WORKBENCH_DIR/tests/" --recursive "${bats_flags[@]}" "${jobs_flag[@]}" "$@"
+    _run_watched bats bats "$WORKBENCH_DIR/tests/" --recursive "${bats_flags[@]}" "${jobs_flag[@]}" "$@"
   fi
 }
 
@@ -417,10 +422,10 @@ run_pytest() {
       err "--pytest-files: no files provided"
       return 1
     fi
-    pytest "${file_list[@]}" "${jobs_flag[@]}" "${basetemp_flag[@]}" "$@"
+    _run_watched pytest pytest "${file_list[@]}" "${jobs_flag[@]}" "${basetemp_flag[@]}" "$@"
     return
   fi
-  pytest "$WORKBENCH_DIR/tests/" "${jobs_flag[@]}" "${basetemp_flag[@]}" "$@"
+  _run_watched pytest pytest "$WORKBENCH_DIR/tests/" "${jobs_flag[@]}" "${basetemp_flag[@]}" "$@"
 }
 
 # report_missing_xdist — say the run is serial, and why, before it starts.
@@ -520,6 +525,18 @@ select_changed() {
 # lets report_jobs() say "asked 12, got 5" instead of only "5".
 granted_jobs() {
   echo "${WORKBENCH_TEST_SLOTS_GRANTED:-$JOBS}"
+}
+
+# _run_watched SUITE CMD... — run CMD under the suite heartbeat supervisor.
+#
+# stdout stays the runner's (TAP / pytest summary). stderr gets one progress
+# line every TEST_HEARTBEAT_SECS so a slow suite is distinguishable from a
+# stuck one. TEST_HEARTBEAT_SECS=0 skips the heartbeat and waits for the child.
+_run_watched() {
+  local suite="$1"
+  shift
+  "$WORKBENCH_DIR/bin/local/suite-watch" \
+    --suite "$suite" --jobs "$(granted_jobs)" -- "$@"
 }
 
 main() {

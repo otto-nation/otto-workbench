@@ -716,6 +716,39 @@ def _proc():
     return core.proc
 
 
+def pytest_runtest_logstart(nodeid, location):
+    """Tell the suite heartbeat which test is in flight, when it is watching.
+
+    No-op unless the supervisor exported WORKBENCH_SUITE_STATUS_DIR. The file
+    is per xdist worker so parallel tests do not overwrite each other. Written
+    atomically: a reader that opened a half-written file would drop the nodeid.
+    """
+    root = os.environ.get("WORKBENCH_SUITE_STATUS_DIR")
+    if not root:
+        return
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
+    path = Path(root) / worker
+    tmp = path.with_suffix(".tmp")
+    try:
+        tmp.write_text(f"{time.time()}\n{nodeid}\n")
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def pytest_runtest_logfinish(nodeid, location):
+    """Clear the in-flight record so a finished test is not reported as running."""
+    root = os.environ.get("WORKBENCH_SUITE_STATUS_DIR")
+    if not root:
+        return
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
+    path = Path(root) / worker
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
 def pytest_runtest_setup(item):
     """Start each test with an empty record of what the machine has killed.
 

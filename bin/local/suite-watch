@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Heartbeat a test-suite child on stderr while leaving its stdout untouched.
+#
+# Slow and stuck look the same when TAP is buffered and stderr is captured.
+# This wraps the runner, writes one progress line every TEST_HEARTBEAT_SECS,
+# and exits with the child's status. See ai/lib/core/suite_watch.py.
+#
+# Usage:
+#   suite-watch [--suite NAME] [--jobs N] -- <command> [args...]
+#
+# Exit status: the command's own.
+set -e
+
+_SELF="${BASH_SOURCE[0]}"
+REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
+
+usage() {
+  cat <<'USAGE'
+suite-watch — heartbeat a test-suite child on stderr
+
+Usage:
+  suite-watch [--suite NAME] [--jobs N] -- <command> [args...]
+
+Options:
+  --suite NAME   Label in the heartbeat line (default: the command's basename).
+  --jobs N       Parallelism announced in the heartbeat line.
+  -h, --help     Show this message.
+
+Environment:
+  TEST_HEARTBEAT_SECS  Seconds between heartbeats. Default 60; 0 runs the
+                       child directly with no supervisor.
+USAGE
+}
+
+args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --suite|--jobs)
+      [[ $# -ge 2 && "${2:-}" != "--" ]] \
+        || { echo "suite-watch: $1 requires an argument" >&2; exit 2; }
+      args+=("$1" "$2")
+      shift 2
+      ;;
+    --) shift; break ;;
+    *) echo "suite-watch: unknown option: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+[[ $# -gt 0 ]] || { echo "suite-watch: no command given after --" >&2; exit 2; }
+
+PYTHONPATH="$REPO_ROOT/ai/lib${PYTHONPATH:+:$PYTHONPATH}" \
+  exec python3 "$REPO_ROOT/ai/lib/core/suite_watch.py" \
+  "${args[@]}" -- "$@"

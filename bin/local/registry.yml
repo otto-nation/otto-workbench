@@ -234,6 +234,11 @@ tools:
     visibility: brief
     description: "Holds a share of the machine's test-parallelism slots while a command runs, so concurrent suites in several worktrees divide the cores instead of each taking all of them"
 
+  - name: suite-watch
+    permission: false
+    visibility: brief
+    description: "Supervises a test-suite child and writes a periodic stderr heartbeat of elapsed time and in-flight work, so a slow run is distinguishable from a stuck one"
+
   - name: validate-test-deps
     permission: false
     visibility: brief

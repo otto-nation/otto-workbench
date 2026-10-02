@@ -107,7 +107,8 @@ machine() {
 @test "both runners are sized from the grant, not the request" {
   # A grant read by only one of them is half a fix: the other still takes the
   # full cap, and two suites still oversubscribe on that half.
-  run grep -cE '(--jobs|-n) "\$\(granted_jobs\)"' "$REPO_ROOT/bin/local/run-tests"
+  run grep -cE 'jobs_flag=\((--jobs|-n) "\$\(granted_jobs\)"\)' \
+    "$REPO_ROOT/bin/local/run-tests"
   [ "$output" -eq 2 ]
 }
 
@@ -259,6 +260,17 @@ report_for() {
   [[ "$output" == *"TEST_JOBS"* ]]
   [[ "$output" == *"at least $TEST_JOBS_FLOOR"* ]]
   [[ "$output" == *"at most $TEST_JOBS_CAP"* ]]
+  [[ "$output" == *"TEST_HEARTBEAT_SECS"* ]]
+}
+
+@test "bats and pytest run under the suite heartbeat" {
+  # A suite not wrapped here is the silent run the heartbeat exists to end.
+  run grep -c '_run_watched bats bats' "$REPO_ROOT/bin/local/run-tests"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 3 ]
+  run grep -c '_run_watched pytest pytest' "$REPO_ROOT/bin/local/run-tests"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 2 ]
 }
 
 @test "sourcing the runner does not start a suite" {

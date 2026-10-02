@@ -301,9 +301,12 @@ It shows up as a handful of failures in arbitrary tests that never repeat — a 
 ```bash
 bin/local/run-tests --pytest          # re-run once the machine is idle
 TEST_JOBS=2 bin/local/run-tests       # or leave capacity for whatever else is running
+TEST_HEARTBEAT_SECS=15 bin/local/run-tests   # tighter progress while you watch
 ```
 
 `TEST_JOBS` also skips the slot pool entirely — a caller that names a number is not asking to be sized.
+
+`TEST_HEARTBEAT_SECS` (default 60, 0 disables) writes one stderr line every N seconds naming the suite, elapsed time, jobs, and what is in flight. It is how a slow suite is told from a stuck one: TAP stays on stdout for the pre-push parser, and the heartbeat never uses a TAP-like prefix.
 
 `bin/local/run-tests` claims its parallelism from a machine-wide slot pool under `~/.local/state/workbench/test-slots/`, so a second suite started through it takes only what the first left — three concurrent runs on an 18-core box get 12, 5 and 2 rather than 12 each. `pr review`'s group phase claims from the same pool, so a review and a suite running together see each other rather than both sizing themselves against a load average that has not caught up. The grant is printed at the top of every run, so a suite sized down by a sibling says so instead of just being slow:
 

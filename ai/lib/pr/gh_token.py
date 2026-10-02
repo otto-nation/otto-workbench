@@ -42,6 +42,7 @@ _AI_LIB = Path(__file__).resolve().parent.parent
 if _AI_LIB.is_dir() and str(_AI_LIB) not in sys.path:
     sys.path.insert(0, str(_AI_LIB))
 
+import gh.client
 import pr.target
 
 TOKEN_VAR = "GH_TOKEN"
@@ -159,6 +160,48 @@ def resolve(
         return Token(env[TOKEN_VAR], TokenSource.ENVIRONMENT, TOKEN_VAR)
 
     raise TokenNotConfigured(_guidance(env_file, org, identity.host if identity else ""))
+
+
+_FALLBACK = (
+    "⚠  Automation token cannot access this repo — "
+    "falling back to interactive gh auth"
+)
+_INTERACTIVE_MISSING = (
+    "✗ Interactive gh auth also not available — run: gh auth login"
+)
+
+
+def use_for_publishing(cwd: Path) -> TokenSource | None:
+    """Put the automation token in the environment, or fall back to interactive gh.
+
+    Returns the token's source when the PAT can see this repo, ``None`` when
+    interactive ``gh auth`` is what will publish (D10), and raises
+    ``TokenNotConfigured`` when neither works. A rejected PAT is unset before
+    the fallback so a later ``gh`` call cannot keep using it.
+    """
+    rejected = False
+    guidance = ""
+    try:
+        token = resolve(cwd)
+    except TokenNotConfigured as exc:
+        guidance = exc.guidance
+    else:
+        os.environ[TOKEN_VAR] = token.value
+        viewed = gh.client.run(
+            "repo", "view", "--json", "name", "-q", ".name", cwd=cwd,
+        )
+        if viewed.ok:
+            return token.source
+        print(_FALLBACK, file=sys.stderr, flush=True)
+        os.environ.pop(TOKEN_VAR, None)
+        rejected = True
+
+    status = gh.client.run("auth", "status", cwd=cwd)
+    if status.ok:
+        return None
+    if rejected:
+        raise TokenNotConfigured(_INTERACTIVE_MISSING)
+    raise TokenNotConfigured(guidance)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1720,6 +1720,26 @@ possible: the newest commit to touch the one line a thread is anchored to, dated
 against when the reviewer opened it. It is a memo because `git log -L` costs a
 process per location and every surface asks about the same threads.
 
+### pr/branch_sync.py
+
+Push the branch ``pr create`` is about to open a PR from.
+
+Ports ``push_branch`` in ``lib/ai/pr.sh``: a missing remote ref is a first
+push with ``--set-upstream``, an existing tracking ref is compared to HEAD,
+and behind / diverged refuse rather than overwrite. The push itself is
+``git.push.push(gated=False)`` — running ``pr create`` is the publish
+decision, and the owner in ``git.push`` is what confirms the remote moved.
+
+The new-branch probe is ``git ls-remote <remote> refs/heads/<branch>`` with
+the full ref (D8): a remote ``feat/auth`` must not make a local ``feat`` look
+already published. A push whose status is ``UNVERIFIED`` is a warning, not a
+failure to open the PR (D9).
+
+A git read that fails — an unreachable remote, a fetch that broke, a
+``rev-parse`` that cannot resolve — is ``FAILED`` naming the command, never
+read as "absent" or "equal". Bash's ``push_branch`` let each of those fall
+through to a push or to "up to date".
+
 ### pr/ci_annotations.py
 
 What a failed CI job was actually complaining about, as `FailureItem`s.

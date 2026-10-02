@@ -91,10 +91,11 @@ def subcommand_schema(command: str) -> dict | None:
     None has two causes, and they are the same answer to a consumer. Four
     commands `pr` runs itself have no delegate parser at all. Three more —
     `review`, `comments`, and `batch` — have one, but it is a plain
-    `ArgumentParser`: those commands print prose, not a document, so there is
-    no output schema to report and a `ToolParser` would advertise a contract
-    they do not keep. Converting them to say nothing more loudly is not worth
-    a wire format.
+    `ArgumentParser`, not a ToolParser document, so there is no output schema
+    to report: `review` and `comments` print prose, `batch` emits JSON / NDJSON
+    without a versioned output document. A `ToolParser` would advertise a
+    contract they do not keep. Converting them to say nothing more loudly is
+    not worth a wire format.
 
     Renamed from the document's own `name` so it reads as the invocation a
     user types. A consumer reading `"pr ci"` can run that string; reading

@@ -45,7 +45,7 @@ def test_run_resolve_status_round_trip(tmp_path, monkeypatch, capsys):
     _fake_pr(bin_dir, log)
 
     assert _main(["batch", "run", "--checkout", str(repo)], bin_dir) == 10
-    lines = [json.loads(l) for l in capsys.readouterr().out.splitlines() if l.startswith("{")]
+    lines = [json.loads(l) for l in capsys.readouterr().out.splitlines()]
     kinds = [l["kind"] for l in lines]
     assert kinds[0] == "run_started" and "run_waiting" in kinds
     assert all(l["schema_version"] == 1 for l in lines)
@@ -55,6 +55,7 @@ def test_run_resolve_status_round_trip(tmp_path, monkeypatch, capsys):
     assert all(c.endswith(f"--repo-dir {repo}") or c.endswith(f"--repo-dir {repo.resolve()}")
                for c in calls)
     assert "--no-push" in calls[0]
+    assert all("--force" not in c.split() or c.split()[0] == "review" for c in calls)
 
     run_id = batch.store.latest_run_id()
     run = batch.store.load(run_id)

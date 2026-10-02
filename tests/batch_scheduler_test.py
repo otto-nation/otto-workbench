@@ -96,6 +96,8 @@ def test_draft_run_ends_waiting_with_one_publish_decision_per_pr():
     pubs = [d for d in h.run.decisions if d.kind is batch.model.DecisionKind.PUBLISH]
     assert sorted(d.item for d in pubs) == ["o/r#1", "o/r#2"]
     assert all(i.status is batch.model.ItemStatus.READY_TO_PUBLISH for i in h.run.items)
+    log = h.run.item("o/r#1").step(batch.model.Step.REBASE).log_path
+    assert "o__r-1-rebase-" in log
 
 
 def test_auto_publish_run_finishes_done():
@@ -343,6 +345,18 @@ def test_interrupt_kills_live_children_and_marks_the_run():
     finished = [f for k, f in h.events if k == "run_finished"]
     assert finished and finished[-1]["status"] == "interrupted"
     assert any(d.kind is batch.model.DecisionKind.INTERRUPTED for d in h.run.decisions)
+
+
+def test_drop_via_resolve_emits_item_finished():
+    h = Harness([row(1)], worktrees=lambda d, b: WorktreeResult("/wt/b1", True, ""))
+    h.sched.run_until_blocked()
+    d = h.run.open_decisions()[0]
+    batch.store.save(h.run)
+    batch.store.write_request(h.run.id, {"decision": d.id, "action": "drop-pr"})
+    h.sched.run_until_blocked()
+    finished = [f for k, f in h.events if k == "item_finished"]
+    assert any(f["item"] == "o/r#1" and f["status"] == "dropped" for f in finished)
+    assert h.run.items[0].status is batch.model.ItemStatus.DROPPED
 
 
 def test_does_not_settle_while_requests_are_pending(monkeypatch):

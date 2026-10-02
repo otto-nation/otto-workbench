@@ -142,6 +142,29 @@ def test_cancel_an_idle_run_marks_it_cancelled():
     assert batch.store.load(run.id).status is batch.model.RunStatus.CANCELLED
 
 
+def test_cancel_does_not_overwrite_a_terminal_status(capsys):
+    run = _saved_run_with_decision()
+    run.status = batch.model.RunStatus.DONE
+    batch.store.save(run)
+    assert _main(["batch", "cancel", run.id]) == 1
+    assert "done" in capsys.readouterr().err
+    assert batch.store.load(run.id).status is batch.model.RunStatus.DONE
+
+
+def test_cancel_unknown_run_exits_1_without_creating_a_dir(tmp_path, capsys):
+    missing = "20990101T000000-dead"
+    assert _main(["batch", "cancel", missing]) == 1
+    assert missing in capsys.readouterr().err
+    assert not (batch.store.batch_root() / missing).exists()
+
+
+def test_resolve_unknown_run_exits_1_without_creating_a_dir(capsys):
+    missing = "20990101T000000-dead"
+    assert _main(["batch", "resolve", missing, "d1", "--action", "accept"]) == 1
+    assert missing in capsys.readouterr().err
+    assert not (batch.store.batch_root() / missing).exists()
+
+
 def test_resume_clears_a_stale_cancel_before_driving(monkeypatch):
     run = _saved_run_with_decision()
     batch.store.request_cancel(run.id, kill=False)

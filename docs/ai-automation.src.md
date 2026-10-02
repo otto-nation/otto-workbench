@@ -435,13 +435,16 @@ A run that still has open decisions exits **10**. `resume` continues it and
 clears a pending cancel. `open-chat` is UI-only — the CLI refuses it and leaves
 the decision open. A failed abort, force, or publish creates a `failed`
 decision; so does a GitHub error during replan (`reason: github`).
-`decision_created` events carry `decision_kind`.
+`decision_created` events carry `decision_kind`. `discard` leaves local drafts
+(held rebase, unpushed commits) in the worktree.
 
-Admission starts the next step only when free memory minus `batch.mem_reserve`
-covers that step's observed peak and CPU/memory pressure stay under
-`batch.cpu_pressure_max` / `batch.mem_pressure_max`. `--pool` and
-`batch.pool_max` (default 2) cap concurrency. Hosts with no pressure metrics
-(macOS) fall back to `batch.pool_default` (1). Running steps are never paused.
+Admission starts the next step when free memory minus `batch.mem_reserve`
+covers that step's observed peak (or a seed estimate until a peak is seen) and
+CPU/memory pressure stay under `batch.cpu_pressure_max` /
+`batch.mem_pressure_max`, with an always-admit-one floor so a run is never
+stuck at zero. `--pool` and `batch.pool_max` (default 2) cap concurrency. Hosts
+with no pressure metrics (macOS) fall back to `batch.pool_default` (1).
+Running steps are never paused.
 
 State lives under `~/.local/state/workbench/batch/<run-id>/` (`state.json` is
 authoritative).

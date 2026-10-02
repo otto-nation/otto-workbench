@@ -30,6 +30,8 @@ _PR_FIELDS = """
   reviewThreads(first: 100) { nodes { id isResolved } }
 """
 
+# ceiling: search first:100 and reviewThreads first:100 are unpaginated; upgrade
+# to pagination if a user has >100 open PRs in the scope or a PR has >100 threads.
 _SEARCH = """
 query($q: String!) {
   viewer { login }

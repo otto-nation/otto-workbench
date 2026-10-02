@@ -195,6 +195,10 @@ def _apply_pending(run_id: str, bin_dir: Path, decision_id: str) -> int:
 
 
 def _cmd_resolve(args, bin_dir: Path) -> int:
+    try:
+        batch.store.load(args.run_id)
+    except batch.store.RunNotFound:
+        return _err(f"no run {args.run_id}")
     request = {"decision": args.decision_id, "action": args.action, "reason": args.reason,
                "body_file": args.body_file, "commit": args.commit}
     if core.run_lock.is_held(batch.store.run_dir(args.run_id)):
@@ -227,12 +231,14 @@ def _cmd_cancel(args) -> int:
     run_id = _run_id(args.run_id)
     if not run_id:
         return _err("no batch run to cancel")
+    try:
+        run = batch.store.load(run_id)
+    except batch.store.RunNotFound:
+        return _err(f"no run {run_id}")
+    if run.status in (RunStatus.DONE, RunStatus.CANCELLED):
+        return _err(f"run {run_id} is {run.status.value}")
     batch.store.request_cancel(run_id, kill=args.kill)
     if not core.run_lock.is_held(batch.store.run_dir(run_id)):
-        try:
-            run = batch.store.load(run_id)
-        except batch.store.RunNotFound:
-            return _err(f"no run {run_id}")
         run.status = RunStatus.CANCELLED
         batch.store.save(run)
     core.report.emit_json({"cancelled": True, "run": run_id})

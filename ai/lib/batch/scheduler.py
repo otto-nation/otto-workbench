@@ -121,6 +121,8 @@ class Scheduler:
         for raw in batch.store.take_requests(self.run.id):
             try:
                 req = batch.resolve.Request.from_dict(raw)
+                item = self.run.item(self.run.decision(req.decision).item)
+                was_terminal = item.terminal
                 created = batch.resolve.apply(self.run, req, pr_bin=self.pr_bin)
                 self._emit("decision_resolved", run=self.run.id, decision=req.decision,
                            action=req.action)
@@ -128,6 +130,9 @@ class Scheduler:
                     self._emit("decision_created", run=self.run.id, item=d.item,
                                decision=d.id, step=d.step, payload=d.payload,
                                decision_kind=d.kind.value)
+                if item.terminal and not was_terminal:
+                    self._emit("item_finished", run=self.run.id, item=item.key,
+                               status=item.status.value)
             except (batch.resolve.ResolveError, KeyError) as exc:
                 self._emit("decision_resolved", run=self.run.id,
                            decision=raw.get("decision", ""), action=raw.get("action", ""),
@@ -260,9 +265,10 @@ class Scheduler:
         return not any(item.has(s) and item.step(s).drafted for s in earlier)
 
     def _start(self, item: Item, rec: StepRecord) -> None:
+        slug = item.repo.replace("/", "__")
         attempt = sum(1 for _ in batch.store.logs_dir(self.run.id).glob(
-            f"{item.pr}-{rec.step.value}-*"))
-        log = batch.store.logs_dir(self.run.id) / f"{item.pr}-{rec.step.value}-{attempt}.log"
+            f"{slug}-{item.pr}-{rec.step.value}-*"))
+        log = batch.store.logs_dir(self.run.id) / f"{slug}-{item.pr}-{rec.step.value}-{attempt}.log"
         argv = step_argv(rec.step, self.pr_bin, item.worktree,
                          publish=self._should_publish(item, rec.step))
         # Sample HEAD before spawn: the harness mutates it inside `_spawn`.

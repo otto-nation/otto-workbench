@@ -1023,11 +1023,12 @@ def test_a_numeric_field_is_parsed_into_the_number_it_names():
 
 
 # The float half of the numeric test this change split in two. The integer half
-# now runs against a real key; nothing on the surface is a float, so this one
-# keeps the patched type it always had.
+# now runs against a real key. `batch.cpu_pressure_max` / `batch.mem_pressure_max`
+# are floats on the surface; this case still uses a patched type so it covers a
+# key that is not.
 # passes-at-base: it is the pre-existing patched-type case, carried over intact
 def test_a_float_field_is_parsed_through_a_patched_type(monkeypatch):
-    """No float on the surface yet; the branch is reached by its type."""
+    """A key typed as number (not an int field) is coerced to float."""
     monkeypatch.setattr(config.workbench_config_write, "schema_type", lambda _: "number")
     assert config.workbench_config_write.coerce_value("some.ratio", "1.5") == 1.5
 

@@ -1440,8 +1440,9 @@ EOF
 
 # ── Parser field validation ───────────────────────────────────────────────────
 
-# _bin_with_parser VISIBILITY EXTRA — a bindir registry whose mytool declares a
-# parser, plus EXTRA lines (already indented) on the same entry.
+# _bin_with_parser VISIBILITY EXTRA [SPEC] — a bindir registry whose mytool
+# declares a parser (SPEC, default cli.mytool:build_parser), plus EXTRA lines
+# (already indented) on the same entry.
 _bin_with_parser() {
   cat > "$TMPDIR/bin/registry.yml" << EOF
 meta:
@@ -1454,7 +1455,7 @@ tools:
     permission: false
     visibility: $1
     description: "A script"
-    parser: cli.mytool:build_parser
+    parser: ${3:-cli.mytool:build_parser}
 $2
   - name: othertool
     permission: false
@@ -1496,11 +1497,31 @@ EOF
 }
 
 @test "a malformed parser spec fails" {
-  _bin_with_parser brief ''
-  sed -i.bak 's/parser: cli.mytool:build_parser/parser: cli.mytool/' "$TMPDIR/bin/registry.yml"
+  _bin_with_parser brief '' cli.mytool
   run main
   [ "$status" -ne 0 ]
   [[ "$output" == *"parser must be <module-or-path>:<attr>"* ]]
+}
+
+@test "a parser path that names no file fails" {
+  _bin_with_parser brief '' bin/mytol:build_parser
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"parser path 'bin/mytol' does not exist"* ]]
+}
+
+@test "a parser path that names a file passes" {
+  _bin_with_parser brief '' bin/mytool:build_parser
+  run main
+  [ "$status" -eq 0 ]
+}
+
+@test "a usage beside a parser on a non-full tool is reported once" {
+  _bin_with_parser brief '    usage: "mytool"'
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"field 'usage' is not allowed beside 'parser'"* ]]
+  [[ "$output" != *"field 'usage' is not allowed when visibility"* ]]
 }
 
 # ── Commands field validation ─────────────────────────────────────────────────

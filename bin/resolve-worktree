@@ -31,19 +31,20 @@
 #
 # Exit `2` is the ordinary answer for an everyday repo, a worktree, or a
 # directory outside any repo, so callers treat it as "carry on here" rather than
-# a failure. This is the one owner of that resolution in bash. The `claude`
-# shell wrapper calls it directly — redirecting a launch is all it wants. A tool
-# that resolves a tree in order to *write* a project artifact into it calls
-# `lib/worktree.sh`'s `project_root` instead, which lets a working tree name
-# itself first and falls back to this only when there is none; the ceiling-debt
-# Stop hook, `serena-mcp`, `workbench-rules`, and `otto-workbench ai init` all
-# reach it that way.
+# a failure. This is the one owner of that resolution in bash. The `claude` and
+# `pi` shell wrappers reach it through
+# [`_worktree_launch.zsh`](architecture.md#shell-zsh) — redirecting a launch is
+# all they want. A tool that resolves a tree in order to *write* a project
+# artifact into it calls [`lib/worktree.sh`](libraries.md)'s `project_root`
+# instead, which lets a working tree name itself first and falls back to this
+# only when there is none; the ceiling-debt Stop hook, `serena-mcp`,
+# `workbench-rules`, and `otto-workbench ai init` all reach it that way.
 #
-# `lib/permission_mirror.py` applies the same rule in Python to pick the
-# worktree a container's permission mirror is copied from. The two must agree —
-# a session redirected to a worktree the mirror never wrote from is a session
-# missing the grants the mirror exists to deliver, with nothing to say so — and
-# `tests/container_source.bats` fails if they diverge.
+# [`lib/permission_mirror.py`](libraries.md) applies the same rule in Python to
+# pick the worktree a container's permission mirror is copied from. The two must
+# agree — a session redirected to a worktree the mirror never wrote from is a
+# session missing the grants the mirror exists to deliver, with nothing to say
+# so — and `tests/container_source.bats` fails if they diverge.
 
 set -e
 

@@ -362,11 +362,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=SCRIPT,
         description="Scan memories and workbench artifacts for promotion evaluation.",
-        usage="promote-scan [--home DIR] [--workbench DIR]",
     )
     parser.add_argument("-V", "--version", action="store_true", help="print version and exit")
     parser.add_argument("--home", type=str, default=os.environ.get("HOME", ""), metavar="DIR",
-                        help="home directory override (for testing)")
+                        help="home directory override (for testing; default: `$HOME`)")
     parser.add_argument("--workbench", type=str, default=default_wb, metavar="DIR",
                         help=f"workbench directory (default: ${WORKBENCH_ENV_VAR} or {DEFAULT_WORKBENCH})")
     add_trail_args(parser)

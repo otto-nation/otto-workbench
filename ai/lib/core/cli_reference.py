@@ -44,6 +44,15 @@ from pathlib import Path
 
 from core.tool_parser import subparsers
 
+# Private argparse API, used because argparse publishes no way to ask for what
+# this renders: `_actions` (a parser's options in declaration order),
+# `_choices_actions` (a command's help text), `_mutually_exclusive_groups`, and
+# `_get_formatter()._expand_help` (`%(default)s` fields). `_actions` has been
+# stable for a decade; the other three have moved between Python releases. The
+# cases in tests/cli_reference_test.py that render a command's help, an
+# exclusive group and a `%(default)s` help are what fail first on an upgrade
+# that changes them.
+
 # The option dests every ToolParser script shares. They belong to the framework,
 # not to the command, and listing them under every command would bury the
 # flags a reader came for.
@@ -341,7 +350,14 @@ def load(spec: str, prog: str, root: Path | str) -> CLIShape:
         module_spec = importlib.util.spec_from_loader(name, loader)
         module = importlib.util.module_from_spec(module_spec)
         sys.modules[name] = module
-        loader.exec_module(module)
+        try:
+            loader.exec_module(module)
+        except BaseException:
+            # Registered before it runs so the script's own imports and
+            # dataclasses can find it; a script that raised is half-initialised
+            # and must not stay findable under that name.
+            sys.modules.pop(name, None)
+            raise
     else:
         module = importlib.import_module(target)
     obj = getattr(module, attr)

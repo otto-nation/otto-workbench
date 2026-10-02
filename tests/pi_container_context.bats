@@ -113,6 +113,34 @@ _render() {
   [ "$output" = null ]
 }
 
+@test "a resolver that succeeds with no path is unresolved, not a worktree of ''" {
+  # An empty worktree would make worktreeFiles match every absolute path.
+  _make_seed
+  _make_container
+  printf '#!/bin/sh\nexit 0\n' > "$TMPDIR/empty-resolver"
+  chmod +x "$TMPDIR/empty-resolver"
+
+  _context "$CONTAINER" "$TMPDIR/empty-resolver"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"\"kind\":\"unresolved\""* ]]
+  [[ "$output" == *"printed no worktree path"* ]]
+}
+
+@test "the resolver is found when the checkout path has a space in it" {
+  # new URL(...).pathname keeps %20, naming a path that does not exist.
+  local root="$TMPDIR/a checkout"
+  mkdir -p "$root/ai/pi/extensions/container-context" "$root/bin"
+  cp "$DETECT" "$root/ai/pi/extensions/container-context/detect.ts"
+
+  run node --input-type=module -e "
+    const { pathToFileURL } = await import('node:url');
+    const m = await import(pathToFileURL(process.argv[1]).href);
+    process.stdout.write(m.RESOLVE_WORKTREE);
+  " -- "$root/ai/pi/extensions/container-context/detect.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$root/bin/resolve-worktree" ]
+}
+
 @test "an inherited GIT_DIR does not redirect the answer" {
   # Hooks export GIT_DIR; git then skips discovery and answers for the hook's repo.
   _make_seed
@@ -218,6 +246,14 @@ _files() {
   [[ "$output" == *"None of the repository's context files were loaded"* ]]
 }
 
+@test "a worktree with no context file is said to have none" {
+  _make_seed
+  _make_container
+
+  _render "$CONTAINER" sectionFor
+  [[ "$output" == *"has no context file"* ]]
+}
+
 @test "the notice names the container and what loaded" {
   _make_seed
   _make_container
@@ -236,14 +272,6 @@ _files() {
 
 # ── Wiring ───────────────────────────────────────────────────────────────────
 
-@test "a worktree with no context file is said to have none" {
-  _make_seed
-  _make_container
-
-  _render "$CONTAINER" sectionFor
-  [[ "$output" == *"has no context file"* ]]
-}
-
 @test "the extension mutates the prompt options and never replaces the prompt" {
   run grep -q 'pi.on("before_agent_start"' "$INDEX"
   [ "$status" -eq 0 ]
@@ -251,7 +279,8 @@ _files() {
   [ "$status" -eq 0 ]
   run grep -q 'loadProjectContextFiles' "$INDEX"
   [ "$status" -eq 0 ]
-  run grep -qE 'systemPrompt:' "$INDEX"
+  # Neither a returned `systemPrompt:` nor an assigned `systemPrompt =`.
+  run grep -qE 'systemPrompt[[:space:]]*(:|=[^=])' "$INDEX"
   [ "$status" -ne 0 ]
 }
 

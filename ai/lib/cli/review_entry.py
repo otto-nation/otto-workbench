@@ -74,7 +74,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--submit", action="store_true",
                         help="Submit the GitHub review after posting (default: leave PENDING)")
     parser.add_argument("--self", action="store_true", dest="self_review",
-                        help="Review the local checkout rather than a PR")
+                        help="Review a local checkout of the current branch, or of "
+                             "the branch or PR ref given")
     parser.add_argument("--fix", action="store_true",
                         help="Apply findings after the review (requires --self)")
     parser.add_argument("--push", action="store_true",
@@ -103,7 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
                              "the PR's base, else the branch this one is stacked "
                              "on, else the repo's default branch")
     parser.add_argument(
-        "--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL,
+        "--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL, metavar="N",
         help="Max concurrent group reviews (default: from the machine slot pool, cap 4)",
     )
     parser.add_argument("--max-cost", type=float, metavar="USD",

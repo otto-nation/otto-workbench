@@ -120,8 +120,8 @@ the keys it advertises.
 The ``--no-<phase>`` flags at the bottom are the registry read from the command
 line: which phases may be switched off is a property of the specs above, so the
 flags are generated from them rather than listed a second time in each script
-that offers them. Today that is ``--no-holistic``, ``--no-scout``,
-``--no-group``, ``--no-synthesis``, ``--no-disprove``.
+that offers them. The flags a script has are in its generated flag table in
+``docs/tools.md``, or in ``ai/bin/review --help``.
 
 Phase 1 is one scan chosen from ``SCAN_PHASES``. ``--no-holistic`` alone falls
 back to the scout scan and ``--no-scout`` alone falls back to the holistic
@@ -3440,7 +3440,7 @@ reads both. Anything else in this module stays behind the preflight.
 
 The gate is fail-open: it only stops runs it can *prove* are misconfigured.
 It proceeds — with a note — when the CLI is not on Vertex
-(``CLAUDE_CODE_USE_VERTEX`` unset), when project/region are unset, when there
+(``CLAUDE_CODE_USE_VERTEX`` not ``1``), when project/region are unset, when there
 are no application-default credentials, when the Service Usage API errors, or
 when the model is a bare alias the CLI resolves internally (``is_checkable`` is
 false). On failure it lists the provisioned models and names the
@@ -5917,8 +5917,11 @@ Usage:
 Rebase current branch onto its base with conflict detection and AI resolution.
 
 The base is resolved per run, most authoritative source first: an explicit
---onto (also spelled --base, the word `pr create` uses for the same branch),
-then the branch's PR base branch, then the repo's default branch.
+--onto (also spelled --base, as `pr create` and `pr review` spell theirs), then
+the branch's PR base branch, then the repo's default branch. Unlike those two,
+which take a bare branch name, the value here is a ref used verbatim: a bare
+`main` means the local `main`, which may be stale, so name `origin/main` to
+rebase onto the remote.
 
 Manages the git rebase lifecycle: start, resume, abort, and force-push.
 With --fix, automatically resolves merge conflicts using AI.
@@ -5939,7 +5942,7 @@ Usage:
   pr-rebase --fix --no-push           # resolve conflicts with AI, but do not push
   pr-rebase --force                   # rebase even when the branch already landed
   pr-rebase --abort                   # abort in-progress rebase
-  pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref (or --base)
+  pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref, used as given (or --base)
   pr-rebase --fork-point <ref>        # replay only the commits after <ref>
   pr-rebase --repo-dir <path>         # specify worktree directory
 

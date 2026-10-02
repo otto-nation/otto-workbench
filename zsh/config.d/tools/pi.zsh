@@ -3,10 +3,14 @@
 # See _worktree_launch.zsh beside this file for what the redirect does and why;
 # this file only binds it to `pi`.
 #
-# Pi files sessions by the directory they started in, so after the redirect
-# `pi -c` run from a container continues the worktree's latest session, not one
-# started at the container before this wrapper existed. Those stay reachable
-# with `pi --session <path>` or `command pi -c`.
+# Pi files sessions by the directory they started in (docs/sessions.md in the
+# Pi 1.0.0 package, the version this was written against: `--continue` opens
+# the most recent session for the current working directory, sessions are
+# stored grouped by working directory, `--session` takes a path or ID). So
+# after the redirect `pi -c` run from a container continues the worktree's
+# latest session, not one started at the container before this wrapper
+# existed. Those stay reachable with `pi --session <path>` or `command pi -c`.
+# Read from Pi's docs, not exercised here; recheck on a Pi upgrade.
 #
 # ceiling-permanent: `command pi`, `\pi`, and an absolute path to the binary all
 # bypass this function, so the redirect is a default rather than a guarantee.

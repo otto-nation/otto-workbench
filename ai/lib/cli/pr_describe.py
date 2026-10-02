@@ -422,8 +422,8 @@ def build_parser() -> ToolParser:
                         help="Git worktree directory")
     parser.add_argument("--branch", metavar="NAME",
                         help="Branch name (injected by pr dispatcher)")
-    parser.add_argument("--pr", metavar="NUM",
-                        help="PR number (injected by pr dispatcher)")
+    parser.add_argument("--pr", metavar="NUM|URL",
+                        help="PR number or URL (injected by pr dispatcher)")
     parser.add_argument("--force", action="store_true",
                         help="Revise even when HEAD has not moved since the last pass")
     parser.add_argument("--dry-run", action="store_true",

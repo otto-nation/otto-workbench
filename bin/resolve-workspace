@@ -21,7 +21,7 @@
 # | Exit | Meaning |
 # |------|---------|
 # | `0` | Resolved; the workspace path is on stdout |
-# | `1` | An ordinary clone, which has no container to write into |
+# | `1` | An ordinary clone, which has no container to write into, or a directory that is not in a git repository |
 # | `64` | Usage error |
 #
 # Exit `1` is a refusal and not a fallback. Writing to `<repo>/workspace` in an

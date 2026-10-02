@@ -122,9 +122,7 @@ Each section below is the script's own header — the comment block under its sh
 
 How the AI subsystem behaves behind these entry points — review phases, publishing, settlement, the summary record — is in [AI Automation](ai-automation.md), and each module's own account is in [AI Libraries](ai-libraries.md).
 
-## Workbench Scripts
-
-General-purpose scripts installed onto `PATH` by `otto-workbench sync`.
+**Workbench scripts** — general-purpose scripts installed onto `PATH` by `otto-workbench sync`.
 
 ### `gcloud-reauth`
 
@@ -333,7 +331,7 @@ resolve-workspace [<path>]
 | Exit | Meaning |
 |------|---------|
 | `0` | Resolved; the workspace path is on stdout |
-| `1` | An ordinary clone, which has no container to write into |
+| `1` | An ordinary clone, which has no container to write into, or a directory that is not in a git repository |
 | `64` | Usage error |
 
 Exit `1` is a refusal and not a fallback. Writing to `<repo>/workspace` in an
@@ -383,19 +381,20 @@ between `master` and `main` for most containers.
 
 Exit `2` is the ordinary answer for an everyday repo, a worktree, or a
 directory outside any repo, so callers treat it as "carry on here" rather than
-a failure. This is the one owner of that resolution in bash. The `claude`
-shell wrapper calls it directly — redirecting a launch is all it wants. A tool
-that resolves a tree in order to *write* a project artifact into it calls
-`lib/worktree.sh`'s `project_root` instead, which lets a working tree name
-itself first and falls back to this only when there is none; the ceiling-debt
-Stop hook, `serena-mcp`, `workbench-rules`, and `otto-workbench ai init` all
-reach it that way.
+a failure. This is the one owner of that resolution in bash. The `claude` and
+`pi` shell wrappers reach it through
+[`_worktree_launch.zsh`](architecture.md#shell-zsh) — redirecting a launch is
+all they want. A tool that resolves a tree in order to *write* a project
+artifact into it calls [`lib/worktree.sh`](libraries.md)'s `project_root`
+instead, which lets a working tree name itself first and falls back to this
+only when there is none; the ceiling-debt Stop hook, `serena-mcp`,
+`workbench-rules`, and `otto-workbench ai init` all reach it that way.
 
-`lib/permission_mirror.py` applies the same rule in Python to pick the
-worktree a container's permission mirror is copied from. The two must agree —
-a session redirected to a worktree the mirror never wrote from is a session
-missing the grants the mirror exists to deliver, with nothing to say so — and
-`tests/container_source.bats` fails if they diverge.
+[`lib/permission_mirror.py`](libraries.md) applies the same rule in Python to
+pick the worktree a container's permission mirror is copied from. The two must
+agree — a session redirected to a worktree the mirror never wrote from is a
+session missing the grants the mirror exists to deliver, with nothing to say
+so — and `tests/container_source.bats` fails if they diverge.
 
 ### `task`
 
@@ -429,15 +428,9 @@ checker had long since settled on 2.
 validate-nesting [--quiet] [--max-depth N] [--diff BASE_REF] [file...]
 ```
 
-| Flag | Description |
-|------|-------------|
-| `--quiet` | Only show failures and summary |
-| `--max-depth N` | Maximum nesting depth (overrides per-language defaults) |
-| `--diff BASE_REF` | Only report violations on lines added since `BASE_REF` |
-| `-h`, `--help` | Show help |
-
 When no files are given, discovers all scripts in the repo by extension and
-shebang. `--diff` is mutually exclusive with positional files.
+shebang. `--diff` is mutually exclusive with positional files. The flag table
+below the exit codes is rendered from the parser, so it is not written here.
 
 | Exit | Meaning |
 |------|---------|
@@ -523,9 +516,7 @@ wt-init [--dry-run] [<path>]
 first. Safe to re-run: a repo that is already bare is skipped, with an offer
 to create a missing default-branch worktree.
 
-## AI Tooling
-
-The `pr` and `review` CLIs, the scanners the workbench skills drive, and the MCP launchers.
+**AI tooling** — the `pr` and `review` CLIs, the scanners the workbench skills drive, and the MCP launchers.
 
 ### `ceiling-scan`
 
@@ -594,7 +585,7 @@ and exits. `--memory-dir REPO` prints that repo's memory directory and exits.
 |------|-------------|
 | `-V`, `--version` | print version and exit. |
 | `--days` `<n>` | scan sessions from last N days (default: 7). |
-| `--home` `<dir>` | home directory override (for testing). Default: `/Users/isaacg`. |
+| `--home` `<dir>` | home directory override (for testing; default: `$HOME`). |
 | `--list-transcripts` | print transcript paths for the window, one per line, and exit. |
 | `--memory-dir` `<repo>` | print the memory directory for the repo at REPO, and exit. |
 
@@ -818,7 +809,7 @@ Takes no flags.
 |------|-------------|
 | `--no-post` | Do not post the review to GitHub. |
 | `--submit` | Submit the GitHub review after posting (default: leave PENDING). |
-| `--self` | Review the local checkout rather than a PR. |
+| `--self` | Review a local checkout of the current branch, or of the branch or PR ref given. |
 | `--fix` | Apply findings after the review (requires --self). |
 | `--push` | Push the --fix commit (requires --fix). |
 | `--skip-user-verification` | Skip the PR-ownership check when --self is given a PR ref. |
@@ -832,7 +823,7 @@ Takes no flags.
 | `--json-summary` | Print a machine-readable summary on stdout. |
 | `--issue` `<url>` | Related issue to include in the review prompt. |
 | `--base`, `--onto` `<base>` | Branch to review against, as a bare name. Default: the PR's base, else the branch this one is stacked on, else the repo's default branch. |
-| `--max-parallel` `<max-parallel>` | Max concurrent group reviews (default: from the machine slot pool, cap 4). |
+| `--max-parallel` `<n>` | Max concurrent group reviews (default: from the machine slot pool, cap 4). |
 | `--max-cost` `<usd>` | Max total review cost in USD. |
 | `--model` `<name>` | Override the model for all agents (e.g. sonnet, opus). |
 | `--effort` `<low\|medium\|high>` | Effort preset (default: review.effort in config.yml, else medium). |
@@ -866,7 +857,10 @@ Takes no flags.
 
 **`pr fix`** — Fix CI + review + comments
 
-Takes no flags.
+| Flag | Description |
+|------|-------------|
+| `--post` | Publish what the passes produce, the revised PR description included (default: print drafts and post nothing). |
+| `[<review-or-ci-flag> ...]` | Any other flag is forwarded to the review pass and the CI pass; see `pr review` and `pr ci`. |
 
 **`pr rebase`** — Rebase onto the branch's base
 
@@ -915,7 +909,7 @@ Backed-Up Memories (`ai/memory` in the workbench), and Workbench Artifacts
 | Flag | Description |
 |------|-------------|
 | `-V`, `--version` | print version and exit. |
-| `--home` `<dir>` | home directory override (for testing). Default: `/Users/isaacg`. |
+| `--home` `<dir>` | home directory override (for testing; default: `$HOME`). |
 | `--workbench` `<dir>` | workbench directory (default: $OTTO_WORKBENCH or ~/git/personal/otto-nation/otto-workbench/main). |
 
 ### `retro-consume`
@@ -974,7 +968,7 @@ alone.
 | Flag | Description |
 |------|-------------|
 | `-V`, `--version` | print version and exit. |
-| `--home` `<dir>` | home directory override. Default: `/Users/isaacg`. |
+| `--home` `<dir>` | home directory override (default: `$HOME`). |
 | `--workbench` `<dir>` | workbench directory (default: $OTTO_WORKBENCH or ~/git/personal/otto-nation/otto-workbench/main). |
 | `--since` `<duration>` | override scan window (e.g. 7d, 24h, 30m). |
 | `--consume` | record the local reviews read, so the retro may delete them when it completes. |
@@ -1010,7 +1004,7 @@ resolution, model selection, and Vertex quota preflight are in
 | `--no-post` | Do not post the review to GitHub. |
 | `--post` | Post the review to GitHub when it finishes. |
 | `--submit` | Submit the GitHub review after posting (default: leave PENDING). |
-| `--self` | Review the local checkout rather than a PR. |
+| `--self` | Review a local checkout of the current branch, or of the branch or PR ref given. |
 | `--fix` | Apply findings after the review (requires --self). |
 | `--push` | Push the --fix commit (requires --fix). |
 | `--skip-user-verification` | Skip the PR-ownership check when --self is given a PR ref. |
@@ -1025,7 +1019,7 @@ resolution, model selection, and Vertex quota preflight are in
 | `--json-summary` | Print a machine-readable summary on stdout. |
 | `--issue` `<url>` | Related issue to include in the review prompt. |
 | `--base`, `--onto` `<base>` | Branch to review against, as a bare name. Default: the PR's base, else the branch this one is stacked on, else the repo's default branch. |
-| `--max-parallel` `<max-parallel>` | Max concurrent group reviews (default: from the machine slot pool, cap 4). |
+| `--max-parallel` `<n>` | Max concurrent group reviews (default: from the machine slot pool, cap 4). |
 | `--max-cost` `<usd>` | Max total review cost in USD. |
 | `--model` `<name>` | Override the model for all agents (e.g. sonnet, opus). |
 | `--effort` `<low\|medium\|high>` | Effort preset (default: review.effort in config.yml, else medium). |

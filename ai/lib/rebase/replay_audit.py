@@ -14,7 +14,9 @@ Three callers, one judgement:
   conflicted replay step when it discards a clean change — `-n` does not skip
   that hook, and `rebase --continue` runs it;
 * the global `post-rewrite` hook reports commits a finished rebase dropped
-  whose changes are not in the result;
+  whose changes are not in the result — and, since it is reading the same
+  map and the same rebase state, writes `git.rewrites`' record of every line
+  that is not a drop;
 * `pr rebase` audits its own resolutions before it continues, so a refusal
   arrives as a paused rebase with the files named rather than as a hook
   failure it would have to interpret.
@@ -28,6 +30,7 @@ Run as a hook entry point::
 
     python3 -I -c '...' <ai/lib> commit
     python3 -I -c '...' <ai/lib> rewritten rebase   < old-new pairs
+    python3 -I -c '...' <ai/lib> rewritten amend    < old-new pairs
 
 Exit codes: 0 when nothing was refused (including when the audit could not
 run — a bug here must never cost somebody a commit), ``REFUSED_EXIT`` when the
@@ -48,6 +51,7 @@ from pathlib import Path
 
 import core.log
 import git.client
+import git.rewrites
 import rebase.conflicts
 import rebase.inspect
 import rebase.survival
@@ -71,11 +75,6 @@ _REPLAY_HEADS = (("REBASE_HEAD", "git rebase --continue"),
 # first half lacks the second by design. Only `edit` writes this file.
 _EDIT_STOP_MARKER = "amend"
 
-# Todo commands that make a commit of their own. A `fixup`/`squash` folds into
-# the previous one, so mapping to the previous new commit is expected there and
-# is the signature of a drop everywhere else.
-_OWN_COMMIT_COMMANDS = frozenset({"pick", "p", "reword", "r", "edit", "e"})
-
 # git's empty tree, for a root commit's parent. `git hash-object -t tree
 # /dev/null` in every SHA-1 repository.
 _EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
@@ -91,19 +90,12 @@ _WHOLE_SIDE_STRATEGIES = frozenset({
 
 
 @dataclass(frozen=True)
-class Replay:
+class ReplayStep:
     """The commit a rebase or cherry-pick is stopped on."""
     commit: str
     # The base every change is measured from; the empty tree for a root commit.
     parent: str
     continue_command: str
-
-
-@dataclass(frozen=True)
-class Rewrite:
-    """One line of `post-rewrite`'s stdin: a commit and what it became."""
-    old: str
-    new: str
 
 
 @dataclass(frozen=True)
@@ -133,7 +125,7 @@ def override_requested() -> bool:
 
 # ── Reading the replay ──────────────────────────────────────────────────────
 
-def replaying(cwd: str) -> Replay | None:
+def replaying(cwd: str) -> ReplayStep | None:
     """The commit a conflicted replay step is about to conclude, or None.
 
     None for an `edit` stop, for a merge commit (whose base is ambiguous), and
@@ -157,7 +149,7 @@ def replaying(cwd: str) -> Replay | None:
         parents = git.client.out("rev-list", "--parents", "-n", "1", commit, cwd=cwd).split()[1:]
         if len(parents) > 1:
             return None
-        return Replay(commit, parents[0] if parents else _EMPTY_TREE, continue_command)
+        return ReplayStep(commit, parents[0] if parents else _EMPTY_TREE, continue_command)
     return None
 
 
@@ -210,7 +202,7 @@ def _subject(cwd: str, commit: str) -> str:
 
 # ── The two audits ──────────────────────────────────────────────────────────
 
-def audit_replay(cwd: str, replay: Replay | None = None) -> CommitAudit | None:
+def audit_replay(cwd: str, replay: ReplayStep | None = None) -> CommitAudit | None:
     """The staged resolution of the commit under replay, or None when there is none."""
     replay = replay if replay is not None else replaying(cwd)
     if replay is None:
@@ -223,88 +215,31 @@ def audit_replay(cwd: str, replay: Replay | None = None) -> CommitAudit | None:
     return CommitAudit(replay.commit, _subject(cwd, replay.commit), files)
 
 
-def parse_rewrites(text: str) -> list[Rewrite]:
-    """The ``<old> <new>`` lines git writes to `post-rewrite`'s stdin, in order."""
-    rewrites = []
-    for line in text.splitlines():
-        fields = line.split()
-        if len(fields) >= 2:
-            rewrites.append(Rewrite(fields[0], fields[1]))
-    return rewrites
+def dropped_commits(
+    cwd: str, drops: Sequence[git.rewrites.Rewrite],
+) -> tuple[CommitAudit, ...]:
+    """The commits among *drops* whose changes are not in the result.
 
-
-def _done_commands(state: Path) -> dict[str, str]:
-    """Each commit sha the rebase processed, mapped to its todo command."""
-    try:
-        lines = (state / "done").read_text().splitlines()
-    except OSError:
-        return {}
-    commands = {}
-    for line in lines:
-        fields = line.split()
-        if len(fields) >= 2 and not line.startswith("#"):
-            commands[fields[1]] = fields[0]
-    return commands
-
-
-def _command_for(commands: dict[str, str], commit: str) -> str:
-    """*commit*'s todo command; `done` may abbreviate the sha.
-
-    The longest matching sha wins when more than one is a prefix match: it is
-    the more specific of the two, and the only tie-break available short of
-    talking to git again.
-
-    *commit* is always the full sha `post-rewrite` hands us, and `done` never
-    abbreviates to something longer than that — so `sha.startswith(commit)`
-    only ever agrees with `commit.startswith(sha)` on an exact match, which the
-    first disjunct already covers. Kept anyway as the one test that stays
-    correct if that assumption about `done` ever stops holding.
+    Which lines are drops is git's rule, and `git.rewrites.drops` owns it. Most
+    drops are right: the change was already upstream, and then the
+    predecessor's tree holds it and the audit finds nothing lost. What is
+    reported is a drop whose changes are absent.
     """
-    matches = [
-        (sha, command) for sha, command in commands.items()
-        if commit.startswith(sha) or sha.startswith(commit)
-    ]
-    if not matches:
-        return ""
-    return max(matches, key=lambda pair: len(pair[0]))[1]
-
-
-def dropped_commits(cwd: str, rewrites: Sequence[Rewrite]) -> tuple[CommitAudit, ...]:
-    """Commits a finished rebase left out whose changes are not in the result.
-
-    git maps a commit it dropped to whatever came before it — the previous new
-    commit, or `onto` for the first — so a commit of its own mapping to its
-    predecessor was dropped. Most such drops are right: the change was already
-    upstream, and then the predecessor's tree holds it and the audit finds
-    nothing lost. What is reported is a drop whose changes are absent.
-    """
-    state = rebase.inspect.git_dir(cwd) / rebase.inspect.GIT_REBASE_MERGE_DIR
-    commands = _done_commands(state)
-    try:
-        previous = (state / "onto").read_text().strip()
-    except OSError:
-        return ()
-
     dropped = []
-    for rewrite in rewrites:
-        audit = _dropped(cwd, commands, rewrite, previous)
+    for rewrite in drops:
+        audit = _dropped(cwd, rewrite)
         if audit is not None:
             dropped.append(audit)
-        previous = rewrite.new
     return tuple(dropped)
 
 
-def _dropped(
-    cwd: str, commands: dict[str, str], rewrite: Rewrite, previous: str,
-) -> CommitAudit | None:
+def _dropped(cwd: str, rewrite: git.rewrites.Rewrite) -> CommitAudit | None:
     """*rewrite*'s audit when git dropped its commit and lost changes doing so.
 
-    A drop is a commit of its own mapped onto whatever came before it. A merge
-    commit is skipped, its base being ambiguous, as `replaying` skips one.
+    A merge commit is skipped, its base being ambiguous, as `replaying` skips
+    one.
     """
     old, new = rewrite.old, rewrite.new
-    if new != previous or _command_for(commands, old) not in _OWN_COMMIT_COMMANDS:
-        return None
     parents = git.client.out("rev-list", "--parents", "-n", "1", old, cwd=cwd).split()[1:]
     if len(parents) > 1:
         return None
@@ -392,11 +327,32 @@ def _commit(cwd: str) -> int:
 
 
 def _rewritten(cwd: str, kind: str, stdin: str) -> int:
+    """Report a rebase's lossy drops, and record every rewrite that is not a drop.
+
+    Both read the one copy of git's map, and both need the rebase state that is
+    gone once this hook returns — which is why the record is written from here
+    rather than by a second interpreter. An amend drops nothing, so all of its
+    lines are rewrites. A rebase whose state cannot be read — `onto` or `done` —
+    records nothing, and so does a line whose commit `done` does not name: with
+    no way to tell a drop from a rewrite, a dropped commit would be recorded as
+    having become its predecessor.
+    """
+    rewrites = git.rewrites.parse(stdin)
     if kind != "rebase":
+        _record(cwd, rewrites)
         return 0
-    dropped = dropped_commits(cwd, parse_rewrites(stdin))
+    state = rebase.inspect.git_dir(cwd) / rebase.inspect.GIT_REBASE_MERGE_DIR
+    try:
+        onto = (state / "onto").read_text().strip()
+    except OSError:
+        return 0
+    commands = git.rewrites.done_commands(state)
+    if commands is None:
+        return 0
+    lines = git.rewrites.split(rewrites, onto, commands)
+    _record(cwd, lines.kept)
+    dropped = dropped_commits(cwd, lines.dropped)
     if dropped:
-        state = rebase.inspect.git_dir(cwd) / rebase.inspect.GIT_REBASE_MERGE_DIR
         try:
             orig_head = (state / "orig-head").read_text().strip()
         except OSError:
@@ -405,12 +361,26 @@ def _rewritten(cwd: str, kind: str, stdin: str) -> int:
     return 0
 
 
+def _record(cwd: str, rewrites: Sequence[git.rewrites.Rewrite]) -> None:
+    """Write the rewrite record, failing open on its own.
+
+    Kept apart from the audit's failure handling so a record that cannot be
+    written never costs the report of a drop that lost changes.
+    """
+    try:
+        common = git.rewrites.common_dir(cwd)
+        if common is not None:
+            git.rewrites.record(common, rewrites)
+    except OSError as exc:
+        core.log.warn(f"could not record this rewrite for `pr`: {exc}")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Hook entry point — see the module docstring for the exit codes."""
     parser = argparse.ArgumentParser(description="Audit a replay for discarded changes.")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("commit", help="audit the staged resolution of the commit under replay")
-    rewritten = sub.add_parser("rewritten", help="report commits a rebase dropped (post-rewrite)")
+    rewritten = sub.add_parser("rewritten", help="report lossy drops and record rewrites (post-rewrite)")
     rewritten.add_argument("kind", help="post-rewrite's first argument: rebase or amend")
     ns = parser.parse_args(argv)
     cwd = os.getcwd()

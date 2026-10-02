@@ -54,27 +54,30 @@ def follow_history_rewrite(state: pr.state.PRState, wt_path: Path) -> None:
     replay that reached the remote clears the hold, and one still sitting local
     is unpushed for the ordinary reason and keeps holding.
 
-    Nothing is cleared when the rename cannot be followed. An orphan no single
-    commit replays keeps the SHA it was recorded with, the hold stands, and the
-    warning below names the two ways out — which is the honest answer to a state
-    this cannot read, and the one thing worse than blocking would be publishing
-    on a guess.
+    Nothing is cleared when the rename cannot be followed. An orphan with no
+    single replay keeps the SHA it was recorded with and the hold stands, and
+    the warning says which of three things stopped it — nothing carries the
+    change, two things do, or git could not answer — because each has a
+    different way out, and the one thing worse than blocking would be
+    publishing on a guess.
     """
     record = state.fix.fix
     recorded = record.commit_sha
-    # Keyed by recorded SHA, so a branch whose threads all cite one commit asks
-    # git once. "" is a cached answer too: it means orphaned with no replay.
-    replays: dict[str, str] = {}
+    # One finder for the whole snapshot, so every SHA in it shares one read of
+    # the rewrite log and one walk per merge base. Answers are cached by
+    # recorded SHA too: None means the commit was never orphaned.
+    finder = git.replay.ReplayFinder(wt_path)
+    replays: dict[str, git.replay.Replay | None] = {}
 
     def followed(sha: str) -> str:
         if not sha:
             return sha
         if sha not in replays:
             replays[sha] = (
-                git.replay.replayed_commit(wt_path, sha)
-                if git.replay.rewritten_away(wt_path, sha) else sha
+                finder.find(sha) if git.replay.rewritten_away(wt_path, sha) else None
             )
-        return replays[sha] or sha
+        replay = replays[sha]
+        return replay.sha if replay is not None and replay.found else sha
 
     record.commit_sha = followed(record.commit_sha)
     # The snapshot HEAD moves with the rest. It is the base of the "what landed
@@ -86,25 +89,56 @@ def follow_history_rewrite(state: pr.state.PRState, wt_path: Path) -> None:
         outcome.commit_sha = followed(outcome.commit_sha)
         outcome.read_sha = followed(outcome.read_sha)
 
-    moved = sum(1 for sha, replayed in replays.items() if replayed and replayed != sha)
+    moved = [r for sha, r in replays.items()
+             if r is not None and r.found and r.sha != sha]
     if moved:
+        exact = sum(1 for r in moved if r.source is git.replay.ReplaySource.REWRITE_LOG)
         core.log.info(
-            f"Followed {moved} rewritten commit(s) — the fix snapshot now cites "
-            "the history on the branch"
+            f"Followed {len(moved)} rewritten commit(s) — the fix snapshot now "
+            f"cites the history on the branch ({exact} from git's record of the "
+            f"rewrite, {len(moved) - exact} by matching the change)"
         )
-    if recorded and replays.get(recorded) == "" and commit_unpushed(
-            record.commit_status):
-        core.log.warn(
-            f"Fix commit {recorded} is no longer on this branch and no single "
-            "commit on it carries that change — the closeout stays held. This "
-            "also fires when the change now appears twice (a duplicated "
-            "cherry-pick, an apply-revert-reapply) — check history for that "
-            "before restoring anything. If the work landed as a different "
-            "change — a squash, a reworked fix — re-run "
-            "`pr comments --fix --post` to re-triage against HEAD; if it was "
-            f"dropped, restore it with `git cherry-pick {recorded}` while the "
-            "orphaned object is still there — a gc reclaims it"
+    held = replays.get(recorded) if recorded else None
+    if held is not None and not held.found and commit_unpushed(record.commit_status):
+        core.log.warn(_unfollowed_warning(recorded, held))
+
+
+def _unfollowed_warning(recorded: str, replay: git.replay.Replay) -> str:
+    """Why *recorded* could not be followed, and the way out that fits."""
+    stays = "the closeout stays held"
+    retriage = "re-run `pr comments --fix --post` to re-triage against HEAD"
+    if replay.status is git.replay.ReplayStatus.UNKNOWN:
+        return (
+            f"Could not tell which commit replays fix commit {recorded} — git did "
+            f"not answer ({replay.detail}) — so {stays}. This says nothing about "
+            f"whether the work is on the branch, so check the history before "
+            f"restoring anything (a commit that no longer resolves cannot be "
+            f"cherry-picked back); {retriage}"
         )
+    if (replay.status is git.replay.ReplayStatus.AMBIGUOUS
+            and replay.source is git.replay.ReplaySource.REWRITE_LOG):
+        # Not a claim about content: git's record names several commits on the
+        # branch, and they may have diverged since.
+        return (
+            f"Fix commit {recorded} was rewritten into more than one commit now "
+            f"on this branch, and git's record does not say which one holds the "
+            f"work — so there is nothing to choose between and {stays}. Check "
+            f"which of them carries it, then {retriage}"
+        )
+    if replay.status is git.replay.ReplayStatus.AMBIGUOUS:
+        return (
+            f"Fix commit {recorded} was rewritten and more than one commit on "
+            f"this branch now carries that change — a duplicated cherry-pick, or "
+            f"an apply-revert-reapply — so there is nothing to choose between "
+            f"and {stays}. Check the history for the duplicate, then {retriage}"
+        )
+    return (
+        f"Fix commit {recorded} is no longer on this branch and no commit on it "
+        f"carries that change — {stays}. If the work landed as a different "
+        f"change — a reworked fix — {retriage}; if it was dropped, restore it "
+        f"with `git cherry-pick {recorded}` while the orphaned object is still "
+        "there — a gc reclaims it"
+    )
 
 
 def reconciled_commit(

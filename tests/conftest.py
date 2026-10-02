@@ -955,6 +955,14 @@ def git_in(cwd, *args) -> None:
     git_out(cwd, *args)
 
 
+def is_range_listing(args) -> bool:
+    """Whether a `git.client.run` call is `git.replay`'s `--name-only` listing
+    of a `<base>..HEAD` range — the call a test wraps to count it or to make it
+    time out. The one place that knows how to recognise it.
+    """
+    return "--name-only" in args and any(a.endswith("..HEAD") for a in args)
+
+
 def seed_repo(path) -> Path:
     """A one-commit repo at *path*, with an identity of its own.
 
@@ -1338,6 +1346,25 @@ def live_git_hooks(monkeypatch):
     """
     for key in ("GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"):
         monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture
+def record_rewrites(live_git_hooks, tmp_path_factory):
+    """Install the workbench `post-rewrite` hook, alone, into a repo.
+
+    Returns a function taking the repo. A hooks directory of its own rather
+    than the workbench's `git/hooks`, so the global pre-commit and pre-push — a
+    gitleaks scan, a push recorder — stay out of a test about rewrites. The
+    symlink is what lets the hook find its workbench, exactly as the installed
+    `~/.git-hooks` link does.
+    """
+    def install(repo: Path) -> Path:
+        hooks = tmp_path_factory.mktemp("hooks")
+        (hooks / "post-rewrite").symlink_to(REPO_ROOT / "git" / "hooks" / "post-rewrite")
+        git_in(repo, "config", "core.hooksPath", str(hooks))
+        return repo
+
+    return install
 
 
 @pytest.fixture(autouse=True)

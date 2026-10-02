@@ -4727,8 +4727,10 @@ Two questions, and the distinction between them is the whole module:
 
 - :func:`rewritten_away` — *was it orphaned?* Ancestry, read for the one exit
   code that means orphaned rather than for truthiness.
-- :func:`replayed_commit` — *which commit carries it now?* Patch equivalence,
-  refusing to answer when more than one candidate matches.
+- :class:`ReplayFinder` — *which commit carries it now?* git's own record of
+  the rewrite first (`git.rewrites`), patch equivalence for a rewrite nobody
+  recorded, and a typed answer either way — because "nothing carries it",
+  "two things do" and "git could not say" each call for a different remedy.
 
 `gh.landed` asks a neighbouring question of a whole branch — *is this work
 upstream at all?* — and answers it with `git cherry`, which is cheaper and
@@ -4738,6 +4740,40 @@ keeping: `landed` answers "is it there?", this answers "which one is it?".
 Layer 2 rather than beside its first caller, so `gh`, `pr`, `fix` and `rebase`
 can all reach it. The rebase subsystem is what *causes* the rewrites this
 recovers from and should be reading the same answer.
+
+### git/rewrites.py
+
+What git reports about a rewrite, and the record of it `pr` reads back.
+
+A rebase knows exactly which commit it turned into which, and says so once: to
+the `post-rewrite` hook, as one `<old> <new>` line per commit, after every
+`commit --amend` and every `rebase`. That list covers what matching on content
+cannot — a pick whose conflict resolution changed its hunks, and every commit a
+`fixup`/`squash` folded, each listed against the commit it folded into. Then git
+forgets it: `rebase-merge/rewritten-list` is deleted when the rebase finishes,
+so the only moment the answer exists is inside that hook.
+
+Not every line is a rewrite. git maps a commit it *dropped* — a `--skip`, a
+resolution that emptied it — onto whatever came before it, so a dropped fix
+commit would read as having become an unrelated commit already on the branch.
+:func:`drops` is git's rule for telling those lines apart, and it needs the
+rebase's own state (`onto`, the `done` todo), which exists only while the hook
+runs. So the hook's one Python entry, `rebase.replay_audit rewritten`, reads
+that state once, reports the drops that lost changes, and calls :func:`record`
+with every line that is not a drop. When the state cannot be read it records
+nothing, and `git.replay` falls back to patch matching — slower, and never
+wrong in that direction.
+
+The record lives in the repository's common git directory rather than in the
+workbench state root. A commit belongs to the repository, every worktree of it
+rewrites into the same history, and the entry should go when the repository
+does; a machine-wide file would also let a busy repository evict a quiet one's
+entries before anything read them.
+
+Append-only text in git's own line format, so a rebase is one `write` with
+`O_APPEND` and two rewrites finishing together cannot drop each other's lines —
+the read-modify-write race `push_intent` accepts does not arise here. Only the
+trim reads and replaces the file.
 
 ### git/topology.py
 
@@ -4974,7 +5010,9 @@ Three callers, one judgement:
   conflicted replay step when it discards a clean change — `-n` does not skip
   that hook, and `rebase --continue` runs it;
 * the global `post-rewrite` hook reports commits a finished rebase dropped
-  whose changes are not in the result;
+  whose changes are not in the result — and, since it is reading the same
+  map and the same rebase state, writes `git.rewrites`' record of every line
+  that is not a drop;
 * `pr rebase` audits its own resolutions before it continues, so a refusal
   arrives as a paused rebase with the files named rather than as a hook
   failure it would have to interpret.
@@ -4988,6 +5026,7 @@ Run as a hook entry point::
 
     python3 -I -c '...' <ai/lib> commit
     python3 -I -c '...' <ai/lib> rewritten rebase   < old-new pairs
+    python3 -I -c '...' <ai/lib> rewritten amend    < old-new pairs
 
 Exit codes: 0 when nothing was refused (including when the audit could not
 run — a bug here must never cost somebody a commit), ``REFUSED_EXIT`` when the

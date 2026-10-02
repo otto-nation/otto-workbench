@@ -13,11 +13,13 @@ if str(LIB_DIR) not in sys.path:
 # `_no_published_summary` is autouse: imported so pytest applies it here,
 # never referenced by name.
 from review_threads_support import _fix, _make_state, _no_published_summary, content  # noqa: E402
-from conftest import git_in, make_ctx, run_checked
+from conftest import git_in, is_range_listing, make_ctx, run_checked
 import pr.state
 import core.log
+import core.proc
 import git.client
 import git.push
+import git.replay
 from git.land import CommitStatus
 import pr.thread_replies
 import pr.history_rewrite
@@ -301,3 +303,76 @@ class TestFollowHistoryRewrite:
         with patch.object(git.client, "run", boom):
             pr.history_rewrite.follow_history_rewrite(state, Path("/fake"))
         assert state.fix.fix.commit_sha == ""
+
+    def test_a_squashed_fix_is_followed_through_gits_record(
+        self, tmp_path, record_rewrites,
+    ):
+        """A squash changes the patch; git's record still says where it went."""
+        work = record_rewrites(_feature_off_origin(tmp_path))
+        _fix_commit(work, "one.txt")
+        held = _fix_commit(work, "two.txt")
+        # Fold the held commit into the one before it: line 2 of the todo.
+        git_in(work, "-c", "sequence.editor=sed -i.bak '2s/^pick/fixup/'",
+               "rebase", "-q", "-i", "origin/main")
+        git_in(work, "push", "-q", "-u", "origin", "feature")
+        state = _make_state(_fix(commit_sha=held,
+                                 commit_status=CommitStatus.PUSH_HELD, head_sha=held))
+
+        pr.history_rewrite.follow_history_rewrite(state, work)
+
+        assert state.fix.fix.commit_sha == _short_sha(work)
+
+    def test_an_unanswered_search_holds_without_advising_a_restore(self, tmp_path):
+        """A timeout is not evidence the work is gone — cherry-picking it back
+        would duplicate a change the branch may already carry."""
+        repo = _held_fix_branch(tmp_path)
+        state = self._state(repo)
+        real = git.client.run
+
+        def slow_listing(*args, **kwargs):
+            if is_range_listing(args):
+                return core.proc.CmdResult(
+                    returncode=core.proc.TIMEOUT_RETURNCODE,
+                    stderr="timed out after 10s: git log --name-only",
+                )
+            return real(*args, **kwargs)
+
+        warned = []
+        with patch.object(git.client, "run", slow_listing), \
+                patch.object(core.log, "warn", side_effect=warned.append):
+            pr.history_rewrite.follow_history_rewrite(state, repo.path)
+
+        assert state.fix.fix.commit_sha == repo.held
+        [warning] = warned
+        assert "timed out after 10s" in warning
+        assert "pr comments --fix" in warning
+        assert "git cherry-pick" not in warning
+
+    def test_each_unfollowed_outcome_names_its_own_cause(self, tmp_path):
+        dropped = _held_fix_branch(tmp_path / "dropped", drop=True)
+        duplicated = _duplicated_fix(tmp_path / "duplicated")
+        warnings = {}
+        for name, repo in (("dropped", dropped), ("duplicated", duplicated)):
+            state = _make_state(_fix(commit_sha=repo.held,
+                                     commit_status=CommitStatus.PUSH_HELD))
+            warned = []
+            with patch.object(core.log, "warn", side_effect=warned.append):
+                pr.history_rewrite.follow_history_rewrite(state, repo.path)
+            [warnings[name]] = warned
+        assert f"git cherry-pick {dropped.held}" in warnings["dropped"]
+        assert "more than one commit" in warnings["duplicated"]
+        assert "git cherry-pick" not in warnings["duplicated"]
+
+    def test_two_commits_from_gits_record_are_not_called_duplicates_of_a_change(self):
+        """The rewrite record names descendants; it says nothing of their content."""
+        by_record = git.replay.Replay(
+            git.replay.ReplayStatus.AMBIGUOUS, source=git.replay.ReplaySource.REWRITE_LOG)
+        by_content = git.replay.Replay(
+            git.replay.ReplayStatus.AMBIGUOUS, source=git.replay.ReplaySource.PATCH_ID)
+
+        from_record = pr.history_rewrite._unfollowed_warning("abc1234", by_record)
+        from_content = pr.history_rewrite._unfollowed_warning("abc1234", by_content)
+
+        assert "carries that change" not in from_record
+        assert "record does not say" in from_record
+        assert "carries that change" in from_content

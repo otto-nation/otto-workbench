@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
 # Global post-rewrite hook: reports commits a rebase dropped whose changes are
-# not in the result, then delegates to the repo-local hook.
+# not in the result, records what every other rewritten commit became, then
+# delegates to the repo-local hook.
 # Installed via step_global_hooks in git/steps.sh (symlinked to ~/.git-hooks/).
 #
 # A conflict resolved to nothing, or a `rebase --skip`, drops the commit
 # without committing anything, so prepare-commit-msg never sees it. The
-# old→new map git writes to this hook's stdin is the only record. post-rewrite
-# cannot stop anything — the rebase has finished — so this reports, with the
-# commands that recover the work, and always exits with the local hook's status.
+# old→new map git writes to this hook's stdin is the only record — of those
+# drops, and of which commit each surviving one became, which `pr` reads back
+# to follow a fix commit a rebase renamed. Both need the rebase's own state to
+# tell a drop from a rewrite, so one interpreter does both: see
+# ai/lib/rebase/replay_audit.py and ai/lib/git/rewrites.py.
+#
+# post-rewrite cannot stop anything — the rebase has finished — so this
+# reports, with the commands that recover the work, and always exits with the
+# local hook's status.
 
 set -euo pipefail
 
@@ -20,12 +27,12 @@ if [[ ! -t 0 ]]; then
   _rewrites="$(cat)" || true
 fi
 
-# `amend` rewrites one commit the user is looking at; only a rebase drops any.
-if [[ "${1:-}" == rebase && -n "$_rewrites" && -n "$_workbench" \
-      && -f "$_workbench/lib/replay_audit.sh" ]]; then
+# Both kinds: an amend renames a commit as surely as a rebase does, though
+# only a rebase can drop one — the audit itself tells them apart.
+if [[ -n "$_rewrites" && -n "$_workbench" && -f "$_workbench/lib/replay_audit.sh" ]]; then
   # shellcheck source=../../lib/replay_audit.sh
   . "$_workbench/lib/replay_audit.sh"
-  printf '%s\n' "$_rewrites" | replay_audit "$_workbench" rewritten "$1" || true
+  printf '%s\n' "$_rewrites" | replay_audit "$_workbench" rewritten "${1:-}" || true
 fi
 
 _local_hook="$(git rev-parse --git-common-dir)/hooks/post-rewrite"

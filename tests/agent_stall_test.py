@@ -5,6 +5,8 @@ that ends a wedged run is worth having; one that also ends a slow build is
 worse than nothing, because the run it kills was going to succeed.
 """
 
+import os
+import signal
 import subprocess
 import sys
 import threading
@@ -157,14 +159,22 @@ class TestSampleSubtree:
     """
 
     def test_a_detached_busy_descendant_is_attributed_to_the_root(self):
+        # The grandchild leads its own session, so killing the parent does not
+        # reach it. It spins only while its parent lives and exits once it is
+        # reparented — so it cannot outlive the test, however the test ends.
         parent = subprocess.Popen(
             [sys.executable, "-c",
              "import subprocess,sys,time;"
-             "subprocess.Popen([sys.executable,'-c','x=0\\nwhile True: x+=1'],"
+             "c=subprocess.Popen([sys.executable,'-c',"
+             "'import os\\np=os.getppid()\\nwhile os.getppid()==p: pass'],"
              " start_new_session=True);"
+             "print(c.pid, flush=True);"
              "time.sleep(30)"],
+            stdout=subprocess.PIPE, text=True,
         )
+        spinner = 0
         try:
+            spinner = int(parent.stdout.readline())
             time.sleep(1.0)
             first = agent.stall.sample_subtree(parent.pid)
             time.sleep(2.0)
@@ -174,6 +184,9 @@ class TestSampleSubtree:
         finally:
             parent.kill()
             parent.wait()
+            parent.stdout.close()
+        assert spinner and _exits_within(spinner, seconds=5.0), (
+            f"busy grandchild {spinner} outlived its parent")
 
     def test_an_idle_subtree_accrues_nothing(self):
         sleeper = subprocess.Popen(["sleep", "30"], start_new_session=True)
@@ -186,6 +199,36 @@ class TestSampleSubtree:
         finally:
             sleeper.kill()
             sleeper.wait()
+
+
+def _is_zombie(pid: int) -> bool:
+    """A dead process nobody has reaped still answers `kill -0`; it is not running."""
+    state = subprocess.run(
+        ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True,
+    ).stdout.strip()
+    return state.startswith("Z")
+
+
+def _exits_within(pid: int, *, seconds: float) -> bool:
+    """Whether *pid* is gone within *seconds*, killing it if it is not.
+
+    The kill is what keeps a failed assertion from leaving a CPU-bound
+    process behind for every later test to compete with.
+    """
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        if _is_zombie(pid):
+            return True
+        time.sleep(0.05)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return True
+    return False
 
 
 class _Recorder:

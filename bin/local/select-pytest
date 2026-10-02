@@ -101,6 +101,10 @@ NO_DEPS_TESTS = {
     # Reads the config modules' source through a path assembled at call time
     # from a dotted name, which no static map can follow.
     "tests/workbench_config_layers_test.py",
+    # Pi RPC lines and fixture readers; the suites importing it carry the deps.
+    "tests/ai_backend_pi_support.py",
+    # Session-log line builders; the suites importing it carry the deps.
+    "tests/review_agent_diagnostics_support.py",
 }
 
 _LOAD_LIB = re.compile(r'_load_lib\(\s*"([^"]+)"\s*\)')

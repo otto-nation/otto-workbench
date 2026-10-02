@@ -99,7 +99,12 @@ Every phase the workbench knows how to run, and what each one defaults to.
 One entry per phase, and the entry is the whole declaration — the config key,
 the ``WORKBENCH_AI_*`` override keys, the review directory's filenames and the
 preflight model list are all derived from it, so adding a phase is a member on
-``Phase`` and a spec here.
+``Phase`` and a spec here. Not only the review pipeline: the conflict
+resolutions behind ``pr rebase --fix``, the description ``pr describe`` writes,
+and the thread triage ``pr comments`` runs each resolve their model and thinking
+level from this registry through the same chain, so ``WORKBENCH_AI_REBASE_MODEL``,
+``WORKBENCH_AI_DESCRIBE_THINKING`` and their siblings set those calls' model and
+thinking level the same way they set a review phase's.
 
 The registry is a dict keyed by phase, but it is written as a tuple and keyed
 afterwards: a literal keyed by hand spells every phase name twice and can drift
@@ -115,7 +120,29 @@ the keys it advertises.
 The ``--no-<phase>`` flags at the bottom are the registry read from the command
 line: which phases may be switched off is a property of the specs above, so the
 flags are generated from them rather than listed a second time in each script
-that offers them.
+that offers them. Today that is ``--no-holistic``, ``--no-scout``,
+``--no-group``, ``--no-synthesis``, ``--no-disprove``.
+
+Phase 1 is one scan chosen from ``SCAN_PHASES``. ``--no-holistic`` alone falls
+back to the scout scan and ``--no-scout`` alone falls back to the holistic
+scan; only both together drop phase 1. ``review.steps._scan_phase`` is the
+choice.
+
+``--no-group`` and ``--no-synthesis`` leave the review *partial* rather than
+clean: the merge still runs, every group reports as skipped, and the status
+header says ``partial``. A review that reviewed nothing must not read like one
+that found nothing — ``review.pipeline`` owns that path.
+
+The ``--effort`` preset drops optional phases the same way. ``low`` skips both
+phase-1 scans, synthesis, and the disprove gate (see ``EFFORT_PRESETS`` in
+``agent.types``). ``--disprove`` buys the gate back from a preset that dropped
+it; ``--no-disprove`` is read off ``skip_phases`` and beats ``--disprove`` —
+``review.phases._should_disprove``.
+
+Each phase's model is resolved elsewhere: ``agent.phases`` layers
+``--model`` / ``WORKBENCH_AI_<PHASE>_MODEL`` / ``WORKBENCH_AI_MODEL`` over the
+default on the spec here, then maps a bare alias (``sonnet``, ``opus``,
+``haiku``) through ``AI_*_MODEL`` / ``ANTHROPIC_DEFAULT_*_MODEL``.
 
 ### agent/retry.py
 
@@ -641,6 +668,24 @@ against. How the collected files are ranked and divided is `review.grouping`'s,
 what a phase does with the block is `review.prompt`'s, and the records this
 fills in are `review.types`' and `gh.types`'.
 
+`--self` reviews the worktree, not the remote branch. Everything that differs
+from the base is in scope: unpushed commits, staged and unstaged edits, and
+untracked files (`.gitignore` still applies — `ls-files --others
+--exclude-standard`). `worktree_diff` is that surface. Re-reviews narrow to what
+changed since the prior review, and that delta follows the same rule —
+uncommitted work done since the last `--self` run is picked up.
+
+`base_ref` is the single place a base *name* becomes a ref. Every range is
+anchored through it, so the file list, the diff, the commit log and the delta
+cannot end up measured from different commits. `origin/<base>` first, and for a
+pushed base it is the only answer. The local fallback is reached only when there
+is no remote-tracking ref *and* the name is a strict ancestor of HEAD — an
+unpushed stack parent. A pushed base is always measured against the remote: the
+two disagree whenever the local branch is behind, and a review must not depend
+on a fetch it does not control. Empty when neither qualifies, which callers must
+tell from a resolved ref: `git log ... --not <missing>` looks exactly like a
+branch that changed nothing.
+
 ### review/completion.py
 
 What happens to a review once the pipeline has produced it.
@@ -826,18 +871,6 @@ nobody can act on.
 Deciding which of those paths a run takes is `review.steps`'; sequencing the
 phases that lead there is `review.pipeline`'s.
 
-### review/overflow.py
-
-In-phase recovery from an API `prompt is too long` rejection.
-
-The local budget is a prior. When the API still rejects the rendered prompt,
-the rejection names how many tokens were sent and how many the model will
-take. That pair is enough to rebuild at a density just measured, without
-waiting for `--recover` — which would re-render the same bytes.
-
-Unparseable rejections stay non-recoverable. Local `PROMPT_TOO_LARGE` is a
-different kind and is never retried here.
-
 ### review/paths.py
 
 Where a review lives on disk, and what is allowed to be there.
@@ -913,6 +946,24 @@ The run ends when the review file is written — what happens to the findings
 afterwards belongs to review.fix, and removing what the run left behind belongs
 to review.gc, which the orchestrator runs once every phase is done.
 
+Two ways every group ends up unreviewed without a single agent running, and
+each group carries the reason rather than an absence: ``--no-group`` (or the
+effort preset that includes it) and a budget already blown after phase 1. The
+merge still runs and reports every group as skipped; the status header says
+``partial``. ``--no-synthesis`` is the same claim one phase later: the mechanical
+merge is written, synthesis is marked done-and-skipped, and the header must not
+read as a clean review of nothing. ``review.outcome`` and ``review.verdict``
+word that header; this module is the path that takes it.
+
+Self-review vs PR mode is decided here too, at ``fetch_metadata`` /
+``_with_local_diff``. A self-review reads the worktree: the head SHA and the
+changed-file list come from git, never from GitHub. Taking them from the PR
+silently drops every unpushed commit — the diff is local but the file list is
+not, so the review never opens the files those commits touched. When the branch
+already has a PR, its title, body and labels supply context but do not define
+the diff; the run logs the local head whenever it differs from the PR's. PR
+mode reviews the pushed commits only.
+
 ### review/preflight.py
 
 Checks that run before a review spends anything.
@@ -933,6 +984,14 @@ repo; each of these fires before the first agent call.
 ``force`` local that suppresses confirmation prompts, and an unattended run is
 the one the refusal most has to survive.
 
+A fourth gate, ``refuse_unresolvable_base``, stops a run whose operator ``--base``
+names a branch that exists in neither ``origin/`` nor locally. Every range would
+then come back empty and the review would report no findings for a branch it
+never read. Derived bases are not refused: they are read out of git, so a miss
+is a gap in the derivation rather than a typo, and ``review.collect.base_ref``'s
+fallbacks handle it. ``--recover`` is exempt from supersession, on both entry
+points — it finishes a run whose spend has already been made.
+
 ### review/prompt.py
 
 Prompt construction for review: the byte budget and the render loop.
@@ -940,9 +999,9 @@ Prompt construction for review: the byte budget and the render loop.
 `PromptBuilder` collects the variables a template is rendered with, and
 `PromptBuilder.fit` is what makes a prompt fit the token budget: it registers
 the sections that can shrink — the pre-collected file contents, the
-incremental delta, the commit log, and the full diff — after everything fixed
-is already accounted for, and pulls four levers in that order, only as far as
-the shortfall requires. It rewrites the environment section to send the agent
+incremental delta, and the full diff — after everything fixed is already
+accounted for, and pulls three levers in that order, only as far as the
+shortfall requires. It rewrites the environment section to send the agent
 after whatever it dropped, and reports the cuts in the prompt's size log. A
 prompt still over budget once every lever is pulled raises `PromptTooLarge`
 rather than being sent: the phase reports it before an agent starts, so it
@@ -954,23 +1013,16 @@ builder, which template it renders, and which file the agent is told to write
 are `review.registry`'s: it holds the phase-to-builder table and
 `build_prompt`, which dispatches on it and imports the builders from here.
 
-### review/prompt_fit.py
-
-Plan → render → verify → re-plan, until the prompt fits or the cap is hit.
-
-`review.registry.build_prompt` is the public entry; this module is the loop
-it runs. The ladder plans against a byte target, the template renders, and
-the result is checked twice: bytes against the spend ceiling always, tokens
-plus the backend overhead reserve against the model's window when a count
-exists. A missing count is an explicit third state, never a pass and never
-a fail. The byte check still applies.
-
-A render that does not fit ratchets the ladder down by the measured
-overshoot — bytes directly, tokens converted at the density just measured —
-and never grows. Three renders is the cap; past that the phase raises
-`PromptTooLarge` the way a single over-budget render always has. A plan that
-reached the diff floor stops sooner: every lever is spent, so a smaller target
-would render the same prompt, and the loop raises after that render.
+Each rendered prompt's exact input-token count is appended to `prompt-stats.json`
+in the review directory (model it was counted against, bytes-per-token), via
+`agent.token_count.count_tokens`. Set `WORKBENCH_AI_MEASURE_TOKENS=0` to opt out.
+On by default because it shipped opt-in and was never once switched on. The
+round trip is mostly fixed latency — about 0.29s for a 6KB prompt, 0.55s for a
+374KB one — against a phase that then runs for minutes. A machine with no Vertex
+credentials skips it and records nothing rather than recording a guess. The
+count is the rendered prompt alone; the system prompt and tool schemas `claude
+-p` assembles internally are charged to the same request and are not visible
+here — see `agent.token_count` for the observed margin.
 
 ### review/prompt_prior.py
 
@@ -1078,6 +1130,13 @@ Both return a `ReviewOutcome`. The caller needs the review file back: a self
 review's lives under a branch-derived directory that `review_file_path` cannot
 produce, so a CLI that recomputed it would emit an all-zero summary for a review
 that ran.
+
+`run_self_review` reviews the checkout at the path it is handed — unpushed
+commits, dirty files, untracked files — not the remote branch. It resolves the
+base once (`pr.context.base_branch`) and refuses an operator `--base` that names
+nothing (`review.preflight.refuse_unresolvable_base`) before spending anything.
+The collection that actually reads the tree is `review.collect`; this module is
+the order those checks run in.
 
 ### review/scout.py
 
@@ -1520,20 +1579,17 @@ re-running post-processing does not stack notes or re-lower a verdict.
 
 Which verdict a tally supports in the first place is `review.verdict`'s. The
 finding-line grammar read here is `review.grammar`'s: `VERIFY_FINDING_RE` is a
-stricter shape over the same vocabulary that selects which findings this gate
-checks. It does not read the location: the path comes from `finding_location`,
-the same reading the poster uses, and is resolved with the poster's
-`review.format.resolve_path` — against the files the diff changed first, as
-the poster does, and the tracked tree only when the diff has no match — so a
-finding is not placed against one file and verified against another.
+stricter shape over the same location vocabulary, and the two have to agree or
+a finding parses one way and verifies against the other — which is why they
+live next to each other rather than here.
 
 Where a finding's body ends is `review.spans`'s. Both gates walk the review
 through `finding_spans` and remove what they drop through `drop_findings`,
 because two gates that measured a finding themselves measured it differently:
 one of them took the resolved finding below a dropped one out with it, and
 neither of them left a `### ` sub-heading standing. `VERIFY_FINDING_RE` selects
-which findings this gate checks; it reads a location only where the poster can
-place none, and never says where one stops.
+which findings this gate checks and reads the location it checks them against;
+it does not say where one stops.
 
 ## Publishing
 
@@ -1565,12 +1621,22 @@ of that run, so the two only ever compose in the safe direction at both scopes.
 The next `run` starts clean: both the flag and the hold reset, or a hold would
 outrank a `--post` nobody in that invocation asked to refuse.
 
-What that means at the CLI: `pr comments` writes nothing outward unless you
-pass `--post`. Replies, the fix summary, thread resolutions, deferral tracking
-issues, the PR description, and the push are all printed to stderr as drafts
-instead, prefixed `DRAFT (not published)`. Code fixes and the commit are
-unaffected: they are local and undoable, and they are what makes the work
-reviewable at all. The gate covers what leaves the machine.
+What that means at the CLI: `--post` is the gate, not a phase. The phase flags
+(`--triage`, `--fix`, `--finish`, `--reply`, `--settle`) choose which work the
+run does; `--post` decides whether that work leaves the machine. Every phase
+drafts to stderr and publishes nothing without it, so `--post` neither implies
+a phase nor is implied by one. `--finish --post` is therefore not saying the
+same thing twice. The same `--post` gates `pr review` and `--reply`; it is one
+switch for the whole process, not a `comments` flag.
+
+`pr comments` writes nothing outward unless you pass `--post`. Replies, the fix
+summary, thread resolutions, deferral tracking issues, the PR description, and
+the push are all printed to stderr as drafts instead, prefixed `DRAFT (not
+published)`. Code fixes and the commit are unaffected: they are local and
+undoable, and they are what makes the work reviewable at all. The gate covers
+what leaves the machine. A held push prints the command that would send it —
+`git.land` owns the commit (ungated) and the push (gated), and
+`push.resume_command` renders the one thing to run.
 
 `pr ci --fix` and `pr review --fix` answer to the same flag and mean the same
 thing by it. Both commit what their agent fixed and both draft the push without
@@ -1582,6 +1648,10 @@ otherwise be made, so `review` forwards the flag to it rather than
 opening a gate the pass would never see. That forwarding predates in-process
 dispatch and survives it: the flag is how the pass learns, and `scope()` is
 what keeps the answer from outliving the run.
+
+`pr ci --fix`'s rebase-if-behind is in-process too (`cli.ci_check._rebase_if_behind`),
+so this run's gate is the one the rebase's push asks. A draft run rebases locally
+and drafts the force-push.
 
 A hand-written `pr comments --reply <id> --body-file <path>` is no exception: it
 drafts the body and reports the draft, and only `--post` sends it.
@@ -1623,44 +1693,13 @@ still asks. Either way an unanswered question files nothing: no tracking issue
 is created and the deferral replies that would link to it are not sent, rather
 than an issue being filed to a tracker nobody named.
 
-### gh/pr_data.py
-
-The consolidated read of a PR — one GraphQL query, and the `PRData` it fills.
-
-Reviews, review threads, issue comments, commits and the PR's own refs come back
-in a single call, so a review that needs all of them pays for one round trip.
-The connections that can outgrow a page are finished off by the drains in
-`gh.pr_pages`, which also owns the page sizes the query interpolates.
-`pr_context_from_data` reads the conversation back out of a `PRData` for a
-caller that already holds one.
-
-The single-call REST reads are `gh.pr_reads`; the transport is `gh.client`.
-
-### gh/pr_pages.py
-
-The paginated connections of a PR: page sizes, the queries that page, the drains.
-
-GitHub caps every `first:` at 100, so a connection that can outgrow one page is
-walked to exhaustion here or reported as short — never returned short and
-silent. Each page size below is justified by the walk that pays for it, which
-is why they live beside the walks rather than beside the queries that
-interpolate them.
-
-The consolidated one-call read of a PR is `gh.pr_data`, which hands its first
-pages to the drains here. The single-call REST reads are `gh.pr_reads`. The
-transport — running gh, timeouts, the rate-limit ladder — is `gh.client`.
-
 ### gh/pr_reads.py
 
-The review system's single-call reads of a PR.
+The review system's reads of a PR, and the GraphQL queries behind them.
 
-The PR's own metadata, its surrounding conversation, its refs, the diff, the
-pending-review check and the new-commit count. Used by the pipeline before any
-agent runs, and by review.posting after. Each accepts the consolidated
-`gh.pr_data.PRData` where it has one and answers from it without a call.
-
-The consolidated query itself is `gh.pr_data`; the paginated connections and
-their page sizes are `gh.pr_pages`.
+The PR's own metadata, its surrounding conversation, the diff, the
+pending-review check, and the consolidated review-thread query. Used by the
+pipeline before any agent runs, and by review.posting and review.dedup after.
 
 The transport is not here. ``gh.client`` owns running gh, the timeout tiers and
 the rate-limit ladder; this module owns what the review system asks for and how
@@ -1848,7 +1887,35 @@ one. Telling those apart is the hard classification problem, and the cost of
 being wrong is asymmetric — a needless hold costs one extra command, while a
 missed one costs a pushed commit and a reply claiming work is done. Running
 `--fix` and `--finish` in the same invocation does not defeat it: the discussion
-is still open at both points, so the hold applies to both.
+is still open at both points, so the hold applies to both. Combining them works
+and closes out that run's deferred set, but posts a summary nobody has replied
+to yet — the discussion is supposed to happen in between. `--finish` is a second
+invocation on purpose.
+
+`--fix` triages threads, applies mechanical fixes, and resolves the verified
+ones. It withholds the summary comment whenever threads need human input,
+because the summary is meant to describe a finished conversation. `--finish`
+closes out what `--fix` held back: replies on threads whose commit had not yet
+been pushed, a tracking issue for the threads named by `--track`, and the
+summary comment. See `review.closeout` and `review.deferred_issue`.
+
+An edited comment is read again. A comment this pass has already read is dropped
+from triage decomposition, keyed on the comment id *and* the time its body was
+last edited — an edit keeps the id and does not move the comment, so a reviewer
+who rewrites a comment to add a demand would otherwise have it silently discarded
+as already handled. The stamp is GitHub's `lastEditedAt`, null until the first
+edit. The issue-comment REST path has no such field and reconstructs it from
+`updated_at`, collapsing `updated_at == created_at` to the same empty stamp so
+the two fetch paths agree about an untouched comment. `fetch_review_body_comments`
+takes `PRData` as required: the reviews REST payload carries no edit stamp at
+all, and a path that silently degrades a correctness check is gone rather than
+kept as a fallback. A state file written before the stamps existed reads as
+"nothing seen" and re-reports one round's comments — a false unseen is noise
+once, a false seen loses a reviewer's words for good. The same edit reopens a
+*thread*: `_rewritten_since_my_reply` turns an `addressed` thread into
+`ambiguous` when anyone other than us rewrote after our last word, compared
+against the time we last spoke (our own later edit does not reopen; a resolved
+thread stays resolved).
 
 ### pr/create.py
 
@@ -1969,6 +2036,25 @@ What is not here: the summary that renders these endings, the replies that
 announce them, and the argparse layer that spells `--settle`. This module
 decides what happened and records it; the surfaces read the record.
 
+`--settle <id>` is how the operator tells the CLI what they did by hand. It is
+repeatable, and `--as` picks which of the three terminal outcomes to record —
+`fixed` (the default), `dismissed`, or `already_addressed`. From there the thread
+is indistinguishable from one the pass settled: `--finish` replies on it,
+resolves it, and gives it a summary row attributed to the commit that carries
+the change. `--as dismissed` requires `--reason <text>`, which becomes the body
+of the reply; the other two outcomes render no reason and refuse the flag rather
+than swallowing it. `--as fixed` finds the commit from the branch history of the
+line the thread is anchored to, and cites it only once the remote has it — a
+link to a commit still sitting on the machine 404s for the reviewer it was
+written for. Pass `--commit <sha>` when the fix landed somewhere else; a
+`--commit` the remote does not hold is an error rather than a dropped citation.
+When neither resolves, the row reads `Addressed outside the fix pass` and the
+run says so. Naming an id no fix pass recorded is an error listing the threads
+that are waiting on a person. Recording the outcome a thread already carries is
+a no-op that says so; recording a different terminal outcome replaces it.
+Recording is its own step: `--settle` publishes nothing and refuses `--post` and
+every other phase flag alongside it (the argparse layer in `cli.review_threads`).
+
 ### pr/summary_model.py
 
 What a summary round is made of: its rows' vocabulary, and its identity.
@@ -2007,6 +2093,20 @@ Whether to edit the existing comment or post a fresh one is decided here too,
 because it changes what the round is allowed to leave out: an edit rewrites its
 target wholesale, a fresh post replaces nothing. `pr.summary_rounds` does that
 arithmetic; this hands it the decision.
+
+A review cycle posts `Review Comments Addressed` comments as it goes. A round
+nobody has spoken over since the last one edits that comment in place; a round a
+reviewer has commented, reviewed, or replied below posts a new one, because an
+edit notifies nobody. A comment covers its own round rather than the whole PR.
+A thread quiet since the round that published it is left in that comment and
+counted in a note. A footer links every earlier summary, so the newest comment
+is the entry point to the whole record. Re-classification is read as an outcome,
+not as cell text — one outcome has several wordings, so a round that only
+re-words a cell changes nothing (`pr.summary_rounds`). A cell somebody rewrote
+by hand states no outcome at all. An edit is the case that can destroy a row:
+the comment is read before the edit and any row this run cannot account for is
+carried forward verbatim, counted as `N carried over`, and logged. An edit never
+drops a row it is the only comment holding.
 
 ### pr/summary_render.py
 
@@ -2140,6 +2240,24 @@ no dedup on that path at all, which is how one thread ends up carrying three of
 our comments that contradict each other — so the one-per-thread rule is the
 module's, not the fix pass's.
 
+Every reply — generated by `--fix`/`--finish` or hand-written via `--reply` —
+edits our standing reply in place while that reply is still the last comment on
+the thread (`our_last_reply_id`), and posts a new one only once a reviewer has
+answered. Editing under a reviewer's reply would rewrite the text they were
+responding to; leaving a second comment when nobody has answered leaves them
+holding two of our positions. Whether the thread is resolved makes no difference:
+`--finish --post` resolves the threads it answers, and the reply it left there is
+still the one to revise. A reply that no longer reads as one of ours was rewritten
+by hand (`has_hand_written_reply`), and the thread is then left alone for the
+life of the PR — a reviewer answering does not retire that. Use `--reply <id>
+--body-file <path> --post` to replace a hand-written reply on purpose.
+
+`--reply` accepts a thread node ID, any comment `databaseId` in the thread, or a
+`...#discussion_r<id>` URL (`find_reply_target`), and warns when the body carries
+no `blob/<sha>/` permalink. Pass `-` as the path to read the body from stdin.
+Like every other write here it needs `--post`; without it the body is printed
+under `DRAFT (not published)` and nothing is sent.
+
 ### pr/triage.py
 
 One round of thread triage: ask the model, then refuse what it cannot back.
@@ -2205,6 +2323,9 @@ push while a thread is still being discussed, queues the replies it drafted but
 could not send, and defers the summary until the needs-human threads have been
 answered — so by the time it returns, four separate things may be owed to a PR
 that looks, from the outside, finished. This is the phase that pays them.
+`--finish` is a second invocation on purpose — the discussion has to happen in
+between. Combining `--fix --finish` works and closes out that run's deferred
+set, but posts a summary nobody has replied to yet.
 
 Order is the whole design here, and it is not incidental. The push goes first,
 because every surface below cites a commit and a reviewer cannot follow a SHA
@@ -2243,6 +2364,22 @@ how the replies pointing at the issue are written (`pr.thread_replies`), and the
 summary comment that renders the same deferral as a row
 (`pr.summary_render`) — see `finalize_deferred` for the one ordering
 dependency between that surface and this one.
+
+`--track THREAD_ID` is repeatable and selects which deferred threads get filed;
+`--track-all` selects every one and overrides any `--track` ids passed alongside
+it (`TRACK_ALL`). Neither is implied by `--finish`. A thread is deferred because
+the fix pass ran out of budget, not because anyone decided to postpone it, and
+filing it posts a reply under the PR author's name saying a reviewer's finding
+was triaged and postponed — so the selection is the user's, per thread. A
+`--finish` logs the deferral ids it left unfiled (`report_unfiled_deferrals`),
+whether the selection was empty or partial. Naming an id that is not a deferred
+thread is an error rather than a silent skip (`validate_track`).
+
+The team key is read from config alone (`issues.team`) — never inferred from the
+branch. A provider that keys issues by team with that unset is recorded the same
+way as a tracker that cannot create issues: owed while the gate is open, a
+non-event on a draft run. The remedy is `otto-workbench config set issues.team
+TEAM --project`.
 
 ### review/finding_issue.py
 
@@ -2458,6 +2595,17 @@ vocabulary of its own, beside a top-level ``commit_sha``/``commit_status``/
 a review cycle in flight keeps the outcomes, the reply queue and the deferred
 issue it had accumulated rather than resuming from an empty one.
 
+``CloseoutDebt`` is what ``pr status`` prints as ``⚠ closeout owed``. The reply
+count is derived from the recorded outcomes — the fixed, already-addressed, and
+dismissed threads ``--finish`` drains. A queue that still owes replies but
+carries no outcomes to count says ``replies`` without a number rather than
+claiming zero. An unfiled tracking issue reads as ``deferred tracking issue`` in
+the same line. A draft run owes nothing: the publishing gate declining a write
+is the gate working, so it neither posts an error to the trail nor counts against
+merge readiness. ``FixSummary.ages`` is false — bookkeeping, not a measurement —
+so an undelivered closeout still blocks at any age and a delivered one never
+starts to.
+
 ### pr/comments_state.py
 
 The review-thread ledger, and the one state file that is not a snapshot.
@@ -2554,6 +2702,22 @@ cost more than the query itself, and they land in the file every `otto-log`
 query then reads. The exemption is read off these same three axes — `Need`
 carries no trail flag of its own for a command to add itself to.
 
+`base_branch` is the other thing this module resolves once per run: the branch
+every range a review (or rebase, or supersession check) measures against, most
+authoritative source first — operator `--base`/`--onto`, the PR's `baseRefName`,
+`git.topology.stack_parent` (nearest local ancestor of HEAD that is not the
+trunk), then the repo's default branch. It returns a *name*; callers spell
+`origin/<name>` themselves, so a local ref sitting at a stale position can
+nominate a base without being the commit anything is measured against. The run
+logs which rung answered and why. A `--base` naming a branch that exists in
+neither `origin/` nor locally is refused by `review.preflight.refuse_unresolvable_base`
+before the review runs — that is the one rung that can name something that does
+not exist. A derived base that does not resolve is not refused; the range
+fallbacks in `review.collect.base_ref` handle it. `--base` is also the override
+for a stale neighbour that won on distance (a `wip` parked mid-stack, a detached
+HEAD whose own branch ref is gone — `--recover`, or a PR whose branch was
+deleted); `git.topology.stack_parent` is that guess.
+
 ### pr/domains.py
 
 The domains a PR's state is made of.
@@ -2580,6 +2744,13 @@ the vocabulary it is written in, and imports nothing back.
 I/O, and imports this module — never the other way round. So does
 ``pr.comments_fix``, which holds the comment pass's domain: the closeout only
 that pass owes, over the same record every domain here carries.
+
+``PushDomain`` is how far the local branch is ahead of ``origin/<branch>``.
+``pr status`` refreshes it live and does not persist it. ``ahead`` is None for a
+branch with no remote ref and a count otherwise, so "never pushed" and "pushed
+and up to date" are different answers. The dashboard line and the merge-readiness
+blocker are the same three states: branch not pushed, N commit(s) not pushed,
+up to date (no block).
 
 #### Rebase refusals
 
@@ -2770,7 +2941,30 @@ Unified PR state framework.
 
 Provides a summary envelope over per-domain state files (CI failures,
 PR comments, review artifacts). Each ``pr`` subcommand updates its own
-section; ``pr status`` reads the whole thing without network calls.
+section; ``pr status`` reads the whole thing without network calls, so a line
+on the dashboard is as old as that run. The age is printed beside the domain it
+belongs to (`age_suffix`): nothing under an hour; ``(as of 3 hours ago)`` past
+an hour; ``[STALE — 7 days ago]`` past a day; ``[STALE — age unknown]`` for a
+stamp that cannot be parsed. The marker is applied by the dashboard's fold over
+the domain registry, not by each domain, so a domain added later is dated without
+doing anything. Push is the exception and not by special case: `pr status`
+observes it live (`PushDomain.observed`) rather than reading it back, so its
+stamp is always seconds old.
+
+A verdict is also refused when it was measured against another commit, however
+recent it is (`[STALE — checked another commit]`). The commit outranks the clock.
+A domain that records no commit (`comments`, `triage`) is judged by the clock
+alone, and so is every domain when HEAD cannot be resolved.
+
+Merge readiness will not vouch for either. A domain the dashboard marks — for
+age or for commit — that says nothing is wrong is folded in as *unchecked*
+rather than as clean (`merge_readiness`), so the line reads `blocked — not
+checked: CI (last checked 9 days ago)` instead of `ready`. A domain that found
+something wrong keeps its blocker either way. Two kinds of domain are judged on
+content alone: one has no say in merging at all (a description, a rebase record,
+a supersession verdict); the other answers from bookkeeping rather than from a
+measurement (`Domain.ages` is false — `pr fix`'s closeout debt). An undelivered
+closeout still blocks at any age; a delivered one never starts to.
 
 State file: ``<state_dir()>/pr/<repo-key>-<branch-slug>/state.json``, keyed on the
 run's target — see ``pr.target.target_dir``, which owns that path.
@@ -2998,71 +3192,6 @@ code, not an invitation to rebuild the path elsewhere: this module is the owner,
 and another repo that wants to know what has been reviewed asks the CLI (see
 ``review.listing``) rather than deriving where a review would sit.
 
-## Batch
-
-Running rebase, comments and self-review across many open PRs at once: admission, scheduling, step processes, and the decisions a run waits on.
-
-### batch/admission.py
-
-Decide whether the host can take one more batch step right now.
-
-Concurrency is not a number chosen up front. A step starts only when free
-memory, minus a reserve kept for every other service on the host, covers what
-that step has been seen to need, and neither CPU nor memory is under pressure.
-Running steps are never paused or killed; admission only gates the next start.
-
-### batch/events.py
-
-NDJSON progress events for live consumers of `pr batch run`.
-
-The state file is authoritative; events only save a consumer from polling it.
-
-### batch/model.py
-
-The persisted shape of a `pr batch` run.
-
-Enum string values are written to state files and NDJSON events, so they are
-stable: renaming a member is free, changing a value is a schema break and
-bumps `Run.schema_version`.
-
-### batch/outcomes.py
-
-Turn what a finished step left behind into a step status and decisions.
-
-### batch/plan.py
-
-Pre-flight: which of my open PRs need which batch steps.
-
-One GraphQL search covers every repo and asks only for fields whose cost does
-not scale with comment volume — no nested `comments` connection — so a plan
-over dozens of PRs costs a point or two of the hourly GraphQL budget.
-
-### batch/resolve.py
-
-Apply an operator's answer to one decision, then move the item on.
-
-### batch/scheduler.py
-
-Drive a run: admit steps, reap them, and stop when only decisions remain.
-
-### batch/steps.py
-
-The child `pr` processes a batch run spawns, and the worktrees they run in.
-
-Every step is its own process so concurrent steps share no interpreter state,
-and each gets a new session with stdin closed: no prompt in any child can
-reach a terminal, whether the batch runs under a server or in a shell.
-
-### batch/store.py
-
-Where a `pr batch` run lives on disk; the only module that touches it.
-
-    <state_dir>/batch/<run-id>/state.json       authoritative run state
-    <state_dir>/batch/<run-id>/run.lock         held by the live scheduler
-    <state_dir>/batch/<run-id>/requests/*.json  decisions waiting to be applied
-    <state_dir>/batch/<run-id>/cancel           {"kill": bool} once cancel is asked
-    <state_dir>/batch/<run-id>/logs/*.log       stderr of each step attempt
-
 ## AI backends
 
 The provider plumbing every AI call goes through — backend selection, streamed events, usage accounting, and quota.
@@ -3081,7 +3210,9 @@ so a machine that has not said which one it runs is unknown rather than assumed
 Linear. A default here is not a convenience: it silently sends every review, fix
 and rebase-resolve to one vendor's CLI, with its flags, its auth and its billing,
 and the only symptom is that the other one was never called. Dispatch raises
-instead, naming both the env var and the config key.
+instead, naming both the env var and the config key. The env var wins where both
+are set, so a one-off run can override the machine's standing choice without
+editing config.
 
 Every entry point takes a required `cwd`, because a backend CLI inherits the
 launching process's working directory unless it is told otherwise. An agent
@@ -3202,11 +3333,15 @@ against the model that will actually serve the request.
 The `system` and `tools` arguments exist for that first property and no caller
 supplies them yet. `claude -p` assembles both inside the CLI, so a review has
 no handle on the text its agent will actually be sent; a count taken here is
-the prompt alone. A real request runs well above it, by an amount that differs
-per backend; `review.budget` owns the measured figures and the reserve built
-from them (see the comment above `OVERHEAD_RESERVE_TOKENS`). A caller comparing
-a count against a context window owes itself that margin until the two are
-wired together.
+the prompt alone. Measured against session logs, a real request runs 9.5k to
+48.8k tokens above it — roughly 26k for a full review phase and 11k for a
+lighter one. A caller comparing a count against a context window owes itself
+that margin until the two are wired together.
+
+The review pipeline records each count in `prompt-stats.json` (see
+`review.prompt`). That write, the `WORKBENCH_AI_MEASURE_TOKENS=0` opt-out, and
+the measured round-trip latency live there, not here: this module only asks the
+endpoint and returns `None` when it cannot.
 
 ### agent/usage.py
 
@@ -3285,6 +3420,21 @@ Reached through ``agent.backend.preflight()``. The quota check itself is the
 Claude backend's alone, but two things here describe the Vertex endpoint rather
 than the check — ``vertex_env`` and ``access_token`` — and ``agent.token_count``
 reads both. Anything else in this module stays behind the preflight.
+
+The gate is fail-open: it only stops runs it can *prove* are misconfigured.
+It proceeds — with a note — when the CLI is not on Vertex
+(``CLAUDE_CODE_USE_VERTEX`` unset), when project/region are unset, when there
+are no application-default credentials, when the Service Usage API errors, or
+when the model is a bare alias the CLI resolves internally (``is_checkable`` is
+false). On failure it lists the provisioned models and names the
+``WORKBENCH_AI_<PHASE>_MODEL`` keys worth changing. Quota lookups are cached per
+project/region for 5 minutes (``_CACHE_TTL_SECS``) under
+``${WORKBENCH_CACHE_DIR}/vertex-quota/``. Requires application-default credentials
+(``gcloud auth application-default login``) with read access to
+``serviceusage.googleapis.com``. The check is skipped entirely on non-Claude
+backends (``AI_BACKEND=pi``) — that skip is ``agent.backend.preflight``'s, not
+this module's. Env vars are declared in ``ai/lib/vertex.env.yml`` and scaffolded
+into ``~/.env.local``.
 
 ## Evaluation
 
@@ -3683,55 +3833,6 @@ against the same file.
 Nothing here raises. Registration is a side effect of a command that was run for
 some other reason, and a hook that failed because a state file was unwritable
 would cost the user their session for a bookkeeping entry.
-
-### core/children.py
-
-The long-lived children this process started, and stopping all of them.
-
-An agent run is a tree: this process, the agents it starts on worker threads,
-and the tools each agent starts. Pi's agents lead sessions of their own, so a
-supervisor's kill aimed at this process's group never reaches them — and the
-cleanup each spawn site had was an `except BaseException` that only an
-exception *on that worker thread* could trigger. Neither stop this process
-receives arrives that way. SIGTERM's default disposition ended the process
-with no Python code run at all; SIGINT raised in the main thread only, which
-then waited in the pool's shutdown for agents nobody had told to stop. Either
-way the agents ran on against the account with nothing holding a handle to
-them.
-
-So the stop is the owner's to deliver, and the owner needs to know what it
-owns. `spawn` starts a child and records it; `forget` drops it once its owner
-has reaped it. `stop_all` is what the entry point's signal handler calls: it
-refuses every spawn from then on, asks every recorded child to stop, and kills
-whatever is still there a grace period later.
-
-`stop_all` signals and does not wait. It runs inside a signal handler on the
-main thread, which may itself be the thread blocked reaping one of these
-children — waiting there would wait on itself. Each owner keeps its own
-`terminate` for the path it unwinds through, and the timer covers a child
-whose owner never gets the chance.
-
-TERM before KILL, everywhere. Pi stops the tool processes it started detached
-only when it receives SIGTERM itself; a SIGKILL aimed at its group skips that
-and leaves the tools running in groups of their own. The grace is the time
-that cleanup gets.
-
-What is recorded here is what nothing else would stop: a child in a session of
-its own, or one owned by a worker thread the stop's exception never reaches.
-A `subprocess.run` on the main thread — the stateless agent prompts, git, gh —
-needs none of this. `run` kills its child on any exception, the `SystemExit`
-the stop handler raises included. By default none of those leave this process's
-group, so a supervisor's group kill reaches them too; `core.proc.run` with
-`kill_process_group=True` does start its child in a session of its own, and
-kills that group itself on the way out of any exception.
-
-Refusing new spawns matters as much as stopping the running ones. A thread
-pool's shutdown still runs the work queued behind the agents it was waiting
-on, so without the refusal a stopped review would start the next group's
-agent on its way out.
-
-Stdlib and `core.timeouts` only, like `core.proc`, which installs the handler
-that calls this.
 
 ### core/conventions.py
 
@@ -4274,20 +4375,6 @@ wrapper was holding is released and the work runs on untracked.
 One owner rather than a copy per wrapper. A second implementation of a
 primitive this subtle is how the two come to disagree, and the bug above was
 already present in both files in the same shape.
-
-### core/suite_watch.py
-
-Supervise a test-suite child and say what it is doing.
-
-A parallel bats run with GNU ``--keep-order`` buffers TAP until the current
-head file finishes, so a slow suite and a stuck one look the same: silence.
-This wrapper leaves the child's stdout alone — the TAP / pytest stream the
-pre-push hook parses — writes one heartbeat line to stderr every
-``TEST_HEARTBEAT_SECS``, and exits with the child's status.
-
-Waiting on the child is :data:`core.timeouts.UNBOUNDED` because the suite *is*
-the work. A bound would convert a large or contended run into a false failure;
-the heartbeat is what makes that wait observable rather than a hang.
 
 ### core/text.py
 
@@ -5103,6 +5190,17 @@ and acts on it.
 The transport is plain `subprocess`: these are local reads with a `timeouts.LOCAL`
 bound, and the one unbounded call is `wt switch`, which creates a checkout.
 
+`stack_parent` is the name a stacked branch should be measured against. It asks
+git for the branches that are ancestors of HEAD but not of the trunk, and takes
+the nearest. An ordinary branch off trunk has none. The answer is a *name*;
+callers resolve it as `origin/<name>`, so a local ref sitting at a stale
+position can nominate a base without being the commit anything is measured
+against. A stale neighbour — a `wip`, a backup, a bisect leftover — that is
+nearer than the real parent wins on distance; `--base` is the override. On a
+detached HEAD (a `--recover` pin, or a PR whose branch was deleted) the guard
+that normally skips the current branch has no name to match, so the same stale
+neighbour can win on distance alone.
+
 ### pr/push_intent.py
 
 What every push on this machine was about to do, and whether it did it.
@@ -5684,19 +5782,6 @@ dispatch, and a reader running `ai/bin/pr --tool-schema` directly should not
 pay for a context resolution to get it. The MCP server no longer spawns this
 binary to discover the tool; it imports `cli.schema.tool_schema` directly.
 
-### cli/pr_batch.py
-
-`pr batch` — run rebase, comments and self-review across my open PRs.
-
-    pr batch plan   --checkout DIR …           which PRs need which steps (JSON)
-    pr batch run    --checkout DIR … [opts]    start a run; NDJSON events on stdout
-    pr batch resume [RUN_ID]                   continue a waiting or interrupted run
-    pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
-    pr batch cancel [RUN_ID] [--kill]
-    pr batch status [RUN_ID]
-
-Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions.
-
 ### cli/pr_commands.py
 
 The three `pr` subcommands that used to be defined inside the binary.
@@ -5713,6 +5798,21 @@ importlib can resolve, or None.
 ahead of a delegate the registry already names — `--self` injection, mode
 routing — rather than commands in their own right, which is why the registry
 points `review` and `comments` at the delegates themselves.
+
+`pr fix` decides whether to run each pass by reading the same cached state
+`pr status` prints (`_worth_running`). A cached "nothing to do" is honoured only
+when the domain can say it was measured against the current HEAD —
+`ReviewSummary.head_sha` for the review, the latest stored run's `headSha` for
+CI. A verdict about another commit, or one that names no commit, re-runs the
+pass and says why. Skipping a necessary pass is silent and permanent, so the
+gate errs toward running whenever it cannot place the verdict. Each pass is
+asked about the commit *its own child* will act on, and under `--pr` those
+differ: `ctx.head_sha` is then the PR's remote head — right for CI, wrong for
+the review, which `--self` runs against the worktree. Asking the review about
+the remote head skips it after a clean review followed by unpushed commits.
+The comment hint is not gated this way: it never spawns the comment pass, and
+`CommentsSummary` records no commit, so a stale count costs a misleading line
+rather than skipped work.
 
 ### cli/pr_create.py
 
@@ -5735,7 +5835,22 @@ Revise a PR description against the repo's PR template.
 Run after the branch stops moving — a description written before the fix passes
 describes a PR that no longer exists. The pass is commit-aware: it records the
 HEAD it described, and a repeated run against an unchanged branch is a no-op
-rather than another AI call.
+rather than another AI call, which is what lets `pr fix` call it unconditionally
+at the end of every run. `--force` ignores the recorded SHA; `--dry-run` prints
+the revision instead of applying it.
+
+The edit itself answers to the same publishing gate as every other GitHub write:
+without `--post` the revised body is drafted to stderr and the PR is untouched.
+`--dry-run` is the narrower request of the two — it prints the revision and
+records nothing, where a draft still records that the pass ran. `pr fix`
+forwards `--post` to the description for this reason, and forwards nothing else.
+
+The template is resolved by `core.pr_template`, which owns the candidate list
+for every caller — this command, `pr create`, and the SessionStart context line.
+It checks `pull_request_template.md`, in either case, in `.github/`, the repo
+root, and `docs/`, and takes the first that exists. A repo with none of them
+gets the built-in fallback (Summary / Changes / Testing only). A differently-named
+template, and GitHub's `PULL_REQUEST_TEMPLATE/` directory form, are not detected.
 
 Exit codes:
   0  Success (description current, revised, or nothing to do)
@@ -5775,7 +5890,6 @@ Usage:
   pr-rebase --abort                   # abort in-progress rebase
   pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref
   pr-rebase --fork-point <ref>        # replay only the commits after <ref>
-  pr-rebase --no-verify               # force-push without running the pre-push hook
   pr-rebase --repo-dir <path>         # specify worktree directory
 
 ### cli/registry.py
@@ -5797,7 +5911,7 @@ it is a user-visible change, not a cosmetic one.
 
 `handler` is a `"<module>:<attr>"` string resolved by importlib at dispatch,
 not a callable: an eager import would pull every delegate into `pr --help`.
-All ten name an importable function, resolved and called through
+All nine name an importable function, resolved and called through
 `core.publishing.call_entry_point` — by `cli.dispatch` for most of them, and
 directly by `ai/bin/pr`'s `cmd_review`/`cmd_comments` and by
 `cli.review_modes`'s `post`/`repair` for the rest.
@@ -5930,6 +6044,15 @@ phase body lives in the module that owns its subject — `pr.triage`,
 `fix.comments`, `pr.settlement`, `pr.thread_replies`, `review.closeout` — and
 this module knows only which one to call and in what order.
 
+Two axes, and they have to stay apart: `--triage`/`--fix`/`--finish`/`--reply`/
+`--settle` choose the work; `--post` decides whether it leaves the machine.
+`--settle` publishes nothing and refuses `--post` and every other phase flag
+alongside it. `--track` / `--track-all` are not implied by `--finish`.
+
+A comment `pr comments` has already read is dropped from triage decomposition
+(`_mark_seen`), keyed on the comment id *and* `last_edited_at` — see
+`pr.comments` for how that stamp is fetched.
+
 `main` returns rather than exits, as every module under `cli/` does; the shim at
 `ai/bin/review-threads` owns the process exit. That now holds through the
 phases too: `closeout.finish_deferred_work` reports a refused `--track` rather
@@ -5956,8 +6079,8 @@ Three related documents, all of them derived rather than written down twice:
 
 That last one is the part D2 specified and nothing built. `pr --tool-schema`
 answers for the whole command and has no `output_schema`, because one of the
-ten subcommands prints a `PRState` document and the other nine print prose
-— declaring one schema for all ten made the MCP server reject the nine. So
+nine subcommands prints a `PRState` document and the other eight print prose
+— declaring one schema for all nine made the MCP server reject the eight. So
 the honest per-command contract is the delegate's, and `subcommand_schema`
 is how a consumer asks for it.
 

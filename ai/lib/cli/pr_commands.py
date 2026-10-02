@@ -12,6 +12,21 @@ importlib can resolve, or None.
 ahead of a delegate the registry already names — `--self` injection, mode
 routing — rather than commands in their own right, which is why the registry
 points `review` and `comments` at the delegates themselves.
+
+`pr fix` decides whether to run each pass by reading the same cached state
+`pr status` prints (`_worth_running`). A cached "nothing to do" is honoured only
+when the domain can say it was measured against the current HEAD —
+`ReviewSummary.head_sha` for the review, the latest stored run's `headSha` for
+CI. A verdict about another commit, or one that names no commit, re-runs the
+pass and says why. Skipping a necessary pass is silent and permanent, so the
+gate errs toward running whenever it cannot place the verdict. Each pass is
+asked about the commit *its own child* will act on, and under `--pr` those
+differ: `ctx.head_sha` is then the PR's remote head — right for CI, wrong for
+the review, which `--self` runs against the worktree. Asking the review about
+the remote head skips it after a clean review followed by unpushed commits.
+The comment hint is not gated this way: it never spawns the comment pass, and
+`CommentsSummary` records no commit, so a stale count costs a misleading line
+rather than skipped work.
 """
 
 # doc-group: cli

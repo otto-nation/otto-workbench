@@ -9,6 +9,21 @@ Reached through ``agent.backend.preflight()``. The quota check itself is the
 Claude backend's alone, but two things here describe the Vertex endpoint rather
 than the check — ``vertex_env`` and ``access_token`` — and ``agent.token_count``
 reads both. Anything else in this module stays behind the preflight.
+
+The gate is fail-open: it only stops runs it can *prove* are misconfigured.
+It proceeds — with a note — when the CLI is not on Vertex
+(``CLAUDE_CODE_USE_VERTEX`` unset), when project/region are unset, when there
+are no application-default credentials, when the Service Usage API errors, or
+when the model is a bare alias the CLI resolves internally (``is_checkable`` is
+false). On failure it lists the provisioned models and names the
+``WORKBENCH_AI_<PHASE>_MODEL`` keys worth changing. Quota lookups are cached per
+project/region for 5 minutes (``_CACHE_TTL_SECS``) under
+``${WORKBENCH_CACHE_DIR}/vertex-quota/``. Requires application-default credentials
+(``gcloud auth application-default login``) with read access to
+``serviceusage.googleapis.com``. The check is skipped entirely on non-Claude
+backends (``AI_BACKEND=pi``) — that skip is ``agent.backend.preflight``'s, not
+this module's. Env vars are declared in ``ai/lib/vertex.env.yml`` and scaffolded
+into ``~/.env.local``.
 """
 
 # doc-group: backend

@@ -8,6 +8,17 @@ and acts on it.
 
 The transport is plain `subprocess`: these are local reads with a `timeouts.LOCAL`
 bound, and the one unbounded call is `wt switch`, which creates a checkout.
+
+`stack_parent` is the name a stacked branch should be measured against. It asks
+git for the branches that are ancestors of HEAD but not of the trunk, and takes
+the nearest. An ordinary branch off trunk has none. The answer is a *name*;
+callers resolve it as `origin/<name>`, so a local ref sitting at a stale
+position can nominate a base without being the commit anything is measured
+against. A stale neighbour — a `wip`, a backup, a bisect leftover — that is
+nearer than the real parent wins on distance; `--base` is the override. On a
+detached HEAD (a `--recover` pin, or a PR whose branch was deleted) the guard
+that normally skips the current branch has no name to match, so the same stale
+neighbour can win on distance alone.
 """
 
 # doc-group: platform

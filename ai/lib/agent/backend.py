@@ -10,7 +10,9 @@ so a machine that has not said which one it runs is unknown rather than assumed
 Linear. A default here is not a convenience: it silently sends every review, fix
 and rebase-resolve to one vendor's CLI, with its flags, its auth and its billing,
 and the only symptom is that the other one was never called. Dispatch raises
-instead, naming both the env var and the config key.
+instead, naming both the env var and the config key. The env var wins where both
+are set, so a one-off run can override the machine's standing choice without
+editing config.
 
 Every entry point takes a required `cwd`, because a backend CLI inherits the
 launching process's working directory unless it is told otherwise. An agent

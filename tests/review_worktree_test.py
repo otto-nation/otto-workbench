@@ -1,4 +1,4 @@
-"""Tests for review.worktree library."""
+"""Tests for review.worktree — worktree setup, branch switching, and cleanup."""
 
 import json
 import sys

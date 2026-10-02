@@ -1,8 +1,8 @@
 """Cross-file contract tests for the review system.
 
 Verifies that constants, templates, regex patterns, and CLI interfaces
-stay consistent across agent.registry, agent.templates, review.document,
-review.prompt, review-templates/, and agents/reviewer.md.
+stay consistent across agent.registry, core.phases, review-templates/, and
+agents/reviewer.md.
 
 All expectations are derived dynamically from source — no hardcoded lists.
 """
@@ -28,12 +28,10 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import agent.registry  # noqa: E402
-import agent.templates  # noqa: E402
 from agent.registry import PHASES, REVIEW_PHASES  # noqa: E402
 import core.serde  # noqa: E402
 from core.phases import Mode, Phase  # noqa: E402
 import review.grammar  # noqa: E402
-import review.prompt  # noqa: E402
 import review.spans  # noqa: E402
 import review.types  # noqa: E402
 

@@ -73,8 +73,41 @@ class TestNormalise:
         with pytest.raises(CloseRefError):
             normalise("eng-123", IssueProvider.LINEAR)
 
+    def test_a_hashed_tracker_key_is_accepted_on_linear(self):
+        assert normalise("#ENG-123", IssueProvider.LINEAR) == "ENG-123"
+
+    def test_a_hashed_tracker_key_is_refused_on_github_naming_the_stripped_key(self):
+        with pytest.raises(CloseRefError) as excinfo:
+            normalise("#ENG-123", IssueProvider.GITHUB)
+        assert str(excinfo.value) == (
+            "✗ --closes ENG-123: a tracker key only auto-closes on Linear, "
+            "and issues.provider is 'github'"
+        )
+
+    def test_a_double_hash_numeric_is_classified_after_stripping_one(self):
+        with pytest.raises(CloseRefError) as excinfo:
+            normalise("##941", IssueProvider.GITHUB)
+        assert str(excinfo.value) == (
+            "✗ --closes #941: expected a GitHub issue number (941 or #941) "
+            "or an uppercase tracker key (ENG-123)"
+        )
+
+    def test_a_hashed_unparseable_ref_is_refused_naming_the_stripped_token(self):
+        with pytest.raises(CloseRefError) as excinfo:
+            normalise("#banana", None)
+        assert str(excinfo.value) == (
+            "✗ --closes banana: expected a GitHub issue number (941 or #941) "
+            "or an uppercase tracker key (ENG-123)"
+        )
+
     def test_close_ref_error_is_the_user_facing_line(self):
         assert issubclass(CloseRefError, ValueError)
+        with pytest.raises(CloseRefError) as excinfo:
+            normalise("banana", None)
+        assert str(excinfo.value) == (
+            "✗ --closes banana: expected a GitHub issue number (941 or #941) "
+            "or an uppercase tracker key (ENG-123)"
+        )
 
 
 # ── stage ───────────────────────────────────────────────────────────────────

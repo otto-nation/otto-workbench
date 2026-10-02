@@ -107,6 +107,12 @@ common_setup() {
   # resolution points this elsewhere and keeps control.
   export MISE_GLOBAL_CONFIG_FILE="${MISE_GLOBAL_CONFIG_FILE:-$HOME/.config/mise/config.toml}"
 
+  # Shadow a live agent CLI so a test that forgot to stub it fails at once
+  # instead of hanging on a real prompt. Presence is unchanged when neither
+  # binary exists (CI). A test that installs its own stub prepends PATH after
+  # this call and wins.
+  _shadow_live_backends
+
   # Leave no Vertex endpoint for a test to reach. `review.prompt` takes an
   # exact token count of every rendered prompt unless WORKBENCH_AI_MEASURE_TOKENS
   # is 0, and it is on by default — right for a real review, since a
@@ -118,6 +124,28 @@ common_setup() {
   # it rather than the one flag that happens to be on. The pytest suite draws
   # the same floor in `conftest._no_vertex_endpoint`.
   unset CLAUDE_CODE_USE_VERTEX ANTHROPIC_VERTEX_PROJECT_ID CLOUD_ML_REGION
+}
+
+# _shadow_live_backends — if claude or pi is on PATH, hide it behind a stub
+# that refuses. A missing binary is left missing, so CI (where neither is
+# installed) keeps the same presence checks it had.
+_shadow_live_backends() {
+  local dir name
+  dir="${BATS_TEST_TMPDIR:-$BATS_FILE_TMPDIR}/backend-stubs"
+  for name in claude pi; do
+    command -v "$name" >/dev/null 2>&1 || continue
+    mkdir -p "$dir"
+    cat > "$dir/$name" <<STUB
+#!/usr/bin/env bash
+echo "test_helper: a test reached the real ${name} CLI — stub it" >&2
+exit 1
+STUB
+    chmod +x "$dir/$name"
+  done
+  if [[ -d "$dir" ]]; then
+    export PATH="$dir:$PATH"
+  fi
+  return 0
 }
 
 # common_teardown — call last in every test's teardown().

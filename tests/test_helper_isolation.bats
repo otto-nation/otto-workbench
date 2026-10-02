@@ -103,3 +103,40 @@ _commit() {
   run git config --global --get user.name
   [ "$output" = "testuser" ]
 }
+
+# ── live agent CLIs ──────────────────────────────────────────────────────────
+
+@test "common_setup shadows a live claude and pi CLI" {
+  mkdir -p "$TMPDIR/realbin"
+  local name
+  for name in claude pi; do
+    printf '#!/usr/bin/env bash\necho reached-real-%s\nexit 0\n' "$name" \
+      > "$TMPDIR/realbin/$name"
+    chmod +x "$TMPDIR/realbin/$name"
+  done
+  PATH="$TMPDIR/realbin:$PATH"
+  common_setup
+
+  run --separate-stderr claude
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"reached the real claude CLI"* ]]
+
+  run --separate-stderr pi
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"reached the real pi CLI"* ]]
+}
+
+@test "a later stub still wins over the live-backend guard" {
+  mkdir -p "$TMPDIR/realbin" "$TMPDIR/mystub"
+  printf '#!/usr/bin/env bash\necho reached-real\n' > "$TMPDIR/realbin/claude"
+  chmod +x "$TMPDIR/realbin/claude"
+  PATH="$TMPDIR/realbin:$PATH"
+  common_setup
+  printf '#!/usr/bin/env bash\necho my-stub\n' > "$TMPDIR/mystub/claude"
+  chmod +x "$TMPDIR/mystub/claude"
+  PATH="$TMPDIR/mystub:$PATH"
+
+  run claude
+  [ "$status" -eq 0 ]
+  [ "$output" = "my-stub" ]
+}

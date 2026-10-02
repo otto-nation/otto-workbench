@@ -10,6 +10,8 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+# `_no_published_summary` is autouse: imported so pytest applies it here,
+# never referenced by name.
 from review_threads_support import (  # noqa: E402
     _answering_the_owner, _fake_ctx, _fix_adapter, _git_ran, _no_published_summary,
     _tick_every_fix, _triaged_round, content,

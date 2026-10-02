@@ -3134,6 +3134,26 @@ A call that reports no usage records nothing rather than a zero row. An
 unmeasured call is then visibly absent instead of looking free, which a zeroed
 row cannot be told apart from.
 
+`otto-log stats` reads the ledger back; how it groups and what it leaves blank is
+`agent.usage_stats`.
+
+### agent/usage_log.py
+
+The shell bridge into the usage ledger.
+
+It renders a stream-json feed while teeing the raw stream, unwraps a
+`--output-format json` envelope, and appends one ledger record from a teed
+file. Run by `ai-usage-log` for the two shell callers that cannot use
+`agent.backend` (`run-auto-task`, the Taskfile's `AI_COMMAND`).
+
+Not: parsing usage (`agent.usage`), rendering an event
+(`agent.backend_events`), argument parsing (`cli.ai_usage_log`).
+
+### agent/usage_stats.py
+
+The usage ledger rolled up into one row per group, rendered as a table or
+as JSON, for `otto-log stats`.
+
 `otto-log stats` reads the ledger back. Its `--by model` breakdown shows cost
 only, because the CLI reports cost per model but tokens per session — leaving the
 token columns blank beats counting one session's tokens against every model it
@@ -3152,6 +3172,9 @@ were allowed. Spent turns and the allocated budget shared one key until
 no way to tell which it is; counting those as under-cap would report every
 phase as comfortably sized on the strength of records that cannot say. The
 column fills in as new runs land.
+
+Not: reading or writing the ledger (`agent.usage`), parsing the window
+(`core.trail_query`), argument parsing (`cli.otto_log`).
 
 ### agent/vertex_quota.py
 
@@ -4343,6 +4366,18 @@ A window is applied twice on purpose. Once at the filename, which is what lets
 a year of history stay unopened, and once per record in `filter_events`, which
 is what makes the boundary exact.
 
+### core/trail_view.py
+
+What `otto-log` prints about the trail.
+
+That is one event as a line, one command as a timeline with its header, a
+listing as one row per command, and the `prune` report, plus the read
+subcommands that select what to print.
+
+Not: discovery, parsing or filtering (`core.trail_query`), writing or sweeping
+(`core.trail`), the usage table (`agent.usage_stats`), argument parsing
+(`cli.otto_log`).
+
 ### core/tree_lock.py
 
 Advisory lock declaring that a tree is being validated.
@@ -5416,6 +5451,19 @@ What a knowledge base reports about itself: status, findings, index.
 
 The top of the stack. A binary under `ai/bin/` is a shim over one module here: the argument parser, the `main(argv) -> int`, and the flow that calls everything above. Nothing imports these, so a helper parked here would never have its dependencies checked — which is why the bodies live in the packages that own their subject and only the entry point lives at layer 8.
 
+### cli/ai_usage_log.py
+
+Bridge shell-invoked AI calls into the global usage ledger.
+
+Python callers go through ai_backend, which records usage itself. Two paths cannot:
+run-auto-task needs slash commands, which ai_backend disables, and the Taskfile's
+AI_COMMAND is deliberately pluggable to non-Claude binaries. Both are shell, so they
+reach the ledger through this tool instead.
+
+  render   stdin JSONL -> readable stdout, raw stream teed to a file
+  unwrap   stdin --output-format json envelope -> reply text, raw teed to a file
+  record   parse a teed file and append one ledger record
+
 ### cli/ci_check.py
 
 Fetch CI run data, classify failures, and output status.
@@ -5483,6 +5531,24 @@ The mode table itself lives in `cli.review_modes`, beside the handlers it
 names. The resolvers here still take a table rather than reaching for one:
 `review_modes` would otherwise have to be imported from below it, and taking it
 as an argument is also what lets a test declare a table of its own.
+
+### cli/otto_log.py
+
+Query trail files and AI usage across otto-workbench scripts.
+
+Trails are discovered from one root — `workbench_paths.trail_dir()`, monthly
+files under the state root. The `stats` subcommand reads the global AI usage
+ledger instead — a separate, monthly-rotated store that every AI call appends to.
+
+One user command spans several processes, each with its own `invocation` and all
+sharing a `root` (see `core.trail`). `show` takes any of those IDs and renders
+the whole command, labelling each event with the script that wrote it; `--only`
+narrows it back to the single process named. `list` rows are whole commands for
+the same reason, so `pr review` is one row rather than three.
+
+A window selects *commands*, not events: a command whose first event predates the
+window is listed whole when any part of it falls inside, because half a timeline
+answers no question anyone asks of it.
 
 ### cli/pr.py
 

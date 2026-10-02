@@ -110,6 +110,13 @@ class TestRecord:
         self._record(monkeypatch, raw)
         assert self._only(ledger)["cost"] == pytest.approx(0.5)
 
+    def test_records_from_an_envelope_spread_over_lines(self, monkeypatch, tmp_path, ledger):
+        """No single line is a record, so only the whole-file envelope read finds it."""
+        raw = tmp_path / "raw.json"
+        raw.write_text(json.dumps(RESULT_RECORD, indent=2))
+        self._record(monkeypatch, raw)
+        assert self._only(ledger)["cost"] == pytest.approx(0.5)
+
     def test_prose_response_records_nothing(self, monkeypatch, tmp_path, ledger):
         """A pluggable non-Claude binary reports no usage; a zero row would lie."""
         raw = tmp_path / "raw.txt"

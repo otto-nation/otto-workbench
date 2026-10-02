@@ -51,17 +51,23 @@ LOG_NAME = "workbench-rewrites"
 # is the signature of a drop everywhere else.
 OWN_COMMIT_COMMANDS = frozenset({"pick", "p", "reword", "r", "edit", "e"})
 
-# A trimmed log keeps the newest half, so a trim runs once per _KEEP_LINES
-# rewrites rather than on every one past the cap. The cap is a byte size, worked
-# out from the longest line: twenty thousand SHA-256 lines, or about thirty-one
-# thousand SHA-1 ones. Either is a couple of megabytes and many big rebases deep
-# — far older than any fix commit a closeout is still holding.
+# A trimmed log keeps the newest _KEEP_LINES lines, so a trim runs once per
+# several thousand rewrites rather than on every one past the cap. The cap is a
+# byte size, worked out from the longest line: twenty thousand SHA-256 lines, or
+# about thirty-one thousand SHA-1 ones (which trim back to _KEEP_LINES, so about
+# twenty-two thousand rewrites between trims). Either is a couple of megabytes
+# and many big rebases deep — far older than any fix commit a closeout is still
+# holding.
 _MAX_LINES = 20_000
 _KEEP_LINES = _MAX_LINES // 2
 # The longest line the log writes: two SHA-256 object names, a space, a newline.
 _MAX_LINE_BYTES = 2 * 64 + 2
 
 _OBJECT_NAME = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
+# A todo line's commit: full or abbreviated (`core.abbrev` allows down to 4).
+_TODO_SHA = re.compile(r"[0-9a-f]{4,64}")
+# Todo commands whose first argument is a commit, as opposed to a label name.
+_COMMIT_ARG_COMMANDS = OWN_COMMIT_COMMANDS | {"fixup", "f", "squash", "s", "drop", "d"}
 
 
 @dataclass(frozen=True)
@@ -113,7 +119,12 @@ def done_commands(state: Path) -> dict[str, str] | None:
     commands = {}
     for line in lines:
         fields = line.split()
-        if len(fields) >= 2 and not line.startswith("#"):
+        # Only a hex word after a commit command is a commit: `label beef`,
+        # `exec make` and `fixup -C <sha>` carry other first arguments, and
+        # `command_for` prefix-matches the keys.
+        if (len(fields) >= 2 and not line.startswith("#")
+                and fields[0] in _COMMIT_ARG_COMMANDS
+                and _TODO_SHA.fullmatch(fields[1])):
             commands[fields[1]] = fields[0]
     return commands
 
@@ -230,7 +241,7 @@ def _trim(path: Path) -> None:
 
     ceiling: a rewrite appended between this read and the replace is lost,
     because the replace writes what was read. The cost is one rewrite falling
-    back to patch matching, once per _KEEP_LINES rewrites. Upgrade trigger: if a
+    back to patch matching, once per trim (see the cap above). Upgrade trigger: if a
     lost entry is ever observed, take an `fcntl.flock` on the log around the
     append and the trim.
     """

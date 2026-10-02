@@ -94,6 +94,33 @@ class TestRewrittenAway:
         assert git.replay.rewritten_away(work, "0" * 40) is False
 
 
+class TestResolveFailure:
+    def test_a_failed_rev_parse_reports_why_not_that_the_commit_is_gone(
+        self, work, monkeypatch,
+    ):
+        sha = _commit(work, "fix.txt")
+        real = git.client.run
+
+        def timed_out(*args, **kwargs):
+            if args[:2] == ("rev-parse", "--verify"):
+                return core.proc.CmdResult(
+                    returncode=core.proc.TIMEOUT_RETURNCODE,
+                    stderr="timed out after 10s: git rev-parse",
+                )
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(git.client, "run", timed_out)
+        replay = git.replay.ReplayFinder(work).find(sha)
+        assert replay.status is git.replay.ReplayStatus.UNKNOWN
+        assert "timed out" in replay.detail
+        assert "no longer resolves" not in replay.detail
+
+    def test_a_sha_git_does_not_know_is_reported_as_gone(self, work):
+        replay = git.replay.ReplayFinder(work).find("0" * 40)
+        assert replay.status is git.replay.ReplayStatus.UNKNOWN
+        assert "no longer resolves" in replay.detail
+
+
 def _ids(work, *revs):
     """What `_patch_ids` found, `{}` when git could not answer."""
     return git.replay._patch_ids(work, *revs).ids or {}

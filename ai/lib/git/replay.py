@@ -203,12 +203,18 @@ class ReplayFinder:
         tells two fix commits apart no better than the static subject a pass
         commits under.
         """
-        full = git.client.out(
+        resolved = git.client.run(
             "rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}", cwd=self._wt,
         )
+        full = resolved.stdout.strip() if resolved.ok else ""
         if not full:
-            return Replay(ReplayStatus.UNKNOWN,
-                          detail=f"{sha} no longer resolves to a commit")
+            # `--quiet` makes exit 1 the one "no such commit" answer; anything
+            # else (a timeout, a git failure) says nothing about the commit.
+            if resolved.returncode == 1:
+                detail = f"{sha} no longer resolves to a commit"
+            else:
+                detail = resolved.detail or f"git rev-parse failed for {sha}"
+            return Replay(ReplayStatus.UNKNOWN, detail=detail)
         from_log = self._from_rewrite_log(full)
         return from_log if from_log is not None else self._from_patch_id(full)
 

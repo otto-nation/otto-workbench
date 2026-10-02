@@ -136,6 +136,14 @@ class TestDoneCommands:
         (tmp_path / "done").write_text("")
         assert git.rewrites.done_commands(tmp_path) == {}
 
+    def test_a_todo_line_whose_first_argument_is_not_a_sha_is_not_a_commit(
+        self, tmp_path,
+    ):
+        (tmp_path / "done").write_text(
+            f"pick {A} one\nlabel onto\nreset onto\nexec make\n"
+            f"fixup -C {B} two\nlabel beef\nlabel beefy\npick abc1234 three\n")
+        assert git.rewrites.done_commands(tmp_path) == {A: "pick", "abc1234": "pick"}
+
 
 class TestRecordAndLoad:
     def test_a_line_appended_to_a_log_missing_its_last_newline_stays_whole(self, repo):

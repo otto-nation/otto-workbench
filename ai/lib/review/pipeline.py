@@ -32,7 +32,10 @@ from gh.pr_data import PRData, fetch_pr_data
 from gh.pr_reads import fetch_pr_context, fetch_pr_metadata
 from agent.backend import selected_backend
 from agent.phases import phase_model
-from review.budget import ladder_target_bytes
+from review.budget import (
+    MIN_DIFF_BYTES, TEMPLATE_OVERHEAD_BYTES, fixed_preflight_bytes,
+    ladder_target_bytes,
+)
 from review.collect import diff_section_sizes, fetch_branch_metadata
 from review.grouping import (
     GROUP_TIER3, estimate_group_diff_bytes, group_files, merge_smallest_groups,
@@ -211,6 +214,30 @@ def _consolidate_logs(
         pass
 
 
+def _group_merge_cap(job: ReviewJob) -> int:
+    """The most diff a merged group may carry and still fit its prompt.
+
+    The group prompt's ladder target, less what a group prompt spends before
+    its diff: the template and the project context no lever can cut. File
+    contents and the delta are levers the ladder pulls first, so they are not
+    reserved here. Every profile is charged although a group renders only the
+    ones matching its files, which errs toward stopping a merge early.
+
+    Never below `MIN_DIFF_BYTES`: a repo whose fixed context alone fills the
+    target still gets groups the ladder can floor, rather than no merges at
+    all.
+    """
+    model = phase_model(Phase.GROUP, job.model or None, job.config)
+    pf = job.preflight
+    fixed = TEMPLATE_OVERHEAD_BYTES
+    if pf is not None:
+        fixed += fixed_preflight_bytes(
+            pf.claude_md, pf.architecture_md, pf.review_checklists,
+            pf.review_profiles,
+        )
+    return max(MIN_DIFF_BYTES, ladder_target_bytes(model, selected_backend()) - fixed)
+
+
 def run_multi_phase(
     job: ReviewJob, max_parallel: int | None = DEFAULT_MAX_PARALLEL,
     max_cost: float = DEFAULT_MAX_COST,
@@ -219,8 +246,7 @@ def run_multi_phase(
 ):
     groups = group_files(job.pr)
     effective_max_groups = max_groups or EFFORT_PRESETS[job.effort].max_groups
-    group_model = phase_model(Phase.GROUP, job.model or None, job.config)
-    group_cap = ladder_target_bytes(group_model, selected_backend())
+    group_cap = _group_merge_cap(job)
     collected_diff = job.preflight.diff if job.preflight else ""
 
     # Scanned once: the merge loop asks for every candidate pair each round.

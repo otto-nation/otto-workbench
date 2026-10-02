@@ -261,13 +261,6 @@ class TestHeadShaRegex:
 
 
 class TestReclassifyAndRetry:
-    DIFF_OLD = (
-        "diff --git a/file.go b/file.go\n"
-        "--- a/file.go\n"
-        "+++ b/file.go\n"
-        "@@ -1,3 +1,10 @@\n"
-        "+line\n"
-    )
     DIFF_NEW = (
         "diff --git a/file.go b/file.go\n"
         "--- a/file.go\n"

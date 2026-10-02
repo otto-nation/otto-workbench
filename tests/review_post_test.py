@@ -1,6 +1,6 @@
 """Tests for the `review-post` command as a whole — `cli.review_post._run_post`
 and the script's `--dry-run` path, end to end: SHA-drift re-verification and
-what reaches the payload from a review a fix pass has already worked.
+what reaches the payload from a review a fix pass has already worked through.
 """
 
 import json

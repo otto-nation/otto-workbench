@@ -93,7 +93,7 @@ JS
   _require_resolver
   # One name resolves to exactly one file. A second copy left loadable would
   # mean the model could still reach upstream's procedure by name.
-  _skill "$AGENT_SKILLS" finishing-a-development-branch "task pr:create --draft"
+  _skill "$AGENT_SKILLS" finishing-a-development-branch "pr create --draft"
   _skill "$PKG_SKILLS" finishing-a-development-branch "three-option completion menu"
 
   run _resolve

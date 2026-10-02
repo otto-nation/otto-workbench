@@ -1,10 +1,10 @@
 """Open a pull request for the current branch — what ``pr create`` does.
 
-Ports ``task pr:create``: preflight (default-branch and base refusals, the
-``--closes`` contract, the publishing token), the nesting gate, the branch
-push, content generation and ``gh pr create``. ``--dry-run`` stops after the
-content is generated and prints it; it runs no gate, pushes nothing and never
-reaches ``gh``.
+Ports the go-task create flow that lived in ``lib/ai/pr.sh``: preflight
+(default-branch and base refusals, the ``--closes`` contract, the publishing
+token), the nesting gate, the branch push, content generation and
+``gh pr create``. ``--dry-run`` stops after the content is generated and prints
+it; it runs no gate, pushes nothing and never reaches ``gh``.
 
 The order is the contract. Every refusal that costs nothing comes before the
 nesting gate, the gate comes before anything leaves the machine, and the push

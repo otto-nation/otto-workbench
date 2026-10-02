@@ -1,7 +1,7 @@
 """Where a repo's PR template is, and what it says — resolved in one place.
 
 Three callers need the same answer and each used to work it out for itself:
-``lib/ai/pr.sh`` for ``task pr:create``, ``cli/pr_describe.py`` for
+``lib/ai/pr.sh`` for ``task pr:update``, ``cli/pr_describe.py`` for
 ``pr describe``, and the SessionStart hook that tells the agent which template
 this repo ships. The first two carried the candidate path list and the fallback
 template as literals, under a comment asking whoever edited one to remember the

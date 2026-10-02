@@ -1074,3 +1074,41 @@ _make_hook() {
   _run_validate --quiet
   [ "$status" -eq 0 ]
 }
+
+# ── pr create invocations held against git-operations.md ─────────────────────
+
+_write_git_ops_rule() {
+  mkdir -p "$FAKE_WORKBENCH/ai/guidelines/rules"
+  printf '%s\n' '- Always use `pr create --draft` to create a PR' \
+    '- To close an issue on merge: `pr create --draft --closes 941`' \
+    > "$FAKE_WORKBENCH/ai/guidelines/rules/git-operations.md"
+}
+
+@test "a skill teaching a pr create invocation the rule file gives passes" {
+  _write_git_ops_rule
+  _make_skill "ship"
+  echo 'Run `pr create --draft --closes 941`.' >> "$FAKE_WORKBENCH/ai/skills/ship/SKILL.md"
+  _run_validate
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"skills/ship: pr create invocation matches git-operations.md"* ]]
+}
+
+@test "a skill teaching a pr create invocation the rule file does not give fails" {
+  # `pr create --draft` is a prefix of a canonical line; whole-line matching is
+  # what keeps a skill that dropped `--closes 941` from passing as contained.
+  _write_git_ops_rule
+  _make_skill "ship"
+  echo 'Run `pr create --draft --issue ENG-1`.' >> "$FAKE_WORKBENCH/ai/skills/ship/SKILL.md"
+  _run_validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *'teaches `pr create --draft --issue ENG-1`'* ]]
+}
+
+@test "gh pr create in a skill is not read as the pr create invocation" {
+  _write_git_ops_rule
+  _make_skill "ship"
+  echo 'Never `gh pr create --fill`.' >> "$FAKE_WORKBENCH/ai/skills/ship/SKILL.md"
+  _run_validate
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"teaches"* ]]
+}

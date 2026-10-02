@@ -16,9 +16,9 @@ tools:
   - name: pr
     permission: true
     visibility: full
-    description: "Unified PR lifecycle CLI — CI failures, code review, and review comments"
-    when_to_use: "Managing PR lifecycle: checking CI status, running reviews, addressing comments, or viewing unified PR status"
-    usage: "pr status  |  pr ci [--fix]  |  pr review [--self] [--fix] [--push] [--post] [--repair] [--summary] [--recover]  |  pr review --list [--schema-version N]  |  pr comments [--triage] [--fix] [--finish] [--post]  |  pr comments --settle <id> [--as fixed|dismissed|already_addressed] [--reason <text>] [--commit <sha>]  |  pr fix  |  pr rebase [--fix] [--no-push] [--force] [--abort] [--onto <ref>] [--fork-point <ref>] [--no-verify] [--push-only]  |  pr gc  |  pr batch plan|run|resume|resolve|cancel|status [--checkout DIR] [--pool N] [--auto-publish STEPS]"
+    description: "Unified PR lifecycle CLI — creation, CI failures, code review, and review comments"
+    when_to_use: "Managing PR lifecycle: opening a PR, checking CI status, running reviews, addressing comments, or viewing unified PR status"
+    usage: "pr create [--draft] [--dry-run] [--base <ref>] [--closes <id>] [--issue <id>] [--title <t>] [--body <b>|--body-file <p>] [--no-verify]  |  pr status  |  pr ci [--fix]  |  pr review [--self] [--fix] [--push] [--post] [--repair] [--summary] [--recover]  |  pr review --list [--schema-version N]  |  pr comments [--triage] [--fix] [--finish] [--post]  |  pr comments --settle <id> [--as fixed|dismissed|already_addressed] [--reason <text>] [--commit <sha>]  |  pr fix  |  pr rebase [--fix] [--no-push] [--force] [--abort] [--onto|--base <ref>] [--fork-point <ref>] [--no-verify] [--push-only]  |  pr gc  |  pr batch plan|run|resume|resolve|cancel|status [--checkout DIR] [--pool N] [--auto-publish STEPS]"
 
   - name: review
     permission: true

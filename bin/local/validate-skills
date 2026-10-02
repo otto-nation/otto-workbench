@@ -17,7 +17,7 @@
 #   - name and description satisfy the Agent Skills standard (64 / 1024 chars)
 #   - every non-programmatic agent has a matching agent-backed skill
 #   - ai/pi/AGENTS.head.md's Agent protocols table matches ai/claude/CLAUDE.md's
-#   - flagged `task ... pr:create` invocations match git-operations.md's
+#   - flagged `pr create --…` invocations match git-operations.md's
 #   - every superpowers shim records the version ai/pi/settings.json pins
 #   - every superpowers shim's override marker names its own directory
 #   - skill scripts are invoked through the shared skills root, not a
@@ -442,15 +442,15 @@ fi
 # rule file, and the skill keeps teaching the old invocation with nothing to
 # notice. Rather than compare prose — the skill spells the command across
 # several lines, with its own commentary — this asks the narrower question the
-# staleness actually turns on: every flagged `task ... pr:create --…` invocation
+# staleness actually turns on: every flagged `pr create --…` invocation
 # a skill gives is one git-operations.md gives too.
 #
-# Only the flagged form is compared. A bare `task pr:create` naming the command
-# in prose carries no flags to drift, and the rule file mentions that spelling
-# itself only to say it does not exist.
+# Only the flagged form is compared. A bare `pr create` naming the command in
+# prose carries no flags to drift. The match opens at the backtick so that
+# `gh pr create --fill`, which is a different command, is not read as ours.
 _pr_create_lines() {
   # shellcheck disable=SC2016  # the backtick is a markdown delimiter, not a subshell
-  grep -ho 'task [^`]*pr:create --[^`]*' "$1" 2> /dev/null | sed 's/ *$//' | sort -u
+  grep -ho '`pr create --[^`]*' "$1" 2> /dev/null | sed -e 's/^`//' -e 's/ *$//' | sort -u
 }
 
 # _check_pr_create_drift FILE DISPLAY RULE_LINES — holds one skill's flagged
@@ -458,15 +458,15 @@ _pr_create_lines() {
 #
 # Matching is whole-line (-Fx). Substring containment would read a stale
 # invocation as canonical whenever it is a prefix of the real one: with the rule
-# file offering `... -- --no-issue --draft`, a skill that had lost `--draft`
-# would be contained in it and pass, which is precisely the drift being looked
-# for.
+# file offering `pr create --draft --closes 941`, a skill that had lost
+# `--closes 941` would be contained in it and pass, which is precisely the drift
+# being looked for.
 _check_pr_create_drift() {
   local skill_file="$1" display="$2" rule_lines="$3" pr_line
   while IFS= read -r pr_line; do
     [[ -n "$pr_line" ]] || continue
     grep -qFx "$pr_line" <<< "$rule_lines" \
-      && _pass "$display: pr:create invocation matches git-operations.md" \
+      && _pass "$display: pr create invocation matches git-operations.md" \
       || _fail "$display: teaches \`$pr_line\`, which git-operations.md § PR Creation does not — the rule file owns this command"
   done <<< "$(_pr_create_lines "$skill_file")"
   return 0

@@ -11,7 +11,7 @@ skip: "Do not use while work is still in progress, or on a branch whose PR is al
      three-option completion menu, offers a local merge into the base branch,
      and creates the PR with whatever forge CLI it finds. All three conflict
      with this machine: the rules forbid a completion menu, require every change
-     to reach main through a merged PR, and pin PR creation to task pr:create.
+     to reach main through a merged PR, and pin PR creation to pr create.
      Its cleanup step also calls `git worktree remove`, which `wt remove` owns.
 
      This file wins by name collision: Pi ranks ~/.agents/skills (scope user,
@@ -98,7 +98,7 @@ branch parked between this one and its real parent is the case that does it.
 applies by hand — slower and sloppier than the pass the fix agent runs, and a
 round trip before the branch is shippable. Leave it off only when you want the
 findings without the edits, which at this step you do not: the next step opens
-the PR. No `--push` here — `task pr:create` pushes in Step 4.
+the PR. No `--push` here — `pr create` pushes in Step 4.
 
 Read the review from `~/.local/state/workbench/reviews/`, present what the fix
 pass did — fixed, skipped, and why — and work through whatever it left open as
@@ -115,23 +115,22 @@ The work is complete and reviewed, so open the PR. Do not present a menu of
 completion options — the rules forbid it, and this is the path.
 
 ```bash
-task --global pr:create -- --no-issue --draft
+pr create --draft
 ```
 
-- Linked to an issue: `task --global pr:create -- --issue ENG-123 --draft`
-- From a different directory: add `REPO_DIR=/path/to/worktree` before
-  `pr:create`
+- Closing an issue on merge: `pr create --draft --closes 941`
+- Giving the description an issue's context without closing it:
+  `pr create --draft --issue ENG-123`
+- From a different directory: add `--repo-dir /path/to/worktree`
 - Custom title or body: `--title` / `--body-file`. Supplying both skips AI
   generation
+- To see the title and body first without pushing anything: add `--dry-run`
 
 `--draft` is not optional: PRs go through review before being marked ready.
-`-- --no-issue` or `--issue <ID>` is not optional either — without one the
-command blocks on an interactive prompt.
 
 Report the PR URL.
 
-On a detached HEAD there is no branch for `task pr:create` to push — it reads
-`git branch --show-current`, which is empty, and fails obscurely downstream. Cut
+On a detached HEAD there is no branch for `pr create` to push. Cut
 the branch first with `git switch -c <username>/<ISSUE-or-type>/<description_in_snake_case>`,
 then open the PR.
 
@@ -180,10 +179,10 @@ If you do have to push again before the PR merges:
 | Diff shows unrelated reversions | Stale base — rebase onto `origin/main` |
 | Uncommitted files in the tree | Commit them or say why not — the PR will not carry them |
 | Branch targets something other than `main` | Substitute it, and pass `--base` in Step 4 |
-| Detached HEAD | `git switch -c` a branch first — `pr:create` has nothing to push otherwise |
+| Detached HEAD | `git switch -c` a branch first — `pr create` has nothing to push otherwise |
 | Review findings open after the fix pass | Work through them, then re-run the review |
 | HEAD moved since the review | Re-run `pr review --self --fix` before the PR |
-| Ready to ship | `task --global pr:create -- --no-issue --draft` |
+| Ready to ship | `pr create --draft` |
 | Human partner named a next step | Do that directly |
 | PR open, more work needed | Follow-up PR by default; if pushing, comment first |
 | PR merged | `wt remove` — never `git worktree remove` |
@@ -195,7 +194,7 @@ If you do have to push again before the PR merges:
 | "I'll offer merge / PR / keep and let them choose" | The rules forbid a completion menu. Open the PR. |
 | "It's a small change — merge it into main locally" | Every change reaches `main` through a merged PR, no exceptions. |
 | "I'll open it ready, it's finished" | `--draft`. Ready is the reviewer's signal, not yours. |
-| "`gh pr create` is right here" | `task pr:create` applies the template, issue linking, and assignee rules. |
+| "`gh pr create` is right here" | `pr create` applies the template, issue linking, and assignee rules. |
 | "The review passed earlier" | It covered one SHA. If HEAD moved — including for the fix pass's own commit — re-run. |
 | "I'll review first and fix what it finds myself" | That is the churn `--fix` exists to remove. Run it with the flag. |
 | "I'll push the last fix quietly" | A branch with an open PR is shared. Say what changed. |

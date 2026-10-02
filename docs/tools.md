@@ -13,7 +13,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | Script | Description |
 |--------|-------------|
 | `record-filed-issue` | Records an issue filed by hand in the branch's follow-up ledger — called by both harnesses' post-execution hooks |
-| `pr` | Unified PR lifecycle CLI — CI failures, code review, and review comments |
+| `pr` | Unified PR lifecycle CLI — creation, CI failures, code review, and review comments |
 | `review` | Run the configured review agent on a PR with local worktree checkout and iterative review support |
 | `otto-log` | Query the unified trail root and AI usage across otto-workbench scripts — audit trail plus cost and token stats |
 | `workbench-rules` | Manages this machine's own coding-rule layers — local additions and overrides, for whichever harnesses are installed |
@@ -720,7 +720,7 @@ records nothing, where a draft still records that the pass ran. `pr fix`
 forwards `--post` to the description for this reason, and forwards nothing else.
 
 The template is resolved by `ai/lib/core/pr_template.py`, which owns the candidate
-list for every caller — this command, `task pr:create`, and the SessionStart context
+list for every caller — this command, `pr create`, and the SessionStart context
 line. It checks `pull_request_template.md`, in either case, in `.github/`, the repo
 root, and `docs/`, and takes the first that exists. A repo with none of them gets the
 built-in fallback (Summary / Changes / Testing only). A differently-named template,

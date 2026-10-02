@@ -165,7 +165,7 @@ PY
 }
 
 @test "_version.py does not shadow the pin" {
-  # wiki, retro-scan, dream-scan and promote-scan import _version after placing
+  # wiki, dream-scan and promote-scan import _version after placing
   # ai/lib, and _version's own body places an ai/lib of its own. Without the
   # stanza in _version.py that insert lands in front of the pinned path and
   # silently answers every import after it.
@@ -214,7 +214,7 @@ PY
   # The stanza is duplicated by design, so a file that missed it fails open:
   # it would run against main's ai/lib while its siblings honoured the pin.
   local script
-  for script in pr pr-describe ci-check wiki otto-log review-threads review retro-consume; do
+  for script in pr pr-describe ci-check wiki otto-log review-threads review retro-consume retro-scan; do
     WORKBENCH_AI_LIB_DIR=/nonexistent run "$REPO_ROOT/ai/bin/$script" --help
     [ "$status" -eq 2 ]
     [[ "$output" == *"WORKBENCH_AI_LIB_DIR"* ]]

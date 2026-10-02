@@ -170,7 +170,7 @@ WORKBENCH_MEMORY_DIR="$WORKBENCH_DATA_DIR/memory"
 # reason, and unable to collide with the per-repo stamps beside it because those
 # all carry a `--`-delimited _canonical_slug prefix.
 #
-# LAST_RETRO_NAME in ai/bin/retro-scan is the Python half — it reads this file
+# LAST_RETRO_NAME in ai/lib/retro/scan.py is the Python half — it reads this file
 # while retro-complete.sh writes it — and tests/workbench_roots.bats fails when
 # the two drift.
 RETRO_STAMP_FILE="$GATE_STAMPS_DIR/last-retro"

@@ -315,20 +315,14 @@ print(record_path(), end='')
   [ "$(resolve_constants RETRO_CONSUMED_REVIEWS_FILE)" = "$(resolve_python_retro_consumed)" ]
 }
 
-# resolve_python_last_retro — the global retro stamp as retro-scan spells it:
-# its own LAST_RETRO_NAME under the Python gates directory. Loaded through
-# SourceFileLoader for the same reason as the consumed-reviews file above.
+# resolve_python_last_retro — the global retro stamp as retro.scan spells it:
+# LAST_RETRO_NAME under the Python gates directory.
 resolve_python_last_retro() {
   python3 -c "
-import importlib.machinery, importlib.util, sys
-loader = importlib.machinery.SourceFileLoader(
-    'retro_scan', '$REPO_ROOT/ai/bin/retro-scan')
-spec = importlib.util.spec_from_loader('retro_scan', loader)
-mod = importlib.util.module_from_spec(spec)
-sys.modules['retro_scan'] = mod
-spec.loader.exec_module(mod)
-from core import workbench_paths
-print(workbench_paths.gates_dir() / mod.LAST_RETRO_NAME, end='')
+import sys
+sys.path.insert(0, '$REPO_ROOT/ai/lib')
+import core.workbench_paths, retro.scan
+print(core.workbench_paths.gates_dir() / retro.scan.LAST_RETRO_NAME, end='')
 "
 }
 

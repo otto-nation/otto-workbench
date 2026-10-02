@@ -37,7 +37,7 @@ import core.tool_parser  # noqa: E402
 
 def test_the_registry_names_every_subcommand():
     assert set(COMMANDS) == {"create", "status", "ci", "review", "comments",
-                             "fix", "rebase", "describe", "gc"}
+                             "fix", "rebase", "describe", "batch", "gc"}
 
 
 def test_no_command_is_declared_twice():
@@ -92,7 +92,7 @@ def test_a_script_is_a_name_and_not_a_path():
 def test_only_create_takes_no_target():
     """`takes_target` replaced a hand-maintained set; the membership is the same."""
     assert {name for name, spec in COMMANDS.items() if not spec.takes_target} \
-        == {"create"}
+        == {"create", "batch"}
 
 
 # ── handler paths ─────────────────────────────────────────────────────────
@@ -116,6 +116,7 @@ _HANDLERS = {
     "fix":      "cli.pr_commands:cmd_fix",
     "rebase":   "cli.pr_rebase:main",
     "describe": "cli.pr_describe:main",
+    "batch":    "cli.pr_batch:cmd_batch",
     "gc":       "cli.pr_commands:cmd_gc",
 }
 
@@ -150,7 +151,7 @@ def test_the_registry_is_the_only_list_of_subcommands():
 # the order tracks whatever the registry says, which is the one thing the
 # reordering would change.
 _DISPLAY_ORDER = ["create", "status", "ci", "review", "comments",
-                  "fix", "rebase", "describe", "gc"]
+                  "fix", "rebase", "describe", "batch", "gc"]
 
 
 def test_the_declaration_order_is_the_display_order():
@@ -432,7 +433,8 @@ def test_pr_help_imports_no_delegate():
     # the regression: those are what `handler` keeps as a string so that
     # dispatch, not import, pays for them.
     assert loaded <= {"cli.pr", "cli.needs", "cli.registry", "cli.review_modes",
-                      "cli.pr_commands", "cli.dispatch", "cli.schema"}, loaded
+                      "cli.pr_commands", "cli.pr_batch", "cli.dispatch",
+                      "cli.schema"}, loaded
 
 
 # ── process-level state belongs to the process ────────────────────────────

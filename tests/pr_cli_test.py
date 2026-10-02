@@ -1160,8 +1160,8 @@ def test_delegate_value_flags_answers_from_the_delegates_own_parser():
 
 def test_every_command_with_a_delegate_has_a_parser_factory():
     """A delegate `pr` cannot read arity from misclassifies its own target."""
-    assert (set(cli.dispatch.PARSER_FACTORIES)
-            == {name for name, spec in cli.registry.COMMANDS.items() if spec.script})
+    scripted = {name for name, spec in cli.registry.COMMANDS.items() if spec.script}
+    assert set(cli.dispatch.PARSER_FACTORIES) == scripted | {"batch"}
 
 
 @pytest.mark.parametrize("command", sorted(cli.registry.COMMANDS))
@@ -1661,7 +1661,7 @@ def test_main_reports_contention_and_exits_1(mock_resolve, worktree, capsys):
 _RESOLVES_LOCALLY = {
     "create": False, "status": True, "ci": False, "review": False,
     "comments": False, "fix": False, "rebase": False, "describe": False,
-    "gc": False,
+    "batch": False, "gc": False,
 }
 
 # Which commands fetch and fast-forward the worktree first. The old
@@ -1670,7 +1670,7 @@ _RESOLVES_LOCALLY = {
 _FETCHES = {
     "create": False, "status": False, "ci": True, "review": True,
     "comments": True, "fix": True, "rebase": False, "describe": True,
-    "gc": False,
+    "batch": False, "gc": False,
 }
 
 # Which commands hold the run lock. The old _NO_LOCK_COMMANDS, inverted: gc is
@@ -1678,7 +1678,7 @@ _FETCHES = {
 _LOCKS = {
     "create": True, "status": False, "ci": True, "review": True,
     "comments": True, "fix": True, "rebase": True, "describe": True,
-    "gc": True,
+    "batch": False, "gc": True,
 }
 
 
@@ -1704,12 +1704,19 @@ def test_axis_tables_cover_every_command():
         assert set(table) == set(cli.registry.COMMANDS)
 
 
-@pytest.mark.parametrize("command", sorted(_RESOLVES_LOCALLY))
+@pytest.mark.parametrize("command", sorted(c for c in _RESOLVES_LOCALLY if c != "batch"))
 def test_command_resolves_at_its_declared_depth(command, tmp_path):
     stage = _dispatch_stage(command, ctx=make_ctx(target_dir=tmp_path / "target"))
     local = _RESOLVES_LOCALLY[command]
     assert stage.local.called is local
     assert stage.remote.called is not local
+
+
+def test_batch_resolves_nothing_at_all(tmp_path):
+    """`pr batch` answers from the batch state root, so it consults neither git nor gh."""
+    stage = _dispatch_stage("batch", ctx=make_ctx(target_dir=tmp_path / "target"))
+    assert not stage.local.called
+    assert not stage.remote.called
 
 
 @pytest.mark.parametrize("command", sorted(_FETCHES))
@@ -1867,10 +1874,17 @@ def test_non_list_dispatch_records_a_trail(mock_resolve, mock_call):
 
 
 def test_only_the_listing_is_exempt_from_the_trail():
-    """The trail is unconditional apart from one hole, and the hole is declared
-    by the same three axes as everything else — no command carries a trail
-    opt-out of its own for someone to add themselves to."""
+    """The trail is unconditional apart from the NONE/no-lock queries, and the
+    hole is declared by the same three axes as everything else — no command
+    carries a trail opt-out of its own for someone to add themselves to.
+
+    `review --list` and `batch` both answer from the state root and take no
+    target lock; `batch run` opens its own `pr-batch` trail.
+    """
     for name, spec in cli.registry.COMMANDS.items():
+        if name == "batch":
+            assert not cli.registry.need_for(spec, []).records_a_trail, name
+            continue
         assert cli.registry.need_for(spec, []).records_a_trail, name
     listing = cli.registry.need_for(cli.registry.COMMANDS["review"], ["--list"])
     assert not listing.records_a_trail

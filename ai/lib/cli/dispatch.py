@@ -60,6 +60,7 @@ PARSER_FACTORIES = {
     "comments": "cli.review_threads:build_parser",
     "rebase": "cli.pr_rebase:build_parser",
     "describe": "cli.pr_describe:build_parser",
+    "batch": "cli.pr_batch:build_parser",
 }
 
 

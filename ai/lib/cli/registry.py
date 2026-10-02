@@ -33,7 +33,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import cli.review_modes
-from cli.needs import LOCAL, REMOTE, Need
+from cli.needs import LOCAL, NONE, REMOTE, Need
 
 
 @dataclass(frozen=True)
@@ -124,6 +124,12 @@ _SPECS: tuple[CommandSpec, ...] = (
     CommandSpec("describe", "Revise the PR description",
                 Need(REMOTE, update=True,  lock=True),  script="pr-describe",
                 handler="cli.pr_describe:main"),
+    # Orchestrates other commands across many PRs, so it resolves no target of
+    # its own and takes no lock: each child `pr` locks its own PR and worktree,
+    # and the run holds a per-run lock under the batch state root.
+    CommandSpec("batch",    "Run rebase, comments and self-review across my open PRs",
+                Need(NONE,   update=False, lock=False), takes_target=False,
+                handler="cli.pr_batch:cmd_batch"),
     CommandSpec("gc",       "Clean up stale PR artifacts",
                 Need(REMOTE, update=False, lock=True),
                 handler="cli.pr_commands:cmd_gc"),

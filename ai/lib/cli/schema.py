@@ -124,6 +124,8 @@ def schema_contracts() -> list[str]:
 
 def served_schema_versions(command: str, argv: list[str]) -> tuple[int, ...]:
     """The row-schema versions *command* can serve for this argv, if any."""
+    if command == "batch":
+        return (1,)
     if command != "review":
         return ()
     modes = cli.review_modes.flags_given(argv)

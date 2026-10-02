@@ -6,7 +6,7 @@ SHA still resolves as an object, and no branch anywhere contains it. Nothing
 short of an actual rebase produces that pair, so a mocked `git` here would test
 the mock.
 
-`review_threads_test.py::TestFollowHistoryRewrite` drives the same fixtures
+`pr_history_rewrite_test.py::TestFollowHistoryRewrite` drives the same fixtures
 through the `pr.history_rewrite` caller. What is here is the layer below it,
 tested directly for the first time.
 """

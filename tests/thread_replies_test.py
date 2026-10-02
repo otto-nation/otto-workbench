@@ -1,7 +1,8 @@
 """Tests for `pr.thread_replies` — the reply paths nothing exercised directly.
 
 The four builders and the two predicates are covered heavily through
-`review_threads_test.py`, which drives them end to end. What had no test at all
+`thread_replies_dispatch_test.py` and `thread_replies_upsert_test.py`, which
+drive them end to end. What had no test at all
 is the machinery underneath: the upsert's three branches, and the two log lines
 the driver emits about what it edited and what it refused to touch.
 """

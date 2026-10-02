@@ -3,7 +3,7 @@
 `TrackingResult.from_outcomes` is the join between what the agent recorded and
 what the pass handed it: the file gives an id and a verdict, and the reviewer,
 the summary and the conversation behind that id live on the entry. Its only
-coverage was through the round trip in `review_threads_test.py`, which writes a
+coverage was through the round trip in `fix_tracking_round_trip_test.py`, which writes a
 real tracking file and reads it back — good evidence about the format, and none
 at all about the join, since every entry there is well-formed by construction.
 

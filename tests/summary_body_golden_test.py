@@ -10,7 +10,7 @@ Nothing else in the suite compares a *whole* rendered body. Every other
 assertion over `summary_render.build_summary_body` is a substring check on a
 cell somebody thought to name, so a change to a part nobody named passes all of
 them. That is
-measured rather than assumed — against `review_threads_test.py`'s 722 tests:
+measured rather than assumed — against the then review-threads suite's 722 tests:
 
 - moving the padding inside the row's outer pipes (`| a |` → `|a |`), which
   changes every row key: **722 passed**, golden failed
@@ -100,9 +100,8 @@ _SCOPE_SINCE = "2026-06-01T00:00:00Z"
 def _round_content(**buckets):
     """A `RoundContent` from the buckets named, and no others.
 
-    The same shape `review_threads_test.py` builds, spelled again here because
-    that fixture is local to that module and this golden outlives the file it
-    currently records.
+    The same shape `review_threads_support.content` builds, spelled again here
+    so this golden does not depend on another suite's fixtures.
     """
     comments = {
         k: list(buckets.pop(k, ()))

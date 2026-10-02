@@ -109,7 +109,41 @@ class TestDrops:
             git.rewrites.Rewrite(B, A)]
 
 
+class TestSplit:
+    ONTO = "0" * 40
+
+    def test_a_pair_reported_twice_is_two_lines_and_only_one_is_the_drop(self):
+        """By position, not by value: the repeat maps onto its predecessor, the
+        first does not, and filtering by value would remove both."""
+        rewrites = [git.rewrites.Rewrite(A, B), git.rewrites.Rewrite(A, B)]
+        kept, dropped = git.rewrites.split(rewrites, self.ONTO, {A: "pick"})
+        assert (kept, dropped) == ([rewrites[0]], [rewrites[1]])
+
+    def test_a_line_whose_commit_the_todo_does_not_name_is_neither(self):
+        rewrites = git.rewrites.parse(f"{A} {self.ONTO}\n{B} {C}\n")
+        assert git.rewrites.split(rewrites, self.ONTO, {B: "pick"}) == (
+            [rewrites[1]], [])
+
+    def test_the_rest_are_rewrites(self):
+        rewrites = git.rewrites.parse(f"{A} {C}\n{B} {C}\n")
+        assert git.rewrites.split(rewrites, self.ONTO, {A: "pick", B: "fixup"}) == (
+            rewrites, [])
+
+
+class TestDoneCommands:
+    def test_an_unreadable_file_is_not_an_empty_one(self, tmp_path):
+        assert git.rewrites.done_commands(tmp_path) is None
+        (tmp_path / "done").write_text("")
+        assert git.rewrites.done_commands(tmp_path) == {}
+
+
 class TestRecordAndLoad:
+    def test_a_line_appended_to_a_log_missing_its_last_newline_stays_whole(self, repo):
+        common = git.rewrites.common_dir(repo)
+        (common / git.rewrites.LOG_NAME).write_text(f"{A} {B}")
+        _record(common, f"{B} {C}\n")
+        assert git.rewrites.load(repo) == {A: [B], B: [C]}
+
     def test_a_recorded_rewrite_loads_back(self, repo):
         _record(git.rewrites.common_dir(repo), f"{A} {B}\n")
         assert git.rewrites.load(repo) == {A: [B]}

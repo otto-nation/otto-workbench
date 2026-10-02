@@ -90,7 +90,7 @@ class TestReplaying:
 
         replay = rebase.replay_audit.replaying(str(repo))
 
-        assert replay == rebase.replay_audit.Replay(
+        assert replay == rebase.replay_audit.ReplayStep(
             commit=git_out(repo, "rev-parse", "REBASE_HEAD").strip(),
             parent=git_out(repo, "rev-parse", "REBASE_HEAD^").strip(),
             continue_command="git rebase --continue",
@@ -211,11 +211,15 @@ class TestMain:
 
         assert "git checkout -m -- 'my file.txt'" in rendered
 
-    def test_an_amend_rewrite_is_not_audited(self, monkeypatch):
-        with mock.patch.object(rebase.replay_audit, "dropped_commits") as dropped:
-            with mock.patch("sys.stdin.read", return_value="a b\n"):
+    def test_an_amend_rewrite_is_recorded_whole_and_not_audited(self, monkeypatch):
+        common = Path("/nonexistent/common")
+        monkeypatch.setattr(git.rewrites, "common_dir", lambda cwd: common)
+        with mock.patch.object(git.rewrites, "record") as record, \
+                mock.patch.object(rebase.replay_audit, "dropped_commits") as dropped:
+            with mock.patch("sys.stdin.read", return_value=f"{'a' * 40} {'b' * 40}\n"):
                 assert rebase.replay_audit.main(["rewritten", "amend"]) == 0
         dropped.assert_not_called()
+        record.assert_called_once_with(common, [git.rewrites.Rewrite("a" * 40, "b" * 40)])
 
 
 def test_a_record_that_cannot_be_written_still_reports_the_drop(
@@ -225,6 +229,7 @@ def test_a_record_that_cannot_be_written_still_reports_the_drop(
     state = tmp_path / rebase.inspect.GIT_REBASE_MERGE_DIR
     state.mkdir()
     (state / "onto").write_text("0" * 40 + "\n")
+    (state / "done").write_text(f"pick {'a' * 40} subject\n")
     monkeypatch.setattr(rebase.inspect, "git_dir", lambda cwd: tmp_path)
     monkeypatch.setattr(rebase.replay_audit, "dropped_commits", lambda *a: ("lossy",))
     monkeypatch.setattr(rebase.replay_audit, "render_dropped", lambda *a: "DROPPED-REPORT")
@@ -239,6 +244,22 @@ def test_a_record_that_cannot_be_written_still_reports_the_drop(
     err = capsys.readouterr().err
     assert "DROPPED-REPORT" in err
     assert "could not record this rewrite" in err
+
+
+def test_a_rebase_whose_done_file_is_unreadable_records_nothing(tmp_path, monkeypatch):
+    """With no todo commands a skipped commit cannot be told from a rewrite, and
+    git maps it onto its predecessor: recording it would follow a dropped fix
+    commit to an unrelated one."""
+    state = tmp_path / rebase.inspect.GIT_REBASE_MERGE_DIR
+    state.mkdir()
+    (state / "onto").write_text("0" * 40 + "\n")
+    monkeypatch.setattr(rebase.inspect, "git_dir", lambda cwd: tmp_path)
+    # Mapped onto `onto`: a drop, were its command known.
+    stdin = f"{'a' * 40} {'0' * 40}\n{'b' * 40} {'c' * 40}\n"
+    with mock.patch.object(git.rewrites, "record") as record, \
+            mock.patch("sys.stdin.read", return_value=stdin):
+        assert rebase.replay_audit.main(["rewritten", "rebase"]) == 0
+    record.assert_not_called()
 
 
 class TestPrRebaseHalts:

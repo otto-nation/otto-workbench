@@ -111,8 +111,9 @@ def _unfollowed_warning(recorded: str, replay: git.replay.Replay) -> str:
         return (
             f"Could not tell which commit replays fix commit {recorded} — git did "
             f"not answer ({replay.detail}) — so {stays}. This says nothing about "
-            f"whether the work is on the branch, so do not restore anything; "
-            f"{retriage}"
+            f"whether the work is on the branch, so check the history before "
+            f"restoring anything (a commit that no longer resolves cannot be "
+            f"cherry-picked back); {retriage}"
         )
     if (replay.status is git.replay.ReplayStatus.AMBIGUOUS
             and replay.source is git.replay.ReplaySource.REWRITE_LOG):

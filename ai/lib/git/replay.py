@@ -82,7 +82,15 @@ def rewritten_away(wt_path: Path, sha: str) -> bool:
     ).returncode == 1
 
 
-def patch_ids(wt_path: Path, *revs: str) -> dict[str, list[str]]:
+@dataclass(frozen=True)
+class _Answer:
+    """What a git read produced: *ids* when it answered, *detail* when it did not."""
+
+    ids: dict[str, list[str]] | None
+    detail: str = ""
+
+
+def _patch_ids(wt_path: Path, *revs: str) -> _Answer:
     """Patch id → the commits in *revs* carrying it, git's own equivalence test.
 
     The same one `git cherry` and `git rebase` use to recognise a commit they
@@ -95,22 +103,9 @@ def patch_ids(wt_path: Path, *revs: str) -> dict[str, list[str]]:
     shared empty id. An empty commit drops out the same way, and neither can
     collide with anything, since `patch-id` emits no line for either.
 
-    A failure maps nothing, which callers here must not read as "no match" —
-    :class:`ReplayFinder` asks `_patch_ids` instead, which keeps them apart.
+    git failing is kept apart from git finding nothing: *ids* is None for the
+    first and `{}` for the second, and a caller must not read one as the other.
     """
-    return _patch_ids(wt_path, *revs).ids or {}
-
-
-@dataclass(frozen=True)
-class _Answer:
-    """What a git read produced: *ids* when it answered, *detail* when it did not."""
-
-    ids: dict[str, list[str]] | None
-    detail: str = ""
-
-
-def _patch_ids(wt_path: Path, *revs: str) -> _Answer:
-    """`patch_ids`, with git failing kept apart from git finding nothing."""
     patches = git.client.run(
         "log", "-p", "--no-merges", "--format=commit %H", *revs, cwd=wt_path,
     )
@@ -271,7 +266,9 @@ class ReplayFinder:
         survive are diffed in full — the shortcut git's own `--cherry-pick`
         takes. "Shares a path" rather than "touches the same paths" because it
         is the weaker claim, and so holds whichever git version decides what a
-        mode-only change contributes to the hash.
+        mode-only change contributes to the hash. The listing is made without
+        rename detection, so a rename lists both its paths and whether git
+        pairs them cannot differ between the orphan's listing and a candidate's.
 
         Two answers is no answer. A patch that appears twice in range — applied,
         reverted, applied again; a cherry-pick duplicated by the rebase — leaves
@@ -337,7 +334,8 @@ class _FileIndex:
     @classmethod
     def build(cls, wt_path: Path, *revs: str) -> _FileIndex:
         listing = git.client.run(
-            "log", "--no-merges", "--name-only", f"--format={_HEADER}%H", *revs,
+            "log", "--no-merges", "--name-only", "--no-renames",
+            f"--format={_HEADER}%H", *revs,
             cwd=wt_path,
         )
         if not listing.ok:

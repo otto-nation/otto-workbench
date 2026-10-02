@@ -90,7 +90,7 @@ _WHOLE_SIDE_STRATEGIES = frozenset({
 
 
 @dataclass(frozen=True)
-class Replay:
+class ReplayStep:
     """The commit a rebase or cherry-pick is stopped on."""
     commit: str
     # The base every change is measured from; the empty tree for a root commit.
@@ -125,7 +125,7 @@ def override_requested() -> bool:
 
 # ── Reading the replay ──────────────────────────────────────────────────────
 
-def replaying(cwd: str) -> Replay | None:
+def replaying(cwd: str) -> ReplayStep | None:
     """The commit a conflicted replay step is about to conclude, or None.
 
     None for an `edit` stop, for a merge commit (whose base is ambiguous), and
@@ -149,7 +149,7 @@ def replaying(cwd: str) -> Replay | None:
         parents = git.client.out("rev-list", "--parents", "-n", "1", commit, cwd=cwd).split()[1:]
         if len(parents) > 1:
             return None
-        return Replay(commit, parents[0] if parents else _EMPTY_TREE, continue_command)
+        return ReplayStep(commit, parents[0] if parents else _EMPTY_TREE, continue_command)
     return None
 
 
@@ -202,7 +202,7 @@ def _subject(cwd: str, commit: str) -> str:
 
 # ── The two audits ──────────────────────────────────────────────────────────
 
-def audit_replay(cwd: str, replay: Replay | None = None) -> CommitAudit | None:
+def audit_replay(cwd: str, replay: ReplayStep | None = None) -> CommitAudit | None:
     """The staged resolution of the commit under replay, or None when there is none."""
     replay = replay if replay is not None else replaying(cwd)
     if replay is None:
@@ -332,9 +332,10 @@ def _rewritten(cwd: str, kind: str, stdin: str) -> int:
     Both read the one copy of git's map, and both need the rebase state that is
     gone once this hook returns — which is why the record is written from here
     rather than by a second interpreter. An amend drops nothing, so all of its
-    lines are rewrites. A rebase whose state cannot be read records nothing:
-    with no way to tell a drop from a rewrite, a dropped commit would be
-    recorded as having become its predecessor.
+    lines are rewrites. A rebase whose state cannot be read — `onto` or `done` —
+    records nothing, and so does a line whose commit `done` does not name: with
+    no way to tell a drop from a rewrite, a dropped commit would be recorded as
+    having become its predecessor.
     """
     rewrites = git.rewrites.parse(stdin)
     if kind != "rebase":
@@ -346,8 +347,10 @@ def _rewritten(cwd: str, kind: str, stdin: str) -> int:
     except OSError:
         return 0
     commands = git.rewrites.done_commands(state)
-    drops = git.rewrites.drops(rewrites, onto, commands)
-    _record(cwd, [r for r in rewrites if r not in drops])
+    if commands is None:
+        return 0
+    kept, drops = git.rewrites.split(rewrites, onto, commands)
+    _record(cwd, kept)
     dropped = dropped_commits(cwd, drops)
     if dropped:
         try:

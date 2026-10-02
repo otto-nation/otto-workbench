@@ -94,10 +94,15 @@ class TestRewrittenAway:
         assert git.replay.rewritten_away(work, "0" * 40) is False
 
 
+def _ids(work, *revs):
+    """What `_patch_ids` found, `{}` when git could not answer."""
+    return git.replay._patch_ids(work, *revs).ids or {}
+
+
 class TestPatchIds:
     def test_a_commit_maps_to_the_patch_it_carries(self, work):
         sha = _commit(work, "fix.txt")
-        ids = git.replay.patch_ids(work, "--no-walk", sha)
+        ids = _ids(work, "--no-walk", sha)
         assert len(ids) == 1
         assert len(next(iter(ids.values()))) == 1
 
@@ -107,22 +112,38 @@ class TestPatchIds:
         _rebase_onto_moved_main(work)
         after = _short(work)
 
-        before_ids = git.replay.patch_ids(work, "--no-walk", first)
-        after_ids = git.replay.patch_ids(work, "--no-walk", after)
+        before_ids = _ids(work, "--no-walk", first)
+        after_ids = _ids(work, "--no-walk", after)
 
         assert set(before_ids) == set(after_ids)
 
     def test_different_changes_do_not_collide(self, work):
         _commit(work, "one.txt")
         _commit(work, "two.txt")
-        assert len(git.replay.patch_ids(work, "HEAD~2..HEAD")) == 2
+        assert len(_ids(work, "HEAD~2..HEAD")) == 2
 
     def test_an_empty_range_maps_nothing(self, work):
         _commit(work, "fix.txt")
-        assert git.replay.patch_ids(work, "HEAD..HEAD") == {}
+        assert _ids(work, "HEAD..HEAD") == {}
 
     def test_an_unresolvable_range_maps_nothing(self, work):
-        assert git.replay.patch_ids(work, "no-such-ref..HEAD") == {}
+        assert git.replay._patch_ids(work, "no-such-ref..HEAD").ids is None
+
+
+class TestFileIndex:
+    def test_a_rename_lists_both_its_paths(self, work):
+        """Without rename detection, so the listing does not depend on how git
+        pairs the two."""
+        (work / "old.txt").write_text("".join(f"line {n}\n" for n in range(20)))
+        git_in(work, "add", "-A")
+        git_in(work, "commit", "-q", "--no-verify", "-m", "add")
+        git_in(work, "mv", "old.txt", "new.txt")
+        git_in(work, "commit", "-q", "--no-verify", "-m", "rename")
+        sha = git_out(work, "rev-parse", "HEAD").strip()
+
+        index = git.replay._FileIndex.build(work, "--no-walk", sha)
+
+        assert index.paths_of(sha) == {"old.txt", "new.txt"}
 
 
 class TestReplayedCommit:

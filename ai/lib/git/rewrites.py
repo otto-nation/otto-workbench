@@ -72,7 +72,12 @@ class Rewrite:
 
     @property
     def informative(self) -> bool:
-        """A line git could have written, naming a commit that actually changed."""
+        """A line git could have written, naming a commit that actually changed.
+
+        A filter for what is written to and read back from the log, not for
+        :func:`parse`: `parse` keeps every line, because :func:`drops` reads each
+        one against the line before it.
+        """
         return (self.old != self.new and bool(_OBJECT_NAME.fullmatch(self.old))
                 and bool(_OBJECT_NAME.fullmatch(self.new)))
 
@@ -93,12 +98,17 @@ def parse(text: str) -> list[Rewrite]:
     return rewrites
 
 
-def done_commands(state: Path) -> dict[str, str]:
-    """Each commit sha the rebase in *state* processed, mapped to its todo command."""
+def done_commands(state: Path) -> dict[str, str] | None:
+    """Each commit sha the rebase in *state* processed, mapped to its todo command.
+
+    None when the `done` file cannot be read — which is not the same answer as
+    an empty one, and a caller that treated it as one would read every commit as
+    having no command.
+    """
     try:
         lines = (state / "done").read_text().splitlines()
     except OSError:
-        return {}
+        return None
     commands = {}
     for line in lines:
         fields = line.split()
@@ -139,14 +149,29 @@ def drops(
     predecessor was dropped. A `fixup`/`squash` maps there too, by folding into
     it, which is why the todo command is part of the rule.
     """
-    dropped = []
+    return split(rewrites, onto, commands)[1]
+
+
+def split(
+    rewrites: Sequence[Rewrite], onto: str, commands: dict[str, str],
+) -> tuple[list[Rewrite], list[Rewrite]]:
+    """*rewrites* as (rewrites, drops), each line in exactly one place or neither.
+
+    Lines are told apart by position, not by value, so a pair git reports twice
+    stays as many lines as it was. A line whose commit the todo does not name
+    is in neither list: with no command there is no telling a drop from a
+    fold, and "not a drop" would be a guess rather than a finding.
+    """
+    kept, dropped = [], []
     previous = onto
     for rewrite in rewrites:
-        if (rewrite.new == previous
-                and command_for(commands, rewrite.old) in OWN_COMMIT_COMMANDS):
+        command = command_for(commands, rewrite.old)
+        if command and rewrite.new == previous and command in OWN_COMMIT_COMMANDS:
             dropped.append(rewrite)
+        elif command:
+            kept.append(rewrite)
         previous = rewrite.new
-    return dropped
+    return kept, dropped
 
 
 def common_dir(cwd: str | Path) -> Path | None:
@@ -169,8 +194,19 @@ def record(common: Path, rewrites: Sequence[Rewrite]) -> None:
     if not lines:
         return
     path = common / LOG_NAME
-    with path.open("a", encoding="ascii") as log:
-        log.write("".join(lines))
+    payload = "".join(lines).encode("ascii")
+    # One `write(2)` on an O_APPEND descriptor, so two rewrites finishing
+    # together cannot interleave their lines.
+    fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o644)
+    try:
+        # A damaged log may end mid-line; appended to it, a new line would merge
+        # with the stump and `load` would lose both.
+        size = os.fstat(fd).st_size
+        if size and os.pread(fd, 1, size - 1) != b"\n":
+            payload = b"\n" + payload
+        os.write(fd, payload)
+    finally:
+        os.close(fd)
     if path.stat().st_size > _MAX_LINES * _MAX_LINE_BYTES:
         _trim(path)
 

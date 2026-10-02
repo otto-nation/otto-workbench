@@ -219,6 +219,30 @@ class TestReplayFinder:
         assert replay.source is git.replay.ReplaySource.REWRITE_LOG
         assert replay.sha == _short(work)
 
+    def test_a_skipped_fix_is_not_followed_onto_its_predecessor(
+        self, work, record_rewrites,
+    ):
+        """git reports a dropped commit as mapped onto the one before it.
+
+        Followed, that would name an unrelated commit already on the branch as
+        the fix, and clear the closeout's hold on work that is gone.
+        """
+        record_rewrites(work)
+        held = _commit(work, "base.txt", "feature\n")
+        git_in(work, "checkout", "-q", "main")
+        (work / "base.txt").write_text("upstream\n")
+        git_in(work, "commit", "-q", "--no-verify", "-am", "upstream edit")
+        git_in(work, "push", "-q", "origin", "main")
+        git_in(work, "checkout", "-q", "feature")
+        assert run_checked(["git", "rebase", "-q", "origin/main"], cwd=work,
+                           check=False).returncode != 0
+        run_checked(["git", "-c", "core.editor=true", "rebase", "--skip"], cwd=work)
+
+        replay = git.replay.ReplayFinder(work).find(held)
+
+        assert replay.status is git.replay.ReplayStatus.NONE
+        assert replay.sha == ""
+
     def test_without_the_record_a_changed_patch_is_not_found(self, work):
         """What the record adds: content matching cannot see this replay."""
         held = _commit(work, "base.txt", "feature\n")

@@ -1,22 +1,25 @@
-"""Which commit each rewritten commit became, as git itself reported it.
+"""What git reports about a rewrite, and the record of it `pr` reads back.
 
 A rebase knows exactly which commit it turned into which, and says so once: to
-the `post-rewrite` hook, as one `<old> <new>` line per rewritten commit, after
-every `commit --amend` and every `rebase`. That list covers what matching on
-content cannot — a pick whose conflict resolution changed its hunks, and every
-commit a `fixup`/`squash` folded, each listed against the commit it folded into.
-A commit the rebase dropped, by `drop` or because its change was already
-upstream, is not listed, because it was not rewritten into anything.
+the `post-rewrite` hook, as one `<old> <new>` line per commit, after every
+`commit --amend` and every `rebase`. That list covers what matching on content
+cannot — a pick whose conflict resolution changed its hunks, and every commit a
+`fixup`/`squash` folded, each listed against the commit it folded into. Then git
+forgets it: `rebase-merge/rewritten-list` is deleted when the rebase finishes,
+so the only moment the answer exists is inside that hook.
 
-Then git forgets it. `rebase-merge/rewritten-list` is deleted when the rebase
-finishes, so the only moment the answer exists is inside that hook. The global
-`git/hooks/post-rewrite` hands the list to :func:`record`, and :func:`load`
-reads it back for `git.replay`, which asks this first and falls back to patch
-equivalence only for a rewrite nobody recorded — one made before the hook was
-installed, or in a repository whose own `core.hooksPath` keeps the global hooks
-out.
+Not every line is a rewrite. git maps a commit it *dropped* — a `--skip`, a
+resolution that emptied it — onto whatever came before it, so a dropped fix
+commit would read as having become an unrelated commit already on the branch.
+:func:`drops` is git's rule for telling those lines apart, and it needs the
+rebase's own state (`onto`, the `done` todo), which exists only while the hook
+runs. So the hook's one Python entry, `rebase.replay_audit rewritten`, reads
+that state once, reports the drops that lost changes, and calls :func:`record`
+with every line that is not a drop. When the state cannot be read it records
+nothing, and `git.replay` falls back to patch matching — slower, and never
+wrong in that direction.
 
-The log lives in the repository's common git directory rather than in the
+The record lives in the repository's common git directory rather than in the
 workbench state root. A commit belongs to the repository, every worktree of it
 rewrites into the same history, and the entry should go when the repository
 does; a machine-wide file would also let a busy repository evict a quiet one's
@@ -26,21 +29,14 @@ Append-only text in git's own line format, so a rebase is one `write` with
 `O_APPEND` and two rewrites finishing together cannot drop each other's lines —
 the read-modify-write race `push_intent` accepts does not arise here. Only the
 trim reads and replaces the file.
-
-:func:`record` never raises. It runs from a hook in every repository on this
-machine, and although git ignores `post-rewrite`'s exit status, a traceback
-printed after every amend would be its own kind of breakage. A lost record costs
-a fallback to patch matching, never a wrong answer.
 """
 
 # doc-group: platform
 
 from __future__ import annotations
 
-import argparse
 import os
 import re
-import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,6 +44,11 @@ from pathlib import Path
 import git.client
 
 LOG_NAME = "workbench-rewrites"
+
+# Todo commands that make a commit of their own. A `fixup`/`squash` folds into
+# the previous one, so mapping to the previous new commit is expected there and
+# is the signature of a drop everywhere else.
+OWN_COMMIT_COMMANDS = frozenset({"pick", "p", "reword", "r", "edit", "e"})
 
 # A trimmed log keeps the newest half, so a trim runs once per _KEEP_LINES
 # rewrites rather than on every one past the cap. The cap is a byte size, worked
@@ -64,39 +65,112 @@ _OBJECT_NAME = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 
 @dataclass(frozen=True)
 class Rewrite:
-    """One line of git's report: *old* was rewritten into *new*."""
+    """One line of `post-rewrite`'s stdin: a commit and what it became."""
 
     old: str
     new: str
 
+    @property
+    def informative(self) -> bool:
+        """A line git could have written, naming a commit that actually changed."""
+        return (self.old != self.new and bool(_OBJECT_NAME.fullmatch(self.old))
+                and bool(_OBJECT_NAME.fullmatch(self.new)))
+
 
 def parse(text: str) -> list[Rewrite]:
-    """The `<old> <new>` lines in *text*, dropping anything else.
+    """The `<old> <new>` lines git writes to `post-rewrite`'s stdin, in order.
 
-    git's own format is the only producer, so a line of any other shape is not a
-    rewrite this can say anything true about. A third field — git reserves one
-    for "extra info" — is ignored. A commit rewritten into itself carries no
-    information and would only make :func:`load` walk in a circle.
+    Every line is kept, a commit mapped onto itself included: :func:`drops`
+    reads each line against the one before it, and a line left out would make
+    the next drop look like a rewrite. A third field — git reserves one for
+    "extra info" — is ignored.
     """
-    pairs = []
+    rewrites = []
     for line in text.splitlines():
         fields = line.split()
-        if len(fields) < 2:
-            continue
-        old, new = fields[0], fields[1]
-        if old != new and _OBJECT_NAME.fullmatch(old) and _OBJECT_NAME.fullmatch(new):
-            pairs.append(Rewrite(old, new))
-    return pairs
+        if len(fields) >= 2:
+            rewrites.append(Rewrite(fields[0], fields[1]))
+    return rewrites
 
 
-def record(common_dir: Path, text: str) -> None:
-    """Append the rewrites git reported in *text* to *common_dir*'s log."""
-    pairs = parse(text)
-    if not pairs:
+def done_commands(state: Path) -> dict[str, str]:
+    """Each commit sha the rebase in *state* processed, mapped to its todo command."""
+    try:
+        lines = (state / "done").read_text().splitlines()
+    except OSError:
+        return {}
+    commands = {}
+    for line in lines:
+        fields = line.split()
+        if len(fields) >= 2 and not line.startswith("#"):
+            commands[fields[1]] = fields[0]
+    return commands
+
+
+def command_for(commands: dict[str, str], commit: str) -> str:
+    """*commit*'s todo command; `done` may abbreviate the sha.
+
+    The longest matching sha wins when more than one is a prefix match: it is
+    the more specific of the two, and the only tie-break available short of
+    talking to git again.
+
+    *commit* is always the full sha `post-rewrite` hands us, and `done` never
+    abbreviates to something longer than that — so `sha.startswith(commit)`
+    only ever agrees with `commit.startswith(sha)` on an exact match, which the
+    first disjunct already covers. Kept anyway as the one test that stays
+    correct if that assumption about `done` ever stops holding.
+    """
+    matches = [
+        (sha, command) for sha, command in commands.items()
+        if commit.startswith(sha) or sha.startswith(commit)
+    ]
+    if not matches:
+        return ""
+    return max(matches, key=lambda pair: len(pair[0]))[1]
+
+
+def drops(
+    rewrites: Sequence[Rewrite], onto: str, commands: dict[str, str],
+) -> list[Rewrite]:
+    """The lines in *rewrites* that report a commit git dropped, not rewrote.
+
+    git maps a commit it dropped to whatever came before it — the previous new
+    commit, or *onto* for the first — so a commit of its own mapping to its
+    predecessor was dropped. A `fixup`/`squash` maps there too, by folding into
+    it, which is why the todo command is part of the rule.
+    """
+    dropped = []
+    previous = onto
+    for rewrite in rewrites:
+        if (rewrite.new == previous
+                and command_for(commands, rewrite.old) in OWN_COMMIT_COMMANDS):
+            dropped.append(rewrite)
+        previous = rewrite.new
+    return dropped
+
+
+def common_dir(cwd: str | Path) -> Path | None:
+    """*cwd*'s repository's common git directory, absolute, or None.
+
+    Resolved by hand rather than with `--path-format=absolute`, which git older
+    than 2.31 does not know and echoes back as if it were an answer. A bare
+    `--git-common-dir` is relative to the directory git ran in, which is *cwd*.
+    """
+    raw = git.client.out("rev-parse", "--git-common-dir", cwd=cwd)
+    if not raw:
+        return None
+    path = Path(raw)
+    return path if path.is_absolute() else Path(cwd).resolve() / path
+
+
+def record(common: Path, rewrites: Sequence[Rewrite]) -> None:
+    """Append *rewrites* — drops already removed — to *common*'s log."""
+    lines = [f"{r.old} {r.new}\n" for r in rewrites if r.informative]
+    if not lines:
         return
-    path = common_dir / LOG_NAME
+    path = common / LOG_NAME
     with path.open("a", encoding="ascii") as log:
-        log.write("".join(f"{r.old} {r.new}\n" for r in pairs))
+        log.write("".join(lines))
     if path.stat().st_size > _MAX_LINES * _MAX_LINE_BYTES:
         _trim(path)
 
@@ -111,7 +185,7 @@ def _trim(path: Path) -> None:
     append and the trim.
     """
     # Bytes, so a stray non-ASCII byte in a damaged log cannot make every trim
-    # raise and leave the file to grow without bound. `parse` drops the line.
+    # raise and leave the file to grow without bound. `load` drops the line.
     kept = path.read_bytes().splitlines(keepends=True)[-_KEEP_LINES:]
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     try:
@@ -119,18 +193,6 @@ def _trim(path: Path) -> None:
         os.replace(tmp, path)
     finally:
         tmp.unlink(missing_ok=True)
-
-
-def log_path(wt_path: Path) -> Path | None:
-    """Where *wt_path*'s repository keeps its log, or None when git will not say.
-
-    `--path-format=absolute` because a bare `--git-common-dir` answers relative
-    to the process's cwd rather than to *wt_path* in an ordinary clone.
-    """
-    common = git.client.out(
-        "rev-parse", "--path-format=absolute", "--git-common-dir", cwd=wt_path,
-    )
-    return Path(common) / LOG_NAME if common else None
 
 
 def load(wt_path: Path) -> dict[str, list[str]]:
@@ -142,41 +204,20 @@ def load(wt_path: Path) -> dict[str, list[str]]:
     map, which reads as "nothing recorded" and sends the caller to its
     fallback.
     """
-    path = log_path(wt_path)
-    if path is None:
+    common = common_dir(wt_path)
+    if common is None:
         return {}
     try:
-        text = path.read_text(encoding="ascii", errors="replace")
+        text = (common / LOG_NAME).read_text(encoding="ascii", errors="replace")
     except OSError:
         return {}
     rewrites: dict[str, list[str]] = {}
     for rewrite in parse(text):
+        if not rewrite.informative:
+            continue
         news = rewrites.setdefault(rewrite.old, [])
         # git can report one pair twice — a fixup's target is listed both as
         # picked and as folded into — and a repeat is not a second answer.
         if rewrite.new not in news:
             news.append(rewrite.new)
     return rewrites
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    """Record a rewrite from the global `post-rewrite` hook.
-
-    Returns zero whenever the arguments parse, whatever recording does — see the
-    module docstring for why a bookkeeping failure here must cost a warning and
-    nothing else. A missing `--git-dir` is argparse's usage error, exit status 2,
-    which git ignores and the hook discards.
-    """
-    parser = argparse.ArgumentParser(description="Record what a rewrite became.")
-    parser.add_argument("--git-dir", required=True, type=Path,
-                        help="the repository's common git directory")
-    ns = parser.parse_args(argv)
-    try:
-        record(ns.git_dir, sys.stdin.read())
-    except Exception as exc:
-        print(f"workbench: could not record this rewrite: {exc}", file=sys.stderr)
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

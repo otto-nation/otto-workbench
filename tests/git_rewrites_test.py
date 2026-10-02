@@ -5,7 +5,6 @@ what is under test is that git's own report reaches the log: a hand-written log
 would only test the parser.
 """
 
-import io
 import os
 import shutil
 import subprocess
@@ -52,30 +51,79 @@ def hooked(repo, record_rewrites):
     return record_rewrites(repo)
 
 
+def _record(common, text):
+    git.rewrites.record(common, git.rewrites.parse(text))
+
+
 class TestParse:
     def test_reads_git_lines_and_ignores_the_extra_field(self):
-        rewrites = git.rewrites.parse(f"{A} {B}\n{B} {C} extra\n")
-        assert [(r.old, r.new) for r in rewrites] == [(A, B), (B, C)]
+        rewrites = git.rewrites.parse(f"{A} {B}\n{B} {C} extra\n\nlone\n")
+        assert rewrites == [git.rewrites.Rewrite(A, B), git.rewrites.Rewrite(B, C)]
 
-    def test_drops_lines_git_would_never_write(self):
-        text = f"{A}\nnot-a-sha {B}\n{A} {A}\n{A[:12]} {B}\n"
-        assert git.rewrites.parse(text) == []
+    def test_keeps_a_commit_mapped_onto_itself_for_the_drop_rule(self):
+        """`drops` reads each line against the one before it."""
+        assert git.rewrites.parse(f"{A} {A}\n") == [git.rewrites.Rewrite(A, A)]
 
-    def test_accepts_sha256_object_names(self):
-        old, new = "a" * 64, "b" * 64
-        assert [(r.old, r.new) for r in git.rewrites.parse(f"{old} {new}\n")] == [(old, new)]
+    def test_only_lines_git_could_write_about_a_changed_commit_are_informative(self):
+        assert git.rewrites.Rewrite(A, B).informative
+        assert git.rewrites.Rewrite("a" * 64, "b" * 64).informative
+        assert not git.rewrites.Rewrite(A, A).informative
+        assert not git.rewrites.Rewrite(A[:12], B).informative
+        assert not git.rewrites.Rewrite("not-a-sha", B).informative
+
+
+def test_command_for_prefers_the_more_specific_sha_match():
+    """Two `done` entries can each be a startswith-match for the same commit
+    when one abbreviated sha happens to be a prefix of another — the longer,
+    more specific one is what should win, not whichever the dict iterates to
+    first.
+    """
+    commit = "ab12cdef1234"
+    commands = {"ab12": "pick", "ab12cdef1234": "edit"}
+
+    assert git.rewrites.command_for(commands, commit) == "edit"
+
+
+class TestDrops:
+    """git maps a dropped commit onto its predecessor; that is not a rewrite."""
+
+    ONTO, D = "0" * 40, "d" * 40
+
+    def test_a_pick_mapped_onto_the_new_commit_before_it_was_dropped(self):
+        rewrites = git.rewrites.parse(f"{A} {C}\n{B} {C}\n")
+        commands = {A: "pick", B: "pick"}
+        assert git.rewrites.drops(rewrites, self.ONTO, commands) == [git.rewrites.Rewrite(B, C)]
+
+    def test_a_first_commit_mapped_onto_onto_was_dropped(self):
+        rewrites = git.rewrites.parse(f"{A} {self.ONTO}\n")
+        assert git.rewrites.drops(rewrites, self.ONTO, {A: "pick"}) == rewrites
+
+    def test_a_fixup_folded_into_its_predecessor_is_a_rewrite(self):
+        rewrites = git.rewrites.parse(f"{A} {C}\n{B} {C}\n")
+        assert git.rewrites.drops(rewrites, self.ONTO, {A: "pick", B: "fixup"}) == []
+
+    def test_a_self_mapped_line_still_sets_the_predecessor(self):
+        """Filter it out before the rule and the drop after it reads as a rewrite."""
+        rewrites = git.rewrites.parse(f"{A} {A}\n{B} {A}\n")
+        assert git.rewrites.drops(rewrites, self.ONTO, {A: "pick", B: "pick"}) == [
+            git.rewrites.Rewrite(B, A)]
 
 
 class TestRecordAndLoad:
     def test_a_recorded_rewrite_loads_back(self, repo):
-        git.rewrites.record(git.rewrites.log_path(repo).parent, f"{A} {B}\n")
+        _record(git.rewrites.common_dir(repo), f"{A} {B}\n")
         assert git.rewrites.load(repo) == {A: [B]}
 
     def test_a_commit_rewritten_twice_keeps_both_answers_in_order(self, repo):
-        common = git.rewrites.log_path(repo).parent
-        git.rewrites.record(common, f"{A} {B}\n")
-        git.rewrites.record(common, f"{A} {C}\n")
+        common = git.rewrites.common_dir(repo)
+        _record(common, f"{A} {B}\n")
+        _record(common, f"{A} {C}\n")
         assert git.rewrites.load(repo) == {A: [B, C]}
+
+    def test_uninformative_lines_are_not_written(self, repo):
+        common = git.rewrites.common_dir(repo)
+        _record(common, f"{A} {A}\nnot-a-sha {B}\n")
+        assert not (common / git.rewrites.LOG_NAME).exists()
 
     def test_no_log_loads_as_nothing_recorded(self, repo):
         assert git.rewrites.load(repo) == {}
@@ -84,17 +132,18 @@ class TestRecordAndLoad:
         """A commit belongs to the repository, not to the checkout that rewrote it."""
         linked = tmp_path / "linked"
         git_in(repo, "worktree", "add", "-q", "-b", "other", str(linked))
-        git.rewrites.record(git.rewrites.log_path(linked).parent, f"{A} {B}\n")
+        _record(git.rewrites.common_dir(linked), f"{A} {B}\n")
+        assert git.rewrites.common_dir(linked) == git.rewrites.common_dir(repo)
         assert git.rewrites.load(repo) == {A: [B]}
 
     def test_the_log_is_trimmed_to_its_newest_entries(self, repo, monkeypatch):
         monkeypatch.setattr(git.rewrites, "_MAX_LINES", 4)
         monkeypatch.setattr(git.rewrites, "_KEEP_LINES", 2)
         monkeypatch.setattr(git.rewrites, "_MAX_LINE_BYTES", 82)
-        common = git.rewrites.log_path(repo).parent
+        common = git.rewrites.common_dir(repo)
         olds = [f"{i:040x}" for i in range(1, 7)]
         for old in olds:
-            git.rewrites.record(common, f"{old} {B}\n")
+            _record(common, f"{old} {B}\n")
         loaded = git.rewrites.load(repo)
         assert olds[-1] in loaded
         assert olds[0] not in loaded
@@ -104,7 +153,7 @@ class TestRecordAndLoad:
     def test_a_damaged_log_is_still_trimmed(self, repo, monkeypatch):
         """A non-ASCII byte must not make every trim raise and the log grow."""
         monkeypatch.setattr(git.rewrites, "_KEEP_LINES", 2)
-        path = git.rewrites.log_path(repo)
+        path = git.rewrites.common_dir(repo) / git.rewrites.LOG_NAME
         olds = [f"{i:040x}" for i in range(1, 5)]
         lines = [f"{old} {B}\n".encode() for old in olds]
         path.write_bytes(lines[0] + b"\xff\xfe\n" + b"".join(lines[1:]))
@@ -112,12 +161,6 @@ class TestRecordAndLoad:
         git.rewrites._trim(path)
 
         assert git.rewrites.load(repo) == {olds[2]: [B], olds[3]: [B]}
-
-    def test_main_never_fails_the_hook(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr(sys, "stdin", io.StringIO(f"{A} {B}\n"))
-        missing = tmp_path / "no" / "such" / "dir"
-        assert git.rewrites.main(["--git-dir", str(missing)]) == 0
-        assert "could not record" in capsys.readouterr().err
 
 
 class TestPostRewriteHook:
@@ -213,6 +256,22 @@ class TestPostRewriteHook:
                "--autosquash", "main")
         folded = _full(hooked)
         assert git.rewrites.load(hooked) == {target: [folded], fixup: [folded]}
+
+    def test_a_skipped_commit_is_not_recorded_as_its_predecessor(self, hooked):
+        """git maps a dropped commit onto the one before it. Recorded, that
+        would follow a dropped fix to an unrelated commit and clear its hold."""
+        git_in(hooked, "checkout", "-q", "-b", "feature")
+        dropped = _commit(hooked, "base.txt", "feature\n")
+        kept = _commit(hooked, "kept.txt")
+        git_in(hooked, "checkout", "-q", "main")
+        _commit(hooked, "base.txt", "upstream\n")
+        git_in(hooked, "checkout", "-q", "feature")
+        assert run_checked(["git", "rebase", "-q", "main"], cwd=hooked,
+                           check=False).returncode != 0
+        run_checked(["git", "-c", "core.editor=true", "rebase", "--skip"], cwd=hooked)
+
+        assert git.rewrites.load(hooked) == {kept: [_full(hooked)]}
+        assert dropped not in git.rewrites.load(hooked)
 
     def test_the_repo_local_hook_still_runs_with_the_same_input(self, hooked):
         """Global hooksPath hides .git/hooks; the global hook hands it back."""

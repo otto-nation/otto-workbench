@@ -4743,25 +4743,28 @@ recovers from and should be reading the same answer.
 
 ### git/rewrites.py
 
-Which commit each rewritten commit became, as git itself reported it.
+What git reports about a rewrite, and the record of it `pr` reads back.
 
 A rebase knows exactly which commit it turned into which, and says so once: to
-the `post-rewrite` hook, as one `<old> <new>` line per rewritten commit, after
-every `commit --amend` and every `rebase`. That list covers what matching on
-content cannot — a pick whose conflict resolution changed its hunks, and every
-commit a `fixup`/`squash` folded, each listed against the commit it folded into.
-A commit the rebase dropped, by `drop` or because its change was already
-upstream, is not listed, because it was not rewritten into anything.
+the `post-rewrite` hook, as one `<old> <new>` line per commit, after every
+`commit --amend` and every `rebase`. That list covers what matching on content
+cannot — a pick whose conflict resolution changed its hunks, and every commit a
+`fixup`/`squash` folded, each listed against the commit it folded into. Then git
+forgets it: `rebase-merge/rewritten-list` is deleted when the rebase finishes,
+so the only moment the answer exists is inside that hook.
 
-Then git forgets it. `rebase-merge/rewritten-list` is deleted when the rebase
-finishes, so the only moment the answer exists is inside that hook. The global
-`git/hooks/post-rewrite` hands the list to :func:`record`, and :func:`load`
-reads it back for `git.replay`, which asks this first and falls back to patch
-equivalence only for a rewrite nobody recorded — one made before the hook was
-installed, or in a repository whose own `core.hooksPath` keeps the global hooks
-out.
+Not every line is a rewrite. git maps a commit it *dropped* — a `--skip`, a
+resolution that emptied it — onto whatever came before it, so a dropped fix
+commit would read as having become an unrelated commit already on the branch.
+:func:`drops` is git's rule for telling those lines apart, and it needs the
+rebase's own state (`onto`, the `done` todo), which exists only while the hook
+runs. So the hook's one Python entry, `rebase.replay_audit rewritten`, reads
+that state once, reports the drops that lost changes, and calls :func:`record`
+with every line that is not a drop. When the state cannot be read it records
+nothing, and `git.replay` falls back to patch matching — slower, and never
+wrong in that direction.
 
-The log lives in the repository's common git directory rather than in the
+The record lives in the repository's common git directory rather than in the
 workbench state root. A commit belongs to the repository, every worktree of it
 rewrites into the same history, and the entry should go when the repository
 does; a machine-wide file would also let a busy repository evict a quiet one's
@@ -4771,11 +4774,6 @@ Append-only text in git's own line format, so a rebase is one `write` with
 `O_APPEND` and two rewrites finishing together cannot drop each other's lines —
 the read-modify-write race `push_intent` accepts does not arise here. Only the
 trim reads and replaces the file.
-
-:func:`record` never raises. It runs from a hook in every repository on this
-machine, and although git ignores `post-rewrite`'s exit status, a traceback
-printed after every amend would be its own kind of breakage. A lost record costs
-a fallback to patch matching, never a wrong answer.
 
 ### git/topology.py
 
@@ -5012,7 +5010,9 @@ Three callers, one judgement:
   conflicted replay step when it discards a clean change — `-n` does not skip
   that hook, and `rebase --continue` runs it;
 * the global `post-rewrite` hook reports commits a finished rebase dropped
-  whose changes are not in the result;
+  whose changes are not in the result — and, since it is reading the same
+  map and the same rebase state, writes `git.rewrites`' record of every line
+  that is not a drop;
 * `pr rebase` audits its own resolutions before it continues, so a refusal
   arrives as a paused rebase with the files named rather than as a hook
   failure it would have to interpret.
@@ -5026,6 +5026,7 @@ Run as a hook entry point::
 
     python3 -I -c '...' <ai/lib> commit
     python3 -I -c '...' <ai/lib> rewritten rebase   < old-new pairs
+    python3 -I -c '...' <ai/lib> rewritten amend    < old-new pairs
 
 Exit codes: 0 when nothing was refused (including when the audit could not
 run — a bug here must never cost somebody a commit), ``REFUSED_EXIT`` when the

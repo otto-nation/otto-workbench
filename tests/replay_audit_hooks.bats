@@ -267,6 +267,23 @@ cherry_pick_in_progress() {
   [ "$(git -C "$W" rev-parse HEAD)" = "$(git -C "$W" rev-parse main)" ]
 }
 
+@test "one rebase is both recorded and audited by the one post-rewrite hook" {
+  # Two jobs share the hook because git hands the map over once: the commit the
+  # rebase kept must reach the rewrite record, and the one it dropped must
+  # still be reported.
+  echo k > "$W/k"
+  git -C "$W" add k
+  git -C "$W" commit -q -m "feat: keep"
+  local kept
+  kept="$(git -C "$W" rev-parse HEAD)"
+  stop_on_conflict
+
+  run git -C "$W" rebase --skip
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dropped 1 commit(s) whose changes are not in the result"* ]]
+  [ "$(cat "$W/.git/workbench-rewrites")" = "$kept $(git -C "$W" rev-parse HEAD)" ]
+}
+
 @test "post-rewrite hands the repo-local hook the same stdin and arguments" {
   printf '#!/bin/sh\n{ echo "args:$*"; cat; } >> "%s/local-ran"\n' "$TMPDIR" \
     > "$W/.git/hooks/post-rewrite"

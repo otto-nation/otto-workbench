@@ -24,6 +24,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import git.client  # noqa: E402
+import git.rewrites  # noqa: E402
 import pr.domains  # noqa: E402
 import rebase.inspect  # noqa: E402
 import rebase.lifecycle  # noqa: E402
@@ -217,23 +218,27 @@ class TestMain:
         dropped.assert_not_called()
 
 
-def test_parse_rewrites_reads_old_new_pairs_and_ignores_extra_fields():
-    assert rebase.replay_audit.parse_rewrites("a1 b1\na2 b2 extra\n\nlone\n") == [
-        rebase.replay_audit.Rewrite("a1", "b1"),
-        rebase.replay_audit.Rewrite("a2", "b2"),
-    ]
+def test_a_record_that_cannot_be_written_still_reports_the_drop(
+    tmp_path, monkeypatch, capsys,
+):
+    """The record is a side job: its failure must not cost the audit's report."""
+    state = tmp_path / rebase.inspect.GIT_REBASE_MERGE_DIR
+    state.mkdir()
+    (state / "onto").write_text("0" * 40 + "\n")
+    monkeypatch.setattr(rebase.inspect, "git_dir", lambda cwd: tmp_path)
+    monkeypatch.setattr(rebase.replay_audit, "dropped_commits", lambda *a: ("lossy",))
+    monkeypatch.setattr(rebase.replay_audit, "render_dropped", lambda *a: "DROPPED-REPORT")
 
+    def unwritable(*a):
+        raise OSError("read-only file system")
 
-def test_command_for_prefers_the_more_specific_sha_match():
-    """Two `done` entries can each be a startswith-match for the same commit
-    when one abbreviated sha happens to be a prefix of another — the longer,
-    more specific one is what should win, not whichever the dict iterates to
-    first.
-    """
-    commit = "ab12cdef1234"
-    commands = {"ab12": "pick", "ab12cdef1234": "edit"}
+    monkeypatch.setattr(git.rewrites, "record", unwritable)
+    with mock.patch("sys.stdin.read", return_value=f"{'a' * 40} {'b' * 40}\n"):
+        assert rebase.replay_audit.main(["rewritten", "rebase"]) == 0
 
-    assert rebase.replay_audit._command_for(commands, commit) == "edit"
+    err = capsys.readouterr().err
+    assert "DROPPED-REPORT" in err
+    assert "could not record this rewrite" in err
 
 
 class TestPrRebaseHalts:

@@ -671,21 +671,21 @@ class TestTheGateIsScopedToOneRun:
 
     def test_a_run_that_opens_the_gate_leaves_it_shut(self):
         core.publishing.call_entry_point(
-            "fake_entry_points:opens_the_gate", [])
+            "fake_entry_points_support:opens_the_gate", [])
         assert core.publishing.enabled() is False
 
     def test_the_next_run_does_not_inherit_the_open_gate(self):
         """The failure this exists to catch, stated as two runs in a row."""
         core.publishing.call_entry_point(
-            "fake_entry_points:opens_the_gate", [])
+            "fake_entry_points_support:opens_the_gate", [])
         seen = core.publishing.call_entry_point(
-            "fake_entry_points:reports_the_gate", [])
+            "fake_entry_points_support:reports_the_gate", [])
         assert seen == 0, "the second run saw a gate the first one opened"
 
     def test_a_run_nested_in_an_open_one_restores_rather_than_closes(self):
         """Restores the previous value, so an outer --post survives its child."""
         core.publishing.enable()
-        core.publishing.call_entry_point("fake_entry_points:reports_the_gate", [])
+        core.publishing.call_entry_point("fake_entry_points_support:reports_the_gate", [])
         assert core.publishing.enabled() is True
 
     def test_a_hold_is_not_restored_when_the_run_ends(self):
@@ -696,14 +696,14 @@ class TestTheGateIsScopedToOneRun:
         not resume publishing because an inner one finished.
         """
         core.publishing.enable()
-        core.publishing.call_entry_point("fake_entry_points:holds_the_gate", [])
+        core.publishing.call_entry_point("fake_entry_points_support:holds_the_gate", [])
         assert core.publishing.held() == "a question this run could not answer"
         assert core.publishing.enabled() is False
 
     def test_the_gate_is_restored_even_when_the_run_raises(self):
         with pytest.raises(RuntimeError):
             core.publishing.call_entry_point(
-                "fake_entry_points:opens_the_gate_then_raises", [])
+                "fake_entry_points_support:opens_the_gate_then_raises", [])
         assert core.publishing.enabled() is False
 
 
@@ -717,31 +717,31 @@ class TestHoweverARunEndsTheCallerGetsAnInt:
 
     def test_a_returned_code_is_the_code(self):
         assert core.publishing.call_entry_point(
-            "fake_entry_points:returns_three", []) == 3
+            "fake_entry_points_support:returns_three", []) == 3
 
     def test_a_run_that_exits_zero_does_not_end_its_caller(self):
         after = []
         assert core.publishing.call_entry_point(
-            "fake_entry_points:exits_zero", []) == 0
+            "fake_entry_points_support:exits_zero", []) == 0
         after.append("reached")
         assert after == ["reached"], "sys.exit(0) unwound past the seam"
 
     def test_a_run_that_exits_non_zero_reports_that_code(self):
         """`EXIT_SUPERSEDED` arrives this way: `review.preflight` exits 4."""
         assert core.publishing.call_entry_point(
-            "fake_entry_points:exits_four", []) == 4
+            "fake_entry_points_support:exits_four", []) == 4
 
     def test_a_bare_exit_is_success(self):
         assert core.publishing.call_entry_point(
-            "fake_entry_points:exits_bare", []) == 0
+            "fake_entry_points_support:exits_bare", []) == 0
 
     def test_returning_nothing_is_success(self):
         assert core.publishing.call_entry_point(
-            "fake_entry_points:returns_none", []) == 0
+            "fake_entry_points_support:returns_none", []) == 0
 
     def test_exiting_with_a_message_prints_it_and_fails(self, capsys):
         rc = core.publishing.call_entry_point(
-            "fake_entry_points:exits_with_a_message", [])
+            "fake_entry_points_support:exits_with_a_message", [])
         assert rc == 1
         assert "could not read the review" in capsys.readouterr().err
 
@@ -750,13 +750,13 @@ class TestHoweverARunEndsTheCallerGetsAnInt:
         invocation, and swallowing it would report an interrupt as an exit."""
         with pytest.raises(KeyboardInterrupt):
             core.publishing.call_entry_point(
-                "fake_entry_points:interrupted", [])
+                "fake_entry_points_support:interrupted", [])
 
     def test_the_argv_and_kwargs_reach_the_entry_point(self):
         assert core.publishing.call_entry_point(
-            "fake_entry_points:echoes_argv", ["--self", "--fix"]) == 2
+            "fake_entry_points_support:echoes_argv", ["--self", "--fix"]) == 2
         assert core.publishing.call_entry_point(
-            "fake_entry_points:requires_a_kwarg", [],
+            "fake_entry_points_support:requires_a_kwarg", [],
             install_signal_handler=False) == 0
 
 

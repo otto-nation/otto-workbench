@@ -179,7 +179,7 @@ def test_typescript_is_declared_out_of_scope(tmp_path):
 
 
 def test_tests_are_out_of_scope(tmp_path):
-    """#910 owns the suites; this gate would only duplicate it, loudly."""
+    """tests/ has its own gate, validate-test-layout, under the same cap."""
     _write(tmp_path, "tests/big_test.py", _lines(900))
     assert vfs.discover(tmp_path) == []
 

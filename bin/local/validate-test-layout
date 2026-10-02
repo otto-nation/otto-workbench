@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+"""Check the Python test suites under tests/ for name and size.
+
+Usage: bin/local/validate-test-layout [--quiet] [--max-lines N] [DIR]
+
+Two rules, both over every `.py` file under `tests/`:
+
+1. **A test module is named `<subject>_test.py`.** pytest collects
+   `test_*.py` as well by default, so a prefix-named module still runs. That
+   is what let the two conventions coexist for as long as they did, split
+   126 to 82 with nothing saying which was right. A module that is not a
+   suite is a support module, and says so in its name: `conftest.py`,
+   `__init__.py`, or `<subject>_support.py`. Nothing else is allowed — in
+   particular a `test_*.py`, which would be collected under the convention
+   this gate retired.
+
+2. **A module stays within the code-line cap** the source gate enforces
+   (`MAX_CODE_LINES` in `lib/file_size.py`), counted the same way: blank
+   lines, comments and docstrings do not count. A suite is a flat list of
+   cases, so the argument for splitting it is navigability rather than
+   coupling — but a 3,000-line suite is one nobody reads end to end, and
+   the seam to split along is the one its subject already has.
+
+Bats suites are out of scope: `code_lines` counts shell, but a `.bats` file
+is not shell until bats preprocesses it, and no counter here reads `@test`.
+
+Exit code: 0 if every name is allowed and every file over the cap is a known
+exemption, 1 otherwise.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+_WORKBENCH_DIR = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_WORKBENCH_DIR / "lib"))
+from ansi import DIM, GREEN, NC, RED, YELLOW  # noqa: E402
+from file_size import MAX_CODE_LINES, code_lines  # noqa: E402
+
+TESTS_DIR = "tests"
+
+SKIP_DIRS = {"__pycache__"}
+
+SUITE_SUFFIX = "_test.py"
+SUPPORT_SUFFIX = "_support.py"
+SUPPORT_NAMES = frozenset({"conftest.py", "__init__.py"})
+
+# The suites over the cap when this landed, each split by #910 along the
+# modules it covers.
+#
+# ceiling: named exemptions, because failing on them would block every push on
+# work #910 owns. Delete an entry when its file comes under the cap; the dict
+# is empty when #910 closes, and from then this gate is unconditional. The test
+# suite pins it to exactly the set of files over the cap, so it can only shrink.
+KNOWN_OVER = {
+    "tests/ai_backend_pi_test.py": "#910",
+    "tests/ci_failures_test.py": "#910",
+    "tests/ci_runs_test.py": "#910",
+    "tests/conftest.py": "#910",
+    "tests/eval_floors_test.py": "#910",
+    "tests/eval_scoring_skill_test.py": "#910",
+    "tests/eval_scoring_test.py": "#910",
+    "tests/fix_engine_test.py": "#910",
+    "tests/mcp_server_test.py": "#910",
+    "tests/otto_log_test.py": "#910",
+    "tests/pr_cli_test.py": "#910",
+    "tests/pr_comments_test.py": "#910",
+    "tests/pr_rebase_test.py": "#910",
+    "tests/pr_state_test.py": "#910",
+    "tests/push_test.py": "#910",
+    "tests/review_agent_diagnostics_test.py": "#910",
+    "tests/review_collect_test.py": "#910",
+    "tests/review_contracts_test.py": "#910",
+    "tests/review_document_test.py": "#910",
+    "tests/review_entry_test.py": "#910",
+    "tests/review_fix_pass_test.py": "#910",
+    "tests/review_issue_test.py": "#910",
+    "tests/review_merge_test.py": "#910",
+    "tests/review_orchestrate_test.py": "#910",
+    "tests/review_post_test.py": "#910",
+    "tests/review_prompt_test.py": "#910",
+    "tests/review_verify_test.py": "#910",
+    "tests/review_worktree_test.py": "#910",
+    "tests/wiki_test.py": "#910",
+    "tests/workbench_config_test.py": "#910",
+}
+
+
+def discover(root: Path) -> list[Path]:
+    """Every `.py` file under *root*/tests, sorted.
+
+    Recursive: `tests/test_nesting/` is a package of suites, and a flat listing
+    would exempt it.
+    """
+    base = root / TESTS_DIR
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+        candidates = (Path(dirpath) / name for name in filenames if name.endswith(".py"))
+        found.extend(path for path in candidates if not path.is_symlink())
+    return sorted(found)
+
+
+def name_allowed(name: str) -> bool:
+    """True if *name* is a suite or a declared support module."""
+    if name in SUPPORT_NAMES:
+        return True
+    return name.endswith(SUITE_SUFFIX) or name.endswith(SUPPORT_SUFFIX)
+
+
+def misnamed(root: Path, paths: list[Path] | None = None) -> list[str]:
+    """Relative paths of every module whose name is neither suite nor support.
+
+    *paths* lets a caller that already walked `tests/` (such as `main()`) reuse
+    that listing instead of paying for a second `os.walk`.
+    """
+    return [str(p.relative_to(root)) for p in (paths if paths is not None else discover(root))
+            if not name_allowed(p.name)]
+
+
+def over_cap(root: Path, max_lines: int, paths: list[Path] | None = None) -> list[tuple[str, int]]:
+    """(relative path, code lines) for every module over *max_lines*, worst first.
+
+    *paths* lets a caller that already walked `tests/` (such as `main()`) reuse
+    that listing instead of paying for a second `os.walk`.
+    """
+    violations = []
+    for path in (paths if paths is not None else discover(root)):
+        try:
+            count = code_lines(path, "python")
+        except OSError as err:
+            # Name the file rather than surfacing a traceback from the counter;
+            # the first unreadable file is a broken checkout, not a finding.
+            raise SystemExit(
+                f"{RED}✗{NC} cannot read {path.relative_to(root)}: {err.strerror}",
+            ) from err
+        if count > max_lines:
+            violations.append((str(path.relative_to(root)), count))
+    return sorted(violations, key=lambda row: (-row[1], row[0]))
+
+
+def _report_names(bad: list[str]) -> None:
+    print(f"{RED}✗{NC} {len(bad)} test module(s) misnamed", file=sys.stderr)
+    for relpath in bad:
+        print(f"      {relpath}", file=sys.stderr)
+    print(f"    {DIM}a suite is <subject>{SUITE_SUFFIX}; a module that is not one is",
+          file=sys.stderr)
+    print(f"    conftest.py, __init__.py, or <subject>{SUPPORT_SUFFIX}{NC}",
+          file=sys.stderr)
+
+
+def _report_size(new: list[tuple[str, int]], max_lines: int) -> None:
+    print(f"{RED}✗{NC} {len(new)} test module(s) over {max_lines} code lines",
+          file=sys.stderr)
+    for relpath, count in new:
+        print(f"      {relpath}: {count}", file=sys.stderr)
+    print(f"    {DIM}split along the modules the suite covers, not at the line{NC}",
+          file=sys.stderr)
+
+
+def _report_known(known: list[tuple[str, int]]) -> None:
+    """Print the exemptions on a direct run, so the debt stays visible."""
+    print(f"{YELLOW}▲{NC} {len(known)} test module(s) over the cap, each owned by an open issue",
+          file=sys.stderr)
+    for relpath, count in known:
+        print(f"      {relpath}: {count}  ({KNOWN_OVER.get(relpath, '?')})",
+              file=sys.stderr)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Check the Python test suites under tests/ for name and size.",
+    )
+    parser.add_argument("--quiet", action="store_true", help="Only show failures")
+    parser.add_argument("--max-lines", type=int, default=MAX_CODE_LINES,
+                        help=f"Cap on code lines (default: {MAX_CODE_LINES})")
+    parser.add_argument("directory", nargs="?", default=str(_WORKBENCH_DIR),
+                        help="Repo root to scan (default: this repo)")
+    args = parser.parse_args(argv)
+
+    root = Path(args.directory).resolve()
+    paths = discover(root)
+    bad = misnamed(root, paths)
+    violations = over_cap(root, args.max_lines, paths)
+    new = [(p, n) for p, n in violations if p not in KNOWN_OVER]
+    known = [(p, n) for p, n in violations if p in KNOWN_OVER]
+
+    if bad:
+        _report_names(bad)
+    if new:
+        _report_size(new, args.max_lines)
+    if bad or new:
+        return 1
+    if args.quiet:
+        return 0
+    if known:
+        _report_known(known)
+    else:
+        print(f"{GREEN}✓{NC} every test module is named and within {args.max_lines} code lines")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

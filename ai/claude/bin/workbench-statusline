@@ -31,7 +31,7 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
     del sys.path[0]
     _AI_LIB_DIR = pinned_ai_lib_dir()
 sys.path.insert(0, str(_AI_LIB_DIR))
-from _reuse_levels import read_default, read_level
+import config.reuse_levels
 
 try:
     import pr.state
@@ -47,8 +47,8 @@ except Exception:
 
 
 def _reuse_piece() -> str:
-    level = read_level()
-    default = read_default()
+    level = config.reuse_levels.read_level()
+    default = config.reuse_levels.read_default()
     if level != default:
         return f"reuse:{level}"
     return ""

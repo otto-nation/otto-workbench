@@ -46,11 +46,7 @@ import core.pr_template  # noqa: E402
 import core.proc  # noqa: E402
 import core.timeouts  # noqa: E402
 import config.workbench_projects  # noqa: E402
-from _reuse_levels import (  # noqa: E402
-    LEVEL_DESCRIPTIONS,
-    read_default,
-    read_level,
-)
+import config.reuse_levels  # noqa: E402
 import config.workbench_config  # noqa: E402
 import git_layout  # noqa: E402
 
@@ -156,9 +152,9 @@ def _pr_template_line(repo: str) -> str:
 def main() -> None:
     lines: list[str] = []
 
-    level = read_level()
-    if level != read_default():
-        lines.append(f"Reuse level: {level} — {LEVEL_DESCRIPTIONS.get(level, '')}")
+    level = config.reuse_levels.read_level()
+    if level != config.reuse_levels.read_default():
+        lines.append(f"Reuse level: {level} — {config.reuse_levels.LEVEL_DESCRIPTIONS.get(level, '')}")
 
     repo = _repo_root()
     config.workbench_projects.register(repo)

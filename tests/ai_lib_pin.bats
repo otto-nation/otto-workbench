@@ -221,6 +221,16 @@ PY
   done
 }
 
+# passes-at-base: the pin was honoured through _reuse_levels before; this keeps it honoured by the shims
+@test "the refusal reaches the Claude hooks under ai/claude/bin" {
+  local script
+  for script in reuse-session-start workbench-statusline reuse-mode-tracker reuse-subagent-start; do
+    WORKBENCH_AI_LIB_DIR=/nonexistent run "$REPO_ROOT/ai/claude/bin/$script" </dev/null
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"WORKBENCH_AI_LIB_DIR"* ]]
+  done
+}
+
 # ─── The stanza itself ───────────────────────────────────────────────────────
 
 @test "every entry point that places ai/lib goes through the pin" {

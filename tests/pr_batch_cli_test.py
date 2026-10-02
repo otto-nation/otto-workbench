@@ -246,6 +246,16 @@ def test_idle_resolve_marks_run_done_when_every_item_is_terminal(capsys):
     assert "run_finished" not in out
 
 
+def test_cancelled_run_stays_cancelled_after_resolve_drain():
+    run = _saved_run_with_decisions(1, kind=batch.model.DecisionKind.FAILED)
+    run.status = batch.model.RunStatus.CANCELLED
+    batch.store.save(run)
+    assert _main(["batch", "resolve", run.id, "d1", "--action", "drop-pr"]) == 0
+    saved = batch.store.load(run.id)
+    assert saved.items[0].terminal
+    assert saved.status is batch.model.RunStatus.CANCELLED
+
+
 def test_idle_resolve_leaves_waiting_when_an_item_is_unblocked():
     run = _saved_run_with_decision()
     assert _main(["batch", "resolve", run.id, "d1", "--action", "accept"]) == 0

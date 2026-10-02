@@ -127,7 +127,8 @@ def _apply_loaded(run, bin_dir: Path) -> list[str]:
             batch.resolve.apply(run, batch.resolve.Request.from_dict(raw), pr_bin=pr_bin)
         except (batch.resolve.ResolveError, KeyError, TypeError) as exc:
             errors.append(str(exc))
-    if run.items and all(item.terminal for item in run.items):
+    if (run.status in (RunStatus.WAITING, RunStatus.RUNNING)
+            and run.items and all(item.terminal for item in run.items)):
         run.status = RunStatus.DONE
     return errors
 

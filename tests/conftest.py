@@ -323,6 +323,35 @@ def pytest_configure(config):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_stop_handling(monkeypatch):
+    """Each test gets its own child registry and leaves the stop signals as found.
+
+    `core.proc.install_stop_handler` replaces SIGINT, SIGTERM and SIGHUP for
+    the life of the process, and every test that drives an entry point's
+    `main` installs it. Left in place, the next signal the worker receives runs
+    a handler a finished test installed. And a test that fires the handler
+    sets `core.children`'s stop flag, which would refuse every spawn in every
+    later test on that worker.
+    """
+    # `pytest_configure` has already put `LIB_DIR` on `sys.path`.
+    import signal
+    import threading
+
+    import core.children
+    import core.proc
+    saved = {signum: signal.getsignal(signum) for signum in core.proc.STOP_SIGNALS}
+    monkeypatch.setattr(core.children, "_stopping", threading.Event())
+    monkeypatch.setattr(core.children, "_live", {})
+    yield
+    for signum, handler in saved.items():
+        # `getsignal` answers None for a handler not installed from Python, and
+        # `signal.signal` rejects None: a teardown error here would mask the
+        # result of the test that just ran.
+        if handler is not None:
+            signal.signal(signum, handler)
+
+
+@pytest.fixture(autouse=True)
 def _empty_pi_catalogue(monkeypatch):
     """Budget lookups do not spawn `pi --list-models`.
 
@@ -803,6 +832,57 @@ def is_range_listing(args) -> bool:
     time out. The one place that knows how to recognise it.
     """
     return "--name-only" in args and any(a.endswith("..HEAD") for a in args)
+
+
+def group_alive(pgid: int) -> bool:
+    """Whether process group *pgid* still has a live member.
+
+    EPERM counts as gone. Darwin answers EPERM for a group whose members are
+    all zombies — a killed grandchild waits for launchd to reap it, which
+    under a loaded suite takes a moment — and a group id since reused by
+    another user's process is not the group a test started either.
+
+    Linux answers success for a zombie, so a group of only zombies reads as
+    alive until its new parent reaps them, and a runner whose init does not
+    reap would fail a test whose kill worked. A member in state `Z` has run
+    its last instruction, so success is confirmed against `ps`.
+    """
+    try:
+        os.killpg(pgid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return _group_has_running_member(pgid)
+
+
+def _group_has_running_member(pgid: int) -> bool:
+    """Whether `ps` lists a member of *pgid* that is not a zombie.
+
+    Anything `ps` cannot answer — no binary, a stall, a failure — is True, the
+    signal-0 answer the caller already had: reading a broken `ps` as an empty
+    group would pass a test whose process is still running.
+    """
+    try:
+        result = subprocess.run(
+            ["ps", "-A", "-o", "pgid=,stat="],
+            capture_output=True, text=True, check=False, timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return True
+    if result.returncode != 0:
+        return True
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[0] == str(pgid) and not fields[1].startswith("Z"):
+            return True
+    return False
+
+
+def group_gone_within(pgid: int, timeout: float) -> bool:
+    """Wait up to *timeout* seconds for process group *pgid* to have no live member."""
+    deadline = time.monotonic() + timeout
+    while group_alive(pgid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return not group_alive(pgid)
 
 
 def seed_repo(path) -> Path:

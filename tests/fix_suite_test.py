@@ -12,8 +12,10 @@ about what a process is.
 """
 
 import os
+import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -24,6 +26,8 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from conftest import group_gone_within  # noqa: E402
+import core.children  # noqa: E402
 import fix.blame  # noqa: E402
 import fix.suite  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
@@ -459,3 +463,84 @@ def test_a_pass_with_nothing_to_check_stays_silent(tmp_path):
     assert fix.suite.SuiteResult().status is fix.suite.SuiteStatus.NOT_ATTEMPTED
     assert fix.suite.SuiteResult().reportable is False
     assert fix.suite.SuiteResult().note == ""
+
+
+def _kill_runner_group(pid_file: Path) -> None:
+    """Best-effort SIGKILL of the group whose leader wrote *pid_file*."""
+    try:
+        pgid = int(pid_file.read_text())
+    except (OSError, ValueError):
+        return
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _pid_line_written(pid_file: Path) -> bool:
+    return pid_file.exists() and pid_file.read_text().endswith("\n")
+
+
+def _interrupt_once_started(pid_file, main, finished, runner_started):
+    """SIGINT the main thread once the runner has written its whole pid line.
+
+    Gives up waiting after 10s and signals anyway, so the run under test is
+    never left to its 60s bound; `finished` stops it firing into a later test.
+    """
+    deadline = time.monotonic() + 10
+    while not (finished.is_set() or _pid_line_written(pid_file)) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    if _pid_line_written(pid_file):
+        runner_started.set()
+    if not finished.is_set():
+        signal.pthread_kill(main, signal.SIGINT)
+
+
+def _run_until_interrupted(tmp_path, cmd, poller, finished):
+    """Run the suite and expect the poller's SIGINT; stop the poller either way."""
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            fix.suite.run(tmp_path, cmd, 60)
+    finally:
+        finished.set()
+        poller.join(timeout=5)
+
+
+def test_an_interrupt_mid_run_stops_the_runner_tree(tmp_path):
+    """The runner leads its own session, so only this process can stop it.
+
+    The stop handler's `SystemExit` arrives on the main thread exactly as this
+    `KeyboardInterrupt` does; before, it unwound past `communicate` and left
+    the runner and its workers going against the worktree.
+    """
+    pid_file = tmp_path / "pid"
+    cmd = _script(tmp_path, "slow", f"echo $$ > {pid_file}; sleep 300 & wait")
+    # A real SIGINT aimed at the main thread, so it interrupts the blocking
+    # read inside `communicate`. `_thread.interrupt_main` only sets a flag,
+    # which nothing checks until the 60s bound has already run out.
+    #
+    # Sent once the runner has written its whole pid line, not after a fixed
+    # delay: bash startup under a loaded parallel run can outlast any delay,
+    # and an interrupt before the pid file is complete hides the result behind
+    # a `FileNotFoundError`. `finished` keeps the poller from firing into a
+    # later test when the run ends first.
+    main = threading.main_thread().ident
+    finished = threading.Event()
+    runner_started = threading.Event()
+
+    poller = threading.Thread(
+        target=_interrupt_once_started,
+        args=(pid_file, main, finished, runner_started), daemon=True)
+    poller.start()
+    started = time.monotonic()
+    try:
+        _run_until_interrupted(tmp_path, cmd, poller, finished)
+        assert runner_started.is_set(), "the runner never wrote its pid"
+        assert time.monotonic() - started < 30, "the interrupt waited out the timeout"
+        pgid = int(pid_file.read_text())
+        assert group_gone_within(pgid, 3), "the runner's process group outlived the interrupt"
+        assert core.children.live() == []
+    finally:
+        # Whichever assertion failed first, the runner tree is not left going:
+        # the poller signals the main thread even when it timed out unseen.
+        _kill_runner_group(pid_file)

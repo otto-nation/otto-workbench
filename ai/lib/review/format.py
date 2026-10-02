@@ -14,6 +14,7 @@ line the diff never touched.
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 from dataclasses import dataclass
 
 import pr.target
@@ -81,8 +82,15 @@ def parse_diff_hunks(diff_text: str) -> dict[str, list[HunkRange]]:
 
 # ── Diff classification ────────────────────────────────────────────────────
 
-def _resolve_path(path: str, hunks: dict[str, list]) -> str | None:
-    """Resolve a possibly-bare filename to a full diff path."""
+def resolve_path(path: str, hunks: Collection[str]) -> str | None:
+    """Resolve a possibly-bare filename to the one known path it names.
+
+    `hunks` is any collection of repo-relative paths: the diff's files when
+    placing a comment, the tracked tree when the evidence gate looks for the
+    file a quote came from. One rule for both; the gate tries the diff's files
+    before the tree, as the poster only ever sees the diff's. None when
+    nothing matches, or when more than one path does.
+    """
     if path in hunks:
         return path
 
@@ -136,7 +144,7 @@ def classify_findings(
             file_level.append(f)
             continue
 
-        resolved = _resolve_path(f.path, hunks)
+        resolved = resolve_path(f.path, hunks)
 
         if resolved is None:
             f.classification = CLASS_SKIPPED
@@ -457,7 +465,7 @@ def resolve_permalinks(
 
     def replacer(m: re.Match) -> str:
         path = m.group(1)
-        resolved = _resolve_path(path, hunks)
+        resolved = resolve_path(path, hunks)
         ref = head_ref if resolved else base_ref
         return _build_permalink(repo, ref, m, host)
 

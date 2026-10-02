@@ -67,6 +67,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+import core.children
 import core.log
 from core.trail import Trail, tinfo, twarn
 import fix.blame
@@ -278,12 +279,19 @@ def _invoke(
     timeout there would leave them running against a worktree the pass is about
     to commit, competing with whatever the operator does next. The new session
     makes the child a group leader so the whole tree can be signalled.
+    `core.children.spawn` records it, so a stop signal reaches the tree too.
+
+    The tree is stopped here with `_terminate_tree` rather than
+    `core.children.terminate`, because this thread still holds the pipes:
+    `communicate` keeps draining them while the runner shuts down, where a bare
+    `wait` could leave a runner flushing its output blocked on a full pipe for
+    the whole grace period.
 
     A non-zero exit is the answer this exists to report, not an exception; the
     output is captured rather than piped to a filter, so the status read below
     is the runner's own and not some `tail`'s.
     """
-    proc = subprocess.Popen(
+    proc = core.children.spawn(
         argv, cwd=workdir, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, start_new_session=True,
     )
@@ -295,6 +303,15 @@ def _invoke(
             status=SuiteStatus.TIMED_OUT, command=command,
             duration_s=time.monotonic() - started,
         )
+    except BaseException:
+        # The new session takes the runner out of reach of any signal aimed at
+        # this process's group, so a stop that unwinds through here — the
+        # `SystemExit` the entry point's stop handler raises — is the only
+        # thing left that can end it.
+        _terminate_tree(proc)
+        raise
+    finally:
+        core.children.forget(proc)
 
     green = proc.returncode == 0
     return SuiteResult(

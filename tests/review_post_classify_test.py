@@ -103,23 +103,23 @@ class TestParseDiffHunks:
 class TestResolvePath:
     def test_exact_match(self, rp):
         hunks = {"pkg/handler.go": [(1, 10)]}
-        assert rp._resolve_path("pkg/handler.go", hunks) == "pkg/handler.go"
+        assert rp.resolve_path("pkg/handler.go", hunks) == "pkg/handler.go"
 
     def test_basename_match_unique(self, rp):
         hunks = {"pkg/handler.go": [(1, 10)]}
-        assert rp._resolve_path("handler.go", hunks) == "pkg/handler.go"
+        assert rp.resolve_path("handler.go", hunks) == "pkg/handler.go"
 
     def test_basename_match_ambiguous(self, rp):
         hunks = {"pkg/a/handler.go": [(1, 10)], "pkg/b/handler.go": [(1, 10)]}
-        assert rp._resolve_path("handler.go", hunks) is None
+        assert rp.resolve_path("handler.go", hunks) is None
 
     def test_partial_path_match(self, rp):
         hunks = {"src/pkg/service/handler.go": [(1, 10)]}
-        assert rp._resolve_path("service/handler.go", hunks) == "src/pkg/service/handler.go"
+        assert rp.resolve_path("service/handler.go", hunks) == "src/pkg/service/handler.go"
 
     def test_no_match(self, rp):
         hunks = {"pkg/handler.go": [(1, 10)]}
-        assert rp._resolve_path("other.go", hunks) is None
+        assert rp.resolve_path("other.go", hunks) is None
 
 
 class TestClassifyFindings:

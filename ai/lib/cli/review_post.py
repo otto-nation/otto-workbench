@@ -44,7 +44,7 @@ from review.format import (
     CLASS_FILE_LEVEL, CLASS_INLINE,
     classify_findings, format_body_text, format_inline_comment,
     renumber_for_posting, resolve_permalinks,
-    _format_path_ref, _format_finding_line, _resolve_path, _hunk_end,
+    _format_path_ref, _format_finding_line, resolve_path, _hunk_end,
     _build_permalink,
 )
 from gh.client import LineResolutionError

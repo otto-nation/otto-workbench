@@ -523,6 +523,38 @@ def _recording_popen(seen):
     return popen
 
 
+class TestAgentsAreRecordedForTheStopHandler:
+    """Every agent a backend starts goes through `core.children`.
+
+    The stop handler can only stop what it was told about. A backend that
+    spawned with `subprocess.Popen` directly would run fine and pass every
+    other test here, then outlive a killed review.
+    """
+
+    @pytest.mark.parametrize("backend", ["agent.backend_claude", "agent.backend_pi"])
+    @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
+    def test_the_agent_is_spawned_through_the_registry(
+        self, monkeypatch, tmp_path, backend, entry_point,
+    ):
+        import core.children
+
+        module = importlib.import_module(backend)
+        monkeypatch.setattr(subprocess, "Popen", _recording_popen({}))
+        spawned = []
+        real_spawn = core.children.spawn
+
+        def recording_spawn(cmd, **kwargs):
+            spawned.append(cmd)
+            return real_spawn(cmd, **kwargs)
+
+        monkeypatch.setattr(core.children, "spawn", recording_spawn)
+        getattr(module, entry_point)(agent.backend.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
+        ))
+        assert len(spawned) == 1
+        assert core.children.live() == [], "the agent was never forgotten"
+
+
 class TestBackendsGetTheInvocationEnv:
     """The env must reach subprocess, not just the invocation object.
 

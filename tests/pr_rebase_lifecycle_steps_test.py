@@ -44,6 +44,18 @@ def test_drive_to_completion_already_done():
     assert tally.commits == 0
 
 
+def test_drive_to_completion_forwards_no_verify_to_the_landing():
+    """A resumed `--fix --no-verify` lands from here, so the flag must reach it."""
+    with mock.patch.object(rebase.inspect, "rebase_in_progress", return_value=False), \
+         mock.patch.object(rebase.lifecycle, "rebase_success", return_value=0) as mock_success:
+        rebase.lifecycle.drive_to_completion(
+            "/fake", mock.MagicMock(), rebase.types.RunMode.FIX,
+            target_ref=_TARGET, lease=_LEASE, verify=False,
+        )
+
+    assert mock_success.call_args.kwargs["verify"] is False
+
+
 def test_drive_to_completion_recovers_lease_from_remembered_tip():
     """A resumed rebase (no ``lease=`` passed) must recover it from the
     remote-tracking ref, not from the local branch's pre-rebase tip —

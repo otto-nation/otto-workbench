@@ -309,7 +309,7 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
         sys.stdout.write("\n")
         return 0
 
-    core.proc.install_interrupt_handler(core.log.interrupted)
+    core.proc.install_stop_handler(core.log.interrupted)
 
     # Two-pass parse: extract global flags first, then route the subcommand.
     # Argparse subparsers swallow flags after the subcommand name, so

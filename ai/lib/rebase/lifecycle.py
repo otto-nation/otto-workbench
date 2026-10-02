@@ -98,6 +98,7 @@ def drive_to_completion(
     target_ref: str, force: bool = False,
     tally: ResolutionTally | None = None,
     lease: rebase_lease.PushLease | None = None,
+    verify: bool = True,
     snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
 ) -> int:
@@ -129,7 +130,7 @@ def drive_to_completion(
     with tspan(trail, "drive_to_completion"):
         return _drive_loop(
             cwd, ctx, mode, target_ref=target_ref, force=force, tally=tally,
-            lease=lease, snapshot=snapshot, trail=trail,
+            lease=lease, verify=verify, snapshot=snapshot, trail=trail,
         )
 
 
@@ -138,6 +139,7 @@ def _drive_loop(
     target_ref: str, force: bool = False,
     tally: ResolutionTally | None = None,
     lease: rebase_lease.PushLease | None = None,
+    verify: bool = True,
     snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
 ) -> int:
@@ -147,7 +149,7 @@ def _drive_loop(
         if not rebase_inspect.rebase_in_progress(cwd):
             return rebase_success(
                 cwd, ctx, mode, tally, target_ref=target_ref,
-                lease=lease, snapshot=snapshot, trail=trail,
+                lease=lease, verify=verify, snapshot=snapshot, trail=trail,
             )
 
         rc, conflict_found = _drive_one_step(
@@ -560,6 +562,7 @@ def _resolved_fork_point(cwd: str, fork_point: str) -> str:
 def fresh(
     cwd: str, ctx: pr.context.ResolvedContext, mode: RunMode,
     force: bool = False, *, target_ref: str, fork_point: str = "",
+    verify: bool = True,
     snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
 ) -> int:
@@ -704,7 +707,7 @@ def fresh(
     if r.ok and not rebase_inspect.rebase_in_progress(cwd):
         return rebase_success(
             cwd, ctx, mode, tally, target_ref=target_ref,
-            lease=lease, snapshot=snapshot, trail=trail,
+            lease=lease, verify=verify, snapshot=snapshot, trail=trail,
         )
 
     if not rebase_inspect.rebase_in_progress(cwd):
@@ -716,7 +719,7 @@ def fresh(
 
     return drive_to_completion(
         cwd, ctx, mode, target_ref=target_ref, force=force, tally=tally,
-        lease=lease, snapshot=snapshot, trail=trail,
+        lease=lease, verify=verify, snapshot=snapshot, trail=trail,
     )
 
 
@@ -724,6 +727,7 @@ def rebase_success(
     cwd: str, ctx: pr.context.ResolvedContext, mode: RunMode,
     tally: ResolutionTally | None = None, *, target_ref: str,
     lease: rebase_lease.PushLease | None = None,
+    verify: bool = True,
     snapshot: rebase_pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
 ) -> int:
@@ -778,7 +782,8 @@ def rebase_success(
         # replayed commits is listed once per commit in the tally.
         repairable = list(dict.fromkeys(tally.files))
         landed = rebase_land.land_rebased(
-            cwd, resolved_files=repairable or None, args=lease.args, trail=trail,
+            cwd, resolved_files=repairable or None, args=lease.args,
+            verify=verify, trail=trail,
         )
         if landed.ok:
             tinfo(trail, "force_push", "force-pushed to remote", data={"sha": landed.sha})

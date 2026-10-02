@@ -28,7 +28,7 @@ import cli.registry  # noqa: E402
 import cli.schema  # noqa: E402
 from cli.needs import LOCAL, NONE, REMOTE, Need  # noqa: E402
 from cli.registry import COMMANDS, CommandSpec, need_for, validate_needs  # noqa: E402
-import core.timeouts
+import core.timeouts  # noqa: E402
 import core.tool_parser  # noqa: E402
 
 
@@ -447,7 +447,7 @@ def test_no_cli_module_installs_a_signal_handler():
     owns SIGINT for the life of the process. Under in-process dispatch the last
     one is a library reached partway through a command, which is why the only
     legitimate installer is the entry point that owns the process —
-    `proc.install_interrupt_handler`, called from a `main` or a shim.
+    `proc.install_stop_handler`, called from a `main` or a shim.
     """
     def installs_a_handler(node):
         return (isinstance(node, ast.Call)

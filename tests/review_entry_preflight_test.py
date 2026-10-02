@@ -32,6 +32,7 @@ from conftest import (
     supersession_verdict,
 )
 
+import core.proc
 import core.prompt
 import core.run_lock
 import pr.supersession
@@ -601,7 +602,7 @@ def test_a_derived_base_that_does_not_resolve_is_not_refused(tmp_path, monkeypat
 
 
 def test_an_in_process_caller_can_keep_its_own_signal_handler(cr, monkeypatch):
-    """The entry point that owns the process owns SIGINT.
+    """The entry point that owns the process owns the stop signals.
 
     `signal.signal` overwrites without chaining and nothing restores it, so a
     `main` called in-process must be able to decline to install one rather than
@@ -618,4 +619,4 @@ def test_an_in_process_caller_can_keep_its_own_signal_handler(cr, monkeypatch):
 
     with patch.object(cr, "build_parser", side_effect=RuntimeError("stop")):
         assert signals_installed_by(False) == []
-        assert signals_installed_by(True) == [signal.SIGINT]
+        assert signals_installed_by(True) == list(core.proc.STOP_SIGNALS)

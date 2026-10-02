@@ -59,9 +59,9 @@ def blank() -> None:
 
 
 def interrupted() -> None:
-    """What an entry point says when SIGINT arrives.
+    """What an entry point says when a stop signal arrives.
 
-    Here rather than beside `proc.install_interrupt_handler`, which takes it as
+    Here rather than beside `proc.install_stop_handler`, which takes it as
     a callback: `proc` is stdlib-only by declaration and cannot reach `log`,
     while every entry point installing a handler already depends on this
     module.

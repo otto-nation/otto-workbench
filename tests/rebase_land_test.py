@@ -102,3 +102,37 @@ class TestGatedPush:
         assert kwargs["gated"] is True
         assert kwargs["args"] == _LEASE.args
         assert kwargs["regen"] == rebase.land.REGEN_MESSAGE
+
+
+class TestNoVerify:
+    """`verify=False` is the operator skipping the hook, and nothing else."""
+
+    def test_the_push_carries_no_verify_ahead_of_the_lease(self):
+        with mock.patch.object(
+            git.land, "land_head", return_value=_pushed(),
+        ) as owner:
+            rebase.land.land_rebased("/fake", args=_LEASE.args, verify=False)
+
+        assert owner.call_args.kwargs["args"] == ("--no-verify", *_LEASE.args)
+
+    def test_a_verified_push_does_not_skip_the_hook(self):
+        with mock.patch.object(
+            git.land, "land_head", return_value=_pushed(),
+        ) as owner:
+            rebase.land.land_rebased("/fake", args=_LEASE.args)
+
+        assert "--no-verify" not in owner.call_args.kwargs["args"]
+
+    def test_a_refusal_with_the_hook_skipped_is_not_handed_to_the_fix(self):
+        """No hook ran, so whatever refused the push is nothing an agent can
+        repair in the tree — a stale lease, most likely."""
+        refusal = _refused()
+        with mock.patch.object(git.land, "land_head", return_value=refusal), \
+             mock.patch.object(rebase.prepush, "fix_push_failures") as fix:
+            got = rebase.land.land_rebased(
+                "/fake", resolved_files=["server.go"], args=_LEASE.args,
+                verify=False,
+            )
+
+        assert got is refusal
+        fix.assert_not_called()

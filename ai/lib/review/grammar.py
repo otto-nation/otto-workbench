@@ -204,13 +204,11 @@ _SEGMENT_CHAR = r"[^\s/:*`—]"
 # The `:12` or `:12-18` a location may carry after its filename. A fragment
 # rather than a reader: `_FIRST_FILE_RE`, `VERIFY_FINDING_RE` and
 # `BODY_FINDING_RE` each bound it differently, and they have to agree on what a
-# line suffix is or a finding parses one way and verifies against the other.
+# line suffix is or a finding parses one way and is selected by the other.
 # `strip_line_suffix` removes what this matches, so a reader that matched one
 # without capturing it does not decide for itself what it was.
 # A list is one suffix, not several: `:64,82` names two lines of one file, and
-# a reader that takes only the first leaves `,82` on the path. That stat'd a
-# path no filesystem holds, so the evidence gate reported "file not found"
-# about a file that exists and dropped a correct finding.
+# a reader that takes only the first leaves `,82` on the path.
 _LINE_SPAN = r"\d+(?:[-–]\d+)?"
 _LINE_SUFFIX_BODY = rf":{_LINE_SPAN}(?:\s*,\s*{_LINE_SPAN})*"
 LINE_SUFFIX = rf"(?:{_LINE_SUFFIX_BODY})?"
@@ -392,14 +390,19 @@ def parse_ledger_line(raw: str) -> LedgerEntry | None:
 
 # ── Readers with bounds of their own ─────────────────────────────────────────
 
-# This pattern selects: which findings the evidence gate checks, and the
-# location it checks each one against. Where a finding's body ends is not its
-# business — `finding_spans` measures that, so a line this pattern cannot read
-# ends the span above it instead of joining that finding's evidence.
+# This pattern selects which findings the evidence gate checks, and nothing
+# more. The location each one is checked against is `finding_location`'s — the
+# reading the poster places the comment with — because a second reading here
+# drifted from it each time a reviewer wrote a suffix it did not know
+# (`:64,82`, `:_short`), and the gate then dropped a correct finding as "file
+# not found". Only a span `finding_location` cannot place at all is checked
+# against what it captured, since there is then no placement to contradict.
+# Where a finding's body ends is not its business either — `finding_spans`
+# measures that.
 #
 # The space-free class stays exactly as it was — anything the delimiters cannot
-# hold, line suffix included, which `strip_line_suffix` takes off the captured
-# path — and the spaced shape is beside it rather than replacing it. Every
+# hold, line suffix included — and the spaced shape is beside it rather than
+# replacing it. Every
 # location that parsed before parses the same way, since a space-free span
 # never reaches the second alternative at all.
 #

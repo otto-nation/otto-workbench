@@ -21,6 +21,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import agent.usage
+import core.children
 import core.log
 import core.timeouts
 import agent.vertex_quota
@@ -337,7 +338,7 @@ def _spawn_env(inv: AgentInvocation) -> dict[str, str]:
 def invoke_agent(inv: AgentInvocation) -> int:
     """Full agent with JSONL streaming to session log. Returns exit code."""
     cmd = _build_agent_cmd(inv)
-    proc = subprocess.Popen(
+    with core.children.owned(
         cmd,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -345,10 +346,10 @@ def invoke_agent(inv: AgentInvocation) -> int:
         text=True,
         cwd=inv.cwd,
         env=_spawn_env(inv),
-    )
-    _send_stdin(proc, inv.prompt)
-    stream_progress(proc, inv.session_log, label=inv.label)
-    proc.wait()
+    ) as proc:
+        _send_stdin(proc, inv.prompt)
+        stream_progress(proc, inv.session_log, label=inv.label)
+        proc.wait()
     _log_stderr_on_failure(proc, inv.session_log)
     return proc.returncode
 
@@ -356,7 +357,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
 def invoke_fix(inv: AgentInvocation) -> int:
     """Agent with workspace write access, progress echoed to stderr. Returns exit code."""
     cmd = _build_fix_cmd(inv)
-    proc = subprocess.Popen(
+    with core.children.owned(
         cmd,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -364,10 +365,10 @@ def invoke_fix(inv: AgentInvocation) -> int:
         text=True,
         cwd=inv.cwd,
         env=_spawn_env(inv),
-    )
-    _send_stdin(proc, inv.prompt)
-    _stream_fix_output(proc, inv.session_log)
-    proc.wait()
+    ) as proc:
+        _send_stdin(proc, inv.prompt)
+        _stream_fix_output(proc, inv.session_log)
+        proc.wait()
     return proc.returncode
 
 

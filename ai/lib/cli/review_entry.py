@@ -361,7 +361,7 @@ def main(argv: list[str] | None = None, *,
     # installed the identical handler at its own entry point, and a second
     # install would replace the caller's without chaining or restoring it.
     if install_signal_handler:
-        core.proc.install_interrupt_handler(core.log.interrupted)
+        core.proc.install_stop_handler(core.log.interrupted)
 
     argv = list(sys.argv[1:] if argv is None else argv)
     parsed = build_parser().parse_args(argv)

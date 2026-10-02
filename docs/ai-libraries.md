@@ -1490,17 +1490,20 @@ re-running post-processing does not stack notes or re-lower a verdict.
 
 Which verdict a tally supports in the first place is `review.verdict`'s. The
 finding-line grammar read here is `review.grammar`'s: `VERIFY_FINDING_RE` is a
-stricter shape over the same location vocabulary, and the two have to agree or
-a finding parses one way and verifies against the other — which is why they
-live next to each other rather than here.
+stricter shape over the same vocabulary that selects which findings this gate
+checks. It does not read the location: the path comes from `finding_location`,
+the same reading the poster uses, and is resolved with the poster's
+`review.format.resolve_path` — against the files the diff changed first, as
+the poster does, and the tracked tree only when the diff has no match — so a
+finding is not placed against one file and verified against another.
 
 Where a finding's body ends is `review.spans`'s. Both gates walk the review
 through `finding_spans` and remove what they drop through `drop_findings`,
 because two gates that measured a finding themselves measured it differently:
 one of them took the resolved finding below a dropped one out with it, and
 neither of them left a `### ` sub-heading standing. `VERIFY_FINDING_RE` selects
-which findings this gate checks and reads the location it checks them against;
-it does not say where one stops.
+which findings this gate checks; it reads a location only where the poster can
+place none, and never says where one stops.
 
 ## Publishing
 
@@ -3531,6 +3534,55 @@ Nothing here raises. Registration is a side effect of a command that was run for
 some other reason, and a hook that failed because a state file was unwritable
 would cost the user their session for a bookkeeping entry.
 
+### core/children.py
+
+The long-lived children this process started, and stopping all of them.
+
+An agent run is a tree: this process, the agents it starts on worker threads,
+and the tools each agent starts. Pi's agents lead sessions of their own, so a
+supervisor's kill aimed at this process's group never reaches them — and the
+cleanup each spawn site had was an `except BaseException` that only an
+exception *on that worker thread* could trigger. Neither stop this process
+receives arrives that way. SIGTERM's default disposition ended the process
+with no Python code run at all; SIGINT raised in the main thread only, which
+then waited in the pool's shutdown for agents nobody had told to stop. Either
+way the agents ran on against the account with nothing holding a handle to
+them.
+
+So the stop is the owner's to deliver, and the owner needs to know what it
+owns. `spawn` starts a child and records it; `forget` drops it once its owner
+has reaped it. `stop_all` is what the entry point's signal handler calls: it
+refuses every spawn from then on, asks every recorded child to stop, and kills
+whatever is still there a grace period later.
+
+`stop_all` signals and does not wait. It runs inside a signal handler on the
+main thread, which may itself be the thread blocked reaping one of these
+children — waiting there would wait on itself. Each owner keeps its own
+`terminate` for the path it unwinds through, and the timer covers a child
+whose owner never gets the chance.
+
+TERM before KILL, everywhere. Pi stops the tool processes it started detached
+only when it receives SIGTERM itself; a SIGKILL aimed at its group skips that
+and leaves the tools running in groups of their own. The grace is the time
+that cleanup gets.
+
+What is recorded here is what nothing else would stop: a child in a session of
+its own, or one owned by a worker thread the stop's exception never reaches.
+A `subprocess.run` on the main thread — the stateless agent prompts, git, gh —
+needs none of this. `run` kills its child on any exception, the `SystemExit`
+the stop handler raises included. By default none of those leave this process's
+group, so a supervisor's group kill reaches them too; `core.proc.run` with
+`kill_process_group=True` does start its child in a session of its own, and
+kills that group itself on the way out of any exception.
+
+Refusing new spawns matters as much as stopping the running ones. A thread
+pool's shutdown still runs the work queued behind the agents it was waiting
+on, so without the refusal a stopped review would start the next group's
+agent on its way out.
+
+Stdlib and `core.timeouts` only, like `core.proc`, which installs the handler
+that calls this.
+
 ### core/conventions.py
 
 Bridge to the repo's conventional-commit rules in lib/conventions.sh.
@@ -5507,6 +5559,7 @@ Usage:
   pr-rebase --abort                   # abort in-progress rebase
   pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref
   pr-rebase --fork-point <ref>        # replay only the commits after <ref>
+  pr-rebase --no-verify               # force-push without running the pre-push hook
   pr-rebase --repo-dir <path>         # specify worktree directory
 
 ### cli/registry.py

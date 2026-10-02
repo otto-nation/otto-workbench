@@ -58,9 +58,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import agent.usage
+import core.children
 import core.log
 import core.timeouts
-from core.proc import _kill_group
 from agent.backend import AgentInvocation, agent_env
 from agent.rule_prefix import (
     TEMP_PREFIX,
@@ -437,11 +437,13 @@ def _wait_for_exit(proc: subprocess.Popen, *, abandoned: bool) -> bool:
     its output and report the whole thing as a failure, which is a worse
     outcome than the wait it would be shortening.
 
-    The whole group is signalled, not the direct child: Pi leads a session of
-    its own and the tools it spawned outlive a kill aimed at it alone. A group
-    that will not reap even after SIGKILL is reported and then left: raising
-    would replace a failure the caller can act on with a traceback none of them
-    handles, and there is no further signal to try.
+    The stop is `core.children.terminate`: SIGTERM to the group Pi leads, a
+    grace period, then SIGKILL. TERM first because Pi stops the tool processes
+    it started detached only on its own SIGTERM, and those lead groups of their
+    own that no kill aimed at Pi's group reaches. A group that will not reap
+    even after SIGKILL is reported and then left: raising would replace a
+    failure the caller can act on with a traceback none of them handles, and
+    there is no further signal to try.
 
     False is that last case, and it is the whole reason this returns anything.
     A caller that reads the child's stderr afterwards blocks until the child
@@ -452,13 +454,15 @@ def _wait_for_exit(proc: subprocess.Popen, *, abandoned: bool) -> bool:
     if not abandoned:
         proc.wait(timeout=core.timeouts.UNBOUNDED)
         return True
+    # The LOCAL wait precedes `terminate` here, unlike the exception path
+    # (`_rpc_process`), which terminates at once: this run was abandoned on a
+    # fatal response with stdin already closed, so Pi may be exiting on its own
+    # and gets a short chance to do so cleanly. An exception leaving the block
+    # is a stop or a failure that wants the child gone now.
     try:
         proc.wait(timeout=core.timeouts.LOCAL)
     except subprocess.TimeoutExpired:
-        _kill_group(proc)
-        try:
-            proc.wait(timeout=core.timeouts.QUICK)
-        except subprocess.TimeoutExpired:
+        if not core.children.terminate(proc):
             core.log.warn(f"pi process group {proc.pid} did not reap after SIGKILL")
             return False
     return True
@@ -481,15 +485,17 @@ def _close_pipes(proc: subprocess.Popen) -> None:
 
 @contextmanager
 def _rpc_process(cmd: list[str], **spawn) -> Iterator[subprocess.Popen]:
-    """Start Pi in its own process session, killing the group on the way out.
+    """Start Pi in its own process session, stopping the group on the way out.
 
-    ``start_new_session`` is what makes the child a group leader, so that
-    `_wait_for_exit` can reach the tools it spawned rather than only Pi itself.
-    It also takes the child out of the terminal's foreground group, which means
-    a Ctrl-C no longer reaches it — the interrupt lands on this process alone
-    and would otherwise leave a detached agent running against the account with
-    nothing holding a handle to it. The kill on the way out is the other half
-    of that flag, and `core.proc._run_in_own_group` pairs the two the same way.
+    ``start_new_session`` is what makes the child a group leader, so that a
+    stop can reach the tools it spawned rather than only Pi itself. It also
+    takes the child out of the terminal's foreground group and out of any
+    supervisor's kill aimed at this process's group, so nothing but this
+    process can stop it. Two things do: the `except` below, for an exception
+    on the thread that owns the child, and `core.children.stop_all`, which the
+    entry point's stop handler calls for a signal — which lands on the main
+    thread, never on this one. `core.children.spawn` is what records the child
+    for the second, and refuses to start one once a stop is under way.
 
     The pipes are closed and the child reaped by hand rather than by entering
     Popen. Its __exit__ reaps with an unbounded `self.wait()` for anything but
@@ -499,14 +505,16 @@ def _rpc_process(cmd: list[str], **spawn) -> Iterator[subprocess.Popen]:
     success path does not come through here at all: `_wait_for_exit` has
     already waited, on the terms that path needs.
     """
-    proc = subprocess.Popen(cmd, start_new_session=True, **spawn)
+    proc = core.children.spawn(cmd, start_new_session=True, **spawn)
     try:
         yield proc
     except BaseException:
-        _kill_group(proc)
-        _wait_for_exit(proc, abandoned=True)
+        if not core.children.terminate(proc):
+            core.log.warn(f"pi process group {proc.pid} did not reap after SIGKILL")
         _close_pipes(proc)
         raise
+    finally:
+        core.children.forget(proc)
 
 
 def _get_stats_after_agent_end(proc: subprocess.Popen) -> dict:

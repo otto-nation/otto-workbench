@@ -301,13 +301,16 @@ class TestRefusalReachesTheCaller:
         proc = _RefusingProc(
             [_response("prompt", False, _AUTH_ERROR)], wait_hangs=True,
         )
+        proc.returncode = None
         killpg_calls = []
         monkeypatch.setattr(
             "core.proc.os.killpg",
             lambda pid, sig: killpg_calls.append((pid, sig)),
         )
         self._run(monkeypatch, tmp_path, proc)
-        assert killpg_calls == [(proc.pid, signal.SIGKILL)]
+        assert killpg_calls == [
+            (proc.pid, signal.SIGTERM), (proc.pid, signal.SIGKILL),
+        ]
         assert proc.waits[0] is not None, "the wait was unbounded"
 
     def test_a_wedged_pi_whose_group_will_not_reap_does_not_crash_the_caller(
@@ -377,6 +380,7 @@ class TestRefusalReachesTheCaller:
         proc = _ExitingProc(
             [_response("prompt", False, _AUTH_ERROR)], wait_hangs=True,
         )
+        proc.returncode = None
         monkeypatch.setattr("core.proc.os.killpg", lambda pid, sig: None)
 
         def _always_hangs(timeout=None):
@@ -386,9 +390,10 @@ class TestRefusalReachesTheCaller:
         proc.wait = _always_hangs
         code = self._run(monkeypatch, tmp_path, proc)
         assert code != 0
-        # Two bounded waits from _wait_for_exit (LOCAL, then QUICK after the
-        # kill). A third entry means Popen.__exit__ ran its own self.wait().
-        assert len(proc.waits) == 2, "the success path re-entered Popen as a context manager"
+        # Three bounded waits: LOCAL from _wait_for_exit, then the grace and
+        # QUICK waits of `core.children.terminate`. A fourth entry means
+        # Popen.__exit__ ran its own self.wait().
+        assert len(proc.waits) == 3, "the success path re-entered Popen as a context manager"
 
 
 class TestPiRunsInItsOwnGroup:

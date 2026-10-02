@@ -50,19 +50,18 @@ def row_for(item: Item) -> PlanRow:
     return PlanRow(item.repo, item.repo_dir, item.pr, "", item.branch, item.head_sha, False, {})
 
 
-def _decide(run: Run, item: Item, step: str, kind: DecisionKind, payload: dict,
-            emit: Callable[..., None] | None = None) -> Decision:
+def _decide(run: Run, item: Item, step: str, kind: DecisionKind, payload: dict, *,
+            emit: Callable[..., None]) -> Decision:
     d = Decision(id=secrets.token_hex(4), item=item.key, step=step, kind=kind, payload=payload,
                  created_at=batch.store.now_iso())
     run.decisions.append(d)
     item.status = ItemStatus.AWAITING_DECISION
-    if emit is not None:
-        emit("decision_created", run=run.id, item=item.key, decision=d.id,
-             step=d.step, payload=d.payload, decision_kind=d.kind.value)
+    emit("decision_created", run=run.id, item=item.key, decision=d.id,
+         step=d.step, payload=d.payload, decision_kind=d.kind.value)
     return d
 
 
-def _interrupt_running(run: Run, item: Item, emit: Callable[..., None] | None = None) -> bool:
+def _interrupt_running(run: Run, item: Item, *, emit: Callable[..., None]) -> bool:
     found = False
     for rec in item.steps:
         if rec.status is not StepStatus.RUNNING:
@@ -74,7 +73,7 @@ def _interrupt_running(run: Run, item: Item, emit: Callable[..., None] | None = 
     return found
 
 
-def mark_interrupted(run: Run, emit: Callable[..., None] | None = None) -> bool:
+def mark_interrupted(run: Run, *, emit: Callable[..., None]) -> bool:
     found = False
     for item in run.items:
         found = _interrupt_running(run, item, emit=emit) or found
@@ -114,29 +113,37 @@ class Scheduler:
 
     # ── requests and cancel ──────────────────────────────────────────────
 
+    def _apply_one(self, raw) -> None:
+        if isinstance(raw, dict) and raw.get("error") and "decision" not in raw:
+            self._emit("decision_resolved", run=self.run.id, decision="", action="",
+                       error=raw["error"])
+            return
+        try:
+            req = batch.resolve.Request.from_dict(raw)
+            item = self.run.item(self.run.decision(req.decision).item)
+            was_terminal = item.terminal
+            created = batch.resolve.apply(self.run, req, pr_bin=self.pr_bin)
+            self._emit("decision_resolved", run=self.run.id, decision=req.decision,
+                       action=req.action)
+            for d in created:
+                self._emit("decision_created", run=self.run.id, item=d.item,
+                           decision=d.id, step=d.step, payload=d.payload,
+                           decision_kind=d.kind.value)
+            if item.terminal and not was_terminal:
+                self._emit("item_finished", run=self.run.id, item=item.key,
+                           status=item.status.value)
+        except (batch.resolve.ResolveError, KeyError, TypeError) as exc:
+            decision = raw.get("decision", "") if isinstance(raw, dict) else ""
+            action = raw.get("action", "") if isinstance(raw, dict) else ""
+            self._emit("decision_resolved", run=self.run.id,
+                       decision=decision, action=action, error=str(exc))
+
     def _apply_requests(self) -> None:
         # ceiling: force and publish run inline, so a tick blocks reaping and events
         # while they run; upgrade to scheduled step attempts if a live UI needs step
         # logs during publish or inline runs exceed a minute.
         for raw in batch.store.take_requests(self.run.id):
-            try:
-                req = batch.resolve.Request.from_dict(raw)
-                item = self.run.item(self.run.decision(req.decision).item)
-                was_terminal = item.terminal
-                created = batch.resolve.apply(self.run, req, pr_bin=self.pr_bin)
-                self._emit("decision_resolved", run=self.run.id, decision=req.decision,
-                           action=req.action)
-                for d in created:
-                    self._emit("decision_created", run=self.run.id, item=d.item,
-                               decision=d.id, step=d.step, payload=d.payload,
-                               decision_kind=d.kind.value)
-                if item.terminal and not was_terminal:
-                    self._emit("item_finished", run=self.run.id, item=item.key,
-                               status=item.status.value)
-            except (batch.resolve.ResolveError, KeyError) as exc:
-                self._emit("decision_resolved", run=self.run.id,
-                           decision=raw.get("decision", ""), action=raw.get("action", ""),
-                           error=str(exc))
+            self._apply_one(raw)
 
     # ── reaping ──────────────────────────────────────────────────────────
 
@@ -307,27 +314,50 @@ class Scheduler:
             return RunStatus.WAITING
         return None
 
+    def _once(self) -> RunStatus | None:
+        self._apply_requests()
+        cancel = batch.store.cancel_requested(self.run.id)
+        if cancel.kill:
+            self._kill_live()
+        self._reap()
+        if not cancel.requested:
+            self._admit()
+        batch.store.save(self.run)
+        return self._blocked_status(cancel)
+
+    def _loop(self) -> RunStatus:
+        while True:
+            blocked = self._once()
+            if blocked is not None:
+                return self._settle(blocked)
+            self._sleep(self._tick)
+
+    def _flush(self, pending: list) -> None:
+        try:
+            for kind, fields in pending:
+                self._emit(kind, **fields)
+        except Exception:
+            pass
+
+    def _on_interrupt(self) -> None:
+        self._kill_live()
+        pending = []
+        if self.run.status in (RunStatus.DONE, RunStatus.WAITING, RunStatus.CANCELLED):
+            self._flush(pending)
+            return
+        mark_interrupted(self.run, emit=lambda kind, **fields: pending.append((kind, fields)))
+        self.run.status = RunStatus.INTERRUPTED
+        batch.store.save(self.run)
+        pending.append(("run_finished", {
+            "run": self.run.id, "status": RunStatus.INTERRUPTED.value,
+            "open_decisions": len(self.run.open_decisions()),
+        }))
+        self._flush(pending)
+
     def run_until_blocked(self) -> RunStatus:
         self.run.status = RunStatus.RUNNING
         try:
-            while True:
-                self._apply_requests()
-                cancel = batch.store.cancel_requested(self.run.id)
-                if cancel.kill:
-                    self._kill_live()
-                self._reap()
-                if not cancel.requested:
-                    self._admit()
-                batch.store.save(self.run)
-                blocked = self._blocked_status(cancel)
-                if blocked is not None:
-                    return self._settle(blocked)
-                self._sleep(self._tick)
+            return self._loop()
         except BaseException:
-            self._kill_live()
-            mark_interrupted(self.run, emit=self._emit)
-            self.run.status = RunStatus.INTERRUPTED
-            batch.store.save(self.run)
-            self._emit("run_finished", run=self.run.id, status=RunStatus.INTERRUPTED.value,
-                       open_decisions=len(self.run.open_decisions()))
+            self._on_interrupt()
             raise

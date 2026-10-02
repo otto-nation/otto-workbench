@@ -67,6 +67,23 @@ def test_requests_are_taken_in_order_and_once():
     assert batch.store.has_requests(RID) is False
 
 
+def test_take_requests_rejects_malformed_files_without_raising():
+    batch.store.save(_run())
+    reqs = batch.store.run_dir(RID) / "requests"
+    reqs.mkdir(parents=True, exist_ok=True)
+    (reqs / "20261001T000000000000-aa.json").write_text("not json")
+    (reqs / "20261001T000000000001-bb.json").write_text("[]")
+    batch.store.write_request(RID, {"decision": "d1", "action": "retry"})
+    taken = batch.store.take_requests(RID)
+    errors = [r for r in taken if r.get("error")]
+    goods = [r for r in taken if not r.get("error")]
+    assert len(errors) == 2
+    assert [g["decision"] for g in goods] == ["d1"]
+    rejected = sorted((reqs / "rejected").glob("*.json"))
+    assert len(rejected) == 2
+    assert not list(reqs.glob("*.json"))
+
+
 def test_cancel_flag_records_kill():
     batch.store.save(_run())
     assert batch.store.cancel_requested(RID).requested is False

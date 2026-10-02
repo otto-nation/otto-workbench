@@ -221,7 +221,11 @@ def test_new_run_honours_explicit_selection():
 def test_mark_interrupted_turns_running_steps_into_decisions():
     run = batch.scheduler.new_run([row(1)], steps=list(batch.model.STEP_ORDER), selected=None, pool=1, auto_publish=[])
     run.items[0].step(batch.model.Step.REBASE).status = batch.model.StepStatus.RUNNING
-    assert batch.scheduler.mark_interrupted(run) is True
+    events = []
+    assert batch.scheduler.mark_interrupted(
+        run, emit=lambda kind, **fields: events.append((kind, fields))) is True
+    assert events and events[0][0] == "decision_created"
+    assert events[0][1]["decision_kind"] == "interrupted"
     assert run.items[0].step(batch.model.Step.REBASE).status is batch.model.StepStatus.INTERRUPTED
     assert run.decisions[0].kind is batch.model.DecisionKind.INTERRUPTED
 
@@ -268,6 +272,23 @@ def test_plan_error_fails_one_item_and_others_progress():
     assert h.run.item("o/r#1").status is batch.model.ItemStatus.AWAITING_DECISION
     assert any(a[-1] == "/wt/b2" for a in h.spawned)
     assert not any(a[-1] == "/wt/b1" for a in h.spawned)
+
+
+def test_unreadable_request_file_does_not_crash_the_run():
+    h = Harness([row(1, {batch.model.Step.REBASE: NEED, batch.model.Step.COMMENTS: NO, batch.model.Step.REVIEW: NO})],
+                codes={("rebase", "/wt/b1"): 3})
+    assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
+    d = h.run.open_decisions()[0]
+    batch.store.save(h.run)
+    reqs = batch.store.run_dir(h.run.id) / "requests"
+    reqs.mkdir(parents=True, exist_ok=True)
+    (reqs / "20261001T000000000000-bad.json").write_text("not json")
+    batch.store.write_request(h.run.id, {"decision": d.id, "action": "retry"})
+    h.codes.clear()
+    assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
+    assert [a[1] for a in h.spawned] == ["rebase", "rebase"]
+    errors = [f for k, f in h.events if k == "decision_resolved" and "error" in f]
+    assert errors
 
 
 def test_malformed_request_is_reported_and_the_rest_apply():
@@ -357,6 +378,52 @@ def test_drop_via_resolve_emits_item_finished():
     finished = [f for k, f in h.events if k == "item_finished"]
     assert any(f["item"] == "o/r#1" and f["status"] == "dropped" for f in finished)
     assert h.run.items[0].status is batch.model.ItemStatus.DROPPED
+
+
+def test_interrupt_emit_failure_still_saves_and_reraises_original():
+    h = Harness([row(1)])
+    real = h.sched._emit
+
+    def boom(kind, **fields):
+        if kind == "run_finished" and fields.get("status") == "interrupted":
+            raise RuntimeError("emit failed")
+        real(kind, **fields)
+
+    h.sched._emit = boom
+    h.sched._sleep = lambda _: (_ for _ in ()).throw(KeyboardInterrupt())
+    with pytest.raises(KeyboardInterrupt):
+        h.sched.run_until_blocked()
+    saved = batch.store.load(h.run.id)
+    assert saved.status is batch.model.RunStatus.INTERRUPTED
+    assert any(d.kind is batch.model.DecisionKind.INTERRUPTED for d in saved.decisions)
+
+
+def test_settle_emit_failure_does_not_mark_interrupted():
+    h = Harness([row(1)], worktrees=lambda d, b: WorktreeResult("/wt/b1", True, ""))
+    real = h.sched._emit
+
+    def boom(kind, **fields):
+        if kind == "run_waiting":
+            raise RuntimeError("emit failed")
+        real(kind, **fields)
+
+    h.sched._emit = boom
+    with pytest.raises(RuntimeError, match="emit failed"):
+        h.sched.run_until_blocked()
+    assert h.run.status is batch.model.RunStatus.WAITING
+    saved = batch.store.load(h.run.id)
+    assert saved.status is batch.model.RunStatus.WAITING
+    assert not any(d.kind is batch.model.DecisionKind.INTERRUPTED for d in saved.decisions)
+
+
+def test_non_dict_request_is_reported_and_does_not_crash(monkeypatch):
+    h = Harness([row(1)], worktrees=lambda d, b: WorktreeResult("/wt/b1", True, ""))
+    h.sched.run_until_blocked()
+    monkeypatch.setattr(batch.store, "take_requests", lambda run_id: [["not", "a", "dict"]])
+    monkeypatch.setattr(batch.store, "has_requests", lambda run_id: False)
+    assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
+    errors = [f for k, f in h.events if k == "decision_resolved" and "error" in f]
+    assert errors
 
 
 def test_does_not_settle_while_requests_are_pending(monkeypatch):

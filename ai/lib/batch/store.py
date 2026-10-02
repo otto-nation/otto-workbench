@@ -104,13 +104,29 @@ def has_requests(run_id: str) -> bool:
     return reqs.is_dir() and any(reqs.glob("*.json"))
 
 
+def _reject_request(path: Path) -> None:
+    dest_dir = path.parent / "rejected"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    path.replace(dest_dir / path.name)
+
+
 def take_requests(run_id: str) -> list[dict]:
     reqs = run_dir(run_id) / "requests"
     if not reqs.is_dir():
         return []
     taken = []
     for path in sorted(reqs.glob("*.json")):
-        taken.append(json.loads(path.read_text()))
+        try:
+            raw = json.loads(path.read_text())
+        except json.JSONDecodeError as exc:
+            _reject_request(path)
+            taken.append({"error": f"malformed request {path.name}: {exc}"})
+            continue
+        if not isinstance(raw, dict):
+            _reject_request(path)
+            taken.append({"error": f"malformed request {path.name}: not an object"})
+            continue
+        taken.append(raw)
         path.unlink()
     return taken
 

@@ -242,7 +242,7 @@ def _run_main(cmd_start_rc: int, *flags: str,
     MagicMock, and `main()` now hands it to a lock that creates the directory —
     which, left real, writes a `MagicMock/mock.target_dir/<id>/` tree into
     whatever directory the suite happens to run from. What main() does with the
-    lock is pinned in run_lock_test and pr_cli_test against real paths.
+    lock is pinned in run_lock_test and the pr_cli suites against real paths.
     """
     fake_ctx = mock.MagicMock()
     fake_ctx.worktree_root = Path("/fake")

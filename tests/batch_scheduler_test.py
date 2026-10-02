@@ -104,6 +104,17 @@ def test_auto_publish_run_finishes_done():
     assert "run_finished" in h.kinds()
 
 
+def test_auto_publish_skips_when_an_earlier_step_is_drafted():
+    h = Harness([row(1)], auto_publish=[batch.model.Step.COMMENTS, batch.model.Step.REVIEW])
+    h.sched.run_until_blocked()
+    comments = next(a for a in h.spawned if a[1] == "comments")
+    review = next(a for a in h.spawned if a[1] == "review")
+    assert "--finish" not in comments and "--post" not in comments
+    assert "--push" not in review
+    assert h.run.items[0].step(batch.model.Step.REBASE).drafted
+    assert any(d.kind is batch.model.DecisionKind.PUBLISH for d in h.run.decisions)
+
+
 def test_pool_limit_is_never_exceeded():
     h = Harness([row(n) for n in range(1, 6)], pool=2)
     h.sched.run_until_blocked()

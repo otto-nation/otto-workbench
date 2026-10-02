@@ -141,7 +141,7 @@ class Scheduler:
         result = batch.outcomes.classify(rec.step, code, live.proc.stdout(), item=item,
                                    log_tail=list(live.tail))
         rec.exit_code, rec.ended_at, rec.status = code, batch.store.now_iso(), result.status
-        rec.drafted = code == 0 and (rec.step not in self.run.auto_publish
+        rec.drafted = code == 0 and (not self._should_publish(item, rec.step)
                                      or result.status is StepStatus.NEEDS_DECISION)
         if rec.step is not Step.REVIEW and self._head(item.worktree) != live.head_before:
             item.head_moved = True
@@ -235,12 +235,18 @@ class Scheduler:
                 continue
             self._start(item, rec)
 
+    def _should_publish(self, item: Item, step: Step) -> bool:
+        if step not in self.run.auto_publish:
+            return False
+        earlier = STEP_ORDER[:STEP_ORDER.index(step)]
+        return not any(item.has(s) and item.step(s).drafted for s in earlier)
+
     def _start(self, item: Item, rec: StepRecord) -> None:
         attempt = sum(1 for _ in batch.store.logs_dir(self.run.id).glob(
             f"{item.pr}-{rec.step.value}-*"))
         log = batch.store.logs_dir(self.run.id) / f"{item.pr}-{rec.step.value}-{attempt}.log"
         argv = step_argv(rec.step, self.pr_bin, item.worktree,
-                         publish=rec.step in self.run.auto_publish)
+                         publish=self._should_publish(item, rec.step))
         # Sample HEAD before spawn: the harness mutates it inside `_spawn`.
         head_before = self._head(item.worktree)
         proc = self._spawn(argv, log_path=log, trail_root=self.run.trail_root)

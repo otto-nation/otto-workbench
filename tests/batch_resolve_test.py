@@ -117,6 +117,29 @@ def test_drop_pr_drops_the_item():
     assert run.items[0].status is batch.model.ItemStatus.DROPPED
 
 
+WT = ["--repo-dir", "/wt"]
+PUSH_ONLY = ["pr", "rebase", "--push-only", *WT]
+GIT_PUSH = ["git-push", "/wt"]
+COMMENTS_FINISH = ["pr", "comments", "--finish", "--post", *WT]
+
+
+@pytest.mark.parametrize("drafted,want", [
+    ((), []),
+    (("rebase",), [PUSH_ONLY]),
+    (("comments",), [GIT_PUSH, COMMENTS_FINISH]),
+    (("review",), [GIT_PUSH]),
+    (("rebase", "comments"), [PUSH_ONLY, COMMENTS_FINISH]),
+    (("rebase", "review"), [PUSH_ONLY]),
+    (("comments", "review"), [GIT_PUSH, COMMENTS_FINISH]),
+    (("rebase", "comments", "review"), [PUSH_ONLY, COMMENTS_FINISH]),
+])
+def test_publish_commands_for_every_drafted_combination(drafted, want):
+    it = _run().items[0]
+    for name in drafted:
+        it.step(batch.model.Step(name)).drafted = True
+    assert batch.resolve.publish_commands(it, "pr") == want
+
+
 def test_publish_commands_order_and_tracking():
     it = _run().items[0]
     it.step(batch.model.Step.REBASE).drafted = True
@@ -127,12 +150,6 @@ def test_publish_commands_order_and_tracking():
         ["pr", "comments", "--finish", "--post", "--track", "T1", "--track", "T2",
          "--repo-dir", "/wt"],
     ]
-
-
-def test_publish_after_review_only_pushes_plainly():
-    it = _run().items[0]
-    it.step(batch.model.Step.REVIEW).drafted = True
-    assert batch.resolve.publish_commands(it, "pr") == [["git-push", "/wt"]]
 
 
 def test_failed_publish_leaves_a_failed_decision():

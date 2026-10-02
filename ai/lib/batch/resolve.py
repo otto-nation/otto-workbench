@@ -81,11 +81,11 @@ def publish_commands(item: Item, pr_bin: str) -> list[list[str]]:
     cmds = []
     if Step.REBASE in drafted:
         cmds.append([pr_bin, "rebase", "--push-only"] + wt)
+    elif Step.REVIEW in drafted or Step.COMMENTS in drafted:
+        cmds.append([GIT_PUSH, item.worktree])
     if Step.COMMENTS in drafted or item.track:
         track = [arg for t in item.track for arg in ("--track", t)]
         cmds.append([pr_bin, "comments", "--finish", "--post", *track] + wt)
-    if not cmds and Step.REVIEW in drafted:
-        cmds.append([GIT_PUSH, item.worktree])
     return cmds
 
 

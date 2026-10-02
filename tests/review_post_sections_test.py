@@ -9,6 +9,10 @@ LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+# The module the `rp` fixture returns, imported so bin/local/select-pytest maps
+# this suite to the code it reaches through `rp`.
+import cli.review_post  # noqa: E402,F401
+
 
 class TestReviewSections:
     REVIEW_TEXT = (

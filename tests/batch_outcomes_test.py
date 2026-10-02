@@ -1,6 +1,7 @@
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -96,13 +97,8 @@ def test_comment_items_reads_only_owed_outcomes_and_marks_synthetic_ids(monkeypa
              pr.fix.ItemOutcome(id="PRRT_2", outcome=pr.fix.FixOutcome.FIXED),
              pr.fix.ItemOutcome(id="ic-5-0", outcome=pr.fix.FixOutcome.DEFERRED)]
 
-    class State:
-        class fix:
-            class fix:
-                pass
-
-    State.fix.fix.items = items
-    monkeypatch.setattr(batch.outcomes, "_load_pr_state", lambda item: State)
+    state = SimpleNamespace(fix=SimpleNamespace(fix=SimpleNamespace(items=items)))
+    monkeypatch.setattr(batch.outcomes, "_load_pr_state", lambda item: state)
     assert [(i["id"], i["replyable"]) for i in batch.outcomes.comment_items(ITEM)] == [
         ("PRRT_1", True), ("ic-5-0", False)]
 

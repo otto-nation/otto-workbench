@@ -12,6 +12,7 @@ import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
 import cli.pr  # noqa: E402
 import core.run_lock  # noqa: E402
+import core.tool_parser  # noqa: E402
 import cli.pr_batch  # noqa: E402
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
 from cli.registry import COMMANDS  # noqa: E402
@@ -33,9 +34,14 @@ def test_batch_is_registered_and_takes_no_target():
 
 
 def test_no_batch_flag_is_a_prefix_of_a_global_flag():
+    # core.tool_parser.subparsers() is the documented, repo-wide way to read a
+    # built parser's subcommands back off of it (see its docstring); walking
+    # each subparser's own `_actions` matches the precedent `value_taking_options`
+    # sets in the same module, rather than reaching further into argparse's
+    # private layout (`_subparsers._group_actions[0]`) the way this test used to.
     parser = cli.pr_batch.build_parser()
-    flags = {opt for action in parser._subparsers._group_actions[0].choices.values()
-             for a in action._actions for opt in a.option_strings if opt.startswith("--")}
+    flags = {opt for sub in core.tool_parser.subparsers(parser).values()
+             for a in sub._actions for opt in a.option_strings if opt.startswith("--")}
     clashes = {f for f in flags for g in GLOBAL_FLAGS if g.startswith(f)}
     assert clashes == set()
 
@@ -153,6 +159,22 @@ def test_cancel_does_not_overwrite_a_terminal_status(capsys):
     batch.store.save(run)
     assert _main(["batch", "cancel", run.id]) == 1
     assert "done" in capsys.readouterr().err
+    assert batch.store.load(run.id).status is batch.model.RunStatus.DONE
+
+
+def test_cancel_does_not_clobber_a_run_that_finished_during_the_request(monkeypatch):
+    run = _saved_run_with_decision()
+
+    def is_held(_path):
+        # Simulate the scheduler finishing and releasing its lock in the window
+        # between the initial load and this check, writing its real outcome.
+        finished = batch.store.load(run.id)
+        finished.status = batch.model.RunStatus.DONE
+        batch.store.save(finished)
+        return False
+
+    monkeypatch.setattr(core.run_lock, "is_held", is_held)
+    assert _main(["batch", "cancel", run.id]) == 0
     assert batch.store.load(run.id).status is batch.model.RunStatus.DONE
 
 

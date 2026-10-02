@@ -139,8 +139,14 @@ def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> 
             created.append(_fail(run, item, "publish"))
     elif action == "retry" and step:
         item.step(step).status = StepStatus.PENDING
-    elif action == "skip-step" and step:
-        item.step(step).status = StepStatus.SKIPPED
+    elif action == "skip-step":
+        if step:
+            item.step(step).status = StepStatus.SKIPPED
+        else:
+            # decision.step is "worktree" or "publish" — there is no real Step to
+            # mark skipped, and re-queuing would just redo the same operation, so
+            # skipping it means giving up on the item like drop-pr does.
+            item.status = ItemStatus.DROPPED
     elif action == "abort":
         if ok:
             item.step(Step.REBASE).status = StepStatus.SKIPPED
@@ -170,12 +176,17 @@ def apply(run: Run, request: Request, *, pr_bin: str,
     item = run.item(decision.item)
     _validate(decision, request)
     run_cmd = default_runner if runner is None else runner
-    ok = True
-    for argv in command_for(decision, item, request, pr_bin):
-        if run_cmd(argv) != 0:
-            ok = False
-            if decision.kind is DecisionKind.COMMENT_ITEM:
-                raise ResolveError(f"{' '.join(argv)} failed; the decision is still open")
-            break
+    ok = _run_commands(decision, item, request, pr_bin, run_cmd)
     decision.resolution, decision.resolved_at = request.action, now_iso()
     return _effect(run, item, decision, request.action, ok)
+
+
+def _run_commands(decision: Decision, item: Item, request: Request, pr_bin: str,
+                   run_cmd: Callable[[list[str]], int]) -> bool:
+    for argv in command_for(decision, item, request, pr_bin):
+        if run_cmd(argv) == 0:
+            continue
+        if decision.kind is DecisionKind.COMMENT_ITEM:
+            raise ResolveError(f"{' '.join(argv)} failed; the decision is still open")
+        return False
+    return True

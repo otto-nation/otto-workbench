@@ -107,7 +107,14 @@ def decide(sample: HostSample, *, running: int, limit: int, estimate: int,
         if running < max(1, cfg.pool_default):
             return Verdict(True, "no host metrics; within batch.pool_default")
         return Verdict(False, f"no host metrics; at batch.pool_default ({cfg.pool_default})")
-    spare = sample.mem_available - parse_size(cfg.mem_reserve)
+    try:
+        reserve = parse_size(cfg.mem_reserve)
+    except ValueError:
+        # A malformed batch.mem_reserve must not crash the scheduler mid-run;
+        # refuse admission instead so the next-start gate stays safe and the
+        # bad config is visible as a wait reason rather than a traceback.
+        return Verdict(False, f"batch.mem_reserve is not a size: {cfg.mem_reserve!r}")
+    spare = sample.mem_available - reserve
     if spare < estimate:
         return Verdict(False, f"waiting for memory: {max(spare, 0) / GB:.1f} of "
                               f"{estimate / GB:.1f} GB")

@@ -56,9 +56,13 @@ class Harness:
 
     def _spawn(self, argv, *, log_path, trail_root):
         h = self
+        # One past the number of processes spawned so far, not a constant: a
+        # test asserting on which pid got killed needs spawns to be
+        # distinguishable from each other.
+        next_pid = len(self.spawned) + 1
 
         class Proc:
-            pid = 1
+            pid = next_pid
             polls = 0
 
             def poll(self):
@@ -188,7 +192,11 @@ def test_admission_wait_is_reported_and_the_floor_still_progresses():
     assert h.max_live == 1
 
 
-def test_resume_applies_queued_requests():
+def test_mid_loop_drains_a_queued_request_written_to_disk():
+    # Not a process-restart test: `h.sched`/`h.run` stay the same in-memory
+    # objects across both run_until_blocked() calls below. What this checks is
+    # that a request written to the store mid-run gets picked up and applied
+    # without a fresh Scheduler being constructed.
     h = Harness([row(1, {batch.model.Step.REBASE: NEED, batch.model.Step.COMMENTS: NO, batch.model.Step.REVIEW: NO})],
                 codes={("rebase", "/wt/b1"): 3})
     assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
@@ -359,7 +367,7 @@ def test_interrupt_kills_live_children_and_marks_the_run():
     h.sched._sleep = lambda _: (_ for _ in ()).throw(KeyboardInterrupt())
     with pytest.raises(KeyboardInterrupt):
         h.sched.run_until_blocked()
-    assert killed
+    assert killed == [1]
     assert h.run.status is batch.model.RunStatus.INTERRUPTED
     saved = batch.store.load(h.run.id)
     assert saved.status is batch.model.RunStatus.INTERRUPTED

@@ -175,7 +175,11 @@ def _graphql(query: str, variables: dict) -> dict:
 
 
 def build_plan(repo_dirs: list[str]) -> Plan:
-    by_slug = {_repo_slug(d): d for d in repo_dirs}
+    slugs = [_repo_slug(d) for d in repo_dirs]
+    by_slug = dict(zip(slugs, repo_dirs))
+    if len(by_slug) != len(repo_dirs):
+        dupes = sorted({s for s in slugs if slugs.count(s) > 1})
+        raise PlanError("--checkout names the same repo more than once: " + ", ".join(dupes))
     data = _graphql(_SEARCH, {"q": search_query(sorted(by_slug))})
     return Plan(viewer=(data.get("viewer") or {}).get("login", ""),
                 rows=rows_from_search(data, by_slug))

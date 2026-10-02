@@ -86,6 +86,12 @@ def test_build_plan_raises_on_graphql_failure(monkeypatch):
         batch.plan.build_plan(["/repos/a"])
 
 
+def test_build_plan_raises_when_two_checkouts_name_the_same_repo(monkeypatch):
+    monkeypatch.setattr(batch.plan, "_repo_slug", lambda d: "o/a")
+    with pytest.raises(batch.plan.PlanError, match="o/a"):
+        batch.plan.build_plan(["/repos/a", "/repos/a-worktree-2"])
+
+
 def test_replan_returns_none_for_a_closed_pr(monkeypatch):
     monkeypatch.setattr(batch.plan, "_graphql", lambda q, v: {
         "repository": {"pullRequest": {"state": "MERGED"}}})

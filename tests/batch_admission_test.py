@@ -94,11 +94,19 @@ def test_floor_admits_one_even_on_a_busy_host():
 
 
 def test_without_metrics_uses_the_static_pool_default():
+    # running=0 always admits before sample.supports_admission is even read
+    # (decide's own early return), so only running=1 reaches the pool_default
+    # branch this test is named for.
     s = batch.admission.HostSample(None, None, None)
     cfg = BatchConfig(pool_max=3, pool_default=1)
-    assert batch.admission.decide(s, running=0, limit=3, estimate=1, cfg=cfg).admit
     v = batch.admission.decide(s, running=1, limit=3, estimate=1, cfg=cfg)
     assert not v.admit and "pool_default" in v.reason
+
+
+def test_refuses_without_crashing_on_a_malformed_mem_reserve():
+    cfg = BatchConfig(pool_max=3, mem_reserve="2 gigs", cpu_pressure_max=30.0, mem_pressure_max=5.0)
+    v = batch.admission.decide(HEALTHY, running=1, limit=3, estimate=1, cfg=cfg)
+    assert not v.admit and "mem_reserve" in v.reason
 
 
 def test_estimates_start_at_defaults_and_keep_the_running_max():

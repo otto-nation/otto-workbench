@@ -3,7 +3,7 @@ title: AI Automation
 description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 ---
 
-<!-- doc-budget: 545 -->
+<!-- doc-budget: 548 -->
 
 # AI Automation
 

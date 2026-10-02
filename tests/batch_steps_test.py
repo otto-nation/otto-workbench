@@ -61,6 +61,13 @@ def test_streams_stderr_logs_it_and_captures_stdout(tmp_path):
 
 
 def test_child_has_no_stdin_no_tty_and_inherits_the_trail_root(tmp_path):
+    # The has-tty probe is weak under a non-interactive test runner (CI,
+    # `pytest -n`, any session with no controlling terminal): opening
+    # /dev/tty from the child fails there regardless of whether
+    # `StepProcess` detaches it, so this assertion can pass even if the
+    # detaching regresses. `test_start_detaches_the_child_from_a_controlling_terminal`
+    # below pins the actual Popen call instead, and is the one that would
+    # catch that regression.
     exe = _script(tmp_path,
                   "read x && echo got-stdin >&2\n"
                   "( : > /dev/tty ) 2>/dev/null && echo has-tty >&2\n"
@@ -72,9 +79,50 @@ def test_child_has_no_stdin_no_tty_and_inherits_the_trail_root(tmp_path):
     assert "root=root-1" in lines
 
 
+def test_start_detaches_the_child_from_a_controlling_terminal(tmp_path, monkeypatch):
+    """Pins the Popen call itself, independent of whether this environment has a tty.
+
+    The behavioural probe above can't fail under a non-interactive runner even
+    if `start_new_session` is dropped, so this asserts on the kwargs instead:
+    a regression here is caught no matter what controlling terminal the test
+    process itself has.
+    """
+    captured = {}
+    real_popen = subprocess.Popen
+
+    def recording_popen(*args, **kwargs):
+        captured.update(kwargs)
+        return real_popen(*args, **kwargs)
+
+    monkeypatch.setattr(batch.steps.subprocess, "Popen", recording_popen)
+    exe = _script(tmp_path, "true\n")
+    proc = batch.steps.StepProcess.start([exe], log_path=tmp_path / "s.log", trail_root="root-1")
+    _wait(proc)
+    assert captured["start_new_session"] is True
+    assert captured["stdin"] == subprocess.DEVNULL
+
+
 def test_kill_terminates_the_process_group(tmp_path):
     exe = _script(tmp_path, "sleep 30 &\nwait\n")
     proc = batch.steps.StepProcess.start([exe], log_path=tmp_path / "s.log", trail_root="r")
+    proc.kill()
+    assert _wait(proc, 5) is not None
+
+
+def test_kill_escalates_to_sigkill_when_the_child_ignores_sigterm(tmp_path, monkeypatch):
+    marker = tmp_path / "trapped"
+    exe = _script(tmp_path, f"trap '' TERM\ntouch {marker}\nexec sleep 30\n")
+    proc = batch.steps.StepProcess.start([exe], log_path=tmp_path / "s.log", trail_root="r")
+    # Wait for the child to actually install its trap before sending SIGTERM,
+    # rather than a fixed sleep that can race under a loaded machine.
+    end = time.time() + 5
+    while not marker.exists() and time.time() < end:
+        time.sleep(0.01)
+    assert marker.exists(), "child never installed its trap"
+    monkeypatch.setattr(batch.steps.StepProcess, "KILL_GRACE_S", 0)
+    proc.kill()
+    time.sleep(0.2)
+    assert proc.poll() is None  # SIGTERM alone is ignored
     proc.kill()
     assert _wait(proc, 5) is not None
 

@@ -59,7 +59,7 @@ def test_the_delegating_commands_name_their_script():
     """Which commands are backed by a script, pinned as literals.
 
     Read off the registry the spec would be asserting against, this would pass
-    for any partition of the nine — including one that quietly stopped
+    for any partition of the ten — including one that quietly stopped
     delegating `comments` and ran it in-process.
     """
     backed = {name: spec.script for name, spec in COMMANDS.items() if spec.script}
@@ -139,14 +139,14 @@ def test_every_handler_path_resolves_to_a_callable():
 def test_the_registry_is_the_only_list_of_subcommands():
     """Every subparser `pr` builds comes from a spec, and every spec builds one.
 
-    The set assertion above hardcodes the nine names and never looks at the
+    The set assertion above hardcodes the ten names and never looks at the
     parser, so a subcommand added directly to `_build_parser` would pass it.
     """
     import cli.pr
     assert set(core.tool_parser.subparsers(cli.pr._build_parser())) == set(COMMANDS)
 
 
-# The order the nine are declared in, spelled out rather than read off
+# The order the ten are declared in, spelled out rather than read off
 # `_SPECS`. Reading it off the tuple makes every assertion below a tautology:
 # the order tracks whatever the registry says, which is the one thing the
 # reordering would change.
@@ -191,8 +191,8 @@ def test_a_delegate_reports_its_own_output_contract(command):
     """`pr ci` answers with CIDomain, which `pr --tool-schema` cannot carry.
 
     The union schema declares no `output_schema` at all: one subcommand
-    prints a document and eight print prose, so one declaration for all nine
-    made the MCP server reject the eight. This is the per-command answer, and
+    prints a document and nine print prose, so one declaration for all ten
+    made the MCP server reject the nine. This is the per-command answer, and
     it is what lets a skill cite `pr ci` rather than `ai/bin/ci-check`.
     """
     doc = cli.schema.subcommand_schema(command)

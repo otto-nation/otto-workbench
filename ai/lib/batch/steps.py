@@ -1,4 +1,4 @@
-"""The child `pr` processes a batch runs, and the worktrees they run in.
+"""The child `pr` processes a batch run spawns, and the worktrees they run in.
 
 Every step is its own process so concurrent steps share no interpreter state,
 and each gets a new session with stdin closed: no prompt in any child can
@@ -14,6 +14,7 @@ import queue
 import signal
 import subprocess
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -54,10 +55,16 @@ def ensure_worktree(repo_dir: str, branch: str) -> WorktreeResult:
 
 
 class StepProcess:
+    # How long a SIGTERM is given to land before a repeated kill() escalates
+    # to SIGKILL. A class attribute so a test can shrink it instead of
+    # waiting out the real grace window.
+    KILL_GRACE_S = core.timeouts.QUICK
+
     def __init__(self, popen: subprocess.Popen, log_path: Path):
         self._popen = popen
         self._lines: queue.Queue[str] = queue.Queue()
         self._out: list[str] = []
+        self._kill_sent_at: float | None = None
         self.pid = popen.pid
         self._readers = [
             threading.Thread(target=self._read_err, args=(log_path,), daemon=True),
@@ -105,7 +112,22 @@ class StepProcess:
         return "".join(self._out)
 
     def kill(self) -> None:
+        """Signal the process group, escalating to SIGKILL once TERM has had its chance.
+
+        Cancel and interrupt both poll by calling this again every tick while the
+        process stays alive, so a first call sends SIGTERM and starts the grace
+        window; a later call past ``KILL_GRACE_S`` sends SIGKILL instead, so a
+        child that ignores or is slow to act on TERM still ends.
+        """
+        now = time.monotonic()
+        if self._kill_sent_at is None:
+            self._kill_sent_at = now
+            sig = signal.SIGTERM
+        elif now - self._kill_sent_at >= self.KILL_GRACE_S:
+            sig = signal.SIGKILL
+        else:
+            sig = signal.SIGTERM
         try:
-            os.killpg(self._popen.pid, signal.SIGTERM)
+            os.killpg(self._popen.pid, sig)
         except ProcessLookupError:
             pass

@@ -259,8 +259,13 @@ def _cmd_cancel(args) -> int:
         return _err(f"run {run_id} is {run.status.value}")
     batch.store.request_cancel(run_id, kill=args.kill)
     if not core.run_lock.is_held(batch.store.run_dir(run_id)):
-        run.status = RunStatus.CANCELLED
-        batch.store.save(run)
+        # Reload: the scheduler may have finished and saved its own outcome in
+        # the window since `run` was loaded above. Stamping that stale copy
+        # CANCELLED here would clobber a completed run's real result.
+        run = batch.store.load(run_id)
+        if run.status not in (RunStatus.DONE, RunStatus.CANCELLED):
+            run.status = RunStatus.CANCELLED
+            batch.store.save(run)
     core.report.emit_json({"cancelled": True, "run": run_id})
     return EXIT_OK
 

@@ -117,6 +117,18 @@ def test_drop_pr_drops_the_item():
     assert run.items[0].status is batch.model.ItemStatus.DROPPED
 
 
+def test_skip_step_on_a_worktree_failure_drops_the_item():
+    run = _run(_d(batch.model.DecisionKind.FAILED, "worktree", {"reason": "error"}))
+    batch.resolve.apply(run, batch.resolve.Request("d1", "skip-step"), pr_bin="pr", runner=Recorder())
+    assert run.items[0].status is batch.model.ItemStatus.DROPPED
+
+
+def test_skip_step_on_a_publish_failure_drops_the_item():
+    run = _run(_d(batch.model.DecisionKind.FAILED, "publish", {"reason": "error"}))
+    batch.resolve.apply(run, batch.resolve.Request("d1", "skip-step"), pr_bin="pr", runner=Recorder())
+    assert run.items[0].status is batch.model.ItemStatus.DROPPED
+
+
 WT = ["--repo-dir", "/wt"]
 PUSH_ONLY = ["pr", "rebase", "--push-only", *WT]
 GIT_PUSH = ["git-push", "/wt"]
@@ -190,3 +202,6 @@ def test_failed_abort_leaves_a_failed_decision_and_does_not_skip_rebase():
     new = [d for d in run.open_decisions() if d.id != "d1"]
     assert [(d.kind, d.step) for d in new] == [(batch.model.DecisionKind.FAILED, "rebase")]
     assert run.items[0].step(batch.model.Step.REBASE).status is batch.model.StepStatus.NEEDS_DECISION
+    # apply() resolves the triggering decision even though the command failed;
+    # the new FAILED decision above is where the operator acts next.
+    assert run.decision("d1").resolution == "abort" and not run.decision("d1").open

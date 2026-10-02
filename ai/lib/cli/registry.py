@@ -15,7 +15,7 @@ it is a user-visible change, not a cosmetic one.
 
 `handler` is a `"<module>:<attr>"` string resolved by importlib at dispatch,
 not a callable: an eager import would pull every delegate into `pr --help`.
-All nine name an importable function, resolved and called through
+All ten name an importable function, resolved and called through
 `core.publishing.call_entry_point` — by `cli.dispatch` for most of them, and
 directly by `ai/bin/pr`'s `cmd_review`/`cmd_comments` and by
 `cli.review_modes`'s `post`/`repair` for the rest.
@@ -51,7 +51,7 @@ class CommandSpec:
     * ``handler`` — ``"<module>:<attr>"`` naming the in-process callable, or
       None when the wrapper is still binary-local. A string, not a callable:
       dispatch imports it at call time so `pr --help` does not. Defaulted to
-      None because two of the nine cannot honestly point anywhere yet;
+      None because two of the ten cannot honestly point anywhere yet;
       `review` and `comments` set that explicitly, and a test pins every
       value as a literal so a silent default on a new command fails the
       build rather than shipping as None.

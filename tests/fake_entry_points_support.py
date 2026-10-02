@@ -7,7 +7,7 @@ patch. These are the endings that actually occur across `ai/lib`: a returned
 code, `sys.exit` with and without an argument, `sys.exit` with a message,
 `SystemExit` raised directly, and an interrupt.
 
-Not a test module. It is imported by name from `tests/pr_comments_test.py`
+Not a test module. It is imported by name from `tests/pr_comments_publishing_test.py`
 rather than collected, and nothing here asserts anything.
 """
 

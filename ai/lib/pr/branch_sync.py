@@ -27,15 +27,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import git.client
 import git.push
 from core.proc import CmdResult
+from core.trail import Trail
 from git.push import PushResult, PushStatus
-
-if TYPE_CHECKING:
-    from core.trail import Trail
 
 # `git_remote` is a workbench-wide module rather than an `ai/lib` one. In a
 # checkout that is one directory up; in the otto-ai-tools tarball, which

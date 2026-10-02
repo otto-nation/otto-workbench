@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""SessionStart hook: reuse level, ceiling nudge, issue tracker, PR template.
+"""SessionStart hook: reuse level, container root, ceiling nudge, issue tracker, PR template.
 
-Five responsibilities, in the order main() handles them:
+Six responsibilities, in the order main() handles them:
 1. Emit the active reuse level as session context
-2. Register the repo in the project registry
-3. Run ceiling-scan --json; if no-trigger markers exist, nudge
-4. Emit the repo's issue tracker, configured or not
-5. Emit the repo's PR template and the sections it requires
+2. Say when the session started at a bare-repo container, and what that costs
+3. Register the repo in the project registry
+4. Run ceiling-scan --json; if no-trigger markers exist, nudge
+5. Emit the repo's issue tracker, configured or not
+6. Emit the repo's PR template and the sections it requires
 
 The registration rides along here because this hook already resolves the repo
 root for the ceiling scan, so it costs nothing extra and it is the cheapest
@@ -79,6 +80,45 @@ def _repo_root() -> str | None:
     than spelling the working-tree-then-container fallback out again.
     """
     return git_layout.project_root()
+
+
+def _container_line(cwd: str) -> str | None:
+    """What starting at a bare-repo container cost this session, or None.
+
+    The `claude` shell wrapper launches a session started at a container in the
+    worktree instead, so a session that is still rooted there came in past it —
+    `command claude`, a launcher that is not zsh. Such a session never loaded
+    the repo's `CLAUDE.md` or `.claude/` rules, and every command it runs lands
+    where `git status` fails. Nothing else says so: a session missing its
+    instructions looks exactly like one that has them. This is the Claude half
+    of the backstop; Pi's is `ai/pi/extensions/container-context`.
+
+    The worktree is `resolve-worktree`'s answer, through `git_layout`, so this
+    line, the wrapper and the Pi extension cannot name different worktrees.
+
+    A resolver that cannot run is not read as "not a container": git answers
+    whether the directory is bare, and a bare one is reported as unresolved,
+    because the wrapper in front asks the same resolver and would be off too.
+    """
+    found = git_layout.worktree_for(cwd)
+    if found.ok:
+        return (
+            f"Session root: {cwd} is a bare-repo container, so this session"
+            f" did not load the repo's CLAUDE.md or .claude/ rules. Its"
+            f" worktree is {found.path} — read them there, run git and repo"
+            " commands there, and suggest the user relaunch inside it"
+        )
+    unresolved = found.status == git_layout.UNRESOLVED or (
+        found.status == git_layout.UNAVAILABLE
+        and git_layout.git(cwd, "rev-parse", "--is-bare-repository") == "true"
+    )
+    if not unresolved:
+        return None
+    return (
+        f"Session root: {cwd} is a bare-repo container with no resolvable"
+        " worktree, so the repo's CLAUDE.md, .claude/ rules and settings were"
+        " not loaded — tell the user and suggest starting inside a worktree"
+    )
 
 
 def _ceiling_counts(repo: str) -> dict | None:
@@ -159,6 +199,10 @@ def main() -> None:
     level = read_level()
     if level != read_default():
         lines.append(f"Reuse level: {level} — {LEVEL_DESCRIPTIONS.get(level, '')}")
+
+    container = _container_line(os.getcwd())
+    if container:
+        lines.append(container)
 
     repo = _repo_root()
     config.workbench_projects.register(repo)

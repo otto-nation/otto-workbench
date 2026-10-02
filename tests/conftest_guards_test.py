@@ -28,9 +28,11 @@ from pathlib import Path
 import pytest
 
 from conftest import (
-    _agent_env_keys, _assert_config_unchanged, _backend_binaries,
-    _clear_agent_env, _describe_config_change, _guarded_lines, _load_lib,
-    _section_of, init_worktree, run_checked, seed_repo,
+    _agent_env_keys, _backend_binaries, _clear_agent_env, _load_lib,
+    init_worktree, run_checked, seed_repo,
+)
+from repo_config_guard_support import (
+    _assert_config_unchanged, _describe_config_change, _guarded_lines, _section_of,
 )
 
 gitenv = _load_lib("gitenv")

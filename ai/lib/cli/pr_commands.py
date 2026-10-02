@@ -1,13 +1,12 @@
-"""The four `pr` subcommands that used to be defined inside the binary.
+"""The three `pr` subcommands that used to be defined inside the binary.
 
-`status`, `fix`, `create` and `gc` ran inside `ai/bin/pr`, which is not an
-importable module, so `CommandSpec.handler` could not name them. They live
-here so the field means one thing across the nine: a `"<module>:<attr>"`
-string that importlib can resolve, or None.
+`status`, `fix` and `gc` ran inside `ai/bin/pr`, which is not an importable
+module, so `CommandSpec.handler` could not name them. They live here so the
+field means one thing across the nine: a `"<module>:<attr>"` string that
+importlib can resolve, or None.
 
 `cmd_fix`'s three passes are in-process calls through `cli.dispatch`.
-`cmd_create` is the one surviving spawn in this module and stays one: it runs
-`task pr:create`, which is a Taskfile target and not a Python delegate.
+`create` has since moved to `cli.pr_create`, which owns its parser as well.
 
 `cmd_review` and `cmd_comments` stay in `ai/bin/pr`. Both are argv shaping
 ahead of a delegate the registry already names — `--self` injection, mode
@@ -26,7 +25,6 @@ import cli.dispatch
 from cli.registry import COMMANDS
 import core.log
 import core.publishing
-import core.timeouts
 from core.trail import Trail
 import gh.budget
 import pr.context
@@ -275,17 +273,6 @@ def cmd_fix(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
         exit_code = 1
 
     return exit_code
-
-
-def cmd_create(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
-    """Delegate PR creation to task pr:create."""
-    cmd = ["task", "--global"]
-    if ctx.worktree_root:
-        cmd.append(f"REPO_DIR={ctx.worktree_root}")
-    cmd.append("pr:create")
-    if argv:
-        cmd += ["--"] + list(argv)
-    return subprocess.run(cmd, timeout=core.timeouts.UNBOUNDED).returncode
 
 
 def cmd_gc(argv: list[str], ctx: pr.context.ResolvedContext, *, trail: Trail, **_kw) -> int:

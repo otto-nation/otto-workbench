@@ -1,14 +1,14 @@
 """`pr`'s parser, its dispatcher, and the two commands that shape argv.
 
 The entry point, and only the entry point. Every subcommand's work lives
-below this layer: four in `cli.pr_commands`, five behind a `CommandSpec`
+below this layer: three in `cli.pr_commands`, six behind a `CommandSpec`
 handler the registry names. What is here is the two-pass global parse, the
 usage text, the ordering of resolve/register/fetch/lock, and the routing.
 
 `cmd_review` and `cmd_comments` are here rather than in `cli.pr_commands`
 because neither is a command in its own right: both shape argv ahead of a
 delegate the registry already names — `--self` injection, mode routing — and
-`cli.pr_commands` holds the four that `pr` genuinely performs itself.
+`cli.pr_commands` holds the three that `pr` genuinely performs itself.
 
 `bin_dir` is a parameter, not something this module derives. Under
 `WORKBENCH_AI_LIB_DIR` this file resolves inside the pinned checkout while
@@ -42,7 +42,6 @@ from cli.pr_commands import (
     # to bind this module's exit code to the maintenance script's bash
     # comparison. See the constant's own comment in cli/pr_commands.py.
     EXIT_BUDGET_EXHAUSTED,  # noqa: F401
-    cmd_create,
     cmd_fix,
     cmd_gc,
     cmd_status,
@@ -87,7 +86,7 @@ def _is_pr_target(target: str | None) -> bool:
 
 
 # `cmd_review` and `cmd_comments` stay here; see `cli.pr_commands`'s module
-# docstring for why (and for which four subcommands moved there instead).
+# docstring for why (and for which three subcommands moved there instead).
 
 def cmd_review(argv: list[str], ctx: pr.context.ResolvedContext, *,
                bin_dir: Path,
@@ -153,6 +152,17 @@ def cmd_comments(argv: list[str], ctx: pr.context.ResolvedContext, *,
     )
 
 
+def cmd_create(argv: list[str], ctx: pr.context.ResolvedContext, **kw) -> int:
+    """Run `pr create`'s handler, imported only when create is dispatched.
+
+    A lazy hop rather than an import: `cli.pr_create` pulls in the content
+    generator and the agent layer, and `pr --help` must load no delegate
+    (test_pr_help_imports_no_delegate). The registry's handler string is the
+    one name for it.
+    """
+    return cli.dispatch.resolve(COMMANDS["create"].handler)(argv, ctx, **kw)
+
+
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
 # Custom handlers for commands that need more than passthrough.
@@ -169,9 +179,10 @@ _CUSTOM = {
 def _build_parser() -> argparse.ArgumentParser:
     """Build the command parser.
 
-    A delegating command's subparser declares no flags of its own — its argv is
-    forwarded whole and `pr <command> --help` is answered by the delegate — so
-    add_help is left off for those. The subparsers are not returned alongside:
+    A command with a parser factory has a subparser that declares no flags of
+    its own — its argv is forwarded whole and `pr <command> --help` is answered
+    by the factory's parser — so add_help is left off for those. That is every
+    delegate and `create`, whose handler runs here but whose parser is its own. The subparsers are not returned alongside:
     what a command declares is read back off the built parser with
     tool_parser.subparsers, which is what keeps `takes_target` honest.
     """
@@ -184,7 +195,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="command")
     for name, spec in COMMANDS.items():
-        sub.add_parser(name, help=spec.help, add_help=spec.script is None)
+        sub.add_parser(name, help=spec.help,
+                       add_help=not cli.dispatch.has_parser_factory(name))
     return parser
 
 
@@ -366,10 +378,11 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
         core.log.warn(f"could not reconcile recorded pushes: {exc}")
 
     spec = COMMANDS[args.command]
-    # The delegate's own parser prints its own help, in this process. It is
+    # The command's own parser prints its own help, in this process. It is
     # asked for the parser rather than run with `--help`, because a delegate
-    # `main` does more than parse before argparse ever sees the flag.
-    if {"-h", "--help"} & set(extra) and spec.script:
+    # `main` does more than parse before argparse ever sees the flag. Keyed on
+    # the factory, not on `script`: `create` has a parser and no script.
+    if {"-h", "--help"} & set(extra) and cli.dispatch.has_parser_factory(spec.name):
         cli.dispatch.print_delegate_help(spec)
         return 0
 

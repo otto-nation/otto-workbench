@@ -86,15 +86,13 @@ class CommandSpec:
 
 
 _SPECS: tuple[CommandSpec, ...] = (
-    # `task pr:create` has no way to accept a target and `create` always acts
-    # on the current branch, so the positional scan has nothing to find here —
-    # only flag values to swallow. `takes_target=False` is what keeps
-    # `pr create --title "…"` from arriving as a dangling --title, and it needs
-    # no arity list of its own: parse_pr_flags in lib/ai/pr.sh stays the single
-    # source of truth for which of create's flags take a value.
-    CommandSpec("create",   "Create a PR (wraps task pr:create)",
+    # `create` always acts on the current branch: its target comes from the
+    # global `--branch`/`--repo-dir`, already resolved into the context, and it
+    # declares no positional. `takes_target=False` keeps the positional scan
+    # from reading a flag value — `pr create --title 3057` — as a PR target.
+    CommandSpec("create",   "Create a PR, or preview it with --dry-run",
                 Need(REMOTE, update=False, lock=True), takes_target=False,
-                handler="cli.pr_commands:cmd_create"),
+                handler="cli.pr_create:cmd_create"),
     CommandSpec("status",   "Show CI, review, and comment status dashboard",
                 Need(LOCAL,  update=False, lock=False),
                 handler="cli.pr_commands:cmd_status"),

@@ -9,6 +9,12 @@
 [[ -n "${_LIB_OVERRIDES_SH:-}" ]] && return
 _LIB_OVERRIDES_SH=1
 
+# Guard: constants must be loaded
+if [[ -z "${WORKBENCH_DIR:-}" ]]; then
+  echo "ERROR: lib/overrides.sh requires WORKBENCH_DIR (source lib/ui.sh first)" >&2
+  return 1 2>/dev/null || exit 1
+fi
+
 _override_type_dirs() {
   local -n __default=$2 __user=$3
   case "$1" in

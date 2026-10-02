@@ -8,6 +8,12 @@
 [[ -n "${_LIB_MAINTENANCE_SH:-}" ]] && return
 _LIB_MAINTENANCE_SH=1
 
+# Guard: constants must be loaded
+if [[ -z "${WORKBENCH_DIR:-}" ]]; then
+  echo "ERROR: lib/maintenance.sh requires WORKBENCH_DIR (source lib/ui.sh first)" >&2
+  return 1 2>/dev/null || exit 1
+fi
+
 _MAINTENANCE_DEFAULT_INTERVAL=43200  # 12 hours
 
 # ── macOS (launchd) ──────────────────────────────────────────────────────────

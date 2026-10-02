@@ -8,6 +8,12 @@
 [[ -n "${_LIB_DISCOVER_SH:-}" ]] && return
 _LIB_DISCOVER_SH=1
 
+# Guard: constants must be loaded
+if [[ -z "${WORKBENCH_DIR:-}" ]]; then
+  echo "ERROR: lib/discover.sh requires WORKBENCH_DIR (source lib/ui.sh first)" >&2
+  return 1 2>/dev/null || exit 1
+fi
+
 _discover_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=maintenance.sh
 . "$_discover_lib_dir/maintenance.sh"

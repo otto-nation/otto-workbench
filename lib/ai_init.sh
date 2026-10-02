@@ -8,6 +8,12 @@
 [[ -n "${_LIB_AI_INIT_SH:-}" ]] && return
 _LIB_AI_INIT_SH=1
 
+# Guard: constants must be loaded
+if [[ -z "${WORKBENCH_DIR:-}" ]]; then
+  echo "ERROR: lib/ai_init.sh requires WORKBENCH_DIR (source lib/ui.sh first)" >&2
+  return 1 2>/dev/null || exit 1
+fi
+
 # _stream_progress SESSION_LOG — reads stream-json from stdin, shows tool-use progress, saves raw log.
 _stream_progress() {
   local session_log="$1"

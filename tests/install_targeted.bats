@@ -265,3 +265,22 @@ _is_targeted() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"Installing dotfiles"* ]]
 }
+
+# ─── lib/*.sh: WORKBENCH_DIR guard on standalone source ─────────────────────
+# Regression: lib/overrides.sh, lib/discover.sh, lib/ai_init.sh, and
+# lib/maintenance.sh lacked the WORKBENCH_DIR-is-set guard that lib/install.sh
+# carries, so sourcing one of them standalone (as lib/git_remote.sh and
+# lib/gitenv.sh document being safe to do) failed with a confusing
+# "unbound variable" error instead of a clear message.
+
+@test "lib/overrides.sh, discover.sh, ai_init.sh, and maintenance.sh refuse to load without WORKBENCH_DIR" {
+  for lib in overrides discover ai_init maintenance; do
+    run bash -c "
+      set -u
+      . '$REPO_ROOT/lib/$lib.sh'
+    "
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"ERROR: lib/$lib.sh requires WORKBENCH_DIR"* ]]
+    [[ "$output" != *"unbound variable"* ]]
+  done
+}

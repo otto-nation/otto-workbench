@@ -55,7 +55,7 @@ done
 
 # The fallback PR template, read from the module that owns it rather than
 # written out here. The rules tell an agent which sections to write when a repo
-# ships no template of its own, and `task pr:create` fills those same sections
+# ships no template of its own, and `pr create` fills those same sections
 # on that same repo — a second copy here is the two disagreeing about what a
 # templateless PR looks like.
 #
@@ -125,7 +125,7 @@ _budget_line() {
     "" \
     "### Description template" \
     "" \
-    "- Always create PRs via \`task pr:create\` — see \`git-operations.md\` § PR Creation for the full invocation and flags." \
+    "- Always create PRs via \`pr create\` — see \`git-operations.md\` § PR Creation for the full invocation and flags." \
     "- When a repo has a PR template, its section headers are required — do not substitute or invent sections. The fallback template below is ONLY for repos with no project template:" \
     "" \
     '```markdown'

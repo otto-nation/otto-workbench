@@ -122,7 +122,7 @@ _create_fix_worktrees() {
   echo ""
   success "Worktrees created. Fix violations, then commit and create PRs."
   info "Commit: git commit -m 'fix: resolve $rule violations'"
-  info "PR:     task --global pr:create -- --no-issue --draft"
+  info "PR:     pr create --draft"
 }
 
 mapfile -t repos < <(resolve_repos "$repos_input")

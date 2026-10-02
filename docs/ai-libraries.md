@@ -1871,11 +1871,11 @@ is still open at both points, so the hold applies to both.
 
 Open a pull request for the current branch — what ``pr create`` does.
 
-Ports ``task pr:create``: preflight (default-branch and base refusals, the
-``--closes`` contract, the publishing token), the nesting gate, the branch
-push, content generation and ``gh pr create``. ``--dry-run`` stops after the
-content is generated and prints it; it runs no gate, pushes nothing and never
-reaches ``gh``.
+Ports the go-task create flow that lived in ``lib/ai/pr.sh``: preflight
+(default-branch and base refusals, the ``--closes`` contract, the publishing
+token), the nesting gate, the branch push, content generation and
+``gh pr create``. ``--dry-run`` stops after the content is generated and prints
+it; it runs no gate, pushes nothing and never reaches ``gh``.
 
 The order is the contract. Every refusal that costs nothing comes before the
 nesting gate, the gate comes before anything leaves the machine, and the push
@@ -3877,7 +3877,7 @@ itself is the rule holding rather than a module patching its own attributes.
 Where a repo's PR template is, and what it says — resolved in one place.
 
 Three callers need the same answer and each used to work it out for itself:
-``lib/ai/pr.sh`` for ``task pr:create``, ``cli/pr_describe.py`` for
+``lib/ai/pr.sh`` for ``task pr:update``, ``cli/pr_describe.py`` for
 ``pr describe``, and the SessionStart hook that tells the agent which template
 this repo ships. The first two carried the candidate path list and the fallback
 template as literals, under a comment asking whoever edited one to remember the

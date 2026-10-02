@@ -12,7 +12,7 @@ tools:
     visibility: full
     description: "AI-powered Git automation runner; wraps go-task with global/local Taskfile routing"
     when_to_use: "Running any dev workflow — commits, PRs, brew management"
-    usage: "task commit  |  task pr:create  |  task --global <cmd>"
+    usage: "task commit  |  task pr:update  |  task --global <cmd>"
     docs: "https://taskfile.dev"
 
   - name: otto-workbench

@@ -139,7 +139,7 @@ def _pr_template_line(repo: str) -> str:
     Recording it in `.workbench.yml` instead would cache a filesystem fact in a
     second place and be wrong the moment someone added, moved or deleted the
     file. So the line is derived on every session start, from the same
-    `core.pr_template` that `task pr:create` and `pr describe` resolve through
+    `core.pr_template` that `pr create` and `pr describe` resolve through
     — what the agent is told and what the automation enforces cannot disagree.
 
     The headers are named, not just the path. The path alone is another lookup;

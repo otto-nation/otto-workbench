@@ -539,7 +539,7 @@ _scan "$cmd"
 # broad one.
 
 # Unlike most rules in this file, this one is not about a permission prompt:
-# `task pr:create` resolves the repo's PR template and checks the body against
+# `pr create` resolves the repo's PR template and checks the body against
 # its sections, appends a closing ref per --closes, assigns the PR, and pushes
 # first. That is coding policy and it holds under any harness, so Pi enforces it
 # too — ai/pi/extensions/pr-create-guard/ is the same rule, and
@@ -550,7 +550,7 @@ _scan "$cmd"
 # neither of which opens a PR.
 re_pr_create='(^|[;&|][[:space:]]*)gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$)'
 if [[ "$stripped" =~ $re_pr_create ]]; then
-  block 'Use task pr:create instead of gh pr create — it auto-loads the repo PR template. See git-operations.md § PR Creation.'
+  block 'Use pr create instead of gh pr create — it auto-loads the repo PR template. See git-operations.md § PR Creation.'
 fi
 
 # Filing an issue while this branch's self-review still has open findings is a

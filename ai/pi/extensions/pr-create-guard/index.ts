@@ -1,8 +1,8 @@
 /**
  * Refuses `gh pr create`, which opens a PR that skips everything
- * `task pr:create` does.
+ * `pr create` does.
  *
- * `task --global pr:create` resolves the repo's PR template and checks the body
+ * `pr create` resolves the repo's PR template and checks the body
  * against its section headers, appends a closing ref for each `--closes`,
  * assigns the PR to whoever opened it, and pushes the branch first. A bare
  * `gh pr create` does none of that, so the PR lands with no template, no issue
@@ -34,11 +34,11 @@ export default function (pi: ExtensionAPI) {
     return {
       block: true,
       reason:
-        "Use task --global pr:create instead of gh pr create — it loads the repo's PR " +
+        "Use pr create instead of gh pr create — it loads the repo's PR " +
         "template and checks the body against its sections, appends a closing ref for " +
         "each --closes, assigns the PR, and pushes the branch first. A bare gh pr create " +
         "opens a PR with none of those. Pass --draft so it goes through review, and " +
-        "REPO_DIR=<path> when the working directory is not the target repo. " +
+        "--repo-dir <path> when the working directory is not the target repo. " +
         "See git-operations.md § PR Creation.",
     };
   });

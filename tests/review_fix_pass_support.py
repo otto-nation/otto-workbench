@@ -17,7 +17,6 @@ import agent.invoke
 import fix.engine
 import git.push
 import review.fix
-import review.types
 from pr.fix import FixOutcome, ItemOutcome
 from gh.types import PRContext, PRMetadata
 from review.types import Finding, ReviewJob

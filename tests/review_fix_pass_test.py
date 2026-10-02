@@ -7,9 +7,12 @@ scoped to, and how `review.md` reads once the agent has answered.
 
 The end-to-end cases (`review_fix_pass_landing_test.py`) run against a real
 repo, because attribution is a set of path strings git produced and a stubbed
-`status` line would agree with whatever the test expected. The agent is stubbed at `agent.invoke.run_fix`, which is
-where the review's own boundary is: everything below it is the engine's, and
-everything above it is what this module decided to ask for.
+`status` line would agree with whatever the test expected. The summary and
+`review.md` rewriting moved to `review_fix_pass_outcomes_test.py`, and the
+static-analysis work stream moved to `review_fix_pass_static_test.py`. The
+agent is stubbed at `agent.invoke.run_fix`, which is where the review's own
+boundary is: everything below it is the engine's, and everything above it is
+what this module decided to ask for.
 """
 
 import sys

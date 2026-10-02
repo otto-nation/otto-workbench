@@ -11,7 +11,6 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import fix.engine  # noqa: E402
 import fix.gate  # noqa: E402
 import git.land  # noqa: E402
 from agent.registry import PHASES  # noqa: E402

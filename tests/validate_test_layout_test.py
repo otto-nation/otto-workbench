@@ -75,6 +75,25 @@ def test_files_outside_tests_are_not_scanned(tmp_path):
     assert vtl.discover(tmp_path) == []
 
 
+def test_a_symlinked_module_is_skipped(tmp_path):
+    """A dangling link would raise OSError in over_cap; a live one could
+    double-count a file reachable by two paths. validate-file-size's `_in_dir`
+    excludes symlinks for the same reason."""
+    target = _write(tmp_path, "elsewhere/real_test.py", _lines(900))
+    link = tmp_path / "tests" / "linked_test.py"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(target)
+    assert vtl.discover(tmp_path) == []
+
+
+def test_a_dangling_symlink_does_not_raise(tmp_path):
+    link = tmp_path / "tests" / "dangling_test.py"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(tmp_path / "does_not_exist.py")
+    assert vtl.discover(tmp_path) == []
+    assert _run(tmp_path) == 0
+
+
 # ── Size ─────────────────────────────────────────────────────────────────────
 
 def test_a_suite_at_the_cap_passes(tmp_path):

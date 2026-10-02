@@ -100,7 +100,8 @@ def discover(root: Path) -> list[Path]:
     for dirpath, dirnames, filenames in os.walk(base):
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
         found.extend(Path(dirpath) / name for name in filenames
-                     if name.endswith(".py"))
+                     if name.endswith(".py")
+                     and not (Path(dirpath) / name).is_symlink())
     return sorted(found)
 
 
@@ -111,16 +112,24 @@ def name_allowed(name: str) -> bool:
     return name.endswith(SUITE_SUFFIX) or name.endswith(SUPPORT_SUFFIX)
 
 
-def misnamed(root: Path) -> list[str]:
-    """Relative paths of every module whose name is neither suite nor support."""
-    return [str(p.relative_to(root)) for p in discover(root)
+def misnamed(root: Path, paths: list[Path] | None = None) -> list[str]:
+    """Relative paths of every module whose name is neither suite nor support.
+
+    *paths* lets a caller that already walked `tests/` (such as `main()`) reuse
+    that listing instead of paying for a second `os.walk`.
+    """
+    return [str(p.relative_to(root)) for p in (paths if paths is not None else discover(root))
             if not name_allowed(p.name)]
 
 
-def over_cap(root: Path, max_lines: int) -> list[tuple[str, int]]:
-    """(relative path, code lines) for every module over *max_lines*, worst first."""
+def over_cap(root: Path, max_lines: int, paths: list[Path] | None = None) -> list[tuple[str, int]]:
+    """(relative path, code lines) for every module over *max_lines*, worst first.
+
+    *paths* lets a caller that already walked `tests/` (such as `main()`) reuse
+    that listing instead of paying for a second `os.walk`.
+    """
     violations = []
-    for path in discover(root):
+    for path in (paths if paths is not None else discover(root)):
         try:
             count = code_lines(path, "python")
         except OSError as err:
@@ -174,8 +183,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     root = Path(args.directory).resolve()
-    bad = misnamed(root)
-    violations = over_cap(root, args.max_lines)
+    paths = discover(root)
+    bad = misnamed(root, paths)
+    violations = over_cap(root, args.max_lines, paths)
     new = [(p, n) for p, n in violations if p not in KNOWN_OVER]
     known = [(p, n) for p, n in violations if p in KNOWN_OVER]
 

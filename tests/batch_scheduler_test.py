@@ -167,6 +167,16 @@ def test_cancel_before_start_runs_nothing():
     assert h.spawned == []
 
 
+def test_unrealised_headroom_blocks_a_second_admit_in_the_same_tick():
+    estimate = batch.admission.DEFAULT_ESTIMATES[batch.model.Step.REBASE]
+    host = batch.admission.HostSample(2 * GiB + estimate, 1.0, 0.0)
+    h = Harness([row(1), row(2)], host=host, pool=2, auto_publish=batch.model.STEP_ORDER)
+    h.sched._sleep = lambda _: (_ for _ in ()).throw(KeyboardInterrupt())
+    with pytest.raises(KeyboardInterrupt):
+        h.sched.run_until_blocked()
+    assert len(h.spawned) == 1
+
+
 def test_admission_wait_is_reported_and_the_floor_still_progresses():
     short = batch.admission.HostSample(2 * GiB, 1.0, 0.0)
     h = Harness([row(1), row(2)], host=short, auto_publish=batch.model.STEP_ORDER)

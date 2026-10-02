@@ -224,6 +224,15 @@ class Scheduler:
                        step=rec.step.value, reason=reason)
         item.status, item.wait_reason = ItemStatus.WAITING_ADMISSION, reason
 
+    def _host_for_admit(self) -> batch.admission.HostSample:
+        sample = self._host()
+        pending = sum(max(0, self._estimates.get(live.item.repo, live.rec.step) - live.peak)
+                      for live in self._live.values())
+        if sample.mem_available is None or not pending:
+            return sample
+        return batch.admission.HostSample(max(0, sample.mem_available - pending),
+                                          sample.cpu_some_avg10, sample.mem_some_avg10)
+
     def _admit(self) -> None:
         for item in self.run.items:
             if not self._ready(item) or not self._ensure_worktree(item):
@@ -232,7 +241,7 @@ class Scheduler:
             if rec is None:
                 self._close(item)
                 continue
-            verdict = batch.admission.decide(self._host(), running=len(self._live),
+            verdict = batch.admission.decide(self._host_for_admit(), running=len(self._live),
                                        limit=max(1, self.run.pool),
                                        estimate=self._estimates.get(item.repo, rec.step),
                                        cfg=self.cfg)

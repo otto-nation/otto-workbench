@@ -261,6 +261,18 @@ def ok(*args: str, cwd: str | Path | None = None) -> bool:
     return run(*args, cwd=cwd).ok
 
 
+def blob(rev: str, path: str, cwd: str | Path | None = None) -> str | None:
+    """*path*'s exact content at *rev*, or None when it does not exist there.
+
+    *rev* is a commit-ish, ``:N`` for index stage N of a conflicted path, or
+    ``""`` for the index's resolved stage 0. Unstripped, unlike ``out``: a
+    trailing newline is part of the file, and a caller comparing versions of
+    it must see every byte.
+    """
+    r = run("cat-file", "blob", f"{rev}:{path}", cwd=cwd)
+    return r.stdout if r.ok else None
+
+
 def lines(
     *args: str, cwd: str | Path | None = None, config: dict[str, str] | None = None,
 ) -> list[str]:

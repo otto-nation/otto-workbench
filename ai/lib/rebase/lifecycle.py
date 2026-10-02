@@ -10,6 +10,8 @@ a refusal, or an abort that leaves the branch where it started.
 
 from __future__ import annotations
 
+import dataclasses
+
 import agent.backend
 import core.log
 from core.proc import CmdResult
@@ -24,6 +26,7 @@ from . import land as rebase_land
 from . import lease as rebase_lease
 from . import pr_snapshot as rebase_pr_snapshot
 from . import refusals
+from . import replay_audit
 from . import resolve_ai as rebase_resolve
 from . import target as rebase_target
 from . import types as rebase_types
@@ -64,6 +67,22 @@ REBASE_CONFIG = {**RERERE_CONFIG, **UNATTENDED_CONFIG}
 # AI agent holding a shell is the other one. Two copies of the variable list
 # would be two places for the next variable to be added to only one of.
 unattended_env = git.client.unattended_env
+
+
+def _continue_command(mode: RunMode) -> str:
+    """What a refusal tells the operator to run once each listed change is
+    confirmed superseded, prefixed with `replay_audit.ALLOW_ENV=1`.
+
+    The run's own command rather than git's: a bare `git rebase --continue`
+    would finish the replay without the run that started it, leaving its
+    state file describing a stop. Carries `--no-push` when the run that hit
+    the refusal was started with it — a resume ignores `--force` and
+    `--fork-point` (see `cmd_start`), so those two are never worth repeating
+    here, but `--no-push` still governs whether the resume pushes.
+    """
+    if mode is RunMode.FIX_ONLY:
+        return "pr rebase --fix --no-push"
+    return "pr rebase --fix"
 
 
 def rebase_continue(cwd: str) -> CmdResult:
@@ -166,7 +185,7 @@ def _drive_one_step(
     conflicts = rebase_inspect.detect_conflicts(cwd)
     if not conflicts:
         return step_advance(
-            cwd, ctx, tally, target_ref=target_ref, trail=trail,
+            cwd, ctx, tally, mode=mode, target_ref=target_ref, trail=trail,
         ), False
 
     rc = step_conflicts(
@@ -246,6 +265,100 @@ def _record_failed(
         files_stale=tally.stale,
         target_base=target_ref,
     ).save(ctx)
+
+
+def _restore_conflicts(cwd: str, paths: list[str]) -> None:
+    """Bring the conflict back into each of *paths*, for a refused resolution.
+
+    `git checkout -m` redoes the merge between HEAD and the commit under
+    replay regardless of what the index currently holds, which is what lets it
+    recreate a conflict this run had already resolved and staged. It is a
+    no-op, though, for a path the two sides never actually conflicted over —
+    `audit_replay` audits every path the replayed commit touched, not only the
+    ones this step had conflicts in, so a cleanly auto-merged file can still be
+    named here (a questionable three-way merge `survival.audit` flagged
+    `blocking`). There is nothing in the index beforehand that tells the two
+    cases apart, so the check happens after: a path still clean once the
+    checkout has run had nothing to restore.
+    """
+    r = git.client.run("checkout", "-m", "--", *paths, cwd=cwd)
+    if not r.ok:
+        core.log.warn(
+            f"Could not restore the conflict in {', '.join(paths)}: "
+            f"{r.stderr.strip()}"
+        )
+        return
+    restored = set(rebase_inspect.detect_conflicts(cwd))
+    missing = [p for p in paths if p not in restored]
+    if missing:
+        core.log.warn(
+            f"No conflict to restore in {', '.join(missing)} — git merged "
+            "them without one; revert the discarded change(s) by hand."
+        )
+
+
+def _halt_if_discarding(
+    cwd: str, ctx: pr.context.ResolvedContext, tally: ResolutionTally, *,
+    target_ref: str, restore: bool, mode: RunMode = RunMode.FIX,
+    trail: Trail | None = None,
+) -> int | None:
+    """Stop before a `--continue` that would commit a resolution discarding changes.
+
+    The global prepare-commit-msg hook makes the same judgement and refuses
+    the commit, but a refused `--continue` leaves the rebase stopped on the
+    same commit with nothing unmerged — which this loop reads as a step to
+    advance, and would `--continue` into the same refusal until the step cap
+    aborted the run. Asking first turns that into one clean stop, with the
+    files named, on machines with the hook and without it alike.
+
+    *restore* brings the conflict back into each refused file
+    (`git checkout -m`), for a resolution this run made: a resolution that
+    discards changes is worth less than the markers it replaced. A resolution
+    staged by hand before the run is left exactly as it is — it is somebody's
+    work, and the refusal says how to redo it.
+
+    None when the continue may go ahead.
+    """
+    # Fail open, exactly like the hook entry point this mirrors
+    # (`replay_audit.main`): a bug in a ~400-line difflib-based audit must
+    # never cost somebody a step's worth of already-staged resolutions, let
+    # alone crash the whole run out from under them.
+    try:
+        audit = replay_audit.audit_replay(cwd)
+    except Exception as exc:
+        core.log.warn(f"replay audit could not run: {exc}")
+        return None
+    if audit is None:
+        return None
+    if audit.flagged:
+        core.log.warn(replay_audit.render_advisory(audit))
+    if audit.ok:
+        return None
+    refused = [f.path for f in audit.refused]
+    tdecision(
+        trail, "replay_audit", f"resolution discards changes in {len(refused)} file(s)",
+        reason="a change git had merged cleanly is missing from the resolution",
+        data={"commit": audit.commit, "files": refused,
+              "losses": {f.path: [loss.describe() for loss in f.blocking]
+                         for f in audit.refused},
+              "override": replay_audit.override_requested()},
+    )
+    core.log.error(replay_audit.render_refusal(audit, _continue_command(mode)))
+    if replay_audit.override_requested():
+        core.log.warn(f"{replay_audit.ALLOW_ENV}=1 — continuing anyway.")
+        return None
+    if restore:
+        _restore_conflicts(cwd, refused)
+    RebaseOutcome(
+        status=RebaseStatus.CONFLICTS,
+        conflicts_resolved=len(tally.files),
+        files_resolved=tally.files,
+        files_stale=tally.stale,
+        target_base=target_ref,
+    ).save(ctx)
+    report = ConflictReport.from_repo(cwd)
+    dataclasses.replace(report, files=sorted(set(report.files) | set(refused))).emit()
+    return rebase_types.CONFLICTS_EXIT
 
 
 def _halt_unresolved(
@@ -331,6 +444,12 @@ def step_conflicts(
     if git.client.lines("diff", "--name-only", cwd=cwd):
         git.client.run("add", "-u", cwd=cwd)
 
+    rc = _halt_if_discarding(
+        cwd, ctx, tally, target_ref=target_ref, restore=True, mode=mode, trail=trail,
+    )
+    if rc is not None:
+        return rc
+
     r = rebase_continue(cwd)
     if r.ok:
         return None
@@ -359,10 +478,23 @@ def step_conflicts(
 def step_advance(
     cwd: str, ctx: pr.context.ResolvedContext,
     tally: ResolutionTally | None = None, *,
-    target_ref: str, trail: Trail | None = None,
+    target_ref: str, mode: RunMode = RunMode.FIX, trail: Trail | None = None,
 ) -> int | None:
     """Advance rebase when there are no conflicts. Returns exit code to stop, or None to continue."""
     tally = tally if tally is not None else ResolutionTally()
+    # A step with nothing unmerged can still be concluding a conflict: one
+    # resolved by hand, and staged, before this run picked the rebase up.
+    # Asked before the empty-patch test, not after it: a whole-file
+    # `checkout --ours` leaves the index equal to HEAD, which that test reads
+    # as "already applied upstream" and skips — dropping the commit with a
+    # log line saying nothing was lost. A commit genuinely upstream passes the
+    # audit, because HEAD already holds its changes.
+    rc = _halt_if_discarding(
+        cwd, ctx, tally, target_ref=target_ref, restore=False, mode=mode, trail=trail,
+    )
+    if rc is not None:
+        return rc
+
     if rebase_inspect.is_empty_patch(cwd):
         sha, subject = rebase_inspect.rebase_head_info(cwd)
         core.log.info(f"Skipping empty commit {sha} — {subject}")

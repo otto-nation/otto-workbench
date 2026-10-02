@@ -8,7 +8,8 @@
 # What it does:
 #   1. Bootstraps ~/.gitconfig from template on a new machine (identity, GPG, credentials)
 #   2. Ensures ~/.gitconfig includes the shared workbench config (git/gitconfig.shared)
-#   3. Installs global git hooks for gitleaks — protects every repo on this machine
+#   3. Installs global git hooks — secret scanning on commit, push verification, and
+#      a refusal of rebase resolutions that discard cleanly merged changes
 #   4. Keeps GitHub's SSH connection alive across a long pre-push, and routes it
 #      over port 443 when github.ssh_over_443 asks for it
 #
@@ -478,12 +479,16 @@ step_global_gitignore() {
   fi
 }
 
-# step_global_hooks — symlinks the workbench pre-commit hook into $GIT_HOOKS_DIR
+# step_global_hooks — symlinks the workbench's global hooks into $GIT_HOOKS_DIR
 # and sets git's global core.hooksPath so every repo on this machine is protected.
+# Each hook delegates to the repo-local hook of the same name, which the global
+# hooks path would otherwise hide.
 step_global_hooks() {
   mkdir -p "$GIT_HOOKS_DIR"
-  install_symlink "$GIT_HOOKS_SRC_DIR/pre-commit"      "$GIT_HOOKS_DIR/pre-commit"
-  install_symlink "$GIT_HOOKS_SRC_DIR/pre-push" "$GIT_HOOKS_DIR/pre-push"
+  local hook
+  for hook in pre-commit prepare-commit-msg pre-push post-rewrite; do
+    install_symlink "$GIT_HOOKS_SRC_DIR/$hook" "$GIT_HOOKS_DIR/$hook"
+  done
   git config --global core.hooksPath "$GIT_HOOKS_DIR"
   [[ "${WORKBENCH_SYNC:-}" != true ]] && success "global core.hooksPath → $GIT_HOOKS_DIR" || true
 }

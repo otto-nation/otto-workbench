@@ -149,15 +149,20 @@ def resolve_delete_conflict(
 
 # ── Git content reads ─────────────────────────────────────────────────────
 
-def get_ours_content(filepath: str, cwd: str) -> str | None:
-    """Get the target-side (HEAD) version of a file from git index stage 2.
+@dataclass(frozen=True)
+class StageTexts:
+    """A conflicted path's three index stages; None where the path is absent."""
+    # Stage 1: the merge base — for a replayed commit, its parent.
+    base: str | None
+    # Stage 2: HEAD, the tip being replayed onto (`--ours` during a rebase).
+    target: str | None
+    # Stage 3: the replayed commit's version (`--theirs` during a rebase).
+    replayed: str | None
 
-    During a rebase conflict, stage 2 holds the 'ours' side — the target branch
-    state before the conflicting commit is applied. Returns None if unavailable
-    (e.g. file is new on the branch).
-    """
-    r = git.client.run("show", f":2:{filepath}", cwd=cwd)
-    return r.stdout if r.ok else None
+
+def stage_texts(filepath: str, cwd: str) -> StageTexts:
+    """*filepath*'s three conflict stages, read from the index."""
+    return StageTexts(*(git.client.blob(f":{n}", filepath, cwd=cwd) for n in (1, 2, 3)))
 
 
 def get_commit_diff(filepath: str, cwd: str) -> str | None:

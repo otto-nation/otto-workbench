@@ -322,25 +322,41 @@ def test_is_generated_file_missing_file(tmp_path):
     assert signal is None
 
 
-# ── _get_ours_content ──────────────────────────────────────────────────────
+# ── stage_texts ───────────────────────────────────────────────────────────
 
 
-def test_get_ours_content_returns_stage2():
-    fake_result = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout="base version content\n",
-    )
-    with mock.patch("subprocess.run", return_value=fake_result) as mock_run:
-        result = rebase.conflicts.get_ours_content("src/file.py", "/fake")
-    assert result == "base version content\n"
-    assert _unconfigured(mock_run.call_args[0][0]) == ["git", "show", ":2:src/file.py"]
+def test_stage_texts_reads_each_conflict_stage_unstripped():
+    """Stage 1 is the base, 2 the target, 3 the replayed commit, bytes intact."""
+    stdout = {":1:src/file.py": "base\n", ":2:src/file.py": "target\n\n",
+              ":3:src/file.py": "replayed\n"}
+
+    def fake(argv, **kwargs):
+        spec = _unconfigured(argv)[-1]
+        return subprocess.CompletedProcess(args=argv, returncode=0, stdout=stdout[spec])
+
+    with mock.patch("subprocess.run", side_effect=fake) as mock_run:
+        stages = rebase.conflicts.stage_texts("src/file.py", "/fake")
+
+    assert stages == rebase.conflicts.StageTexts("base\n", "target\n\n", "replayed\n")
+    assert _unconfigured(mock_run.call_args_list[1][0][0]) == [
+        "git", "cat-file", "blob", ":2:src/file.py",
+    ]
     assert mock_run.call_args.kwargs["cwd"] == "/fake"
 
 
-def test_get_ours_content_returns_none_on_failure():
-    fake_result = subprocess.CompletedProcess(args=[], returncode=128, stdout="", stderr="not found")
-    with mock.patch("subprocess.run", return_value=fake_result):
-        result = rebase.conflicts.get_ours_content("new_file.py", "/fake")
-    assert result is None
+def test_stage_texts_is_none_where_a_side_lacks_the_file():
+    """A file added on the branch has no stage 1 or 2."""
+    def fake(argv, **kwargs):
+        present = _unconfigured(argv)[-1].startswith(":3:")
+        return subprocess.CompletedProcess(
+            args=argv, returncode=0 if present else 128,
+            stdout="new\n" if present else "", stderr="" if present else "not found",
+        )
+
+    with mock.patch("subprocess.run", side_effect=fake):
+        stages = rebase.conflicts.stage_texts("new_file.py", "/fake")
+
+    assert stages == rebase.conflicts.StageTexts(None, None, "new\n")
 
 
 # ── _get_commit_diff ──────────────────────────────────────────────────────
@@ -601,7 +617,8 @@ class TestLedgerAttribution:
     @staticmethod
     def _resolving(tmp_path, trail, recorded):
         """Drive one rebase-assist prompt and capture what it billed to."""
-        with mock.patch.object(rebase.conflicts, "get_ours_content", return_value=""), \
+        with mock.patch.object(rebase.conflicts, "stage_texts",
+                               return_value=rebase.conflicts.StageTexts(None, "", None)), \
              mock.patch.object(rebase.conflicts, "get_commit_diff", return_value=""), \
              mock.patch.object(agent.backend, "prompt",
                                side_effect=lambda *a, **kw: (
@@ -635,7 +652,8 @@ class TestFailureRecording:
         """The old record kept 500 characters of a tail and no way to the rest."""
         fake_trail = mock.MagicMock()
         answer = mock.Mock(exit_code=0, text="the model explained itself at length")
-        with mock.patch.object(rebase.conflicts, "get_ours_content", return_value=""), \
+        with mock.patch.object(rebase.conflicts, "stage_texts",
+                               return_value=rebase.conflicts.StageTexts(None, "", None)), \
              mock.patch.object(rebase.conflicts, "get_commit_diff", return_value=""), \
              mock.patch.object(agent.invoke, "run_prompt",
                                return_value=answer):
@@ -1240,7 +1258,7 @@ def test_resolve_file_conflicts_calls_claude():
                     args=cmd, returncode=0,
                     stdout=resolved_output, stderr="",
                 )
-            if cmd[:2] == ["git", "show"] and ":2:" in cmd[2]:
+            if _unconfigured(cmd)[:3] == ["git", "cat-file", "blob"] and ":2:" in cmd[-1]:
                 return subprocess.CompletedProcess(
                     args=cmd, returncode=0,
                     stdout="base version\n", stderr="",
@@ -1264,9 +1282,14 @@ def test_resolve_file_conflicts_calls_claude():
         git_add_calls = [(c, w) for c, w in calls if c == ["git", "add", "main.go"]]
         assert len(git_add_calls) == 1
         assert git_add_calls[0][1] == tmpdir
-        # Verify context-fetching git calls were made
-        ours_calls = [c for c, _ in calls if c[:2] == ["git", "show"] and ":2:" in str(c)]
-        assert len(ours_calls) == 1
+        # Verify context-fetching git calls were made: each conflict stage read
+        # once, which is both the prompt's target side and the survival check's
+        # three versions.
+        stage_reads = sorted(
+            _unconfigured(c)[-1] for c, _ in calls
+            if _unconfigured(c)[:3] == ["git", "cat-file", "blob"]
+        )
+        assert stage_reads == [":1:main.go", ":2:main.go", ":3:main.go"]
         diff_calls = [c for c, _ in calls if "REBASE_HEAD^" in str(c)]
         assert len(diff_calls) == 1
 
@@ -1274,9 +1297,21 @@ def test_resolve_file_conflicts_calls_claude():
 def _fake_run_with_context(extra_handler=None):
     """Return a fake subprocess.run that handles context-fetching git calls."""
     def fake_run(cmd, **kwargs):
-        if cmd[:2] == ["git", "show"] and len(cmd) > 2 and ":2:" in cmd[2]:
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="base\n", stderr="")
-        if _unconfigured(cmd)[:2] == ["git", "diff"] and "REBASE_HEAD^" in cmd:
+        unconfigured = _unconfigured(cmd)
+        if unconfigured[:3] == ["git", "cat-file", "blob"]:
+            arg = cmd[-1]
+            # Every stage is given distinct, present content by default so a
+            # test built on this helper that exercises survival/loss behavior
+            # (`judge_answer`, `stage_texts`) gets real base/replayed text
+            # rather than the generic fallback's "empty file present", which
+            # a real missing stage would never produce (git exits non-zero).
+            if ":1:" in arg:
+                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="base\n", stderr="")
+            if ":2:" in arg:
+                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="target\n", stderr="")
+            if ":3:" in arg:
+                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="replayed\n", stderr="")
+        if unconfigured[:2] == ["git", "diff"] and "REBASE_HEAD^" in cmd:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="diff\n", stderr="")
         if extra_handler:
             result = extra_handler(cmd, **kwargs)
@@ -2271,6 +2306,97 @@ def test_step_advance_empty_commit_event_carries_remaining():
         )
 
     assert fake_trail.decision.call_args.kwargs["data"]["remaining"] == 4
+
+
+def test_step_advance_survives_a_broken_audit():
+    """A crash inside the replay audit fails open rather than killing the run.
+
+    The same contract as the hook entry point, `replay_audit.main`: a bug in
+    the audit costs a warning, never the resolutions already staged.
+    """
+    with mock.patch.object(rebase.lifecycle.replay_audit, "audit_replay",
+                           side_effect=RuntimeError("boom")), \
+         mock.patch.object(rebase.inspect, "is_empty_patch", return_value=False), \
+         mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(
+             args=[], returncode=0, stdout="", stderr="")):
+        rc = rebase.lifecycle.step_advance("/fake", mock.MagicMock(), target_ref=_TARGET)
+
+    assert rc is None
+
+
+def test_step_advance_discard_refusal_names_no_push_when_the_run_held_it(capsys):
+    """The resume command a refusal prints carries --no-push along.
+
+    Resuming with a plain `pr rebase --fix` would push a run its operator
+    started with the push held.
+    """
+    loss = rebase.survival.Loss(
+        kind=rebase.survival.LossKind.FILE_TAKEN_WHOLE,
+        side=rebase.survival.Side.REPLAYED,
+    )
+    audit = rebase.replay_audit.CommitAudit(
+        commit="abc123", subject="subj",
+        files=(rebase.survival.FileAudit("f.txt", (loss,)),),
+    )
+
+    with mock.patch.object(rebase.lifecycle.replay_audit, "audit_replay", return_value=audit), \
+         mock.patch.object(rebase.types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(core.report, "emit_json"), \
+         mock.patch.object(rebase.inspect, "rebase_head_info", return_value=("abc123", "subj")), \
+         mock.patch.object(rebase.inspect, "detect_conflicts", return_value=[]), \
+         mock.patch.object(rebase.inspect, "remaining_rebase_commits", return_value=0):
+        rc = rebase.lifecycle.step_advance(
+            "/fake", mock.MagicMock(), target_ref=_TARGET,
+            mode=rebase.types.RunMode.FIX_ONLY,
+        )
+
+    assert rc == rebase.types.CONFLICTS_EXIT
+    assert "pr rebase --fix --no-push" in capsys.readouterr().err
+
+
+def test_halt_if_discarding_reports_a_file_checkout_m_could_not_restore(capsys):
+    """`git checkout -m` is a no-op for a path the two sides never conflicted over.
+
+    `audit_replay` audits every path the replayed commit touched, not only the
+    ones this step had conflicts in — a cleanly auto-merged file can still be
+    named here (a questionable three-way merge `survival.audit` flagged
+    blocking). Restoring it is a no-op, since there is no conflict between HEAD
+    and the replayed commit to recreate, and that must be reported rather than
+    silently claimed as handled.
+    """
+    loss = rebase.survival.Loss(
+        kind=rebase.survival.LossKind.HUNK_REVERTED,
+        side=rebase.survival.Side.REPLAYED,
+    )
+    audit = rebase.replay_audit.CommitAudit(
+        commit="abc123", subject="subj",
+        files=(
+            rebase.survival.FileAudit("conflicted.py", (loss,)),
+            rebase.survival.FileAudit("clean.py", (loss,)),
+        ),
+    )
+
+    commands = []
+
+    def fake_run(cmd, **kwargs):
+        commands.append(cmd)
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch.object(rebase.lifecycle.replay_audit, "audit_replay", return_value=audit), \
+         mock.patch.object(rebase.types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(core.report, "emit_json"), \
+         mock.patch.object(rebase.inspect, "detect_conflicts", return_value=["conflicted.py"]), \
+         mock.patch("subprocess.run", side_effect=fake_run):
+        rc = rebase.lifecycle._halt_if_discarding(
+            "/fake", mock.MagicMock(), rebase.types.ResolutionTally(),
+            target_ref=_TARGET, restore=True,
+        )
+
+    assert rc == rebase.types.CONFLICTS_EXIT
+    checkout_cmds = [cmd for cmd in commands if "checkout" in cmd and "-m" in cmd]
+    assert len(checkout_cmds) == 1
+    assert "conflicted.py" in checkout_cmds[0] and "clean.py" in checkout_cmds[0]
+    assert "No conflict to restore in clean.py" in capsys.readouterr().err
 
 
 def test_step_advance_continue_succeeds():

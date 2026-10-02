@@ -22,6 +22,7 @@ if str(LIB_DIR) not in sys.path:
 import agent.retry  # noqa: E402
 import rebase.conflicts  # noqa: E402
 import rebase.resolve_ai  # noqa: E402
+import rebase.survival  # noqa: E402
 import rebase.types  # noqa: E402
 import agent.invoke
 
@@ -211,3 +212,110 @@ class TestChunkedResolutionFallsBackToTheWholeFile:
             ) is None
 
         assert path.read_text() == before
+
+
+class TestAWholeFileAnswerMustKeepTheCleanChanges:
+    """A whole-file answer that copies one side through parses perfectly.
+
+    That is the AI's version of `git checkout --ours`, and the commit hook
+    would refuse it after the fact. Checked before the write instead, so the
+    retry is spent on the mistake and a file is never staged with work missing.
+    """
+
+    _STAGES = rebase.conflicts.StageTexts(
+        base="a\nb\nc\nd\ne\nf\ng\n",
+        target="a\nBM\nc\nD\ne\nf\ng\n",
+        replayed="a\nB\nc\nd\ne\nF\ng\n",
+    )
+
+    @staticmethod
+    def _answer(body: str) -> str:
+        return f"{rebase.conflicts.RESOLVE_BEGIN}\n{body}{rebase.conflicts.RESOLVE_END}\n"
+
+    def test_an_answer_that_is_the_target_verbatim_is_unusable(self):
+        verdict = rebase.resolve_ai.judge_answer(
+            "f.txt", self._STAGES, self._answer(self._STAGES.target),
+        )
+
+        assert not verdict.usable
+        assert [loss.kind for loss in verdict.losses] == [
+            rebase.survival.LossKind.FILE_TAKEN_WHOLE,
+        ]
+
+    def test_an_answer_keeping_both_sides_is_usable(self):
+        verdict = rebase.resolve_ai.judge_answer(
+            "f.txt", self._STAGES, self._answer("a\nBM+B\nc\nD\ne\nF\ng\n"),
+        )
+
+        assert verdict.usable and verdict.losses == ()
+
+    def test_an_unparseable_answer_reports_the_parse_failure_not_losses(self):
+        verdict = rebase.resolve_ai.judge_answer("f.txt", self._STAGES, "no markers at all")
+
+        assert not verdict.usable
+        assert verdict.losses == ()
+        assert verdict.reason == rebase.types.ParseFailure.MISSING_BOTH_MARKERS
+
+    def test_the_retry_hint_names_what_went_missing(self):
+        losses = rebase.resolve_ai.judge_answer(
+            "f.txt", self._STAGES, self._answer("a\nBM+B\nc\nD\ne\nf\ng\n"),
+        ).losses
+
+        hint = rebase.resolve_ai.dropped_change_hint(losses)
+
+        assert hint.startswith(agent.retry.DROPPED_CHANGE_HINT)
+        assert "line 6" in hint and "+ F" in hint
+
+    def _resolve(self, tmp_path, answer_text, retried):
+        path = tmp_path / "f.txt"
+        path.write_text("conflicted\n")
+
+        def fake_run_prompt(*args, usable, retry_hint, **kwargs):
+            if not usable(answer_text):
+                retried.append(retry_hint(answer_text))
+            return mock.Mock(exit_code=0, text=answer_text)
+
+        trail = mock.MagicMock()
+        with mock.patch.object(rebase.conflicts, "stage_texts", return_value=self._STAGES), \
+             mock.patch.object(rebase.conflicts, "get_commit_diff", return_value=""), \
+             mock.patch.object(rebase.conflicts, "git_add", return_value=True), \
+             mock.patch.object(agent.invoke, "run_prompt", side_effect=fake_run_prompt):
+            result = rebase.resolve_ai.resolve_full_file(
+                "f.txt", path, "conflicted\n", "abc123", "feat: x", str(tmp_path),
+                target_ref="origin/main", trail=trail,
+            )
+        return result, path, trail
+
+    def test_a_discarding_answer_is_retried_and_never_written(self, tmp_path):
+        retried = []
+
+        result, path, trail = self._resolve(
+            tmp_path, self._answer(self._STAGES.target), retried,
+        )
+
+        assert result is None
+        assert path.read_text() == "conflicted\n"
+        assert len(retried) == 1 and retried[0].startswith(agent.retry.DROPPED_CHANGE_HINT)
+        assert trail.failure.call_args.kwargs["data"]["filepath"] == "f.txt"
+
+    def test_a_good_answer_is_written(self, tmp_path):
+        retried = []
+
+        result, path, _ = self._resolve(
+            tmp_path, self._answer("a\nBM+B\nc\nD\ne\nF\ng\n"), retried,
+        )
+
+        assert result == "f.txt"
+        assert path.read_text() == "a\nBM+B\nc\nD\ne\nF\ng\n"
+        assert retried == []
+
+    def test_the_same_answer_is_audited_once_not_three_times(self, tmp_path):
+        """`usable`, `retry_hint`, and the post-prompt check share one verdict."""
+        retried = []
+
+        with mock.patch.object(
+            rebase.survival, "audit", wraps=rebase.survival.audit,
+        ) as audit:
+            self._resolve(tmp_path, self._answer(self._STAGES.target), retried)
+
+        assert audit.call_count == 1

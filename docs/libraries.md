@@ -759,6 +759,26 @@ Bash-only — `read -n 1` behaves differently in zsh.
 
 Loaded via `ui.sh`.
 
+### replay_audit.sh
+
+Runs ai/lib/rebase/replay_audit.py for the global commit hooks.
+
+Two hooks reach the same audit — `prepare-commit-msg` refuses a conflict
+resolution that throws away changes, `post-rewrite` reports commits a rebase
+dropped with their changes — and this is the one place that knows how to
+start it. Sourced on its own, with no dependencies, for the reason
+lib/git_remote.sh gives: a hook that runs in every repository on the machine
+must not load the whole workbench to answer one question.
+
+```bash
+. "$_workbench/lib/replay_audit.sh"
+replay_audit "$_workbench" commit || exit 1
+```
+
+| Function | Purpose |
+|----------|---------|
+| `replay_audit WORKBENCH SUBCOMMAND [ARGS...]` | runs the audit for SUBCOMMAND (`commit` or `rewritten`); returns 1 only on a refusal. |
+
 ### roots.sh
 
 The four user-level roots the workbench writes to, each resolved through the

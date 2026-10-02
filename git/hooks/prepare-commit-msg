@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Global prepare-commit-msg hook: refuses to conclude a conflicted rebase or
+# cherry-pick step with a resolution that throws away changes, then delegates
+# to the repo-local hook.
+# Installed via step_global_hooks in git/steps.sh (symlinked to ~/.git-hooks/).
+#
+# This hook and not pre-commit, because `rebase --continue` commits with `-n`:
+# pre-commit and commit-msg never run for a replayed commit, and this one
+# always does. A non-zero exit leaves the rebase stopped on the same commit,
+# with the resolution still staged, for `rebase --continue` to retry.
+#
+# What counts as throwing changes away is ai/lib/rebase/survival.py's call; see
+# ai/lib/rebase/replay_audit.py for which files are exempt and how to override.
+
+set -euo pipefail
+
+# The workbench checkout this hook is a symlink into, resolved the way the
+# global pre-push hook resolves it — and failing open the same way, since a
+# moved checkout must not refuse every commit on the machine.
+_self="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+_workbench="$(cd "$(dirname "$_self")/../.." 2>/dev/null && pwd)" || _workbench=""
+
+# Cheap enough for every commit, and the interpreter only starts when a replay
+# is actually in progress. A prefilter only — replay_audit.replaying() decides.
+# It tests the rebase state directory rather than REBASE_HEAD, which git leaves
+# behind after a rebase whose last step stopped for a conflict.
+_in_replay() {
+  [[ -d "$(git rev-parse --git-path rebase-merge)" ]] \
+    || [[ -d "$(git rev-parse --git-path rebase-apply)" ]] \
+    || git rev-parse -q --verify CHERRY_PICK_HEAD >/dev/null
+}
+
+if [[ -n "$_workbench" && -f "$_workbench/lib/replay_audit.sh" ]] && _in_replay; then
+  # shellcheck source=../../lib/replay_audit.sh
+  . "$_workbench/lib/replay_audit.sh"
+  replay_audit "$_workbench" commit || exit 1
+fi
+
+# Delegate to the repo-local hook, which a global core.hooksPath otherwise
+# hides — the same delegation, through --git-common-dir, as pre-commit.
+_local_hook="$(git rev-parse --git-common-dir)/hooks/prepare-commit-msg"
+if [[ -x "$_local_hook" ]]; then
+  exec "$_local_hook" "$@"
+fi

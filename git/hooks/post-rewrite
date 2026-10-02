@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Global post-rewrite hook: reports commits a rebase dropped whose changes are
+# not in the result, then delegates to the repo-local hook.
+# Installed via step_global_hooks in git/steps.sh (symlinked to ~/.git-hooks/).
+#
+# A conflict resolved to nothing, or a `rebase --skip`, drops the commit
+# without committing anything, so prepare-commit-msg never sees it. The
+# old→new map git writes to this hook's stdin is the only record. post-rewrite
+# cannot stop anything — the rebase has finished — so this reports, with the
+# commands that recover the work, and always exits with the local hook's status.
+
+set -euo pipefail
+
+_self="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+_workbench="$(cd "$(dirname "$_self")/../.." 2>/dev/null && pwd)" || _workbench=""
+
+# Read once and replayed to the local hook, which is owed the same bytes.
+_rewrites=""
+if [[ ! -t 0 ]]; then
+  _rewrites="$(cat)" || true
+fi
+
+# `amend` rewrites one commit the user is looking at; only a rebase drops any.
+if [[ "${1:-}" == rebase && -n "$_rewrites" && -n "$_workbench" \
+      && -f "$_workbench/lib/replay_audit.sh" ]]; then
+  # shellcheck source=../../lib/replay_audit.sh
+  . "$_workbench/lib/replay_audit.sh"
+  printf '%s\n' "$_rewrites" | replay_audit "$_workbench" rewritten "$1" || true
+fi
+
+_local_hook="$(git rev-parse --git-common-dir)/hooks/post-rewrite"
+# A here-string rather than `printf | exec`: in a pipeline the exec replaces
+# only the subshell, so the script would carry on and run the hook a second
+# time with no input. The here-string's trailing newline restores the one the
+# command substitution above stripped.
+if [[ -x "$_local_hook" ]]; then
+  if [[ -n "$_rewrites" ]]; then
+    exec "$_local_hook" "$@" <<<"$_rewrites"
+  fi
+  exec "$_local_hook" "$@" </dev/null
+fi

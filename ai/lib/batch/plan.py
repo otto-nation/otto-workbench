@@ -121,8 +121,8 @@ def _repo_slug(repo_dir: str) -> str:
     return pr.context.detect_repo(repo_dir)
 
 
-def _row(node: dict, repo_dir: str) -> PlanRow:
-    repo, branch, head = node["repository"]["nameWithOwner"], node["headRefName"], node["headRefOid"]
+def _row(node: dict, repo_dir: str, repo: str) -> PlanRow:
+    branch, head = node["headRefName"], node["headRefOid"]
     threads = (node.get("reviewThreads") or {}).get("nodes") or []
     return PlanRow(
         repo=repo, repo_dir=repo_dir, pr=int(node["number"]), title=node.get("title", ""),
@@ -136,9 +136,14 @@ def _row(node: dict, repo_dir: str) -> PlanRow:
 
 
 def rows_from_search(data: dict, repo_dirs: dict[str, str]) -> list[PlanRow]:
-    rows = [_row(n, repo_dirs[n["repository"]["nameWithOwner"]])
-            for n in (data.get("search") or {}).get("nodes") or []
-            if (n.get("repository") or {}).get("nameWithOwner") in repo_dirs]
+    by_fold = {slug.casefold(): slug for slug in repo_dirs}
+    rows = []
+    for n in (data.get("search") or {}).get("nodes") or []:
+        name = (n.get("repository") or {}).get("nameWithOwner") or ""
+        slug = by_fold.get(name.casefold())
+        if slug is None:
+            continue
+        rows.append(_row(n, repo_dirs[slug], slug))
     return sorted(rows, key=lambda r: (r.repo, r.pr))
 
 
@@ -146,7 +151,23 @@ def _graphql(query: str, variables: dict) -> dict:
     r = gh.client.graphql(query, variables=variables)
     if not r.ok:
         raise PlanError(f"GitHub query failed: {r.stderr.strip() or r.stdout.strip()}")
-    return json.loads(r.stdout)["data"]
+    payload = None
+    try:
+        payload = json.loads(r.stdout)
+        data = payload["data"]
+        if not isinstance(data, dict):
+            raise TypeError("data is not an object")
+        return data
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        messages = []
+        if isinstance(payload, dict):
+            messages = [
+                e.get("message", "")
+                for e in (payload.get("errors") or [])
+                if isinstance(e, dict)
+            ]
+        detail = "; ".join(m for m in messages if m) or str(exc)
+        raise PlanError(f"GitHub query failed: {detail}") from exc
 
 
 def build_plan(repo_dirs: list[str]) -> Plan:
@@ -162,4 +183,4 @@ def replan_row(row: PlanRow) -> PlanRow | None:
             .get("repository") or {}).get("pullRequest") or {}
     if node.get("state") != "OPEN":
         return None
-    return _row(node, row.repo_dir)
+    return _row(node, row.repo_dir, row.repo)

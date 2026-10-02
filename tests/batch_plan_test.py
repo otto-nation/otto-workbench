@@ -91,3 +91,33 @@ def test_replan_returns_none_for_a_closed_pr(monkeypatch):
         "repository": {"pullRequest": {"state": "MERGED"}}})
     row = plan.PlanRow("o/a", "/r", 1, "t", "b", "h", False, {})
     assert plan.replan_row(row) is None
+
+
+def test_rows_from_search_matches_repos_case_insensitively(monkeypatch):
+    seen = []
+    monkeypatch.setattr(plan, "settled_ids", lambda repo_dir, branch: set())
+    monkeypatch.setattr(
+        plan, "_review_file",
+        lambda repo, branch: seen.append(repo) or Path("/nonexistent"),
+    )
+    data = {"search": {"nodes": [
+        {"number": 7, "title": "t", "isDraft": True, "headRefName": "b",
+         "headRefOid": "sha", "mergeStateStatus": "BEHIND",
+         "repository": {"nameWithOwner": "O/A"},
+         "reviewThreads": {"nodes": []}},
+    ]}}
+    rows = plan.rows_from_search(data, {"o/a": "/repos/a"})
+    assert [r.key for r in rows] == ["o/a#7"]
+    assert rows[0].repo == "o/a"
+    assert seen == ["o/a"]
+
+
+def test_graphql_wraps_ok_payload_with_errors(monkeypatch):
+    monkeypatch.setattr(plan, "_repo_slug", lambda d: "o/a")
+
+    class R:
+        ok, stdout, stderr = True, '{"errors":[{"message":"bad"}]}', ""
+
+    monkeypatch.setattr(plan.gh.client, "graphql", lambda *a, **k: R())
+    with pytest.raises(plan.PlanError, match="bad"):
+        plan.build_plan(["/repos/a"])

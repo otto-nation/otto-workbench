@@ -39,7 +39,7 @@ install_targeted.bats	1.64
 lint_sweep.bats	4.83
 list_shell_scripts.bats	2.02
 load_ai_command.bats	2.85
-load_gh_token.bats	7.79
+load_gh_token_shim.bats	7.79
 load_pr_context.bats	6.10
 machine_profile.bats	15.18
 maintenance_auto_tasks.bats	8.71

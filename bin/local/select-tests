@@ -59,7 +59,7 @@ NO_REFS_TESTS=(
   find_commitlint_config
   install_cask
   load_ai_command
-  load_gh_token
+  load_gh_token_shim
   load_pr_context
   parse_pr_flags
   pi_skill_override

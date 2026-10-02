@@ -1751,6 +1751,32 @@ missed one costs a pushed commit and a reply claiming work is done. Running
 `--fix` and `--finish` in the same invocation does not defeat it: the discussion
 is still open at both points, so the hold applies to both.
 
+### pr/gh_token.py
+
+GitHub token resolution for the commands that publish a PR.
+
+One owner for the per-org PAT routing ``task pr:*`` has used since the
+automation token was split from the interactive ``gh`` login. Resolution order,
+first match wins:
+
+1. ``GH_TOKEN`` in ``<repo>/.taskfile/taskfile.env`` — a per-repo pin
+2. ``GH_TOKEN__<ORG>`` in ``~/.config/task/taskfile.env``, ORG from ``origin``
+3. ``GH_TOKEN`` in ``~/.config/task/taskfile.env``
+4. a non-empty ``GH_TOKEN`` already in the environment (CI, ``~/.env.local``)
+
+An empty value (``GH_TOKEN=`` with nothing after) is treated as unset in every
+file tier, matching the environment. Tiers 2 and 3 always read the global file.
+A local file that pins nothing does not disable org routing.
+
+Org and host come from ``pr.target.repo_identity_from_origin`` — the remote
+parser every other ``pr`` command keys on — so every remote spelling git
+accepts routes the same way, and a GitHub Enterprise remote links its own PAT
+page in the failure guidance.
+
+Run as a script, the token is the only thing on stdout (for ``load_gh_token``
+in ``lib/ai/core.sh``) and the guidance goes to stderr, so a failure can never
+be captured into ``GH_TOKEN``.
+
 ### pr/permalinks.py
 
 Links back to the code a review comment is about, pinned so they keep pointing.

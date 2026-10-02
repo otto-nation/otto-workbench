@@ -1054,8 +1054,8 @@ POSIX-compatible for the go-task path.
 
 ### ai/core.sh
 
-Foundation module: AI command loading, GitHub token resolution with per-org
-routing, response handling.
+Foundation module: AI command loading, GitHub token resolution (handed off
+to ai/lib/pr/gh_token.py), response handling.
 
 Sourced first by `commit.sh`, `pr.sh`, and `review.sh`, and by the Taskfile
 tasks that drive them. It inherits the commit conventions by sourcing
@@ -1070,7 +1070,7 @@ State set by its functions: `AI_COMMAND`, `AI_RESPONSE`.
 | Function | Purpose |
 |----------|---------|
 | `load_ai_command` | Finds the AI config and validates the binary exists. Sets AI_COMMAND. Returns 1 on failure. |
-| `load_gh_token` | Resolves GH_TOKEN with per-org routing support. Returns 1 on failure. |
+| `load_gh_token` | Hands GitHub token resolution off to ai/lib/pr/gh_token.py and exports GH_TOKEN. Returns 1 on failure, with the guidance already on stderr. |
 | `run_ai PROMPT [AGENT_OVERRIDE] [TASK_LABEL]` | Requires AI_COMMAND. When AGENT_OVERRIDE is provided, replaces --agent <name> in AI_COMMAND so different tasks can route to the appropriate agent. TASK_LABEL names the call in the usage ledger. Sets AI_RESPONSE. |
 
 ### ai/pr.sh

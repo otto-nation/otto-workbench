@@ -135,7 +135,6 @@ def fetch_pr_context(
     )
 
 
-
 # ── PR refs ─────────────────────────────────────────────────────────────────
 
 def _fetch_pr_refs(repo: str, pr: str, pr_data: gh.pr_data.PRData | None = None) -> dict:

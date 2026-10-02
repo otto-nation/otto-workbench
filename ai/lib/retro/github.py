@@ -66,7 +66,7 @@ GQL_MERGED_PRS_MAX_PAGES = 5
 # times over.
 RETRO_THREADS_LIMIT = 100
 
-# Same reasoning as `gh.pr_pages`' equivalent, and the same measurement behind
+# Same reasoning as `gh.pr_pages`'s equivalent, and the same measurement behind
 # it: p90 is two comments per thread and 3 threads in 217 exceed ten. Nested
 # under `reviewThreads`, this is multiplied by 100 and is most of what the
 # detail query costs. `_threads_for` refetches any PR whose threads were cut

@@ -106,14 +106,15 @@ class Scheduler:
 
     def _apply_requests(self) -> None:
         for raw in store.take_requests(self.run.id):
-            req = resolve.Request.from_dict(raw)
             try:
+                req = resolve.Request.from_dict(raw)
                 resolve.apply(self.run, req, pr_bin=self.pr_bin)
                 self._emit("decision_resolved", run=self.run.id, decision=req.decision,
                            action=req.action)
             except (resolve.ResolveError, KeyError) as exc:
-                self._emit("decision_resolved", run=self.run.id, decision=req.decision,
-                           action=req.action, error=str(exc))
+                self._emit("decision_resolved", run=self.run.id,
+                           decision=raw.get("decision", ""), action=raw.get("action", ""),
+                           error=str(exc))
 
     # ── reaping ──────────────────────────────────────────────────────────
 
@@ -180,48 +181,57 @@ class Scheduler:
             item.status = ItemStatus.DONE
         self._emit("item_finished", run=self.run.id, item=item.key, status=item.status.value)
 
-    def _next_step(self, item: Item) -> StepRecord | None:
-        while True:
-            rec = next((r for r in item.steps if r.status is StepStatus.PENDING), None)
-            if rec is None:
-                return None
+    def _pending(self, item: Item) -> StepRecord | None:
+        return next((r for r in item.steps if r.status is StepStatus.PENDING), None)
+
+    def _confirm(self, item: Item, rec: StepRecord) -> StepRecord | None:
+        try:
             fresh = self._replan(row_for(item))
-            if fresh is None:
-                item.status = ItemStatus.SKIPPED_CLOSED
-                self._emit("item_finished", run=self.run.id, item=item.key,
-                           status=item.status.value)
-                return None
-            need = fresh.needs.get(rec.step)
-            forced = rec.step is Step.REVIEW and item.head_moved
-            if need is not None and not need.needed and not forced:
-                rec.status = StepStatus.SKIPPED
-                continue
-            return rec
+        except _plan.PlanError as exc:
+            _decide(self.run, item, rec.step.value, DecisionKind.FAILED,
+                    {"reason": "github", "detail": str(exc)})
+            return None
+        if fresh is None:
+            item.status = ItemStatus.SKIPPED_CLOSED
+            self._emit("item_finished", run=self.run.id, item=item.key,
+                       status=item.status.value)
+            return None
+        need = fresh.needs.get(rec.step)
+        forced = rec.step is Step.REVIEW and item.head_moved
+        if need is not None and not need.needed and not forced:
+            rec.status = StepStatus.SKIPPED
+            return None
+        return rec
+
+    def _refuse(self, item: Item, rec: StepRecord, reason: str) -> None:
+        if item.wait_reason != reason:
+            self._emit("admission_wait", run=self.run.id, item=item.key,
+                       step=rec.step.value, reason=reason)
+        item.status, item.wait_reason = ItemStatus.WAITING_ADMISSION, reason
 
     def _admit(self) -> None:
         for item in self.run.items:
             if not self._ready(item) or not self._ensure_worktree(item):
                 continue
-            rec = self._next_step(item)
-            if item.terminal:
-                continue
+            rec = self._pending(item)
             if rec is None:
                 self._close(item)
                 continue
             verdict = admission.decide(self._host(), running=len(self._live),
-                                       limit=self.run.pool,
+                                       limit=max(1, self.run.pool),
                                        estimate=self._estimates.get(item.repo, rec.step),
                                        cfg=self.cfg)
-            if verdict.admit:
-                self._start(item, rec)
+            if not verdict.admit:
+                self._refuse(item, rec, verdict.reason)
                 continue
-            if item.wait_reason != verdict.reason:
-                self._emit("admission_wait", run=self.run.id, item=item.key,
-                           step=rec.step.value, reason=verdict.reason)
-            item.status, item.wait_reason = ItemStatus.WAITING_ADMISSION, verdict.reason
+            rec = self._confirm(item, rec)
+            if rec is None:
+                continue
+            self._start(item, rec)
 
     def _start(self, item: Item, rec: StepRecord) -> None:
-        attempt = sum(1 for _ in store.logs_dir(self.run.id).glob(f"{item.pr}-{rec.step}-*"))
+        attempt = sum(1 for _ in store.logs_dir(self.run.id).glob(
+            f"{item.pr}-{rec.step.value}-*"))
         log = store.logs_dir(self.run.id) / f"{item.pr}-{rec.step.value}-{attempt}.log"
         argv = step_argv(rec.step, self.pr_bin, item.worktree,
                          publish=rec.step in self.run.auto_publish)

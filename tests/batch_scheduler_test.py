@@ -15,7 +15,7 @@ import batch.model as m  # noqa: E402
 import batch.outcomes as outcomes  # noqa: E402
 import batch.scheduler as sch  # noqa: E402
 import batch.store as store  # noqa: E402
-from batch.plan import PlanRow, StepNeed  # noqa: E402
+from batch.plan import PlanError, PlanRow, StepNeed  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
 from config.workbench_config import BatchConfig  # noqa: E402
 
@@ -211,3 +211,60 @@ def test_events_are_ndjson_with_schema_version(capsys):
 def test_unknown_event_kind_is_refused():
     with pytest.raises(ValueError):
         events.emit("nope")
+
+
+def test_replan_runs_only_after_admission():
+    calls = []
+
+    def replan(r):
+        calls.append(r.key)
+        return r
+
+    h = Harness([row(1), row(2), row(3)], pool=1, replan=replan)
+    h.sched.run_until_blocked()
+    assert len(h.spawned) == 9
+    assert len(calls) == len(h.spawned)
+
+
+def test_plan_error_fails_one_item_and_others_progress():
+    n = {"n": 0}
+
+    def replan(r):
+        n["n"] += 1
+        if n["n"] == 1:
+            raise PlanError("graphql 502")
+        return r
+
+    h = Harness([row(1), row(2)], replan=replan)
+    assert h.sched.run_until_blocked() is m.RunStatus.WAITING
+    failed = [d for d in h.run.decisions if d.kind is m.DecisionKind.FAILED]
+    assert len(failed) == 1
+    assert failed[0].payload["reason"] == "github"
+    assert failed[0].payload["detail"] == "graphql 502"
+    assert h.run.item("o/r#1").status is m.ItemStatus.AWAITING_DECISION
+    assert any(a[-1] == "/wt/b2" for a in h.spawned)
+    assert not any(a[-1] == "/wt/b1" for a in h.spawned)
+
+
+def test_malformed_request_is_reported_and_the_rest_apply():
+    h = Harness([row(1, {m.Step.REBASE: NEED, m.Step.COMMENTS: NO, m.Step.REVIEW: NO})],
+                codes={("rebase", "/wt/b1"): 3})
+    assert h.sched.run_until_blocked() is m.RunStatus.WAITING
+    d = h.run.open_decisions()[0]
+    store.save(h.run)
+    store.write_request(h.run.id, {"decision": d.id})
+    store.write_request(h.run.id, {"decision": d.id, "action": "retry"})
+    h.codes.clear()
+    h.sched.run_until_blocked()
+    assert [a[1] for a in h.spawned] == ["rebase", "rebase"]
+    errors = [f for k, f in h.events if k == "decision_resolved" and "error" in f]
+    assert errors
+
+
+def test_decision_created_carries_decision_kind():
+    h = Harness([row(1)], codes={("rebase", "/wt/b1"): 3})
+    h.sched.run_until_blocked()
+    created = [f for k, f in h.events if k == "decision_created"]
+    assert created
+    f = created[0]
+    assert f["decision_kind"] and f["decision"] and f["item"] and f["step"] and "payload" in f

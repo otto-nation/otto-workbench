@@ -371,7 +371,10 @@ class TestMergeSmallestGroups:
     def test_agent_count_cap_stops_rather_than_overflow_the_byte_cap(self):
         """Too many agents used to justify a merge that could not be prompted."""
         groups = [Group(f"g{i}", [f"f{i}.py"], 5_000) for i in range(4)]
-        result = merge_smallest_groups(groups, 1, max_diff_bytes=100)
+        # Size is pinned rather than left to the default lines-derived estimate.
+        result = merge_smallest_groups(
+            groups, 1, max_diff_bytes=100, group_diff_bytes=lambda g: 60 * len(g.files),
+        )
         assert len(result) == 4
 
     def test_a_measured_size_callable_is_what_the_cap_reads(self):

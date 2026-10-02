@@ -156,13 +156,15 @@ def _first_turn_claude(records: list[dict]) -> FirstTurnUsage | None:
             continue
         message = rec.get("message") or {}
         usage = message.get("usage") or {}
-        if not usage:
-            continue
         billed = (
             int(usage.get("input_tokens") or 0)
             + int(usage.get("cache_read_input_tokens") or 0)
             + int(usage.get("cache_creation_input_tokens") or 0)
         )
+        if billed == 0:
+            # No usage block, or the zeros block of a synthetic API-error
+            # message: neither is a served request. Keep scanning.
+            continue
         served = str(message.get("model") or model)
         return FirstTurnUsage(served_model=served, input_tokens=billed)
     return None

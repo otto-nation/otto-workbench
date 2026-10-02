@@ -329,7 +329,7 @@ def run_phase(
             phase, job, max_turns=max_turns, ladder_bytes=ladder, **prompt_args,
         )
 
-    prompt, diagnosis = run_with_overflow_recovery(
+    diagnosis = run_with_overflow_recovery(
         prompt,
         invoke=lambda text: runner.invoke(text),
         after=lambda text: _retry_missing_output(
@@ -338,7 +338,7 @@ def run_phase(
         ),
         has_output=lambda: _has_output(output),
         rebuild=_rebuild,
-    )
+    ).diagnosis
 
     if not _has_output(output):
         # A `None` here is the artifact vanishing after the retry driver had
@@ -460,13 +460,13 @@ def _review_group(
             prefix=retry_hint, ladder_bytes=ladder, **group_kwargs,
         )
 
-    _prompt, diagnosis = run_with_overflow_recovery(
+    diagnosis = run_with_overflow_recovery(
         group_prompt,
         invoke=lambda text: runner.invoke(text, max_turns, label=grp.name),
         after=_after,
         has_output=lambda: _has_output(group_output),
         rebuild=_rebuild,
-    )
+    ).diagnosis
 
     failed = None
     if not _has_output(group_output):

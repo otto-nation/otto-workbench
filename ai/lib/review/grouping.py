@@ -46,9 +46,9 @@ HOLISTIC_MIN_GROUPS = 8
 # ceiling: grouping only has additions+deletions per file, not the patch
 # text. 80 bytes/line sits above the ~40–60 B of a typical unified-diff line
 # (hunk header plus context), so a merge that would overflow the group ladder
-# still looks oversize here. Upgrade to scope_diff(preflight.diff, files)
-# once every caller has the collected diff in hand — pipeline does today, and
-# passes that callable; this estimate is the fallback when it does not.
+# still looks oversize here. When the collected diff is in hand, the pipeline
+# passes `group_diff_bytes` summing the measured per-file diff section sizes
+# instead; this estimate is the fallback when it does not.
 BYTES_PER_DIFF_LINE = 80
 
 GROUP_TIER1 = "tier1-critical"

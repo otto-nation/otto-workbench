@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from conftest import add_self_origin, commit_all, git_out, init_repo
 
@@ -12,6 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import cli.review_orchestrate  # noqa: F401
 
 import review.pipeline
+from review.budget import MIN_DIFF_BYTES, TEMPLATE_OVERHEAD_BYTES, fixed_preflight_bytes
+from review.types import PreflightData
 
 
 # ── self-review metadata ──────────────────────────────────────────────
@@ -167,8 +170,6 @@ class TestGroupMergeCap:
     """A merged group's diff is capped at what its prompt has room for."""
 
     def _job(self, preflight):
-        from types import SimpleNamespace
-
         return SimpleNamespace(model="", config=None, preflight=preflight)
 
     def _patch(self, monkeypatch, target):
@@ -178,9 +179,6 @@ class TestGroupMergeCap:
         )
 
     def test_the_fixed_context_and_template_are_reserved(self, monkeypatch):
-        from review.budget import TEMPLATE_OVERHEAD_BYTES
-        from review.types import PreflightData
-
         self._patch(monkeypatch, 300_000)
         pf = PreflightData(
             diff="", commit_log="x" * 40_000, file_contents={},
@@ -189,12 +187,14 @@ class TestGroupMergeCap:
         )
         cap = review.pipeline._group_merge_cap(self._job(pf))
         # The commit log is a lever, so it is not charged against the cap.
-        assert cap == 300_000 - TEMPLATE_OVERHEAD_BYTES - 15_000
+        fixed = fixed_preflight_bytes(
+            pf.claude_md, pf.architecture_md, pf.review_checklists,
+            pf.review_profiles,
+        )
+        assert fixed >= 15_000  # the context files are charged at least whole
+        assert cap == 300_000 - TEMPLATE_OVERHEAD_BYTES - fixed
 
     def test_never_below_the_diff_floor(self, monkeypatch):
-        from review.budget import MIN_DIFF_BYTES
-        from review.types import PreflightData
-
         self._patch(monkeypatch, 30_000)
         pf = PreflightData(
             diff="", commit_log="", file_contents={}, file_permissions={},

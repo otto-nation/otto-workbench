@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TypeVar
 
 import core.log
@@ -108,6 +109,18 @@ def recover_overflow_prompt(
     return rebuilt
 
 
+@dataclass(frozen=True)
+class OverflowRun:
+    """The outcome of `run_with_overflow_recovery`.
+
+    `prompt` is the one the last invocation ran; `diagnosis` is why the
+    artifact is still missing, or None when there is nothing to report.
+    """
+
+    prompt: str
+    diagnosis: Diagnosis | None
+
+
 def run_with_overflow_recovery(
     prompt: str,
     *,
@@ -115,7 +128,7 @@ def run_with_overflow_recovery(
     after: Callable[[str], Diagnosis | None],
     has_output: Callable[[], bool],
     rebuild: Callable[[int], str],
-) -> tuple[str, Diagnosis | None]:
+) -> OverflowRun:
     """Invoke, and rebuild at most `MAX_OVERFLOW_RECOVERY` times on overflow.
 
     `after` runs the same-prompt retry (missing output, max turns) and returns
@@ -127,9 +140,9 @@ def run_with_overflow_recovery(
         invoke(prompt)
         diagnosis = after(prompt)
         if has_output():
-            return prompt, diagnosis
+            return OverflowRun(prompt, diagnosis)
         nxt = recover_overflow_prompt(diagnosis, prompt, rebuild, attempt)
         if nxt is None:
-            return prompt, diagnosis
+            return OverflowRun(prompt, diagnosis)
         attempt += 1
         prompt = nxt

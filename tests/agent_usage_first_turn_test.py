@@ -91,6 +91,28 @@ def test_claude_assistant_without_usage_is_skipped():
     assert first.input_tokens == 700
 
 
+def test_claude_synthetic_error_message_with_zero_usage_is_skipped():
+    """An API error surfaces as a `<synthetic>` assistant message of zeros."""
+    zeros = {
+        "input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
+    records = [
+        {"type": "assistant", "message": {"model": "<synthetic>", "usage": zeros}},
+        {
+            "type": "assistant",
+            "message": {"model": "claude-sonnet-5", "usage": {"input_tokens": 900}},
+        },
+    ]
+    first = first_turn_usage(records)
+    assert first is not None
+    assert first.served_model == "claude-sonnet-5"
+    assert first.input_tokens == 900
+
+    assert first_turn_usage(records[:1]) is None
+
+
 def test_claude_falls_back_to_the_init_model_when_the_message_names_none():
     records = [
         {"type": "system", "subtype": "init", "model": "claude-init-model"},

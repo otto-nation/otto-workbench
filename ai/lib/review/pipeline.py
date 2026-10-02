@@ -38,7 +38,7 @@ from review.budget import (
 )
 from review.collect import diff_section_sizes, fetch_branch_metadata
 from review.grouping import (
-    GROUP_TIER3, estimate_group_diff_bytes, group_files, merge_smallest_groups,
+    GROUP_TIER3, Group, estimate_group_diff_bytes, group_files, merge_smallest_groups,
 )
 from review.overflow import run_with_overflow_recovery
 from review.outcome import _post_process_review, _write_review_sidecar, is_complete_review
@@ -149,7 +149,7 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
         rc = runner.invoke(text, turns)
         return rc
 
-    prompt, diagnosis = run_with_overflow_recovery(
+    diagnosis = run_with_overflow_recovery(
         prompt,
         invoke=lambda text: invoke(text, max_turns),
         after=lambda text: _retry_missing_output(
@@ -160,7 +160,7 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
         rebuild=lambda ladder: build_prompt(
             Phase.SINGLE, job, max_turns=max_turns, ladder_bytes=ladder,
         ),
-    )
+    ).diagnosis
 
     if not _has_output(job.review_file):
         detail = f"exited with code {rc}" if rc != 0 else "completed"
@@ -252,7 +252,7 @@ def run_multi_phase(
     # Scanned once: the merge loop asks for every candidate pair each round.
     section_sizes = diff_section_sizes(collected_diff) if collected_diff else None
 
-    def _group_diff_bytes(group):
+    def _group_diff_bytes(group: Group) -> int:
         if section_sizes is not None:
             return sum(section_sizes.get(f, 0) for f in group.files)
         return estimate_group_diff_bytes(group)

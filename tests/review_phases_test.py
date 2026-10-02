@@ -602,7 +602,6 @@ class TestPromptTooLargeFailsThePhase:
         assert not Diagnosis(DiagnosisKind.PROMPT_TOO_LARGE, detail="x").recoverable
 
 
-
 class TestApiOverflowRecoversInPhase:
     """An API `prompt is too long` rejection is re-planned inside the phase.
 

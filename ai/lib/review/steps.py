@@ -297,14 +297,16 @@ def _phase_synthesis(
         rc = runner.invoke(text, turns)
         return rc
 
-    def invoke_first(text: str) -> int:
+    def invoke_logged(text: str) -> int:
         result = invoke(text, max_turns)
         core.log.blank()
         return result
 
-    prompt, _diagnosis = run_with_overflow_recovery(
+    # The result is intentionally ignored: success is judged below by
+    # `is_complete_review`, which also catches output that exists but is partial.
+    run_with_overflow_recovery(
         prompt,
-        invoke=invoke_first,
+        invoke=invoke_logged,
         after=lambda text: _retry_missing_output(
             invoke, text, synthesis_log, job.review_file,
             label="Synthesis", max_turns=max_turns,

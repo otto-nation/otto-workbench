@@ -124,18 +124,18 @@ class TestRunWithOverflowRecovery:
                 detail="prompt is too long: 200 tokens > 100 maximum",
             )
 
-        prompt, diagnosis = run_with_overflow_recovery(
+        run = run_with_overflow_recovery(
             "B" * 100,
             invoke=invoke,
             after=after,
             has_output=lambda: output["ready"],
             rebuild=lambda n: f"SMALL-{n}",
         )
-        assert diagnosis is None
+        assert run.diagnosis is None
         assert len(prompts) == 2
         assert prompts[0] == "B" * 100
         assert prompts[1].startswith("SMALL-")
-        assert prompt == prompts[1]
+        assert run.prompt == prompts[1]
 
     def test_unparseable_is_not_retried(self):
         prompts = []
@@ -143,7 +143,7 @@ class TestRunWithOverflowRecovery:
         def invoke(text):
             prompts.append(text)
 
-        prompt, diagnosis = run_with_overflow_recovery(
+        run = run_with_overflow_recovery(
             "BIG",
             invoke=invoke,
             after=lambda _t: Diagnosis(DiagnosisKind.AGENT_ERROR, detail="nope"),
@@ -151,8 +151,8 @@ class TestRunWithOverflowRecovery:
             rebuild=lambda n: "SMALL",
         )
         assert prompts == ["BIG"]
-        assert diagnosis.detail == "nope"
-        assert prompt == "BIG"
+        assert run.diagnosis.detail == "nope"
+        assert run.prompt == "BIG"
 
     def test_stops_after_the_attempt_cap_when_every_rebuild_still_overflows(self):
         prompts = []
@@ -161,7 +161,7 @@ class TestRunWithOverflowRecovery:
         def rebuild(_target):
             return "r" * next(sizes)
 
-        prompt, diagnosis = run_with_overflow_recovery(
+        run = run_with_overflow_recovery(
             "B" * 1000,
             invoke=prompts.append,
             after=lambda _t: Diagnosis(
@@ -172,14 +172,14 @@ class TestRunWithOverflowRecovery:
             rebuild=rebuild,
         )
         assert len(prompts) == 1 + MAX_OVERFLOW_RECOVERY
-        assert diagnosis is not None
-        assert prompt == prompts[-1]
+        assert run.diagnosis is not None
+        assert run.prompt == prompts[-1]
 
     def test_an_artifact_on_disk_ends_recovery_despite_a_diagnosis(self):
         prompts = []
         rebuilds = []
 
-        prompt, diagnosis = run_with_overflow_recovery(
+        run = run_with_overflow_recovery(
             "BIG",
             invoke=prompts.append,
             after=lambda _t: Diagnosis(
@@ -191,5 +191,5 @@ class TestRunWithOverflowRecovery:
         )
         assert prompts == ["BIG"]
         assert rebuilds == []
-        assert prompt == "BIG"
-        assert diagnosis is not None
+        assert run.prompt == "BIG"
+        assert run.diagnosis is not None

@@ -12,6 +12,15 @@ setup() {
   TEMPLATE="$TMPDIR/template.json"
   BIN="$TMPDIR/bin"
   mkdir -p "$BIN"
+  # Shadow the host `pi` so this suite never calls `pi --list-models` against
+  # the developer's install. Tests that cover the check overwrite $BIN/pi;
+  # tests that need it absent delete it and narrow PATH.
+  cat > "$BIN/pi" << 'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+  chmod +x "$BIN/pi"
+  PATH="$BIN:$PATH"
   ORG="usemaximum"
   REPO="$ORG/pi-extensions"
   PKG="git:github.com/$REPO"
@@ -501,4 +510,190 @@ _teardown_registry_tree() {
   [ "$(_live 'has("enabledModels")')" = "false" ]
   _teardown_env_local
   _teardown_registry_tree
+}
+
+# ── unknown-model warning against `pi --list-models` ──────────────────────────
+
+# Rows copied from a real `pi --list-models`. claude-opus-5 is deliberately
+# absent so a substring of claude-opus-5-5 is not treated as listed.
+_stub_pi_list_models() {
+  cat > "$BIN/pi" << 'SCRIPT'
+#!/usr/bin/env bash
+[[ "$1" == "--list-models" ]] || exit 1
+cat << 'LIST'
+provider              model                               context  max-out  thinking  images
+google-vertex         gemini-2.5-flash                    1.0M     65.5K    yes       yes
+google-vertex-claude  claude-opus-5-5                     1M       128K     yes       yes
+google-vertex-claude  claude-sonnet-5                     1M       128K     yes       yes
+google-vertex-grok    xai/grok-4.6                        120K     32K      yes       no
+LIST
+SCRIPT
+  chmod +x "$BIN/pi"
+  PATH="$BIN:$PATH"
+}
+
+_hide_pi() {
+  rm -f "$BIN/pi"
+  ln -sf "$(command -v jq)" "$BIN/jq"
+  ln -sf "$(command -v yq)" "$BIN/yq"
+  ln -sf "$BASH" "$BIN/bash"
+  PATH="$BIN:/usr/bin:/bin"
+}
+
+@test "an unknown model warns with the variable name" {
+  _seed_env_local 'export AI_MODEL=not-a-real-model'
+  _stub_gh 'echo "{}"'
+  _stub_pi_list_models
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"AI_MODEL=not-a-real-model"* ]]
+  [[ "$output" == *"google-vertex-claude"* ]]
+  [[ "$output" == *"~/.env.local"* ]]
+  _teardown_env_local
+}
+
+@test "every listed model is silent" {
+  _seed_env_local 'export AI_MODEL=claude-sonnet-5'
+  _stub_gh 'echo "{}"'
+  _stub_pi_list_models
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"is not listed under"* ]]
+  _teardown_env_local
+}
+
+@test "pi absent is silent and the step still succeeds" {
+  _seed_env_local 'export AI_MODEL=not-a-real-model'
+  _stub_gh 'echo "{}"'
+  _hide_pi
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"is not listed under"* ]]
+  _teardown_env_local
+}
+
+@test "pi --list-models failing is silent and the step still succeeds" {
+  _seed_env_local 'export AI_MODEL=not-a-real-model'
+  _stub_gh 'echo "{}"'
+  # setup already shadows pi with a failing binary.
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"is not listed under"* ]]
+  _teardown_env_local
+}
+
+@test "a model listed only under a different provider still warns" {
+  _seed_env_local 'export AI_MODEL=gemini-2.5-flash'
+  _stub_gh 'echo "{}"'
+  _stub_pi_list_models
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"AI_MODEL=gemini-2.5-flash"* ]]
+  [[ "$output" == *"google-vertex-claude"* ]]
+  _teardown_env_local
+}
+
+@test "a substring of a listed id is not treated as listed" {
+  _seed_env_local 'export AI_MODEL=claude-opus-5'
+  _stub_gh 'echo "{}"'
+  _stub_pi_list_models
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"AI_MODEL=claude-opus-5"* ]]
+  [[ "$output" == *"is not listed under google-vertex-claude"* ]]
+  _teardown_env_local
+}
+
+# ── one registry scan per sync, not one per collector ──────────────────────────
+
+@test "step_pi_settings shares one registry scan between build and warn" {
+  # _pi_build_models and _pi_warn_unknown_models each call
+  # collect_model_env_vars against the same scan_dir. step_pi_settings wraps
+  # both in one reg_scan_hold, so the second call must reuse the first's scan
+  # rather than rescanning the directory on disk.
+  #
+  # Proven the same way registries_cache.bats proves reg_scan_hold's sharing:
+  # through the hold's own cost rather than its benefit. collect_model_env_vars
+  # is wrapped so its first call — _pi_build_models' — rewrites the registry
+  # out from under AI_MODEL to declare AI_OTHER_MODEL instead, which has no
+  # value in ~/.env.local. A second, unheld call would see only
+  # AI_OTHER_MODEL and find nothing set, so _pi_warn_unknown_models would stay
+  # silent regardless of whether claude-opus-5 is listed. A held call still
+  # sees AI_MODEL from the scan _pi_build_models already loaded, and warns.
+  mkdir -p "$TMPDIR/registries"
+  cat > "$TMPDIR/registries/models.env.yml" << 'YAML'
+meta:
+  section: "test models"
+  validation: none
+env:
+  - var: AI_MODEL
+    role: model-default
+YAML
+  _seed_env_local 'export AI_MODEL=claude-opus-5'
+  _stub_gh 'echo "{}"'
+  _stub_pi_list_models
+
+  run bash -c '
+    set -e
+    success() { echo "OK $*"; }
+    warn()    { echo "WARN $*"; }
+    err()     { echo "ERR $*"; }
+    skip()    { echo "SKIP $*"; }
+    PI_AGENT_DIR="$2"
+    PI_SETTINGS_FILE="$2/settings.json"
+    PI_SETTINGS_SRC="$3"
+    PI_SYNC_SETTINGS_JQ="$1/ai/pi/sync-settings.jq"
+    ENV_LOCAL_FILE="$4"
+    LIB_SRC_DIR="$1/lib"
+    WORKBENCH_STABLE_DIR="$5"
+    REGISTRY_FILE="$5/models.env.yml"
+    . "$1/lib/env.sh"
+    . "$1/lib/registries.sh"
+    __orig_def=$(declare -f collect_model_env_vars)
+    eval "_orig_collect_model_env_vars${__orig_def#collect_model_env_vars}"
+    collect_model_env_vars() {
+      _orig_collect_model_env_vars "$@"
+      cat > "$REGISTRY_FILE" << YAML2
+meta:
+  section: "test models"
+  validation: none
+env:
+  - var: AI_OTHER_MODEL
+    role: model-default
+YAML2
+    }
+    . "$1/ai/pi/steps.sh"
+    step_pi_settings
+  ' _ "$REPO_ROOT" "$AGENT_DIR" "$TEMPLATE" "$TMPDIR/.env.local" "$TMPDIR/registries"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"AI_MODEL=claude-opus-5"* ]]
+  _teardown_env_local
+}
+
+@test "a malformed template surfaces jq's error on the build path" {
+  _seed_env_local 'export AI_MODEL=claude-opus-5'
+  printf '{ not json' > "$TEMPLATE"
+
+  run --separate-stderr bash -c '
+    set -e
+    warn() { :; }
+    PI_SETTINGS_SRC="$2"
+    ENV_LOCAL_FILE="$3"
+    LIB_SRC_DIR="$1/lib"
+    WORKBENCH_STABLE_DIR="$1"
+    . "$1/lib/env.sh"
+    . "$1/ai/pi/steps.sh"
+    _pi_build_models out
+    echo "built: $out"
+  ' _ "$REPO_ROOT" "$TEMPLATE" "$ENV_LOCAL_FILE"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"parse error"* ]]
+  [[ "$output" != *"built:"* ]]
+  _teardown_env_local
 }

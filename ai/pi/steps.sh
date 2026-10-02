@@ -348,21 +348,25 @@ step_pi_extensions() {
   return 0
 }
 
-# _pi_build_models — reads the model env vars the registries declare out of
-# ~/.env.local and prints a JSON object with defaultModel + enabledModels, or {}
-# when there is no default to build around. The provider prefix comes from the
-# template.
+# _pi_build_models OUT — reads the model env vars the registries declare out of
+# ~/.env.local and sets OUT to a JSON object with defaultModel + enabledModels,
+# or {} when there is no default to build around. The provider prefix comes from
+# the template. A nameref rather than stdout, so the registry scan it loads stays
+# in the caller's shell for step_pi_settings' reg_scan_hold to share — a
+# `$(...)` would load it in a subshell and throw it away.
 #
 # Which variables carry models is not written here: ai/models.env.yml declares
 # them with a `role`, and collect_model_env_vars reads it, so a tier added there
 # reaches Pi without this function changing. Claude Code's sync reads the same
 # file through collect_claude_env_vars.
 _pi_build_models() {
+  local -n __pbm_out=$1
+  __pbm_out='{}'
+
   # Before the registry read, so a machine with no ~/.env.local answers without
   # yq — there are no model values to be had either way, and this is the one
   # path through the function that needs nothing beyond jq.
   if [[ ! -f "$ENV_LOCAL_FILE" ]]; then
-    printf '{}'
     return 0
   fi
 
@@ -390,12 +394,11 @@ _pi_build_models() {
   done
 
   if [[ -z "$default_model" ]]; then
-    printf '{}'
     return 0
   fi
 
   local provider values_json='[]'
-  provider=$(jq -r '.defaultProvider // "google-vertex-claude"' "$PI_SETTINGS_SRC")
+  provider=$(_pi_default_provider)
   # Guarded because bash 4.3 treats "${arr[@]}" on an empty array as unbound.
   if (( ${#values[@]} > 0 )); then
     values_json=$(printf '%s\n' "${values[@]}" | jq -Rn '[inputs]')
@@ -410,7 +413,7 @@ _pi_build_models() {
   # and sonnet both pointed at the same id is a normal way to pin a machine to
   # one model. `unique` would sort, and the list reads defaultModel-first, so
   # the fold below keeps first-seen order instead.
-  jq -n \
+  __pbm_out=$(jq -n \
     --arg default "$default_model" \
     --arg provider "$provider" \
     --argjson values "$values_json" \
@@ -418,7 +421,70 @@ _pi_build_models() {
        enabledModels: ([$default] + $values
          | map(select(. != ""))
          | map("\($provider)/\(.)")
-         | reduce .[] as $m ([]; if index($m) then . else . + [$m] end)) }'
+         | reduce .[] as $m ([]; if index($m) then . else . + [$m] end)) }')
+}
+
+# _pi_default_provider — prints the provider prefix model ids are built and
+# checked against: the template's defaultProvider, or the hardcoded fallback
+# every caller shares. jq's stderr is left alone so a malformed template fails
+# loudly on the build path; the warn path, which must never fail, silences it
+# at its own call.
+_pi_default_provider() {
+  jq -r '.defaultProvider // "google-vertex-claude"' "$PI_SETTINGS_SRC"
+}
+
+# _pi_warn_unknown_models — warn when a set model env var names an id pi does
+# not list for the default provider. Never fails the sync: a missing or broken
+# `pi` is skipped, because pi may be absent or offline and a 404 mid-review is
+# still how those machines find out. Quiet when every set value is listed.
+#
+# Kept out of _pi_build_models because it needs `pi`, which building the model
+# list does not, and a missing or offline `pi` must not touch the merge.
+_pi_warn_unknown_models() {
+  [[ -f "$ENV_LOCAL_FILE" ]] || return 0
+
+  if ! declare -F collect_model_env_vars > /dev/null 2>&1; then
+    # shellcheck source=../../lib/registries.sh
+    . "$LIB_SRC_DIR/registries.sh"
+  fi
+
+  local -a model_vars=() model_roles=()
+  collect_model_env_vars model_vars model_roles "$WORKBENCH_STABLE_DIR" || return 0
+
+  local i value
+  local -a names=() values=()
+  for (( i=0; i<${#model_vars[@]}; i++ )); do
+    value=$(read_env_local_var "${model_vars[i]}")
+    [[ -n "$value" ]] || continue
+    names+=("${model_vars[i]}")
+    values+=("$value")
+  done
+  (( ${#names[@]} > 0 )) || return 0
+
+  # pi may be absent (a Claude-only machine) or offline. Skip rather than fail.
+  command -v pi > /dev/null 2>&1 || return 0
+
+  local listing
+  listing=$(pi --list-models 2>/dev/null) || return 0
+  [[ -n "$listing" ]] || return 0
+
+  local provider
+  provider=$(_pi_default_provider 2>/dev/null) || return 0
+
+  local -A listed=()
+  local col1 col2
+  while read -r col1 col2 _ || [[ -n "$col1" ]]; do
+    [[ "$col1" == "provider" ]] && continue
+    [[ "$col1" == "$provider" ]] || continue
+    [[ -n "$col2" ]] || continue
+    listed["$col2"]=1
+  done <<< "$listing"
+
+  for (( i=0; i<${#names[@]}; i++ )); do
+    [[ -n "${listed[${values[i]}]+x}" ]] && continue
+    warn "${names[i]}=${values[i]} is not listed under $provider — set it in ~/.env.local"
+  done
+  return 0
 }
 
 # step_pi_settings — merges the workbench's managed keys into Pi's global settings.
@@ -429,7 +495,23 @@ _pi_build_models() {
 # authoritative. Model config is derived from the vars the registries declare
 # with a model role, read out of ~/.env.local — the same SSOT Claude Code reads
 # — and applied after template scalars so it always wins.
+#
+# One registry scan for the whole step. _pi_build_models and
+# _pi_warn_unknown_models each call collect_model_env_vars against the same
+# scan_dir, and each re-scans on its own, so the yq parse of every registry
+# ran twice per sync and the second threw away what the first had cached —
+# the identical duplication step_claude_settings carries a reg_scan_hold for.
+# Safe because the step only reads the registry tree; see `reg_scan_hold` in
+# lib/registries.sh for the bound that makes it so.
 step_pi_settings() {
+  if ! declare -F reg_scan_hold > /dev/null 2>&1; then
+    # shellcheck source=/dev/null
+    . "$LIB_SRC_DIR/registries.sh"
+  fi
+  reg_scan_hold _step_pi_settings
+}
+
+_step_pi_settings() {
   mkdir -p "$PI_AGENT_DIR"
 
   local existing="{}" content
@@ -440,7 +522,8 @@ step_pi_settings() {
   _pi_partition_packages allowed blocked
 
   local models
-  models=$(_pi_build_models)
+  _pi_build_models models
+  _pi_warn_unknown_models
 
   local result
   result=$(jq -n \

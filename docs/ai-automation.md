@@ -667,12 +667,12 @@ command as taking no target, or give it a delegate to read.
 ### The Pi package the sync declares, and who gets it
 
 Pi reads *and writes* `~/.pi/agent/settings.json` — `pi install`, `pi config` and
-Ctrl+S in `/model` all land there — so `step_pi_settings`
-([`ai/pi/steps.sh`](../ai/pi/steps.sh)) merges the workbench's template into that
-file rather than copying over it. Scalar keys are seeds: one the live file
-already carries stays as whatever set it first, which also means a changed
-template default never reaches a machine that already has the key. Delete the key
-there to be re-seeded.
+Ctrl+S in `/model` all land there — so `step_pi_settings` ([`ai/pi/steps.sh`](../ai/pi/steps.sh))
+merges the workbench's template into that file rather than copying over it. Scalar
+keys are seeds: one the live file already carries stays as whatever set it first,
+which also means a changed template default never reaches a machine that already
+has the key. Delete the key there to be re-seeded. A model id `pi --list-models`
+does not list for the default provider is a sync warning, not a failure.
 
 `packages` is reconciled instead, because a list gains an entry without
 displacing one. Before declaring one, the sync asks GitHub whether this machine

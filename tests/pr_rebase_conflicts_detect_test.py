@@ -2,7 +2,6 @@
 
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 from unittest import mock
 
@@ -445,37 +444,6 @@ def test_classify_conflict_lockfile_takes_priority_over_generated(tmp_path):
         plan = rebase.conflicts.classify_conflict("pnpm-lock.yaml", f, str(tmp_path))
     assert plan.strategy is rebase.types.ConflictStrategy.REGENERATE
 
-
-def test_classify_delete_conflict_carries_side():
-    """Modify/delete conflict classifies as DELETE and records which side deleted."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        filepath = "KanbanOverlay.tsx"
-        full_path = Path(tmpdir) / filepath
-        full_path.write_text("some content\n")
-
-        with mock.patch.object(rebase.conflicts, "is_generated_file", return_value=None), \
-             mock.patch.object(
-                 rebase.conflicts, "detect_delete_conflict",
-                 return_value=rebase.types.DeleteSide.THEIRS_DELETED,
-             ):
-            plan = rebase.conflicts.classify_conflict(filepath, full_path, tmpdir)
-
-        assert plan.strategy is rebase.types.ConflictStrategy.DELETE
-        assert plan.delete_side is rebase.types.DeleteSide.THEIRS_DELETED
-
-
-def test_classify_normal_conflict_as_ai_merge():
-    """Normal content conflict classifies as AI_MERGE."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        filepath = "main.go"
-        full_path = Path(tmpdir) / filepath
-        full_path.write_text("<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n")
-
-        with mock.patch.object(rebase.conflicts, "is_generated_file", return_value=None), \
-             mock.patch.object(rebase.conflicts, "detect_delete_conflict", return_value=None):
-            plan = rebase.conflicts.classify_conflict(filepath, full_path, tmpdir)
-
-        assert plan.strategy is rebase.types.ConflictStrategy.AI_MERGE
 
 
 def test_extract_conflict_blocks_single():

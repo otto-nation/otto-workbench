@@ -14,7 +14,7 @@ import rebase.types  # noqa: E402
 import rebase.conflicts  # noqa: E402
 import rebase.resolve_ai  # noqa: E402
 import agent.invoke  # noqa: E402
-import agent.backend
+import agent.backend  # noqa: E402
 
 from pr_rebase_support import _TARGET, _OTHER_TARGET, _make_large_file, _block
 

@@ -11,7 +11,6 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import gh.client  # noqa: E402
 import gh.landed  # noqa: E402
 import git.client  # noqa: E402
 import core.report  # noqa: E402
@@ -25,23 +24,11 @@ from pr_rebase_support import (
     _OTHER_TARGET,
     _LANDED_BRANCH,
     _LANDED_PR,
-    _completed,
     _landed_ctx,
 )
 
 _LANDED_URL = "https://x/pull/726"
 
-
-def _gh_response(payload: str, returncode: int = 0):
-    """Patch the transport so the gh call answers with *payload*.
-
-    Stubbed under `gh.client` rather than at it, so the argv the client builds
-    and the tier it picks are both still observable from the call.
-    """
-    return mock.patch(
-        "core.proc.subprocess.run",
-        return_value=_completed(["gh"], returncode=returncode, stdout=payload),
-    )
 
 
 def _run_tracker_check(merged=None, ctx=None, *, looked=True, remedy=""):

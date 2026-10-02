@@ -20,8 +20,8 @@ import config.workbench_config  # noqa: E402
 import agent.invoke  # noqa: E402
 import fix.engine  # noqa: E402
 import pr.target  # noqa: E402
-import agent.backend
-import fix.scope
+import agent.backend  # noqa: E402
+import fix.scope  # noqa: E402
 
 from pr_rebase_support import _LEASE
 

@@ -117,6 +117,16 @@ def test_drop_pr_drops_the_item():
     assert run.items[0].status is batch.model.ItemStatus.DROPPED
 
 
+def test_drop_pr_on_rebase_refused_drops_the_item():
+    run = _run(_d(batch.model.DecisionKind.REBASE_REFUSED, "rebase", {"override": "--force"}))
+    batch.resolve.apply(run, batch.resolve.Request("d1", "drop-pr"), pr_bin="pr", runner=Recorder())
+    assert run.items[0].status is batch.model.ItemStatus.DROPPED
+
+
+def test_skip_pr_is_not_an_action():
+    assert all("skip-pr" not in actions for actions in batch.resolve.ACTIONS.values())
+
+
 def test_skip_step_on_a_worktree_failure_drops_the_item():
     run = _run(_d(batch.model.DecisionKind.FAILED, "worktree", {"reason": "error"}))
     batch.resolve.apply(run, batch.resolve.Request("d1", "skip-step"), pr_bin="pr", runner=Recorder())

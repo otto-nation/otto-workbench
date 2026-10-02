@@ -73,6 +73,8 @@ def open_findings(item: Item) -> list[dict]:
 
 
 def _failed(exit_code: int, log_tail: list[str]) -> StepResult:
+    # The lock-busy message is the child's final stderr line and log_tail keeps
+    # the last 40 lines, so it is always inside the tail.
     reason = "busy" if any(LOCK_BUSY_MARKER in line for line in log_tail) else "error"
     return StepResult(StepStatus.FAILED, [DecisionDraft(DecisionKind.FAILED, {
         "reason": reason, "exit_code": exit_code, "log_tail": log_tail})])

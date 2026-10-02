@@ -19,7 +19,7 @@ ACTIONS: dict[DecisionKind, frozenset[str]] = {
     DecisionKind.COMMENT_ITEM: frozenset({"settle-fixed", "settle-addressed",
                                           "settle-dismissed", "reply", "track", "open-chat"}),
     DecisionKind.REBASE_CONFLICT: frozenset({"retry", "abort", "open-chat"}),
-    DecisionKind.REBASE_REFUSED: frozenset({"skip-pr", "force"}),
+    DecisionKind.REBASE_REFUSED: frozenset({"drop-pr", "force"}),
     DecisionKind.OPEN_FINDINGS: frozenset({"accept", "open-chat"}),
     DecisionKind.DIRTY_WORKTREE: frozenset({"retry", "drop-pr", "open-chat"}),
     DecisionKind.FAILED: frozenset({"retry", "skip-step", "drop-pr"}),
@@ -128,7 +128,7 @@ def _step_of(decision: Decision) -> Step | None:
 def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> list[Decision]:
     created: list[Decision] = []
     step = _step_of(decision)
-    if action in ("drop-pr", "skip-pr"):
+    if action == "drop-pr":
         item.status = ItemStatus.DROPPED
     elif action == "discard":
         item.status = ItemStatus.DONE

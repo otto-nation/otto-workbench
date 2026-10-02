@@ -240,8 +240,10 @@ def _cmd_resolve(args, bin_dir: Path) -> int:
                "body_file": args.body_file, "commit": args.commit}
     batch.store.write_request(args.run_id, request)
     held = batch.store.run_dir(args.run_id)
-    # A lock that drops between the two checks is applied, not left queued.
-    if core.run_lock.is_held(held) and core.run_lock.is_held(held):
+    # A request queued while a scheduler holds the lock is applied by that
+    # scheduler or drained by its _drive after the loop, or by the next
+    # resolve/resume.
+    if core.run_lock.is_held(held):
         core.report.emit_json({"queued": True, "decision": args.decision_id})
         return EXIT_OK
     return _apply_pending(args.run_id, bin_dir, args.decision_id)

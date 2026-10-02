@@ -114,7 +114,7 @@ def test_resolve_applies_directly_when_no_scheduler_holds_the_run(capsys):
     assert batch.store.load(run.id).decision("d1").resolution == "accept"
 
 
-def test_resolve_applies_a_queued_request_if_the_lock_drops(monkeypatch, capsys):
+def test_resolve_queues_when_the_lock_is_held(monkeypatch, capsys):
     run = _saved_run_with_decision()
     held = {"n": 0}
 
@@ -124,8 +124,10 @@ def test_resolve_applies_a_queued_request_if_the_lock_drops(monkeypatch, capsys)
 
     monkeypatch.setattr(core.run_lock, "is_held", is_held)
     assert _main(["batch", "resolve", run.id, "d1", "--action", "accept"]) == 0
-    assert batch.store.load(run.id).decision("d1").resolution == "accept"
-    assert batch.store.has_requests(run.id) is False
+    assert json.loads(capsys.readouterr().out)["queued"] is True
+    assert batch.store.load(run.id).decision("d1").open
+    assert batch.store.has_requests(run.id) is True
+    assert held["n"] == 1
 
 
 def test_resolve_rejects_a_bad_action(capsys):
@@ -238,16 +240,9 @@ def test_idle_resolve_drains_other_pending_requests():
     assert batch.store.has_requests(run.id) is False
 
 
-def test_apply_pending_reports_each_error_and_keeps_earlier_applies(monkeypatch, capsys):
+def test_apply_pending_reports_each_error_and_keeps_earlier_applies(capsys):
     run = _saved_run_with_decisions(2)
     batch.store.write_request(run.id, {"decision": "d1", "action": "accept"})
-    held = {"n": 0}
-
-    def is_held(_path):
-        held["n"] += 1
-        return held["n"] == 1
-
-    monkeypatch.setattr(core.run_lock, "is_held", is_held)
     assert _main(["batch", "resolve", run.id, "d2", "--action", "abort"]) == 1
     captured = capsys.readouterr()
     err_json = json.loads(captured.out)

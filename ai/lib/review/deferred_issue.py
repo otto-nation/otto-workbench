@@ -19,6 +19,22 @@ how the replies pointing at the issue are written (`pr.thread_replies`), and the
 summary comment that renders the same deferral as a row
 (`pr.summary_render`) — see `finalize_deferred` for the one ordering
 dependency between that surface and this one.
+
+`--track THREAD_ID` is repeatable and selects which deferred threads get filed;
+`--track-all` selects every one and overrides any `--track` ids passed alongside
+it (`TRACK_ALL`). Neither is implied by `--finish`. A thread is deferred because
+the fix pass ran out of budget, not because anyone decided to postpone it, and
+filing it posts a reply under the PR author's name saying a reviewer's finding
+was triaged and postponed — so the selection is the user's, per thread. A
+`--finish` logs the deferral ids it left unfiled (`report_unfiled_deferrals`),
+whether the selection was empty or partial. Naming an id that is not a deferred
+thread is an error rather than a silent skip (`validate_track`).
+
+The team key is read from config alone (`issues.team`) — never inferred from the
+branch. A provider that keys issues by team with that unset is recorded the same
+way as a tracker that cannot create issues: owed while the gate is open, a
+non-event on a draft run. The remedy is `otto-workbench config set issues.team
+TEAM --project`.
 """
 
 # doc-group: publishing

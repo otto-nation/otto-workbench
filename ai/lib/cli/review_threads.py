@@ -11,6 +11,15 @@ phase body lives in the module that owns its subject — `pr.triage`,
 `fix.comments`, `pr.settlement`, `pr.thread_replies`, `review.closeout` — and
 this module knows only which one to call and in what order.
 
+Two axes, and they have to stay apart: `--triage`/`--fix`/`--finish`/`--reply`/
+`--settle` choose the work; `--post` decides whether it leaves the machine.
+`--settle` publishes nothing and refuses `--post` and every other phase flag
+alongside it. `--track` / `--track-all` are not implied by `--finish`.
+
+A comment `pr comments` has already read is dropped from triage decomposition
+(`_mark_seen`), keyed on the comment id *and* `last_edited_at` — see
+`pr.comments` for how that stamp is fetched.
+
 `main` returns rather than exits, as every module under `cli/` does; the shim at
 `ai/bin/review-threads` owns the process exit. That now holds through the
 phases too: `closeout.finish_deferred_work` reports a refused `--track` rather

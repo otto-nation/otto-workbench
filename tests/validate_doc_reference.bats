@@ -81,11 +81,31 @@ _drop_directive() {
   echo "$output" | grep -q "Module sections come from the module's own doc block"
 }
 
+@test "fails on a hand-written script section in the tools reference" {
+  # tools.src.md renders the scripts set, so a script's section can only come
+  # from its own header. A hand-written one is the drift the set exists to end.
+  _copy_docs
+  echo '### `wt-cleanup`' >> "$FIXTURE/tools.src.md"
+
+  DOCS_DIR="$FIXTURE" run "$VALIDATOR"
+  [ "$status" -eq 1 ]
+  echo "$output" | grep -q "tools.src.md: hand-written module section '### \`wt-cleanup\`'"
+}
+
+@test "fails when the tools reference stops rendering a scripts group" {
+  _copy_docs
+  _drop_directive tools.src.md "--set scripts --group workbench-scripts"
+
+  DOCS_DIR="$FIXTURE" run "$VALIDATOR"
+  [ "$status" -eq 1 ]
+  echo "$output" | grep -q "the 'workbench-scripts' group of the 'scripts' set"
+}
+
 @test "allows a level-three heading in a doc that renders no module sections" {
   _copy_docs
-  # tools.src.md calls no generator, so its ### headings are ordinary prose —
-  # the heading rule applies to the docs the generator writes sections into.
-  echo '### Installing a tool' >> "$FIXTURE/tools.src.md"
+  # getting-started.src.md calls no generator, so its ### headings are ordinary
+  # prose — the heading rule applies to the docs the generator writes into.
+  echo '### Installing a tool' >> "$FIXTURE/getting-started.src.md"
 
   DOCS_DIR="$FIXTURE" run "$VALIDATOR"
   [ "$status" -eq 0 ]

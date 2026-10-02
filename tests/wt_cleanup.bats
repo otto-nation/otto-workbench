@@ -903,6 +903,18 @@ JSON
   grep -q -- "--force-delete" "$WT_REMOVE_LOG"
 }
 
+# `wt remove` without --foreground hands the delete to `taskpolicy -b`, and on
+# macOS entering background QoS can block in setpriority for as long as other
+# I/O keeps the disk busy — the cleanup then hangs behind a test suite.
+@test "every removal runs in the foreground" {
+  _write_worktrees <<'JSON'
+[{"branch":"feat/gone","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":0}}]
+JSON
+  _run_cleanup
+  [ "$status" -eq 0 ]
+  grep -q -- "--foreground" "$WT_REMOVE_LOG"
+}
+
 @test "a squash-merged removal deletes the branch too" {
   _write_worktrees <<'JSON'
 [{"branch":"feat/squash-gone","is_main":false,"is_current":false,"main_state":"ahead","symbols":"↑1","commit":{"timestamp":0}}]

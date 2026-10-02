@@ -490,7 +490,13 @@ main() {
     # despite uncommitted files, `--force-delete` lets the branch go despite
     # commits `wt` reads as unmerged. Only a merge this script proved earns the
     # second — an `--age` removal keeps `wt`'s judgement and its branch.
-    remove_flags=(--force -y --no-hooks)
+    #
+    # --foreground because the default background delete runs under
+    # `taskpolicy -b`, and on macOS entering background QoS can block in
+    # setpriority for as long as other I/O keeps the disk busy. `wt remove`
+    # waits on that child, so a concurrent test suite stalled the whole cleanup
+    # for tens of minutes. A synchronous delete at normal priority is bounded.
+    remove_flags=(--force -y --no-hooks --foreground)
     delete_branch=false
     if _is_merged "$main_state" "$symbols" "$pr_state"; then
       delete_branch=true

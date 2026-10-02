@@ -17,12 +17,14 @@ ITEM = m.Item(key="o/r#1", repo="o/r", repo_dir="/r", pr=1, branch="b", head_sha
 # Minimal real review document (grammar from tests/test_review_post.py): one
 # checked finding and one open finding. OPEN_TITLE is the body after the em dash.
 OPEN_TITLE = "genuinely open"
+DECLINED_TITLE = "not worth it *(declined — tradeoff)*"
 REVIEW_WITH_ONE_OPEN_ONE_CHECKED = (
     "<!-- head_sha: aaa1111bbb2222 -->\n"
     "## Summary\nOk\n\n"
     "## Should fix\n"
     "- [x] **[S1]** **`file.go:4`** — already fixed by the fix pass\n"
     "- [ ] **[S2]** **`file.go:5`** — genuinely open\n"
+    "- [ ] **[S3]** **`file.go:6`** — not worth it *(declined — tradeoff)*\n"
 )
 
 
@@ -43,6 +45,12 @@ def test_rebase_refusal_carries_status_and_override():
     r = out.classify(m.Step.REBASE, 4, json.dumps(report), item=ITEM, log_tail=[])
     assert r.decisions[0].kind is m.DecisionKind.REBASE_REFUSED
     assert r.decisions[0].payload["override"] == "--force"
+
+
+def test_rebase_conflicts_without_json_carry_log_tail():
+    r = out.classify(m.Step.REBASE, 3, "not json", item=ITEM, log_tail=["x"])
+    assert r.status is m.StepStatus.NEEDS_DECISION
+    assert r.decisions[0].payload == {"log_tail": ["x"]}
 
 
 def test_comments_owed_items_each_become_a_decision(monkeypatch):
@@ -103,4 +111,7 @@ def test_open_findings_reads_unchecked_findings(tmp_path, monkeypatch):
     f = tmp_path / "review.md"
     f.write_text(REVIEW_WITH_ONE_OPEN_ONE_CHECKED)
     monkeypatch.setattr(out.review.paths, "self_review_file_path", lambda repo, branch: f)
-    assert [x["title"] for x in out.open_findings(ITEM)] == [OPEN_TITLE]
+    assert out.open_findings(ITEM) == [
+        {"severity": "should-fix", "title": OPEN_TITLE, "declined": False},
+        {"severity": "should-fix", "title": DECLINED_TITLE, "declined": True},
+    ]

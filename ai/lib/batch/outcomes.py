@@ -13,6 +13,7 @@ import review.document
 import review.paths
 from batch.model import DecisionKind, Item, Step, StepStatus
 from rebase.types import CONFLICTS_EXIT, REFUSAL_EXIT
+from review.types import severity_by_key
 
 # The phrase core.run_lock.report_busy prints; confirmed in Task 0 Step 5.
 LOCK_BUSY_MARKER = "another pr run already owns this"
@@ -32,12 +33,17 @@ class StepResult:
     decisions: list[DecisionDraft]
 
 
-def _json(stdout: str) -> dict:
+def _json(stdout: str) -> dict | None:
     try:
-        value = json.loads(stdout or "{}")
+        value = json.loads(stdout)
     except ValueError:
-        return {}
-    return value if isinstance(value, dict) else {}
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _rebase_payload(stdout: str, log_tail: list[str]) -> dict:
+    parsed = _json(stdout)
+    return parsed if parsed is not None else {"log_tail": log_tail}
 
 
 def _load_pr_state(item: Item):
@@ -60,7 +66,8 @@ def open_findings(item: Item) -> list[dict]:
         return []
     doc = review.document.ReviewDocument.parse(path.read_text())
     # Finding stores the description in `body`, not `title`. The payload key stays `title`.
-    return [{"severity": str(f.severity), "title": f.body} for f in doc.open_findings]
+    return [{"severity": severity_by_key(f.severity).label, "title": f.body,
+             "declined": f.declined} for f in doc.open_findings]
 
 
 def _failed(exit_code: int, log_tail: list[str]) -> StepResult:
@@ -76,9 +83,9 @@ def _needs(kind: DecisionKind, payloads: list[dict]) -> StepResult:
 def classify(step: Step, exit_code: int, stdout: str, *, item: Item,
              log_tail: list[str]) -> StepResult:
     if step is Step.REBASE and exit_code == CONFLICTS_EXIT:
-        return _needs(DecisionKind.REBASE_CONFLICT, [_json(stdout)])
+        return _needs(DecisionKind.REBASE_CONFLICT, [_rebase_payload(stdout, log_tail)])
     if step is Step.REBASE and exit_code == REFUSAL_EXIT:
-        return _needs(DecisionKind.REBASE_REFUSED, [_json(stdout)])
+        return _needs(DecisionKind.REBASE_REFUSED, [_rebase_payload(stdout, log_tail)])
     if exit_code != 0:
         return _failed(exit_code, log_tail)
     if step is Step.COMMENTS and (owed := comment_items(item)):

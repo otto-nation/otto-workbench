@@ -107,6 +107,8 @@ NO_DEPS_TESTS = {
     "tests/ai_backend_pi_support.py",
     # Session-log line builders; the suites importing it carry the deps.
     "tests/review_agent_diagnostics_support.py",
+    # Three string constants the eval.floors suites share; it imports nothing.
+    "tests/eval_floors_support.py",
 }
 
 _LOAD_LIB = re.compile(r'_load_lib\(\s*"([^"]+)"\s*\)')

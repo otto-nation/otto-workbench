@@ -367,7 +367,9 @@ fi
 
 _step "Running $_bats_label"
 _bats_start=$SECONDS
-_bats_output=$("$REPO_ROOT/bin/local/run-tests" "${_bats_args[@]}" 2>&1) || {
+# stdout only: stderr carries the heartbeat and the parallelism report, which
+# have to stream or a slow suite still looks stuck. TAP stays on stdout.
+_bats_output=$("$REPO_ROOT/bin/local/run-tests" "${_bats_args[@]}") || {
   printf "${RED}✗${NC}\n" >&2
   echo "$_bats_output" | grep -E '^(not ok |# )'
   err "Tests failed"
@@ -434,7 +436,9 @@ else
 
   _step "Running $_pytest_label"
   _pytest_start=$SECONDS
-  _pytest_output=$("$REPO_ROOT/bin/local/run-tests" "${_pytest_args[@]}" -- --tb=short -q 2>&1) || {
+  # stdout only — see the bats capture above. The summary line the count is
+  # parsed from stays on stdout; heartbeats stream on stderr.
+  _pytest_output=$("$REPO_ROOT/bin/local/run-tests" "${_pytest_args[@]}" -- --tb=short -q) || {
     printf "${RED}✗${NC}\n" >&2
     echo "$_pytest_output"
     err "Pytest failed"

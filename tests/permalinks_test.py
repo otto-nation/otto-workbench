@@ -6,7 +6,7 @@ has to name a commit rather than a branch, and the line it highlights has to be
 a line that exists. Both are tested here.
 
 `anchored_line`'s drift check against a real two-commit branch lives in
-`review_threads_test.py::TestLineAnchorsAreTreeScoped`, which builds the two
+`permalinks_anchors_test.py::TestLineAnchorsAreTreeScoped`, which builds the two
 trees it needs; what is added here is the paths that need no repository.
 """
 

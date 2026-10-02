@@ -32,7 +32,7 @@ def _summary(*outcomes: FixOutcome, **kwargs) -> pr.comments_fix.FixSummary:
     have to invent them — the counts every renderer here reads come off the
     outcomes, and the ids only have to be distinct enough not to fold together.
     That is why this takes verdicts where the `_fix` helpers in
-    `pr_state_test` and `review_threads_test` take whole `ItemOutcome`s: those
+    `pr_state_test` and `review_threads_support` take whole `ItemOutcome`s: those
     suites are about what the record holds, and this one is about what the
     domain says over it.
     """

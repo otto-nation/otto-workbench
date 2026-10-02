@@ -1,6 +1,6 @@
 """Tests for `summary_rounds` — the arithmetic that lets a round omit a row.
 
-`RoundScope.covers` is exercised end to end through `review_threads_test.py`,
+`RoundScope.covers` is exercised end to end through `summary_publish_round_test.py`,
 but `round_scope` itself — the function that builds the scope out of the
 comments actually on the PR — had no direct test, and neither did the two
 timestamp readers it is paired with. That is the wrong way round: the scope is

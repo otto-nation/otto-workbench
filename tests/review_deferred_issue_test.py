@@ -1,7 +1,7 @@
 """Tests for `review.deferred_issue` — the paths its move out of the binary exposed.
 
 The cluster arrived with 50 tests already, all driving it through
-`review_threads_test.py`, and those stay where they are. What is here is what
+`review_deferred_issue_flow_test.py`, and those stay where they are. What is here is what
 those 50 never reached, found by tracing the module rather than the surface:
 
 - `update_deferred_issue` had **no** test of any kind, including the branch
@@ -337,7 +337,7 @@ class TestReportingRunsAfterFiling:
 
 
 class TestTheTrackingIssueBody:
-    """Only what the move changed. The rest stays in `review_threads_test.py`."""
+    """Only what the move changed. The rest is in `review_deferred_issue_flow_test.py`."""
 
     def test_the_table_is_three_columns_wide(self):
         body = review.deferred_issue.build_deferred_issue_body(

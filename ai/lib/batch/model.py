@@ -106,6 +106,8 @@ class Item:
     # Comment item ids the operator chose to file as tracking issues at publish.
     track: list[str] = field(default_factory=list)
     wait_reason: str = ""
+    # Local HEAD moved during this run, so a self-review is owed whatever GitHub's head says.
+    head_moved: bool = False
 
     def step(self, step: Step) -> StepRecord:
         for rec in self.steps:

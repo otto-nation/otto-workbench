@@ -117,3 +117,7 @@ def cancel_requested(run_id: str) -> CancelRequest:
     if not path.is_file():
         return CancelRequest(False, False)
     return CancelRequest(True, bool(json.loads(path.read_text()).get("kill")))
+
+
+def clear_cancel(run_id: str) -> None:
+    (run_dir(run_id) / CANCEL_FILE).unlink(missing_ok=True)

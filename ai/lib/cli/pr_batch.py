@@ -158,9 +158,13 @@ def _cmd_resume(args, bin_dir: Path) -> int:
         return _err("no batch run to resume")
     if core.run_lock.is_held(store.run_dir(run_id)):
         return _err(f"run {run_id} is already running")
-    run = store.load(run_id)
+    try:
+        run = store.load(run_id)
+    except store.RunNotFound:
+        return _err(f"no run {run_id}")
     if run.status in (RunStatus.DONE, RunStatus.CANCELLED):
         return _err(f"run {run_id} is {run.status.value}")
+    store.clear_cancel(run_id)
     batch.scheduler.mark_interrupted(run)
     os.environ.setdefault(TRAIL_ROOT_ENV, run.trail_root)
     return _drive(run, bin_dir=bin_dir, cfg=_cfg([i.repo_dir for i in run.items]))
@@ -195,7 +199,10 @@ def _cmd_cancel(args) -> int:
         return _err("no batch run to cancel")
     store.request_cancel(run_id, kill=args.kill)
     if not core.run_lock.is_held(store.run_dir(run_id)):
-        run = store.load(run_id)
+        try:
+            run = store.load(run_id)
+        except store.RunNotFound:
+            return _err(f"no run {run_id}")
         run.status = RunStatus.CANCELLED
         store.save(run)
     core.report.emit_json({"cancelled": True, "run": run_id})

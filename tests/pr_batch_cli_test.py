@@ -2,8 +2,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -129,6 +127,27 @@ def test_cancel_an_idle_run_marks_it_cancelled():
     assert store.load(run.id).status is m.RunStatus.CANCELLED
 
 
-def test_schema_version_1_is_served_for_batch(monkeypatch, capsys):
+def test_resume_clears_a_stale_cancel_before_driving(monkeypatch):
+    run = _saved_run_with_decision()
+    store.request_cancel(run.id, kill=False)
+    seen = {}
+
+    def fake_run(self):
+        seen["cancel"] = store.cancel_requested(self.run.id).requested
+        return m.RunStatus.WAITING
+
+    monkeypatch.setattr(pb.batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    assert _main(["batch", "resume", run.id]) == 10
+    assert seen["cancel"] is False
+
+
+def test_resume_reports_an_unknown_run(capsys):
+    assert _main(["batch", "resume", "nope"]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("pr batch:")
+    assert "nope" in err
+
+
+def test_schema_version_1_is_served_for_batch(monkeypatch):
     monkeypatch.setattr(pb.batch.plan, "build_plan", lambda dirs: Plan("me", []))
     assert _main(["--schema-version", "1", "batch", "plan", "--checkout", "/r"]) == 0

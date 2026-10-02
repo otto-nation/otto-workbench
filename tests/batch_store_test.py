@@ -73,6 +73,14 @@ def test_cancel_flag_records_kill():
     assert c.requested and c.kill
 
 
+def test_clear_cancel_removes_the_file_and_is_idempotent():
+    store.save(_run())
+    store.request_cancel(RID, kill=True)
+    store.clear_cancel(RID)
+    assert store.cancel_requested(RID).requested is False
+    store.clear_cancel(RID)
+
+
 def test_open_decisions_excludes_resolved():
     run = _run()
     run.decisions.append(m.Decision(id="d2", item="o/r#1", step="review",

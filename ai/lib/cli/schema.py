@@ -10,8 +10,8 @@ Three related documents, all of them derived rather than written down twice:
 
 That last one is the part D2 specified and nothing built. `pr --tool-schema`
 answers for the whole command and has no `output_schema`, because one of the
-nine subcommands prints a `PRState` document and the other eight print prose
-— declaring one schema for all nine made the MCP server reject the eight. So
+ten subcommands prints a `PRState` document and the other nine print prose
+— declaring one schema for all ten made the MCP server reject the nine. So
 the honest per-command contract is the delegate's, and `subcommand_schema`
 is how a consumer asks for it.
 
@@ -51,10 +51,10 @@ EXIT_USAGE = 2
 def tool_schema() -> dict:
     """The MCP input schema for `pr` as a whole.
 
-    No top-level ``output_schema``. One of the nine subcommands prints a
+    No top-level ``output_schema``. One of the ten subcommands prints a
     ``PRState`` document, and not even that one before a state file exists,
     so declaring a schema for every invocation made the MCP server reject the
-    other eight for printing no JSON object. `subcommand_schema` is where a
+    other nine for printing no JSON object. `subcommand_schema` is where a
     consumer gets the honest per-command answer.
 
     The `command` enum is `COMMANDS` in declaration order, which is the same
@@ -86,7 +86,7 @@ def subcommand_schema(command: str) -> dict | None:
     The delegate's own `ToolParser` answers, so `pr ci` reports `CIDomain`
     and `pr rebase` reports `RebaseSummary` with its two non-failing exit
     codes — the contracts those commands already declare and that
-    `pr --tool-schema` cannot carry, because it answers for all nine at once.
+    `pr --tool-schema` cannot carry, because it answers for all ten at once.
 
     None has two causes, and they are the same answer to a consumer. Four
     commands `pr` runs itself have no delegate parser at all. Two more —

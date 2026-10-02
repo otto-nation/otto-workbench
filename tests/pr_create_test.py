@@ -176,6 +176,23 @@ def test_reports_the_pr_url_when_gh_succeeds(h, capsys):
     assert out.strip() == URL
 
 
+def test_succeeds_under_an_exported_git_dir(h, monkeypatch):
+    """A hook that invokes ``pr create`` can leave `GIT_DIR`/`GIT_WORK_TREE`
+    exported pointing at its own repo. Every git read here (D7's ahead-count,
+    the nesting gate's diff, and `branch_sync`'s ls-remote/fetch/rev-parse) has
+    to answer for `h.wt`, the worktree `run_create` was asked to act on, not
+    for whatever `GIT_DIR` names — so the run still succeeds exactly as it does
+    with no override set.
+    """
+    h.repo()
+    other = h.tmp / "unrelated"
+    run_checked(["git", "init", "-q", str(other)])
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(other))
+    assert run_create(h.ctx(), CreateOptions()) == 0
+    assert h.events == ["token", "nesting", "push", "ai", "gh"]
+
+
 def test_args_reach_gh_pr_create_including_draft_assignee_and_base(h):
     h.repo()
     assert run_create(h.ctx(), CreateOptions(draft=True, title="fix: thing")) == 0

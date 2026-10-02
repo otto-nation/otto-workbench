@@ -22,11 +22,14 @@ it.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+import contextlib
 
 import config.workbench_config
 import core.proc
@@ -52,6 +55,13 @@ if _WORKBENCH_LIB.is_dir() and str(_WORKBENCH_LIB) not in sys.path:
 import git_remote  # noqa: E402
 
 GIT_REMOTE = git_remote.GIT_REMOTE
+
+# Dropped from every git/validate-nesting child's environment. A hook that
+# invoked `pr create` could have either set, and with either set a `git -C`
+# or a `rev-parse --show-toplevel` answers for the hook's repo rather than
+# the worktree this run was asked to act on — see `pr.create_content._git_env`,
+# which this mirrors.
+_GIT_ENV_DROP = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
 
 # The first `https://…/pull/<n>` in gh's output. The host is free so an
 # enterprise or self-hosted URL is reported; the `/pull/<n>` anchor is what
@@ -88,6 +98,41 @@ class CreateOptions:
 def _say(msg: str) -> None:
     """A progress or ✗ line. The text carries its own →/✓/✗ prefix."""
     print(msg, file=sys.stderr, flush=True)
+
+
+def _git_env() -> dict[str, str]:
+    """The process environment with inherited git overrides dropped.
+
+    See `_GIT_ENV_DROP`: a run launched from a hook that exports `GIT_DIR` or
+    `GIT_WORK_TREE` would otherwise have every git call here, and the
+    `validate-nesting` subprocess below, answer for the hook's repo instead
+    of the worktree `pr create` was asked to act on.
+    """
+    env = os.environ.copy()
+    for name in _GIT_ENV_DROP:
+        env.pop(name, None)
+    return env
+
+
+@contextlib.contextmanager
+def _env_cleared():
+    """Drop `_GIT_ENV_DROP` from the process environment for the duration.
+
+    `git_remote`'s helpers (and `git.topology.default_branch`, which is one of
+    them) take no `env=` — by its own docstring's design, which leaves
+    "unsetting it... to the caller that knows whether it owns the process".
+    `pr create` does, so this clears the override process-wide for the one
+    call it wraps and restores it after, rather than letting a hook's
+    `GIT_DIR` make the default-branch or base-ref lookup answer for the
+    hook's repo instead of `wt`.
+    """
+    saved = {name: os.environ.pop(name, None) for name in _GIT_ENV_DROP}
+    try:
+        yield
+    finally:
+        for name, value in saved.items():
+            if value is not None:
+                os.environ[name] = value
 
 
 def _base_refusal(base: str, default: str, *, explicit: bool) -> str:
@@ -134,7 +179,7 @@ def _nesting_gate(wt: Path, base: str) -> bool:
         # Unbounded: the gate parses every file the diff touches, so its cost is the input's.
         r = subprocess.run(
             argv, cwd=wt, capture_output=True, text=True,
-            timeout=core.timeouts.UNBOUNDED,
+            timeout=core.timeouts.UNBOUNDED, env=_git_env(),
         )
         status, output = r.returncode, (r.stdout or "") + (r.stderr or "")
     except OSError as exc:
@@ -172,7 +217,7 @@ def _ahead_refusal(wt: Path, branch: str, base: str) -> str:
     """
     remote_base = f"{GIT_REMOTE}/{base}"
     argv = ("rev-list", "--count", f"{remote_base}..HEAD")
-    r = git.client.run(*argv, cwd=wt)
+    r = git.client.run(*argv, cwd=wt, env=_git_env())
     count = r.stdout.strip()
     if not r.ok or not count.isdigit():
         detail = r.detail or f"exit {r.returncode}"
@@ -199,7 +244,9 @@ def _preflight(
         _say(f"✗ PR operations cannot be run from the {default} branch")
         return None
     base = opts.base or default
-    if not git_remote.remote_branch_ref_exists(base, cwd=str(wt)):
+    with _env_cleared():
+        base_exists = git_remote.remote_branch_ref_exists(base, cwd=str(wt))
+    if not base_exists:
         _say(_base_refusal(base, default, explicit=bool(opts.base)))
         return None
     refusal = _ahead_refusal(wt, branch, base)
@@ -274,7 +321,8 @@ def run_create(
         _say(f"✗ {branch} has no checkout — run from its worktree or pass --repo-dir")
         return 1
 
-    default = git.topology.default_branch(wt)
+    with _env_cleared():
+        default = git.topology.default_branch(wt)
     closes = _preflight(wt, branch, default, opts, ctx.pr_number)
     if closes is None:
         return 1

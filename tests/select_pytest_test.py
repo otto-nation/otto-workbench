@@ -178,6 +178,27 @@ def test_a_change_to_a_package_module_selects_the_tests_that_use_it():
     assert "tests/wiki_test.py" in selected
 
 
+def test_a_change_to_a_tests_dir_support_module_selects_its_suites():
+    """`tests/wiki_support.py` is imported by six suites as a bare sibling name
+    rather than through ai/lib or lib, so the map has to resolve it the way
+    pytest's own rootdir insertion does — see `_test_sibling_index`.
+
+    Before that resolution existed, a change confined to the support module
+    selected nothing but itself: `wiki_support` was absent from the module
+    index, so `from wiki_support import ...` dropped silently during
+    resolution and a bug introduced in `make_wiki`/`write_article` there alone
+    was invisible to the selective run.
+    """
+    mapping = sp.dependency_map()
+    selected = {t for t, deps in mapping.items()
+                if sp._selects(t, deps, ["tests/wiki_support.py"])}
+    assert selected >= {
+        "tests/wiki_test.py", "tests/wiki_create_test.py",
+        "tests/wiki_archive_test.py", "tests/wiki_backup_test.py",
+        "tests/wiki_lint_test.py", "tests/wiki_signals_test.py",
+    }
+
+
 def test_a_script_subject_carries_the_scripts_own_imports():
     """A test naming a bin/ script is testing what that script imports.
 

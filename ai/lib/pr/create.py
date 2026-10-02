@@ -27,11 +27,11 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import config.workbench_config
 import core.proc
 import core.timeouts
+from core.trail import Trail
 import gh.client
 import git.client
 import git.push
@@ -43,9 +43,6 @@ from pr.branch_sync import SyncOutcome
 from pr.close_refs import CloseRefError, normalise, stage
 from pr.context import ResolvedContext
 from pr.create_content import ContentError, ContentRequest
-
-if TYPE_CHECKING:
-    from core.trail import Trail
 
 # `git_remote` is a workbench-wide module rather than an `ai/lib` one; see
 # `pr.branch_sync` for the path arithmetic, which is the same here.

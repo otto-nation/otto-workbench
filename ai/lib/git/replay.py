@@ -392,7 +392,12 @@ def _on_head(wt_path: Path, commit: str) -> _Ancestry:
 
 
 def _short(wt_path: Path, commit: str) -> str:
-    return git.client.out("rev-parse", "--short", commit, cwd=wt_path)
+    """*commit* abbreviated the way recorded SHAs are, or in full if git won't.
+
+    Never empty: a FOUND answer carrying "" would overwrite the recorded SHA
+    with nothing, which every reader downstream takes for "no commit".
+    """
+    return git.client.out("rev-parse", "--short", commit, cwd=wt_path) or commit
 
 
 def _batches(items: list[str], size: int) -> Iterable[list[str]]:

@@ -401,6 +401,25 @@ class TestReplayFinder:
         assert replay.status is git.replay.ReplayStatus.UNKNOWN
         assert "timed out" in replay.detail
 
+    def test_a_replay_git_will_not_abbreviate_is_named_in_full(self, work, monkeypatch):
+        """Never FOUND with an empty SHA: that would erase the recorded one."""
+        held = _commit(work, "fix.txt")
+        _rebase_onto_moved_main(work)
+        replay_full = git_out(work, "rev-parse", "HEAD").strip()
+        real = git.client.run
+
+        def no_abbrev(*args, **kwargs):
+            if args[:2] == ("rev-parse", "--short"):
+                return core.proc.CmdResult(
+                    returncode=core.proc.TIMEOUT_RETURNCODE, stderr="timed out")
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(git.client, "run", no_abbrev)
+        replay = git.replay.ReplayFinder(work).find(held)
+
+        assert replay.found
+        assert replay.sha == replay_full
+
     def test_a_duplicated_patch_is_ambiguous_and_a_dropped_one_is_none(self, work):
         held = _commit(work, "fix.txt")
         _rebase_onto_moved_main(work)

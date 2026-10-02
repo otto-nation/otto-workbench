@@ -198,3 +198,34 @@ def test_a_local_file_without_a_token_does_not_hide_global_tokens(tmp_path, home
 ])
 def test_org_variable(org, expected):
     assert gh_token.org_variable(org) == expected
+
+
+SCRIPT = LIB_DIR / "pr" / "gh_token.py"
+
+
+def _run_script(cwd: Path, home: Path, extra_env: dict[str, str] | None = None):
+    env = {"HOME": str(home), "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"}
+    env.update(extra_env or {})
+    return run_checked([sys.executable, str(SCRIPT), "--cwd", str(cwd)], env=env, check=False)
+
+
+def test_script_prints_only_the_token(tmp_path, home):
+    _global(home, "GH_TOKEN=ghp_default\n")
+    r = _run_script(_repo(tmp_path), home)
+    assert r.returncode == 0
+    assert r.stdout == "ghp_default\n"
+
+
+def test_script_failure_keeps_stdout_empty(tmp_path, home):
+    r = _run_script(_repo(tmp_path), home)
+    assert r.returncode == 1
+    assert r.stdout == ""
+    assert "GH_TOKEN not configured" in r.stderr
+
+
+def test_script_runs_from_any_cwd_with_a_hostile_pythonpath(tmp_path, home):
+    # The mise-shim case git/push.py documents: PYTHONPATH replaced wholesale.
+    _global(home, "GH_TOKEN=ghp_default\n")
+    r = _run_script(_repo(tmp_path), home, {"PYTHONPATH": str(tmp_path)})
+    assert r.returncode == 0
+    assert r.stdout == "ghp_default\n"

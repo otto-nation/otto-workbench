@@ -140,6 +140,41 @@ def stream(cmd):
     ]
 
 
+def test_a_forwarded_positional_bound_on_a_reap_is_clean(tmp_path):
+    assert _check(tmp_path, """
+def stream(cmd, budget):
+    proc = subprocess.Popen(cmd)
+    proc.wait(budget)
+    other = subprocess.Popen(cmd)
+    other.communicate(None, budget)
+""") == []
+
+
+def test_a_literal_positional_bound_on_a_reap_is_flagged_as_a_literal(tmp_path):
+    violations = _check(tmp_path, """
+def stream(cmd):
+    proc = subprocess.Popen(cmd)
+    proc.wait(30)
+    other = subprocess.Popen(cmd)
+    other.communicate(b'in', 5)
+""")
+    assert [(v.line, v.found) for v in violations] == [
+        (4, "timeout=30"),
+        (6, "timeout=5"),
+    ]
+
+
+def test_communicate_input_alone_is_not_a_bound(tmp_path):
+    violations = _check(tmp_path, """
+def stream(cmd, data):
+    proc = subprocess.Popen(cmd)
+    proc.communicate(data)
+""")
+    assert [(v.line, v.found) for v in violations] == [
+        (4, "proc.communicate() with no timeout="),
+    ]
+
+
 def test_event_wait_on_a_non_popen_name_is_ignored(tmp_path):
     assert _check(tmp_path, """
 def hold(done):

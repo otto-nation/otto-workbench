@@ -128,12 +128,17 @@ common_setup() {
 
 # _shadow_live_backends — if claude or pi is on PATH, hide it behind a stub
 # that refuses. A missing binary is left missing, so CI (where neither is
-# installed) keeps the same presence checks it had.
+# installed) keeps the same presence checks it had. A binary already under
+# $BATS_TEST_TMPDIR is the test's own stub (a helper calling common_setup after
+# the test put one on PATH), so it is left in front.
 _shadow_live_backends() {
-  local dir name
+  local dir name found shadowed=0
   dir="${BATS_TEST_TMPDIR:-$BATS_FILE_TMPDIR}/backend-stubs"
   for name in claude pi; do
-    command -v "$name" >/dev/null 2>&1 || continue
+    found="$(command -v "$name" 2>/dev/null)" || continue
+    if [[ -n "${BATS_TEST_TMPDIR:-}" && "$found" == "$BATS_TEST_TMPDIR"/* ]]; then
+      continue
+    fi
     mkdir -p "$dir"
     cat > "$dir/$name" <<STUB
 #!/usr/bin/env bash
@@ -141,8 +146,9 @@ echo "test_helper: a test reached the real ${name} CLI — stub it" >&2
 exit 1
 STUB
     chmod +x "$dir/$name"
+    shadowed=1
   done
-  if [[ -d "$dir" ]]; then
+  if [[ "$shadowed" -eq 1 ]]; then
     export PATH="$dir:$PATH"
   fi
   return 0

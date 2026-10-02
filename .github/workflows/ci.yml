@@ -71,7 +71,9 @@ jobs:
     runs-on: ubuntu-24.04
     # ~3x the slowest observed bats-shard job on recent main runs (~6 min).
     # A hang that used to look like a slow suite now fails the job instead of
-    # occupying a runner until the workflow default (360 min).
+    # occupying a runner until the workflow default (360 min). Only the two test
+    # jobs are bounded; the other jobs here still run to that default. The
+    # figure comes from the Actions run history, not from anything in the repo.
     timeout-minutes: 20
     strategy:
       fail-fast: false

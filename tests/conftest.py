@@ -304,6 +304,10 @@ def _no_live_backend(monkeypatch):
 # rather than spawning `pi`.
 _REAL_RUN_PI_LIST_MODELS = None
 
+# The session's config, kept so the status hooks below — whose signatures carry
+# no config — can tell an xdist controller from a worker.
+_CONFIG = None
+
 
 def pytest_configure(config):
     """Budget lookups must not spawn `pi` during collection.
@@ -314,7 +318,8 @@ def pytest_configure(config):
     fixture below re-applies the stub per test so a catalogue test cannot
     leak a live listing into the next one.
     """
-    global _REAL_RUN_PI_LIST_MODELS
+    global _REAL_RUN_PI_LIST_MODELS, _CONFIG
+    _CONFIG = config
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
     import review.budget
@@ -716,6 +721,26 @@ def _proc():
     return core.proc
 
 
+def _status_path():
+    """Where this process records its in-flight test, or None when it should not.
+
+    None unless the supervisor exported WORKBENCH_SUITE_STATUS_DIR. Also None in
+    the xdist controller: it re-emits every worker's logstart/logfinish to these
+    same hooks, and with no PYTEST_XDIST_WORKER it would write one shared `main`
+    file that the last-started worker overwrites and the first-finished unlinks.
+    Only a process that actually runs a test writes a record.
+    """
+    root = os.environ.get("WORKBENCH_SUITE_STATUS_DIR")
+    if not root:
+        return None
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    if worker is None:
+        if _CONFIG is not None and _CONFIG.pluginmanager.hasplugin("dsession"):
+            return None
+        worker = "main"
+    return Path(root) / worker
+
+
 def pytest_runtest_logstart(nodeid, location):
     """Tell the suite heartbeat which test is in flight, when it is watching.
 
@@ -723,11 +748,9 @@ def pytest_runtest_logstart(nodeid, location):
     is per xdist worker so parallel tests do not overwrite each other. Written
     atomically: a reader that opened a half-written file would drop the nodeid.
     """
-    root = os.environ.get("WORKBENCH_SUITE_STATUS_DIR")
-    if not root:
+    path = _status_path()
+    if path is None:
         return
-    worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
-    path = Path(root) / worker
     tmp = path.with_suffix(".tmp")
     try:
         tmp.write_text(f"{time.time()}\n{nodeid}\n")
@@ -738,11 +761,9 @@ def pytest_runtest_logstart(nodeid, location):
 
 def pytest_runtest_logfinish(nodeid, location):
     """Clear the in-flight record so a finished test is not reported as running."""
-    root = os.environ.get("WORKBENCH_SUITE_STATUS_DIR")
-    if not root:
+    path = _status_path()
+    if path is None:
         return
-    worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
-    path = Path(root) / worker
     try:
         path.unlink()
     except OSError:

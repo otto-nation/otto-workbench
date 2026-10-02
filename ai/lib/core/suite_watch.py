@@ -25,9 +25,11 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import core.signal_relay
 import core.timeouts
 
 ENV_INTERVAL = "TEST_HEARTBEAT_SECS"
@@ -48,8 +50,17 @@ class Inflight:
     age_s: int
 
 
+class PsRow(NamedTuple):
+    """One ``ps`` line: a process, its parent, how long it has run, its argv."""
+
+    pid: int
+    ppid: int
+    etime: str
+    command: str
+
+
 def heartbeat_interval(raw: str | None = None) -> float:
-    """Seconds between heartbeats. ``0`` disables the supervisor.
+    """Seconds between heartbeats. ``0`` disables the heartbeat.
 
     *raw* is ``TEST_HEARTBEAT_SECS`` when omitted. Empty or unset is the
     default, not zero: an exported empty string is a real environment, and
@@ -124,18 +135,18 @@ def format_heartbeat(
     )
 
 
-def parse_ps_line(line: str) -> tuple[int, int, str, str] | None:
+def parse_ps_line(line: str) -> PsRow | None:
     """``pid ppid etime command`` from ``ps -A -o pid=,ppid=,etime=,command=``."""
     parts = line.split(None, 3)
     if len(parts) < 4:
         return None
     try:
-        return int(parts[0]), int(parts[1]), parts[2], parts[3]
+        return PsRow(int(parts[0]), int(parts[1]), parts[2], parts[3])
     except ValueError:
         return None
 
 
-def _ps_rows() -> list[tuple[int, int, str, str]]:
+def _ps_rows() -> list[PsRow]:
     """Every process, or an empty list if ``ps`` cannot answer.
 
     ceiling: text from ``ps`` rather than a libc iterator. Upgrade if a
@@ -161,14 +172,12 @@ def _ps_rows() -> list[tuple[int, int, str, str]]:
     return rows
 
 
-def descendants(
-    root_pid: int, rows: list[tuple[int, int, str, str]]
-) -> list[tuple[int, int, str, str]]:
+def descendants(root_pid: int, rows: list[PsRow]) -> list[PsRow]:
     """Processes whose parent chain leads to *root_pid*, excluding it."""
-    by_parent: dict[int, list[tuple[int, int, str, str]]] = {}
+    by_parent: dict[int, list[PsRow]] = {}
     for row in rows:
-        by_parent.setdefault(row[1], []).append(row)
-    out: list[tuple[int, int, str, str]] = []
+        by_parent.setdefault(row.ppid, []).append(row)
+    out: list[PsRow] = []
     stack = [root_pid]
     seen = {root_pid}
     while stack:
@@ -178,14 +187,14 @@ def descendants(
 
 def _push_children(
     current: int,
-    by_parent: dict[int, list[tuple[int, int, str, str]]],
+    by_parent: dict[int, list[PsRow]],
     seen: set[int],
     stack: list[int],
-    out: list[tuple[int, int, str, str]],
+    out: list[PsRow],
 ) -> None:
     """Enqueue unseen children of *current*."""
     for child in by_parent.get(current, []):
-        pid = child[0]
+        pid = child.pid
         if pid in seen:
             continue
         seen.add(pid)
@@ -194,28 +203,36 @@ def _push_children(
 
 
 def bats_file_from_command(command: str) -> str | None:
-    """Basename of the file a ``bats-exec-file`` process is running, if any."""
+    """Basename of the file a ``bats-exec-file`` process is running, if any.
+
+    bats-core puts flags and the file's index before the file —
+    ``bats-exec-file [flags] 3 /t/x.bats /tmp/list`` — so the token right after
+    the executable is never the file. The first ``.bats`` token after it is.
+    ``ps`` flattens argv, so a path with a space arrives in pieces; its last
+    piece still carries the file's name, which is all this reports.
+    """
     parts = command.split()
     for index, part in enumerate(parts):
         if Path(part).name != "bats-exec-file":
             continue
-        if index + 1 >= len(parts):
-            return None
-        return Path(parts[index + 1]).name
+        for candidate in parts[index + 1:]:
+            if candidate.endswith(".bats"):
+                return Path(candidate).name
+        return None
     return None
 
 
-def bats_inflight(root_pid: int, rows: list[tuple[int, int, str, str]] | None = None) -> list[Inflight]:
+def bats_inflight(root_pid: int, rows: list[PsRow] | None = None) -> list[Inflight]:
     """In-flight bats files under *root_pid*, longest-running first."""
     if rows is None:
         rows = _ps_rows()
     found: list[Inflight] = []
-    for _pid, _ppid, etime, command in descendants(root_pid, rows):
-        name = bats_file_from_command(command)
+    for row in descendants(root_pid, rows):
+        name = bats_file_from_command(row.command)
         if name is None:
             continue
         try:
-            age = parse_etime(etime)
+            age = parse_etime(row.etime)
         except ValueError:
             continue
         found.append(Inflight(name=name, age_s=age))
@@ -268,30 +285,16 @@ def child_status(code: int) -> int:
     return 128 + (-code) if code < 0 else code
 
 
-def _forward(proc: subprocess.Popen, signum: int) -> None:
-    if proc.poll() is not None:
-        return
+def _spawn(child: list[str], env: dict[str, str]) -> subprocess.Popen | None:
+    """Start *child* in its own session, so a signal reaches it exactly once.
+
+    A group-wide stop sent to this process's group (``claim-job-slots`` does
+    that to ``run-tests``'s) would otherwise hit the child directly and then
+    again through the relay. In its own session the child hears only what the
+    relay forwards, to its own group, as ``job_slots_cli`` does.
+    """
     try:
-        proc.send_signal(signum)
-    except ProcessLookupError:
-        pass
-
-
-class _Forwarder:
-    """Signal handler that can see the child once it exists."""
-
-    def __init__(self) -> None:
-        self.proc: subprocess.Popen | None = None
-
-    def handle(self, signum: int, _frame: object) -> None:
-        if self.proc is None:
-            return
-        _forward(self.proc, signum)
-
-
-def _spawn(child: list[str]) -> subprocess.Popen | None:
-    try:
-        return subprocess.Popen(child)
+        return subprocess.Popen(child, env=env, start_new_session=True)
     except OSError as exc:
         print(f"suite_watch: cannot run {child[0]}: {exc}", file=sys.stderr)
         return None
@@ -339,32 +342,37 @@ def run_supervised(
     ``interval == 0`` skips the heartbeat but still waits, so a signal death
     is reported as ``128+N`` the way ``job_slots_cli`` does. Exec-ing the
     child would leave a Python parent seeing ``-N`` instead.
+
+    The child runs in its own session and :mod:`core.signal_relay` forwards
+    SIGINT/SIGTERM/SIGHUP to its group, so a stop sent to this process's whole
+    group (as ``claim-job-slots`` does) reaches the child once, not twice.
     """
     status_dir = None
-    if interval > 0:
-        status_dir = tempfile.mkdtemp(prefix="suite-watch-")
-        os.environ[STATUS_ENV] = status_dir
-    started = time.monotonic()
-    forwarder = _Forwarder()
-    previous = {
-        signum: signal.signal(signum, forwarder.handle)
-        for signum in (signal.SIGINT, signal.SIGTERM)
-    }
     try:
-        proc = _spawn(child)
-        if proc is None:
-            return 127
-        forwarder.proc = proc
-        if interval == 0:
-            # The suite is the work; a bound here would convert a long run
-            # into a false failure. See the module docstring.
-            return child_status(proc.wait(timeout=core.timeouts.UNBOUNDED))
-        return _heartbeat_until_done(
-            proc, suite, jobs, interval, started, status_dir,
-        )
+        env = os.environ.copy()
+        # Passed to the child alone, never set on this process: the directory
+        # is deleted below, and a disabled heartbeat must not let an outer
+        # supervisor's value through to pytest's workers.
+        env.pop(STATUS_ENV, None)
+        if interval > 0:
+            status_dir = tempfile.mkdtemp(prefix="suite-watch-")
+            env[STATUS_ENV] = status_dir
+        started = time.monotonic()
+        # Entered before the spawn, which is what makes a signal landing early
+        # deferred rather than dropped.
+        with core.signal_relay.forwarding_signals() as relay:
+            proc = _spawn(child, env)
+            if proc is None:
+                return 127
+            relay.forward_to(proc)
+            if interval == 0:
+                # The suite is the work; a bound here would convert a long run
+                # into a false failure. See the module docstring.
+                return child_status(proc.wait(timeout=core.timeouts.UNBOUNDED))
+            return _heartbeat_until_done(
+                proc, suite, jobs, interval, started, status_dir,
+            )
     finally:
-        for signum, handler in previous.items():
-            signal.signal(signum, handler)
         if status_dir is not None:
             shutil.rmtree(status_dir, ignore_errors=True)
 
@@ -385,13 +393,13 @@ def main(argv: list[str], child: list[str]) -> int:
             "\n"
             f"Environment:\n"
             f"  {ENV_INTERVAL}  Seconds between heartbeats "
-            f"(default {int(DEFAULT_INTERVAL)}; 0 runs the child directly).\n",
+            f"(default {int(DEFAULT_INTERVAL)}; 0 disables the heartbeat).\n",
             end="",
         )
         return 0
 
     if not child:
-        print("suite_watch: need a command after --", file=sys.stderr)
+        print("suite_watch: no command given after --", file=sys.stderr)
         return 2
 
     suite = args.suite or Path(child[0]).name

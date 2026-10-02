@@ -18,6 +18,7 @@ from core.suite_watch import (
     ENV_INTERVAL,
     STATUS_ENV,
     Inflight,
+    PsRow,
     bats_file_from_command,
     child_status,
     descendants,
@@ -27,6 +28,7 @@ from core.suite_watch import (
     parse_etime,
     parse_ps_line,
     pytest_inflight,
+    run_supervised,
 )
 
 CLI = REPO_ROOT / "bin" / "local" / "suite-watch"
@@ -105,24 +107,40 @@ def test_heartbeat_interval_rejects_junk():
         heartbeat_interval("-1")
 
 
-def test_bats_file_from_command_uses_the_arg_after_exec_file():
-    cmd = "/usr/local/libexec/bats-exec-file /tmp/tests/claude_settings.bats"
-    assert bats_file_from_command(cmd) == "claude_settings.bats"
+@pytest.mark.parametrize(
+    "command",
+    [
+        # bats-core runs `bats-exec-file <flags> <index> <file> <list>`.
+        "/usr/libexec/bats-core/bats-exec-file 3 /t/claude_settings.bats /tmp/list",
+        "/usr/libexec/bats-core/bats-exec-file --gather-test-outputs-in /tmp/g "
+        "-T -x --trace 3 /t/claude_settings.bats /tmp/list",
+        # `ps` flattens argv, so a path with a space arrives in pieces.
+        "/usr/libexec/bats-core/bats-exec-file 3 /my repo/t/claude_settings.bats /tmp/list",
+    ],
+)
+def test_bats_file_from_command_finds_the_file_past_flags_and_index(command):
+    assert bats_file_from_command(command) == "claude_settings.bats"
+
+
+def test_bats_file_from_command_without_a_file_is_none():
+    assert bats_file_from_command("/x/bats-exec-file --trace 3") is None
+    assert bats_file_from_command("/usr/bin/python3 other.bats") is None
 
 
 def test_parse_ps_line_splits_command_on_the_fourth_field():
     row = parse_ps_line("  42  7  01:02 /usr/bin/bats-exec-file /x/y.bats")
-    assert row == (42, 7, "01:02", "/usr/bin/bats-exec-file /x/y.bats")
+    assert row == PsRow(42, 7, "01:02", "/usr/bin/bats-exec-file /x/y.bats")
+    assert (row.pid, row.ppid) == (42, 7)
 
 
 def test_descendants_walk_ppid_not_the_whole_table():
     rows = [
-        (2, 1, "0:01", "child"),
-        (3, 2, "0:01", "grand"),
-        (9, 8, "0:01", "cousin"),
+        PsRow(2, 1, "0:01", "child"),
+        PsRow(3, 2, "0:01", "grand"),
+        PsRow(9, 8, "0:01", "cousin"),
     ]
     found = descendants(1, rows)
-    assert [r[0] for r in found] == [2, 3]
+    assert [r.pid for r in found] == [2, 3]
 
 
 def test_pytest_inflight_reads_worker_status_files(tmp_path):
@@ -214,7 +232,7 @@ def test_heartbeat_reports_a_descendant_bats_exec_file():
     outer = (
         "import subprocess, sys, time; "
         "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(0.8)', "
-        "'bats-exec-file', '/tmp/claude_settings.bats']); "
+        "'bats-exec-file', '--trace', '3', '/tmp/claude_settings.bats', '/tmp/list']); "
         "time.sleep(0.7)"
     )
     result = _cli(
@@ -251,7 +269,121 @@ def test_missing_command_is_a_message_not_a_traceback():
     assert "Traceback" not in result.stderr
 
 
+def test_the_module_run_directly_rejects_a_missing_command():
+    """The shell wrapper catches this first; the module has its own message."""
+    result = subprocess.run(
+        [sys.executable, str(LIB_DIR / "core" / "suite_watch.py"), "--suite", "bats"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 2
+    assert "no command given after --" in result.stderr
+
+
 def test_the_cli_rejects_a_missing_command():
     result = _cli("--suite", "bats", "--")
     assert result.returncode == 2
     assert "no command given" in result.stderr
+
+
+def test_the_status_dir_reaches_the_child_but_not_this_process(tmp_path, monkeypatch):
+    monkeypatch.delenv(STATUS_ENV, raising=False)
+    seen = tmp_path / "seen"
+    code = run_supervised(
+        [sys.executable, "-c",
+         f"import os, pathlib; pathlib.Path({str(seen)!r}).write_text(os.environ[{STATUS_ENV!r}])"],
+        suite="pytest", jobs=None, interval=30.0,
+    )
+    assert code == 0
+    assert seen.read_text()
+    assert STATUS_ENV not in os.environ
+
+
+def test_a_disabled_heartbeat_hides_an_inherited_status_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv(STATUS_ENV, "/outer/supervisors/dir")
+    seen = tmp_path / "seen"
+    code = run_supervised(
+        [sys.executable, "-c",
+         f"import os, pathlib; pathlib.Path({str(seen)!r}).write_text("
+         f"repr(os.environ.get({STATUS_ENV!r})))"],
+        suite="pytest", jobs=None, interval=0.0,
+    )
+    assert code == 0
+    assert seen.read_text() == "None"
+
+
+def test_a_group_wide_signal_reaches_the_child_once(tmp_path):
+    """`claim-job-slots` signals the whole group; the child must not hear it twice."""
+    started, count = tmp_path / "started", tmp_path / "count"
+    child = (
+        "import pathlib, signal, time\n"
+        "n = 0\n"
+        "def h(*_):\n"
+        "    global n\n"
+        "    n += 1\n"
+        "signal.signal(signal.SIGTERM, h)\n"
+        f"pathlib.Path({str(started)!r}).touch()\n"
+        "time.sleep(0.5)\n"
+        "while not n:\n"
+        "    time.sleep(0.05)\n"
+        "time.sleep(0.5)\n"
+        f"pathlib.Path({str(count)!r}).write_text(str(n))\n"
+    )
+    proc = subprocess.Popen(
+        [str(CLI), "--suite", "bats", "--", sys.executable, "-c", child],
+        env=dict(os.environ, **{ENV_INTERVAL: "30"}),
+        start_new_session=True,
+    )
+    try:
+        _await_path(started, "the child never started")
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        proc.wait(timeout=15)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+    assert count.read_text() == "1"
+
+
+class _FakePluginManager:
+    def __init__(self, names):
+        self._names = names
+
+    def hasplugin(self, name):
+        return name in self._names
+
+
+class _FakeConfig:
+    def __init__(self, *plugins):
+        self.pluginmanager = _FakePluginManager(set(plugins))
+
+
+_LOCATION = ("tests/demo.py", 1, "test_a")
+
+
+def test_the_xdist_controller_writes_no_status_file(tmp_path, monkeypatch):
+    import conftest
+
+    monkeypatch.setenv(STATUS_ENV, str(tmp_path))
+    monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
+    monkeypatch.setattr(conftest, "_CONFIG", _FakeConfig("dsession"))
+    conftest.pytest_runtest_logstart("tests/demo.py::test_a", _LOCATION)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_worker_and_a_plain_run_still_write_their_status_file(tmp_path, monkeypatch):
+    import conftest
+
+    monkeypatch.setenv(STATUS_ENV, str(tmp_path))
+    monkeypatch.setattr(conftest, "_CONFIG", _FakeConfig("dsession"))
+    monkeypatch.setenv("PYTEST_XDIST_WORKER", "gw3")
+    conftest.pytest_runtest_logstart("tests/demo.py::test_a", _LOCATION)
+    assert [p.name for p in tmp_path.iterdir()] == ["gw3"]
+    conftest.pytest_runtest_logfinish("tests/demo.py::test_a", _LOCATION)
+    assert list(tmp_path.iterdir()) == []
+
+    monkeypatch.delenv("PYTEST_XDIST_WORKER")
+    monkeypatch.setattr(conftest, "_CONFIG", _FakeConfig())
+    conftest.pytest_runtest_logstart("tests/demo.py::test_b", _LOCATION)
+    assert [p.name for p in tmp_path.iterdir()] == ["main"]

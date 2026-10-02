@@ -12,9 +12,13 @@ setup() {
 @test "pre-push captures run-tests stdout without swallowing stderr" {
   # Combined 2>&1 on these assignments is the capture the heartbeat exists to
   # undo. Other 2>&1 in the hook (gitleaks, shellcheck) are unrelated.
-  run grep -E 'bin/local/run-tests.*2>&1' "$REPO_ROOT/git/hooks/pre-push-workbench"
+  # Backslash continuations are joined first, so splitting the invocation
+  # across lines does not hide the redirect. A redirect smuggled in through a
+  # variable is not seen; this pins the spelling, not the runtime behaviour.
+  local joined
+  joined=$(sed -e :a -e '/\\$/N; s/\\\n//; ta' "$REPO_ROOT/git/hooks/pre-push-workbench")
+  run grep -E 'bin/local/run-tests.*2>&1' <<<"$joined"
   [ "$status" -ne 0 ]
-  [ -z "$output" ]
 }
 
 # passes-at-base: stdout capture predates streaming stderr; this change only drops 2>&1

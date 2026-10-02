@@ -35,7 +35,10 @@ call whose callee ends in `Popen` — or `with ... Popen(...) as name`:
 `Popen` itself takes no bound, so the launch is still unchecked; the wait
 that follows is where the duration is decided, and omitting `timeout=` there
 is the same silence as omitting it on `subprocess.run`.  `Event.wait` and any
-other receiver not assigned from `Popen` in that function are ignored.
+other receiver not assigned from `Popen` in that function are ignored.  A bound
+may be the keyword or its positional slot — `proc.wait(budget)`, or the second
+argument of `proc.communicate(input, budget)` — and a literal in that slot is
+flagged the same as `timeout=30`.
 
 Reading only the bounds that were written down leaves the omission invisible,
 which is the case the table exists to eliminate: a call with no `timeout=` is
@@ -47,6 +50,12 @@ renames it — `def fetch(*, budget)` handing `budget` to `subprocess.run` — h
 its literal from this check.  And a runner is recognised by its written name, so
 `from subprocess import run` escapes the omission check.  The convention is to
 keep both names; a call site that does is fully covered.
+
+The Popen-reap check sees only a plain name bound from `Popen` in the same
+function.  It does not see `self.proc = Popen(...)` followed by
+`self.proc.wait()`, a module-level `p = Popen(...); p.wait()`, or a closure
+that waits on its enclosing function's Popen.  A clean run is not coverage of
+those.
 
 Exit code: 0 if all files pass, 1 if any have violations.
 """
@@ -76,6 +85,9 @@ RUNNERS = {
     ('subprocess', 'check_call'),
     ('subprocess', 'check_output'),
 }
+
+# Where `timeout` sits positionally on a Popen reap.
+REAP_TIMEOUT_SLOT = {'wait': 0, 'communicate': 1}
 
 SEARCH_DIRS = ('ai',)
 SKIP_DIRS = {'.git', '__pycache__', '.venv', 'node_modules'}
@@ -222,13 +234,19 @@ def _bind_with_popen(node, names: set[str]) -> None:
         names.add(bound.id)
 
 
+def _is_popen_annassign(node) -> bool:
+    """True for `name: T = Popen(...)`."""
+    if not isinstance(node, ast.AnnAssign) or not isinstance(node.target, ast.Name):
+        return False
+    return node.value is not None and _ends_with_popen_call(node.value)
+
+
 def _bind_popen_names(node, names: set[str]) -> None:
     """Add names *node* binds from a Popen launch, if it does."""
     if isinstance(node, ast.Assign) and _ends_with_popen_call(node.value):
         names.update(_name_ids(node.targets))
         return
-    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) \
-            and node.value is not None and _ends_with_popen_call(node.value):
+    if _is_popen_annassign(node):
         names.add(node.target.id)
         return
     if isinstance(node, (ast.With, ast.AsyncWith)):
@@ -277,9 +295,20 @@ def _unbounded_reap(node, names: set[str]) -> Violation | None:
         return None
     if any(kw.arg in (KEYWORD, None) for kw in node.keywords):
         return None
+    attr = node.func.attr
+    # `wait(timeout=None)`, `communicate(input=None, timeout=None)`.
+    slot = REAP_TIMEOUT_SLOT[attr]
+    if any(isinstance(a, ast.Starred) for a in node.args):
+        return None
+    if len(node.args) > slot:
+        literal = _literal(node.args[slot])
+        if literal is None:
+            return None
+        return Violation(line=node.lineno, found=f'{KEYWORD}={literal}',
+                         suggestion=_suggestion(literal))
     return Violation(
         line=node.lineno,
-        found=f'{receiver}.{node.func.attr}() with no {KEYWORD}=',
+        found=f'{receiver}.{attr}() with no {KEYWORD}=',
         suggestion=A_TIER,
     )
 

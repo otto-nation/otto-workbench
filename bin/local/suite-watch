@@ -27,8 +27,8 @@ Options:
   -h, --help     Show this message.
 
 Environment:
-  TEST_HEARTBEAT_SECS  Seconds between heartbeats. Default 60; 0 runs the
-                       child directly with no supervisor.
+  TEST_HEARTBEAT_SECS  Seconds between heartbeats. Default 60; 0 disables
+                       the heartbeat (the child is still waited on).
 USAGE
 }
 

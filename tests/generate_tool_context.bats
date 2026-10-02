@@ -247,6 +247,7 @@ EOF
 
   run main
   [ "$status" -ne 0 ]
+  [[ "$output" == *"bin/missing"* ]]
 }
 
 @test "omits docs field from output" {

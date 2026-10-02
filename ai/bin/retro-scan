@@ -481,11 +481,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=SCRIPT,
         description="Scan PR review comments and cross-reference against coding rules.",
-        usage="retro-scan [--home DIR] [--workbench DIR] [--since DURATION] [--consume]",
     )
     parser.add_argument("-V", "--version", action="store_true", help="print version and exit")
     parser.add_argument("--home", type=str, default=str(Path.home()), metavar="DIR",
-                        help="home directory override")
+                        help="home directory override (default: `$HOME`)")
     parser.add_argument("--workbench", type=str, default=default_wb, metavar="DIR",
                         help=f"workbench directory (default: ${WORKBENCH_ENV_VAR} or {DEFAULT_WORKBENCH})")
     parser.add_argument("--since", type=str, default=None, metavar="DURATION",

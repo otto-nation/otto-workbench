@@ -191,6 +191,17 @@ class TestLoad:
         shape = core.cli_reference.load("bin/my-tool:build_parser", "my-tool", tmp_path)
         assert core.cli_reference.usage_line(shape) == "my-tool [--json]"
 
+    def test_a_script_that_fails_to_load_is_not_left_in_sys_modules(self, tmp_path):
+        script = tmp_path / "bin" / "broken-tool"
+        script.parent.mkdir()
+        script.write_text("raise RuntimeError('half-initialised')\n")
+        name = "_cli_reference_broken_tool"
+
+        with pytest.raises(RuntimeError, match="half-initialised"):
+            core.cli_reference.load("bin/broken-tool:build_parser", "broken-tool", tmp_path)
+
+        assert name not in sys.modules
+
     def test_a_shape_is_used_as_is(self):
         shape = core.cli_reference.load("cli.pr:reference_shape", "pr", REPO_ROOT)
         assert [c.name for c in shape.commands][0] == "create"
@@ -239,7 +250,31 @@ class TestPrShape:
         args, _ = cli.pr.build_global_parser().parse_known_args(["--worktree", "/x", "status"])
         assert args.repo_dir == "/x"
 
+    def test_fix_documents_the_flags_it_forwards(self, shape):
+        fix = next(c for c in shape.commands if c.name == "fix")
+        synopsis = core.cli_reference.synopsis(fix.parser)
+        assert "[--post]" in synopsis
+        assert "review-or-ci-flag" in synopsis
+        section = core.cli_reference.tables(shape).split("**`pr fix`**")[1].split("**`pr rebase`**")[0]
+        assert "Takes no flags" not in section
+
+    def test_a_command_with_no_parser_and_no_declaration_fails(self):
+        import cli.pr
+        with pytest.raises(RuntimeError, match="not declared to take no flags"):
+            cli.pr._reference_parser("newcmd", {"newcmd": _parser()})
+
     def test_no_documented_flag_has_an_empty_description(self, shape):
         out = core.cli_reference.tables(shape)
         empty = [line for line in out.splitlines() if line.endswith("|  |")]
         assert empty == []
+
+
+# ── Machine-independent output ─────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("script", ["dream-scan", "promote-scan", "retro-scan"])
+def test_a_home_default_is_not_rendered_into_the_tables(script, monkeypatch):
+    """The tables are committed; the generating machine's $HOME must not be in them."""
+    monkeypatch.setenv("HOME", "/home/a-unique-user")
+    shape = core.cli_reference.load(f"ai/bin/{script}:build_parser", script, REPO_ROOT)
+    assert "a-unique-user" not in core.cli_reference.tables(shape)

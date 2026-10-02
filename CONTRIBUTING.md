@@ -294,13 +294,14 @@ nothing to move by hand: once the mirror is there, a container-rooted session
 and a worktree-rooted one start from the same grants.
 
 Fewer sessions root there now. The `claude` shell wrapper in
-[`zsh/config.d/tools/claude.zsh`](zsh/config.d/tools/claude.zsh) — one binding of
-the helper in [`_worktree_launch.zsh`](zsh/config.d/tools/_worktree_launch.zsh),
-which `pi` shares — sends a launch from the container into the worktree its
-default branch is checked out into, and says so on the way. The mirror still matters — `command claude` bypasses the
-wrapper, and a shell without the workbench's zsh config has no wrapper at all —
-but the container is now where a session passes through rather than where it
-settles.
+[`zsh/config.d/tools/claude.zsh`](zsh/config.d/tools/claude.zsh) — one binding
+of the helper in
+[`_worktree_launch.zsh`](zsh/config.d/tools/_worktree_launch.zsh), which `pi`
+shares — sends a launch from the container into the worktree its default branch
+is checked out into, and says so on the way. The mirror still matters —
+`command claude` bypasses the wrapper, and a shell without the workbench's zsh
+config has no wrapper at all — but the container is now where a session passes
+through rather than where it settles.
 
 ### The rest of the machine
 

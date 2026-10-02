@@ -26,8 +26,8 @@ the keys it advertises.
 The ``--no-<phase>`` flags at the bottom are the registry read from the command
 line: which phases may be switched off is a property of the specs above, so the
 flags are generated from them rather than listed a second time in each script
-that offers them. Today that is ``--no-holistic``, ``--no-scout``,
-``--no-group``, ``--no-synthesis``, ``--no-disprove``.
+that offers them. The flags a script has are in its generated flag table in
+``docs/tools.md``, or in ``ai/bin/review --help``.
 
 Phase 1 is one scan chosen from ``SCAN_PHASES``. ``--no-holistic`` alone falls
 back to the scout scan and ``--no-scout`` alone falls back to the holistic

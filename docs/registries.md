@@ -82,7 +82,7 @@ tools:
 | `brief` | one-liner — name and description |
 | `hidden` | omitted from AI context |
 
-`when_to_use` and `usage` are required when `visibility: full` and forbidden otherwise.
+`when_to_use` and `usage` are required when `visibility: full` and forbidden otherwise — except that `usage` is not required when `parser` is set, and is rejected beside one.
 
 `parser` names where a Python CLI's argparse parser is built — `<module>:<attr>` for a module importable from `ai/lib`, or `<path>:<attr>` for a script whose parser lives in the script itself (`ai/bin/otto-log:build_parser`). The attribute may return an `ArgumentParser` or a `core.cli_reference.CLIShape`; `pr` returns the latter, assembled from its global flags and each command's own parser. Everything that would otherwise restate the CLI's flags is then rendered from it by [`bin/local/generate-cli-reference`](../bin/local/generate-cli-reference): the `usage` line in `tools.generated.md` and the MCP tool description, and the flag tables under the script's section in the [script reference](tools.md#script-reference). A `usage` beside a `parser` is rejected, because it would be a second copy free to drift from the first — the drift that once left `pr create` out of the usage agents read and `--base` off three of `pr rebase`'s four descriptions.
 

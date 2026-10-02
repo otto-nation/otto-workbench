@@ -219,11 +219,12 @@ def reference_shape() -> core.cli_reference.CLIShape:
     """Everything `pr` accepts, for the rendered usage line and flag tables.
 
     A command with a parser factory is documented from that parser — its
-    subparser here declares nothing and forwards argv whole — and every other
-    command from its subparser, which is where its flags (or their absence)
-    are declared. A command in COMMANDS with neither is a registry this module
-    cannot parse, and fails here rather than rendering as a command with no
-    flags.
+    subparser here declares nothing and forwards argv whole. `fix` is
+    documented from a parser of its own, because it forwards argv to other
+    passes and has no factory to read it from. `status` and `gc` are declared
+    to take no flags. A command in COMMANDS that is none of these is one this
+    module cannot document, and fails here rather than rendering as a command
+    with no flags.
     """
     subs = core.tool_parser.subparsers(_build_parser())
     commands = tuple(
@@ -235,11 +236,38 @@ def reference_shape() -> core.cli_reference.CLIShape:
     )
 
 
+# Commands `pr` performs itself that accept no flags of their own. Listed, not
+# inferred from an empty subparser: every command in COMMANDS has a subparser,
+# so "has one" says nothing about whether its flags were written down.
+_TAKES_NO_FLAGS = frozenset({"status", "gc"})
+
+
+def _fix_reference_parser() -> argparse.ArgumentParser:
+    """The flags `pr fix` accepts: its own `--post`, and what it forwards.
+
+    `cmd_fix` hands its argv whole to the review and CI passes, so any flag
+    those parsers accept is accepted here; only `--post` is also read by `fix`
+    itself, which forwards it to the description pass.
+    """
+    parser = argparse.ArgumentParser(prog=f"{SCRIPT} fix", add_help=False)
+    parser.add_argument("--post", action="store_true",
+                        help="Publish what the passes produce, the revised PR "
+                             "description included (default: print drafts and "
+                             "post nothing)")
+    parser.add_argument("pass_flags", nargs="*", metavar="review-or-ci-flag",
+                        help="Any other flag is forwarded to the review pass and "
+                             "the CI pass; see `pr review` and `pr ci`")
+    return parser
+
+
 def _reference_parser(name: str, subs: dict[str, argparse.ArgumentParser]) -> argparse.ArgumentParser:
     """The parser that documents `pr <name>`, per `reference_shape`."""
+    if name == "fix":
+        return _fix_reference_parser()
     if not cli.dispatch.has_parser_factory(name):
-        if name not in subs:
-            raise RuntimeError(f"pr: '{name}' has neither a parser factory nor a subparser")
+        if name not in _TAKES_NO_FLAGS:
+            raise RuntimeError(
+                f"pr: '{name}' has no parser factory and is not declared to take no flags")
         return subs[name]
     parser = cli.dispatch.resolve(cli.dispatch.PARSER_FACTORIES[name])()
     # `review`'s handler routes the mode flags before its parser runs, so `pr
@@ -276,6 +304,18 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _global_flags_block() -> str:
+    """The global flags as `build_global_parser` declares them, for the usage text.
+
+    Read off the parser's own help rather than written out, so `pr --help` and
+    the first pass of `main` cannot disagree about what is global. The help is
+    a usage line, a blank line, then a section heading and the flags; the
+    block is the flags.
+    """
+    _usage, sections = build_global_parser().format_help().split("\n\n", 1)
+    return sections.split("\n", 1)[1].rstrip()
+
+
 def _build_usage() -> str:
     max_name = max(len(n) for n in COMMANDS)
     cmd_lines = "\n".join(
@@ -293,13 +333,9 @@ Commands:
 {cmd_lines}
 
 Global flags (auto-detected from CWD when omitted):
-  --repo-dir PATH    Git worktree directory
-  --branch NAME      Branch name
-  --pr NUM|URL       PR number or URL
+{_global_flags_block()}
 
-Contract flags:
-  --schema-version N  Serve a versioned JSON document on stdout instead of a
-                      human table. Honored by {contracts}; serving {versions}.
+--schema-version is honored by {contracts}; serving {versions}.
 
 Run 'pr <command> -h' for details on a specific command."""
 

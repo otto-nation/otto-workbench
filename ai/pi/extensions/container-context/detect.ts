@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * What a Pi session started at a bare-repo container is missing, kept apart
@@ -26,10 +27,9 @@ import { sep } from "node:path";
  */
 
 /** Where `resolve-worktree` lives, resolved from this file rather than $PATH. */
-export const RESOLVE_WORKTREE = new URL(
-  "../../../../bin/resolve-worktree",
-  import.meta.url,
-).pathname;
+export const RESOLVE_WORKTREE = fileURLToPath(
+  new URL("../../../../bin/resolve-worktree", import.meta.url),
+);
 
 /** Section tag the notice renders under. Pi accepts `^[a-z][a-z0-9_-]*$`. */
 export const SECTION_NAME = "container_context";
@@ -112,6 +112,15 @@ export function containerContext(
 
   if (run.status === RESOLVED) {
     const worktree = run.stdout.trim();
+    // An empty path is no answer: `worktreeFiles` would build the prefix "/"
+    // from it and take every absolute path for a file inside the worktree.
+    if (!worktree) {
+      return {
+        kind: "unresolved",
+        container: cwd,
+        reason: "resolve-worktree exited 0 but printed no worktree path",
+      };
+    }
     return { kind: "resolved", container: cwd, worktree };
   }
 

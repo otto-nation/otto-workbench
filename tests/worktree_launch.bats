@@ -236,6 +236,8 @@ _launch() {
   local cmd
   for cmd in "${WRAPPERS[@]}"; do
     grep -q "_wb_launch_in_worktree $cmd" "$SNIPPET_DIR/$cmd.zsh"
-    ! grep -q '^[^#]*resolve-worktree' "$SNIPPET_DIR/$cmd.zsh"
+    # `run !`: a bare `! grep` never fails a test mid-body, so only the last
+    # wrapper in the loop would be checked.
+    run ! grep -q '^[^#]*resolve-worktree' "$SNIPPET_DIR/$cmd.zsh"
   done
 }

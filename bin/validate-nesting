@@ -10,15 +10,9 @@ checker had long since settled on 2.
 validate-nesting [--quiet] [--max-depth N] [--diff BASE_REF] [file...]
 ```
 
-| Flag | Description |
-|------|-------------|
-| `--quiet` | Only show failures and summary |
-| `--max-depth N` | Maximum nesting depth (overrides per-language defaults) |
-| `--diff BASE_REF` | Only report violations on lines added since `BASE_REF` |
-| `-h`, `--help` | Show help |
-
 When no files are given, discovers all scripts in the repo by extension and
-shebang. `--diff` is mutually exclusive with positional files.
+shebang. `--diff` is mutually exclusive with positional files. The flag table
+below the exit codes is rendered from the parser, so it is not written here.
 
 | Exit | Meaning |
 |------|---------|

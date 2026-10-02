@@ -17,15 +17,11 @@ Each section below is the script's own header — the comment block under its sh
 
 How the AI subsystem behaves behind these entry points — review phases, publishing, settlement, the summary record — is in [AI Automation](ai-automation.md), and each module's own account is in [AI Libraries](ai-libraries.md).
 
-## Workbench Scripts
-
-General-purpose scripts installed onto `PATH` by `otto-workbench sync`.
+**Workbench scripts** — general-purpose scripts installed onto `PATH` by `otto-workbench sync`.
 
 <!-- include: bin/local/generate-doc-reference --set scripts --group workbench-scripts -->
 
-## AI Tooling
-
-The `pr` and `review` CLIs, the scanners the workbench skills drive, and the MCP launchers.
+**AI tooling** — the `pr` and `review` CLIs, the scanners the workbench skills drive, and the MCP launchers.
 
 <!-- include: bin/local/generate-doc-reference --set scripts --group ai-tooling -->
 

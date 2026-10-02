@@ -154,7 +154,8 @@ _check_required_fields() {
     fi
   else
     [[ "$has_wtu" != "true" ]]   || _fail "$(basename "$file") entry '$name': field 'when_to_use' is not allowed when visibility: $visibility"
-    [[ "$has_usage" != "true" ]] || _fail "$(basename "$file") entry '$name': field 'usage' is not allowed when visibility: $visibility"
+    # Already reported above when a parser sits beside it; one failure per cause.
+    [[ "$has_usage" != "true" || "$has_parser" == "true" ]] || _fail "$(basename "$file") entry '$name': field 'usage' is not allowed when visibility: $visibility"
   fi
 }
 
@@ -348,6 +349,10 @@ _check_parser_field() {
   spec=$(reg_get "$file" tools "$i" parser)
   if [[ ! "$spec" =~ ^[^:[:space:]]+:[A-Za-z_][A-Za-z0-9_]*$ ]]; then
     _fail "$(basename "$file") entry '$name': parser must be <module-or-path>:<attr> (got '$spec')"
+  elif [[ "$spec" == */* && ! -f "$REPO_ROOT/${spec%:*}" ]]; then
+    # A path spec names a script under the repo root; a typo would otherwise
+    # surface only when generate-cli-reference tries to load it.
+    _fail "$(basename "$file") entry '$name': parser path '${spec%:*}' does not exist"
   fi
   if [[ "$(reg_get "$file" meta validation)" != bindir ]]; then
     _fail "$(basename "$file") entry '$name': field 'parser' is read only in a bindir registry"

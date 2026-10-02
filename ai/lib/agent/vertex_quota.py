@@ -12,7 +12,7 @@ reads both. Anything else in this module stays behind the preflight.
 
 The gate is fail-open: it only stops runs it can *prove* are misconfigured.
 It proceeds — with a note — when the CLI is not on Vertex
-(``CLAUDE_CODE_USE_VERTEX`` unset), when project/region are unset, when there
+(``CLAUDE_CODE_USE_VERTEX`` not ``1``), when project/region are unset, when there
 are no application-default credentials, when the Service Usage API errors, or
 when the model is a bare alias the CLI resolves internally (``is_checkable`` is
 false). On failure it lists the provisioned models and names the

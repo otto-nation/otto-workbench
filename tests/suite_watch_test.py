@@ -14,6 +14,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import core.suite_watch
 from core.suite_watch import (
     ENV_INTERVAL,
     STATUS_ENV,
@@ -114,22 +115,18 @@ def test_format_heartbeat_names_time_the_machine_spent_asleep():
 
 
 def test_a_suspend_shows_up_as_asleep_time(monkeypatch):
-    import core.suite_watch as sw
-
-    started = sw._Clocks(wall=1000.0, mono=50.0)
+    started = core.suite_watch._Clocks(wall=1000.0, mono=50.0)
     # 600s of wall time passed, but the monotonic clock only saw 240s of it.
-    monkeypatch.setattr(sw.time, "time", lambda: 1600.0)
-    monkeypatch.setattr(sw.time, "monotonic", lambda: 290.0)
-    assert started.since(60) == sw.Elapsed(wall_s=600, asleep_s=360)
+    monkeypatch.setattr(core.suite_watch.time, "time", lambda: 1600.0)
+    monkeypatch.setattr(core.suite_watch.time, "monotonic", lambda: 290.0)
+    assert started.since(60) == core.suite_watch.Elapsed(wall_s=600, asleep_s=360)
 
 
 def test_clock_jitter_under_one_interval_is_not_sleep(monkeypatch):
-    import core.suite_watch as sw
-
-    started = sw._Clocks(wall=1000.0, mono=50.0)
-    monkeypatch.setattr(sw.time, "time", lambda: 1120.5)
-    monkeypatch.setattr(sw.time, "monotonic", lambda: 170.0)
-    assert started.since(60) == sw.Elapsed(wall_s=120, asleep_s=0)
+    started = core.suite_watch._Clocks(wall=1000.0, mono=50.0)
+    monkeypatch.setattr(core.suite_watch.time, "time", lambda: 1120.5)
+    monkeypatch.setattr(core.suite_watch.time, "monotonic", lambda: 170.0)
+    assert started.since(60) == core.suite_watch.Elapsed(wall_s=120, asleep_s=0)
 
 
 def test_heartbeat_interval_defaults_and_disables():

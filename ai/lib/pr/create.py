@@ -22,14 +22,11 @@ it.
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-
-import contextlib
 
 import config.workbench_config
 import core.proc
@@ -47,21 +44,15 @@ from pr.close_refs import CloseRefError, normalise, stage
 from pr.context import ResolvedContext
 from pr.create_content import ContentError, ContentRequest
 
-# `git_remote` is a workbench-wide module rather than an `ai/lib` one; see
+# `git_remote` and `gitenv` are workbench-wide modules, not `ai/lib` ones; see
 # `pr.branch_sync` for the path arithmetic, which is the same here.
 _WORKBENCH_LIB = Path(__file__).resolve().parent.parent.parent.parent / "lib"
 if _WORKBENCH_LIB.is_dir() and str(_WORKBENCH_LIB) not in sys.path:
     sys.path.insert(0, str(_WORKBENCH_LIB))
 import git_remote  # noqa: E402
+import gitenv  # noqa: E402
 
 GIT_REMOTE = git_remote.GIT_REMOTE
-
-# Dropped from every git/validate-nesting child's environment. A hook that
-# invoked `pr create` could have either set, and with either set a `git -C`
-# or a `rev-parse --show-toplevel` answers for the hook's repo rather than
-# the worktree this run was asked to act on — see `pr.create_content._git_env`,
-# which this mirrors.
-_GIT_ENV_DROP = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
 
 # The first `https://…/pull/<n>` in gh's output. The host is free so an
 # enterprise or self-hosted URL is reported; the `/pull/<n>` anchor is what
@@ -100,47 +91,7 @@ def _say(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
 
-def _git_env() -> dict[str, str]:
-    """The process environment with inherited git overrides dropped.
-
-    See `_GIT_ENV_DROP`: a run launched from a hook that exports `GIT_DIR` or
-    `GIT_WORK_TREE` would otherwise have every git call here, and the
-    `validate-nesting` subprocess below, answer for the hook's repo instead
-    of the worktree `pr create` was asked to act on.
-    """
-    env = os.environ.copy()
-    for name in _GIT_ENV_DROP:
-        env.pop(name, None)
-    return env
-
-
-@contextlib.contextmanager
-def _env_cleared():
-    """Drop `_GIT_ENV_DROP` from the process environment for the duration.
-
-    `git_remote`'s helpers (and `git.topology.default_branch`, which is one of
-    them) take no `env=` — by its own docstring's design, which leaves
-    "unsetting it... to the caller that knows whether it owns the process".
-    `pr create` does, so this clears the override process-wide for the one
-    call it wraps and restores it after, rather than letting a hook's
-    `GIT_DIR` make the default-branch or base-ref lookup answer for the
-    hook's repo instead of `wt`.
-    """
-    saved = {name: os.environ.pop(name, None) for name in _GIT_ENV_DROP}
-    try:
-        yield
-    finally:
-        for name, value in saved.items():
-            if value is not None:
-                os.environ[name] = value
-
-
-def _base_refusal(base: str, default: str, *, explicit: bool) -> str:
-    lines = [
-        f"✗ {GIT_REMOTE}/{base} does not resolve — cannot open a PR against "
-        f"a base that doesn't exist",
-        f"→ Fix with: git fetch {GIT_REMOTE}",
-    ]
+def _with_set_head_hint(lines: list[str], default: str, *, explicit: bool) -> str:
     # Only a guessed base can be wrong about which branch is the default; a
     # base the operator named is wrong for a reason set-head cannot fix.
     if not explicit:
@@ -149,6 +100,33 @@ def _base_refusal(base: str, default: str, *, explicit: bool) -> str:
             f"also run: git remote set-head {GIT_REMOTE} -a"
         )
     return "\n".join(lines)
+
+
+def _base_refusal(base: str, default: str, *, explicit: bool) -> str:
+    return _with_set_head_hint([
+        (f"✗ {GIT_REMOTE}/{base} does not resolve — cannot open a PR against "
+         f"a base that doesn't exist"),
+        f"→ Fix with: git fetch {GIT_REMOTE}",
+    ], default, explicit=explicit)
+
+
+def _fetch_refusal(wt: Path, base: str, default: str, *, explicit: bool) -> str:
+    """Bring ``origin/<base>`` current; the ✗ refusal when that fails, else "".
+
+    Every measurement against the base — D7's ahead-count, the nesting gate's
+    diff, the content's commit and file list — reads ``origin/<base>``, which
+    is otherwise only as fresh as the clone's last fetch. A dry run fetches
+    too: its preview is measured against the same base.
+    """
+    r = git.client.run(
+        "fetch", GIT_REMOTE, base, "--quiet", cwd=wt, env=gitenv.git_env_clear(),
+    )
+    if r.ok:
+        return ""
+    detail = r.detail or f"exit {r.returncode}"
+    return _with_set_head_hint(
+        [f"✗ Could not fetch {GIT_REMOTE}/{base}: {detail}"], default, explicit=explicit,
+    )
 
 
 def _closes(raw: tuple[str, ...], wt: Path) -> tuple[str, ...]:
@@ -179,7 +157,7 @@ def _nesting_gate(wt: Path, base: str) -> bool:
         # Unbounded: the gate parses every file the diff touches, so its cost is the input's.
         r = subprocess.run(
             argv, cwd=wt, capture_output=True, text=True,
-            timeout=core.timeouts.UNBOUNDED, env=_git_env(),
+            timeout=core.timeouts.UNBOUNDED, env=gitenv.git_env_clear(),
         )
         status, output = r.returncode, (r.stdout or "") + (r.stderr or "")
     except OSError as exc:
@@ -217,7 +195,7 @@ def _ahead_refusal(wt: Path, branch: str, base: str) -> str:
     """
     remote_base = f"{GIT_REMOTE}/{base}"
     argv = ("rev-list", "--count", f"{remote_base}..HEAD")
-    r = git.client.run(*argv, cwd=wt, env=_git_env())
+    r = git.client.run(*argv, cwd=wt, env=gitenv.git_env_clear())
     count = r.stdout.strip()
     if not r.ok or not count.isdigit():
         detail = r.detail or f"exit {r.returncode}"
@@ -244,9 +222,11 @@ def _preflight(
         _say(f"✗ PR operations cannot be run from the {default} branch")
         return None
     base = opts.base or default
-    with _env_cleared():
-        base_exists = git_remote.remote_branch_ref_exists(base, cwd=str(wt))
-    if not base_exists:
+    refusal = _fetch_refusal(wt, base, default, explicit=bool(opts.base))
+    if refusal:
+        _say(refusal)
+        return None
+    if not git_remote.remote_branch_ref_exists(base, cwd=str(wt)):
         _say(_base_refusal(base, default, explicit=bool(opts.base)))
         return None
     refusal = _ahead_refusal(wt, branch, base)
@@ -321,8 +301,7 @@ def run_create(
         _say(f"✗ {branch} has no checkout — run from its worktree or pass --repo-dir")
         return 1
 
-    with _env_cleared():
-        default = git.topology.default_branch(wt)
+    default = git.topology.default_branch(wt)
     closes = _preflight(wt, branch, default, opts, ctx.pr_number)
     if closes is None:
         return 1

@@ -22,7 +22,6 @@ through to a push or to "up to date".
 
 from __future__ import annotations
 
-import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -35,20 +34,15 @@ from core.proc import CmdResult
 from core.trail import Trail
 from git.push import PushResult, PushStatus
 
-# Dropped from every git child's environment here. A hook invoking `pr create`
-# could have either set, and with either set a read keyed on *wt* — the
-# ls-remote probe, the fetch, the rev-parse/merge-base comparisons — would
-# answer for the hook's repo instead of the worktree being synced. See
-# `pr.create_content._git_env`, which this mirrors.
-_GIT_ENV_DROP = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
-
-# `git_remote` is a workbench-wide module rather than an `ai/lib` one. In a
-# checkout that is one directory up; in the otto-ai-tools tarball, which
-# flattens both into one `lib/`, it is one directory up from this file too.
+# `git_remote` and `gitenv` are workbench-wide modules rather than `ai/lib`
+# ones. In a checkout that is one directory up; in the otto-ai-tools tarball,
+# which flattens both into one `lib/`, it is one directory up from this file
+# too.
 _WORKBENCH_LIB = Path(__file__).resolve().parent.parent.parent.parent / "lib"
 if _WORKBENCH_LIB.is_dir() and str(_WORKBENCH_LIB) not in sys.path:
     sys.path.insert(0, str(_WORKBENCH_LIB))
 import git_remote  # noqa: E402
+import gitenv  # noqa: E402
 
 GIT_REMOTE = git_remote.GIT_REMOTE
 
@@ -100,20 +94,6 @@ def _emit(msg: str) -> None:
     carries →/✓/✗, so ``core.log`` would double the prefix.
     """
     print(msg, file=sys.stderr, flush=True)
-
-
-def _git_env() -> dict[str, str]:
-    """The process environment with inherited git overrides dropped.
-
-    See `_GIT_ENV_DROP`: a run launched from a hook that exports `GIT_DIR` or
-    `GIT_WORK_TREE` would otherwise have the probe, the fetch, and the
-    rev-parse/merge-base comparisons below answer for the hook's repo instead
-    of *wt*.
-    """
-    env = os.environ.copy()
-    for name in _GIT_ENV_DROP:
-        env.pop(name, None)
-    return env
 
 
 def _nv(no_verify: bool) -> tuple[str, ...]:
@@ -190,7 +170,11 @@ def sync_branch(
 
     # A probe that failed is not a branch that is absent: reading it as one
     # pushes with --set-upstream into a remote nobody could reach.
-    probe = git.client.run("ls-remote", remote, f"refs/heads/{branch}", cwd=wt, env=_git_env())
+    # Every git child here runs with the inherited overrides dropped: a hook that
+    # invoked `pr create` may export `GIT_DIR`, and with it set these reads
+    # would answer for the hook's repo instead of *wt*.
+    env = gitenv.git_env_clear()
+    probe = git.client.run("ls-remote", remote, f"refs/heads/{branch}", cwd=wt, env=env)
     if not probe.ok:
         return _failed(f"Could not reach {remote}", probe)
     if not _remote_has_branch(probe, branch):
@@ -200,11 +184,11 @@ def sync_branch(
             outcome=SyncOutcome.PUSHED_NEW, message=MSG_NEW, log=emit, trail=trail,
         )
 
-    fetched = git.client.run("fetch", remote, branch, "--quiet", cwd=wt, env=_git_env())
+    fetched = git.client.run("fetch", remote, branch, "--quiet", cwd=wt, env=env)
     if not fetched.ok:
         return _failed(f"Could not fetch {remote}/{branch}", fetched)
 
-    if not git.client.run("rev-parse", "--verify", "@{u}", cwd=wt, env=_git_env()).ok:
+    if not git.client.run("rev-parse", "--verify", "@{u}", cwd=wt, env=env).ok:
         # Bash printed nothing extra here — just pushed without --set-upstream.
         return _push(
             wt, branch, remote=remote,
@@ -217,7 +201,7 @@ def sync_branch(
     shas: list[str] = []
     for argv in (("rev-parse", "HEAD"), ("rev-parse", "@{u}"),
                  ("merge-base", "HEAD", "@{u}")):
-        r = git.client.run(*argv, cwd=wt, env=_git_env())
+        r = git.client.run(*argv, cwd=wt, env=env)
         if not r.ok:
             return _failed(f"git {' '.join(argv)} failed", r)
         shas.append(r.stdout.strip())

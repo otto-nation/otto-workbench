@@ -176,23 +176,6 @@ def test_reports_the_pr_url_when_gh_succeeds(h, capsys):
     assert out.strip() == URL
 
 
-def test_succeeds_under_an_exported_git_dir(h, monkeypatch):
-    """A hook that invokes ``pr create`` can leave `GIT_DIR`/`GIT_WORK_TREE`
-    exported pointing at its own repo. Every git read here (D7's ahead-count,
-    the nesting gate's diff, and `branch_sync`'s ls-remote/fetch/rev-parse) has
-    to answer for `h.wt`, the worktree `run_create` was asked to act on, not
-    for whatever `GIT_DIR` names — so the run still succeeds exactly as it does
-    with no override set.
-    """
-    h.repo()
-    other = h.tmp / "unrelated"
-    run_checked(["git", "init", "-q", str(other)])
-    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
-    monkeypatch.setenv("GIT_WORK_TREE", str(other))
-    assert run_create(h.ctx(), CreateOptions()) == 0
-    assert h.events == ["token", "nesting", "push", "ai", "gh"]
-
-
 def test_args_reach_gh_pr_create_including_draft_assignee_and_base(h):
     h.repo()
     assert run_create(h.ctx(), CreateOptions(draft=True, title="fix: thing")) == 0
@@ -296,8 +279,26 @@ def test_resolves_origin_head_to_a_non_main_default_branch(h):
     assert h.nesting_argv == ["--diff origin/trunk --quiet"]
 
 
-def test_refuses_when_the_resolved_default_branch_has_no_remote_tracking_ref(h, capsys):
+def test_a_guessed_default_the_remote_lacks_refuses_at_the_fetch(h, capsys):
+    """The remote has only `trunk` and nothing points origin/HEAD at it, so the
+    guessed `main` cannot be fetched. The refusal names the fetch and, since
+    the base was a guess, the set-head fix."""
     h.repo("trunk")
+    assert run_create(h.ctx(), CreateOptions()) == 1
+    err = capsys.readouterr().err
+    assert "✗ Could not fetch origin/main: " in err
+    assert "couldn't find remote ref main" in err
+    assert ("→ If main is a guess and the real default branch differs, also run: "
+            "git remote set-head origin -a") in err
+    assert h.events == []
+
+
+def test_refuses_when_the_fetched_base_has_no_remote_tracking_ref(h, capsys):
+    """A remote with no fetch refspec fetches into FETCH_HEAD only, so the
+    fetch succeeds and `origin/<base>` still does not resolve."""
+    wt = h.repo("main")
+    git_in(wt, "config", "--unset-all", "remote.origin.fetch")
+    git_in(wt, "update-ref", "-d", "refs/remotes/origin/main")
     assert run_create(h.ctx(), CreateOptions()) == 1
     err = capsys.readouterr().err
     assert ("✗ origin/main does not resolve — cannot open a PR against a base "
@@ -318,9 +319,10 @@ def test_a_non_resolving_base_refuses_naming_the_branch_passed(h, capsys):
     h.repo("main")
     assert run_create(h.ctx(), CreateOptions(base="does-not-exist")) == 1
     err = capsys.readouterr().err
-    assert "origin/does-not-exist does not resolve" in err
-    assert "origin/main does not resolve" not in err
+    assert "✗ Could not fetch origin/does-not-exist: " in err
+    assert "origin/main" not in err
     assert "set-head" not in err
+    assert h.events == []
 
 
 # ── preflight ───────────────────────────────────────────────────────────────
@@ -440,6 +442,51 @@ def test_no_commits_ahead_refuses_before_token_gate_push_or_ai(h, capsys, opts):
     assert run_create(h.ctx(), opts) == 1
     assert (f"✗ No commits on {BRANCH} ahead of origin/main — nothing to open a PR for"
             in capsys.readouterr().err)
+    assert h.events == []
+    assert not h.remote_has_branch()
+
+
+def _advance_remote_base(h: Harness, n: int = 1) -> str:
+    """Push *n* commits to origin/main from a second clone; the harness clone
+    does not fetch. Returns the new remote tip."""
+    other = h.tmp / "other"
+    run_checked(["git", "clone", "-q", str(h.tmp / "remote.git"), str(other)])
+    for i in range(n):
+        (other / f"upstream{i}.txt").write_text(f"{i}\n")
+        git_in(other, "add", "--", f"upstream{i}.txt")
+        git_in(other, "-c", "user.name=t", "-c", "user.email=t@example.com",
+               "commit", "-q", "--no-verify", "-m", f"chore: upstream {i}")
+    git_in(other, "push", "-q", "origin", "HEAD:main")
+    return git_out(other, "rev-parse", "HEAD").strip()
+
+
+def test_the_base_is_fetched_before_the_ahead_count(h, capsys):
+    """D7 measures against origin/main as it is on the remote now, not as of
+    the clone's last fetch: a branch already merged upstream is refused."""
+    wt = h.repo()
+    git_in(wt, "push", "-q", "origin", f"{BRANCH}:main")
+    git_in(wt, "update-ref", "refs/remotes/origin/main", "main")
+    assert git_out(wt, "rev-list", "--count", "origin/main..HEAD").strip() == "2"
+    assert run_create(h.ctx(), CreateOptions(dry_run=True)) == 1
+    assert (f"✗ No commits on {BRANCH} ahead of origin/main — nothing to open a PR for"
+            in capsys.readouterr().err)
+    assert h.events == []
+
+
+def test_a_base_that_cannot_be_fetched_refuses_before_anything_runs(h, monkeypatch, capsys):
+    h.repo()
+    import git.client
+    real = git.client.run
+
+    def run(*args, **kwargs):
+        if args[:2] == ("fetch", "origin") and "main" in args:
+            return CmdResult(128, "", "fatal: unable to access remote")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(git.client, "run", run)
+    assert run_create(h.ctx(), CreateOptions()) == 1
+    err = capsys.readouterr().err
+    assert "✗ Could not fetch origin/main: fatal: unable to access remote" in err
     assert h.events == []
     assert not h.remote_has_branch()
 

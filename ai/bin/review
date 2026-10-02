@@ -1,5 +1,26 @@
 #!/usr/bin/env python3
-"""Run the configured review agent on a PR with local worktree checkout and iterative review support."""
+"""Run the configured review agent on a PR with local worktree checkout and iterative review support.
+
+```
+review [<flags>] <pr_url_or_number>
+review --self [<pr_url_or_number>]
+review [--self] --recover [<pr_url_or_number>]
+```
+
+`--self` reviews the local worktree (unpushed commits, staged and unstaged
+edits, untracked files) rather than the remote branch. `--recover` finishes a
+review whose agents failed, at the commit the run started from.
+
+The `gc`, `post`, `rebuild`, `summary` and `threads` subcommands this binary
+once carried have moved to `pr` — `pr gc`, `pr review --post`, `pr review
+--repair`, `pr review --summary` and `pr comments` respectively. Each is still
+recognised here and refused with the command to use instead, rather than being
+read as the name of a branch to review.
+
+`--no-post` and `--post` are mutually exclusive. Pipeline phases, base-branch
+resolution, model selection, and Vertex quota preflight are in
+docs/ai-automation.md and the modules in docs/ai-libraries.md.
+"""
 
 import os
 import sys

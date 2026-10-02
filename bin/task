@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
-# Task wrapper — installed to ~/.local/bin/task, which takes precedence over the real binary.
-# Handles two cases:
-#   1. Local Taskfile exists → pass through to the real task binary unchanged
-#   2. --global flag → strip the flag and use ~/.config/task/Taskfile.yml explicitly
+# Wrapper around go-task that adds `--global` support. Installed to
+# `~/.local/bin/task`, which takes precedence over the real binary; the wrapper
+# finds the real `task` by dropping that directory from `PATH`.
 #
-# Usage: task [--global] [command] [args...]
-#   task commit              Uses ./Taskfile.yml in the current directory
-#   task --global commit     Uses ~/.config/task/Taskfile.yml from anywhere
+# ```
+# task [--global] <task-name> [-- <task-args>]
+# ```
+#
+# | Flag | Description |
+# |------|-------------|
+# | `--global` | Use the global Taskfile (`~/.config/task/Taskfile.yml`) from any directory |
+# | `-h`, `--help` | Show help |
+#
+# Without `--global`, uses a Taskfile in the current directory (`Taskfile.yml` /
+# `Taskfile.yaml`, either case) and passes through to the real binary unchanged.
+# Missing both a local Taskfile and `--global` is an error.
 
 set -euo pipefail
 

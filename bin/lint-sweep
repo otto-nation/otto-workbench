@@ -1,4 +1,29 @@
 #!/usr/bin/env bash
+# Sweep lint violations across multiple Go repos — detect, report, and optionally
+# create fix branches.
+#
+# Detects violations of a given golangci-lint rule across a set of repos (paths
+# that contain `go.mod`) and reports a per-repo count. With `--fix`, creates a
+# worktree per repo that has violations (requires `wt`) on branch
+# `<user>/fix/<rule>` unless `--branch` overrides it.
+#
+# ```
+# lint-sweep --rule <name> --repos <glob> [--fix] [--branch <name>] [--dry-run] [--json]
+# ```
+#
+# | Flag | Description | Default |
+# |------|-------------|---------|
+# | `--rule <name>` | Lint rule to sweep (required) | — |
+# | `--repos <glob>` | Glob or comma-separated list of repo paths (required) | — |
+# | `--fix` | Create worktrees and branches for fixing | report only |
+# | `--branch <name>` | Branch name override | `<user>/fix/<rule>` |
+# | `--dry-run` | Show what would be done | — |
+# | `--json` | Output results as JSON | — |
+# | `-h`, `--help` | Show help | — |
+#
+# Requires `golangci-lint`. Repos that are not Go modules are skipped; matching
+# nothing is an error.
+
 set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"

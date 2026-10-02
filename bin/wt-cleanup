@@ -1,4 +1,47 @@
 #!/usr/bin/env bash
+# Remove stale git worktrees — merged branches and optionally age-based cleanup.
+#
+# By default, removes worktrees whose branches are fully merged (safe to delete),
+# and deletes the branch with the worktree — including a squash merge, which git's
+# own ancestry check cannot see. With `--age <days>`, also removes worktrees with
+# no commits newer than that many days; those branches are kept, since inactivity
+# says nothing about whether the work landed.
+#
+# ```
+# wt-cleanup [--age <days>] [--no-grace-period] [--dry-run] [--quiet]
+# ```
+#
+# | Flag | Description | Default |
+# |------|-------------|---------|
+# | `--age <days>` | Also remove worktrees inactive for N+ days | — |
+# | `--no-grace-period` | Skip the 600s grace period (remove immediately) | grace period on |
+# | `--dry-run` | Show what would be removed | — |
+# | `--quiet` | No output (for hooks) | — |
+# | `-h`, `--help` | Show help | — |
+#
+# A merged worktree holding uncommitted changes is reported rather than removed,
+# and the question of what counts as a change is asked of the default branch rather
+# than of the worktree's own index. The branch is already in the default branch, so
+# the default branch's ignore rules are the ones that decide whether a file is worth
+# preserving — and a worktree cut before a rule landed does not carry it, which is
+# the only reason git reports the file at all. A file whose lines merely moved is
+# forgiven on the same grounds: a reordering of a branch that already landed is
+# residue, not work. The same check applies to an `--age` removal of an unmerged
+# worktree — disposable residue there does not hold it back either.
+#
+# Nothing else is forgiven. A file the default branch does not ignore, one that
+# gained or lost a line, a staged change, a rename, and a deletion all still hold
+# the worktree back and are named in the summary. Every path the check forgives is
+# written to `~/.local/state/workbench/logs/wt-cleanup.log` with its reason, so a
+# removal this widens can be audited afterwards.
+#
+# The worktree list comes from `wt list --format json`, whose payload carries a
+# `schema` number. The script reads schema 2 and refuses any other with an error
+# rather than reading fields that may have moved — a mismatch means worktrunk
+# changed the format and `wt-cleanup` needs updating for it. This is deliberately
+# noisy: the bump to schema 2 moved every field the script read, and because the
+# call site swallowed the failure it no-opped silently on every session exit
+# instead of reporting anything.
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 WORKBENCH_DIR="${WORKBENCH_DIR:-$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)}"

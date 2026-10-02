@@ -1,24 +1,26 @@
 #!/usr/bin/env python3
-"""Scan for deliberate-simplification markers and produce a structured ledger.
+"""Scan for `ceiling:` / `ceiling-permanent:` markers and produce a structured debt ledger.
 
-Usage:
-  ceiling-scan [--summary-only] [--json] [--output PATH] [DIR]
+Called by the `ceiling-debt` skill (`ai/skills/ceiling-debt`). Walks a tree,
+skips binaries, oversized files, and minified lines, and reports every marker
+that opens its own comment line.
 
-A marker opens its own comment line, in any of the supported comment styles, and
-runs to the end of the comment block below it. Two forms:
+```
+ceiling-scan [--summary-only] [--json] [--output PATH] [DIR]
+```
 
-  ceiling:            a simplification that should end at some named condition
-  ceiling-permanent:  one accepted for good, counted apart from the first
+Two forms: `ceiling:` is a simplification that should end at a named condition;
+`ceiling-permanent:` is accepted for good and counted apart. The trigger is an
+explicit "Upgrade trigger:" sentence, or the first clause turning on if / once /
+when / unless / until. A `ceiling:` marker with no such clause is **no-trigger**
+(what `bin/local/validate-ceiling` rejects).
 
-The trigger is the clause naming that condition — an explicit "Upgrade trigger:"
-sentence, or the first clause turning on if / once / when / unless / until. A
-`ceiling:` marker with no such clause is reported as **no-trigger**, which is
-what bin/local/validate-ceiling rejects.
+Default output is a markdown ledger grouped by file. `--summary-only` prints one
+count line. `--json` prints `{"total": N, "no_trigger": M, "permanent": P}`
+(counts only, not the markers). `--output PATH` writes the ledger and removes
+the file when no markers remain.
 
-Work is bounded per file and per line: MAX_FILE_BYTES caps size, BINARY_SNIFF_BYTES
-sniffs for NUL, and MAX_LINE_LEN skips minified and generated lines.
-
-Exit code is always 0 (informational).
+Exit code is always 0 (informational), including when DIR is not a directory.
 """
 
 from __future__ import annotations

@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""Print a reference card of all workbench skills, agents, and modes.
+"""Print a reference card of all workbench skills, agents, and reuse modes.
 
-Discovers from SKILL.md frontmatter and agent .md files.
+Called by the `reference` skill (`ai/skills/reference`). Discovers from SKILL.md
+frontmatter under `~/.claude/skills/` and agent `.md` files under
+`~/.claude/agents/` (`CLAUDE_DIR` overrides that root).
 
 Usage: workbench-reference
-  Prints a markdown reference card of all available workbench skills,
-  agents, and reuse modes. Auto-discovers from installed files.
+
+Stdout is markdown: a Skills table (invocation, description), an Agents table
+(name, description), and a Reuse Modes table. Skill descriptions are trimmed at
+the TRIGGER/SKIP/Use-when clause so the card stays short.
+
+`-h` / `--help` prints this text.
 """
 
 from __future__ import annotations

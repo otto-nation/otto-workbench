@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
 """Scan memories and workbench artifacts for promotion evaluation.
 
-Replaces Phase 1 of the promote skill (Orient).
-Outputs a structured markdown report to stdout.
+Replaces Phase 1 of the `promote` skill (`ai/skills/promote`): Orient. Reads
+every registered repo's memory plus the workbench checkout's rules, scripts,
+hooks, and agents.
 
-Usage:
-  promote-scan [--home DIR] [--workbench DIR]
+```
+promote-scan [--home DIR] [--workbench DIR]
+```
+
+`--workbench` defaults to `$OTTO_WORKBENCH` or the machine's main workbench
+checkout.
+
+Stdout is a markdown report with Memory State (topic files, last-promote stamp),
+Backed-Up Memories (`ai/memory` in the workbench), and Workbench Artifacts
+(rules, scripts, hooks, agents). Topic bodies are truncated to a preview.
 """
 
 from __future__ import annotations

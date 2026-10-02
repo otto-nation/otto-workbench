@@ -1,11 +1,25 @@
 #!/usr/bin/env python3
-"""Scan PR review comments and cross-reference against coding rules.
+"""Scan PR review comments and cross-reference them against coding rules.
 
-Replaces Phase 1 of the retro skill (Orient).
-Outputs a structured markdown report to stdout.
+Replaces Phase 1 of the `retro` skill (`ai/skills/retro`): Orient. Resolves
+GitHub remotes from the machine profile's Project Registry, fetches merged-PR
+review comments since the last retro (or `--since`), scores each against the
+workbench rule set, and folds in local self-review files (deduped against GitHub).
 
-Usage:
-  retro-scan [--home DIR] [--workbench DIR] [--since DURATION] [--consume]
+```
+retro-scan [--home DIR] [--workbench DIR] [--since DURATION]
+retro-scan --consume
+```
+
+Stdout is a markdown report of comments grouped by repo/PR, nearest-rule matches,
+unmatched comments, and themes (matched comments grouped by rule file).
+`--consume` also writes a consume record of the local reviews it read, stamped
+with this run's trail root, and prints `<!-- scan-id: ID | consumed: N -->` after
+the report so the skill can quote the ID into `retro-consume`.
+
+`--consume` cannot be combined with `--since`. Exit 1 if no registered project
+resolves to a GitHub repo — the scan refuses to bank a window over local reviews
+alone.
 """
 
 from __future__ import annotations

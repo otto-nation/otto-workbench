@@ -1,4 +1,25 @@
 #!/usr/bin/env bash
+# Convert a regular git repo to a bare repo with worktrees.
+#
+# The current branch's working tree (including uncommitted changes) is moved
+# into a named worktree directory inside the bare repo root. Existing worktrees
+# (e.g. Claude agent worktrees in `.claude/worktrees/`) are preserved in place
+# and relocated to the bare root. Requires `wt` (worktrunk).
+#
+# ```
+# wt-init [--dry-run] [<path>]
+# ```
+#
+# | Flag | Description |
+# |------|-------------|
+# | `--dry-run` | Preview what would happen |
+# | `-h`, `--help` | Show help |
+#
+# `<path>` defaults to the current directory. Must be run from the repo root
+# (after `cd` into `<path>`). A detached HEAD is refused — checkout a branch
+# first. Safe to re-run: a repo that is already bare is skipped, with an offer
+# to create a missing default-branch worktree.
+
 set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"

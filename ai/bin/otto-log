@@ -1,5 +1,43 @@
 #!/usr/bin/env python3
-"""Query trail files and AI usage across otto-workbench scripts."""
+"""Query the unified trail root and AI usage across otto-workbench scripts.
+
+Trails are monthly files under the state root (`workbench_paths.trail_dir()`).
+`stats` reads a separate monthly-rotated AI usage ledger that every AI call
+appends to.
+
+One user command spans several processes, each with its own `invocation` and all
+sharing a `root`. `show` takes any of those IDs and renders the whole command;
+`--only` narrows it to the named process. `list` rows are whole commands for the
+same reason — `pr review` is one row rather than three.
+
+A time window selects *commands*, not events: a command whose first event
+predates the window is listed whole when any part of it falls inside.
+
+```
+otto-log recent [--since 1h] [--repo org/repo]
+otto-log query [--script NAME] [--level L] [--pr N] [--root ID] [--since WINDOW]
+otto-log show <invocation> [--only]
+otto-log list [--script NAME] [--since WINDOW] [--repo org/repo]
+otto-log record --script NAME --action KEY [--detail TEXT] [--level info|warn|error]
+otto-log prune [--keep N]
+otto-log stats [--since 7d] [--by script|task|model|day|phase]
+```
+
+`--json` on `recent`, `query`, `show`, and `list` emits JSONL. On `stats` it
+emits one JSON object per group (`group`, `calls`, `cost`, token fields,
+`median_duration_ms`; plus turn percentiles when `--by phase`).
+
+`record` writes one event for callers that cannot open a `Trail` themselves
+(shell close-out scripts, agents between a scan and its close). It inherits
+`WORKBENCH_TRAIL_ROOT` so a record written inside a larger command is filed
+under that command, and prints the invocation ID.
+
+`prune` drops trail months older than `--keep` (default: the same horizon every
+trail already sweeps as it opens).
+
+What the ledger records, and what each stats column means, is on `agent/usage.py`
+in docs/ai-libraries.md.
+"""
 
 import os
 import sys

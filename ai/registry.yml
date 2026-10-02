@@ -137,6 +137,7 @@ tools:
   - name: otto-mcp-server
     permission: false
     visibility: hidden
+    reference: true
     description: "MCP server — offers the tools the component registries declare, with schemas imported in-process"
 
   - name: build-otto-ai-tools-tarball

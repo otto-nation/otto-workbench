@@ -18,7 +18,6 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -242,12 +241,16 @@ def bats_file_from_command(command: str) -> str | None:
     """
     parts = command.split()
     for index, part in enumerate(parts):
-        if Path(part).name != "bats-exec-file":
-            continue
-        for candidate in parts[index + 1:]:
-            if candidate.endswith(".bats"):
-                return Path(candidate).name
-        return None
+        if Path(part).name == "bats-exec-file":
+            return _first_bats_file(parts[index + 1:])
+    return None
+
+
+def _first_bats_file(tokens: list[str]) -> str | None:
+    """Basename of the first ``.bats`` token in *tokens*, if there is one."""
+    for token in tokens:
+        if token.endswith(".bats"):
+            return Path(token).name
     return None
 
 
@@ -395,6 +398,32 @@ def _heartbeat_until_done(
         )
 
 
+def _spawn_and_wait(
+    child: list[str],
+    env: dict[str, str],
+    suite: str,
+    jobs: int | None,
+    interval: float,
+    started: _Clocks,
+    status_dir: str | None,
+) -> int:
+    """Spawn *child* under the signal relay and wait for it per *interval*."""
+    # Entered before the spawn, which is what makes a signal landing early
+    # deferred rather than dropped.
+    with core.signal_relay.forwarding_signals() as relay:
+        proc = _spawn(child, env)
+        if proc is None:
+            return 127
+        relay.forward_to(proc)
+        if interval == 0:
+            # The suite is the work; a bound here would convert a long run
+            # into a false failure. See the module docstring.
+            return child_status(proc.wait(timeout=core.timeouts.UNBOUNDED))
+        return _heartbeat_until_done(
+            proc, suite, jobs, interval, started, status_dir,
+        )
+
+
 def run_supervised(
     child: list[str],
     *,
@@ -422,21 +451,9 @@ def run_supervised(
         if interval > 0:
             status_dir = tempfile.mkdtemp(prefix="suite-watch-")
             env[STATUS_ENV] = status_dir
-        started = _Clocks.now()
-        # Entered before the spawn, which is what makes a signal landing early
-        # deferred rather than dropped.
-        with core.signal_relay.forwarding_signals() as relay:
-            proc = _spawn(child, env)
-            if proc is None:
-                return 127
-            relay.forward_to(proc)
-            if interval == 0:
-                # The suite is the work; a bound here would convert a long run
-                # into a false failure. See the module docstring.
-                return child_status(proc.wait(timeout=core.timeouts.UNBOUNDED))
-            return _heartbeat_until_done(
-                proc, suite, jobs, interval, started, status_dir,
-            )
+        return _spawn_and_wait(
+            child, env, suite, jobs, interval, _Clocks.now(), status_dir,
+        )
     finally:
         if status_dir is not None:
             shutil.rmtree(status_dir, ignore_errors=True)

@@ -265,12 +265,58 @@ report_for() {
 
 @test "bats and pytest run under the suite heartbeat" {
   # A suite not wrapped here is the silent run the heartbeat exists to end.
-  run grep -c '_run_watched bats bats' "$REPO_ROOT/bin/local/run-tests"
+  # Pinned by what is wrapped, not by how many call sites there are: no line
+  # may start either runner directly, and every wrapped call must name the
+  # runner it launches.
+  run grep -cE '^[[:space:]]*(bats|pytest)[[:space:]]' "$REPO_ROOT/bin/local/run-tests"
+  [ "$output" -eq 0 ]
+
+  run grep -E '^[[:space:]]*_run_watched[[:space:]]' "$REPO_ROOT/bin/local/run-tests"
   [ "$status" -eq 0 ]
-  [ "$output" -ge 3 ]
-  run grep -c '_run_watched pytest pytest' "$REPO_ROOT/bin/local/run-tests"
+  local calls="$output" line
+  while IFS= read -r line; do
+    [[ "$line" =~ _run_watched\ (bats|pytest)\ \"\$watch_jobs\"\ (bats|pytest)\  ]]
+    [ "${BASH_REMATCH[1]}" = "${BASH_REMATCH[2]}" ]
+  done <<< "$calls"
+  [[ "$calls" == *"_run_watched bats "* ]]
+  [[ "$calls" == *"_run_watched pytest "* ]]
+}
+
+# The suite is wrapped through a stub that prints what it was handed, so the
+# jobs the heartbeat announces can be read without starting a suite.
+@test "a serial pytest run announces one job, not the grant" {
+  _run_watched() { printf '%s\n' "$@"; }
+  pytest() { echo "pytest 8.0 (no plugins)"; }
+  PYTEST_DEBUG_TEMPROOT=$BATS_TEST_TMPDIR
+  JOBS=12
+  run --separate-stderr run_pytest
   [ "$status" -eq 0 ]
-  [ "$output" -ge 2 ]
+  [ "${lines[0]}" = pytest ]
+  [ "${lines[1]}" = 1 ]
+}
+
+@test "a parallel pytest run announces the granted jobs" {
+  _run_watched() { printf '%s\n' "$@"; }
+  pytest() { echo "pytest 8.0 xdist-3.0"; }
+  PYTEST_DEBUG_TEMPROOT=$BATS_TEST_TMPDIR
+  JOBS=12
+  run --separate-stderr run_pytest
+  [ "$status" -eq 0 ]
+  [ "${lines[1]}" = 12 ]
+}
+
+@test "a serial bats run announces one job, not the grant" {
+  _run_watched() { printf '%s\n' "$@"; }
+  command() {
+    if [[ "$1" = -v && "$2" = parallel ]]; then return 1; fi
+    builtin command "$@"
+  }
+  BATS_RUN_TMPDIR=$BATS_TEST_TMPDIR/bats-run
+  JOBS=12
+  run --separate-stderr run_bats
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = bats ]
+  [ "${lines[1]}" = 1 ]
 }
 
 @test "sourcing the runner does not start a suite" {

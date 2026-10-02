@@ -108,7 +108,7 @@ _commit() {
 
 @test "common_setup shadows a live claude and pi CLI" {
   # Outside BATS_TEST_TMPDIR: a binary under it reads as the test's own stub.
-  local realbin="$BATS_FILE_TMPDIR/realbin"
+  local realbin="$BATS_FILE_TMPDIR/shadows-a-live-cli/realbin"
   mkdir -p "$realbin"
   local name
   for name in claude pi; do
@@ -129,7 +129,7 @@ _commit() {
 }
 
 @test "a later stub still wins over the live-backend guard" {
-  local realbin="$BATS_FILE_TMPDIR/realbin"
+  local realbin="$BATS_FILE_TMPDIR/later-stub-wins/realbin"
   mkdir -p "$realbin" "$TMPDIR/mystub"
   printf '#!/usr/bin/env bash\necho reached-real\n' > "$realbin/claude"
   chmod +x "$realbin/claude"

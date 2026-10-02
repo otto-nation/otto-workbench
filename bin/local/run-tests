@@ -347,6 +347,8 @@ run_bats() {
   # bats farms tests out through GNU parallel and silently runs them serially
   # without it, so the flag is only worth passing when parallel is installed.
   command -v parallel >/dev/null 2>&1 && jobs_flag=(--jobs "$(granted_jobs)")
+  local watch_jobs=1
+  [[ ${#jobs_flag[@]} -gt 0 ]] && watch_jobs="$(granted_jobs)"
 
   # --print-output-on-failure: bats prints only the failing assertion's source
   # line by default, so a test whose diagnostic value sits in the command's
@@ -370,7 +372,7 @@ run_bats() {
       err "--shard $SHARD: produced an empty file list"
       return 1
     fi
-    _run_watched bats bats "${shard_test_files[@]}" "${bats_flags[@]}" "${jobs_flag[@]}" "$@"
+    _run_watched bats "$watch_jobs" bats "${shard_test_files[@]}" "${bats_flags[@]}" "${jobs_flag[@]}" "$@"
   elif [[ -n "${BATS_FILES:-}" ]]; then
     local -a file_list=()
     while IFS= read -r f; do
@@ -380,9 +382,9 @@ run_bats() {
       err "--files: no files provided"
       return 1
     fi
-    _run_watched bats bats "${file_list[@]}" "${bats_flags[@]}" "${jobs_flag[@]}" "$@"
+    _run_watched bats "$watch_jobs" bats "${file_list[@]}" "${bats_flags[@]}" "${jobs_flag[@]}" "$@"
   else
-    _run_watched bats bats "$WORKBENCH_DIR/tests/" --recursive "${bats_flags[@]}" "${jobs_flag[@]}" "$@"
+    _run_watched bats "$watch_jobs" bats "$WORKBENCH_DIR/tests/" --recursive "${bats_flags[@]}" "${jobs_flag[@]}" "$@"
   fi
 }
 
@@ -406,6 +408,8 @@ run_pytest() {
   else
     report_missing_xdist
   fi
+  local watch_jobs=1
+  [[ ${#jobs_flag[@]} -gt 0 ]] && watch_jobs="$(granted_jobs)"
 
   local basetemp_flag=()
   if [[ -z "${PYTEST_DEBUG_TEMPROOT:-}" ]]; then
@@ -423,10 +427,10 @@ run_pytest() {
       err "--pytest-files: no files provided"
       return 1
     fi
-    _run_watched pytest pytest "${file_list[@]}" "${jobs_flag[@]}" "${basetemp_flag[@]}" "$@"
+    _run_watched pytest "$watch_jobs" pytest "${file_list[@]}" "${jobs_flag[@]}" "${basetemp_flag[@]}" "$@"
     return
   fi
-  _run_watched pytest pytest "$WORKBENCH_DIR/tests/" "${jobs_flag[@]}" "${basetemp_flag[@]}" "$@"
+  _run_watched pytest "$watch_jobs" pytest "$WORKBENCH_DIR/tests/" "${jobs_flag[@]}" "${basetemp_flag[@]}" "$@"
 }
 
 # report_missing_xdist — say the run is serial, and why, before it starts.
@@ -528,16 +532,19 @@ granted_jobs() {
   echo "${WORKBENCH_TEST_SLOTS_GRANTED:-$JOBS}"
 }
 
-# _run_watched SUITE CMD... — run CMD under the suite heartbeat supervisor.
+# _run_watched SUITE JOBS CMD... — run CMD under the suite heartbeat supervisor.
+#
+# JOBS is what the runner actually parallelises at: 1 when it dropped its jobs
+# flag (no GNU parallel, no xdist), so a serial run does not announce "N jobs".
 #
 # stdout stays the runner's (TAP / pytest summary). stderr gets one progress
 # line every TEST_HEARTBEAT_SECS so a slow suite is distinguishable from a
 # stuck one. TEST_HEARTBEAT_SECS=0 disables the heartbeat; the child is still waited on.
 _run_watched() {
-  local suite="$1"
-  shift
+  local suite="$1" jobs="$2"
+  shift 2
   "$WORKBENCH_DIR/bin/local/suite-watch" \
-    --suite "$suite" --jobs "$(granted_jobs)" -- "$@"
+    --suite "$suite" --jobs "$jobs" -- "$@"
 }
 
 main() {

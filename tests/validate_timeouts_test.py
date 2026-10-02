@@ -121,6 +121,27 @@ def stream(cmd):
 """) == []
 
 
+def test_a_popen_wait_with_timeout_none_is_flagged(tmp_path):
+    """Keyword `None` on a reap is silence, the same as it is on `proc.run`."""
+    violations = _check(tmp_path, """
+def stream(cmd):
+    proc = subprocess.Popen(cmd)
+    proc.wait(timeout=None)
+""")
+    assert [(v.line, v.found) for v in violations] == [(4, "timeout=None")]
+    assert violations[0].suggestion == "timeouts.UNBOUNDED"
+
+
+def test_a_popen_wait_with_positional_none_is_flagged(tmp_path):
+    violations = _check(tmp_path, """
+def stream(cmd):
+    proc = subprocess.Popen(cmd)
+    proc.wait(None)
+""")
+    assert [(v.line, v.found) for v in violations] == [(4, "timeout=None")]
+    assert violations[0].suggestion == "timeouts.UNBOUNDED"
+
+
 def test_a_popen_wait_with_unbounded_is_clean(tmp_path):
     assert _check(tmp_path, """
 def stream(cmd):

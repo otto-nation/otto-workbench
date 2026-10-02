@@ -2684,6 +2684,15 @@ The domains this is an envelope over live in ``pr.domains`` — and one of them,
 the comment pass's, in ``pr.comments_fix``. This module imports both; neither
 imports it.
 
+### pr/statusline.py
+
+The status line's PR segment, read from the per-target state file and never
+from ``gh`` or the network.
+
+Not: the reuse segment or the degradation when ``pr`` will not import
+(``cli.workbench_statusline``), the state schema (``pr.state``), target
+resolution (``pr.target``).
+
 ### pr/supersession.py
 
 Whether a branch's reason to exist is already gone.
@@ -3431,6 +3440,34 @@ that adding a task does not make every other task's dependencies load.
 ## Platform
 
 The shared substrate — process execution, logging, the structured trail, serialization, config, paths, and the tool framework the CLIs are built on.
+
+### config/reuse_levels.py
+
+The reuse-level vocabulary, its readers and writers, and the two hook bodies
+that are nothing but those (``/reuse`` tracking, the subagent line).
+
+Not: the config schema or keys (``config.workbench_config``), the write
+mechanics (``config.workbench_config_write``), the session-start context
+(``config.session_start``), the status line (``cli.workbench_statusline``).
+
+### config/session_start.py
+
+SessionStart hook: reuse level, ceiling nudge, issue tracker, PR template.
+
+Five responsibilities, in the order run() handles them:
+1. Emit the active reuse level as session context
+2. Register the repo in the project registry
+3. Run ceiling-scan --json; if no-trigger markers exist, nudge
+4. Emit the repo's issue tracker, configured or not
+5. Emit the repo's PR template and the sections it requires
+
+The registration rides along here because this hook already resolves the repo
+root for the ceiling scan, so it costs nothing extra and it is the cheapest
+observation of "a workbench-managed session ran in this repo" the machine has.
+
+Not: the reuse vocabulary (``config.reuse_levels``), the project registry
+(``config.workbench_projects``), PR template resolution (``core.pr_template``),
+the marker scan itself (``ai/bin/ceiling-scan``).
 
 ### config/tool_registry.py
 
@@ -5623,6 +5660,30 @@ by path, so the field is the declaration of which `ai/bin` name that is. The
 command/domain/phase join in `tests/cli_join_test.py` is what keeps it from
 going stale now that no `pr` code path would notice if it did.
 
+### cli/reuse_mode_tracker.py
+
+Reads hook JSON from stdin, checks if the prompt matches /reuse <level>,
+writes the level into the workbench config, and emits context. Which key and
+which file are ai/lib/config/workbench_config.py's to say; this only hands it a
+value.
+
+Usage (called by settings.json UserPromptSubmit hook):
+  echo '{"prompt":"/reuse ultra"}' | reuse-mode-tracker
+
+### cli/reuse_session_start.py
+
+SessionStart hook entry point: the context lines `config.session_start`
+derives, printed for Claude Code to read. Failure is left to the hook
+command's `|| true` in settings.json (Decision F).
+
+### cli/reuse_subagent_start.py
+
+Emits the active reuse level so subagents inherit the parent session's mode.
+Skips ceiling scan (too expensive for subagent startup).
+
+Usage (called by settings.json SubagentStart hook):
+  reuse-subagent-start
+
 ### cli/review_entry.py
 
 Run the configured review agent on a PR with local worktree checkout and iterative review support.
@@ -5833,3 +5894,10 @@ Where a repo's knowledge base lives, and where a new one should go.
 Resolution consults an explicit `--wiki`, then the machine's vault, then the
 in-tree walk. Placement is the other half of that question: `init` will not
 guess between a committed base and a private one.
+
+### cli/workbench_statusline.py
+
+Claude Code's status line: the reuse level when it differs from the
+default, then the PR segment. A broken `pr` package blanks the PR segment
+and leaves the reuse segment. The help text is the shim's docstring, printed
+before `ai/lib` is loaded.

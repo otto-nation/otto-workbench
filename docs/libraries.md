@@ -194,7 +194,7 @@ Every key any of them accepts:
 | `batch.cpu_pressure_max` | number | `30.0` |
 | `batch.mem_pressure_max` | number | `5.0` |
 
-`<phase>` is one of: `single`, `holistic`, `scout`, `group`, `synthesis`, `disprove`, `fix`, `fix_verify`, `comments_fix`, `comments_verify`, `comments_triage`, `ci_fix`, `rebase`, `prepush_fix`, `describe`
+`<phase>` is one of: `single`, `holistic`, `scout`, `group`, `synthesis`, `disprove`, `fix`, `fix_verify`, `comments_fix`, `comments_verify`, `comments_triage`, `ci_fix`, `rebase`, `prepush_fix`, `describe`, `create`
 
 `fix.verify_command` may only be written at container, project scope: it names a command inside one repo's checkout, which a machine-wide value would point every other repo at.
 

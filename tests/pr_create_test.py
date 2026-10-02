@@ -98,9 +98,10 @@ class Harness:
     def remote_has_branch(self) -> bool:
         return bool(git_out(self.wt, "ls-remote", "origin", f"refs/heads/{BRANCH}").strip())
 
-    def ctx(self, branch: str = BRANCH, worktree_root: Path | None | str = "wt"):
+    def ctx(self, branch: str = BRANCH, worktree_root: Path | None | str = "wt",
+            pr_number: int | None = None):
         root = self.wt if worktree_root == "wt" else worktree_root
-        return make_ctx(repo="otto-nation/otto-workbench", branch=branch, pr_number=None,
+        return make_ctx(repo="otto-nation/otto-workbench", branch=branch, pr_number=pr_number,
                         worktree_root=root, target_dir=self.tmp / "target")
 
 
@@ -396,3 +397,49 @@ def test_dry_run_runs_no_gate_no_push_no_gh_and_prints_the_content(h, capsys):
     assert out == f"→ PR Title:\n   {AI_TITLE}\n\n→ PR Description:\n{AI_BODY}\n"
     assert f"→ Analyzing changes: {BRANCH}" in err
     assert "✓ Content ready" in err
+
+
+# ── refusals before anything leaves the machine ─────────────────────────────
+
+
+@pytest.mark.parametrize("opts", [
+    CreateOptions(),
+    CreateOptions(title="fix: given", body="given body"),
+], ids=["generated", "both-overrides"])
+def test_no_commits_ahead_refuses_before_token_gate_push_or_ai(h, capsys, opts):
+    """D7 refuses in preflight, so even a fully overridden PR pays for nothing."""
+    wt = h.repo()
+    git_in(wt, "reset", "-q", "--hard", "main")
+    assert run_create(h.ctx(), opts) == 1
+    assert (f"✗ No commits on {BRANCH} ahead of origin/main — nothing to open a PR for"
+            in capsys.readouterr().err)
+    assert h.events == []
+    assert not h.remote_has_branch()
+
+
+def test_a_failed_ahead_count_is_refused_naming_the_command(h, monkeypatch, capsys):
+    h.repo()
+    import git.client
+    real = git.client.run
+
+    def run(*args, **kwargs):
+        if args[:2] == ("rev-list", "--count"):
+            return CmdResult(128, "", "fatal: bad revision")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(git.client, "run", run)
+    assert run_create(h.ctx(), CreateOptions()) == 1
+    err = capsys.readouterr().err
+    assert "✗ git rev-list --count origin/main..HEAD failed: fatal: bad revision" in err
+    assert h.events == []
+
+
+@pytest.mark.parametrize("dry_run", [False, True], ids=["create", "dry-run"])
+def test_an_existing_pr_refuses_before_anything_runs(h, capsys, dry_run):
+    h.repo()
+    assert run_create(h.ctx(pr_number=812), CreateOptions(dry_run=dry_run)) == 1
+    assert (f"✗ PR #812 already exists for {BRANCH} — use pr describe to revise it"
+            in capsys.readouterr().err)
+    assert h.events == []
+    assert not h.remote_has_branch()
+

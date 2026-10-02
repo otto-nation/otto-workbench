@@ -11,6 +11,7 @@ import batch.model  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
 import cli.pr  # noqa: E402
+import core.run_lock  # noqa: E402
 import cli.pr_batch  # noqa: E402
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
 from cli.registry import COMMANDS  # noqa: E402
@@ -100,6 +101,20 @@ def test_resolve_applies_directly_when_no_scheduler_holds_the_run(capsys):
     assert _main(["batch", "resolve", run.id, "d1", "--action", "accept"]) == 0
     assert json.loads(capsys.readouterr().out)["applied"] is True
     assert batch.store.load(run.id).decision("d1").resolution == "accept"
+
+
+def test_resolve_applies_a_queued_request_if_the_lock_drops(monkeypatch, capsys):
+    run = _saved_run_with_decision()
+    held = {"n": 0}
+
+    def is_held(_path):
+        held["n"] += 1
+        return held["n"] == 1
+
+    monkeypatch.setattr(core.run_lock, "is_held", is_held)
+    assert _main(["batch", "resolve", run.id, "d1", "--action", "accept"]) == 0
+    assert batch.store.load(run.id).decision("d1").resolution == "accept"
+    assert batch.store.has_requests(run.id) is False
 
 
 def test_resolve_rejects_a_bad_action(capsys):

@@ -112,18 +112,21 @@ def command_for(decision: Decision, item: Item, request: Request,
     return []
 
 
-def _fail(run: Run, item: Item, step: str) -> None:
-    run.decisions.append(Decision(
+def _fail(run: Run, item: Item, step: str) -> Decision:
+    d = Decision(
         id=secrets.token_hex(4), item=item.key, step=step, kind=DecisionKind.FAILED,
-        payload={"reason": "error", "exit_code": 1, "log_tail": []}, created_at=now_iso()))
+        payload={"reason": "error", "exit_code": 1, "log_tail": []}, created_at=now_iso())
+    run.decisions.append(d)
     item.status = ItemStatus.AWAITING_DECISION
+    return d
 
 
 def _step_of(decision: Decision) -> Step | None:
     return Step(decision.step) if decision.step in {s.value for s in Step} else None
 
 
-def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> None:
+def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> list[Decision]:
+    created: list[Decision] = []
     step = _step_of(decision)
     if action in ("drop-pr", "skip-pr"):
         item.status = ItemStatus.DROPPED
@@ -133,7 +136,7 @@ def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> 
         if ok:
             item.status = ItemStatus.DONE
         else:
-            _fail(run, item, "publish")
+            created.append(_fail(run, item, "publish"))
     elif action == "retry" and step:
         item.step(step).status = StepStatus.PENDING
     elif action == "skip-step" and step:
@@ -142,13 +145,13 @@ def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> 
         if ok:
             item.step(Step.REBASE).status = StepStatus.SKIPPED
         else:
-            _fail(run, item, "rebase")
+            created.append(_fail(run, item, "rebase"))
     elif action == "force":
         if ok:
             rec = item.step(Step.REBASE)
             rec.status, rec.drafted = StepStatus.DONE, True
         else:
-            _fail(run, item, "rebase")
+            created.append(_fail(run, item, "rebase"))
     elif action == "accept":
         item.step(Step.REVIEW).status = StepStatus.DONE
     elif decision.kind is DecisionKind.COMMENT_ITEM:
@@ -158,19 +161,21 @@ def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> 
             item.step(Step.COMMENTS).status = StepStatus.DONE
     if item.status is ItemStatus.AWAITING_DECISION and not run.open_decisions(item.key):
         item.status = ItemStatus.QUEUED
+    return created
 
 
 def apply(run: Run, request: Request, *, pr_bin: str,
-          runner: Callable[[list[str]], int] = default_runner) -> None:
+          runner: Callable[[list[str]], int] | None = None) -> list[Decision]:
     decision = run.decision(request.decision)
     item = run.item(decision.item)
     _validate(decision, request)
+    run_cmd = default_runner if runner is None else runner
     ok = True
     for argv in command_for(decision, item, request, pr_bin):
-        if runner(argv) != 0:
+        if run_cmd(argv) != 0:
             ok = False
             if decision.kind is DecisionKind.COMMENT_ITEM:
                 raise ResolveError(f"{' '.join(argv)} failed; the decision is still open")
             break
     decision.resolution, decision.resolved_at = request.action, now_iso()
-    _effect(run, item, decision, request.action, ok)
+    return _effect(run, item, decision, request.action, ok)

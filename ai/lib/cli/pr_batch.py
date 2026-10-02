@@ -175,22 +175,47 @@ def _cmd_resume(args, bin_dir: Path) -> int:
     return _drive(run, bin_dir=bin_dir, cfg=_cfg([i.repo_dir for i in run.items]))
 
 
+def _apply_pending(run_id: str, bin_dir: Path, decision_id: str) -> int:
+    try:
+        with core.run_lock.acquire(batch.store.run_dir(run_id), "batch-resolve",
+                                   batch.store.now_iso()):
+            run = batch.store.load(run_id)
+            for raw in batch.store.take_requests(run_id):
+                batch.resolve.apply(run, batch.resolve.Request.from_dict(raw),
+                                    pr_bin=str(bin_dir / "pr"))
+            batch.store.save(run)
+    except (batch.resolve.ResolveError, KeyError, batch.store.RunNotFound) as exc:
+        return _err(str(exc))
+    except core.run_lock.LockBusy:
+        core.report.emit_json({"queued": True, "decision": decision_id})
+        return EXIT_OK
+    core.report.emit_json({"applied": True, "decision": decision_id,
+                           "open_decisions": len(run.open_decisions())})
+    return EXIT_OK
+
+
 def _cmd_resolve(args, bin_dir: Path) -> int:
     request = {"decision": args.decision_id, "action": args.action, "reason": args.reason,
                "body_file": args.body_file, "commit": args.commit}
     if core.run_lock.is_held(batch.store.run_dir(args.run_id)):
         batch.store.write_request(args.run_id, request)
-        core.report.emit_json({"queued": True, "decision": args.decision_id})
-        return EXIT_OK
+        if core.run_lock.is_held(batch.store.run_dir(args.run_id)):
+            core.report.emit_json({"queued": True, "decision": args.decision_id})
+            return EXIT_OK
+        return _apply_pending(args.run_id, bin_dir, args.decision_id)
     try:
-        with core.run_lock.acquire(batch.store.run_dir(args.run_id), "batch-resolve", batch.store.now_iso()):
+        with core.run_lock.acquire(batch.store.run_dir(args.run_id), "batch-resolve",
+                                   batch.store.now_iso()):
             run = batch.store.load(args.run_id)
-            batch.resolve.apply(run, batch.resolve.Request.from_dict(request), pr_bin=str(bin_dir / "pr"))
+            batch.resolve.apply(run, batch.resolve.Request.from_dict(request),
+                                pr_bin=str(bin_dir / "pr"))
             batch.store.save(run)
     except (batch.resolve.ResolveError, KeyError, batch.store.RunNotFound) as exc:
         return _err(str(exc))
     except core.run_lock.LockBusy:
         batch.store.write_request(args.run_id, request)
+        if not core.run_lock.is_held(batch.store.run_dir(args.run_id)):
+            return _apply_pending(args.run_id, bin_dir, args.decision_id)
         core.report.emit_json({"queued": True, "decision": args.decision_id})
         return EXIT_OK
     core.report.emit_json({"applied": True, "decision": args.decision_id,

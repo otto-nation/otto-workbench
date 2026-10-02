@@ -99,6 +99,11 @@ def write_request(run_id: str, request: dict) -> Path:
     return path
 
 
+def has_requests(run_id: str) -> bool:
+    reqs = run_dir(run_id) / "requests"
+    return reqs.is_dir() and any(reqs.glob("*.json"))
+
+
 def take_requests(run_id: str) -> list[dict]:
     reqs = run_dir(run_id) / "requests"
     if not reqs.is_dir():

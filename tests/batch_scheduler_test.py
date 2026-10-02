@@ -13,6 +13,7 @@ import batch.admission  # noqa: E402
 import batch.events  # noqa: E402
 import batch.model  # noqa: E402
 import batch.outcomes  # noqa: E402
+import batch.resolve  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
 from batch.plan import PlanError, PlanRow, StepNeed  # noqa: E402
@@ -279,3 +280,69 @@ def test_decision_created_carries_decision_kind():
     assert created
     f = created[0]
     assert f["decision_kind"] and f["decision"] and f["item"] and f["step"] and "payload" in f
+
+
+def test_publish_and_dirty_worktree_emit_decision_created():
+    dirty = Harness([row(1)], worktrees=lambda d, b: WorktreeResult("/wt/b1", True, ""))
+    dirty.sched.run_until_blocked()
+    kinds = [f["decision_kind"] for k, f in dirty.events if k == "decision_created"]
+    assert "dirty_worktree" in kinds
+
+    h = Harness([row(1)])
+    h.sched.run_until_blocked()
+    kinds = [f["decision_kind"] for k, f in h.events if k == "decision_created"]
+    assert "publish" in kinds
+
+
+def test_failed_publish_via_request_emits_decision_created(monkeypatch):
+    h = Harness([row(1)])
+    h.sched.run_until_blocked()
+    d = next(x for x in h.run.open_decisions() if x.kind is batch.model.DecisionKind.PUBLISH)
+    batch.store.save(h.run)
+    batch.store.write_request(h.run.id, {"decision": d.id, "action": "publish"})
+    monkeypatch.setattr(batch.resolve, "default_runner", lambda argv: 1)
+    h.sched.run_until_blocked()
+    created = [f for k, f in h.events if k == "decision_created"]
+    assert any(f["decision_kind"] == "failed" and f["step"] == "publish" for f in created)
+
+
+def test_interrupt_kills_live_children_and_marks_the_run():
+    h = Harness([row(1)])
+    killed = []
+    orig = h._spawn
+
+    def spawn(argv, **kw):
+        proc = orig(argv, **kw)
+        inner = proc.kill
+
+        def kill():
+            killed.append(proc.pid)
+            inner()
+
+        proc.kill = kill
+        return proc
+
+    h.sched._spawn = spawn
+    h.sched._sleep = lambda _: (_ for _ in ()).throw(KeyboardInterrupt())
+    with pytest.raises(KeyboardInterrupt):
+        h.sched.run_until_blocked()
+    assert killed
+    assert h.run.status is batch.model.RunStatus.INTERRUPTED
+    saved = batch.store.load(h.run.id)
+    assert saved.status is batch.model.RunStatus.INTERRUPTED
+    finished = [f for k, f in h.events if k == "run_finished"]
+    assert finished and finished[-1]["status"] == "interrupted"
+    assert any(d.kind is batch.model.DecisionKind.INTERRUPTED for d in h.run.decisions)
+
+
+def test_does_not_settle_while_requests_are_pending(monkeypatch):
+    h = Harness([row(1)], worktrees=lambda d, b: WorktreeResult("/wt/b1", True, ""))
+    checks = {"n": 0}
+
+    def has(run_id):
+        checks["n"] += 1
+        return checks["n"] == 1
+
+    monkeypatch.setattr(batch.store, "has_requests", has)
+    assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
+    assert checks["n"] >= 2

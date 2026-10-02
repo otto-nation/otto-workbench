@@ -50,30 +50,34 @@ def row_for(item: Item) -> PlanRow:
     return PlanRow(item.repo, item.repo_dir, item.pr, "", item.branch, item.head_sha, False, {})
 
 
-def _decide(run: Run, item: Item, step: str, kind: DecisionKind, payload: dict) -> Decision:
+def _decide(run: Run, item: Item, step: str, kind: DecisionKind, payload: dict,
+            emit: Callable[..., None] | None = None) -> Decision:
     d = Decision(id=secrets.token_hex(4), item=item.key, step=step, kind=kind, payload=payload,
                  created_at=batch.store.now_iso())
     run.decisions.append(d)
     item.status = ItemStatus.AWAITING_DECISION
+    if emit is not None:
+        emit("decision_created", run=run.id, item=item.key, decision=d.id,
+             step=d.step, payload=d.payload, decision_kind=d.kind.value)
     return d
 
 
-def _interrupt_running(run: Run, item: Item) -> bool:
+def _interrupt_running(run: Run, item: Item, emit: Callable[..., None] | None = None) -> bool:
     found = False
     for rec in item.steps:
         if rec.status is not StepStatus.RUNNING:
             continue
         rec.status = StepStatus.INTERRUPTED
         _decide(run, item, rec.step.value, DecisionKind.INTERRUPTED,
-                {"log_path": rec.log_path})
+                {"log_path": rec.log_path}, emit=emit)
         found = True
     return found
 
 
-def mark_interrupted(run: Run) -> bool:
+def mark_interrupted(run: Run, emit: Callable[..., None] | None = None) -> bool:
     found = False
     for item in run.items:
-        found = _interrupt_running(run, item) or found
+        found = _interrupt_running(run, item, emit=emit) or found
     return found
 
 
@@ -111,12 +115,19 @@ class Scheduler:
     # ── requests and cancel ──────────────────────────────────────────────
 
     def _apply_requests(self) -> None:
+        # ceiling: force and publish run inline, so a tick blocks reaping and events
+        # while they run; upgrade to scheduled step attempts if a live UI needs step
+        # logs during publish or inline runs exceed a minute.
         for raw in batch.store.take_requests(self.run.id):
             try:
                 req = batch.resolve.Request.from_dict(raw)
-                batch.resolve.apply(self.run, req, pr_bin=self.pr_bin)
+                created = batch.resolve.apply(self.run, req, pr_bin=self.pr_bin)
                 self._emit("decision_resolved", run=self.run.id, decision=req.decision,
                            action=req.action)
+                for d in created:
+                    self._emit("decision_created", run=self.run.id, item=d.item,
+                               decision=d.id, step=d.step, payload=d.payload,
+                               decision_kind=d.kind.value)
             except (batch.resolve.ResolveError, KeyError) as exc:
                 self._emit("decision_resolved", run=self.run.id,
                            decision=raw.get("decision", ""), action=raw.get("action", ""),
@@ -151,10 +162,7 @@ class Scheduler:
         self._estimates.observe(item.repo, rec.step, live.peak)
         item.status = ItemStatus.QUEUED
         for draft in result.decisions:
-            d = _decide(self.run, item, rec.step.value, draft.kind, draft.payload)
-            # `kind` is emit's first argument, so the decision kind cannot be a field.
-            self._emit("decision_created", run=self.run.id, item=item.key, decision=d.id,
-                       step=d.step, payload=d.payload, decision_kind=d.kind.value)
+            _decide(self.run, item, rec.step.value, draft.kind, draft.payload, emit=self._emit)
         self._emit("step_finished", run=self.run.id, item=item.key, step=rec.step.value,
                    status=rec.status.value, exit_code=code)
 
@@ -169,10 +177,11 @@ class Scheduler:
         res = self._worktrees(item.repo_dir, item.branch)
         if not res.ok:
             _decide(self.run, item, "worktree", DecisionKind.FAILED,
-                    {"reason": "error", "detail": res.error})
+                    {"reason": "error", "detail": res.error}, emit=self._emit)
             return False
         if res.dirty:
-            _decide(self.run, item, "worktree", DecisionKind.DIRTY_WORKTREE, {"path": res.path})
+            _decide(self.run, item, "worktree", DecisionKind.DIRTY_WORKTREE, {"path": res.path},
+                    emit=self._emit)
             return False
         item.worktree = res.path
         return True
@@ -181,7 +190,7 @@ class Scheduler:
         if any(rec.drafted for rec in item.steps):
             _decide(self.run, item, "publish", DecisionKind.PUBLISH,
                     {"drafted": [r.step.value for r in item.steps if r.drafted],
-                     "track": list(item.track)})
+                     "track": list(item.track)}, emit=self._emit)
             item.status = ItemStatus.READY_TO_PUBLISH
         else:
             item.status = ItemStatus.DONE
@@ -195,7 +204,7 @@ class Scheduler:
             fresh = self._replan(row_for(item))
         except batch.plan.PlanError as exc:
             _decide(self.run, item, rec.step.value, DecisionKind.FAILED,
-                    {"reason": "github", "detail": str(exc)})
+                    {"reason": "github", "detail": str(exc)}, emit=self._emit)
             return None
         if fresh is None:
             item.status = ItemStatus.SKIPPED_CLOSED
@@ -273,6 +282,8 @@ class Scheduler:
     def _blocked_status(self, cancel: batch.store.CancelRequest) -> RunStatus | None:
         if self._live:
             return None
+        if batch.store.has_requests(self.run.id):
+            return None
         if cancel.requested:
             return RunStatus.CANCELLED
         if all(i.terminal for i in self.run.items):
@@ -283,16 +294,25 @@ class Scheduler:
 
     def run_until_blocked(self) -> RunStatus:
         self.run.status = RunStatus.RUNNING
-        while True:
-            self._apply_requests()
-            cancel = batch.store.cancel_requested(self.run.id)
-            if cancel.kill:
-                self._kill_live()
-            self._reap()
-            if not cancel.requested:
-                self._admit()
+        try:
+            while True:
+                self._apply_requests()
+                cancel = batch.store.cancel_requested(self.run.id)
+                if cancel.kill:
+                    self._kill_live()
+                self._reap()
+                if not cancel.requested:
+                    self._admit()
+                batch.store.save(self.run)
+                blocked = self._blocked_status(cancel)
+                if blocked is not None:
+                    return self._settle(blocked)
+                self._sleep(self._tick)
+        except BaseException:
+            self._kill_live()
+            mark_interrupted(self.run, emit=self._emit)
+            self.run.status = RunStatus.INTERRUPTED
             batch.store.save(self.run)
-            blocked = self._blocked_status(cancel)
-            if blocked is not None:
-                return self._settle(blocked)
-            self._sleep(self._tick)
+            self._emit("run_finished", run=self.run.id, status=RunStatus.INTERRUPTED.value,
+                       open_decisions=len(self.run.open_decisions()))
+            raise

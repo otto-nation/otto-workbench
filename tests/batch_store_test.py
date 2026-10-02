@@ -61,8 +61,10 @@ def test_requests_are_taken_in_order_and_once():
     batch.store.save(_run())
     batch.store.write_request(RID, {"decision": "d1", "action": "retry"})
     batch.store.write_request(RID, {"decision": "d2", "action": "abort"})
+    assert batch.store.has_requests(RID) is True
     assert [r["decision"] for r in batch.store.take_requests(RID)] == ["d1", "d2"]
     assert batch.store.take_requests(RID) == []
+    assert batch.store.has_requests(RID) is False
 
 
 def test_cancel_flag_records_kill():

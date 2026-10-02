@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Foundation module: AI command loading, GitHub token resolution with per-org
-# routing, response handling.
+# Foundation module: AI command loading, GitHub token resolution (handed off
+# to ai/lib/pr/gh_token.py), response handling.
 #
 # Sourced first by `commit.sh`, `pr.sh`, and `review.sh`, and by the Taskfile
 # tasks that drive them. It inherits the commit conventions by sourcing
@@ -123,11 +123,10 @@ load_ai_command() {
 }
 
 # load_gh_token
-# Resolves GH_TOKEN for AI automation and exports it. Returns 1 on failure, with
-# the guidance already on stderr. Resolution — local pin, GH_TOKEN__<ORG>,
-# default, environment — is owned by ai/lib/pr/gh_token.py; this only hands off.
+# Hands GitHub token resolution off to ai/lib/pr/gh_token.py and exports
+# GH_TOKEN. Returns 1 on failure, with the guidance already on stderr.
 load_gh_token() {
-  _gh_token=$(python3 "$WORKBENCH_ROOT/ai/lib/pr/gh_token.py" --cwd .) || return 1
+  _gh_token=$(python3 "$WORKBENCH_ROOT/ai/lib/pr/gh_token.py" --cwd .) || { unset _gh_token; return 1; }
   GH_TOKEN="$_gh_token"
   export GH_TOKEN
   unset _gh_token

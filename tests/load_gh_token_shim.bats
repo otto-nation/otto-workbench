@@ -37,7 +37,7 @@ teardown() {
   [ -z "${GH_TOKEN:-}" ]
 }
 
-@test "the guidance never lands in GH_TOKEN" {
-  load_gh_token 2>/dev/null || true
-  [[ "${GH_TOKEN:-}" != *"not configured"* ]]
+@test "unsets _gh_token after a failed call" {
+  load_gh_token || true
+  [ -z "${_gh_token+x}" ]
 }

@@ -96,6 +96,14 @@ def test_guidance_names_the_org_variable(tmp_path, home):
     assert "GH_TOKEN__OTTO_NATION" in exc.value.guidance
 
 
+def test_guidance_folds_a_mixed_case_remote(tmp_path, home):
+    repo = _repo(tmp_path, "git@github.com:Otto-Nation/widget.git")
+    with pytest.raises(TokenNotConfigured) as exc:
+        pr.gh_token.resolve(repo, environ={}, home=home)
+    assert "GH_TOKEN__OTTO_NATION" in exc.value.guidance
+    assert "(for otto-nation)" in exc.value.guidance
+
+
 # --- tiers 1-4 ---------------------------------------------------------------
 
 def test_default_token_from_the_global_file(tmp_path, home):
@@ -162,6 +170,7 @@ def test_local_pin_beats_global(tmp_path, home):
 
 @pytest.mark.parametrize("origin", [
     "git@github.com:otto-nation/widget.git",
+    "git@github.com:Otto-Nation/widget.git",
     "https://github.com/otto-nation/widget.git",
     "https://user@github.com/otto-nation/widget.git",
     "ssh://git@github.com:22/otto-nation/widget.git",
@@ -236,6 +245,7 @@ def test_script_prints_only_the_token(tmp_path, home):
     r = _run_script(_repo(tmp_path), home)
     assert r.returncode == 0
     assert r.stdout == "ghp_default\n"
+    assert r.stderr == ""
 
 
 def test_script_failure_keeps_stdout_empty(tmp_path, home):

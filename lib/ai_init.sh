@@ -98,7 +98,7 @@ EOF
     return
   fi
 
-  cd "$root"
+  cd "$root" || return
 
   # Scaffolding a repo is as clear a statement that it uses the workbench as
   # there is, and the root is already resolved here.

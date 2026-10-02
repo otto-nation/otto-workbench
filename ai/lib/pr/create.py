@@ -1,10 +1,11 @@
 """Open a pull request for the current branch — what ``pr create`` does.
 
 Ports the go-task create flow that lived in ``lib/ai/pr.sh``: preflight
-(default-branch and base refusals, the ``--closes`` contract, the publishing
-token), the nesting gate, the branch push, content generation and
-``gh pr create``. ``--dry-run`` stops after the content is generated and prints
-it; it runs no gate, pushes nothing and never reaches ``gh``.
+(an already-open PR, default-branch and base refusals, no commits ahead of
+the base (D7), the ``--closes`` contract), the publishing token, the nesting
+gate, the branch push, content generation and ``gh pr create``.
+``--dry-run`` stops after the content is generated and prints it; it runs no
+gate, pushes nothing and never reaches ``gh``.
 
 The order is the contract. Every refusal that costs nothing comes before the
 nesting gate, the gate comes before anything leaves the machine, and the push
@@ -30,6 +31,7 @@ from pathlib import Path
 import config.workbench_config
 import core.timeouts
 import gh.client
+import git.client
 import git.push
 import git.topology
 import pr.branch_sync
@@ -147,21 +149,48 @@ def _sync(wt: Path, branch: str, *, no_verify: bool) -> bool:
     return result.ok
 
 
+def _ahead_refusal(wt: Path, branch: str, base: str) -> str:
+    """The D7 ✗ line when *branch* has nothing over ``origin/<base>``, else "".
+
+    Asked in preflight so a PR with nothing in it is refused before the token,
+    the gate, the push or the AI call — including when ``--title`` and
+    ``--body`` leave content generation nothing to read.
+    """
+    remote_base = f"{GIT_REMOTE}/{base}"
+    argv = ("rev-list", "--count", f"{remote_base}..HEAD")
+    r = git.client.run(*argv, cwd=wt)
+    count = r.stdout.strip()
+    if not r.ok or not count.isdigit():
+        detail = r.detail or f"exit {r.returncode}"
+        return f"✗ git {' '.join(argv)} failed: {detail}"
+    if int(count) == 0:
+        return f"✗ No commits on {branch} ahead of {remote_base} — nothing to open a PR for"
+    return ""
+
+
 def _preflight(
-    wt: Path, branch: str, default: str, opts: CreateOptions,
+    wt: Path, branch: str, default: str, opts: CreateOptions, pr_number: int | None,
 ) -> tuple[str, ...] | None:
     """Every refusal that needs no network write, in order. None means refused.
 
     Returns the normalised ``--closes`` refs, the one thing the checks produce.
     The default-branch refusal is keyed on the repo's default, not the target
-    base: running from trunk is wrong whatever the PR would target.
+    base: running from trunk is wrong whatever the PR would target. An open PR
+    refuses a dry run too — the preview would describe a PR nobody can open.
     """
+    if pr_number:
+        _say(f"✗ PR #{pr_number} already exists for {branch} — use pr describe to revise it")
+        return None
     if branch == default:
         _say(f"✗ PR operations cannot be run from the {default} branch")
         return None
     base = opts.base or default
     if not git_remote.remote_branch_ref_exists(base, cwd=str(wt)):
         _say(_base_refusal(base, default, explicit=bool(opts.base)))
+        return None
+    refusal = _ahead_refusal(wt, branch, base)
+    if refusal:
+        _say(refusal)
         return None
     try:
         return _closes(opts.closes, wt)
@@ -214,7 +243,7 @@ def run_create(ctx: ResolvedContext, opts: CreateOptions) -> int:
         return 1
 
     default = git.topology.default_branch(wt)
-    closes = _preflight(wt, branch, default, opts)
+    closes = _preflight(wt, branch, default, opts, ctx.pr_number)
     if closes is None:
         return 1
     base = opts.base or default

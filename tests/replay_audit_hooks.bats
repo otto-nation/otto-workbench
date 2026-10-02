@@ -111,7 +111,7 @@ cherry_pick_in_progress() {
   run git -C "$W" rebase --continue
   [ "$status" -eq 0 ]
   [[ "$output" != *"refusing"* ]]
-  ! rebase_in_progress
+  run ! rebase_in_progress
   [ "$(git -C "$W" log -1 --format=%s)" = "feat: edit" ]
 }
 
@@ -123,7 +123,7 @@ cherry_pick_in_progress() {
   WORKBENCH_ALLOW_DROPPED_CHANGES=1 run git -C "$W" rebase --continue
   [ "$status" -eq 0 ]
   [[ "$output" == *"committing anyway"* ]]
-  ! rebase_in_progress
+  run ! rebase_in_progress
 }
 
 @test "a one-sided collision with every clean change kept is advisory only" {
@@ -134,7 +134,7 @@ cherry_pick_in_progress() {
   run git -C "$W" rebase --continue
   [ "$status" -eq 0 ]
   [[ "$output" == *"Resolved to one side only"* ]]
-  ! rebase_in_progress
+  run ! rebase_in_progress
 }
 
 @test "a whole-file resolution replayed by rerere is refused like a typed one" {

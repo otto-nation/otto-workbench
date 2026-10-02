@@ -3,6 +3,8 @@
 The state file is authoritative; events only save a consumer from polling it.
 """
 
+# doc-group: batch
+
 from __future__ import annotations
 
 import json

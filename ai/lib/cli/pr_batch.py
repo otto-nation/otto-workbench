@@ -10,6 +10,8 @@
 Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions.
 """
 
+# doc-group: cli
+
 from __future__ import annotations
 
 import argparse

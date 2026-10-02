@@ -6,6 +6,8 @@ that step has been seen to need, and neither CPU nor memory is under pressure.
 Running steps are never paused or killed; admission only gates the next start.
 """
 
+# doc-group: batch
+
 from __future__ import annotations
 
 import json

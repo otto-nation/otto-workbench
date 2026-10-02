@@ -1,5 +1,7 @@
 """Turn what a finished step left behind into a step status and decisions."""
 
+# doc-group: batch
+
 from __future__ import annotations
 
 import json

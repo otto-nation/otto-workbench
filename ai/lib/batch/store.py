@@ -7,6 +7,8 @@
     <state_dir>/batch/<run-id>/logs/*.log       stderr of each step attempt
 """
 
+# doc-group: batch
+
 from __future__ import annotations
 
 import json

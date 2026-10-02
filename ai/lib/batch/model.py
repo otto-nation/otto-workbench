@@ -5,6 +5,8 @@ stable: renaming a member is free, changing a value is a schema break and
 bumps `Run.schema_version`.
 """
 
+# doc-group: batch
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

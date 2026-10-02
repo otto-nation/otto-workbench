@@ -5,6 +5,8 @@ and each gets a new session with stdin closed: no prompt in any child can
 reach a terminal, whether the batch runs under a server or in a shell.
 """
 
+# doc-group: batch
+
 from __future__ import annotations
 
 import os

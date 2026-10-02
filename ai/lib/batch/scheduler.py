@@ -1,5 +1,7 @@
 """Drive a run: admit steps, reap them, and stop when only decisions remain."""
 
+# doc-group: batch
+
 from __future__ import annotations
 
 import collections

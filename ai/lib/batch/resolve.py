@@ -1,5 +1,7 @@
 """Apply an operator's answer to one decision, then move the item on."""
 
+# doc-group: batch
+
 from __future__ import annotations
 
 import secrets

@@ -5,6 +5,8 @@ not scale with comment volume — no nested `comments` connection — so a plan
 over dozens of PRs costs a point or two of the hourly GraphQL budget.
 """
 
+# doc-group: batch
+
 from __future__ import annotations
 
 import json

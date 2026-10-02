@@ -50,6 +50,7 @@ from review.paths import (
     phase_output_path,
 )
 from review.document import SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, ReviewDocument
+from review.overflow import run_with_overflow_recovery
 from review.prompt import PromptTooLarge
 from review.registry import PhaseScan, build_prompt, for_phase
 from review.retry import (
@@ -127,6 +128,7 @@ class PhaseRunner:
         # runner per group, and all of them want the same file.
         cfg = job.config
         self.job = job
+        self.index = index
         # A phase that names no log of its own logs to the job's — that is
         # where the single-agent path already sends every record, and the
         # caller may have pointed it outside the review directory.
@@ -175,10 +177,16 @@ class PhaseRunner:
         """Run one attempt. Positional `(prompt, max_turns)` is the shape
         `agent.retry.retry_missing_output` calls its callback with, so a
         runner can be handed to it directly."""
-        return run_agent(
+        rc = run_agent(
             self.invocation(prompt, max_turns, label=label),
             throttle=self.job.throttle,
         )
+        from review.prompt_fit import record_prompt_overhead
+
+        record_prompt_overhead(
+            self.job, self.session_log, self.phase, index=self.index,
+        )
+        return rc
 
 
 @dataclass(frozen=True)
@@ -306,13 +314,23 @@ def run_phase(
 
     core.log.info(announce)
     core.log.blank()
-    runner.invoke(prompt)
-    core.log.blank()
 
     label = PHASES[phase].label
-    diagnosis = _retry_missing_output(
-        runner.invoke, prompt, runner.session_log, output,
-        label=label, max_turns=max_turns,
+
+    def _rebuild(ladder: int) -> str:
+        return build_prompt(
+            phase, job, max_turns=max_turns, ladder_bytes=ladder, **prompt_args,
+        )
+
+    prompt, diagnosis = run_with_overflow_recovery(
+        prompt,
+        invoke=lambda text: runner.invoke(text),
+        after=lambda text: _retry_missing_output(
+            runner.invoke, text, runner.session_log, output,
+            label=label, max_turns=max_turns,
+        ),
+        has_output=lambda: _has_output(output),
+        rebuild=_rebuild,
     )
 
     if not _has_output(output):
@@ -401,13 +419,16 @@ def _review_group(
         for f in job.pr.files if f["path"] in grp.files
     )
 
+    group_kwargs = dict(
+        group_idx=i, group_count=group_count, group_name=grp.name,
+        group_files_formatted=group_files_formatted,
+        group_file_paths=grp.files,
+        holistic_content=holistic_content,
+    )
     try:
         group_prompt = build_prompt(
             Phase.GROUP, job, max_turns=max_turns,
-            group_idx=i, group_count=group_count, group_name=grp.name,
-            group_files_formatted=group_files_formatted,
-            group_file_paths=grp.files,
-            holistic_content=holistic_content,
+            prefix=retry_hint, **group_kwargs,
         )
     except PromptTooLarge as exc:
         diagnosis = Diagnosis(DiagnosisKind.PROMPT_TOO_LARGE, detail=str(exc))
@@ -415,16 +436,34 @@ def _review_group(
         if pipeline_state is not None:
             _update_group_failed(job, i, diagnosis, pipeline_state)
         return (i, group_output, GroupFailure(grp.name, diagnosis))
-    group_prompt = retry_hint + group_prompt
 
     core.log.info(f"Phase 2: Group {i}/{group_count} — {grp.name} ({grp.lines} lines)...")
-    runner.invoke(group_prompt, max_turns, label=grp.name)
+
+    def _after(_text: str) -> Diagnosis | None:
+        if _has_output(group_output):
+            return None
+        try_recover_output(group_log, group_output)
+        if _has_output(group_output):
+            return None
+        return diagnose_missing_output(group_log, output_path=group_output)
+
+    def _rebuild(ladder: int) -> str:
+        return build_prompt(
+            Phase.GROUP, job, max_turns=max_turns,
+            prefix=retry_hint, ladder_bytes=ladder, **group_kwargs,
+        )
+
+    _prompt, diagnosis = run_with_overflow_recovery(
+        group_prompt,
+        invoke=lambda text: runner.invoke(text, max_turns, label=grp.name),
+        after=_after,
+        has_output=lambda: _has_output(group_output),
+        rebuild=_rebuild,
+    )
 
     failed = None
     if not _has_output(group_output):
-        try_recover_output(group_log, group_output)
-    if not _has_output(group_output):
-        diagnosis = diagnose_missing_output(group_log, output_path=group_output)
+        diagnosis = diagnosis or Diagnosis(DiagnosisKind.OUTPUT_MISSING)
         core.log.warn(f"Group {i} ({grp.name}) produced no output ({diagnosis.message})")
         failed = GroupFailure(grp.name, diagnosis)
         if pipeline_state is not None:

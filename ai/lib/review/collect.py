@@ -236,6 +236,40 @@ def _truncate_log(text: str, max_bytes: int, label: str = "Commit log") -> str:
     return truncated + "\n\n... (truncated — full log exceeded size limit)"
 
 
+_COMMIT_SPLIT = re.compile(r"(?=^commit )", re.MULTILINE)
+
+
+def trim_commit_log(log: str, max_bytes: int) -> str:
+    """``log`` shrunk to ``max_bytes``, keeping the newest commits first.
+
+    Collection records `git log --reverse` (oldest first). The budget lever
+    spends its cap on what a reviewer sees first, so the kept commits are
+    emitted newest-first. A single commit larger than the cap is truncated
+    from its start rather than dropped, so the newest message is never empty
+    when there was anything to keep.
+    """
+    if max_bytes <= 0 or not log:
+        return ""
+    if len(log.encode()) <= max_bytes:
+        return log
+    parts = [p for p in _COMMIT_SPLIT.split(log) if p]
+    if not parts:
+        return log.encode()[:max_bytes].decode(errors="ignore")
+    kept: list[str] = []
+    used = 0
+    for part in reversed(parts):
+        size = len(part.encode())
+        overflow = used + size > max_bytes
+        if overflow and kept:
+            break
+        if overflow:
+            kept.append(part.encode()[:max_bytes].decode(errors="ignore"))
+            break
+        kept.append(part)
+        used += size
+    return "".join(kept)
+
+
 def _read_file_safe(path: Path) -> str:
     try:
         content = path.read_text()
@@ -966,6 +1000,7 @@ def format_preflight_data(
     files: FileFit | None = None,
     skip_project_context: bool = False,
     max_diff_bytes: int | None = None,
+    commit_log: str | None = None,
 ) -> PreflightBlock:
     """The "Pre-collected data" block a phase's prompt carries.
 
@@ -1002,8 +1037,9 @@ def format_preflight_data(
     rendered_diff_bytes = len(diff_text.encode())
     parts += ["", "### Full diff", "", "```diff", diff_text, "```"]
 
-    if data.commit_log:
-        parts += ["", "### Commit history", "", "```", data.commit_log, "```"]
+    log = data.commit_log if commit_log is None else commit_log
+    if log:
+        parts += ["", "### Commit history", "", "```", log, "```"]
 
     parts += _format_file_contents(data, file_filter, files=files)
 

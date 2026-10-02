@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -41,6 +42,14 @@ MAX_GROUP_FILES = 15
 # value, and a future revisit is free to move it with new evidence.
 MIN_GROUP_LINES = 200
 HOLISTIC_MIN_GROUPS = 8
+
+# ceiling: grouping only has additions+deletions per file, not the patch
+# text. 80 bytes/line sits above the ~40–60 B of a typical unified-diff line
+# (hunk header plus context), so a merge that would overflow the group ladder
+# still looks oversize here. Upgrade to scope_diff(preflight.diff, files)
+# once every caller has the collected diff in hand — pipeline does today, and
+# passes that callable; this estimate is the fallback when it does not.
+BYTES_PER_DIFF_LINE = 80
 
 GROUP_TIER1 = "tier1-critical"
 GROUP_TIER3 = "tier3-generated"
@@ -236,10 +245,26 @@ def _merge_score(a: Group, b: Group) -> tuple[int, int]:
     return (-shared, a.lines + b.lines)
 
 
+def estimate_group_diff_bytes(group: Group) -> int:
+    """A byte estimate for ``group``'s diff from its line count alone."""
+    return group.lines * BYTES_PER_DIFF_LINE
+
+
+def _combined_diff_bytes(
+    a: Group, b: Group, size_of: Callable[[Group], int],
+) -> int:
+    merged = Group(
+        name=f"{a.name}+{b.name}", files=a.files + b.files, lines=a.lines + b.lines,
+    )
+    return size_of(merged)
+
+
 def _find_best_merge_pair(
     groups: list[Group], max_lines: int | None = None,
+    max_diff_bytes: int | None = None,
+    group_diff_bytes: Callable[[Group], int] | None = None,
 ) -> tuple[int, int] | None:
-    """The best pair to merge, or None when `max_lines` excludes every pair.
+    """The best pair to merge, or None when a cap excludes every pair.
 
     `max_lines` bounds the combined size. A floor merge passes it so that one
     unmergeable pair does not decide the fate of the rest: the affinity-best
@@ -247,28 +272,43 @@ def _find_best_merge_pair(
     two unrelated small groups elsewhere would merge perfectly. Ranking only
     the pairs that fit keeps the affinity order among the candidates that are
     actually available.
+
+    `max_diff_bytes` is the other cap: a merged group's estimated (or measured)
+    diff must still fit the group ladder. The agent-count cap used to ignore
+    this and overflow; it now stops rather than form a group nothing can prompt.
     """
+    size_of = group_diff_bytes or estimate_group_diff_bytes
     pairs = [(i, j) for i in range(len(groups)) for j in range(i + 1, len(groups))]
     if max_lines is not None:
         pairs = [
             p for p in pairs
             if groups[p[0]].lines + groups[p[1]].lines <= max_lines
         ]
+    if max_diff_bytes is not None:
+        pairs = [
+            p for p in pairs
+            if _combined_diff_bytes(groups[p[0]], groups[p[1]], size_of)
+            <= max_diff_bytes
+        ]
     if not pairs:
         return None
     return min(pairs, key=lambda p: _merge_score(groups[p[0]], groups[p[1]]))
 
 
-def merge_smallest_groups(groups: list[Group], max_groups: int) -> list[Group]:
+def merge_smallest_groups(
+    groups: list[Group], max_groups: int,
+    max_diff_bytes: int | None = None,
+    group_diff_bytes: Callable[[Group], int] | None = None,
+) -> list[Group]:
     """``groups`` reduced to at most ``max_groups``, and until none is below
     ``MIN_GROUP_LINES``, by repeatedly merging a pair.
 
     Each round merges the pair sharing the longest name prefix, breaking ties on
     combined size, so a cap is spent on neighbouring directories before it costs
     an unrelated group its own agent. A floor merge stops when no remaining pair
-    fits under ``MAX_GROUP_LINES`` — not on the first pair that doesn't fit —
-    while the agent-count cap still merges in that case, because too many
-    agents is worse than one slightly large one.
+    fits under ``MAX_GROUP_LINES`` — not on the first pair that doesn't fit.
+    The agent-count cap used to merge past the line budget; with
+    ``max_diff_bytes`` it stops rather than form a group the ladder cannot hold.
     """
     groups = list(groups)
     while len(groups) > 1:
@@ -276,13 +316,13 @@ def merge_smallest_groups(groups: list[Group], max_groups: int) -> list[Group]:
         undersized = min(g.lines for g in groups) < MIN_GROUP_LINES
         if not over_cap and not undersized:
             break
-        # The agent-count cap accepts an oversized group, because too many
-        # agents is worse than one large one; a floor merge does not, and asks
-        # for the best pair that fits. None back means no pair fits, which is
-        # the loop's other exit: every remaining undersized group has only
-        # neighbours it would overflow.
+        # Floor merges never overflow MAX_GROUP_LINES. The agent-count cap
+        # still drops the line bound (too many agents is worse than one large
+        # one) but honours max_diff_bytes so the merged group still fits.
         pair = _find_best_merge_pair(
             groups, None if over_cap else MAX_GROUP_LINES,
+            max_diff_bytes=max_diff_bytes,
+            group_diff_bytes=group_diff_bytes,
         )
         if pair is None:
             break

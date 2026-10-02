@@ -38,6 +38,7 @@ from pathlib import Path
 import core.proc
 import core.timeouts
 from agent.phases import ModelAlias, collect_phase_models
+from core.phases import Backend
 from review.grouping import classify_tier, format_profiles_section
 
 # ── The token ceiling, and the bytes it buys ─────────────────────────────────
@@ -77,13 +78,15 @@ ALIAS_FLOOR_TOKENS = 200_000
 # being wrong is a truncated finding list.
 COMPLETION_RESERVE_TOKENS = 32_000
 
-# The system prompt and tool schemas, which `claude -p` assembles inside the CLI
-# where nothing here can see them. `agent.token_count` measures the gap against
-# session logs at 9.5k–48.8k tokens — ~26k for a full review phase, ~11k for a
-# lighter one — so this covers the top of the observed band with margin. It is a
-# reserve because the text is unreachable, not because it is unmeasurable: pass
-# `system` and `tools` to `count_tokens` and it becomes a measurement.
+# The system prompt and tool schemas, which the CLI assembles where nothing
+# here can see them. First-request overhead (session input minus counted
+# prompt tokens) measured 43–51k on the Claude backend (n=4) and 8–26k on
+# pi (n=31). Each backend's reserve covers its observed max with margin.
+# An unknown backend takes the larger figure, because guessing small is the
+# expensive direction. Pass `system` and `tools` to `count_tokens` and the
+# reserve becomes a measurement.
 OVERHEAD_RESERVE_TOKENS = 64_000
+PI_OVERHEAD_RESERVE_TOKENS = 32_000
 
 # ceiling: a density floor, not an estimate. No byte count can bound a token
 # count — the same 480KB is 242k tokens of review prose and 457k of base64 — so
@@ -123,15 +126,21 @@ MAX_DELTA_LOG_BYTES = 20_000
 # `unaccounted_bytes` across 86 recorded renders — 2.3KB median, 9.6KB worst —
 # with room above the worst case.
 #
-# Held back by `ladder_target_bytes`, which is what the ladder plans against,
-# rather than by `prompt_budget_bytes`, which is where a prompt is refused. The
-# two have to differ: the ladder fills its sections to whatever target it is
-# given, so a target equal to the ceiling is overshot by exactly this markup.
+# Held back by `ladder_target_bytes` on the *first* render only, which is
+# what the ladder plans against, rather than by `prompt_budget_bytes`, which
+# is where a prompt is refused. The two have to differ: the ladder fills its
+# sections to whatever target it is given, so a target equal to the ceiling
+# is overshot by exactly this markup.
 #
-# ceiling: a reserve, because the markup is generated during the render the
-# budget precedes. Upgrade to a measurement if a render is ever recorded with
-# `unaccounted_bytes` above this figure, which is the same record that would
-# show the reserve had stopped covering what it is for.
+# The plan-render-verify loop then measures the real overshoot and ratchets
+# the ladder down by it, so this figure is a prior for render one, not a
+# bound the later renders still hide behind.
+#
+# ceiling: a first-render prior, because the markup is generated during the
+# render the budget precedes. The loop now measures the overshoot; keep this
+# figure only as the opening guess. Upgrade it if a first render is recorded
+# with `unaccounted_bytes` above this figure, which is the same record that
+# would show the prior had stopped covering what it is for.
 RENDER_MARKUP_RESERVE_BYTES = 16_000
 
 MIN_DIFF_BYTES = 20_000
@@ -299,21 +308,24 @@ class UnknownModelWindow(RuntimeError):
         super().__init__(detail)
 
     @classmethod
-    def too_narrow(cls, model: str, window: int) -> "UnknownModelWindow":
+    def too_narrow(
+        cls, model: str, window: int, backend: Backend | None = None,
+    ) -> "UnknownModelWindow":
         """A window the reserves alone exhaust, so no prompt could ever fit.
 
         Unreachable while every recorded window is 200,000 against 96,000 of
-        reserves. It is raised rather than clamped because the alternative is a
-        negative budget that `_fit_budget`'s `max(0, ...)` guards absorb
-        without complaint — every phase would then refuse every prompt, and the
-        reason would be a table entry nobody would think to look at.
+        reserves on Claude (64,000 on pi). It is raised rather than clamped
+        because the alternative is a negative budget that `_fit_budget`'s
+        `max(0, ...)` guards absorb without complaint — every phase would then
+        refuse every prompt, and the reason would be a table entry nobody
+        would think to look at.
         """
-        reserved = COMPLETION_RESERVE_TOKENS + OVERHEAD_RESERVE_TOKENS
+        reserved = COMPLETION_RESERVE_TOKENS + overhead_reserve_tokens(backend)
         return cls(model, (
             f"{model!r} has a {window:,}-token window, which its reserves "
             f"({reserved:,}) exhaust — no prompt could fit. Lower "
-            f"COMPLETION_RESERVE_TOKENS or OVERHEAD_RESERVE_TOKENS, or do not "
-            f"review with this model."
+            f"COMPLETION_RESERVE_TOKENS or the backend overhead reserve, or do "
+            f"not review with this model."
         ))
 
 
@@ -334,20 +346,39 @@ def model_window_tokens(model: str) -> int:
     raise UnknownModelWindow(model)
 
 
-def prompt_budget_tokens(model: str) -> int:
+def overhead_reserve_tokens(backend: Backend | None = None) -> int:
+    """Tokens reserved for CLI system prompt and tool schemas on ``backend``.
+
+    ``None`` asks the selected backend. An unknown or unselected backend takes
+    the larger reserve — guessing small is the expensive direction.
+    """
+    if backend is None:
+        from agent.backend import selected_backend
+
+        backend = selected_backend()
+    if backend is Backend.PI:
+        return PI_OVERHEAD_RESERVE_TOKENS
+    return OVERHEAD_RESERVE_TOKENS
+
+
+def prompt_budget_tokens(
+    model: str, backend: Backend | None = None,
+) -> int:
     """What one prompt to ``model`` may cost, in tokens.
 
     The window less what the reply needs and less the system prompt and tool
-    schemas the CLI adds out of sight.
+    schemas the CLI adds out of sight, priced for ``backend``.
     """
     window = model_window_tokens(model)
-    budget = window - COMPLETION_RESERVE_TOKENS - OVERHEAD_RESERVE_TOKENS
+    budget = window - COMPLETION_RESERVE_TOKENS - overhead_reserve_tokens(backend)
     if budget <= 0:
-        raise UnknownModelWindow.too_narrow(model, window)
+        raise UnknownModelWindow.too_narrow(model, window, backend)
     return budget
 
 
-def prompt_budget_bytes(model: str) -> int:
+def prompt_budget_bytes(
+    model: str, backend: Backend | None = None,
+) -> int:
     """What one prompt to ``model`` may cost, in bytes of rendered prompt.
 
     The lesser of what the model can hold and what a review will spend. The
@@ -360,25 +391,32 @@ def prompt_budget_bytes(model: str) -> int:
     below it, which is the case the fused constant got wrong. Raises
     `UnknownModelWindow` for a model with no recorded window.
     """
-    capability = int(prompt_budget_tokens(model) * BYTES_PER_TOKEN_FLOOR)
+    capability = int(
+        prompt_budget_tokens(model, backend) * BYTES_PER_TOKEN_FLOOR
+    )
     return min(capability, MAX_SPEND_BYTES)
 
 
-def ladder_target_bytes(model: str) -> int:
+def ladder_target_bytes(
+    model: str, backend: Backend | None = None,
+) -> int:
     """What the budget ladder may plan to spend, below the refusal ceiling.
 
     `prompt_budget_bytes` is where a prompt is refused; this is what the ladder
-    aims at, and the gap between them is `RENDER_MARKUP_RESERVE_BYTES`. They
-    have to be two numbers: the ladder plans its sections up to whatever it is
-    given and the render then adds markup no lever sized, so a ladder aimed at
-    the ceiling overshoots it by exactly the bytes the reserve exists to cover.
+    aims at on the first render, and the gap between them is
+    `RENDER_MARKUP_RESERVE_BYTES`. They have to be two numbers: the ladder
+    plans its sections up to whatever it is given and the render then adds
+    markup no lever sized, so a ladder aimed at the ceiling overshoots it by
+    exactly the bytes the reserve exists to cover. Later renders ratchet from
+    the measured overshoot rather than subtracting this prior again.
     """
-    return prompt_budget_bytes(model) - RENDER_MARKUP_RESERVE_BYTES
+    return prompt_budget_bytes(model, backend) - RENDER_MARKUP_RESERVE_BYTES
 
 
 def collection_budget_bytes(
     explicit_model: str | None = None,
     project_root: Path | str | None = None,
+    backend: Backend | None = None,
 ) -> int:
     """The ceiling collection may gather against, across every review phase.
 
@@ -394,7 +432,7 @@ def collection_budget_bytes(
     can be sized against a ceiling no phase actually budgets to.
     """
     return min(
-        ladder_target_bytes(model)
+        ladder_target_bytes(model, backend)
         for model in collect_phase_models(explicit_model, project_root)
     )
 
@@ -408,12 +446,16 @@ def fixed_preflight_bytes(
 ) -> int:
     """The bytes of preflight data no budget lever can shrink.
 
-    `commit_log` is the log the collector gathered, `claude_md` and
-    `architecture_md` are the project context files, `review_checklists` is
-    every checklist keyed by name, and `review_profiles` is every profile the
-    repo declares — the five sections that go into a prompt whole or not at
-    all. The diff, the pre-collected file contents and the incremental delta
-    are all levers a fit can pull, so none of them is here.
+    `claude_md` and `architecture_md` are the project context files,
+    `review_checklists` is every checklist keyed by name, and `review_profiles`
+    is every profile the repo declares — the sections that go into a prompt
+    whole or not at all. The diff, the pre-collected file contents, the
+    incremental delta and the commit log are all levers a fit can pull, so
+    none of them is here.
+
+    `commit_log` is accepted so callers that still pass the five-tuple keep
+    compiling; it is not summed. The COMMIT_LOG lever trims it, and counting
+    it as fixed would hide the room that lever needs.
 
     Profiles are measured as `format_profiles_section` will render them, not as
     the sum of their source files: the rendered section carries a heading and a
@@ -429,9 +471,9 @@ def fixed_preflight_bytes(
     knowing that type would invert the dependency. A caller that has one reads
     the fields off it, and one that does not spends nothing.
     """
+    _ = commit_log
     return (
-        len(commit_log.encode())
-        + len(claude_md.encode())
+        len(claude_md.encode())
         + len(architecture_md.encode())
         + sum(len(v.encode()) for v in review_checklists.values())
         + len(format_profiles_section(review_profiles or []).encode())

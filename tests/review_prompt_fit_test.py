@@ -113,6 +113,30 @@ class TestFitBudget:
             <= MAX_PROMPT_BYTES
         )
 
+    def test_commit_log_trims_newest_first_before_the_diff_floor(self):
+        oldest = "commit aaa\n" + ("o" * 4_000) + "\n\n"
+        newest = "commit zzz\n" + ("n" * 200) + "\n\n"
+        log = oldest + newest
+        pf = _make_preflight(
+            commit_log=log, file_contents={}, claude_md="",
+            delta_diff="", delta_files=[], prior_head_sha="",
+        )
+        # Room for the newest commit and nothing else, so the lever has to fire.
+        plan = _fit_budget(
+            _make_job(pf), {"header": "x"},
+            budget_bytes=len(newest.encode()) + 50, min_diff=0,
+        )
+        assert any(c.lever is BudgetLever.COMMIT_LOG for c in plan.cuts)
+        assert "zzz" in plan.commit_log
+        assert "aaa" not in plan.commit_log
+        assert plan.commit_log.strip().startswith("commit zzz")
+
+    def test_fixed_preflight_does_not_count_the_commit_log(self):
+        log = "commit abc\n" * 100
+        with_log = fixed_preflight_bytes(log, "c", "", {}, None)
+        without = fixed_preflight_bytes("", "c", "", {}, None)
+        assert with_log == without
+
 
 class TestProfilesAreCountedByTheBudget:
     """A profile renders into the prompt, so a budget that ignores it overspends.

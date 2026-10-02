@@ -31,9 +31,14 @@ from review.paths import phase_log_path
 from review.collect import fetch_branch_metadata
 from gh.pr_data import PRData, fetch_pr_data
 from gh.pr_reads import fetch_pr_context, fetch_pr_metadata
+from agent.backend import selected_backend
+from agent.phases import phase_model
+from review.budget import ladder_target_bytes
+from review.collect import scope_diff
 from review.grouping import (
-    GROUP_TIER3, group_files, merge_smallest_groups,
+    GROUP_TIER3, estimate_group_diff_bytes, group_files, merge_smallest_groups,
 )
+from review.overflow import run_with_overflow_recovery
 from review.outcome import _post_process_review, _write_review_sidecar, is_complete_review
 from review.types import ReviewJob, ReviewType
 from review.prompt import PromptTooLarge
@@ -142,12 +147,17 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
         rc = runner.invoke(text, turns)
         return rc
 
-    invoke(prompt, max_turns)
-    core.log.blank()
-
-    diagnosis = _retry_missing_output(
-        invoke, prompt, job.session_log, job.review_file,
-        label="Review agent", max_turns=max_turns,
+    prompt, diagnosis = run_with_overflow_recovery(
+        prompt,
+        invoke=lambda text: invoke(text, max_turns),
+        after=lambda text: _retry_missing_output(
+            invoke, text, job.session_log, job.review_file,
+            label="Review agent", max_turns=max_turns,
+        ),
+        has_output=lambda: _has_output(job.review_file),
+        rebuild=lambda ladder: build_prompt(
+            Phase.SINGLE, job, max_turns=max_turns, ladder_bytes=ladder,
+        ),
     )
 
     if not _has_output(job.review_file):
@@ -210,7 +220,19 @@ def run_multi_phase(
 ):
     groups = group_files(job.pr)
     effective_max_groups = max_groups or EFFORT_PRESETS[job.effort].max_groups
-    groups = merge_smallest_groups(groups, effective_max_groups)
+    group_model = phase_model(Phase.GROUP, job.model or None, job.config)
+    group_cap = ladder_target_bytes(group_model, selected_backend())
+    collected_diff = job.preflight.diff if job.preflight else ""
+
+    def _group_diff_bytes(group):
+        if collected_diff:
+            return len(scope_diff(collected_diff, group.files).encode())
+        return estimate_group_diff_bytes(group)
+
+    groups = merge_smallest_groups(
+        groups, effective_max_groups,
+        max_diff_bytes=group_cap, group_diff_bytes=_group_diff_bytes,
+    )
 
     if not job.include_generated:
         before = len(groups)

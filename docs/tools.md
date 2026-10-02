@@ -402,11 +402,11 @@ Bare aliases (`sonnet`, `opus`, `haiku`) resolve through `AI_SONNET_MODEL`, `AI_
 
 #### Prompt token measurement
 
-Each rendered prompt's exact input-token count is recorded in `prompt-stats.json`, alongside the model it was counted against and the resulting bytes-per-token. Set `WORKBENCH_AI_MEASURE_TOKENS=0` to opt out. The count is a round trip that is mostly fixed latency — 0.29s for a 6KB prompt, 0.55s for a 374KB one — and a machine with no Vertex credentials skips it and records nothing. It is on by default because it shipped opt-in and was never once switched on, leaving every density figure inferred rather than measured.
+Each rendered prompt is verified before it is sent: bytes against the spend ceiling always, and tokens plus a per-backend overhead reserve against the model's window when a count exists. A missing count is recorded as `token_verified: false` with a reason — never treated as a pass. The count is one round trip per render (0.29s for 6KB, 0.55s for 374KB). Set `WORKBENCH_AI_MEASURE_TOKENS=0` to opt out; a machine with no Vertex credentials skips the count the same way. After the agent runs, the same record gains `served_model` and `overhead_tokens` (first-turn billed input minus counted prompt tokens).
 
-The count comes from the model's own tokenizer, so it is only meaningful against the model that will serve the request — `claude-sonnet-5` counts the same text around 27% denser than `claude-sonnet-4-5`. It needs the same Vertex configuration and application-default credentials as the quota preflight below; without them the run proceeds and records no count rather than recording a guess.
+The count comes from the model's own tokenizer, so it is only meaningful against the model that will serve the request — `claude-sonnet-5` counts the same text around 27% denser than `claude-sonnet-4-5`. It needs the same Vertex configuration and application-default credentials as the quota preflight below; without them the run proceeds and records the unverified state rather than recording a guess.
 
-It counts the rendered prompt alone. The system prompt and tool schemas that `claude -p` assembles internally are charged to the same request and are not visible to the review, so the request costs more than `prompt_tokens` reports — measured against session logs, between 9.5k and 48.8k tokens more: around 26k for a full review phase, around 11k for a lighter one.
+It counts the rendered prompt alone. The system prompt and tool schemas the CLI assembles internally are charged to the same request and are reserved per backend (64k on Claude, covering a measured max of 51k; 32k on pi, covering 26k). An unknown backend takes the larger reserve.
 
 #### Vertex AI quota preflight
 

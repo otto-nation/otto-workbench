@@ -583,6 +583,66 @@ class TestPromptTooLargeFailsThePhase:
 
         assert not Diagnosis(DiagnosisKind.PROMPT_TOO_LARGE, detail="x").recoverable
 
+    def test_an_api_overflow_rebuilds_once_with_a_smaller_prompt(
+        self, tmp_path, monkeypatch,
+    ):
+        import agent.retry
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+
+        prompts = []
+
+        def fake_build(*_args, **kwargs):
+            if kwargs.get("ladder_bytes") is not None:
+                return "SMALL"
+            return "BIG"
+
+        def fake_invoke(inv, throttle=None):
+            prompts.append(inv.prompt)
+            Path(inv.session_log).write_text("{}\n")
+            if inv.prompt == "SMALL":
+                Path(inv.output_path).write_text("ok")
+            return 0
+
+        monkeypatch.setattr(review.phases, "build_prompt", fake_build)
+        monkeypatch.setattr(review.phases, "run_agent", fake_invoke)
+        monkeypatch.setattr(
+            agent.retry, "diagnose_missing_output",
+            lambda *a, **k: Diagnosis(
+                DiagnosisKind.AGENT_ERROR,
+                detail="prompt is too long: 200 tokens > 100 maximum",
+            ),
+        )
+
+        result = review.phases.run_phase(_job(tmp_path), Phase.SCOUT, "scanning...")
+        assert prompts == ["BIG", "SMALL"]
+        assert result.diagnosis is None
+
+    def test_an_unparseable_agent_error_is_not_retried(
+        self, tmp_path, monkeypatch,
+    ):
+        import agent.retry
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+
+        prompts = []
+
+        def fake_invoke(inv, throttle=None):
+            prompts.append(inv.prompt)
+            Path(inv.session_log).write_text("{}\n")
+            return 0
+
+        monkeypatch.setattr(review.phases, "build_prompt", lambda *a, **k: "BIG")
+        monkeypatch.setattr(review.phases, "run_agent", fake_invoke)
+        monkeypatch.setattr(
+            agent.retry, "diagnose_missing_output",
+            lambda *a, **k: Diagnosis(
+                DiagnosisKind.AGENT_ERROR, detail="some other crash",
+            ),
+        )
+
+        result = review.phases.run_phase(_job(tmp_path), Phase.SCOUT, "scanning...")
+        assert prompts == ["BIG"]
+        assert result.diagnosis.kind is DiagnosisKind.AGENT_ERROR
+
 
 class TestReadScan:
     """`read_scan`'s three outcomes: transformed, verbatim, and refused.

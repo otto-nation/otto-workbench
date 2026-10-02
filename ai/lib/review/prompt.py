@@ -3,9 +3,9 @@
 `PromptBuilder` collects the variables a template is rendered with, and
 `PromptBuilder.fit` is what makes a prompt fit the token budget: it registers
 the sections that can shrink — the pre-collected file contents, the
-incremental delta, and the full diff — after everything fixed is already
-accounted for, and pulls three levers in that order, only as far as the
-shortfall requires. It rewrites the environment section to send the agent
+incremental delta, the commit log, and the full diff — after everything fixed
+is already accounted for, and pulls four levers in that order, only as far as
+the shortfall requires. It rewrites the environment section to send the agent
 after whatever it dropped, and reports the cuts in the prompt's size log. A
 prompt still over budget once every lever is pulled raises `PromptTooLarge`
 rather than being sent: the phase reports it before an agent starts, so it
@@ -41,7 +41,9 @@ from review.budget import (
     FileFit, MIN_DIFF_BYTES,
     fit_files, fixed_preflight_bytes, model_window_tokens,
 )
-from review.collect import PreflightBlock, build_project_context, format_preflight_data
+from review.collect import (
+    PreflightBlock, build_project_context, format_preflight_data, trim_commit_log,
+)
 from review.paths import FILENAME_PROMPT_STATS, review_artifact_path
 from review.prompt_prior import _build_prior_section, _build_unaccounted_section
 from review.prompt_sections import (
@@ -172,6 +174,7 @@ class PromptBuilder:
             files=plan.files,
             skip_project_context=skip_project_context,
             max_diff_bytes=plan.diff_allowance_bytes,
+            commit_log=plan.commit_log,
         )
         self.set("preflight_data", block.text)
         self._rendered_diff_bytes = block.rendered_diff_bytes
@@ -221,6 +224,7 @@ def _build_preflight_section(
     files: FileFit | None = None,
     skip_project_context: bool = False,
     max_diff_bytes: int | None = None,
+    commit_log: str | None = None,
 ) -> PreflightBlock:
     if not job.preflight:
         return PreflightBlock("", 0)
@@ -229,6 +233,7 @@ def _build_preflight_section(
         files=files,
         skip_project_context=skip_project_context,
         max_diff_bytes=max_diff_bytes,
+        commit_log=commit_log,
     )
 
 
@@ -237,6 +242,7 @@ class BudgetLever(StrEnum):
 
     FILE_CONTENTS = "file_contents"
     DELTA = "delta"
+    COMMIT_LOG = "commit_log"
     DIFF_FLOOR = "diff_floor"
 
 
@@ -273,6 +279,8 @@ class Cut:
             )
         if self.lever is BudgetLever.DELTA:
             return f"{self.freed_bytes // 1024}KB of incremental delta"
+        if self.lever is BudgetLever.COMMIT_LOG:
+            return f"{self.freed_bytes // 1024}KB of commit log"
         still_over = f"{self.shortfall_bytes // 1024}KB still over"
         if self.floor_bytes:
             return f"the full diff, floored at {self.floor_bytes // 1024}KB and {still_over}"
@@ -322,6 +330,7 @@ class BudgetPlan:
     files: FileFit
     cuts: tuple[Cut, ...]
     measured_bytes: int = 0
+    commit_log: str = ""
 
     @property
     def allowance_bytes(self) -> int:
@@ -352,7 +361,9 @@ def _fixed_preflight_bytes(
     if not pf:
         return 0
     if skip_project_context:
-        return fixed_preflight_bytes(pf.commit_log, "", "", {}, None)
+        # The commit log is a lever, so skipping the project context leaves
+        # nothing in this reserve — the caller already registered it.
+        return 0
     return fixed_preflight_bytes(
         pf.commit_log, pf.claude_md, pf.architecture_md, pf.review_checklists,
         pf.review_profiles,
@@ -396,15 +407,17 @@ def _fit_budget(
 ) -> BudgetPlan:
     """Fit the variable sections into what `known_sections` leaves of the budget.
 
-    Three levers, pulled in this order and only as far as the shortfall
+    Four levers, pulled in this order and only as far as the shortfall
     requires: keep only the pre-collected file contents that still fit, shrink
-    the incremental delta, then floor the full diff at `min_diff`. Contents go
-    first because they are the only section the agent can recover on its own
-    — the worktree is checked out and `fit` rewrites the environment section
-    to send it there — while a diff it is not shown is a change it does not
-    know happened. The first lever ranks what it keeps by `(classify_tier,
-    size)` rather than dropping the whole collection, so a ceiling too low for
-    everything still buys the files most worth having.
+    the incremental delta, trim the commit log (newest first), then floor the
+    full diff at `min_diff`. Contents go first because they are the only
+    section the agent can recover on its own — the worktree is checked out and
+    `fit` rewrites the environment section to send it there — while a diff it
+    is not shown is a change it does not know happened. The commit log sits
+    after the delta so scout and synthesis have a non-diff lever when the
+    fixed sections overflow. The first lever ranks what it keeps by
+    `(classify_tier, size)` rather than dropping the whole collection, so a
+    ceiling too low for everything still buys the files most worth having.
 
     `skip_project_context` says the caller rendered the project context itself
     and registered it, so it is already in `known_sections` and must not be
@@ -439,10 +452,11 @@ def _fit_budget(
     contents = _contents_bytes(scoped)
     files = FileFit(scoped, job.preflight.file_permissions if job.preflight else {}, [])
     delta = _build_delta_section(job.preflight, file_filter=file_filter)
+    commit_log = job.preflight.commit_log if job.preflight else ""
     cuts: list[Cut] = []
 
-    if contents and measured + contents + len(delta.encode()) + min_diff > budget_bytes:
-        room = max(0, budget_bytes - measured - len(delta.encode()) - min_diff)
+    if contents and measured + contents + len(delta.encode()) + len(commit_log.encode()) + min_diff > budget_bytes:
+        room = max(0, budget_bytes - measured - len(delta.encode()) - len(commit_log.encode()) - min_diff)
         files = fit_files(scoped, files.permissions, room)
         kept = _contents_bytes(files.included)
         cuts.append(Cut(
@@ -452,7 +466,7 @@ def _fit_budget(
         ))
         contents = kept
 
-    delta_room = max(0, budget_bytes - measured - contents - min_diff)
+    delta_room = max(0, budget_bytes - measured - contents - len(commit_log.encode()) - min_diff)
     if len(delta.encode()) > delta_room:
         shrunk = _build_delta_section(
             job.preflight, file_filter=file_filter, max_bytes=delta_room,
@@ -463,7 +477,16 @@ def _fit_budget(
         ))
         delta = shrunk
 
-    diff_bytes = budget_bytes - measured - contents - len(delta.encode())
+    commit_room = max(0, budget_bytes - measured - contents - len(delta.encode()) - min_diff)
+    if len(commit_log.encode()) > commit_room:
+        trimmed = trim_commit_log(commit_log, commit_room)
+        cuts.append(Cut(
+            BudgetLever.COMMIT_LOG,
+            freed_bytes=len(commit_log.encode()) - len(trimmed.encode()),
+        ))
+        commit_log = trimmed
+
+    diff_bytes = budget_bytes - measured - contents - len(delta.encode()) - len(commit_log.encode())
     if diff_bytes < min_diff:
         # Recorded as a shortfall rather than as bytes freed, because the floor
         # frees nothing: it is what the ladder could not absorb, and so is also
@@ -480,7 +503,10 @@ def _fit_budget(
         diff_allowance_bytes=diff_bytes,
         files=files,
         cuts=tuple(cuts),
-        measured_bytes=measured + contents + len(delta.encode()),
+        measured_bytes=(
+            measured + contents + len(delta.encode()) + len(commit_log.encode())
+        ),
+        commit_log=commit_log,
     )
 
 
@@ -564,6 +590,9 @@ def _log_prompt_size(
     model: str,
     label: str = "", cuts: tuple[Cut, ...] = (), phase: Phase | None = None,
     accounting: BudgetAccounting | None = None,
+    verification=None,
+    renders: int = 1,
+    ladder_bytes: int | None = None,
 ) -> str:
     prompt_bytes = len(prompt.encode())
     prompt_kb = prompt_bytes // 1024
@@ -629,14 +658,34 @@ def _log_prompt_size(
         stats["allowance_bytes"] = accounting.allowance_bytes
         stats["accounted_bytes"] = accounting.accounted_bytes
         stats["unaccounted_bytes"] = prompt_bytes - accounting.accounted_bytes
-    measured = _measured_tokens(prompt, phase, model)
+    # The verify loop counts once per render and hands the result in. A
+    # direct call (tests, a path that logged without verifying) still
+    # measures here so the record is complete either way — never a second
+    # round trip on the loop's path.
+    if verification is not None:
+        counted = verification.tokens
+        stats["token_verified"] = verification.token_verified
+        if not verification.token_verified:
+            stats["token_unverified_reason"] = verification.reason
+        stats["renders"] = renders
+        if ladder_bytes is not None:
+            stats["ladder_bytes"] = ladder_bytes
+        measured = (counted, model) if counted is not None else None
+    else:
+        measured = _measured_tokens(prompt, phase, model)
+        stats["token_verified"] = measured is not None
+        if measured is None:
+            stats["token_unverified_reason"] = (
+                "disabled" if os.environ.get(_MEASURE_TOKENS_ENV, "1") == "0"
+                else "unavailable"
+            )
     if measured:
         # Both the count and the model are recorded: a density is meaningless
         # without the tokenizer it was measured against, and sonnet-5 counts the
         # same text ~27% denser than sonnet-4-5.
-        counted, model = measured
+        counted, token_model = measured
         stats["prompt_tokens"] = counted
-        stats["token_model"] = model
+        stats["token_model"] = token_model
         # A zero-token prompt has no density to report, and dividing by it would
         # fail the render over a statistic. Unreachable for a real prompt; the
         # guard is here because the field's absence is already how a reader is

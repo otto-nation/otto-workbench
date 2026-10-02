@@ -39,6 +39,7 @@ from review.phases import (
     _phase_group_reviews, _should_disprove, _synthesis_max_turns,
     read_scan, run_phase,
 )
+from review.overflow import run_with_overflow_recovery
 from review.prompt import PromptTooLarge
 from review.prompt_prior import _scope_prior_review
 from review.reconcile import passed_over
@@ -262,11 +263,13 @@ def _phase_synthesis(
             f"{len(unaccounted)} prior finding{plural(len(unaccounted))} unaccounted for "
             "— synthesis is asked to settle them"
         )
+    synth_kwargs = dict(
+        holistic_content=holistic_content, group_count=group_count,
+        merged_content=merged_content, unaccounted_prior=unaccounted,
+    )
     try:
         prompt = build_prompt(
-            Phase.SYNTHESIS, job, max_turns=max_turns,
-            holistic_content=holistic_content, group_count=group_count,
-            merged_content=merged_content, unaccounted_prior=unaccounted,
+            Phase.SYNTHESIS, job, max_turns=max_turns, **synth_kwargs,
         )
     except PromptTooLarge as exc:
         # The group findings are already on disk; the synthesis agent only
@@ -294,12 +297,18 @@ def _phase_synthesis(
         rc = runner.invoke(text, turns)
         return rc
 
-    invoke(prompt, max_turns)
-    core.log.blank()
-
-    _retry_missing_output(
-        invoke, prompt, synthesis_log, job.review_file,
-        label="Synthesis", max_turns=max_turns,
+    prompt, _diagnosis = run_with_overflow_recovery(
+        prompt,
+        invoke=lambda text: invoke(text, max_turns),
+        after=lambda text: _retry_missing_output(
+            invoke, text, synthesis_log, job.review_file,
+            label="Synthesis", max_turns=max_turns,
+        ),
+        has_output=lambda: _has_output(job.review_file),
+        rebuild=lambda ladder: build_prompt(
+            Phase.SYNTHESIS, job, max_turns=max_turns,
+            ladder_bytes=ladder, **synth_kwargs,
+        ),
     )
 
     if is_complete_review(job.review_file):

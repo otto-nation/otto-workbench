@@ -368,6 +368,32 @@ class TestMergeSmallestGroups:
         result = merge_smallest_groups(groups, 8)
         assert len(result) == 2
 
+    def test_agent_count_cap_stops_rather_than_overflow_the_byte_cap(self):
+        """Too many agents used to justify a merge that could not be prompted."""
+        groups = [Group(f"g{i}", [f"f{i}.py"], 5_000) for i in range(4)]
+        result = merge_smallest_groups(groups, 1, max_diff_bytes=100)
+        assert len(result) == 4
+
+    def test_a_measured_size_callable_is_what_the_cap_reads(self):
+        groups = [
+            Group("a", ["a.py"], 10),
+            Group("b", ["b.py"], 10),
+            Group("c", ["c.py"], 10),
+        ]
+
+        def size_of(group):
+            return 50 if "+" in group.name else 10
+
+        result = merge_smallest_groups(
+            groups, 1, max_diff_bytes=40, group_diff_bytes=size_of,
+        )
+        assert len(result) == 3
+
+        fitted = merge_smallest_groups(
+            groups, 1, max_diff_bytes=80, group_diff_bytes=size_of,
+        )
+        assert len(fitted) == 1
+
 
 # ── load_profiles ────────────────────────────────────────────────────────────
 

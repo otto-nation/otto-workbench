@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 from config.workbench_config import IssueProvider
 
-_NUMERIC = re.compile(r"#?[0-9]+")
+_NUMERIC = re.compile(r"[0-9]+")
 _TRACKER = re.compile(r"[A-Z]+-[0-9]+")
 
 
@@ -33,21 +33,21 @@ def normalise(value: str, provider: IssueProvider | None) -> str:
     """Return a staged ref, or raise :class:`CloseRefError`.
 
     ``941`` / ``#941`` become ``#941``. ``ENG-123`` is kept only when
-    ``provider`` is Linear. One leading ``#`` is stripped for the numeric form;
-    a second is not, so ``##941`` is refused.
+    ``provider`` is Linear. One leading ``#`` is stripped before classifying,
+    so ``#ENG-123`` is a tracker key and ``##941`` is refused as ``#941``.
     """
-    if _NUMERIC.fullmatch(value):
-        digits = value[1:] if value.startswith("#") else value
-        return f"#{digits}"
-    if _TRACKER.fullmatch(value):
+    raw = value[1:] if value.startswith("#") else value
+    if _NUMERIC.fullmatch(raw):
+        return f"#{raw}"
+    if _TRACKER.fullmatch(raw):
         if provider is not IssueProvider.LINEAR:
             raise CloseRefError(
-                f"✗ --closes {value}: a tracker key only auto-closes on Linear, "
+                f"✗ --closes {raw}: a tracker key only auto-closes on Linear, "
                 f"and issues.provider is '{provider or 'unset'}'"
             )
-        return value
+        return raw
     raise CloseRefError(
-        f"✗ --closes {value}: expected a GitHub issue number (941 or #941) "
+        f"✗ --closes {raw}: expected a GitHub issue number (941 or #941) "
         f"or an uppercase tracker key (ENG-123)"
     )
 

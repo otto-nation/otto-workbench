@@ -89,8 +89,8 @@ class Phase(StrEnum):
     REBASE = "rebase"
     PREPUSH_FIX = "prepush_fix"
     DESCRIBE = "describe"
+    # PR title and body for a new PR — `pr create`
     CREATE = "create"
-    """PR title and body for a new PR — `pr create`"""
 
     @property
     def model_env_key(self) -> str:

@@ -14,6 +14,10 @@ import agent.backend_pi
 from ai_backend_pi_support import _event
 
 
+# ai_backend_pi_rpc_test.py subclasses this (and TestConsumeStreamTracksWrites
+# below) under __test__ = False to reach MockStdin/MockProc without
+# recollecting these cases there. A test method added directly to either class
+# runs here but not through that subclass, so it stays silent about the split.
 class TestCheckLimits:
     class MockStdin:
         def __init__(self):
@@ -104,6 +108,9 @@ class TestCheckLimits:
 
 
 class TestStallWatchWiring:
+    # Uses TestConsumeStreamTracksWrites.MockProc, defined further down this
+    # file; Python resolves the attribute at call time, so the forward
+    # reference works, it just reads out of order top to bottom.
     """The stream loop arms the stall watch, and a stall ends the run.
 
     The watch itself is covered by `agent_stall_test.py`; what is checked here
@@ -306,6 +313,8 @@ class TestWriteAwareSteer:
         assert "write" in agent.backend_pi.PI_TOOLS.split(",")
 
 
+# See the pointer comment above TestCheckLimits: ai_backend_pi_rpc_test.py also
+# subclasses this one (under __test__ = False) to reach MockProc.
 class TestConsumeStreamTracksWrites:
     """_consume_stream is what tells _check_limits whether a write happened."""
 

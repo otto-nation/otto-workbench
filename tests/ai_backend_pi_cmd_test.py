@@ -268,7 +268,6 @@ class TestPromptCmdHasNoTools:
         assert "--no-tools" in seen[0]
 
 
-
 class TestPromptCmdThinking:
     """A stateless prompt is sized the same way the agent modes are.
 

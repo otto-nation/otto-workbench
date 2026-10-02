@@ -6,8 +6,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-import agent.invoke
-import agent.backend
 import agent.session
 
 from review_agent_diagnostics_support import _write_log, _pi_tool, _pi_result, _pi_text

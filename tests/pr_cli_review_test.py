@@ -22,9 +22,9 @@ import cli.pr  # noqa: E402
 
 import cli.registry  # noqa: E402
 import cli.schema  # noqa: E402
-import review.listing
+import review.listing  # noqa: E402
 
-from pr_cli_support import _run_main, _lock_file, _dispatch_stage
+from pr_cli_support import _run_main, _lock_file, _dispatch_stage  # noqa: E402
 
 
 # ── cmd_review auto-self ──────────────────────────────────────────────────

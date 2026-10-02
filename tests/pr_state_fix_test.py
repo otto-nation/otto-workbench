@@ -551,7 +551,6 @@ def test_a_pre_fold_state_file_still_owes_the_closeout_it_owed():
     assert debt.reply_count == 3
 
 
-
 def test_a_pre_fold_state_file_still_blocks_the_merge_it_blocked():
     """`pr comments --finish` — readiness reads the same undelivered closeout."""
     answer = _loaded_pre_fold().readiness(readiness_state())

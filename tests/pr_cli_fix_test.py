@@ -9,7 +9,6 @@ from unittest.mock import patch
 from conftest import make_ctx
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BIN_DIR = REPO_ROOT / "ai" / "bin"
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
@@ -18,7 +17,7 @@ import cli.pr_commands  # noqa: E402
 import pr.domains  # noqa: E402
 import pr.state  # noqa: E402
 
-from pr_cli_support import _cmd_fix
+from pr_cli_support import _cmd_fix  # noqa: E402
 
 
 # ── cmd_fix ─────────────────────────────────────────────────────────────────

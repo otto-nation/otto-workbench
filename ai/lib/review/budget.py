@@ -7,8 +7,10 @@ collector deciding what to gather and a phase deciding what to send read the
 same figure rather than two that drifted apart.
 
 The ceiling is derived, not declared. It starts from the resolved model's
-context window, subtracts what the reply and the CLI's own system prompt need,
-and prices the remainder in bytes at a density floor — so it is a property of
+context window, read from pi's provider catalogue with `MODEL_CONTEXT_TOKENS` as
+the fallback when the catalogue cannot be read or lacks the model. It subtracts
+what the reply and the CLI's own system prompt need, and prices the remainder in
+bytes at a density floor — so it is a property of
 the model a phase actually runs on rather than a constant that matched none of
 them. `prompt_budget_bytes` is that derivation. A tier alias that never resolved
 takes its tier's floor rather than failing, because an unset
@@ -29,19 +31,23 @@ budgets retries, not bytes.
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 from pathlib import Path
 
+import core.proc
+import core.timeouts
 from agent.phases import ModelAlias, collect_phase_models
 from review.grouping import classify_tier, format_profiles_section
 
 # ── The token ceiling, and the bytes it buys ─────────────────────────────────
 
-# What each model can hold, read from `result.modelUsage[*].contextWindow` in
-# real session logs rather than from documentation. A model absent from this
-# table has no entry to guess at: `prompt_budget_bytes` refuses rather than
-# defaulting, because every default is wrong in the expensive direction on the
-# model it was not chosen for.
+# Fallback when pi's provider catalogue cannot be read, or does not list the
+# model. Figures originally come from `pi --list-models` (and from
+# `result.modelUsage[*].contextWindow` in session logs). A model absent from
+# both the catalogue and this table has no entry to guess at:
+# `prompt_budget_bytes` refuses rather than defaulting, because every default
+# is wrong in the expensive direction on the model it was not chosen for.
 MODEL_CONTEXT_TOKENS = {
     "claude-sonnet-5": 1_000_000,
     # Absent until a review that resolved to it aborted on UnknownModelWindow.
@@ -176,8 +182,92 @@ MAX_DELTA_LIST_ENTRIES = 200
 MIN_DELTA_DIFF_BYTES = 2_048
 
 
+def _parse_context_tokens(raw: str) -> int | None:
+    """A `pi --list-models` context cell as an integer token count, or None.
+
+    Suffixes: K=1_000, M=1_000_000. Decimals are allowed. The result is
+    floored — overestimating a window is the expensive direction.
+    """
+    text = raw.strip()
+    if not text:
+        return None
+    multiplier = 1
+    suffix = text[-1]
+    if suffix in ("K", "k"):
+        multiplier = 1_000
+        text = text[:-1]
+    elif suffix in ("M", "m"):
+        multiplier = 1_000_000
+        text = text[:-1]
+    try:
+        amount = float(text)
+    except ValueError:
+        return None
+    if amount < 0:
+        return None
+    tokens = int(amount * multiplier)
+    if tokens <= 0:
+        return None
+    return tokens
+
+
+def _parse_pi_list_models(text: str) -> dict[str, int]:
+    """Model id -> context window, taking the minimum across providers.
+
+    Assumes the model column is a bare id — the same spelling a resolved
+    review model uses (`claude-haiku-4-5`), with no `@version` or
+    `provider/` decoration. A deployment whose provider lists ids that way
+    (`claude-haiku-4-5@20251001`, `xai/grok-4.6`) would never match here and
+    would fall through to `MODEL_CONTEXT_TOKENS` silently rather than loudly
+    — worth re-checking this assumption if the catalogue's own format ever
+    changes.
+    """
+    windows: dict[str, int] = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        tokens = _parse_context_tokens(parts[2])
+        if tokens is None:
+            continue
+        model = parts[1]
+        previous = windows.get(model)
+        if previous is None or tokens < previous:
+            windows[model] = tokens
+    return windows
+
+
+def _run_pi_list_models() -> str:
+    """Stdout of ``pi --list-models``, or empty when the catalogue cannot be read.
+
+    The empty string is a silent fallback, not an error: a review must still
+    budget against the recorded table when pi is absent, hung, or speaking a
+    format we do not parse. Raising would turn an optional live lookup into a
+    hard dependency on a binary the table exists to replace.
+    """
+    try:
+        result = core.proc.run(
+            ["pi", "--list-models"], timeout=core.timeouts.LOCAL,
+        )
+    except OSError:
+        # Not just FileNotFoundError: a `pi` present on disk but not
+        # executable raises PermissionError, another OSError subclass, and
+        # that must fall back the same way — the stated goal is that pi
+        # absent, hung, or unreadable is never a hard dependency.
+        return ""
+    if not result.ok:
+        return ""
+    return result.stdout
+
+
+@functools.cache
+def _pi_catalogue_windows() -> dict[str, int]:
+    """Parsed provider catalogue, populated at most once per process."""
+    return _parse_pi_list_models(_run_pi_list_models())
+
+
 class UnknownModelWindow(RuntimeError):
-    """A model that is neither on record nor a tier alias to fall back on.
+    """A model that is in neither pi's catalogue nor the fallback table.
 
     Raised rather than defaulted, because a model nobody has measured is as
     likely to be narrower than the alias floor as wider, and guessing wide is
@@ -188,10 +278,23 @@ class UnknownModelWindow(RuntimeError):
     def __init__(self, model: str, detail: str = ""):
         self.model = model
         if not detail:
-            known = ", ".join(sorted(MODEL_CONTEXT_TOKENS))
+            # Both sources, not just the fallback table: when the catalogue is
+            # readable it usually knows more models than MODEL_CONTEXT_TOKENS
+            # ever will, and a reader chasing a typo'd model name wants the
+            # full list this process could actually have resolved against.
+            catalogue = _pi_catalogue_windows()
+            known = ", ".join(sorted(set(MODEL_CONTEXT_TOKENS) | set(catalogue)))
+            # An empty catalogue means pi was absent, failed, or unparsed — not
+            # that it lacks the model — so the message must not claim it does.
+            where = (
+                "pi's provider catalogue or review.budget.MODEL_CONTEXT_TOKENS"
+                if catalogue else
+                "review.budget.MODEL_CONTEXT_TOKENS (pi's provider catalogue "
+                "could not be read)"
+            )
             detail = (
-                f"no context window on record for model {model!r} — add it to "
-                f"review.budget.MODEL_CONTEXT_TOKENS. Known models: {known}"
+                f"no context window on record for model {model!r} — not in "
+                f"{where}. Known models: {known}"
             )
         super().__init__(detail)
 
@@ -217,9 +320,12 @@ class UnknownModelWindow(RuntimeError):
 def model_window_tokens(model: str) -> int:
     """The context window ``model`` is budgeted against.
 
-    A concrete id is looked up; an unresolved tier alias takes the conservative
-    floor its tier guarantees. Anything else raises `UnknownModelWindow`.
+    Order: pi's provider catalogue, then `MODEL_CONTEXT_TOKENS`, then the
+    unresolved-alias floor. Anything else raises `UnknownModelWindow`.
     """
+    window = _pi_catalogue_windows().get(model)
+    if window is not None:
+        return window
     window = MODEL_CONTEXT_TOKENS.get(model)
     if window is not None:
         return window

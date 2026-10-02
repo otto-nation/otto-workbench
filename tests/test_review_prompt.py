@@ -39,7 +39,7 @@ from review.prompt_sections import (
     _build_omitted_guidance, _build_pr_header,
 )
 import review.registry
-from conftest import TEST_MODEL, model_budget_bytes
+from conftest import TEST_MODEL, _REAL_RUN_PI_LIST_MODELS, model_budget_bytes
 from pr.ci_failures import FailureGroup, FailureItem, FailureKind, RunState
 from pr.domains import CIDomain
 
@@ -1195,8 +1195,9 @@ class TestTheBudgetComesFromTheModel:
     def test_an_unknown_model_names_the_ones_on_record(self):
         from review.budget import UnknownModelWindow
 
-        with pytest.raises(UnknownModelWindow, match="claude-sonnet-5"):
+        with pytest.raises(UnknownModelWindow, match="claude-sonnet-5") as caught:
             prompt_budget_bytes("gpt-5")
+        assert "catalogue" in str(caught.value)
 
     def test_the_record_says_which_model_the_budget_came_from(
         self, tmp_path, monkeypatch,
@@ -1261,6 +1262,131 @@ class TestTheBudgetComesFromTheModel:
         assert "claude-sonnet-4-6" in str(exc)
         assert exc.budget_bytes == 464_000
         assert exc.model == "claude-sonnet-4-6"
+
+
+class TestTheWindowPrefersPisCatalogue:
+    """The live provider catalogue is the source; the table is the fallback.
+
+    `MODEL_CONTEXT_TOKENS` copies figures from `pi --list-models`. Reading the
+    catalogue itself means a model pi already knows does not have to be copied
+    here before a review can budget against it.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_catalogue_cache(self):
+        from review.budget import _pi_catalogue_windows
+
+        _pi_catalogue_windows.cache_clear()
+        yield
+        _pi_catalogue_windows.cache_clear()
+
+    def test_the_parser_reads_k_and_m_and_rounds_down(self):
+        """Overestimating a window is the expensive direction, so floor."""
+        from review.budget import _parse_context_tokens
+
+        assert _parse_context_tokens("200K") == 200_000
+        assert _parse_context_tokens("1M") == 1_000_000
+        assert _parse_context_tokens("1.0M") == 1_000_000
+        assert _parse_context_tokens("65.5K") == 65_500
+        assert _parse_context_tokens("1.9") == 1
+        assert _parse_context_tokens("context") is None
+
+    def test_a_catalogue_hit_wins_over_the_table(self, monkeypatch):
+        """A live figure is what the model will actually hold."""
+        import review.budget
+        from review.budget import MODEL_CONTEXT_TOKENS, model_window_tokens
+
+        assert MODEL_CONTEXT_TOKENS["claude-sonnet-5"] == 1_000_000
+        monkeypatch.setattr(review.budget, "_run_pi_list_models", lambda: (
+            "provider model context max-out thinking images\n"
+            "google-vertex-claude claude-sonnet-5 500K 128K yes yes\n"
+        ))
+        assert model_window_tokens("claude-sonnet-5") == 500_000
+
+    def test_a_catalogue_miss_falls_back_to_the_table(self, monkeypatch):
+        import review.budget
+        from review.budget import MODEL_CONTEXT_TOKENS, model_window_tokens
+
+        monkeypatch.setattr(review.budget, "_run_pi_list_models", lambda: (
+            "provider model context max-out thinking images\n"
+            "google-vertex gemini-2.5-flash 1.0M 65.5K yes yes\n"
+        ))
+        assert model_window_tokens("claude-sonnet-4-6") == MODEL_CONTEXT_TOKENS[
+            "claude-sonnet-4-6"
+        ]
+
+    def test_an_unusable_catalogue_falls_back_to_the_table(self, monkeypatch):
+        """pi absent, failing, or unparseable must not change today's fallback.
+
+        The table and UnknownModelWindow are the contract when the catalogue
+        cannot be read; raising would make an optional lookup a hard dependency.
+        """
+        import core.proc
+        import review.budget
+        from core.proc import CmdResult
+        from review.budget import MODEL_CONTEXT_TOKENS, model_window_tokens
+
+        model = "claude-sonnet-4-6"
+        expected = MODEL_CONTEXT_TOKENS[model]
+        monkeypatch.setattr(
+            review.budget, "_run_pi_list_models", _REAL_RUN_PI_LIST_MODELS,
+        )
+
+        def missing(*_a, **_k):
+            raise FileNotFoundError("pi")
+
+        def not_executable(*_a, **_k):
+            raise PermissionError("pi")
+
+        for run in (
+            missing,
+            not_executable,
+            lambda *_a, **_k: CmdResult(returncode=1),
+            lambda *_a, **_k: CmdResult(returncode=0, stdout="not a table"),
+            lambda *_a, **_k: CmdResult(returncode=0, stdout=""),
+        ):
+            monkeypatch.setattr(core.proc, "run", run)
+            review.budget._pi_catalogue_windows.cache_clear()
+            assert model_window_tokens(model) == expected
+
+    def test_an_unknown_model_names_catalogue_models_too(self, monkeypatch):
+        """A typo'd model's error should not undersell what's actually known.
+
+        MODEL_CONTEXT_TOKENS alone is a narrower list than a readable
+        catalogue usually offers; the message should name both.
+        """
+        import review.budget
+        from review.budget import UnknownModelWindow, prompt_budget_bytes
+
+        monkeypatch.setattr(review.budget, "_run_pi_list_models", lambda: (
+            "provider model context max-out thinking images\n"
+            "xai grok-4.6 120K 32K yes no\n"
+        ))
+        with pytest.raises(UnknownModelWindow) as caught:
+            prompt_budget_bytes("gpt-5")
+        assert "grok-4.6" in str(caught.value)
+
+    def test_an_unreadable_catalogue_is_not_blamed_on_the_model(self):
+        """With no catalogue (the autouse fixture's default), say it was unreadable."""
+        from review.budget import UnknownModelWindow, prompt_budget_bytes
+
+        with pytest.raises(UnknownModelWindow) as caught:
+            prompt_budget_bytes("gpt-5")
+        message = str(caught.value)
+        assert "could not be read" in message
+        assert "not in pi's provider catalogue" not in message
+
+    def test_the_narrowest_window_wins_across_providers(self, monkeypatch):
+        """The same id under two providers is only as wide as the smaller."""
+        import review.budget
+        from review.budget import model_window_tokens
+
+        monkeypatch.setattr(review.budget, "_run_pi_list_models", lambda: (
+            "provider model context max-out thinking images\n"
+            "google-vertex-grok grok-4.6 120K 32K yes no\n"
+            "xai grok-4.6 500K 500K yes yes\n"
+        ))
+        assert model_window_tokens("grok-4.6") == 120_000
 
 
 class TestCollectionBudgetsForEveryPhase:

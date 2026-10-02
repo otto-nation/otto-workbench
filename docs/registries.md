@@ -53,7 +53,8 @@ tools:
     permission: true                 # required — see below
     visibility: full                 # required — see below
     when_to_use: "Searching files"   # required when visibility: full
-    usage: "rg pattern | rg -t py"   # required when visibility: full
+    usage: "rg pattern | rg -t py"   # required when visibility: full, unless parser is set
+    parser: cli.rg:build_parser      # optional — bindir registries only, see below
     docs: https://github.com/...     # optional
     brew_name: ripgrep               # optional — override for brewfile validation
     reference: false                 # optional — bindir registries only, see below
@@ -82,6 +83,8 @@ tools:
 | `hidden` | omitted from AI context |
 
 `when_to_use` and `usage` are required when `visibility: full` and forbidden otherwise.
+
+`parser` names where a Python CLI's argparse parser is built — `<module>:<attr>` for a module importable from `ai/lib`, or `<path>:<attr>` for a script whose parser lives in the script itself (`ai/bin/otto-log:build_parser`). The attribute may return an `ArgumentParser` or a `core.cli_reference.CLIShape`; `pr` returns the latter, assembled from its global flags and each command's own parser. Everything that would otherwise restate the CLI's flags is then rendered from it by [`bin/local/generate-cli-reference`](../bin/local/generate-cli-reference): the `usage` line in `tools.generated.md` and the MCP tool description, and the flag tables under the script's section in the [script reference](tools.md#script-reference). A `usage` beside a `parser` is rejected, because it would be a second copy free to drift from the first — the drift that once left `pr create` out of the usage agents read and `--base` off three of `pr rebase`'s four descriptions.
 
 `reference` decides whether a script gets a section in the [script reference](tools.md#script-reference), which `generate-doc-reference --set scripts` renders from the script's own header — the `#` block under the shebang, or a Python script's docstring. It is read only in `bindir` registries outside the `workbench` scope, and `validate-registries` rejects it anywhere else. Omitted, it follows `visibility`: a `full` or `brief` tool is in the reference and a `hidden` one is out, so leaving a user-facing script undocumented takes `reference: false`, and documenting an internal one takes `reference: true`. A tool in the reference whose script has no header fails the build.
 

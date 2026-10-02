@@ -185,6 +185,12 @@ _render_subcommands() {
 _tool_md_entry() {
   local name="$1" description="$2" when_to_use="$3" usage="$4"
   local file="${6:-}" index="${7:-}"
+  # An entry with a `parser:` has its usage rendered from that parser, so the
+  # line agents read cannot advertise less than the CLI accepts. A render that
+  # fails stops the run: a missing usage line is the drift this replaces.
+  if [[ -n "$file" && -n "$(reg_get "$file" tools "$index" parser)" ]]; then
+    usage="$(REGISTRY_ROOT="${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$REPO_ROOT/bin/local/generate-cli-reference" --tool "$name" --emit usage)" || return 1
+  fi
   printf '\n### %s\n' "$name"
   printf '%s\n' "$description"
   printf -- '- **When to use**: %s\n' "$when_to_use"
@@ -478,6 +484,7 @@ _emit_skill_reference() {
     # shellcheck disable=SC2016  # backticks are markdown literals
     printf '\n### `%s`\n\n' "$invocation"
     printf '%s\n\n' "$skill_desc"
+    # shellcheck disable=SC2016  # backticks are markdown literals
     printf '```\n%s\n```\n' "$invocation"
 
     if [[ -n "$output" ]]; then

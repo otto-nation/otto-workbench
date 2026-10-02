@@ -357,18 +357,24 @@ def _resolve_workbench(raw: str) -> Path:
     return Path(os.path.expanduser(raw)).resolve()
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     default_wb = os.environ.get(WORKBENCH_ENV_VAR, DEFAULT_WORKBENCH)
-
     parser = argparse.ArgumentParser(
+        prog=SCRIPT,
         description="Scan memories and workbench artifacts for promotion evaluation.",
         usage="promote-scan [--home DIR] [--workbench DIR]",
     )
     parser.add_argument("-V", "--version", action="store_true", help="print version and exit")
-    parser.add_argument("--home", type=str, default=os.environ.get("HOME", ""), help="home directory override (for testing)")
-    parser.add_argument("--workbench", type=str, default=default_wb, help=f"workbench directory (default: ${WORKBENCH_ENV_VAR} or {DEFAULT_WORKBENCH})")
+    parser.add_argument("--home", type=str, default=os.environ.get("HOME", ""), metavar="DIR",
+                        help="home directory override (for testing)")
+    parser.add_argument("--workbench", type=str, default=default_wb, metavar="DIR",
+                        help=f"workbench directory (default: ${WORKBENCH_ENV_VAR} or {DEFAULT_WORKBENCH})")
     add_trail_args(parser)
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
 
     if args.version:
         print(_version_string(SCRIPT))

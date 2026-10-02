@@ -331,8 +331,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="PR review threads. Phase flags (--triage/--fix/--finish/"
                     "--reply/--settle) pick the work; --post publishes it.")
-    parser.add_argument("--pr", help="PR number")
-    parser.add_argument("--branch", help="Branch name (resolved via resolve-branch)")
+    parser.add_argument("--pr", metavar="NUM|URL", help="PR number or URL")
+    parser.add_argument("--branch", metavar="NAME",
+                        help="Branch name (resolved via resolve-branch)")
     parser.add_argument("--triage", action="store_true",
                         help="Phase: classify threads via AI and auto-resolve verified")
     parser.add_argument("--fix", action="store_true",
@@ -357,7 +358,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Gate, not a phase: publish whatever the chosen phase "
                              "produced — replies, summaries, resolutions "
                              "(default: print drafts to stderr and post nothing)")
-    parser.add_argument("--repo-dir", "--worktree",
+    parser.add_argument("--repo-dir", "--worktree", metavar="PATH",
                         help="Git worktree directory (skips git toplevel detection)")
     parser.add_argument("--reply", metavar="THREAD_OR_COMMENT_ID",
                         help="Reply to one thread, editing our standing reply if it "

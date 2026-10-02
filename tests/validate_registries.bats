@@ -1438,6 +1438,71 @@ EOF
   [[ "$output" == *"field 'reference' is read only"* ]]
 }
 
+# ── Parser field validation ───────────────────────────────────────────────────
+
+# _bin_with_parser VISIBILITY EXTRA — a bindir registry whose mytool declares a
+# parser, plus EXTRA lines (already indented) on the same entry.
+_bin_with_parser() {
+  cat > "$TMPDIR/bin/registry.yml" << EOF
+meta:
+  section: "Workbench Scripts"
+  validation: bindir
+  source: bin
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: $1
+    description: "A script"
+    parser: cli.mytool:build_parser
+$2
+  - name: othertool
+    permission: false
+    visibility: hidden
+    description: "Another script"
+EOF
+}
+
+@test "a full tool with a parser needs no usage" {
+  _bin_with_parser full '    when_to_use: "When needed"'
+  run main
+  [ "$status" -eq 0 ]
+}
+
+@test "a usage beside a parser fails — it would be a second copy" {
+  _bin_with_parser full '    when_to_use: "When needed"
+    usage: "mytool --help"'
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"field 'usage' is not allowed beside 'parser'"* ]]
+}
+
+@test "a full tool with neither usage nor parser fails" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  validation: none
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: full
+    description: "A script"
+    when_to_use: "When needed"
+EOF
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"missing required field: usage or parser"* ]]
+}
+
+@test "a malformed parser spec fails" {
+  _bin_with_parser brief ''
+  sed -i.bak 's/parser: cli.mytool:build_parser/parser: cli.mytool/' "$TMPDIR/bin/registry.yml"
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"parser must be <module-or-path>:<attr>"* ]]
+}
+
 # ── Commands field validation ─────────────────────────────────────────────────
 
 @test "passes with valid commands field" {

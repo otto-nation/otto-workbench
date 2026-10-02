@@ -190,15 +190,23 @@ def _resolve_diff_files(base_ref: str, repo_root: str):
     return sorted(result, key=lambda t: t[0])
 
 
-def main():
-    parser = argparse.ArgumentParser(description='Validate script nesting depth.')
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog='validate-nesting',
+        description='Validate script nesting depth.',
+    )
     parser.add_argument('--quiet', action='store_true', help='Only show failures and summary')
-    parser.add_argument('--max-depth', type=int, default=None,
+    parser.add_argument('--max-depth', type=int, default=None, metavar='N',
                         help='Maximum nesting depth (overrides per-language defaults)')
     parser.add_argument('--diff', metavar='BASE_REF',
                         help='Only check violations in lines added since BASE_REF')
-    parser.add_argument('files', nargs='*', help='Files to check (auto-discovers if omitted)')
-    args = parser.parse_args()
+    parser.add_argument('files', nargs='*', metavar='FILE',
+                        help='Files to check (auto-discovers if omitted)')
+    return parser
+
+
+def main():
+    args = build_parser().parse_args()
 
     if args.diff and args.files:
         print('error: --diff and positional files are mutually exclusive', file=sys.stderr)

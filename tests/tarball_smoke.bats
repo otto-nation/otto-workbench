@@ -108,6 +108,12 @@ teardown() {
   [[ "$output" == *"$TEST_VERSION"* ]]
 }
 
+@test "retro-consume runs from the tarball layout" {
+  run "$TARBALL_ROOT/bin/retro-consume" --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"retro-consume"* ]]
+}
+
 # ── 7. review-orchestrate Python imports ────────────────────────────────────
 
 @test "review-orchestrate Python imports succeed from tarball layout" {

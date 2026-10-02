@@ -14,17 +14,20 @@ completion presents the scan ID it believes it is completing. A record that
 does not answer to that ID is refused rather than honoured, and an entry whose
 review has changed since the scan is left alone rather than deleted.
 
-Writing it is `retro-scan`'s under `--consume`; reading and enforcing it is
-`retro-consume`'s, which the skill calls in place of an inline `rm`.
+Writing the record is `retro.scan`'s (run by `retro-scan --consume`), and
+reading and enforcing it is `consume()` below (run by `retro-consume`, which
+the skill calls in place of an inline `rm`).
 """
 
 # doc-group: platform
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import core.log
 import core.serde
 import core.workbench_paths
 
@@ -141,3 +144,66 @@ def _reviewed_at(review_dir: Path) -> str:
         meta=read_review_meta(review_dir),
     )
     return entry.reviewed_at
+
+
+def consume(scan_id: str, *, dry_run: bool = False) -> int:
+    """Delete the reviews this scan recorded, if the record answers to it.
+
+    Returns 0 when done or when there is nothing to do, and 1 when the
+    record belongs to another scan.
+    """
+    record = read_record()
+    if record is None:
+        # Not an error. A retro whose scan consumed nothing, or one run before
+        # this record existed, has nothing to clean up and should not fail the
+        # completion over it.
+        core.log.info("No consume record — nothing to clean up")
+        return 0
+
+    if record.scan_id != scan_id:
+        core.log.error(
+            f"Consume record belongs to scan {record.scan_id}, not {scan_id} "
+            f"— refusing to delete {len(record.reviews)} review(s) this retro did not scan. "
+            f"Trace it with `otto-log show {record.scan_id}`."
+        )
+        return 1
+
+    reviews_dir = core.workbench_paths.reviews_dir()
+    targets, skipped = deletable(record, reviews_dir)
+    for reason in skipped:
+        core.log.warn(f"Keeping {reason}")
+
+    if dry_run:
+        for target in targets:
+            core.log.info(f"Would delete {target.name}")
+        core.log.info(f"{len(targets)} review(s) would be deleted, {len(skipped)} kept")
+        return 0
+
+    deleted = 0
+    raced = 0
+    for target in targets:
+        try:
+            shutil.rmtree(target)
+            deleted += 1
+        except FileNotFoundError:
+            # Gone since deletable()'s is_dir() check — a concurrent sweep
+            # (e.g. `pr gc`) beat this run to it. The record stays until
+            # clear_record() below, so a re-run with the same scan ID skips
+            # it as already gone rather than losing track of it.
+            raced += 1
+            core.log.warn(f"{target.name}: gone before deletion — already removed")
+
+    # Cleared only after the deletions it authorised have happened. A crash
+    # part-way leaves the record in place, so the next run with the same scan
+    # ID deletes the remainder rather than losing track of it — the entries
+    # already gone are skipped as missing.
+    clear_record()
+    # The raced clause only appears when it has something to report. A run that
+    # hit no race is the overwhelmingly common one, and "0 raced" on every line
+    # of a tool's normal output is noise that trains the reader past the clause
+    # for the run where it is not zero.
+    summary = f"Deleted {deleted} consumed review(s), kept {len(skipped)}"
+    if raced:
+        summary += f", {raced} raced (removed concurrently)"
+    core.log.ok(summary)
+    return 0

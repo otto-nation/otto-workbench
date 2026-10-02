@@ -128,6 +128,7 @@ teardown() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"retro-scan"* ]]
 }
+
 # ── 7. review-orchestrate Python imports ────────────────────────────────────
 
 @test "review-orchestrate Python imports succeed from tarball layout" {

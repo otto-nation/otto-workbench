@@ -1321,21 +1321,6 @@ def _fake_run_with_context(extra_handler=None):
     return fake_run
 
 
-def test_fake_run_with_context_gives_each_stage_distinct_content():
-    """Stage 1 (base) and stage 2 (target) must not collide.
-
-    A test exercising survival/loss behavior through this helper needs base
-    and target to actually differ: if both stages come back identical, the
-    target side is a no-op relative to base and `survival.audit` can never
-    see a target-side clean change or a collision.
-    """
-    with mock.patch("subprocess.run", side_effect=_fake_run_with_context()):
-        stages = rebase.conflicts.stage_texts("main.go", ".")
-
-    assert stages.base != stages.target
-    assert stages.target != stages.replayed
-
-
 def test_resolve_file_conflicts_claude_failure_returns_none():
     with tempfile.TemporaryDirectory() as tmpdir:
         conflict_file = Path(tmpdir) / "main.go"

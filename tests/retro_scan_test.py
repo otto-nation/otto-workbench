@@ -239,3 +239,27 @@ def test_a_registry_resolving_to_nothing_returns_1_rather_than_exiting(
 ):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
     assert retro.scan.run_scan(str(tmp_path), str(tmp_path / "wb")) == 1
+
+
+def test_cli_refuses_to_run_without_a_workbench(monkeypatch, capsys):
+    """No env var and no checkout to fall back on is a usage error, not a scan of '.'."""
+    import cli.retro_scan
+    monkeypatch.delenv("OTTO_WORKBENCH", raising=False)
+    monkeypatch.setattr(cli.retro_scan.core.workbench_paths, "source_checkout", lambda: None)
+    assert cli.retro_scan.main([]) == 2
+    assert "--workbench" in capsys.readouterr().err
+
+
+def test_cli_defaults_to_the_checkout_it_runs_from(monkeypatch, tmp_path):
+    import cli.retro_scan
+    monkeypatch.delenv("OTTO_WORKBENCH", raising=False)
+    seen = {}
+
+    def fake_run_scan(home, workbench, **_):
+        seen["wb"] = workbench
+        return 0
+
+    monkeypatch.setattr(cli.retro_scan.retro.scan, "run_scan", fake_run_scan)
+    monkeypatch.setattr(cli.retro_scan.core.workbench_paths, "source_checkout", lambda: tmp_path)
+    cli.retro_scan.main([])
+    assert seen["wb"] == str(tmp_path)

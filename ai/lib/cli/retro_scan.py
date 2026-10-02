@@ -17,15 +17,16 @@ from pathlib import Path
 
 import core.log
 import core.version
+import core.workbench_paths
 import retro.scan
 from core.trail import add_trail_args
 
-DEFAULT_WORKBENCH = "~/git/personal/otto-nation/otto-workbench/main"
 WORKBENCH_ENV_VAR = "OTTO_WORKBENCH"
 
 
 def main(argv: list[str] | None = None) -> int:
-    default_wb = os.environ.get(WORKBENCH_ENV_VAR, DEFAULT_WORKBENCH)
+    checkout = core.workbench_paths.source_checkout()
+    default_wb = os.environ.get(WORKBENCH_ENV_VAR) or (str(checkout) if checkout else None)
 
     parser = argparse.ArgumentParser(
         description="Scan PR review comments and cross-reference against coding rules.",
@@ -33,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("-V", "--version", action="store_true", help="print version and exit")
     parser.add_argument("--home", type=str, default=str(Path.home()), help="home directory override")
-    parser.add_argument("--workbench", type=str, default=default_wb, help=f"workbench directory (default: ${WORKBENCH_ENV_VAR} or {DEFAULT_WORKBENCH})")
+    parser.add_argument("--workbench", type=str, default=default_wb, help=f"workbench directory (default: ${WORKBENCH_ENV_VAR}, else the checkout this runs from)")
     parser.add_argument("--since", type=str, default=None, help="override scan window (e.g. 7d, 24h, 30m)")
     parser.add_argument(
         "--consume", action="store_true",
@@ -45,6 +46,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.version:
         print(core.version.version_string(retro.scan.SCRIPT))
         return 0
+
+    if not args.workbench:
+        core.log.error(f"no workbench checkout found: pass --workbench or set {WORKBENCH_ENV_VAR}")
+        return 2
 
     if args.consume and args.since:
         # --since is the debugging and historical-analysis window, and a scan

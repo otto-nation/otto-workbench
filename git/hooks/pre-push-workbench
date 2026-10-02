@@ -366,6 +366,10 @@ if [[ -n "$_bats_selected" ]]; then
 fi
 
 _step "Running $_bats_label"
+# End the step line now: run-tests streams its parallelism report and
+# heartbeats on stderr while it runs, and they would otherwise be glued onto
+# this line. The ✓ or ✗ then closes the step on a line of its own.
+echo
 _bats_start=$SECONDS
 # stdout only: stderr carries the heartbeat and the parallelism report, which
 # have to stream or a slow suite still looks stuck. TAP stays on stdout.
@@ -435,6 +439,8 @@ else
   fi
 
   _step "Running $_pytest_label"
+  # Same as the bats step: stderr streams below this line.
+  echo
   _pytest_start=$SECONDS
   # stdout only — see the bats capture above. The summary line the count is
   # parsed from stays on stdout; heartbeats stream on stderr.

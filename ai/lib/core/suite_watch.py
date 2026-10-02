@@ -114,24 +114,53 @@ def format_duration(seconds: int) -> str:
     return f"{hours}h{minutes:02d}m{secs:02d}s"
 
 
+def collapse_inflight(running: list[Inflight]) -> list[tuple[str, int, int]]:
+    """``(name, count, oldest_age_s)`` per distinct name, oldest first.
+
+    bats runs a file's tests in parallel, so one file shows up once per test
+    process in flight. Listing each one buries the signal — which file has been
+    running longest — under copies of the same name.
+    """
+    grouped: dict[str, tuple[int, int]] = {}
+    for item in running:
+        count, oldest = grouped.get(item.name, (0, 0))
+        grouped[item.name] = (count + 1, max(oldest, item.age_s))
+    return sorted(
+        ((name, count, oldest) for name, (count, oldest) in grouped.items()),
+        key=lambda entry: (-entry[2], entry[0]),
+    )
+
+
 def format_heartbeat(
     suite: str,
     elapsed_s: int,
     jobs: int | None,
     running: list[Inflight],
+    asleep_s: int = 0,
 ) -> str:
-    """One stderr line naming the suite, elapsed time, jobs, and in-flight work."""
+    """One stderr line naming the suite, elapsed time, jobs, and in-flight work.
+
+    ``asleep_s`` is how much of ``elapsed_s`` the machine spent suspended. It
+    is named whenever it is non-zero: a laptop that slept mid-run produces a
+    suite that looks stalled and in-flight ages that jump by the length of the
+    nap, and without this the heartbeat reads exactly like a wedge.
+    """
     jobs_part = f", {jobs} jobs" if jobs is not None else ""
+    asleep_part = (
+        f" (machine asleep for {format_duration(asleep_s)} of it)"
+        if asleep_s > 0 else ""
+    )
     if running:
         items = ", ".join(
-            f"{item.name} ({format_duration(item.age_s)})" for item in running
+            f"{name}{f' ×{count}' if count > 1 else ''} ({format_duration(age)})"
+            for name, count, age in collapse_inflight(running)
         )
         running_part = f" — running: {items}"
     else:
         running_part = " — running: (none)"
     return (
         f"{_HEARTBEAT_PREFIX} {suite}: {format_duration(elapsed_s)} elapsed"
-        f"{jobs_part}{running_part}"
+        f"{asleep_part}{jobs_part}{running_part}"
     )
 
 
@@ -300,6 +329,40 @@ def _spawn(child: list[str], env: dict[str, str]) -> subprocess.Popen | None:
         return None
 
 
+@dataclass(frozen=True)
+class Elapsed:
+    """Wall time since the suite started, and how much of it was asleep."""
+
+    wall_s: int
+    asleep_s: int
+
+
+@dataclass(frozen=True)
+class _Clocks:
+    """A wall-clock and a monotonic reading taken together.
+
+    The monotonic clock stops while the machine is suspended (on macOS and
+    Linux alike) and the wall clock does not, so the gap between the two is
+    how long the run spent asleep. Elapsed is reported in wall time because
+    that is what `ps` ages and the reader's own clock are in.
+    """
+
+    wall: float
+    mono: float
+
+    @classmethod
+    def now(cls) -> "_Clocks":
+        return cls(time.time(), time.monotonic())
+
+    def since(self, interval: float) -> Elapsed:
+        """Time since these readings; a gap under one interval is jitter, not sleep."""
+        wall = time.time() - self.wall
+        asleep = wall - (time.monotonic() - self.mono)
+        if asleep < interval:
+            asleep = 0
+        return Elapsed(int(wall), int(asleep))
+
+
 def _wait_slice(proc: subprocess.Popen, interval: float) -> int | None:
     """Child exit code, or None if this heartbeat slice expired."""
     try:
@@ -313,7 +376,7 @@ def _heartbeat_until_done(
     suite: str,
     jobs: int | None,
     interval: float,
-    started: float,
+    started: _Clocks,
     status_dir: str | None,
 ) -> int:
     """Wait forever, printing a heartbeat each *interval* until the child exits."""
@@ -321,10 +384,12 @@ def _heartbeat_until_done(
         code = _wait_slice(proc, interval)
         if code is not None:
             return child_status(code)
-        elapsed = int(time.monotonic() - started)
+        elapsed = started.since(interval)
         running = inflight_for(suite, proc.pid, status_dir)
         print(
-            format_heartbeat(suite, elapsed, jobs, running),
+            format_heartbeat(
+                suite, elapsed.wall_s, jobs, running, elapsed.asleep_s,
+            ),
             file=sys.stderr,
             flush=True,
         )
@@ -357,7 +422,7 @@ def run_supervised(
         if interval > 0:
             status_dir = tempfile.mkdtemp(prefix="suite-watch-")
             env[STATUS_ENV] = status_dir
-        started = time.monotonic()
+        started = _Clocks.now()
         # Entered before the spawn, which is what makes a signal landing early
         # deferred rather than dropped.
         with core.signal_relay.forwarding_signals() as relay:

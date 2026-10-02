@@ -93,6 +93,45 @@ def test_format_heartbeat_without_inflight_still_says_so():
     assert not line.startswith(("ok", "not ok", "#", "1.."))
 
 
+def test_format_heartbeat_collapses_one_file_running_several_tests():
+    line = format_heartbeat(
+        "bats", 300, 12,
+        [
+            Inflight("wt_cleanup.bats", 30),
+            Inflight("claude_settings.bats", 7),
+            Inflight("claude_settings.bats", 281),
+            Inflight("claude_settings.bats", 44),
+        ],
+    )
+    assert line.endswith(
+        "running: claude_settings.bats ×3 (4m41s), wt_cleanup.bats (30s)"
+    )
+
+
+def test_format_heartbeat_names_time_the_machine_spent_asleep():
+    line = format_heartbeat("bats", 1260, 2, [], asleep_s=330)
+    assert "21m00s elapsed (machine asleep for 5m30s of it), 2 jobs" in line
+
+
+def test_a_suspend_shows_up_as_asleep_time(monkeypatch):
+    import core.suite_watch as sw
+
+    started = sw._Clocks(wall=1000.0, mono=50.0)
+    # 600s of wall time passed, but the monotonic clock only saw 240s of it.
+    monkeypatch.setattr(sw.time, "time", lambda: 1600.0)
+    monkeypatch.setattr(sw.time, "monotonic", lambda: 290.0)
+    assert started.since(60) == sw.Elapsed(wall_s=600, asleep_s=360)
+
+
+def test_clock_jitter_under_one_interval_is_not_sleep(monkeypatch):
+    import core.suite_watch as sw
+
+    started = sw._Clocks(wall=1000.0, mono=50.0)
+    monkeypatch.setattr(sw.time, "time", lambda: 1120.5)
+    monkeypatch.setattr(sw.time, "monotonic", lambda: 170.0)
+    assert started.since(60) == sw.Elapsed(wall_s=120, asleep_s=0)
+
+
 def test_heartbeat_interval_defaults_and_disables():
     assert heartbeat_interval("") == 60.0
     assert heartbeat_interval(None) == 60.0

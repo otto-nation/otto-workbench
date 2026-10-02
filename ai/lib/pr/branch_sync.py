@@ -27,11 +27,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import git.client
 import git.push
 from core.proc import CmdResult
 from git.push import PushResult, PushStatus
+
+if TYPE_CHECKING:
+    from core.trail import Trail
 
 # `git_remote` is a workbench-wide module rather than an `ai/lib` one. In a
 # checkout that is one directory up; in the otto-ai-tools tarball, which
@@ -76,15 +80,14 @@ class SyncResult:
 
     @property
     def ok(self) -> bool:
-        """Safe to open the PR: pushed, already there, or unverified (D9)."""
-        if self.outcome in {
+        """Safe to open the PR: pushed, already there, or unverified (D9).
+
+        An unverified push carries the outcome it was attempting —
+        ``PUSHED`` or ``PUSHED_NEW`` — so the outcome alone answers D9.
+        """
+        return self.outcome in {
             SyncOutcome.PUSHED_NEW, SyncOutcome.PUSHED, SyncOutcome.UP_TO_DATE,
-        }:
-            return True
-        return (
-            self.push is not None
-            and self.push.status is PushStatus.UNVERIFIED
-        )
+        }
 
 
 def _emit(msg: str) -> None:
@@ -131,11 +134,12 @@ def _push(
     outcome: SyncOutcome,
     message: str,
     log: Callable[[str], None],
+    trail: Trail | None,
 ) -> SyncResult:
     if message:
         log(message)
     result = git.push.push(
-        wt, gated=False, branch=branch, remote=remote, args=args,
+        wt, gated=False, branch=branch, remote=remote, args=args, trail=trail,
     )
     if result.status in _FAILED:
         return SyncResult(SyncOutcome.FAILED, result.output or message, result)
@@ -151,6 +155,7 @@ def sync_branch(
     no_verify: bool,
     remote: str = GIT_REMOTE,
     log: Callable[[str], None] | None = None,
+    trail: Trail | None = None,
 ) -> SyncResult:
     """Push *branch* from *wt* when local is ahead or the ref is new.
 
@@ -158,7 +163,8 @@ def sync_branch(
     operator sees ``→ Pushing new branch…`` while git is still in flight.
     The same wording is on ``SyncResult.message`` for the caller to print
     after. Defaults to stderr, not ``core.log.info``, because the strings
-    already carry their own →/✓/✗ prefix.
+    already carry their own →/✓/✗ prefix. ``trail`` is handed to
+    ``git.push.push`` so the push is recorded on the caller's trail.
     """
     emit = log or _emit
     nv = _nv(no_verify)
@@ -172,7 +178,7 @@ def sync_branch(
         return _push(
             wt, branch, remote=remote,
             args=("--set-upstream", remote, branch, *nv),
-            outcome=SyncOutcome.PUSHED_NEW, message=MSG_NEW, log=emit,
+            outcome=SyncOutcome.PUSHED_NEW, message=MSG_NEW, log=emit, trail=trail,
         )
 
     fetched = git.client.run("fetch", remote, branch, "--quiet", cwd=wt)
@@ -184,7 +190,7 @@ def sync_branch(
         return _push(
             wt, branch, remote=remote,
             args=(*nv, remote, branch),
-            outcome=SyncOutcome.PUSHED, message="", log=emit,
+            outcome=SyncOutcome.PUSHED, message="", log=emit, trail=trail,
         )
 
     # Read through `run`, not `out`: `out` answers "" on failure, so two failed
@@ -206,6 +212,6 @@ def sync_branch(
         return _push(
             wt, branch, remote=remote,
             args=(*nv, remote, branch),
-            outcome=SyncOutcome.PUSHED, message=MSG_AHEAD, log=emit,
+            outcome=SyncOutcome.PUSHED, message=MSG_AHEAD, log=emit, trail=trail,
         )
     return SyncResult(SyncOutcome.DIVERGED, MSG_DIVERGED, None)

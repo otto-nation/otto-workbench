@@ -71,7 +71,8 @@ tasks:
     # The third stands for a silence: lib/config_cli.py is read at
     # lib/ai/pr.sh:314, which discards stderr and returns 0, so a checkout
     # missing it loses issue-provider resolution and reports nothing at all.
-    # Late or silent is what earns a path a place in this list.
+    # The other three each earn their place for a reason given below: a
+    # failure that is late, or that names $WORKBENCH_ROOT rather than the pin.
     #
     # The fourth, lib/gitenv.sh, is sourced directly at pr.sh:19 rather than
     # reached mid-run, so on its own it would belong with the excluded

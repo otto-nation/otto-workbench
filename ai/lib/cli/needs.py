@@ -144,7 +144,7 @@ def review_modes(argv: Sequence[str], modes: Mapping[str, ReviewMode]) -> list[s
 def review_need(argv: Sequence[str], modes: Mapping[str, ReviewMode]) -> Need:
     """`review`'s need, which its mode flag decides.
 
-    The one command that declares a callable rather than a constant. A mode
+    One of the commands that declare a callable rather than a constant. A mode
     flag means the subject is a review that already exists, and a bare `review`
     means the subject is the branch — which is the whole of why the fetch
     differs between them. Reading the declaration off the mode table is what

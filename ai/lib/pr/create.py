@@ -27,8 +27,10 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import config.workbench_config
+import core.proc
 import core.timeouts
 import gh.client
 import git.client
@@ -41,6 +43,9 @@ from pr.branch_sync import SyncOutcome
 from pr.close_refs import CloseRefError, normalise, stage
 from pr.context import ResolvedContext
 from pr.create_content import ContentError, ContentRequest
+
+if TYPE_CHECKING:
+    from core.trail import Trail
 
 # `git_remote` is a workbench-wide module rather than an `ai/lib` one; see
 # `pr.branch_sync` for the path arithmetic, which is the same here.
@@ -105,8 +110,16 @@ def _base_refusal(base: str, default: str, *, explicit: bool) -> str:
 
 
 def _closes(raw: tuple[str, ...], wt: Path) -> tuple[str, ...]:
-    """Normalise every ``--closes`` value; raises CloseRefError on the first bad one."""
-    provider = config.workbench_config.load_config_or_default(wt).issues.provider
+    """Normalise every ``--closes`` value; raises CloseRefError on the first bad one.
+
+    The provider decides what a ref may be, so a config that cannot be read
+    raises ConfigError rather than defaulting: a guessed provider would accept
+    or refuse refs the operator's tracker would not. Read only when there are
+    refs to judge, so a broken config costs nothing to a create without any.
+    """
+    if not raw:
+        return ()
+    provider = config.workbench_config.load_config(wt).issues.provider
     refs: list[str] = []
     for value in raw:
         refs = stage(refs, normalise(value, provider))
@@ -116,18 +129,18 @@ def _closes(raw: tuple[str, ...], wt: Path) -> tuple[str, ...]:
 def _nesting_gate(wt: Path, base: str) -> bool:
     """Run ``validate-nesting`` over the diff from ``origin/<base>``; True when clean.
 
-    A gate that cannot start or does not answer in time is reported as one
-    that could not run — the same message as its own exit 2 — rather than as
-    a pass.
+    A gate that cannot start is reported as one that could not run — the
+    same message as its own exit 2 — rather than as a pass.
     """
     argv = ["validate-nesting", "--diff", f"{GIT_REMOTE}/{base}", "--quiet"]
     try:
+        # Unbounded: the gate parses every file the diff touches, so its cost is the input's.
         r = subprocess.run(
             argv, cwd=wt, capture_output=True, text=True,
-            timeout=core.timeouts.LOCAL,
+            timeout=core.timeouts.UNBOUNDED,
         )
         status, output = r.returncode, (r.stdout or "") + (r.stderr or "")
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except OSError as exc:
         status, output = _NESTING_COULD_NOT_RUN, str(exc)
     if status == 0:
         return True
@@ -140,12 +153,16 @@ def _nesting_gate(wt: Path, base: str) -> bool:
     return False
 
 
-def _sync(wt: Path, branch: str, *, no_verify: bool) -> bool:
-    result = pr.branch_sync.sync_branch(wt, branch, no_verify=no_verify, log=_say)
-    if result.outcome in _UNEMITTED:
-        _say(result.message)
+def _sync(wt: Path, branch: str, *, no_verify: bool, trail: Trail | None) -> bool:
+    result = pr.branch_sync.sync_branch(
+        wt, branch, no_verify=no_verify, log=_say, trail=trail,
+    )
+    # A failed push's message is its output, which `git.push.report` prints
+    # with the headline and resume command; printing it here too doubled it.
     if result.outcome is SyncOutcome.FAILED and result.push is not None:
         git.push.report(result.push, wt)
+    elif result.outcome in _UNEMITTED:
+        _say(result.message)
     return result.ok
 
 
@@ -194,32 +211,45 @@ def _preflight(
         return None
     try:
         return _closes(opts.closes, wt)
-    except CloseRefError as exc:
-        _say(str(exc))
+    except (CloseRefError, config.workbench_config.ConfigError) as exc:
+        _say(str(exc) if isinstance(exc, CloseRefError) else f"✗ {exc}")
         return None
 
 
-def _publishable(wt: Path, base: str, branch: str, opts: CreateOptions) -> bool:
+def _publishable(
+    wt: Path, base: str, branch: str, opts: CreateOptions, trail: Trail | None,
+) -> bool:
     """Token, nesting gate, push — the steps a dry run skips."""
     try:
         pr.gh_token.use_for_publishing(wt)
     except pr.gh_token.TokenNotConfigured as exc:
         print(exc.guidance, file=sys.stderr, flush=True)
         return False
+    except OSError as exc:
+        # The same wording as `pr.gh_token.main`: an unreadable credentials
+        # file is a fault to name, not a traceback.
+        path = exc.filename or "a GH_TOKEN config file"
+        _say(f"✗ Could not read {path}: {exc.strerror or exc}")
+        return False
     if not _nesting_gate(wt, base):
         return False
-    return _sync(wt, branch, no_verify=opts.no_verify)
+    return _sync(wt, branch, no_verify=opts.no_verify, trail=trail)
 
 
 def _gh_create(wt: Path, title: str, body: str, base: str, draft: bool) -> int:
     _say("→ Creating PR...")
+    # NETWORK, the tier gh.client keys on this argv: latency-bound, so a breach is a hang,
+    # but the write may have landed — hence the timeout's own message below.
     r = gh.client.run(
-        "pr", "create", "--title", title, "--body", body,
+        "pr", "create", "--title", title, "--body-file", "-",
         "--assignee", "@me", "--base", base,
         *(["--draft"] if draft else []),
-        cwd=wt,
+        cwd=wt, input_text=body,
     )
     output = r.combined_output
+    if r.returncode == core.proc.TIMEOUT_RETURNCODE:
+        _say("✗ gh pr create timed out — check gh pr view before retrying")
+        return 1
     if not r.ok:
         _say(f"✗ PR creation failed (gh exited {r.returncode})")
         _say(output.rstrip("\n"))
@@ -234,8 +264,13 @@ def _gh_create(wt: Path, title: str, body: str, base: str, draft: bool) -> int:
     return 0
 
 
-def run_create(ctx: ResolvedContext, opts: CreateOptions) -> int:
-    """Open the PR *opts* describes for ``ctx.branch``, or preview it. 0 on success."""
+def run_create(
+    ctx: ResolvedContext, opts: CreateOptions, *, trail: Trail | None = None,
+) -> int:
+    """Open the PR *opts* describes for ``ctx.branch``, or preview it. 0 on success.
+
+    *trail* is the dispatch's, threaded to the push so it is recorded there.
+    """
     wt = ctx.worktree_root
     branch = ctx.branch
     if wt is None:
@@ -248,7 +283,7 @@ def run_create(ctx: ResolvedContext, opts: CreateOptions) -> int:
         return 1
     base = opts.base or default
 
-    if not opts.dry_run and not _publishable(wt, base, branch, opts):
+    if not opts.dry_run and not _publishable(wt, base, branch, opts, trail):
         return 1
 
     _say(f"→ Analyzing changes: {branch}")

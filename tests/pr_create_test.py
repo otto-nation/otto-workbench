@@ -58,6 +58,7 @@ class Harness:
         self.events_file = tmp_path / "events.log"
         self.events_file.write_text("")
         self.gh_calls: list[tuple[str, ...]] = []
+        self.gh_inputs: list[str | None] = []
         self.gh_result = CmdResult(0, URL + "\n", "")
         self.wt: Path | None = None
 
@@ -122,9 +123,10 @@ def h(tmp_path, monkeypatch):
         harness.event("token")
         return None
 
-    def gh_run(*args, cwd=None, **_kw):
+    def gh_run(*args, cwd=None, input_text=None, **_kw):
         harness.event("gh")
         harness.gh_calls.append(args)
+        harness.gh_inputs.append(input_text)
         return harness.gh_result
 
     def run_prompt(phase, prompt, **kwargs):
@@ -155,6 +157,14 @@ def _flag(argv: tuple[str, ...], flag: str) -> str:
     return argv[argv.index(flag) + 1]
 
 
+def _gh_body(h: Harness) -> str:
+    """The body gh was handed: on stdin, through `--body-file -`."""
+    argv = _gh_argv(h)
+    assert _flag(argv, "--body-file") == "-"
+    assert "--body" not in argv
+    return h.gh_inputs[0]
+
+
 # ── ported from the bash create_pr suite ───────────────────────────────────
 
 
@@ -172,7 +182,7 @@ def test_args_reach_gh_pr_create_including_draft_assignee_and_base(h):
     argv = _gh_argv(h)
     assert argv[:2] == ("pr", "create")
     assert _flag(argv, "--title") == "fix: thing"
-    assert _flag(argv, "--body") == AI_BODY
+    assert _gh_body(h) == AI_BODY
     assert _flag(argv, "--assignee") == "@me"
     assert "--draft" in argv
 
@@ -325,7 +335,7 @@ def test_a_rejected_closes_fails_before_anything_runs(h, capsys):
 def test_closes_refs_are_normalised_and_appended_to_the_body(h, capsys):
     h.repo()
     assert run_create(h.ctx(), CreateOptions(closes=("941", "#941", "942"))) == 0
-    assert _flag(_gh_argv(h), "--body").endswith("Closes #941\n\nCloses #942")
+    assert _gh_body(h).endswith("Closes #941\n\nCloses #942")
     assert "✓ Linked for auto-close on merge: Closes #941 Closes #942" in capsys.readouterr().err
 
 
@@ -443,3 +453,87 @@ def test_an_existing_pr_refuses_before_anything_runs(h, capsys, dry_run):
     assert h.events == []
     assert not h.remote_has_branch()
 
+
+# ── push output, trail, token, config, timeouts ─────────────────────────────
+
+
+_REJECT_HOOK = """#!/usr/bin/env bash
+echo "HOOK-REJECT-MARKER no pushes today" >&2
+exit 1
+"""
+
+
+def test_a_refused_pushs_output_is_printed_exactly_once(h, capsys):
+    """FAILED with a push: `git.push.report` prints the output; run_create must not as well."""
+    h.repo()
+    hook = h.tmp / "remote.git" / "hooks" / "pre-receive"
+    hook.write_text(_REJECT_HOOK)
+    hook.chmod(0o755)
+    assert run_create(h.ctx(), CreateOptions()) == 1
+    err = capsys.readouterr().err
+    assert err.count("HOOK-REJECT-MARKER") == 1, err
+    assert h.events == ["token", "nesting", "push"]
+
+
+def test_the_trail_reaches_git_push(h, monkeypatch):
+    h.repo()
+    import git.push
+    seen = []
+    real = git.push.push
+
+    def push(*args, **kwargs):
+        seen.append(kwargs.get("trail"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(git.push, "push", push)
+    from unittest.mock import MagicMock
+    trail = MagicMock(name="trail")
+    assert run_create(h.ctx(), CreateOptions(), trail=trail) == 0
+    assert seen == [trail]
+
+
+def test_an_unreadable_token_file_is_a_controlled_refusal(h, monkeypatch, capsys):
+    h.repo()
+
+    def unreadable(cwd):
+        raise PermissionError(13, "Permission denied", "/cfg/taskfile.env")
+
+    monkeypatch.setattr(pr.gh_token, "use_for_publishing", unreadable)
+    assert run_create(h.ctx(), CreateOptions()) == 1
+    assert "✗ Could not read /cfg/taskfile.env: Permission denied" in capsys.readouterr().err
+    assert h.events == []
+    assert not h.remote_has_branch()
+
+
+def _broken_config(monkeypatch):
+    import config.workbench_config as wc
+
+    def load_config(project_root=None):
+        raise wc.ConfigError("/cfg/config.yml is not readable YAML: boom")
+
+    monkeypatch.setattr(wc, "load_config", load_config)
+
+
+def test_a_broken_config_refuses_a_create_that_uses_closes(h, monkeypatch, capsys):
+    h.repo()
+    _broken_config(monkeypatch)
+    assert run_create(h.ctx(), CreateOptions(closes=("941",))) == 1
+    assert "✗ /cfg/config.yml is not readable YAML: boom" in capsys.readouterr().err
+    assert h.events == []
+
+
+# passes-at-base: a broken config never failed a create without --closes
+def test_a_broken_config_does_not_fail_a_create_without_closes(h, monkeypatch):
+    h.repo()
+    _broken_config(monkeypatch)
+    assert run_create(h.ctx(), CreateOptions()) == 0
+
+
+def test_a_gh_create_timeout_says_a_pr_may_exist(h, capsys):
+    from core.proc import TIMEOUT_RETURNCODE
+    h.repo()
+    h.gh_result = CmdResult(TIMEOUT_RETURNCODE, "", "")
+    assert run_create(h.ctx(), CreateOptions()) == 1
+    err = capsys.readouterr().err
+    assert "✗ gh pr create timed out — check gh pr view before retrying" in err
+    assert "Pull request created" not in err

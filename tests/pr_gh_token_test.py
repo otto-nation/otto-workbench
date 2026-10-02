@@ -294,6 +294,17 @@ _INTERACTIVE_MISSING = (
 _GUIDANCE = "✗ GH_TOKEN not configured for AI automation."
 
 
+def _unset_token(monkeypatch) -> None:
+    """Unset GH_TOKEN so monkeypatch restores it, even when it was absent.
+
+    ``delenv(..., raising=False)`` on an absent var records nothing, so a
+    value ``use_for_publishing`` writes afterwards outlives the test. Setting
+    it first is what gives the undo something to undo.
+    """
+    monkeypatch.setenv("GH_TOKEN", "placeholder")
+    monkeypatch.delenv("GH_TOKEN")
+
+
 def _ok(**kw) -> CmdResult:
     return CmdResult(returncode=0, **kw)
 
@@ -303,7 +314,7 @@ def _fail(**kw) -> CmdResult:
 
 
 def test_use_for_publishing_sets_env_and_returns_the_source(tmp_path, monkeypatch):
-    monkeypatch.delenv("GH_TOKEN", raising=False)
+    _unset_token(monkeypatch)
     token = Token("ghp_ok", TokenSource.DEFAULT, "GH_TOKEN")
     monkeypatch.setattr(pr.gh_token, "resolve", lambda cwd: token)
 
@@ -320,7 +331,7 @@ def test_use_for_publishing_sets_env_and_returns_the_source(tmp_path, monkeypatc
 
 def test_use_for_publishing_rejected_token_falls_back_to_interactive(
         tmp_path, monkeypatch, capsys):
-    monkeypatch.delenv("GH_TOKEN", raising=False)
+    _unset_token(monkeypatch)
     token = Token("ghp_bad", TokenSource.ORG, "GH_TOKEN__ACME")
     monkeypatch.setattr(pr.gh_token, "resolve", lambda cwd: token)
 
@@ -340,7 +351,7 @@ def test_use_for_publishing_rejected_token_falls_back_to_interactive(
 
 def test_use_for_publishing_rejected_token_and_no_interactive_auth(
         tmp_path, monkeypatch):
-    monkeypatch.delenv("GH_TOKEN", raising=False)
+    _unset_token(monkeypatch)
     token = Token("ghp_bad", TokenSource.DEFAULT, "GH_TOKEN")
     monkeypatch.setattr(pr.gh_token, "resolve", lambda cwd: token)
 
@@ -361,7 +372,7 @@ def test_use_for_publishing_rejected_token_and_no_interactive_auth(
 def test_use_for_publishing_no_token_with_interactive_auth_returns_none(
         tmp_path, monkeypatch):
     # D10: no token configured, but `gh auth status` succeeds.
-    monkeypatch.delenv("GH_TOKEN", raising=False)
+    _unset_token(monkeypatch)
 
     def no_token(cwd):
         raise TokenNotConfigured(_GUIDANCE)
@@ -380,7 +391,7 @@ def test_use_for_publishing_no_token_with_interactive_auth_returns_none(
 def test_use_for_publishing_no_token_and_no_interactive_auth_raises(
         tmp_path, monkeypatch):
     # D10: no token, and no interactive login either.
-    monkeypatch.delenv("GH_TOKEN", raising=False)
+    _unset_token(monkeypatch)
 
     def no_token(cwd):
         raise TokenNotConfigured(_GUIDANCE)

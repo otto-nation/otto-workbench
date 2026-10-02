@@ -237,6 +237,24 @@ def _clear_agent_env():
     os.environ.update(saved)
 
 
+@pytest.fixture(autouse=True)
+def _restore_gh_token():
+    """Restore GH_TOKEN after every test, whatever the test did to it.
+
+    ``pr.gh_token.use_for_publishing`` writes ``os.environ`` directly, and a
+    test that drives it through any caller leaks the token into every test
+    after it — which then authenticates ``gh`` with a fixture string. Saved
+    and restored here, like ``_clear_agent_env``, so the next caller does not
+    have to remember.
+    """
+    saved = os.environ.get("GH_TOKEN")
+    yield
+    if saved is None:
+        os.environ.pop("GH_TOKEN", None)
+    else:
+        os.environ["GH_TOKEN"] = saved
+
+
 def _backend_binaries() -> set[str]:
     """The CLI names an AI call can spawn, from the enum that selects between them."""
     if LIB_DIR not in sys.path:

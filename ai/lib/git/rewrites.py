@@ -124,6 +124,9 @@ def done_commands(state: Path) -> dict[str, str] | None:
         if not fields or line.startswith("#") or fields[0] not in _COMMIT_ARG_COMMANDS:
             continue
         # `fixup -C <sha>` / `fixup -c <sha>` put a flag before the commit.
+        # These are the only two flags git's todo list writes. A line with any
+        # other flag is skipped below, leaving its commit with no command: the
+        # fold goes unrecorded and the caller falls back to patch matching.
         # Only a hex word is a commit: `label beef` and `exec make` carry other
         # first arguments, and `command_for` prefix-matches the keys.
         args = fields[1:]

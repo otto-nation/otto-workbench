@@ -22,6 +22,8 @@ in ``lib/ai/core.sh``) and the guidance goes to stderr, so a failure can never
 be captured into ``GH_TOKEN``.
 """
 
+# doc-group: publishing
+
 from __future__ import annotations
 
 import argparse

@@ -182,9 +182,11 @@ def _build_parser() -> argparse.ArgumentParser:
     A command with a parser factory has a subparser that declares no flags of
     its own — its argv is forwarded whole and `pr <command> --help` is answered
     by the factory's parser — so add_help is left off for those. That is every
-    delegate and `create`, whose handler runs here but whose parser is its own. The subparsers are not returned alongside:
-    what a command declares is read back off the built parser with
-    tool_parser.subparsers, which is what keeps `takes_target` honest.
+    delegate and `create`, whose handler runs here but whose parser is its own.
+
+    The subparsers are not returned alongside: what a command declares is read
+    back off the built parser with tool_parser.subparsers, which is what keeps
+    `takes_target` honest.
     """
     parser = argparse.ArgumentParser(
         prog=SCRIPT,

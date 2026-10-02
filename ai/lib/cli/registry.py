@@ -86,8 +86,16 @@ class CommandSpec:
 
 
 def _create_need(argv: Sequence[str]) -> Need:
-    """`create`'s need: a `--dry-run` pushes and creates nothing, so it takes no lock."""
-    return Need(REMOTE, update=False, lock="--dry-run" not in argv)
+    """`create`'s need: a `--dry-run` pushes and creates nothing, so it takes no lock.
+
+    `update=True` regardless of `--dry-run`: every measurement against the
+    base — the D7 "ahead of base" refusal, the nesting-gate diff, and
+    `create_content.branch_facts`'s commit/file list — reads `origin/<base>`
+    as of the last fetch, which `update_to_remote` brings current before the
+    handler runs. `update_to_remote` only resets the branch when there are
+    zero unpushed commits, so it is safe to run even mid-create.
+    """
+    return Need(REMOTE, update=True, lock="--dry-run" not in argv)
 
 
 _SPECS: tuple[CommandSpec, ...] = (

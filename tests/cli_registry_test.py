@@ -313,12 +313,16 @@ def test_review_declares_a_need_per_invocation():
 
 def test_create_takes_the_run_lock_only_when_it_may_publish():
     """`--dry-run` pushes nothing and creates nothing, so it holds no lock: a
-    preview must not contend with a real run on the same branch."""
+    preview must not contend with a real run on the same branch. It still
+    fetches the base either way — the D7 ahead-of-base refusal, the
+    nesting-gate diff and the AI prompt's branch facts all measure against
+    `origin/<base>`, which must be current whether or not this run can
+    publish."""
     spec = COMMANDS["create"]
-    assert need_for(spec, []) == Need(REMOTE, update=False, lock=True)
-    assert need_for(spec, ["--title", "t", "--draft"]) == Need(REMOTE, update=False, lock=True)
-    assert need_for(spec, ["--dry-run"]) == Need(REMOTE, update=False, lock=False)
-    assert need_for(spec, ["--title", "x", "--dry-run"]) == Need(REMOTE, update=False, lock=False)
+    assert need_for(spec, []) == Need(REMOTE, update=True, lock=True)
+    assert need_for(spec, ["--title", "t", "--draft"]) == Need(REMOTE, update=True, lock=True)
+    assert need_for(spec, ["--dry-run"]) == Need(REMOTE, update=True, lock=False)
+    assert need_for(spec, ["--title", "x", "--dry-run"]) == Need(REMOTE, update=True, lock=False)
 
 
 @pytest.mark.parametrize("mode", ["--post", "--repair", "--summary", "--recover"])

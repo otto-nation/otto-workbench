@@ -56,8 +56,8 @@ through `finding_spans` and remove what they drop through `drop_findings`,
 because two gates that measured a finding themselves measured it differently:
 one of them took the resolved finding below a dropped one out with it, and
 neither of them left a `### ` sub-heading standing. `VERIFY_FINDING_RE` selects
-which findings this gate checks; it neither reads their location nor says where
-one stops.
+which findings this gate checks; it reads a location only where the poster can
+place none, and never says where one stops.
 """
 
 # doc-group: findings
@@ -78,7 +78,7 @@ from review.document import (
     ReviewDocument, section_span, strip_sections,
 )
 from review.grammar import (
-    VERIFY_FINDING_RE, strip_sid_markers,
+    VERIFY_FINDING_RE, strip_line_suffix, strip_sid_markers,
 )
 from review.format import resolve_path
 from review.merge import renumber_findings
@@ -286,27 +286,25 @@ def _verification_finding(span: FindingSpan, text: str) -> dict | None:
     readings drifted (`:64,82`, `:_short`, `:~690`) stat'd a path no
     filesystem holds and dropped a correct finding as "file not found".
 
-    A declaration naming no location the poster can place is skipped: there is
-    no path to match the evidence against, so the check has nothing to say
-    about it. A skipped must-fix or should-fix is logged, since the skip is the
-    gate failing open for that finding — an extensionless, slash-less file such
-    as `Makefile` reads as no location. A declaration in the prior-findings ledger is skipped too — it
-    reports the last review's finding, and the file it names was quoted
-    against a commit this one is not looking at.
+    A declaration naming no location the poster can place — `Makefile:3`,
+    which has neither an extension nor a slash, or `C:/src/x.py` — is checked
+    against the span it wrote, minus a line suffix. Skipping it instead would
+    let a must-fix with a quote nobody can find through the gate whenever its
+    file happens to have such a name. The two readings cannot disagree here:
+    the poster places no comment against this finding, so there is no file it
+    would be posted on for the gate to contradict. A declaration in the
+    prior-findings ledger is skipped — it reports the last review's finding,
+    and the file it names was quoted against a commit this one is not looking
+    at.
     """
     m = VERIFY_FINDING_RE.match(span.line)
     if not m or span.reported:
         return None
-    if not span.finding.path:
-        if m.group(1) in (SEVERITY_MUST, SEVERITY_SHOULD):
-            core.log.warn(
-                f"Not verifying {m.group(1)}{m.group(2)}: its location names no file the poster can place"
-            )
-        return None
+    written = strip_line_suffix((m.group(3) or m.group(4) or "").replace("\\_", "_"))
     return {
         "id": f"{m.group(1)}{m.group(2)}",
         "severity": m.group(1),
-        "path": span.finding.path,
+        "path": span.finding.path or written,
         "body": _verification_body(span, m.group(5), text),
     }
 

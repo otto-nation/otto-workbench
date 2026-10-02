@@ -395,8 +395,10 @@ def parse_ledger_line(raw: str) -> LedgerEntry | None:
 # reading the poster places the comment with — because a second reading here
 # drifted from it each time a reviewer wrote a suffix it did not know
 # (`:64,82`, `:_short`), and the gate then dropped a correct finding as "file
-# not found". Where a finding's body ends is not its business either —
-# `finding_spans` measures that.
+# not found". Only a span `finding_location` cannot place at all is checked
+# against what it captured, since there is then no placement to contradict.
+# Where a finding's body ends is not its business either — `finding_spans`
+# measures that.
 #
 # The space-free class stays exactly as it was — anything the delimiters cannot
 # hold, line suffix included — and the spaced shape is beside it rather than

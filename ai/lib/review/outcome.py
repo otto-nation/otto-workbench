@@ -212,7 +212,9 @@ def _no_synthesis_body(
 def _reconcile_and_verify(job: ReviewJob) -> None:
     # Reconciliation reads the ledger, which post-processing then strips.
     record_prior_findings(job.review_file, job.prior_review, job.wt_path)
-    job.verification = post_process_findings(job.review_file, job.wt_path)
+    job.verification = post_process_findings(
+        job.review_file, job.wt_path, [f["path"] for f in job.pr.files],
+    )
 
 
 # What a prior review states about the run that produced it rather than about

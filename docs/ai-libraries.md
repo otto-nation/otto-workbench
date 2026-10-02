@@ -1502,8 +1502,8 @@ through `finding_spans` and remove what they drop through `drop_findings`,
 because two gates that measured a finding themselves measured it differently:
 one of them took the resolved finding below a dropped one out with it, and
 neither of them left a `### ` sub-heading standing. `VERIFY_FINDING_RE` selects
-which findings this gate checks; it neither reads their location nor says where
-one stops.
+which findings this gate checks; it reads a location only where the poster can
+place none, and never says where one stops.
 
 ## Publishing
 

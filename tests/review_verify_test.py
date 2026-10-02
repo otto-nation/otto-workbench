@@ -325,16 +325,20 @@ class TestParseVerificationReadsThePostersLocation:
             posted = review.spans.finding_spans(line + "\n")[0].finding.path
             assert verified[0]["path"] == posted, location
 
-    @pytest.mark.parametrize("location", ["ns:module.py", "C:/src/x.py", "C:/src/x.py:12"])
-    def test_a_location_the_poster_cannot_place_is_skipped_not_dropped(self, location):
-        """No path to check against means nothing to say, not a drop.
+    @pytest.mark.parametrize("location, path", [
+        ("ns:module.py", "ns:module.py"),
+        ("C:/src/x.py", "C:/src/x.py"),
+        ("C:/src/x.py:12", "C:/src/x.py"),
+        ("Makefile:3", "Makefile"),
+    ])
+    def test_a_location_the_poster_cannot_place_is_checked_as_written(self, location, path):
+        """No placement to contradict, so the gate keeps checking what was written.
 
-        These used to be verified as whole paths, which only ever dropped
-        them: `C:/src/x.py` exists on no POSIX tree, and the poster files all
-        three as general findings with no file reference.
+        Skipping these would let an unsupported quote through whenever its
+        file has a name the poster cannot read — the gate failing open.
         """
         text = f"- **[M1]** **`{location}`** — missing error check\n"
-        assert review.verify._parse_findings_for_verification(text) == []
+        assert review.verify._parse_findings_for_verification(text)[0]["path"] == path
 
 
 class TestVerifyFindsTheFileThePosterWould:
@@ -400,14 +404,14 @@ class TestVerifyFindsTheFileThePosterWould:
         assert result["dropped"] == []
         assert result["details"][0]["resolved_path"] == "ai/lib/git/replay.py"
 
-    def test_a_finding_whose_location_names_no_file_is_logged_not_silently_skipped(
-        self, tmp_path, capsys,
-    ):
-        """`Makefile` has no extension and no slash, so it reads as no location."""
+    def test_an_unplaceable_finding_with_no_such_quote_is_still_dropped(self, tmp_path):
+        """`Makefile` reads as no location to the poster; the gate still checks it."""
+        wt = self._tree(tmp_path)
+        (tmp_path / "Makefile").write_text("all:\n\ttrue\n")
         text = "## Should fix\n- [ ] **[S1]** **`Makefile:3`** — gap\n" + self._EVIDENCE
-        _, result = review.verify._verify_findings(text, self._tree(tmp_path))
-        assert result["findings_checked"] == 0
-        assert "Not verifying S1" in capsys.readouterr().err
+        _, result = review.verify._verify_findings(text, wt)
+        assert result["dropped"] == ["S1"]
+        assert result["details"][0]["file_exists"] is True
 
     def test_a_worktree_that_is_not_there_drops_rather_than_raising(self, tmp_path):
         """Resolution asks git, and git cannot start in a missing directory."""

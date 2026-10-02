@@ -711,7 +711,7 @@ authoritative).
 | any with `open-chat` | `open-chat` | refused by the CLI; decision stays open |
 | `rebase_conflict` | `retry` | rebase step → `pending` |
 | | `abort` | rebase → `skipped`; failure → new `failed` decision |
-| `rebase_refused` | `skip-pr` | item → `dropped` |
+| `rebase_refused` | `drop-pr` | item → `dropped` |
 | | `force` | only if payload `override`; success → rebase `done` and drafted; failure → `failed` |
 | `open_findings` | `accept` | review step `done` |
 | `dirty_worktree` | `retry` | worktree re-checked when the scheduler next picks the item |

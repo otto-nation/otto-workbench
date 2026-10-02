@@ -62,13 +62,11 @@ KNOWN_OVER = {
     "tests/eval_floors_test.py": "#910",
     "tests/eval_scoring_skill_test.py": "#910",
     "tests/eval_scoring_test.py": "#910",
-    "tests/fix_engine_test.py": "#910",
     "tests/otto_log_test.py": "#910",
     "tests/pr_cli_test.py": "#910",
     "tests/pr_comments_test.py": "#910",
     "tests/pr_state_test.py": "#910",
     "tests/push_test.py": "#910",
-    "tests/review_fix_pass_test.py": "#910",
     "tests/wiki_test.py": "#910",
     "tests/workbench_config_test.py": "#910",
 }

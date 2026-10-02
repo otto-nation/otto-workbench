@@ -13,12 +13,13 @@ if str(LIB_DIR) not in sys.path:
 # `_no_published_summary` is autouse: imported so pytest applies it here,
 # never referenced by name.
 from review_threads_support import _fix, _make_state, _no_published_summary, content  # noqa: E402
-from conftest import git_in, make_ctx, run_checked
+from conftest import git_in, is_range_listing, make_ctx, run_checked
 import pr.state
 import core.log
 import core.proc
 import git.client
 import git.push
+import git.replay
 from git.land import CommitStatus
 import pr.thread_replies
 import pr.history_rewrite
@@ -329,7 +330,7 @@ class TestFollowHistoryRewrite:
         real = git.client.run
 
         def slow_listing(*args, **kwargs):
-            if "--name-only" in args and any(a.endswith("..HEAD") for a in args):
+            if is_range_listing(args):
                 return core.proc.CmdResult(
                     returncode=core.proc.TIMEOUT_RETURNCODE,
                     stderr="timed out after 10s: git log --name-only",
@@ -361,3 +362,17 @@ class TestFollowHistoryRewrite:
         assert f"git cherry-pick {dropped.held}" in warnings["dropped"]
         assert "more than one commit" in warnings["duplicated"]
         assert "git cherry-pick" not in warnings["duplicated"]
+
+    def test_two_commits_from_gits_record_are_not_called_duplicates_of_a_change(self):
+        """The rewrite record names descendants; it says nothing of their content."""
+        by_record = git.replay.Replay(
+            git.replay.ReplayStatus.AMBIGUOUS, source=git.replay.ReplaySource.REWRITE_LOG)
+        by_content = git.replay.Replay(
+            git.replay.ReplayStatus.AMBIGUOUS, source=git.replay.ReplaySource.PATCH_ID)
+
+        from_record = pr.history_rewrite._unfollowed_warning("abc1234", by_record)
+        from_content = pr.history_rewrite._unfollowed_warning("abc1234", by_content)
+
+        assert "carries that change" not in from_record
+        assert "record does not say" in from_record
+        assert "carries that change" in from_content

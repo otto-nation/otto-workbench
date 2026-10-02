@@ -214,7 +214,8 @@ class ReplayFinder:
         if not full:
             return Replay(ReplayStatus.UNKNOWN,
                           detail=f"{sha} no longer resolves to a commit")
-        return self._from_rewrite_log(full) or self._from_patch_id(full)
+        from_log = self._from_rewrite_log(full)
+        return from_log if from_log is not None else self._from_patch_id(full)
 
     def _from_rewrite_log(self, full: str) -> Replay | None:
         """Follow git's recorded rewrites from *full* to the commits on HEAD.
@@ -223,6 +224,10 @@ class ReplayFinder:
         Descent stops at the first commit on the branch: a rewrite of a commit
         already on HEAD would be a commit that is not. None when the log reaches
         nothing on the branch, which leaves the question to patch matching.
+
+        A commit whose ancestry git will not report is UNKNOWN rather than
+        skipped: it may be the one that is on the branch, and patch matching
+        from there could answer "none" for work that is there.
         """
         if self._rewrites is None:
             self._rewrites = git.rewrites.load(self._wt)
@@ -234,7 +239,10 @@ class ReplayFinder:
             if commit in seen:
                 continue
             seen.add(commit)
-            if _on_head(self._wt, commit):
+            ancestry = _on_head(self._wt, commit)
+            if ancestry.contained is None:
+                return Replay(ReplayStatus.UNKNOWN, detail=ancestry.detail)
+            if ancestry.contained:
                 on_head.append(commit)
             else:
                 frontier.extend(self._rewrites.get(commit, []))
@@ -272,8 +280,13 @@ class ReplayFinder:
         orphan = _patch_ids(self._wt, "--no-walk", full)
         if orphan.ids is None:
             return Replay(ReplayStatus.UNKNOWN, detail=orphan.detail)
-        if len(orphan.ids) != 1:
-            return Replay(ReplayStatus.NONE)
+        if not orphan.ids:
+            # An empty commit, or one `patch-id` emits no line for: there is no
+            # change to look for, so "nothing carries it" would be a claim about
+            # work that does not exist, and would advise restoring it.
+            return Replay(ReplayStatus.UNKNOWN,
+                          detail=f"{full[:12]} carries no change to match")
+        # A single commit has at most one patch id.
         orphan_id = next(iter(orphan.ids))
 
         base = git.client.run("merge-base", full, "HEAD", cwd=self._wt)
@@ -350,11 +363,28 @@ class _FileIndex:
         return [commit for commit, paths in self.paths.items() if paths & wanted]
 
 
-def _on_head(wt_path: Path, commit: str) -> bool:
-    """Whether HEAD's history contains *commit* — exit 0, and nothing else."""
-    return git.client.run(
+@dataclass(frozen=True)
+class _Ancestry:
+    """Whether HEAD contains a commit: *contained* is None when git won't say,
+    and *detail* then says why."""
+
+    contained: bool | None
+    detail: str = ""
+
+
+def _on_head(wt_path: Path, commit: str) -> _Ancestry:
+    """Whether HEAD's history contains *commit*.
+
+    Exit 0 is yes and exit 1 is no. Any other exit — a timeout, an unreadable
+    object — is "unanswered" with the reason, kept apart from "no" the way
+    :func:`rewritten_away` keeps them apart.
+    """
+    result = git.client.run(
         "merge-base", "--is-ancestor", commit, "HEAD", cwd=wt_path,
-    ).returncode == 0
+    )
+    if result.returncode in (0, 1):
+        return _Ancestry(result.returncode == 0)
+    return _Ancestry(None, result.detail or f"git merge-base exit {result.returncode}")
 
 
 def _short(wt_path: Path, commit: str) -> str:

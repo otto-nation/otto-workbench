@@ -13,7 +13,7 @@ tested directly for the first time.
 
 import sys
 
-from conftest import REPO_ROOT, git_in, git_out, run_checked
+from conftest import REPO_ROOT, git_in, git_out, is_range_listing, run_checked
 
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -291,6 +291,8 @@ class TestReplayFinder:
         git_in(work, "push", "-q", "origin", "main")
         git_in(work, "checkout", "-q", "feature")
         git_in(work, "rebase", "-q", "origin/main")
+        orphan = git_out(work, "rev-parse", held).strip()
+        replayed = git_out(work, "rev-parse", "HEAD").strip()
         diffed = []
         real = git.replay._patch_ids
         monkeypatch.setattr(git.replay, "_patch_ids",
@@ -299,8 +301,11 @@ class TestReplayFinder:
         replay = git.replay.ReplayFinder(work).find(held)
 
         assert replay.sha == _short(work)
-        candidate_calls = [revs for revs in diffed if held not in "".join(revs)]
-        assert candidate_calls == [("--no-walk", git_out(work, "rev-parse", "HEAD").strip())]
+        # Every commit handed to a full diff, the orphan's own aside: of the
+        # twenty-five upstream commits, only the one sharing its path.
+        candidates = {rev for revs in diffed for rev in revs
+                      if rev != "--no-walk" and rev != orphan}
+        assert candidates == {replayed}
 
     def test_a_range_git_cannot_list_in_time_is_unknown_not_none(
         self, work, monkeypatch,
@@ -311,7 +316,7 @@ class TestReplayFinder:
         real = git.client.run
 
         def slow_listing(*args, **kwargs):
-            if "--name-only" in args and any(a.endswith("..HEAD") for a in args):
+            if is_range_listing(args):
                 return core.proc.CmdResult(
                     returncode=core.proc.TIMEOUT_RETURNCODE,
                     stderr="timed out after 10s: git log --name-only",
@@ -344,7 +349,7 @@ class TestReplayFinder:
         real = git.client.run
 
         def counting(*args, **kwargs):
-            if "--name-only" in args and any(a.endswith("..HEAD") for a in args):
+            if is_range_listing(args):
                 listings.append(args)
             return real(*args, **kwargs)
 
@@ -353,3 +358,41 @@ class TestReplayFinder:
 
         assert finder.find(first).found and finder.find(second).found
         assert len(listings) == 1
+
+
+class TestWhenGitDoesNotAnswer:
+    def test_an_ancestry_check_that_fails_is_unknown_not_a_miss(
+        self, work, record_rewrites, monkeypatch,
+    ):
+        """The replay is on the branch; failing to see that must not let patch
+        matching decide, which could call the work gone."""
+        record_rewrites(work)
+        held = _commit(work, "fix.txt")
+        _rebase_onto_moved_main(work)
+        replayed = git_out(work, "rev-parse", "HEAD").strip()
+        real = git.client.run
+
+        def failing_ancestry(*args, **kwargs):
+            if "--is-ancestor" in args and replayed in args:
+                return core.proc.CmdResult(
+                    returncode=core.proc.TIMEOUT_RETURNCODE,
+                    stderr="timed out after 10s: git merge-base",
+                )
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(git.client, "run", failing_ancestry)
+        replay = git.replay.ReplayFinder(work).find(held)
+
+        assert replay.status is git.replay.ReplayStatus.UNKNOWN
+        assert "timed out" in replay.detail
+
+    def test_an_empty_commit_has_no_change_to_restore(self, work):
+        """"No commit carries it" advises a cherry-pick of nothing."""
+        git_in(work, "commit", "-q", "--no-verify", "--allow-empty", "-m", "empty")
+        held = _short(work)
+        git_in(work, "reset", "-q", "--hard", "HEAD~1")
+
+        replay = git.replay.ReplayFinder(work).find(held)
+
+        assert replay.status is git.replay.ReplayStatus.UNKNOWN
+        assert "no change to match" in replay.detail

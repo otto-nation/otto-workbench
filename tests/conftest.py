@@ -955,6 +955,14 @@ def git_in(cwd, *args) -> None:
     git_out(cwd, *args)
 
 
+def is_range_listing(args) -> bool:
+    """Whether a `git.client.run` call is `git.replay`'s `--name-only` listing
+    of a `<base>..HEAD` range — the call a test wraps to count it or to make it
+    time out. The one place that knows how to recognise it.
+    """
+    return "--name-only" in args and any(a.endswith("..HEAD") for a in args)
+
+
 def seed_repo(path) -> Path:
     """A one-commit repo at *path*, with an identity of its own.
 

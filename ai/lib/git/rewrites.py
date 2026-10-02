@@ -50,9 +50,10 @@ import git.client
 LOG_NAME = "workbench-rewrites"
 
 # A trimmed log keeps the newest half, so a trim runs once per _KEEP_LINES
-# rewrites rather than on every one past the cap. Twenty thousand lines is a
-# couple of megabytes and many big rebases deep — far older than any fix commit
-# a closeout is still holding.
+# rewrites rather than on every one past the cap. The cap is a byte size, worked
+# out from the longest line: twenty thousand SHA-256 lines, or about thirty-one
+# thousand SHA-1 ones. Either is a couple of megabytes and many big rebases deep
+# — far older than any fix commit a closeout is still holding.
 _MAX_LINES = 20_000
 _KEEP_LINES = _MAX_LINES // 2
 # The longest line the log writes: two SHA-256 object names, a space, a newline.
@@ -109,10 +110,12 @@ def _trim(path: Path) -> None:
     lost entry is ever observed, take an `fcntl.flock` on the log around the
     append and the trim.
     """
-    kept = path.read_text(encoding="ascii").splitlines(keepends=True)[-_KEEP_LINES:]
+    # Bytes, so a stray non-ASCII byte in a damaged log cannot make every trim
+    # raise and leave the file to grow without bound. `parse` drops the line.
+    kept = path.read_bytes().splitlines(keepends=True)[-_KEEP_LINES:]
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     try:
-        tmp.write_text("".join(kept), encoding="ascii")
+        tmp.write_bytes(b"".join(kept))
         os.replace(tmp, path)
     finally:
         tmp.unlink(missing_ok=True)
@@ -133,10 +136,11 @@ def log_path(wt_path: Path) -> Path | None:
 def load(wt_path: Path) -> dict[str, list[str]]:
     """Old commit → every commit it was rewritten into, oldest rewrite first.
 
-    Each distinct answer once. Usually one, but a commit can be rewritten twice — a branch reset back to it
-    and rebased again — and every answer is kept so a reader can see that.
-    An absent or unreadable log is an empty map, which reads as "nothing
-    recorded" and sends the caller to its fallback.
+    Each distinct answer once. Usually one, but a commit can be rewritten
+    twice — a branch reset back to it and rebased again — and every answer is
+    kept so a reader can see that. An absent or unreadable log is an empty
+    map, which reads as "nothing recorded" and sends the caller to its
+    fallback.
     """
     path = log_path(wt_path)
     if path is None:
@@ -158,8 +162,10 @@ def load(wt_path: Path) -> dict[str, list[str]]:
 def main(argv: Sequence[str] | None = None) -> int:
     """Record a rewrite from the global `post-rewrite` hook.
 
-    Always returns zero — see the module docstring for why a bookkeeping failure
-    here must cost a warning and nothing else.
+    Returns zero whenever the arguments parse, whatever recording does — see the
+    module docstring for why a bookkeeping failure here must cost a warning and
+    nothing else. A missing `--git-dir` is argparse's usage error, exit status 2,
+    which git ignores and the hook discards.
     """
     parser = argparse.ArgumentParser(description="Record what a rewrite became.")
     parser.add_argument("--git-dir", required=True, type=Path,

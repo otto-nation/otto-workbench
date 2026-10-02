@@ -77,7 +77,7 @@ def follow_history_rewrite(state: pr.state.PRState, wt_path: Path) -> None:
                 finder.find(sha) if git.replay.rewritten_away(wt_path, sha) else None
             )
         replay = replays[sha]
-        return replay.sha if replay and replay.found else sha
+        return replay.sha if replay is not None and replay.found else sha
 
     record.commit_sha = followed(record.commit_sha)
     # The snapshot HEAD moves with the rest. It is the base of the "what landed
@@ -89,7 +89,8 @@ def follow_history_rewrite(state: pr.state.PRState, wt_path: Path) -> None:
         outcome.commit_sha = followed(outcome.commit_sha)
         outcome.read_sha = followed(outcome.read_sha)
 
-    moved = [r for sha, r in replays.items() if r and r.found and r.sha != sha]
+    moved = [r for sha, r in replays.items()
+             if r is not None and r.found and r.sha != sha]
     if moved:
         exact = sum(1 for r in moved if r.source is git.replay.ReplaySource.REWRITE_LOG)
         core.log.info(
@@ -98,7 +99,7 @@ def follow_history_rewrite(state: pr.state.PRState, wt_path: Path) -> None:
             f"rewrite, {len(moved) - exact} by matching the change)"
         )
     held = replays.get(recorded) if recorded else None
-    if held and not held.found and commit_unpushed(record.commit_status):
+    if held is not None and not held.found and commit_unpushed(record.commit_status):
         core.log.warn(_unfollowed_warning(recorded, held))
 
 
@@ -112,6 +113,16 @@ def _unfollowed_warning(recorded: str, replay: git.replay.Replay) -> str:
             f"not answer ({replay.detail}) — so {stays}. This says nothing about "
             f"whether the work is on the branch, so do not restore anything; "
             f"{retriage}"
+        )
+    if (replay.status is git.replay.ReplayStatus.AMBIGUOUS
+            and replay.source is git.replay.ReplaySource.REWRITE_LOG):
+        # Not a claim about content: git's record names several commits on the
+        # branch, and they may have diverged since.
+        return (
+            f"Fix commit {recorded} was rewritten into more than one commit now "
+            f"on this branch, and git's record does not say which one holds the "
+            f"work — so there is nothing to choose between and {stays}. Check "
+            f"which of them carries it, then {retriage}"
         )
     if replay.status is git.replay.ReplayStatus.AMBIGUOUS:
         return (

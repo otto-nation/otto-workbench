@@ -6,6 +6,9 @@ would only test the parser.
 """
 
 import io
+import os
+import shutil
+import subprocess
 import sys
 
 from conftest import REPO_ROOT, git_in, git_out, run_checked
@@ -98,6 +101,18 @@ class TestRecordAndLoad:
         assert len(loaded) <= 4
         assert not list(common.glob(f"{git.rewrites.LOG_NAME}.*.tmp"))
 
+    def test_a_damaged_log_is_still_trimmed(self, repo, monkeypatch):
+        """A non-ASCII byte must not make every trim raise and the log grow."""
+        monkeypatch.setattr(git.rewrites, "_KEEP_LINES", 2)
+        path = git.rewrites.log_path(repo)
+        olds = [f"{i:040x}" for i in range(1, 5)]
+        lines = [f"{old} {B}\n".encode() for old in olds]
+        path.write_bytes(lines[0] + b"\xff\xfe\n" + b"".join(lines[1:]))
+
+        git.rewrites._trim(path)
+
+        assert git.rewrites.load(repo) == {olds[2]: [B], olds[3]: [B]}
+
     def test_main_never_fails_the_hook(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setattr(sys, "stdin", io.StringIO(f"{A} {B}\n"))
         missing = tmp_path / "no" / "such" / "dir"
@@ -106,6 +121,71 @@ class TestRecordAndLoad:
 
 
 class TestPostRewriteHook:
+    def test_step_global_hooks_installs_the_hook(self, tmp_path):
+        """Dropping the install line would silently leave only patch matching."""
+        hooks = tmp_path / "installed"
+        env = {**os.environ, "HOME": str(tmp_path),
+               "GIT_CONFIG_GLOBAL": str(tmp_path / "gitconfig"),
+               "GIT_CONFIG_SYSTEM": "/dev/null"}
+        run_checked(
+            ["bash", "-c",
+             f'. "{REPO_ROOT}/lib/ui.sh"; . "{REPO_ROOT}/git/steps.sh"; '
+             f'GIT_HOOKS_DIR="{hooks}" GIT_HOOKS_SRC_DIR="{REPO_ROOT}/git/hooks" '
+             f'WORKBENCH_DIR="{REPO_ROOT}" WORKBENCH_STABLE_DIR="{REPO_ROOT}" '
+             "step_global_hooks"],
+            cwd=tmp_path, env=env,
+        )
+        assert (hooks / "post-rewrite").is_symlink()
+        assert (hooks / "post-rewrite").resolve() == HOOK.resolve()
+
+    def test_a_git_that_echoes_unknown_options_still_records(self, repo, tmp_path):
+        """git older than 2.31 prints `--path-format=absolute` back as an answer.
+
+        The hook is run by hand: git puts its own exec path ahead of `PATH` for
+        a hook it runs, which would find the real git instead of the stand-in.
+        """
+        shim_dir = tmp_path / "oldgit"
+        shim_dir.mkdir()
+        shim = shim_dir / "git"
+        shim.write_text(
+            "#!/usr/bin/env bash\n"
+            'for a in "$@"; do\n'
+            '  [[ "$a" == --path-format=* ]] && echo "$a"\n'
+            "done\n"
+            f'exec "{shutil.which("git")}" "$@"\n'
+        )
+        shim.chmod(0o755)
+        env = {**os.environ, "PATH": f"{shim_dir}{os.pathsep}{os.environ['PATH']}"}
+
+        subprocess.run(
+            ["bash", str(HOOK), "amend"], cwd=repo, env=env, input=f"{A} {B}\n",
+            text=True, check=True, timeout=60,
+        )
+
+        assert git.rewrites.load(repo) == {A: [B]}
+
+    def test_a_relative_link_that_resolves_nowhere_records_nothing_and_breaks_nothing(
+        self, repo, tmp_path, live_git_hooks,
+    ):
+        """`readlink` returns the link's text, so a relative one is resolved
+        against the repository, not the link's own directory."""
+        hooks = tmp_path / "hooks"
+        moved = hooks / "moved" / "git" / "hooks"
+        moved.mkdir(parents=True)
+        (moved / "post-rewrite").write_text(HOOK.read_text())
+        (moved / "post-rewrite").chmod(0o755)
+        (hooks / "post-rewrite").symlink_to("moved/git/hooks/post-rewrite")
+        git_in(repo, "config", "core.hooksPath", str(hooks))
+        _commit(repo, "fix.txt")
+        assert not (repo / "moved").exists()
+        result = run_checked(
+            ["git", "commit", "-q", "--no-verify", "--amend", "-m", "reworded"],
+            cwd=repo, check=False,
+        )
+        assert result.returncode == 0
+        assert result.stderr == ""
+        assert git.rewrites.load(repo) == {}
+
     def test_an_amend_is_recorded(self, hooked):
         old = _commit(hooked, "fix.txt")
         git_in(hooked, "commit", "-q", "--no-verify", "--amend", "-m", "reworded")

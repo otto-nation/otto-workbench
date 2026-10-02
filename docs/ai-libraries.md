@@ -1846,6 +1846,15 @@ missed one costs a pushed commit and a reply claiming work is done. Running
 `--fix` and `--finish` in the same invocation does not defeat it: the discussion
 is still open at both points, so the hold applies to both.
 
+### pr/create_content.py
+
+Generate a new PR's title and body.
+
+Resolves the repo template, gathers branch facts, and either fills from
+overrides, the single commit, or an AI call on ``Phase.CREATE``. Marker
+extraction is the only parse of the model answer — nothing outside
+``<<<TITLE>>>`` / ``<<<DESCRIPTION>>>`` is kept.
+
 ### pr/gh_token.py
 
 GitHub token resolution for the commands that publish a PR.

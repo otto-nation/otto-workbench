@@ -96,11 +96,11 @@ def shape_of(parser: argparse.ArgumentParser, prog: str) -> CLIShape:
     the globals. A parser with no subparsers is a single-command CLI: its
     options are the globals and it has no commands.
     """
-    helps = {}
-    for action in parser._actions:
-        if isinstance(action, argparse._SubParsersAction):
-            for choice in action._choices_actions:
-                helps[choice.dest] = choice.help or ""
+    helps = {
+        choice.dest: choice.help or ""
+        for action in parser._actions if isinstance(action, argparse._SubParsersAction)
+        for choice in action._choices_actions
+    }
     seen: set[int] = set()
     commands = []
     for name, sub in subparsers(parser).items():
@@ -274,19 +274,21 @@ def _description(parser: argparse.ArgumentParser, action: argparse.Action,
     return _cell(". ".join(n for n in notes if n) + ("." if notes else ""))
 
 
+def _flag_cell(action: argparse.Action) -> str:
+    """The Flag cell: every option string, then the value it takes."""
+    value = _value(action)
+    if not action.option_strings:
+        return f"`{value}`"
+    flags = ", ".join(f"`{o}`" for o in action.option_strings)
+    return f"{flags} `{value}`" if value else flags
+
+
 def _table(parser: argparse.ArgumentParser, hidden: frozenset[str] = frozenset()) -> str:
     """The Flag/Description table for *parser*, or "" when it documents nothing."""
     owner = _groups(parser)
     rows = []
     for action in _documented(parser, hidden):
-        value = _value(action)
-        if action.option_strings:
-            flag = ", ".join(f"`{o}`" for o in action.option_strings)
-            if value:
-                flag += f" `{value}`"
-        else:
-            flag = f"`{value}`"
-        rows.append(f"| {_cell(flag)} | {_description(parser, action, owner)} |")
+        rows.append(f"| {_cell(_flag_cell(action))} | {_description(parser, action, owner)} |")
     if not rows:
         return ""
     return "| Flag | Description |\n|------|-------------|\n" + "\n".join(rows)

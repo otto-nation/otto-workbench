@@ -226,23 +226,28 @@ def reference_shape() -> core.cli_reference.CLIShape:
     flags.
     """
     subs = core.tool_parser.subparsers(_build_parser())
-    commands = []
-    for name, spec in COMMANDS.items():
-        if cli.dispatch.has_parser_factory(name):
-            parser = cli.dispatch.resolve(cli.dispatch.PARSER_FACTORIES[name])()
-            # `review`'s handler routes the mode flags before its parser runs,
-            # so `pr review` accepts more than `review` does — the one command
-            # whose dispatcher adds flags of its own.
-            if name == "review":
-                parser = cli.review_modes.reference_parser(parser)
-        elif name in subs:
-            parser = subs[name]
-        else:
-            raise RuntimeError(f"pr: '{name}' has neither a parser factory nor a subparser")
-        commands.append(core.cli_reference.Command(name, spec.help, parser))
-    return core.cli_reference.CLIShape(
-        prog=SCRIPT, globals=build_global_parser(), commands=tuple(commands),
+    commands = tuple(
+        core.cli_reference.Command(name, spec.help, _reference_parser(name, subs))
+        for name, spec in COMMANDS.items()
     )
+    return core.cli_reference.CLIShape(
+        prog=SCRIPT, globals=build_global_parser(), commands=commands,
+    )
+
+
+def _reference_parser(name: str, subs: dict[str, argparse.ArgumentParser]) -> argparse.ArgumentParser:
+    """The parser that documents `pr <name>`, per `reference_shape`."""
+    if not cli.dispatch.has_parser_factory(name):
+        if name not in subs:
+            raise RuntimeError(f"pr: '{name}' has neither a parser factory nor a subparser")
+        return subs[name]
+    parser = cli.dispatch.resolve(cli.dispatch.PARSER_FACTORIES[name])()
+    # `review`'s handler routes the mode flags before its parser runs, so `pr
+    # review` accepts more than `review` does — the one command whose
+    # dispatcher adds flags of its own.
+    if name == "review":
+        return cli.review_modes.reference_parser(parser)
+    return parser
 
 
 def _build_parser() -> argparse.ArgumentParser:

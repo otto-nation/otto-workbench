@@ -207,6 +207,12 @@ _section_slug() {
   printf '%s' "${slug%-}"
 }
 
+# _default_reference VISIBILITY — whether a tool with no `reference` field is
+# in the reference: every tool but a hidden one.
+_default_reference() {
+  if [[ "$1" == hidden ]]; then printf false; else printf true; fi
+}
+
 # The registry members whose entry declares `parser:`, keyed by script path,
 # valued by tool name. Filled by _registry_members, in the parent shell, and
 # read by _render_module to append the flag tables rendered from that parser.
@@ -224,37 +230,44 @@ declare -gA _PARSER_TOOL_OF=()
 _registry_members() {
   local -n __out=$2
   local -a registries=() listed=()
-  local reg source group count i name vis ref line
+  local reg line
   __out=()
   collect_component_registries registries "$SOURCE_ROOT"
   (( ${#registries[@]} > 0 )) || return 0
   reg_load "${registries[@]}" || return 1
   for reg in "${registries[@]}"; do
-    [[ "$(reg_get "$reg" meta validation)" == bindir ]] || continue
-    [[ "$(reg_get "$reg" meta scope)" == workbench ]] && continue
-    source="$(reg_get "$reg" meta source)"
-    group="$(_section_slug "$(reg_get "$reg" meta section)")"
-    count="$(reg_len "$reg" tools)"
-    for (( i=0; i<count; i++ )); do
-      name="$(reg_get "$reg" tools "$i" name)"
-      vis="$(reg_get "$reg" tools "$i" visibility)"
-      ref="$(reg_get "$reg" tools "$i" reference)"
-      if [[ -z "$ref" ]]; then
-        ref=true
-        [[ "$vis" == hidden ]] && ref=false
-      fi
-      [[ "$ref" == true ]] || continue
-      if [[ -n "$(reg_get "$reg" tools "$i" parser)" ]]; then
-        _PARSER_TOOL_OF["$SOURCE_ROOT/$source/$name"]="$name"
-      fi
-      # shellcheck disable=SC2016  # backticks are markdown literals
-      listed+=("$name"$'\t'"$SOURCE_ROOT/$source/$name"$'\t'"$group"$'\t'"$(printf '`%s`' "$name")")
-    done
+    _registry_file_members "$reg" listed
   done
   (( ${#listed[@]} > 0 )) || return 0
   while IFS= read -r line; do
     __out+=("${line#*$'\t'}")
   done < <(printf '%s\n' "${listed[@]}" | sort)
+}
+
+# _registry_file_members REGISTRY ARRAY_REF — appends "name<TAB>entry" for each
+# tool REGISTRY puts in the reference, and records the ones with a `parser:`.
+# A registry that is not bindir, or is scoped `workbench`, appends nothing.
+# shellcheck disable=SC2178  # __acc is a nameref to an array — shellcheck misreads it
+_registry_file_members() {
+  local reg="$1"
+  local -n __acc=$2
+  local source group count i name ref
+  [[ "$(reg_get "$reg" meta validation)" == bindir ]] || return 0
+  [[ "$(reg_get "$reg" meta scope)" != workbench ]] || return 0
+  source="$(reg_get "$reg" meta source)"
+  group="$(_section_slug "$(reg_get "$reg" meta section)")"
+  count="$(reg_len "$reg" tools)"
+  for (( i=0; i<count; i++ )); do
+    name="$(reg_get "$reg" tools "$i" name)"
+    ref="$(reg_get "$reg" tools "$i" reference)"
+    [[ -n "$ref" ]] || ref="$(_default_reference "$(reg_get "$reg" tools "$i" visibility)")"
+    [[ "$ref" == true ]] || continue
+    if [[ -n "$(reg_get "$reg" tools "$i" parser)" ]]; then
+      _PARSER_TOOL_OF["$SOURCE_ROOT/$source/$name"]="$name"
+    fi
+    # shellcheck disable=SC2016  # backticks are markdown literals
+    __acc+=("$name"$'\t'"$SOURCE_ROOT/$source/$name"$'\t'"$group"$'\t'"$(printf '`%s`' "$name")")
+  done
 }
 
 # _hash_group FILE — the group a `#`-commented file declares, read from the

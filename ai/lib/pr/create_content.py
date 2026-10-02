@@ -10,7 +10,6 @@ extraction is the only parse of the model answer — nothing outside
 
 from __future__ import annotations
 
-import os
 import re
 import sys
 from collections.abc import Callable
@@ -24,7 +23,7 @@ from core.phases import Phase
 from core.pr_template import PRTemplate
 from pr.close_refs import append
 
-# `git_remote` is a workbench-wide module rather than an `ai/lib` one, because
+# `git_remote` and `gitenv` are workbench-wide modules, not `ai/lib` ones, because
 # the pre-push hooks and the surface gate resolve the same default branch. In a
 # checkout that is one directory up; in the otto-ai-tools tarball, which
 # flattens both into one `lib/`, it is one directory up from this file too —
@@ -33,9 +32,9 @@ _WORKBENCH_LIB = Path(__file__).resolve().parent.parent.parent.parent / "lib"
 if _WORKBENCH_LIB.is_dir() and str(_WORKBENCH_LIB) not in sys.path:
     sys.path.insert(0, str(_WORKBENCH_LIB))
 import git_remote  # noqa: E402
+import gitenv  # noqa: E402
 
 _ISSUE = re.compile(r"[A-Z]+-[0-9]+")
-_GIT_ENV_DROP = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
 
 
 class ContentError(Exception):
@@ -180,20 +179,10 @@ def generate(
     return _finish(title, body, req.closes)
 
 
-def _git_env() -> dict[str, str]:
-    """The process environment with inherited git overrides dropped.
-
-    ``GIT_DIR`` is read ahead of directory discovery, so a run under a hook
-    would have ``--show-toplevel`` answer the cwd rather than the repo root.
-    """
-    env = os.environ.copy()
-    for name in _GIT_ENV_DROP:
-        env.pop(name, None)
-    return env
-
-
 def _git(wt: Path, *args: str) -> str:
-    result = git.client.run(*args, cwd=wt, env=_git_env())
+    # ``GIT_DIR`` is read ahead of directory discovery, so under a hook that
+    # exports it ``--show-toplevel`` would answer the cwd, not the repo root.
+    result = git.client.run(*args, cwd=wt, env=gitenv.git_env_clear())
     if not result.ok:
         raise ContentError(f"✗ git {' '.join(args)} failed")
     return result.stdout.strip()

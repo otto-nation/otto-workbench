@@ -86,9 +86,7 @@ no, so the push has very likely landed and simply cannot be confirmed.
 
 from __future__ import annotations
 
-import contextlib
 import dataclasses
-import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -100,34 +98,6 @@ import core.proc
 import core.publishing
 import core.timeouts
 from core.trail import Trail
-
-# Dropped from the process environment for the span of every git read and
-# write here. A hook that invoked a push-owning command (`pr create`, `pr
-# rebase`, a review fix pass) could have either set, and with either set a
-# read or write keyed on `wt_path` would answer for the hook's repo instead of
-# the one being pushed. See `pr.create_content._git_env`, which this mirrors;
-# unlike that module's own calls, most of what runs here goes through
-# `git.client`'s convenience wrappers (`current_branch`, `head_sha`,
-# `is_dirty`, `ok`, `out`), none of which take an `env=` override, so the
-# environment itself is cleared for the duration rather than passed per call.
-_GIT_ENV_DROP = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
-
-
-@contextlib.contextmanager
-def _env_cleared():
-    """Drop `_GIT_ENV_DROP` from the process environment for the duration.
-
-    Restores whatever was there after, so a caller nested inside another
-    cleared span (`push` calling `remote_head`, say) leaves the outer span's
-    values intact rather than one restoring what the other just cleared.
-    """
-    saved = {name: os.environ.pop(name, None) for name in _GIT_ENV_DROP}
-    try:
-        yield
-    finally:
-        for name, value in saved.items():
-            if value is not None:
-                os.environ[name] = value
 
 
 class PushStatus(StrEnum):
@@ -394,8 +364,7 @@ def remote_head(
     an answer to the question.
     """
     ref = f"refs/heads/{branch}"
-    with _env_cleared():
-        r = git.client.run("ls-remote", "--heads", remote, ref, cwd=wt_path)
+    r = git.client.run("ls-remote", "--heads", remote, ref, cwd=wt_path)
     if not r.ok:
         return None
     for line in r.stdout.splitlines():
@@ -421,11 +390,10 @@ def holds(wt_path: str | Path, sha: str, *, remote: str = "origin") -> bool:
     a later one carrying it is, so the question is whether the remote's tip
     descends from *sha*.
     """
-    with _env_cleared():
-        tip = remote_head(wt_path, git.client.current_branch(cwd=wt_path), remote=remote)
-        if not tip:
-            return False
-        return git.client.ok("merge-base", "--is-ancestor", sha, tip, cwd=wt_path)
+    tip = remote_head(wt_path, git.client.current_branch(cwd=wt_path), remote=remote)
+    if not tip:
+        return False
+    return git.client.ok("merge-base", "--is-ancestor", sha, tip, cwd=wt_path)
 
 
 def _verify(
@@ -452,11 +420,10 @@ def _retry_block(wt_path: str | Path, sha: str) -> Retry | None:
     the tree must be the one they validated. This repo's own pre-push
     regenerates files, so the dirty check is not hypothetical.
     """
-    with _env_cleared():
-        if git.client.head_sha(cwd=wt_path) != sha:
-            return Retry.HEAD_MOVED
-        if git.client.is_dirty(cwd=wt_path):
-            return Retry.DIRTY
+    if git.client.head_sha(cwd=wt_path) != sha:
+        return Retry.HEAD_MOVED
+    if git.client.is_dirty(cwd=wt_path):
+        return Retry.DIRTY
     return None
 
 
@@ -482,8 +449,7 @@ def _retry_lost(
                    data={"sha": lost.sha, "branch": lost.branch})
     core.log.warn("push did not land — retrying once without the gates")
 
-    with _env_cleared():
-        r = git.client.run("push", "--no-verify", *args, cwd=wt_path)
+    r = git.client.run("push", "--no-verify", *args, cwd=wt_path)
     output = _push_output(r)
     if not r.ok and not _dropped(r):
         artifact = trail.failure(
@@ -531,10 +497,10 @@ def push(
         core.publishing.draft("push", _push_command(wt_path, argv))
         return PushResult(PushStatus.HELD, sha, branch, remote=remote, args=argv)
 
-    with _env_cleared():
-        sha = sha or git.client.head_sha(cwd=wt_path)
-        branch = branch or git.client.current_branch(cwd=wt_path)
-        r = git.client.run("push", *argv, cwd=wt_path)
+    sha = sha or git.client.head_sha(cwd=wt_path)
+    branch = branch or git.client.current_branch(cwd=wt_path)
+
+    r = git.client.run("push", *argv, cwd=wt_path)
     output = _push_output(r)
     if not r.ok and not _dropped(r):
         artifact = trail.failure(
@@ -676,8 +642,7 @@ def _ssh_host(wt_path: str | Path, remote: str) -> SshTarget:
     authority, while scp-style `host:path` uses the same colon for the path and
     cannot express one at all.
     """
-    with _env_cleared():
-        url = git.client.out("remote", "get-url", remote, cwd=wt_path)
+    url = git.client.out("remote", "get-url", remote, cwd=wt_path)
     if not url:
         return SshTarget()
     if url.startswith("ssh://"):

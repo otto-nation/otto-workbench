@@ -196,6 +196,7 @@ class TestRenderedRow:
 
 
 class TestFormatReport:
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
     def test_produces_markdown_with_repo_sections(self):
         scan_data = {
             "repos": [
@@ -236,11 +237,13 @@ class TestFormatReport:
         assert "security.md" in report
         assert "Rules Coverage Summary" in report
 
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
     def test_handles_empty_scan(self):
         report = format_report({"repos": [], "rules_summary": []}, "retro-scan test")
         assert "Retro Scan Report" in report
         assert "No PR comments found" in report
 
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
     def test_includes_direction_counts_in_metadata(self):
         scan_data = {
             "repos": [{
@@ -268,6 +271,7 @@ class TestFormatReport:
         assert "gave: 1" in report
         assert "received: 1" in report
 
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
     def test_includes_unmatched_count_per_repo(self):
         scan_data = {
             "repos": [{
@@ -290,6 +294,7 @@ class TestFormatReport:
         report = format_report(scan_data, "retro-scan test")
         assert "3 unmatched" in report
 
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
     def test_includes_repeated_themes_section(self):
         scan_data = {
             "repos": [{
@@ -319,6 +324,7 @@ class TestFormatReport:
         assert "3 occurrences" in report
         assert "hardcoded secret" in report
 
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
     def test_skips_themes_section_when_no_repeats(self):
         scan_data = {
             "repos": [{

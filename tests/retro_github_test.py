@@ -423,10 +423,12 @@ def test_a_thread_within_the_page_is_not_refetched():
         ("LGTM!", True),
     ],
 )
+# passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
 def test_is_noise(text, expected):
     assert retro.github.is_noise(text) is expected
 
 
+# passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
 def test_parse_review_comment_extracts_fields_from_api_response():
     comment = {
         "user": {"login": "reviewer1"},
@@ -441,6 +443,7 @@ def test_parse_review_comment_extracts_fields_from_api_response():
     assert parsed["line"] == 45
 
 
+# passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
 def test_parse_review_comment_handles_missing_path():
     comment = {
         "user": {"login": "reviewer1"},
@@ -451,6 +454,7 @@ def test_parse_review_comment_handles_missing_path():
     assert parsed["line"] is None
 
 
+# passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
 def test_parse_review_comment_truncates_long_bodies():
     comment = {
         "user": {"login": "r"},
@@ -460,6 +464,7 @@ def test_parse_review_comment_truncates_long_bodies():
     assert len(parsed["body"]) <= 500
 
 
+# passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
 def test_threads_for_uses_the_batch_nodes_when_nothing_was_truncated(monkeypatch):
     def _refetch(*_a):
         raise AssertionError("refetched")
@@ -475,6 +480,7 @@ def test_threads_for_uses_the_batch_nodes_when_nothing_was_truncated(monkeypatch
     assert len(retro.github._threads_for("o/r", pr_node)) == 2
 
 
+# passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
 def test_threads_for_refetches_every_thread_when_the_batch_query_truncated(
     monkeypatch,
 ):

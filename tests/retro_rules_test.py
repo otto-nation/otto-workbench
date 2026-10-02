@@ -704,6 +704,7 @@ class TestLoadRules:
 
 
 class TestLoadRulesFromDir:
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
     def test_loads_rules_files_from_workbench(self, tmp_path):
         make_rules_dir(tmp_path / "wb")
         rules = load_rules(tmp_path / "wb")
@@ -711,6 +712,7 @@ class TestLoadRulesFromDir:
         names = {r["filename"] for r in rules}
         assert names == {"security.md", "general.md"}
 
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
     def test_extracts_keywords_from_rule_text(self, tmp_path):
         make_rules_dir(tmp_path / "wb")
         rules = load_rules(tmp_path / "wb")
@@ -718,11 +720,13 @@ class TestLoadRulesFromDir:
         assert "secrets" in sec["keywords"]
         assert "credentials" in sec["keywords"]
 
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
     def test_returns_empty_list_when_dir_missing(self):
         assert load_rules(Path("/nonexistent/wb")) == []
 
 
 class TestNearestRuleSmallCorpus:
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
     def test_matches_security_comment_to_security_md(self, tmp_path):
         make_rules_dir(tmp_path / "wb")
         rules = load_rules(tmp_path / "wb")
@@ -731,12 +735,14 @@ class TestNearestRuleSmallCorpus:
         )
         assert match["filename"] == "security.md"
 
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
     def test_returns_none_for_unrelated_comment(self, tmp_path):
         make_rules_dir(tmp_path / "wb")
         rules = load_rules(tmp_path / "wb")
         match = find_nearest_rule("the button color should be blue", rules)
         assert match is None
 
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
     def test_single_keyword_overlap_returns_none(self, tmp_path):
         make_rules_dir(tmp_path / "wb")
         rules = load_rules(tmp_path / "wb")

@@ -14,6 +14,7 @@ from retro.rules import load_rules  # noqa: E402
 from retro_support import make_rules_dir  # noqa: E402
 
 
+# passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
 def test_scan_local_reviews_returns_consumed_dir_names(tmp_path):
     reviews_dir = tmp_path / "state" / "reviews" / "myrepo-self-1"
     reviews_dir.mkdir(parents=True)

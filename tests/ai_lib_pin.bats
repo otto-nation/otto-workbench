@@ -231,6 +231,13 @@ PY
   done
 }
 
+# passes-at-base: asserts the early --help this change was careful to keep
+@test "workbench-statusline answers --help before the pin is read" {
+  WORKBENCH_AI_LIB_DIR=/nonexistent run "$REPO_ROOT/ai/claude/bin/workbench-statusline" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Usage: workbench-statusline"* ]]
+}
+
 # ─── The stanza itself ───────────────────────────────────────────────────────
 
 @test "every entry point that places ai/lib goes through the pin" {

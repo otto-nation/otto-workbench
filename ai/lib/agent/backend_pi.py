@@ -455,7 +455,7 @@ def _wait_for_exit(proc: subprocess.Popen, *, abandoned: bool) -> bool:
         proc.wait(timeout=core.timeouts.UNBOUNDED)
         return True
     # The LOCAL wait precedes `terminate` here, unlike the exception path
-    # (`children.owned`), which terminates at once: this run was abandoned on a
+    # (`_rpc_process`), which terminates at once: this run was abandoned on a
     # fatal response with stdin already closed, so Pi may be exiting on its own
     # and gets a short chance to do so cleanly. An exception leaving the block
     # is a stop or a failure that wants the child gone now.

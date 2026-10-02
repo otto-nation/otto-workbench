@@ -1,23 +1,27 @@
 #!/usr/bin/env bash
-# Manage this machine's coding-rule layers, for whichever harnesses are installed.
+# Manage this machine's own coding-rule layers — the local additions and
+# overrides that no harness ships. Installing the merged set is each harness's
+# own sync step (`step_claude_rules` symlinks it into `~/.claude/rules/`,
+# `step_pi_guidelines` concatenates it into `~/.pi/agent/AGENTS.md`), so a
+# machine running either harness alone gets the same rules.
 #
-# Usage: workbench-rules <command> [args]
+# ```
+# workbench-rules <command> [<args>]
+# ```
 #
-# Commands:
-#   sync                  Regenerate the machine's generated rule layer
-#   add <domain> "rule"   Append a rule to the override layer's <domain>.local.md
-#   list                  List all local rule files with line counts
-#   status                Show local rules not tracked in workbench
-#   open [domain]         Open a local rule file in $EDITOR
-#   project add "rule"    Append a rule to the current repo's CLAUDE.md
-#   project show          Display the current repo's CLAUDE.md
+# | Command | Description |
+# |---------|-------------|
+# | `sync` | Regenerate `workbench.md` in the generated layer |
+# | `add <domain> "rule"` | Append a rule to `~/.config/workbench/overrides/ai/guidelines/rules/<domain>.local.md` |
+# | `list` | List all local rule files with line counts |
+# | `status` | Show local rules not tracked in workbench |
+# | `open [domain]` | Open a local rule file in `$EDITOR` |
+# | `project add "rule"` | Append a convention to the current repo's `CLAUDE.md` |
+# | `project show` | Display the current repo's `CLAUDE.md` |
+# | `-V`, `--version` | Show version |
+# | `-h`, `--help` | Show help |
 #
-# This owns the two rule layers that exist only on this machine — the operator's
-# *.local.md additions and the generated workbench.md — and nothing about any
-# one harness. Installing the merged set is each harness's own step:
-# step_claude_rules symlinks it into ~/.claude/rules/, step_pi_guidelines
-# concatenates it into ~/.pi/agent/AGENTS.md. Both read the merged set through
-# resolve_rules, so neither depends on the other having run.
+# Domain aliases: `ts`/`js` → `typescript`, `py` → `python`, `sh`/`shell` → `bash`, `yml` → `yaml`.
 
 set -e
 

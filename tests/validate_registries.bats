@@ -1376,6 +1376,68 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+# ── Reference field validation ────────────────────────────────────────────────
+
+# _bin_with_reference VALUE [META_EXTRA] — a bindir registry whose one tool sets
+# `reference: VALUE`, beside the othertool the shared fixture also carries.
+_bin_with_reference() {
+  cat > "$TMPDIR/bin/registry.yml" << EOF
+meta:
+  section: "Workbench Scripts"
+  validation: bindir
+  source: bin
+${2:-}
+tools:
+  - name: mytool
+    permission: false
+    visibility: hidden
+    description: "A script"
+    reference: $1
+  - name: othertool
+    permission: false
+    visibility: hidden
+    description: "Another script"
+EOF
+}
+
+@test "passes with reference: true on a hidden bindir tool" {
+  _bin_with_reference true
+  run main
+  [ "$status" -eq 0 ]
+}
+
+@test "fails with a non-boolean reference" {
+  _bin_with_reference yes-please
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"reference must be true or false (got !!str)"* ]]
+}
+
+@test "fails with reference in a workbench-scoped registry, where nothing reads it" {
+  _bin_with_reference false "  scope: workbench"
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"field 'reference' is read only in a bindir registry outside the workbench scope"* ]]
+}
+
+@test "fails with reference in a registry that is not bindir" {
+  cat > "$TMPDIR/bin/registry.yml" << 'EOF'
+meta:
+  section: "Test"
+  validation: none
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: hidden
+    description: "A script"
+    reference: true
+EOF
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"field 'reference' is read only"* ]]
+}
+
 # ── Commands field validation ─────────────────────────────────────────────────
 
 @test "passes with valid commands field" {

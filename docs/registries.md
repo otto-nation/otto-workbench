@@ -56,6 +56,7 @@ tools:
     usage: "rg pattern | rg -t py"   # required when visibility: full
     docs: https://github.com/...     # optional
     brew_name: ripgrep               # optional — override for brewfile validation
+    reference: false                 # optional — bindir registries only, see below
     commands:                         # optional — subcommands
       - name: sync
         scope: "All components"
@@ -81,6 +82,8 @@ tools:
 | `hidden` | omitted from AI context |
 
 `when_to_use` and `usage` are required when `visibility: full` and forbidden otherwise.
+
+`reference` decides whether a script gets a section in the [script reference](tools.md#script-reference), which `generate-doc-reference --set scripts` renders from the script's own header — the `#` block under the shebang, or a Python script's docstring. It is read only in `bindir` registries outside the `workbench` scope, and `validate-registries` rejects it anywhere else. Omitted, it follows `visibility`: a `full` or `brief` tool is in the reference and a `hidden` one is out, so leaving a user-facing script undocumented takes `reference: false`, and documenting an internal one takes `reference: true`. A tool in the reference whose script has no header fails the build.
 
 ### Environment variables (`*.env.yml`)
 

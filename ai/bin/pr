@@ -1,8 +1,30 @@
 #!/usr/bin/env python3
-"""Unified PR lifecycle CLI — CI, review, comments, rebase.
+"""Unified PR lifecycle CLI — CI, code review, comments, rebasing, and push state.
 
-Implements --tool-schema; see ai/lib/core/tool_parser.py for the protocol.
+```
+pr [global flags] <command> [flags]
+pr status
+pr ci [--fix] [--post]
+pr review [--self] [--fix] [--push] [--post] [--repair] [--summary]
+pr comments [--triage] [--fix] [--finish] [--post]
+pr fix
+pr rebase [--fix] [--push] [--abort] [--onto <ref>]
+pr describe [--force] [--dry-run] [--post]
+pr gc
+```
+
+Global flags (`--repo-dir`, `--branch`, `--pr`) apply to every command; omit them
+and the worktree, branch, and PR are resolved from the current directory.
+`--tool-schema` prints a JSON document describing the tool (or, after a
+subcommand, that command) and exits.
+
+Deeper behaviour — phases, review modes, comment settlement, rebase conflict
+handling — is in docs/ai-automation.md and the modules in docs/ai-libraries.md.
 """
+
+# `--tool-schema` is answered in cli.pr before context resolution; see
+# ai/lib/core/tool_parser.py for the protocol. The MCP server imports
+# cli.schema.tool_schema directly rather than spawning this binary.
 
 import os
 import sys

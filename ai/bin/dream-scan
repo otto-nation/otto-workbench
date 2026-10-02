@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
 """Scan session transcripts and memory state for dream consolidation.
 
-Replaces Phases 1+2 of the dream skill (Orient + Gather Signal).
-Outputs a structured markdown report to stdout.
+Replaces Phases 1+2 of the `dream` skill (`ai/skills/dream`): Orient + Gather
+Signal. The `architecture` skill also uses the path-discovery flags rather than
+globbing a harness tree.
 
-Sessions come from ``core.sessions``, which owns what a session is and where
-one lives across every harness on the machine. This script used to answer that
-itself, with Claude Code's directory layout and its record shape: interactive
-work moved to Pi and the scan went blind to most of the corpus while reporting
-nothing amiss. The report header now prints a per-harness count, so a harness
-that has stopped being discovered reads as a zero rather than as a corpus that
-quietly halved.
+Sessions come from `core.sessions`, which owns what a session is and where one
+lives across every harness. The report header prints a per-harness transcript
+count, so a harness that has stopped being discovered reads as a zero.
 
-Usage:
-  dream-scan [--days N] [--home DIR] [--list-transcripts] [--memory-dir REPO]
+```
+dream-scan [--days N] [--home DIR]
+dream-scan [--days N] [--home DIR] --list-transcripts
+dream-scan --memory-dir REPO
+```
 
-The two exit-early flags answer "where does the corpus live" for callers that
-need the paths rather than the report: ``--list-transcripts`` prints every
-transcript in the window, one per line, and ``--memory-dir`` prints the memory
-directory for one repo. Skills use them instead of globbing a harness's tree.
+Default stdout is a markdown report: an HTML comment carrying the trail root
+(`<!-- scan-id: ... -->`), a Sessions Scanned header, Memory State (per
+registered repo), and Session Signals grouped by category (correction,
+preference, decision, pattern, review_feedback).
+
+`--list-transcripts` prints every transcript path in the window, one per line,
+and exits. `--memory-dir REPO` prints that repo's memory directory and exits.
 """
 
 from __future__ import annotations

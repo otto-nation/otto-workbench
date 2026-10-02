@@ -8,13 +8,26 @@
 # module moves its documentation with it.
 #
 # Which files that means is a source set, and a source set is a row in the table
-# below and nothing else. Adding one is five values, not a dispatch branch.
+# below and nothing else. Adding one is six values, not a dispatch branch.
 #
 #   Set       Members            Doc block            Symbol table
 #   lib       lib/*.sh,          `#` block under the  `name()`
 #             lib/ai/*.sh        shebang
 #   ai-lib    ai/lib/*/*.py      `"""…"""` module     none — the modules are
 #                                docstring            imported, not sourced
+#   scripts   every tool a       either, by the       none — these are CLIs,
+#             bindir registry    script's shebang     not function libraries
+#             declares with
+#             `reference` on
+#
+# The scripts set is read from the registries rather than globbed, so the
+# reference documents exactly the tools the registries declare — and the
+# scripts-table generate-tool-context renders beside it reads the same files,
+# so the two cannot disagree about what exists. A tool is in the reference
+# unless its entry says `reference: false`, and a hidden tool is out unless it
+# says `reference: true`: being undocumented takes a decision, not an omission.
+# Registries scoped `workbench` (bin/local) document their own internals and
+# are not read.
 #
 # Doc block conventions:
 #
@@ -58,38 +71,55 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "$_SELF")/../.." && pwd)}"
 # shellcheck source=/dev/null
 . "$REPO_ROOT/lib/ui.sh"
+# shellcheck source=/dev/null
+. "$REPO_ROOT/lib/registries.sh"
 
 SOURCE_ROOT="${SOURCE_ROOT:-$REPO_ROOT}"
 
 # The source sets. Every column is data the renderer reads; none of them is a
 # name the renderer branches on, which is what keeps a new set to one row.
 #
+#   SET_MEMBERS  Where the members come from: `glob`, read from SET_SOURCES, or
+#                `registry`, read from the bindir registries under SOURCE_ROOT.
 #   SET_SOURCES  `glob:default-group` pairs, relative to SOURCE_ROOT. An empty
 #                default means a module matched by that glob must declare one.
-#   SET_BASE     The directory an `### <name>` heading is relative to.
-#   SET_COMMENT  How the doc block is written: `hash` or `docstring`.
+#                Empty for a set whose members are not globbed.
+#   SET_BASE     The directory an `### <name>` heading is relative to, for a
+#                globbed set; a registry member is headed by its tool name.
+#   SET_COMMENT  How the doc block is written: `hash`, `docstring`, or
+#                `shebang` — whichever of the two the file's interpreter uses.
 #   SET_SYMBOLS  How public symbols are found: `bash`, or empty for no table.
 #   SET_FACADE   A module that loads the others, excluded from the reference and
 #                named by the note its members carry. Empty when the set has none.
+declare -gA SET_MEMBERS=(
+  [lib]="glob"
+  [ai-lib]="glob"
+  [scripts]="registry"
+)
 declare -gA SET_SOURCES=(
   [lib]="lib/*.sh:core lib/ai/*.sh:ai"
   [ai-lib]="ai/lib/*/*.py:"
+  [scripts]=""
 )
 declare -gA SET_BASE=(
   [lib]="lib"
   [ai-lib]="ai/lib"
+  [scripts]=""
 )
 declare -gA SET_COMMENT=(
   [lib]="hash"
   [ai-lib]="docstring"
+  [scripts]="shebang"
 )
 declare -gA SET_SYMBOLS=(
   [lib]="bash"
   [ai-lib]=""
+  [scripts]=""
 )
 declare -gA SET_FACADE=(
   [lib]="ui.sh"
   [ai-lib]=""
+  [scripts]=""
 )
 
 usage() {
@@ -110,7 +140,7 @@ Options:
   -h, --help     Show this help
 
 Environment:
-  SOURCE_ROOT    Root the set globs resolve against (default: the repo root)
+  SOURCE_ROOT    Root the set globs and registries resolve against (default: the repo root)
 EOF
 }
 
@@ -119,13 +149,34 @@ _set_keys() {
   printf '%s\n' "${!SET_SOURCES[@]}" | sort
 }
 
-# _set_entries KEY ARRAY_REF — "file<TAB>default-group" per module in the set.
+# _set_entries KEY ARRAY_REF — "file<TAB>default-group<TAB>title" per member
+# of the set, however the set finds its members.
 #
 # The default travels with the file rather than being looked up later: bash
 # pattern matching lets `*` cross a `/`, so `lib/*.sh` would claim `lib/ai/pr.sh`
-# if a file were matched back against the globs after the fact.
-# shellcheck disable=SC2178  # __out is a nameref to an array — shellcheck misreads it
+# if a file were matched back against the globs after the fact. The title is the
+# section heading, so a registry member can be headed by its tool name — which
+# is the anchor every `tools.md#<name>` link already uses.
 _set_entries() {
+  "_${SET_MEMBERS[$1]}_members" "$@"
+}
+
+# _split_entry ENTRY FILE_VAR DEFAULT_VAR TITLE_VAR — the three fields of one
+# _set_entries line. Split by expansion, not `read`: a tab is IFS whitespace,
+# so `read` collapses the empty default an ai-lib entry carries and hands the
+# title over as the group.
+_split_entry() {
+  local -n __file=$2 __default=$3 __title=$4
+  local rest="${1#*$'\t'}"
+  __file="${1%%$'\t'*}"
+  __default="${rest%%$'\t'*}"
+  __title="${rest#*$'\t'}"
+}
+
+# _glob_members KEY ARRAY_REF — the members SET_SOURCES' globs match, titled by
+# their path relative to SET_BASE.
+# shellcheck disable=SC2178  # __out is a nameref to an array — shellcheck misreads it
+_glob_members() {
   local key="$1"
   local -n __out=$2
   local spec glob default file facade="${SET_FACADE[$key]}"
@@ -142,9 +193,60 @@ _set_entries() {
       # layer's import boundary, not a documented module — so it is excluded
       # here rather than given a marker just to satisfy the group requirement.
       if [[ "${file##*/}" == "__init__.py" ]]; then continue; fi
-      __out+=("$file"$'\t'"$default")
+      __out+=("$file"$'\t'"$default"$'\t'"${file#"$SOURCE_ROOT/${SET_BASE[$key]}"/}")
     done
   done
+}
+
+# _section_slug TEXT — a registry `meta.section` as a group key: lowercase,
+# runs of anything else collapsed to one hyphen. "AI Tooling" is `ai-tooling`.
+_section_slug() {
+  local slug
+  slug="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-')"
+  slug="${slug#-}"
+  printf '%s' "${slug%-}"
+}
+
+# _registry_members KEY ARRAY_REF — every tool a bindir registry under
+# SOURCE_ROOT puts in the reference, grouped by its registry's section and
+# titled by its name, ordered by name.
+#
+# A tool is in unless its entry says `reference: false`; a hidden one is out
+# unless it says `reference: true`. A registry scoped `workbench` is skipped
+# whole: bin/local's validators and generators are the repo's own tooling, and
+# CONTRIBUTING.md documents them.
+# shellcheck disable=SC2178  # __out is a nameref to an array — shellcheck misreads it
+_registry_members() {
+  local -n __out=$2
+  local -a registries=() listed=()
+  local reg source group count i name vis ref line
+  __out=()
+  collect_component_registries registries "$SOURCE_ROOT"
+  (( ${#registries[@]} > 0 )) || return 0
+  reg_load "${registries[@]}" || return 1
+  for reg in "${registries[@]}"; do
+    [[ "$(reg_get "$reg" meta validation)" == bindir ]] || continue
+    [[ "$(reg_get "$reg" meta scope)" == workbench ]] && continue
+    source="$(reg_get "$reg" meta source)"
+    group="$(_section_slug "$(reg_get "$reg" meta section)")"
+    count="$(reg_len "$reg" tools)"
+    for (( i=0; i<count; i++ )); do
+      name="$(reg_get "$reg" tools "$i" name)"
+      vis="$(reg_get "$reg" tools "$i" visibility)"
+      ref="$(reg_get "$reg" tools "$i" reference)"
+      if [[ -z "$ref" ]]; then
+        ref=true
+        [[ "$vis" == hidden ]] && ref=false
+      fi
+      [[ "$ref" == true ]] || continue
+      # shellcheck disable=SC2016  # backticks are markdown literals
+      listed+=("$name"$'\t'"$SOURCE_ROOT/$source/$name"$'\t'"$group"$'\t'"$(printf '`%s`' "$name")")
+    done
+  done
+  (( ${#listed[@]} > 0 )) || return 0
+  while IFS= read -r line; do
+    __out+=("${line#*$'\t'}")
+  done < <(printf '%s\n' "${listed[@]}" | sort)
 }
 
 # _hash_group FILE — the group a `#`-commented file declares, read from the
@@ -201,6 +303,27 @@ _docstring_group() {
     }
     { nextfile }
   ' "$@"
+}
+
+# _is_python FILE — whether FILE's shebang names a Python interpreter.
+_is_python() {
+  local first
+  IFS= read -r first < "$1" || true
+  [[ "$first" == '#!'*python* ]]
+}
+
+# _shebang_group FILE... — _hash_group or _docstring_group per file, by shebang.
+# A set of scripts mixes both languages, and each declares its group the way
+# its own doc block is written.
+_shebang_group() {
+  local -a hash=() docstring=()
+  local file
+  for file in "$@"; do
+    if _is_python "$file"; then docstring+=("$file"); else hash+=("$file"); fi
+  done
+  if (( ${#hash[@]} > 0 )); then _hash_group "${hash[@]}"; fi
+  if (( ${#docstring[@]} > 0 )); then _docstring_group "${docstring[@]}"; fi
+  return 0
 }
 
 # The group each module declares, keyed by path, and the sets already scanned.
@@ -303,6 +426,12 @@ _docstring_doc_block() {
       exit
     }
   ' "$1"
+}
+
+# _shebang_doc_block FILE — the docstring of a Python script, the `#` block of
+# any other.
+_shebang_doc_block() {
+  if _is_python "$1"; then _docstring_doc_block "$1"; else _hash_doc_block "$1"; fi
 }
 
 # _doc_block KEY FILE — one module's doc prose, however its set writes it.
@@ -481,7 +610,7 @@ _render_module() {
   _check_purposes "$key" "$file" "$rel" || return 1
   block="$(_doc_block "$key" "$file")"
   if [[ -z "$block" ]]; then
-    err "${SET_BASE[$key]}/$rel has no doc block — the reference is rendered from it"
+    err "${file#"$SOURCE_ROOT/"} has no doc block — the reference is rendered from it"
     return 1
   fi
   printf '### %s\n\n' "$rel"
@@ -493,7 +622,8 @@ _render_module() {
   fi
 }
 
-# _emit_group KEY GROUP — every module in the group, in byte order.
+# _emit_group KEY GROUP — every module in the group, in the order the set lists
+# them: byte order for a globbed set, name order for the registry one.
 _emit_group() {
   local key="$1" group="$2" entry file default rel declared found=false
   local -a entries=() facade=()
@@ -501,9 +631,7 @@ _emit_group() {
   _load_groups "$key"
   _facade_members "$key" facade
   for entry in "${entries[@]}"; do
-    file="${entry%%$'\t'*}"
-    default="${entry#*$'\t'}"
-    rel="${file#"$SOURCE_ROOT/${SET_BASE[$key]}"/}"
+    _split_entry "$entry" file default rel
     declared="$(_file_group "$key" "$file" "$default")" || return 1
     if [[ "$declared" != "$group" ]]; then continue; fi
     if [[ "$found" == true ]]; then printf '\n'; fi
@@ -518,13 +646,12 @@ _emit_group() {
 
 # _emit_groups KEY — every group key the set's modules declare, one per line.
 _emit_groups() {
-  local key="$1" entry file default group
+  local key="$1" entry file default group _title
   local -a entries=() declared=()
   _set_entries "$key" entries
   _load_groups "$key"
   for entry in "${entries[@]}"; do
-    file="${entry%%$'\t'*}"
-    default="${entry#*$'\t'}"
+    _split_entry "$entry" file default _title
     group="$(_file_group "$key" "$file" "$default")" || return 1
     declared+=("$group")
   done

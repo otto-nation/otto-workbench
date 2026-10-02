@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """Delete the local reviews a retro consumed, if the record answers to it.
 
-Phase 4 of the retro skill. `retro-scan --consume` recorded which reviews it
-read and stamped the record with its own scan ID; this presents that ID back
-and deletes only what that scan claimed, and only where the review on disk is
-still the one it read.
+Phase 4 of the `retro` skill (`ai/skills/retro`). `retro-scan --consume` recorded
+which reviews it read and stamped the record with its scan ID; this presents that
+ID back and deletes only what that scan claimed, and only where the review on
+disk is still the one it read.
 
-A record that names a different scan is refused rather than honoured: it
-belongs to a retro that was never completed, or to a debug run, and the
-reviews it lists are not this retro's to delete.
+```
+retro-consume --scan-id ID [--dry-run]
+```
 
-Usage:
-  retro-consume --scan-id ID [--dry-run]
+A record that names a different scan is refused (exit 1) rather than honoured.
+No consume record is not an error — nothing to clean up. `--dry-run` reports
+targets and deletes nothing. The record is cleared only after the deletions it
+authorised have happened, so a crash mid-run can be retried with the same ID.
+`--scan-id` is required (exit 2 if omitted).
 """
 
 from __future__ import annotations

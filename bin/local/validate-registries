@@ -307,6 +307,26 @@ _check_commands_field() {
   fi
 }
 
+# _check_reference_field FILE INDEX — `reference` is a boolean, and only where
+# bin/local/generate-doc-reference reads it.
+#
+# The scripts reference reads bindir registries outside the workbench scope and
+# nothing else, so the field anywhere else would be a decision with no effect —
+# a tool someone marked for documentation that is documented nowhere.
+_check_reference_field() {
+  local file="$1" i="$2"
+  reg_has "$file" tools "$i" reference || return 0
+  local name tag
+  name=$(_tool_label "$file" "$i")
+  tag=$(reg_type "$file" tools "$i" reference)
+  if [[ "$tag" != '!!bool' ]]; then
+    _fail "$(basename "$file") entry '$name': reference must be true or false (got $tag)"
+  fi
+  if [[ "$(reg_get "$file" meta validation)" != bindir || "$(reg_get "$file" meta scope)" == workbench ]]; then
+    _fail "$(basename "$file") entry '$name': field 'reference' is read only in a bindir registry outside the workbench scope"
+  fi
+}
+
 # _validate_schema FILE VALIDATION
 # Runs required-field, allow-field, and duplicate checks for every entry in FILE.
 _validate_schema() {
@@ -319,6 +339,7 @@ _validate_schema() {
     _check_permission_field "$file" "$i"
     _check_unknown_fields "$file" "$i"
     _check_commands_field "$file" "$i"
+    _check_reference_field "$file" "$i"
     i=$(( i + 1 ))
   done
   _check_no_duplicates "$file" "$validation"

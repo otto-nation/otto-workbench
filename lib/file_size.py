@@ -32,6 +32,14 @@ from pathlib import Path
 
 from nesting.preprocess import heredoc_delimiter, strip_shell_line
 
+# The cap both size gates enforce — `bin/local/validate-file-size` over source,
+# `bin/local/validate-test-layout` over `tests/`. 600 rather than #754's 700,
+# because #754's number counts total lines and this counts code. Measured across
+# the 193 modules in ai/lib, code lines run to a median of 145 and a p95 of 367;
+# 600 sits above every honest module and below the handful that are genuinely
+# dense. A cap nothing is near is not a gate.
+MAX_CODE_LINES = 600
+
 
 def _docstring_lines(tree: ast.AST) -> set[int]:
     """Every line held by a docstring, at any level of *tree*."""

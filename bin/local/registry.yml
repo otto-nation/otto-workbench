@@ -134,6 +134,11 @@ tools:
     visibility: brief
     description: "Fails when a source file passes 600 code lines — blanks, comments and docstrings are not counted, so documenting a file never pushes it over. The files already over are named with the issue that splits each"
 
+  - name: validate-test-layout
+    permission: false
+    visibility: brief
+    description: "Fails when a Python module under tests/ is neither <subject>_test.py nor a declared support module, or passes the 600-code-line cap the source gate uses. The suites already over are named with the issue that splits them"
+
   - name: check-new-tests
     permission: false
     visibility: brief

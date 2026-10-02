@@ -9,11 +9,9 @@ total-line count in this repo measures documentation, and the guidelines
 require the documentation it would tax.
 
 Scope is Python and shell source under `ai/`, `bin/` and `lib/` — the two
-languages `code_lines` reads. Tests are not covered: a test file is a flat
-list of cases where the argument for splitting is navigability rather than
-coupling, so it wants a different number and a different owner
-(#910). Adding tests here would also make this gate the loudest thing in the
-repo while saying nothing #910 does not already track.
+languages `code_lines` reads. Tests are not covered here: `tests/` has its
+own gate, `bin/local/validate-test-layout`, which applies the same cap
+alongside the suite naming rule and carries its own exemptions (#910).
 
 Exit code: 0 if every file over the cap is a known exemption, 1 otherwise.
 
@@ -39,14 +37,9 @@ from pathlib import Path
 _WORKBENCH_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_WORKBENCH_DIR / "lib"))
 from ansi import DIM, GREEN, NC, RED, YELLOW  # noqa: E402
-from file_size import code_lines  # noqa: E402
+from file_size import MAX_CODE_LINES, code_lines  # noqa: E402
 from repo_scan import BASE_SKIP_DIRS  # noqa: E402
 
-# 600 rather than #754's 700, because #754's number counts total lines and this
-# counts code. Measured across the 193 modules in ai/lib, code lines run to a
-# median of 145 and a p95 of 367; 600 sits above every honest module and below
-# the handful that are genuinely dense. A cap nothing is near is not a gate.
-MAX_CODE_LINES = 600
 
 # The files over the cap when this landed, each with the issue that splits it.
 # The two shell files are #853's by name. `gh/pr_reads.py` is the densest module

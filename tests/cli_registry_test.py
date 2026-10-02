@@ -28,7 +28,7 @@ import cli.registry  # noqa: E402
 import cli.schema  # noqa: E402
 from cli.needs import LOCAL, NONE, REMOTE, Need  # noqa: E402
 from cli.registry import COMMANDS, CommandSpec, need_for, validate_needs  # noqa: E402
-import core.timeouts
+import core.timeouts  # noqa: E402
 import core.tool_parser  # noqa: E402
 
 

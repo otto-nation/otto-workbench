@@ -465,6 +465,18 @@ def test_a_pass_with_nothing_to_check_stays_silent(tmp_path):
     assert fix.suite.SuiteResult().note == ""
 
 
+def _kill_runner_group(pid_file: Path) -> None:
+    """Best-effort SIGKILL of the group whose leader wrote *pid_file*."""
+    try:
+        pgid = int(pid_file.read_text())
+    except (OSError, ValueError):
+        return
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
 def test_an_interrupt_mid_run_stops_the_runner_tree(tmp_path):
     """The runner leads its own session, so only this process can stop it.
 
@@ -501,16 +513,18 @@ def test_an_interrupt_mid_run_stops_the_runner_tree(tmp_path):
     poller.start()
     started = time.monotonic()
     try:
-        with pytest.raises(KeyboardInterrupt):
-            fix.suite.run(tmp_path, cmd, 60)
+        try:
+            with pytest.raises(KeyboardInterrupt):
+                fix.suite.run(tmp_path, cmd, 60)
+        finally:
+            finished.set()
+            poller.join(timeout=5)
+        assert runner_started.is_set(), "the runner never wrote its pid"
+        assert time.monotonic() - started < 30, "the interrupt waited out the timeout"
+        pgid = int(pid_file.read_text())
+        assert group_gone_within(pgid, 3), "the runner's process group outlived the interrupt"
+        assert core.children.live() == []
     finally:
-        finished.set()
-        poller.join(timeout=5)
-    assert runner_started.is_set(), "the runner never wrote its pid"
-    assert time.monotonic() - started < 30, "the interrupt waited out the timeout"
-    pgid = int(pid_file.read_text())
-    gone = group_gone_within(pgid, 3)
-    if not gone:
-        os.killpg(pgid, signal.SIGKILL)
-    assert gone, "the runner's process group outlived the interrupt"
-    assert core.children.live() == []
+        # Whichever assertion failed first, the runner tree is not left going:
+        # the poller signals the main thread even when it timed out unseen.
+        _kill_runner_group(pid_file)

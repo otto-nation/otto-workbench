@@ -422,6 +422,14 @@ class TestVerifyFindsTheFileThePosterWould:
         assert result["dropped"] == []
         assert result["details"][0]["resolved_path"] == "pkg/README.md"
 
+    def test_a_file_the_diff_deleted_is_dropped_as_not_found(self, tmp_path):
+        """The PR's file list names deleted files; the worktree does not hold them."""
+        wt = self._tree(tmp_path)
+        text = "## Should fix\n- [ ] **[S1]** `ai/lib/git/gone.py:1` — gap\n"
+        _, result = review.verify._verify_findings(text, wt, ["ai/lib/git/gone.py"])
+        assert result["dropped"] == ["S1"]
+        assert result["details"][0]["file_exists"] is False
+
     def test_an_unplaceable_finding_with_no_such_quote_is_still_dropped(self, tmp_path):
         """`Makefile` reads as no location to the poster; the gate still checks it."""
         wt = self._tree(tmp_path)

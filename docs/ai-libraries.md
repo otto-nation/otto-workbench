@@ -3570,8 +3570,10 @@ What is recorded here is what nothing else would stop: a child in a session of
 its own, or one owned by a worker thread the stop's exception never reaches.
 A `subprocess.run` on the main thread — the stateless agent prompts, git, gh —
 needs none of this. `run` kills its child on any exception, the `SystemExit`
-the stop handler raises included, and none of those leave this process's
-group, so a supervisor's group kill reaches them too.
+the stop handler raises included. By default none of those leave this process's
+group, so a supervisor's group kill reaches them too; `core.proc.run` with
+`kill_process_group=True` does start its child in a session of its own, and
+kills that group itself on the way out of any exception.
 
 Refusing new spawns matters as much as stopping the running ones. A thread
 pool's shutdown still runs the work queued behind the agents it was waiting

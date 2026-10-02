@@ -683,7 +683,7 @@ class TestTail:
         assert core.proc.tail("", limit=10) == ""
 
 
-# passes-at-base: proc was stdlib-only before this branch too — the point is that it still is, after a commit that briefly made it not
+# passes-at-base: for the `proc` case only — proc was stdlib-only before this branch too, the point being that it still is, after a commit that briefly made it not. The `children` case is new with this branch: `core.children` did not exist at base.
 @pytest.mark.parametrize("module, allowed", [
     (core.proc, {"timeouts", "children"}),
     (core.children, {"timeouts"}),

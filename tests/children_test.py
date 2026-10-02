@@ -15,6 +15,7 @@ import subprocess
 import sys
 import textwrap
 import time
+import types
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,7 @@ if str(LIB_DIR) not in sys.path:
 
 import core.children
 import core.proc
+import core.timeouts
 
 # Two agents running and two queued behind them, as a review with more groups
 # than workers has.
@@ -121,16 +123,19 @@ def test_a_stopped_run_leaves_nothing_running(tmp_path, stop, code):
         _clean_up(run, tmp_path)
 
 
-def test_terminate_kills_a_child_that_ignores_sigterm():
-    with core.children.owned(
-        ["sh", "-c", 'trap "" TERM; sleep 300 & wait'], start_new_session=True,
-    ) as proc:
-        # Let the trap be installed before the TERM arrives.
-        time.sleep(0.3)
+def test_terminate_kills_a_child_that_ignores_sigterm(tmp_path):
+    ready = tmp_path / "ready"
+    # The child reports ready itself, once the trap is in place: a TERM landing
+    # while `sh` is still starting would kill it with the default disposition,
+    # and the test would be about the shell's startup rather than this module.
+    script = f'trap "" TERM; echo ready > {ready}; sleep 300 & wait'
+    with core.children.owned(["sh", "-c", script], start_new_session=True) as proc:
+        assert _wait_until(ready.exists, 10), "the child never installed its trap"
         started = time.monotonic()
         assert core.children.terminate(proc, grace=0.5) is True
+        elapsed = time.monotonic() - started
     assert proc.returncode == -signal.SIGKILL
-    assert time.monotonic() - started < 0.5 + 5
+    assert elapsed < 0.5 + core.timeouts.QUICK
 
 
 def test_an_exception_in_the_owning_block_stops_the_child():
@@ -152,8 +157,11 @@ def test_a_child_already_reaped_is_never_signalled(monkeypatch):
     proc = core.children.spawn(["true"])
     proc.wait()
     sent = []
-    monkeypatch.setattr(core.children.os, "killpg", lambda *a: sent.append(a))
-    monkeypatch.setattr(core.children.os, "kill", lambda *a: sent.append(a))
+    # Replaces the name in `core.children` only: patching `core.children.os`'s
+    # attributes would rebind them on the global `os` module for every thread.
+    monkeypatch.setattr(core.children, "os", types.SimpleNamespace(
+        killpg=lambda *a: sent.append(a), kill=lambda *a: sent.append(a),
+    ))
     core.children.stop_all()
     assert sent == []
     core.children.forget(proc)
@@ -173,7 +181,9 @@ def test_a_child_not_recorded_as_a_group_leader_is_never_signalled_by_group(monk
     """Spawned without `start_new_session`, its pid names no group of its own."""
     proc = core.children.spawn(["sleep", "300"])
     by_group = []
-    monkeypatch.setattr(core.children.os, "killpg", lambda *a: by_group.append(a))
+    monkeypatch.setattr(core.children, "os", types.SimpleNamespace(
+        killpg=lambda *a: by_group.append(a), kill=os.kill,
+    ))
     try:
         core.children.stop_all()
         proc.wait(timeout=5)
@@ -200,8 +210,10 @@ def test_an_announcement_that_cannot_be_written_still_exits_with_the_signal_code
 def test_a_group_of_only_zombies_is_not_alive(monkeypatch):
     """Linux answers success to signal 0 for a zombie, so `ps` has the say."""
     listing = subprocess.CompletedProcess([], 0, stdout="  123 Z\n  123 Z+\n  456 S\n")
-    monkeypatch.setattr(conftest.os, "killpg", lambda *a: None)
-    monkeypatch.setattr(conftest.subprocess, "run", lambda *a, **kw: listing)
+    monkeypatch.setattr(conftest, "os", types.SimpleNamespace(killpg=lambda *a: None))
+    monkeypatch.setattr(conftest, "subprocess", types.SimpleNamespace(
+        run=lambda *a, **kw: listing, TimeoutExpired=subprocess.TimeoutExpired,
+    ))
     assert group_alive(123) is False
     assert group_alive(456) is True
 

@@ -230,7 +230,10 @@ def _locate(
     every location is already repo-relative and resolves literally.
     """
     match = resolve_path(path, changed) if changed else None
-    if match is not None:
+    # The diff's file list includes files the PR deleted, so a match there is
+    # taken only when it is on disk; otherwise the finding falls through to
+    # "file not found" rather than passing as a file that exists.
+    if match is not None and (Path(wt_path) / match).exists():
         return Path(wt_path) / match
     literal = Path(wt_path) / path
     if literal.exists():

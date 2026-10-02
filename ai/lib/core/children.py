@@ -32,8 +32,10 @@ What is recorded here is what nothing else would stop: a child in a session of
 its own, or one owned by a worker thread the stop's exception never reaches.
 A `subprocess.run` on the main thread — the stateless agent prompts, git, gh —
 needs none of this. `run` kills its child on any exception, the `SystemExit`
-the stop handler raises included, and none of those leave this process's
-group, so a supervisor's group kill reaches them too.
+the stop handler raises included. By default none of those leave this process's
+group, so a supervisor's group kill reaches them too; `core.proc.run` with
+`kill_process_group=True` does start its child in a session of its own, and
+kills that group itself on the way out of any exception.
 
 Refusing new spawns matters as much as stopping the running ones. A thread
 pool's shutdown still runs the work queued behind the agents it was waiting
@@ -92,6 +94,11 @@ def spawn(cmd: Sequence[str], **popen_kwargs) -> subprocess.Popen:
     on the way out — nobody else has a handle to it. What remains is an
     exception landing inside `Popen.__init__` after its fork, which is CPython's
     to clean up and not reachable from here.
+
+    Nor does this cover a second stop signal landing between `Popen` returning
+    and the record: `install_stop_handler` answers a repeated stop with
+    `os._exit` at once, which skips the unwind above, so that child is leaked.
+    The window is tiny and needs two signals during one spawn on the main thread.
     """
     leads_group = bool(popen_kwargs.get("start_new_session"))
     started: list[subprocess.Popen] = []
@@ -232,6 +239,13 @@ def _sweep_group(proc: subprocess.Popen) -> None:
     reserved while the group has members, so the number reaches either those
     members or nobody. For any other child the pid is free for reuse once it
     is reaped, and could by now lead a stranger's group.
+
+    The "or nobody" holds only while members remain. A group with no members
+    has released its id, and the pid could be reused by a process leading a
+    group of its own in the moment between the reap and this call. That window
+    is short, and nothing here can tell a group with members from one without,
+    short of the signal this sends, so the residual race is accepted rather
+    than guarded.
     """
     with contextlib.suppress(ProcessLookupError, PermissionError):
         os.killpg(proc.pid, signal.SIGKILL)

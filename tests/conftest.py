@@ -344,7 +344,11 @@ def _isolated_stop_handling(monkeypatch):
     monkeypatch.setattr(core.children, "_live", {})
     yield
     for signum, handler in saved.items():
-        signal.signal(signum, handler)
+        # `getsignal` answers None for a handler not installed from Python, and
+        # `signal.signal` rejects None: a teardown error here would mask the
+        # result of the test that just ran.
+        if handler is not None:
+            signal.signal(signum, handler)
 
 
 @pytest.fixture(autouse=True)

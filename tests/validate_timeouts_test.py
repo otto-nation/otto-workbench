@@ -84,10 +84,66 @@ def go(runner, cmd):
 
 
 def test_popen_needs_no_bound(tmp_path):
-    """It takes none; the one `communicate` takes belongs to that call."""
+    """The launch takes none; the wait that follows is checked on its own."""
     assert _check(tmp_path, """
 def stream(cmd):
     return subprocess.Popen(cmd, stdout=subprocess.PIPE)
+""") == []
+
+
+def test_a_popen_wait_without_timeout_is_flagged(tmp_path):
+    violations = _check(tmp_path, """
+def stream(cmd):
+    proc = subprocess.Popen(cmd)
+    proc.wait()
+""")
+    assert [(v.line, v.found) for v in violations] == [
+        (4, "proc.wait() with no timeout="),
+    ]
+
+
+def test_a_popen_communicate_without_timeout_is_flagged(tmp_path):
+    violations = _check(tmp_path, """
+def stream(cmd):
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    return proc.communicate()
+""")
+    assert [(v.line, v.found) for v in violations] == [
+        (4, "proc.communicate() with no timeout="),
+    ]
+
+
+def test_a_popen_wait_with_timeout_is_clean(tmp_path):
+    assert _check(tmp_path, """
+def stream(cmd):
+    proc = subprocess.Popen(cmd)
+    proc.wait(timeout=timeouts.LOCAL)
+""") == []
+
+
+def test_a_popen_wait_with_unbounded_is_clean(tmp_path):
+    assert _check(tmp_path, """
+def stream(cmd):
+    proc = subprocess.Popen(cmd)
+    proc.wait(timeout=timeouts.UNBOUNDED)
+""") == []
+
+
+def test_a_with_popen_wait_without_timeout_is_flagged(tmp_path):
+    violations = _check(tmp_path, """
+def stream(cmd):
+    with subprocess.Popen(cmd) as proc:
+        proc.wait()
+""")
+    assert [(v.line, v.found) for v in violations] == [
+        (4, "proc.wait() with no timeout="),
+    ]
+
+
+def test_event_wait_on_a_non_popen_name_is_ignored(tmp_path):
+    assert _check(tmp_path, """
+def hold(done):
+    done.wait()
 """) == []
 
 

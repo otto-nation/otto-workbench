@@ -330,7 +330,7 @@ class TestTruncatedThreadFetch:
                         target_dir=tmp_path / "target")
 
     def _pr_data(self, threads, *, complete):
-        from gh.pr_reads import PRData
+        from gh.pr_data import PRData
         return PRData(
             viewer_login="isaacg", head_sha="abc1234", head_ref="isaac/feat/x",
             base_ref="main", review_threads=threads, threads_complete=complete,

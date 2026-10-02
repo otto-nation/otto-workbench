@@ -27,7 +27,7 @@ from review.sections import ReviewSections
 import core.log
 from gh.client import LineResolutionError
 from pr.state import PostedAs, PostEvent, PostTracking
-from gh.pr_reads import PRData
+from gh.pr_data import PRData
 from review.types import Finding
 from core.text import plural
 from core.serde import to_dict as serde_to_dict

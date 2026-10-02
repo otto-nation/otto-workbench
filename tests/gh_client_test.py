@@ -24,7 +24,7 @@ if str(LIB_DIR) not in sys.path:
 
 import gh.budget  # noqa: E402
 import gh.client  # noqa: E402
-import gh.pr_reads  # noqa: E402
+import gh.pr_pages  # noqa: E402
 import core.proc  # noqa: E402
 import core.timeouts  # noqa: E402
 from core.proc import CmdResult  # noqa: E402
@@ -442,7 +442,7 @@ def test_a_first_page_read_sends_no_cursor_to_gh(stub_gh):
     test that watches the argv a paging caller actually produces.
     """
     calls = stub_gh("echo '{\"data\": {\"repository\": {\"pullRequest\": null}}}'")
-    gh.pr_reads.fetch_review_threads("owner/repo", 7)
+    gh.pr_pages.fetch_review_threads("owner/repo", 7)
     said = calls.read_text()
     # The query text declares $endCursor either way, so assert on the fields
     # gh was handed, not on the whole command line.

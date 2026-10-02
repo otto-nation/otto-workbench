@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 
 import gh.client
 import core.log
-from gh.pr_reads import fetch_review_threads
+from gh.pr_pages import fetch_review_threads
 from retro.report import COMMENT_BODY_MAX
 
 
@@ -58,7 +58,7 @@ GQL_MERGED_PRS_LIMIT = 50
 # 250 PRs in one window, well past any window this scans.
 GQL_MERGED_PRS_MAX_PAGES = 5
 
-# This module's own page sizes, rather than `gh.pr_reads`'s. The two queries
+# This module's own page sizes, rather than `gh.pr_pages`'. The two queries
 # have nothing in common but their shape: that one reads a single PR and
 # recovers from truncation by paginating, while this one nests the same fields
 # fifty PRs deep and recovers through `_threads_for`'s refetch. Sharing the
@@ -66,7 +66,7 @@ GQL_MERGED_PRS_MAX_PAGES = 5
 # times over.
 RETRO_THREADS_LIMIT = 100
 
-# Same reasoning as `gh.pr_reads`' equivalent, and the same measurement behind
+# Same reasoning as `gh.pr_pages`' equivalent, and the same measurement behind
 # it: p90 is two comments per thread and 3 threads in 217 exceed ten. Nested
 # under `reviewThreads`, this is multiplied by 100 and is most of what the
 # detail query costs. `_threads_for` refetches any PR whose threads were cut

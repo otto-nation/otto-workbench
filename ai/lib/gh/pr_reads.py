@@ -1,8 +1,12 @@
-"""The review system's reads of a PR, and the GraphQL queries behind them.
+"""The review system's single-call reads of a PR.
 
-The PR's own metadata, its surrounding conversation, the diff, the
-pending-review check, and the consolidated review-thread query. Used by the
-pipeline before any agent runs, and by review.posting and review.dedup after.
+The PR's own metadata, its surrounding conversation, its refs, the diff, the
+pending-review check and the new-commit count. Used by the pipeline before any
+agent runs, and by review.posting after. Each accepts the consolidated
+`gh.pr_data.PRData` where it has one and answers from it without a call.
+
+The consolidated query itself is `gh.pr_data`; the paginated connections and
+their page sizes are `gh.pr_pages`.
 
 The transport is not here. ``gh.client`` owns running gh, the timeout tiers and
 the rate-limit ladder; this module owns what the review system asks for and how
@@ -21,61 +25,15 @@ from __future__ import annotations
 import json
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import gh.client
+import gh.pr_data
 import git.client
 import core.log
 import git.numstat
 import core.proc
 from gh.types import PRContext, PRMetadata
-
-
-# ── Constants ───────────────────────────────────────────────────────────────
-
-REVIEW_STATE_PENDING = "PENDING"
-
-# GraphQL page sizes — shared across queries. GitHub rejects `first:` above 100.
-# Upgrade to a query builder class when: a third query shape is added, or
-# fields become runtime-conditional.
-GQL_REVIEWS_LIMIT = 100
-GQL_THREADS_LIMIT = 100
-
-# Sized for the thread people actually write, not the worst one on record.
-# GitHub scores a query from its `first:` values before running it, and this
-# one is nested inside `reviewThreads`, so it is multiplied by 100 and is most
-# of what both queries cost. Measured over 217 threads on the repo under
-# heaviest review: p50 and p90 are 2 comments, the mean is 4.2, and 3 threads
-# exceed 10. Ten therefore serves 98.6% of threads whole for a fifth of the
-# charge, and `_complete_truncated_comments` finishes off the rest — which is
-# not a new risk: the old value of 50 was itself under the observed maximum of
-# 163, so the set was already being truncated, silently.
-GQL_THREAD_COMMENTS_LIMIT = 10
-
-GQL_ISSUE_COMMENTS_LIMIT = 100
-GQL_COMMITS_LIMIT = 100
-
-# Ceiling on review-thread pages, so a server that keeps reporting hasNextPage
-# cannot spin forever. 20 pages is 2000 threads — far beyond any real PR.
-GQL_MAX_THREAD_PAGES = 20
-
-# The same guard for issue comments. 10 pages is 1000 comments against an
-# observed maximum of 230, so this bounds a misbehaving server rather than any
-# PR someone might actually open.
-GQL_MAX_ISSUE_COMMENT_PAGES = 10
-
-# The page size for a thread already known to be deep. Deliberately the
-# largest GitHub allows, and deliberately not GQL_THREAD_COMMENTS_LIMIT: that
-# one is small because it is nested under `reviewThreads` and multiplied by
-# 100, where this one is scored on its own for a thread whose comments we
-# already know we want. A second round trip is the thing worth avoiding here.
-GQL_THREAD_REFETCH_LIMIT = 100
-
-# The same guard for a single thread's comments. _drain_thread_comments pages
-# through _THREAD_COMMENTS_QUERY at GQL_THREAD_REFETCH_LIMIT a page, so 20
-# pages is 2000 comments against an observed maximum of 163 per thread — this
-# bounds a misbehaving server rather than any thread someone might leave.
-GQL_MAX_THREAD_COMMENT_PAGES = 20
 
 
 # ── What a review knows about its PR ────────────────────────────────────────
@@ -135,7 +93,7 @@ def fetch_pr_metadata(
 
 
 def fetch_pr_context(
-    repo: str, pr_number: str, pr_data: PRData | None = None,
+    repo: str, pr_number: str, pr_data: gh.pr_data.PRData | None = None,
 ) -> PRContext:
     """The PR's surrounding conversation — commits, reviews, comments.
 
@@ -143,7 +101,7 @@ def fetch_pr_context(
     is read out of it and no call is made.
     """
     if pr_data is not None:
-        return _pr_context_from_data(pr_data)
+        return gh.pr_data.pr_context_from_data(pr_data)
 
     cmds = {
         "commits": [
@@ -177,66 +135,10 @@ def fetch_pr_context(
     )
 
 
-def _thread_comment_entries(thread: dict) -> list[dict]:
-    """Convert a review thread's comment nodes into flat entry dicts."""
-    path = thread.get("path", "")
-    line = thread.get("line")
-    nodes = thread.get("comments", {}).get("nodes", [])
-    root_id = None
-    entries = []
-    for i, c in enumerate(nodes):
-        entries.append({
-            "id": c.get("databaseId"),
-            "path": path,
-            "line": line,
-            "body": c.get("body", ""),
-            "user": (c.get("author") or {}).get("login", ""),
-            "in_reply_to_id": root_id,
-        })
-        if i == 0:
-            root_id = c.get("databaseId")
-    return entries
-
-
-def _pr_context_from_data(pr_data: PRData) -> PRContext:
-    """Build PRContext from PRData without any API calls."""
-    commits = "\n".join(
-        c.get("commit", {}).get("messageHeadline", "")
-        for c in pr_data.commits
-    )
-
-    reviews = [
-        {
-            "user": (r.get("author") or {}).get("login", ""),
-            "state": r.get("state", ""),
-            "body": r.get("body", ""),
-        }
-        for r in pr_data.reviews
-    ]
-
-    review_comments = []
-    for thread in pr_data.review_threads:
-        review_comments.extend(_thread_comment_entries(thread))
-
-    comments = [
-        {
-            "user": (c.get("author") or {}).get("login", ""),
-            "body": c.get("body", ""),
-        }
-        for c in pr_data.issue_comments
-    ]
-
-    return PRContext(
-        commits=commits,
-        reviews=json.dumps(reviews),
-        review_comments=json.dumps(review_comments),
-        comments=json.dumps(comments),
-    )
-
 
 # ── PR refs ─────────────────────────────────────────────────────────────────
 
-def _fetch_pr_refs(repo: str, pr: str, pr_data: PRData | None = None) -> dict:
+def _fetch_pr_refs(repo: str, pr: str, pr_data: gh.pr_data.PRData | None = None) -> dict:
     """Fetch the PR's refs (head SHA, head ref, base ref) in one call."""
     if pr_data is not None:
         return {"head_sha": pr_data.head_sha, "head_ref": pr_data.head_ref, "base_ref": pr_data.base_ref}
@@ -286,7 +188,7 @@ class PendingReview:
 
 
 def _check_existing_pending(
-    repo: str, pr: str, pr_data: PRData | None = None,
+    repo: str, pr: str, pr_data: gh.pr_data.PRData | None = None,
 ) -> PendingReview:
     """The PR's PENDING review, and whether we managed to ask."""
     if pr_data is not None:
@@ -305,7 +207,7 @@ def _check_existing_pending(
         core.log.warn(f"Could not parse {repo}#{pr}'s reviews — treating the check as unanswered")
         return PendingReview(looked=False)
     for review in reviews:
-        if review.get("state") == REVIEW_STATE_PENDING:
+        if review.get("state") == gh.pr_data.REVIEW_STATE_PENDING:
             return PendingReview(int(review.get("id", 0)) or None)
     return PendingReview()
 
@@ -324,7 +226,7 @@ class NewCommits:
 
 
 def _count_new_commits(
-    repo: str, pr: str, review_sha: str, pr_data: PRData | None = None,
+    repo: str, pr: str, review_sha: str, pr_data: gh.pr_data.PRData | None = None,
 ) -> NewCommits:
     """Commits on the PR since the review SHA, and whether we managed to count."""
     if pr_data is not None:
@@ -343,618 +245,3 @@ def _count_new_commits(
         if sha.startswith(review_sha) or review_sha.startswith(sha):
             return NewCommits(len(commits) - i - 1)
     return NewCommits(len(commits))
-
-
-# ── Review threads ─────────────────────────────────────────────────────────
-
-# One definition of a review-thread node, shared by the consolidated PR query
-# and the follow-up page query so the two cannot drift apart.
-_THREAD_NODE_FIELDS = f"""
-          id
-          isResolved
-          path
-          line
-          comments(first: {GQL_THREAD_COMMENTS_LIMIT}) {{
-            totalCount
-            pageInfo {{ hasNextPage endCursor }}
-            nodes {{
-              id
-              databaseId
-              author {{ login }}
-              body
-              createdAt
-              lastEditedAt
-            }}
-          }}
-"""
-
-# Issue comments past the first page. Separate from the consolidated query so a
-# PR over the 100-comment cap costs one extra call rather than making every PR
-# pay for a second page it does not have.
-_ISSUE_COMMENTS_QUERY = f"""
-query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) {{
-  repository(owner: $owner, name: $name) {{
-    pullRequest(number: $pr) {{
-      comments(first: {GQL_ISSUE_COMMENTS_LIMIT}, after: $endCursor) {{
-        totalCount
-        pageInfo {{ hasNextPage endCursor }}
-        nodes {{
-          databaseId
-          author {{ login __typename }}
-          body
-          createdAt
-          lastEditedAt
-        }}
-      }}
-    }}
-  }}
-}}
-"""
-
-# One thread's comments, addressed by the thread's own node id. This is what
-# finishes off a thread the nested page size cut off, so it asks for the
-# largest page GitHub allows — see GQL_THREAD_REFETCH_LIMIT for why that is the
-# opposite choice from the nested one.
-_THREAD_COMMENTS_QUERY = f"""
-query($threadId: ID!, $endCursor: String) {{
-  node(id: $threadId) {{
-    ... on PullRequestReviewThread {{
-      comments(first: {GQL_THREAD_REFETCH_LIMIT}, after: $endCursor) {{
-        totalCount
-        pageInfo {{ hasNextPage endCursor }}
-        nodes {{
-          id
-          databaseId
-          author {{ login }}
-          body
-          createdAt
-          lastEditedAt
-        }}
-      }}
-    }}
-  }}
-}}
-"""
-
-# The cursor variable is named endCursor so this query stays compatible with
-# `gh api graphql --paginate`, which only advances on that exact name. We drive
-# the loop ourselves — a wrong name there re-requests page 1 forever rather
-# than erroring.
-_THREADS_PAGE_QUERY = f"""
-query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) {{
-  repository(owner: $owner, name: $name) {{
-    pullRequest(number: $pr) {{
-      reviewThreads(first: {GQL_THREADS_LIMIT}, after: $endCursor) {{
-        totalCount
-        pageInfo {{ hasNextPage endCursor }}
-        nodes {{
-{_THREAD_NODE_FIELDS}
-        }}
-      }}
-    }}
-  }}
-}}
-"""
-
-
-@dataclass(frozen=True)
-class ThreadSet:
-    """Every review thread on a PR, and whether that is actually all of them.
-
-    `complete` is the pagination's own success, not a property of the PR. A
-    caller that persists a thread ledger has to tell "this PR has N threads"
-    from "we stopped early at N", and a bare list cannot: a page that failed
-    mid-walk returned a short list indistinguishable from a complete one, so
-    `pr comments` wrote a ledger missing every thread past the failure and
-    dropped the triage verdicts on them — the one thing on a record that no API
-    call re-derives.
-
-    The distinction is per-fetch rather than per-thread, and that is enough:
-    the fetch never learns which ids it failed to reach, but it knows for
-    certain whether it walked to exhaustion. A thread absent from a *complete*
-    fetch is deleted and its record should go; one absent from an *incomplete*
-    fetch is merely unknown and its record must stand. That also makes the
-    carry-forward self-healing — the first complete fetch afterwards reaps
-    anything genuinely gone, so a truncated run cannot strand a record forever.
-    """
-
-    threads: list[dict] = field(default_factory=list)
-    complete: bool = True
-
-
-def warn_if_truncated(
-    connection: dict, what: str,
-    consequence: str = "reads over the older ones are incomplete",
-) -> bool:
-    """Report a `last:`-paged connection that came back short of its totalCount.
-
-    Returns whether it truncated, so a caller with something better to do than
-    warn may. A page of nodes looks the same whole or cut off, and `totalCount`
-    is the only thing in the answer that tells the two apart — without it the
-    reads below the cut are wrong with no symptom.
-
-    Every caller pages with `last:`, so the entries missing are the oldest and
-    the newest are intact. That is what keeps the truncation a warning rather
-    than a failure: review verdicts, the pending-review lookup and the
-    new-commit scan all read the recent end. The exposure is dedup, which looks
-    for a finding it posted long enough ago to have fallen off and, not finding
-    it, posts it again — so the warning is what makes a duplicate post
-    explicable instead of inexplicable. `consequence` names what a specific
-    caller loses when that happens; the default is generic for a caller with
-    nothing more specific to say.
-
-    Absent `totalCount` this reports nothing: a caller that did not ask for it
-    gets today's silence rather than a warning on every read.
-    """
-    total = connection.get("totalCount", 0)
-    nodes = connection.get("nodes", [])
-    if total <= len(nodes):
-        return False
-    core.log.warn(f"{what}: {total} exist but only the newest {len(nodes)} were read "
-             f"— {consequence}")
-    return True
-
-
-def _complete_truncated_comments(threads: list[dict]) -> bool:
-    """Refetch the comments of any thread the page size cut off. Returns success.
-
-    The page size is set for the common thread rather than the worst one — the
-    p90 thread carries two comments — so the rare deep thread is finished off
-    with a second call instead of being paid for on every thread in every
-    query. A warning alone was what this used to do, and the truncated set went
-    on to feed dedup, which reads a missing comment as one never posted and
-    posts it again.
-    """
-    ok = True
-    for thread in threads:
-        comments_data = thread.get("comments", {})
-        total = comments_data.get("totalCount", 0)
-        nodes = comments_data.get("nodes", [])
-        if total <= len(nodes):
-            continue
-        full = _drain_thread_comments(thread["id"], nodes, comments_data)
-        if full is None:
-            path = thread.get("path", "?")
-            core.log.warn(
-                f"Thread at {path} has {total} comments and the refetch failed — "
-                f"only {len(nodes)} are available")
-            ok = False
-            continue
-        comments_data["nodes"] = full
-    return ok
-
-
-def _drain_thread_comments(
-    thread_id: str, first_nodes: list[dict], first_page: dict,
-) -> list[dict] | None:
-    """Every comment on one thread, or None when a page could not be read.
-
-    Keyed on the thread's node id rather than the PR, so this asks only for the
-    thread that overflowed instead of re-running the whole consolidated query
-    at a larger page size.
-    """
-    nodes = list(first_nodes)
-    page_info = first_page.get("pageInfo", {})
-    seen: set[str] = set()
-
-    for _ in range(GQL_MAX_THREAD_COMMENT_PAGES):
-        if not page_info.get("hasNextPage"):
-            return nodes
-        cursor = page_info.get("endCursor")
-        if not cursor or cursor in seen:
-            return None
-        seen.add(cursor)
-        r = gh.client.graphql(
-            _THREAD_COMMENTS_QUERY, variables={"threadId": thread_id, "endCursor": cursor},
-        )
-        if not r.ok:
-            return None
-        try:
-            data = json.loads(r.stdout)
-        except (json.JSONDecodeError, TypeError):
-            return None
-        page = (data.get("data", {}).get("node") or {}).get("comments") or {}
-        nodes.extend(page.get("nodes", []))
-        page_info = page.get("pageInfo", {})
-
-    # ceiling: a thread past GQL_MAX_THREAD_COMMENT_PAGES pages of comments is
-    # still short, and says so rather than reading as complete. Upgrade
-    # trigger: raise the bound once a real thread trips it — the warning above
-    # names the thread when one does.
-    return None if page_info.get("hasNextPage") else nodes
-
-
-def _drain_issue_comments(
-    owner: str, name: str, pr: int, first_page: dict,
-) -> tuple[list[dict], bool]:
-    """Every issue comment on the PR, and whether the walk finished.
-
-    100 is GitHub's hard cap on `first:`, so this is not a page size that can
-    be raised — a PR past it needs a second call or it is silently short. This
-    query asked for neither `totalCount` nor `pageInfo`, so nothing downstream
-    could even tell: the observed maximum on the repo under heaviest review is
-    230 comments, and the 130 past the cap were invisible to triage, to the
-    dashboard, and to the settlement pass that looks for its own verdicts among
-    them.
-
-    A `tuple` rather than a type because both halves are the same fact — the
-    comments and whether they are all of them — and unlike `ThreadSet` nothing
-    carries this pair further than the line below.
-    """
-    nodes = list(first_page.get("nodes", []))
-    page_info = first_page.get("pageInfo", {})
-    seen: set[str] = set()
-
-    for _ in range(GQL_MAX_ISSUE_COMMENT_PAGES - 1):
-        if not page_info.get("hasNextPage"):
-            return nodes, True
-        cursor = page_info.get("endCursor")
-        if not cursor or cursor in seen:
-            return nodes, False
-        seen.add(cursor)
-        r = gh.client.graphql(
-            _ISSUE_COMMENTS_QUERY,
-            variables={"owner": owner, "name": name, "pr": pr, "endCursor": cursor},
-        )
-        if not r.ok:
-            core.log.warn(core.proc.failure_message(
-                "Failed to fetch a page of issue comments — the set is incomplete", r))
-            return nodes, False
-        try:
-            data = json.loads(r.stdout)
-        except (json.JSONDecodeError, TypeError):
-            core.log.warn("Failed to parse a page of issue comments — the set is incomplete")
-            return nodes, False
-        pr_node = data.get("data", {}).get("repository", {}).get("pullRequest") or {}
-        page = pr_node.get("comments") or {}
-        nodes.extend(page.get("nodes", []))
-        page_info = page.get("pageInfo", {})
-
-    if page_info.get("hasNextPage"):
-        core.log.warn(
-            f"Issue comments hit the {GQL_MAX_ISSUE_COMMENT_PAGES}-page ceiling — "
-            f"stopping at {len(nodes)}")
-        return nodes, False
-    return nodes, True
-
-
-def _threads_page(owner: str, name: str, pr: int, cursor: str | None) -> dict | None:
-    """One page of review threads, or None when the page could not be read.
-
-    None rather than `{}`: an empty node is what a PR with no threads returns,
-    and the caller has to tell that from a page it failed to fetch.
-    """
-    variables = {"owner": owner, "name": name, "pr": pr, "endCursor": cursor}
-    r = gh.client.graphql(_THREADS_PAGE_QUERY, variables=variables)
-    if not r.ok:
-        core.log.warn(core.proc.failure_message(
-            "Failed to fetch a page of review threads (fetch) — the thread set is incomplete", r))
-        return None
-    try:
-        data = json.loads(r.stdout)
-    except (json.JSONDecodeError, TypeError):
-        core.log.warn("Failed to fetch a page of review threads (parse) — the thread set is incomplete")
-        return None
-    pr_node = data.get("data", {}).get("repository", {}).get("pullRequest") or {}
-    return pr_node.get("reviewThreads") or {}
-
-
-def _drain_thread_pages(
-    owner: str, name: str, pr: int, first_page: dict | None,
-) -> ThreadSet:
-    """Follow reviewThreads pagination from an already-fetched first page.
-
-    Every way of stopping short — a failed page, a missing or repeated cursor,
-    the page ceiling — comes back `complete=False`. Each of those used to warn
-    and return the threads gathered so far, which the caller could not tell
-    from the whole set.
-    """
-    if first_page is None:
-        return ThreadSet([], complete=False)
-    threads = list(first_page.get("nodes", []))
-    page_info = first_page.get("pageInfo", {})
-    # GitHub cursors are strictly increasing; a repeat means the server or the
-    # query is not advancing, which would otherwise loop until timeout.
-    seen: set[str] = set()
-
-    for _ in range(GQL_MAX_THREAD_PAGES - 1):
-        if not page_info.get("hasNextPage"):
-            return ThreadSet(threads)
-        cursor = page_info.get("endCursor")
-        if not cursor:
-            core.log.warn(f"Review threads report another page but no cursor — stopping at {len(threads)} threads")
-            return ThreadSet(threads, complete=False)
-        if cursor in seen:
-            core.log.warn(f"Review thread pagination repeated cursor {cursor} — stopping at {len(threads)} threads")
-            return ThreadSet(threads, complete=False)
-        seen.add(cursor)
-        page = _threads_page(owner, name, pr, cursor)
-        if page is None:
-            return ThreadSet(threads, complete=False)
-        threads.extend(page.get("nodes", []))
-        page_info = page.get("pageInfo", {})
-
-    if page_info.get("hasNextPage"):
-        core.log.warn(f"Review thread pagination hit the {GQL_MAX_THREAD_PAGES}-page ceiling — stopping at {len(threads)} threads")
-        return ThreadSet(threads, complete=False)
-    return ThreadSet(threads)
-
-
-def fetch_review_threads(repo: str, pr: str | int) -> ThreadSet:
-    """Every review thread on a PR, and whether the walk actually finished."""
-    owner, name = repo.split("/", 1)
-    first_page = _threads_page(owner, name, int(pr), None)
-    found = _drain_thread_pages(owner, name, int(pr), first_page)
-    if not _complete_truncated_comments(found.threads):
-        return ThreadSet(found.threads, complete=False)
-    return found
-
-
-# ── Consolidated GraphQL PR data ───────────────────────────────────────────
-
-_PR_DATA_QUERY = f"""
-query($owner: String!, $name: String!, $pr: Int!) {{
-  viewer {{ login }}
-  repository(owner: $owner, name: $name) {{
-    pullRequest(number: $pr) {{
-      headRefOid
-      headRefName
-      baseRefName
-      author {{ login }}
-      isDraft
-      labels(first: 20) {{ nodes {{ name }} }}
-      reviewDecision
-      reviewRequests(first: 20) {{ nodes {{ requestedReviewer {{ ... on User {{ login }} ... on Team {{ name slug }} }} }} }}
-      reviews(last: {GQL_REVIEWS_LIMIT}) {{
-        totalCount
-        nodes {{
-          databaseId
-          state
-          body
-          minimizedReason
-          submittedAt
-          lastEditedAt
-          author {{ login }}
-        }}
-      }}
-      reviewThreads(first: {GQL_THREADS_LIMIT}) {{
-        totalCount
-        pageInfo {{ hasNextPage endCursor }}
-        nodes {{
-{_THREAD_NODE_FIELDS}
-        }}
-      }}
-      comments(first: {GQL_ISSUE_COMMENTS_LIMIT}) {{
-        totalCount
-        pageInfo {{ hasNextPage endCursor }}
-        nodes {{
-          databaseId
-          author {{ login __typename }}
-          body
-          createdAt
-          lastEditedAt
-        }}
-      }}
-      commits(last: {GQL_COMMITS_LIMIT}) {{
-        totalCount
-        nodes {{
-          commit {{
-            oid
-            messageHeadline
-          }}
-        }}
-      }}
-    }}
-  }}
-}}
-"""
-
-
-@dataclass
-class PRData:
-    """Consolidated PR data from a single GraphQL query.
-
-    Fields store raw GraphQL node shapes. Helper methods produce the
-    output formats that downstream callers expect.
-    """
-
-    viewer_login: str
-    head_sha: str
-    head_ref: str
-    base_ref: str
-    reviews: list[dict] = field(default_factory=list)
-    review_threads: list[dict] = field(default_factory=list)
-    issue_comments: list[dict] = field(default_factory=list)
-    commits: list[dict] = field(default_factory=list)
-    author: str = ""
-    is_draft: bool = False
-    labels: list[str] = field(default_factory=list)
-    review_decision: str = ""
-    requested_reviewers: list[str] = field(default_factory=list)
-    # Whether `review_threads` is all of them — see `ThreadSet`, whose meaning
-    # this carries through the consolidated read. Defaulted True so a caller
-    # constructing PRData directly, as the tests do, keeps today's shape.
-    threads_complete: bool = True
-
-    @property
-    def pending_review_id(self) -> int | None:
-        for r in self.reviews:
-            if r.get("state") == REVIEW_STATE_PENDING:
-                return r.get("databaseId") or None
-        return None
-
-    def new_commit_count(self, review_sha: str) -> int:
-        for i, c in enumerate(self.commits):
-            sha = c.get("commit", {}).get("oid", "")
-            if sha.startswith(review_sha) or review_sha.startswith(sha):
-                return len(self.commits) - i - 1
-        return len(self.commits)
-
-    def bot_reviews_visible(self, bot_login: str) -> list[dict]:
-        """Non-PENDING, non-DISMISSED, non-minimized reviews from bot_login."""
-        bot_lower = bot_login.lower()
-        return [
-            {"id": r.get("databaseId"), "body": r.get("body", ""), "state": r.get("state", "")}
-            for r in self.reviews
-            if (r.get("author") or {}).get("login", "").lower() == bot_lower
-            and r.get("state") not in ("PENDING", "DISMISSED")
-            and not r.get("minimizedReason")
-        ]
-
-    def bot_inline_comments(self, bot_login: str) -> list[dict]:
-        """Bot-authored inline review comments as [{path, body}]."""
-        bot_lower = bot_login.lower()
-        results = []
-        for thread in self.review_threads:
-            results.extend(self._bot_comments_in_thread(thread, bot_lower))
-        return results
-
-    @staticmethod
-    def _bot_comments_in_thread(thread: dict, bot_lower: str) -> list[dict]:
-        path = thread.get("path", "")
-        return [
-            {"path": path, "body": comment.get("body", "")}
-            for comment in thread.get("comments", {}).get("nodes", [])
-            if (comment.get("author") or {}).get("login", "").lower() == bot_lower
-        ]
-
-    def bot_review_bodies(self, bot_login: str) -> list[str]:
-        """Body text of bot-authored reviews (for finding extraction)."""
-        bot_lower = bot_login.lower()
-        return [
-            r.get("body", "")
-            for r in self.reviews
-            if (r.get("author") or {}).get("login", "").lower() == bot_lower
-            and r.get("body")
-        ]
-
-    def reviewer_verdicts(self) -> list[dict]:
-        """Latest review verdict per reviewer as [{user, state, submitted_at}]."""
-        by_user: dict[str, dict] = {}
-        for r in self.reviews:
-            user = (r.get("author") or {}).get("login", "")
-            submitted = r.get("submittedAt", "")
-            state = r.get("state", "")
-            if state == "PENDING":
-                continue
-            if user not in by_user or submitted > by_user[user]["submitted_at"]:
-                by_user[user] = {"user": user, "state": state, "submitted_at": submitted}
-        return list(by_user.values())
-
-    def review_body_comments(self, my_login: str) -> list[dict]:
-        """Non-self reviews with substantive body text.
-
-        ``[{id, user, body, state, submitted_at, last_edited_at}]``.
-
-        ``last_edited_at`` is what lets a caller tell a review it has already
-        read from the same review re-worded since. An edit keeps the id and
-        does not move the review, so id alone cannot: see
-        `cli.review_threads`, which keys seen-ness on both.
-        """
-        my_lower = my_login.lower()
-        results = []
-        for r in self.reviews:
-            author = r.get("author") or {}
-            login = author.get("login", "")
-            if login.lower() == my_lower:
-                continue
-            state = r.get("state", "")
-            if state == "PENDING":
-                continue
-            if r.get("minimizedReason"):
-                continue
-            body = (r.get("body") or "").strip()
-            if not body:
-                continue
-            results.append({
-                "id": r.get("databaseId"),
-                "user": login,
-                "body": body,
-                "state": state,
-                "submitted_at": r.get("submittedAt", ""),
-                # None when never edited, which is the common case — normalised
-                # to "" so every consumer compares strings.
-                "last_edited_at": r.get("lastEditedAt") or "",
-            })
-        return results
-
-    def non_self_issue_comments(self, my_login: str) -> list[dict]:
-        """Issue-level comments excluding my_login and bots.
-
-        ``[{id, user, body, created_at, last_edited_at}]``. See
-        `review_body_comments` for why the edit stamp travels with the id.
-        """
-        my_lower = my_login.lower()
-        results = []
-        for c in self.issue_comments:
-            author = c.get("author") or {}
-            login = author.get("login", "")
-            if login.lower() == my_lower:
-                continue
-            if author.get("__typename") == "Bot":
-                continue
-            results.append({
-                "id": c.get("databaseId"),
-                "user": login,
-                "body": c.get("body", ""),
-                "created_at": c.get("createdAt", ""),
-                "last_edited_at": c.get("lastEditedAt") or "",
-            })
-        return results
-
-
-def fetch_pr_data(repo: str, pr: str) -> PRData:
-    """Fetch all PR review data in a single GraphQL query."""
-    owner, name = repo.split("/", 1)
-    r = gh.client.graphql(
-        _PR_DATA_QUERY, variables={"owner": owner, "name": name, "pr": int(pr)},
-    )
-    if not r.ok:
-        core.log.error(core.proc.failure_message(
-            f"Failed to fetch data for {repo}#{pr} via GraphQL", r))
-        sys.exit(1)
-    try:
-        data = json.loads(r.stdout)
-    except (json.JSONDecodeError, TypeError):
-        core.log.error("Failed to parse PR data from GraphQL response")
-        sys.exit(1)
-
-    viewer = data.get("data", {}).get("viewer", {})
-    pr_node = data.get("data", {}).get("repository", {}).get("pullRequest", {})
-
-    reviews = pr_node.get("reviews") or {}
-    commits = pr_node.get("commits") or {}
-    # The two connections nothing pages: `last:` keeps the newest, which every
-    # caller wants, so the oldest falling off is reported rather than fetched.
-    warn_if_truncated(
-        reviews, f"{repo}#{pr} reviews",
-        "an older bot review may be missed, so dedup can repost its findings")
-    warn_if_truncated(
-        commits, f"{repo}#{pr} commits",
-        "the drift count is a floor rather than the real number")
-
-    found = _drain_thread_pages(owner, name, int(pr), pr_node.get("reviewThreads") or {})
-    comments_whole = _complete_truncated_comments(found.threads)
-    issue_comments, issue_whole = _drain_issue_comments(
-        owner, name, int(pr), pr_node.get("comments") or {})
-
-    return PRData(
-        viewer_login=viewer.get("login", ""),
-        head_sha=pr_node.get("headRefOid", ""),
-        head_ref=pr_node.get("headRefName", ""),
-        base_ref=pr_node.get("baseRefName", ""),
-        reviews=reviews.get("nodes", []),
-        review_threads=found.threads,
-        threads_complete=found.complete and comments_whole and issue_whole,
-        issue_comments=issue_comments,
-        commits=commits.get("nodes", []),
-        author=(pr_node.get("author") or {}).get("login", ""),
-        is_draft=pr_node.get("isDraft", False),
-        labels=[n["name"] for n in pr_node.get("labels", {}).get("nodes", [])],
-        review_decision=pr_node.get("reviewDecision") or "",
-        requested_reviewers=[
-            (n.get("requestedReviewer") or {}).get("login", "")
-            for n in pr_node.get("reviewRequests", {}).get("nodes", [])
-            if (n.get("requestedReviewer") or {}).get("login")
-        ],
-    )

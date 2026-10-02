@@ -35,7 +35,7 @@ from pathlib import Path
 
 import core.log
 import core.publishing
-from gh.pr_reads import fetch_pr_data
+from gh.pr_data import fetch_pr_data
 import git.client
 import pr.attribution
 import pr.comments

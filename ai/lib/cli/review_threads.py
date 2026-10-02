@@ -38,7 +38,7 @@ import core.publishing
 import core.run_lock
 from core.trail import Trail, add_trail_args
 import fix.comments
-from gh.pr_reads import fetch_pr_data
+from gh.pr_data import fetch_pr_data
 import pr.comments
 import pr.comments_fix
 import pr.comments_state

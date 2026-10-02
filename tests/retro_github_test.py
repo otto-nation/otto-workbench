@@ -17,7 +17,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from core.proc import CmdResult  # noqa: E402
-from gh.pr_reads import ThreadSet  # noqa: E402
+from gh.pr_pages import ThreadSet  # noqa: E402
 import retro.github  # noqa: E402
 import gh.client
 

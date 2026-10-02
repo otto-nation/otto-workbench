@@ -14,7 +14,7 @@ if str(LIB_DIR) not in sys.path:
 # `_no_published_summary` is autouse: imported so pytest applies it here,
 # never referenced by name.
 from review_threads_support import _no_published_summary  # noqa: E402
-from gh.pr_reads import ThreadSet
+from gh.pr_pages import ThreadSet
 from review.grammar import sid_marker
 from review.reply_threads import (
     ReplyThreads, ThreadFinding, _classify_thread_for_rereview,

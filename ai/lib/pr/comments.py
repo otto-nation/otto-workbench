@@ -56,7 +56,8 @@ import core.log
 import core.publishing
 from pr.comments_state import ThreadRecord, ThreadState
 from core.proc import CmdResult
-from gh.pr_reads import PRData, ThreadSet, fetch_review_threads
+from gh.pr_data import PRData
+from gh.pr_pages import ThreadSet, fetch_review_threads
 from core.text import relative_time
 
 

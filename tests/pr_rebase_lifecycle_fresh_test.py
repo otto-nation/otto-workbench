@@ -81,9 +81,36 @@ def test_fresh_delegates_to_drive_on_paused_rebase():
     assert result == 0
     mock_drive.assert_called_once_with(
         "/fake", ctx, rebase.types.RunMode.FIX, target_ref=_TARGET, force=False,
-        tally=rebase.types.ResolutionTally(), lease=None, snapshot=None,
-        trail=None,
+        tally=rebase.types.ResolutionTally(), lease=None, verify=True,
+        snapshot=None, trail=None,
     )
+
+
+@pytest.mark.parametrize("paused", [False, True])
+def test_fresh_forwards_no_verify_to_whichever_path_lands(paused):
+    """A clean replay lands from rebase_success, a paused one via the drive.
+
+    Both are reached from `fresh`, so `--no-verify` dropped on either branch
+    pushes through the very hook the operator asked to skip.
+    """
+    ctx = mock.MagicMock()
+    ctx.branch = "feat/my-branch"
+    ctx.current_branch = "feat/my-branch"
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(rebase.inspect, "rebase_in_progress", return_value=paused), \
+         mock.patch.object(rebase.lifecycle, "rebase_success", return_value=0) as success, \
+         mock.patch.object(rebase.lifecycle, "drive_to_completion", return_value=0) as drive:
+        rebase.lifecycle.fresh(
+            "/fake", ctx, rebase.types.RunMode.FIX, target_ref=_TARGET,
+            verify=False,
+        )
+
+    lander = drive if paused else success
+    assert lander.call_args.kwargs["verify"] is False
 
 
 def test_fresh_skips_checkout_when_on_correct_branch():

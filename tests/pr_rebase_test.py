@@ -278,6 +278,51 @@ def test_push_flag_calls_cmd_push_when_start_succeeds():
     assert exit_code == 0
 
 
+@pytest.mark.parametrize("flags,verify", [
+    ((), True),
+    (("--no-verify",), False),
+    (("--fix", "--no-verify"), False),
+])
+def test_no_verify_reaches_both_commands_that_push(flags, verify):
+    """A bare run pushes from cmd_push; `--fix` pushes from inside cmd_start."""
+    _, mock_push, mock_start = _run_main(0, *flags)
+
+    assert mock_start.call_args.kwargs["verify"] is verify
+    if mock_push.called:
+        assert mock_push.call_args.kwargs["verify"] is verify
+
+
+def test_cmd_push_hands_no_verify_to_the_landing():
+    ctx = mock.MagicMock()
+    ctx.branch = "isaac/feat/x"
+
+    with mock.patch.object(rebase.inspect, "rebase_in_progress", return_value=False), \
+         mock.patch.object(rebase.types, "load_or_init", return_value=_push_state()), \
+         mock.patch.object(rebase.types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(git.client, "commits_ahead", return_value=1), \
+         _lands(_pushed()) as owner:
+        cli.pr_rebase.cmd_push("/fake", ctx, target_ref=_TARGET, verify=False)
+
+    assert owner.call_args.kwargs["verify"] is False
+
+
+@pytest.mark.parametrize("resuming", [False, True])
+def test_cmd_start_forwards_no_verify_on_both_paths(resuming):
+    with mock.patch.object(rebase.inspect, "rebase_in_progress", return_value=resuming), \
+         mock.patch.object(rebase.stash, "auto_stash", return_value=False), \
+         mock.patch.object(rebase.stash, "restore"), \
+         mock.patch.object(rebase.target, "resume_target_ref", return_value=_TARGET), \
+         mock.patch.object(rebase.lifecycle, "fresh", return_value=0) as fresh, \
+         mock.patch.object(rebase.lifecycle, "drive_to_completion", return_value=0) as drive:
+        cli.pr_rebase.cmd_start(
+            "/fake", mock.MagicMock(), rebase.types.RunMode.FIX,
+            target_ref=_TARGET, verify=False,
+        )
+
+    started = drive if resuming else fresh
+    assert started.call_args.kwargs["verify"] is False
+
+
 def test_push_flag_skips_cmd_push_on_conflicts():
     """--push must not call cmd_push when cmd_start returns non-zero (e.g. conflicts)."""
     exit_code, mock_push = _run_main_with_push(cmd_start_rc=3)
@@ -407,13 +452,14 @@ def test_a_lease_recorded_before_the_field_existed_is_refused(capsys):
 # ── --push-only ─────────────────────────────────────────────────────────────
 
 
-def test_push_only_pushes_with_the_lease_and_never_rebases(monkeypatch):
+@pytest.mark.parametrize("extra", [[], ["--no-verify"]])
+def test_push_only_pushes_with_the_lease_and_never_rebases(monkeypatch, extra):
     pushed = {}
     monkeypatch.setattr(cli.pr_rebase, "cmd_start",
                         lambda *a, **k: pytest.fail("--push-only must not rebase"))
 
-    def fake_push(cwd, ctx, *, target_ref, snapshot=None, trail=None):
-        pushed["cwd"], pushed["ref"] = cwd, target_ref
+    def fake_push(cwd, ctx, *, target_ref, verify=True, snapshot=None, trail=None):
+        pushed["cwd"], pushed["ref"], pushed["verify"] = cwd, target_ref, verify
         return 0
 
     monkeypatch.setattr(cli.pr_rebase, "cmd_push", fake_push)
@@ -427,8 +473,9 @@ def test_push_only_pushes_with_the_lease_and_never_rebases(monkeypatch):
     monkeypatch.setattr(pr.context, "resolve", lambda **k: fake_ctx)
     monkeypatch.setattr(core.run_lock, "claim_for_process", lambda *a, **k: None)
     monkeypatch.setattr(cli.pr_rebase.Trail, "start", lambda **k: fake_trail)
-    assert cli.pr_rebase.main(["--push-only"]) == 0
-    assert pushed == {"cwd": "/wt", "ref": "origin/main"}
+    assert cli.pr_rebase.main(["--push-only", *extra]) == 0
+    assert pushed == {"cwd": "/wt", "ref": "origin/main",
+                      "verify": "--no-verify" not in extra}
 
 
 @pytest.mark.parametrize("other", ["--fix", "--abort", "--no-push"])

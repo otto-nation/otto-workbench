@@ -5559,6 +5559,7 @@ Usage:
   pr-rebase --abort                   # abort in-progress rebase
   pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref
   pr-rebase --fork-point <ref>        # replay only the commits after <ref>
+  pr-rebase --no-verify               # force-push without running the pre-push hook
   pr-rebase --repo-dir <path>         # specify worktree directory
 
 ### cli/registry.py

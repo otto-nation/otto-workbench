@@ -24,6 +24,7 @@ Usage:
   pr-rebase --abort                   # abort in-progress rebase
   pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref
   pr-rebase --fork-point <ref>        # replay only the commits after <ref>
+  pr-rebase --no-verify               # force-push without running the pre-push hook
   pr-rebase --repo-dir <path>         # specify worktree directory
 """
 
@@ -103,6 +104,7 @@ def cmd_abort(
 
 def cmd_push(
     cwd: str, ctx: pr.context.ResolvedContext, *, target_ref: str,
+    verify: bool = True,
     snapshot: rebase.pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
 ) -> int:
@@ -147,7 +149,9 @@ def cmd_push(
 
     rebase.pr_snapshot.name_the_open_pr(snapshot, trail=trail)
     core.log.info("Force-pushing...")
-    landed = rebase.land.land_rebased(cwd, args=lease.args, trail=trail)
+    landed = rebase.land.land_rebased(
+        cwd, args=lease.args, verify=verify, trail=trail,
+    )
     if not landed.ok:
         core.trail.terr(
             trail, "push", "force-push failed",
@@ -172,6 +176,7 @@ def cmd_push(
 def cmd_start(
     cwd: str, ctx: pr.context.ResolvedContext, mode: RunMode,
     force: bool = False, *, target_ref: str, fork_point: str = "",
+    verify: bool = True,
     snapshot: rebase.pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
 ) -> int:
@@ -201,7 +206,7 @@ def cmd_start(
         try:
             return rebase.lifecycle.drive_to_completion(
                 cwd, ctx, mode, target_ref=target_ref, force=True,
-                snapshot=snapshot, trail=trail,
+                verify=verify, snapshot=snapshot, trail=trail,
             )
         finally:
             # An earlier run may have stashed and then stopped with the rebase
@@ -222,7 +227,8 @@ def cmd_start(
     try:
         return rebase.lifecycle.fresh(
             cwd, ctx, mode, force=force, target_ref=target_ref,
-            fork_point=fork_point, snapshot=snapshot, trail=trail,
+            fork_point=fork_point, verify=verify, snapshot=snapshot,
+            trail=trail,
         )
     finally:
         # try/finally rather than a trailing call: the run lock gets this right
@@ -250,6 +256,18 @@ def _select_mode(args) -> tuple[RunMode, str]:
     if args.push:
         return RunMode.PUSH, "default mode"
     return RunMode.REBASE_ONLY, "--no-push flag set"
+
+
+def _verify(args, trail: Trail) -> bool:
+    """Whether the force-push runs the pre-push hook, recorded when it does not.
+
+    `--no-verify` is the operator's call and never inferred: the trail is the
+    only record that a branch reached the remote without its gate.
+    """
+    if args.no_verify:
+        trail.decision("verify", "skipping the pre-push hook",
+                       reason="--no-verify flag set")
+    return not args.no_verify
 
 
 def build_parser() -> ToolParser:
@@ -292,6 +310,11 @@ def build_parser() -> ToolParser:
         "--push-only", action="store_true",
         help="Push HEAD with the lease an earlier --no-push run recorded; do not rebase",
     )
+    parser.add_argument(
+        "--no-verify", action="store_true",
+        help="Skip the pre-push hook on the force-push. For a hook failure "
+             "already understood — a flake, or one the branch did not cause",
+    )
     parser.add_argument("--force", action="store_true",
                         help="Rebase even when the branch's work already "
                              "landed on the target ref")
@@ -316,7 +339,8 @@ def _run(args, ctx: pr.context.ResolvedContext, cwd: str, trail: Trail) -> int:
         # force-push is held rather than issued — the same path --no-push uses.
         with core.publishing.run(post=True):
             return cmd_push(
-                target.cwd, target.ctx, target_ref=target.target_ref, trail=trail,
+                target.cwd, target.ctx, target_ref=target.target_ref,
+                verify=_verify(args, trail), trail=trail,
             )
 
     if args.abort:
@@ -359,12 +383,14 @@ def _run(args, ctx: pr.context.ResolvedContext, cwd: str, trail: Trail) -> int:
         if args.force:
             trail.decision("preflight", "waiving the already-landed check",
                            reason=f"{REFUSAL_OVERRIDE_FLAG} flag set")
+        verify = _verify(args, trail)
         rc = cmd_start(cwd, ctx, mode, force=args.force, target_ref=target_ref,
-                       fork_point=args.fork_point or "",
+                       fork_point=args.fork_point or "", verify=verify,
                        snapshot=snapshot, trail=trail)
 
         if rc == 0 and mode is RunMode.PUSH:
-            rc = cmd_push(cwd, ctx, target_ref=target_ref, snapshot=snapshot, trail=trail)
+            rc = cmd_push(cwd, ctx, target_ref=target_ref, verify=verify,
+                          snapshot=snapshot, trail=trail)
         return rc
 
 

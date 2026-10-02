@@ -2,7 +2,7 @@
 name: pr-rebase
 description: "AI-assisted rebase onto the branch's base with conflict resolution and force push. TRIGGER when: user asks to rebase a branch, resolve rebase conflicts, update a branch against its base, or fix merge conflicts during rebase. SKIP: simple git pull --rebase with no conflicts; commit rewording (use task commit:reword instead)."
 source: otto-workbench/ai/skills/pr-rebase/SKILL.md
-invocation: "/pr-rebase [branch] [--no-fix] [--no-push] [--force] [--onto|--base <ref>] [--fork-point <ref>]"
+invocation: "/pr-rebase [branch] [--no-fix] [--no-push] [--force] [--onto|--base <ref>] [--fork-point <ref>] [--no-verify]"
 trigger: "Use when user asks to rebase a branch, resolve rebase conflicts, update a branch against its base, or fix merge conflicts during rebase."
 skip: "Do not use for simple git pull --rebase with no conflicts. Do not use for commit rewording (use task commit:reword instead)."
 output_schema:
@@ -54,6 +54,11 @@ Run with `/pr-rebase` or `/pr-rebase <branch>`.
   Only pass it when a `partially_landed` refusal named the ref in its `remedy`
   field, or the user named one; it changes which commits end up on the branch.
   Not git's boolean `--fork-point`, and it is ignored on a resumed rebase.
+- `--no-verify` (optional): Force-push without running the pre-push hook. The
+  same rule as `pr:create --no-verify`: only for a hook failure already read
+  and judged a flake or not the branch's doing, or when the user asks. It also
+  skips the AI repair of pre-push failures, since no hook output exists to
+  repair. Never add it to get past a failure nobody has read.
 
 ---
 
@@ -335,6 +340,12 @@ actually going out. This is how the skill ends. Never run `git push --force-with
 and never hand it to the user as the remaining step: `pr rebase` prints a
 `Resume: git -C '<worktree>' push --force-with-lease` line when a push is refused,
 and that hint is for a human at a terminal, not an instruction to you.
+
+When the hook's failure is one the user has decided to push past — a flake, a
+failure the branch did not cause, or simply their call — finish with
+`pr rebase --no-verify --branch <branch>` rather than handing them a raw
+`git push --no-verify`. It is still the owner's push, under the lease the rebase
+recorded.
 
 The one exception is `--no-push`, where the user asked for the push to be withheld
 — report the printed command as the script gave it, and come back here only if

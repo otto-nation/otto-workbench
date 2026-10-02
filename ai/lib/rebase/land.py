@@ -18,6 +18,7 @@ REGEN_MESSAGE = rebase_types.REGEN_MESSAGE
 def land_rebased(
     cwd: str, resolved_files: list[str] | None = None, *,
     args: tuple[str, ...],
+    verify: bool = True,
     trail: Trail | None = None,
 ) -> git.land.LandResult:
     """Force-push the replayed branch, auto-recovering from a hook rejection.
@@ -39,7 +40,15 @@ def land_rebased(
     must still be at, which only the caller that read it before the fetch can
     know. A default here would be a bare lease, and a bare lease is satisfied by
     the tool's own fetch — see `rebase.lease`.
+
+    `verify=False` pushes with `--no-verify`, for an operator who has already
+    read the hook's failure and judged it a flake or not the branch's doing.
+    It also skips the AI repair: with no hook run there is no complaint to
+    repair, and a refusal that does come back (a stale lease) is not one an
+    agent can fix in the tree.
     """
+    if not verify:
+        args = ("--no-verify", *args)
     landed = git.land.land_head(
         cwd, gated=True, args=tuple(args), trail=trail, regen=REGEN_MESSAGE,
     )
@@ -48,7 +57,7 @@ def land_rebased(
     # the fix pass asks an agent to rewrite code that passed every check. So does
     # a refusal the connection dropped, which `repairable` is what excludes.
     refused = landed.push is not None and landed.push.repairable
-    if not refused or not resolved_files or not landed.error:
+    if not verify or not refused or not resolved_files or not landed.error:
         return landed
 
     core.log.info("Attempting to fix pre-push check failures...")

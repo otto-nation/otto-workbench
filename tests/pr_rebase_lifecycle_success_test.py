@@ -371,3 +371,21 @@ def test_a_no_push_run_with_no_nameable_lease_is_refused(capsys):
     assert rc == 1
     owner.assert_not_called()
     assert "cannot tell what the remote was at" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("verify", [True, False])
+def test_rebase_success_hands_the_hook_decision_to_the_landing(verify):
+    """`--fix --no-verify` pushes from here, not from cmd_push."""
+    with mock.patch.object(git.client, "commits_ahead", return_value=1), \
+         mock.patch.object(rebase.types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(core.report, "emit_json"), \
+         mock.patch.object(
+             rebase.land, "land_rebased", return_value=_pushed(),
+         ) as mock_land:
+        rebase.lifecycle.rebase_success(
+            "/fake", mock.MagicMock(), rebase.types.RunMode.FIX,
+            rebase.types.ResolutionTally(), target_ref=_TARGET,
+            lease=_LEASE, verify=verify,
+        )
+
+    assert mock_land.call_args.kwargs["verify"] is verify

@@ -99,9 +99,12 @@ def discover(root: Path) -> list[Path]:
     found: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(base):
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
-        found.extend(Path(dirpath) / name for name in filenames
-                     if name.endswith(".py")
-                     and not (Path(dirpath) / name).is_symlink())
+        for name in filenames:
+            if not name.endswith(".py"):
+                continue
+            path = Path(dirpath) / name
+            if not path.is_symlink():
+                found.append(path)
     return sorted(found)
 
 

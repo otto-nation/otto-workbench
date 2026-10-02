@@ -27,7 +27,8 @@ is not shell until bats preprocesses it, and no counter here reads `@test`.
 Exit code: 0 if every name is allowed and every module is within the cap, 1
 otherwise. There are no exemptions: the suites over the cap when this gate
 landed were split before it became unconditional, so a module over the line
-is a new one.
+is a new one. `--quiet` only suppresses the success banner on a 0 exit; a
+failure is always reported regardless of the flag.
 """
 
 from __future__ import annotations

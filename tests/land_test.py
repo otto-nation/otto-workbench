@@ -390,7 +390,7 @@ def test_the_same_pass_pushes_once_the_gate_is_open(landable, publishing_on):
 
 
 def test_an_ungated_pass_pushes_with_the_gate_shut(landable):
-    """`pr rebase` and the `pr:create` bridge push because pushing is the command."""
+    """`pr rebase` and `pr create` push because pushing is the command."""
     wt, remote = landable
     (wt / "src.py").write_text("edited\n")
 

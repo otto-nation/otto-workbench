@@ -1,8 +1,8 @@
 """Tests for `pr.branch_sync` — the push decision `pr create` makes.
 
-Ported from `tests/push_branch.bats` plus D8 (exact ls-remote), D9 (UNVERIFIED
-is ok) and `--no-verify` reaching the push args. Bash stays until a later
-task; these pin the Python owner to the same acceptance.
+Ported from the bats suite that covered the bash `push_branch` this replaced,
+plus D8 (exact ls-remote), D9 (UNVERIFIED is ok) and `--no-verify` reaching the
+push args.
 """
 
 from __future__ import annotations
@@ -75,7 +75,7 @@ def _pushed(status: PushStatus, branch: str, output: str = "") -> PushResult:
     return PushResult(status, sha="abc", branch=branch, output=output, remote="origin")
 
 
-# ── bats: tests/push_branch.bats ────────────────────────────────────────────
+# ── ported from the bash push_branch suite ─────────────────────────────────
 
 
 def test_pushes_new_branch_to_remote(tmp_path):

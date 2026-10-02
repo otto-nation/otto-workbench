@@ -1724,9 +1724,10 @@ process per location and every surface asks about the same threads.
 
 Push the branch ``pr create`` is about to open a PR from.
 
-Ports ``push_branch`` in ``lib/ai/pr.sh``: a missing remote ref is a first
-push with ``--set-upstream``, an existing tracking ref is compared to HEAD,
-and behind / diverged refuse rather than overwrite. The push itself is
+Replaces the bash ``push_branch`` that ``lib/ai/pr.sh`` once carried: a
+missing remote ref is a first push with ``--set-upstream``, an existing
+tracking ref is compared to HEAD, and behind / diverged refuse rather than
+overwrite. The push itself is
 ``git.push.push(gated=False)`` — running ``pr create`` is the publish
 decision, and the owner in ``git.push`` is what confirms the remote moved.
 
@@ -1737,7 +1738,7 @@ failure to open the PR (D9).
 
 A git read that fails — an unreachable remote, a fetch that broke, a
 ``rev-parse`` that cannot resolve — is ``FAILED`` naming the command, never
-read as "absent" or "equal". Bash's ``push_branch`` let each of those fall
+read as "absent" or "equal". The bash version let each of those fall
 through to a push or to "up to date".
 
 ### pr/ci_annotations.py
@@ -4986,18 +4987,18 @@ above it, which is what keeps this module's answer to "did it land" independent
 of any caller's idea of how to fix it. `holds` is the same question asked of a
 commit nobody is pushing right now: whether the remote already has it.
 
-`gated` is required and has no default. Every caller in `ai/` passes `True` and
-differs only in what opens the gate: `pr comments`, `pr ci --fix` and the review
-fix pass open it under `--post`, and `pr rebase` opens it unless `--no-push`,
-because there force-pushing is the command itself rather than a side effect. The
-gate is where that difference belongs — expressed as an entry point's decision
-rather than as an argument one caller passes differently, `--no-push` gets the
-drafted command and the resume line every other held push already gets. Only the
-`pr:create` bridge below still passes `False`, because it is bash reaching in
-from a command that has already decided to publish and has no gate to open. A
-`False` default would let the next call site inherit the ungated answer by
-omitting the argument, which is how three of those four came to push without
-ever asking.
+`gated` is required and has no default. Every caller in `ai/` but one passes
+`True` and differs only in what opens the gate: `pr comments`, `pr ci --fix` and
+the review fix pass open it under `--post`, and `pr rebase` opens it unless
+`--no-push`, because there force-pushing is the command itself rather than a
+side effect. The gate is where that difference belongs — expressed as an entry
+point's decision rather than as an argument one caller passes differently,
+`--no-push` gets the drafted command and the resume line every other held push
+already gets. The one is `pr create`, which passes `False` through
+`pr.branch_sync`, because creating the PR has already decided to publish and
+there is no gate to open. A `False` default would let the next call site
+inherit the ungated answer by omitting the argument, which is how three of
+those four came to push without ever asking.
 
 Every outcome but `PUSHED` names the command that would finish it, and
 `resume_command` is where that mapping lives — one place rather than a line of
@@ -5010,11 +5011,6 @@ nothing downstream may run: `pr comments` records it as `push_lost` rather than
 in the worktree — nothing may cite the SHA. `UNVERIFIED` records as
 `push_unverified` and is a warning: a remote that could not be asked has not said
 no, so the push has very likely landed and simply cannot be confirmed.
-
-Running this module as a script is how the bash half of `pr:create` reaches it,
-since a second implementation in shell is the thing being avoided. It takes
-`--cwd`, `--branch`, `--remote` and `--set-upstream`, runs ungated, and answers
-in exit codes — `0` pushed, `1` refused, `2` lost, `3` unverified.
 
 ### git/regenerate.py
 

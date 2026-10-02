@@ -204,3 +204,28 @@ def test_a_group_of_only_zombies_is_not_alive(monkeypatch):
     monkeypatch.setattr(conftest.subprocess, "run", lambda *a, **kw: listing)
     assert group_alive(123) is False
     assert group_alive(456) is True
+
+
+def test_a_stop_landing_between_the_spawn_and_the_record_still_stops_the_child(monkeypatch):
+    """The stop handler can interrupt the main thread inside `spawn` itself.
+
+    Simulated by the record raising once, as the handler's `SystemExit` would
+    on the main thread just after `Popen` returned. The caller never receives
+    the child, so `spawn` is the only thing left holding it.
+    """
+    started = []
+
+    class _InterruptedOnce(dict):
+        def __setitem__(self, proc, leads):
+            if not started:
+                started.append(proc)
+                raise SystemExit(128 + signal.SIGTERM)
+            super().__setitem__(proc, leads)
+
+    monkeypatch.setattr(core.children, "_live", _InterruptedOnce())
+    with pytest.raises(SystemExit):
+        core.children.spawn(["sleep", "300"], start_new_session=True)
+    (proc,) = started
+    assert proc.returncode is not None, "the child outlived the interrupted spawn"
+    assert group_gone_within(proc.pid, 3)
+    assert core.children.live() == []

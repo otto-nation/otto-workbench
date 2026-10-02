@@ -235,8 +235,7 @@ def _locate(
     literal = Path(wt_path) / path
     if literal.exists():
         return literal
-    if match is None:
-        match = resolve_path(path, tracked())
+    match = resolve_path(path, tracked())
     return Path(wt_path) / match if match else None
 
 

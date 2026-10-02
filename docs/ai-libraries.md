@@ -3566,6 +3566,13 @@ only when it receives SIGTERM itself; a SIGKILL aimed at its group skips that
 and leaves the tools running in groups of their own. The grace is the time
 that cleanup gets.
 
+What is recorded here is what nothing else would stop: a child in a session of
+its own, or one owned by a worker thread the stop's exception never reaches.
+A `subprocess.run` on the main thread — the stateless agent prompts, git, gh —
+needs none of this. `run` kills its child on any exception, the `SystemExit`
+the stop handler raises included, and none of those leave this process's
+group, so a supervisor's group kill reaches them too.
+
 Refusing new spawns matters as much as stopping the running ones. A thread
 pool's shutdown still runs the work queued behind the agents it was waiting
 on, so without the refusal a stopped review would start the next group's

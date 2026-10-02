@@ -28,6 +28,13 @@ only when it receives SIGTERM itself; a SIGKILL aimed at its group skips that
 and leaves the tools running in groups of their own. The grace is the time
 that cleanup gets.
 
+What is recorded here is what nothing else would stop: a child in a session of
+its own, or one owned by a worker thread the stop's exception never reaches.
+A `subprocess.run` on the main thread — the stateless agent prompts, git, gh —
+needs none of this. `run` kills its child on any exception, the `SystemExit`
+the stop handler raises included, and none of those leave this process's
+group, so a supervisor's group kill reaches them too.
+
 Refusing new spawns matters as much as stopping the running ones. A thread
 pool's shutdown still runs the work queued behind the agents it was waiting
 on, so without the refusal a stopped review would start the next group's
@@ -75,17 +82,47 @@ def spawn(cmd: Sequence[str], **popen_kwargs) -> subprocess.Popen:
 
     The check and the record are made under one lock with the spawn between
     them, so a stop on another thread cannot land after the check and miss the
-    child. It is no guard against the signal handler itself interrupting the
-    main thread between `Popen` returning and the record: the lock is
-    reentrant, so that `stop_all` proceeds and snapshots a registry without the
-    new child.
+    child.
+
+    The lock is no guard against the stop handler itself, which runs on the
+    main thread and may interrupt this one there: the lock is reentrant, so its
+    `stop_all` snapshots a registry the new child is not yet in, and the
+    `SystemExit` it raises unwinds through here before the caller ever holds
+    the child. So a child that exists when this unwinds is recorded and stopped
+    on the way out — nobody else has a handle to it. What remains is an
+    exception landing inside `Popen.__init__` after its fork, which is CPython's
+    to clean up and not reachable from here.
     """
+    leads_group = bool(popen_kwargs.get("start_new_session"))
+    started: list[subprocess.Popen] = []
+    try:
+        return _start_and_record(cmd, popen_kwargs, leads_group, started)
+    except BaseException:
+        _abandon(started, leads_group)
+        raise
+
+
+def _start_and_record(
+    cmd: Sequence[str], popen_kwargs: dict, leads_group: bool,
+    started: list[subprocess.Popen],
+) -> subprocess.Popen:
+    """`spawn`'s locked half. *started* holds the child the moment it exists,
+    so an exception before the record still leaves `spawn` a handle to it."""
     with _lock:
         if _stopping.is_set():
             raise StopRequested(f"not starting {cmd[0]}: this process is stopping")
-        proc = subprocess.Popen(cmd, **popen_kwargs)
-        _live[proc] = bool(popen_kwargs.get("start_new_session"))
-    return proc
+        started.append(subprocess.Popen(cmd, **popen_kwargs))
+        _live[started[0]] = leads_group
+    return started[0]
+
+
+def _abandon(started: list[subprocess.Popen], leads_group: bool) -> None:
+    """Record, stop and forget a child `spawn` is unwinding past."""
+    for proc in started:
+        with _lock:
+            _live[proc] = leads_group
+        terminate(proc)
+        forget(proc)
 
 
 def forget(proc: subprocess.Popen) -> None:

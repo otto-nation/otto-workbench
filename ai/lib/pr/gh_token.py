@@ -9,8 +9,9 @@ first match wins:
 3. ``GH_TOKEN`` in ``~/.config/task/taskfile.env``
 4. a non-empty ``GH_TOKEN`` already in the environment (CI, ``~/.env.local``)
 
-Tiers 2 and 3 always read the global file. A local file that pins nothing does
-not disable org routing.
+An empty value (``GH_TOKEN=`` with nothing after) is treated as unset in every
+file tier, matching the environment. Tiers 2 and 3 always read the global file.
+A local file that pins nothing does not disable org routing.
 
 Org and host come from ``pr.target.repo_identity_from_origin`` — the remote
 parser every other ``pr`` command keys on — so every remote spelling git
@@ -88,7 +89,8 @@ def org_variable(org: str) -> str:
 def read_env_value(path: Path, key: str) -> str | None:
     """The value of the first ``KEY=`` line in *path*, verbatim, or None.
 
-    A missing file is "not set". Any other read error propagates — an
+    A missing file, a missing key, and an empty value (``KEY=`` with nothing
+    after) are all "not set". Any other read error propagates — an
     unreadable credentials file is a fault to report, not a tier to skip.
     """
     try:
@@ -98,7 +100,7 @@ def read_env_value(path: Path, key: str) -> str | None:
     prefix = f"{key}="
     for line in text.splitlines():
         if line.startswith(prefix):
-            return line[len(prefix):]
+            return line[len(prefix):] or None
     return None
 
 

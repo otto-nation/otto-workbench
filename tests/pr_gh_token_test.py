@@ -124,6 +124,28 @@ def test_an_empty_environment_value_is_not_a_token(tmp_path, home):
         pr.gh_token.resolve(_repo(tmp_path), environ={"GH_TOKEN": ""}, home=home)
 
 
+def test_empty_local_pin_falls_through_to_global_default(tmp_path, home):
+    repo = _repo(tmp_path)
+    _local(repo, "GH_TOKEN=\n")
+    _global(home, "GH_TOKEN=ghp_default\n")
+    assert pr.gh_token.resolve(repo, environ={}, home=home) == Token(
+        "ghp_default", TokenSource.DEFAULT, "GH_TOKEN")
+
+
+def test_empty_org_value_falls_through_to_default(tmp_path, home):
+    repo = _repo(tmp_path, "git@github.com:otto-nation/widget.git")
+    _global(home, "GH_TOKEN__OTTO_NATION=\nGH_TOKEN=ghp_default\n")
+    assert pr.gh_token.resolve(repo, environ={}, home=home) == Token(
+        "ghp_default", TokenSource.DEFAULT, "GH_TOKEN")
+
+
+def test_empty_default_falls_through_to_environment(tmp_path, home):
+    _global(home, "GH_TOKEN=\n")
+    token = pr.gh_token.resolve(
+        _repo(tmp_path), environ={"GH_TOKEN": "ghp_env"}, home=home)
+    assert token == Token("ghp_env", TokenSource.ENVIRONMENT, "GH_TOKEN")
+
+
 def test_the_file_beats_the_environment(tmp_path, home):
     _global(home, "GH_TOKEN=ghp_file\n")
     token = pr.gh_token.resolve(_repo(tmp_path), environ={"GH_TOKEN": "ghp_env"}, home=home)

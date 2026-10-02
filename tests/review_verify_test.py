@@ -19,14 +19,14 @@ import sys
 from pathlib import Path
 
 import pytest
-from conftest import git_in, init_repo
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import review.verify
+from conftest import git_in, init_repo  # noqa: E402
+import review.verify  # noqa: E402
 
 
 def _verifies(path: str, evidence: str | None, wt_path: str) -> bool:
@@ -383,6 +383,31 @@ class TestVerifyFindsTheFileThePosterWould:
         _, result = review.verify._verify_findings(text, wt)
         assert result["dropped"] == ["S1"]
         assert result["details"][0]["file_exists"] is False
+
+    def test_a_basename_unique_in_the_diff_resolves_though_the_tree_has_two(self, tmp_path):
+        """The poster resolves against the diff, so the gate must agree.
+
+        `replay.py:1` is one file among the changed ones, so it posts inline;
+        read against the whole tree it is ambiguous and was dropped as "file
+        not found".
+        """
+        wt = self._tree(tmp_path)
+        (tmp_path / "other").mkdir()
+        (tmp_path / "other/replay.py").write_text("def _short(sha):\n")
+        git_in(tmp_path, "add", ".")
+        text = "## Should fix\n- [ ] **[S1]** `replay.py:1` — gap\n" + self._EVIDENCE
+        _, result = review.verify._verify_findings(text, wt, ["ai/lib/git/replay.py"])
+        assert result["dropped"] == []
+        assert result["details"][0]["resolved_path"] == "ai/lib/git/replay.py"
+
+    def test_a_finding_whose_location_names_no_file_is_logged_not_silently_skipped(
+        self, tmp_path, capsys,
+    ):
+        """`Makefile` has no extension and no slash, so it reads as no location."""
+        text = "## Should fix\n- [ ] **[S1]** **`Makefile:3`** — gap\n" + self._EVIDENCE
+        _, result = review.verify._verify_findings(text, self._tree(tmp_path))
+        assert result["findings_checked"] == 0
+        assert "Not verifying S1" in capsys.readouterr().err
 
     def test_a_worktree_that_is_not_there_drops_rather_than_raising(self, tmp_path):
         """Resolution asks git, and git cannot start in a missing directory."""

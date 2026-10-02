@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 import pytest
+import conftest
 from conftest import group_alive, group_gone_within
 
 LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
@@ -137,7 +138,7 @@ def test_an_exception_in_the_owning_block_stops_the_child():
         with core.children.owned(["sleep", "300"], start_new_session=True) as proc:
             raise KeyboardInterrupt
     assert proc.returncode is not None
-    assert core.children._live == {}
+    assert core.children.live() == []
 
 
 def test_no_child_starts_once_a_stop_is_under_way():
@@ -156,3 +157,50 @@ def test_a_child_already_reaped_is_never_signalled(monkeypatch):
     core.children.stop_all()
     assert sent == []
     core.children.forget(proc)
+
+
+def test_live_lists_the_children_recorded_and_not_yet_forgotten():
+    proc = core.children.spawn(["sleep", "300"], start_new_session=True)
+    try:
+        assert core.children.live() == [proc]
+    finally:
+        core.children.terminate(proc, grace=0.5)
+        core.children.forget(proc)
+    assert core.children.live() == []
+
+
+def test_a_child_not_recorded_as_a_group_leader_is_never_signalled_by_group(monkeypatch):
+    """Spawned without `start_new_session`, its pid names no group of its own."""
+    proc = core.children.spawn(["sleep", "300"])
+    by_group = []
+    monkeypatch.setattr(core.children.os, "killpg", lambda *a: by_group.append(a))
+    try:
+        core.children.stop_all()
+        proc.wait(timeout=5)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        core.children.forget(proc)
+    assert by_group == []
+    assert proc.returncode == -signal.SIGTERM
+
+
+def test_an_announcement_that_cannot_be_written_still_exits_with_the_signal_code():
+    """A closed terminal is a stderr that may raise; the exit code is the contract."""
+    def announce():
+        raise BrokenPipeError
+
+    core.proc.install_stop_handler(announce)
+    with pytest.raises(SystemExit) as exc_info:
+        signal.getsignal(signal.SIGHUP)(signal.SIGHUP, None)
+    assert exc_info.value.code == 128 + signal.SIGHUP
+
+
+def test_a_group_of_only_zombies_is_not_alive(monkeypatch):
+    """Linux answers success to signal 0 for a zombie, so `ps` has the say."""
+    listing = subprocess.CompletedProcess([], 0, stdout="  123 Z\n  123 Z+\n  456 S\n")
+    monkeypatch.setattr(conftest.os, "killpg", lambda *a: None)
+    monkeypatch.setattr(conftest.subprocess, "run", lambda *a, **kw: listing)
+    assert group_alive(123) is False
+    assert group_alive(456) is True

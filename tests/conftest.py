@@ -333,8 +333,7 @@ def _isolated_stop_handling(monkeypatch):
     sets `core.children`'s stop flag, which would refuse every spawn in every
     later test on that worker.
     """
-    if LIB_DIR not in sys.path:
-        sys.path.insert(0, LIB_DIR)
+    # `pytest_configure` has already put `LIB_DIR` on `sys.path`.
     import signal
     import threading
 
@@ -838,12 +837,40 @@ def group_alive(pgid: int) -> bool:
     all zombies — a killed grandchild waits for launchd to reap it, which
     under a loaded suite takes a moment — and a group id since reused by
     another user's process is not the group a test started either.
+
+    Linux answers success for a zombie, so a group of only zombies reads as
+    alive until its new parent reaps them, and a runner whose init does not
+    reap would fail a test whose kill worked. A member in state `Z` has run
+    its last instruction, so success is confirmed against `ps`.
     """
     try:
         os.killpg(pgid, 0)
     except (ProcessLookupError, PermissionError):
         return False
-    return True
+    return _group_has_running_member(pgid)
+
+
+def _group_has_running_member(pgid: int) -> bool:
+    """Whether `ps` lists a member of *pgid* that is not a zombie.
+
+    Anything `ps` cannot answer — no binary, a stall, a failure — is True, the
+    signal-0 answer the caller already had: reading a broken `ps` as an empty
+    group would pass a test whose process is still running.
+    """
+    try:
+        result = subprocess.run(
+            ["ps", "-A", "-o", "pgid=,stat="],
+            capture_output=True, text=True, check=False, timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return True
+    if result.returncode != 0:
+        return True
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[0] == str(pgid) and not fields[1].startswith("Z"):
+            return True
+    return False
 
 
 def group_gone_within(pgid: int, timeout: float) -> bool:

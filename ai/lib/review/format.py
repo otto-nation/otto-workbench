@@ -87,9 +87,9 @@ def resolve_path(path: str, hunks: Collection[str]) -> str | None:
 
     `hunks` is any collection of repo-relative paths: the diff's files when
     placing a comment, the tracked tree when the evidence gate looks for the
-    file a quote came from. One rule for both, so a location the poster would
-    place is never one the gate reports as missing. None when nothing matches,
-    or when more than one path does.
+    file a quote came from. One rule for both; the gate tries the diff's files
+    before the tree, as the poster only ever sees the diff's. None when
+    nothing matches, or when more than one path does.
     """
     if path in hunks:
         return path

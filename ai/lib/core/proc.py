@@ -116,6 +116,7 @@ should be free to depend on, and pulling in `log`, `agent.usage`, or
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import signal
@@ -211,7 +212,10 @@ def install_stop_handler(announce: Callable[[], None]) -> None:
         code = _SIGNAL_EXIT_BASE + signum
         if repeated:
             os._exit(code)
-        announce()
+        # A closed terminal (SIGHUP) is a stderr that may no longer be there;
+        # the exit code is the contract, so the announcement cannot cost it.
+        with contextlib.suppress(OSError):
+            announce()
         sys.exit(code)
 
     for signum in STOP_SIGNALS:

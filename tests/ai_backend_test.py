@@ -552,7 +552,7 @@ class TestAgentsAreRecordedForTheStopHandler:
             prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
         ))
         assert len(spawned) == 1
-        assert core.children._live == {}, "the agent was never forgotten"
+        assert core.children.live() == [], "the agent was never forgotten"
 
 
 class TestBackendsGetTheInvocationEnv:

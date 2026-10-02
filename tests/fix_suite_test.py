@@ -12,8 +12,10 @@ about what a process is.
 """
 
 import os
+import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -25,6 +27,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from conftest import group_gone_within  # noqa: E402
+import core.children  # noqa: E402
 import fix.blame  # noqa: E402
 import fix.suite  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
@@ -469,25 +472,45 @@ def test_an_interrupt_mid_run_stops_the_runner_tree(tmp_path):
     `KeyboardInterrupt` does; before, it unwound past `communicate` and left
     the runner and its workers going against the worktree.
     """
-    import signal
-    import threading
-
-    import core.children
-
     pid_file = tmp_path / "pid"
     cmd = _script(tmp_path, "slow", f"echo $$ > {pid_file}; sleep 300 & wait")
     # A real SIGINT aimed at the main thread, so it interrupts the blocking
     # read inside `communicate`. `_thread.interrupt_main` only sets a flag,
     # which nothing checks until the 60s bound has already run out.
+    #
+    # Sent once the runner has written its whole pid line, not after a fixed
+    # delay: bash startup under a loaded parallel run can outlast any delay,
+    # and an interrupt before the pid file is complete hides the result behind
+    # a `FileNotFoundError`. `finished` keeps the poller from firing into a
+    # later test when the run ends first.
     main = threading.main_thread().ident
-    threading.Timer(0.5, signal.pthread_kill, args=(main, signal.SIGINT)).start()
+    finished = threading.Event()
+    runner_started = threading.Event()
+
+    def interrupt_once_started():
+        deadline = time.monotonic() + 10
+        while not finished.is_set() and time.monotonic() < deadline:
+            if pid_file.exists() and pid_file.read_text().endswith("\n"):
+                runner_started.set()
+                break
+            time.sleep(0.02)
+        if not finished.is_set():
+            signal.pthread_kill(main, signal.SIGINT)
+
+    poller = threading.Thread(target=interrupt_once_started, daemon=True)
+    poller.start()
     started = time.monotonic()
-    with pytest.raises(KeyboardInterrupt):
-        fix.suite.run(tmp_path, cmd, 60)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            fix.suite.run(tmp_path, cmd, 60)
+    finally:
+        finished.set()
+        poller.join(timeout=5)
+    assert runner_started.is_set(), "the runner never wrote its pid"
     assert time.monotonic() - started < 30, "the interrupt waited out the timeout"
     pgid = int(pid_file.read_text())
     gone = group_gone_within(pgid, 3)
     if not gone:
         os.killpg(pgid, signal.SIGKILL)
     assert gone, "the runner's process group outlived the interrupt"
-    assert core.children._live == {}
+    assert core.children.live() == []

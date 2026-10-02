@@ -130,19 +130,23 @@ def _signal(proc: subprocess.Popen, sig: int) -> None:
     have its pid reused, so a zombie is safe to signal. A child that is gone,
     or that this process may not signal, has nothing further to try.
 
-    The group is tried first and the pid second. A group id is always its
-    leader's pid, so for a child that leads no group there is no group by that
-    number and `killpg` fails with ESRCH rather than reaching anyone else.
+    Only a child recorded as a group leader is signalled by group, so the
+    safety of `killpg` rests on that record and not on a pid that names no
+    group failing with ESRCH. A child that leads one is tried by group first
+    and by pid second.
     """
     if proc.returncode is not None:
         return
-    try:
-        os.killpg(proc.pid, sig)
-        return
-    except ProcessLookupError:
-        pass
-    except PermissionError:
-        return
+    with _lock:
+        leads_group = _live.get(proc, False)
+    if leads_group:
+        try:
+            os.killpg(proc.pid, sig)
+            return
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            return
     with contextlib.suppress(ProcessLookupError, PermissionError):
         os.kill(proc.pid, sig)
 
@@ -152,9 +156,9 @@ def terminate(proc: subprocess.Popen, grace: float = GRACE) -> bool:
 
     SIGTERM, *grace* seconds to act on it, then SIGKILL and a bounded reap.
     A group leader that went on TERM has its group swept afterwards, for the
-    member that ignored the signal it acted on. False is a child that outlived SIGKILL — uninterruptible sleep, or a group
-    this process may not signal — which the caller reports; there is no
-    further signal to try.
+    member that ignored the signal it acted on. False is a child that
+    outlived SIGKILL — uninterruptible sleep, or a group this process may not
+    signal — which the caller reports; there is no further signal to try.
     """
     _signal(proc, signal.SIGTERM)
     try:
@@ -174,7 +178,8 @@ def terminate(proc: subprocess.Popen, grace: float = GRACE) -> bool:
     return True
 
 
-def _snapshot() -> list[subprocess.Popen]:
+def live() -> list[subprocess.Popen]:
+    """The children recorded and not yet forgotten, in the order they started."""
     with _lock:
         return list(_live)
 
@@ -202,13 +207,14 @@ def stop_all() -> None:
     Returns at once; see the module docstring for why it cannot wait. A second
     call is a second stop request from someone who did not want to wait the
     first one out, and kills immediately.
+
     The KILL takes the children recorded now rather than re-reading the
     registry when it fires. Nothing can join it once the stop is under way,
     and a child its owner reaped in the meantime is skipped by `_signal`.
     """
     repeated = _stopping.is_set()
     _stopping.set()
-    procs = _snapshot()
+    procs = live()
     if repeated:
         _kill(procs)
         return
@@ -220,7 +226,7 @@ def stop_all() -> None:
 
 
 def _terminate_survivors() -> None:
-    for proc in _snapshot():
+    for proc in live():
         terminate(proc)
 
 

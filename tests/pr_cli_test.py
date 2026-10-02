@@ -1,6 +1,8 @@
 """Tests for pr CLI helper functions: targets, global flags, delegate argv, SIGINT and create."""
 
+
 import signal
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,6 +23,7 @@ if str(LIB_DIR) not in sys.path:
 import cli.pr  # noqa: E402
 
 import cli.dispatch  # noqa: E402
+import core.children  # noqa: E402
 import core.publishing  # noqa: E402
 
 from pr_cli_support import _TEST_PR, _run_main, _delegate_cmd
@@ -292,8 +295,6 @@ def test_main_installs_the_stop_handler(mock_resolve, mock_call, signum, code):
     autouse `_isolated_stop_handling` fixture restores the handlers and the
     child registry this leaves behind.
     """
-    import core.children
-
     mock_resolve.return_value = make_ctx()
     mock_call.return_value = 0
     original = signal.getsignal(signum)

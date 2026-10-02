@@ -1493,8 +1493,9 @@ finding-line grammar read here is `review.grammar`'s: `VERIFY_FINDING_RE` is a
 stricter shape over the same vocabulary that selects which findings this gate
 checks. It does not read the location: the path comes from `finding_location`,
 the same reading the poster uses, and is resolved with the poster's
-`review.format.resolve_path`, so a finding cannot be placed against one file
-and verified against another.
+`review.format.resolve_path` — against the files the diff changed first, as
+the poster does, and the tracked tree only when the diff has no match — so a
+finding is not placed against one file and verified against another.
 
 Where a finding's body ends is `review.spans`'s. Both gates walk the review
 through `finding_spans` and remove what they drop through `drop_findings`,

@@ -47,8 +47,9 @@ finding-line grammar read here is `review.grammar`'s: `VERIFY_FINDING_RE` is a
 stricter shape over the same vocabulary that selects which findings this gate
 checks. It does not read the location: the path comes from `finding_location`,
 the same reading the poster uses, and is resolved with the poster's
-`review.format.resolve_path`, so a finding cannot be placed against one file
-and verified against another.
+`review.format.resolve_path` — against the files the diff changed first, as
+the poster does, and the tracked tree only when the diff has no match — so a
+finding is not placed against one file and verified against another.
 
 Where a finding's body ends is `review.spans`'s. Both gates walk the review
 through `finding_spans` and remove what they drop through `drop_findings`,
@@ -207,14 +208,19 @@ def _tracked_files(wt_path: str) -> frozenset[str]:
     return frozenset(git.client.lines("ls-files", cwd=wt_path))
 
 
-def _locate(path: str, wt_path: str, tracked: Callable[[], Collection[str]]) -> Path | None:
+def _locate(
+    path: str, wt_path: str, tracked: Callable[[], Collection[str]],
+    changed: Collection[str] = (),
+) -> Path | None:
     """The file `path` names in the worktree, or None when it names none.
 
     The literal path first, then the poster's own resolution — a bare basename
-    or a unique suffix — over the tracked tree. Without the second step a
-    finding at `handler.go:42` posts inline against `pkg/handler.go` and is
-    dropped here as "file not found": the two stages disagreeing about which
-    file a finding is about, one layer below the location grammar.
+    or a unique suffix. The poster resolves against the files the diff changed,
+    so that is tried before the tracked tree: with `pkg/handler.go` changed and
+    an untouched `other/handler.go` tracked, `handler.go:42` is unique in the
+    diff and posts inline, but ambiguous in the tree and would be dropped here
+    as "file not found". The tree is the fallback for a path the diff does not
+    name, or for a caller that has no diff.
 
     `tracked` is a thunk because listing the tree is a subprocess, and nearly
     every location is already repo-relative and resolves literally.
@@ -222,15 +228,18 @@ def _locate(path: str, wt_path: str, tracked: Callable[[], Collection[str]]) -> 
     literal = Path(wt_path) / path
     if literal.exists():
         return literal
-    match = resolve_path(path, tracked())
+    match = resolve_path(path, changed) if changed else None
+    if match is None:
+        match = resolve_path(path, tracked())
     return Path(wt_path) / match if match else None
 
 
 def _match_evidence(
     path: str, evidence: str | None, wt_path: str,
     tracked: Callable[[], Collection[str]] = _no_tracked_files,
+    changed: Collection[str] = (),
 ) -> dict:
-    resolved = _locate(path, wt_path, tracked)
+    resolved = _locate(path, wt_path, tracked, changed)
     detail: dict = {
         "path": path,
         "has_evidence": evidence is not None,
@@ -279,12 +288,20 @@ def _verification_finding(span: FindingSpan, text: str) -> dict | None:
 
     A declaration naming no location the poster can place is skipped: there is
     no path to match the evidence against, so the check has nothing to say
-    about it. A declaration in the prior-findings ledger is skipped too — it
+    about it. A skipped must-fix or should-fix is logged, since the skip is the
+    gate failing open for that finding — an extensionless, slash-less file such
+    as `Makefile` reads as no location. A declaration in the prior-findings ledger is skipped too — it
     reports the last review's finding, and the file it names was quoted
     against a commit this one is not looking at.
     """
     m = VERIFY_FINDING_RE.match(span.line)
-    if not m or span.reported or not span.finding.path:
+    if not m or span.reported:
+        return None
+    if not span.finding.path:
+        if m.group(1) in (SEVERITY_MUST, SEVERITY_SHOULD):
+            core.log.warn(
+                f"Not verifying {m.group(1)}{m.group(2)}: its location names no file the poster can place"
+            )
         return None
     return {
         "id": f"{m.group(1)}{m.group(2)}",
@@ -302,8 +319,9 @@ def _parse_findings_for_verification(text: str) -> list[dict]:
 def _verification_detail(
     finding: dict, evidence: str | None, wt_path: str,
     tracked: Callable[[], Collection[str]] = _no_tracked_files,
+    changed: Collection[str] = (),
 ) -> dict:
-    detail = _match_evidence(finding["path"], evidence, wt_path, tracked)
+    detail = _match_evidence(finding["path"], evidence, wt_path, tracked, changed)
     detail["id"] = finding["id"]
     detail["severity"] = finding["severity"]
     return detail
@@ -316,7 +334,9 @@ def _drop_reason(detail: dict) -> str:
     return reason
 
 
-def _verify_findings(text: str, wt_path: str) -> tuple[str, dict]:
+def _verify_findings(
+    text: str, wt_path: str, changed: Collection[str] = (),
+) -> tuple[str, dict]:
     findings = _parse_findings_for_verification(text)
     dropped: list[str] = []
     details: list[dict] = []
@@ -325,7 +345,7 @@ def _verify_findings(text: str, wt_path: str) -> tuple[str, dict]:
         if f["severity"] not in (SEVERITY_MUST, SEVERITY_SHOULD):
             continue
         evidence = _extract_evidence(f["body"])
-        detail = _verification_detail(f, evidence, wt_path, tracked)
+        detail = _verification_detail(f, evidence, wt_path, tracked, changed)
         details.append(detail)
         if not detail["match_result"]:
             dropped.append(f["id"])
@@ -497,14 +517,18 @@ def apply_disprove_results(
 
 # ── The whole pass over a finished review ────────────────────────────────────
 
-def post_process_findings(review_file: str, wt_path: str = "") -> dict | None:
+def post_process_findings(
+    review_file: str, wt_path: str = "", changed_files: Collection[str] = (),
+) -> dict | None:
     """Every gate and cleanup a finished review needs, run over it in place.
 
     The verification report, or None when `review_file` does not exist — the
     guard covers all of the sub-steps, so a caller gets no partial result from
     a review that was never written. Without `wt_path` there is no tree to
     check evidence against, so verification is skipped and only the cleanups
-    run; the report is None then too.
+    run; the report is None then too. `changed_files` are the paths the diff
+    changed: a bare or partial location resolves against them before the
+    tracked tree, as the poster resolves it.
 
     The order is the contract rather than an implementation detail. The prior
     findings ledger goes before renumbering because its IDs number the
@@ -519,7 +543,7 @@ def post_process_findings(review_file: str, wt_path: str = "") -> dict | None:
     text = path.read_text()
     verification: dict | None = None
     if wt_path:
-        text, verification = _verify_findings(text, wt_path)
+        text, verification = _verify_findings(text, wt_path, changed_files)
         dropped = verification["dropped"]
         if dropped:
             core.log.info(f"Dropped {len(dropped)} unverified findings: {', '.join(dropped)}")

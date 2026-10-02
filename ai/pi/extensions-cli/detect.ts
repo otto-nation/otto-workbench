@@ -58,7 +58,7 @@ import { hasUnparsed, span, tokenize, type Token } from "../extensions/_shared/t
  * resets is not finishing the job early, it is landing work outside the only
  * scope the pass can account for. `backend_claude.FIX_DENIED_TOOLS` denies the
  * same subcommands through Claude's matcher, and the two are kept in step —
- * tests/test_ai_backend_observability.py asserts the parity by running this
+ * tests/ai_backend_observability_test.py asserts the parity by running this
  * predicate against every command that list denies.
  *
  * Compared against a whole token, never matched as a prefix. A `\b` after the

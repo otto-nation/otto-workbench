@@ -148,7 +148,7 @@ owner spells those same names a second time for Python, and
 `tests/config.bats` fails when a pair drifts. The scope and key tables below
 are generated from the dataclass by `bin/local/generate-config-schema`,
 alongside [`config.schema.json`](../config.schema.json);
-`tests/test_workbench_config.py` fails if the committed schema goes stale.
+`tests/workbench_config_test.py` fails if the committed schema goes stale.
 
 | Scope | File |
 |-------|------|

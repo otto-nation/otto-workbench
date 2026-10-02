@@ -4,7 +4,7 @@ Folding the group reviews together, deduplicating and renumbering findings,
 unioning the prior-findings ledger across groups, and the stable IDs that give
 a finding an identity later reviews can recognise. Reconciling this review
 against the prior one is `review.reconcile`'s job, tested in
-`test_review_reconcile.py`.
+`review_reconcile_test.py`.
 """
 
 import sys

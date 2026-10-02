@@ -199,7 +199,7 @@ class TestPhaseRunnerInvocation:
         assert inv.max_budget == 8.0
         # Read from the resolver rather than pinned: the subject here is that
         # PhaseRunner forwards the resolved budget, not what the arithmetic
-        # makes it. `phase_turns` owns that, and test_agent_phases asserts it.
+        # makes it. `phase_turns` owns that, and agent_phases_test asserts it.
         assert inv.max_turns == agent.phases.phase_turns(Phase.GROUP, Effort.HIGH)
         assert inv.label == "grp"
 

@@ -2,7 +2,7 @@
 # Tests for `otto-workbench config` — the dispatch in bin/otto-workbench and the
 # guard the writer behind it exists for: a key the workbench does not read is
 # refused instead of written into a file every repo on the machine shares. The
-# key surface itself is Python and is covered by tests/test_workbench_config.py.
+# key surface itself is Python and is covered by tests/workbench_config_test.py.
 #
 # Every test puts a launcher of its own on PATH, because that symlink is what
 # `check_key` resolves "the installed workbench" through. Left alone it would be
@@ -172,7 +172,7 @@ _make_container() {
 # ─── The report ──────────────────────────────────────────────────────────────
 #
 # What each scope resolved to is Python and is covered by
-# tests/test_workbench_config.py. These are the dispatch, the exit codes, and
+# tests/workbench_config_test.py. These are the dispatch, the exit codes, and
 # that the rendering actually puts a source next to a value.
 
 # _make_repo — a git repo under TMPDIR, and the shell standing in it.

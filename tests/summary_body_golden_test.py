@@ -10,7 +10,7 @@ Nothing else in the suite compares a *whole* rendered body. Every other
 assertion over `summary_render.build_summary_body` is a substring check on a
 cell somebody thought to name, so a change to a part nobody named passes all of
 them. That is
-measured rather than assumed — against `test_review_threads.py`'s 722 tests:
+measured rather than assumed — against `review_threads_test.py`'s 722 tests:
 
 - moving the padding inside the row's outer pipes (`| a |` → `|a |`), which
   changes every row key: **722 passed**, golden failed
@@ -44,7 +44,7 @@ save will silently eat.
 Regenerate the fixtures by calling `_write_goldens()` from a throwaway test in
 this directory. It takes no arguments — the renderer is imported directly, as
 every module this file drives now is. Prose rather than a flag for the same
-reason `test_mcp_server.py` uses prose: one regeneration idiom in the repo is
+reason `mcp_server_test.py` uses prose: one regeneration idiom in the repo is
 better than two.
 
 A diff in one of these files is a change to the published summary format and is
@@ -100,7 +100,7 @@ _SCOPE_SINCE = "2026-06-01T00:00:00Z"
 def _round_content(**buckets):
     """A `RoundContent` from the buckets named, and no others.
 
-    The same shape `test_review_threads.py` builds, spelled again here because
+    The same shape `review_threads_test.py` builds, spelled again here because
     that fixture is local to that module and this golden outlives the file it
     currently records.
     """

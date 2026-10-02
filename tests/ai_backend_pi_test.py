@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import agent.backend_pi
 from conftest import FIXTURES_DIR
-from test_ai_backend import _recording_popen
+from ai_backend_test import _recording_popen
 
 
 class TestBuildFixCmd:
@@ -235,7 +235,7 @@ class TestCheckLimits:
 class TestStallWatchWiring:
     """The stream loop arms the stall watch, and a stall ends the run.
 
-    The watch itself is covered by `test_agent_stall.py`; what is checked here
+    The watch itself is covered by `agent_stall_test.py`; what is checked here
     is the wiring, which is where it can be switched off without anything
     looking broken.
     """

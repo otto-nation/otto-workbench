@@ -1,7 +1,7 @@
 """Tests for `pr.settlement` — the evidence rules nothing exercised directly.
 
 `reconcile_fix_snapshot` and `run_settle` are covered heavily through
-`test_review_threads.py`, which drives both ends to end. What had no test at all
+`review_threads_test.py`, which drives both ends to end. What had no test at all
 is the grading underneath them: which evidence supports FIXED and which supports
 only SETTLED_ELSEWHERE, how a location shared by two settled threads is broken,
 and the three ways a decomposed comment item can be settled without a thread of

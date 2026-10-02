@@ -1,7 +1,7 @@
 """Tests for `pr.fix_state` — assembling the record, and writing it once.
 
 The three functions that turn a round's buckets into what the state file holds.
-They were tested through `test_review_threads.py`, which could only reach them
+They were tested through `review_threads_test.py`, which could only reach them
 by loading a binary; they have a module now, so they are tested against it.
 
 The write is the part worth isolating. It is one transaction by design — the

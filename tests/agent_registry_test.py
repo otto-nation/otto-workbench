@@ -1,6 +1,6 @@
 """Tests for agent.registry — what the phases the workbench ships are set to.
 
-The rules a spec applies to its own fields are ``test_agent_types``. Here the
+The rules a spec applies to its own fields are ``agent_types_test``. Here the
 subject is the inventory: that every phase has an entry, and that the numbers
 and pins in those entries are still the ones each call site had before it
 became a phase. A change to any of these should be a deliberate edit here.
@@ -105,7 +105,7 @@ class TestPhaseMaxTurnsDefaults:
     A prompt-shaped phase is one stateless call, so ``run_prompt`` reads
     neither ``max_turns`` nor ``max_budget`` and whatever the field defaults to
     is inert. Pinning a number for it here would assert a default nothing
-    reads; that ``run_prompt`` reads neither is ``test_agent_invoke``'s.
+    reads; that ``run_prompt`` reads neither is ``agent_invoke_test``'s.
     """
 
     def test_preserves_current_budgets(self):

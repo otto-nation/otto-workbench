@@ -1455,7 +1455,7 @@ def command_spec(**overrides):
     Here rather than in either suite that wants one: `CommandSpec` requires its
     declaration in full, so a test interested only in `script` would otherwise
     restate a need it does not care about — and both `pr_cli_test.py` and
-    `test_cli_registry.py` need that same throwaway. Shared from conftest, not
+    `cli_registry_test.py` need that same throwaway. Shared from conftest, not
     imported across test modules, so neither suite owns the other's helper.
     """
     if LIB_DIR not in sys.path:

@@ -126,7 +126,7 @@ class ScopeRule:
 # Where the generated schema lives, repo-relative, and the raw URL that serves
 # it. One spelling of the path: bin/local/generate-config-schema writes there,
 # the modeline below points there, ``workbench_config_write`` reads it out of
-# the installed checkout, and tests/test_workbench_config.py fails if they stop
+# the installed checkout, and tests/workbench_config_test.py fails if they stop
 # agreeing — so moving the file is a one-line change here.
 # Pinned to main rather than a release tag: the config on a machine tracks
 # whatever workbench is installed, and main is where the schema is regenerated.
@@ -141,7 +141,7 @@ CONFIG_HEADER = f"# yaml-language-server: $schema={SCHEMA_URL}"
 
 # The dotted keys written from outside this module. Spelled here rather than at
 # the call site so a rename of the dataclass field and a rename of the key are
-# the same edit; test_workbench_config.py resolves each one against
+# the same edit; workbench_config_test.py resolves each one against
 # WorkbenchConfig and fails on a key no field answers to.
 REUSE_LEVEL_KEY = "reuse.level"
 REUSE_DEFAULT_KEY = "reuse.default"

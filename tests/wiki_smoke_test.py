@@ -15,7 +15,7 @@ the exit code, and the shape of what reaches the terminal.
 A third defect — the package being unreachable from the binary, and so dropped
 from the distribution tarball — is *not* covered here, and cannot be: the CLI
 runs correctly from a source checkout either way.
-`tests/test_tarball_completeness.py` is what catches that one.
+`tests/tarball_completeness_test.py` is what catches that one.
 """
 
 import hashlib

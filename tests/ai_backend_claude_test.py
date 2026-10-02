@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import agent.backend_claude
 from core.phases import Phase
-from test_ai_backend import _recording_popen
+from ai_backend_test import _recording_popen
 import agent.vertex_quota
 
 _FIX_PHASE = Phase.FIX

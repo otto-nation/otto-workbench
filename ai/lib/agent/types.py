@@ -75,7 +75,7 @@ class EffortPreset:
     phase: a preset is a statement about how deep a review goes, and a phase
     that becomes skippable should not need a field added to all three presets
     before it can be. Only a phase whose spec is ``optional`` belongs in here —
-    ``test_agent_registry`` holds the presets to that.
+    ``agent_registry_test`` holds the presets to that.
 
     ``turn_multiplier`` scales every phase's registry turn budget. Without it a
     preset bought thinking level and dollars only, so ``--effort high`` answered

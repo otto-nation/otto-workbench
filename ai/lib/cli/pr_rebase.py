@@ -1,7 +1,8 @@
 """Rebase current branch onto its base with conflict detection and AI resolution.
 
 The base is resolved per run, most authoritative source first: an explicit
---onto, then the branch's PR base branch, then the repo's default branch.
+--onto (also spelled --base, the word `pr create` uses for the same branch),
+then the branch's PR base branch, then the repo's default branch.
 
 Manages the git rebase lifecycle: start, resume, abort, and force-push.
 With --fix, automatically resolves merge conflicts using AI.
@@ -22,7 +23,7 @@ Usage:
   pr-rebase --fix --no-push           # resolve conflicts with AI, but do not push
   pr-rebase --force                   # rebase even when the branch already landed
   pr-rebase --abort                   # abort in-progress rebase
-  pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref
+  pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref (or --base)
   pr-rebase --fork-point <ref>        # replay only the commits after <ref>
   pr-rebase --no-verify               # force-push without running the pre-push hook
   pr-rebase --repo-dir <path>         # specify worktree directory

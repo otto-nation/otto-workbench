@@ -15,8 +15,8 @@ Rebases a feature branch onto its base. The `pr rebase` script handles
 everything: fetch, rebase, AI-assisted conflict resolution (via `claude -p`),
 and force-push.
 
-The base is resolved per run, most authoritative source first: `--onto` when
-given, then the branch's PR base branch as GitHub reports it, then the branch
+The base is resolved per run, most authoritative source first: `--onto` (or
+`--base`) when given, then the branch's PR base branch as GitHub reports it, then the branch
 this one is stacked on per local ancestry, then the repo's default branch. A
 stacked or release-branch PR is replayed onto its own base, a stack whose
 parent has no PR yet onto that parent, and a repo whose trunk is not `main`

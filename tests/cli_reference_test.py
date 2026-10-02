@@ -11,7 +11,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
 
-from core import cli_reference as ref  # noqa: E402
+import core.cli_reference  # noqa: E402
 from core.tool_parser import ToolParser  # noqa: E402
 
 
@@ -27,37 +27,37 @@ class TestSynopsis:
         p = _parser()
         p.add_argument("--fix", action="store_true")
         p.add_argument("--rule", required=True)
-        assert ref.synopsis(p) == "[--fix] --rule <rule>"
+        assert core.cli_reference.synopsis(p) == "[--fix] --rule <rule>"
 
     def test_every_option_string_is_shown(self):
         """An alias is documented the moment it is declared — `--base` on rebase."""
         p = _parser()
         p.add_argument("--onto", "--base", dest="onto", metavar="REF")
-        assert ref.synopsis(p) == "[--onto|--base <ref>]"
+        assert core.cli_reference.synopsis(p) == "[--onto|--base <ref>]"
 
     def test_a_suppressed_flag_stays_out(self):
         p = _parser()
         p.add_argument("--no-issue", action="store_true", help=argparse.SUPPRESS)
         p.add_argument("--draft", action="store_true")
-        assert ref.synopsis(p) == "[--draft]"
+        assert core.cli_reference.synopsis(p) == "[--draft]"
 
     def test_framework_flags_stay_out(self):
         p = ToolParser(prog="tool")
         p.add_argument("--debug", action="store_true")
         p.add_argument("--fix", action="store_true")
-        assert ref.synopsis(p) == "[--fix]"
+        assert core.cli_reference.synopsis(p) == "[--fix]"
 
     def test_a_mutually_exclusive_group_is_one_bracket(self):
         p = _parser()
         group = p.add_mutually_exclusive_group()
         group.add_argument("--body", metavar="TEXT")
         group.add_argument("--body-file", metavar="PATH")
-        assert ref.synopsis(p) == "[--body <text> | --body-file <path>]"
+        assert core.cli_reference.synopsis(p) == "[--body <text> | --body-file <path>]"
 
     def test_choices_spell_the_value(self):
         p = _parser()
         p.add_argument("--effort", choices=["low", "high"])
-        assert ref.synopsis(p) == "[--effort <low|high>]"
+        assert core.cli_reference.synopsis(p) == "[--effort <low|high>]"
 
     @pytest.mark.parametrize(("nargs", "shown"), [
         (None, "<ref>"),
@@ -68,7 +68,7 @@ class TestSynopsis:
     def test_a_positional_is_bracketed_by_its_nargs(self, nargs, shown):
         p = _parser()
         p.add_argument("ref", nargs=nargs)
-        assert ref.synopsis(p) == shown
+        assert core.cli_reference.synopsis(p) == shown
 
 
 # ── Shapes ─────────────────────────────────────────────────────────────────
@@ -87,7 +87,7 @@ def _dispatcher() -> argparse.ArgumentParser:
 
 class TestShapes:
     def test_subparsers_become_commands_in_declaration_order(self):
-        shape = ref.shape_of(_dispatcher(), "disp")
+        shape = core.cli_reference.shape_of(_dispatcher(), "disp")
         assert [c.name for c in shape.commands] == ["first", "second"]
         assert shape.commands[0].help == "Do the first thing"
 
@@ -95,28 +95,28 @@ class TestShapes:
         p = _parser("disp")
         sub = p.add_subparsers(dest="command")
         sub.add_parser("status", aliases=["st"], add_help=False)
-        assert [c.name for c in ref.shape_of(p, "disp").commands] == ["status"]
+        assert [c.name for c in core.cli_reference.shape_of(p, "disp").commands] == ["status"]
 
     def test_the_usage_line_has_one_invocation_per_command(self):
-        line = ref.usage_line(ref.shape_of(_dispatcher(), "disp"))
+        line = core.cli_reference.usage_line(core.cli_reference.shape_of(_dispatcher(), "disp"))
         assert line == "disp first [--fast]  |  disp second"
 
     def test_a_global_flag_a_command_redeclares_is_documented_once(self):
         """Delegates redeclare the dispatcher's context flags to run alone."""
-        shape = ref.shape_of(_dispatcher(), "disp")
-        out = ref.tables(shape)
+        shape = core.cli_reference.shape_of(_dispatcher(), "disp")
+        out = core.cli_reference.tables(shape)
         assert out.count("`--repo-dir`") == 1
-        assert "--repo-dir" not in ref.usage_line(shape)
+        assert "--repo-dir" not in core.cli_reference.usage_line(shape)
 
     def test_a_cli_with_no_commands_is_one_invocation(self):
         p = _parser("scan")
         p.add_argument("--json", action="store_true")
-        shape = ref.shape_of(p, "scan")
-        assert ref.usage_line(shape) == "scan [--json]"
-        assert ref.tables(shape).startswith("**Flags**")
+        shape = core.cli_reference.shape_of(p, "scan")
+        assert core.cli_reference.usage_line(shape) == "scan [--json]"
+        assert core.cli_reference.tables(shape).startswith("**Flags**")
 
     def test_a_command_with_nothing_to_document_says_so(self):
-        out = ref.tables(ref.shape_of(_dispatcher(), "disp"))
+        out = core.cli_reference.tables(core.cli_reference.shape_of(_dispatcher(), "disp"))
         assert "**`disp second`** — Do the second thing\n\nTakes no flags." in out
 
 
@@ -124,7 +124,7 @@ class TestShapes:
 
 
 def _row(parser: argparse.ArgumentParser, flag: str) -> str:
-    out = ref.tables(ref.CLIShape(prog="tool", globals=parser))
+    out = core.cli_reference.tables(core.cli_reference.CLIShape(prog="tool", globals=parser))
     return next(line for line in out.splitlines() if line.startswith(f"| `{flag}`"))
 
 
@@ -172,9 +172,9 @@ class TestTables:
 
 class TestLoad:
     def test_a_module_attr_loads_and_is_called(self):
-        shape = ref.load("cli.review_entry:build_parser", "review", REPO_ROOT)
+        shape = core.cli_reference.load("cli.review_entry:build_parser", "review", REPO_ROOT)
         assert shape.prog == "review"
-        assert "--self" in ref.usage_line(shape)
+        assert "--self" in core.cli_reference.usage_line(shape)
 
     def test_a_path_attr_loads_a_script_without_running_it(self, tmp_path):
         script = tmp_path / "bin" / "my-tool"
@@ -188,21 +188,21 @@ class TestLoad:
             "    return p\n"
             "if __name__ == '__main__':\n"
             "    sys.exit(3)\n")
-        shape = ref.load("bin/my-tool:build_parser", "my-tool", tmp_path)
-        assert ref.usage_line(shape) == "my-tool [--json]"
+        shape = core.cli_reference.load("bin/my-tool:build_parser", "my-tool", tmp_path)
+        assert core.cli_reference.usage_line(shape) == "my-tool [--json]"
 
     def test_a_shape_is_used_as_is(self):
-        shape = ref.load("cli.pr:reference_shape", "pr", REPO_ROOT)
+        shape = core.cli_reference.load("cli.pr:reference_shape", "pr", REPO_ROOT)
         assert [c.name for c in shape.commands][0] == "create"
 
     @pytest.mark.parametrize("spec", ["cli.review_entry", ":build_parser", "cli.review_entry:"])
     def test_a_malformed_spec_raises(self, spec):
         with pytest.raises(ValueError):
-            ref.load(spec, "x", REPO_ROOT)
+            core.cli_reference.load(spec, "x", REPO_ROOT)
 
     def test_something_that_is_not_a_parser_raises(self):
         with pytest.raises(TypeError):
-            ref.load("core.cli_reference:USAGE_SEPARATOR", "x", REPO_ROOT)
+            core.cli_reference.load("core.cli_reference:USAGE_SEPARATOR", "x", REPO_ROOT)
 
 
 # ── The pr shape ───────────────────────────────────────────────────────────
@@ -222,12 +222,12 @@ class TestPrShape:
 
     def test_rebase_documents_both_spellings_of_its_base(self, shape):
         rebase = next(c for c in shape.commands if c.name == "rebase")
-        assert "--onto|--base" in ref.synopsis(rebase.parser)
+        assert "--onto|--base" in core.cli_reference.synopsis(rebase.parser)
 
     def test_review_documents_the_mode_flags_its_dispatcher_adds(self, shape):
         import cli.review_modes
         review = next(c for c in shape.commands if c.name == "review")
-        synopsis = ref.synopsis(review.parser)
+        synopsis = core.cli_reference.synopsis(review.parser)
         for flag in cli.review_modes.MODES:
             assert f"[{flag}]" in synopsis, flag
 
@@ -240,6 +240,6 @@ class TestPrShape:
         assert args.repo_dir == "/x"
 
     def test_no_documented_flag_has_an_empty_description(self, shape):
-        out = ref.tables(shape)
+        out = core.cli_reference.tables(shape)
         empty = [line for line in out.splitlines() if line.endswith("|  |")]
         assert empty == []

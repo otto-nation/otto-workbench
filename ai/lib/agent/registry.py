@@ -220,6 +220,11 @@ _SPECS: tuple[PhaseSpec, ...] = (
         shape=PhaseShape.PROMPT,
         scales_with_omitted=False,
     ),
+    PhaseSpec(
+        Phase.CREATE, PhaseDomain.DESCRIBE, "Create",
+        shape=PhaseShape.PROMPT,
+        scales_with_omitted=False,
+    ),
 )
 
 PHASES: dict[Phase, PhaseSpec] = {s.phase: s for s in _SPECS}

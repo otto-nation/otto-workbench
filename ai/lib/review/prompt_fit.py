@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 
 import agent.templates
@@ -32,10 +31,10 @@ from review.budget import (
 )
 from review.paths import FILENAME_PROMPT_STATS, review_artifact_path
 from review.prompt import (
-    BudgetLever, BuiltPrompt, PromptTooLarge, _build_common_sections, _log_prompt_size,
-    _measured_tokens, _prompt_stats_lock, unverified_reason,
+    BudgetLever, BuiltPrompt, PromptTooLarge, build_common_sections, log_prompt_size,
+    measured_tokens, prompt_stats_lock, unverified_reason,
 )
-from review.types import ReviewJob
+from review.types import PromptVerification, ReviewJob
 
 # Three renders is one opening guess and two corrections. Past that the
 # overshoot is not a markup miss, it is a prompt that will not fit.
@@ -44,29 +43,6 @@ MAX_PROMPT_RENDERS = 3
 # Shrink a little more than the overshoot so the next render is not the
 # current one minus a rounding error.
 _RATCHET_MARGIN = 0.05
-
-
-@dataclass(frozen=True)
-class PromptVerification:
-    """What one render was measured against, and whether it may be sent.
-
-    `tokens` is the exact count when one was taken. `token_verified` is derived
-    from it, so the two cannot disagree; a missing count records `reason` and
-    is neither pass nor fail.
-    `ok` is the send decision: bytes always, tokens only when verified.
-    """
-
-    prompt_bytes: int
-    budget_bytes: int
-    tokens: int | None
-    reason: str
-    ok: bool
-    byte_overshoot: int
-    token_overshoot: int
-
-    @property
-    def token_verified(self) -> bool:
-        return self.tokens is not None
 
 
 def verify_prompt(
@@ -83,7 +59,7 @@ def verify_prompt(
     # Counted even when the bytes already overshoot: the render is known not to
     # fit, but the count still feeds `prompt-stats.json` and the token-density
     # ratchet, which is worth the round trip.
-    measured = _measured_tokens(prompt, phase, model)
+    measured = measured_tokens(prompt, phase, model)
     if measured is None:
         return PromptVerification(
             prompt_bytes=prompt_bytes,
@@ -159,7 +135,7 @@ def fit_rendered_prompt(
 
     last_verification: PromptVerification | None = None
     for render_i in range(MAX_PROMPT_RENDERS):
-        common = _build_common_sections(
+        common = build_common_sections(
             job, max_turns=max_turns, budget_bytes=target,
         )
         built = builder(job, common, extra, output)
@@ -170,7 +146,7 @@ def fit_rendered_prompt(
             budget_bytes=budget_bytes,
         )
         last_verification = verification
-        _log_prompt_size(
+        log_prompt_size(
             template_name, prompt, built.builder.vars, job,
             label=built.label, cuts=built.builder.cuts, phase=phase,
             accounting=built.builder.accounting,
@@ -281,5 +257,5 @@ def record_prompt_overhead(
 
     stats_file = review_artifact_path(job.review_file, FILENAME_PROMPT_STATS)
     path = Path(stats_file)
-    with _prompt_stats_lock:
+    with prompt_stats_lock:
         _write_overhead_into_stats(path, template, first)

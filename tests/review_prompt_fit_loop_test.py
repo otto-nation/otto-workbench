@@ -95,10 +95,10 @@ class TestUnverifiedReason:
         assert unverified_reason(Phase.SCOUT) == "unavailable"
 
     def test_the_direct_log_path_uses_the_same_vocabulary(self, tmp_path, monkeypatch):
-        from review.prompt import _log_prompt_size
+        from review.prompt import log_prompt_size
 
         monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
-        _log_prompt_size(
+        log_prompt_size(
             "scout.md", "text", {}, _job(tmp_path),
             budget_bytes=1_000, model=TEST_MODEL, phase=None,
         )

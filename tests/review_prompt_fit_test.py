@@ -17,7 +17,7 @@ from review.collect import (
 )
 from dataclasses import asdict
 
-from review.prompt import BudgetLever, Cut, _build_common_sections
+from review.prompt import BudgetLever, Cut, build_common_sections
 from review.prompt import _fit_budget as _fit_budget_impl
 
 from review_prompt_support import MAX_PROMPT_BYTES, _make_preflight, _make_job
@@ -333,7 +333,7 @@ class TestThePlanIsCheckedAgainstTheRender:
         # render against and nothing worth recording.
         from review.prompt import PromptBuilder
         job = _make_job(_make_preflight())
-        b = PromptBuilder(_build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES))
+        b = PromptBuilder(build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES))
         assert b.accounting is None
 
 

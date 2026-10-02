@@ -26,7 +26,6 @@ from dataclasses import asdict, dataclass, fields
 from enum import StrEnum
 from pathlib import Path
 import threading
-from typing import TYPE_CHECKING
 
 import git.client
 import json
@@ -53,11 +52,7 @@ from review.prompt_sections import (
     _build_reply_threads_section, _build_reviews_section,
     _build_state_context_section, _is_incremental,
 )
-from review.types import PreflightData, ReviewJob
-
-if TYPE_CHECKING:
-    # `prompt_fit` imports this module at runtime, so the type is annotation-only.
-    from review.prompt_fit import PromptVerification
+from review.types import PreflightData, PromptVerification, ReviewJob
 
 # The verdicts the prompt offers, written from the same members the review's
 # `## Verdict` line is parsed against — the wording an agent is asked for cannot
@@ -300,7 +295,7 @@ class BudgetAccounting:
     the same measured sections with the diff charged at what it actually
     rendered to. The gap between them is unspent allowance, which is ordinary
     and says nothing. The gap between `accounted_bytes` and the rendered
-    prompt is the figure worth reading — see `_log_prompt_size`.
+    prompt is the figure worth reading — see `log_prompt_size`.
 
     A separate type rather than two more fields on `BudgetPlan`: a plan that is
     sometimes reconciled and sometimes not would leave `accounted_bytes`
@@ -537,7 +532,7 @@ def _measuring_disabled() -> bool:
 
 
 def unverified_reason(phase: Phase | None) -> str:
-    """Why `_measured_tokens` has no count: the one owner of that vocabulary.
+    """Why `measured_tokens` has no count: the one owner of that vocabulary.
 
     `disabled` is the opt-out, `no_phase` is a caller that named no phase, and
     `unavailable` is everything else — the counter was asked and had no answer.
@@ -549,7 +544,7 @@ def unverified_reason(phase: Phase | None) -> str:
     return "unavailable"
 
 
-def _measured_tokens(
+def measured_tokens(
     prompt: str, phase: Phase | None, model: str,
 ) -> tuple[int, str] | None:
     """The prompt's exact token count and the model it was counted against.
@@ -581,7 +576,7 @@ def _measured_tokens(
 # lock is the extra file gc would then have to know about. If that call
 # site ever moves to subprocess-per-group or multiprocessing, this lock
 # stops protecting anything and needs to move with it.
-_prompt_stats_lock = threading.Lock()
+prompt_stats_lock = threading.Lock()
 
 
 def _append_prompt_stats(stats_file: str, stats: dict) -> None:
@@ -596,7 +591,7 @@ def _append_prompt_stats(stats_file: str, stats: dict) -> None:
     run, or a truncated file from before this was atomic.
     """
     path = Path(stats_file)
-    with _prompt_stats_lock:
+    with prompt_stats_lock:
         existing: list = []
         try:
             parsed = json.loads(path.read_text())
@@ -610,7 +605,7 @@ def _append_prompt_stats(stats_file: str, stats: dict) -> None:
             core.log.warn(f"{path} could not be written ({exc})")
 
 
-def _log_prompt_size(
+def log_prompt_size(
     template_name: str, prompt: str, sections: dict[str, object], job: ReviewJob,
     *,
     budget_bytes: int,
@@ -699,7 +694,7 @@ def _log_prompt_size(
             stats["ladder_bytes"] = ladder_bytes
         measured = (counted, model) if counted is not None else None
     else:
-        measured = _measured_tokens(prompt, phase, model)
+        measured = measured_tokens(prompt, phase, model)
         stats["token_verified"] = measured is not None
         if measured is None:
             stats["token_unverified_reason"] = unverified_reason(phase)
@@ -933,7 +928,7 @@ def _prompt_disprove(job, common, extra, output):
     return BuiltPrompt(b, "")
 
 
-def _build_common_sections(
+def build_common_sections(
     job: ReviewJob, *, max_turns: int, budget_bytes: int,
 ) -> CommonSections:
     return CommonSections(

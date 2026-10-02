@@ -33,7 +33,7 @@ class TestPromptStats:
             session_log=str(tmp_path / "s.jsonl"),
         )
 
-        ro._log_prompt_size(
+        ro.log_prompt_size(
             "test", "hello world", {"sec": "data"}, job,
             budget_bytes=_TEST_BUDGET, model=_TEST_MODEL,
         )
@@ -61,8 +61,8 @@ class TestPromptStats:
             session_log=str(tmp_path / "s.jsonl"),
         )
 
-        ro._log_prompt_size("first", "aaa", {}, job, budget_bytes=_TEST_BUDGET, model=_TEST_MODEL)
-        ro._log_prompt_size("second", "bbb", {}, job, budget_bytes=_TEST_BUDGET, model=_TEST_MODEL)
+        ro.log_prompt_size("first", "aaa", {}, job, budget_bytes=_TEST_BUDGET, model=_TEST_MODEL)
+        ro.log_prompt_size("second", "bbb", {}, job, budget_bytes=_TEST_BUDGET, model=_TEST_MODEL)
 
         stats = json.loads((tmp_path / ro.FILENAME_PROMPT_STATS).read_text())
         assert len(stats) == 2
@@ -86,7 +86,7 @@ class TestPromptStats:
         stats_file = tmp_path / ro.FILENAME_PROMPT_STATS
         stats_file.write_text("")
 
-        ro._log_prompt_size("test", "hello", {}, job, budget_bytes=_TEST_BUDGET, model=_TEST_MODEL)
+        ro.log_prompt_size("test", "hello", {}, job, budget_bytes=_TEST_BUDGET, model=_TEST_MODEL)
 
         stats = json.loads(stats_file.read_text())
         assert isinstance(stats, list)

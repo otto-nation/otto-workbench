@@ -288,8 +288,16 @@ _claude_setup() {
 
 @test "step_claude_settings: second run produces identical settings.json" {
   _claude_setup
-  # Stub registry scanning — it takes ~1s per call and idempotency doesn't depend on registry content
-  collect_registry_permissions() { local -n __out=$1; __out=("Bash(git:*)"); }
+  # Stub registry scanning — idempotency doesn't depend on registry content, and
+  # the real scan costs minutes under bats' per-command DEBUG trap. The module is
+  # loaded first: step_claude_settings sources it when it is not yet loaded,
+  # which would replace a stub defined before it with the real collector.
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/lib/registries.sh"
+  collect_registry_permissions() {
+    touch "$BATS_TEST_TMPDIR/stubbed"
+    local -n __out=$1; __out=("Bash(git:*)")
+  }
 
   step_claude_settings >/dev/null 2>&1
   content1=$(cat "$FAKE_HOME/.claude/settings.json")
@@ -298,6 +306,26 @@ _claude_setup() {
   content2=$(cat "$FAKE_HOME/.claude/settings.json")
 
   [[ "$content1" == "$content2" ]]
+  # The stub, not the real collector, answered.
+  [[ -e "$BATS_TEST_TMPDIR/stubbed" ]]
+}
+
+@test "_claude_mirror_env: no ~/.env.local means no registry scan" {
+  _claude_setup
+  # The scan is a full load of every registry; with nothing to mirror it is
+  # pure cost, and under bats it cost the test above minutes per call.
+  collect_claude_env_vars() {
+    touch "$BATS_TEST_TMPDIR/scanned"
+    local -n __s=$1 __t=$2
+    __s=(); __t=()
+  }
+  [[ ! -e "$ENV_LOCAL_FILE" ]]
+
+  run _claude_mirror_env '{"settings":{}}'
+
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"settings":{}}' ]
+  [ ! -e "$BATS_TEST_TMPDIR/scanned" ]
 }
 
 @test "step_claude_agents: second run produces identical files" {

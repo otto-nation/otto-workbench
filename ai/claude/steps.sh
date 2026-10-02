@@ -241,9 +241,18 @@ _claude_env_json() {
 _claude_mirror_env() {
   local result="$1"
 
+  # The file is checked before the registry scan, not after it: with no
+  # ~/.env.local there is nothing to mirror whatever the registries declare, and
+  # the scan is the expensive half — a full load of every registry, which under
+  # bats' per-command DEBUG trap took sync_idempotency.bats minutes per call.
+  if [[ ! -f "$ENV_LOCAL_FILE" ]]; then
+    printf '%s' "$result"
+    return 0
+  fi
+
   local -a sources=() targets=()
   collect_claude_env_vars sources targets "$WORKBENCH_STABLE_DIR"
-  if [[ ! -f "$ENV_LOCAL_FILE" || ${#sources[@]} -eq 0 ]]; then
+  if [[ ${#sources[@]} -eq 0 ]]; then
     printf '%s' "$result"
     return 0
   fi

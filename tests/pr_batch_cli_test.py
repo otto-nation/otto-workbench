@@ -81,19 +81,24 @@ def test_run_honours_select_and_prs(monkeypatch):
     assert seen["items"] == [("o/r#2", ["review"])]
 
 
-def _saved_run_with_decision():
-    run = batch.scheduler.new_run([PlanRow("o/r", "/r", 1, "t", "b", "h", False,
-                               {batch.model.Step.REVIEW: StepNeed(True, "x")})],
-                      steps=[batch.model.Step.REVIEW], selected=None, pool=1, auto_publish=[])
-    item = run.items[0]
-    item.worktree = "/wt"
-    item.step(batch.model.Step.REVIEW).status = batch.model.StepStatus.NEEDS_DECISION
-    run.decisions.append(batch.model.Decision(id="d1", item=item.key, step="review",
-                                    kind=batch.model.DecisionKind.OPEN_FINDINGS))
-    item.status = batch.model.ItemStatus.AWAITING_DECISION
+def _saved_run_with_decisions(n=1, *, kind=batch.model.DecisionKind.OPEN_FINDINGS):
+    rows = [PlanRow("o/r", "/r", i, "t", "b", "h", False,
+                    {batch.model.Step.REVIEW: StepNeed(True, "x")}) for i in range(1, n + 1)]
+    run = batch.scheduler.new_run(rows, steps=[batch.model.Step.REVIEW], selected=None,
+                                  pool=1, auto_publish=[])
+    for i, item in enumerate(run.items, 1):
+        item.worktree = "/wt"
+        item.step(batch.model.Step.REVIEW).status = batch.model.StepStatus.NEEDS_DECISION
+        run.decisions.append(batch.model.Decision(id=f"d{i}", item=item.key, step="review",
+                                                  kind=kind))
+        item.status = batch.model.ItemStatus.AWAITING_DECISION
     run.status = batch.model.RunStatus.WAITING
     batch.store.save(run)
     return run
+
+
+def _saved_run_with_decision():
+    return _saved_run_with_decisions(1)
 
 
 def test_resolve_applies_directly_when_no_scheduler_holds_the_run(capsys):
@@ -184,6 +189,70 @@ def test_resume_reports_an_unknown_run(capsys):
     err = capsys.readouterr().err
     assert err.startswith("pr batch:")
     assert "nope" in err
+
+
+def test_resume_emits_interrupted_for_a_running_step(monkeypatch, capsys):
+    run = _saved_run_with_decision()
+    rec = run.items[0].step(batch.model.Step.REVIEW)
+    rec.status = batch.model.StepStatus.RUNNING
+    rec.log_path = "/tmp/x.log"
+    run.status = batch.model.RunStatus.INTERRUPTED
+    batch.store.save(run)
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
+                        lambda self: batch.model.RunStatus.WAITING)
+    assert _main(["batch", "resume", run.id]) == 10
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    created = [e for e in lines if e.get("kind") == "decision_created"]
+    assert any(e.get("decision_kind") == "interrupted" for e in created)
+
+
+def test_idle_resolve_drains_other_pending_requests():
+    run = _saved_run_with_decisions(2)
+    batch.store.write_request(run.id, {"decision": "d1", "action": "accept"})
+    assert _main(["batch", "resolve", run.id, "d2", "--action", "accept"]) == 0
+    saved = batch.store.load(run.id)
+    assert saved.decision("d1").resolution == "accept"
+    assert saved.decision("d2").resolution == "accept"
+    assert batch.store.has_requests(run.id) is False
+
+
+def test_apply_pending_reports_each_error_and_keeps_earlier_applies(monkeypatch, capsys):
+    run = _saved_run_with_decisions(2)
+    batch.store.write_request(run.id, {"decision": "d1", "action": "accept"})
+    held = {"n": 0}
+
+    def is_held(_path):
+        held["n"] += 1
+        return held["n"] == 1
+
+    monkeypatch.setattr(core.run_lock, "is_held", is_held)
+    assert _main(["batch", "resolve", run.id, "d2", "--action", "abort"]) == 1
+    captured = capsys.readouterr()
+    err_json = json.loads(captured.out)
+    assert err_json["errors"]
+    assert "accept" in captured.err
+    saved = batch.store.load(run.id)
+    assert saved.decision("d1").resolution == "accept"
+    assert saved.decision("d2").open
+
+
+def test_idle_resolve_marks_run_done_when_every_item_is_terminal(capsys):
+    run = _saved_run_with_decisions(1, kind=batch.model.DecisionKind.FAILED)
+    assert _main(["batch", "resolve", run.id, "d1", "--action", "drop-pr"]) == 0
+    saved = batch.store.load(run.id)
+    assert saved.items[0].terminal
+    assert saved.status is batch.model.RunStatus.DONE
+    out = capsys.readouterr().out
+    assert "run_finished" not in out
+
+
+def test_idle_resolve_leaves_waiting_when_an_item_is_unblocked():
+    run = _saved_run_with_decision()
+    assert _main(["batch", "resolve", run.id, "d1", "--action", "accept"]) == 0
+    saved = batch.store.load(run.id)
+    assert saved.items[0].status is batch.model.ItemStatus.QUEUED
+    assert not saved.open_decisions()
+    assert saved.status is batch.model.RunStatus.WAITING
 
 
 def test_schema_version_1_is_served_for_batch(monkeypatch):

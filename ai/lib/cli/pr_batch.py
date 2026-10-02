@@ -116,16 +116,48 @@ def _plan(args) -> batch.plan.Plan:
     return batch.plan.build_plan(args.checkout)
 
 
+def _apply_loaded(run, bin_dir: Path) -> list[str]:
+    errors = []
+    pr_bin = str(bin_dir / "pr")
+    for raw in batch.store.take_requests(run.id):
+        if isinstance(raw, dict) and raw.get("error") and "decision" not in raw:
+            errors.append(raw["error"])
+            continue
+        try:
+            batch.resolve.apply(run, batch.resolve.Request.from_dict(raw), pr_bin=pr_bin)
+        except (batch.resolve.ResolveError, KeyError, TypeError) as exc:
+            errors.append(str(exc))
+    if run.items and all(item.terminal for item in run.items):
+        run.status = RunStatus.DONE
+    return errors
+
+
+def _report_apply_errors(errors: list[str]) -> None:
+    for message in errors:
+        print(f"pr batch: {message}", file=sys.stderr)
+
+
+def _held_drive(run, bin_dir: Path, cfg) -> int:
+    status = batch.scheduler.Scheduler(
+        run, pr_bin=str(bin_dir / "pr"), cfg=cfg).run_until_blocked()
+    errors = _apply_loaded(run, bin_dir)
+    batch.store.save(run)
+    if run.status is RunStatus.DONE:
+        status = RunStatus.DONE
+    if errors:
+        _report_apply_errors(errors)
+        return 1
+    return _STATUS_EXIT.get(status, 1)
+
+
 def _drive(run, *, bin_dir: Path, cfg) -> int:
     started = batch.store.now_iso()
     try:
         with core.run_lock.acquire(batch.store.run_dir(run.id), "batch", started):
-            status = batch.scheduler.Scheduler(
-                run, pr_bin=str(bin_dir / "pr"), cfg=cfg).run_until_blocked()
+            return _held_drive(run, bin_dir, cfg)
     except core.run_lock.LockBusy as exc:
         core.run_lock.report_busy(exc)
         return 1
-    return _STATUS_EXIT.get(status, 1)
 
 
 def _cmd_run(args, bin_dir: Path) -> int:
@@ -170,7 +202,7 @@ def _cmd_resume(args, bin_dir: Path) -> int:
     if run.status in (RunStatus.DONE, RunStatus.CANCELLED):
         return _err(f"run {run_id} is {run.status.value}")
     batch.store.clear_cancel(run_id)
-    batch.scheduler.mark_interrupted(run)
+    batch.scheduler.mark_interrupted(run, emit=batch.events.emit)
     os.environ.setdefault(TRAIL_ROOT_ENV, run.trail_root)
     return _drive(run, bin_dir=bin_dir, cfg=_cfg([i.repo_dir for i in run.items]))
 
@@ -180,17 +212,21 @@ def _apply_pending(run_id: str, bin_dir: Path, decision_id: str) -> int:
         with core.run_lock.acquire(batch.store.run_dir(run_id), "batch-resolve",
                                    batch.store.now_iso()):
             run = batch.store.load(run_id)
-            for raw in batch.store.take_requests(run_id):
-                batch.resolve.apply(run, batch.resolve.Request.from_dict(raw),
-                                    pr_bin=str(bin_dir / "pr"))
+            errors = _apply_loaded(run, bin_dir)
             batch.store.save(run)
-    except (batch.resolve.ResolveError, KeyError, batch.store.RunNotFound) as exc:
+    except batch.store.RunNotFound as exc:
         return _err(str(exc))
     except core.run_lock.LockBusy:
         core.report.emit_json({"queued": True, "decision": decision_id})
         return EXIT_OK
-    core.report.emit_json({"applied": True, "decision": decision_id,
-                           "open_decisions": len(run.open_decisions())})
+    result = {"applied": not errors, "decision": decision_id,
+              "open_decisions": len(run.open_decisions())}
+    if errors:
+        result["errors"] = errors
+        _report_apply_errors(errors)
+        core.report.emit_json(result)
+        return 1
+    core.report.emit_json(result)
     return EXIT_OK
 
 
@@ -201,30 +237,13 @@ def _cmd_resolve(args, bin_dir: Path) -> int:
         return _err(f"no run {args.run_id}")
     request = {"decision": args.decision_id, "action": args.action, "reason": args.reason,
                "body_file": args.body_file, "commit": args.commit}
-    if core.run_lock.is_held(batch.store.run_dir(args.run_id)):
-        batch.store.write_request(args.run_id, request)
-        if core.run_lock.is_held(batch.store.run_dir(args.run_id)):
-            core.report.emit_json({"queued": True, "decision": args.decision_id})
-            return EXIT_OK
-        return _apply_pending(args.run_id, bin_dir, args.decision_id)
-    try:
-        with core.run_lock.acquire(batch.store.run_dir(args.run_id), "batch-resolve",
-                                   batch.store.now_iso()):
-            run = batch.store.load(args.run_id)
-            batch.resolve.apply(run, batch.resolve.Request.from_dict(request),
-                                pr_bin=str(bin_dir / "pr"))
-            batch.store.save(run)
-    except (batch.resolve.ResolveError, KeyError, batch.store.RunNotFound) as exc:
-        return _err(str(exc))
-    except core.run_lock.LockBusy:
-        batch.store.write_request(args.run_id, request)
-        if not core.run_lock.is_held(batch.store.run_dir(args.run_id)):
-            return _apply_pending(args.run_id, bin_dir, args.decision_id)
+    batch.store.write_request(args.run_id, request)
+    held = batch.store.run_dir(args.run_id)
+    # A lock that drops between the two checks is applied, not left queued.
+    if core.run_lock.is_held(held) and core.run_lock.is_held(held):
         core.report.emit_json({"queued": True, "decision": args.decision_id})
         return EXIT_OK
-    core.report.emit_json({"applied": True, "decision": args.decision_id,
-                           "open_decisions": len(run.open_decisions())})
-    return EXIT_OK
+    return _apply_pending(args.run_id, bin_dir, args.decision_id)
 
 
 def _cmd_cancel(args) -> int:

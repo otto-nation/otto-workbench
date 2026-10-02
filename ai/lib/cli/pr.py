@@ -36,6 +36,7 @@ from pathlib import Path
 import cli.dispatch
 import cli.review_modes
 from cli.needs import Need
+from cli.pr_batch import cmd_batch
 from cli.pr_commands import (
     # Re-exported, not used here: the tests read `pr_cli.EXIT_BUDGET_EXHAUSTED`
     # to bind this module's exit code to the maintenance script's bash
@@ -161,6 +162,7 @@ _CUSTOM = {
     "review":   cmd_review,
     "comments": cmd_comments,
     "fix":      cmd_fix,
+    "batch":    cmd_batch,
     "gc":       cmd_gc,
 }
 

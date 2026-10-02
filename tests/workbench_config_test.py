@@ -186,6 +186,19 @@ def test_a_non_mapping_file_is_rejected(roots):
         config.workbench_config.load_config(project)
 
 
+def test_batch_keys_default_and_merge(tmp_path, monkeypatch):
+    cfg_dir = tmp_path / "cfg"
+    cfg_dir.mkdir()
+    (cfg_dir / "config.yml").write_text("batch:\n  pool_max: 3\n")
+    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(cfg_dir))
+    cfg = config.workbench_config.load_config(tmp_path)
+    assert cfg.batch.pool_max == 3
+    assert cfg.batch.pool_default == 1
+    assert cfg.batch.mem_reserve == "2G"
+    assert cfg.batch.cpu_pressure_max == 30.0
+    assert cfg.batch.mem_pressure_max == 5.0
+
+
 # ── The container scope ─────────────────────────────────────────────────────
 
 
@@ -1010,11 +1023,12 @@ def test_a_numeric_field_is_parsed_into_the_number_it_names():
 
 
 # The float half of the numeric test this change split in two. The integer half
-# now runs against a real key; nothing on the surface is a float, so this one
-# keeps the patched type it always had.
+# now runs against a real key. `batch.cpu_pressure_max` / `batch.mem_pressure_max`
+# are floats on the surface; this case still uses a patched type so it covers a
+# key that is not.
 # passes-at-base: it is the pre-existing patched-type case, carried over intact
 def test_a_float_field_is_parsed_through_a_patched_type(monkeypatch):
-    """No float on the surface yet; the branch is reached by its type."""
+    """A key typed as number (not an int field) is coerced to float."""
     monkeypatch.setattr(config.workbench_config_write, "schema_type", lambda _: "number")
     assert config.workbench_config_write.coerce_value("some.ratio", "1.5") == 1.5
 

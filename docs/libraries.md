@@ -188,6 +188,11 @@ Every key any of them accepts:
 | `wiki.dir` | string | `wiki` |
 | `wiki.link` | boolean | `false` |
 | `wiki.root` | string | — |
+| `batch.pool_max` | integer | `2` |
+| `batch.pool_default` | integer | `1` |
+| `batch.mem_reserve` | string | `2G` |
+| `batch.cpu_pressure_max` | number | `30.0` |
+| `batch.mem_pressure_max` | number | `5.0` |
 
 `<phase>` is one of: `single`, `holistic`, `scout`, `group`, `synthesis`, `disprove`, `fix`, `fix_verify`, `comments_fix`, `comments_verify`, `comments_triage`, `ci_fix`, `rebase`, `prepush_fix`, `describe`
 

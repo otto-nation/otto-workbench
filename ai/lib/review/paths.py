@@ -157,6 +157,17 @@ def review_file_path(repo: str, pr_number: str) -> Path:
     return core.workbench_paths.reviews_dir() / f"{repo_name}-{pr_number}" / f"review{REVIEW_EXT}"
 
 
+def self_review_dir(repo: str, branch: str) -> Path:
+    """Where a self-review of *branch* in *repo* is written."""
+    repo_name = repo.split("/")[-1]
+    return core.workbench_paths.reviews_dir() / f"{repo_name}-self-{branch.replace('/', '-')}"
+
+
+def self_review_file_path(repo: str, branch: str) -> Path:
+    """The self-review document for *branch* in *repo*."""
+    return self_review_dir(repo, branch) / f"review{REVIEW_EXT}"
+
+
 def _load_review_meta(review_dir: Path) -> ReviewMeta | None:
     """The sidecar a review directory holds, or None if it holds no usable one.
 

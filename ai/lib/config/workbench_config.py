@@ -478,6 +478,23 @@ class RebaseConfig:
 
 
 @dataclass(frozen=True)
+class BatchConfig:
+    """How `pr batch` sizes a run on this host.
+
+    `pool_max` caps whatever a caller asks for. The rest feed admission
+    control, which decides actual concurrency from host pressure;
+    `pool_default` is the fixed concurrency used where the host exposes no
+    pressure metrics.
+    """
+
+    pool_max: int = 2
+    pool_default: int = 1
+    mem_reserve: str = "2G"
+    cpu_pressure_max: float = 30.0
+    mem_pressure_max: float = 5.0
+
+
+@dataclass(frozen=True)
 class WorkbenchConfig:
     reuse: ReuseConfig = field(default_factory=ReuseConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
@@ -487,6 +504,7 @@ class WorkbenchConfig:
     rebase: RebaseConfig = field(default_factory=RebaseConfig)
     fix: FixConfig = field(default_factory=FixConfig)
     wiki: WikiConfig = field(default_factory=WikiConfig)
+    batch: BatchConfig = field(default_factory=BatchConfig)
 
 
 def global_config_path() -> Path:

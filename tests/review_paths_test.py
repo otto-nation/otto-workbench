@@ -9,6 +9,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import review.paths
 from review.paths import (
     ARCHIVE_KEEP_COUNT, archive_review, archives_dir, review_artifact_path,
 )
@@ -22,6 +23,15 @@ def test_artifact_path_sits_beside_the_review(tmp_path):
     assert review_artifact_path(str(review_file), "meta.json") == str(
         review_file.parent / "meta.json"
     )
+
+
+# ── self_review_file_path ────────────────────────────────────────────────────
+
+
+def test_self_review_file_path_matches_the_layout_review_entry_writes(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
+    p = review.paths.self_review_file_path("otto-nation/otto-workbench", "isaac/feat/x")
+    assert p == tmp_path / "reviews" / "otto-workbench-self-isaac-feat-x" / "review.md"
 
 
 # ── archive_review ───────────────────────────────────────────────────────────

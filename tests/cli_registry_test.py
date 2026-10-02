@@ -37,7 +37,7 @@ import core.tool_parser  # noqa: E402
 
 def test_the_registry_names_every_subcommand():
     assert set(COMMANDS) == {"create", "status", "ci", "review", "comments",
-                             "fix", "rebase", "describe", "gc"}
+                             "fix", "rebase", "describe", "batch", "gc"}
 
 
 def test_no_command_is_declared_twice():
@@ -59,7 +59,7 @@ def test_the_delegating_commands_name_their_script():
     """Which commands are backed by a script, pinned as literals.
 
     Read off the registry the spec would be asserting against, this would pass
-    for any partition of the nine — including one that quietly stopped
+    for any partition of the ten — including one that quietly stopped
     delegating `comments` and ran it in-process.
     """
     backed = {name: spec.script for name, spec in COMMANDS.items() if spec.script}
@@ -92,7 +92,7 @@ def test_a_script_is_a_name_and_not_a_path():
 def test_only_create_takes_no_target():
     """`takes_target` replaced a hand-maintained set; the membership is the same."""
     assert {name for name, spec in COMMANDS.items() if not spec.takes_target} \
-        == {"create"}
+        == {"create", "batch"}
 
 
 # ── handler paths ─────────────────────────────────────────────────────────
@@ -116,6 +116,7 @@ _HANDLERS = {
     "fix":      "cli.pr_commands:cmd_fix",
     "rebase":   "cli.pr_rebase:main",
     "describe": "cli.pr_describe:main",
+    "batch":    "cli.pr_batch:cmd_batch",
     "gc":       "cli.pr_commands:cmd_gc",
 }
 
@@ -138,19 +139,19 @@ def test_every_handler_path_resolves_to_a_callable():
 def test_the_registry_is_the_only_list_of_subcommands():
     """Every subparser `pr` builds comes from a spec, and every spec builds one.
 
-    The set assertion above hardcodes the nine names and never looks at the
+    The set assertion above hardcodes the ten names and never looks at the
     parser, so a subcommand added directly to `_build_parser` would pass it.
     """
     import cli.pr
     assert set(core.tool_parser.subparsers(cli.pr._build_parser())) == set(COMMANDS)
 
 
-# The order the nine are declared in, spelled out rather than read off
+# The order the ten are declared in, spelled out rather than read off
 # `_SPECS`. Reading it off the tuple makes every assertion below a tautology:
 # the order tracks whatever the registry says, which is the one thing the
 # reordering would change.
 _DISPLAY_ORDER = ["create", "status", "ci", "review", "comments",
-                  "fix", "rebase", "describe", "gc"]
+                  "fix", "rebase", "describe", "batch", "gc"]
 
 
 def test_the_declaration_order_is_the_display_order():
@@ -190,8 +191,8 @@ def test_a_delegate_reports_its_own_output_contract(command):
     """`pr ci` answers with CIDomain, which `pr --tool-schema` cannot carry.
 
     The union schema declares no `output_schema` at all: one subcommand
-    prints a document and eight print prose, so one declaration for all nine
-    made the MCP server reject the eight. This is the per-command answer, and
+    prints a document and nine print prose, so one declaration for all ten
+    made the MCP server reject the nine. This is the per-command answer, and
     it is what lets a skill cite `pr ci` rather than `ai/bin/ci-check`.
     """
     doc = cli.schema.subcommand_schema(command)
@@ -432,7 +433,8 @@ def test_pr_help_imports_no_delegate():
     # the regression: those are what `handler` keeps as a string so that
     # dispatch, not import, pays for them.
     assert loaded <= {"cli.pr", "cli.needs", "cli.registry", "cli.review_modes",
-                      "cli.pr_commands", "cli.dispatch", "cli.schema"}, loaded
+                      "cli.pr_commands", "cli.pr_batch", "cli.dispatch",
+                      "cli.schema"}, loaded
 
 
 # ── process-level state belongs to the process ────────────────────────────

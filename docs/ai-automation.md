@@ -4,7 +4,7 @@ description: Claude Code integration for coding guidelines, intelligent skills, 
 ---
 <!-- Generated from docs/ai-automation.src.md by bin/local/compose-docs — do not edit. -->
 
-<!-- doc-budget: 492 -->
+<!-- doc-budget: 548 -->
 
 # AI Automation
 
@@ -663,6 +663,62 @@ scan is arity-blind for the same reason. A test reads `value_taking_options` off
 of their subparsers — the same function `pr` classifies with — and fails the build the
 day one declares an option that consumes a value, naming the two ways out: declare the
 command as taking no target, or give it a delegate to read.
+
+### pr batch
+
+`pr batch` runs rebase, comments, and self-review across your open PRs. Every
+step is a child `pr` in a new session with stdin closed — no prompt in any
+child can reach a TTY.
+
+```bash
+pr batch plan --checkout DIR …           # which PRs need which steps (JSON)
+pr batch run --checkout DIR … [opts]     # start; NDJSON events on stdout
+pr batch run --plan FILE …               # start from a saved plan
+pr batch resume [RUN_ID]                 # continue waiting or interrupted
+pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
+pr batch cancel [RUN_ID] [--kill]
+pr batch status [RUN_ID]
+```
+
+`--checkout` is required on `plan`, and on `run` unless `--plan` names a saved
+plan. `--pool` caps concurrency; `--auto-publish STEPS` publishes those steps
+as they finish. Without it, a successful step is drafted and the item waits on
+a `publish` decision. `pr rebase --push-only` is what publish uses for a
+drafted rebase: it pushes HEAD with the lease the earlier `--no-push` run
+recorded, and does not rebase.
+
+A run that still has open decisions exits **10**. `resume` continues it and
+clears a pending cancel. `open-chat` is UI-only — the CLI refuses it and leaves
+the decision open. A failed abort, force, or publish creates a `failed`
+decision; so does a GitHub error during replan (`reason: github`).
+`decision_created` events carry `decision_kind`. `discard` leaves local drafts
+(held rebase, unpushed commits) in the worktree.
+
+Admission starts the next step when free memory minus `batch.mem_reserve`
+covers that step's observed peak (or a seed estimate until a peak is seen) and
+CPU/memory pressure stay under `batch.cpu_pressure_max` /
+`batch.mem_pressure_max`, with an always-admit-one floor so a run is never
+stuck at zero. `--pool` and `batch.pool_max` (default 2) cap concurrency. Hosts
+with no pressure metrics (macOS) fall back to `batch.pool_default` (1).
+Running steps are never paused.
+
+State lives under `~/.local/state/workbench/batch/<run-id>/` (`state.json` is
+authoritative).
+
+| Kind | Action | Effect |
+|---|---|---|
+| `comment_item` | `settle-fixed` / `settle-addressed` / `settle-dismissed` / `reply` / `track` | comments step `done` once no `comment_item` remains for the item; `settle-dismissed` needs `--reason`; `reply` needs `--body-file` and a replyable item |
+| any with `open-chat` | `open-chat` | refused by the CLI; decision stays open |
+| `rebase_conflict` | `retry` | rebase step → `pending` |
+| | `abort` | rebase → `skipped`; failure → new `failed` decision |
+| `rebase_refused` | `drop-pr` | item → `dropped` |
+| | `force` | only if payload `override`; success → rebase `done` and drafted; failure → `failed` |
+| `open_findings` | `accept` | review step `done` |
+| `dirty_worktree` | `retry` | worktree re-checked when the scheduler next picks the item |
+| | `drop-pr` | item → `dropped` |
+| `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped`; item → `dropped` |
+| `publish` | `publish` | success → item `done`; failure → new `failed` decision on step `publish` |
+| | `discard` | item → `done` (local commits stay, nothing pushed) |
 
 ### The Pi package the sync declares, and who gets it
 

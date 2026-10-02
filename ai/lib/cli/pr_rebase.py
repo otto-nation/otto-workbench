@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import sys
 import traceback
+from dataclasses import dataclass
 from pathlib import Path
 
 import core.log
@@ -63,6 +64,26 @@ RunMode = rebase.types.RunMode
 REFUSAL_EXIT = rebase.types.REFUSAL_EXIT
 CONFLICTS_EXIT = rebase.types.CONFLICTS_EXIT
 REFUSAL_OVERRIDE_FLAG = rebase.types.REFUSAL_OVERRIDE_FLAG
+
+
+@dataclass(frozen=True)
+class RebaseTarget:
+    ctx: pr.context.ResolvedContext
+    cwd: str
+    target_ref: str
+
+
+def _resolve(args) -> RebaseTarget:
+    """Turn parsed args into the checkout and target the run acts on."""
+    ctx = pr.context.resolve(
+        repo_dir=args.repo_dir, branch=args.branch, pr_ref=args.pr,
+    )
+    cwd = str(ctx.require_worktree())
+    snapshot = rebase.pr_snapshot.fetch(cwd, ctx)
+    target_ref = rebase.target.resolve_target_ref(
+        cwd, ctx, args.onto, snapshot=snapshot,
+    )
+    return RebaseTarget(ctx=ctx, cwd=cwd, target_ref=target_ref)
 
 
 # ── Subcommands ─────────────────────────────────────────────────────────────
@@ -267,6 +288,10 @@ def build_parser() -> ToolParser:
                         help=argparse.SUPPRESS)
     parser.add_argument("--no-push", action="store_false", dest="push",
                         help="Skip the force-push — print the command instead")
+    parser.add_argument(
+        "--push-only", action="store_true",
+        help="Push HEAD with the lease an earlier --no-push run recorded; do not rebase",
+    )
     parser.add_argument("--force", action="store_true",
                         help="Rebase even when the branch's work already "
                              "landed on the target ref")
@@ -277,10 +302,23 @@ def build_parser() -> ToolParser:
 
 
 def _parse_args(argv: list[str] | None):
-    return build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.push_only and (args.fix or args.abort or not args.push):
+        parser.error("--push-only cannot be combined with --fix, --abort or --no-push")
+    return args
 
 
 def _run(args, ctx: pr.context.ResolvedContext, cwd: str, trail: Trail) -> int:
+    if args.push_only:
+        target = _resolve(args)
+        # cmd_push lands through the publishing gate; without opening it the
+        # force-push is held rather than issued — the same path --no-push uses.
+        with core.publishing.run(post=True):
+            return cmd_push(
+                target.cwd, target.ctx, target_ref=target.target_ref, trail=trail,
+            )
+
     if args.abort:
         trail.decision("mode", "selected abort", reason="--abort flag set")
         # Abort is the escape hatch for a broken or hung rebase — it should

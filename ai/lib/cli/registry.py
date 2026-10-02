@@ -15,7 +15,7 @@ it is a user-visible change, not a cosmetic one.
 
 `handler` is a `"<module>:<attr>"` string resolved by importlib at dispatch,
 not a callable: an eager import would pull every delegate into `pr --help`.
-All nine name an importable function, resolved and called through
+All ten name an importable function, resolved and called through
 `core.publishing.call_entry_point` — by `cli.dispatch` for most of them, and
 directly by `ai/bin/pr`'s `cmd_review`/`cmd_comments` and by
 `cli.review_modes`'s `post`/`repair` for the rest.
@@ -33,7 +33,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import cli.review_modes
-from cli.needs import LOCAL, REMOTE, Need
+from cli.needs import LOCAL, NONE, REMOTE, Need
 
 
 @dataclass(frozen=True)
@@ -51,7 +51,7 @@ class CommandSpec:
     * ``handler`` — ``"<module>:<attr>"`` naming the in-process callable, or
       None when the wrapper is still binary-local. A string, not a callable:
       dispatch imports it at call time so `pr --help` does not. Defaulted to
-      None because two of the nine cannot honestly point anywhere yet;
+      None because two of the ten cannot honestly point anywhere yet;
       `review` and `comments` set that explicitly, and a test pins every
       value as a literal so a silent default on a new command fails the
       build rather than shipping as None.
@@ -124,6 +124,12 @@ _SPECS: tuple[CommandSpec, ...] = (
     CommandSpec("describe", "Revise the PR description",
                 Need(REMOTE, update=True,  lock=True),  script="pr-describe",
                 handler="cli.pr_describe:main"),
+    # Orchestrates other commands across many PRs, so it resolves no target of
+    # its own and takes no lock: each child `pr` locks its own PR and worktree,
+    # and the run holds a per-run lock under the batch state root.
+    CommandSpec("batch",    "Run rebase, comments and self-review across my open PRs",
+                Need(NONE,   update=False, lock=False), takes_target=False,
+                handler="cli.pr_batch:cmd_batch"),
     CommandSpec("gc",       "Clean up stale PR artifacts",
                 Need(REMOTE, update=False, lock=True),
                 handler="cli.pr_commands:cmd_gc"),

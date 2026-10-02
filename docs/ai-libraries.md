@@ -2869,6 +2869,71 @@ code, not an invitation to rebuild the path elsewhere: this module is the owner,
 and another repo that wants to know what has been reviewed asks the CLI (see
 ``review.listing``) rather than deriving where a review would sit.
 
+## Batch
+
+Running rebase, comments and self-review across many open PRs at once: admission, scheduling, step processes, and the decisions a run waits on.
+
+### batch/admission.py
+
+Decide whether the host can take one more batch step right now.
+
+Concurrency is not a number chosen up front. A step starts only when free
+memory, minus a reserve kept for every other service on the host, covers what
+that step has been seen to need, and neither CPU nor memory is under pressure.
+Running steps are never paused or killed; admission only gates the next start.
+
+### batch/events.py
+
+NDJSON progress events for live consumers of `pr batch run`.
+
+The state file is authoritative; events only save a consumer from polling it.
+
+### batch/model.py
+
+The persisted shape of a `pr batch` run.
+
+Enum string values are written to state files and NDJSON events, so they are
+stable: renaming a member is free, changing a value is a schema break and
+bumps `Run.schema_version`.
+
+### batch/outcomes.py
+
+Turn what a finished step left behind into a step status and decisions.
+
+### batch/plan.py
+
+Pre-flight: which of my open PRs need which batch steps.
+
+One GraphQL search covers every repo and asks only for fields whose cost does
+not scale with comment volume — no nested `comments` connection — so a plan
+over dozens of PRs costs a point or two of the hourly GraphQL budget.
+
+### batch/resolve.py
+
+Apply an operator's answer to one decision, then move the item on.
+
+### batch/scheduler.py
+
+Drive a run: admit steps, reap them, and stop when only decisions remain.
+
+### batch/steps.py
+
+The child `pr` processes a batch run spawns, and the worktrees they run in.
+
+Every step is its own process so concurrent steps share no interpreter state,
+and each gets a new session with stdin closed: no prompt in any child can
+reach a terminal, whether the batch runs under a server or in a shell.
+
+### batch/store.py
+
+Where a `pr batch` run lives on disk; the only module that touches it.
+
+    <state_dir>/batch/<run-id>/state.json       authoritative run state
+    <state_dir>/batch/<run-id>/run.lock         held by the live scheduler
+    <state_dir>/batch/<run-id>/requests/*.json  decisions waiting to be applied
+    <state_dir>/batch/<run-id>/cancel           {"kill": bool} once cancel is asked
+    <state_dir>/batch/<run-id>/logs/*.log       stderr of each step attempt
+
 ## AI backends
 
 The provider plumbing every AI call goes through — backend selection, streamed events, usage accounting, and quota.
@@ -5364,6 +5429,19 @@ dispatch, and a reader running `ai/bin/pr --tool-schema` directly should not
 pay for a context resolution to get it. The MCP server no longer spawns this
 binary to discover the tool; it imports `cli.schema.tool_schema` directly.
 
+### cli/pr_batch.py
+
+`pr batch` — run rebase, comments and self-review across my open PRs.
+
+    pr batch plan   --checkout DIR …           which PRs need which steps (JSON)
+    pr batch run    --checkout DIR … [opts]    start a run; NDJSON events on stdout
+    pr batch resume [RUN_ID]                   continue a waiting or interrupted run
+    pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
+    pr batch cancel [RUN_ID] [--kill]
+    pr batch status [RUN_ID]
+
+Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions.
+
 ### cli/pr_commands.py
 
 The four `pr` subcommands that used to be defined inside the binary.
@@ -5450,7 +5528,7 @@ it is a user-visible change, not a cosmetic one.
 
 `handler` is a `"<module>:<attr>"` string resolved by importlib at dispatch,
 not a callable: an eager import would pull every delegate into `pr --help`.
-All nine name an importable function, resolved and called through
+All ten name an importable function, resolved and called through
 `core.publishing.call_entry_point` — by `cli.dispatch` for most of them, and
 directly by `ai/bin/pr`'s `cmd_review`/`cmd_comments` and by
 `cli.review_modes`'s `post`/`repair` for the rest.
@@ -5609,8 +5687,8 @@ Three related documents, all of them derived rather than written down twice:
 
 That last one is the part D2 specified and nothing built. `pr --tool-schema`
 answers for the whole command and has no `output_schema`, because one of the
-nine subcommands prints a `PRState` document and the other eight print prose
-— declaring one schema for all nine made the MCP server reject the eight. So
+ten subcommands prints a `PRState` document and the other nine print prose
+— declaring one schema for all ten made the MCP server reject the nine. So
 the honest per-command contract is the delegate's, and `subcommand_schema`
 is how a consumer asks for it.
 

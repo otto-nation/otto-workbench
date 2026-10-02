@@ -28,7 +28,7 @@ import config.workbench_config
 @pytest.fixture(autouse=True)
 def _publishing_allowed(publishing_on):
     """These cover what a write does once it is allowed; the gate itself is
-    covered in pr_comments_test.py."""
+    covered in the pr_comments suites."""
 
 
 def test_create_issue_linear():

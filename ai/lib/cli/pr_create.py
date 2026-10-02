@@ -67,8 +67,14 @@ def _read_body(path: str) -> str | None:
         return None
 
 
-def cmd_create(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
-    """Parse *argv* and open, or preview, the PR for ``ctx.branch``."""
+def cmd_create(
+    argv: list[str], ctx: pr.context.ResolvedContext, *, trail=None, **_kw,
+) -> int:
+    """Parse *argv* and open, or preview, the PR for ``ctx.branch``.
+
+    *trail* is the one `cli.pr` started for this dispatch, passed on so the
+    push records on it rather than nowhere.
+    """
     args = build_parser().parse_args(argv)
     body = args.body
     if args.body_file:
@@ -85,4 +91,4 @@ def cmd_create(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
         issue=args.issue,
         closes=tuple(args.closes),
     )
-    return pr.create.run_create(ctx, opts)
+    return pr.create.run_create(ctx, opts, trail=trail)

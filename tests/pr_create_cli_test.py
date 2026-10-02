@@ -48,15 +48,17 @@ def created(tmp_path):
     ctx = make_ctx(pr_number=None, branch="feat/x", worktree_root=tmp_path,
                    target_dir=tmp_path / "target")
     calls: list[CreateOptions] = []
+    trails: list[object] = []
 
-    def run_create(c, opts):
+    def run_create(c, opts, *, trail=None):
         calls.append(opts)
+        trails.append(trail)
         return 0
 
     with patch("pr.context.resolve", return_value=ctx) as resolve, \
          patch("pr.context.resolve_local", return_value=ctx), \
          patch.object(pr.create, "run_create", run_create):
-        yield MagicMock(calls=calls, resolve=resolve)
+        yield MagicMock(calls=calls, trails=trails, resolve=resolve)
 
 
 @pytest.mark.parametrize("flag,field,value", [
@@ -70,6 +72,14 @@ def test_a_value_flag_reaches_create_options_intact(created, flag, field, value)
     opts = created.calls[-1]
     assert getattr(opts, field) == value
     assert opts.draft is True
+
+
+def test_the_dispatch_trail_reaches_run_create(created):
+    trail = MagicMock(name="dispatch-trail")
+    with patch("cli.pr.Trail.start", return_value=trail), \
+         patch("git.topology.current_branch_quiet", return_value=None):
+        assert cli.pr.main(["create"], bin_dir=BIN_DIR) == 0
+    assert created.trails == [trail]
 
 
 def test_closes_is_repeatable_and_keeps_order(created):

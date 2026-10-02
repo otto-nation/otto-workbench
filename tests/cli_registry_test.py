@@ -291,7 +291,7 @@ def test_every_command_declares_a_need():
 
 
 def test_review_declares_a_need_per_invocation():
-    """`review` is the one spec whose declaration its argv resolves. A bare
+    """`review` declares its need per invocation, off its argv. A bare
     invocation is about to review a PR, so it wants the branch current and it
     needs `gh` to name the PR.
 
@@ -309,6 +309,16 @@ def test_review_declares_a_need_per_invocation():
     self_need = need_for(spec, ["--self"])
     assert self_need == Need(LOCAL, update=True, lock=True)
     assert (self_need.update, self_need.lock) == (plain.update, plain.lock)
+
+
+def test_create_takes_the_run_lock_only_when_it_may_publish():
+    """`--dry-run` pushes nothing and creates nothing, so it holds no lock: a
+    preview must not contend with a real run on the same branch."""
+    spec = COMMANDS["create"]
+    assert need_for(spec, []) == Need(REMOTE, update=False, lock=True)
+    assert need_for(spec, ["--title", "t", "--draft"]) == Need(REMOTE, update=False, lock=True)
+    assert need_for(spec, ["--dry-run"]) == Need(REMOTE, update=False, lock=False)
+    assert need_for(spec, ["--title", "x", "--dry-run"]) == Need(REMOTE, update=False, lock=False)
 
 
 @pytest.mark.parametrize("mode", ["--post", "--repair", "--summary", "--recover"])

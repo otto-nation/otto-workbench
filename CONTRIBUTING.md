@@ -126,8 +126,8 @@ Tests live in `tests/`. Each file targets a single library function or script be
 
 When adding a new library function, add a corresponding test file `tests/<function_name>.bats`.
 
-A Python test module is named `<subject>_test.py`, after the module it covers — `pr/summary_scope.py`
-is tested in `tests/summary_scope_test.py`. Never `test_<subject>.py`: pytest collects both, so
+A Python test module is named `<subject>_test.py`, after the module it covers — `pr/permalinks.py`
+is tested in `tests/permalinks_test.py`. Never `test_<subject>.py`: pytest collects both, so
 nothing but this sentence keeps the two forms from drifting apart again. A second suite over the same
 subject takes a qualifier before the suffix (`pr_context_resolution_test.py`).
 

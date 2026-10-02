@@ -251,6 +251,26 @@
           "type": "string"
         }
       }
+    },
+    "batch": {
+      "type": "object",
+      "properties": {
+        "pool_max": {
+          "type": "integer"
+        },
+        "pool_default": {
+          "type": "integer"
+        },
+        "mem_reserve": {
+          "type": "string"
+        },
+        "cpu_pressure_max": {
+          "type": "number"
+        },
+        "mem_pressure_max": {
+          "type": "number"
+        }
+      }
     }
   }
 }

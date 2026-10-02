@@ -186,6 +186,19 @@ def test_a_non_mapping_file_is_rejected(roots):
         config.workbench_config.load_config(project)
 
 
+def test_batch_keys_default_and_merge(tmp_path, monkeypatch):
+    cfg_dir = tmp_path / "cfg"
+    cfg_dir.mkdir()
+    (cfg_dir / "config.yml").write_text("batch:\n  pool_max: 3\n")
+    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(cfg_dir))
+    cfg = config.workbench_config.load_config(tmp_path)
+    assert cfg.batch.pool_max == 3
+    assert cfg.batch.pool_default == 1
+    assert cfg.batch.mem_reserve == "2G"
+    assert cfg.batch.cpu_pressure_max == 30.0
+    assert cfg.batch.mem_pressure_max == 5.0
+
+
 # ── The container scope ─────────────────────────────────────────────────────
 
 

@@ -815,11 +815,12 @@ def collect_preflight_data(job: ReviewJob) -> PreflightData:
     wt = Path(job.wt_path)
     base = job.pr.base or git.topology.default_branch(wt)
 
-    # Self-review's subject is the working tree, so it is not pinned.
-    head = "HEAD" if job.mode == Mode.SELF else _delta_head(job)
+    # Pinned in every mode: self-review's diff is the working tree whatever
+    # head is passed, but its commit history still has to agree with the
+    # header and the delta log.
     diff, commit_log = _collect_git_data(
         job.wt_path, base, job.pr.files, include_worktree=job.mode == Mode.SELF,
-        head=head,
+        head=_delta_head(job),
     )
     claude_md, architecture_md, review_checklists, profiles = _collect_project_context(wt)
     all_contents, all_permissions, file_changes = _collect_file_data(wt, job.pr.files)

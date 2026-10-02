@@ -1379,6 +1379,18 @@ class TestCollectDeltaEndsAtTheStampedHead:
         assert "a commit made after the snapshot" not in commit_log
         assert "late.go" not in diff
 
+    def test_self_review_history_is_pinned_while_its_diff_is_the_tree(
+        self, tmp_path, capsys,
+    ):
+        """Self-review reads the working tree, but its history still ends at the stamp."""
+        job = replace(self._job_after_a_late_commit(tmp_path), mode="self")
+
+        data = review.collect.collect_preflight_data(job)
+        capsys.readouterr()
+
+        assert "work this review is stamped with" in data.commit_log
+        assert "a commit made after the snapshot" not in data.commit_log
+
 
 # ── fetch_branch_metadata ─────────────────────────────────────────────
 

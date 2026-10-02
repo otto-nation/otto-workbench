@@ -1771,6 +1771,20 @@ keeps going until every job has finished or the caller's timeout runs out.
 What it hands back is the last poll's merged payload, which the caller turns
 into the same report a single-shot run produces.
 
+### pr/close_refs.py
+
+The `--closes` contract: validate, stage, and append closing references.
+
+A GitHub issue number (`941` or `#941`) closes anywhere. A tracker key
+(`ENG-123`) only auto-closes where `issues.provider` is Linear, so it is
+refused anywhere else rather than becoming a dead link in a published body.
+
+Appended rather than prepended because a templated body's section headers are
+a contract — content above the first heading, or injected into a section the
+AI wrote, is content the template did not ask for. GitHub honours a closing
+keyword anywhere in the body, so the end costs nothing, and re-running over a
+body that already links is then a no-op.
+
 ### pr/comments.py
 
 PR comments lifecycle tracking.

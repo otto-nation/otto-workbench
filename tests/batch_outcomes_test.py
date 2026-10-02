@@ -7,11 +7,11 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import batch.model as m  # noqa: E402
-import batch.outcomes as out  # noqa: E402
+import batch.model  # noqa: E402
+import batch.outcomes  # noqa: E402
 import pr.fix  # noqa: E402
 
-ITEM = m.Item(key="o/r#1", repo="o/r", repo_dir="/r", pr=1, branch="b", head_sha="s",
+ITEM = batch.model.Item(key="o/r#1", repo="o/r", repo_dir="/r", pr=1, branch="b", head_sha="s",
               worktree="/wt")
 
 # Minimal real review document (grammar from tests/test_review_post.py): one
@@ -29,27 +29,27 @@ REVIEW_WITH_ONE_OPEN_ONE_CHECKED = (
 
 
 def test_rebase_clean_is_done():
-    assert out.classify(m.Step.REBASE, 0, "{}", item=ITEM, log_tail=[]).status is m.StepStatus.DONE
+    assert batch.outcomes.classify(batch.model.Step.REBASE, 0, "{}", item=ITEM, log_tail=[]).status is batch.model.StepStatus.DONE
 
 
 def test_rebase_conflicts_carry_the_conflict_report():
     report = {"status": "conflicts", "files": ["a.py"], "rebase_head": "abc",
               "rebase_head_subject": "s", "remaining_commits": 2}
-    r = out.classify(m.Step.REBASE, 3, json.dumps(report), item=ITEM, log_tail=[])
-    assert r.status is m.StepStatus.NEEDS_DECISION
-    assert r.decisions == [out.DecisionDraft(m.DecisionKind.REBASE_CONFLICT, report)]
+    r = batch.outcomes.classify(batch.model.Step.REBASE, 3, json.dumps(report), item=ITEM, log_tail=[])
+    assert r.status is batch.model.StepStatus.NEEDS_DECISION
+    assert r.decisions == [batch.outcomes.DecisionDraft(batch.model.DecisionKind.REBASE_CONFLICT, report)]
 
 
 def test_rebase_refusal_carries_status_and_override():
     report = {"status": "already_landed", "override": "--force", "remedy": "r", "detail": "d"}
-    r = out.classify(m.Step.REBASE, 4, json.dumps(report), item=ITEM, log_tail=[])
-    assert r.decisions[0].kind is m.DecisionKind.REBASE_REFUSED
+    r = batch.outcomes.classify(batch.model.Step.REBASE, 4, json.dumps(report), item=ITEM, log_tail=[])
+    assert r.decisions[0].kind is batch.model.DecisionKind.REBASE_REFUSED
     assert r.decisions[0].payload["override"] == "--force"
 
 
 def test_rebase_conflicts_without_json_carry_log_tail():
-    r = out.classify(m.Step.REBASE, 3, "not json", item=ITEM, log_tail=["x"])
-    assert r.status is m.StepStatus.NEEDS_DECISION
+    r = batch.outcomes.classify(batch.model.Step.REBASE, 3, "not json", item=ITEM, log_tail=["x"])
+    assert r.status is batch.model.StepStatus.NEEDS_DECISION
     assert r.decisions[0].payload == {"log_tail": ["x"]}
 
 
@@ -58,35 +58,35 @@ def test_comments_owed_items_each_become_a_decision(monkeypatch):
              "file": "a.py", "line": 3, "replyable": True},
             {"id": "ic-9-0", "outcome": "deferred", "summary": "s2", "reason": "",
              "file": "", "line": 0, "replyable": False}]
-    monkeypatch.setattr(out, "comment_items", lambda item: owed)
-    r = out.classify(m.Step.COMMENTS, 0, "{}", item=ITEM, log_tail=[])
-    assert r.status is m.StepStatus.NEEDS_DECISION
+    monkeypatch.setattr(batch.outcomes, "comment_items", lambda item: owed)
+    r = batch.outcomes.classify(batch.model.Step.COMMENTS, 0, "{}", item=ITEM, log_tail=[])
+    assert r.status is batch.model.StepStatus.NEEDS_DECISION
     assert [(d.kind, d.payload["id"]) for d in r.decisions] == [
-        (m.DecisionKind.COMMENT_ITEM, "PRRT_1"), (m.DecisionKind.COMMENT_ITEM, "ic-9-0")]
+        (batch.model.DecisionKind.COMMENT_ITEM, "PRRT_1"), (batch.model.DecisionKind.COMMENT_ITEM, "ic-9-0")]
 
 
 def test_comments_with_nothing_owed_is_done(monkeypatch):
-    monkeypatch.setattr(out, "comment_items", lambda item: [])
-    assert out.classify(m.Step.COMMENTS, 0, "{}", item=ITEM, log_tail=[]).status is m.StepStatus.DONE
+    monkeypatch.setattr(batch.outcomes, "comment_items", lambda item: [])
+    assert batch.outcomes.classify(batch.model.Step.COMMENTS, 0, "{}", item=ITEM, log_tail=[]).status is batch.model.StepStatus.DONE
 
 
 def test_review_open_findings_become_one_decision(monkeypatch):
-    monkeypatch.setattr(out, "open_findings", lambda item: [{"severity": "must-fix", "title": "x"}])
-    r = out.classify(m.Step.REVIEW, 0, "", item=ITEM, log_tail=[])
-    assert r.decisions == [out.DecisionDraft(m.DecisionKind.OPEN_FINDINGS,
+    monkeypatch.setattr(batch.outcomes, "open_findings", lambda item: [{"severity": "must-fix", "title": "x"}])
+    r = batch.outcomes.classify(batch.model.Step.REVIEW, 0, "", item=ITEM, log_tail=[])
+    assert r.decisions == [batch.outcomes.DecisionDraft(batch.model.DecisionKind.OPEN_FINDINGS,
                                              {"findings": [{"severity": "must-fix", "title": "x"}]})]
 
 
 def test_lock_busy_is_a_failed_decision_with_reason_busy():
-    r = out.classify(m.Step.COMMENTS, 1, "", item=ITEM,
-                     log_tail=[f"pr: {out.LOCK_BUSY_MARKER} by pid 4"])
-    assert r.status is m.StepStatus.FAILED
+    r = batch.outcomes.classify(batch.model.Step.COMMENTS, 1, "", item=ITEM,
+                     log_tail=[f"pr: {batch.outcomes.LOCK_BUSY_MARKER} by pid 4"])
+    assert r.status is batch.model.StepStatus.FAILED
     assert r.decisions[0].payload["reason"] == "busy"
 
 
 def test_other_failures_carry_exit_code_and_log_tail():
-    r = out.classify(m.Step.REVIEW, 1, "", item=ITEM, log_tail=["a", "b"])
-    assert r.status is m.StepStatus.FAILED
+    r = batch.outcomes.classify(batch.model.Step.REVIEW, 1, "", item=ITEM, log_tail=["a", "b"])
+    assert r.status is batch.model.StepStatus.FAILED
     assert r.decisions[0].payload == {"reason": "error", "exit_code": 1, "log_tail": ["a", "b"]}
 
 
@@ -102,16 +102,16 @@ def test_comment_items_reads_only_owed_outcomes_and_marks_synthetic_ids(monkeypa
                 pass
 
     State.fix.fix.items = items
-    monkeypatch.setattr(out, "_load_pr_state", lambda item: State)
-    assert [(i["id"], i["replyable"]) for i in out.comment_items(ITEM)] == [
+    monkeypatch.setattr(batch.outcomes, "_load_pr_state", lambda item: State)
+    assert [(i["id"], i["replyable"]) for i in batch.outcomes.comment_items(ITEM)] == [
         ("PRRT_1", True), ("ic-5-0", False)]
 
 
 def test_open_findings_reads_unchecked_findings(tmp_path, monkeypatch):
     f = tmp_path / "review.md"
     f.write_text(REVIEW_WITH_ONE_OPEN_ONE_CHECKED)
-    monkeypatch.setattr(out.review.paths, "self_review_file_path", lambda repo, branch: f)
-    assert out.open_findings(ITEM) == [
+    monkeypatch.setattr(batch.outcomes.review.paths, "self_review_file_path", lambda repo, branch: f)
+    assert batch.outcomes.open_findings(ITEM) == [
         {"severity": "should-fix", "title": OPEN_TITLE, "declined": False},
         {"severity": "should-fix", "title": DECLINED_TITLE, "declined": True},
     ]

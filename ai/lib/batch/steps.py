@@ -17,6 +17,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
+import core.timeouts
 import core.trail
 import git.client
 import git.topology
@@ -89,7 +90,7 @@ class StepProcess:
         code = self._popen.poll()
         if code is not None:
             for t in self._readers:
-                t.join(timeout=5)
+                t.join(timeout=core.timeouts.QUICK)
         return code
 
     def drain_lines(self) -> list[str]:

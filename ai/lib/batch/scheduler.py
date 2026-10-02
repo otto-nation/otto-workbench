@@ -11,11 +11,15 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable
 
+import batch.admission
+import batch.events
+import batch.outcomes
+import batch.plan
+import batch.resolve
+import batch.store
 import git.client
-from batch import admission, events, outcomes, resolve, store
 from batch.model import (STEP_ORDER, Decision, DecisionKind, Item, ItemStatus, Run, RunStatus,
                          Step, StepRecord, StepStatus)
-from batch import plan as _plan
 from batch.plan import PlanRow
 from batch.steps import StepProcess, WorktreeResult, ensure_worktree, step_argv
 from config.workbench_config import BatchConfig
@@ -38,7 +42,7 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
                 for s in STEP_ORDER if s in steps]
         items.append(Item(key=r.key, repo=r.repo, repo_dir=r.repo_dir, pr=r.pr, branch=r.branch,
                           head_sha=r.head_sha, steps=recs))
-    return Run(id=store.new_run_id(now), started_at=now.isoformat(timespec="seconds"),
+    return Run(id=batch.store.new_run_id(now), started_at=now.isoformat(timespec="seconds"),
                steps=list(steps), pool=pool, auto_publish=list(auto_publish), items=items)
 
 
@@ -48,7 +52,7 @@ def row_for(item: Item) -> PlanRow:
 
 def _decide(run: Run, item: Item, step: str, kind: DecisionKind, payload: dict) -> Decision:
     d = Decision(id=secrets.token_hex(4), item=item.key, step=step, kind=kind, payload=payload,
-                 created_at=store.now_iso())
+                 created_at=batch.store.now_iso())
     run.decisions.append(d)
     item.status = ItemStatus.AWAITING_DECISION
     return d
@@ -85,35 +89,35 @@ class _Live:
 
 class Scheduler:
     def __init__(self, run: Run, *, pr_bin: str, cfg: BatchConfig,
-                 host: Callable[[], admission.HostSample] = admission.read_host,
+                 host: Callable[[], batch.admission.HostSample] = batch.admission.read_host,
                  spawn: Callable[..., object] = StepProcess.start,
                  replan: Callable[[PlanRow], PlanRow | None] | None = None,
                  worktrees: Callable[[str, str], WorktreeResult] = ensure_worktree,
                  head: Callable[[str], str] = _local_head,
-                 rss: Callable[[int], int] = admission.tree_rss,
-                 estimates: admission.Estimates | None = None,
-                 emit: Callable[..., None] = events.emit,
+                 rss: Callable[[int], int] = batch.admission.tree_rss,
+                 estimates: batch.admission.Estimates | None = None,
+                 emit: Callable[..., None] = batch.events.emit,
                  sleep: Callable[[float], None] = time.sleep, tick: float = 0.5):
         self.run, self.pr_bin, self.cfg = run, pr_bin, cfg
         # Looked up at construction, not bound as a default, so a patched
         # batch.plan.replan_row is the one used.
         self._host, self._spawn = host, spawn
-        self._replan = replan or _plan.replan_row
+        self._replan = replan or batch.plan.replan_row
         self._worktrees, self._head, self._rss = worktrees, head, rss
-        self._estimates = estimates or admission.Estimates.load()
+        self._estimates = estimates or batch.admission.Estimates.load()
         self._emit, self._sleep, self._tick = emit, sleep, tick
         self._live: dict[str, _Live] = {}
 
     # ── requests and cancel ──────────────────────────────────────────────
 
     def _apply_requests(self) -> None:
-        for raw in store.take_requests(self.run.id):
+        for raw in batch.store.take_requests(self.run.id):
             try:
-                req = resolve.Request.from_dict(raw)
-                resolve.apply(self.run, req, pr_bin=self.pr_bin)
+                req = batch.resolve.Request.from_dict(raw)
+                batch.resolve.apply(self.run, req, pr_bin=self.pr_bin)
                 self._emit("decision_resolved", run=self.run.id, decision=req.decision,
                            action=req.action)
-            except (resolve.ResolveError, KeyError) as exc:
+            except (batch.resolve.ResolveError, KeyError) as exc:
                 self._emit("decision_resolved", run=self.run.id,
                            decision=raw.get("decision", ""), action=raw.get("action", ""),
                            error=str(exc))
@@ -134,9 +138,9 @@ class Scheduler:
 
     def _finish(self, live: _Live, code: int) -> None:
         item, rec = live.item, live.rec
-        result = outcomes.classify(rec.step, code, live.proc.stdout(), item=item,
+        result = batch.outcomes.classify(rec.step, code, live.proc.stdout(), item=item,
                                    log_tail=list(live.tail))
-        rec.exit_code, rec.ended_at, rec.status = code, store.now_iso(), result.status
+        rec.exit_code, rec.ended_at, rec.status = code, batch.store.now_iso(), result.status
         rec.drafted = code == 0 and (rec.step not in self.run.auto_publish
                                      or result.status is StepStatus.NEEDS_DECISION)
         if rec.step is not Step.REVIEW and self._head(item.worktree) != live.head_before:
@@ -189,7 +193,7 @@ class Scheduler:
     def _confirm(self, item: Item, rec: StepRecord) -> StepRecord | None:
         try:
             fresh = self._replan(row_for(item))
-        except _plan.PlanError as exc:
+        except batch.plan.PlanError as exc:
             _decide(self.run, item, rec.step.value, DecisionKind.FAILED,
                     {"reason": "github", "detail": str(exc)})
             return None
@@ -219,7 +223,7 @@ class Scheduler:
             if rec is None:
                 self._close(item)
                 continue
-            verdict = admission.decide(self._host(), running=len(self._live),
+            verdict = batch.admission.decide(self._host(), running=len(self._live),
                                        limit=max(1, self.run.pool),
                                        estimate=self._estimates.get(item.repo, rec.step),
                                        cfg=self.cfg)
@@ -232,15 +236,15 @@ class Scheduler:
             self._start(item, rec)
 
     def _start(self, item: Item, rec: StepRecord) -> None:
-        attempt = sum(1 for _ in store.logs_dir(self.run.id).glob(
+        attempt = sum(1 for _ in batch.store.logs_dir(self.run.id).glob(
             f"{item.pr}-{rec.step.value}-*"))
-        log = store.logs_dir(self.run.id) / f"{item.pr}-{rec.step.value}-{attempt}.log"
+        log = batch.store.logs_dir(self.run.id) / f"{item.pr}-{rec.step.value}-{attempt}.log"
         argv = step_argv(rec.step, self.pr_bin, item.worktree,
                          publish=rec.step in self.run.auto_publish)
         # Sample HEAD before spawn: the harness mutates it inside `_spawn`.
         head_before = self._head(item.worktree)
         proc = self._spawn(argv, log_path=log, trail_root=self.run.trail_root)
-        rec.status, rec.started_at, rec.log_path = StepStatus.RUNNING, store.now_iso(), str(log)
+        rec.status, rec.started_at, rec.log_path = StepStatus.RUNNING, batch.store.now_iso(), str(log)
         item.status, item.wait_reason = ItemStatus.RUNNING, ""
         self._live[item.key] = _Live(item, rec, proc, head_before)
         self._emit("step_started", run=self.run.id, item=item.key, step=rec.step.value,
@@ -250,7 +254,7 @@ class Scheduler:
 
     def _settle(self, status: RunStatus) -> RunStatus:
         self.run.status = status
-        store.save(self.run)
+        batch.store.save(self.run)
         self._emit("run_waiting" if status is RunStatus.WAITING else "run_finished",
                    run=self.run.id, status=status.value,
                    open_decisions=len(self.run.open_decisions()))
@@ -260,7 +264,7 @@ class Scheduler:
         for live in self._live.values():
             live.proc.kill()
 
-    def _blocked_status(self, cancel: store.CancelRequest) -> RunStatus | None:
+    def _blocked_status(self, cancel: batch.store.CancelRequest) -> RunStatus | None:
         if self._live:
             return None
         if cancel.requested:
@@ -275,13 +279,13 @@ class Scheduler:
         self.run.status = RunStatus.RUNNING
         while True:
             self._apply_requests()
-            cancel = store.cancel_requested(self.run.id)
+            cancel = batch.store.cancel_requested(self.run.id)
             if cancel.kill:
                 self._kill_live()
             self._reap()
             if not cancel.requested:
                 self._admit()
-            store.save(self.run)
+            batch.store.save(self.run)
             blocked = self._blocked_status(cancel)
             if blocked is not None:
                 return self._settle(blocked)

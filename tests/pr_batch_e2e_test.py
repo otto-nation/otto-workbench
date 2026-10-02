@@ -9,9 +9,9 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import batch.model as m  # noqa: E402
+import batch.model  # noqa: E402
 import batch.plan  # noqa: E402
-import batch.store as store  # noqa: E402
+import batch.store  # noqa: E402
 import cli.pr  # noqa: E402
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
 from conftest import seed_repo  # noqa: E402
@@ -37,7 +37,7 @@ def test_run_resolve_status_round_trip(tmp_path, monkeypatch, capsys):
     branch = subprocess.run(["git", "-C", str(repo), "branch", "--show-current"],
                             capture_output=True, text=True, check=True).stdout.strip()
     row = PlanRow("o/r", str(repo), 1, "t", branch, "h", False,
-                  {s: StepNeed(True, "x") for s in m.STEP_ORDER})
+                  {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})
     monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", [row]))
     monkeypatch.setattr(batch.plan, "replan_row", lambda r: row)
     log = tmp_path / "calls.log"
@@ -56,9 +56,9 @@ def test_run_resolve_status_round_trip(tmp_path, monkeypatch, capsys):
                for c in calls)
     assert "--no-push" in calls[0]
 
-    run_id = store.latest_run_id()
-    run = store.load(run_id)
-    publish = [d for d in run.open_decisions() if d.kind is m.DecisionKind.PUBLISH]
+    run_id = batch.store.latest_run_id()
+    run = batch.store.load(run_id)
+    publish = [d for d in run.open_decisions() if d.kind is batch.model.DecisionKind.PUBLISH]
     assert len(publish) == 1
 
     assert _main(["batch", "resolve", run_id, publish[0].id, "--action", "discard"], bin_dir) == 0

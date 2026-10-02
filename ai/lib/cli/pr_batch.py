@@ -22,13 +22,16 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+import batch.admission
+import batch.events
 import batch.plan
+import batch.resolve
 import batch.scheduler
+import batch.store
 import config.workbench_config
 import core.report
 import core.run_lock
 import core.serde
-from batch import admission, events, resolve, store
 from batch.model import STEP_ORDER, RunStatus, Step
 from core.trail import TRAIL_ROOT_ENV, Trail
 
@@ -100,7 +103,7 @@ def _err(message: str) -> int:
 
 
 def _run_id(given: str | None) -> str | None:
-    return given or store.latest_run_id()
+    return given or batch.store.latest_run_id()
 
 
 def _cfg(dirs: list[str]):
@@ -114,9 +117,9 @@ def _plan(args) -> batch.plan.Plan:
 
 
 def _drive(run, *, bin_dir: Path, cfg) -> int:
-    started = store.now_iso()
+    started = batch.store.now_iso()
     try:
-        with core.run_lock.acquire(store.run_dir(run.id), "batch", started):
+        with core.run_lock.acquire(batch.store.run_dir(run.id), "batch", started):
             status = batch.scheduler.Scheduler(
                 run, pr_bin=str(bin_dir / "pr"), cfg=cfg).run_until_blocked()
     except core.run_lock.LockBusy as exc:
@@ -126,7 +129,7 @@ def _drive(run, *, bin_dir: Path, cfg) -> int:
 
 
 def _cmd_run(args, bin_dir: Path) -> int:
-    active = store.active_run_id()
+    active = batch.store.active_run_id()
     if active:
         return _err(f"run {active} is still active; resolve its decisions or cancel it first")
     plan = _plan(args)
@@ -136,17 +139,17 @@ def _cmd_run(args, bin_dir: Path) -> int:
     dirs = sorted({r.repo_dir for r in rows}) or (args.checkout or [])
     cfg = _cfg(dirs)
     run = batch.scheduler.new_run(rows, steps=args.steps, selected=selected,
-                                  pool=admission.ceiling(args.pool, cfg),
+                                  pool=batch.admission.ceiling(args.pool, cfg),
                                   auto_publish=args.auto_publish,
                                   now=datetime.now(timezone.utc))
     trail = Trail.start(script="pr-batch", context={"run": run.id}, record=True)
     run.trail_root = os.environ.get(TRAIL_ROOT_ENV, "")
-    store.save(run)
-    events.emit("run_started", run=run.id, pool=run.pool, trail_root=run.trail_root,
+    batch.store.save(run)
+    batch.events.emit("run_started", run=run.id, pool=run.pool, trail_root=run.trail_root,
                 steps=[s.value for s in run.steps],
                 auto_publish=[s.value for s in run.auto_publish])
     for item in run.items:
-        events.emit("item_queued", run=run.id, item=item.key,
+        batch.events.emit("item_queued", run=run.id, item=item.key,
                     steps=[s.step.value for s in item.steps])
     try:
         return _drive(run, bin_dir=bin_dir, cfg=cfg)
@@ -158,15 +161,15 @@ def _cmd_resume(args, bin_dir: Path) -> int:
     run_id = _run_id(args.run_id)
     if not run_id:
         return _err("no batch run to resume")
-    if core.run_lock.is_held(store.run_dir(run_id)):
+    if core.run_lock.is_held(batch.store.run_dir(run_id)):
         return _err(f"run {run_id} is already running")
     try:
-        run = store.load(run_id)
-    except store.RunNotFound:
+        run = batch.store.load(run_id)
+    except batch.store.RunNotFound:
         return _err(f"no run {run_id}")
     if run.status in (RunStatus.DONE, RunStatus.CANCELLED):
         return _err(f"run {run_id} is {run.status.value}")
-    store.clear_cancel(run_id)
+    batch.store.clear_cancel(run_id)
     batch.scheduler.mark_interrupted(run)
     os.environ.setdefault(TRAIL_ROOT_ENV, run.trail_root)
     return _drive(run, bin_dir=bin_dir, cfg=_cfg([i.repo_dir for i in run.items]))
@@ -175,19 +178,19 @@ def _cmd_resume(args, bin_dir: Path) -> int:
 def _cmd_resolve(args, bin_dir: Path) -> int:
     request = {"decision": args.decision_id, "action": args.action, "reason": args.reason,
                "body_file": args.body_file, "commit": args.commit}
-    if core.run_lock.is_held(store.run_dir(args.run_id)):
-        store.write_request(args.run_id, request)
+    if core.run_lock.is_held(batch.store.run_dir(args.run_id)):
+        batch.store.write_request(args.run_id, request)
         core.report.emit_json({"queued": True, "decision": args.decision_id})
         return EXIT_OK
     try:
-        with core.run_lock.acquire(store.run_dir(args.run_id), "batch-resolve", store.now_iso()):
-            run = store.load(args.run_id)
-            resolve.apply(run, resolve.Request.from_dict(request), pr_bin=str(bin_dir / "pr"))
-            store.save(run)
-    except (resolve.ResolveError, KeyError, store.RunNotFound) as exc:
+        with core.run_lock.acquire(batch.store.run_dir(args.run_id), "batch-resolve", batch.store.now_iso()):
+            run = batch.store.load(args.run_id)
+            batch.resolve.apply(run, batch.resolve.Request.from_dict(request), pr_bin=str(bin_dir / "pr"))
+            batch.store.save(run)
+    except (batch.resolve.ResolveError, KeyError, batch.store.RunNotFound) as exc:
         return _err(str(exc))
     except core.run_lock.LockBusy:
-        store.write_request(args.run_id, request)
+        batch.store.write_request(args.run_id, request)
         core.report.emit_json({"queued": True, "decision": args.decision_id})
         return EXIT_OK
     core.report.emit_json({"applied": True, "decision": args.decision_id,
@@ -199,14 +202,14 @@ def _cmd_cancel(args) -> int:
     run_id = _run_id(args.run_id)
     if not run_id:
         return _err("no batch run to cancel")
-    store.request_cancel(run_id, kill=args.kill)
-    if not core.run_lock.is_held(store.run_dir(run_id)):
+    batch.store.request_cancel(run_id, kill=args.kill)
+    if not core.run_lock.is_held(batch.store.run_dir(run_id)):
         try:
-            run = store.load(run_id)
-        except store.RunNotFound:
+            run = batch.store.load(run_id)
+        except batch.store.RunNotFound:
             return _err(f"no run {run_id}")
         run.status = RunStatus.CANCELLED
-        store.save(run)
+        batch.store.save(run)
     core.report.emit_json({"cancelled": True, "run": run_id})
     return EXIT_OK
 
@@ -216,11 +219,11 @@ def _cmd_status(args) -> int:
     if not run_id:
         return _err("no batch runs yet")
     try:
-        run = store.load(run_id)
-    except store.RunNotFound:
+        run = batch.store.load(run_id)
+    except batch.store.RunNotFound:
         return _err(f"no run {run_id}")
     core.report.emit_json({"schema_version": run.schema_version,
-                           "active": core.run_lock.is_held(store.run_dir(run_id)),
+                           "active": core.run_lock.is_held(batch.store.run_dir(run_id)),
                            "run": core.serde.to_dict(run)})
     return EXIT_OK
 

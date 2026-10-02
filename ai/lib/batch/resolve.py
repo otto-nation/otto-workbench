@@ -10,6 +10,7 @@ import sys
 from dataclasses import dataclass
 from typing import Callable
 
+import core.timeouts
 import git.push
 from batch.model import Decision, DecisionKind, Item, ItemStatus, Run, Step, StepStatus
 from batch.store import now_iso
@@ -52,7 +53,7 @@ def default_runner(argv: list[str]) -> int:
     if argv[0] == GIT_PUSH:
         return 0 if git.push.push(argv[1], gated=False).ok else 1
     return subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=sys.stderr,
-                          start_new_session=True).returncode
+                          start_new_session=True, timeout=core.timeouts.UNBOUNDED).returncode
 
 
 def _validate(decision: Decision, request: Request) -> None:

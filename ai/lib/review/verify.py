@@ -214,21 +214,27 @@ def _locate(
 ) -> Path | None:
     """The file `path` names in the worktree, or None when it names none.
 
-    The literal path first, then the poster's own resolution — a bare basename
-    or a unique suffix. The poster resolves against the files the diff changed,
-    so that is tried before the tracked tree: with `pkg/handler.go` changed and
-    an untouched `other/handler.go` tracked, `handler.go:42` is unique in the
-    diff and posts inline, but ambiguous in the tree and would be dropped here
-    as "file not found". The tree is the fallback for a path the diff does not
-    name, or for a caller that has no diff.
+    The poster's own resolution first, against the files the diff changed: the
+    poster has no literal-on-disk step, so a literal lookup ahead of it can pick
+    a different file. With `pkg/README.md` changed and an untouched root
+    `README.md` on disk, `README.md:5` posts on `pkg/README.md` and must be
+    verified against it. An exact path is covered by `resolve_path`'s own
+    `path in hunks`. Likewise `handler.go:42` is unique in a diff that changed
+    `pkg/handler.go`, though ambiguous in a tree that also tracks
+    `other/handler.go`.
+
+    Then the literal path, then the tracked tree: the fallbacks for a path the
+    diff does not name, or for a caller that has no diff.
 
     `tracked` is a thunk because listing the tree is a subprocess, and nearly
     every location is already repo-relative and resolves literally.
     """
+    match = resolve_path(path, changed) if changed else None
+    if match is not None:
+        return Path(wt_path) / match
     literal = Path(wt_path) / path
     if literal.exists():
         return literal
-    match = resolve_path(path, changed) if changed else None
     if match is None:
         match = resolve_path(path, tracked())
     return Path(wt_path) / match if match else None

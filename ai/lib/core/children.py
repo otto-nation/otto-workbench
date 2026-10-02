@@ -74,7 +74,11 @@ def spawn(cmd: Sequence[str], **popen_kwargs) -> subprocess.Popen:
     """Start *cmd* and record it, or raise `StopRequested` during a stop.
 
     The check and the record are made under one lock with the spawn between
-    them, so a stop cannot land after the check and miss the child.
+    them, so a stop on another thread cannot land after the check and miss the
+    child. It is no guard against the signal handler itself interrupting the
+    main thread between `Popen` returning and the record: the lock is
+    reentrant, so that `stop_all` proceeds and snapshots a registry without the
+    new child.
     """
     with _lock:
         if _stopping.is_set():

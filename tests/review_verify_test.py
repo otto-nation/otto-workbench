@@ -404,6 +404,24 @@ class TestVerifyFindsTheFileThePosterWould:
         assert result["dropped"] == []
         assert result["details"][0]["resolved_path"] == "ai/lib/git/replay.py"
 
+    def test_a_bare_name_in_the_diff_wins_over_an_untouched_file_of_that_name_on_disk(
+        self, tmp_path,
+    ):
+        """The poster places `README.md:5` on `pkg/README.md`; so must the gate.
+
+        The literal lookup used to find the untouched root `README.md` first
+        and check the quote against that file.
+        """
+        wt = self._tree(tmp_path)
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "README.md").write_text("root readme\n")
+        (tmp_path / "pkg/README.md").write_text("def _short(sha):\n")
+        git_in(tmp_path, "add", ".")
+        text = "## Should fix\n- [ ] **[S1]** `README.md:5` — gap\n" + self._EVIDENCE
+        _, result = review.verify._verify_findings(text, wt, ["pkg/README.md"])
+        assert result["dropped"] == []
+        assert result["details"][0]["resolved_path"] == "pkg/README.md"
+
     def test_an_unplaceable_finding_with_no_such_quote_is_still_dropped(self, tmp_path):
         """`Makefile` reads as no location to the poster; the gate still checks it."""
         wt = self._tree(tmp_path)

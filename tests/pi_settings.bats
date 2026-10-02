@@ -532,12 +532,20 @@ SCRIPT
   PATH="$BIN:$PATH"
 }
 
+# _hide_pi — take pi off PATH and leave every other tool where it was.
+# Drops only the PATH entries holding a pi, rather than rebuilding PATH from a
+# fixed list: a version manager's shim (mise, asdf) is a symlink that resolves
+# its tool by searching PATH, so a shim relinked into a narrowed PATH can no
+# longer find the binary it stands in for and fails in place of the tool.
 _hide_pi() {
   rm -f "$BIN/pi"
-  ln -sf "$(command -v jq)" "$BIN/jq"
-  ln -sf "$(command -v yq)" "$BIN/yq"
-  ln -sf "$BASH" "$BIN/bash"
-  PATH="$BIN:/usr/bin:/bin"
+  local dir kept="" entries
+  IFS=: read -ra entries <<< "$PATH"
+  for dir in "${entries[@]}"; do
+    [[ -x "$dir/pi" ]] || kept+="${kept:+:}$dir"
+  done
+  PATH="$kept"
+  ! command -v pi
 }
 
 @test "an unknown model warns with the variable name" {

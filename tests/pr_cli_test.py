@@ -1,5 +1,6 @@
 """Tests for pr CLI helper functions: targets, global flags, delegate argv, SIGINT and create."""
 
+import signal
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -275,27 +276,35 @@ def test_main_positional_pr_number_not_forwarded_as_extra(mock_resolve, mock_cal
     assert cmd.count("42") == 1, f"PR number appeared {cmd.count('42')} times: {cmd}"
 
 
-# ── SIGINT handling ──────────────────────────────────────────────────────────
+# ── Stop handling ────────────────────────────────────────────────────────────
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
 @patch("pr.context.resolve")
-def test_main_installs_sigint_handler(mock_resolve, mock_call):
-    """main() installs a SIGINT handler so Ctrl+C exits cleanly without a traceback."""
-    import signal
+@pytest.mark.parametrize("signum, code", [
+    (signal.SIGINT, 130), (signal.SIGTERM, 143), (signal.SIGHUP, 129),
+])
+def test_main_installs_the_stop_handler(mock_resolve, mock_call, signum, code):
+    """main() answers every stop signal by stopping its children and exiting 128+N.
+
+    Ctrl+C exits cleanly without a traceback, and a supervisor's SIGTERM no
+    longer ends the process with the agents it started still running. The
+    autouse `_isolated_stop_handling` fixture restores the handlers and the
+    child registry this leaves behind.
+    """
+    import core.children
+
     mock_resolve.return_value = make_ctx()
     mock_call.return_value = 0
-    original = signal.getsignal(signal.SIGINT)
-    try:
-        _run_main("--repo-dir", "/path", "rebase")
-        handler = signal.getsignal(signal.SIGINT)
-        assert handler is not original
-        assert handler is not signal.SIG_DFL
-        with pytest.raises(SystemExit) as exc_info:
-            handler(None, None)
-        assert exc_info.value.code == 130
-    finally:
-        signal.signal(signal.SIGINT, original)
+    original = signal.getsignal(signum)
+    _run_main("--repo-dir", "/path", "rebase")
+    handler = signal.getsignal(signum)
+    assert handler is not original
+    assert handler is not signal.SIG_DFL
+    with pytest.raises(SystemExit) as exc_info:
+        handler(signum, None)
+    assert exc_info.value.code == code
+    assert core.children.stopping(), "the handler exited without stopping the children"
 
 
 # ── cmd_create ─────────────────────────────────────────────────────────────

@@ -447,7 +447,7 @@ def test_no_cli_module_installs_a_signal_handler():
     owns SIGINT for the life of the process. Under in-process dispatch the last
     one is a library reached partway through a command, which is why the only
     legitimate installer is the entry point that owns the process —
-    `proc.install_interrupt_handler`, called from a `main` or a shim.
+    `proc.install_stop_handler`, called from a `main` or a shim.
     """
     def installs_a_handler(node):
         return (isinstance(node, ast.Call)

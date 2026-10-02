@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import git_in, init_repo
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -290,29 +291,109 @@ class TestParseVerificationStripsLine:
         assert findings[0]["path"] == "handler.go"
 
 
-class TestParseVerificationKeepsAColonThatIsNotALineSuffix:
-    """Verification reads the same path the rest of the pipeline parsed.
+class TestParseVerificationReadsThePostersLocation:
+    """Verification checks the file the poster will place the finding on.
 
-    This reader used to truncate at the last colon, so a path carrying one of
-    its own verified against its prefix — a file that does not exist, which
-    fails every evidence check. `review.grammar.strip_line_suffix` now takes
-    off a line suffix and nothing else.
+    The path comes from `finding_location`, not from a second reading of the
+    line. That second reading kept any suffix it did not know as part of the
+    path, so a finding at `replay.py:_short` was stat'd as a file literally
+    named that and dropped as "file not found" while the poster read the same
+    line as `replay.py`.
     """
 
-    def test_a_prefixed_path_survives(self):
-        text = '- **[M1]** **`ns:module.py`** — missing error check\n'
+    @pytest.mark.parametrize("location, path", [
+        ("ai/lib/git/replay.py:_short", "ai/lib/git/replay.py"),
+        ("ai/lib/git/replay.py:_short:12", "ai/lib/git/replay.py"),
+        ("pkg/x.py:Foo.bar", "pkg/x.py"),
+        ("pkg/x.py:~690", "pkg/x.py"),
+        ("pkg/x.py:L12", "pkg/x.py"),
+    ])
+    def test_a_suffix_that_is_not_a_line_number_comes_off(self, location, path):
+        text = f"- **[S1]** `{location}` — gap\n"
         findings = review.verify._parse_findings_for_verification(text)
-        assert findings[0]["path"] == "ns:module.py"
+        assert findings[0]["path"] == path
 
-    def test_a_drive_letter_survives(self):
-        text = '- **[M1]** **`C:/src/x.py`** — missing error check\n'
-        findings = review.verify._parse_findings_for_verification(text)
-        assert findings[0]["path"] == "C:/src/x.py"
+    def test_agrees_with_the_poster_on_every_location(self):
+        """The property the fix is for, rather than a list of shapes."""
+        locations = [
+            "ai/lib/git/replay.py:_short", "src/x.py:64,82", "pkg/x.py:Foo.bar",
+            "src/my notes.py:12-18", "ai/bin/ci-check", "handler.go:42",
+        ]
+        for location in locations:
+            line = f"- **[S1]** **`{location}`** — gap"
+            verified = review.verify._parse_findings_for_verification(line + "\n")
+            posted = review.spans.finding_spans(line + "\n")[0].finding.path
+            assert verified[0]["path"] == posted, location
 
-    def test_a_line_suffix_still_comes_off_a_prefixed_path(self):
-        text = '- **[M1]** **`C:/src/x.py:12`** — missing error check\n'
-        findings = review.verify._parse_findings_for_verification(text)
-        assert findings[0]["path"] == "C:/src/x.py"
+    @pytest.mark.parametrize("location", ["ns:module.py", "C:/src/x.py", "C:/src/x.py:12"])
+    def test_a_location_the_poster_cannot_place_is_skipped_not_dropped(self, location):
+        """No path to check against means nothing to say, not a drop.
+
+        These used to be verified as whole paths, which only ever dropped
+        them: `C:/src/x.py` exists on no POSIX tree, and the poster files all
+        three as general findings with no file reference.
+        """
+        text = f"- **[M1]** **`{location}`** — missing error check\n"
+        assert review.verify._parse_findings_for_verification(text) == []
+
+
+class TestVerifyFindsTheFileThePosterWould:
+    """`_verify_findings` resolves a location with the poster's rule.
+
+    End to end through the seam the run uses, against a real worktree, so the
+    finding that was dropped in production is the subject.
+    """
+
+    _EVIDENCE = (
+        "  > ```python\n"
+        "  > def _short(sha):\n"
+        "  > ```\n"
+    )
+
+    @staticmethod
+    def _tree(tmp_path):
+        init_repo(tmp_path)
+        (tmp_path / "ai/lib/git").mkdir(parents=True)
+        (tmp_path / "ai/lib/git/replay.py").write_text("def _short(sha):\n    return sha\n")
+        git_in(tmp_path, "add", ".")
+        return str(tmp_path)
+
+    def test_a_symbol_suffixed_finding_survives(self, tmp_path):
+        text = (
+            "## Should fix\n"
+            "- [ ] **[S1]** `ai/lib/git/replay.py:_short` — fail-open gap\n"
+            + self._EVIDENCE
+        )
+        _, result = review.verify._verify_findings(text, self._tree(tmp_path))
+        assert result["dropped"] == []
+        assert result["findings_passed"] == 1
+
+    def test_a_bare_basename_resolves_to_the_tracked_file(self, tmp_path):
+        text = "## Should fix\n- [ ] **[S1]** `replay.py:1` — gap\n" + self._EVIDENCE
+        _, result = review.verify._verify_findings(text, self._tree(tmp_path))
+        assert result["dropped"] == []
+        assert result["details"][0]["resolved_path"] == "ai/lib/git/replay.py"
+
+    def test_a_basename_two_files_share_is_still_not_found(self, tmp_path):
+        wt = self._tree(tmp_path)
+        (tmp_path / "other").mkdir()
+        (tmp_path / "other/replay.py").write_text("def _short(sha):\n")
+        git_in(tmp_path, "add", ".")
+        text = "## Should fix\n- [ ] **[S1]** `replay.py:1` — gap\n" + self._EVIDENCE
+        _, result = review.verify._verify_findings(text, wt)
+        assert result["dropped"] == ["S1"]
+        assert result["details"][0]["file_exists"] is False
+
+    def test_a_worktree_that_is_not_there_drops_rather_than_raising(self, tmp_path):
+        """Resolution asks git, and git cannot start in a missing directory."""
+        text = "## Should fix\n- [ ] **[S1]** `replay.py:1` — gap\n" + self._EVIDENCE
+        _, result = review.verify._verify_findings(text, str(tmp_path / "gone"))
+        assert result["dropped"] == ["S1"]
+
+    def test_a_file_that_does_not_exist_is_still_dropped(self, tmp_path):
+        text = "## Should fix\n- [ ] **[S1]** `ai/lib/git/nope.py:1` — gap\n" + self._EVIDENCE
+        _, result = review.verify._verify_findings(text, self._tree(tmp_path))
+        assert result["dropped"] == ["S1"]
 
 
 class TestParseVerificationReadsALineList:

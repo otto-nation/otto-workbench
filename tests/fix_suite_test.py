@@ -24,6 +24,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from conftest import group_gone_within  # noqa: E402
 import fix.blame  # noqa: E402
 import fix.suite  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
@@ -459,3 +460,34 @@ def test_a_pass_with_nothing_to_check_stays_silent(tmp_path):
     assert fix.suite.SuiteResult().status is fix.suite.SuiteStatus.NOT_ATTEMPTED
     assert fix.suite.SuiteResult().reportable is False
     assert fix.suite.SuiteResult().note == ""
+
+
+def test_an_interrupt_mid_run_stops_the_runner_tree(tmp_path):
+    """The runner leads its own session, so only this process can stop it.
+
+    The stop handler's `SystemExit` arrives on the main thread exactly as this
+    `KeyboardInterrupt` does; before, it unwound past `communicate` and left
+    the runner and its workers going against the worktree.
+    """
+    import signal
+    import threading
+
+    import core.children
+
+    pid_file = tmp_path / "pid"
+    cmd = _script(tmp_path, "slow", f"echo $$ > {pid_file}; sleep 300 & wait")
+    # A real SIGINT aimed at the main thread, so it interrupts the blocking
+    # read inside `communicate`. `_thread.interrupt_main` only sets a flag,
+    # which nothing checks until the 60s bound has already run out.
+    main = threading.main_thread().ident
+    threading.Timer(0.5, signal.pthread_kill, args=(main, signal.SIGINT)).start()
+    started = time.monotonic()
+    with pytest.raises(KeyboardInterrupt):
+        fix.suite.run(tmp_path, cmd, 60)
+    assert time.monotonic() - started < 30, "the interrupt waited out the timeout"
+    pgid = int(pid_file.read_text())
+    gone = group_gone_within(pgid, 3)
+    if not gone:
+        os.killpg(pgid, signal.SIGKILL)
+    assert gone, "the runner's process group outlived the interrupt"
+    assert core.children._live == {}

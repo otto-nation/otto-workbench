@@ -20,6 +20,7 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest
 
+import core.children
 import core.proc
 import core.timeouts
 from core.proc import CmdResult
@@ -683,18 +684,24 @@ class TestTail:
 
 
 # passes-at-base: proc was stdlib-only before this branch too — the point is that it still is, after a commit that briefly made it not
-def test_proc_imports_nothing_from_ai_lib_but_timeouts():
+@pytest.mark.parametrize("module, allowed", [
+    (core.proc, {"timeouts", "children"}),
+    (core.children, {"timeouts"}),
+])
+def test_proc_imports_nothing_from_ai_lib_but_stdlib_only_core(module, allowed):
     """The module docstring's stdlib-only claim, made structural.
 
     `proc` is what everything else in `ai/lib` is meant to be free to depend on,
     and the docstring names `log`, `agent.usage` and `workbench_paths` as the
     imports that would end that. An interrupt handler wanting `log.info` is the
-    exact pressure it warns about — hence `install_interrupt_handler` taking the
+    exact pressure it warns about — hence `install_stop_handler` taking the
     announcement as a callback rather than reaching for the module.
 
-    `timeouts` is the one allowed edge and is itself stdlib-only.
+    `timeouts` and `children` are the allowed edges, and each is itself held
+    to the same rule here — `children` because the stop handler `proc`
+    installs calls it.
     """
-    tree = ast.parse((Path(core.proc.__file__)).read_text())
+    tree = ast.parse((Path(module.__file__)).read_text())
     # Both spellings are read. #1137 made `import core.timeouts` the form every
     # module uses, and a check that only knew `from core import ...` would
     # report this file as importing nothing at all — passing by blindness.
@@ -706,8 +713,8 @@ def test_proc_imports_nothing_from_ai_lib_but_timeouts():
         alias.name.split(".")[0]
         for node in ast.walk(tree) if isinstance(node, ast.Import)
         for alias in node.names
-    }) - {"__future__", "collections", "dataclasses", "pathlib", "typing",
-          "os", "re", "signal", "subprocess", "sys"}
+    }) - {"__future__", "atexit", "collections", "contextlib", "dataclasses",
+          "pathlib", "typing", "os", "re", "signal", "subprocess", "sys", "threading"}
     assert reached == {"core"}, reached
 
     workbench = {
@@ -719,4 +726,4 @@ def test_proc_imports_nothing_from_ai_lib_but_timeouts():
         for node in ast.walk(tree) if isinstance(node, ast.Import)
         for alias in node.names if alias.name.startswith("core.")
     }
-    assert workbench == {"timeouts"}, workbench
+    assert workbench == allowed, workbench

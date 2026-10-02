@@ -126,6 +126,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import core.children
 import core.timeouts
 
 # gh reports a transport failure as "HTTP 503: ..." on stderr, whether it came
@@ -169,23 +170,52 @@ INTERRUPT_RETURNCODE = 130
 MISSING_RETURNCODE = 127
 
 
-def install_interrupt_handler(announce: Callable[[], None]) -> None:
-    """Exit quietly on SIGINT, the way every entry point here wants to.
+# The stops an entry point answers: the terminal's Ctrl-C, a supervisor's
+# ordinary ask-to-stop (the Pi harness's `job_kill`, CI cancellation), and the
+# closed terminal. Each used to end this process and leave its agents running.
+STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+
+# `128 + N` for a death by signal N, read off the one code already named for it
+# rather than spelled as a second literal.
+_SIGNAL_EXIT_BASE = INTERRUPT_RETURNCODE - signal.SIGINT
+
+
+def install_stop_handler(announce: Callable[[], None]) -> None:
+    """Stop this process's children and exit quietly on any of `STOP_SIGNALS`.
 
     Installing a handler is process-level state, so it belongs to whoever owns
     the process — an entry point, never a library reached mid-run. That is why
     this is a function an entry point calls rather than something a module does
     on import: `signal.signal` overwrites without chaining and nothing restores
     it, so two installers in one process means the second silently wins for the
-    rest of its life.
+    rest of its life. Call it before the first child is spawned; a stop landing
+    earlier finds nothing to orphan.
+
+    The children go first. `core.children.stop_all` TERMs every child this
+    process recorded and refuses new ones, so the `SystemExit` raised next
+    unwinds through owners whose agents are already stopping, and a thread
+    pool's shutdown drains its queue without starting anything. The exit is
+    `128 + N`, the shell's code for a death by signal N.
+
+    A repeated stop is someone who will not wait for the first: the children
+    are killed outright and the process leaves with `os._exit`, skipping the
+    unwinding the first stop started.
 
     `announce` says the run was interrupted. It is a callback rather than a
     `log` call because this module is stdlib-only by declaration — see the
     module docstring — and every caller already depends on `log` anyway.
     """
-    signal.signal(
-        signal.SIGINT,
-        lambda *_: (announce(), sys.exit(INTERRUPT_RETURNCODE)))
+    def stop(signum: int, _frame: object) -> None:
+        repeated = core.children.stopping()
+        core.children.stop_all()
+        code = _SIGNAL_EXIT_BASE + signum
+        if repeated:
+            os._exit(code)
+        announce()
+        sys.exit(code)
+
+    for signum in STOP_SIGNALS:
+        signal.signal(signum, stop)
 
 # Signals that mean something outside the process ended it: the OOM killer and
 # a supervisor's kill (SIGKILL, SIGTERM), a reader that went away (SIGPIPE), an

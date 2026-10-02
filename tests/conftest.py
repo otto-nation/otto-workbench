@@ -323,6 +323,32 @@ def pytest_configure(config):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_stop_handling(monkeypatch):
+    """Each test gets its own child registry and leaves the stop signals as found.
+
+    `core.proc.install_stop_handler` replaces SIGINT, SIGTERM and SIGHUP for
+    the life of the process, and every test that drives an entry point's
+    `main` installs it. Left in place, the next signal the worker receives runs
+    a handler a finished test installed. And a test that fires the handler
+    sets `core.children`'s stop flag, which would refuse every spawn in every
+    later test on that worker.
+    """
+    if LIB_DIR not in sys.path:
+        sys.path.insert(0, LIB_DIR)
+    import signal
+    import threading
+
+    import core.children
+    import core.proc
+    saved = {signum: signal.getsignal(signum) for signum in core.proc.STOP_SIGNALS}
+    monkeypatch.setattr(core.children, "_stopping", threading.Event())
+    monkeypatch.setattr(core.children, "_live", {})
+    yield
+    for signum, handler in saved.items():
+        signal.signal(signum, handler)
+
+
+@pytest.fixture(autouse=True)
 def _empty_pi_catalogue(monkeypatch):
     """Budget lookups do not spawn `pi --list-models`.
 
@@ -803,6 +829,29 @@ def is_range_listing(args) -> bool:
     time out. The one place that knows how to recognise it.
     """
     return "--name-only" in args and any(a.endswith("..HEAD") for a in args)
+
+
+def group_alive(pgid: int) -> bool:
+    """Whether process group *pgid* still has a live member.
+
+    EPERM counts as gone. Darwin answers EPERM for a group whose members are
+    all zombies — a killed grandchild waits for launchd to reap it, which
+    under a loaded suite takes a moment — and a group id since reused by
+    another user's process is not the group a test started either.
+    """
+    try:
+        os.killpg(pgid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
+def group_gone_within(pgid: int, timeout: float) -> bool:
+    """Wait up to *timeout* seconds for process group *pgid* to have no live member."""
+    deadline = time.monotonic() + timeout
+    while group_alive(pgid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return not group_alive(pgid)
 
 
 def seed_repo(path) -> Path:

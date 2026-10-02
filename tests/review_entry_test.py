@@ -14,6 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
+import core.proc
 import core.version
 import pr.context
 from pr.domains import ReviewVerdict
@@ -493,3 +494,27 @@ def test_update_pr_state_reports_a_failed_write_on_both_channels(
 
     assert "read-only file system" in trail.error.call_args[0][1]
     assert "read-only file system" in capsys.readouterr().err
+
+
+def test_an_in_process_caller_can_keep_its_own_signal_handler(cr, monkeypatch):
+    """The entry point that owns the process owns the stop signals.
+
+    `signal.signal` overwrites without chaining and nothing restores it, so a
+    `main` called in-process must be able to decline to install one rather than
+    silently replacing its caller's for the rest of the run.
+    """
+    import signal
+    from unittest.mock import patch
+
+    installed = []
+    monkeypatch.setattr(signal, "signal", lambda *a: installed.append(a[0]))
+
+    def signals_installed_by(flag):
+        installed.clear()
+        with pytest.raises(RuntimeError):
+            cr.main([], install_signal_handler=flag)
+        return list(installed)
+
+    with patch.object(cr, "build_parser", side_effect=RuntimeError("stop")):
+        assert signals_installed_by(False) == []
+        assert signals_installed_by(True) == list(core.proc.STOP_SIGNALS)

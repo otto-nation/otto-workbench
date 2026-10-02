@@ -1308,7 +1308,7 @@ def _fake_run_with_context(extra_handler=None):
             if ":1:" in arg:
                 return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="base\n", stderr="")
             if ":2:" in arg:
-                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="base\n", stderr="")
+                return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="target\n", stderr="")
             if ":3:" in arg:
                 return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="replayed\n", stderr="")
         if unconfigured[:2] == ["git", "diff"] and "REBASE_HEAD^" in cmd:
@@ -1319,6 +1319,21 @@ def _fake_run_with_context(extra_handler=None):
                 return result
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
     return fake_run
+
+
+def test_fake_run_with_context_gives_each_stage_distinct_content():
+    """Stage 1 (base) and stage 2 (target) must not collide.
+
+    A test exercising survival/loss behavior through this helper needs base
+    and target to actually differ: if both stages come back identical, the
+    target side is a no-op relative to base and `survival.audit` can never
+    see a target-side clean change or a collision.
+    """
+    with mock.patch("subprocess.run", side_effect=_fake_run_with_context()):
+        stages = rebase.conflicts.stage_texts("main.go", ".")
+
+    assert stages.base != stages.target
+    assert stages.target != stages.replayed
 
 
 def test_resolve_file_conflicts_claude_failure_returns_none():

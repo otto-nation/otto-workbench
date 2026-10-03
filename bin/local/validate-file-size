@@ -41,15 +41,14 @@ from file_size import MAX_CODE_LINES, code_lines  # noqa: E402
 from repo_scan import BASE_SKIP_DIRS  # noqa: E402
 
 
-# The files still over the cap, each with the issue that splits it. Both are
-# #853's: the shell half of the workbench, which no phase of #754 touches.
+# The file still over the cap, with the issue that splits it: #853's, the shell
+# half of the workbench, which no phase of #754 touches.
 #
-# ceiling: two named exemptions, because failing on them would block every push
-# on work owned elsewhere. Delete an entry when its file comes under the cap;
+# ceiling: one named exemption, because failing on it would block every push
+# on work owned elsewhere. Delete the entry when its file comes under the cap;
 # once the dict is empty this gate is the unconditional one #911 specifies.
 KNOWN_OVER = {
     "bin/otto-workbench": "#853",
-    "ai/claude/steps.sh": "#853",
 }
 
 SCAN_ROOTS = ("ai", "bin", "lib")

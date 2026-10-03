@@ -30,6 +30,7 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
 import argparse
 import contextlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -65,6 +66,13 @@ import config.workbench_projects
 import core.run_lock
 import review.listing
 from core.trail import Trail, add_trail_args
+
+# `gitenv` is a workbench-wide module, not an `ai/lib` one; see `pr.push_intent`
+# for the path arithmetic, which is the same here.
+_WORKBENCH_LIB = Path(__file__).resolve().parent.parent.parent.parent / "lib"
+if _WORKBENCH_LIB.is_dir() and str(_WORKBENCH_LIB) not in sys.path:
+    sys.path.insert(0, str(_WORKBENCH_LIB))
+import gitenv  # noqa: E402
 
 # The command a user types. A literal, not `Path(__file__).name`: this module
 # is `pr.py` and the two happen to agree, but an error or a trail naming the
@@ -359,6 +367,16 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     if not args.command:
         print(usage, file=sys.stderr)
         return 0
+
+    # `pr create` is a one-command process: an inherited GIT_DIR (it is
+    # exported when a hook invokes us) would make every git call from here on
+    # answer for another repository — context resolution, and helpers that
+    # take no env, like git_remote.remote_branch_ref_exists and git.push.
+    # Clearing it here, ahead of the first git call, is the single owner; it is
+    # safe because nothing else runs in this process after the command.
+    if args.command == "create":
+        for name in gitenv.GIT_ENV_OVERRIDES:
+            os.environ.pop(name, None)
 
     # The one place a push nobody verified is asked about. Every push on this
     # machine passes the global pre-push hook, which records what it is about to

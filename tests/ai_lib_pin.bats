@@ -214,7 +214,7 @@ PY
   # The stanza is duplicated by design, so a file that missed it fails open:
   # it would run against main's ai/lib while its siblings honoured the pin.
   local script
-  for script in pr pr-describe ci-check wiki otto-log review-threads review; do
+  for script in pr pr-describe ci-check wiki otto-log review-threads review ai-usage-log; do
     WORKBENCH_AI_LIB_DIR=/nonexistent run "$REPO_ROOT/ai/bin/$script" --help
     [ "$status" -eq 2 ]
     [[ "$output" == *"WORKBENCH_AI_LIB_DIR"* ]]

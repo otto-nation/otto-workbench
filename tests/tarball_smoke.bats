@@ -108,6 +108,16 @@ teardown() {
   [[ "$output" == *"$TEST_VERSION"* ]]
 }
 
+# passes-at-base: guards the shim's import graph in the tarball layout; it ran before the move too
+@test "otto-log and ai-usage-log run from the tarball layout" {
+  run "$TARBALL_ROOT/bin/ai-usage-log" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"usage ledger"* ]]
+  run "$TARBALL_ROOT/bin/otto-log" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Query trail files"* ]]
+}
+
 # ── 7. review-orchestrate Python imports ────────────────────────────────────
 
 @test "review-orchestrate Python imports succeed from tarball layout" {

@@ -1,22 +1,18 @@
-"""Tests for `otto-log stats`: aggregating the usage ledger, the table, and the command."""
+"""Tests for `otto-log stats` — `agent.usage_stats`."""
 
-import argparse
 import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-from conftest import load_script
 
-BIN_DIR = Path(__file__).resolve().parent.parent / "ai" / "bin"
 LIB_DIR = Path(__file__).resolve().parent.parent / "ai" / "lib"
 sys.path.insert(0, str(LIB_DIR))
-sys.path.insert(0, str(BIN_DIR))
 
 import agent.usage
-
-otto_log = load_script("otto_log", BIN_DIR / "otto-log")
+import agent.usage_stats
+import core.trail_query
 
 
 # ── stats ─────────────────────────────────────────────────────────────────────
@@ -39,7 +35,7 @@ def _by_group(rows):
 
 class TestStatsAggregation:
     def test_groups_by_script(self):
-        rows = otto_log.aggregate_usage(
+        rows = agent.usage_stats.aggregate_usage(
             [_usage(script="pr", cost=1.0), _usage(script="pr", cost=2.0),
              _usage(script="ci-check", cost=0.5)],
             by="script",
@@ -50,27 +46,27 @@ class TestStatsAggregation:
         assert groups["ci-check"].calls == 1
 
     def test_sorts_by_cost_descending(self):
-        rows = otto_log.aggregate_usage(
+        rows = agent.usage_stats.aggregate_usage(
             [_usage(script="cheap", cost=0.1), _usage(script="pricey", cost=9.0)],
             by="script",
         )
         assert [r.group for r in rows] == ["pricey", "cheap"]
 
     def test_groups_by_task(self):
-        rows = otto_log.aggregate_usage(
+        rows = agent.usage_stats.aggregate_usage(
             [_usage(task="pr-review"), _usage(task="pr-review"), _usage(task="ci-fix")],
             by="task",
         )
         assert _by_group(rows)["pr-review"].calls == 2
 
     def test_records_without_the_group_field_land_in_one_bucket(self):
-        rows = otto_log.aggregate_usage([_usage(), _usage()], by="task")
+        rows = agent.usage_stats.aggregate_usage([_usage(), _usage()], by="task")
         assert len(rows) == 1
         assert rows[0].calls == 2
 
     # passes-at-base: aggregate_usage groups by any key; what this change adds is phase as an accepted choice, pinned by the test below
     def test_groups_by_phase(self):
-        rows = otto_log.aggregate_usage(
+        rows = agent.usage_stats.aggregate_usage(
             [_usage(phase="fix"), _usage(phase="fix"), _usage(phase="group")],
             by="phase",
         )
@@ -82,24 +78,24 @@ class TestStatsAggregation:
         # would never render — silently, since every other grouping is
         # supposed to omit them. Held here rather than by a module-level
         # `assert`, which `python -O` removes.
-        assert otto_log._TURN_GROUPING in otto_log.STATS_GROUPINGS
+        assert agent.usage_stats._TURN_GROUPING in agent.usage_stats.STATS_GROUPINGS
 
     def test_phase_is_a_grouping_the_cli_will_accept(self):
         # `aggregate_usage` groups by whatever key it is handed, so the test
         # above passed before `phase` was a choice anyone could pass — the
         # argument parser rejected it and the function was never reached.
         # This is the half that was actually missing.
-        assert "phase" in otto_log.STATS_GROUPINGS
+        assert "phase" in agent.usage_stats.STATS_GROUPINGS
 
     def test_groups_by_day_chronologically(self):
-        rows = otto_log.aggregate_usage(
+        rows = agent.usage_stats.aggregate_usage(
             [_usage(ts="2026-08-20T01:00:00Z"), _usage(ts="2026-08-18T01:00:00Z")],
             by="day",
         )
         assert [r.group for r in rows] == ["2026-08-18", "2026-08-20"]
 
     def test_turn_percentiles_come_from_what_runs_actually_spent(self):
-        rows = otto_log.aggregate_usage(
+        rows = agent.usage_stats.aggregate_usage(
             [_usage(phase="fix", num_turns=n) for n in (5, 10, 40)], by="phase",
         )
         row = _by_group(rows)["fix"]
@@ -117,13 +113,13 @@ class TestStatsAggregation:
         reaching its cap — a confident answer drawn from records that cannot
         support one, and the reading a person would act on.
         """
-        rows = otto_log.aggregate_usage(
+        rows = agent.usage_stats.aggregate_usage(
             [_usage(phase="fix", num_turns=40)], by="phase",
         )
         assert _by_group(rows)["fix"].at_cap_ratio is None
 
     def test_the_cap_ratio_counts_only_the_runs_that_declared_one(self):
-        rows = otto_log.aggregate_usage([
+        rows = agent.usage_stats.aggregate_usage([
             _usage(phase="fix", num_turns=20, max_turns=20),
             _usage(phase="fix", num_turns=20, max_turns=20),
             _usage(phase="fix", num_turns=5, max_turns=20),
@@ -134,7 +130,7 @@ class TestStatsAggregation:
         assert _by_group(rows)["fix"].at_cap_ratio == pytest.approx(2 / 3)
 
     def test_a_run_that_reported_no_turns_is_not_counted_as_zero(self):
-        rows = otto_log.aggregate_usage(
+        rows = agent.usage_stats.aggregate_usage(
             [_usage(phase="fix", num_turns=30), _usage(phase="fix")], by="phase",
         )
         # A record with no turn count says nothing about turns. Reading it as
@@ -142,7 +138,7 @@ class TestStatsAggregation:
         assert _by_group(rows)["fix"].p50_turns == 30
 
     def test_by_model_splits_cost_across_models(self):
-        rows = otto_log.aggregate_usage(
+        rows = agent.usage_stats.aggregate_usage(
             [_usage(cost=3.0, cost_by_model={"opus-5": 2.0, "haiku-4-5": 1.0})],
             by="model",
         )
@@ -152,18 +148,18 @@ class TestStatsAggregation:
 
     def test_by_model_leaves_tokens_unattributed(self):
         """The CLI reports cost per model but tokens per session — don't invent a split."""
-        rows = otto_log.aggregate_usage(
+        rows = agent.usage_stats.aggregate_usage(
             [_usage(cost_by_model={"opus-5": 1.0})], by="model",
         )
         assert rows[0].billed_input is None
         assert rows[0].cache_read_ratio is None
 
     def test_by_model_falls_back_to_requested_model(self):
-        rows = otto_log.aggregate_usage([_usage(model="sonnet-5")], by="model")
+        rows = agent.usage_stats.aggregate_usage([_usage(model="sonnet-5")], by="model")
         assert rows[0].group == "sonnet-5"
 
     def test_billed_input_sums_input_and_cache(self):
-        rows = otto_log.aggregate_usage(
+        rows = agent.usage_stats.aggregate_usage(
             [_usage(input_tokens=100, cache_read_tokens=900, cache_write_tokens=50)],
             by="script",
         )
@@ -171,47 +167,47 @@ class TestStatsAggregation:
         assert rows[0].cache_read_ratio == pytest.approx(900 / 1050)
 
     def test_median_duration_ignores_unmeasured_calls(self):
-        rows = otto_log.aggregate_usage(
+        rows = agent.usage_stats.aggregate_usage(
             [_usage(duration_ms=1000), _usage(duration_ms=3000), _usage(duration_ms=0)],
             by="script",
         )
         assert rows[0].median_duration_ms == 2000
 
     def test_median_duration_is_none_when_nothing_measured(self):
-        rows = otto_log.aggregate_usage([_usage(duration_ms=0)], by="script")
+        rows = agent.usage_stats.aggregate_usage([_usage(duration_ms=0)], by="script")
         assert rows[0].median_duration_ms is None
 
 
 class TestStatsTable:
     def _rows(self):
-        return otto_log.aggregate_usage(
+        return agent.usage_stats.aggregate_usage(
             [_usage(script="pr", cost=1.5), _usage(script="a-much-longer-name", cost=0.5)],
             by="script",
         )
 
     def test_the_total_row_sums_the_groups(self):
-        assert "$2.0000" in otto_log.format_stats_table(self._rows()).splitlines()[-1]
+        assert "$2.0000" in agent.usage_stats.format_stats_table(self._rows()).splitlines()[-1]
 
     def test_columns_line_up_across_rows(self):
         """Every cell is padded to its column's width, so the body lines match.
 
         The header is excluded because its bold escape adds invisible bytes.
         """
-        body = otto_log.format_stats_table(self._rows()).splitlines()[1:]
+        body = agent.usage_stats.format_stats_table(self._rows()).splitlines()[1:]
         assert len({len(line) for line in body}) == 1
 
     def _phase_rows(self):
-        return otto_log.aggregate_usage(
+        return agent.usage_stats.aggregate_usage(
             [_usage(phase="fix", num_turns=20, max_turns=20)], by="phase",
         )
 
     def test_the_turn_columns_appear_under_by_phase(self):
-        header = otto_log.format_stats_table(self._phase_rows(), "phase")
+        header = agent.usage_stats.format_stats_table(self._phase_rows(), "phase")
         assert "P95 TURNS" in header
         assert "AT CAP" in header
 
     def test_the_turn_columns_stay_out_of_the_other_groupings(self):
-        table = otto_log.format_stats_table(self._rows(), "script")
+        table = agent.usage_stats.format_stats_table(self._rows(), "script")
         assert "P95 TURNS" not in table
         assert "AT CAP" not in table
 
@@ -220,7 +216,7 @@ class TestStatsTable:
         # silence: pairing the wider rows against the narrower column tuple
         # dropped the three new columns from the output while every other
         # test passed.
-        body = otto_log.format_stats_table(self._phase_rows(), "phase").splitlines()
+        body = agent.usage_stats.format_stats_table(self._phase_rows(), "phase").splitlines()
         assert len({len(line) for line in body[1:]}) == 1
         assert body[0].count("TURNS") == 2
 
@@ -240,9 +236,9 @@ class TestStatsCommand:
     def _run(self, monkeypatch, since="7d", by="script", as_json=False):
         """Pin 'now' so fixture timestamps stay inside the window."""
         monkeypatch.setattr(
-            otto_log, "_parse_since", lambda _: datetime(2026, 8, 1, tzinfo=timezone.utc),
+            core.trail_query, "parse_since", lambda _: datetime(2026, 8, 1, tzinfo=timezone.utc),
         )
-        otto_log.cmd_stats(argparse.Namespace(since=since, by=by, json=as_json))
+        agent.usage_stats.stats(since, by, as_json=as_json)
 
     def test_prints_a_row_per_group(self, ledger, monkeypatch, capsys):
         self._write(ledger, _usage(script="pr", cost=1.5), _usage(script="ci-check"))
@@ -286,9 +282,9 @@ class TestStatsCommand:
             _usage(script="fresh", ts="2026-08-20T00:00:00Z"),
         )
         monkeypatch.setattr(
-            otto_log, "_parse_since", lambda _: datetime(2026, 8, 15, tzinfo=timezone.utc),
+            core.trail_query, "parse_since", lambda _: datetime(2026, 8, 15, tzinfo=timezone.utc),
         )
-        otto_log.cmd_stats(argparse.Namespace(since="7d", by="script", json=True))
+        agent.usage_stats.stats("7d", "script", as_json=True)
         out = capsys.readouterr().out
         assert "fresh" in out
         assert "stale" not in out

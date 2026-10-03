@@ -18,24 +18,8 @@ A call that reports no usage records nothing rather than a zero row. An
 unmeasured call is then visibly absent instead of looking free, which a zeroed
 row cannot be told apart from.
 
-`otto-log stats` reads the ledger back. Its `--by model` breakdown shows cost
-only, because the CLI reports cost per model but tokens per session — leaving the
-token columns blank beats counting one session's tokens against every model it
-used.
-
-`--by phase` is the one breakdown that reports turns, and the only one it could
-be: a turn budget is set per phase, so a distribution rolled up by script or by
-day mixes a 15-turn review agent with an 80-turn fix pass and describes neither.
-Its `AT CAP` column is the share of a phase's runs that spent their whole
-budget, which is the reading that says whether the budget is calibrated — a
-phase hitting its cap on a third of runs is one whose constant is too low.
-
-That column is blank, not zero, for a phase whose records never said what they
-were allowed. Spent turns and the allocated budget shared one key until
-`record` split them, so every record written before that carries a number with
-no way to tell which it is; counting those as under-cap would report every
-phase as comfortably sized on the strength of records that cannot say. The
-column fills in as new runs land.
+`otto-log stats` reads the ledger back; how it groups and what it leaves blank is
+`agent.usage_stats`.
 """
 
 # doc-group: backend

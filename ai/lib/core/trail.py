@@ -770,6 +770,57 @@ def billed_to(trail: Trail | None) -> dict[str, str | None]:
     return {"repo": context.get("repo"), "pr": str(pr) if pr else None}
 
 
+# ── One-shot record ─────────────────────────────────────────────────────
+
+# What `record` will write, which is a subset of what `Trail` can. A debug
+# event is for watching a run that is already instrumented, and the callers
+# here have no run to watch; a span needs two events around work this process
+# is not doing.
+RECORD_LEVELS = ("info", "warn", "error")
+
+
+def record_event(
+    script: str,
+    action: str,
+    *,
+    detail: str = "",
+    level: str = "info",
+    data: dict | None = None,
+    repo: str | None = None,
+    pr: int | None = None,
+    debug: bool = False,
+) -> str:
+    """Write one event to the trail on behalf of a caller that cannot.
+
+    Every Python entry point opens its own `Trail`. The callers this is for
+    cannot: the shell scripts that close out a dream or a retro, and the agent
+    running the phases between the scan and the close, which has a terminal and
+    no process of its own to instrument. Without it the trail holds what the
+    scan found and nothing about what was done with it.
+
+    The run inherits `WORKBENCH_TRAIL_ROOT` like any other, so a record written
+    from inside a larger command is filed under that command rather than as an
+    orphan of its own.
+
+    No `finish` event follows: this process's duration measures the write, not
+    the work being recorded, and a 4ms figure beside a consolidation that took
+    an hour is worse than no figure at all.
+    """
+    context = {}
+    if repo:
+        context["repo"] = repo
+    if pr is not None:
+        context["pr"] = pr
+    trail = Trail.start(script=script, context=context, debug=debug)
+    writers = {
+        "info": lambda: trail.summary(action, detail, data=data),
+        "warn": lambda: trail.warn(action, detail, data=data),
+        "error": lambda: trail.error(action, detail, data=data),
+    }
+    writers[level]()
+    return trail.invocation
+
+
 # ── Argparse helper ───────────────────────────────────────────────────────
 
 def add_trail_args(parser: argparse.ArgumentParser) -> None:

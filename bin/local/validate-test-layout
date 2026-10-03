@@ -71,7 +71,6 @@ KNOWN_OVER = {
     "tests/review_orchestrate_pipeline.bats": "#853",
     "tests/projects.bats": "#853",
     "tests/validate_skills.bats": "#853",
-    "tests/git.bats": "#853",
     "tests/retro_scan.bats": "#853",
 }
 

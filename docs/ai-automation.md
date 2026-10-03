@@ -623,8 +623,8 @@ task --global WORKBENCH_LIB_DIR=/path/to/worktree REPO_DIR=/path/to/worktree com
 Both are go-task variables, written after `--global` — not a `VAR=value` shell
 prefix, which `claude-bash-guard` blocks. It pins the checkout root, not `lib/`
 alone, so `ai/lib/core/pr_template.py` and `lib/config_cli.py` come from the
-same tree as the libraries calling them. Unset, nothing resolves differently than before.
-Set, `_lib-dir-guard` — in `deps:` on each task sourcing `lib/ai` and no other —
+same tree as the libraries calling them. Unset, nothing resolves differently
+than before. Set, `_lib-dir-guard` — in `deps:` on each task sourcing `lib/ai` and no other —
 requires it absolute and holding the six paths that witness a whole checkout,
 so a partial one is refused by the missing path's name, not by a later `python3`
 failure naming nothing. A module sourced by name is not among them: it fails on
@@ -760,8 +760,9 @@ site, and the spread was the bug. Each owns its own reference page:
 
 They stack: `land` sits on `push` and `git_client`, which sit on `proc`, which
 requires a `timeouts` tier on every call — `bin/local/validate-timeouts` enforces
-that one across `ai/`, so a new subprocess call cannot skip the question. `pr create`
-pushes through `push` by way of `pr.branch_sync`, and a push typed by hand is recorded by the global `pre-push` hook for `pr` to reconcile.
+that one across `ai/`, so a new subprocess call cannot skip the question.
+`pr create` pushes through `push` by way of `pr.branch_sync`, and a push typed
+by hand is recorded by the global `pre-push` hook for `pr` to reconcile.
 
 ## Guidelines & Rules
 

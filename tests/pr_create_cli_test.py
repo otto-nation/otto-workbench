@@ -114,6 +114,14 @@ def test_an_unknown_flag_is_a_usage_error(created):
     assert not created.calls
 
 
+def test_a_flag_abbreviation_is_a_usage_error(created):
+    """`--dry` must not parse as `--dry-run`: the run lock is decided on the
+    literal `--dry-run`, so an abbreviation would preview under a lock-free
+    need (or push under the wrong one)."""
+    assert _main("create", "--dry") == 2
+    assert not created.calls
+
+
 def test_a_value_flag_without_its_value_is_a_usage_error(created):
     assert _main("create", "--title") == 2
     assert not created.calls

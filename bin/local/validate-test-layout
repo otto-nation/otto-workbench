@@ -73,7 +73,6 @@ KNOWN_OVER = {
     "tests/validate_skills.bats": "#853",
     "tests/git.bats": "#853",
     "tests/retro_scan.bats": "#853",
-    "tests/validate_migrations.bats": "#853",
 }
 
 

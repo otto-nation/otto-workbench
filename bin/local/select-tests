@@ -78,6 +78,7 @@ NO_REFS_TESTS=(
 FULL_SUITE_TRIGGERS=(
   tests/test_helper.bash
   tests/conftest.py
+  tests/validate_migrations_helper.bash
   bin/local/run-tests
   bin/local/select-tests
 )

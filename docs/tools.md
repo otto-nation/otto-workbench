@@ -106,6 +106,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `select-tests` | Emits the bats test files affected by a set of changed paths — used by the pre-push hook for change-based selection |
 | `select-pytest` | Emits the pytest files affected by a set of changed paths, resolved through the import graph — the pytest counterpart of select-tests |
 | `claim-job-slots` | Holds a share of the machine's test-parallelism slots while a command runs, so concurrent suites in several worktrees divide the cores instead of each taking all of them |
+| `suite-watch` | Supervises a test-suite child and writes a periodic stderr heartbeat of elapsed time and in-flight work, so a slow run is distinguishable from a stuck one |
 | `validate-test-deps` | Validates that every bats test has resolvable source refs or is in the always-run list |
 | `validate-pytest-deps` | Validates that every pytest file resolves deps through the import graph or is declared unmappable |
 | `check-surface-compat` | Fails when a public surface entry is removed without a breaking-change or Not-Breaking declaration |

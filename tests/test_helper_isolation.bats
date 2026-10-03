@@ -103,3 +103,56 @@ _commit() {
   run git config --global --get user.name
   [ "$output" = "testuser" ]
 }
+
+# ── live agent CLIs ──────────────────────────────────────────────────────────
+
+@test "common_setup shadows a live claude and pi CLI" {
+  # Outside BATS_TEST_TMPDIR: a binary under it reads as the test's own stub.
+  local realbin="$BATS_FILE_TMPDIR/shadows-a-live-cli/realbin"
+  mkdir -p "$realbin"
+  local name
+  for name in claude pi; do
+    printf '#!/usr/bin/env bash\necho reached-real-%s\nexit 0\n' "$name" \
+      > "$realbin/$name"
+    chmod +x "$realbin/$name"
+  done
+  PATH="$realbin:$PATH"
+  common_setup
+
+  run --separate-stderr claude
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"reached the real claude CLI"* ]]
+
+  run --separate-stderr pi
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"reached the real pi CLI"* ]]
+}
+
+@test "a later stub still wins over the live-backend guard" {
+  local realbin="$BATS_FILE_TMPDIR/later-stub-wins/realbin"
+  mkdir -p "$realbin" "$TMPDIR/mystub"
+  printf '#!/usr/bin/env bash\necho reached-real\n' > "$realbin/claude"
+  chmod +x "$realbin/claude"
+  PATH="$realbin:$PATH"
+  common_setup
+  printf '#!/usr/bin/env bash\necho my-stub\n' > "$TMPDIR/mystub/claude"
+  chmod +x "$TMPDIR/mystub/claude"
+  PATH="$TMPDIR/mystub:$PATH"
+
+  run claude
+  [ "$status" -eq 0 ]
+  [ "$output" = "my-stub" ]
+}
+
+@test "common_setup leaves a stub the test already put on PATH in front" {
+  mkdir -p "$TMPDIR/mystub"
+  printf '#!/usr/bin/env bash\necho my-stub\n' > "$TMPDIR/mystub/claude"
+  chmod +x "$TMPDIR/mystub/claude"
+  PATH="$TMPDIR/mystub:$PATH"
+  # A helper (make_git_remote and friends) calling common_setup mid-test.
+  common_setup
+
+  run claude
+  [ "$status" -eq 0 ]
+  [ "$output" = "my-stub" ]
+}

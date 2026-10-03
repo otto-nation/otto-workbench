@@ -476,7 +476,7 @@ class TestBackendsRunInTheGivenDirectory:
             stdout = io.StringIO("")
             stderr = io.StringIO("")
 
-            def wait(self):
+            def wait(self, timeout=None):
                 return 0
 
         def fake_popen(cmd, **kwargs):

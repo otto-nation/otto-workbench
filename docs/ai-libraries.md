@@ -4186,6 +4186,20 @@ One owner rather than a copy per wrapper. A second implementation of a
 primitive this subtle is how the two come to disagree, and the bug above was
 already present in both files in the same shape.
 
+### core/suite_watch.py
+
+Supervise a test-suite child and say what it is doing.
+
+A parallel bats run with GNU ``--keep-order`` buffers TAP until the current
+head file finishes, so a slow suite and a stuck one look the same: silence.
+This wrapper leaves the child's stdout alone — the TAP / pytest stream the
+pre-push hook parses — writes one heartbeat line to stderr every
+``TEST_HEARTBEAT_SECS``, and exits with the child's status.
+
+Waiting on the child is :data:`core.timeouts.UNBOUNDED` because the suite *is*
+the work. A bound would convert a large or contended run into a false failure;
+the heartbeat is what makes that wait observable rather than a hang.
+
 ### core/text.py
 
 Text a human reads, formatted the same way wherever it is written.

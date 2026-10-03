@@ -17,6 +17,10 @@ import pytest
 
 from repo_config_guard_support import _REPO_CONFIG, _assert_config_unchanged, _config_bytes
 
+# The suite heartbeat's in-flight records, as a plugin of their own so this
+# module keeps the fixtures and stays within the test-layout cap.
+pytest_plugins = ["suite_status_support"]
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"

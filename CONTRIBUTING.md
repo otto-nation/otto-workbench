@@ -81,7 +81,9 @@ A slot is *held* for the length of the run, so a suite starting beside another o
 what that one is holding rather than what the load average has got round to reporting:
 three concurrent runs on an 18-core box get 12, 5 and 2. Set `TEST_JOBS` to take the
 sizing back — which also skips the pool — and `TEST_JOBS=1` to get the serial ordering
-when bisecting a test that only fails under concurrency.
+when bisecting a test that only fails under concurrency. `TEST_HEARTBEAT_SECS`
+(default 60, 0 disables) writes a stderr progress line while a suite runs so a
+slow run is distinguishable from a stuck one; it never writes to stdout.
 
 The pool replaced sizing from the one-minute load average, which could not work: two
 suites launched within a minute of each other both read an idle machine and both took the

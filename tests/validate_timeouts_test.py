@@ -84,10 +84,162 @@ def go(runner, cmd):
 
 
 def test_popen_needs_no_bound(tmp_path):
-    """It takes none; the one `communicate` takes belongs to that call."""
+    """The launch takes none; the wait that follows is checked on its own."""
     assert _check(tmp_path, """
 def stream(cmd):
     return subprocess.Popen(cmd, stdout=subprocess.PIPE)
+""") == []
+
+
+def test_a_popen_wait_without_timeout_is_flagged(tmp_path):
+    violations = _check(tmp_path, """
+def stream(cmd):
+    proc = subprocess.Popen(cmd)
+    proc.wait()
+""")
+    assert [(v.line, v.found) for v in violations] == [
+        (4, "proc.wait() with no timeout="),
+    ]
+
+
+def test_a_popen_communicate_without_timeout_is_flagged(tmp_path):
+    violations = _check(tmp_path, """
+def stream(cmd):
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    return proc.communicate()
+""")
+    assert [(v.line, v.found) for v in violations] == [
+        (4, "proc.communicate() with no timeout="),
+    ]
+
+
+def test_a_popen_wait_with_timeout_is_clean(tmp_path):
+    assert _check(tmp_path, """
+def stream(cmd):
+    proc = subprocess.Popen(cmd)
+    proc.wait(timeout=timeouts.LOCAL)
+""") == []
+
+
+def test_a_popen_wait_with_timeout_none_is_flagged(tmp_path):
+    """Keyword `None` on a reap is silence, the same as it is on `proc.run`."""
+    violations = _check(tmp_path, """
+def stream(cmd):
+    proc = subprocess.Popen(cmd)
+    proc.wait(timeout=None)
+""")
+    assert [(v.line, v.found) for v in violations] == [(4, "timeout=None")]
+    assert violations[0].suggestion == "timeouts.UNBOUNDED"
+
+
+def test_a_popen_wait_with_positional_none_is_flagged(tmp_path):
+    violations = _check(tmp_path, """
+def stream(cmd):
+    proc = subprocess.Popen(cmd)
+    proc.wait(None)
+""")
+    assert [(v.line, v.found) for v in violations] == [(4, "timeout=None")]
+    assert violations[0].suggestion == "timeouts.UNBOUNDED"
+
+
+def test_a_popen_wait_with_unbounded_is_clean(tmp_path):
+    assert _check(tmp_path, """
+def stream(cmd):
+    proc = subprocess.Popen(cmd)
+    proc.wait(timeout=timeouts.UNBOUNDED)
+""") == []
+
+
+def test_a_with_popen_wait_without_timeout_is_flagged(tmp_path):
+    violations = _check(tmp_path, """
+def stream(cmd):
+    with subprocess.Popen(cmd) as proc:
+        proc.wait()
+""")
+    assert [(v.line, v.found) for v in violations] == [
+        (4, "proc.wait() with no timeout="),
+    ]
+
+
+def test_a_core_children_owned_wait_without_timeout_is_flagged(tmp_path):
+    violations = _check(tmp_path, """
+def stream(cmd):
+    with core.children.owned(cmd) as proc:
+        proc.wait()
+""")
+    assert [(v.line, v.found) for v in violations] == [
+        (4, "proc.wait() with no timeout="),
+    ]
+
+
+def test_a_core_children_spawn_wait_without_timeout_is_flagged(tmp_path):
+    violations = _check(tmp_path, """
+def stream(cmd):
+    proc = children.spawn(cmd)
+    proc.wait()
+""")
+    assert [(v.line, v.found) for v in violations] == [
+        (4, "proc.wait() with no timeout="),
+    ]
+
+
+def test_an_unrelated_spawn_is_not_a_popen(tmp_path):
+    assert _check(tmp_path, """
+def stream(pool):
+    task = pool.spawn(work)
+    task.wait()
+""") == []
+
+
+def test_a_forwarded_positional_bound_on_a_reap_is_clean(tmp_path):
+    assert _check(tmp_path, """
+def stream(cmd, budget):
+    proc = subprocess.Popen(cmd)
+    proc.wait(budget)
+    other = subprocess.Popen(cmd)
+    other.communicate(None, budget)
+""") == []
+
+
+def test_a_literal_positional_bound_on_a_reap_is_flagged_as_a_literal(tmp_path):
+    violations = _check(tmp_path, """
+def stream(cmd):
+    proc = subprocess.Popen(cmd)
+    proc.wait(30)
+    other = subprocess.Popen(cmd)
+    other.communicate(b'in', 5)
+""")
+    assert [(v.line, v.found) for v in violations] == [
+        (4, "timeout=30"),
+        (6, "timeout=5"),
+    ]
+
+
+def test_communicate_input_alone_is_not_a_bound(tmp_path):
+    violations = _check(tmp_path, """
+def stream(cmd, data):
+    proc = subprocess.Popen(cmd)
+    proc.communicate(data)
+""")
+    assert [(v.line, v.found) for v in violations] == [
+        (4, "proc.communicate() with no timeout="),
+    ]
+
+
+def test_event_wait_on_a_non_popen_name_is_ignored(tmp_path):
+    assert _check(tmp_path, """
+def hold(done):
+    done.wait()
+""") == []
+
+
+def test_a_name_rebound_away_from_popen_is_no_longer_a_reap(tmp_path):
+    assert _check(tmp_path, """
+def hold(cmd):
+    p = subprocess.Popen(cmd)
+    p.wait(timeout=timeouts.UNBOUNDED)
+    p = threading.Event()
+    p.wait()
 """) == []
 
 

@@ -8,6 +8,7 @@ setup() {
   load 'test_helper'
   load 'generate_tool_context_helper'
   common_setup
+  source "$REPO_ROOT/bin/local/generate-tool-context"
   gtc_setup
 }
 

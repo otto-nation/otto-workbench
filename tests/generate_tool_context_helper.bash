@@ -1,10 +1,11 @@
 # Shared helper for the generate-tool-context test files.
 # Loaded in setup() after test_helper, so common_setup has pinned $TMPDIR.
 
-# Source the generator and point every input and output at temp paths, so a
-# test never touches real workbench files (registry data, tools.generated.md).
+# Point every generator input and output at temp paths, so a test never
+# touches real workbench files (registry data, tools.generated.md). Each suite
+# sources the generator itself: bin/local/select-tests maps a suite to what it
+# covers by the path literals in the .bats file, not in its helpers.
 gtc_setup() {
-  source "$REPO_ROOT/bin/local/generate-tool-context"
   ORIG_DIR="$PWD"
 
   mkdir -p "$TMPDIR/brew" "$TMPDIR/bin" "$TMPDIR/zsh" "$TMPDIR/mise"

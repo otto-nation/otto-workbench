@@ -127,12 +127,15 @@ class StepProcess:
             sig = signal.SIGKILL
         else:
             sig = signal.SIGTERM
-        if self._popen.poll() is not None:
-            # Already exited, reaped or not. Nothing left to signal, and on macOS
-            # killpg on a group holding only the step's own unreaped zombie answers
-            # EPERM rather than ESRCH, which would otherwise look like a refusal.
-            return
+        # Signal the group even when the step itself has exited: anything it left
+        # running in the background is still in the group and must end too.
         try:
             os.killpg(self._popen.pid, sig)
         except ProcessLookupError:
             pass
+        except PermissionError:
+            # macOS answers EPERM rather than ESRCH when the only process left in the
+            # group is the step's own unreaped zombie: it has already exited. Reaping
+            # it confirms that; a step still running means the signal was refused.
+            if self._popen.poll() is None:
+                raise

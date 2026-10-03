@@ -273,14 +273,42 @@ _is_targeted() {
 # lib/gitenv.sh document being safe to do) failed with a confusing
 # "unbound variable" error instead of a clear message.
 
-@test "lib/overrides.sh, discover.sh, ai_init.sh, and maintenance.sh refuse to load without WORKBENCH_DIR" {
-  for lib in overrides discover ai_init maintenance; do
-    run bash -c "
-      set -u
-      . '$REPO_ROOT/lib/$lib.sh'
-    "
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"ERROR: lib/$lib.sh requires WORKBENCH_DIR"* ]]
-    [[ "$output" != *"unbound variable"* ]]
-  done
+@test "lib/overrides.sh refuses to load without WORKBENCH_DIR" {
+  run bash -c "
+    set -u
+    . '$REPO_ROOT/lib/overrides.sh'
+  "
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"ERROR: lib/overrides.sh requires WORKBENCH_DIR"* ]]
+  [[ "$output" != *"unbound variable"* ]]
+}
+
+@test "lib/discover.sh refuses to load without WORKBENCH_DIR" {
+  run bash -c "
+    set -u
+    . '$REPO_ROOT/lib/discover.sh'
+  "
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"ERROR: lib/discover.sh requires WORKBENCH_DIR"* ]]
+  [[ "$output" != *"unbound variable"* ]]
+}
+
+@test "lib/ai_init.sh refuses to load without WORKBENCH_DIR" {
+  run bash -c "
+    set -u
+    . '$REPO_ROOT/lib/ai_init.sh'
+  "
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"ERROR: lib/ai_init.sh requires WORKBENCH_DIR"* ]]
+  [[ "$output" != *"unbound variable"* ]]
+}
+
+@test "lib/maintenance.sh refuses to load without WORKBENCH_DIR" {
+  run bash -c "
+    set -u
+    . '$REPO_ROOT/lib/maintenance.sh'
+  "
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"ERROR: lib/maintenance.sh requires WORKBENCH_DIR"* ]]
+  [[ "$output" != *"unbound variable"* ]]
 }

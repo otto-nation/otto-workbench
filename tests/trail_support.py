@@ -52,7 +52,10 @@ def make_command(*scripts: str) -> list[str]:
 
 # The command every correlation test is about: what `pr review` really runs.
 # Named once so the three-process shape is a single source of truth rather than
-# a literal repeated down the class.
+# a literal repeated down the class. Call sites unpack this positionally
+# (`root, child, _ = make_command(*PR_REVIEW)`), so a fourth element here would
+# break every one of them with a ValueError at the unpack rather than where the
+# element was added.
 PR_REVIEW = ("pr", "review", "review-orchestrate")
 
 

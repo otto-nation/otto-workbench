@@ -14,7 +14,6 @@ sys.path.insert(0, str(LIB_DIR))
 
 import cli.otto_log  # noqa: E402
 import core.trail_query  # noqa: E402
-from conftest import reset_trail_root  # noqa: E402
 from trail_support import PR_REVIEW, make_command  # noqa: E402
 
 
@@ -37,11 +36,10 @@ def test_show_only_reaches_the_library(capsys):
 
 
 def test_record_stores_numeric_data_as_numbers(capsys):
-    with reset_trail_root():
-        code = cli.otto_log.main([
-            "record", "--script", "dream", "--action", "consolidate",
-            "--data", "added=3", "--data", "ratio=0.5", "--data", "note=x",
-        ])
+    code = cli.otto_log.main([
+        "record", "--script", "dream", "--action", "consolidate",
+        "--data", "added=3", "--data", "ratio=0.5", "--data", "note=x",
+    ])
     assert code == 0
     invocation = capsys.readouterr().out.strip()
     events = core.trail_query.filter_events(
@@ -52,7 +50,7 @@ def test_record_stores_numeric_data_as_numbers(capsys):
 
 
 def test_record_refuses_data_without_an_equals_sign(capsys):
-    with reset_trail_root(), pytest.raises(SystemExit) as exc:
+    with pytest.raises(SystemExit) as exc:
         cli.otto_log.main([
             "record", "--script", "dream", "--action", "consolidate", "--data", "bad",
         ])

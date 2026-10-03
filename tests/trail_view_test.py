@@ -24,6 +24,21 @@ from trail_support import (  # noqa: E402
 )
 
 
+def _body_lines(capsys) -> list[str]:
+    """The event lines `show` printed, below its header.
+
+    The header's length is not fixed: `Trail.start` defaults `record=True`,
+    which always adds a "Started by:" line, and that line itself wraps onto a
+    second physical line whenever `origin["command"]` is present (see
+    `_format_origin`'s trailing `\\n  {command}`). Slicing by a hardcoded line
+    count silently drops or keeps part of the header depending on what ran the
+    test; finding the blank line `_format_show` always emits between the
+    header and the body does not.
+    """
+    lines = capsys.readouterr().out.splitlines()
+    return lines[lines.index("") + 1:]
+
+
 def _finish_event_fields(**fields) -> dict:
     """The summary that closes a run, carrying the duration it measured."""
     return dict(event_type="summary", action="finish", **fields)
@@ -89,14 +104,14 @@ class TestCommandCorrelation:
     def test_show_labels_each_event_with_the_script_that_wrote_it(self, capsys):
         root, _ = make_command("pr", "review")
         core.trail_view.show(root, only=False, as_json=False)
-        body = capsys.readouterr().out.splitlines()[3:]
+        body = _body_lines(capsys)
         assert any("review" in line for line in body)
 
     def test_a_single_process_command_keeps_the_unlabelled_layout(self, capsys):
         """Nothing to tell apart, so the column would be the same on every line."""
         inv = make_trail("ci-check", [("fetch", "fetched")])
         core.trail_view.show(inv, only=False, as_json=False)
-        body = capsys.readouterr().out.splitlines()[3:]
+        body = _body_lines(capsys)
         assert not any("ci-check" in line for line in body)
 
     def test_only_narrows_back_to_one_process(self, capsys):

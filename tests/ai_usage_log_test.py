@@ -14,7 +14,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
 
-import agent.usage
+import agent.usage  # noqa: E402
 import cli.ai_usage_log  # noqa: E402
 
 RESULT_RECORD = {

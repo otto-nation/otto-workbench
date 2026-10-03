@@ -460,6 +460,11 @@ def run_supervised(
 
 
 def main(argv: list[str], child: list[str]) -> int:
+    """Parse suite-watch options and run `child` under the heartbeat.
+
+    `argv` holds the options before `--` and `child` the command after it.
+    Returns the child's exit status, or 2 for a usage or configuration error.
+    """
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--suite", default="")
     parser.add_argument("--jobs", type=int, default=None)

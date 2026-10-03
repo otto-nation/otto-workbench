@@ -1356,6 +1356,23 @@ group's IDs are shifted past the groups before it. Deferring that to the
 merge-wide pass would misdirect it: group provenance is gone by then, and the
 pooled map answers with whichever group happens to have declared that number.
 
+### review/positions.py
+
+Where a review's findings can be posted, given the PR's diff.
+
+A finding whose path:line falls inside a diff hunk can be posted inline; one
+outside every hunk is demoted to a file-level comment; one whose path is not
+in the diff at all is skipped. `cli.review_positions` is the command over this;
+`review.format.parse_diff_hunks` reads the diff.
+
+### review/rebuild.py
+
+Rebuild a review document from its group finding files.
+
+Merges the group-N.md outputs, post-processes the findings and writes a new
+review.md — the recovery path when synthesis drifted or the review file was
+corrupted. `cli.review_rebuild` is the command over this.
+
 ### review/reconcile.py
 
 Deciding what became of each finding the last review reported.

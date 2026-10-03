@@ -80,7 +80,7 @@ class Harness:
             def stdout(self):
                 return "{}"
 
-            def kill(self):
+            def kill(self, *, force=False):
                 pass
 
         self.live += 1
@@ -391,6 +391,40 @@ def test_failed_publish_via_request_emits_decision_created(monkeypatch):
     h.sched.run_until_blocked()
     created = [f for k, f in h.events if k == "decision_created"]
     assert any(f["decision_kind"] == "failed" and f["step"] == "publish" for f in created)
+
+
+def test_cancel_kill_force_kills_what_the_tracked_step_already_outlived():
+    # The tracked step can die to the first kill() call in the same tick that
+    # _reap() notices it is gone; once that happens the item leaves self._live
+    # and nothing calls kill() on it again. Anything it left running in its
+    # process group (a backgrounded child trapping SIGTERM, say) must still get
+    # reached, so _reap() owes it one last, unconditional SIGKILL right there.
+    h = Harness([row(1)])
+    calls = []
+    orig = h._spawn
+
+    def spawn(argv, **kw):
+        proc = orig(argv, **kw)
+        proc.exited = False
+
+        def poll():
+            return 0 if proc.exited else None
+
+        def kill(*, force=False):
+            calls.append(force)
+            proc.exited = True
+
+        proc.poll = poll
+        proc.kill = kill
+        return proc
+
+    h.sched._spawn = spawn
+    batch.store.save(h.run)
+    h.sched._admit()
+    assert h.spawned
+    batch.store.request_cancel(h.run.id, kill=True)
+    h.sched._once()
+    assert calls == [False, True]
 
 
 def test_interrupt_kills_live_children_and_marks_the_run():

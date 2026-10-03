@@ -400,27 +400,27 @@ _LOCATION = ("tests/demo.py", 1, "test_a")
 
 
 def test_the_xdist_controller_writes_no_status_file(tmp_path, monkeypatch):
-    import conftest
+    import suite_status_support
 
     monkeypatch.setenv(STATUS_ENV, str(tmp_path))
     monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
-    monkeypatch.setattr(conftest, "_CONFIG", _FakeConfig("dsession"))
-    conftest.pytest_runtest_logstart("tests/demo.py::test_a", _LOCATION)
+    monkeypatch.setattr(suite_status_support, "_CONFIG", _FakeConfig("dsession"))
+    suite_status_support.pytest_runtest_logstart("tests/demo.py::test_a", _LOCATION)
     assert list(tmp_path.iterdir()) == []
 
 
 def test_a_worker_and_a_plain_run_still_write_their_status_file(tmp_path, monkeypatch):
-    import conftest
+    import suite_status_support
 
     monkeypatch.setenv(STATUS_ENV, str(tmp_path))
-    monkeypatch.setattr(conftest, "_CONFIG", _FakeConfig("dsession"))
+    monkeypatch.setattr(suite_status_support, "_CONFIG", _FakeConfig("dsession"))
     monkeypatch.setenv("PYTEST_XDIST_WORKER", "gw3")
-    conftest.pytest_runtest_logstart("tests/demo.py::test_a", _LOCATION)
+    suite_status_support.pytest_runtest_logstart("tests/demo.py::test_a", _LOCATION)
     assert [p.name for p in tmp_path.iterdir()] == ["gw3"]
-    conftest.pytest_runtest_logfinish("tests/demo.py::test_a", _LOCATION)
+    suite_status_support.pytest_runtest_logfinish("tests/demo.py::test_a", _LOCATION)
     assert list(tmp_path.iterdir()) == []
 
     monkeypatch.delenv("PYTEST_XDIST_WORKER")
-    monkeypatch.setattr(conftest, "_CONFIG", _FakeConfig())
-    conftest.pytest_runtest_logstart("tests/demo.py::test_b", _LOCATION)
+    monkeypatch.setattr(suite_status_support, "_CONFIG", _FakeConfig())
+    suite_status_support.pytest_runtest_logstart("tests/demo.py::test_b", _LOCATION)
     assert [p.name for p in tmp_path.iterdir()] == ["main"]

@@ -258,6 +258,7 @@ def test_a_clean_run_does_not_report_a_race_that_did_not_happen(monkeypatch, tmp
 
     _run_consume(monkeypatch, tmp_path, "s")
 
-    summary = "".join(capsys.readouterr())
+    captured = capsys.readouterr()
+    summary = captured.out + captured.err
     assert "Deleted 2 consumed review(s), kept 0" in summary
     assert "raced" not in summary

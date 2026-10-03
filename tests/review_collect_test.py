@@ -84,6 +84,22 @@ class TestDiffSectionSizes:
     def test_no_headers_is_empty(self):
         assert review.collect.diff_section_sizes("not a diff") == {}
 
+    def test_a_path_appearing_twice_is_summed(self):
+        first = "diff --git a/a.go b/a.go\ncontent one\n"
+        other = "diff --git a/b.go b/b.go\ncontent b\n"
+        second = "diff --git a/a.go b/a.go\ncontent two!\n"
+        sizes = review.collect.diff_section_sizes(first + other + second)
+        assert sizes == {
+            "a.go": len(first.encode()) + len(second.encode()),
+            "b.go": len(other.encode()),
+        }
+
+    def test_a_rename_is_keyed_by_its_old_path(self):
+        renamed = "diff --git a/old.go b/new.go\nrename from old.go\n"
+        sizes = review.collect.diff_section_sizes(renamed)
+        assert sizes == {"old.go": len(renamed.encode())}
+        assert "new.go" not in sizes
+
 
 # ── truncate_diff ───────────────────────────────────────────────────────────
 

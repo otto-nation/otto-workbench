@@ -2,7 +2,6 @@
 
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 from conftest import add_self_origin, commit_all, git_out, init_repo
 
@@ -15,6 +14,7 @@ import cli.review_orchestrate  # noqa: F401
 import review.pipeline
 from review.budget import MIN_DIFF_BYTES, TEMPLATE_OVERHEAD_BYTES, fixed_preflight_bytes
 from review.types import PreflightData
+from review_prompt_support import _make_job
 
 
 # ── self-review metadata ──────────────────────────────────────────────
@@ -170,7 +170,7 @@ class TestGroupMergeCap:
     """A merged group's diff is capped at what its prompt has room for."""
 
     def _job(self, preflight):
-        return SimpleNamespace(model="", config=None, preflight=preflight)
+        return _make_job(preflight)
 
     def _patch(self, monkeypatch, target):
         monkeypatch.setattr(review.pipeline, "phase_model", lambda *a, **k: "m")

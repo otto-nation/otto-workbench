@@ -304,9 +304,13 @@ class TestOverheadIsRecordedForTheFirstAttemptOnly:
         import review.prompt_fit
 
         calls = []
+        record = lambda *a, **k: calls.append((a, k))  # noqa: E731
+        monkeypatch.setattr(review.prompt_fit, "record_prompt_overhead", record)
+        # Also the name `review.phases` would hold if it imported it at module
+        # level: `phases.invoke` imports lazily today, so patching only the
+        # source would silently stop working after a hoist.
         monkeypatch.setattr(
-            review.prompt_fit, "record_prompt_overhead",
-            lambda *a, **k: calls.append((a, k)),
+            review.phases, "record_prompt_overhead", record, raising=False,
         )
         monkeypatch.setattr(review.phases, "run_agent", lambda inv, throttle=None: 0)
         runner = review.pipeline.PhaseRunner(_job(tmp_path), Phase.GROUP, 1)

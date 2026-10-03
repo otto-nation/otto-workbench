@@ -385,7 +385,7 @@ class TestMergeSmallestGroups:
         ]
 
         def size_of(group):
-            return 50 if "+" in group.name else 10
+            return 50 if len(group.files) > 1 else 10
 
         result = merge_smallest_groups(
             groups, 1, max_diff_bytes=40, group_diff_bytes=size_of,

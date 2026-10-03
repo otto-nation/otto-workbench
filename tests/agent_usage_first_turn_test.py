@@ -164,6 +164,37 @@ def test_pi_with_only_usageless_turns_is_none():
     assert first_turn_usage(records) is None
 
 
+def test_pi_falls_back_to_the_record_level_usage():
+    records = [
+        {
+            "type": "message_end",
+            "message": {"role": "assistant", "model": "m"},
+            "usage": {"input": 600, "cacheRead": 5, "cacheWrite": 5},
+        },
+    ]
+    first = first_turn_usage(records)
+    assert first is not None
+    assert first.served_model == "m"
+    assert first.input_tokens == 610
+
+
+def test_a_log_with_both_record_shapes_reports_the_claude_turn():
+    records = [
+        {
+            "type": "message_end",
+            "message": {"role": "assistant", "model": "pi-m", "usage": {"input": 1}},
+        },
+        {
+            "type": "assistant",
+            "message": {"model": "claude-m", "usage": {"input_tokens": 2}},
+        },
+    ]
+    first = first_turn_usage(records)
+    assert first is not None
+    assert first.served_model == "claude-m"
+    assert first.input_tokens == 2
+
+
 def _stats_job(tmp_path, rows):
     job = _make_job(_make_preflight())
     job.review_file = str(tmp_path / "review.md")
@@ -200,7 +231,6 @@ def test_record_prompt_overhead_writes_served_model_and_warns(tmp_path, capsys):
             },
         },
     }) + "\n")
-    job.session_log = str(log)
     record_prompt_overhead(job, str(log), Phase.SCOUT)
     row = json.loads(stats.read_text())[-1]
     assert row["served_model"] == "claude-sonnet-5"
@@ -209,25 +239,28 @@ def test_record_prompt_overhead_writes_served_model_and_warns(tmp_path, capsys):
 
 
 class TestRecordPromptOverheadLeavesTheRecordAlone:
-    def test_a_session_with_no_usage(self, tmp_path):
+    def test_a_session_with_no_usage(self, tmp_path, capsys):
         rows = [{"template": "scout.md", "prompt_tokens": 100}]
         job, stats = _stats_job(tmp_path, rows)
         log = tmp_path / "session.jsonl"
         log.write_text(json.dumps({"type": "result"}) + "\n")
         record_prompt_overhead(job, str(log), Phase.SCOUT)
         assert json.loads(stats.read_text()) == rows
+        assert capsys.readouterr().err == ""
 
-    def test_a_prompt_that_was_never_counted(self, tmp_path):
+    def test_a_prompt_that_was_never_counted(self, tmp_path, capsys):
         job, stats = _stats_job(tmp_path, [{"template": "scout.md"}])
         log = tmp_path / "session.jsonl"
         _claude_log(log, 5_000)
         record_prompt_overhead(job, str(log), Phase.SCOUT)
         row = json.loads(stats.read_text())[-1]
         assert "overhead_tokens" not in row
+        assert capsys.readouterr().err == ""
 
-    def test_a_missing_log(self, tmp_path):
+    def test_a_missing_log(self, tmp_path, capsys):
         rows = [{"template": "scout.md", "prompt_tokens": 100}]
         job, stats = _stats_job(tmp_path, rows)
         record_prompt_overhead(job, str(tmp_path / "absent.jsonl"), Phase.SCOUT)
         record_prompt_overhead(job, "", Phase.SCOUT)
         assert json.loads(stats.read_text()) == rows
+        assert capsys.readouterr().err == ""

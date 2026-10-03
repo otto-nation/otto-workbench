@@ -65,11 +65,18 @@ class TestRecoverOverflowPrompt:
             DiagnosisKind.AGENT_ERROR,
             detail="prompt is too long: 100 tokens > 80 maximum",
         )
+        targets = []
+
+        def rebuild(n):
+            targets.append(n)
+            return f"small-{n}"
+
         rebuilt = recover_overflow_prompt(
-            diagnosis, "x" * 1000, rebuild=lambda n: f"small-{n}", attempt=0,
+            diagnosis, "x" * 1000, rebuild=rebuild, attempt=0,
         )
-        assert rebuilt is not None
-        assert rebuilt.startswith("small-")
+        expected = overflow_ladder_bytes(100, 80, 1000)
+        assert targets == [expected]
+        assert rebuilt == f"small-{expected}"
 
     def test_a_rebuild_no_smaller_than_the_rejected_prompt_is_not_resent(self):
         diagnosis = Diagnosis(
@@ -129,6 +136,8 @@ class TestRunWithOverflowRecovery:
             invoke=invoke,
             after=after,
             has_output=lambda: output["ready"],
+            # Short on purpose: the rebuild must be strictly smaller than the
+            # rejected 100-byte prompt or the recovery refuses to resend it.
             rebuild=lambda n: f"SMALL-{n}",
         )
         assert run.diagnosis is None

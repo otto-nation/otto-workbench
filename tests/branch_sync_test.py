@@ -191,7 +191,7 @@ def test_a_branch_whose_name_is_a_prefix_of_a_remote_ref_is_new(tmp_path, monkey
     captured: dict = {}
 
     def fake_push(wt_path, *, gated, sha="", branch="", remote="origin",
-                  args=(), trail=None):
+                  args=(), trail=None, env=None):
         captured["args"] = tuple(args)
         return _pushed(PushStatus.PUSHED, branch)
 
@@ -222,7 +222,7 @@ def test_no_verify_reaches_the_push_args(tmp_path, monkeypatch):
     wt, _ = _repo(tmp_path)
     captured: dict = {}
 
-    def fake_push(wt_path, *, gated, sha="", branch="", remote="origin", args=(), trail=None):
+    def fake_push(wt_path, *, gated, sha="", branch="", remote="origin", args=(), trail=None, env=None):
         captured["gated"] = gated
         captured["args"] = tuple(args)
         captured["branch"] = branch
@@ -244,11 +244,30 @@ def test_no_verify_reaches_the_push_args(tmp_path, monkeypatch):
     assert captured["args"].count("feature/test") == 1
 
 
+def test_push_runs_with_the_scrubbed_git_env(tmp_path, monkeypatch):
+    """`git.push.push` must get the same GIT_DIR-stripped env as the probe
+    reads — a hook's inherited GIT_DIR would otherwise push to its repo rather
+    than *wt*."""
+    wt, _ = _repo(tmp_path)
+    monkeypatch.setenv("GIT_DIR", "/somewhere/else/.git")
+    captured: dict = {}
+
+    def fake_push(wt_path, *, gated, sha="", branch="", remote="origin", args=(), trail=None, env=None):
+        captured["env"] = env
+        return _pushed(PushStatus.PUSHED, branch)
+
+    monkeypatch.setattr(git.push, "push", fake_push)
+    result = sync_branch(wt, "feature/test", no_verify=False)
+    assert result.ok
+    assert captured["env"] is not None
+    assert "GIT_DIR" not in captured["env"]
+
+
 def test_first_push_sets_upstream_in_args(tmp_path, monkeypatch):
     wt, _ = _repo(tmp_path)
     captured: dict = {}
 
-    def fake_push(wt_path, *, gated, sha="", branch="", remote="origin", args=(), trail=None):
+    def fake_push(wt_path, *, gated, sha="", branch="", remote="origin", args=(), trail=None, env=None):
         captured["args"] = tuple(args)
         captured["gated"] = gated
         return _pushed(PushStatus.PUSHED, branch)
@@ -265,7 +284,7 @@ def test_ahead_push_does_not_set_upstream(tmp_path, monkeypatch):
     _commit(wt, "feat: add more", "more.txt")
     captured: dict = {}
 
-    def fake_push(wt_path, *, gated, sha="", branch="", remote="origin", args=(), trail=None):
+    def fake_push(wt_path, *, gated, sha="", branch="", remote="origin", args=(), trail=None, env=None):
         captured["args"] = tuple(args)
         return _pushed(PushStatus.PUSHED, branch)
 

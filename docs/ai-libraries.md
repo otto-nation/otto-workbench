@@ -871,6 +871,18 @@ nobody can act on.
 Deciding which of those paths a run takes is `review.steps`'; sequencing the
 phases that lead there is `review.pipeline`'s.
 
+### review/overflow.py
+
+In-phase recovery from an API `prompt is too long` rejection.
+
+The local budget is a prior. When the API still rejects the rendered prompt,
+the rejection names how many tokens were sent and how many the model will
+take. That pair is enough to rebuild at a density just measured, without
+waiting for `--recover` — which would re-render the same bytes.
+
+Unparseable rejections stay non-recoverable. Local `PROMPT_TOO_LARGE` is a
+different kind and is never retried here.
+
 ### review/paths.py
 
 Where a review lives on disk, and what is allowed to be there.
@@ -999,9 +1011,9 @@ Prompt construction for review: the byte budget and the render loop.
 `PromptBuilder` collects the variables a template is rendered with, and
 `PromptBuilder.fit` is what makes a prompt fit the token budget: it registers
 the sections that can shrink — the pre-collected file contents, the
-incremental delta, and the full diff — after everything fixed is already
-accounted for, and pulls three levers in that order, only as far as the
-shortfall requires. It rewrites the environment section to send the agent
+incremental delta, the commit log, and the full diff — after everything fixed
+is already accounted for, and pulls four levers in that order, only as far as
+the shortfall requires. It rewrites the environment section to send the agent
 after whatever it dropped, and reports the cuts in the prompt's size log. A
 prompt still over budget once every lever is pulled raises `PromptTooLarge`
 rather than being sent: the phase reports it before an agent starts, so it
@@ -1023,6 +1035,24 @@ credentials skips it and records nothing rather than recording a guess. The
 count is the rendered prompt alone; the system prompt and tool schemas `claude
 -p` assembles internally are charged to the same request and are not visible
 here — see `agent.token_count` for the observed margin.
+
+### review/prompt_fit.py
+
+Plan → render → verify → re-plan, until the prompt fits or the cap is hit.
+
+`review.registry.build_prompt` is the public entry; this module is the loop
+it runs. The ladder plans against a byte target, the template renders, and
+the result is checked twice: bytes against the spend ceiling always, tokens
+plus the backend overhead reserve against the model's window when a count
+exists. A missing count is an explicit third state, never a pass and never
+a fail. The byte check still applies.
+
+A render that does not fit ratchets the ladder down by the measured
+overshoot — bytes directly, tokens converted at the density just measured —
+and never grows. Three renders is the cap; past that the phase raises
+`PromptTooLarge` the way a single over-budget render always has. A plan that
+reached the diff floor stops sooner: every lever is spent, so a smaller target
+would render the same prompt, and the loop raises after that render.
 
 ### review/prompt_prior.py
 
@@ -1596,17 +1626,20 @@ re-running post-processing does not stack notes or re-lower a verdict.
 
 Which verdict a tally supports in the first place is `review.verdict`'s. The
 finding-line grammar read here is `review.grammar`'s: `VERIFY_FINDING_RE` is a
-stricter shape over the same location vocabulary, and the two have to agree or
-a finding parses one way and verifies against the other — which is why they
-live next to each other rather than here.
+stricter shape over the same vocabulary that selects which findings this gate
+checks. It does not read the location: the path comes from `finding_location`,
+the same reading the poster uses, and is resolved with the poster's
+`review.format.resolve_path` — against the files the diff changed first, as
+the poster does, and the tracked tree only when the diff has no match — so a
+finding is not placed against one file and verified against another.
 
 Where a finding's body ends is `review.spans`'s. Both gates walk the review
 through `finding_spans` and remove what they drop through `drop_findings`,
 because two gates that measured a finding themselves measured it differently:
 one of them took the resolved finding below a dropped one out with it, and
 neither of them left a `### ` sub-heading standing. `VERIFY_FINDING_RE` selects
-which findings this gate checks and reads the location it checks them against;
-it does not say where one stops.
+which findings this gate checks; it reads a location only where the poster can
+place none, and never says where one stops.
 
 ## Publishing
 
@@ -1710,13 +1743,44 @@ still asks. Either way an unanswered question files nothing: no tracking issue
 is created and the deferral replies that would link to it are not sent, rather
 than an issue being filed to a tracker nobody named.
 
+### gh/pr_data.py
+
+The consolidated read of a PR — one GraphQL query, and the `PRData` it fills.
+
+Reviews, review threads, issue comments, commits and the PR's own refs come back
+in a single call, so a review that needs all of them pays for one round trip.
+The connections that can outgrow a page are finished off by the drains in
+`gh.pr_pages`, which also owns the page sizes the query interpolates.
+`pr_context_from_data` reads the conversation back out of a `PRData` for a
+caller that already holds one.
+
+The single-call REST reads are `gh.pr_reads`; the transport is `gh.client`.
+
+### gh/pr_pages.py
+
+The paginated connections of a PR: page sizes, the queries that page, the drains.
+
+GitHub caps every `first:` at 100, so a connection that can outgrow one page is
+walked to exhaustion here or reported as short — never returned short and
+silent. Each page size below is justified by the walk that pays for it, which
+is why they live beside the walks rather than beside the queries that
+interpolate them.
+
+The consolidated one-call read of a PR is `gh.pr_data`, which hands its first
+pages to the drains here. The single-call REST reads are `gh.pr_reads`. The
+transport — running gh, timeouts, the rate-limit ladder — is `gh.client`.
+
 ### gh/pr_reads.py
 
-The review system's reads of a PR, and the GraphQL queries behind them.
+The review system's single-call reads of a PR.
 
-The PR's own metadata, its surrounding conversation, the diff, the
-pending-review check, and the consolidated review-thread query. Used by the
-pipeline before any agent runs, and by review.posting and review.dedup after.
+The PR's own metadata, its surrounding conversation, its refs, the diff, the
+pending-review check and the new-commit count. Used by the pipeline before any
+agent runs, and by review.posting after. Each accepts the consolidated
+`gh.pr_data.PRData` where it has one and answers from it without a call.
+
+The consolidated query itself is `gh.pr_data`; the paginated connections and
+their page sizes are `gh.pr_pages`.
 
 The transport is not here. ``gh.client`` owns running gh, the timeout tiers and
 the rate-limit ladder; this module owns what the review system asks for and how
@@ -3209,6 +3273,71 @@ code, not an invitation to rebuild the path elsewhere: this module is the owner,
 and another repo that wants to know what has been reviewed asks the CLI (see
 ``review.listing``) rather than deriving where a review would sit.
 
+## Batch
+
+Running rebase, comments and self-review across many open PRs at once: admission, scheduling, step processes, and the decisions a run waits on.
+
+### batch/admission.py
+
+Decide whether the host can take one more batch step right now.
+
+Concurrency is not a number chosen up front. A step starts only when free
+memory, minus a reserve kept for every other service on the host, covers what
+that step has been seen to need, and neither CPU nor memory is under pressure.
+Running steps are never paused or killed; admission only gates the next start.
+
+### batch/events.py
+
+NDJSON progress events for live consumers of `pr batch run`.
+
+The state file is authoritative; events only save a consumer from polling it.
+
+### batch/model.py
+
+The persisted shape of a `pr batch` run.
+
+Enum string values are written to state files and NDJSON events, so they are
+stable: renaming a member is free, changing a value is a schema break and
+bumps `Run.schema_version`.
+
+### batch/outcomes.py
+
+Turn what a finished step left behind into a step status and decisions.
+
+### batch/plan.py
+
+Pre-flight: which of my open PRs need which batch steps.
+
+One GraphQL search covers every repo and asks only for fields whose cost does
+not scale with comment volume — no nested `comments` connection — so a plan
+over dozens of PRs costs a point or two of the hourly GraphQL budget.
+
+### batch/resolve.py
+
+Apply an operator's answer to one decision, then move the item on.
+
+### batch/scheduler.py
+
+Drive a run: admit steps, reap them, and stop when only decisions remain.
+
+### batch/steps.py
+
+The child `pr` processes a batch run spawns, and the worktrees they run in.
+
+Every step is its own process so concurrent steps share no interpreter state,
+and each gets a new session with stdin closed: no prompt in any child can
+reach a terminal, whether the batch runs under a server or in a shell.
+
+### batch/store.py
+
+Where a `pr batch` run lives on disk; the only module that touches it.
+
+    <state_dir>/batch/<run-id>/state.json       authoritative run state
+    <state_dir>/batch/<run-id>/run.lock         held by the live scheduler
+    <state_dir>/batch/<run-id>/requests/*.json  decisions waiting to be applied
+    <state_dir>/batch/<run-id>/cancel           {"kill": bool} once cancel is asked
+    <state_dir>/batch/<run-id>/logs/*.log       stderr of each step attempt
+
 ## AI backends
 
 The provider plumbing every AI call goes through — backend selection, streamed events, usage accounting, and quota.
@@ -3350,10 +3479,11 @@ against the model that will actually serve the request.
 The `system` and `tools` arguments exist for that first property and no caller
 supplies them yet. `claude -p` assembles both inside the CLI, so a review has
 no handle on the text its agent will actually be sent; a count taken here is
-the prompt alone. Measured against session logs, a real request runs 9.5k to
-48.8k tokens above it — roughly 26k for a full review phase and 11k for a
-lighter one. A caller comparing a count against a context window owes itself
-that margin until the two are wired together.
+the prompt alone. A real request runs well above it, by an amount that differs
+per backend; `review.budget` owns the measured figures and the reserve built
+from them (see the comment above `OVERHEAD_RESERVE_TOKENS`). A caller comparing
+a count against a context window owes itself that margin until the two are
+wired together.
 
 The review pipeline records each count in `prompt-stats.json` (see
 `review.prompt`). That write, the `WORKBENCH_AI_MEASURE_TOKENS=0` opt-out, and
@@ -3850,6 +3980,55 @@ against the same file.
 Nothing here raises. Registration is a side effect of a command that was run for
 some other reason, and a hook that failed because a state file was unwritable
 would cost the user their session for a bookkeeping entry.
+
+### core/children.py
+
+The long-lived children this process started, and stopping all of them.
+
+An agent run is a tree: this process, the agents it starts on worker threads,
+and the tools each agent starts. Pi's agents lead sessions of their own, so a
+supervisor's kill aimed at this process's group never reaches them — and the
+cleanup each spawn site had was an `except BaseException` that only an
+exception *on that worker thread* could trigger. Neither stop this process
+receives arrives that way. SIGTERM's default disposition ended the process
+with no Python code run at all; SIGINT raised in the main thread only, which
+then waited in the pool's shutdown for agents nobody had told to stop. Either
+way the agents ran on against the account with nothing holding a handle to
+them.
+
+So the stop is the owner's to deliver, and the owner needs to know what it
+owns. `spawn` starts a child and records it; `forget` drops it once its owner
+has reaped it. `stop_all` is what the entry point's signal handler calls: it
+refuses every spawn from then on, asks every recorded child to stop, and kills
+whatever is still there a grace period later.
+
+`stop_all` signals and does not wait. It runs inside a signal handler on the
+main thread, which may itself be the thread blocked reaping one of these
+children — waiting there would wait on itself. Each owner keeps its own
+`terminate` for the path it unwinds through, and the timer covers a child
+whose owner never gets the chance.
+
+TERM before KILL, everywhere. Pi stops the tool processes it started detached
+only when it receives SIGTERM itself; a SIGKILL aimed at its group skips that
+and leaves the tools running in groups of their own. The grace is the time
+that cleanup gets.
+
+What is recorded here is what nothing else would stop: a child in a session of
+its own, or one owned by a worker thread the stop's exception never reaches.
+A `subprocess.run` on the main thread — the stateless agent prompts, git, gh —
+needs none of this. `run` kills its child on any exception, the `SystemExit`
+the stop handler raises included. By default none of those leave this process's
+group, so a supervisor's group kill reaches them too; `core.proc.run` with
+`kill_process_group=True` does start its child in a session of its own, and
+kills that group itself on the way out of any exception.
+
+Refusing new spawns matters as much as stopping the running ones. A thread
+pool's shutdown still runs the work queued behind the agents it was waiting
+on, so without the refusal a stopped review would start the next group's
+agent on its way out.
+
+Stdlib and `core.timeouts` only, like `core.proc`, which installs the handler
+that calls this.
 
 ### core/cli_reference.py
 
@@ -4425,6 +4604,20 @@ wrapper was holding is released and the work runs on untracked.
 One owner rather than a copy per wrapper. A second implementation of a
 primitive this subtle is how the two come to disagree, and the bug above was
 already present in both files in the same shape.
+
+### core/suite_watch.py
+
+Supervise a test-suite child and say what it is doing.
+
+A parallel bats run with GNU ``--keep-order`` buffers TAP until the current
+head file finishes, so a slow suite and a stuck one look the same: silence.
+This wrapper leaves the child's stdout alone — the TAP / pytest stream the
+pre-push hook parses — writes one heartbeat line to stderr every
+``TEST_HEARTBEAT_SECS``, and exits with the child's status.
+
+Waiting on the child is :data:`core.timeouts.UNBOUNDED` because the suite *is*
+the work. A bound would convert a large or contended run into a false failure;
+the heartbeat is what makes that wait observable rather than a hang.
 
 ### core/text.py
 
@@ -5832,6 +6025,19 @@ dispatch, and a reader running `ai/bin/pr --tool-schema` directly should not
 pay for a context resolution to get it. The MCP server no longer spawns this
 binary to discover the tool; it imports `cli.schema.tool_schema` directly.
 
+### cli/pr_batch.py
+
+`pr batch` — run rebase, comments and self-review across my open PRs.
+
+    pr batch plan   --checkout DIR …           which PRs need which steps (JSON)
+    pr batch run    --checkout DIR … [opts]    start a run; NDJSON events on stdout
+    pr batch resume [RUN_ID]                   continue a waiting or interrupted run
+    pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
+    pr batch cancel [RUN_ID] [--kill]
+    pr batch status [RUN_ID]
+
+Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions.
+
 ### cli/pr_commands.py
 
 The three `pr` subcommands that used to be defined inside the binary.
@@ -5944,6 +6150,7 @@ Usage:
   pr-rebase --abort                   # abort in-progress rebase
   pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref, used as given (or --base)
   pr-rebase --fork-point <ref>        # replay only the commits after <ref>
+  pr-rebase --no-verify               # force-push without running the pre-push hook
   pr-rebase --repo-dir <path>         # specify worktree directory
 
 ### cli/registry.py
@@ -5965,7 +6172,7 @@ it is a user-visible change, not a cosmetic one.
 
 `handler` is a `"<module>:<attr>"` string resolved by importlib at dispatch,
 not a callable: an eager import would pull every delegate into `pr --help`.
-All nine name an importable function, resolved and called through
+All ten name an importable function, resolved and called through
 `core.publishing.call_entry_point` — by `cli.dispatch` for most of them, and
 directly by `ai/bin/pr`'s `cmd_review`/`cmd_comments` and by
 `cli.review_modes`'s `post`/`repair` for the rest.
@@ -6133,8 +6340,8 @@ Three related documents, all of them derived rather than written down twice:
 
 That last one is the part D2 specified and nothing built. `pr --tool-schema`
 answers for the whole command and has no `output_schema`, because one of the
-nine subcommands prints a `PRState` document and the other eight print prose
-— declaring one schema for all nine made the MCP server reject the eight. So
+ten subcommands prints a `PRState` document and the other nine print prose
+— declaring one schema for all ten made the MCP server reject the nine. So
 the honest per-command contract is the delegate's, and `subcommand_schema`
 is how a consumer asks for it.
 

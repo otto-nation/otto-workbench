@@ -344,7 +344,6 @@ def _push_output(r: core.proc.CmdResult) -> str:
 
 def remote_head(
     wt_path: str | Path, branch: str, *, remote: str = "origin",
-    env: dict[str, str] | None = None,
 ) -> str | None:
     """The commit *remote* holds for *branch*.
 
@@ -363,14 +362,9 @@ def remote_head(
     since git sorts its output, the impostor can come first. The full refname
     narrows the query and comparing it again reads the one line that is actually
     an answer to the question.
-
-    `env` is passed straight to `git.client.run`, undefaulted: a caller that
-    knows a hook's `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` may be sitting in
-    the inherited environment should clear it with `gitenv.git_env_clear()` and
-    pass the result here, the same as it would for any other read of *wt_path*.
     """
     ref = f"refs/heads/{branch}"
-    r = git.client.run("ls-remote", "--heads", remote, ref, cwd=wt_path, env=env)
+    r = git.client.run("ls-remote", "--heads", remote, ref, cwd=wt_path)
     if not r.ok:
         return None
     for line in r.stdout.splitlines():
@@ -380,10 +374,7 @@ def remote_head(
     return ""
 
 
-def holds(
-    wt_path: str | Path, sha: str, *, remote: str = "origin",
-    env: dict[str, str] | None = None,
-) -> bool:
+def holds(wt_path: str | Path, sha: str, *, remote: str = "origin") -> bool:
     """Whether *remote* already has *sha*, asked of the remote itself.
 
     The question a caller asks before pushing something again, and before citing
@@ -398,12 +389,8 @@ def holds(
     Ancestry, not equality: a commit from an earlier round is on the remote once
     a later one carrying it is, so the question is whether the remote's tip
     descends from *sha*.
-
-    `env`, as on `remote_head`, reaches both git calls this makes.
     """
-    tip = remote_head(
-        wt_path, git.client.current_branch(cwd=wt_path), remote=remote, env=env,
-    )
+    tip = remote_head(wt_path, git.client.current_branch(cwd=wt_path), remote=remote)
     if not tip:
         return False
     return git.client.ok("merge-base", "--is-ancestor", sha, tip, cwd=wt_path)
@@ -411,10 +398,9 @@ def holds(
 
 def _verify(
     wt_path: str | Path, sha: str, branch: str, remote: str, output: str,
-    env: dict[str, str] | None = None,
 ) -> PushResult:
     """Ask the remote what it holds, and turn that into an outcome."""
-    held = remote_head(wt_path, branch, remote=remote, env=env)
+    held = remote_head(wt_path, branch, remote=remote)
     if held is None:
         return PushResult(PushStatus.UNVERIFIED, sha, branch,
                           output=output, remote=remote)
@@ -425,9 +411,7 @@ def _verify(
                       output=output, remote=remote)
 
 
-def _retry_block(
-    wt_path: str | Path, sha: str, env: dict[str, str] | None = None,
-) -> Retry | None:
+def _retry_block(wt_path: str | Path, sha: str) -> Retry | None:
     """Why a retry would be unsafe, or None when it is safe.
 
     `--no-verify` is what makes the retry cheap, and it is only defensible
@@ -449,7 +433,6 @@ def _retry_lost(
     remote: str,
     args: Sequence[str],
     trail: Trail | None,
-    env: dict[str, str] | None = None,
 ) -> PushResult:
     """One more attempt at a push that vanished, then the final answer.
 
@@ -466,7 +449,7 @@ def _retry_lost(
                    data={"sha": lost.sha, "branch": lost.branch})
     core.log.warn("push did not land — retrying once without the gates")
 
-    r = git.client.run("push", "--no-verify", *args, cwd=wt_path, env=env)
+    r = git.client.run("push", "--no-verify", *args, cwd=wt_path)
     output = _push_output(r)
     if not r.ok and not _dropped(r):
         artifact = trail.failure(
@@ -480,7 +463,7 @@ def _retry_lost(
     # A retry the connection dropped is verified for the same reason the first
     # attempt was: git stopped being able to say what arrived, and reporting it
     # as refused without asking is the misreading this module exists to remove.
-    verified = _verify(wt_path, lost.sha, lost.branch, remote, output, env=env)
+    verified = _verify(wt_path, lost.sha, lost.branch, remote, output)
     return dataclasses.replace(
         verified, retry=Retry.ATTEMPTED, args=lost.args,
         refusal=None if r.ok else Refusal.DROPPED)
@@ -495,7 +478,6 @@ def push(
     remote: str = "origin",
     args: Sequence[str] = (),
     trail: Trail | None = None,
-    env: dict[str, str] | None = None,
 ) -> PushResult:
     """Push, then confirm the remote moved. See the module docstring.
 
@@ -509,12 +491,6 @@ def push(
     untouched rather than shell out twice to describe a push it will not make.
     That is why a held result carries only what the caller passed in — no caller
     reads a SHA off one, and the gate's own draft names the command instead.
-
-    `env` reaches every git call this makes, including the verification and the
-    one retry: a caller sitting under a process that exports `GIT_DIR` (a hook
-    that invoked `pr create`, say) should pass `gitenv.git_env_clear()` so the
-    push, and the `ls-remote` that confirms it landed, answer for *wt_path*
-    rather than for whatever repository the inherited environment names.
     """
     argv = tuple(args)
     if gated and not core.publishing.enabled():
@@ -524,7 +500,7 @@ def push(
     sha = sha or git.client.head_sha(cwd=wt_path)
     branch = branch or git.client.current_branch(cwd=wt_path)
 
-    r = git.client.run("push", *argv, cwd=wt_path, env=env)
+    r = git.client.run("push", *argv, cwd=wt_path)
     output = _push_output(r)
     if not r.ok and not _dropped(r):
         artifact = trail.failure(
@@ -539,12 +515,12 @@ def push(
         trail.warn("push", "the connection dropped mid-push — asking the remote "
                            "what it holds", data={"sha": sha, "branch": branch})
 
-    verified = _verify(wt_path, sha, branch, remote, output, env=env)
+    verified = _verify(wt_path, sha, branch, remote, output)
     result = dataclasses.replace(
         verified, args=argv, refusal=None if r.ok else Refusal.DROPPED)
     if result.status is not PushStatus.LOST:
         return result
-    return _retry_lost(wt_path, result, remote, argv, trail, env=env)
+    return _retry_lost(wt_path, result, remote, argv, trail)
 
 
 def _push_command(wt_path: str | Path, args: Sequence[str]) -> str:

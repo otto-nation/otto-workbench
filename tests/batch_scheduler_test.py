@@ -151,6 +151,40 @@ def test_local_head_move_reenables_review():
     assert h.run.items[0].head_moved
 
 
+def test_confirm_hands_replan_the_worktree_head():
+    seen = []
+
+    def replan(r):
+        seen.append(r.local_head)
+        return r
+
+    h = Harness([row(1)], replan=replan, heads={"/wt/b1": "local1"})
+    h.sched.run_until_blocked()
+    assert seen and set(seen) == {"local1"}
+
+
+def test_explicit_selection_runs_even_when_replan_says_not_needed():
+    done = {batch.model.Step.REBASE: NO, batch.model.Step.COMMENTS: NO, batch.model.Step.REVIEW: NO}
+    h = Harness([row(1, done)], selected={"o/r#1": [batch.model.Step.REVIEW]},
+                replan=lambda r: row(1, done))
+    h.sched.run_until_blocked()
+    assert [a[1] for a in h.spawned] == ["review"]
+
+
+def test_unselected_step_is_still_skipped_when_replan_says_not_needed():
+    done = {batch.model.Step.REBASE: NO, batch.model.Step.COMMENTS: NO, batch.model.Step.REVIEW: NO}
+    h = Harness([row(1, ALL)], replan=lambda r: row(1, done))
+    h.sched.run_until_blocked()
+    assert h.spawned == []
+
+
+def test_explicit_selection_still_skips_a_closed_pr():
+    h = Harness([row(1)], selected={"o/r#1": [batch.model.Step.REVIEW]}, replan=lambda r: None)
+    h.sched.run_until_blocked()
+    assert h.run.items[0].status is batch.model.ItemStatus.SKIPPED_CLOSED
+    assert h.spawned == []
+
+
 def test_closed_pr_is_skipped_without_running_anything():
     h = Harness([row(1)], replan=lambda r: None)
     assert h.sched.run_until_blocked() is batch.model.RunStatus.DONE
@@ -224,6 +258,18 @@ def test_new_run_honours_explicit_selection():
                       steps=list(batch.model.STEP_ORDER), selected={"o/r#1": [batch.model.Step.REVIEW]}, pool=1,
                       auto_publish=[])
     assert run.items[0].step(batch.model.Step.REVIEW).status is batch.model.StepStatus.PENDING
+
+
+def test_new_run_marks_only_selected_steps_explicit():
+    run = batch.scheduler.new_run([row(1)], steps=list(batch.model.STEP_ORDER),
+                                  selected={"o/r#1": [batch.model.Step.REVIEW]}, pool=1,
+                                  auto_publish=[])
+    assert [(s.step, s.explicit) for s in run.items[0].steps] == [
+        (batch.model.Step.REBASE, False), (batch.model.Step.COMMENTS, False),
+        (batch.model.Step.REVIEW, True)]
+    planned = batch.scheduler.new_run([row(1)], steps=list(batch.model.STEP_ORDER),
+                                      selected=None, pool=1, auto_publish=[])
+    assert not any(s.explicit for s in planned.items[0].steps)
 
 
 def test_mark_interrupted_turns_running_steps_into_decisions():

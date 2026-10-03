@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import gh.client
+import git.client
+import git.topology
 import pr.context
 import pr.settlement
 import pr.state
@@ -68,6 +70,9 @@ class PlanRow:
     head_sha: str
     is_draft: bool
     needs: dict[Step, StepNeed] = field(default_factory=dict)
+    # HEAD of the branch's local worktree, or "" when none is checked out.
+    # Unpushed commits live here, so a self-review is judged against it.
+    local_head: str = ""
 
     @property
     def key(self) -> str:
@@ -100,13 +105,23 @@ def comments_need(threads: list[dict], settled: set[str]) -> StepNeed:
     return StepNeed(True, f"{len(owed)} unresolved thread{'' if len(owed) == 1 else 's'}")
 
 
-def review_need(review_file: Path, head_sha: str) -> StepNeed:
+def review_need(review_file: Path, head_sha: str, *, local_head: str = "") -> StepNeed:
+    """Whether the self-review covers the commit a review would publish.
+
+    That commit is the local worktree's HEAD when there is one — it carries any
+    unpushed fix commits — and GitHub's head otherwise, where nothing local exists.
+    """
     if not review_file.is_file():
         return StepNeed(True, "no self-review yet")
+    subject = local_head or head_sha
     reviewed = review.document.ReviewHeader.parse(review_file.read_text()).head_sha
-    if reviewed and head_sha.startswith(reviewed):
+    if reviewed and subject.startswith(reviewed):
         return StepNeed(False, "self-review is current")
-    return StepNeed(True, f"self-review is of {reviewed[:7] or 'an unknown head'}")
+    of = f"self-review is of {git.client.abbrev(reviewed) or 'an unknown head'}"
+    if local_head and local_head != head_sha:
+        return StepNeed(True, f"{of}; local HEAD {git.client.abbrev(local_head)} "
+                              f"differs from GitHub's {git.client.abbrev(head_sha)}")
+    return StepNeed(True, of)
 
 
 def settled_ids(repo_dir: str, branch: str) -> set[str]:
@@ -125,7 +140,13 @@ def _repo_slug(repo_dir: str) -> str:
     return pr.context.detect_repo(repo_dir)
 
 
-def _row(node: dict, repo_dir: str, repo: str) -> PlanRow:
+def _local_heads(repo_dir: str) -> dict[str, str]:
+    """Branch → HEAD for every worktree of *repo_dir* that has a branch checked out."""
+    return {e.branch: git.client.head_sha(cwd=str(e.path))
+            for e in git.topology.worktree_entries(repo_dir) if e.branch}
+
+
+def _row(node: dict, repo_dir: str, repo: str, local_head: str = "") -> PlanRow:
     branch, head = node["headRefName"], node["headRefOid"]
     threads = (node.get("reviewThreads") or {}).get("nodes") or []
     return PlanRow(
@@ -134,20 +155,25 @@ def _row(node: dict, repo_dir: str, repo: str) -> PlanRow:
         needs={
             Step.REBASE: rebase_need(node.get("mergeStateStatus") or "UNKNOWN"),
             Step.COMMENTS: comments_need(threads, settled_ids(repo_dir, branch)),
-            Step.REVIEW: review_need(_review_file(repo, branch), head),
+            Step.REVIEW: review_need(_review_file(repo, branch), head, local_head=local_head),
         },
+        local_head=local_head,
     )
 
 
 def rows_from_search(data: dict, repo_dirs: dict[str, str]) -> list[PlanRow]:
     by_fold = {slug.casefold(): slug for slug in repo_dirs}
+    heads: dict[str, dict[str, str]] = {}
     rows = []
     for n in (data.get("search") or {}).get("nodes") or []:
         name = (n.get("repository") or {}).get("nameWithOwner") or ""
         slug = by_fold.get(name.casefold())
         if slug is None:
             continue
-        rows.append(_row(n, repo_dirs[slug], slug))
+        repo_dir = repo_dirs[slug]
+        if repo_dir not in heads:
+            heads[repo_dir] = _local_heads(repo_dir)
+        rows.append(_row(n, repo_dir, slug, heads[repo_dir].get(n.get("headRefName", ""), "")))
     return sorted(rows, key=lambda r: (r.repo, r.pr))
 
 
@@ -186,9 +212,10 @@ def build_plan(repo_dirs: list[str]) -> Plan:
 
 
 def replan_row(row: PlanRow) -> PlanRow | None:
+    """Re-read one PR from GitHub, judging its review against ``row.local_head``."""
     owner, name = row.repo.split("/", 1)
     node = (_graphql(_ONE, {"owner": owner, "name": name, "number": row.pr})
             .get("repository") or {}).get("pullRequest") or {}
     if node.get("state") != "OPEN":
         return None
-    return _row(node, row.repo_dir, row.repo)
+    return _row(node, row.repo_dir, row.repo, row.local_head)

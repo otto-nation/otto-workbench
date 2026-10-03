@@ -33,12 +33,14 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
             pool: int, auto_publish: list[Step], now: datetime | None = None) -> Run:
     now = now or datetime.now(timezone.utc)
     items = []
+    explicit = selected is not None
     for r in rows:
         chosen = selected.get(r.key, []) if selected is not None else \
             [s for s in steps if r.needs.get(s) and r.needs[s].needed]
         if not chosen:
             continue
-        recs = [StepRecord(s, StepStatus.PENDING if s in chosen else StepStatus.SKIPPED)
+        recs = [StepRecord(s, StepStatus.PENDING if s in chosen else StepStatus.SKIPPED,
+                           explicit=explicit and s in chosen)
                 for s in STEP_ORDER if s in steps]
         items.append(Item(key=r.key, repo=r.repo, repo_dir=r.repo_dir, pr=r.pr, branch=r.branch,
                           head_sha=r.head_sha, steps=recs))
@@ -46,8 +48,9 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
                steps=list(steps), pool=pool, auto_publish=list(auto_publish), items=items)
 
 
-def row_for(item: Item) -> PlanRow:
-    return PlanRow(item.repo, item.repo_dir, item.pr, "", item.branch, item.head_sha, False, {})
+def row_for(item: Item, local_head: str = "") -> PlanRow:
+    return PlanRow(item.repo, item.repo_dir, item.pr, "", item.branch, item.head_sha, False, {},
+                   local_head=local_head)
 
 
 def _decide(run: Run, item: Item, step: str, kind: DecisionKind, payload: dict, *,
@@ -213,7 +216,7 @@ class Scheduler:
 
     def _confirm(self, item: Item, rec: StepRecord) -> StepRecord | None:
         try:
-            fresh = self._replan(row_for(item))
+            fresh = self._replan(row_for(item, self._head(item.worktree)))
         except batch.plan.PlanError as exc:
             _decide(self.run, item, rec.step.value, DecisionKind.FAILED,
                     {"reason": "github", "detail": str(exc)}, emit=self._emit)
@@ -224,7 +227,7 @@ class Scheduler:
                        status=item.status.value)
             return None
         need = fresh.needs.get(rec.step)
-        forced = rec.step is Step.REVIEW and item.head_moved
+        forced = rec.explicit or (rec.step is Step.REVIEW and item.head_moved)
         if need is not None and not need.needed and not forced:
             rec.status = StepStatus.SKIPPED
             return None

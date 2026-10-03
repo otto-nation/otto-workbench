@@ -15,6 +15,14 @@ repo; each of these fires before the first agent call.
 (``supersession_override``) because ``--post``/``--no-post`` also set the
 ``force`` local that suppresses confirmation prompts, and an unattended run is
 the one the refusal most has to survive.
+
+A fourth gate, ``refuse_unresolvable_base``, stops a run whose operator ``--base``
+names a branch that exists in neither ``origin/`` nor locally. Every range would
+then come back empty and the review would report no findings for a branch it
+never read. Derived bases are not refused: they are read out of git, so a miss
+is a gap in the derivation rather than a typo, and ``review.collect.base_ref``'s
+fallbacks handle it. ``--recover`` is exempt from supersession, on both entry
+points — it finishes a run whose spend has already been made.
 """
 
 # doc-group: pipeline

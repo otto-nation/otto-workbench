@@ -358,7 +358,115 @@ EOF
 @test "--sets lists every source set" {
   run main --sets
   [ "$status" -eq 0 ]
-  [ "$output" = "$(printf 'ai-lib\nlib')" ]
+  [ "$output" = "$(printf 'ai-lib\nlib\nscripts')" ]
+}
+
+# ── The scripts set ──────────────────────────────────────────────────────────
+
+# _registry DIR SECTION [META_EXTRA] TOOLS_YAML — a bindir registry at
+# SOURCE_ROOT/DIR/registry.yml declaring TOOLS_YAML under SECTION.
+_registry() {
+  mkdir -p "$SOURCE_ROOT/$1"
+  printf 'meta:\n  section: "%s"\n  validation: bindir\n  source: %s\n%s\ntools:\n%s\n' \
+    "$2" "$1" "$3" "$4" > "$SOURCE_ROOT/$1/registry.yml"
+}
+
+# _tool NAME VISIBILITY [EXTRA] — one tools[] entry.
+_tool() {
+  printf '  - name: %s\n    permission: false\n    visibility: %s\n    description: "x"\n' "$1" "$2"
+  if [[ -n "${3:-}" ]]; then printf '    %s\n' "$3"; fi
+}
+
+# _bash_script PATH TEXT — an executable bash script whose header is TEXT.
+_bash_script() {
+  mkdir -p "$(dirname "$SOURCE_ROOT/$1")"
+  printf '#!/usr/bin/env bash\n# %s\nset -e\n' "$2" > "$SOURCE_ROOT/$1"
+  chmod +x "$SOURCE_ROOT/$1"
+}
+
+@test "scripts: a registry's tools are rendered under their names, from their headers" {
+  _registry bin "Workbench Scripts" "" "$(_tool wt-init brief; _tool alpha full)"
+  _bash_script bin/wt-init "Turn a clone into a bare container."
+  _bash_script bin/alpha "First in name order."
+
+  run main --set scripts --group workbench-scripts
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf '### `alpha`\n\nFirst in name order.\n\n### `wt-init`\n\nTurn a clone into a bare container.')" ]
+}
+
+@test "scripts: a Python script's docstring is its doc block" {
+  _registry ai/bin "AI Tooling" "" "$(_tool otto-log brief)"
+  mkdir -p "$SOURCE_ROOT/ai/bin"
+  printf '#!/usr/bin/env python3\n"""Query the trail."""\n# a comment that is not the doc\nimport sys\n' \
+    > "$SOURCE_ROOT/ai/bin/otto-log"
+
+  run main --set scripts --group ai-tooling
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf '### `otto-log`\n\nQuery the trail.')" ]
+}
+
+@test "scripts: a hidden tool is out, unless it says reference: true" {
+  _registry bin "Workbench Scripts" "" "$(_tool shown brief; _tool internal hidden; _tool opted hidden 'reference: true')"
+  _bash_script bin/shown "Shown."
+  _bash_script bin/internal "Internal."
+  _bash_script bin/opted "Opted in."
+
+  run main --set scripts --group workbench-scripts
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'### `shown`'* ]]
+  [[ "$output" == *'### `opted`'* ]]
+  [[ "$output" != *'internal'* ]]
+}
+
+@test "scripts: reference: false keeps a user-facing tool out" {
+  _registry bin "Workbench Scripts" "" "$(_tool shown brief; _tool quiet full 'reference: false')"
+  _bash_script bin/shown "Shown."
+  _bash_script bin/quiet "Quiet."
+
+  run main --set scripts --group workbench-scripts
+  [ "$status" -eq 0 ]
+  [[ "$output" != *'quiet'* ]]
+}
+
+@test "scripts: a workbench-scoped registry is not read" {
+  _registry bin/local "Workbench Dev Scripts" "  scope: workbench" "$(_tool validate-x brief)"
+  _bash_script bin/local/validate-x "A validator."
+
+  run main --set scripts --groups
+  [ "$status" -eq 0 ]
+  [ "$output" = "" ]
+}
+
+@test "scripts: groups are the registries' sections, as keys" {
+  _registry bin "Workbench Scripts" "" "$(_tool a brief)"
+  _registry ai/bin "AI Tooling" "" "$(_tool b brief)"
+  _bash_script bin/a "A."
+  _bash_script ai/bin/b "B."
+
+  run main --set scripts --groups
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf 'ai-tooling\nworkbench-scripts')" ]
+}
+
+@test "scripts: a tool with a parser gets its flag tables appended, from that parser" {
+  _registry ai/bin "AI Tooling" "" "$(_tool otto-log brief 'parser: ai/bin/otto-log:build_parser'; _tool plain brief)"
+  mkdir -p "$SOURCE_ROOT/ai/bin"
+  printf '#!/usr/bin/env python3\n"""Query the trail."""\n' > "$SOURCE_ROOT/ai/bin/otto-log"
+  _bash_script ai/bin/plain "No parser."
+
+  run main --set scripts --group ai-tooling
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'Query the trail.'$'\n\n''<!-- include: bin/local/generate-cli-reference --tool otto-log --emit tables -->'* ]]
+  [ "$(grep -c 'generate-cli-reference' <<< "$output")" -eq 1 ]
+}
+
+@test "scripts: a tool in the reference whose script has no header fails the render" {
+  _registry bin "Workbench Scripts" "" "$(_tool bare brief)"
+  printf '#!/usr/bin/env bash\nset -e\n' > "$SOURCE_ROOT/bin/bare"
+
+  run main --set scripts --group workbench-scripts
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"bin/bare has no doc block"* ]]
 }
 
 @test "the ai-lib set renders module docstrings under their own heading" {

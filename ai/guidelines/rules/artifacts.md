@@ -3,6 +3,13 @@
 Context files other tools in this workbench regenerate for you. Each is written
 on a schedule and read at session start; none is authored by hand.
 
+"In the project" below means the worktree, never a bare-repo container. A session
+that started at a container is told so — a `Session root:` line under Claude Code, a
+`container_context` section under Pi — and that message names the worktree. Read every
+project artifact, and run every git and repo command, there. The repo's own
+`CLAUDE.md` is part of what such a session is missing under Claude Code: read it from
+that worktree before acting on the repo.
+
 ## Machine Profile
 
 If `~/.claude/machine/machine.md` exists, read it at session start — it contains

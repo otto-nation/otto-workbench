@@ -7,6 +7,24 @@ session logs, and fetching the PR metadata a run starts from.
 The run ends when the review file is written — what happens to the findings
 afterwards belongs to review.fix, and removing what the run left behind belongs
 to review.gc, which the orchestrator runs once every phase is done.
+
+Two ways every group ends up unreviewed without a single agent running, and
+each group carries the reason rather than an absence: ``--no-group`` (or the
+effort preset that includes it) and a budget already blown after phase 1. The
+merge still runs and reports every group as skipped; the status header says
+``partial``. ``--no-synthesis`` is the same claim one phase later: the mechanical
+merge is written, synthesis is marked done-and-skipped, and the header must not
+read as a clean review of nothing. ``review.outcome`` and ``review.verdict``
+word that header; this module is the path that takes it.
+
+Self-review vs PR mode is decided here too, at ``fetch_metadata`` /
+``_with_local_diff``. A self-review reads the worktree: the head SHA and the
+changed-file list come from git, never from GitHub. Taking them from the PR
+silently drops every unpushed commit — the diff is local but the file list is
+not, so the review never opens the files those commits touched. When the branch
+already has a PR, its title, body and labels supply context but do not define
+the diff; the run logs the local head whenever it differs from the PR's. PR
+mode reviews the pushed commits only.
 """
 
 # doc-group: pipeline

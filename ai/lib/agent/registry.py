@@ -5,7 +5,12 @@
 One entry per phase, and the entry is the whole declaration — the config key,
 the ``WORKBENCH_AI_*`` override keys, the review directory's filenames and the
 preflight model list are all derived from it, so adding a phase is a member on
-``Phase`` and a spec here.
+``Phase`` and a spec here. Not only the review pipeline: the conflict
+resolutions behind ``pr rebase --fix``, the description ``pr describe`` writes,
+and the thread triage ``pr comments`` runs each resolve their model and thinking
+level from this registry through the same chain, so ``WORKBENCH_AI_REBASE_MODEL``,
+``WORKBENCH_AI_DESCRIBE_THINKING`` and their siblings set those calls' model and
+thinking level the same way they set a review phase's.
 
 The registry is a dict keyed by phase, but it is written as a tuple and keyed
 afterwards: a literal keyed by hand spells every phase name twice and can drift
@@ -21,7 +26,29 @@ the keys it advertises.
 The ``--no-<phase>`` flags at the bottom are the registry read from the command
 line: which phases may be switched off is a property of the specs above, so the
 flags are generated from them rather than listed a second time in each script
-that offers them.
+that offers them. The flags a script has are in its generated flag table in
+``docs/tools.md``, or in ``ai/bin/review --help``.
+
+Phase 1 is one scan chosen from ``SCAN_PHASES``. ``--no-holistic`` alone falls
+back to the scout scan and ``--no-scout`` alone falls back to the holistic
+scan; only both together drop phase 1. ``review.steps._scan_phase`` is the
+choice.
+
+``--no-group`` and ``--no-synthesis`` leave the review *partial* rather than
+clean: the merge still runs, every group reports as skipped, and the status
+header says ``partial``. A review that reviewed nothing must not read like one
+that found nothing — ``review.pipeline`` owns that path.
+
+The ``--effort`` preset drops optional phases the same way. ``low`` skips both
+phase-1 scans, synthesis, and the disprove gate (see ``EFFORT_PRESETS`` in
+``agent.types``). ``--disprove`` buys the gate back from a preset that dropped
+it; ``--no-disprove`` is read off ``skip_phases`` and beats ``--disprove`` —
+``review.phases._should_disprove``.
+
+Each phase's model is resolved elsewhere: ``agent.phases`` layers
+``--model`` / ``WORKBENCH_AI_<PHASE>_MODEL`` / ``WORKBENCH_AI_MODEL`` over the
+default on the spec here, then maps a bare alias (``sonnet``, ``opus``,
+``haiku``) through ``AI_*_MODEL`` / ``ANTHROPIC_DEFAULT_*_MODEL``.
 """
 
 # doc-group: pipeline
@@ -217,6 +244,11 @@ _SPECS: tuple[PhaseSpec, ...] = (
     ),
     PhaseSpec(
         Phase.DESCRIBE, PhaseDomain.DESCRIBE, "Describe",
+        shape=PhaseShape.PROMPT,
+        scales_with_omitted=False,
+    ),
+    PhaseSpec(
+        Phase.CREATE, PhaseDomain.DESCRIBE, "Create",
         shape=PhaseShape.PROMPT,
         scales_with_omitted=False,
     ),

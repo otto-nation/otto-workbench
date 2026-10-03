@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""Render a tool's usage line or flag tables from its own argparse parser.
+
+Usage: bin/local/generate-cli-reference --tool <name> --emit usage|tables
+
+A registry entry that declares `parser:` names where its CLI's parser is built,
+and everything that would otherwise restate the CLI's flags is rendered from
+it here instead:
+
+  usage   one line, every invocation joined by `  |  ` — what
+          generate-tool-context puts in tools.generated.md for the entry
+  tables  markdown flag tables — what generate-doc-reference appends under the
+          script's own header in docs/tools.md
+
+The rendering is core.cli_reference's; this script finds the entry and hands
+over its `parser:`. A tool that is not registered, or that declares no
+`parser:`, fails with exit 1 rather than printing nothing: an empty usage line
+reads as a CLI with no flags.
+
+Environment:
+  REGISTRY_ROOT   Root the registries and `path:attr` parsers resolve against
+                  (default: this checkout)
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+# Path arithmetic rather than `git rev-parse --show-toplevel`: an inherited
+# GIT_DIR makes git answer for the caller's repository instead of this one.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
+
+import config.tool_registry  # noqa: E402
+import core.cli_reference  # noqa: E402
+
+EMITTERS = {
+    "usage": core.cli_reference.usage_line,
+    "tables": core.cli_reference.tables,
+}
+
+
+def _parser_spec(root: Path, name: str) -> str:
+    """The `parser:` of the registered tool called NAME, or exit 1 naming why."""
+    entries = [e for e in config.tool_registry.load_registry_entries(root).values()
+               if e.name == name]
+    if not entries:
+        raise SystemExit(f"generate-cli-reference: no registered tool named {name!r}")
+    spec = entries[0].parser
+    if not spec:
+        raise SystemExit(f"generate-cli-reference: {name!r} declares no parser: in its registry")
+    return spec
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="generate-cli-reference",
+        description="Render a tool's usage line or flag tables from its argparse parser.",
+    )
+    parser.add_argument("--tool", required=True, metavar="name",
+                        help="Registered tool whose parser to render")
+    parser.add_argument("--emit", required=True, choices=sorted(EMITTERS),
+                        help="What to print")
+    args = parser.parse_args(argv)
+
+    root = Path(os.environ.get("REGISTRY_ROOT") or REPO_ROOT)
+    shape = core.cli_reference.load(_parser_spec(root, args.tool), args.tool, root)
+    print(EMITTERS[args.emit](shape))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

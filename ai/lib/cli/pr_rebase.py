@@ -1,7 +1,11 @@
 """Rebase current branch onto its base with conflict detection and AI resolution.
 
 The base is resolved per run, most authoritative source first: an explicit
---onto, then the branch's PR base branch, then the repo's default branch.
+--onto (also spelled --base, as `pr create` and `pr review` spell theirs), then
+the branch's PR base branch, then the repo's default branch. Unlike those two,
+which take a bare branch name, the value here is a ref used verbatim: a bare
+`main` means the local `main`, which may be stale, so name `origin/main` to
+rebase onto the remote.
 
 Manages the git rebase lifecycle: start, resume, abort, and force-push.
 With --fix, automatically resolves merge conflicts using AI.
@@ -22,7 +26,7 @@ Usage:
   pr-rebase --fix --no-push           # resolve conflicts with AI, but do not push
   pr-rebase --force                   # rebase even when the branch already landed
   pr-rebase --abort                   # abort in-progress rebase
-  pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref
+  pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref, used as given (or --base)
   pr-rebase --fork-point <ref>        # replay only the commits after <ref>
   pr-rebase --no-verify               # force-push without running the pre-push hook
   pr-rebase --repo-dir <path>         # specify worktree directory
@@ -284,11 +288,13 @@ def build_parser() -> ToolParser:
         ok_exit_codes=[CONFLICTS_EXIT, REFUSAL_EXIT],
     )
     parser.add_argument("--repo-dir", "--worktree",
-                        dest="repo_dir",
+                        dest="repo_dir", metavar="PATH",
                         help="Git worktree directory")
-    parser.add_argument("--branch", help="Branch name (injected by pr dispatcher)")
-    parser.add_argument("--pr", help="PR number (injected by pr dispatcher)")
-    parser.add_argument("--onto", "--base", dest="onto",
+    parser.add_argument("--branch", metavar="NAME",
+                        help="Branch name (injected by pr dispatcher)")
+    parser.add_argument("--pr", metavar="NUM|URL",
+                        help="PR number or URL (injected by pr dispatcher)")
+    parser.add_argument("--onto", "--base", dest="onto", metavar="REF",
                         help="Ref to rebase onto — overrides the PR's base branch "
                              "and the repo's default branch")
     # git's `<upstream>` argument, which `--onto` alone cannot express: with

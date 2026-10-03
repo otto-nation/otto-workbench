@@ -24,6 +24,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import cli.pr  # noqa: E402
 import cli.registry  # noqa: E402
 import cli.schema  # noqa: E402
 from cli.needs import LOCAL, NONE, REMOTE, Need  # noqa: E402
@@ -108,7 +109,7 @@ def test_only_create_takes_no_target():
 # injection, mode routing — ahead of the callable named here.
 
 _HANDLERS = {
-    "create":   "cli.pr_commands:cmd_create",
+    "create":   "cli.pr_create:cmd_create",
     "status":   "cli.pr_commands:cmd_status",
     "ci":       "cli.ci_check:main",
     "review":   "cli.review_entry:main",
@@ -173,6 +174,30 @@ def test_the_declaration_order_is_the_display_order():
     body = usage[usage.index("Commands:") + 1:]
     helped = [line.split()[0] for line in body[:len(declared)]]
     assert helped == declared
+
+
+def test_the_usage_text_names_every_global_flag_the_parser_declares():
+    """`pr --help` is rendered from `build_global_parser`, not a copy of it.
+
+    The hand-written block omitted the `--worktree` alias; every option string
+    the global parser declares must appear in the text.
+    """
+    usage = cli.pr._build_usage()
+    declared = [s for a in cli.pr.build_global_parser()._actions for s in a.option_strings]
+    assert "--worktree" in declared
+    for flag in declared:
+        assert flag in usage, f"{flag} is global but `pr --help` does not name it"
+
+
+def test_the_global_flags_block_is_bare_flags_with_no_argparse_heading():
+    """`_global_flags_block` leans on private argparse API (`_get_formatter`,
+    `_actions`, a `start_section(None)` heading-less section); this is the case
+    that fails first when an upgrade changes any of them.
+    """
+    block = cli.pr._global_flags_block()
+    assert "usage:" not in block
+    assert "options:" not in block and "optional arguments:" not in block
+    assert block.lstrip().startswith("-")
 
 
 # ── the per-subcommand schema ─────────────────────────────────────────────
@@ -259,7 +284,7 @@ def test_rebase_carries_the_exit_codes_that_are_not_failures():
     assert cli.schema.subcommand_schema("rebase")["ok_exit_codes"] == [3, 4]
 
 
-@pytest.mark.parametrize("command", ["status", "fix", "create", "gc"])
+@pytest.mark.parametrize("command", ["status", "fix", "gc"])
 def test_a_command_pr_runs_itself_reports_no_subcommand_schema(command):
     """No delegate parser, so nothing to report — the union already answered."""
     assert cli.schema.subcommand_schema(command) is None
@@ -291,7 +316,7 @@ def test_every_command_declares_a_need():
 
 
 def test_review_declares_a_need_per_invocation():
-    """`review` is the one spec whose declaration its argv resolves. A bare
+    """`review` declares its need per invocation, off its argv. A bare
     invocation is about to review a PR, so it wants the branch current and it
     needs `gh` to name the PR.
 
@@ -309,6 +334,16 @@ def test_review_declares_a_need_per_invocation():
     self_need = need_for(spec, ["--self"])
     assert self_need == Need(LOCAL, update=True, lock=True)
     assert (self_need.update, self_need.lock) == (plain.update, plain.lock)
+
+
+def test_create_takes_the_run_lock_only_when_it_may_publish():
+    """`--dry-run` pushes nothing and creates nothing, so it holds no lock: a
+    preview must not contend with a real run on the same branch."""
+    spec = COMMANDS["create"]
+    assert need_for(spec, []) == Need(REMOTE, update=False, lock=True)
+    assert need_for(spec, ["--title", "t", "--draft"]) == Need(REMOTE, update=False, lock=True)
+    assert need_for(spec, ["--dry-run"]) == Need(REMOTE, update=False, lock=False)
+    assert need_for(spec, ["--title", "x", "--dry-run"]) == Need(REMOTE, update=False, lock=False)
 
 
 @pytest.mark.parametrize("mode", ["--post", "--repair", "--summary", "--recover"])

@@ -548,8 +548,9 @@ def build_parser(version_string: Callable[[str], str] | None = None) -> argparse
         # one. Registered the other way round, argparse gives the first word to
         # `directory` and then has nothing left for the slug.
         if name == "archive":
-            sub.add_argument("slug", help="Article to retire")
-        sub.add_argument("directory", nargs="?", default=".", help="Where to start looking (default: cwd)")
+            sub.add_argument("slug", metavar="SLUG", help="Article to retire")
+        sub.add_argument("directory", nargs="?", default=".", metavar="DIR",
+                         help="Where to start looking (default: cwd)")
         sub.add_argument("--wiki", metavar="DIR", help="Use this knowledge base instead of searching")
         if name in ("status", "lint", "signals", "sources"):
             sub.add_argument("--json", action="store_true", help="Emit JSON")
@@ -594,7 +595,8 @@ def build_parser(version_string: Callable[[str], str] | None = None) -> argparse
         if name == "ingest":
             sub.add_argument("--stage", metavar="SRC", required=True, help="File to copy into raw/")
             sub.add_argument(
-                "--type", default="file", dest="source_type", help="Source type recorded in frontmatter"
+                "--type", default="file", dest="source_type", metavar="TYPE",
+                help="Source type recorded in frontmatter",
             )
             sub.add_argument("--title", default="", help="Title, used for the filename and frontmatter")
     return parser

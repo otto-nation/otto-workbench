@@ -24,6 +24,8 @@ is the mode-handler contract rather than a path any of them uses today.
 
 # doc-group: cli
 
+import argparse
+import copy
 import json
 import sys
 from collections.abc import Sequence
@@ -157,14 +159,45 @@ def listing(argv: list[str], _ctx: pr.context.ResolvedContext, *,
 # `cmd_review` routes through it, and the two MCP schema helpers derive the
 # versioned invocations from it — none of them restates the set of flags.
 MODES: dict[str, ReviewMode] = {
-    "--post":    ReviewMode(post),
-    "--repair":  ReviewMode(repair),
-    "--summary": ReviewMode(summary),
-    "--recover": ReviewMode(),
+    "--post":    ReviewMode(post, help="Post an existing review to GitHub"),
+    "--repair":  ReviewMode(repair, help="Repair broken review artifacts via summary or rebuild"),
+    "--summary": ReviewMode(summary, help="Print a JSON summary of an existing review"),
+    "--recover": ReviewMode(
+        help="Finish a review whose agents failed, at the commit it started from"),
     "--list":    ReviewMode(listing,
                             need=Need(_NONE, update=False, lock=False),
-                            schema_versions=review.listing.SCHEMA_VERSIONS),
+                            schema_versions=review.listing.SCHEMA_VERSIONS,
+                            help="List every review in the user's state root"),
 }
+
+
+def reference_parser(base: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    """`pr review`'s parser as a reader should see it: *base* plus the modes.
+
+    `review_entry.build_parser` is the `review` binary's parser. Under `pr
+    review` every flag in MODES is a mode routed here before that parser runs,
+    so `--post` posts an existing review rather than the one being run, and
+    `--repair`, `--summary` and `--list` exist only here. The mode's own help
+    therefore replaces the binary's for each of them.
+
+    A deep copy, because argparse's `parents=` shares action objects and the
+    conflict resolution that replaces `--post` would strip the option string
+    off the binary's own parser.
+    """
+    parser = copy.deepcopy(base)
+    parser.prog = "pr review"
+    # Each argument group checks conflicts against its own copy of the
+    # setting, taken when the group was made, so the parser's alone is not
+    # enough.
+    for container in (parser, *parser._action_groups):
+        container.conflict_handler = "resolve"
+    for flag, mode in MODES.items():
+        parser.add_argument(
+            flag,
+            action="store_true",
+            help=f"{mode.help} — a mode; excludes the other mode flags",
+        )
+    return parser
 
 
 def flags_given(argv: Sequence[str]) -> list[str]:

@@ -16,6 +16,25 @@ Getting that wrong publishes a false claim about someone's code.
 What is not here: the summary that renders these endings, the replies that
 announce them, and the argparse layer that spells `--settle`. This module
 decides what happened and records it; the surfaces read the record.
+
+`--settle <id>` is how the operator tells the CLI what they did by hand. It is
+repeatable, and `--as` picks which of the three terminal outcomes to record —
+`fixed` (the default), `dismissed`, or `already_addressed`. From there the thread
+is indistinguishable from one the pass settled: `--finish` replies on it,
+resolves it, and gives it a summary row attributed to the commit that carries
+the change. `--as dismissed` requires `--reason <text>`, which becomes the body
+of the reply; the other two outcomes render no reason and refuse the flag rather
+than swallowing it. `--as fixed` finds the commit from the branch history of the
+line the thread is anchored to, and cites it only once the remote has it — a
+link to a commit still sitting on the machine 404s for the reviewer it was
+written for. Pass `--commit <sha>` when the fix landed somewhere else; a
+`--commit` the remote does not hold is an error rather than a dropped citation.
+When neither resolves, the row reads `Addressed outside the fix pass` and the
+run says so. Naming an id no fix pass recorded is an error listing the threads
+that are waiting on a person. Recording the outcome a thread already carries is
+a no-op that says so; recording a different terminal outcome replaces it.
+Recording is its own step: `--settle` publishes nothing and refuses `--post` and
+every other phase flag alongside it (the argparse layer in `cli.review_threads`).
 """
 
 # ceiling: the two halves are kept in one module for the shared vocabulary

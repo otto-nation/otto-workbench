@@ -66,6 +66,10 @@ class RegistryEntry:
     visibility: Visibility
     when_to_use: str = ""
     usage: str = ""
+    # Where the tool's argparse parser is built, as `module:attr` or
+    # `path:attr`. Set instead of `usage`, which is then rendered from it by
+    # `core.cli_reference` — see `docs/registries.md`.
+    parser: str = ""
 
     @property
     def offered(self) -> bool:
@@ -151,6 +155,7 @@ def _entry(tool: dict) -> RegistryEntry:
         visibility=_visibility(tool.get("visibility")),
         when_to_use=tool.get("when_to_use") or "",
         usage=tool.get("usage") or "",
+        parser=tool.get("parser") or "",
     )
 
 

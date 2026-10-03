@@ -85,23 +85,27 @@ class CommandSpec:
     handler: str | None = None
 
 
+def _create_need(argv: Sequence[str]) -> Need:
+    """`create`'s need: a `--dry-run` pushes and creates nothing, so it takes no lock."""
+    return Need(REMOTE, update=False, lock="--dry-run" not in argv)
+
+
 _SPECS: tuple[CommandSpec, ...] = (
-    # `task pr:create` has no way to accept a target and `create` always acts
-    # on the current branch, so the positional scan has nothing to find here —
-    # only flag values to swallow. `takes_target=False` is what keeps
-    # `pr create --title "…"` from arriving as a dangling --title, and it needs
-    # no arity list of its own: parse_pr_flags in lib/ai/pr.sh stays the single
-    # source of truth for which of create's flags take a value.
-    CommandSpec("create",   "Create a PR (wraps task pr:create)",
-                Need(REMOTE, update=False, lock=True), takes_target=False,
-                handler="cli.pr_commands:cmd_create"),
+    # `create` always acts on the current branch: its target comes from the
+    # global `--branch`/`--repo-dir`, already resolved into the context, and it
+    # declares no positional. `takes_target=False` keeps the positional scan
+    # from reading a flag value — `pr create --title 3057` — as a PR target.
+    # Its need varies by flag, like review's: a preview holds no run lock.
+    CommandSpec("create",   "Create a PR, or preview it with --dry-run",
+                _create_need, takes_target=False,
+                handler="cli.pr_create:cmd_create"),
     CommandSpec("status",   "Show CI, review, and comment status dashboard",
                 Need(LOCAL,  update=False, lock=False),
                 handler="cli.pr_commands:cmd_status"),
     CommandSpec("ci",       "Check CI failures",
                 Need(REMOTE, update=True,  lock=True),  script="ci-check",
                 handler="cli.ci_check:main"),
-    # The one spec whose declaration its own argv resolves. `cli.review_modes`
+    # Like create, a spec whose declaration its own argv resolves. `cli.review_modes`
     # owns the table the resolver reads, so this is an ordinary import rather
     # than something the entry point has to supply from above.
     #

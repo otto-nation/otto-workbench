@@ -1,31 +1,41 @@
 #!/usr/bin/env bash
-# Resolve the workspace directory a repository's plans and specs belong in.
+# Print the workspace directory holding a repository's plans and specs —
+# `<container>/workspace`, outside every checkout.
 #
 # A plan or a spec is about the repository, not about one branch of it. Written
 # inside a worktree it is duplicated across every sibling checkout, invisible
 # from the others, and destroyed by `wt remove` — so it goes at the container,
 # the directory holding the bare `.git` with every worktree as a peer. Nothing
-# there is inside any checkout, which is also why it needs no .gitignore entry.
+# there is inside any checkout, which is also why it needs no `.gitignore` entry.
 #
-# Usage: resolve-workspace [DIR]
-#        DIR defaults to the current directory.
+# ```
+# resolve-workspace [<path>]
+# ```
 #
-# Output: absolute workspace path on stdout — <container>/workspace
-# Exit:   0  resolved
-#         1  DIR is an ordinary clone, which has no container to write into
-#         64 usage error
+# | Flag | Description |
+# |------|-------------|
+# | `-h`, `--help` | Show help |
 #
-# Exit 1 is a refusal and not a fallback. Writing to `<repo>/workspace` in an
+# `<path>` defaults to the current directory.
+#
+# | Exit | Meaning |
+# |------|---------|
+# | `0` | Resolved; the workspace path is on stdout |
+# | `1` | An ordinary clone, which has no container to write into, or a directory that is not in a git repository |
+# | `64` | Usage error |
+#
+# Exit `1` is a refusal and not a fallback. Writing to `<repo>/workspace` in an
 # ordinary clone would put the artifact back inside the checkout, which is the
-# arrangement this exists to end; the repo is converted with `wt-init` instead.
+# arrangement this exists to end; convert the repo with `wt-init` instead.
 #
 # The single owner of this path. Both halves of the answer are borrowed rather
 # than re-derived: `lib/git_layout.sh`'s `git_shared_dir` names the shared git
 # dir, whose parent is the container, and `bin/resolve-worktree` decides whether
-# that parent really is one. `bin/migrations/20260922-rename-issues-jira-url-
-# container.sh` composes the same two for the same reason. `lib/git_layout.py`'s
+# that parent really is one.
+# `bin/migrations/20260922-rename-issues-jira-url-container.sh` composes the
+# same two for the same reason. `lib/git_layout.py`'s
 # `container_dir` is the Python spelling of the pair and returns None exactly
-# where this exits 1; tests/resolve_workspace.bats holds them to one answer.
+# where this exits `1`; `tests/resolve_workspace.bats` holds them to one answer.
 
 set -e
 

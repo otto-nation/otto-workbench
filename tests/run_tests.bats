@@ -107,7 +107,8 @@ machine() {
 @test "both runners are sized from the grant, not the request" {
   # A grant read by only one of them is half a fix: the other still takes the
   # full cap, and two suites still oversubscribe on that half.
-  run grep -cE '(--jobs|-n) "\$\(granted_jobs\)"' "$REPO_ROOT/bin/local/run-tests"
+  run grep -cE 'jobs_flag=\((--jobs|-n) "\$\(granted_jobs\)"\)' \
+    "$REPO_ROOT/bin/local/run-tests"
   [ "$output" -eq 2 ]
 }
 
@@ -259,6 +260,81 @@ report_for() {
   [[ "$output" == *"TEST_JOBS"* ]]
   [[ "$output" == *"at least $TEST_JOBS_FLOOR"* ]]
   [[ "$output" == *"at most $TEST_JOBS_CAP"* ]]
+  [[ "$output" == *"TEST_HEARTBEAT_SECS"* ]]
+}
+
+@test "bats and pytest run under the suite heartbeat" {
+  # A suite not wrapped here is the silent run the heartbeat exists to end.
+  # Pinned by what is wrapped, not by how many call sites there are: no line
+  # may start either runner directly, and every wrapped call must name the
+  # runner it launches.
+  run grep -cE '^[[:space:]]*(bats|pytest)[[:space:]]' "$REPO_ROOT/bin/local/run-tests"
+  [ "$output" -eq 0 ]
+
+  run grep -E '^[[:space:]]*_run_watched[[:space:]]' "$REPO_ROOT/bin/local/run-tests"
+  [ "$status" -eq 0 ]
+  local calls="$output" line
+  while IFS= read -r line; do
+    [[ "$line" =~ _run_watched\ (bats|pytest)\ \"\$watch_jobs\"\ (bats|pytest)\  ]]
+    [ "${BASH_REMATCH[1]}" = "${BASH_REMATCH[2]}" ]
+  done <<< "$calls"
+  [[ "$calls" == *"_run_watched bats "* ]]
+  [[ "$calls" == *"_run_watched pytest "* ]]
+}
+
+# The suite is wrapped through a stub that prints what it was handed, so the
+# jobs the heartbeat announces can be read without starting a suite.
+@test "a serial pytest run announces one job, not the grant" {
+  _run_watched() { printf '%s\n' "$@"; }
+  pytest() { echo "pytest 8.0 (no plugins)"; }
+  # shellcheck disable=SC2034  # read by run_pytest in bin/local/run-tests
+  PYTEST_DEBUG_TEMPROOT=$BATS_TEST_TMPDIR
+  JOBS=12
+  run --separate-stderr run_pytest
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = pytest ]
+  [ "${lines[1]}" = 1 ]
+}
+
+@test "a parallel pytest run announces the granted jobs" {
+  _run_watched() { printf '%s\n' "$@"; }
+  pytest() { echo "pytest 8.0 xdist-3.0"; }
+  # shellcheck disable=SC2034  # read by run_pytest in bin/local/run-tests
+  PYTEST_DEBUG_TEMPROOT=$BATS_TEST_TMPDIR
+  JOBS=12
+  run --separate-stderr run_pytest
+  [ "$status" -eq 0 ]
+  [ "${lines[1]}" = 12 ]
+}
+
+@test "a serial bats run announces one job, not the grant" {
+  _run_watched() { printf '%s\n' "$@"; }
+  command() {
+    if [[ "$1" = -v && "$2" = parallel ]]; then return 1; fi
+    builtin command "$@"
+  }
+  # shellcheck disable=SC2034  # read by run_bats in bin/local/run-tests
+  BATS_RUN_TMPDIR=$BATS_TEST_TMPDIR/bats-run
+  JOBS=12
+  run --separate-stderr run_bats
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = bats ]
+  [ "${lines[1]}" = 1 ]
+}
+
+@test "a parallel bats run announces the granted jobs" {
+  _run_watched() { printf '%s\n' "$@"; }
+  command() {
+    if [[ "$1" = -v && "$2" = parallel ]]; then return 0; fi
+    builtin command "$@"
+  }
+  # shellcheck disable=SC2034  # read by run_bats in bin/local/run-tests
+  BATS_RUN_TMPDIR=$BATS_TEST_TMPDIR/bats-run
+  JOBS=12
+  run --separate-stderr run_bats
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = bats ]
+  [ "${lines[1]}" = 12 ]
 }
 
 @test "sourcing the runner does not start a suite" {

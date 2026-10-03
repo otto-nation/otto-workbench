@@ -103,6 +103,9 @@ NO_DEPS_TESTS = {
     "tests/review_document_support.py",
     # Rule-corpus and registry fixture writers for the retro suites; stdlib only.
     "tests/retro_support.py",
+    # The suite heartbeat's pytest hooks: stdlib only, loaded by conftest as a
+    # plugin, and exercised by suite_watch_test, which carries the deps.
+    "tests/suite_status_support.py",
     # Pi RPC lines and fixture readers; the suites importing it carry the deps.
     "tests/ai_backend_pi_support.py",
     # Session-log line builders; the suites importing it carry the deps.

@@ -199,7 +199,7 @@ project_granted_dirs() {
 # holds the two in step.
 @test "the tracked .claude/.gitignore matches the scaffold's artifact list" {
   local scaffolded
-  scaffolded=$(sed -n 's/^CLAUDE_LOCAL_ARTIFACTS=(\(.*\))$/\1/p' "$REPO_ROOT/ai/claude/steps.sh")
+  scaffolded=$(sed -n 's/^CLAUDE_LOCAL_ARTIFACTS=(\(.*\))$/\1/p' "$REPO_ROOT/ai/claude/scaffold.sh")
   [ -n "$scaffolded" ]
 
   local artifact

@@ -17,18 +17,18 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-import agent.templates
 import core.log
+from agent.backend import selected_backend
 from agent.registry import PHASES
 from core.phases import Phase
 from agent.phases import phase_model
-from review.budget import ladder_target_bytes, prompt_budget_bytes
 from review.paths import phase_output_path
 from review.prompt import (
-    BuiltPrompt, PromptTooLarge, _build_common_sections, _log_prompt_size,
+    BuiltPrompt,
     _prompt_disprove, _prompt_group, _prompt_synthesis, _prompt_single,
     _survey_prompt,
 )
+from review.prompt_fit import fit_rendered_prompt
 from review.scout import format_leads_block, parse_scout_output
 from review.types import ReviewJob
 
@@ -92,13 +92,23 @@ def registered() -> frozenset[Phase]:
     return frozenset(_PHASES)
 
 
-def build_prompt(phase: Phase, job: ReviewJob, *, max_turns: int, **extra) -> str:
+def build_prompt(
+    phase: Phase, job: ReviewJob, *,
+    max_turns: int,
+    prefix: str = "",
+    ladder_bytes: int | None = None,
+    **extra,
+) -> str:
     """Render ``phase``'s prompt for ``job``, with ``max_turns`` turns to spend.
 
     The template and the file the agent is told to write both come off the
     phase's registry entry, so a caller names the phase and nothing else about
     it. ``extra`` carries only what the phase cannot derive — the group's
     identity and the content a later phase reasons over.
+
+    ``prefix`` is prepended before verification so the counted prompt is the
+    one the agent is sent (the group retry hint). ``ladder_bytes`` is an
+    opening ladder target for in-phase overflow recovery.
 
     The byte ceiling is derived from the phase's own model, so a phase pointed
     at a 200k-window model budgets against that rather than against whatever
@@ -120,28 +130,11 @@ def build_prompt(phase: Phase, job: ReviewJob, *, max_turns: int, **extra) -> st
         if spec.output_filename else job.review_file
     )
     template_name = spec.template_for(job.mode)
-
     model = phase_model(phase, job.model or None, job.config)
-    # Two numbers, deliberately: the ladder plans against the lower one so the
-    # markup the render adds afterwards still lands under the ceiling the
-    # prompt is refused at.
-    budget_bytes = prompt_budget_bytes(model)
-
-    common = _build_common_sections(
-        job, max_turns=max_turns, budget_bytes=ladder_target_bytes(model),
+    return fit_rendered_prompt(
+        phase, job, max_turns=max_turns,
+        template_name=template_name, output=output,
+        builder=entry.build, extra=extra, model=model,
+        backend=selected_backend(), prefix=prefix,
+        ladder_bytes=ladder_bytes,
     )
-    built = entry.build(job, common, extra, output)
-    template_vars = built.builder.vars
-    rendered = agent.templates.render(template_name, **template_vars)
-    prompt = _log_prompt_size(
-        template_name, rendered, template_vars, job,
-        label=built.label, cuts=built.builder.cuts, phase=phase,
-        accounting=built.builder.accounting,
-        budget_bytes=budget_bytes, model=model,
-    )
-    if len(prompt.encode()) > budget_bytes:
-        raise PromptTooLarge(
-            template_name, len(prompt.encode()),
-            budget_bytes=budget_bytes, model=model,
-        )
-    return prompt

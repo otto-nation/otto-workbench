@@ -69,6 +69,15 @@ jobs:
   bats-shard:
     name: bats shard ${{ matrix.shard }}
     runs-on: ubuntu-24.04
+    # ~3x the slowest observed bats-shard job on recent main runs (~6 min).
+    # A hang that used to look like a slow suite now fails the job instead of
+    # occupying a runner until the workflow default (360 min). Only the two test
+    # jobs are bounded; the other jobs here still run to that default. The
+    # figure comes from the Actions run history, not from anything in the repo.
+    # The cap includes runner setup (apt, pipx, uv). Re-measure it whenever
+    # tests/weights.tsv is repacked: moving weight between shards moves shard
+    # time toward the cap with no warning.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -152,6 +161,9 @@ jobs:
   test-pytest:
     name: Tests (pytest)
     runs-on: ubuntu-24.04
+    # ~3x the slowest observed pytest job on recent main runs (~2 min), runner
+    # setup included. Re-measure when the pytest suite grows substantially.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

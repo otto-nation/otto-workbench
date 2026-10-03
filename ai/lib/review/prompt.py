@@ -3,9 +3,9 @@
 `PromptBuilder` collects the variables a template is rendered with, and
 `PromptBuilder.fit` is what makes a prompt fit the token budget: it registers
 the sections that can shrink — the pre-collected file contents, the
-incremental delta, and the full diff — after everything fixed is already
-accounted for, and pulls three levers in that order, only as far as the
-shortfall requires. It rewrites the environment section to send the agent
+incremental delta, the commit log, and the full diff — after everything fixed
+is already accounted for, and pulls four levers in that order, only as far as
+the shortfall requires. It rewrites the environment section to send the agent
 after whatever it dropped, and reports the cuts in the prompt's size log. A
 prompt still over budget once every lever is pulled raises `PromptTooLarge`
 rather than being sent: the phase reports it before an agent starts, so it
@@ -41,7 +41,9 @@ from review.budget import (
     FileFit, MIN_DIFF_BYTES,
     fit_files, fixed_preflight_bytes, model_window_tokens,
 )
-from review.collect import PreflightBlock, build_project_context, format_preflight_data
+from review.collect import (
+    PreflightBlock, build_project_context, format_preflight_data, trim_commit_log,
+)
 from review.paths import FILENAME_PROMPT_STATS, review_artifact_path
 from review.prompt_prior import _build_prior_section, _build_unaccounted_section
 from review.prompt_sections import (
@@ -50,7 +52,7 @@ from review.prompt_sections import (
     _build_reply_threads_section, _build_reviews_section,
     _build_state_context_section, _is_incremental,
 )
-from review.types import PreflightData, ReviewJob
+from review.types import PreflightData, PromptVerification, ReviewJob
 
 # The verdicts the prompt offers, written from the same members the review's
 # `## Verdict` line is parsed against — the wording an agent is asked for cannot
@@ -172,6 +174,7 @@ class PromptBuilder:
             files=plan.files,
             skip_project_context=skip_project_context,
             max_diff_bytes=plan.diff_allowance_bytes,
+            commit_log=plan.commit_log,
         )
         self.set("preflight_data", block.text)
         self._rendered_diff_bytes = block.rendered_diff_bytes
@@ -221,6 +224,7 @@ def _build_preflight_section(
     files: FileFit | None = None,
     skip_project_context: bool = False,
     max_diff_bytes: int | None = None,
+    commit_log: str | None = None,
 ) -> PreflightBlock:
     if not job.preflight:
         return PreflightBlock("", 0)
@@ -229,6 +233,7 @@ def _build_preflight_section(
         files=files,
         skip_project_context=skip_project_context,
         max_diff_bytes=max_diff_bytes,
+        commit_log=commit_log,
     )
 
 
@@ -237,6 +242,7 @@ class BudgetLever(StrEnum):
 
     FILE_CONTENTS = "file_contents"
     DELTA = "delta"
+    COMMIT_LOG = "commit_log"
     DIFF_FLOOR = "diff_floor"
 
 
@@ -273,6 +279,8 @@ class Cut:
             )
         if self.lever is BudgetLever.DELTA:
             return f"{self.freed_bytes // 1024}KB of incremental delta"
+        if self.lever is BudgetLever.COMMIT_LOG:
+            return f"{self.freed_bytes // 1024}KB of commit log"
         still_over = f"{self.shortfall_bytes // 1024}KB still over"
         if self.floor_bytes:
             return f"the full diff, floored at {self.floor_bytes // 1024}KB and {still_over}"
@@ -287,7 +295,7 @@ class BudgetAccounting:
     the same measured sections with the diff charged at what it actually
     rendered to. The gap between them is unspent allowance, which is ordinary
     and says nothing. The gap between `accounted_bytes` and the rendered
-    prompt is the figure worth reading — see `_log_prompt_size`.
+    prompt is the figure worth reading — see `log_prompt_size`.
 
     A separate type rather than two more fields on `BudgetPlan`: a plan that is
     sometimes reconciled and sometimes not would leave `accounted_bytes`
@@ -322,6 +330,7 @@ class BudgetPlan:
     files: FileFit
     cuts: tuple[Cut, ...]
     measured_bytes: int = 0
+    commit_log: str = ""
 
     @property
     def allowance_bytes(self) -> int:
@@ -345,16 +354,19 @@ def _fixed_preflight_bytes(
     itself and registered it as its own template variable — `_prompt_group`
     does, scoped to its group's files. Those bytes are already in
     `known_bytes`, so reserving them here as well charges the phase twice for
-    one section and takes the difference out of the diff. Only the commit log
-    is left to reserve in that case; everything else `fixed_preflight_bytes`
-    counts is inside the context the caller already rendered.
+    one section and takes the difference out of the diff. Nothing is reserved in
+    that case: everything `fixed_preflight_bytes` counts is inside the context
+    the caller already rendered, and the commit log is a lever in `_fit_budget`
+    rather than a reserve.
     """
     if not pf:
         return 0
     if skip_project_context:
-        return fixed_preflight_bytes(pf.commit_log, "", "", {}, None)
+        # The commit log is a lever, so skipping the project context leaves
+        # nothing in this reserve — the caller already registered it.
+        return 0
     return fixed_preflight_bytes(
-        pf.commit_log, pf.claude_md, pf.architecture_md, pf.review_checklists,
+        pf.claude_md, pf.architecture_md, pf.review_checklists,
         pf.review_profiles,
     )
 
@@ -396,15 +408,17 @@ def _fit_budget(
 ) -> BudgetPlan:
     """Fit the variable sections into what `known_sections` leaves of the budget.
 
-    Three levers, pulled in this order and only as far as the shortfall
+    Four levers, pulled in this order and only as far as the shortfall
     requires: keep only the pre-collected file contents that still fit, shrink
-    the incremental delta, then floor the full diff at `min_diff`. Contents go
-    first because they are the only section the agent can recover on its own
-    — the worktree is checked out and `fit` rewrites the environment section
-    to send it there — while a diff it is not shown is a change it does not
-    know happened. The first lever ranks what it keeps by `(classify_tier,
-    size)` rather than dropping the whole collection, so a ceiling too low for
-    everything still buys the files most worth having.
+    the incremental delta, trim the commit log (newest first), then floor the
+    full diff at `min_diff`. Contents go first because they are the only
+    section the agent can recover on its own — the worktree is checked out and
+    `fit` rewrites the environment section to send it there — while a diff it
+    is not shown is a change it does not know happened. The commit log sits
+    after the delta so scout and synthesis have a non-diff lever when the
+    fixed sections overflow. The first lever ranks what it keeps by
+    `(classify_tier, size)` rather than dropping the whole collection, so a
+    ceiling too low for everything still buys the files most worth having.
 
     `skip_project_context` says the caller rendered the project context itself
     and registered it, so it is already in `known_sections` and must not be
@@ -439,10 +453,13 @@ def _fit_budget(
     contents = _contents_bytes(scoped)
     files = FileFit(scoped, job.preflight.file_permissions if job.preflight else {}, [])
     delta = _build_delta_section(job.preflight, file_filter=file_filter)
+    commit_log = job.preflight.commit_log if job.preflight else ""
+    log_bytes = len(commit_log.encode())
+    delta_bytes = len(delta.encode())
     cuts: list[Cut] = []
 
-    if contents and measured + contents + len(delta.encode()) + min_diff > budget_bytes:
-        room = max(0, budget_bytes - measured - len(delta.encode()) - min_diff)
+    if contents and measured + contents + delta_bytes + log_bytes + min_diff > budget_bytes:
+        room = max(0, budget_bytes - measured - delta_bytes - log_bytes - min_diff)
         files = fit_files(scoped, files.permissions, room)
         kept = _contents_bytes(files.included)
         cuts.append(Cut(
@@ -452,18 +469,29 @@ def _fit_budget(
         ))
         contents = kept
 
-    delta_room = max(0, budget_bytes - measured - contents - min_diff)
-    if len(delta.encode()) > delta_room:
+    delta_room = max(0, budget_bytes - measured - contents - log_bytes - min_diff)
+    if delta_bytes > delta_room:
         shrunk = _build_delta_section(
             job.preflight, file_filter=file_filter, max_bytes=delta_room,
         )
         cuts.append(Cut(
             BudgetLever.DELTA,
-            freed_bytes=len(delta.encode()) - len(shrunk.encode()),
+            freed_bytes=delta_bytes - len(shrunk.encode()),
         ))
         delta = shrunk
+        delta_bytes = len(delta.encode())
 
-    diff_bytes = budget_bytes - measured - contents - len(delta.encode())
+    commit_room = max(0, budget_bytes - measured - contents - delta_bytes - min_diff)
+    if log_bytes > commit_room:
+        trimmed = trim_commit_log(commit_log, commit_room)
+        cuts.append(Cut(
+            BudgetLever.COMMIT_LOG,
+            freed_bytes=log_bytes - len(trimmed.encode()),
+        ))
+        commit_log = trimmed
+        log_bytes = len(commit_log.encode())
+
+    diff_bytes = budget_bytes - measured - contents - delta_bytes - log_bytes
     if diff_bytes < min_diff:
         # Recorded as a shortfall rather than as bytes freed, because the floor
         # frees nothing: it is what the ladder could not absorb, and so is also
@@ -480,7 +508,8 @@ def _fit_budget(
         diff_allowance_bytes=diff_bytes,
         files=files,
         cuts=tuple(cuts),
-        measured_bytes=measured + contents + len(delta.encode()),
+        measured_bytes=measured + contents + delta_bytes + log_bytes,
+        commit_log=commit_log,
     )
 
 
@@ -496,16 +525,31 @@ def _fit_budget(
 _MEASURE_TOKENS_ENV = "WORKBENCH_AI_MEASURE_TOKENS"
 
 
-def _measured_tokens(
-    prompt: str, phase: Phase | None, model: str,
-) -> tuple[int, str] | None:
-    """The prompt's exact token count and the model it was counted against.
+def _measuring_disabled() -> bool:
+    return os.environ.get(_MEASURE_TOKENS_ENV, "1") == "0"
 
-    The two travel together because a density is uninterpretable without its
-    tokenizer, and resolving the model twice is how the recorded count and the
-    recorded model come to disagree. ``model`` is therefore the one the caller
-    already resolved to derive the budget, not a second resolution of it: the
-    count, the density and the ceiling all have to describe the same model.
+
+def unverified_reason(phase: Phase | None) -> str:
+    """Why `measured_tokens` has no count: the one owner of that vocabulary.
+
+    `disabled` is the opt-out, `no_phase` is a caller that named no phase, and
+    `unavailable` is everything else — the counter was asked and had no answer.
+    """
+    if _measuring_disabled():
+        return "disabled"
+    if phase is None:
+        return "no_phase"
+    return "unavailable"
+
+
+def measured_tokens(prompt: str, phase: Phase | None, model: str) -> int | None:
+    """The prompt's exact token count against ``model``.
+
+    ``model`` is the one the caller already resolved to derive the budget, not
+    a second resolution of it: the count, the density and the ceiling all have
+    to describe the same model, and a density is uninterpretable without its
+    tokenizer. The caller keeps the model it passed in rather than being handed
+    it back.
 
     This is the rendered prompt only. The system prompt and tool schemas the
     CLI adds are charged to the same request and are not visible from here, so
@@ -516,10 +560,9 @@ def _measured_tokens(
     deliberately not distinguished here: both leave the stats record without a
     token count, which is the only thing a reader can act on.
     """
-    if os.environ.get(_MEASURE_TOKENS_ENV, "1") == "0" or phase is None:
+    if _measuring_disabled() or phase is None:
         return None
-    counted = count_tokens(prompt, model)
-    return (counted, model) if counted is not None else None
+    return count_tokens(prompt, model)
 
 
 # ceiling: process-local lock, upgrade to fcntl.flock on a sidecar if
@@ -528,7 +571,7 @@ def _measured_tokens(
 # lock is the extra file gc would then have to know about. If that call
 # site ever moves to subprocess-per-group or multiprocessing, this lock
 # stops protecting anything and needs to move with it.
-_prompt_stats_lock = threading.Lock()
+prompt_stats_lock = threading.Lock()
 
 
 def _append_prompt_stats(stats_file: str, stats: dict) -> None:
@@ -543,7 +586,7 @@ def _append_prompt_stats(stats_file: str, stats: dict) -> None:
     run, or a truncated file from before this was atomic.
     """
     path = Path(stats_file)
-    with _prompt_stats_lock:
+    with prompt_stats_lock:
         existing: list = []
         try:
             parsed = json.loads(path.read_text())
@@ -557,14 +600,26 @@ def _append_prompt_stats(stats_file: str, stats: dict) -> None:
             core.log.warn(f"{path} could not be written ({exc})")
 
 
-def _log_prompt_size(
+def log_prompt_size(
     template_name: str, prompt: str, sections: dict[str, object], job: ReviewJob,
     *,
     budget_bytes: int,
     model: str,
     label: str = "", cuts: tuple[Cut, ...] = (), phase: Phase | None = None,
     accounting: BudgetAccounting | None = None,
+    verification: PromptVerification | None = None,
+    renders: int = 1,
+    ladder_bytes: int | None = None,
 ) -> str:
+    """Log the rendered prompt's size and record it; return ``prompt`` unchanged.
+
+    Not a pure formatter. It writes the prompt to ``prompt-{template}[-label]``
+    beside the review file and appends one record to ``prompt-stats.json`` as
+    side effects; the return value is only there for call chains that pass the
+    prompt along, and ``fit_rendered_prompt`` ignores it. ``verification`` is
+    the loop's count for this render; without it the prompt is counted here,
+    so a direct call still records a complete row.
+    """
     prompt_bytes = len(prompt.encode())
     prompt_kb = prompt_bytes // 1024
     budget_kb = budget_bytes // 1024
@@ -629,12 +684,28 @@ def _log_prompt_size(
         stats["allowance_bytes"] = accounting.allowance_bytes
         stats["accounted_bytes"] = accounting.accounted_bytes
         stats["unaccounted_bytes"] = prompt_bytes - accounting.accounted_bytes
-    measured = _measured_tokens(prompt, phase, model)
-    if measured:
+    # The verify loop counts once per render and hands the result in. A
+    # direct call (tests, a path that logged without verifying) still
+    # measures here so the record is complete either way — never a second
+    # round trip on the loop's path.
+    if verification is not None:
+        counted = verification.tokens
+        unverified = None if verification.token_verified else verification.reason
+    else:
+        counted = measured_tokens(prompt, phase, model)
+        unverified = None if counted is not None else unverified_reason(phase)
+    # One record shape for both paths, so they cannot drift on which fields
+    # they write.
+    stats["token_verified"] = unverified is None
+    if unverified is not None:
+        stats["token_unverified_reason"] = unverified
+    stats["renders"] = renders
+    if ladder_bytes is not None:
+        stats["ladder_bytes"] = ladder_bytes
+    if counted is not None:
         # Both the count and the model are recorded: a density is meaningless
         # without the tokenizer it was measured against, and sonnet-5 counts the
         # same text ~27% denser than sonnet-4-5.
-        counted, model = measured
         stats["prompt_tokens"] = counted
         stats["token_model"] = model
         # A zero-token prompt has no density to report, and dividing by it would
@@ -860,7 +931,7 @@ def _prompt_disprove(job, common, extra, output):
     return BuiltPrompt(b, "")
 
 
-def _build_common_sections(
+def build_common_sections(
     job: ReviewJob, *, max_turns: int, budget_bytes: int,
 ) -> CommonSections:
     return CommonSections(
@@ -893,15 +964,25 @@ class PromptTooLarge(RuntimeError):
 
     def __init__(
         self, template: str, prompt_bytes: int,
-        budget_bytes: int = 0, model: str = "",
+        budget_bytes: int = 0, model: str = "", token_overshoot: int = 0,
     ):
         self.template = template
         self.prompt_bytes = prompt_bytes
         self.budget_bytes = budget_bytes
         self.model = model
+        self.token_overshoot = token_overshoot
         against = f"{budget_bytes // 1024}KB budget"
         if model:
             against += f" for {model}"
+        if token_overshoot and prompt_bytes <= budget_bytes:
+            # Bytes fit; the measured token count is what does not. Saying
+            # "N KB against a larger M KB budget" would read as a contradiction.
+            super().__init__(
+                f"{template} prompt is {prompt_bytes // 1024}KB, within the "
+                f"{against}, but {token_overshoot} tokens over the model "
+                f"window, with every lever already pulled"
+            )
+            return
         super().__init__(
             f"{template} prompt is {prompt_bytes // 1024}KB against a "
             f"{against}, with every lever already pulled"

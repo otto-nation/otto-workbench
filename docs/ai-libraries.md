@@ -826,6 +826,18 @@ nobody can act on.
 Deciding which of those paths a run takes is `review.steps`'; sequencing the
 phases that lead there is `review.pipeline`'s.
 
+### review/overflow.py
+
+In-phase recovery from an API `prompt is too long` rejection.
+
+The local budget is a prior. When the API still rejects the rendered prompt,
+the rejection names how many tokens were sent and how many the model will
+take. That pair is enough to rebuild at a density just measured, without
+waiting for `--recover` — which would re-render the same bytes.
+
+Unparseable rejections stay non-recoverable. Local `PROMPT_TOO_LARGE` is a
+different kind and is never retried here.
+
 ### review/paths.py
 
 Where a review lives on disk, and what is allowed to be there.
@@ -928,9 +940,9 @@ Prompt construction for review: the byte budget and the render loop.
 `PromptBuilder` collects the variables a template is rendered with, and
 `PromptBuilder.fit` is what makes a prompt fit the token budget: it registers
 the sections that can shrink — the pre-collected file contents, the
-incremental delta, and the full diff — after everything fixed is already
-accounted for, and pulls three levers in that order, only as far as the
-shortfall requires. It rewrites the environment section to send the agent
+incremental delta, the commit log, and the full diff — after everything fixed
+is already accounted for, and pulls four levers in that order, only as far as
+the shortfall requires. It rewrites the environment section to send the agent
 after whatever it dropped, and reports the cuts in the prompt's size log. A
 prompt still over budget once every lever is pulled raises `PromptTooLarge`
 rather than being sent: the phase reports it before an agent starts, so it
@@ -941,6 +953,24 @@ One builder per phase assembles the sections `review.prompt_sections` and
 builder, which template it renders, and which file the agent is told to write
 are `review.registry`'s: it holds the phase-to-builder table and
 `build_prompt`, which dispatches on it and imports the builders from here.
+
+### review/prompt_fit.py
+
+Plan → render → verify → re-plan, until the prompt fits or the cap is hit.
+
+`review.registry.build_prompt` is the public entry; this module is the loop
+it runs. The ladder plans against a byte target, the template renders, and
+the result is checked twice: bytes against the spend ceiling always, tokens
+plus the backend overhead reserve against the model's window when a count
+exists. A missing count is an explicit third state, never a pass and never
+a fail. The byte check still applies.
+
+A render that does not fit ratchets the ladder down by the measured
+overshoot — bytes directly, tokens converted at the density just measured —
+and never grows. Three renders is the cap; past that the phase raises
+`PromptTooLarge` the way a single over-budget render always has. A plan that
+reached the diff floor stops sooner: every lever is spent, so a smaller target
+would render the same prompt, and the loop raises after that render.
 
 ### review/prompt_prior.py
 
@@ -3107,10 +3137,11 @@ against the model that will actually serve the request.
 The `system` and `tools` arguments exist for that first property and no caller
 supplies them yet. `claude -p` assembles both inside the CLI, so a review has
 no handle on the text its agent will actually be sent; a count taken here is
-the prompt alone. Measured against session logs, a real request runs 9.5k to
-48.8k tokens above it — roughly 26k for a full review phase and 11k for a
-lighter one. A caller comparing a count against a context window owes itself
-that margin until the two are wired together.
+the prompt alone. A real request runs well above it, by an amount that differs
+per backend; `review.budget` owns the measured figures and the reserve built
+from them (see the comment above `OVERHEAD_RESERVE_TOKENS`). A caller comparing
+a count against a context window owes itself that margin until the two are
+wired together.
 
 ### agent/usage.py
 
@@ -4154,6 +4185,20 @@ wrapper was holding is released and the work runs on untracked.
 One owner rather than a copy per wrapper. A second implementation of a
 primitive this subtle is how the two come to disagree, and the bug above was
 already present in both files in the same shape.
+
+### core/suite_watch.py
+
+Supervise a test-suite child and say what it is doing.
+
+A parallel bats run with GNU ``--keep-order`` buffers TAP until the current
+head file finishes, so a slow suite and a stuck one look the same: silence.
+This wrapper leaves the child's stdout alone — the TAP / pytest stream the
+pre-push hook parses — writes one heartbeat line to stderr every
+``TEST_HEARTBEAT_SECS``, and exits with the child's status.
+
+Waiting on the child is :data:`core.timeouts.UNBOUNDED` because the suite *is*
+the work. A bound would convert a large or contended run into a false failure;
+the heartbeat is what makes that wait observable rather than a hang.
 
 ### core/text.py
 

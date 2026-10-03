@@ -28,12 +28,19 @@ from agent.types import EFFORT_PRESETS
 from gh.types import PRContext, PRMetadata
 from core.phases import Mode, Phase
 from review.paths import phase_log_path
-from review.collect import fetch_branch_metadata
 from gh.pr_data import PRData, fetch_pr_data
 from gh.pr_reads import fetch_pr_context, fetch_pr_metadata
-from review.grouping import (
-    GROUP_TIER3, group_files, merge_smallest_groups,
+from agent.backend import selected_backend
+from agent.phases import phase_model
+from review.budget import (
+    MIN_DIFF_BYTES, TEMPLATE_OVERHEAD_BYTES, fixed_preflight_bytes,
+    ladder_target_bytes,
 )
+from review.collect import diff_section_sizes, fetch_branch_metadata
+from review.grouping import (
+    GROUP_TIER3, Group, estimate_group_diff_bytes, group_files, merge_smallest_groups,
+)
+from review.overflow import run_with_overflow_recovery
 from review.outcome import _post_process_review, _write_review_sidecar, is_complete_review
 from review.types import ReviewJob, ReviewType
 from review.prompt import PromptTooLarge
@@ -142,13 +149,18 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
         rc = runner.invoke(text, turns)
         return rc
 
-    invoke(prompt, max_turns)
-    core.log.blank()
-
-    diagnosis = _retry_missing_output(
-        invoke, prompt, job.session_log, job.review_file,
-        label="Review agent", max_turns=max_turns,
-    )
+    diagnosis = run_with_overflow_recovery(
+        prompt,
+        invoke=lambda text: invoke(text, max_turns),
+        after=lambda text: _retry_missing_output(
+            invoke, text, job.session_log, job.review_file,
+            label="Review agent", max_turns=max_turns,
+        ),
+        has_output=lambda: _has_output(job.review_file),
+        rebuild=lambda ladder: build_prompt(
+            Phase.SINGLE, job, max_turns=max_turns, ladder_bytes=ladder,
+        ),
+    ).diagnosis
 
     if not _has_output(job.review_file):
         detail = f"exited with code {rc}" if rc != 0 else "completed"
@@ -202,6 +214,30 @@ def _consolidate_logs(
         pass
 
 
+def _group_merge_cap(job: ReviewJob) -> int:
+    """The most diff a merged group may carry and still fit its prompt.
+
+    The group prompt's ladder target, less what a group prompt spends before
+    its diff: the template and the project context no lever can cut. File
+    contents and the delta are levers the ladder pulls first, so they are not
+    reserved here. Every profile is charged although a group renders only the
+    ones matching its files, which errs toward stopping a merge early.
+
+    Never below `MIN_DIFF_BYTES`: a repo whose fixed context alone fills the
+    target still gets groups the ladder can floor, rather than no merges at
+    all.
+    """
+    model = phase_model(Phase.GROUP, job.model or None, job.config)
+    pf = job.preflight
+    fixed = TEMPLATE_OVERHEAD_BYTES
+    if pf is not None:
+        fixed += fixed_preflight_bytes(
+            pf.claude_md, pf.architecture_md, pf.review_checklists,
+            pf.review_profiles,
+        )
+    return max(MIN_DIFF_BYTES, ladder_target_bytes(model, selected_backend()) - fixed)
+
+
 def run_multi_phase(
     job: ReviewJob, max_parallel: int | None = DEFAULT_MAX_PARALLEL,
     max_cost: float = DEFAULT_MAX_COST,
@@ -210,7 +246,21 @@ def run_multi_phase(
 ):
     groups = group_files(job.pr)
     effective_max_groups = max_groups or EFFORT_PRESETS[job.effort].max_groups
-    groups = merge_smallest_groups(groups, effective_max_groups)
+    group_cap = _group_merge_cap(job)
+    collected_diff = job.preflight.diff if job.preflight else ""
+
+    # Scanned once: the merge loop asks for every candidate pair each round.
+    section_sizes = diff_section_sizes(collected_diff) if collected_diff else None
+
+    def _group_diff_bytes(group: Group) -> int:
+        if section_sizes is not None:
+            return sum(section_sizes.get(f, 0) for f in group.files)
+        return estimate_group_diff_bytes(group)
+
+    groups = merge_smallest_groups(
+        groups, effective_max_groups,
+        max_diff_bytes=group_cap, group_diff_bytes=_group_diff_bytes,
+    )
 
     if not job.include_generated:
         before = len(groups)

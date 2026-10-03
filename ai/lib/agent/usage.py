@@ -115,6 +115,82 @@ class SessionUsage:
         return self.cache_read_tokens / self.billed_input if self.billed_input else 0.0
 
 
+@dataclass(frozen=True)
+class FirstTurnUsage:
+    """The first request of a session: the model that served it, and its input.
+
+    `input_tokens` is billed input — raw input plus cache read and cache write
+    — because that is what occupies the context window. `served_model` is the
+    id the backend reported, which can differ from the alias the phase asked
+    for.
+    """
+
+    served_model: str
+    input_tokens: int
+
+
+def first_turn_usage(records: list[dict]) -> FirstTurnUsage | None:
+    """First-request input and served model from a session JSONL, or None.
+
+    Claude stream-json: the first `{type:system, subtype:init}` line names the
+    model, and the first assistant message's `usage` is billed as
+    `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`.
+
+    Pi `--mode json`: the first `message_end` whose message role is assistant
+    carries `message.model` and `usage` as `input + cacheRead + cacheWrite`.
+    """
+    claude = _first_turn_claude(records)
+    if claude is not None:
+        return claude
+    return _first_turn_pi(records)
+
+
+def _first_turn_claude(records: list[dict]) -> FirstTurnUsage | None:
+    model = ""
+    for rec in records:
+        if rec.get("type") == "system" and rec.get("subtype") == "init":
+            model = str(rec.get("model") or "")
+            break
+    for rec in records:
+        if rec.get("type") != "assistant":
+            continue
+        message = rec.get("message") or {}
+        usage = message.get("usage") or {}
+        billed = (
+            int(usage.get("input_tokens") or 0)
+            + int(usage.get("cache_read_input_tokens") or 0)
+            + int(usage.get("cache_creation_input_tokens") or 0)
+        )
+        if billed == 0:
+            # No usage block, or the zeros block of a synthetic API-error
+            # message: neither is a served request. Keep scanning.
+            continue
+        served = str(message.get("model") or model)
+        return FirstTurnUsage(served_model=served, input_tokens=billed)
+    return None
+
+
+def _first_turn_pi(records: list[dict]) -> FirstTurnUsage | None:
+    for rec in records:
+        if rec.get("type") != "message_end":
+            continue
+        message = rec.get("message") or {}
+        if message.get("role") != "assistant":
+            continue
+        usage = message.get("usage") or rec.get("usage") or {}
+        billed = (
+            int(usage.get("input") or 0)
+            + int(usage.get("cacheRead") or 0)
+            + int(usage.get("cacheWrite") or 0)
+        )
+        if billed == 0:
+            # An errored or aborted turn carries no usage; keep scanning.
+            continue
+        served = str(message.get("model") or "")
+        return FirstTurnUsage(served_model=served, input_tokens=billed)
+    return None
+
+
 # The CLI emits two spellings for the same fields: modelUsage entries are camelCase,
 # the top-level usage block is snake_case. Accept both at the boundary rather than
 # picking one — backends differ, and a mismatch silently reports zero tokens.

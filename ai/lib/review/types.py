@@ -768,3 +768,26 @@ class ReviewJob:
         root: a root grant is how scratch files ended up beside unrelated reviews.
         """
         return str(Path(self.review_file).parent)
+
+
+@dataclass(frozen=True)
+class PromptVerification:
+    """What one render was measured against, and whether it may be sent.
+
+    `tokens` is the exact count when one was taken. `token_verified` is derived
+    from it, so the two cannot disagree; a missing count records `reason` and
+    is neither pass nor fail.
+    `ok` is the send decision: bytes always, tokens only when verified.
+    """
+
+    prompt_bytes: int
+    budget_bytes: int
+    tokens: int | None
+    reason: str
+    ok: bool
+    byte_overshoot: int
+    token_overshoot: int
+
+    @property
+    def token_verified(self) -> bool:
+        return self.tokens is not None

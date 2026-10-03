@@ -12,6 +12,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import cli.review_orchestrate  # noqa: F401
 
 import review.pipeline
+from review.budget import MIN_DIFF_BYTES, TEMPLATE_OVERHEAD_BYTES, fixed_preflight_bytes
+from review.types import PreflightData
+from review_prompt_support import _make_job
 
 
 # ── self-review metadata ──────────────────────────────────────────────
@@ -158,3 +161,43 @@ class TestFetchMetadataSelfMode:
 
         assert run_ctx.pr.base == "parent"
         assert [f["path"] for f in run_ctx.pr.files] == ["child.go"]
+
+
+# ── merge cap ─────────────────────────────────────────────────────────
+
+
+class TestGroupMergeCap:
+    """A merged group's diff is capped at what its prompt has room for."""
+
+    def _job(self, preflight):
+        return _make_job(preflight)
+
+    def _patch(self, monkeypatch, target):
+        monkeypatch.setattr(review.pipeline, "phase_model", lambda *a, **k: "m")
+        monkeypatch.setattr(
+            review.pipeline, "ladder_target_bytes", lambda *a, **k: target,
+        )
+
+    def test_the_fixed_context_and_template_are_reserved(self, monkeypatch):
+        self._patch(monkeypatch, 300_000)
+        pf = PreflightData(
+            diff="", commit_log="x" * 40_000, file_contents={},
+            file_permissions={}, claude_md="c" * 10_000,
+            architecture_md="a" * 5_000,
+        )
+        cap = review.pipeline._group_merge_cap(self._job(pf))
+        # The commit log is a lever, so it is not charged against the cap.
+        fixed = fixed_preflight_bytes(
+            pf.claude_md, pf.architecture_md, pf.review_checklists,
+            pf.review_profiles,
+        )
+        assert fixed >= 15_000  # the context files are charged at least whole
+        assert cap == 300_000 - TEMPLATE_OVERHEAD_BYTES - fixed
+
+    def test_never_below_the_diff_floor(self, monkeypatch):
+        self._patch(monkeypatch, 30_000)
+        pf = PreflightData(
+            diff="", commit_log="", file_contents={}, file_permissions={},
+            claude_md="c" * 50_000, architecture_md="",
+        )
+        assert review.pipeline._group_merge_cap(self._job(pf)) == MIN_DIFF_BYTES

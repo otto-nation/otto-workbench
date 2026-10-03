@@ -86,7 +86,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `validate-permissions` | Validates that every Bash permission rule can match a command, that no untracked settings file duplicates a tracked grant or re-grants a gated one, and that a tracked allow bucket is in the codepoint order both ai sync and Claude Code write it back in — --fix prunes the duplicates and sorts the bucket |
 | `validate-ceiling` | Validates that every ceiling marker names an upgrade trigger or is marked permanent |
 | `validate-file-size` | Fails when a source file passes 600 code lines — blanks, comments and docstrings are not counted, so documenting a file never pushes it over. The files already over are named with the issue that splits each |
-| `validate-test-layout` | Fails when a Python module under tests/ is neither <subject>_test.py nor a declared support module, or passes the 600-code-line cap the source gate uses. No exemptions |
+| `validate-test-layout` | Fails when a Python module under tests/ is neither <subject>_test.py nor a declared support module, or when a Python or bats suite passes the 600-code-line cap the source gate uses. The bats suites already over are named with the issue that splits them |
 | `check-new-tests` | Runs the tests a change adds against a worktree at the merge base and reports any that pass without the change — the revert check the testing rule prescribes, done once from the diff |
 | `validate-yq-version` | Fails when this machine's yq is older than the one CI pins — an expression the older parser rejects fails every registry read at once |
 | `validate-eval-baselines` | Validates eval baseline files for schema correctness and corpus coverage |
@@ -106,6 +106,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-
 | `select-tests` | Emits the bats test files affected by a set of changed paths — used by the pre-push hook for change-based selection |
 | `select-pytest` | Emits the pytest files affected by a set of changed paths, resolved through the import graph — the pytest counterpart of select-tests |
 | `claim-job-slots` | Holds a share of the machine's test-parallelism slots while a command runs, so concurrent suites in several worktrees divide the cores instead of each taking all of them |
+| `suite-watch` | Supervises a test-suite child and writes a periodic stderr heartbeat of elapsed time and in-flight work, so a slow run is distinguishable from a stuck one |
 | `validate-test-deps` | Validates that every bats test has resolvable source refs or is in the always-run list |
 | `validate-pytest-deps` | Validates that every pytest file resolves deps through the import graph or is declared unmappable |
 | `check-surface-compat` | Fails when a public surface entry is removed without a breaking-change or Not-Breaking declaration |
@@ -402,11 +403,11 @@ Bare aliases (`sonnet`, `opus`, `haiku`) resolve through `AI_SONNET_MODEL`, `AI_
 
 #### Prompt token measurement
 
-Each rendered prompt's exact input-token count is recorded in `prompt-stats.json`, alongside the model it was counted against and the resulting bytes-per-token. Set `WORKBENCH_AI_MEASURE_TOKENS=0` to opt out. The count is a round trip that is mostly fixed latency — 0.29s for a 6KB prompt, 0.55s for a 374KB one — and a machine with no Vertex credentials skips it and records nothing. It is on by default because it shipped opt-in and was never once switched on, leaving every density figure inferred rather than measured.
+Each rendered prompt is verified before it is sent: bytes against the spend ceiling always, and tokens plus a per-backend overhead reserve against the model's window when a count exists. A missing count is recorded as `token_verified: false` with a reason — never treated as a pass. The count is one round trip per render (0.29s for 6KB, 0.55s for 374KB). Set `WORKBENCH_AI_MEASURE_TOKENS=0` to opt out; a machine with no Vertex credentials skips the count the same way. After the agent runs, the same record gains `served_model` and `overhead_tokens` (first-turn billed input minus counted prompt tokens).
 
-The count comes from the model's own tokenizer, so it is only meaningful against the model that will serve the request — `claude-sonnet-5` counts the same text around 27% denser than `claude-sonnet-4-5`. It needs the same Vertex configuration and application-default credentials as the quota preflight below; without them the run proceeds and records no count rather than recording a guess.
+The count comes from the model's own tokenizer, so it is only meaningful against the model that will serve the request — `claude-sonnet-5` counts the same text around 27% denser than `claude-sonnet-4-5`. It needs the same Vertex configuration and application-default credentials as the quota preflight below; without them the run proceeds and records the unverified state rather than recording a guess.
 
-It counts the rendered prompt alone. The system prompt and tool schemas that `claude -p` assembles internally are charged to the same request and are not visible to the review, so the request costs more than `prompt_tokens` reports — measured against session logs, between 9.5k and 48.8k tokens more: around 26k for a full review phase, around 11k for a lighter one.
+It counts the rendered prompt alone. The system prompt and tool schemas the CLI assembles internally are charged to the same request and are reserved per backend (64k on Claude, covering a measured max of 51k; 32k on pi, covering 26k). An unknown backend takes the larger reserve.
 
 #### Vertex AI quota preflight
 

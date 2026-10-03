@@ -349,7 +349,12 @@ def invoke_agent(inv: AgentInvocation) -> int:
     ) as proc:
         _send_stdin(proc, inv.prompt)
         stream_progress(proc, inv.session_log, label=inv.label)
-        proc.wait()
+        # stream_progress has already read stdout to EOF, so this is a reap of
+        # a process that has finished writing — not a hang detector. Claude's
+        # own turn ends the CLI; a bound here would only fire if it closed the
+        # stream and then refused to exit, which is not a failure this
+        # pipeline sees.
+        proc.wait(timeout=core.timeouts.UNBOUNDED)
     _log_stderr_on_failure(proc, inv.session_log)
     return proc.returncode
 
@@ -368,7 +373,10 @@ def invoke_fix(inv: AgentInvocation) -> int:
     ) as proc:
         _send_stdin(proc, inv.prompt)
         _stream_fix_output(proc, inv.session_log)
-        proc.wait()
+        # Same reap as invoke_agent: stdout is already drained. The fix CLI
+        # ends when the turn does; nothing this wait could time out on is a
+        # hang.
+        proc.wait(timeout=core.timeouts.UNBOUNDED)
     return proc.returncode
 
 

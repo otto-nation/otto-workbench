@@ -27,6 +27,7 @@ LEVEL_DESCRIPTIONS = {
     "ultra": "Challenge the requirement. Deletion before addition. Ship the one-liner.",
 }
 
+
 def read_default() -> str:
     """Resolve the default level: env var > config > built-in."""
     env = os.environ.get("REUSE_DEFAULT_MODE", "").strip().lower()

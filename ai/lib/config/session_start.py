@@ -68,10 +68,9 @@ def _ceiling_counts(repo: str) -> dict | None:
     flat-cost local read: a breach means something is wrong, not that the repo
     is large.
     """
-    ceiling_scan = CEILING_SCAN
     try:
         result = core.proc.run(
-            [sys.executable, str(ceiling_scan), "--json", repo],
+            [sys.executable, str(CEILING_SCAN), "--json", repo],
             timeout=core.timeouts.LOCAL,
         )
     except FileNotFoundError:

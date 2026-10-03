@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 /**
  * Whether a write is a plan or spec landing in a checkout, kept apart from the
@@ -22,10 +23,9 @@ import { existsSync } from "node:fs";
  */
 
 /** Where `resolve-workspace` lives, resolved from this file rather than $PATH. */
-const RESOLVE_WORKSPACE = new URL(
-  "../../../../bin/resolve-workspace",
-  import.meta.url,
-).pathname;
+const RESOLVE_WORKSPACE = fileURLToPath(
+  new URL("../../../../bin/resolve-workspace", import.meta.url),
+);
 
 /**
  * Worktree-relative path prefixes that name a plan or a spec.

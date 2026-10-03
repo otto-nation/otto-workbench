@@ -130,21 +130,32 @@ def test_kill_escalates_to_sigkill_when_the_child_ignores_sigterm(tmp_path, monk
     assert _wait(proc, 5) is not None
 
 
+def _zombie_reported(pid):
+    # WNOWAIT reports the exit without reaping, so the zombie stays; a child
+    # already reaped out from under us reads as "done" too.
+    try:
+        return bool(os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT))
+    except ChildProcessError:
+        return True
+
+
+def _wait_for_zombie(pid, timeout):
+    end = time.time() + timeout
+    while time.time() < end and not _zombie_reported(pid):
+        time.sleep(0.01)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS-only EPERM smoke test")
 def test_kill_of_an_exited_but_unreaped_step_does_not_raise(tmp_path):
-    # The step has exited but nothing has reaped it, so its group holds only a
-    # zombie. macOS answers killpg on that group with EPERM rather than ESRCH;
-    # cancel --kill reaching this window crashed the scheduler.
+    # macOS-only smoke test: the step has exited but nothing has reaped it, so its
+    # group holds only a zombie, and macOS answers killpg on that group with EPERM
+    # rather than ESRCH. On Linux, signalling a zombie-only group is a silent
+    # no-op either way, so this test alone does not pin the fix on this branch;
+    # test_kill_treats_eperm_as_gone_only_once_the_step_has_exited below, which
+    # mocks os.killpg to raise EPERM directly, is the regression guard for that.
     exe = _script(tmp_path, "true\n")
     proc = batch.steps.StepProcess.start([exe], log_path=tmp_path / "s.log", trail_root="r")
-    end = time.time() + 5
-    while time.time() < end:
-        try:
-            # WNOWAIT reports the exit without reaping, so the zombie stays.
-            if os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT):
-                break
-        except ChildProcessError:
-            break
-        time.sleep(0.01)
+    _wait_for_zombie(proc.pid, 5)
     proc.kill()
     assert _wait(proc, 5) == 0
 

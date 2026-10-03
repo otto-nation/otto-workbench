@@ -41,19 +41,14 @@ from file_size import MAX_CODE_LINES, code_lines  # noqa: E402
 from repo_scan import BASE_SKIP_DIRS  # noqa: E402
 
 
-# The files over the cap when this landed, each with the issue that splits it.
-# `bin/otto-workbench` is #853's by name. `gh/pr_reads.py` is the densest module
-# in ai/lib (647 code lines, 19% prose) and no phase of #754 names it, so it
-# falls to #911, which splits whatever is still over the line in its own PR.
+# The file still over the cap, with the issue that splits it: #853's, the shell
+# half of the workbench, which no phase of #754 touches.
 #
-# ceiling: two named exemptions, because failing on them would block every
-# push on work owned elsewhere. Delete an entry when its file comes under the
-# cap; the dict is empty once the #853 entry and the #911 entry
-# (`gh/pr_reads.py`) have landed, and at that point this gate is the
-# unconditional one #911 specifies.
+# ceiling: one named exemption, because failing on it would block every push
+# on work owned elsewhere. Delete the entry when its file comes under the cap;
+# once the dict is empty this gate is the unconditional one #911 specifies.
 KNOWN_OVER = {
     "bin/otto-workbench": "#853",
-    "ai/lib/gh/pr_reads.py": "#911",
 }
 
 SCAN_ROOTS = ("ai", "bin", "lib")

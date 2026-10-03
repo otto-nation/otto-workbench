@@ -313,6 +313,10 @@ def _global_flags_block() -> str:
     the block does not depend on how argparse lays out its usage line or names
     its heading.
     """
+    # Private argparse API (`_get_formatter`, `_actions`, a heading-less
+    # `start_section(None)`), the same trade `core.cli_reference` makes; the case
+    # in tests/cli_registry_test.py that renders this block is what fails first
+    # when an upgrade changes any of them.
     parser = build_global_parser()
     formatter = parser._get_formatter()
     formatter.start_section(None)

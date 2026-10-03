@@ -205,6 +205,22 @@ def _ahead_refusal(wt: Path, branch: str, base: str) -> str:
     return ""
 
 
+def _base_ref_exists(base: str, wt: Path) -> bool:
+    """Whether *base* has a remote-tracking ref under GIT_REMOTE in *wt*.
+
+    Mirrors `git_remote.remote_branch_ref_exists`, scrubbed: that helper takes
+    no `env` and answers for whatever `GIT_DIR` the process inherited — a hook
+    that invoked `pr create` with one exported would otherwise have this check
+    read the wrong repository's remote-tracking refs, same as `_fetch_refusal`
+    and `_ahead_refusal` guard against for their own reads.
+    """
+    ref = f"refs/remotes/{GIT_REMOTE}/{base}"
+    r = git.client.run(
+        "show-ref", "--verify", "--quiet", ref, cwd=wt, env=gitenv.git_env_clear(),
+    )
+    return r.ok
+
+
 def _preflight(
     wt: Path, branch: str, default: str, opts: CreateOptions, pr_number: int | None,
 ) -> tuple[str, ...] | None:

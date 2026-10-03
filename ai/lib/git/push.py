@@ -436,9 +436,9 @@ def _retry_block(
     the tree must be the one they validated. This repo's own pre-push
     regenerates files, so the dirty check is not hypothetical.
     """
-    if git.client.head_sha(cwd=wt_path) != sha:
+    if git.client.head_sha(cwd=wt_path, env=env) != sha:
         return Retry.HEAD_MOVED
-    if git.client.is_dirty(cwd=wt_path):
+    if git.client.is_dirty(cwd=wt_path, env=env):
         return Retry.DIRTY
     return None
 
@@ -457,7 +457,7 @@ def _retry_lost(
     first did not, and the point of verifying was to stop spending minutes
     learning what one round trip already reported.
     """
-    blocked = _retry_block(wt_path, lost.sha)
+    blocked = _retry_block(wt_path, lost.sha, env=env)
     if blocked:
         return dataclasses.replace(lost, retry=blocked)
 

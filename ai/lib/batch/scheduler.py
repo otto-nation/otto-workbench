@@ -150,7 +150,7 @@ class Scheduler:
 
     # ── reaping ──────────────────────────────────────────────────────────
 
-    def _reap(self) -> None:
+    def _reap(self, kill: bool = False) -> None:
         for key, live in list(self._live.items()):
             for line in live.proc.drain_lines():
                 live.tail.append(line)
@@ -159,6 +159,12 @@ class Scheduler:
             live.peak = max(live.peak, self._rss(live.proc.pid))
             code = live.proc.poll()
             if code is not None:
+                if kill:
+                    # The tracked step is gone, so this is the last call that will
+                    # ever reach its process group: anything it left running there
+                    # gets a decisive SIGKILL now rather than whatever signal the
+                    # grace-window escalation happened to be up to.
+                    live.proc.kill(force=True)
                 self._finish(live, code)
                 del self._live[key]
 
@@ -322,7 +328,7 @@ class Scheduler:
         cancel = batch.store.cancel_requested(self.run.id)
         if cancel.kill:
             self._kill_live()
-        self._reap()
+        self._reap(cancel.kill)
         if not cancel.requested:
             self._admit()
         batch.store.save(self.run)

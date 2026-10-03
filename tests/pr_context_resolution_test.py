@@ -248,6 +248,47 @@ def test_detached_head_skips_worktree_redirect(
     assert ctx.worktree_root == Path("/repo/main")
 
 
+@patch.object(pr.target, "repo_identity_from_origin",
+              return_value=pr.target.RepoIdentity(label="owner/repo", key="repo"))
+@patch.object(pr.context, "_git_toplevel", return_value=Path("/repo/main"))
+@patch.object(git.topology, "current_branch_quiet", return_value="main")
+@patch.object(git.topology, "find_worktree_for_branch", return_value=Path("/repo/feat-bar"))
+@patch.object(pr.context, "detect_repo", return_value="owner/repo")
+@patch.object(pr.context, "_pr_head", return_value=PRHead(branch="feat/bar", sha="pr-sha"))
+def test_pr_redirects_to_head_branch_worktree(
+    mock_head, mock_repo, mock_find_wt, mock_current, mock_top, mock_repo_name,
+):
+    """--pr from another checkout lands in the head branch's worktree, as --branch does."""
+    ctx = pr.context.resolve(pr_ref="42")
+    assert ctx.worktree_root == Path("/repo/feat-bar")
+    assert ctx.branch == "feat/bar"
+    assert ctx.head_sha == "pr-sha"
+    mock_find_wt.assert_called_once_with("feat/bar", "/repo/main")
+
+
+def _bare_worktree_for(cwd, branch):
+    return Path("/wt/feat-bar") if branch == "feat/bar" else Path("/wt/main")
+
+
+@patch.object(pr.target, "repo_identity_from_origin",
+              return_value=pr.target.RepoIdentity(label="owner/repo", key="repo"))
+@patch.object(pr.context, "_git_toplevel", return_value=None)
+@patch.object(git.topology, "is_bare_repo", return_value=True)
+@patch.object(git.topology, "resolve_bare_repo_worktree", side_effect=_bare_worktree_for)
+@patch.object(git.topology, "current_branch_quiet", return_value="feat/bar")
+@patch.object(pr.context, "detect_repo", return_value="owner/repo")
+@patch.object(pr.context, "_pr_head", return_value=PRHead(branch="feat/bar", sha="pr-sha"))
+def test_bare_repo_pr_resolves_head_branch_worktree(
+    mock_head, mock_repo, mock_quiet, mock_resolve_wt, mock_bare, mock_top,
+    mock_repo_name,
+):
+    """--pr from a bare container uses the head branch's worktree, not the default branch's."""
+    ctx = pr.context.resolve(pr_ref="42")
+    assert ctx.worktree_root == Path("/wt/feat-bar")
+    assert ctx.current_branch == "feat/bar"
+    mock_resolve_wt.assert_called_with(None, "feat/bar")
+
+
 # ── is_pr_ref / classify_target ──────────────────────────────────────────
 
 

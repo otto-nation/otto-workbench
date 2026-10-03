@@ -318,6 +318,15 @@ def resolve(
                     "stamps state with its head SHA")
             sys.exit(1)
         branch_name = head.branch
+        # Resolved again now that the head branch is known. The first pass
+        # could not name a branch, so it fell back to the caller's checkout:
+        # the default branch's worktree when run from a bare repo, or whatever
+        # checkout the caller started in. A --pr run then refused to check the
+        # head out there, while --branch on the same head went to the right
+        # worktree. This puts --pr in the same worktree --branch would use.
+        worktree_root, cwd = _resolve_worktree(
+            repo_dir, pr_ref=pr_ref, branch=branch_name,
+        )
         # The PR's HEAD, not the caller's: state written for this run belongs to
         # the PR, and the caller may be sitting on an unrelated branch.
         head_sha = head.sha

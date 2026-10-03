@@ -60,7 +60,7 @@ BATS_SUFFIX = ".bats"
 #
 # ceiling: named exemptions, because failing on them would block every push on
 # work #853 owns. Delete an entry in the PR that splits its suite; once the dict
-# is empty #910 deletes it and the gate is unconditional. The test suite pins it
+# is empty #911 deletes it and the gate is unconditional. The test suite pins it
 # to exactly the set of files over the cap, so it can only shrink.
 KNOWN_OVER = {
     "tests/pi_extensions.bats": "#853",

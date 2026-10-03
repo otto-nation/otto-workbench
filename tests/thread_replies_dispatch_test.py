@@ -16,7 +16,7 @@ if str(LIB_DIR) not in sys.path:
 # never referenced by name.
 from review_threads_support import _no_published_summary, _standing_reply_thread  # noqa: E402
 from conftest import make_ctx
-from gh.pr_reads import ThreadSet
+from gh.pr_pages import ThreadSet
 from pr.comments_state import ThreadState
 import core.log
 import pr.comments

@@ -1593,13 +1593,44 @@ still asks. Either way an unanswered question files nothing: no tracking issue
 is created and the deferral replies that would link to it are not sent, rather
 than an issue being filed to a tracker nobody named.
 
+### gh/pr_data.py
+
+The consolidated read of a PR — one GraphQL query, and the `PRData` it fills.
+
+Reviews, review threads, issue comments, commits and the PR's own refs come back
+in a single call, so a review that needs all of them pays for one round trip.
+The connections that can outgrow a page are finished off by the drains in
+`gh.pr_pages`, which also owns the page sizes the query interpolates.
+`pr_context_from_data` reads the conversation back out of a `PRData` for a
+caller that already holds one.
+
+The single-call REST reads are `gh.pr_reads`; the transport is `gh.client`.
+
+### gh/pr_pages.py
+
+The paginated connections of a PR: page sizes, the queries that page, the drains.
+
+GitHub caps every `first:` at 100, so a connection that can outgrow one page is
+walked to exhaustion here or reported as short — never returned short and
+silent. Each page size below is justified by the walk that pays for it, which
+is why they live beside the walks rather than beside the queries that
+interpolate them.
+
+The consolidated one-call read of a PR is `gh.pr_data`, which hands its first
+pages to the drains here. The single-call REST reads are `gh.pr_reads`. The
+transport — running gh, timeouts, the rate-limit ladder — is `gh.client`.
+
 ### gh/pr_reads.py
 
-The review system's reads of a PR, and the GraphQL queries behind them.
+The review system's single-call reads of a PR.
 
-The PR's own metadata, its surrounding conversation, the diff, the
-pending-review check, and the consolidated review-thread query. Used by the
-pipeline before any agent runs, and by review.posting and review.dedup after.
+The PR's own metadata, its surrounding conversation, its refs, the diff, the
+pending-review check and the new-commit count. Used by the pipeline before any
+agent runs, and by review.posting after. Each accepts the consolidated
+`gh.pr_data.PRData` where it has one and answers from it without a call.
+
+The consolidated query itself is `gh.pr_data`; the paginated connections and
+their page sizes are `gh.pr_pages`.
 
 The transport is not here. ``gh.client`` owns running gh, the timeout tiers and
 the rate-limit ladder; this module owns what the review system asks for and how

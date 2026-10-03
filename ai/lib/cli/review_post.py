@@ -21,6 +21,7 @@ from core.trail import Trail, add_trail_args
 import gh.client
 import review.dedup
 import review.format
+import gh.pr_data
 import gh.pr_reads
 import review.paths
 import review.posting
@@ -48,8 +49,8 @@ from review.format import (
     _build_permalink,
 )
 from gh.client import LineResolutionError
+from gh.pr_data import PRData, fetch_pr_data
 from gh.pr_reads import (
-    PRData, fetch_pr_data,
     _fetch_pr_refs, _get_diff,
     _check_existing_pending, _count_new_commits,
 )
@@ -73,7 +74,7 @@ from review.sections import ReviewSections
 SCRIPT = "review-post"
 
 _SUBMODULES = (
-    gh.client, review.dedup, review.format, gh.pr_reads, review.paths, review.posting, review.sections, git.client, core.log, core.module_proxy, core.proc,
+    gh.client, review.dedup, review.format, gh.pr_data, gh.pr_reads, review.paths, review.posting, review.sections, git.client, core.log, core.module_proxy, core.proc,
 )
 
 core.module_proxy.install(__name__, _SUBMODULES)

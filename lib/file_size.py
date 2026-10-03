@@ -3,9 +3,10 @@
 A total-line count measures documentation as much as complexity. Across
 ``ai/lib`` the prose share runs 19–51%, so the best-documented modules are the
 ones a total-line cap binds hardest: ``pr/summary_model.py`` is 708 lines of
-which 270 are code, while the densest module in the tree, ``gh/pr_reads.py``,
-carries 647 code lines under a total of 941. A cap on totals fires on the first
-and spares the second, which is the wrong way round.
+which 270 are code, while the densest module the tree had, ``gh/pr_reads.py``
+before its split, carried 647 code lines under a total of 941. A cap on
+totals fires on the first and spares the second, which is the wrong way
+round.
 
 The guidelines require the prose it would tax — ``ceiling:`` markers naming a
 trigger, a comment on every silent fallback, module docstrings that record why

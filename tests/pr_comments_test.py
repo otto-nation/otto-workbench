@@ -16,7 +16,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import pr.comments
-from gh.pr_reads import ThreadSet
+from gh.pr_pages import ThreadSet
 from pr.comments import (
     compute_thread_state, sync_threads, fetch_threads, render_dashboard,
 )

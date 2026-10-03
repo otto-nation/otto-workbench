@@ -52,6 +52,8 @@ ALL_LIB_MODULES = sorted(
 )
 
 POST_LIB_MODULES = [
+    "gh.pr_data",
+    "gh.pr_pages",
     "gh.pr_reads",
     "review.format",
     "review.dedup",

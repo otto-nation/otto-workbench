@@ -22,8 +22,9 @@ from dataclasses import dataclass, field, replace
 
 import core.log
 import gh.client
-import gh.pr_reads
-from gh.pr_reads import PRData, GQL_REVIEWS_LIMIT
+import gh.pr_pages
+from gh.pr_data import PRData
+from gh.pr_pages import GQL_REVIEWS_LIMIT
 
 from review.format import CLASS_SKIPPED
 from review.grammar import BODY_FINDING_RE, strip_line_suffix, strip_sid_markers
@@ -302,7 +303,7 @@ def fetch_bot_reviews(repo: str, pr: str, pr_data: PRData | None = None) -> BotR
         core.log.warn(f"Could not parse {repo}#{pr}'s reviews — dedup has nothing to match against")
         return BotReviews(looked=False)
 
-    gh.pr_reads.warn_if_truncated(reviews, f"{repo}#{pr} reviews")
+    gh.pr_pages.warn_if_truncated(reviews, f"{repo}#{pr} reviews")
 
     return BotReviews([
         {"id": n["databaseId"], "body": n.get("body", ""), "state": n.get("state", "")}

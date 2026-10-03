@@ -116,6 +116,8 @@ import sys
 sys.path.insert(0, '$TARBALL_ROOT/lib')
 from review import paths
 from review import collect
+from gh import pr_data
+from gh import pr_pages
 from gh import pr_reads
 from review import prompt
 from agent import session
@@ -141,6 +143,8 @@ sys.path.insert(0, '$TARBALL_ROOT/lib')
 from review import paths
 from review import dedup
 from review import format
+from gh import pr_data
+from gh import pr_pages
 from gh import pr_reads
 from review import posting
 from review import types

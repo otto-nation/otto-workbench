@@ -27,7 +27,7 @@ from dataclasses import dataclass
 import core.log
 from pr.comments import fetch_threads, is_acknowledgment, is_pushback
 from review.dedup import get_bot_login
-from gh.pr_reads import PRData
+from gh.pr_data import PRData
 from review.grammar import BOLD_FINDING_ID_RE, SID_MARKER_RE
 from review.types import ReplyState
 

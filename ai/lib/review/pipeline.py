@@ -29,9 +29,8 @@ from gh.types import PRContext, PRMetadata
 from core.phases import Mode, Phase
 from review.paths import phase_log_path
 from review.collect import fetch_branch_metadata
-from gh.pr_reads import (
-    PRData, fetch_pr_context, fetch_pr_data, fetch_pr_metadata,
-)
+from gh.pr_data import PRData, fetch_pr_data
+from gh.pr_reads import fetch_pr_context, fetch_pr_metadata
 from review.grouping import (
     GROUP_TIER3, group_files, merge_smallest_groups,
 )

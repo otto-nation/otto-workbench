@@ -92,6 +92,11 @@ def discover(root: Path, suffix: str = ".py") -> list[Path]:
     return sorted(found)
 
 
+def discover_all(root: Path) -> list[Path]:
+    """Every suite module under *root*/tests, Python and bats both."""
+    return discover(root) + discover(root, BATS_SUFFIX)
+
+
 def name_allowed(name: str) -> bool:
     """True if *name* is a suite or a declared support module."""
     if name in SUPPORT_NAMES:
@@ -117,7 +122,7 @@ def over_cap(root: Path, max_lines: int, paths: list[Path] | None = None) -> lis
     by default both suffixes are walked.
     """
     if paths is None:
-        paths = discover(root) + discover(root, BATS_SUFFIX)
+        paths = discover_all(root)
     violations = []
     for path in paths:
         language = "shell" if path.suffix == BATS_SUFFIX else "python"
@@ -175,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.directory).resolve()
     paths = discover(root)
     bad = misnamed(root, paths)
-    violations = over_cap(root, args.max_lines, paths + discover(root, BATS_SUFFIX))
+    violations = over_cap(root, args.max_lines, discover_all(root))
     over = [(p, n) for p, n in violations if p not in KNOWN_OVER]
     known = [(p, n) for p, n in violations if p in KNOWN_OVER]
 

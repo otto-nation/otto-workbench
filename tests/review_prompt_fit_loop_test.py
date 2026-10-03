@@ -104,6 +104,18 @@ class TestUnverifiedReason:
         )
         assert _stats(tmp_path)[-1]["token_unverified_reason"] == "no_phase"
 
+    def test_the_direct_log_path_records_renders_and_ladder_bytes(self, tmp_path, monkeypatch):
+        from review.prompt import log_prompt_size
+
+        monkeypatch.setenv("WORKBENCH_AI_MEASURE_TOKENS", "1")
+        log_prompt_size(
+            "scout.md", "text", {}, _job(tmp_path),
+            budget_bytes=1_000, model=TEST_MODEL, phase=None, ladder_bytes=900,
+        )
+        record = _stats(tmp_path)[-1]
+        assert record["renders"] == 1
+        assert record["ladder_bytes"] == 900
+
 
 class TestRatchetNeverGrows:
     def test_shrinks_by_byte_overshoot_with_margin(self):
@@ -173,9 +185,11 @@ class TestTheFitLoop:
 
         with patch("review.prompt.count_tokens", return_value=10), \
              patch("agent.templates.render", side_effect=_counting_render(renders)):
-            with pytest.raises(PromptTooLarge):
+            with pytest.raises(PromptTooLarge) as exc:
                 build_prompt(Phase.SCOUT, _job(tmp_path), max_turns=10)
         assert renders, "render was never looked up through agent.templates"
+        # Proves the budget patch took effect, so the floor path was forced.
+        assert exc.value.budget_bytes == 80
         assert len(renders) == 1
         assert len(_stats(tmp_path)) == 1
 

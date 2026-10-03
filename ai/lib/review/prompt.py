@@ -508,9 +508,7 @@ def _fit_budget(
         diff_allowance_bytes=diff_bytes,
         files=files,
         cuts=tuple(cuts),
-        measured_bytes=(
-            measured + contents + delta_bytes + log_bytes
-        ),
+        measured_bytes=measured + contents + delta_bytes + log_bytes,
         commit_log=commit_log,
     )
 
@@ -544,16 +542,14 @@ def unverified_reason(phase: Phase | None) -> str:
     return "unavailable"
 
 
-def measured_tokens(
-    prompt: str, phase: Phase | None, model: str,
-) -> tuple[int, str] | None:
-    """The prompt's exact token count and the model it was counted against.
+def measured_tokens(prompt: str, phase: Phase | None, model: str) -> int | None:
+    """The prompt's exact token count against ``model``.
 
-    The two travel together because a density is uninterpretable without its
-    tokenizer, and resolving the model twice is how the recorded count and the
-    recorded model come to disagree. ``model`` is therefore the one the caller
-    already resolved to derive the budget, not a second resolution of it: the
-    count, the density and the ceiling all have to describe the same model.
+    ``model`` is the one the caller already resolved to derive the budget, not
+    a second resolution of it: the count, the density and the ceiling all have
+    to describe the same model, and a density is uninterpretable without its
+    tokenizer. The caller keeps the model it passed in rather than being handed
+    it back.
 
     This is the rendered prompt only. The system prompt and tool schemas the
     CLI adds are charged to the same request and are not visible from here, so
@@ -566,8 +562,7 @@ def measured_tokens(
     """
     if _measuring_disabled() or phase is None:
         return None
-    counted = count_tokens(prompt, model)
-    return (counted, model) if counted is not None else None
+    return count_tokens(prompt, model)
 
 
 # ceiling: process-local lock, upgrade to fcntl.flock on a sidecar if
@@ -616,6 +611,15 @@ def log_prompt_size(
     renders: int = 1,
     ladder_bytes: int | None = None,
 ) -> str:
+    """Log the rendered prompt's size and record it; return ``prompt`` unchanged.
+
+    Not a pure formatter. It writes the prompt to ``prompt-{template}[-label]``
+    beside the review file and appends one record to ``prompt-stats.json`` as
+    side effects; the return value is only there for call chains that pass the
+    prompt along, and ``fit_rendered_prompt`` ignores it. ``verification`` is
+    the loop's count for this render; without it the prompt is counted here,
+    so a direct call still records a complete row.
+    """
     prompt_bytes = len(prompt.encode())
     prompt_kb = prompt_bytes // 1024
     budget_kb = budget_bytes // 1024
@@ -686,25 +690,24 @@ def log_prompt_size(
     # round trip on the loop's path.
     if verification is not None:
         counted = verification.tokens
-        stats["token_verified"] = verification.token_verified
-        if not verification.token_verified:
-            stats["token_unverified_reason"] = verification.reason
-        stats["renders"] = renders
-        if ladder_bytes is not None:
-            stats["ladder_bytes"] = ladder_bytes
-        measured = (counted, model) if counted is not None else None
+        unverified = None if verification.token_verified else verification.reason
     else:
-        measured = measured_tokens(prompt, phase, model)
-        stats["token_verified"] = measured is not None
-        if measured is None:
-            stats["token_unverified_reason"] = unverified_reason(phase)
-    if measured:
+        counted = measured_tokens(prompt, phase, model)
+        unverified = None if counted is not None else unverified_reason(phase)
+    # One record shape for both paths, so they cannot drift on which fields
+    # they write.
+    stats["token_verified"] = unverified is None
+    if unverified is not None:
+        stats["token_unverified_reason"] = unverified
+    stats["renders"] = renders
+    if ladder_bytes is not None:
+        stats["ladder_bytes"] = ladder_bytes
+    if counted is not None:
         # Both the count and the model are recorded: a density is meaningless
         # without the tokenizer it was measured against, and sonnet-5 counts the
         # same text ~27% denser than sonnet-4-5.
-        counted, token_model = measured
         stats["prompt_tokens"] = counted
-        stats["token_model"] = token_model
+        stats["token_model"] = model
         # A zero-token prompt has no density to report, and dividing by it would
         # fail the render over a statistic. Unreachable for a real prompt; the
         # guard is here because the field's absence is already how a reader is

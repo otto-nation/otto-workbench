@@ -280,7 +280,7 @@ def test_the_measured_path_takes_no_round_trip_when_it_is_patched():
             measured = review.prompt.measured_tokens(
                 "prompt", Phase.SCOUT, "claude-sonnet-5",
             )
-    assert measured == (123, "claude-sonnet-5")
+    assert measured == 123
     assert counter.called
 
 

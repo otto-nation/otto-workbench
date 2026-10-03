@@ -59,8 +59,8 @@ def verify_prompt(
     # Counted even when the bytes already overshoot: the render is known not to
     # fit, but the count still feeds `prompt-stats.json` and the token-density
     # ratchet, which is worth the round trip.
-    measured = measured_tokens(prompt, phase, model)
-    if measured is None:
+    counted = measured_tokens(prompt, phase, model)
+    if counted is None:
         return PromptVerification(
             prompt_bytes=prompt_bytes,
             budget_bytes=budget_bytes,
@@ -70,7 +70,6 @@ def verify_prompt(
             byte_overshoot=byte_overshoot,
             token_overshoot=0,
         )
-    counted, _model = measured
     overhead = overhead_reserve_tokens(backend)
     charged = counted + overhead
     limit = model_window_tokens(model) - COMPLETION_RESERVE_TOKENS

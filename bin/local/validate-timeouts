@@ -27,7 +27,8 @@ A third shape is rejected at the call sites that launch a subprocess —
   proc.run(cmd)  no bound written down at all            -> a tier
 
 A fourth shape is rejected on a name bound, in the same function, from a
-call whose callee ends in `Popen` — or `with ... Popen(...) as name`:
+call whose callee ends in `Popen` or is one of `core.children`'s launchers
+(`spawn`, `owned`) — or `with ... Popen(...) as name`, likewise:
 
   proc.wait()         a reap with no bound written down  -> a tier
   proc.communicate()  same                               -> a tier
@@ -205,16 +206,27 @@ def _iter_scope(node):
         yield from _iter_scope(child)
 
 
+# `core.children` launches through `Popen` and hands the process back, so a
+# name bound from either wrapper is a Popen the caller must reap with a bound.
+# Matched on the module's last segment and the function, so `children.spawn`
+# and `core.children.spawn` both count and an unrelated `spawn` does not.
+POPEN_WRAPPERS = {('children', 'spawn'), ('children', 'owned')}
+
+
 def _ends_with_popen_call(node) -> bool:
-    """True when *node* is a call whose callee is named `Popen`."""
+    """True when *node* launches a Popen: `Popen(...)` or a `core.children` wrapper."""
     if not isinstance(node, ast.Call):
         return False
     func = node.func
     if isinstance(func, ast.Name):
         return func.id == 'Popen'
-    if isinstance(func, ast.Attribute):
-        return func.attr == 'Popen'
-    return False
+    if not isinstance(func, ast.Attribute):
+        return False
+    if func.attr == 'Popen':
+        return True
+    owner = func.value
+    owner_name = owner.attr if isinstance(owner, ast.Attribute) else getattr(owner, 'id', None)
+    return (owner_name, func.attr) in POPEN_WRAPPERS
 
 
 def _name_ids(targets) -> list[str]:

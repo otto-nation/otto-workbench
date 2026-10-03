@@ -161,6 +161,36 @@ def stream(cmd):
     ]
 
 
+def test_a_core_children_owned_wait_without_timeout_is_flagged(tmp_path):
+    violations = _check(tmp_path, """
+def stream(cmd):
+    with core.children.owned(cmd) as proc:
+        proc.wait()
+""")
+    assert [(v.line, v.found) for v in violations] == [
+        (4, "proc.wait() with no timeout="),
+    ]
+
+
+def test_a_core_children_spawn_wait_without_timeout_is_flagged(tmp_path):
+    violations = _check(tmp_path, """
+def stream(cmd):
+    proc = children.spawn(cmd)
+    proc.wait()
+""")
+    assert [(v.line, v.found) for v in violations] == [
+        (4, "proc.wait() with no timeout="),
+    ]
+
+
+def test_an_unrelated_spawn_is_not_a_popen(tmp_path):
+    assert _check(tmp_path, """
+def stream(pool):
+    task = pool.spawn(work)
+    task.wait()
+""") == []
+
+
 def test_a_forwarded_positional_bound_on_a_reap_is_clean(tmp_path):
     assert _check(tmp_path, """
 def stream(cmd, budget):

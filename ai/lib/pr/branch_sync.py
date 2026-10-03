@@ -134,11 +134,13 @@ def _push(
     message: str,
     log: Callable[[str], None],
     trail: Trail | None,
+    env: dict[str, str] | None = None,
 ) -> SyncResult:
     if message:
         log(message)
     result = git.push.push(
         wt, gated=False, branch=branch, remote=remote, args=args, trail=trail,
+        env=env,
     )
     if result.status in _FAILED:
         return SyncResult(SyncOutcome.FAILED, result.output or message, result)
@@ -182,6 +184,7 @@ def sync_branch(
             wt, branch, remote=remote,
             args=("--set-upstream", remote, branch, *nv),
             outcome=SyncOutcome.PUSHED_NEW, message=MSG_NEW, log=emit, trail=trail,
+            env=env,
         )
 
     fetched = git.client.run("fetch", remote, branch, "--quiet", cwd=wt, env=env)
@@ -194,6 +197,7 @@ def sync_branch(
             wt, branch, remote=remote,
             args=(*nv, remote, branch),
             outcome=SyncOutcome.PUSHED, message="", log=emit, trail=trail,
+            env=env,
         )
 
     # Read through `run`, not `out`: `out` answers "" on failure, so two failed
@@ -216,5 +220,6 @@ def sync_branch(
             wt, branch, remote=remote,
             args=(*nv, remote, branch),
             outcome=SyncOutcome.PUSHED, message=MSG_AHEAD, log=emit, trail=trail,
+            env=env,
         )
     return SyncResult(SyncOutcome.DIVERGED, MSG_DIVERGED, None)

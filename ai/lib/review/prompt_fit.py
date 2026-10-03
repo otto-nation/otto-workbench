@@ -10,7 +10,9 @@ a fail. The byte check still applies.
 A render that does not fit ratchets the ladder down by the measured
 overshoot — bytes directly, tokens converted at the density just measured —
 and never grows. Three renders is the cap; past that the phase raises
-`PromptTooLarge` the way a single over-budget render always has.
+`PromptTooLarge` the way a single over-budget render always has. A plan that
+reached the diff floor stops sooner: every lever is spent, so a smaller target
+would render the same prompt, and the loop raises after that render.
 """
 
 # doc-group: pipeline

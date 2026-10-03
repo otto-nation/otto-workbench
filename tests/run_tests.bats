@@ -287,6 +287,7 @@ report_for() {
 @test "a serial pytest run announces one job, not the grant" {
   _run_watched() { printf '%s\n' "$@"; }
   pytest() { echo "pytest 8.0 (no plugins)"; }
+  # shellcheck disable=SC2034  # read by run_pytest in bin/local/run-tests
   PYTEST_DEBUG_TEMPROOT=$BATS_TEST_TMPDIR
   JOBS=12
   run --separate-stderr run_pytest
@@ -298,6 +299,7 @@ report_for() {
 @test "a parallel pytest run announces the granted jobs" {
   _run_watched() { printf '%s\n' "$@"; }
   pytest() { echo "pytest 8.0 xdist-3.0"; }
+  # shellcheck disable=SC2034  # read by run_pytest in bin/local/run-tests
   PYTEST_DEBUG_TEMPROOT=$BATS_TEST_TMPDIR
   JOBS=12
   run --separate-stderr run_pytest
@@ -311,6 +313,7 @@ report_for() {
     if [[ "$1" = -v && "$2" = parallel ]]; then return 1; fi
     builtin command "$@"
   }
+  # shellcheck disable=SC2034  # read by run_bats in bin/local/run-tests
   BATS_RUN_TMPDIR=$BATS_TEST_TMPDIR/bats-run
   JOBS=12
   run --separate-stderr run_bats
@@ -325,6 +328,7 @@ report_for() {
     if [[ "$1" = -v && "$2" = parallel ]]; then return 0; fi
     builtin command "$@"
   }
+  # shellcheck disable=SC2034  # read by run_bats in bin/local/run-tests
   BATS_RUN_TMPDIR=$BATS_TEST_TMPDIR/bats-run
   JOBS=12
   run --separate-stderr run_bats

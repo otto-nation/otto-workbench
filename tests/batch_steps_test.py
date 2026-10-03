@@ -1,8 +1,11 @@
+import os
 import stat
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -125,6 +128,48 @@ def test_kill_escalates_to_sigkill_when_the_child_ignores_sigterm(tmp_path, monk
     assert proc.poll() is None  # SIGTERM alone is ignored
     proc.kill()
     assert _wait(proc, 5) is not None
+
+
+def test_kill_of_an_exited_but_unreaped_step_does_not_raise(tmp_path):
+    # The step has exited but nothing has reaped it, so its group holds only a
+    # zombie. macOS answers killpg on that group with EPERM rather than ESRCH;
+    # cancel --kill reaching this window crashed the scheduler.
+    exe = _script(tmp_path, "true\n")
+    proc = batch.steps.StepProcess.start([exe], log_path=tmp_path / "s.log", trail_root="r")
+    end = time.time() + 5
+    while time.time() < end:
+        try:
+            # WNOWAIT reports the exit without reaping, so the zombie stays.
+            if os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT):
+                break
+        except ChildProcessError:
+            break
+        time.sleep(0.01)
+    proc.kill()
+    assert _wait(proc, 5) == 0
+
+
+def test_kill_treats_eperm_as_gone_only_once_the_step_has_exited(tmp_path, monkeypatch):
+    def refuse(_pgid, _sig):
+        raise PermissionError(1, "Operation not permitted")
+
+    done = batch.steps.StepProcess.start([_script(tmp_path, "true\n")],
+                                         log_path=tmp_path / "a.log", trail_root="r")
+    _wait(done, 5)
+    monkeypatch.setattr(batch.steps.os, "killpg", refuse)
+    done.kill()
+
+    monkeypatch.undo()
+    live = batch.steps.StepProcess.start([_script(tmp_path, "exec sleep 30\n")],
+                                         log_path=tmp_path / "b.log", trail_root="r")
+    monkeypatch.setattr(batch.steps.os, "killpg", refuse)
+    try:
+        with pytest.raises(PermissionError):
+            live.kill()
+    finally:
+        monkeypatch.undo()
+        live.kill()
+        _wait(live, 5)
 
 
 def test_ensure_worktree_finds_the_checkout_and_reports_dirt(tmp_path):

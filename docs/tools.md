@@ -86,7 +86,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `validate-permissions` | Validates that every Bash permission rule can match a command, that no untracked settings file duplicates a tracked grant or re-grants a gated one, and that a tracked allow bucket is in the codepoint order both ai sync and Claude Code write it back in — --fix prunes the duplicates and sorts the bucket |
 | `validate-ceiling` | Validates that every ceiling marker names an upgrade trigger or is marked permanent |
 | `validate-file-size` | Fails when a source file passes 600 code lines — blanks, comments and docstrings are not counted, so documenting a file never pushes it over. The files already over are named with the issue that splits each |
-| `validate-test-layout` | Fails when a Python module under tests/ is neither <subject>_test.py nor a declared support module, or passes the 600-code-line cap the source gate uses. The suites already over are named with the issue that splits them |
+| `validate-test-layout` | Fails when a Python module under tests/ is neither <subject>_test.py nor a declared support module, or when a Python or bats suite passes the 600-code-line cap the source gate uses. The bats suites already over are named with the issue that splits them |
 | `check-new-tests` | Runs the tests a change adds against a worktree at the merge base and reports any that pass without the change — the revert check the testing rule prescribes, done once from the diff |
 | `validate-yq-version` | Fails when this machine's yq is older than the one CI pins — an expression the older parser rejects fails every registry read at once |
 | `validate-eval-baselines` | Validates eval baseline files for schema correctness and corpus coverage |
@@ -107,6 +107,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `select-tests` | Emits the bats test files affected by a set of changed paths — used by the pre-push hook for change-based selection |
 | `select-pytest` | Emits the pytest files affected by a set of changed paths, resolved through the import graph — the pytest counterpart of select-tests |
 | `claim-job-slots` | Holds a share of the machine's test-parallelism slots while a command runs, so concurrent suites in several worktrees divide the cores instead of each taking all of them |
+| `suite-watch` | Supervises a test-suite child and writes a periodic stderr heartbeat of elapsed time and in-flight work, so a slow run is distinguishable from a stuck one |
 | `validate-test-deps` | Validates that every bats test has resolvable source refs or is in the always-run list |
 | `validate-pytest-deps` | Validates that every pytest file resolves deps through the import graph or is declared unmappable |
 | `check-surface-compat` | Fails when a public surface entry is removed without a breaking-change or Not-Breaking declaration |
@@ -870,6 +871,8 @@ Takes no flags.
 | `--fork-point` `<ref>` | Replay only the commits after REF, onto the target — for a branch whose earlier commits already landed. The partially-landed refusal names the ref to pass. |
 | `--fix` | Autonomous mode — resolve conflicts with AI and rebase (force-pushes unless --no-push). |
 | `--no-push` | Skip the force-push — print the command instead. |
+| `--push-only` | Push HEAD with the lease an earlier --no-push run recorded; do not rebase. |
+| `--no-verify` | Skip the pre-push hook on the force-push. For a hook failure already understood — a flake, or one the branch did not cause. |
 | `--force` | Rebase even when the branch's work already landed on the target ref. |
 | `--abort` | Abort in-progress rebase. |
 
@@ -880,6 +883,10 @@ Takes no flags.
 | `--force` | Revise even when HEAD has not moved since the last pass. |
 | `--dry-run` | Print the revision instead of applying it. |
 | `--post` | Apply the revision to the PR; without it the edit is drafted. |
+
+**`pr batch`** — Run rebase, comments and self-review across my open PRs
+
+Takes no flags.
 
 **`pr gc`** — Clean up stale PR artifacts
 

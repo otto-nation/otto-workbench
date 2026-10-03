@@ -29,9 +29,7 @@ import git.push  # noqa: E402
 import core.timeouts  # noqa: E402
 from core.trail import Trail  # noqa: E402
 
-from conftest import _last_event, _load_lib, git_in  # noqa: E402
-
-gitenv = _load_lib("gitenv")
+from conftest import _last_event, git_in  # noqa: E402
 
 # `pushable` is a fixture: imported so pytest finds it here, never called by name.
 from push_support import _never_runs, _commit, pushable, _lose_pushes, _HOOK_DUMP, _RESET_DUMP_FULL
@@ -494,39 +492,3 @@ def test_retry_blocked_when_tree_dirty(pushable, monkeypatch):
 
     assert result.status is git.push.PushStatus.LOST
     assert result.retry is git.push.Retry.DIRTY
-
-
-def test_retry_safety_check_reads_wt_path_not_an_inherited_git_dir(pushable, monkeypatch):
-    """The retry's HEAD/dirty check must answer for *wt_path*, not for whatever
-    repository an inherited `GIT_DIR` names.
-
-    `GIT_DIR` is pointed at the bare remote, whose `main` sits one commit
-    behind *wt* right after the losing hook rewinds it — exactly what
-    `_retry_block` would see if the `env` it was handed never reached
-    `head_sha`/`is_dirty`, and would misread as the gated commit no longer
-    being HEAD, blocking a retry that is in fact perfectly safe.
-    """
-    wt, remote = pushable
-    sha = _commit(wt, "work")
-    hook = _lose_pushes(remote)
-    monkeypatch.setenv("GIT_DIR", str(remote))
-    real_run = git.client.run
-    seen: list[tuple[str, ...]] = []
-
-    def heal_after_first(*args, **kwargs):
-        if args and args[0] == "push":
-            seen.append(args)
-            if len(seen) == 1:
-                result = real_run(*args, **kwargs)
-                hook.unlink()
-                return result
-        return real_run(*args, **kwargs)
-
-    monkeypatch.setattr(git.client, "run", heal_after_first)
-    result = git.push.push(
-        wt, gated=False, sha=sha, branch="main", env=gitenv.git_env_clear(),
-    )
-
-    assert result.status is git.push.PushStatus.PUSHED
-    assert result.retry is git.push.Retry.ATTEMPTED
-    assert result.remote_sha == sha

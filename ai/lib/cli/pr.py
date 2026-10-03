@@ -308,12 +308,17 @@ def _global_flags_block() -> str:
     """The global flags as `build_global_parser` declares them, for the usage text.
 
     Read off the parser's own help rather than written out, so `pr --help` and
-    the first pass of `main` cannot disagree about what is global. The help is
-    a usage line, a blank line, then a section heading and the flags; the
-    block is the flags.
+    the first pass of `main` cannot disagree about what is global. The flags
+    are formatted from the parser's actions inside a heading-less section, so
+    the block does not depend on how argparse lays out its usage line or names
+    its heading.
     """
-    _usage, sections = build_global_parser().format_help().split("\n\n", 1)
-    return sections.split("\n", 1)[1].rstrip()
+    parser = build_global_parser()
+    formatter = parser._get_formatter()
+    formatter.start_section(None)
+    formatter.add_arguments(parser._actions)
+    formatter.end_section()
+    return formatter.format_help().rstrip()
 
 
 def _build_usage() -> str:

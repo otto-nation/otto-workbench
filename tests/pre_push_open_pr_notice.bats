@@ -173,7 +173,11 @@ wait
 EOF
   chmod +x "$STUB_BIN/gh"
 
-  run _run_briefly 2 gh pr list
+  # Long enough for the stub to start and fork before the deadline fires. On a
+  # loaded machine — the full suite under the pre-push gate — two seconds was
+  # not: the stub was killed before writing the pid file, and the test failed
+  # on a missing file rather than on a leaked grandchild.
+  run _run_briefly 5 gh pr list
   [ "$status" -ne 0 ]
   [ -z "$output" ]
 

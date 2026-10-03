@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
-# Tests for the git hooks: global and local hooks, the commit identity guard, worktrunk pre-switch.
+# Tests for the git hooks: global and local hooks, the commit identity guard,
+# repo-local delegation, multi-identity helpers, worktrunk pre-switch.
 
 setup() {
   load 'test_helper'

@@ -20,7 +20,7 @@ from review.types import (
 from core.phases import Phase
 
 from review.grammar import parse_ledger_line
-from review.prompt import _build_common_sections
+from review.prompt import build_common_sections
 from review.prompt_prior import _LEDGER_INSTRUCTION, _build_unaccounted_section
 import review.registry
 
@@ -66,7 +66,7 @@ class TestUnaccountedPriorSection:
 
     def test_the_synthesis_prompt_carries_them(self):
         job = _make_job(_make_preflight())
-        common = _build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
+        common = build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
         extra = dict(
             group_count=1, merged_content="m", holistic_content="h",
             unaccounted_prior=[self.M1],
@@ -76,7 +76,7 @@ class TestUnaccountedPriorSection:
 
     def test_a_synthesis_prompt_with_nothing_left_over_says_nothing(self):
         job = _make_job(_make_preflight())
-        common = _build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
+        common = build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
         extra = dict(group_count=1, merged_content="m", holistic_content="h")
         built = review.registry.for_phase(Phase.SYNTHESIS).build(job, common, extra, "/tmp/r.md")
         assert built.builder.vars["prior_section"] == ""

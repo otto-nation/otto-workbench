@@ -21,10 +21,11 @@ against the model that will actually serve the request.
 The `system` and `tools` arguments exist for that first property and no caller
 supplies them yet. `claude -p` assembles both inside the CLI, so a review has
 no handle on the text its agent will actually be sent; a count taken here is
-the prompt alone. Measured against session logs, a real request runs 9.5k to
-48.8k tokens above it — roughly 26k for a full review phase and 11k for a
-lighter one. A caller comparing a count against a context window owes itself
-that margin until the two are wired together.
+the prompt alone. A real request runs well above it, by an amount that differs
+per backend; `review.budget` owns the measured figures and the reserve built
+from them (see the comment above `OVERHEAD_RESERVE_TOKENS`). A caller comparing
+a count against a context window owes itself that margin until the two are
+wired together.
 """
 
 # doc-group: backend
@@ -47,16 +48,42 @@ _ANTHROPIC_VERSION = "vertex-2023-10-16"
 # tokenizer is wanted travels in the body, not the URL.
 _COUNT_TOKENS_MODEL = "count-tokens"
 
+# Vertex multi-regions are not `{region}-aiplatform.googleapis.com` — that
+# host 404s with HTML. They live on the `.rep.` publisher frontend instead.
+_MULTI_REGIONS = frozenset({"us", "eu"})
+
+
+def aiplatform_host(region: str) -> str:
+    """The Vertex AI host for ``region``.
+
+    `global` is the un-prefixed producer. Multi-regions (`us`, `eu`) use the
+    `.rep.` frontend (`aiplatform.us.rep.googleapis.com`); a single region
+    such as `us-east5` keeps `{region}-aiplatform.googleapis.com`.
+    """
+    if region == "global":
+        return "https://aiplatform.googleapis.com"
+    if region in _MULTI_REGIONS:
+        return f"https://aiplatform.{region}.rep.googleapis.com"
+    return f"https://{region}-aiplatform.googleapis.com"
+
 
 def _endpoint(project: str, region: str) -> str:
-    host = (
-        "https://aiplatform.googleapis.com" if region == "global"
-        else f"https://{region}-aiplatform.googleapis.com"
-    )
     return (
-        f"{host}/v1/projects/{project}/locations/{region}"
+        f"{aiplatform_host(region)}/v1/projects/{project}/locations/{region}"
         f"/publishers/anthropic/models/{_COUNT_TOKENS_MODEL}:rawPredict"
     )
+
+
+def _count_failure_note(exc: BaseException) -> str:
+    """Why a count did not come back, for the dim log.
+
+    HTTP errors are named by status: catching them as `URLError` (their
+    parent) used to report a transport class and "using estimate", which
+    was two lies — the host answered, and nothing estimated anything.
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"HTTP {exc.code}"
+    return type(exc).__name__
 
 
 def count_tokens(
@@ -113,9 +140,19 @@ def count_tokens(
     try:
         with urllib.request.urlopen(req, timeout=core.timeouts.NETWORK) as resp:
             return json.loads(resp.read())["input_tokens"]
-    except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError) as exc:
+    except (
+        # HTTPError subclasses URLError; it is listed anyway because
+        # `_count_failure_note` reads its status code, so keep it explicit.
+        urllib.error.HTTPError,
+        urllib.error.URLError,
+        OSError,
+        json.JSONDecodeError,
+        KeyError,
+    ) as exc:
         # Dim rather than warn: a run whose prompt cannot be counted still
-        # proceeds on its planned estimate, and this is the note that says the
-        # estimate was never checked — not a failure of the review.
-        core.log.dim(f"Token count unavailable ({type(exc).__name__}) — using estimate")
+        # proceeds, and this is the note that says the count was skipped —
+        # not a failure of the review, and not an estimate of anything.
+        core.log.dim(
+            f"Token count unavailable ({_count_failure_note(exc)}) — count skipped"
+        )
         return None

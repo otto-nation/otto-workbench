@@ -71,14 +71,12 @@ _AGENT_ERROR_PREFIX = "agent error:"
 # the way `_TRANSIENT_ERROR_MARKERS` is — the error text is free-form, and these
 # are the fragments of it that carry a verdict.
 #
-# "prompt is too long" is the API rejecting a prompt the local budget passed.
-# The budget bounds a token ceiling with a byte count, which no byte count can
-# do without knowing the content's density; it prices bytes at a floor below
-# anything measured, so the gap is meant to be conservative rather than absent.
-# Content denser than that floor — base64, hashes — still closes it. It is the
-# same verdict as `PROMPT_TOO_LARGE` below and earns the same answer: recovery
-# re-renders the same phase from the same commit and produces a prompt the API
-# rejects identically.
+# "prompt is too long" is the API rejecting a prompt after in-phase recovery
+# already ran (or could not parse the rejection). `--recover` re-renders the
+# same phase from the same commit, so a second attempt at the same overflow is
+# not what changes the answer; a smaller review is. Local `PROMPT_TOO_LARGE`
+# is the same verdict reached before any agent starts, and is not retried for
+# the same reason.
 _NON_RECOVERABLE_ERROR_MARKERS = ("permission denied", "prompt is too long")
 
 _DIAGNOSIS_MESSAGES = {
@@ -193,9 +191,10 @@ class Diagnosis:
     def recoverable(self) -> bool:
         """Whether `pr review --recover` could plausibly do better than this run.
 
-        A prompt over the budget is not: recovery re-renders the same phase from
-        the same commit, so it produces the same oversized prompt. What changes
-        the answer is a smaller review, not a second attempt at this one.
+        A prompt over the budget is not: in-phase recovery already rebuilt it
+        against the API's reported maximum, and `--recover` re-renders the same
+        phase from the same commit. What changes the answer is a smaller review,
+        not another attempt at this one.
         """
         if self.kind is DiagnosisKind.PROMPT_TOO_LARGE:
             return False

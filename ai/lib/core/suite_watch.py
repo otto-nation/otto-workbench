@@ -183,7 +183,7 @@ def _ps_rows() -> list[PsRow]:
     """
     try:
         result = subprocess.run(
-            ["ps", "-A", "-o", "pid=,ppid=,etime=,command="],
+            ["ps", "-ww", "-A", "-o", "pid=,ppid=,etime=,command="],
             capture_output=True,
             text=True,
             timeout=core.timeouts.QUICK,

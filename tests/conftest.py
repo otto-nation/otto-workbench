@@ -634,7 +634,6 @@ def _guard_repo_config():
 
 
 EVAL_MODELS = REPO_ROOT / "ai" / "bin" / "eval-models"
-REUSE_SESSION_START = REPO_ROOT / "ai" / "claude" / "bin" / "reuse-session-start"
 
 
 def init_worktree(path) -> Path:
@@ -1335,11 +1334,6 @@ def ro():
         sys.path.insert(0, LIB_DIR)
     import cli.review_orchestrate
     return cli.review_orchestrate
-
-
-@pytest.fixture(scope="session")
-def rss():
-    return load_script("reuse_session_start", REUSE_SESSION_START)
 
 
 @pytest.fixture(scope="session")

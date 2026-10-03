@@ -451,13 +451,10 @@ def test_adopt_is_a_no_op_without_an_old_file(roots):
 
 @pytest.fixture
 def reuse_levels(roots):
-    """_reuse_levels, importable only with ai/claude/bin on the path."""
-    bin_dir = str(Path(__file__).resolve().parent.parent / "ai" / "claude" / "bin")
-    if bin_dir not in sys.path:
-        sys.path.insert(0, bin_dir)
-    import _reuse_levels
+    """config.reuse_levels, with the roots fixture's config dir in place."""
+    import config.reuse_levels
 
-    return _reuse_levels
+    return config.reuse_levels
 
 
 def test_reuse_level_defaults_to_full(reuse_levels):

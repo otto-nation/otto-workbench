@@ -221,6 +221,23 @@ PY
   done
 }
 
+# passes-at-base: the pin was honoured through _reuse_levels before; this keeps it honoured by the shims
+@test "the refusal reaches the Claude hooks under ai/claude/bin" {
+  local script
+  for script in reuse-session-start workbench-statusline reuse-mode-tracker reuse-subagent-start; do
+    WORKBENCH_AI_LIB_DIR=/nonexistent run "$REPO_ROOT/ai/claude/bin/$script" </dev/null
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"WORKBENCH_AI_LIB_DIR"* ]]
+  done
+}
+
+# passes-at-base: asserts the early --help this change was careful to keep
+@test "workbench-statusline answers --help before the pin is read" {
+  WORKBENCH_AI_LIB_DIR=/nonexistent run "$REPO_ROOT/ai/claude/bin/workbench-statusline" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Usage: workbench-statusline"* ]]
+}
+
 # ─── The stanza itself ───────────────────────────────────────────────────────
 
 @test "every entry point that places ai/lib goes through the pin" {

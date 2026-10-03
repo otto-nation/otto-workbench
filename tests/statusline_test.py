@@ -1,11 +1,13 @@
 """Tests for the workbench status line's PR segment."""
 
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
 
-from conftest import exec_fresh, load_script, run_checked
+from conftest import exec_fresh, run_checked
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "claude" / "bin"
@@ -13,10 +15,11 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-statusline = load_script("workbench_statusline", BIN_DIR / "workbench-statusline")
-
+import cli.workbench_statusline  # noqa: E402
+import config.reuse_levels  # noqa: E402
 import pr.domains  # noqa: E402
 import pr.state  # noqa: E402
+import pr.statusline  # noqa: E402
 import pr.target  # noqa: E402
 
 
@@ -51,7 +54,7 @@ def test_statusline_reads_the_target_dir_for_the_checkout(tmp_path, monkeypatch)
         repo="acme/widget", branch="feat/a", pr_number=7,
         head_sha="sha", worktree_root=str(wt)))
 
-    assert "PR#7" in statusline._pr_piece()
+    assert "PR#7" in pr.statusline.segment()
 
 
 def test_statusline_is_silent_without_an_origin(tmp_path, monkeypatch):
@@ -66,7 +69,7 @@ def test_statusline_is_silent_without_an_origin(tmp_path, monkeypatch):
     monkeypatch.chdir(wt)
     _save(wt)
 
-    assert statusline._pr_piece() == ""
+    assert pr.statusline.segment() == ""
     assert pr.target.target_dir_for_checkout(wt) is None
 
 
@@ -74,12 +77,12 @@ def test_pr_piece_renders_ci_failures(tmp_path):
     _save(tmp_path, pr.domains.CIDomain(conclusion="failure", failure_count=3))
 
     with _at(tmp_path):
-        assert statusline._pr_piece() == "PR#42 CI:3F"
+        assert pr.statusline.segment() == "PR#42 CI:3F"
 
 
 def test_pr_piece_is_blank_without_a_state_file(tmp_path):
     with _at(tmp_path):
-        assert statusline._pr_piece() == ""
+        assert pr.statusline.segment() == ""
 
 
 def test_pr_piece_is_blank_for_a_corrupt_state_file(tmp_path, capsys):
@@ -90,7 +93,7 @@ def test_pr_piece_is_blank_for_a_corrupt_state_file(tmp_path, capsys):
     path.write_text("{ not json")
 
     with _at(tmp_path):
-        assert statusline._pr_piece() == ""
+        assert pr.statusline.segment() == ""
     assert capsys.readouterr().err == ""
 
 
@@ -116,7 +119,7 @@ def test_pr_piece_survives_null_behind_a_scalar_field(tmp_path):
     with _at(tmp_path):
         # failure_count degrades to 0, so the CI:<n>F branch does not fire —
         # the point of this test is that it renders at all, not which branch.
-        assert statusline._pr_piece() == "PR#42 CI:failure"
+        assert pr.statusline.segment() == "PR#42 CI:failure"
 
 
 def test_pr_piece_survives_a_wrong_typed_scalar_field(tmp_path):
@@ -137,15 +140,16 @@ def test_pr_piece_survives_a_wrong_typed_scalar_field(tmp_path):
     }))
 
     with _at(tmp_path):
-        assert statusline._pr_piece() == "PR#42 CI:failure"
+        assert pr.statusline.segment() == "PR#42 CI:failure"
 
 
 def test_main_keeps_the_reuse_segment_when_the_pr_segment_raises(capsys):
     """The PR segment is guarded as a whole, not just its import: a raise
     inside it must not take down a status line that has something to say."""
-    with patch.object(statusline, "_reuse_piece", return_value="reuse:ultra"), \
-            patch.object(statusline, "_pr_piece", side_effect=RuntimeError("boom")):
-        statusline.main()
+    with patch.object(config.reuse_levels, "read_level", return_value="ultra"), \
+            patch.object(config.reuse_levels, "read_default", return_value="full"), \
+            patch.object(pr.statusline, "segment", side_effect=RuntimeError("boom")):
+        assert cli.workbench_statusline.main([]) == 0
 
     assert capsys.readouterr().out == "reuse:ultra"
 
@@ -158,21 +162,44 @@ def test_pr_details_reads_typed_fields(tmp_path):
     pr.state.apply(state, pr.domains.ReviewSummary(verdict="approve"))
     pr.state.apply(state, pr.domains.CommentsSummary(by_state={"open": 2}))
 
-    assert statusline._pr_details(state) == "review:approve 2open"
+    assert pr.statusline._pr_details(state) == "review:approve 2open"
 
 
-def test_a_broken_ai_lib_blanks_the_pr_segment_instead_of_crashing(monkeypatch):
-    """Regression: the script used to carry an unconditional `import pr.target`
-    ahead of the guarded try/except that imports the same module to catch
-    exactly this failure. The unconditional pair ran first, so a broken ai/lib
-    raised at module import time instead of being caught, and `pr` never got
-    the chance to degrade to None. Setting `sys.modules["pr.target"] = None`
-    makes the next `import pr.target` raise ImportError, standing in for a
-    broken ai/lib without touching the real module on disk."""
-    monkeypatch.setitem(sys.modules, "pr.target", None)
+def test_a_broken_ai_lib_blanks_the_pr_segment_instead_of_crashing(
+    monkeypatch, capsys,
+):
+    """The guard now lives in cli.workbench_statusline: a failed
+    ``import pr.statusline`` blanks the PR segment and leaves reuse.
 
-    broken = exec_fresh("workbench_statusline_broken_import",
-                         BIN_DIR / "workbench-statusline")
+    Setting ``sys.modules["pr.statusline"] = None`` makes the next
+    ``import pr.statusline`` raise ImportError, standing in for a broken
+    ai/lib without touching the real module on disk.
+    """
+    monkeypatch.setitem(sys.modules, "pr.statusline", None)
+
+    broken = exec_fresh(
+        "workbench_statusline_broken_import",
+        LIB_DIR / "cli" / "workbench_statusline.py",
+    )
 
     assert broken.pr is None
-    assert broken._pr_piece() == ""
+    with patch.object(config.reuse_levels, "read_level", return_value="ultra"), \
+            patch.object(config.reuse_levels, "read_default", return_value="full"):
+        assert broken.main([]) == 0
+    assert capsys.readouterr().out == "reuse:ultra"
+
+
+def test_the_installed_shim_renders_the_reuse_segment(tmp_path):
+    config_dir = Path(os.environ["WORKBENCH_CONFIG_DIR"])
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "config.yml").write_text("reuse:\n  level: ultra\n")
+    result = subprocess.run(
+        [str(BIN_DIR / "workbench-statusline")],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0
+    assert result.stdout == "reuse:ultra"
+    assert result.stderr == ""

@@ -29,6 +29,7 @@ if str(LIB_DIR) not in sys.path:
 import agent.invoke  # noqa: E402
 import gh.client  # noqa: E402
 import pr.branch_sync  # noqa: E402
+import pr.create  # noqa: E402
 import pr.gh_token  # noqa: E402
 from agent.invoke import PromptResult  # noqa: E402
 from core.proc import CmdResult  # noqa: E402
@@ -313,6 +314,31 @@ def test_a_resolving_base_succeeds_even_when_the_guessed_default_does_not(h):
     h.repo("trunk")
     assert run_create(h.ctx(), CreateOptions(base="trunk")) == 0
     assert _flag(_gh_argv(h), "--base") == "trunk"
+
+
+def test_base_ref_check_is_not_fooled_by_an_inherited_git_dir(tmp_path, monkeypatch):
+    """A hook that invoked `pr create` may export `GIT_DIR`; `_base_ref_exists`
+    must still read *wt*'s own remote-tracking refs rather than whatever
+    repository `GIT_DIR` names.
+
+    Isolated to the one read rather than run through `run_create`'s whole
+    pipeline: a globally-exported `GIT_DIR` also reaches the push this harness
+    makes further along, which is a separate path with its own env wiring and
+    not what this finding is about.
+    """
+    remote = tmp_path / "remote.git"
+    run_checked(["git", "init", "-q", "--bare", "-b", "main", str(remote)])
+    wt = init_repo(tmp_path / "wt")
+    git_in(wt, "commit", "-q", "--allow-empty", "--no-verify", "-m", "init")
+    git_in(wt, "remote", "add", "origin", str(remote))
+    git_in(wt, "push", "-q", "origin", "main")
+    other = tmp_path / "other.git"
+    run_checked(["git", "init", "-q", "--bare", str(other)])
+    monkeypatch.setenv("GIT_DIR", str(other))
+
+    assert pr.create._preflight(
+        wt, "feat/work", "main", CreateOptions(), None,
+    ) == ()
 
 
 def test_a_non_resolving_base_refuses_naming_the_branch_passed(h, capsys):

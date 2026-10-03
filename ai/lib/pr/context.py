@@ -324,9 +324,15 @@ def resolve(
         # checkout the caller started in. A --pr run then refused to check the
         # head out there, while --branch on the same head went to the right
         # worktree. This puts --pr in the same worktree --branch would use.
-        worktree_root, cwd = _resolve_worktree(
+        #
+        # A second pass that finds nothing (bare repo, head branch not
+        # available locally, ``wt`` missing) must not discard the first pass's
+        # worktree: the run degrades to it rather than losing its worktree.
+        head_root, head_cwd = _resolve_worktree(
             repo_dir, pr_ref=pr_ref, branch=branch_name,
         )
+        if head_root is not None:
+            worktree_root, cwd = head_root, head_cwd
         # The PR's HEAD, not the caller's: state written for this run belongs to
         # the PR, and the caller may be sitting on an unrelated branch.
         head_sha = head.sha

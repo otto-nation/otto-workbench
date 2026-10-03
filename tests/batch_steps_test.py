@@ -1,8 +1,11 @@
+import os
 import stat
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -125,6 +128,84 @@ def test_kill_escalates_to_sigkill_when_the_child_ignores_sigterm(tmp_path, monk
     assert proc.poll() is None  # SIGTERM alone is ignored
     proc.kill()
     assert _wait(proc, 5) is not None
+
+
+def _zombie_reported(pid):
+    # WNOWAIT reports the exit without reaping, so the zombie stays; a child
+    # already reaped out from under us reads as "done" too.
+    try:
+        return bool(os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT))
+    except ChildProcessError:
+        return True
+
+
+def _wait_for_zombie(pid, timeout):
+    end = time.time() + timeout
+    while time.time() < end and not _zombie_reported(pid):
+        time.sleep(0.01)
+
+
+# platform-only: the EPERM answer is macOS kernel behaviour; Linux signals a zombie-only group silently
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS-only EPERM smoke test")
+def test_kill_of_an_exited_but_unreaped_step_does_not_raise(tmp_path):
+    # macOS-only smoke test: the step has exited but nothing has reaped it, so its
+    # group holds only a zombie, and macOS answers killpg on that group with EPERM
+    # rather than ESRCH. On Linux, signalling a zombie-only group is a silent
+    # no-op either way, so this test alone does not pin the fix on this branch;
+    # test_kill_treats_eperm_as_gone_only_once_the_step_has_exited below, which
+    # mocks os.killpg to raise EPERM directly, is the regression guard for that.
+    exe = _script(tmp_path, "true\n")
+    proc = batch.steps.StepProcess.start([exe], log_path=tmp_path / "s.log", trail_root="r")
+    _wait_for_zombie(proc.pid, 5)
+    proc.kill()
+    assert _wait(proc, 5) == 0
+
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def test_kill_ends_what_an_exited_step_left_running_in_its_group(tmp_path):
+    # The step's own process is gone but a background child it started is still in
+    # its group; cancel --kill must still reach that child.
+    pidfile = tmp_path / "child.pid"
+    exe = _script(tmp_path, f"sleep 30 >/dev/null 2>&1 &\necho $! > {pidfile}\n")
+    proc = batch.steps.StepProcess.start([exe], log_path=tmp_path / "s.log", trail_root="r")
+    assert _wait(proc, 5) == 0
+    child = int(pidfile.read_text())
+    assert _alive(child)
+    proc.kill()
+    end = time.time() + 5
+    while _alive(child) and time.time() < end:
+        time.sleep(0.05)
+    assert not _alive(child)
+
+
+def test_kill_treats_eperm_as_gone_only_once_the_step_has_exited(tmp_path, monkeypatch):
+    def refuse(_pgid, _sig):
+        raise PermissionError(1, "Operation not permitted")
+
+    done = batch.steps.StepProcess.start([_script(tmp_path, "true\n")],
+                                         log_path=tmp_path / "a.log", trail_root="r")
+    _wait(done, 5)
+    monkeypatch.setattr(batch.steps.os, "killpg", refuse)
+    done.kill()
+
+    monkeypatch.undo()
+    live = batch.steps.StepProcess.start([_script(tmp_path, "exec sleep 30\n")],
+                                         log_path=tmp_path / "b.log", trail_root="r")
+    monkeypatch.setattr(batch.steps.os, "killpg", refuse)
+    try:
+        with pytest.raises(PermissionError):
+            live.kill()
+    finally:
+        monkeypatch.undo()
+        live.kill()
+        _wait(live, 5)
 
 
 def test_ensure_worktree_finds_the_checkout_and_reports_dirt(tmp_path):

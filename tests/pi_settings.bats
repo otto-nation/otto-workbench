@@ -66,31 +66,19 @@ SCRIPT
 }
 
 # _hide_gh — a PATH with no gh on it, which is one of the ways a verdict comes
-# back unknown. Drops only the PATH entries holding a gh, rather than
-# rebuilding PATH from a fixed list: a version manager's shim (mise, asdf) is
-# a symlink that resolves its tool by searching PATH, so relinking jq/yq into
-# a narrowed PATH — the way _hide_pi used to for pi — can leave the shim
-# unable to find the binary it stands in for and fail in its place. See
-# _hide_pi below for the same fix applied to pi.
+# back unknown. jq is symlinked in because the step needs it either way, and
+# bash because /bin/bash on macOS is 3.2 and has no namerefs — a PATH narrow
+# enough to lose gh would otherwise run the step under a shell it predates.
+#
+# yq for the same reason as jq: _pi_build_models reads the registries through
+# collect_model_env_vars. Both tests here reach the {} return before that,
+# since ENV_LOCAL_FILE defaults to /dev/null — the symlink is so a reordering
+# fails on its merits rather than on a PATH accident.
 _hide_gh() {
-  local dir kept="" entries
-  IFS=: read -ra entries <<< "$PATH"
-  for dir in "${entries[@]}"; do
-    [[ -x "$dir/gh" ]] || kept+="${kept:+:}$dir"
-  done
-  PATH="$kept"
-  ! command -v gh
-}
-
-# _hide_gh_fixture DIR — adds DIR to PATH with an executable NAME inside, so a
-# test can assert _hide_gh leaves a tool-bearing directory alone when that
-# directory holds no gh.
-_hide_gh_fixture() {
-  local dir="$1" name="$2"
-  mkdir -p "$dir"
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/$name"
-  chmod +x "$dir/$name"
-  PATH="$dir:$PATH"
+  ln -sf "$(command -v jq)" "$BIN/jq"
+  ln -sf "$(command -v yq)" "$BIN/yq"
+  ln -sf "$BASH" "$BIN/bash"
+  PATH="$BIN:/usr/bin:/bin"
 }
 
 # _run_step — runs step_pi_settings against the sandbox with the ui helpers
@@ -256,19 +244,6 @@ _live() {
   run _run_step
   [ "$status" -eq 0 ]
   [ "$(_live '.packages | length')" = "0" ]
-}
-
-@test "_hide_gh drops only the PATH entries holding gh" {
-  # A directory holding a tool other than gh (jq, yq, a version manager's
-  # shim dir) must survive _hide_gh untouched. The old implementation
-  # rebuilt PATH as "$BIN:/usr/bin:/bin", which silently dropped this
-  # directory along with gh.
-  local toolsdir="$TMPDIR/tools"
-  _hide_gh_fixture "$toolsdir" jq
-
-  _hide_gh
-
-  [[ ":$PATH:" == *":$toolsdir:"* ]]
 }
 
 @test "a machine with no gh reaches no verdict" {

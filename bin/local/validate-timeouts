@@ -53,7 +53,11 @@ its literal from this check.  And a runner is recognised by its written name, so
 keep both names; a call site that does is fully covered.
 
 The Popen-reap check sees only a plain name bound from `Popen` in the same
-function.  It does not see `self.proc = Popen(...)` followed by
+function.  It reads statements in source order, with no branch analysis: a
+plain rebinding of the name to anything else (`p = threading.Event()`) drops it,
+but a rebinding on one branch of an `if` drops it for the code after the other
+branch too.  Scopes are the function bodies only: nested functions are skipped,
+while lambda and class bodies written inside a function are read as part of it.  It does not see `self.proc = Popen(...)` followed by
 `self.proc.wait()`, a module-level `p = Popen(...); p.wait()`, or a closure
 that waits on its enclosing function's Popen.  A clean run is not coverage of
 those.
@@ -241,9 +245,12 @@ def _name_ids(targets) -> list[str]:
 def _bind_with_popen(node, names: set[str]) -> None:
     for item in node.items:
         bound = item.optional_vars
-        if not _ends_with_popen_call(item.context_expr) or not isinstance(bound, ast.Name):
+        if not isinstance(bound, ast.Name):
             continue
-        names.add(bound.id)
+        if _ends_with_popen_call(item.context_expr):
+            names.add(bound.id)
+        else:
+            names.discard(bound.id)
 
 
 def _is_popen_annassign(node) -> bool:
@@ -254,12 +261,18 @@ def _is_popen_annassign(node) -> bool:
 
 
 def _bind_popen_names(node, names: set[str]) -> None:
-    """Add names *node* binds from a Popen launch, if it does."""
-    if isinstance(node, ast.Assign) and _ends_with_popen_call(node.value):
-        names.update(_name_ids(node.targets))
+    """Add names *node* binds from a Popen launch; drop ones it rebinds to anything else."""
+    if isinstance(node, ast.Assign):
+        if _ends_with_popen_call(node.value):
+            names.update(_name_ids(node.targets))
+        else:
+            names.difference_update(_name_ids(node.targets))
         return
-    if _is_popen_annassign(node):
-        names.add(node.target.id)
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        if _is_popen_annassign(node):
+            names.add(node.target.id)
+        elif node.value is not None:
+            names.discard(node.target.id)
         return
     if isinstance(node, (ast.With, ast.AsyncWith)):
         _bind_with_popen(node, names)

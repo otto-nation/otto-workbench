@@ -233,6 +233,16 @@ def hold(done):
 """) == []
 
 
+def test_a_name_rebound_away_from_popen_is_no_longer_a_reap(tmp_path):
+    assert _check(tmp_path, """
+def hold(cmd):
+    p = subprocess.Popen(cmd)
+    p.wait(timeout=timeouts.UNBOUNDED)
+    p = threading.Event()
+    p.wait()
+""") == []
+
+
 def test_syntax_error_is_tolerated_but_reported(tmp_path, capsys):
     assert _check(tmp_path, "def f(cmd:\n    proc.run(cmd, timeout=5)\n") == []
     assert "unparseable, not checked" in capsys.readouterr().err

@@ -20,9 +20,11 @@ from core.suite_watch import (
     ENV_INTERVAL,
     STATUS_ENV,
     Inflight,
+    InflightGroup,
     PsRow,
     bats_file_from_command,
     child_status,
+    collapse_inflight,
     descendants,
     format_duration,
     format_heartbeat,
@@ -93,6 +95,18 @@ def test_format_heartbeat_without_inflight_still_says_so():
     line = format_heartbeat("pytest", 12, 4, [])
     assert "running: (none)" in line
     assert not line.startswith(("ok", "not ok", "#", "1.."))
+
+
+def test_collapse_inflight_groups_by_name_oldest_first():
+    groups = collapse_inflight([
+        Inflight("a.bats", 5),
+        Inflight("b.bats", 90),
+        Inflight("a.bats", 40),
+    ])
+    assert groups == [
+        InflightGroup("b.bats", 1, 90),
+        InflightGroup("a.bats", 2, 40),
+    ]
 
 
 def test_format_heartbeat_collapses_one_file_running_several_tests():
@@ -189,6 +203,35 @@ def test_pytest_inflight_reads_worker_status_files(tmp_path):
         ("tests/demo.py::test_slow", 20),
         ("tests/demo.py::test_fast", 2),
     ]
+
+
+@pytest.mark.parametrize("error", [OSError("gone"), ValueError("bad status file")])
+def test_a_failing_heartbeat_does_not_lose_the_childs_exit_status(monkeypatch, error):
+    def explode(*_args):
+        raise error
+
+    monkeypatch.setattr(core.suite_watch, "inflight_for", explode)
+    code = run_supervised(
+        [sys.executable, "-c", "import time; time.sleep(0.5); raise SystemExit(3)"],
+        suite="bats", jobs=None, interval=0.1,
+    )
+    assert code == 3
+
+
+def test_a_closed_stderr_does_not_lose_the_childs_exit_status(monkeypatch):
+    class _Closed:
+        def write(self, _text):
+            raise BrokenPipeError
+
+        def flush(self):
+            raise BrokenPipeError
+
+    monkeypatch.setattr(core.suite_watch.sys, "stderr", _Closed())
+    code = run_supervised(
+        [sys.executable, "-c", "import time; time.sleep(0.5); raise SystemExit(4)"],
+        suite="pytest", jobs=None, interval=0.1,
+    )
+    assert code == 4
 
 
 def test_child_status_translates_a_signal_death():

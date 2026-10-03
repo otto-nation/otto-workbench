@@ -49,6 +49,15 @@ class Inflight:
     age_s: int
 
 
+@dataclass(frozen=True)
+class InflightGroup:
+    """All in-flight entries sharing one name: how many, and the oldest's age."""
+
+    name: str
+    count: int
+    oldest_age_s: int
+
+
 class PsRow(NamedTuple):
     """One ``ps`` line: a process, its parent, how long it has run, its argv."""
 
@@ -113,21 +122,24 @@ def format_duration(seconds: int) -> str:
     return f"{hours}h{minutes:02d}m{secs:02d}s"
 
 
-def collapse_inflight(running: list[Inflight]) -> list[tuple[str, int, int]]:
-    """``(name, count, oldest_age_s)`` per distinct name, oldest first.
+def collapse_inflight(running: list[Inflight]) -> list[InflightGroup]:
+    """One :class:`InflightGroup` per distinct name, oldest first.
 
-    bats runs a file's tests in parallel, so one file shows up once per test
-    process in flight. Listing each one buries the signal — which file has been
+    bats runs a file's tests in parallel, so one file shows up once per
+    ``bats-exec-file`` process in flight. That is a process count, not a test
+    count: a subshell the file's bash forks keeps the parent's command line and
+    is counted too. Listing each one buries the signal — which file has been
     running longest — under copies of the same name.
     """
     grouped: dict[str, tuple[int, int]] = {}
     for item in running:
         count, oldest = grouped.get(item.name, (0, 0))
         grouped[item.name] = (count + 1, max(oldest, item.age_s))
-    return sorted(
-        ((name, count, oldest) for name, (count, oldest) in grouped.items()),
-        key=lambda entry: (-entry[2], entry[0]),
-    )
+    groups = [
+        InflightGroup(name, count, oldest)
+        for name, (count, oldest) in grouped.items()
+    ]
+    return sorted(groups, key=lambda g: (-g.oldest_age_s, g.name))
 
 
 def format_heartbeat(
@@ -151,8 +163,9 @@ def format_heartbeat(
     )
     if running:
         items = ", ".join(
-            f"{name}{f' ×{count}' if count > 1 else ''} ({format_duration(age)})"
-            for name, count, age in collapse_inflight(running)
+            f"{g.name}{f' ×{g.count}' if g.count > 1 else ''} "
+            f"({format_duration(g.oldest_age_s)})"
+            for g in collapse_inflight(running)
         )
         running_part = f" — running: {items}"
     else:
@@ -273,7 +286,13 @@ def bats_inflight(root_pid: int, rows: list[PsRow] | None = None) -> list[Inflig
 
 
 def pytest_inflight(status_dir: str | os.PathLike[str], now: float | None = None) -> list[Inflight]:
-    """In-flight pytest nodeids from per-worker files under *status_dir*."""
+    """In-flight pytest nodeids from per-worker files under *status_dir*.
+
+    ``.tmp`` files and files with fewer than two lines are skipped as
+    half-written. A worker that dies mid-test leaves its status file behind, so
+    that entry's age keeps growing until the run ends — which is the right
+    signal for a stuck run, not a bug in the listing.
+    """
     root = Path(status_dir)
     if not root.is_dir():
         return []
@@ -324,6 +343,11 @@ def _spawn(child: list[str], env: dict[str, str]) -> subprocess.Popen | None:
     that to ``run-tests``'s) would otherwise hit the child directly and then
     again through the relay. In its own session the child hears only what the
     relay forwards, to its own group, as ``job_slots_cli`` does.
+
+    The cost: a new session has no controlling terminal, so anything in the
+    suite that opens ``/dev/tty`` (a gpg or ssh prompt, ``tty``) fails. Stdin is
+    still inherited, so ``[ -t 0 ]`` is unaffected, and a terminal Ctrl-C
+    reaches only this process, which forwards it.
     """
     try:
         return subprocess.Popen(child, env=env, start_new_session=True)
@@ -387,6 +411,25 @@ def _heartbeat_until_done(
         code = _wait_slice(proc, interval)
         if code is not None:
             return child_status(code)
+        _emit_heartbeat(proc, suite, jobs, interval, started, status_dir)
+
+
+def _emit_heartbeat(
+    proc: subprocess.Popen,
+    suite: str,
+    jobs: int | None,
+    interval: float,
+    started: _Clocks,
+    status_dir: str | None,
+) -> None:
+    """Write one heartbeat line; a failure to do so is dropped.
+
+    The heartbeat is advisory but sits on the only path that reaps the child,
+    which runs in its own session. An exception here would kill this process
+    and leave the suite an orphan that no signal reaches, with its exit status
+    lost — so a closed stderr or an unreadable status file skips the line.
+    """
+    try:
         elapsed = started.since(interval)
         running = inflight_for(suite, proc.pid, status_dir)
         print(
@@ -396,6 +439,8 @@ def _heartbeat_until_done(
             file=sys.stderr,
             flush=True,
         )
+    except (OSError, ValueError):
+        return
 
 
 def _spawn_and_wait(

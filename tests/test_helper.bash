@@ -130,7 +130,10 @@ common_setup() {
 # that refuses. A missing binary is left missing, so CI (where neither is
 # installed) keeps the same presence checks it had. A binary already under
 # $BATS_TEST_TMPDIR is the test's own stub (a helper calling common_setup after
-# the test put one on PATH), so it is left in front.
+# the test put one on PATH), so it is left in front. The same test is what
+# keeps a second call from prepending $dir again: the guard stub this function
+# wrote lives under $BATS_TEST_TMPDIR too, so the second call finds it, skips
+# it, and adds nothing.
 _shadow_live_backends() {
   local dir name found shadowed=0
   dir="${BATS_TEST_TMPDIR:-$BATS_FILE_TMPDIR}/backend-stubs"

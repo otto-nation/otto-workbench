@@ -35,10 +35,6 @@ def build_parser() -> ToolParser:
         prog=SCRIPT,
         description="Create a pull request for the current branch, or preview "
                     "it with --dry-run",
-        # `cli.registry._create_need` decides the run lock by looking for the
-        # literal `--dry-run`; a prefix abbreviation (`--dry`) would be
-        # accepted here yet missed there.
-        allow_abbrev=False,
     )
     parser.add_argument("--draft", action="store_true", help="Open the PR as a draft")
     parser.add_argument("--no-verify", action="store_true",

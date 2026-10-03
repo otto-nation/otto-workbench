@@ -192,6 +192,8 @@ def _load_template(wt: Path) -> PRTemplate:
     try:
         root = Path(_git(wt, "rev-parse", "--show-toplevel"))
         return core.pr_template.load(root)
+    except ContentError:
+        raise ContentError("✗ Could not resolve this repo's PR template") from None
     except Exception as exc:
         raise ContentError("✗ Could not resolve this repo's PR template") from exc
 

@@ -158,15 +158,16 @@ class Scheduler:
                            line=line)
             live.peak = max(live.peak, self._rss(live.proc.pid))
             code = live.proc.poll()
-            if code is not None:
-                if kill:
-                    # The tracked step is gone, so this is the last call that will
-                    # ever reach its process group: anything it left running there
-                    # gets a decisive SIGKILL now rather than whatever signal the
-                    # grace-window escalation happened to be up to.
-                    live.proc.kill(force=True)
-                self._finish(live, code)
-                del self._live[key]
+            if code is None:
+                continue
+            if kill:
+                # The tracked step is gone, so this is the last call that will
+                # ever reach its process group: anything it left running there
+                # gets a decisive SIGKILL now rather than whatever signal the
+                # grace-window escalation happened to be up to.
+                live.proc.kill(force=True)
+            self._finish(live, code)
+            del self._live[key]
 
     def _finish(self, live: _Live, code: int) -> None:
         item, rec = live.item, live.rec

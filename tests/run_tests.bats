@@ -319,6 +319,20 @@ report_for() {
   [ "${lines[1]}" = 1 ]
 }
 
+@test "a parallel bats run announces the granted jobs" {
+  _run_watched() { printf '%s\n' "$@"; }
+  command() {
+    if [[ "$1" = -v && "$2" = parallel ]]; then return 0; fi
+    builtin command "$@"
+  }
+  BATS_RUN_TMPDIR=$BATS_TEST_TMPDIR/bats-run
+  JOBS=12
+  run --separate-stderr run_bats
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = bats ]
+  [ "${lines[1]}" = 12 ]
+}
+
 @test "sourcing the runner does not start a suite" {
   # The guard around main() is what makes every test above possible. Without
   # it, setup() would have run both suites before the first assertion.

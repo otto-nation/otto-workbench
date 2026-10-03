@@ -14,6 +14,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+# Module object, not just names: the clock tests patch core.suite_watch.time.
 import core.suite_watch
 from core.suite_watch import (
     ENV_INTERVAL,

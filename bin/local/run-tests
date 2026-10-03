@@ -347,8 +347,8 @@ run_bats() {
   # bats farms tests out through GNU parallel and silently runs them serially
   # without it, so the flag is only worth passing when parallel is installed.
   command -v parallel >/dev/null 2>&1 && jobs_flag=(--jobs "$(granted_jobs)")
-  local watch_jobs=1
-  [[ ${#jobs_flag[@]} -gt 0 ]] && watch_jobs="$(granted_jobs)"
+  # The flag's value is the grant; no flag means the runner is serial.
+  local watch_jobs="${jobs_flag[1]:-1}"
 
   # --print-output-on-failure: bats prints only the failing assertion's source
   # line by default, so a test whose diagnostic value sits in the command's
@@ -408,8 +408,8 @@ run_pytest() {
   else
     report_missing_xdist
   fi
-  local watch_jobs=1
-  [[ ${#jobs_flag[@]} -gt 0 ]] && watch_jobs="$(granted_jobs)"
+  # The flag's value is the grant; no flag means the runner is serial.
+  local watch_jobs="${jobs_flag[1]:-1}"
 
   local basetemp_flag=()
   if [[ -z "${PYTEST_DEBUG_TEMPROOT:-}" ]]; then

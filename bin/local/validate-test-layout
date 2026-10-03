@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Check the Python test suites under tests/ for name and size.
+"""Check the test suites under tests/ for name and size.
 
 Usage: bin/local/validate-test-layout [--quiet] [--max-lines N] [DIR]
 
-Two rules, both over every `.py` file under `tests/`:
+Two rules — the first over every `.py` file under `tests/`, the second over
+every `.py` and `.bats` file there:
 
 1. **A test module is named `<subject>_test.py`.** pytest collects
    `test_*.py` as well by default, so a prefix-named module still runs. That
@@ -21,14 +22,15 @@ Two rules, both over every `.py` file under `tests/`:
    coupling — but a 3,000-line suite is one nobody reads end to end, and
    the seam to split along is the one its subject already has.
 
-Bats suites are out of scope: `code_lines` counts shell, but a `.bats` file
-is not shell until bats preprocesses it, and no counter here reads `@test`.
+A bats suite is counted as shell. Bats' own syntax reads as ordinary
+commands to the counter — `@test "name" {` is one code line, its name a
+closed quoted span — so the shell counter measures a suite the way it
+measures a script. Naming stays Python-only: nothing collects a misnamed
+`.bats` under a retired convention, which is the hazard rule 1 exists for.
 
-Exit code: 0 if every name is allowed and every module is within the cap, 1
-otherwise. There are no exemptions: the suites over the cap when this gate
-landed were split before it became unconditional, so a module over the line
-is a new one. `--quiet` only suppresses the success banner on a 0 exit; a
-failure is always reported regardless of the flag.
+Exit code: 0 if every name is allowed and every file over the cap is a known
+exemption, 1 otherwise. `--quiet` suppresses the success banner and the
+exemption notice; a failure is always reported.
 """
 
 from __future__ import annotations
@@ -40,7 +42,7 @@ from pathlib import Path
 
 _WORKBENCH_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_WORKBENCH_DIR / "lib"))
-from ansi import DIM, GREEN, NC, RED  # noqa: E402
+from ansi import DIM, GREEN, NC, RED, YELLOW  # noqa: E402
 from file_size import MAX_CODE_LINES, code_lines  # noqa: E402
 
 TESTS_DIR = "tests"
@@ -51,9 +53,32 @@ SUITE_SUFFIX = "_test.py"
 SUPPORT_SUFFIX = "_support.py"
 SUPPORT_NAMES = frozenset({"conftest.py", "__init__.py"})
 
+BATS_SUFFIX = ".bats"
 
-def discover(root: Path) -> list[Path]:
-    """Every `.py` file under *root*/tests, sorted.
+# The bats suites over the cap when the gate reached them, each split by #853
+# along the sections it already has.
+#
+# ceiling: named exemptions, because failing on them would block every push on
+# work #853 owns. Delete an entry in the PR that splits its suite; once the dict
+# is empty #911 deletes it and the gate is unconditional. The test suite pins it
+# to exactly the set of files over the cap, so it can only shrink.
+KNOWN_OVER = {
+    "tests/pi_extensions.bats": "#853",
+    "tests/migrations.bats": "#853",
+    "tests/claude_settings.bats": "#853",
+    "tests/validate_registries.bats": "#853",
+    "tests/wt_cleanup.bats": "#853",
+    "tests/review_orchestrate_pipeline.bats": "#853",
+    "tests/projects.bats": "#853",
+    "tests/validate_skills.bats": "#853",
+    "tests/git.bats": "#853",
+    "tests/retro_scan.bats": "#853",
+    "tests/validate_migrations.bats": "#853",
+}
+
+
+def discover(root: Path, suffix: str = ".py") -> list[Path]:
+    """Every file ending in *suffix* under *root*/tests, sorted.
 
     Recursive: `tests/test_nesting/` is a package of suites, and a flat listing
     would exempt it.
@@ -62,9 +87,14 @@ def discover(root: Path) -> list[Path]:
     found: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(base):
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
-        candidates = (Path(dirpath) / name for name in filenames if name.endswith(".py"))
+        candidates = (Path(dirpath) / name for name in filenames if name.endswith(suffix))
         found.extend(path for path in candidates if not path.is_symlink())
     return sorted(found)
+
+
+def discover_all(root: Path) -> list[Path]:
+    """Every suite module under *root*/tests, Python and bats both."""
+    return discover(root) + discover(root, BATS_SUFFIX)
 
 
 def name_allowed(name: str) -> bool:
@@ -87,13 +117,17 @@ def misnamed(root: Path, paths: list[Path] | None = None) -> list[str]:
 def over_cap(root: Path, max_lines: int, paths: list[Path] | None = None) -> list[tuple[str, int]]:
     """(relative path, code lines) for every module over *max_lines*, worst first.
 
-    *paths* lets a caller that already walked `tests/` (such as `main()`) reuse
-    that listing instead of paying for a second `os.walk`.
+    Counts `.bats` as shell and everything else as Python. *paths* lets a
+    caller that already walked `tests/` (such as `main()`) reuse that listing;
+    by default both suffixes are walked.
     """
+    if paths is None:
+        paths = discover_all(root)
     violations = []
-    for path in (paths if paths is not None else discover(root)):
+    for path in paths:
+        language = "shell" if path.suffix == BATS_SUFFIX else "python"
         try:
-            count = code_lines(path, "python")
+            count = code_lines(path, language)
         except OSError as err:
             # Name the file rather than surfacing a traceback from the counter;
             # the first unreadable file is a broken checkout, not a finding.
@@ -124,9 +158,17 @@ def _report_size(over: list[tuple[str, int]], max_lines: int) -> None:
           file=sys.stderr)
 
 
+def _report_known(known: list[tuple[str, int]]) -> None:
+    """Print the exemptions on a direct run, so the debt stays visible."""
+    print(f"{YELLOW}▲{NC} {len(known)} test file(s) over the cap, each owned by an open issue",
+          file=sys.stderr)
+    for relpath, count in known:
+        print(f"      {relpath}: {count}  ({KNOWN_OVER[relpath]})", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Check the Python test suites under tests/ for name and size.",
+        description="Check the test suites under tests/ for name and size.",
     )
     parser.add_argument("--quiet", action="store_true", help="Only show failures")
     parser.add_argument("--max-lines", type=int, default=MAX_CODE_LINES,
@@ -138,7 +180,9 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.directory).resolve()
     paths = discover(root)
     bad = misnamed(root, paths)
-    over = over_cap(root, args.max_lines, paths)
+    violations = over_cap(root, args.max_lines, paths + discover(root, BATS_SUFFIX))
+    over = [(p, n) for p, n in violations if p not in KNOWN_OVER]
+    known = [(p, n) for p, n in violations if p in KNOWN_OVER]
 
     if bad:
         _report_names(bad)
@@ -146,8 +190,12 @@ def main(argv: list[str] | None = None) -> int:
         _report_size(over, args.max_lines)
     if bad or over:
         return 1
-    if not args.quiet:
-        print(f"{GREEN}✓{NC} every test module is named and within {args.max_lines} code lines")
+    if args.quiet:
+        return 0
+    if known:
+        _report_known(known)
+    print(f"{GREEN}✓{NC} every test module is named and every new one within "
+          f"{args.max_lines} code lines")
     return 0
 
 

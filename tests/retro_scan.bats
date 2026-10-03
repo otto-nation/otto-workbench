@@ -56,6 +56,13 @@ HEADER
   [[ "$output" == *"usage"* ]] || [[ "$output" == *"Usage"* ]]
 }
 
+@test "retro-scan's usage line is generated, so it names the trail flags too" {
+  # A hand-written usage string listed four flags and left out --debug.
+  run "$RETRO_SCAN" --help
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"[--debug]"* ]]
+}
+
 @test "retro-scan --version prints version info" {
   run "$RETRO_SCAN" --version
   [[ "$status" -eq 0 ]]

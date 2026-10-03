@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 /**
  * Records this Pi session as editing a worktree, kept apart from the wiring.
@@ -23,10 +24,9 @@ import { execFileSync } from "node:child_process";
  */
 
 /** Where `with-session-lock` lives, resolved from this file, not $PATH. */
-const WITH_SESSION_LOCK = new URL(
-  "../../../../bin/local/with-session-lock",
-  import.meta.url,
-).pathname;
+const WITH_SESSION_LOCK = fileURLToPath(
+  new URL("../../../../bin/local/with-session-lock", import.meta.url),
+);
 
 /**
  * Record `pid` as editing `cwd`. Returns whether the claim was made.

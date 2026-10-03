@@ -175,6 +175,20 @@ def test_the_declaration_order_is_the_display_order():
     assert helped == declared
 
 
+def test_the_usage_text_names_every_global_flag_the_parser_declares():
+    """`pr --help` is rendered from `build_global_parser`, not a copy of it.
+
+    The hand-written block omitted the `--worktree` alias; every option string
+    the global parser declares must appear in the text.
+    """
+    import cli.pr
+    usage = cli.pr._build_usage()
+    declared = [s for a in cli.pr.build_global_parser()._actions for s in a.option_strings]
+    assert "--worktree" in declared
+    for flag in declared:
+        assert flag in usage, f"{flag} is global but `pr --help` does not name it"
+
+
 # ── the per-subcommand schema ─────────────────────────────────────────────
 
 

@@ -119,7 +119,7 @@ def review_need(review_file: Path, head_sha: str, *, local_head: str = "") -> St
         return StepNeed(False, "self-review is current")
     of = f"self-review is of {reviewed[:7] or 'an unknown head'}"
     if local_head and local_head != head_sha:
-        return StepNeed(True, f"{of}; local HEAD {local_head[:7]} differs from GitHub's")
+        return StepNeed(True, f"{of}; local HEAD {local_head[:7]} differs from GitHub's {head_sha[:7]}")
     return StepNeed(True, of)
 
 

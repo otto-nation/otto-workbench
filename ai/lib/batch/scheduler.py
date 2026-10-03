@@ -33,12 +33,12 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
             pool: int, auto_publish: list[Step], now: datetime | None = None) -> Run:
     now = now or datetime.now(timezone.utc)
     items = []
+    explicit = selected is not None
     for r in rows:
         chosen = selected.get(r.key, []) if selected is not None else \
             [s for s in steps if r.needs.get(s) and r.needs[s].needed]
         if not chosen:
             continue
-        explicit = selected is not None
         recs = [StepRecord(s, StepStatus.PENDING if s in chosen else StepStatus.SKIPPED,
                            explicit=explicit and s in chosen)
                 for s in STEP_ORDER if s in steps]

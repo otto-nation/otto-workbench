@@ -142,6 +142,12 @@ def test_review_needed_when_local_head_is_ahead_of_github(tmp_path):
     assert "aaaaaaa" in n.reason and "bbbbbbb" in n.reason and "local" in n.reason
 
 
+def test_review_reason_names_both_local_and_github_heads(tmp_path):
+    f = _review_at(tmp_path, "ccccccc")
+    n = batch.plan.review_need(f, "aaaaaaa1111", local_head="bbbbbbb2222")
+    assert "local HEAD bbbbbbb" in n.reason and "GitHub's aaaaaaa" in n.reason
+
+
 def test_review_current_when_it_matches_local_head_not_github(tmp_path):
     f = _review_at(tmp_path, "bbbbbbb")
     assert batch.plan.review_need(f, "aaaaaaa1111", local_head="bbbbbbb2222").needed is False

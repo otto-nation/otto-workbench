@@ -34,15 +34,14 @@ from core.proc import CmdResult
 from core.trail import Trail
 from git.push import PushResult, PushStatus
 
-# `git_remote` and `gitenv` are workbench-wide modules rather than `ai/lib`
-# ones. In a checkout that is one directory up; in the otto-ai-tools tarball,
+# `git_remote` is a workbench-wide module rather than an `ai/lib`
+# one. In a checkout that is one directory up; in the otto-ai-tools tarball,
 # which flattens both into one `lib/`, it is one directory up from this file
 # too.
 _WORKBENCH_LIB = Path(__file__).resolve().parent.parent.parent.parent / "lib"
 if _WORKBENCH_LIB.is_dir() and str(_WORKBENCH_LIB) not in sys.path:
     sys.path.insert(0, str(_WORKBENCH_LIB))
 import git_remote  # noqa: E402
-import gitenv  # noqa: E402
 
 GIT_REMOTE = git_remote.GIT_REMOTE
 
@@ -170,11 +169,7 @@ def sync_branch(
 
     # A probe that failed is not a branch that is absent: reading it as one
     # pushes with --set-upstream into a remote nobody could reach.
-    # Every git child here runs with the inherited overrides dropped: a hook that
-    # invoked `pr create` may export `GIT_DIR`, and with it set these reads
-    # would answer for the hook's repo instead of *wt*.
-    env = gitenv.git_env_clear()
-    probe = git.client.run("ls-remote", remote, f"refs/heads/{branch}", cwd=wt, env=env)
+    probe = git.client.run("ls-remote", remote, f"refs/heads/{branch}", cwd=wt)
     if not probe.ok:
         return _failed(f"Could not reach {remote}", probe)
     if not _remote_has_branch(probe, branch):
@@ -184,11 +179,11 @@ def sync_branch(
             outcome=SyncOutcome.PUSHED_NEW, message=MSG_NEW, log=emit, trail=trail,
         )
 
-    fetched = git.client.run("fetch", remote, branch, "--quiet", cwd=wt, env=env)
+    fetched = git.client.run("fetch", remote, branch, "--quiet", cwd=wt)
     if not fetched.ok:
         return _failed(f"Could not fetch {remote}/{branch}", fetched)
 
-    if not git.client.run("rev-parse", "--verify", "@{u}", cwd=wt, env=env).ok:
+    if not git.client.run("rev-parse", "--verify", "@{u}", cwd=wt).ok:
         # Bash printed nothing extra here — just pushed without --set-upstream.
         return _push(
             wt, branch, remote=remote,
@@ -201,7 +196,7 @@ def sync_branch(
     shas: list[str] = []
     for argv in (("rev-parse", "HEAD"), ("rev-parse", "@{u}"),
                  ("merge-base", "HEAD", "@{u}")):
-        r = git.client.run(*argv, cwd=wt, env=env)
+        r = git.client.run(*argv, cwd=wt)
         if not r.ok:
             return _failed(f"git {' '.join(argv)} failed", r)
         shas.append(r.stdout.strip())

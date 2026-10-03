@@ -11,13 +11,14 @@ tests that lived in `tests/pr_cli_test.py`.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from conftest import make_ctx
+from conftest import git_in, init_repo, make_ctx, run_checked
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -26,6 +27,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import cli.pr  # noqa: E402
+import pr.context  # noqa: E402
 import pr.create  # noqa: E402
 from pr.create import CreateOptions  # noqa: E402
 
@@ -167,3 +169,48 @@ def test_tool_schema_for_create_names_its_flags(capsys):
     assert doc["name"] == "pr create"
     assert "dry_run" in doc["input_schema"]["properties"]
     assert "output_schema" not in doc
+
+
+def _repo_ahead_of_origin(tmp_path: Path) -> Path:
+    """A checkout on feat/x, one commit ahead of a bare origin's main.
+
+    The origin is spelled as a github.com URL so the repo resolves from git
+    alone, and rewritten with ``insteadOf`` to the local bare repo so the
+    fetch reaches something real.
+    """
+    remote = tmp_path / "remote.git"
+    run_checked(["git", "init", "-q", "--bare", "-b", "main", str(remote)])
+    wt = init_repo(tmp_path / "wt")
+    url = "https://github.com/otto-nation/scrub-fixture.git"
+    git_in(wt, "config", f"url.{remote}.insteadOf", url)
+    git_in(wt, "remote", "add", "origin", url)
+    git_in(wt, "commit", "-q", "--allow-empty", "--no-verify", "-m", "init")
+    git_in(wt, "push", "-q", "origin", "main")
+    git_in(wt, "remote", "set-head", "origin", "main")
+    git_in(wt, "checkout", "-q", "-b", "feat/x")
+    git_in(wt, "commit", "-q", "--allow-empty", "--no-verify", "-m", "feat: work")
+    return wt
+
+
+def test_create_answers_for_repo_dir_not_an_inherited_git_dir(tmp_path, monkeypatch, capsys):
+    wt = _repo_ahead_of_origin(tmp_path)
+    other = init_repo(tmp_path / "other")
+    git_in(other, "commit", "-q", "--allow-empty", "--no-verify", "-m", "unrelated")
+    # monkeypatch, so the variable is restored whatever the scrub did to it.
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+
+    with patch("cli.pr.Trail.start", return_value=MagicMock()), \
+         patch("pr.push_intent.reconcile"), \
+         patch("config.workbench_projects.register"), \
+         patch("pr.context._pr_from_current", return_value=pr.context.BranchPR()):
+        code = cli.pr.main(
+            ["--repo-dir", str(wt), "create", "--dry-run", "--title", "t", "--body", "b"],
+            bin_dir=BIN_DIR,
+        )
+
+    out, err = capsys.readouterr()
+    assert code == 0, err
+    assert "→ PR Title:" in out
+    assert "   t" in out.splitlines()
+    assert "feat/x" in err
+    assert "GIT_DIR" not in os.environ

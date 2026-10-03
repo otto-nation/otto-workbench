@@ -44,13 +44,12 @@ from pr.close_refs import CloseRefError, normalise, stage
 from pr.context import ResolvedContext
 from pr.create_content import ContentError, ContentRequest
 
-# `git_remote` and `gitenv` are workbench-wide modules, not `ai/lib` ones; see
+# `git_remote` is a workbench-wide module, not an `ai/lib` one; see
 # `pr.branch_sync` for the path arithmetic, which is the same here.
 _WORKBENCH_LIB = Path(__file__).resolve().parent.parent.parent.parent / "lib"
 if _WORKBENCH_LIB.is_dir() and str(_WORKBENCH_LIB) not in sys.path:
     sys.path.insert(0, str(_WORKBENCH_LIB))
 import git_remote  # noqa: E402
-import gitenv  # noqa: E402
 
 GIT_REMOTE = git_remote.GIT_REMOTE
 
@@ -118,9 +117,7 @@ def _fetch_refusal(wt: Path, base: str, default: str, *, explicit: bool) -> str:
     is otherwise only as fresh as the clone's last fetch. A dry run fetches
     too: its preview is measured against the same base.
     """
-    r = git.client.run(
-        "fetch", GIT_REMOTE, base, "--quiet", cwd=wt, env=gitenv.git_env_clear(),
-    )
+    r = git.client.run("fetch", GIT_REMOTE, base, "--quiet", cwd=wt)
     if r.ok:
         return ""
     detail = r.detail or f"exit {r.returncode}"
@@ -157,7 +154,7 @@ def _nesting_gate(wt: Path, base: str) -> bool:
         # Unbounded: the gate parses every file the diff touches, so its cost is the input's.
         r = subprocess.run(
             argv, cwd=wt, capture_output=True, text=True,
-            timeout=core.timeouts.UNBOUNDED, env=gitenv.git_env_clear(),
+            timeout=core.timeouts.UNBOUNDED,
         )
         status, output = r.returncode, (r.stdout or "") + (r.stderr or "")
     except OSError as exc:
@@ -195,7 +192,7 @@ def _ahead_refusal(wt: Path, branch: str, base: str) -> str:
     """
     remote_base = f"{GIT_REMOTE}/{base}"
     argv = ("rev-list", "--count", f"{remote_base}..HEAD")
-    r = git.client.run(*argv, cwd=wt, env=gitenv.git_env_clear())
+    r = git.client.run(*argv, cwd=wt)
     count = r.stdout.strip()
     if not r.ok or not count.isdigit():
         detail = r.detail or f"exit {r.returncode}"

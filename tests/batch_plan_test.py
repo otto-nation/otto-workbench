@@ -127,3 +127,63 @@ def test_graphql_wraps_ok_payload_with_errors(monkeypatch):
     monkeypatch.setattr(batch.plan.gh.client, "graphql", lambda *a, **k: R())
     with pytest.raises(batch.plan.PlanError, match="bad"):
         batch.plan.build_plan(["/repos/a"])
+
+
+def _review_at(tmp_path, sha):
+    f = tmp_path / "review.md"
+    f.write_text(f"<!-- head_sha: {sha} -->\n# Review\n")
+    return f
+
+
+def test_review_needed_when_local_head_is_ahead_of_github(tmp_path):
+    f = _review_at(tmp_path, "aaaaaaa")
+    n = batch.plan.review_need(f, "aaaaaaa1111", local_head="bbbbbbb2222")
+    assert n.needed is True
+    assert "aaaaaaa" in n.reason and "bbbbbbb" in n.reason and "local" in n.reason
+
+
+def test_review_current_when_it_matches_local_head_not_github(tmp_path):
+    f = _review_at(tmp_path, "bbbbbbb")
+    assert batch.plan.review_need(f, "aaaaaaa1111", local_head="bbbbbbb2222").needed is False
+
+
+def test_review_falls_back_to_github_head_without_a_worktree(tmp_path):
+    f = _review_at(tmp_path, "aaaaaaa")
+    assert batch.plan.review_need(f, "aaaaaaa1111", local_head="").needed is False
+
+
+def _node(branch="b", head="remote1"):
+    return {"number": 7, "title": "t", "isDraft": False, "headRefName": branch,
+            "headRefOid": head, "mergeStateStatus": "CLEAN",
+            "repository": {"nameWithOwner": "o/a"}, "reviewThreads": {"nodes": []}}
+
+
+def test_rows_from_search_judges_review_against_the_branch_worktree_head(monkeypatch, tmp_path):
+    review = _review_at(tmp_path, "remote1")
+    monkeypatch.setattr(batch.plan, "settled_ids", lambda repo_dir, branch: set())
+    monkeypatch.setattr(batch.plan, "_review_file", lambda repo, branch: review)
+    monkeypatch.setattr(batch.plan, "_local_heads", lambda repo_dir: {"b": "local22"})
+    rows = batch.plan.rows_from_search({"search": {"nodes": [_node()]}}, {"o/a": "/repos/a"})
+    assert rows[0].local_head == "local22"
+    assert rows[0].needs[Step.REVIEW].needed is True
+
+
+def test_local_heads_maps_each_checked_out_branch_to_its_head(monkeypatch):
+    Entry = batch.plan.git.topology.WorktreeEntry
+    monkeypatch.setattr(batch.plan.git.topology, "worktree_entries", lambda cwd: [
+        Entry(Path("/wt/main"), "main"), Entry(Path("/wt/b"), "b"), Entry(Path("/wt/d"), None)])
+    monkeypatch.setattr(batch.plan.git.client, "head_sha", lambda cwd: f"sha-of-{cwd}")
+    assert batch.plan._local_heads("/repos/a") == {
+        "main": "sha-of-/wt/main", "b": "sha-of-/wt/b"}
+
+
+def test_replan_judges_review_against_the_rows_local_head(monkeypatch, tmp_path):
+    review = _review_at(tmp_path, "remote1")
+    monkeypatch.setattr(batch.plan, "settled_ids", lambda repo_dir, branch: set())
+    monkeypatch.setattr(batch.plan, "_review_file", lambda repo, branch: review)
+    node = dict(_node(), state="OPEN")
+    monkeypatch.setattr(batch.plan, "_graphql", lambda q, v: {"repository": {"pullRequest": node}})
+    row = batch.plan.PlanRow("o/a", "/r", 7, "t", "b", "remote1", False, {}, local_head="local22")
+    fresh = batch.plan.replan_row(row)
+    assert fresh.local_head == "local22"
+    assert fresh.needs[Step.REVIEW].needed is True

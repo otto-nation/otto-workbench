@@ -75,6 +75,8 @@ class StepRecord:
     log_path: str = ""
     # Ran without publishing; its push/post is owed to the item's publish decision.
     drafted: bool = False
+    # Named by --select: an instruction, so admission never skips it as not needed.
+    explicit: bool = False
 
 
 @dataclass

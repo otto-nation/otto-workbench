@@ -34,6 +34,18 @@ def test_run_round_trips_through_the_state_file():
     assert back.decisions[0].kind is batch.model.DecisionKind.REBASE_CONFLICT
 
 
+def test_state_file_saved_before_explicit_existed_still_loads():
+    import json
+    run = _run()
+    batch.store.save(run)
+    path = batch.store.run_dir(RID) / "state.json"
+    data = json.loads(path.read_text())
+    for step in data["items"][0]["steps"]:
+        del step["explicit"]
+    path.write_text(json.dumps(data))
+    assert batch.store.load(RID).items[0].steps[1].explicit is False
+
+
 def test_state_file_lives_under_state_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
     batch.store.save(_run())

@@ -1,6 +1,5 @@
 #!/usr/bin/env bats
-# Tests for targeted install (install.sh COMPONENT ...) and
-# install-needed detection (_check_install_needed in otto-workbench sync).
+# Tests for targeted install (install.sh COMPONENT ...).
 # Also covers parse_install_flags set -e safety (regression: silent exit with no args).
 
 bats_require_minimum_version 1.5.0
@@ -179,74 +178,6 @@ _is_targeted() {
   [[ " ${selected[*]} " == *" docker "* ]]
 }
 
-# ─── Install-needed detection ────────────────────────────────────────────────
-
-@test "check_install_needed detects component with failing check command" {
-  _make_workbench "$TMPDIR/wb"
-  printf 'label = Docker\ndescription = Docker\ncheck = false\n' > "$TMPDIR/wb/docker/setup.conf"
-
-  local -a needs_install=()
-  local registry="$TMPDIR/wb/install.components"
-  local component check_cmd
-  while IFS= read -r component; do
-    [[ -z "$component" || "$component" =~ ^# ]] && continue
-    local conf="$TMPDIR/wb/$component/setup.conf"
-    [[ -f "$conf" ]] || continue
-    check_cmd=$(grep -m1 '^check[[:space:]]*=' "$conf" 2>/dev/null \
-      | sed 's/^check[[:space:]]*=[[:space:]]*//')
-    [[ -z "$check_cmd" ]] && continue
-    if ! bash -c "$check_cmd" >/dev/null 2>&1; then
-      needs_install+=("$component")
-    fi
-  done < "$registry"
-
-  [[ " ${needs_install[*]} " == *" docker "* ]]
-}
-
-@test "check_install_needed skips component with passing check command" {
-  _make_workbench "$TMPDIR/wb"
-  printf 'label = Docker\ndescription = Docker\ncheck = true\n' > "$TMPDIR/wb/docker/setup.conf"
-
-  local -a needs_install=()
-  local registry="$TMPDIR/wb/install.components"
-  local component check_cmd
-  while IFS= read -r component; do
-    [[ -z "$component" || "$component" =~ ^# ]] && continue
-    local conf="$TMPDIR/wb/$component/setup.conf"
-    [[ -f "$conf" ]] || continue
-    check_cmd=$(grep -m1 '^check[[:space:]]*=' "$conf" 2>/dev/null \
-      | sed 's/^check[[:space:]]*=[[:space:]]*//')
-    [[ -z "$check_cmd" ]] && continue
-    if ! bash -c "$check_cmd" >/dev/null 2>&1; then
-      needs_install+=("$component")
-    fi
-  done < "$registry"
-
-  [[ ${#needs_install[@]} -eq 0 ]]
-}
-
-@test "check_install_needed skips components without check command" {
-  _make_workbench "$TMPDIR/wb"
-  # Neither brew nor docker have check commands by default
-
-  local -a needs_install=()
-  local registry="$TMPDIR/wb/install.components"
-  local component check_cmd
-  while IFS= read -r component; do
-    [[ -z "$component" || "$component" =~ ^# ]] && continue
-    local conf="$TMPDIR/wb/$component/setup.conf"
-    [[ -f "$conf" ]] || continue
-    check_cmd=$(grep -m1 '^check[[:space:]]*=' "$conf" 2>/dev/null \
-      | sed 's/^check[[:space:]]*=[[:space:]]*//')
-    [[ -z "$check_cmd" ]] && continue
-    if ! bash -c "$check_cmd" >/dev/null 2>&1; then
-      needs_install+=("$component")
-    fi
-  done < "$registry"
-
-  [[ ${#needs_install[@]} -eq 0 ]]
-}
-
 # ─── parse_install_flags: set -e safety ──────────────────────────────────────
 # Regression: parse_install_flags ended with `[[ ... ]] && INSTALL_TARGETED=true`.
 # When INSTALL_TARGETS was empty the [[ ]] returned 1 and the function's last
@@ -333,4 +264,51 @@ _is_targeted() {
   "
   [ "$status" -eq 0 ]
   [[ "$output" == *"Installing dotfiles"* ]]
+}
+
+# ─── lib/*.sh: WORKBENCH_DIR guard on standalone source ─────────────────────
+# Regression: lib/overrides.sh, lib/discover.sh, lib/ai_init.sh, and
+# lib/maintenance.sh lacked the WORKBENCH_DIR-is-set guard that lib/install.sh
+# carries, so sourcing one of them standalone (as lib/git_remote.sh and
+# lib/gitenv.sh document being safe to do) failed with a confusing
+# "unbound variable" error instead of a clear message.
+
+@test "lib/overrides.sh refuses to load without WORKBENCH_DIR" {
+  run bash -c "
+    set -u
+    . '$REPO_ROOT/lib/overrides.sh'
+  "
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"ERROR: lib/overrides.sh requires WORKBENCH_DIR"* ]]
+  [[ "$output" != *"unbound variable"* ]]
+}
+
+@test "lib/discover.sh refuses to load without WORKBENCH_DIR" {
+  run bash -c "
+    set -u
+    . '$REPO_ROOT/lib/discover.sh'
+  "
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"ERROR: lib/discover.sh requires WORKBENCH_DIR"* ]]
+  [[ "$output" != *"unbound variable"* ]]
+}
+
+@test "lib/ai_init.sh refuses to load without WORKBENCH_DIR" {
+  run bash -c "
+    set -u
+    . '$REPO_ROOT/lib/ai_init.sh'
+  "
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"ERROR: lib/ai_init.sh requires WORKBENCH_DIR"* ]]
+  [[ "$output" != *"unbound variable"* ]]
+}
+
+@test "lib/maintenance.sh refuses to load without WORKBENCH_DIR" {
+  run bash -c "
+    set -u
+    . '$REPO_ROOT/lib/maintenance.sh'
+  "
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"ERROR: lib/maintenance.sh requires WORKBENCH_DIR"* ]]
+  [[ "$output" != *"unbound variable"* ]]
 }

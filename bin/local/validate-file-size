@@ -11,7 +11,7 @@ require the documentation it would tax.
 Scope is Python and shell source under `ai/`, `bin/` and `lib/` — the two
 languages `code_lines` reads. Tests are not covered here: `tests/` has its
 own gate, `bin/local/validate-test-layout`, which applies the same cap
-alongside the suite naming rule and carries its own exemptions (#910).
+alongside the suite naming rule and carries its own exemptions (#853).
 
 Exit code: 0 if every file over the cap is a known exemption, 1 otherwise.
 

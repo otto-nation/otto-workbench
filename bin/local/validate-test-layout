@@ -180,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.directory).resolve()
     paths = discover(root)
     bad = misnamed(root, paths)
-    violations = over_cap(root, args.max_lines, discover_all(root))
+    violations = over_cap(root, args.max_lines, paths + discover(root, BATS_SUFFIX))
     over = [(p, n) for p, n in violations if p not in KNOWN_OVER]
     known = [(p, n) for p, n in violations if p in KNOWN_OVER]
 

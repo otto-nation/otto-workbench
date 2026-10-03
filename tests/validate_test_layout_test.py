@@ -46,6 +46,22 @@ def test_anything_else_is_refused(name):
     assert not vtl.name_allowed(name)
 
 
+def test_main_walks_the_python_tree_only_once(tmp_path, monkeypatch):
+    """main() reuses the `discover(root)` it already computed for the naming
+    check instead of paying for a second `.py` walk via `discover_all`."""
+    _write(tmp_path, "tests/a_test.py")
+    real_walk = os.walk
+    calls = []
+
+    def counting_walk(top, *args, **kwargs):
+        calls.append(top)
+        return real_walk(top, *args, **kwargs)
+
+    monkeypatch.setattr(vtl.os, "walk", counting_walk)
+    assert _run(tmp_path) == 0
+    assert len(calls) == 2
+
+
 def test_a_prefix_named_suite_fails_the_gate(tmp_path):
     _write(tmp_path, "tests/ok_test.py")
     _write(tmp_path, "tests/test_thing.py")

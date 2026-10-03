@@ -6,31 +6,14 @@ setup_file() {
 
 setup() {
   load 'test_helper'
+  load 'generate_tool_context_helper'
   common_setup
-  source "$REPO_ROOT/bin/local/generate-tool-context"
-  ORIG_DIR="$PWD"
-
-  # Point all generator inputs/outputs at temp paths so tests never touch
-  # real workbench files (registry data, tools.generated.md).
-  mkdir -p "$TMPDIR/brew" "$TMPDIR/bin" "$TMPDIR/zsh" "$TMPDIR/mise"
-  export BREW_REGISTRY="$TMPDIR/brew/registry.yml"
-  export MISE_REGISTRY="$TMPDIR/mise/registry.yml"
-  export BIN_REGISTRY="$TMPDIR/bin/registry.yml"
-  export ZSH_REGISTRY="$TMPDIR/zsh/registry.yml"
-  export BREW_STACKS_DIR="$TMPDIR"
-  export WORK_DIR="$TMPDIR/work"
-  export TOOL_CONTEXT_OUTPUT="$TMPDIR/tools.generated.md"
-  export TASKFILE_PATH="$TMPDIR/Taskfile.yml"
-  export AI_DIR="$TMPDIR/ai"
-  export REGISTRY_SCAN_DIR="$TMPDIR"
-
-  mkdir -p "$WORK_DIR"
+  gtc_setup
 }
 
 teardown() {
-  cd "$ORIG_DIR" || return 1
+  gtc_teardown
   common_teardown
-  unset BREW_REGISTRY MISE_REGISTRY BIN_REGISTRY ZSH_REGISTRY BREW_STACKS_DIR WORK_DIR TOOL_CONTEXT_OUTPUT REGISTRY_SCAN_DIR AI_DIR TASKFILE_PATH
 }
 
 # _write_registry FILE SECTION — writes a single-tool registry with the given section title
@@ -196,58 +179,6 @@ EOF
 
   main
   grep -q "mytool --flag" "$TOOL_CONTEXT_OUTPUT"
-}
-
-@test "renders the usage of an entry with a parser from that parser" {
-  # The usage agents read is rendered, not written: a flag the parser gains
-  # reaches tools.generated.md with no second edit.
-  cat > "$BIN_REGISTRY" << 'EOF'
-meta:
-  section: "Workbench Scripts"
-  validation: bindir
-  source: bin
-
-tools:
-  - name: mytool
-    permission: false
-    visibility: full
-    description: "A test tool"
-    when_to_use: "When testing"
-    parser: bin/mytool:build_parser
-EOF
-  cat > "$TMPDIR/bin/mytool" << 'EOF'
-#!/usr/bin/env python3
-import argparse
-def build_parser():
-    p = argparse.ArgumentParser(prog="mytool")
-    p.add_argument("--onto", "--base", metavar="REF", help="Ref")
-    return p
-EOF
-  chmod +x "$TMPDIR/bin/mytool"
-
-  main
-  grep -qF -- '- **Usage**: `mytool [--onto|--base <ref>]`' "$TOOL_CONTEXT_OUTPUT"
-}
-
-@test "a parser that does not load stops the run instead of dropping the usage" {
-  cat > "$BIN_REGISTRY" << 'EOF'
-meta:
-  section: "Workbench Scripts"
-  validation: bindir
-  source: bin
-
-tools:
-  - name: mytool
-    permission: false
-    visibility: full
-    description: "A test tool"
-    when_to_use: "When testing"
-    parser: bin/missing:build_parser
-EOF
-
-  run main
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"bin/missing"* ]]
 }
 
 @test "omits docs field from output" {

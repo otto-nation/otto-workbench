@@ -117,9 +117,11 @@ def review_need(review_file: Path, head_sha: str, *, local_head: str = "") -> St
     reviewed = review.document.ReviewHeader.parse(review_file.read_text()).head_sha
     if reviewed and subject.startswith(reviewed):
         return StepNeed(False, "self-review is current")
-    of = f"self-review is of {reviewed[:7] or 'an unknown head'}"
+    abbrev = git.client.abbrev
+    of = f"self-review is of {abbrev(reviewed) or 'an unknown head'}"
     if local_head and local_head != head_sha:
-        return StepNeed(True, f"{of}; local HEAD {local_head[:7]} differs from GitHub's {head_sha[:7]}")
+        return StepNeed(True, f"{of}; local HEAD {abbrev(local_head)} "
+                              f"differs from GitHub's {abbrev(head_sha)}")
     return StepNeed(True, of)
 
 

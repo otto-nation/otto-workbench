@@ -142,7 +142,9 @@ def _paused_rebase(
     *branch* None starts the rebase from a detached HEAD instead of a branch.
     *worktree* runs the rebase in a linked worktree at ``tmp_path/feat-wt`` and
     returns that path; the main checkout stays at ``tmp_path/repo`` on main.
+    *worktree* implies a branch: it cannot be combined with ``branch=None``.
     """
+    assert branch or not worktree, "worktree=True needs a branch; branch=None is unsupported"
     repo = init_repo(tmp_path / "repo")
     (repo / "f").write_text("base\n")
     commit_all(repo, "base")

@@ -14,15 +14,15 @@ from batch.model import Step  # noqa: E402
 
 @pytest.mark.parametrize("state,needed", [
     ("BEHIND", True), ("DIRTY", True), ("CLEAN", False), ("BLOCKED", False),
-    ("UNSTABLE", False), ("DRAFT", False), ("HAS_HOOKS", False), ("UNKNOWN", False),
+    ("UNSTABLE", False), ("DRAFT", False), ("HAS_HOOKS", False), ("UNKNOWN", True),
 ])
 def test_rebase_need_follows_merge_state(state, needed):
     n = batch.plan.rebase_need(state)
     assert n.needed is needed and n.reason
 
 
-def test_rebase_need_unknown_says_github_is_computing():
-    assert "computing" in batch.plan.rebase_need("UNKNOWN").reason
+def test_rebase_need_unknown_leaves_it_to_the_rebase_step():
+    assert "the rebase step decides" in batch.plan.rebase_need("UNKNOWN").reason
 
 
 def test_comments_need_counts_unresolved_unsettled_threads():
@@ -77,6 +77,7 @@ def test_rows_from_search_maps_nodes_and_drops_unknown_repos(monkeypatch):
 
 def test_build_plan_raises_on_graphql_failure(monkeypatch):
     monkeypatch.setattr(batch.plan, "_repo_slug", lambda d: "o/a")
+    monkeypatch.setattr(batch.plan, "fetch_namespace", lambda d, ns: False)
 
     class R:
         ok, stdout, stderr = False, "", "boom"
@@ -120,6 +121,7 @@ def test_rows_from_search_matches_repos_case_insensitively(monkeypatch):
 
 def test_graphql_wraps_ok_payload_with_errors(monkeypatch):
     monkeypatch.setattr(batch.plan, "_repo_slug", lambda d: "o/a")
+    monkeypatch.setattr(batch.plan, "fetch_namespace", lambda d, ns: False)
 
     class R:
         ok, stdout, stderr = True, '{"errors":[{"message":"bad"}]}', ""
@@ -193,3 +195,28 @@ def test_replan_judges_review_against_the_rows_local_head(monkeypatch, tmp_path)
     fresh = batch.plan.replan_row(row)
     assert fresh.local_head == "local22"
     assert fresh.needs[Step.REVIEW].needed is True
+
+
+@pytest.mark.parametrize("state,needed,reason", [
+    ("FAILURE", True, "checks failure"), ("ERROR", True, "checks error"),
+    ("PENDING", True, "checks running"), ("EXPECTED", True, "checks running"),
+    ("SUCCESS", False, "checks green"), ("", False, "no checks reported"),
+])
+def test_ci_need_follows_the_rollup(state, needed, reason):
+    assert batch.plan.ci_need(state) == batch.plan.StepNeed(needed, reason)
+
+
+def test_rollup_state_reads_the_last_commit():
+    node = {"commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]}}
+    assert batch.plan.rollup_state(node) == "FAILURE"
+    assert batch.plan.rollup_state({"commits": {"nodes": [{"commit": {}}]}}) == ""
+
+
+def test_a_fork_row_skips_rebase_and_ci(monkeypatch):
+    monkeypatch.setattr(batch.plan, "settled_ids", lambda repo_dir, branch: set())
+    monkeypatch.setattr(batch.plan, "_review_file", lambda repo, branch: Path("/nonexistent"))
+    node = dict(_node(), mergeStateStatus="BEHIND", isCrossRepository=True,
+                commits={"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]})
+    row = batch.plan._row(node, "/repos/a", "o/a")
+    assert row.needs[Step.REBASE] == batch.plan.FORK_NEED
+    assert row.needs[Step.CI] == batch.plan.FORK_NEED

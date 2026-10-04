@@ -117,6 +117,8 @@ class Item:
     # the batch worked from, and so the lease its publish pushes under. Empty
     # only in runs saved before the field existed; see __post_init__.
     remote_sha: str = ""
+    # The key of another item in this run whose branch is this PR's base; its publish goes first.
+    stacked_on: str = ""
 
     def __post_init__(self) -> None:
         if not self.remote_sha:
@@ -147,6 +149,10 @@ class Run:
     trail_root: str = ""
     items: list[Item] = field(default_factory=list)
     decisions: list[Decision] = field(default_factory=list)
+    # The plan's private ref namespace and the repos it was fetched into;
+    # dropped when the run reaches a terminal state.
+    ref_namespace: str = ""
+    ref_dirs: list[str] = field(default_factory=list)
     schema_version: int = 1
 
     def item(self, key: str) -> Item:

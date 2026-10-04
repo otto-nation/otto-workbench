@@ -123,6 +123,10 @@ def _plan(args) -> batch.plan.Plan:
     return batch.plan.build_plan(args.checkout)
 
 
+def _drop_refs(run) -> None:
+    batch.plan.drop_refs(run.ref_dirs, run.ref_namespace)
+
+
 def _apply_loaded(run, bin_dir: Path) -> list[str]:
     errors = []
     pr_bin = str(bin_dir / "pr")
@@ -137,6 +141,7 @@ def _apply_loaded(run, bin_dir: Path) -> list[str]:
     if (run.status in (RunStatus.WAITING, RunStatus.RUNNING)
             and run.items and all(item.terminal for item in run.items)):
         run.status = RunStatus.DONE
+        _drop_refs(run)
     return errors
 
 
@@ -181,7 +186,8 @@ def _cmd_run(args, bin_dir: Path) -> int:
     run = batch.scheduler.new_run(rows, steps=args.steps, selected=selected,
                                   pool=batch.admission.ceiling(args.pool, cfg),
                                   auto_publish=args.auto_publish,
-                                  now=datetime.now(timezone.utc))
+                                  now=datetime.now(timezone.utc),
+                                  ref_namespace=plan.ref_namespace, ref_dirs=plan.ref_dirs)
     trail = Trail.start(script="pr-batch", context={"run": run.id}, record=True)
     run.trail_root = os.environ.get(TRAIL_ROOT_ENV, "")
     batch.store.save(run)
@@ -274,6 +280,7 @@ def _cmd_cancel(args) -> int:
         run = batch.store.load(run_id)
         if run.status not in (RunStatus.DONE, RunStatus.CANCELLED):
             run.status = RunStatus.CANCELLED
+            _drop_refs(run)
             batch.store.save(run)
     core.report.emit_json({"cancelled": True, "run": run_id})
     return EXIT_OK
@@ -298,7 +305,11 @@ def cmd_batch(argv: list[str], ctx, *, bin_dir: Path, schema_version: str | None
     args = build_parser().parse_args(argv)
     try:
         if args.command == "plan":
-            core.report.emit_json(core.serde.to_dict(batch.plan.build_plan(args.checkout)))
+            plan = batch.plan.build_plan(args.checkout)
+            core.report.emit_json(core.serde.to_dict(plan))
+            # Nothing runs from a standalone plan, so its refs go now; a saved
+            # plan passed to `run --plan` reads mergeStateStatus instead.
+            batch.plan.drop_refs(plan.ref_dirs, plan.ref_namespace)
             return EXIT_OK
         if args.command == "run":
             return _cmd_run(args, bin_dir)

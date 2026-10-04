@@ -30,7 +30,8 @@ def _local_head(worktree: str) -> str:
 
 
 def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[Step]] | None,
-            pool: int, auto_publish: list[Step], now: datetime | None = None) -> Run:
+            pool: int, auto_publish: list[Step], now: datetime | None = None,
+            ref_namespace: str = "", ref_dirs: list[str] | None = None) -> Run:
     now = now or datetime.now(timezone.utc)
     items = []
     explicit = selected is not None
@@ -44,13 +45,23 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
                 for s in STEP_ORDER if s in steps]
         items.append(Item(key=r.key, repo=r.repo, repo_dir=r.repo_dir, pr=r.pr, branch=r.branch,
                           head_sha=r.head_sha, steps=recs))
+    by_branch = {(r.repo, r.branch): r.key for r in rows}
+    queued = {it.key for it in items}
+    bases = {r.key: by_branch.get((r.repo, r.base_ref), "") for r in rows if r.base_ref}
+    for it in items:
+        base = bases.get(it.key, "")
+        if base in queued and base != it.key:
+            it.stacked_on = base
     return Run(id=batch.store.new_run_id(now), started_at=now.isoformat(timespec="seconds"),
-               steps=list(steps), pool=pool, auto_publish=list(auto_publish), items=items)
+               steps=list(steps), pool=pool, auto_publish=list(auto_publish), items=items,
+               ref_namespace=ref_namespace, ref_dirs=list(ref_dirs or []))
 
 
-def row_for(item: Item, local_head: str = "") -> PlanRow:
-    return PlanRow(item.repo, item.repo_dir, item.pr, "", item.branch, item.head_sha, False, {},
-                   local_head=local_head)
+def row_for(item: Item, local_head: str = "", ref_namespace: str = "") -> PlanRow:
+    # The remote sha, not head_sha: a replan that echoes its input must never
+    # read as GitHub reporting the plan-time head again.
+    return PlanRow(item.repo, item.repo_dir, item.pr, "", item.branch, item.remote_sha, False,
+                   {}, local_head=local_head, ref_namespace=ref_namespace)
 
 
 def _decide(run: Run, item: Item, step: str, kind: DecisionKind, payload: dict, *,
@@ -223,7 +234,7 @@ class Scheduler:
 
     def _confirm(self, item: Item, rec: StepRecord) -> StepRecord | None:
         try:
-            fresh = self._replan(row_for(item, self._head(item.worktree)))
+            fresh = self._replan(row_for(item, self._head(item.worktree), self.run.ref_namespace))
         except batch.plan.PlanError as exc:
             _decide(self.run, item, rec.step.value, DecisionKind.FAILED,
                     {"reason": "github", "detail": str(exc)}, emit=self._emit)
@@ -302,6 +313,8 @@ class Scheduler:
 
     def _settle(self, status: RunStatus) -> RunStatus:
         self.run.status = status
+        if status in (RunStatus.DONE, RunStatus.CANCELLED):
+            batch.plan.drop_refs(self.run.ref_dirs, self.run.ref_namespace)
         batch.store.save(self.run)
         self._emit("run_waiting" if status is RunStatus.WAITING else "run_finished",
                    run=self.run.id, status=status.value,

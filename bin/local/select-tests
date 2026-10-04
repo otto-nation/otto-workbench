@@ -44,7 +44,10 @@ ALWAYS_RUN_TESTS=(
   run_tests
   skills_install
   validate_all
-  validate_registries
+  validate_registries_commands
+  validate_registries_env
+  validate_registries_permissions
+  validate_registries_schema
   site_docs_frontmatter
   site_sidebar_order
   site_doc_links
@@ -75,6 +78,7 @@ NO_REFS_TESTS=(
 # Fallback triggers — changes to these run the full suite.
 FULL_SUITE_TRIGGERS=(
   tests/test_helper.bash
+  tests/validate_registries_helper.bash
   tests/wt_cleanup_helper.bash
   tests/conftest.py
   tests/validate_migrations_helper.bash

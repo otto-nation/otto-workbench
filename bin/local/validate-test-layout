@@ -63,7 +63,6 @@ BATS_SUFFIX = ".bats"
 # is empty #911 deletes it and the gate is unconditional. The test suite pins it
 # to exactly the set of files over the cap, so it can only shrink.
 KNOWN_OVER = {
-
     "tests/retro_scan.bats": "#853",
 }
 

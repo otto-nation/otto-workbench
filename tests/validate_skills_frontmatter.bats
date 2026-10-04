@@ -377,6 +377,7 @@ EOF
 }
 
 # Non-object JSON is rejected by the `type == "object"` check on the emitted document.
+# passes-at-base: has() also rejected non-objects; this holds the type check to the same answer
 @test "output_schema tool emitting a scalar document fails" {
   _make_tool "scalar-tool" "echo 3"
   _make_skill_with_tool "schema-skill" "scalar-tool"
@@ -385,6 +386,7 @@ EOF
   [[ "$output" == *"scalar-tool' emits an invalid --tool-schema document"* ]]
 }
 
+# passes-at-base: has() also rejected non-objects; this holds the type check to the same answer
 @test "output_schema tool emitting an array document fails" {
   _make_tool "array-tool" "echo '[]'"
   _make_skill_with_tool "schema-skill" "array-tool"

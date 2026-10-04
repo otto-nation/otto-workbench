@@ -237,6 +237,7 @@ _run_all_migrations_in_fake() {
 }
 
 @test "an unreadable source warns, is skipped, and the rest of the carry finishes" {
+  skip_if_root
   _seed_review_trail "repo-1" '{"ts":"a"}
 '
   _seed_review_trail "repo-2" '{"ts":"b"}
@@ -257,6 +258,7 @@ _run_all_migrations_in_fake() {
 }
 
 @test "every source failing leaves no empty legacy.jsonl behind" {
+  skip_if_root
   # legacy.jsonl is created before _append_ledger runs, because an existing
   # destination is that call's precondition. When the only source cannot be
   # read, that leaves an empty monthless file otto-log would open on every
@@ -292,6 +294,7 @@ _run_all_migrations_in_fake() {
 }
 
 @test "an unreadable source leaves the migration unrecorded and retryable" {
+  skip_if_root
   # Only the framework-dispatch harness can observe this: lib/migrations.sh
   # records a migration as applied (MIGRATIONS_STATE_FILE) only when the
   # explicit "$fn_name" call returns 0, and skips recording — with "will

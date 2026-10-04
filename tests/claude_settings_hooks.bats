@@ -6,14 +6,6 @@ setup_file() {
   local repo_root
   repo_root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 
-  # shellcheck source=/dev/null
-  source "$repo_root/lib/registries.sh"
-
-  # Collect registry permissions once for all tests
-  local -a perms=()
-  collect_registry_permissions perms "$repo_root"
-  printf '%s\n' "${perms[@]}" > "$BATS_FILE_TMPDIR/registry_perms.list"
-
   _sync_settings_into "$BATS_FILE_TMPDIR/home" "$repo_root"
 }
 
@@ -216,11 +208,11 @@ _init_test_repo() {
 }
 
 # ── edit-guard: the tree-validation lock ────────────────────────────────────
-# The Pi half of this is tree-lock-guard in tests/pi_extensions_issues.bats. Both read
+# The Pi half of this is tree-lock-guard in tests/pi_extensions.bats. Both read
 # ai/lib/core/tree_lock.py through `with-tree-lock --check`, so the two
 # harnesses cannot disagree about whether a tree is under validation.
 
-# _hold_tree lives in tests/test_helper.bash: pi_extensions_issues.bats holds the same
+# _hold_tree lives in tests/test_helper.bash: pi_extensions.bats holds the same
 # lock for the Pi half of this guard, and one fact read by two harnesses is
 # worth one helper rather than two copies of it.
 

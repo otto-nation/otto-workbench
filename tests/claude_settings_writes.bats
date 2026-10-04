@@ -1,22 +1,5 @@
 #!/usr/bin/env bats
 # Tests for the Claude bash guard: redirects, backgrounding, sleeping, variable expansion, and the guard-rules contract.
-setup_file() {
-  load 'test_helper'
-  load 'claude_settings_helper'
-  local repo_root
-  repo_root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
-
-  # shellcheck source=/dev/null
-  source "$repo_root/lib/registries.sh"
-
-  # Collect registry permissions once for all tests
-  local -a perms=()
-  collect_registry_permissions perms "$repo_root"
-  printf '%s\n' "${perms[@]}" > "$BATS_FILE_TMPDIR/registry_perms.list"
-
-  _sync_settings_into "$BATS_FILE_TMPDIR/home" "$repo_root"
-}
-
 setup() {
   load 'test_helper'
   load 'claude_settings_helper'

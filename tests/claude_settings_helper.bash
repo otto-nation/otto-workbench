@@ -14,7 +14,7 @@
 _sync_settings_into() {
   local fake_home="$1" repo_root="$2"
   mkdir -p "$fake_home"
-  HOME="$fake_home"
+  export HOME="$fake_home"
   export WORKBENCH_CONFIG_DIR="$fake_home/.config/workbench"
   export WORKBENCH_STATE_DIR="$fake_home/.local/state/workbench"
   export WORKBENCH_CACHE_DIR="$fake_home/.cache/workbench"

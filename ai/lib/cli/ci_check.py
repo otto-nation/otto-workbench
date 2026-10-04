@@ -40,11 +40,11 @@ import pr.ci_wait
 import pr.context
 import pr.domains
 import pr.state
+import rebase.commands
 import rebase.inspect
 import rebase.target
 import rebase.types
 
-from . import pr_rebase
 
 # The binary a user runs and the trail records, which is not this module's own
 # name. Spelled out rather than derived, so the shim can be renamed only by
@@ -215,7 +215,7 @@ def _rebase_if_behind(trail, report: pr.ci_report.CIReport, ctx) -> bool:
 
     cwd = str(ctx.require_worktree())
     target_ref = rebase.target.resolve_target_ref(cwd, ctx, None, trail=trail)
-    rc = pr_rebase.cmd_start(
+    rc = rebase.commands.cmd_start(
         cwd, ctx, rebase.types.RunMode.FIX, target_ref=target_ref, trail=trail,
     )
 

@@ -15,6 +15,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import cli.pr_rebase  # noqa: E402
+import rebase.commands  # noqa: E402
 
 import git.topology  # noqa: E402
 import git.client  # noqa: E402
@@ -108,7 +109,7 @@ def test_main_aborts_without_asking_the_network():
     with mock.patch.object(rebase.types, "recorded_target_base",
                            return_value="origin/release/1.2"), \
          mock.patch.object(rebase.target, "resolve_target_ref") as resolve, \
-         mock.patch.object(cli.pr_rebase, "cmd_abort", return_value=0) as abort:
+         mock.patch.object(rebase.commands, "cmd_abort", return_value=0) as abort:
         _run_main(0, "--abort")
 
     resolve.assert_not_called()
@@ -127,7 +128,7 @@ def test_cmd_start_skips_stash_when_rebase_in_progress():
          mock.patch.object(rebase.stash, "restore"), \
          mock.patch.object(rebase.target, "resume_target_ref", return_value=_TARGET), \
          mock.patch.object(rebase.lifecycle, "drive_to_completion", return_value=0):
-        result = cli.pr_rebase.cmd_start(
+        result = rebase.commands.cmd_start(
             "/fake", ctx, rebase.types.RunMode.FIX, target_ref=_TARGET,
         )
 
@@ -143,7 +144,7 @@ def test_cmd_start_stashes_before_fresh_rebase():
          mock.patch.object(rebase.stash, "auto_stash", return_value=False) as mock_stash, \
          mock.patch.object(rebase.stash, "restore"), \
          mock.patch.object(rebase.lifecycle, "fresh", return_value=0):
-        result = cli.pr_rebase.cmd_start(
+        result = rebase.commands.cmd_start(
             "/fake", ctx, rebase.types.RunMode.PUSH, target_ref=_TARGET,
         )
 
@@ -163,7 +164,7 @@ def test_cmd_start_restores_the_stash_when_the_rebase_raises():
          mock.patch.object(rebase.stash, "restore") as restore, \
          mock.patch.object(rebase.lifecycle, "fresh", side_effect=RuntimeError("boom")):
         with pytest.raises(RuntimeError):
-            cli.pr_rebase.cmd_start(
+            rebase.commands.cmd_start(
                 "/fake", mock.MagicMock(), rebase.types.RunMode.PUSH,
                 target_ref=_TARGET,
             )
@@ -181,7 +182,7 @@ def test_cmd_start_restores_a_held_stash_after_a_resume():
          mock.patch.object(rebase.target, "resume_target_ref", return_value=_TARGET), \
          mock.patch.object(rebase.stash, "restore") as restore, \
          mock.patch.object(rebase.lifecycle, "drive_to_completion", return_value=0):
-        cli.pr_rebase.cmd_start(
+        rebase.commands.cmd_start(
             "/fake", mock.MagicMock(), rebase.types.RunMode.FIX,
             target_ref=_TARGET,
         )
@@ -196,7 +197,7 @@ def test_cmd_start_stash_failure_aborts():
     with mock.patch.object(rebase.inspect, "rebase_in_progress", return_value=False), \
          mock.patch.object(rebase.stash, "auto_stash", return_value=None), \
          mock.patch.object(rebase.lifecycle, "fresh") as mock_fresh:
-        result = cli.pr_rebase.cmd_start(
+        result = rebase.commands.cmd_start(
             "/fake", ctx, rebase.types.RunMode.PUSH, target_ref=_TARGET,
         )
 
@@ -218,7 +219,7 @@ def test_cmd_start_resume_forwards_the_snapshot():
          mock.patch.object(rebase.stash, "restore"), \
          mock.patch.object(rebase.target, "resume_target_ref", return_value=_TARGET), \
          mock.patch.object(rebase.lifecycle, "drive_to_completion", return_value=0) as drive:
-        cli.pr_rebase.cmd_start(
+        rebase.commands.cmd_start(
             "/fake", ctx, rebase.types.RunMode.PUSH, target_ref=_TARGET,
             snapshot=snapshot,
         )
@@ -257,8 +258,8 @@ def _run_main(cmd_start_rc: int, *flags: str,
          mock.patch.object(git.topology, "default_branch",
                            return_value=default_branch), \
          mock.patch.object(cli.pr_rebase, "Trail") as mock_trail_cls, \
-         mock.patch.object(cli.pr_rebase, "cmd_start", return_value=cmd_start_rc) as mock_start, \
-         mock.patch.object(cli.pr_rebase, "cmd_push", return_value=0) as mock_push:
+         mock.patch.object(rebase.commands, "cmd_start", return_value=cmd_start_rc) as mock_start, \
+         mock.patch.object(rebase.commands, "cmd_push", return_value=0) as mock_push:
         mock_trail_cls.start.return_value = fake_trail
         exit_code = cli.pr_rebase.main([*flags])
     return exit_code, mock_push, mock_start
@@ -301,7 +302,7 @@ def test_cmd_push_hands_no_verify_to_the_landing():
          mock.patch.object(rebase.types.RebaseOutcome, "save", lambda self, c: None), \
          mock.patch.object(git.client, "commits_ahead", return_value=1), \
          _lands(_pushed()) as owner:
-        cli.pr_rebase.cmd_push("/fake", ctx, target_ref=_TARGET, verify=False)
+        rebase.commands.cmd_push("/fake", ctx, target_ref=_TARGET, verify=False)
 
     assert owner.call_args.kwargs["verify"] is False
 
@@ -314,7 +315,7 @@ def test_cmd_start_forwards_no_verify_on_both_paths(resuming):
          mock.patch.object(rebase.target, "resume_target_ref", return_value=_TARGET), \
          mock.patch.object(rebase.lifecycle, "fresh", return_value=0) as fresh, \
          mock.patch.object(rebase.lifecycle, "drive_to_completion", return_value=0) as drive:
-        cli.pr_rebase.cmd_start(
+        rebase.commands.cmd_start(
             "/fake", mock.MagicMock(), rebase.types.RunMode.FIX,
             target_ref=_TARGET, verify=False,
         )
@@ -343,7 +344,7 @@ def test_push_flag_skips_cmd_push_on_conflicts():
 def test_select_mode_keeps_fix_and_push_independent(flags, expected):
     """--fix says the AI may resolve; --no-push says nothing reaches the remote."""
     args = mock.Mock(fix="--fix" in flags, push="--no-push" not in flags)
-    assert cli.pr_rebase._select_mode(args)[0] is expected
+    assert rebase.commands._select_mode(args)[0] is expected
 
 
 def test_fix_with_no_push_does_not_reach_the_remote():
@@ -398,7 +399,7 @@ def test_the_default_invocation_names_the_pr_before_pushing(capsys):
          mock.patch.object(rebase.types.RebaseOutcome, "save", lambda self, c: None), \
          mock.patch.object(git.client, "commits_ahead", return_value=1), \
          _lands(_pushed()):
-        rc = cli.pr_rebase.cmd_push(
+        rc = rebase.commands.cmd_push(
             "/fake", ctx, target_ref=_TARGET, snapshot=snapshot,
         )
 
@@ -419,7 +420,7 @@ def test_the_default_invocation_pushes_under_the_recorded_lease():
          mock.patch.object(rebase.types.RebaseOutcome, "save", lambda self, c: None), \
          mock.patch.object(git.client, "commits_ahead", return_value=1), \
          _lands(_pushed()) as owner:
-        cli.pr_rebase.cmd_push("/fake", ctx, target_ref=_TARGET)
+        rebase.commands.cmd_push("/fake", ctx, target_ref=_TARGET)
 
     assert owner.call_args.kwargs["args"] == (
         "--force-with-lease=refs/heads/isaac/feat/x:deadbee",
@@ -442,7 +443,7 @@ def test_a_lease_recorded_before_the_field_existed_is_refused(capsys):
          mock.patch.object(rebase.types, "load_or_init",
                            return_value=_push_state(lease_expect="")), \
          _lands(_pushed()) as owner:
-        rc = cli.pr_rebase.cmd_push("/fake", ctx, target_ref=_TARGET)
+        rc = rebase.commands.cmd_push("/fake", ctx, target_ref=_TARGET)
 
     assert rc == 1
     owner.assert_not_called()
@@ -455,16 +456,16 @@ def test_a_lease_recorded_before_the_field_existed_is_refused(capsys):
 @pytest.mark.parametrize("extra", [[], ["--no-verify"]])
 def test_push_only_pushes_with_the_lease_and_never_rebases(monkeypatch, extra):
     pushed = {}
-    monkeypatch.setattr(cli.pr_rebase, "cmd_start",
+    monkeypatch.setattr(rebase.commands, "cmd_start",
                         lambda *a, **k: pytest.fail("--push-only must not rebase"))
 
     def fake_push(cwd, ctx, *, target_ref, verify=True, snapshot=None, trail=None):
         pushed["cwd"], pushed["ref"], pushed["verify"] = cwd, target_ref, verify
         return 0
 
-    monkeypatch.setattr(cli.pr_rebase, "cmd_push", fake_push)
-    monkeypatch.setattr(cli.pr_rebase, "_resolve",
-                        lambda args: cli.pr_rebase.RebaseTarget(make_ctx(), "/wt", "origin/main"))
+    monkeypatch.setattr(rebase.commands, "cmd_push", fake_push)
+    monkeypatch.setattr(rebase.commands, "_resolve",
+                        lambda args: rebase.commands.RebaseTarget(make_ctx(), "/wt", "origin/main"))
     # main() still resolves context, claims the lock, and opens a trail before
     # _run; stub those so this case does not need a real checkout.
     fake_ctx = mock.MagicMock()

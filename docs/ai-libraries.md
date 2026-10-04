@@ -5520,6 +5520,15 @@ escaping exception would take the whole CLI down over a side-feature. Warning
 rather than passing is what keeps a bug in here loud without coupling anything
 to it.
 
+### rebase/commands.py
+
+The rebase commands behind `pr rebase`: start, abort, push, and the run that picks one.
+
+Each command resolves the branch's target, takes the lease the rebase needs,
+and records the outcome in the PR's state file. `cli.pr_rebase` is the command
+over these — the parser, the run lock, the trail. The rebase mechanics are the
+rest of this package (`rebase.lifecycle`, `rebase.land`, `rebase.lease`, …).
+
 ### rebase/conflicts.py
 
 Conflict classification, parsing, and git-level resolution.

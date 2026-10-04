@@ -75,7 +75,9 @@ def test_a_one_sided_resolution_holds_the_push_even_when_posting(capsys):
     assert "force_pushed" not in report
     assert report["files_one_sided"] == ["a.py"] and report["pre_rebase_head"] == "p0"
     assert saved[0].files_one_sided == ["a.py"]
-    assert "pr rebase --push-only" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "pr rebase --push-only" in err
+    assert "without --no-push" not in err
 
 
 def test_a_one_sided_rebase_in_push_mode_skips_the_push():

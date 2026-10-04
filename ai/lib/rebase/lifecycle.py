@@ -859,7 +859,10 @@ def rebase_success(
     # Under FIX_ONLY the AI's work is the whole point of the run and the user is
     # about to push it by hand, so name it rather than reporting a bare "clean".
     core.log.ok(label)
-    if landed is not None:
+    # A one-sided hold already named `--push-only` above. "Re-run without
+    # --no-push" would start a fresh rebase with no one-sided record to
+    # replay, so it would force-push straight past the hold.
+    if landed is not None and not one_sided:
         core.log.ok(f"Run `{landed.resume}` to push, or re-run without --no-push.")
     return 0
 

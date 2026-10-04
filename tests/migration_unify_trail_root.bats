@@ -258,11 +258,11 @@ _run_all_migrations_in_fake() {
 }
 
 @test "every source failing leaves no empty legacy.jsonl behind" {
-  skip_if_root
   # legacy.jsonl is created before _append_ledger runs, because an existing
   # destination is that call's precondition. When the only source cannot be
   # read, that leaves an empty monthless file otto-log would open on every
   # query forever — for a carry that never happened.
+  skip_if_root
   _seed_review_trail "repo-1" '{"ts":"a"}
 '
   chmod 000 "$STATE/reviews/repo-1/trail.jsonl"
@@ -294,12 +294,12 @@ _run_all_migrations_in_fake() {
 }
 
 @test "an unreadable source leaves the migration unrecorded and retryable" {
-  skip_if_root
   # Only the framework-dispatch harness can observe this: lib/migrations.sh
   # records a migration as applied (MIGRATIONS_STATE_FILE) only when the
   # explicit "$fn_name" call returns 0, and skips recording — with "will
   # retry on next run" — otherwise. repo-1 stays unreadable across the whole
   # first sync; repo-2 must still be carried in that same run.
+  skip_if_root
   _build_fake_workbench "retry"
   mkdir -p "$FAKE_STATE/reviews/repo-1" "$FAKE_STATE/reviews/repo-2"
   printf '{"ts":"a"}\n' > "$FAKE_STATE/reviews/repo-1/trail.jsonl"

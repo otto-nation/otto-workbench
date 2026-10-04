@@ -455,6 +455,8 @@ EOF
   # symlink, a permissions hiccup), and its stderr is discarded, so such a file
   # must still get a fallback weight from the directory listing rather than
   # vanishing from the shard output entirely.
+  # As root, grep opens the file regardless of mode, so the fallback is never hit.
+  skip_if_root
   WORKBENCH_DIR=$(_weighted_tree <<'EOF'
 known.bats	1
 EOF

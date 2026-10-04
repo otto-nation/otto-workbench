@@ -8,10 +8,6 @@ Usage: workbench-statusline
   Outputs compact status: reuse level (if non-default) and PR state.
 """
 
-from __future__ import annotations
-
-import contextlib
-import io
 import os
 import sys
 from pathlib import Path
@@ -21,104 +17,15 @@ if "--help" in sys.argv or "-h" in sys.argv:
         print(line)
     sys.exit(0)
 
-BIN_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BIN_DIR))
 # ai/lib, from WORKBENCH_AI_LIB_DIR's checkout when that is set — see ai/bin/_libdir.py
-_AI_LIB_DIR = BIN_DIR.parent.parent / "lib"
+_AI_LIB_DIR = Path(__file__).resolve().parent.parent.parent / "lib"
 if os.environ.get("WORKBENCH_AI_LIB_DIR"):
     sys.path.insert(0, str(_AI_LIB_DIR.parent / "bin"))
     from _libdir import pinned_ai_lib_dir
     del sys.path[0]
     _AI_LIB_DIR = pinned_ai_lib_dir()
 sys.path.insert(0, str(_AI_LIB_DIR))
-from _reuse_levels import read_default, read_level
 
-try:
-    import pr.state
-    import pr.target
-except Exception:
-    # The status line renders on every turn and has no way to report a fault.
-    # A broken ai/lib blanks the PR segment rather than killing the line.
-    #
-    # One name for both: `import pr.state` binds the package, so the package is
-    # what is missing when either import fails, and the guard below has one
-    # thing to test rather than two that can only fail together.
-    pr = None
+from cli.workbench_statusline import main  # noqa: E402
 
-
-def _reuse_piece() -> str:
-    level = read_level()
-    default = read_default()
-    if level != default:
-        return f"reuse:{level}"
-    return ""
-
-
-def _pr_piece() -> str:
-    if pr is None:
-        return ""
-
-    # No `gh` and no network: this runs on every prompt render.
-    try:
-        target = pr.target.target_dir_for_checkout(Path.cwd())
-    except Exception:
-        return ""
-    if target is None:
-        return ""
-
-    # load_state warns on stderr when the file will not parse. The status line
-    # has nowhere to put that, so it is swallowed here; `pr status` and every
-    # write path still surface it.
-    with contextlib.redirect_stderr(io.StringIO()):
-        state = pr.state.load_state(target)
-
-    if state is None or not state.identity.pr_number:
-        return ""
-
-    label = f"PR#{state.identity.pr_number}"
-    details = _pr_details(state)
-    if details:
-        label = f"{label} {details}"
-    return label
-
-
-def _pr_details(state: pr.state.PRState) -> str:
-    parts: list[str] = []
-
-    if state.ci.conclusion == "failure" and state.ci.failure_count > 0:
-        parts.append(f"CI:{state.ci.failure_count}F")
-    elif state.ci.conclusion == "success":
-        parts.append("CI:ok")
-    elif state.ci.conclusion:
-        parts.append(f"CI:{state.ci.conclusion}")
-
-    if state.review.verdict:
-        parts.append(f"review:{state.review.verdict}")
-
-    open_threads = state.comments.by_state.get("open") or 0
-    if open_threads > 0:
-        parts.append(f"{open_threads}open")
-
-    return " ".join(parts)
-
-
-def main() -> None:
-    pieces: list[str] = []
-    reuse = _reuse_piece()
-    if reuse:
-        pieces.append(reuse)
-    try:
-        pr_piece = _pr_piece()
-    except Exception:
-        # Same policy as the guarded import above, applied to the whole segment:
-        # the status line has nowhere to report a fault, so a broken PR segment
-        # blanks itself instead of taking the line — and `reuse:` — down with it.
-        pr_piece = ""
-    if pr_piece:
-        pieces.append(pr_piece)
-    if pieces:
-        print(" ".join(pieces), end="")
-
-
-if __name__ == "__main__":
-    main()
+sys.exit(main(sys.argv[1:]))

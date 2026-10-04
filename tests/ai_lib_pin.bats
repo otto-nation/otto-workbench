@@ -221,6 +221,23 @@ PY
   done
 }
 
+# passes-at-base: the pin was honoured through _reuse_levels before; this keeps it honoured by the shims
+@test "the refusal reaches the Claude hooks under ai/claude/bin" {
+  local script
+  for script in reuse-session-start workbench-statusline reuse-mode-tracker reuse-subagent-start; do
+    WORKBENCH_AI_LIB_DIR=/nonexistent run "$REPO_ROOT/ai/claude/bin/$script" </dev/null
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"WORKBENCH_AI_LIB_DIR"* ]]
+  done
+}
+
+# passes-at-base: asserts the early --help this change was careful to keep
+@test "workbench-statusline answers --help before the pin is read" {
+  WORKBENCH_AI_LIB_DIR=/nonexistent run "$REPO_ROOT/ai/claude/bin/workbench-statusline" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Usage: workbench-statusline"* ]]
+}
+
 # ─── The stanza itself ───────────────────────────────────────────────────────
 
 @test "every entry point that places ai/lib goes through the pin" {
@@ -228,10 +245,15 @@ PY
   # through \$WORKBENCH_LIB_DIR". A new script writing the bare insert pins
   # itself to the installed checkout while its siblings follow the pin, and
   # nothing else reports that.
-  local bad
-  bad=$(grep -rln 'sys.path.insert(0, str(.*parent.* / "lib"))' \
-      "$REPO_ROOT/ai/bin" "$REPO_ROOT/ai/claude/bin" \
-    | xargs grep -L 'WORKBENCH_AI_LIB_DIR') || true
+  # A loop rather than `| xargs grep -L`: with no inserting script left, GNU
+  # xargs still runs grep once on empty stdin, which reports "(standard input)".
+  local inserters bad="" f
+  inserters=$(grep -rln 'sys.path.insert(0, str(.*parent.* / "lib"))' \
+      "$REPO_ROOT/ai/bin" "$REPO_ROOT/ai/claude/bin") || true
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    grep -q 'WORKBENCH_AI_LIB_DIR' "$f" || bad+="$f"$'\n'
+  done <<< "$inserters"
   [ -z "$bad" ]
 }
 

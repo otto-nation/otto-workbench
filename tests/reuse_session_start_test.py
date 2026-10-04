@@ -1,16 +1,25 @@
 """Tests for the SessionStart hook's context lines."""
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import config.session_start  # noqa: E402
 import config.workbench_config  # noqa: E402
+
+
+@pytest.fixture
+def rss():
+    return config.session_start
 
 ISSUE_TRACKER_RULE = REPO_ROOT / "ai" / "guidelines" / "rules" / "issue-tracker.md"
 GIT_OPERATIONS_RULE = REPO_ROOT / "ai" / "guidelines" / "rules" / "git-operations.md"
@@ -25,7 +34,7 @@ def _run(rss, repo):
     """
     with patch.object(rss, "_repo_root", return_value=str(repo)), \
          patch.object(rss, "_ceiling_counts", return_value=None):
-        rss.main()
+        rss.run()
 
 
 def test_names_the_configured_tracker(rss, tmp_path, capsys):
@@ -151,7 +160,7 @@ class TestWhereTheSessionStarted:
         (worktree / ".workbench.yml").write_text("issues:\n  provider: github\n")
         monkeypatch.chdir(worktree)
         with patch.object(rss, "_ceiling_counts", return_value=None):
-            rss.main()
+            rss.run()
         assert "Issue tracker: github" in capsys.readouterr().out
 
     def test_a_container_rooted_session_gets_the_same_tracker(
@@ -168,7 +177,7 @@ class TestWhereTheSessionStarted:
         )
         monkeypatch.chdir(container)
         with patch.object(rss, "_ceiling_counts", return_value=None):
-            rss.main()
+            rss.run()
         assert "Issue tracker: github" in capsys.readouterr().out
 
     def test_the_config_comes_from_the_worktree_not_the_container(
@@ -188,7 +197,7 @@ class TestWhereTheSessionStarted:
         (container / ".workbench.yml").write_text("issues:\n  provider: github\n")
         monkeypatch.chdir(container)
         with patch.object(rss, "_ceiling_counts", return_value=None):
-            rss.main()
+            rss.run()
         assert "Issue tracker: linear" in capsys.readouterr().out
 
     def test_a_container_with_no_worktree_names_no_tracker(
@@ -206,7 +215,7 @@ class TestWhereTheSessionStarted:
         run_checked(["git", "clone", "-q", "--bare", str(seed), str(root / ".git")])
         monkeypatch.chdir(root)
         with patch.object(rss, "_ceiling_counts", return_value=None):
-            rss.main()
+            rss.run()
         out = capsys.readouterr().out
         assert "Issue tracker" not in out
         assert "is a bare-repo container with no resolvable worktree" in out
@@ -222,7 +231,7 @@ class TestWhereTheSessionStarted:
         """
         monkeypatch.chdir(container)
         with patch.object(rss, "_ceiling_counts", return_value=None):
-            rss.main()
+            rss.run()
         out = capsys.readouterr().out
         worktree = os.path.realpath(container / "main")
         assert "is a bare-repo container, so this session did not load" in out
@@ -233,7 +242,7 @@ class TestWhereTheSessionStarted:
     ):
         monkeypatch.chdir(container / "main")
         with patch.object(rss, "_ceiling_counts", return_value=None):
-            rss.main()
+            rss.run()
         assert "Session root" not in capsys.readouterr().out
 
     def test_a_missing_resolver_at_a_container_is_reported_not_silent(
@@ -248,7 +257,7 @@ class TestWhereTheSessionStarted:
         unavailable = rss.git_layout.Worktree(None, rss.git_layout.UNAVAILABLE)
         with patch.object(rss, "_ceiling_counts", return_value=None), \
                 patch.object(rss.git_layout, "worktree_for", return_value=unavailable):
-            rss.main()
+            rss.run()
         assert "with no resolvable worktree" in capsys.readouterr().out
 
     def test_a_missing_resolver_outside_a_container_stays_silent(
@@ -258,7 +267,7 @@ class TestWhereTheSessionStarted:
         unavailable = rss.git_layout.Worktree(None, rss.git_layout.UNAVAILABLE)
         with patch.object(rss, "_ceiling_counts", return_value=None), \
                 patch.object(rss.git_layout, "worktree_for", return_value=unavailable):
-            rss.main()
+            rss.run()
         assert "Session root" not in capsys.readouterr().out
 
     def test_outside_a_repo_stays_silent(self, rss, tmp_path, monkeypatch, capsys):
@@ -267,5 +276,29 @@ class TestWhereTheSessionStarted:
         monkeypatch.chdir(plain)
         monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
         with patch.object(rss, "_ceiling_counts", return_value=None):
-            rss.main()
+            rss.run()
         assert "Issue tracker" not in capsys.readouterr().out
+
+
+def test_ceiling_counts_runs_the_scan_beside_ai_lib(rss, tmp_path):
+    (tmp_path / "a.py").write_text("# " + "ceiling: shortcut\n")
+    counts = rss._ceiling_counts(str(tmp_path))
+    assert counts is not None
+    assert counts["no_trigger"] == 1
+
+
+def test_the_installed_shim_reaches_ai_lib_from_one_level_deeper(tmp_path):
+    config_dir = Path(os.environ["WORKBENCH_CONFIG_DIR"])
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "config.yml").write_text("reuse:\n  level: ultra\n")
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "ai" / "claude" / "bin" / "reuse-session-start")],
+        cwd=tmp_path,
+        env={**os.environ, "GIT_CEILING_DIRECTORIES": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert "Reuse level: ultra —" in result.stdout

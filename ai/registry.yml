@@ -63,13 +63,13 @@ tools:
     description: "Scan memories and workbench artifacts for promotion evaluation"
 
   - name: retro-scan
-    parser: ai/bin/retro-scan:build_parser
+    parser: cli.retro_scan:build_parser
     permission: true
     visibility: brief
     description: "Scan PR review comments and cross-reference against coding rules"
 
   - name: retro-consume
-    parser: ai/bin/retro-consume:build_parser
+    parser: cli.retro_consume:build_parser
     permission: true
     visibility: brief
     description: "Delete the local reviews a retro consumed, for the scan ID that recorded them"

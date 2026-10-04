@@ -26,15 +26,22 @@ import retro.consumed
 SCRIPT = "retro-consume"
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """The retro-consume parser, for `main` and for rendering its usage and flag tables."""
     parser = argparse.ArgumentParser(
+        prog=SCRIPT,
         description="Delete the local reviews a retro consumed.",
-        usage="retro-consume --scan-id ID [--dry-run]",
     )
     parser.add_argument("-V", "--version", action="store_true", help="print version and exit")
-    parser.add_argument("--scan-id", type=str, default=None, help="the scan ID retro-scan --consume reported")
-    parser.add_argument("--dry-run", action="store_true", help="report what would be deleted, delete nothing")
-    args = parser.parse_args(argv)
+    parser.add_argument("--scan-id", type=str, default=None, metavar="ID",
+                        help="the scan ID retro-scan --consume reported")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="report what would be deleted, delete nothing")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     if args.version:
         print(core.version.version_string(SCRIPT))

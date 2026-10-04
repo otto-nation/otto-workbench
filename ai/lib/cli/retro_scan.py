@@ -24,24 +24,31 @@ from core.trail import add_trail_args
 WORKBENCH_ENV_VAR = "OTTO_WORKBENCH"
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """The retro-scan parser, for `main` and for rendering its usage and flag tables."""
     checkout = core.workbench_paths.source_checkout()
     default_wb = os.environ.get(WORKBENCH_ENV_VAR) or (str(checkout) if checkout else None)
-
     parser = argparse.ArgumentParser(
+        prog=retro.scan.SCRIPT,
         description="Scan PR review comments and cross-reference against coding rules.",
-        usage="retro-scan [--home DIR] [--workbench DIR] [--since DURATION] [--consume]",
     )
     parser.add_argument("-V", "--version", action="store_true", help="print version and exit")
-    parser.add_argument("--home", type=str, default=str(Path.home()), help="home directory override")
-    parser.add_argument("--workbench", type=str, default=default_wb, help=f"workbench directory (default: ${WORKBENCH_ENV_VAR}, else the checkout this runs from)")
-    parser.add_argument("--since", type=str, default=None, help="override scan window (e.g. 7d, 24h, 30m)")
+    parser.add_argument("--home", type=str, default=str(Path.home()), metavar="DIR",
+                        help="home directory override (default: `$HOME`)")
+    parser.add_argument("--workbench", type=str, default=default_wb, metavar="DIR",
+                        help=f"workbench directory (default: ${WORKBENCH_ENV_VAR}, else the checkout this runs from)")
+    parser.add_argument("--since", type=str, default=None, metavar="DURATION",
+                        help="override scan window (e.g. 7d, 24h, 30m)")
     parser.add_argument(
         "--consume", action="store_true",
         help="record the local reviews read, so the retro may delete them when it completes",
     )
     add_trail_args(parser)
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     if args.version:
         print(core.version.version_string(retro.scan.SCRIPT))

@@ -4,7 +4,7 @@
 # `shard_files` in bin/local/run-tests packs the bats suite into CI shards, and
 # it needs to know what each file costs. Counting `@test` lines is the obvious
 # proxy and it is a bad one: measured on this repo, a case in
-# claude_settings.bats cost 2.2s and one in migrations_run.bats 0.26s, so a
+# claude_settings_hooks.bats cost 2.2s and one in migrations_run.bats 0.26s, so a
 # count-weighted split put 1193s of work on shard 1 and 242s on shard 3 — a
 # 440s critical path against a 165s one. Nothing readable from a test file
 # predicts its runtime, so the weight has to be measured.

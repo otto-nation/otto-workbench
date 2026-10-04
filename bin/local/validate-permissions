@@ -22,8 +22,8 @@ is a one-off entry in settings.local.json, which hides the dead rule for good.
 
 Registry `permission:` entries never reach a committed settings file — they are
 collected at sync time and injected into ~/.claude/settings.json.  Pass that
-file (or any other) as an argument to check them; tests/claude_settings.bats
-does exactly that against a synced sandbox.
+file (or any other) as an argument to check them;
+tests/claude_settings_template.bats does exactly that against a synced sandbox.
 
 The second question is where a live rule is written down, and `lib/permissions`
 answers it — the matcher, the coverage test, and the discovery walk all live

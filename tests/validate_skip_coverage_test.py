@@ -88,7 +88,7 @@ def test_a_repo_path_reached_through_a_variable_fires(tmp_path):
 
 def test_a_repo_path_reached_via_bats_test_filename_fires(tmp_path):
     # The idiom this repo actually uses three times over (tests/bin_scripts.bats,
-    # tests/claude_settings.bats, tests/registry_permissions.bats): deriving the
+    # tests/claude_settings_template.bats, tests/registry_permissions.bats): deriving the
     # repo root by walking up from the running test file.
     source = f"""\
 @test "derived via filename" {{

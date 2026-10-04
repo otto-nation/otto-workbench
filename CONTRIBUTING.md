@@ -197,7 +197,7 @@ A grant that lands in `.claude/settings.local.json` is a bug report: some rule
 that should have matched did not. Move it into one of the tracked files rather
 than leaving it there, where nothing reviews it and the next worktree starts
 without it. `bin/local/validate-permissions` checks every settings file for
-rules that can never match; `tests/claude_settings.bats` holds the project file
+rules that can never match; `tests/claude_settings_template.bats` holds the project file
 to directories the repo actually ships.
 
 The same validator reports the drift itself. It reads the tracked project file

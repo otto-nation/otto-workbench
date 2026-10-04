@@ -131,7 +131,7 @@ EOF
 # the repo: regenerated context and Claude Code's own per-machine grants. The
 # rest of the directory — CLAUDE.md, rules/, settings.json — is committed, so
 # these are excluded by name. This repo's own .claude/.gitignore is held to the
-# same list by tests/claude_settings.bats.
+# same list by tests/claude_settings_template.bats.
 CLAUDE_LOCAL_ARTIFACTS=(anatomy.md ceiling-debt.md settings.local.json)
 
 # _scaffold_gitignore — creates .claude/rules/.gitignore and .claude/.gitignore.

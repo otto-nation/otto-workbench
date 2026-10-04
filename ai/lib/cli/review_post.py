@@ -117,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
     repo = sidecar.repo
     args.repo = repo
     # Stamped beside `repo` so every posting path reads the host the same way it
-    # reads the slug. `_run_post` is handed the sidecar and takes it from there;
+    # reads the slug. `review.post_file.run_post` is handed the sidecar and takes it from there;
     # the comment-fallback path only ever sees `args`, and a host it cannot read
     # is an enterprise link rendered on public GitHub.
     args.host = sidecar.host

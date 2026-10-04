@@ -11,17 +11,13 @@ posting mechanics are `review.posting`, formatting is `review.format`.
 
 from __future__ import annotations
 
-
-
 # Most of what follows is never referenced in this file. The names are re-exported
 # so a test can reach them at `review_post.<name>` and patch one, which the proxy
-# installed below forwards to the module that actually defines it. An import an
-# editor calls unused is therefore load-bearing — deleting it silently turns the
-# patch it serves into a no-op.
+# installed in `cli.review_post` forwards to the module that actually defines it.
+# An import an editor calls unused is therefore load-bearing — deleting it
+# silently turns the patch it serves into a no-op.
 import git.client
 import core.log
-import core.module_proxy
-import core.proc
 from review.dedup import dedup_against_posted
 from review.document import ReviewDocument
 from core.text import plural

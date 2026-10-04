@@ -160,6 +160,62 @@ _split_repo_worktree_line() {
   __path="${1#*"$_PROJECT_FIELD_SEP"}"
 }
 
+# ─── Path canonicalisation ──────────────────────────────────────────────────
+
+# _projects_abs DIR — DIR as the path the registry would have stored for it.
+#
+# Entries are always what `git rev-parse --show-toplevel` returned: absolute,
+# symlink-resolved, and the work-tree root rather than whatever subdirectory the
+# caller happened to be in. `forget` compares by exact string, so anything the
+# user can reasonably type — a relative path, one with `..` in it, one reaching
+# through a symlink, a path inside the repo — has to arrive in that same form or
+# a valid request fails as "not in the registry".
+#
+# A directory that is gone can only be normalised lexically, which is the right
+# answer for it: the entry it matches was written while it still existed.
+_projects_abs() {
+  local dir="${1%/}" root
+  [[ -n "$dir" ]] || dir="/"
+  root="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" || root=""
+  if [[ -n "$root" ]]; then
+    printf '%s\n' "$root"
+    return 0
+  fi
+  if [[ -d "$dir" ]]; then
+    (cd "$dir" && pwd -P)
+    return 0
+  fi
+  _projects_lexical_abs "$dir"
+}
+
+# _projects_lexical_abs PATH — PATH collapsed to an absolute path without
+# touching the filesystem: made absolute against $PWD if relative, then every
+# `.` and `..` component resolved by string manipulation alone. There is no
+# symlink to follow for a path whose directory is already gone, so this is the
+# only normalisation available — and the right one, since the entry it has to
+# match was written while the directory still existed.
+_projects_lexical_abs() {
+  local path="$1"
+  [[ "$path" == /* ]] || path="$PWD/$path"
+  local -a parts result
+  IFS='/' read -ra parts <<< "$path"
+  local part
+  for part in "${parts[@]}"; do
+    case "$part" in
+      ""|.) continue ;;
+      ..)   [[ ${#result[@]} -eq 0 ]] || unset 'result[-1]' ;;
+      *)    result+=("$part") ;;
+    esac
+  done
+  if (( ${#result[@]} == 0 )); then
+    printf '/\n'
+    return 0
+  fi
+  local joined
+  joined="$(IFS=/; printf '%s' "${result[*]}")"
+  printf '/%s\n' "$joined"
+}
+
 # ─── Membership rules ────────────────────────────────────────────────────────
 
 # The path prefixes nothing under is ever registered.

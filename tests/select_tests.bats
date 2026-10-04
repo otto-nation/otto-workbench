@@ -87,6 +87,12 @@ teardown() {
   [[ "$output" == *"lib/ui.sh"* ]]
 }
 
+@test "source edges: bin/otto-workbench sources lib/maintenance.sh" {
+  run _source_edges_for bin/otto-workbench
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"lib/maintenance.sh"* ]]
+}
+
 @test "source edges: lib/migrations.sh sources lib/components.sh via LIB_SRC_DIR" {
   run _source_edges_for lib/migrations.sh
   [ "$status" -eq 0 ]
@@ -128,6 +134,13 @@ teardown() {
 @test "reverse closure: lib/components.sh reaches bin/otto-workbench" {
   _restore_dep_graph
   run _reverse_closure "lib/components.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"bin/otto-workbench"* ]]
+}
+
+@test "reverse closure: lib/maintenance.sh reaches bin/otto-workbench" {
+  _restore_dep_graph
+  run _reverse_closure "lib/maintenance.sh"
   [ "$status" -eq 0 ]
   [[ "$output" == *"bin/otto-workbench"* ]]
 }

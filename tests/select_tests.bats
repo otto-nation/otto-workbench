@@ -223,3 +223,38 @@ teardown() {
   run _is_full_suite_trigger "lib/roots.sh"
   [ "$status" -ne 0 ]
 }
+
+# ── what counts as changed ───────────────────────────────────────────
+
+# _scratch_repo — a one-file repo under this case's scratch, committed.
+_scratch_repo() {
+  local repo="$BATS_TEST_TMPDIR/repo"
+  git init -q -b main "$repo"
+  printf 'a\n' > "$repo/tracked.sh"
+  git -C "$repo" add tracked.sh
+  git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m base
+  printf '%s' "$repo"
+}
+
+@test "changed paths include an uncommitted edit and an untracked file" {
+  local repo base
+  repo="$(_scratch_repo)"
+  base="$(git -C "$repo" rev-parse HEAD)"
+  printf 'b\n' >> "$repo/tracked.sh"
+  printf '@test "x" { true; }\n' > "$repo/new.bats"
+  cd "$repo"
+  run _changed_paths "$base"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"tracked.sh"* ]]
+  [[ "$output" == *"new.bats"* ]]
+}
+
+@test "an unresolvable base yields no paths, so the caller runs everything" {
+  local repo
+  repo="$(_scratch_repo)"
+  printf 'x\n' > "$repo/new.bats"
+  cd "$repo"
+  run _changed_paths refs/heads/nope
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}

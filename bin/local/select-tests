@@ -405,6 +405,20 @@ _validate_test_refs() {
   return 0
 }
 
+# _changed_paths BASE — paths differing from BASE in the working tree: committed
+# since the merge base, staged, unstaged, and untracked. Prints nothing when
+# BASE does not resolve, which main() reads as "select everything".
+#
+# The working tree counts because a fix pass runs the selection before it
+# commits: its edits are in the tree and not yet in history.
+_changed_paths() {
+  local base="$1" merge_base
+  git rev-parse --verify --quiet "${base}^{commit}" >/dev/null 2>&1 || return 0
+  merge_base=$(git merge-base "$base" HEAD 2>/dev/null) || merge_base="$base"
+  git diff --name-only "$merge_base" 2>/dev/null || true
+  git ls-files --others --exclude-standard 2>/dev/null || true
+}
+
 main() {
   local base="origin/main"
   local validate=false
@@ -429,11 +443,11 @@ main() {
     return 0
   fi
 
-  # Get changed files relative to the base
+  # Changed files relative to the base, working tree included — see _changed_paths
   local -a changed_files=()
   while IFS= read -r f; do
     [[ -n "$f" ]] && changed_files+=("$f")
-  done < <(git diff --name-only "$base"...HEAD 2>/dev/null || git diff --name-only "$base" HEAD 2>/dev/null || true)
+  done < <(_changed_paths "$base" | LC_ALL=C sort -u)
 
   if [[ ${#changed_files[@]} -eq 0 ]]; then
     # No changes detected — run everything

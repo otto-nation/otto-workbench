@@ -9,7 +9,7 @@ setup() {
   export WORKBENCH_SYNC=true
   mkdir -p "$HOME"
 
-  # Most of the cases below evaluate a guard predicate by spawning `node` to
+  # Around 150 cases below evaluate a guard predicate by spawning `node` to
   # import one .ts module, and nearly all of the ~82ms that costs is startup
   # and type-stripping rather than the predicate. Node's compile cache makes
   # that work survive across processes, taking it to ~59ms.

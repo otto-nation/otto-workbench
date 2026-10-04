@@ -376,16 +376,18 @@ EOF
   [[ "$output" == *"invalid --tool-schema document"* ]]
 }
 
-# passes-at-base: has() already errored on a non-object; this pins the type guard that replaced it
-@test "output_schema tool emitting a scalar or array document fails" {
+# Non-object JSON is rejected by the `type == "object"` check on the emitted document.
+@test "output_schema tool emitting a scalar document fails" {
   _make_tool "scalar-tool" "echo 3"
   _make_skill_with_tool "schema-skill" "scalar-tool"
   _run_validate
   [ "$status" -eq 1 ]
-  [[ "$output" == *"invalid --tool-schema document"* ]]
+  [[ "$output" == *"scalar-tool' emits an invalid --tool-schema document"* ]]
+}
 
+@test "output_schema tool emitting an array document fails" {
   _make_tool "array-tool" "echo '[]'"
-  _make_skill_with_tool "array-skill" "array-tool"
+  _make_skill_with_tool "schema-skill" "array-tool"
   _run_validate
   [ "$status" -eq 1 ]
   [[ "$output" == *"array-tool' emits an invalid --tool-schema document"* ]]

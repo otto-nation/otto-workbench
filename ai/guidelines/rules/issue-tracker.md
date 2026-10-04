@@ -39,7 +39,7 @@ Applies only when the resolved provider is `linear`.
 - Assign with `--assignee self`
 - Search with `linear issue query --search "term"`. `linear issue list` is an alias for `issue mine` and takes no search flag at all — `--query` on it prints that subcommand's usage to *stdout* and exits 2, so a duplicate check written that way reads as a search that matched nothing. Never conclude an issue does not exist from a command whose output looked like help text
 - `issue view --json` has no `relations` key — the schema is assignee, attachments, branchName, children, comments, cycle, description, documents, identifier, labels, parent, priority, project, projectMilestone, state, team, title, url. Relations are only visible through `linear issue relation list <ID>`, so absence in the JSON is the field never being returned, not the relation being missing
-- Pass `--closes ENG-123` to `pr:create` to auto-close on merge — Linear acts on the same keywords GitHub does, so the key goes in the PR body. The flag accepts a tracker key only where `issues.provider` is `linear`, and refuses it elsewhere rather than opening a PR with a link that will never fire
+- Pass `--closes ENG-123` to `pr create` to auto-close on merge — Linear acts on the same keywords GitHub does, so the key goes in the PR body. The flag accepts a tracker key only where `issues.provider` is `linear`, and refuses it elsewhere rather than opening a PR with a link that will never fire
 - Team key is always the prefix of the issue identifier. Pass it explicitly where required:
 
 | Command | Notes |
@@ -64,7 +64,7 @@ Applies only when the resolved provider is `github`.
 
 - Issues are addressed by repo, not by team — there is no team key to supply, and nothing should be skipped for want of one
 - Assign with `--assignee @me`
-- Pass `--closes <number>` to `pr:create` to auto-close a numeric issue on merge — it appends `Closes #<number>` to the body. Jira-style keys (`PROJ-123`) do not auto-close on GitHub and the flag refuses them
+- Pass `--closes <number>` to `pr create` to auto-close a numeric issue on merge — it appends `Closes #<number>` to the body. Jira-style keys (`PROJ-123`) do not auto-close on GitHub and the flag refuses them
 - Pass `--repo <owner>/<repo>` *after* the subcommand — `gh issue view --repo x/y`, never `gh --repo x/y issue view`. Both parse, but the flag reads as the subcommand's everywhere it is documented, and under Claude Code the leading form also costs a permission prompt (`bash-tool.md` § Avoid Compound `cd` Commands)
 - On GitHub Enterprise, set `issues.base_url` to the instance host. It moves the issue links, and the workbench passes the host to `gh` as `--repo HOST/OWNER/REPO` on every issue read and write — a bare `OWNER/REPO` resolves against gh's *default* host, which on a machine logged into both instances is whichever gh picked, not the one the repo lives on. Unset it and a filing lands on github.com
 - Use the same three-part form in any `gh` command you run by hand against an enterprise repo, for the same reason

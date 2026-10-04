@@ -1,14 +1,14 @@
 """`pr`'s parser, its dispatcher, and the two commands that shape argv.
 
 The entry point, and only the entry point. Every subcommand's work lives
-below this layer: four in `cli.pr_commands`, five behind a `CommandSpec`
+below this layer: three in `cli.pr_commands`, six behind a `CommandSpec`
 handler the registry names. What is here is the two-pass global parse, the
 usage text, the ordering of resolve/register/fetch/lock, and the routing.
 
 `cmd_review` and `cmd_comments` are here rather than in `cli.pr_commands`
 because neither is a command in its own right: both shape argv ahead of a
 delegate the registry already names — `--self` injection, mode routing — and
-`cli.pr_commands` holds the four that `pr` genuinely performs itself.
+`cli.pr_commands` holds the three that `pr` genuinely performs itself.
 
 `bin_dir` is a parameter, not something this module derives. Under
 `WORKBENCH_AI_LIB_DIR` this file resolves inside the pinned checkout while
@@ -30,6 +30,7 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
 import argparse
 import contextlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -42,7 +43,6 @@ from cli.pr_commands import (
     # to bind this module's exit code to the maintenance script's bash
     # comparison. See the constant's own comment in cli/pr_commands.py.
     EXIT_BUDGET_EXHAUSTED,  # noqa: F401
-    cmd_create,
     cmd_fix,
     cmd_gc,
     cmd_status,
@@ -59,13 +59,22 @@ import pr.context
 import pr.state
 import pr.sync
 import pr.push_intent
+import core.cli_reference
 import core.log
+import core.tool_parser
 import core.proc
 import core.publishing
 import config.workbench_projects
 import core.run_lock
 import review.listing
 from core.trail import Trail, add_trail_args
+
+# `gitenv` is a workbench-wide module, not an `ai/lib` one; see `pr.push_intent`
+# for the path arithmetic, which is the same here.
+_WORKBENCH_LIB = Path(__file__).resolve().parent.parent.parent.parent / "lib"
+if _WORKBENCH_LIB.is_dir() and str(_WORKBENCH_LIB) not in sys.path:
+    sys.path.insert(0, str(_WORKBENCH_LIB))
+import gitenv  # noqa: E402
 
 # The command a user types. A literal, not `Path(__file__).name`: this module
 # is `pr.py` and the two happen to agree, but an error or a trail naming the
@@ -87,7 +96,7 @@ def _is_pr_target(target: str | None) -> bool:
 
 
 # `cmd_review` and `cmd_comments` stay here; see `cli.pr_commands`'s module
-# docstring for why (and for which four subcommands moved there instead).
+# docstring for why (and for which three subcommands moved there instead).
 
 def cmd_review(argv: list[str], ctx: pr.context.ResolvedContext, *,
                bin_dir: Path,
@@ -153,6 +162,17 @@ def cmd_comments(argv: list[str], ctx: pr.context.ResolvedContext, *,
     )
 
 
+def cmd_create(argv: list[str], ctx: pr.context.ResolvedContext, **kw) -> int:
+    """Run `pr create`'s handler, imported only when create is dispatched.
+
+    A lazy hop rather than an import: `cli.pr_create` pulls in the content
+    generator and the agent layer, and `pr --help` must load no delegate
+    (test_pr_help_imports_no_delegate). The registry's handler string is the
+    one name for it.
+    """
+    return cli.dispatch.resolve(COMMANDS["create"].handler)(argv, ctx, **kw)
+
+
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
 # Custom handlers for commands that need more than passthrough.
@@ -166,14 +186,109 @@ _CUSTOM = {
     "gc":       cmd_gc,
 }
 
+def build_global_parser() -> argparse.ArgumentParser:
+    """The flags `pr` accepts around any command, parsed before the command is.
+
+    One parser for both the first pass of `main` and the reference rendered
+    from it, so the flags documented as global are the flags the first pass
+    consumes — `--worktree` included, which no hand-written usage ever named.
+    """
+    parser = argparse.ArgumentParser(prog=SCRIPT, add_help=False)
+    parser.add_argument("--repo-dir", "--worktree", dest="repo_dir", metavar="path",
+                        help="Git worktree to act on; detected from the current "
+                             "directory when omitted")
+    parser.add_argument("--branch", metavar="name",
+                        help="Branch to act on, resolved to the worktree it is "
+                             "checked out in")
+    parser.add_argument("--pr", metavar="num|url", help="PR number or URL to act on")
+    # Global rather than declared on the invocation that serves a contract,
+    # for three reasons. It describes the caller ("what do you speak"), not the
+    # subcommand ("what do you want"). It generalizes to `pr status`, which
+    # stamps a version nobody reads and is the obvious next document. And it is
+    # consumed by this first parse, so its value never reaches `extra`, where
+    # the positional scan below would read a bare `1` as PR #1 — `pr` has no
+    # arity source of truth for the flags it handles itself.
+    parser.add_argument("--schema-version", dest="schema_version", metavar="n",
+                        help="Serve a versioned JSON document on stdout instead of "
+                             "a human table, where the command has a contract")
+    add_trail_args(parser)
+    return parser
+
+
+def reference_shape() -> core.cli_reference.CLIShape:
+    """Everything `pr` accepts, for the rendered usage line and flag tables.
+
+    A command with a parser factory is documented from that parser — its
+    subparser here declares nothing and forwards argv whole. `fix` is
+    documented from a parser of its own, because it forwards argv to other
+    passes and has no factory to read it from. `status` and `gc` are declared
+    to take no flags. A command in COMMANDS that is none of these is one this
+    module cannot document, and fails here rather than rendering as a command
+    with no flags.
+    """
+    subs = core.tool_parser.subparsers(_build_parser())
+    commands = tuple(
+        core.cli_reference.Command(name, spec.help, _reference_parser(name, subs))
+        for name, spec in COMMANDS.items()
+    )
+    return core.cli_reference.CLIShape(
+        prog=SCRIPT, globals=build_global_parser(), commands=commands,
+    )
+
+
+# Commands `pr` performs itself that accept no flags of their own. Listed, not
+# inferred from an empty subparser: every command in COMMANDS has a subparser,
+# so "has one" says nothing about whether its flags were written down.
+_TAKES_NO_FLAGS = frozenset({"status", "gc"})
+
+
+def _fix_reference_parser() -> argparse.ArgumentParser:
+    """The flags `pr fix` accepts: its own `--post`, and what it forwards.
+
+    `cmd_fix` hands its argv whole to the review and CI passes, so any flag
+    those parsers accept is accepted here; only `--post` is also read by `fix`
+    itself, which forwards it to the description pass.
+    """
+    parser = argparse.ArgumentParser(prog=f"{SCRIPT} fix", add_help=False)
+    parser.add_argument("--post", action="store_true",
+                        help="Publish what the passes produce, the revised PR "
+                             "description included (default: print drafts and "
+                             "post nothing)")
+    parser.add_argument("pass_flags", nargs="*", metavar="review-or-ci-flag",
+                        help="Any other flag is forwarded to the review pass and "
+                             "the CI pass; see `pr review` and `pr ci`")
+    return parser
+
+
+def _reference_parser(name: str, subs: dict[str, argparse.ArgumentParser]) -> argparse.ArgumentParser:
+    """The parser that documents `pr <name>`, per `reference_shape`."""
+    if name == "fix":
+        return _fix_reference_parser()
+    if not cli.dispatch.has_parser_factory(name):
+        if name not in _TAKES_NO_FLAGS:
+            raise RuntimeError(
+                f"pr: '{name}' has no parser factory and is not declared to take no flags")
+        return subs[name]
+    parser = cli.dispatch.resolve(cli.dispatch.PARSER_FACTORIES[name])()
+    # `review`'s handler routes the mode flags before its parser runs, so `pr
+    # review` accepts more than `review` does — the one command whose
+    # dispatcher adds flags of its own.
+    if name == "review":
+        return cli.review_modes.reference_parser(parser)
+    return parser
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """Build the command parser.
 
-    A delegating command's subparser declares no flags of its own — its argv is
-    forwarded whole and `pr <command> --help` is answered by the delegate — so
-    add_help is left off for those. The subparsers are not returned alongside:
-    what a command declares is read back off the built parser with
-    tool_parser.subparsers, which is what keeps `takes_target` honest.
+    A command with a parser factory has a subparser that declares no flags of
+    its own — its argv is forwarded whole and `pr <command> --help` is answered
+    by the factory's parser — so add_help is left off for those. That is every
+    delegate and `create`, whose handler runs here but whose parser is its own.
+
+    The subparsers are not returned alongside: what a command declares is read
+    back off the built parser with tool_parser.subparsers, which is what keeps
+    `takes_target` honest.
     """
     parser = argparse.ArgumentParser(
         prog=SCRIPT,
@@ -184,8 +299,30 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="command")
     for name, spec in COMMANDS.items():
-        sub.add_parser(name, help=spec.help, add_help=spec.script is None)
+        sub.add_parser(name, help=spec.help,
+                       add_help=not cli.dispatch.has_parser_factory(name))
     return parser
+
+
+def _global_flags_block() -> str:
+    """The global flags as `build_global_parser` declares them, for the usage text.
+
+    Read off the parser's own help rather than written out, so `pr --help` and
+    the first pass of `main` cannot disagree about what is global. The flags
+    are formatted from the parser's actions inside a heading-less section, so
+    the block does not depend on how argparse lays out its usage line or names
+    its heading.
+    """
+    # Private argparse API (`_get_formatter`, `_actions`, a heading-less
+    # `start_section(None)`), the same trade `core.cli_reference` makes; the case
+    # in tests/cli_registry_test.py that renders this block is what fails first
+    # when an upgrade changes any of them.
+    parser = build_global_parser()
+    formatter = parser._get_formatter()
+    formatter.start_section(None)
+    formatter.add_arguments(parser._actions)
+    formatter.end_section()
+    return formatter.format_help().rstrip()
 
 
 def _build_usage() -> str:
@@ -205,13 +342,9 @@ Commands:
 {cmd_lines}
 
 Global flags (auto-detected from CWD when omitted):
-  --repo-dir PATH    Git worktree directory
-  --branch NAME      Branch name
-  --pr NUM|URL       PR number or URL
+{_global_flags_block()}
 
-Contract flags:
-  --schema-version N  Serve a versioned JSON document on stdout instead of a
-                      human table. Honored by {contracts}; serving {versions}.
+--schema-version is honored by {contracts}; serving {versions}.
 
 Run 'pr <command> -h' for details on a specific command."""
 
@@ -314,20 +447,7 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     # Two-pass parse: extract global flags first, then route the subcommand.
     # Argparse subparsers swallow flags after the subcommand name, so
     # `pr rebase --repo-dir /path` would lose --repo-dir without this.
-    _global = argparse.ArgumentParser(add_help=False)
-    _global.add_argument("--repo-dir", "--worktree", dest="repo_dir")
-    _global.add_argument("--branch")
-    _global.add_argument("--pr")
-    # Global rather than declared on the invocation that serves a contract,
-    # for three reasons. It describes the caller ("what do you speak"), not the
-    # subcommand ("what do you want"). It generalizes to `pr status`, which
-    # stamps a version nobody reads and is the obvious next document. And it is
-    # consumed by this first parse, so its value never reaches `extra`, where
-    # the positional scan below would read a bare `1` as PR #1 — `pr` has no
-    # arity source of truth for the flags it handles itself.
-    _global.add_argument("--schema-version", dest="schema_version")
-    add_trail_args(_global)
-    global_args, remaining = _global.parse_known_args(argv)
+    global_args, remaining = build_global_parser().parse_known_args(argv)
 
     parser = _build_parser()
 
@@ -345,6 +465,16 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     if not args.command:
         print(usage, file=sys.stderr)
         return 0
+
+    # `pr create` is a one-command process: an inherited GIT_DIR (it is
+    # exported when a hook invokes us) would make every git call from here on
+    # answer for another repository — context resolution, and helpers that
+    # take no env, like git_remote.remote_branch_ref_exists and git.push.
+    # Clearing it here, ahead of the first git call, is the single owner; it is
+    # safe because nothing else runs in this process after the command.
+    if args.command == "create":
+        for name in gitenv.GIT_ENV_OVERRIDES:
+            os.environ.pop(name, None)
 
     # The one place a push nobody verified is asked about. Every push on this
     # machine passes the global pre-push hook, which records what it is about to
@@ -366,10 +496,11 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
         core.log.warn(f"could not reconcile recorded pushes: {exc}")
 
     spec = COMMANDS[args.command]
-    # The delegate's own parser prints its own help, in this process. It is
+    # The command's own parser prints its own help, in this process. It is
     # asked for the parser rather than run with `--help`, because a delegate
-    # `main` does more than parse before argparse ever sees the flag.
-    if {"-h", "--help"} & set(extra) and spec.script:
+    # `main` does more than parse before argparse ever sees the flag. Keyed on
+    # the factory, not on `script`: `create` has a parser and no script.
+    if {"-h", "--help"} & set(extra) and cli.dispatch.has_parser_factory(spec.name):
         cli.dispatch.print_delegate_help(spec)
         return 0
 

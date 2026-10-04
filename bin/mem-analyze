@@ -1,17 +1,26 @@
 #!/usr/bin/env bash
-# macOS memory analysis report.
+# macOS memory analysis report — pressure, swap usage, top processes, per-user totals.
 #
-# Prints a formatted report with:
-#   • System information (model, installed RAM)
-#   • Memory pressure status (normal / warning / critical)
-#   • Memory page breakdown (vm_stat categories converted to MB)
-#   • Swap usage (total / used / free) with a warning above 10 GB used
-#   • Top 10 processes by memory consumption
-#   • All processes using more than 500 MB
-#   • Memory totals per user
-#   • Summary with actionable recommendations based on pressure + swap state
+# Prints a formatted report with system information (model, installed RAM),
+# memory pressure (normal / warning / critical), a page breakdown from `vm_stat`,
+# swap usage, the top 10 processes by memory, every process above the process
+# warning threshold, per-user totals, and a summary with recommendations based
+# on pressure plus swap state.
 #
-# macOS-only — requires: system_profiler, memory_pressure, vm_stat, sysctl, bc, perl
+# ```
+# mem-analyze
+# ```
+#
+# | Flag | Description |
+# |------|-------------|
+# | `-h`, `--help` | Show help |
+#
+# | Environment Variable | Description | Default |
+# |---------------------|-------------|---------|
+# | `SWAP_WARN_THRESHOLD_MB` | Swap warning threshold in MB | `10240` |
+# | `PROCESS_WARN_THRESHOLD_KB` | Process memory warning threshold in KB | `500000` |
+#
+# macOS-only — requires: `system_profiler`, `memory_pressure`, `vm_stat`, `sysctl`, `bc`, `perl`.
 
 set -e
 

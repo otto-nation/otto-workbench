@@ -224,9 +224,13 @@ def test_delegate_value_flags_answers_from_the_delegates_own_parser():
 
 
 def test_every_command_with_a_delegate_has_a_parser_factory():
-    """A delegate `pr` cannot read arity from misclassifies its own target."""
+    """A delegate `pr` cannot read arity from misclassifies its own target.
+
+    `batch` and `create` run in-process rather than through a script, and each
+    still has a parser of its own to answer `--help` with.
+    """
     scripted = {name for name, spec in cli.registry.COMMANDS.items() if spec.script}
-    assert set(cli.dispatch.PARSER_FACTORIES) == scripted | {"batch"}
+    assert set(cli.dispatch.PARSER_FACTORIES) == scripted | {"batch", "create"}
 
 
 @pytest.mark.parametrize("command", sorted(cli.registry.COMMANDS))

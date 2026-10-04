@@ -1,11 +1,25 @@
 #!/usr/bin/env python3
-"""Scan PR review comments and cross-reference against coding rules.
+"""Scan PR review comments and cross-reference them against coding rules.
 
-Replaces Phase 1 of the retro skill (Orient).
-Outputs a structured markdown report to stdout.
+Replaces Phase 1 of the `retro` skill (`ai/skills/retro`): Orient. Resolves
+GitHub remotes from the machine profile's Project Registry, fetches merged-PR
+review comments since the last retro (or `--since`), scores each against the
+workbench rule set, and folds in local self-review files (deduped against GitHub).
 
-Usage:
-  retro-scan [--home DIR] [--workbench DIR] [--since DURATION] [--consume]
+```
+retro-scan [--home DIR] [--workbench DIR] [--since DURATION]
+retro-scan --consume
+```
+
+Stdout is a markdown report of comments grouped by repo/PR, nearest-rule matches,
+unmatched comments, and themes (matched comments grouped by rule file).
+`--consume` also writes a consume record of the local reviews it read, stamped
+with this run's trail root, and prints `<!-- scan-id: ID | consumed: N -->` after
+the report so the skill can quote the ID into `retro-consume`.
+
+`--consume` cannot be combined with `--since`. Exit 1 if no registered project
+resolves to a GitHub repo — the scan refuses to bank a window over local reviews
+alone.
 """
 
 from __future__ import annotations
@@ -462,23 +476,29 @@ def _run_retro(
         print(f"\n<!-- scan-id: {trail.root} | consumed: {len(local_scan.consumed)} -->")
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     default_wb = os.environ.get(WORKBENCH_ENV_VAR, DEFAULT_WORKBENCH)
-
     parser = argparse.ArgumentParser(
+        prog=SCRIPT,
         description="Scan PR review comments and cross-reference against coding rules.",
-        usage="retro-scan [--home DIR] [--workbench DIR] [--since DURATION] [--consume]",
     )
     parser.add_argument("-V", "--version", action="store_true", help="print version and exit")
-    parser.add_argument("--home", type=str, default=str(Path.home()), help="home directory override")
-    parser.add_argument("--workbench", type=str, default=default_wb, help=f"workbench directory (default: ${WORKBENCH_ENV_VAR} or {DEFAULT_WORKBENCH})")
-    parser.add_argument("--since", type=str, default=None, help="override scan window (e.g. 7d, 24h, 30m)")
+    parser.add_argument("--home", type=str, default=str(Path.home()), metavar="DIR",
+                        help="home directory override (default: `$HOME`)")
+    parser.add_argument("--workbench", type=str, default=default_wb, metavar="DIR",
+                        help=f"workbench directory (default: ${WORKBENCH_ENV_VAR} or {DEFAULT_WORKBENCH})")
+    parser.add_argument("--since", type=str, default=None, metavar="DURATION",
+                        help="override scan window (e.g. 7d, 24h, 30m)")
     parser.add_argument(
         "--consume", action="store_true",
         help="record the local reviews read, so the retro may delete them when it completes",
     )
     add_trail_args(parser)
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
 
     if args.version:
         print(_version_string(SCRIPT))

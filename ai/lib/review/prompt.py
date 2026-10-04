@@ -16,6 +16,17 @@ One builder per phase assembles the sections `review.prompt_sections` and
 builder, which template it renders, and which file the agent is told to write
 are `review.registry`'s: it holds the phase-to-builder table and
 `build_prompt`, which dispatches on it and imports the builders from here.
+
+Each rendered prompt's exact input-token count is appended to `prompt-stats.json`
+in the review directory (model it was counted against, bytes-per-token), via
+`agent.token_count.count_tokens`. Set `WORKBENCH_AI_MEASURE_TOKENS=0` to opt out.
+On by default because it shipped opt-in and was never once switched on. The
+round trip is mostly fixed latency — about 0.29s for a 6KB prompt, 0.55s for a
+374KB one — against a phase that then runs for minutes. A machine with no Vertex
+credentials skips it and records nothing rather than recording a guess. The
+count is the rendered prompt alone; the system prompt and tool schemas `claude
+-p` assembles internally are charged to the same request and are not visible
+here — see `agent.token_count` for the observed margin.
 """
 
 # doc-group: pipeline

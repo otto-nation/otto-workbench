@@ -338,10 +338,10 @@ def build_parser() -> ToolParser:
         description="CI failure status",
         output_schema=pr.domains.CIDomain,
     )
-    parser.add_argument("--pr", help="PR number or URL")
-    parser.add_argument("--branch", help="Branch name (overrides git detection)")
-    parser.add_argument("--run", type=int, help="Specific run ID")
-    parser.add_argument("--repo-dir", "--worktree",
+    parser.add_argument("--pr", metavar="NUM|URL", help="PR number or URL")
+    parser.add_argument("--branch", metavar="NAME", help="Branch name (overrides git detection)")
+    parser.add_argument("--run", type=int, metavar="ID", help="Specific run ID")
+    parser.add_argument("--repo-dir", "--worktree", metavar="PATH",
                         help="Git worktree directory")
     parser.add_argument("--fix", action="store_true",
                         help="Invoke AI to fix failures after diagnosis")
@@ -349,9 +349,9 @@ def build_parser() -> ToolParser:
                         help="Push the fixes; without it the push is drafted")
     parser.add_argument("--wait", action="store_true",
                         help="Poll until all jobs complete, emitting incremental reports")
-    parser.add_argument("--wait-timeout", type=int, default=900,
+    parser.add_argument("--wait-timeout", type=int, default=900, metavar="SEC",
                         help="Max wait time in seconds (default: 900)")
-    parser.add_argument("--wait-interval", type=int, default=30,
+    parser.add_argument("--wait-interval", type=int, default=30, metavar="SEC",
                         help="Poll interval in seconds (default: 30)")
     add_trail_args(parser)
     return parser

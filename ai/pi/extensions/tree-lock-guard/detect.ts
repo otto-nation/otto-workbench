@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * Whether a tree is being validated right now, kept apart from the extension.
@@ -20,10 +21,9 @@ import { dirname } from "node:path";
  */
 
 /** Where `with-tree-lock` lives, resolved from this file rather than $PATH. */
-const WITH_TREE_LOCK = new URL(
-  "../../../../bin/local/with-tree-lock",
-  import.meta.url,
-).pathname;
+const WITH_TREE_LOCK = fileURLToPath(
+  new URL("../../../../bin/local/with-tree-lock", import.meta.url),
+);
 
 export const REFUSAL =
   "A validator holds this tree — a suite or a gate is reading the files you are " +

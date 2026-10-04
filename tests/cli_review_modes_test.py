@@ -6,6 +6,7 @@ because the module is importable: a mode handler can be called directly, with
 no binary in the way.
 """
 
+import argparse
 import sys
 from pathlib import Path
 from unittest import mock
@@ -160,3 +161,25 @@ def test_post_names_the_branch_it_is_publishing_for(tmp_path):
     cmd = call.call_args[0][1]
     assert "--expect-ref" in cmd
     assert cmd[cmd.index("--expect-ref") + 1] == "feat/x"
+
+
+def test_reference_parser_lists_each_mode_once_without_mutating_base():
+    """The generated `pr review` reference lists each mode flag once."""
+    import cli.review_entry
+
+    base = cli.review_entry.build_parser()
+    before = [(tuple(a.option_strings), a.help, a.dest, a.default) for a in base._actions]
+    ref = cli.review_modes.reference_parser(base)
+    assert ref is not base
+    assert isinstance(ref, argparse.ArgumentParser)
+    assert ref.prog == "pr review"
+    assert [(tuple(a.option_strings), a.help, a.dest, a.default)
+            for a in base._actions] == before
+
+    strings = [s for a in ref._actions for s in a.option_strings]
+    for flag in cli.review_modes.MODES:
+        assert strings.count(flag) == 1, flag
+        action = next(a for a in ref._actions if flag in a.option_strings)
+        assert action.help, flag
+        # Under `pr review` each is a mode, whatever the binary's parser says.
+        assert action.help.startswith(cli.review_modes.MODES[flag].help), flag

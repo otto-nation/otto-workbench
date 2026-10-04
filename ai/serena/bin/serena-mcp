@@ -1,11 +1,25 @@
 #!/usr/bin/env bash
-# serena-mcp — scaffolds Serena MCP into a project's .mcp.json.
+# Scaffold Serena MCP into a project's `.mcp.json` for project-scoped code
+# intelligence.
 #
-# Both files it touches are tracked project files, so it resolves the working
-# tree they belong to before writing rather than trusting the current directory.
-# A shell sitting in a bare-repo container has no working tree, and a .mcp.json
-# written there is read by nothing and covered by no .gitignore, review, or CI
-# check — see lib/worktree.sh and _scaffold_root() below.
+# ```
+# serena-mcp <command>
+# ```
+#
+# | Command | Description |
+# |---------|-------------|
+# | `init` | Add Serena to `.mcp.json` in the current project (creates if missing) |
+# | `status` | Show whether Serena is configured in the current project |
+# | `-h`, `--help` | Show help |
+#
+# `.mcp.json` and `.gitignore` are both tracked project files, so the project is
+# the working tree the current directory belongs to rather than the directory
+# itself. A shell sitting in a bare-repo container has no working tree, and
+# `resolve-worktree` names the one the container stands in for; a container whose
+# default branch has no checkout is an error rather than a write into the
+# container, where nothing would read the file and no `.gitignore` rule, review,
+# or CI check could reach it. A directory outside any repository is left alone —
+# scaffolding there is a real thing to want.
 
 set -e
 

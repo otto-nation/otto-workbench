@@ -3,7 +3,7 @@
 #
 # Global AI/git automation tasks live in Taskfile.global.yml and are
 # installed to ~/.config/task/Taskfile.global.yml by install.sh.
-# Run them from anywhere with: task --global commit, task --global pr:create, etc.
+# Run them from anywhere with: task --global commit, task --global pr:update, etc.
 
 version: "3"
 

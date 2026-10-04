@@ -56,6 +56,18 @@ HEADER
   [[ "$output" == *"usage"* ]] || [[ "$output" == *"Usage"* ]]
 }
 
+@test "retro-scan's usage line names every flag its parser declares, trail flags too" {
+  # A hand-written usage string listed four flags and left out --debug. Each
+  # flag is asserted in the form argparse renders it, metavar included, so a
+  # usage line that drifts from `build_parser` fails here.
+  run "$RETRO_SCAN" --help
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"[--home DIR]"* ]]
+  [[ "$output" == *"[--workbench DIR]"* ]]
+  [[ "$output" == *"[--since DURATION]"* ]]
+  [[ "$output" == *"[--debug]"* ]]
+}
+
 @test "retro-scan --version prints version info" {
   run "$RETRO_SCAN" --version
   [[ "$status" -eq 0 ]]

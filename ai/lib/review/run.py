@@ -19,6 +19,13 @@ Both return a `ReviewOutcome`. The caller needs the review file back: a self
 review's lives under a branch-derived directory that `review_file_path` cannot
 produce, so a CLI that recomputed it would emit an all-zero summary for a review
 that ran.
+
+`run_self_review` reviews the checkout at the path it is handed — unpushed
+commits, dirty files, untracked files — not the remote branch. It resolves the
+base once (`pr.context.base_branch`) and refuses an operator `--base` that names
+nothing (`review.preflight.refuse_unresolvable_base`) before spending anything.
+The collection that actually reads the tree is `review.collect`; this module is
+the order those checks run in.
 """
 
 # doc-group: pipeline

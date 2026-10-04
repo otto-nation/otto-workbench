@@ -38,7 +38,35 @@ one. Telling those apart is the hard classification problem, and the cost of
 being wrong is asymmetric — a needless hold costs one extra command, while a
 missed one costs a pushed commit and a reply claiming work is done. Running
 `--fix` and `--finish` in the same invocation does not defeat it: the discussion
-is still open at both points, so the hold applies to both.
+is still open at both points, so the hold applies to both. Combining them works
+and closes out that run's deferred set, but posts a summary nobody has replied
+to yet — the discussion is supposed to happen in between. `--finish` is a second
+invocation on purpose.
+
+`--fix` triages threads, applies mechanical fixes, and resolves the verified
+ones. It withholds the summary comment whenever threads need human input,
+because the summary is meant to describe a finished conversation. `--finish`
+closes out what `--fix` held back: replies on threads whose commit had not yet
+been pushed, a tracking issue for the threads named by `--track`, and the
+summary comment. See `review.closeout` and `review.deferred_issue`.
+
+An edited comment is read again. A comment this pass has already read is dropped
+from triage decomposition, keyed on the comment id *and* the time its body was
+last edited — an edit keeps the id and does not move the comment, so a reviewer
+who rewrites a comment to add a demand would otherwise have it silently discarded
+as already handled. The stamp is GitHub's `lastEditedAt`, null until the first
+edit. The issue-comment REST path has no such field and reconstructs it from
+`updated_at`, collapsing `updated_at == created_at` to the same empty stamp so
+the two fetch paths agree about an untouched comment. `fetch_review_body_comments`
+takes `PRData` as required: the reviews REST payload carries no edit stamp at
+all, and a path that silently degrades a correctness check is gone rather than
+kept as a fallback. A state file written before the stamps existed reads as
+"nothing seen" and re-reports one round's comments — a false unseen is noise
+once, a false seen loses a reviewer's words for good. The same edit reopens a
+*thread*: `_rewritten_since_my_reply` turns an `addressed` thread into
+`ambiguous` when anyone other than us rewrote after our last word, compared
+against the time we last spoke (our own later edit does not reopen; a resolved
+thread stays resolved).
 """
 
 # doc-group: publishing

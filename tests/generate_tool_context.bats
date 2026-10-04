@@ -6,31 +6,15 @@ setup_file() {
 
 setup() {
   load 'test_helper'
+  load 'generate_tool_context_helper'
   common_setup
   source "$REPO_ROOT/bin/local/generate-tool-context"
-  ORIG_DIR="$PWD"
-
-  # Point all generator inputs/outputs at temp paths so tests never touch
-  # real workbench files (registry data, tools.generated.md).
-  mkdir -p "$TMPDIR/brew" "$TMPDIR/bin" "$TMPDIR/zsh" "$TMPDIR/mise"
-  export BREW_REGISTRY="$TMPDIR/brew/registry.yml"
-  export MISE_REGISTRY="$TMPDIR/mise/registry.yml"
-  export BIN_REGISTRY="$TMPDIR/bin/registry.yml"
-  export ZSH_REGISTRY="$TMPDIR/zsh/registry.yml"
-  export BREW_STACKS_DIR="$TMPDIR"
-  export WORK_DIR="$TMPDIR/work"
-  export TOOL_CONTEXT_OUTPUT="$TMPDIR/tools.generated.md"
-  export TASKFILE_PATH="$TMPDIR/Taskfile.yml"
-  export AI_DIR="$TMPDIR/ai"
-  export REGISTRY_SCAN_DIR="$TMPDIR"
-
-  mkdir -p "$WORK_DIR"
+  gtc_setup
 }
 
 teardown() {
-  cd "$ORIG_DIR" || return 1
+  gtc_teardown
   common_teardown
-  unset BREW_REGISTRY MISE_REGISTRY BIN_REGISTRY ZSH_REGISTRY BREW_STACKS_DIR WORK_DIR TOOL_CONTEXT_OUTPUT REGISTRY_SCAN_DIR AI_DIR TASKFILE_PATH
 }
 
 # _write_registry FILE SECTION — writes a single-tool registry with the given section title

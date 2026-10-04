@@ -1,19 +1,39 @@
 #!/usr/bin/env bash
+# MCP server launcher. Offers the tools the component registries declare, over
+# stdio. Registered in `~/.claude.json` as `otto-workbench` by
+# `otto-workbench ai sync`.
+#
+# ```
+# otto-mcp-server
+# ```
+#
+# Discovery reads the component registries — the same files that document every
+# workbench script — rather than globbing `bin/` directories or probing
+# executables. `ai/lib/config/tool_registry.py` maps each registered script's
+# path to its entry; the Python server (`ai/claude/mcps/server.py`) reads that
+# mapping.
+#
+# There is no configuration file. The server hosts the workbench's own tools, so
+# what to offer is a fact about the checkout's registries. Adding a tool means
+# registering it in a component's `registry.yml`.
+#
+# The launcher runs `uv run --no-project --with mcp`. A client spawns the server
+# with its own project as the working directory, and without `--no-project` uv
+# would resolve and install that project first — writing a virtualenv and a lock
+# file into somebody else's checkout, and failing outright where the project
+# does not build. The server needs `mcp` and nothing from wherever it was
+# launched.
+#
+# Requires: `uv`, the `mcp` Python package.
+
 set -e
 
-# The help below describes the schema flag without naming it. This launcher
-# sits in one of the directories discovery always scans, and the source scan in
-# ai/claude/mcps/server.py would read a literal here as a protocol
-# implementation — probing it re-execs the server, which then blocks on stdin
-# until the discovery timeout. Same reasoning as build-otto-ai-tools-tarball.
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   cat <<'EOF'
-otto-mcp-server — dynamic MCP server for otto-workbench tools
+otto-mcp-server — MCP server for otto-workbench tools
 
-Discovers scripts that declare a tool schema and exposes them via MCP stdio transport.
-
-Scans the workbench's own component bin/ directories, derived from the
-component layout. There is no configuration file.
+Offers the tools the component registries declare, over stdio.
+Registered as otto-workbench by otto-workbench ai sync.
 
 Usage: otto-mcp-server
 

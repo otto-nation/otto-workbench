@@ -67,8 +67,10 @@ def _coerce(value: str) -> int | float | str:
     return value
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """The otto-log parser, for `main` and for rendering its usage and flag tables."""
     parser = argparse.ArgumentParser(
+        prog="otto-log",
         description="Query trail files across otto-workbench AI scripts.",
     )
     sub = parser.add_subparsers(dest="command")
@@ -144,7 +146,11 @@ def main(argv: list[str] | None = None) -> int:
     p_stats.add_argument(
         "--json", action="store_true", help="Output one JSON object per group",
     )
+    return parser
 
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
     args = parser.parse_args(argv)
     if not args.command:
         parser.print_help()

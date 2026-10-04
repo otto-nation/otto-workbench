@@ -48,7 +48,10 @@ ALWAYS_RUN_TESTS=(
   run_tests
   skills_install
   validate_all
-  validate_registries
+  validate_registries_commands
+  validate_registries_env
+  validate_registries_permissions
+  validate_registries_schema
   site_docs_frontmatter
   site_sidebar_order
   site_doc_links
@@ -58,7 +61,6 @@ ALWAYS_RUN_TESTS=(
 NO_REFS_TESTS=(
   claude_rules_install
   compact_diff
-  create_pr
   files_frontmatter
   find_commitlint_config
   install_cask
@@ -68,7 +70,6 @@ NO_REFS_TESTS=(
   parse_pr_flags
   pi_skill_override
   pr_issue_link
-  push_branch
   run_ai
   session_count
   step_install_claude
@@ -82,7 +83,10 @@ NO_REFS_TESTS=(
 FULL_SUITE_TRIGGERS=(
   tests/test_helper.bash
   tests/migrations_helper.bash
+  tests/validate_registries_helper.bash
+  tests/wt_cleanup_helper.bash
   tests/conftest.py
+  tests/validate_migrations_helper.bash
   bin/local/run-tests
   bin/local/select-tests
 )

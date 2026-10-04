@@ -133,13 +133,16 @@ _iter_tools() {
   local count i
   count=$(reg_len "$file" tools)
   for (( i=0; i<count; i++ )); do
+    # Checked here rather than left to errexit: this runs inside a command
+    # substitution, where errexit is not inherited, so a failing entry would
+    # otherwise be lost unless it happened to be the last one rendered.
     "$cb" \
       "$(reg_get "$file" tools "$i" name)" \
       "$(reg_get "$file" tools "$i" description)" \
       "$(reg_get "$file" tools "$i" when_to_use)" \
       "$(reg_get "$file" tools "$i" usage)" \
       "$(reg_get "$file" tools "$i" docs)" \
-      "$file" "$i"
+      "$file" "$i" || return 1
   done
 }
 
@@ -155,13 +158,16 @@ _iter_tools_by_visibility() {
     local vis
     vis=$(reg_get "$file" tools "$i" visibility)
     [[ "$vis" == "$target_vis" ]] || continue
+    # Checked here rather than left to errexit: this runs inside a command
+    # substitution, where errexit is not inherited, so a failing entry would
+    # otherwise be lost unless it happened to be the last one rendered.
     "$cb" \
       "$(reg_get "$file" tools "$i" name)" \
       "$(reg_get "$file" tools "$i" description)" \
       "$(reg_get "$file" tools "$i" when_to_use)" \
       "$(reg_get "$file" tools "$i" usage)" \
       "$(reg_get "$file" tools "$i" docs)" \
-      "$file" "$i"
+      "$file" "$i" || return 1
   done
 }
 
@@ -234,8 +240,8 @@ _collect_registry() {
   reg_has "$file" meta section || section="Tools"
 
   local full_content brief_content
-  full_content=$(_iter_tools_by_visibility "$file" "full" _tool_md_entry)
-  brief_content=$(_iter_tools_by_visibility "$file" "brief" _tool_ref_entry)
+  full_content=$(_iter_tools_by_visibility "$file" "full" _tool_md_entry) || return 1
+  brief_content=$(_iter_tools_by_visibility "$file" "brief" _tool_ref_entry) || return 1
 
   [[ -n "$full_content" || -n "$brief_content" ]] || return 0
 
@@ -767,7 +773,7 @@ main() {
     printf '<!-- AUTO-GENERATED — do not edit directly -->\n'
     printf '<!-- Regenerate: generate-tool-context -->\n'
     for _reg in "${_core_registries[@]}"; do
-      _collect_registry "$_reg"
+      _collect_registry "$_reg" || return 1
     done
     _flush_sections
   } > "$OUTPUT"
@@ -792,7 +798,7 @@ main() {
       printf '<!-- Regenerate: generate-tool-context -->\n'
       while IFS= read -r _reg; do
         [[ -z "$_reg" ]] && continue
-        _collect_registry "$_reg"
+        _collect_registry "$_reg" || return 1
       done <<< "$_scope_regs"
       _flush_sections
     } > "$_scope_output"

@@ -28,7 +28,7 @@ tools:
     when_to_use: "Running a structured code review on a PR; supports re-reviews that track resolved vs open findings. Use --self for self-review before PR creation. Use --recover to finish a review whose agents failed — it completes at the commit the run started from, even if the branch has new commits (so it cannot be combined with --fix once HEAD has moved). For multiple PRs, dispatch separate subagents — do not background with &"
 
   - name: otto-log
-    parser: ai/bin/otto-log:build_parser
+    parser: cli.otto_log:build_parser
     permission: true
     visibility: full
     description: "Query the unified trail root and AI usage across otto-workbench scripts — audit trail plus cost and token stats"

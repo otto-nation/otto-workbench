@@ -115,6 +115,23 @@ class TestShapes:
         assert core.cli_reference.usage_line(shape) == "scan [--json]"
         assert core.cli_reference.tables(shape).startswith("**Flags**")
 
+    def test_a_command_with_subcommands_documents_each_one(self):
+        """`pr batch` declares no flags of its own; its subcommands carry them."""
+        batch = _parser("batch")
+        sub = batch.add_subparsers(dest="command", required=True)
+        sub.add_parser("plan", help="Show the plan", add_help=False).add_argument(
+            "--checkout", required=True, metavar="DIR")
+        sub.add_parser("status", add_help=False).add_argument("run_id", nargs="?")
+        shape = core.cli_reference.CLIShape(
+            prog="pr", commands=(core.cli_reference.Command("batch", "Batch", batch),))
+
+        assert core.cli_reference.usage_line(shape) == (
+            "pr batch plan --checkout <dir>  |  pr batch status [<run-id>]")
+        out = core.cli_reference.tables(shape)
+        assert "**`pr batch plan`** — Show the plan" in out
+        assert "| `--checkout` `<dir>` |" in out
+        assert "**`pr batch`**" not in out
+
     def test_a_command_with_nothing_to_document_says_so(self):
         out = core.cli_reference.tables(core.cli_reference.shape_of(_dispatcher(), "disp"))
         assert "**`disp second`** — Do the second thing\n\nTakes no flags." in out

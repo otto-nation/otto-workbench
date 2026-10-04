@@ -884,9 +884,53 @@ Takes no flags.
 | `--dry-run` | Print the revision instead of applying it. |
 | `--post` | Apply the revision to the PR; without it the edit is drafted. |
 
-**`pr batch`** — Run rebase, comments and self-review across my open PRs
+**`pr batch plan`** — Show which PRs need which steps
 
-Takes no flags.
+| Flag | Description |
+|------|-------------|
+| `--checkout` `<dir>` | A checkout whose open PRs to plan for; repeatable. Required. |
+
+**`pr batch run`** — Start a run
+
+| Flag | Description |
+|------|-------------|
+| `--checkout` `<dir>` | A checkout whose open PRs to run on; repeatable. Not with `--plan`. |
+| `--plan` `<file>` | A saved `pr batch plan` document. Not with `--checkout`. |
+| `--steps` `<steps>` | Comma-separated steps to run (default: rebase,comments,review). |
+| `--pool` `<pool>` | Concurrency ceiling. |
+| `--auto-publish` `<steps>` | Comma-separated steps whose results publish without asking. |
+| `--prs` `<prs>` | Comma-separated repo#number keys to include. |
+| `--select` `<key=steps>` | Run exactly these steps for one PR. Repeatable. |
+
+**`pr batch resume`** — Continue a run
+
+| Flag | Description |
+|------|-------------|
+| `[<run-id>]` | Run to continue (default: the latest). |
+
+**`pr batch resolve`** — Answer one decision
+
+| Flag | Description |
+|------|-------------|
+| `<run-id>` | Run the decision belongs to. |
+| `<decision-id>` | Decision to answer. |
+| `--action` `<action>` | The answer; which actions apply depends on the decision's kind. Required. |
+| `--reason` `<reason>` | Why, recorded with the answer. |
+| `--body-file` `<body-file>` | File holding a reply body, for actions that post one. |
+| `--commit` `<commit>` | Commit that settles the decision, for actions that cite one. |
+
+**`pr batch cancel`** — Stop starting new steps
+
+| Flag | Description |
+|------|-------------|
+| `[<run-id>]` | Run to cancel (default: the latest). |
+| `--kill` | Also terminate running steps. |
+
+**`pr batch status`** — Print a run's state
+
+| Flag | Description |
+|------|-------------|
+| `[<run-id>]` | Run to show (default: the latest). |
 
 **`pr gc`** — Clean up stale PR artifacts
 

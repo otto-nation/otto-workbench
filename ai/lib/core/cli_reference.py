@@ -122,6 +122,26 @@ def shape_of(parser: argparse.ArgumentParser, prog: str) -> CLIShape:
     return CLIShape(prog=prog, globals=parser, commands=tuple(commands))
 
 
+def _flattened(commands: tuple[Command, ...]) -> tuple[Command, ...]:
+    """*commands* with each command that has subcommands of its own expanded.
+
+    `pr batch` takes `plan`, `run` and the rest, each with its own flags, and
+    declares none of its own. Rendered whole it reads as a command with no
+    arguments; expanded, each `pr batch <sub>` documents what it accepts.
+    Recursive, so a deeper tree expands the same way.
+    """
+    out: list[Command] = []
+    for command in commands:
+        nested = shape_of(command.parser, command.name).commands
+        if nested:
+            out.extend(_flattened(tuple(
+                Command(f"{command.name} {sub.name}", sub.help, sub.parser) for sub in nested
+            )))
+        else:
+            out.append(command)
+    return tuple(out)
+
+
 def _documented(parser: argparse.ArgumentParser,
                 hidden: frozenset[str] = frozenset()) -> list[argparse.Action]:
     """The actions of *parser* a reader should see, in declaration order.
@@ -241,7 +261,7 @@ def usage_line(shape: CLIShape) -> str:
         return _invocation(shape.prog, None, shape.globals) if shape.globals else shape.prog
     hidden = _global_strings(shape)
     return USAGE_SEPARATOR.join(
-        _invocation(shape.prog, c.name, c.parser, hidden) for c in shape.commands
+        _invocation(shape.prog, c.name, c.parser, hidden) for c in _flattened(shape.commands)
     )
 
 
@@ -318,7 +338,7 @@ def tables(shape: CLIShape) -> str:
         if table:
             label = "Global flags" if shape.commands else "Flags"
             out.append(f"**{label}**\n\n{table}")
-    for command in shape.commands:
+    for command in _flattened(shape.commands):
         head = f"**`{shape.prog} {command.name}`**"
         if command.help:
             head += f" — {_cell(command.help)}"

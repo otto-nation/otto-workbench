@@ -289,9 +289,13 @@ class TestPrShape:
 # ── Machine-independent output ─────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("script", ["dream-scan", "promote-scan", "retro-scan"])
-def test_a_home_default_is_not_rendered_into_the_tables(script, monkeypatch):
+@pytest.mark.parametrize(("script", "spec"), [
+    ("dream-scan", "ai/bin/dream-scan:build_parser"),
+    ("promote-scan", "ai/bin/promote-scan:build_parser"),
+    ("retro-scan", "cli.retro_scan:build_parser"),
+])
+def test_a_home_default_is_not_rendered_into_the_tables(script, spec, monkeypatch):
     """The tables are committed; the generating machine's $HOME must not be in them."""
     monkeypatch.setenv("HOME", "/home/a-unique-user")
-    shape = core.cli_reference.load(f"ai/bin/{script}:build_parser", script, REPO_ROOT)
+    shape = core.cli_reference.load(spec, script, REPO_ROOT)
     assert "a-unique-user" not in core.cli_reference.tables(shape)

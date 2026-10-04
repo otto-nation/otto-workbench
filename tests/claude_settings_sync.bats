@@ -650,7 +650,7 @@ _referenced_home_paths() {
 # suite happens to be on — these cannot use it.
 
 # _guard_in and _review_sandbox live in test_helper.bash — shared with
-# pi_extensions.bats, which uses the same layout to compare the Pi guard
+# pi_extensions_issues.bats, which uses the same layout to compare the Pi guard
 # against this one.
 
 @test "guard: blocks gh issue create while the branch review has open findings" {

@@ -216,11 +216,11 @@ _init_test_repo() {
 }
 
 # ── edit-guard: the tree-validation lock ────────────────────────────────────
-# The Pi half of this is tree-lock-guard in tests/pi_extensions.bats. Both read
+# The Pi half of this is tree-lock-guard in tests/pi_extensions_issues.bats. Both read
 # ai/lib/core/tree_lock.py through `with-tree-lock --check`, so the two
 # harnesses cannot disagree about whether a tree is under validation.
 
-# _hold_tree lives in tests/test_helper.bash: pi_extensions.bats holds the same
+# _hold_tree lives in tests/test_helper.bash: pi_extensions_issues.bats holds the same
 # lock for the Pi half of this guard, and one fact read by two harnesses is
 # worth one helper rather than two copies of it.
 

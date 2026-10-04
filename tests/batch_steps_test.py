@@ -17,38 +17,27 @@ from batch.model import Step  # noqa: E402
 from conftest import seed_repo  # noqa: E402
 
 
-def test_draft_argvs():
-    assert batch.steps.step_argv(Step.REBASE, "pr", "/wt", publish=False) == \
+def test_every_step_runs_drafted():
+    assert batch.steps.step_argv(Step.REBASE, "pr", "/wt") == \
         ["pr", "rebase", "--fix", "--no-push", "--repo-dir", "/wt"]
-    assert batch.steps.step_argv(Step.COMMENTS, "pr", "/wt", publish=False) == \
+    assert batch.steps.step_argv(Step.COMMENTS, "pr", "/wt") == \
         ["pr", "comments", "--fix", "--repo-dir", "/wt"]
-    assert batch.steps.step_argv(Step.REVIEW, "pr", "/wt", publish=False) == \
+    assert batch.steps.step_argv(Step.REVIEW, "pr", "/wt") == \
         ["pr", "review", "--self", "--fix", "--force", "--repo-dir", "/wt"]
 
 
-def test_publish_argvs():
-    assert batch.steps.step_argv(Step.REBASE, "pr", "/wt", publish=True) == \
-        ["pr", "rebase", "--fix", "--repo-dir", "/wt"]
-    assert batch.steps.step_argv(Step.COMMENTS, "pr", "/wt", publish=True) == \
-        ["pr", "comments", "--fix", "--finish", "--post", "--repo-dir", "/wt"]
-    assert batch.steps.step_argv(Step.REVIEW, "pr", "/wt", publish=True) == \
-        ["pr", "review", "--self", "--fix", "--force", "--push", "--repo-dir", "/wt"]
-
-
 def test_no_step_argv_forces_a_rebase():
-    for publish in (True, False):
-        assert "--force" not in batch.steps.step_argv(Step.REBASE, "pr", "/wt", publish=publish)
+    assert "--force" not in batch.steps.step_argv(Step.REBASE, "pr", "/wt")
 
 
 def test_the_ci_step_fixes_without_rebasing_against_the_remote_head():
-    for publish in (True, False):
-        assert batch.steps.step_argv(Step.CI, "pr", "/wt", publish=publish, remote_sha="abc") == \
-            ["pr", "ci", "--fix", "--no-rebase", "--head-sha", "abc", "--repo-dir", "/wt"]
+    assert batch.steps.step_argv(Step.CI, "pr", "/wt", remote_sha="abc") == \
+        ["pr", "ci", "--fix", "--no-rebase", "--head-sha", "abc", "--repo-dir", "/wt"]
 
 
 def test_the_ci_step_waits_when_asked():
-    assert "--wait" in batch.steps.step_argv(Step.CI, "pr", "/wt", publish=False,
-                                             remote_sha="abc", wait=True)
+    assert "--wait" in batch.steps.step_argv(Step.CI, "pr", "/wt", remote_sha="abc",
+                                             wait=True)
 
 
 def _script(tmp_path, body):

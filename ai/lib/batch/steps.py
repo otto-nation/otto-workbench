@@ -25,23 +25,26 @@ import git.topology
 from batch.model import Step
 
 
-def step_argv(step: Step, pr_bin: str, worktree: str, *, publish: bool,
-              remote_sha: str = "", wait: bool = False) -> list[str]:
+def step_argv(step: Step, pr_bin: str, worktree: str, *, remote_sha: str = "",
+              wait: bool = False) -> list[str]:
+    """The child `pr` for one step. Every step runs drafted — nothing here pushes
+    or posts — because publishing is the batch's own decision, made once per item
+    against the tree."""
     if step is Step.REBASE:
-        argv = [pr_bin, "rebase", "--fix"] + ([] if publish else ["--no-push"])
+        argv = [pr_bin, "rebase", "--fix", "--no-push"]
     elif step is Step.CI:
-        # Never --post: a CI fix's push belongs to the item's publish. --no-rebase
-        # because the batch rebases in its own step, and --head-sha because after
-        # a drafted rebase local HEAD is a commit GitHub has no runs for.
+        # --no-rebase because the batch rebases in its own step, and --head-sha
+        # because after a drafted rebase local HEAD is a commit GitHub has no
+        # runs for.
         argv = [pr_bin, "ci", "--fix", "--no-rebase"]
         if remote_sha:
             argv += ["--head-sha", remote_sha]
         if wait:
             argv.append("--wait")
     elif step is Step.COMMENTS:
-        argv = [pr_bin, "comments", "--fix"] + (["--finish", "--post"] if publish else [])
+        argv = [pr_bin, "comments", "--fix"]
     else:
-        argv = [pr_bin, "review", "--self", "--fix", "--force"] + (["--push"] if publish else [])
+        argv = [pr_bin, "review", "--self", "--fix", "--force"]
     return argv + ["--repo-dir", worktree]
 
 

@@ -30,6 +30,10 @@ def _local_head(worktree: str) -> str:
     return git.client.head_sha(cwd=worktree)
 
 
+def _contains_commit(worktree: str, sha: str) -> bool:
+    return git.client.ok("merge-base", "--is-ancestor", sha, "HEAD", cwd=worktree)
+
+
 def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[Step]] | None,
             pool: int, auto_publish: list[Step], now: datetime | None = None,
             ref_namespace: str = "", ref_dirs: list[str] | None = None) -> Run:
@@ -119,7 +123,8 @@ class Scheduler:
                  emit: Callable[..., None] = batch.events.emit,
                  sleep: Callable[[float], None] = time.sleep, tick: float = 0.5,
                  runner: Callable[[list[str]], int] | None = None,
-                 tree: Callable[[Item], batch.publish.TreeState] | None = None):
+                 tree: Callable[[Item], batch.publish.TreeState] | None = None,
+                 contains: Callable[[str, str], bool] = _contains_commit):
         self.run, self.pr_bin, self.cfg = run, pr_bin, cfg
         # Looked up at construction, not bound as a default, so a patched
         # batch.plan.replan_row is the one used.
@@ -131,6 +136,7 @@ class Scheduler:
         self._live: dict[str, _Live] = {}
         # The publish seams: None takes resolve's real runner and tree read.
         self._runner, self._tree = runner, tree
+        self._contains = contains
 
     # ── requests and cancel ──────────────────────────────────────────────
 
@@ -193,9 +199,14 @@ class Scheduler:
         result = batch.outcomes.classify(rec.step, code, live.proc.stdout(), item=item,
                                    log_tail=list(live.tail))
         rec.exit_code, rec.ended_at, rec.status = code, batch.store.now_iso(), result.status
-        rec.drafted = code == 0 and (not self._should_publish(item, rec.step)
-                                     or result.status is StepStatus.NEEDS_DECISION)
-        if rec.step is not Step.REVIEW and self._head(item.worktree) != live.head_before:
+        moved = self._head(item.worktree) != live.head_before
+        # Drafted means this step left work the publish owes the remote: commits,
+        # or — for a comments pass, which drafts its replies even when it commits
+        # nothing — any clean exit.
+        rec.drafted = moved or (rec.step is Step.COMMENTS and code == 0)
+        if result.pre_rebase_head:
+            item.pre_rebase_head = result.pre_rebase_head
+        if rec.step is not Step.REVIEW and moved:
             item.head_moved = True
             if item.has(Step.REVIEW) and item.step(Step.REVIEW).status in (
                     StepStatus.SKIPPED, StepStatus.DONE):
@@ -228,21 +239,43 @@ class Scheduler:
         return True
 
     def _close(self, item: Item) -> None:
-        if any(rec.drafted for rec in item.steps):
-            _decide(self.run, item, "publish", DecisionKind.PUBLISH,
-                    {"drafted": [r.step.value for r in item.steps if r.drafted],
-                     "track": list(item.track)}, emit=self._emit)
-            item.status = ItemStatus.READY_TO_PUBLISH
-        else:
+        drafted = [r.step for r in item.steps if r.drafted]
+        if not drafted:
             item.status = ItemStatus.DONE
+            self._emit("item_finished", run=self.run.id, item=item.key,
+                       status=item.status.value)
+            return
+        d = _decide(self.run, item, "publish", DecisionKind.PUBLISH,
+                    {"drafted": [s.value for s in drafted], "track": list(item.track)},
+                    emit=self._emit)
+        item.status = ItemStatus.READY_TO_PUBLISH
+        # --auto-publish answers the publish decision itself, and only for an
+        # item that closed with nothing open and every drafted step listed.
+        # _apply_one emits the outcome — item_finished on DONE, or the refusal's
+        # decision — so READY_TO_PUBLISH is not announced first.
+        if set(drafted) <= set(self.run.auto_publish):
+            self._apply_one({"decision": d.id, "action": "publish"})
+            return
         self._emit("item_finished", run=self.run.id, item=item.key, status=item.status.value)
+
+    def _refresh_remote(self, item: Item, remote: str) -> None:
+        """Adopt GitHub's head as the lease only while nothing local was built on
+        the old one, and only when the local branch already contains it — so a
+        colleague's push never becomes the head a force-push leases on."""
+        if not remote or remote == item.remote_sha:
+            return
+        if any(r.drafted for r in item.steps):
+            return
+        if self._contains(item.worktree, remote):
+            item.remote_sha = remote
 
     def _pending(self, item: Item) -> StepRecord | None:
         return next((r for r in item.steps if r.status is StepStatus.PENDING), None)
 
-    def _confirm(self, item: Item, rec: StepRecord) -> StepRecord | None:
+    def _confirm(self, item: Item, rec: StepRecord) -> PlanRow | None:
         try:
-            fresh = self._replan(row_for(item, self._head(item.worktree), self.run.ref_namespace))
+            fresh = self._replan(row_for(item, self._head(item.worktree),
+                                         self.run.ref_namespace))
         except batch.plan.PlanError as exc:
             _decide(self.run, item, rec.step.value, DecisionKind.FAILED,
                     {"reason": "github", "detail": str(exc)}, emit=self._emit)
@@ -252,12 +285,13 @@ class Scheduler:
             self._emit("item_finished", run=self.run.id, item=item.key,
                        status=item.status.value)
             return None
+        self._refresh_remote(item, fresh.head_sha)
         need = fresh.needs.get(rec.step)
         forced = rec.explicit or (rec.step is Step.REVIEW and item.head_moved)
         if need is not None and not need.needed and not forced:
             rec.status = StepStatus.SKIPPED
             return None
-        return rec
+        return fresh
 
     def _refuse(self, item: Item, rec: StepRecord, reason: str) -> None:
         if item.wait_reason != reason:
@@ -289,25 +323,17 @@ class Scheduler:
             if not verdict.admit:
                 self._refuse(item, rec, verdict.reason)
                 continue
-            rec = self._confirm(item, rec)
-            if rec is None:
+            fresh = self._confirm(item, rec)
+            if fresh is None:
                 continue
-            self._start(item, rec)
+            self._start(item, rec, fresh)
 
-    def _should_publish(self, item: Item, step: Step) -> bool:
-        if step is Step.CI or step not in self.run.auto_publish:
-            return False
-        earlier = STEP_ORDER[:STEP_ORDER.index(step)]
-        return not any(item.has(s) and item.step(s).drafted for s in earlier)
-
-    def _start(self, item: Item, rec: StepRecord) -> None:
+    def _start(self, item: Item, rec: StepRecord, fresh: PlanRow) -> None:
         slug = item.repo.replace("/", "__")
         attempt = sum(1 for _ in batch.store.logs_dir(self.run.id).glob(
             f"{slug}-{item.pr}-{rec.step.value}-*"))
         log = batch.store.logs_dir(self.run.id) / f"{slug}-{item.pr}-{rec.step.value}-{attempt}.log"
-        argv = step_argv(rec.step, self.pr_bin, item.worktree,
-                         publish=self._should_publish(item, rec.step),
-                         remote_sha=item.remote_sha)
+        argv = step_argv(rec.step, self.pr_bin, item.worktree, remote_sha=item.remote_sha)
         # Sample HEAD before spawn: the harness mutates it inside `_spawn`.
         head_before = self._head(item.worktree)
         proc = self._spawn(argv, log_path=log, trail_root=self.run.trail_root)

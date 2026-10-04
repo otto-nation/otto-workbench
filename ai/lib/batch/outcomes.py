@@ -33,6 +33,8 @@ class DecisionDraft:
 class StepResult:
     status: StepStatus
     decisions: list[DecisionDraft]
+    # The tip a completed rebase started from, from its stdout report.
+    pre_rebase_head: str = ""
 
 
 def _json(stdout: str) -> dict | None:
@@ -96,4 +98,5 @@ def classify(step: Step, exit_code: int, stdout: str, *, item: Item,
         return _needs(DecisionKind.COMMENT_ITEM, owed)
     if step is Step.REVIEW and (findings := open_findings(item)):
         return _needs(DecisionKind.OPEN_FINDINGS, [{"findings": findings}])
-    return StepResult(StepStatus.DONE, [])
+    pre = str((_json(stdout) or {}).get("pre_rebase_head", "")) if step is Step.REBASE else ""
+    return StepResult(StepStatus.DONE, [], pre_rebase_head=pre)

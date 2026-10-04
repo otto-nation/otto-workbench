@@ -50,8 +50,9 @@ def _quiet_outcomes(monkeypatch):
 class Harness:
     def __init__(self, rows, *, codes=None, auto_publish=(), pool=2, host=HEALTHY,
                  replan=None, worktrees=None, heads=None, selected=None, cfg=None,
-                 runner=None, tree=None):
+                 runner=None, tree=None, moves=(), stdouts=None, contains=None):
         self.codes = codes or {}
+        self.moves, self.stdouts = set(moves), stdouts or {}
         self.spawned, self.events, self.live, self.max_live = [], [], 0, 0
         self.published, self.publish_code = [], 0
         self.run = batch.scheduler.new_run(rows, steps=list(batch.model.STEP_ORDER), selected=selected, pool=pool,
@@ -65,7 +66,8 @@ class Harness:
             head=lambda wt: self.heads.get(wt, "h0"), rss=lambda pid: 0,
             emit=lambda kind, **f: self.events.append((kind, f)), sleep=lambda s: None,
             estimates=batch.admission.Estimates({}),
-            runner=runner or self._publish, tree=tree or ff_tree,)
+            runner=runner or self._publish, tree=tree or ff_tree,
+            contains=contains or (lambda wt, sha: True))
 
     def _publish(self, argv):
         self.published.append(argv)
@@ -77,6 +79,9 @@ class Harness:
         # test asserting on which pid got killed needs spawns to be
         # distinguishable from each other.
         next_pid = len(self.spawned) + 1
+        if (argv[1], argv[-1]) in self.moves:
+            self.heads[argv[-1]] = f"{argv[1]}-{next_pid}"
+        out = self.stdouts.get((argv[1], argv[-1]), "{}")
 
         class Proc:
             pid = next_pid
@@ -95,7 +100,7 @@ class Harness:
                 return []
 
             def stdout(self):
-                return "{}"
+                return out
 
             def kill(self):
                 pass

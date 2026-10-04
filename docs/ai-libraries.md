@@ -2422,6 +2422,17 @@ Layer 6, not 4, and the reason is worth stating because it was got wrong once:
 import either, and the validator would have said so — but only after the code
 was written.
 
+### review/comment_threads.py
+
+A PR's comment threads: read them, reconcile them with the state file, and triage, fix, or settle them.
+
+`run_threads` is the flow `pr comments` runs over a resolved target: fetch the
+PR's threads and conversation, carry the state file's records forward, mark
+what has been seen, and hand off to triage, the fix pass, or settlement as the
+arguments ask. `cli.review_threads` is the command over this — the parser, the
+run lock, the trail. Thread state is `pr.comments_state`; triage is
+`pr.triage`; the fix pass is `pr.comments_fix`.
+
 ### review/deferred_issue.py
 
 The tracking issue a fix pass owes the threads it deferred.

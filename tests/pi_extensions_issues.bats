@@ -28,7 +28,7 @@ teardown() {
 # ── issue-defer-guard ────────────────────────────────────────────────────────
 # Same split as the guards above: the predicate is in detect.ts, which imports
 # nothing. Whether a review has open findings is a filesystem question index.ts
-# asks, and the Claude guard's copy of it is covered in claude_settings.bats.
+# asks, and the Claude guard's copy of it is covered in claude_settings_sync.bats.
 
 # _files_issue COMMAND — prints true or false for isIssueFiling(COMMAND).
 _files_issue() {
@@ -84,7 +84,7 @@ gh issue create --title x'
   # Two guards enforcing one rule that disagree are worse than one guard: which
   # answer you get would depend on which harness you happen to be in. The
   # Claude side needs a repo with an open-findings review before its pattern is
-  # reached, so build one (via the same helper claude_settings.bats uses) and
+  # reached, so build one (via the same helper claude_settings_sync.bats uses) and
   # compare the pair on every shape.
   local sandbox
   sandbox="$(_review_sandbox "isaac/fix/thing" " ")"
@@ -198,7 +198,7 @@ _lock_refusal() {
   " -- "$1"
 }
 
-# _hold_tree lives in tests/test_helper.bash: claude_settings.bats holds the
+# _hold_tree lives in tests/test_helper.bash: claude_settings_hooks.bats holds the
 # same lock for the Claude half of this guard, and one fact read by two
 # harnesses is worth one helper rather than two copies of it.
 

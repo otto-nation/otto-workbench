@@ -35,6 +35,7 @@ Usage:
 
 import sys
 
+import core.log
 import core.publishing
 import core.run_lock
 import pr.context
@@ -43,6 +44,7 @@ import pr.state
 from pr.domains import DescribeSummary
 from core.tool_parser import ToolParser
 from core.trail import Trail, add_trail_args
+
 
 def build_parser() -> ToolParser:
     """This command's parser, before anything has been parsed with it.

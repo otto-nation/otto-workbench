@@ -25,7 +25,6 @@ import git.topology
 import core.log
 import core.pr_template
 import core.publishing
-import core.run_lock
 import pr.context
 import pr.follow_ups
 import pr.state

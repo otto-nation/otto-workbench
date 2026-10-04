@@ -19,6 +19,8 @@ from pr.follow_ups import FollowUp, FollowUpDomain, FollowUpSource, IssueRef  # 
 import agent.invoke
 import gh.client
 import agent.backend
+import cli.pr_describe
+import pr.context
 
 
 def _ctx(worktree, head_sha="aaaa111", pr_number=7):
@@ -45,6 +47,33 @@ def _run(ctx, *, body="", ai=(_wrapped("NEW BODY"), 0), **kw):
                            side_effect=lambda r, n, b: edits.append(b) or True):
         rc = pr.describe.run_describe(ctx, **kw)
     return rc, edits, prompt
+
+
+# ── cli imports ─────────────────────────────────────────────────────────────
+
+
+def test_cli_pr_describe_imports_core_log_directly():
+    """`main()` calls `core.log.info(...)`, so this module must import it itself.
+
+    It otherwise only resolves because `core.publishing`, `core.run_lock`, and
+    `pr.context` each transitively import `core.log`, which populates `log` as
+    an attribute of the `core` package as a side effect. That's borrowed, not
+    declared — if any of those three stopped, `core.log` would raise
+    `AttributeError` here. Checked via the AST rather than at runtime because
+    by the time this test file runs, something else in the suite has already
+    imported `core.log` and the package-level attribute is set regardless of
+    whether this module declares its own import.
+    """
+    import ast
+
+    tree = ast.parse(Path(cli.pr_describe.__file__).read_text())
+    imported = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    assert "core.log" in imported
 
 
 # ── template discovery ──────────────────────────────────────────────────────

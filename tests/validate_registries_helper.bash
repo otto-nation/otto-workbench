@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Valid registry fixtures shared by the validate_registries_* suites; each writes into the shared tree setup_file built.
+# Callers' setup_file() must create the target directories (e.g. $TMPDIR/brew, $TMPDIR/bin) before invoking these
+# functions — nothing here creates them.
 
 _write_valid_brew() {
   cat > "$TMPDIR/brew/registry.yml" << 'EOF'

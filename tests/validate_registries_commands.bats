@@ -32,8 +32,6 @@ setup() {
   rm -f "$TMPDIR/brew/registry.yml" "$TMPDIR/brew/Brewfile"
   rm -f "$TMPDIR/bin/registry.yml"
   rm -f "$TMPDIR/zsh/registry.yml"
-  rm -f "$TMPDIR/zsh/config.d/"*
-  rm -f "$TMPDIR/brew/work/"*.registry.yml "$TMPDIR/brew/work/"*.Brewfile
   for f in "$TMPDIR/bin/"*; do
     [[ -e "$f" ]] || continue
     case "${f##*/}" in mytool|othertool) ;; *) rm -f "$f" ;; esac

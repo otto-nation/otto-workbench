@@ -25,6 +25,7 @@ import pr.settlement
 from pr.fix import FixOutcome
 from pr.thread_models import PRReport
 import cli.review_threads
+import review.comment_threads
 import review.closeout
 
 
@@ -183,7 +184,7 @@ class TestResolveVerifiedThreads:
             "t3": ThreadRecord(state=ThreadState.VERIFIED),
         }
         with patch.object(pr.comments, "resolve_thread", return_value=True) as resolve:
-            count = cli.review_threads._resolve_verified_threads(raw, threads)
+            count = review.comment_threads.resolve_verified_threads(raw, threads)
         assert count == 2
         assert [c.args[0] for c in resolve.call_args_list] == ["t1", "t3"]
 
@@ -191,7 +192,7 @@ class TestResolveVerifiedThreads:
         raw = [self._node("t1")]
         threads = {"t1": ThreadRecord(state=ThreadState.VERIFIED, reviewer="alice")}
         with patch.object(pr.comments, "resolve_thread", return_value=True):
-            cli.review_threads._resolve_verified_threads(raw, threads)
+            review.comment_threads.resolve_verified_threads(raw, threads)
         assert threads["t1"].state is ThreadState.RESOLVED
         # The record is replaced, not rebuilt: everything triage decided about
         # the thread survives the state change.
@@ -202,21 +203,21 @@ class TestResolveVerifiedThreads:
         raw = [self._node("t1")]
         threads = {"t1": ThreadRecord(state=ThreadState.RESOLVED)}
         with patch.object(pr.comments, "resolve_thread") as resolve:
-            assert cli.review_threads._resolve_verified_threads(raw, threads) == 0
+            assert review.comment_threads.resolve_verified_threads(raw, threads) == 0
         resolve.assert_not_called()
 
     def test_a_node_with_no_record_is_skipped(self):
         """A thread the sync never recorded has no verdict to act on."""
         raw = [self._node("t1")]
         with patch.object(pr.comments, "resolve_thread") as resolve:
-            assert cli.review_threads._resolve_verified_threads(raw, {}) == 0
+            assert review.comment_threads.resolve_verified_threads(raw, {}) == 0
         resolve.assert_not_called()
 
     def test_a_record_with_no_node_is_never_reached(self):
         """The raw fetch drives the loop, so a short fetch resolves only what it saw."""
         threads = {"t1": ThreadRecord(state=ThreadState.VERIFIED)}
         with patch.object(pr.comments, "resolve_thread") as resolve:
-            assert cli.review_threads._resolve_verified_threads([], threads) == 0
+            assert review.comment_threads.resolve_verified_threads([], threads) == 0
         resolve.assert_not_called()
 
     def test_only_a_mutation_that_landed_is_counted(self):
@@ -227,7 +228,7 @@ class TestResolveVerifiedThreads:
             "t2": ThreadRecord(state=ThreadState.VERIFIED),
         }
         with patch.object(pr.comments, "resolve_thread", side_effect=[True, False]):
-            assert cli.review_threads._resolve_verified_threads(raw, threads) == 1
+            assert review.comment_threads.resolve_verified_threads(raw, threads) == 1
         assert threads["t1"].state is ThreadState.RESOLVED
         # Still owed: the next run with --post has to find it verified.
         assert threads["t2"].state is ThreadState.VERIFIED
@@ -239,8 +240,8 @@ class TestResolveVerifiedThreads:
             "t2": ThreadRecord(state=ThreadState.VERIFIED),
         }
         with patch.object(pr.comments, "resolve_thread", return_value=True) as resolve:
-            first = cli.review_threads._resolve_verified_threads(raw, threads)
-            second = cli.review_threads._resolve_verified_threads(raw, threads)
+            first = review.comment_threads.resolve_verified_threads(raw, threads)
+            second = review.comment_threads.resolve_verified_threads(raw, threads)
         assert (first, second) == (2, 0)
         assert resolve.call_count == 2
 
@@ -298,7 +299,7 @@ class TestWorktreeGuard:
 
     def test_run_threads_exits_before_touching_github(self, capsys):
         assert_no_worktree_exit(capsys, "isaac/feat/x",
-                                cli.review_threads._run_threads, None, None, self._ctx())
+                                review.comment_threads.run_threads, None, None, self._ctx())
 
     def test_finish_deferred_work_exits_with_guidance(self, capsys):
         assert_no_worktree_exit(capsys, "isaac/feat/x",
@@ -316,7 +317,7 @@ class TestWorktreeGuard:
 class TestTruncatedThreadFetch:
     """End to end: what `pr comments` writes when it could not read every thread.
 
-    Driven through `_run_threads` rather than `sync_threads` because the loss
+    Driven through `run_threads` rather than `sync_threads` because the loss
     happened between them — the sweep fetched, synced, and saved, and only the
     save is durable. `fetch_pr_data` is the single seam the whole path hangs
     off, so patching it is enough to stand up a short fetch.
@@ -380,10 +381,10 @@ class TestTruncatedThreadFetch:
         state_path = self._seed_ledger(ctx)
         args = cli.review_threads.build_parser().parse_args(
             ["--finish"] if finish else [])
-        with patch.object(cli.review_threads, "fetch_pr_data",
+        with patch.object(review.comment_threads, "fetch_pr_data",
                           return_value=self._pr_data(threads, complete=complete)), \
              patch.object(review.closeout, "finish_deferred_work") as fin:
-            code = cli.review_threads._run_threads(MagicMock(), args, ctx)
+            code = review.comment_threads.run_threads(MagicMock(), args, ctx)
         return code, pr.comments_state.load_state(state_path), fin
 
     def test_an_incomplete_fetch_does_not_erase_triage_from_the_written_ledger(
@@ -432,11 +433,11 @@ class TestTruncatedThreadFetch:
         ctx = self._ctx(tmp_path)
         self._seed_ledger(ctx)
         args = cli.review_threads.build_parser().parse_args(["--finish"])
-        with patch.object(cli.review_threads, "fetch_pr_data",
+        with patch.object(review.comment_threads, "fetch_pr_data",
                           return_value=self._pr_data(
                               [self._thread("T_page1")], complete=True)), \
              patch.object(review.closeout, "finish_deferred_work", return_value=False):
-            assert cli.review_threads._run_threads(MagicMock(), args, ctx) == 1
+            assert review.comment_threads.run_threads(MagicMock(), args, ctx) == 1
 
     def test_finish_on_an_incomplete_fetch_resolves_nothing_on_github(
             self, tmp_path):
@@ -447,12 +448,12 @@ class TestTruncatedThreadFetch:
         self._seed_ledger(ctx)
         args = cli.review_threads.build_parser().parse_args(["--finish"])
         with patch.object(
-                cli.review_threads, "fetch_pr_data",
+                review.comment_threads, "fetch_pr_data",
                 return_value=self._pr_data(
                     [self._verified_thread("T_verified")], complete=False)), \
              patch.object(review.closeout, "finish_deferred_work") as fin, \
              patch.object(pr.comments, "resolve_thread") as resolve:
-            code = cli.review_threads._run_threads(MagicMock(), args, ctx)
+            code = review.comment_threads.run_threads(MagicMock(), args, ctx)
 
         assert code == 1
         resolve.assert_not_called()
@@ -481,47 +482,47 @@ class TestSeenTracking:
 
     def test_a_comment_the_last_round_read_is_seen(self):
         comments = [self._comment(1)]
-        cli.review_threads._mark_seen(comments, {1: ""})
+        review.comment_threads.mark_seen(comments, {1: ""})
         assert comments[0]["seen"] is True
 
     def test_a_comment_never_read_is_unseen(self):
         comments = [self._comment(1)]
-        cli.review_threads._mark_seen(comments, {})
+        review.comment_threads.mark_seen(comments, {})
         assert comments[0]["seen"] is False
 
     def test_an_edited_comment_is_unseen_again(self):
         """The defect: same id, new text, and it used to stay seen."""
         comments = [self._comment(1, edited="2026-02-01T00:00:00Z")]
-        cli.review_threads._mark_seen(comments, {1: ""})
+        review.comment_threads.mark_seen(comments, {1: ""})
         assert comments[0]["seen"] is False
 
     def test_a_comment_edited_again_since_the_last_round_is_unseen(self):
         """A second edit must not match the stamp recorded for the first."""
         comments = [self._comment(1, edited="2026-03-01T00:00:00Z")]
-        cli.review_threads._mark_seen(comments, {1: "2026-02-01T00:00:00Z"})
+        review.comment_threads.mark_seen(comments, {1: "2026-02-01T00:00:00Z"})
         assert comments[0]["seen"] is False
 
     def test_an_edit_already_read_stays_seen(self):
         """Re-reporting every edited comment on every round would be noise."""
         comments = [self._comment(1, edited="2026-02-01T00:00:00Z")]
-        cli.review_threads._mark_seen(comments, {1: "2026-02-01T00:00:00Z"})
+        review.comment_threads.mark_seen(comments, {1: "2026-02-01T00:00:00Z"})
         assert comments[0]["seen"] is True
 
     def test_a_missing_edit_field_reads_as_never_edited(self):
         """A payload without the field must not differ from one carrying ''."""
         comments = [{"id": 1, "body": "t"}]
-        cli.review_threads._mark_seen(comments, {1: ""})
+        review.comment_threads.mark_seen(comments, {1: ""})
         assert comments[0]["seen"] is True
-        assert cli.review_threads._seen_record(comments) == {1: ""}
+        assert review.comment_threads.seen_record(comments) == {1: ""}
 
     def test_a_null_edit_field_reads_as_never_edited(self):
         """GitHub sends null, not '', for a comment nobody has edited."""
         comments = [{"id": 1, "body": "t", "last_edited_at": None}]
-        cli.review_threads._mark_seen(comments, {1: ""})
+        review.comment_threads.mark_seen(comments, {1: ""})
         assert comments[0]["seen"] is True
 
     def test_the_record_carries_the_stamp_each_comment_arrived_with(self):
-        record = cli.review_threads._seen_record([
+        record = review.comment_threads.seen_record([
             self._comment(1),
             self._comment(2, edited="2026-02-01T00:00:00Z"),
         ])
@@ -530,9 +531,9 @@ class TestSeenTracking:
     def test_a_round_that_records_what_it_read_sees_it_seen_next_time(self):
         """The two halves agree: what one writes, the other reads as seen."""
         comments = [self._comment(1), self._comment(2, edited="2026-02-01T00:00:00Z")]
-        record = cli.review_threads._seen_record(comments)
+        record = review.comment_threads.seen_record(comments)
         fresh = [self._comment(1), self._comment(2, edited="2026-02-01T00:00:00Z")]
-        cli.review_threads._mark_seen(fresh, record)
+        review.comment_threads.mark_seen(fresh, record)
         assert [c["seen"] for c in fresh] == [True, True]
 
     def test_a_comment_with_no_id_is_left_out_of_the_record(self):
@@ -543,7 +544,7 @@ class TestSeenTracking:
         "null", which serde refuses to coerce back — and `load_state` discards
         an unreadable file wholesale, losing every verdict and round with it.
         """
-        record = cli.review_threads._seen_record([
+        record = review.comment_threads.seen_record([
             {"id": None, "last_edited_at": ""},
             {"id": 5, "last_edited_at": ""},
         ])
@@ -551,14 +552,14 @@ class TestSeenTracking:
 
     def test_a_comment_with_no_id_is_unseen_rather_than_a_crash(self):
         comments = [{"id": None}, {"last_edited_at": ""}]
-        cli.review_threads._mark_seen(comments, {5: ""})
+        review.comment_threads.mark_seen(comments, {5: ""})
         assert [c["seen"] for c in comments] == [False, False]
 
     def test_the_record_survives_a_state_file_round_trip(self, tmp_path):
         """End to end: what _seen_record writes must load back unchanged."""
         import pr.state
         import pr.domains
-        record = cli.review_threads._seen_record([
+        record = review.comment_threads.seen_record([
             {"id": None, "last_edited_at": ""},
             {"id": 111, "last_edited_at": ""},
             {"id": 222, "last_edited_at": "2026-02-01T00:00:00Z"},

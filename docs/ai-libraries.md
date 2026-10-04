@@ -2422,6 +2422,20 @@ Layer 6, not 4, and the reason is worth stating because it was got wrong once:
 import either, and the validator would have said so — but only after the code
 was written.
 
+### review/comment_threads.py
+
+A PR's comment threads: read them, reconcile them with the state file, and triage, fix, or settle them.
+
+`run_threads` is the flow `pr comments` runs over a resolved target: fetch the
+PR's threads and conversation, carry the state file's records forward, mark
+what has been seen, and hand off to triage, the fix pass, or settlement as the
+arguments ask. `cli.review_threads` is the command over this — the parser, the
+run lock, the trail. Thread state is `pr.comments_state`; triage is
+`pr.triage`; the fix pass is `pr.comments_fix`. This is also where the
+fix-engine and GitHub-read dependency moved: `fix.comments` and
+`gh.pr_data` used to be pulled in by `cli.review_threads` directly, and now
+live here instead.
+
 ### review/deferred_issue.py
 
 The tracking issue a fix pass owes the threads it deferred.
@@ -6447,16 +6461,14 @@ synthesis agent formatting drift or corrupted review files.
 
 Fetch PR review threads, compute lifecycle states, and output status.
 
-Renders a human-readable dashboard to stderr and structured JSON to stdout.
-Manages local state in the run's target directory, at pr-comments/state.json;
-`pr.comments.threads_state_path` owns that join.
-
 What is left here is what an entry point is: argument parsing, the flag
 conflicts that have to be refused before anything runs, context resolution, the
-run lock and the trail, and the dispatch that picks one of five phases. Every
-phase body lives in the module that owns its subject — `pr.triage`,
-`fix.comments`, `pr.settlement`, `pr.thread_replies`, `review.closeout` — and
-this module knows only which one to call and in what order.
+run lock and the trail, and the dispatch that picks one of five phases.
+`review.comment_threads.run_threads` is the one call every phase goes through;
+that module is what knows which of `pr.triage`, `fix.comments`,
+`pr.settlement`, `pr.thread_replies`, `review.closeout` to call and in what
+order, and it owns the dashboard-to-stderr/JSON-to-stdout rendering and the
+local state file this command used to manage directly.
 
 Two axes, and they have to stay apart: `--triage`/`--fix`/`--finish`/`--reply`/
 `--settle` choose the work; `--post` decides whether it leaves the machine.
@@ -6464,8 +6476,8 @@ Two axes, and they have to stay apart: `--triage`/`--fix`/`--finish`/`--reply`/
 alongside it. `--track` / `--track-all` are not implied by `--finish`.
 
 A comment `pr comments` has already read is dropped from triage decomposition
-(`_mark_seen`), keyed on the comment id *and* `last_edited_at` — see
-`pr.comments` for how that stamp is fetched.
+(`review.comment_threads.mark_seen`), keyed on the comment id *and*
+`last_edited_at` — see `pr.comments` for how that stamp is fetched.
 
 `main` returns rather than exits, as every module under `cli/` does; the shim at
 `ai/bin/review-threads` owns the process exit. That now holds through the

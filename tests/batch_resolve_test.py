@@ -190,6 +190,62 @@ def test_force_publish_answers_only_a_not_incorporated_remote_refusal():
     assert run.items[0].status is batch.model.ItemStatus.DONE
 
 
+def test_force_publish_refuses_again_when_a_remote_commit_appeared_since():
+    run = _run(_d(batch.model.DecisionKind.PUBLISH, "publish"))
+    rec = Recorder()
+    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr", runner=rec,
+                        tree=_stale)
+    refusal = run.open_decisions()[-1]
+
+    def grown(item):
+        return TreeState(local="new", remote=item.remote_sha,
+                         divergence=RefDivergence(ahead=1, behind=2, comparable=True),
+                         unincorporated=("c1 elsewhere", "c2 later"))
+
+    batch.resolve.apply(run, batch.resolve.Request(refusal.id, "force-publish"), pr_bin="pr",
+                        runner=rec, tree=grown)
+    again = run.open_decisions()[-1]
+    assert rec.calls == []
+    assert again.id != refusal.id
+    assert (again.payload["reason"], again.payload["commits"]) == (
+        "not_incorporated_remote", ["c1 elsewhere", "c2 later"])
+    assert run.items[0].status is batch.model.ItemStatus.AWAITING_DECISION
+
+
+def test_a_landed_push_moves_the_lease_even_when_the_replies_fail():
+    run = _run(_d(batch.model.DecisionKind.PUBLISH, "publish"))
+    item = run.items[0]
+    item.remote_sha = "s"
+    item.step(batch.model.Step.COMMENTS).drafted = True
+    origin = {"tip": "s"}
+
+    def tree(it):
+        return TreeState(local="new", remote=origin["tip"],
+                         divergence=RefDivergence(ahead=int(origin["tip"] != "new"), behind=0,
+                                                  comparable=True))
+
+    def runner(argv):
+        if argv[0] == batch.resolve.GIT_PUSH:
+            origin["tip"] = "new"
+            return 0
+        return 1
+
+    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr", runner=runner,
+                        tree=tree)
+    failed = run.open_decisions()[-1]
+    assert (item.remote_sha, item.published_sha) == ("new", "new")
+    assert failed.payload["reason"] == "error"
+    # A retry re-queues the item; the scheduler then asks for the publish again.
+    batch.resolve.apply(run, batch.resolve.Request(failed.id, "retry"), pr_bin="pr",
+                        runner=Recorder())
+    run.decisions.append(_d(batch.model.DecisionKind.PUBLISH, "publish", id="d2"))
+    rec = Recorder()
+    batch.resolve.apply(run, batch.resolve.Request("d2", "publish"), pr_bin="pr",
+                        runner=rec, tree=tree)
+    assert rec.calls == [["pr", "comments", "--finish", "--post", "--repo-dir", "/wt"]]
+    assert item.status is batch.model.ItemStatus.DONE
+
+
 def test_open_chat_is_left_to_the_ui():
     run = _run(_d(batch.model.DecisionKind.OPEN_FINDINGS, "review"))
     with pytest.raises(batch.resolve.ResolveError, match="UI"):

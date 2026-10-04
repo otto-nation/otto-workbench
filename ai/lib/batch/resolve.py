@@ -7,6 +7,7 @@ from __future__ import annotations
 import secrets
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Callable
 
@@ -159,7 +160,7 @@ def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> 
 
 def _publish(run: Run, item: Item, pr_bin: str, run_cmd: Callable[[list[str]], int],
              read: Callable[[Item], batch.publish.TreeState], *,
-             confirmed: bool = False) -> list[Decision]:
+             confirmed: Sequence[str] = ()) -> list[Decision]:
     """Push what the tree says to push; a refusal or a failed command is a decision."""
     tree = read(item)
     plan = batch.publish.plan(item, pr_bin, tree, confirmed=confirmed)
@@ -167,14 +168,20 @@ def _publish(run: Run, item: Item, pr_bin: str, run_cmd: Callable[[list[str]], i
         extra = {"commits": plan.commits} if plan.commits else None
         return [_fail(run, item, "publish", reason=plan.refusal.value, detail=plan.detail,
                       extra=extra)]
-    for argv in plan.commands:
-        if run_cmd(argv) != 0:
-            return [_fail(run, item, "publish")]
+    rest = plan.commands
     if plan.pushes:
-        # Leased on what the branch holds after the commands, not before: a
-        # landing may commit (hook regeneration) before it pushes. The tree
+        push, *rest = plan.commands
+        if run_cmd(push) != 0:
+            return [_fail(run, item, "publish")]
+        # The lease moves as soon as the push lands, before anything after it
+        # can fail: a retry must see our own push as the planned head, not as
+        # somebody else's. Leased on what the branch holds after the push, not
+        # before, since a landing may commit (hook regeneration) first. The tree
         # seam re-reads it; an unreadable branch falls back to the pre-push tip.
         item.remote_sha = item.published_sha = read(item).local or tree.local
+    for argv in rest:
+        if run_cmd(argv) != 0:
+            return [_fail(run, item, "publish")]
     item.status = ItemStatus.DONE
     return []
 
@@ -188,7 +195,8 @@ def apply(run: Run, request: Request, *, pr_bin: str,
     run_cmd = default_runner if runner is None else runner
     if request.action in ("publish", "force-publish"):
         created = _publish(run, item, pr_bin, run_cmd, tree or batch.publish.read_tree,
-                           confirmed=request.action == "force-publish")
+                           confirmed=decision.payload.get("commits", [])
+                           if request.action == "force-publish" else ())
         decision.resolution, decision.resolved_at = request.action, now_iso()
         return created
     ok = _run_commands(decision, item, request, pr_bin, run_cmd)

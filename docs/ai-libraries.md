@@ -3399,7 +3399,9 @@ still the head the batch planned from (`Item.remote_sha`):
 `pr comments --finish --post` follows when the comments step drafted or an item
 is tracked. A refusal is a `failed` decision on step `publish` carrying `reason`;
 a `not_incorporated_remote` one also lists the remote commits, and the operator
-answers it with `force-publish` (push anyway) or drops the PR.
+answers it with `force-publish` (push past exactly those commits; one that
+appeared since is refused again) or drops the PR. The lease advances as soon as
+the push lands, so a failure in the replies after it never strands the item.
 
 ### batch/resolve.py
 

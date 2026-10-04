@@ -61,8 +61,14 @@ def test_an_unincorporated_refusal_names_the_remote_commits():
 
 def test_a_confirmed_publish_force_pushes_past_unincorporated_commits():
     got = batch.publish.plan(_item(), "pr", _tree(2, 3, unincorporated=("c1 subj",)),
-                             confirmed=True)
+                             confirmed=["c1 subj"])
     assert got.commands == [["pr", "rebase", "--push-only", "--expect", "r0", *WT]]
+
+
+def test_a_confirmation_covers_only_the_commits_the_operator_saw():
+    tree = _tree(2, 3, unincorporated=("c1 subj", "c2 new"))
+    got = batch.publish.plan(_item(), "pr", tree, confirmed=["c1 subj"])
+    assert (got.refusal, got.commits) == (Refusal.NOT_INCORPORATED_REMOTE, ["c1 subj", "c2 new"])
 
 
 def test_comment_replies_follow_a_drafted_comments_step_and_tracking():

@@ -18,13 +18,16 @@ still the head the batch planned from (`Item.remote_sha`):
 `pr comments --finish --post` follows when the comments step drafted or an item
 is tracked. A refusal is a `failed` decision on step `publish` carrying `reason`;
 a `not_incorporated_remote` one also lists the remote commits, and the operator
-answers it with `force-publish` (push anyway) or drops the PR.
+answers it with `force-publish` (push past exactly those commits; one that
+appeared since is refused again) or drops the PR. The lease advances as soon as
+the push lands, so a failure in the replies after it never strands the item.
 """
 
 # doc-group: batch
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -119,11 +122,13 @@ def _refuse(refusal: Refusal, detail: str, commits: list[str] | None = None) -> 
     return PublishPlan(refusal=refusal, detail=detail, commits=list(commits or []))
 
 
-def plan(item: Item, pr_bin: str, tree: TreeState, *, confirmed: bool = False) -> PublishPlan:
+def plan(item: Item, pr_bin: str, tree: TreeState, *,
+         confirmed: Sequence[str] = ()) -> PublishPlan:
     """The commands that publish *item* given *tree*, or the refusal that stops it.
 
-    *confirmed* is the operator's ``force-publish``: it pushes past remote
-    commits the local branch has no equivalent of, and past nothing else.
+    *confirmed* is the operator's ``force-publish``: the remote commits listed
+    in the refusal they answered. It pushes past those and past nothing else —
+    a remote commit that appeared since is refused again, with the full list.
     """
     wt = ["--repo-dir", item.worktree]
     if not tree.fetched:
@@ -141,7 +146,7 @@ def plan(item: Item, pr_bin: str, tree: TreeState, *, confirmed: bool = False) -
             return _refuse(Refusal.NOT_INCORPORATED,
                            f"the rebase started from {git.client.abbrev(item.pre_rebase_head)}, "
                            f"which does not contain {git.client.abbrev(item.remote_sha)}")
-        if tree.unincorporated and not confirmed:
+        if set(tree.unincorporated) - set(confirmed):
             return _refuse(Refusal.NOT_INCORPORATED_REMOTE,
                            f"{len(tree.unincorporated)} remote commit(s) have no equivalent "
                            f"in {item.branch}", list(tree.unincorporated))

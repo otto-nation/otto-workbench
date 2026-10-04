@@ -233,6 +233,38 @@ def test_every_package_declares_a_layer():
     assert val.undeclared_packages(str(REPO_ROOT), layers) == []
 
 
+def _tree(root, *inits):
+    for rel in inits:
+        path = root / "ai" / "lib" / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('"""Layer 1 — x. May import: nothing."""\n')
+
+
+def test_a_nested_package_is_a_subpackage(tmp_path):
+    _tree(tmp_path, "pr/__init__.py", "pr/threads/__init__.py")
+    assert val.subpackages(str(tmp_path)) == ["pr/threads/__init__.py"]
+
+
+def test_a_directory_without_an_init_is_not_a_subpackage(tmp_path):
+    _tree(tmp_path, "pr/__init__.py")
+    (tmp_path / "ai" / "lib" / "pr" / "fixtures").mkdir()
+    (tmp_path / "ai" / "lib" / "pr" / "__pycache__").mkdir()
+    assert val.subpackages(str(tmp_path)) == []
+
+
+def test_the_repo_has_no_subpackages():
+    assert val.subpackages(str(REPO_ROOT)) == []
+
+
+def test_main_refuses_a_subpackage(monkeypatch, capsys):
+    monkeypatch.setattr(val, "subpackages", lambda *a: ["pr/threads/__init__.py"])
+    monkeypatch.setattr(sys, "argv", ["validate-ai-layers", "--quiet"])
+    with pytest.raises(SystemExit) as exc:
+        val.main()
+    assert exc.value.code == 1
+    assert "ai/lib/pr/threads/__init__.py: is a subpackage" in capsys.readouterr().err
+
+
 def test_the_declarations_agree_with_each_other():
     assert val.check_declarations(val.read_layers(str(REPO_ROOT))) == {}
 

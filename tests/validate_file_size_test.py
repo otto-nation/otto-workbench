@@ -243,37 +243,12 @@ def test_an_unreadable_file_names_itself_instead_of_raising(tmp_path):
     assert "ai/locked.py" in str(caught.value)
 
 
-def test_a_known_file_over_the_cap_does_not_fail(tmp_path, monkeypatch):
-    """Pre-existing debt is #853's and #911's; blocking on it blocks every push."""
-    monkeypatch.setitem(vfs.KNOWN_OVER, "ai/a.py", "#853")
-    _write(tmp_path, "ai/a.py", _lines(11))
-    assert vfs.main(["--max-lines", "10", "--quiet", str(tmp_path)]) == 0
-
-
-def test_a_new_file_fails_even_beside_a_known_one(tmp_path, monkeypatch):
-    """An exemption must not carry cover for anything but itself."""
-    monkeypatch.setitem(vfs.KNOWN_OVER, "ai/known.py", "#853")
-    _write(tmp_path, "ai/known.py", _lines(11))
-    _write(tmp_path, "ai/new.py", _lines(11))
-    assert vfs.main(["--max-lines", "10", "--quiet", str(tmp_path)]) == 1
-
-
 def test_it_passes_when_nothing_is_over(tmp_path):
     _write(tmp_path, "ai/a.py", _lines(5))
     assert vfs.main(["--max-lines", "10", "--quiet", str(tmp_path)]) == 0
 
 
-def test_the_exemptions_are_exactly_what_is_over_the_cap():
-    """Pins the list so it can only shrink.
 
-    An entry added to KNOWN_OVER to quiet a newly-oversized file fails here, and
-    so does an entry left behind after its file came under the cap. #911's gate
-    lands when this set is empty.
-    """
-    over = {name for name, _ in vfs.over_cap(REPO_ROOT, vfs.MAX_CODE_LINES)}
-    assert over == set(vfs.KNOWN_OVER)
-
-
-def test_every_exemption_names_the_issue_that_owns_it():
-    """An exemption with no owner is a permanent one wearing a temporary label."""
-    assert all(owner.startswith("#") for owner in vfs.KNOWN_OVER.values())
+def test_no_source_file_in_this_repo_is_over_the_cap():
+    """The gate has no exemptions, so this repo has to satisfy it outright."""
+    assert vfs.over_cap(REPO_ROOT, vfs.MAX_CODE_LINES) == []

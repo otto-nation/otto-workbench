@@ -285,6 +285,8 @@ def _build_parser() -> argparse.ArgumentParser:
     its own — its argv is forwarded whole and `pr <command> --help` is answered
     by the factory's parser — so add_help is left off for those. That is every
     delegate and `create`, whose handler runs here but whose parser is its own.
+    A command that parses its own argv (`CommandSpec.parses_own_argv`) is left
+    without one too, so its subcommands answer their own help.
 
     The subparsers are not returned alongside: what a command declares is read
     back off the built parser with tool_parser.subparsers, which is what keeps
@@ -300,7 +302,8 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
     for name, spec in COMMANDS.items():
         sub.add_parser(name, help=spec.help,
-                       add_help=not cli.dispatch.has_parser_factory(name))
+                       add_help=not (cli.dispatch.has_parser_factory(name)
+                                     or spec.parses_own_argv))
     return parser
 
 

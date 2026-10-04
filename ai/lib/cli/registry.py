@@ -75,6 +75,12 @@ class CommandSpec:
       of them grows a value-taking flag. `need` has no such check available —
       there is no observable consequence to assert on until dispatch runs — so
       it is refused at construction instead.
+    * ``parses_own_argv`` — whether a command `pr` runs itself has a parser of
+      its own, subcommands included. Its empty subparser then declares no
+      `-h`, so `pr batch plan -h` reaches the batch parser instead of argparse
+      answering with a usage line naming none of its subcommands. False for
+      the commands that ignore their argv: with no `-h` of their own they
+      would run on `-h`.
     """
 
     name: str
@@ -83,6 +89,7 @@ class CommandSpec:
     script: str | None = None
     takes_target: bool = True
     handler: str | None = None
+    parses_own_argv: bool = False
 
 
 def _create_need(argv: Sequence[str]) -> Need:
@@ -133,7 +140,7 @@ _SPECS: tuple[CommandSpec, ...] = (
     # and the run holds a per-run lock under the batch state root.
     CommandSpec("batch",    "Run rebase, comments and self-review across my open PRs",
                 Need(NONE,   update=False, lock=False), takes_target=False,
-                handler="cli.pr_batch:cmd_batch"),
+                handler="cli.pr_batch:cmd_batch", parses_own_argv=True),
     CommandSpec("gc",       "Clean up stale PR artifacts",
                 Need(REMOTE, update=False, lock=True),
                 handler="cli.pr_commands:cmd_gc"),

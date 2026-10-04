@@ -285,3 +285,17 @@ def test_idle_resolve_leaves_waiting_when_an_item_is_unblocked():
 def test_schema_version_1_is_served_for_batch(monkeypatch):
     monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", []))
     assert _main(["--schema-version", "1", "batch", "plan", "--checkout", "/r"]) == 0
+
+
+def test_batch_subcommand_help_reaches_the_batch_parser(capsys):
+    assert _main(["batch", "plan", "-h"]) == 0
+    assert "--checkout" in capsys.readouterr().out
+
+
+# passes-at-base: status already answers -h via argparse because it is scriptless
+def test_a_command_that_ignores_argv_answers_help_without_running(monkeypatch, capsys):
+    """`status` takes no flags, so add_help=False would run it on `-h`."""
+    monkeypatch.setitem(cli.pr._CUSTOM, "status",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("ran")))
+    assert _main(["status", "-h"]) == 0
+    assert "usage" in capsys.readouterr().out

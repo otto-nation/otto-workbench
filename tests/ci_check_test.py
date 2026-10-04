@@ -93,10 +93,13 @@ def _rebase_returning(rc, *, posting):
     `publishing` is a process-wide flag, so a test that opens it has to shut it
     again or every later test in the session runs as if `--post` were given.
     """
+    state = MagicMock()
+    state.rebase.force_pushed = posting
     with patch.object(rebase.target, "resolve_target_ref",
                       return_value="origin/main"), \
          patch.object(rebase.commands, "cmd_start", return_value=rc) as start, \
-         patch.object(core.publishing, "enabled", return_value=posting):
+         patch.object(core.publishing, "enabled", return_value=posting), \
+         patch.object(rebase.types, "load_or_init", return_value=state):
         yield start
 
 
@@ -212,6 +215,7 @@ def _wait_args(run=None):
     args.wait_timeout = 120
     args.wait_interval = 0
     args.run = run
+    args.head_sha = ""
     return args
 
 

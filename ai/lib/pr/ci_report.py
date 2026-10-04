@@ -14,7 +14,7 @@ absent on the single-shot one rather than being reported as zero.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 
 import git.client
 import pr.ci_failures
@@ -158,6 +158,33 @@ class CIReport:
         if self.total is not None:
             report["total"] = self.total
         return report
+
+
+# The `type` tag of the stream documents ci-check prints: the last poll of a
+# `--wait` run, and the tally a `--fix` run ends with. A batch reads both back.
+FINAL_REPORT_TYPE = "final"
+FIX_TALLY_TYPE = "fix"
+
+
+@dataclass(frozen=True)
+class CIFixTally:
+    """What one `ci-check --fix` run did with the failures it was handed.
+
+    Printed on stdout on every successful `--fix` exit, so a caller reads this
+    run's answer rather than `state.ci.fix`, which the all-skipped path never
+    writes and an earlier run may have left. ``skipped`` holds the failures no
+    edit could clear (infra, flaky, external), with their kind.
+    """
+
+    failures: list[str] = field(default_factory=list)
+    fixed: list[str] = field(default_factory=list)
+    unfixed: list[str] = field(default_factory=list)
+    skipped: list[dict] = field(default_factory=list)
+    suite_status: str = ""
+    commit: str = ""
+
+    def to_json(self) -> dict:
+        return asdict(self)
 
 
 # ── Dashboard ──────────────────────────────────────────────────────────────

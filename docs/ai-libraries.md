@@ -6103,6 +6103,8 @@ Usage:
   ci-check --pr <number_or_url> # discover branch from PR
   ci-check --repo-dir <path>    # specify worktree directory
   ci-check --fix                # diagnose then invoke AI to fix failures
+  ci-check --head-sha <sha>     # runs and checks of this commit, not local HEAD
+  ci-check --fix --no-rebase    # fix without rebasing first (pr batch rebases itself)
 
 ### cli/dispatch.py
 

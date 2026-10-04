@@ -167,21 +167,27 @@ def read_layers(repo_root: str) -> dict[str, Layer]:
     return found
 
 
-def subpackages(repo_root: str) -> list[str]:
-    """Every `__init__.py` below a package's own, relative to `ai/lib/`, sorted.
+def _nested_inits(package_dir: Path) -> list[Path]:
+    """Every `__init__.py` strictly below *package_dir*.
 
     `__pycache__` and `.git` are pruned out of the walk itself, the same way
     `discover_files` prunes them, rather than filtered out of the result after
     the fact — one way of expressing the exclusion, not two.
     """
-    lib_root = Path(repo_root) / LIB_DIR
     found = []
-    for package in package_names(repo_root):
-        for dirpath, dirnames, filenames in os.walk(lib_root / package):
-            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-            if dirpath != str(lib_root / package) and '__init__.py' in filenames:
-                found.append(Path(dirpath, '__init__.py'))
-    return sorted(str(init.relative_to(lib_root)) for init in found)
+    for dirpath, dirnames, filenames in os.walk(package_dir):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        if Path(dirpath) != package_dir and '__init__.py' in filenames:
+            found.append(Path(dirpath) / '__init__.py')
+    return found
+
+
+def subpackages(repo_root: str) -> list[str]:
+    """Every `__init__.py` below a package's own, relative to `ai/lib/`, sorted."""
+    lib_root = Path(repo_root) / LIB_DIR
+    return sorted(str(init.relative_to(lib_root))
+                  for package in package_names(repo_root)
+                  for init in _nested_inits(lib_root / package))
 
 
 def undeclared_packages(repo_root: str, layers: dict[str, Layer]) -> list[str]:

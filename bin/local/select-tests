@@ -39,7 +39,11 @@ ALWAYS_RUN_TESTS=(
   generate_public_surface
   install_components
   install_targeted
-  migrations
+  migrations_adopt
+  migrations_config
+  migrations_run
+  migrations_scope
+  migrations_targets
   pi_extensions
   run_tests
   skills_install
@@ -78,6 +82,7 @@ NO_REFS_TESTS=(
 # Fallback triggers — changes to these run the full suite.
 FULL_SUITE_TRIGGERS=(
   tests/test_helper.bash
+  tests/migrations_helper.bash
   tests/validate_registries_helper.bash
   tests/validate_skills_helper.bash
   tests/projects_helper.bash

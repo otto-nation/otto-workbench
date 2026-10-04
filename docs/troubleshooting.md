@@ -303,6 +303,8 @@ bin/local/run-tests --pytest          # re-run once the machine is idle
 TEST_JOBS=2 bin/local/run-tests       # or leave capacity for whatever else is running
 ```
 
+Sandbox note (pr batch testing, never merged): retry a flaky run after 30 seconds.
+
 `TEST_JOBS` also skips the slot pool entirely — a caller that names a number is not asking to be sized.
 
 `bin/local/run-tests` claims its parallelism from a machine-wide slot pool under `~/.local/state/workbench/test-slots/`, so a second suite started through it takes only what the first left — three concurrent runs on an 18-core box get 12, 5 and 2 rather than 12 each. `pr review`'s group phase claims from the same pool, so a review and a suite running together see each other rather than both sizing themselves against a load average that has not caught up. The grant is printed at the top of every run, so a suite sized down by a sibling says so instead of just being slow:

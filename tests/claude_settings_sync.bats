@@ -6,6 +6,14 @@ setup_file() {
   local repo_root
   repo_root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 
+  # shellcheck source=/dev/null
+  source "$repo_root/lib/registries.sh"
+
+  # Collect registry permissions once for all tests
+  local -a perms=()
+  collect_registry_permissions perms "$repo_root"
+  printf '%s\n' "${perms[@]}" > "$BATS_FILE_TMPDIR/registry_perms.list"
+
   _sync_settings_into "$BATS_FILE_TMPDIR/home" "$repo_root"
 }
 
@@ -642,7 +650,7 @@ _referenced_home_paths() {
 # suite happens to be on — these cannot use it.
 
 # _guard_in and _review_sandbox live in test_helper.bash — shared with
-# pi_extensions.bats, which uses the same layout to compare the Pi guard
+# pi_extensions_issues.bats, which uses the same layout to compare the Pi guard
 # against this one.
 
 @test "guard: blocks gh issue create while the branch review has open findings" {

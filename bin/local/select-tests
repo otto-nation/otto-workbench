@@ -90,6 +90,7 @@ FULL_SUITE_TRIGGERS=(
   tests/validate_skills_helper.bash
   tests/projects_helper.bash
   tests/wt_cleanup_helper.bash
+  tests/claude_settings_helper.bash
   tests/conftest.py
   tests/validate_migrations_helper.bash
   bin/local/run-tests

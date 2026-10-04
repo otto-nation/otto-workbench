@@ -16,6 +16,8 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import cli.ci_check  # noqa: E402
+import rebase.ci_fix  # noqa: E402
+import pr.ci_check  # noqa: E402
 import rebase.commands  # noqa: E402
 import agent.retry  # noqa: E402
 import git.land  # noqa: E402
@@ -80,7 +82,7 @@ def _mock_ctx(worktree_root="/tmp/wt", branch="feat/auth"):
 
 def test_rebase_if_behind_skips_when_not_behind():
     trail = MagicMock()
-    assert cli.ci_check._rebase_if_behind(trail, _report(), _mock_ctx()) is False
+    assert rebase.ci_fix.rebase_if_behind(trail, _report(), _mock_ctx()) is False
     trail.decision.assert_not_called()
 
 
@@ -102,7 +104,7 @@ def test_rebase_if_behind_rebases_in_process_on_success():
     """The rebase is a call, not a spawn — so it answers this run's gate."""
     trail = MagicMock()
     with _rebase_returning(0, posting=True) as start:
-        result = cli.ci_check._rebase_if_behind(trail, _report(behind_main=5),
+        result = rebase.ci_fix.rebase_if_behind(trail, _report(behind_main=5),
                                             _mock_ctx())
 
     assert result is True
@@ -123,7 +125,7 @@ def test_a_draft_run_rebases_but_does_not_move_the_remote():
     """
     trail = MagicMock()
     with _rebase_returning(0, posting=False) as start:
-        result = cli.ci_check._rebase_if_behind(trail, _report(behind_main=5),
+        result = rebase.ci_fix.rebase_if_behind(trail, _report(behind_main=5),
                                             _mock_ctx())
 
     start.assert_called_once()
@@ -134,7 +136,7 @@ def test_a_draft_run_rebases_but_does_not_move_the_remote():
 def test_rebase_if_behind_continues_on_failure():
     trail = MagicMock()
     with _rebase_returning(1, posting=True):
-        result = cli.ci_check._rebase_if_behind(trail, _report(behind_main=10),
+        result = rebase.ci_fix.rebase_if_behind(trail, _report(behind_main=10),
                                             _mock_ctx())
     assert result is False
     trail.warn.assert_called()
@@ -151,7 +153,7 @@ def test_a_refused_rebase_is_reported_apart_from_a_failed_one():
     """
     trail = MagicMock()
     with _rebase_returning(rebase.types.REFUSAL_EXIT, posting=True):
-        result = cli.ci_check._rebase_if_behind(trail, _report(behind_main=5),
+        result = rebase.ci_fix.rebase_if_behind(trail, _report(behind_main=5),
                                             _mock_ctx())
 
     assert result is False
@@ -167,7 +169,7 @@ def test_a_paused_rebase_is_reported_apart_from_a_failed_one():
     """
     trail = MagicMock()
     with _rebase_returning(rebase.types.CONFLICTS_EXIT, posting=True):
-        result = cli.ci_check._rebase_if_behind(trail, _report(behind_main=5),
+        result = rebase.ci_fix.rebase_if_behind(trail, _report(behind_main=5),
                                             _mock_ctx())
 
     assert result is False
@@ -182,7 +184,7 @@ def test_a_refused_rebase_does_not_report_a_moved_head():
     """
     trail = MagicMock()
     with _rebase_returning(rebase.types.REFUSAL_EXIT, posting=True):
-        assert cli.ci_check._rebase_if_behind(
+        assert rebase.ci_fix.rebase_if_behind(
             trail, _report(behind_main=5), _mock_ctx(),
         ) is False
 
@@ -194,7 +196,7 @@ def test_a_refused_rebase_does_not_report_a_moved_head():
 def test_rebase_if_behind_without_a_worktree_exits_with_guidance(capsys):
     """A rebase needs somewhere to run — "--repo-dir None" is not it."""
     ctx = make_ctx(branch="feat/auth", worktree_root=None, head_sha="abc1234")
-    assert_no_worktree_exit(capsys, "feat/auth", cli.ci_check._rebase_if_behind,
+    assert_no_worktree_exit(capsys, "feat/auth", rebase.ci_fix.rebase_if_behind,
                             MagicMock(), _report(behind_main=3), ctx)
 
 
@@ -230,7 +232,7 @@ def test_run_ci_wait_emits_the_final_report(capsys):
                return_value=_no_log_fallback(pr.ci_failures.FailureKind.BUILD)), \
          patch("gh.run_reads.commits_behind_main", return_value=0), \
          patch("pr.ci_wait.time.sleep"):
-        report = cli.ci_check._run_ci_wait(MagicMock(), _wait_args(), make_ctx())
+        report = pr.ci_check.run_ci_wait(MagicMock(), _wait_args(), make_ctx())
 
     chunks = [c.strip() for c in capsys.readouterr().out.split("---") if c.strip()]
     final = json.loads(chunks[-1])
@@ -242,7 +244,7 @@ def test_run_ci_wait_leaves_nothing_to_poll_to_the_entry_point():
     """`RunUnavailable` travels to `main`, which owns the exit code."""
     with patch("gh.run_reads.fetch_latest_runs", return_value=gh.run_reads.RunDiscovery()):
         with pytest.raises(pr.ci_runs.RunUnavailable, match="No checks found"):
-            cli.ci_check._run_ci_wait(MagicMock(), _wait_args(), make_ctx())
+            pr.ci_check.run_ci_wait(MagicMock(), _wait_args(), make_ctx())
 
 
 def test_run_ci_leaves_nothing_to_report_on_to_the_entry_point():
@@ -250,7 +252,7 @@ def test_run_ci_leaves_nothing_to_report_on_to_the_entry_point():
     args = _wait_args()
     with patch("gh.run_reads.fetch_latest_runs", return_value=gh.run_reads.RunDiscovery()):
         with pytest.raises(pr.ci_runs.RunUnavailable, match="No checks found"):
-            cli.ci_check._run_ci(MagicMock(), args, make_ctx())
+            pr.ci_check.run_ci(MagicMock(), args, make_ctx())
 
 
 def test_run_ci_asks_a_pinned_runs_rollup_at_that_runs_own_commit():
@@ -287,7 +289,7 @@ def test_run_ci_asks_a_pinned_runs_rollup_at_that_runs_own_commit():
          patch("gh.run_reads.fetch_commit_checks",
                side_effect=lambda repo, sha: by_sha[sha]) as fetch_checks, \
          patch("gh.run_reads.commits_behind_main", return_value=0):
-        report = cli.ci_check._run_ci(MagicMock(), args, ctx)
+        report = pr.ci_check.run_ci(MagicMock(), args, ctx)
 
     assert [c.args[1] for c in fetch_checks.call_args_list] == ["runsha"]
     assert report.conclusion == "success"
@@ -310,7 +312,7 @@ def test_a_pinned_runs_own_external_failure_is_still_reported():
          patch("gh.run_reads.fetch_commit_checks", return_value=checks), \
          patch("gh.run_reads.fetch_annotations", return_value=[]), \
          patch("gh.run_reads.commits_behind_main", return_value=0):
-        report = cli.ci_check._run_ci(MagicMock(), args, make_ctx(head_sha="currenthead"))
+        report = pr.ci_check.run_ci(MagicMock(), args, make_ctx(head_sha="currenthead"))
 
     assert report.conclusion == "failure"
 
@@ -394,14 +396,14 @@ def _drive_fix(tmp_path, *, tick, landed=None, exit_code=0):
 
     trail = MagicMock()
     report = _report(failures=_ONE_FAILURE, run_number=1)
-    with patch("cli.ci_check._rebase_if_behind", return_value=False), \
+    with patch("rebase.ci_fix.rebase_if_behind", return_value=False), \
          patch("git.land.land",
                return_value=landed or git.land.LandResult(CommitStatus.NO_CHANGES)), \
          patch("git.client.head_sha", return_value="cafe123"), \
          patch("fix.scope.changed_files", return_value=set()), \
          patch("agent.backend.invoke_fix",
                side_effect=invoke) as inv:
-        rc = cli.ci_check._run_fix(
+        rc = rebase.ci_fix.run_fix(
             trail, report,
             make_ctx(worktree_root=tmp_path, target_dir=tmp_path),
         )
@@ -420,11 +422,11 @@ def test_a_paused_rebase_stops_the_fix_pass(tmp_path):
     """
     trail = MagicMock()
     report = _report(failures=_ONE_FAILURE, run_number=1)
-    with patch("cli.ci_check._rebase_if_behind", return_value=False), \
+    with patch("rebase.ci_fix.rebase_if_behind", return_value=False), \
          patch("rebase.inspect.rebase_in_progress",
                return_value=True), \
          patch("fix.engine.run") as run:
-        rc = cli.ci_check._run_fix(
+        rc = rebase.ci_fix.run_fix(
             trail, report,
             make_ctx(worktree_root=tmp_path, target_dir=tmp_path),
         )
@@ -489,13 +491,13 @@ def test_the_fix_pass_gives_the_land_owner_its_trail(tmp_path):
     trail = MagicMock()
     artifacts = tmp_path / "ci-failures"
     artifacts.mkdir(parents=True)
-    with patch("cli.ci_check._rebase_if_behind", return_value=False), \
+    with patch("rebase.ci_fix.rebase_if_behind", return_value=False), \
          patch("git.land.land",
                return_value=git.land.LandResult(CommitStatus.NO_CHANGES)) as mock_land, \
          patch("git.client.head_sha", return_value="cafe123"), \
          patch("fix.scope.changed_files", return_value=set()), \
          patch("agent.backend.invoke_fix", return_value=0):
-        cli.ci_check._run_fix(
+        rebase.ci_fix.run_fix(
             trail, _report(failures=_ONE_FAILURE, run_number=1),
             make_ctx(worktree_root=tmp_path, target_dir=tmp_path),
         )
@@ -504,13 +506,13 @@ def test_the_fix_pass_gives_the_land_owner_its_trail(tmp_path):
 
 def test_the_fix_pass_commits_gated_and_asks_for_the_recovery(tmp_path):
     """A run without `--post` commits and drafts the push; regeneration is retried."""
-    with patch("cli.ci_check._rebase_if_behind", return_value=False), \
+    with patch("rebase.ci_fix.rebase_if_behind", return_value=False), \
          patch("git.land.land",
                return_value=git.land.LandResult(CommitStatus.NO_CHANGES)) as mock_land, \
          patch("git.client.head_sha", return_value="cafe123"), \
          patch("fix.scope.changed_files", return_value=set()), \
          patch("agent.backend.invoke_fix", return_value=0):
-        cli.ci_check._run_fix(
+        rebase.ci_fix.run_fix(
             MagicMock(), _report(failures=_ONE_FAILURE, run_number=1),
             make_ctx(worktree_root=tmp_path, target_dir=tmp_path),
         )

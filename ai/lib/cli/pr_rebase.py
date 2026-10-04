@@ -41,8 +41,6 @@ import sys
 import traceback
 from pathlib import Path
 
-import core.log
-import core.publishing
 import core.run_lock
 import core.trail
 from core.tool_parser import ToolParser
@@ -50,13 +48,6 @@ from core.trail import Trail, add_trail_args
 import pr.context
 import pr.state
 from pr.domains import RebaseSummary
-import rebase.inspect
-import rebase.land
-import rebase.lease
-import rebase.lifecycle
-import rebase.pr_snapshot
-import rebase.stash
-import rebase.target
 import rebase.commands
 import rebase.types
 

@@ -3273,15 +3273,6 @@ code, not an invitation to rebuild the path elsewhere: this module is the owner,
 and another repo that wants to know what has been reviewed asks the CLI (see
 ``review.listing``) rather than deriving where a review would sit.
 
-### rebase/commands.py
-
-The rebase commands behind `pr rebase`: start, abort, push, and the run that picks one.
-
-Each command resolves the branch's target, takes the lease the rebase needs,
-and records the outcome in the PR's state file. `cli.pr_rebase` is the command
-over these — the parser, the run lock, the trail. The rebase mechanics are the
-rest of this package (`rebase.lifecycle`, `rebase.land`, `rebase.lease`, …).
-
 ## Batch
 
 Running rebase, comments and self-review across many open PRs at once: admission, scheduling, step processes, and the decisions a run waits on.
@@ -5515,6 +5506,15 @@ passes through it on the way to work that has nothing to do with pushing, so an
 escaping exception would take the whole CLI down over a side-feature. Warning
 rather than passing is what keeps a bug in here loud without coupling anything
 to it.
+
+### rebase/commands.py
+
+The rebase commands behind `pr rebase`: start, abort, push, and the run that picks one.
+
+Each command resolves the branch's target, takes the lease the rebase needs,
+and records the outcome in the PR's state file. `cli.pr_rebase` is the command
+over these — the parser, the run lock, the trail. The rebase mechanics are the
+rest of this package (`rebase.lifecycle`, `rebase.land`, `rebase.lease`, …).
 
 ### rebase/conflicts.py
 

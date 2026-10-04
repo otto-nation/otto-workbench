@@ -6,7 +6,7 @@ over these — the parser, the run lock, the trail. The rebase mechanics are the
 rest of this package (`rebase.lifecycle`, `rebase.land`, `rebase.lease`, …).
 """
 
-# doc-group: pr-state
+# doc-group: platform
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from dataclasses import dataclass
 
 import core.log
 import core.publishing
-import core.run_lock
 import core.trail
 from core.trail import Trail
 import git.client

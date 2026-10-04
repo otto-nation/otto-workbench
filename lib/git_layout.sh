@@ -19,7 +19,7 @@
 # deliberately nothing for an ordinary clone whose parent belongs to somebody
 # else. This one is total, because the caller here wants an identity rather than
 # a directory to write into, and `/repo/.git` is a perfectly good identity.
-# `tests/projects.bats` cross-validates the two.
+# `tests/projects_agreement.bats` cross-validates the two.
 #
 # `bin/resolve-worktree` owns the other direction — container → the worktree it
 # stands in for.

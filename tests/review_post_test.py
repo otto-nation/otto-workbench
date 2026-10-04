@@ -1,4 +1,4 @@
-"""Tests for the `review-post` command as a whole — `cli.review_post._run_post`
+"""Tests for the `review-post` command as a whole — `cli.review_post.run_post`
 and the script's `--dry-run` path, end to end: SHA-drift re-verification and
 what reaches the payload from a review a fix pass has already worked through.
 """
@@ -88,7 +88,7 @@ class TestShaDriftReverify:
             patch("gh.client.api_json", side_effect=capture_post),
             patch.object(rp, "resolve_permalinks"),
         ):
-            rp._run_post(trail, args, "org/repo", sidecar, review_file)
+            rp.run_post(trail, args, "org/repo", sidecar, review_file)
 
         assert any("pulls" in c and "reviews" in c for c in post_calls), \
             f"Expected review API call, got: {post_calls}"
@@ -125,7 +125,7 @@ class TestShaDriftReverify:
             patch("gh.client.api_json", return_value={"id": 42}),
             patch.object(rp, "resolve_permalinks"),
         ):
-            rp._run_post(trail, args, "org/repo", sidecar, review_file)
+            rp.run_post(trail, args, "org/repo", sidecar, review_file)
 
         assert len(diff_calls) == 1, "Should fetch fresh diff, not use sidecar"
 
@@ -157,7 +157,7 @@ class TestShaDriftReverify:
             patch("gh.client.api_json", return_value={"id": 42}),
             patch.object(rp, "resolve_permalinks"),
         ):
-            rp._run_post(trail, args, "org/repo", sidecar, review_file)
+            rp.run_post(trail, args, "org/repo", sidecar, review_file)
 
         post_file = review_file.parent / "post.jsonl"
         tracking = serde_from_dict(PostTracking, json.loads(post_file.read_text()))
@@ -551,7 +551,7 @@ class TestPostSkipsResolvedAndDeclinedFindings:
         args.debug = False
 
         with patch.object(rp, "_get_diff", return_value=self.DIFF):
-            return rp._run_post(MagicMock(), args, "org/repo",
+            return rp.run_post(MagicMock(), args, "org/repo",
                                 rp.ReviewMeta(repo="org/repo"), review_file)
 
     def _dry_run_payload(self, rp, tmp_path, capsys, review_text=None):

@@ -25,9 +25,19 @@ import git.topology
 from batch.model import Step
 
 
-def step_argv(step: Step, pr_bin: str, worktree: str, *, publish: bool) -> list[str]:
+def step_argv(step: Step, pr_bin: str, worktree: str, *, publish: bool,
+              remote_sha: str = "", wait: bool = False) -> list[str]:
     if step is Step.REBASE:
         argv = [pr_bin, "rebase", "--fix"] + ([] if publish else ["--no-push"])
+    elif step is Step.CI:
+        # Never --post: a CI fix's push belongs to the item's publish. --no-rebase
+        # because the batch rebases in its own step, and --head-sha because after
+        # a drafted rebase local HEAD is a commit GitHub has no runs for.
+        argv = [pr_bin, "ci", "--fix", "--no-rebase"]
+        if remote_sha:
+            argv += ["--head-sha", remote_sha]
+        if wait:
+            argv.append("--wait")
     elif step is Step.COMMENTS:
         argv = [pr_bin, "comments", "--fix"] + (["--finish", "--post"] if publish else [])
     else:

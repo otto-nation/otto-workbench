@@ -249,7 +249,9 @@ def test_new_run_selects_needed_steps_and_drops_rows_with_none():
     run = batch.scheduler.new_run(rows, steps=list(batch.model.STEP_ORDER), selected=None, pool=2, auto_publish=[])
     assert [i.key for i in run.items] == ["o/r#1"]
     assert [(s.step, s.status) for s in run.items[0].steps] == [
-        (batch.model.Step.REBASE, batch.model.StepStatus.SKIPPED), (batch.model.Step.COMMENTS, batch.model.StepStatus.PENDING),
+        (batch.model.Step.REBASE, batch.model.StepStatus.SKIPPED),
+        (batch.model.Step.CI, batch.model.StepStatus.SKIPPED),
+        (batch.model.Step.COMMENTS, batch.model.StepStatus.PENDING),
         (batch.model.Step.REVIEW, batch.model.StepStatus.SKIPPED)]
 
 
@@ -265,8 +267,8 @@ def test_new_run_marks_only_selected_steps_explicit():
                                   selected={"o/r#1": [batch.model.Step.REVIEW]}, pool=1,
                                   auto_publish=[])
     assert [(s.step, s.explicit) for s in run.items[0].steps] == [
-        (batch.model.Step.REBASE, False), (batch.model.Step.COMMENTS, False),
-        (batch.model.Step.REVIEW, True)]
+        (batch.model.Step.REBASE, False), (batch.model.Step.CI, False),
+        (batch.model.Step.COMMENTS, False), (batch.model.Step.REVIEW, True)]
     planned = batch.scheduler.new_run([row(1)], steps=list(batch.model.STEP_ORDER),
                                       selected=None, pool=1, auto_publish=[])
     assert not any(s.explicit for s in planned.items[0].steps)
@@ -525,3 +527,10 @@ def test_does_not_settle_while_requests_are_pending(monkeypatch):
     monkeypatch.setattr(batch.store, "has_requests", has)
     assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
     assert checks["n"] >= 2
+
+
+def test_a_ci_step_runs_against_the_planned_remote_head():
+    h = Harness([row(1, {batch.model.Step.CI: NEED})])
+    h.sched.run_until_blocked()
+    assert h.spawned == [["pr", "ci", "--fix", "--no-rebase", "--head-sha", "h",
+                          "--repo-dir", "/wt/b1"]]

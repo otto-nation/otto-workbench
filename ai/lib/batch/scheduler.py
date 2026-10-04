@@ -276,7 +276,7 @@ class Scheduler:
             self._start(item, rec)
 
     def _should_publish(self, item: Item, step: Step) -> bool:
-        if step not in self.run.auto_publish:
+        if step is Step.CI or step not in self.run.auto_publish:
             return False
         earlier = STEP_ORDER[:STEP_ORDER.index(step)]
         return not any(item.has(s) and item.step(s).drafted for s in earlier)
@@ -287,7 +287,8 @@ class Scheduler:
             f"{slug}-{item.pr}-{rec.step.value}-*"))
         log = batch.store.logs_dir(self.run.id) / f"{slug}-{item.pr}-{rec.step.value}-{attempt}.log"
         argv = step_argv(rec.step, self.pr_bin, item.worktree,
-                         publish=self._should_publish(item, rec.step))
+                         publish=self._should_publish(item, rec.step),
+                         remote_sha=item.remote_sha)
         # Sample HEAD before spawn: the harness mutates it inside `_spawn`.
         head_before = self._head(item.worktree)
         proc = self._spawn(argv, log_path=log, trail_root=self.run.trail_root)

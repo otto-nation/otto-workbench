@@ -27,6 +27,7 @@ _UNITS = {"": 1, "K": 1024, "M": 1024 ** 2, "G": GB, "T": 1024 ** 4}
 # measurement (spec A17) replaces them.
 DEFAULT_ESTIMATES: dict[Step, int] = {
     Step.REBASE: 512 * 1024 ** 2,
+    Step.CI: 1 * GB,
     Step.COMMENTS: 1 * GB,
     Step.REVIEW: int(1.5 * GB),
 }

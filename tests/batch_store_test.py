@@ -1,3 +1,4 @@
+import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -117,3 +118,16 @@ def test_open_decisions_excludes_resolved():
     run.decisions.append(batch.model.Decision(id="d2", item="o/r#1", step="review",
                                     kind=batch.model.DecisionKind.OPEN_FINDINGS, resolution="accept"))
     assert [d.id for d in run.open_decisions()] == ["d1"]
+
+
+def test_a_run_saved_before_remote_sha_existed_leases_on_its_head():
+    run = batch.model.Run(id="20261003T000000-aaaa", started_at="t", steps=[], pool=1,
+                          auto_publish=[], items=[batch.model.Item(
+                              key="o/r#1", repo="o/r", repo_dir="/r", pr=1, branch="b",
+                              head_sha="h1")])
+    batch.store.save(run)
+    path = batch.store.run_dir(run.id) / batch.store.STATE_FILE
+    raw = json.loads(path.read_text())
+    del raw["items"][0]["remote_sha"]
+    path.write_text(json.dumps(raw))
+    assert batch.store.load(run.id).items[0].remote_sha == "h1"

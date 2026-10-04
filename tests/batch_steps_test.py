@@ -40,6 +40,17 @@ def test_no_step_argv_forces_a_rebase():
         assert "--force" not in batch.steps.step_argv(Step.REBASE, "pr", "/wt", publish=publish)
 
 
+def test_the_ci_step_fixes_without_rebasing_against_the_remote_head():
+    for publish in (True, False):
+        assert batch.steps.step_argv(Step.CI, "pr", "/wt", publish=publish, remote_sha="abc") == \
+            ["pr", "ci", "--fix", "--no-rebase", "--head-sha", "abc", "--repo-dir", "/wt"]
+
+
+def test_the_ci_step_waits_when_asked():
+    assert "--wait" in batch.steps.step_argv(Step.CI, "pr", "/wt", publish=False,
+                                             remote_sha="abc", wait=True)
+
+
 def _script(tmp_path, body):
     p = tmp_path / "fake.sh"
     p.write_text("#!/bin/sh\n" + body)

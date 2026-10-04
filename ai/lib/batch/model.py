@@ -15,11 +15,12 @@ from enum import StrEnum
 
 class Step(StrEnum):
     REBASE = "rebase"
+    CI = "ci"
     COMMENTS = "comments"
     REVIEW = "review"
 
 
-STEP_ORDER: tuple[Step, ...] = (Step.REBASE, Step.COMMENTS, Step.REVIEW)
+STEP_ORDER: tuple[Step, ...] = (Step.REBASE, Step.CI, Step.COMMENTS, Step.REVIEW)
 
 
 class StepStatus(StrEnum):
@@ -112,6 +113,14 @@ class Item:
     wait_reason: str = ""
     # Local HEAD moved during this run, so a self-review is owed whatever GitHub's head says.
     head_moved: bool = False
+    # The PR head GitHub reported when the batch planned this item: the commit
+    # the batch worked from, and so the lease its publish pushes under. Empty
+    # only in runs saved before the field existed; see __post_init__.
+    remote_sha: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.remote_sha:
+            self.remote_sha = self.head_sha
 
     def step(self, step: Step) -> StepRecord:
         for rec in self.steps:

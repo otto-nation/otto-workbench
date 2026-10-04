@@ -6,6 +6,7 @@ each of them does with the answer is tested with that caller; what the answer
 *is* is tested here.
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -97,6 +98,9 @@ def test_a_repo_without_one_gets_the_fallback(tmp_path):
     assert template.text == core.pr_template.FALLBACK_TEMPLATE
 
 
+@pytest.mark.skipif(
+    os.geteuid() == 0, reason="root reads a 0o000 file, so the mode proves nothing",
+)
 def test_an_unreadable_template_reads_as_absent(tmp_path):
     """A permissions problem degrades like a missing file rather than raising.
 

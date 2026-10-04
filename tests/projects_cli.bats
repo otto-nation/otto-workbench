@@ -121,6 +121,7 @@ teardown() {
   # project_register returns 1 for a refusal and 2 for a write that failed. A
   # read-only state root used to read back as "a temporary path or a bare repo's
   # container", which sends the user looking at the wrong thing entirely.
+  skip_if_root
   make_repo "$TMPDIR/alpha"
   mkdir -p "$WORKBENCH_STATE_DIR"
   chmod 500 "$WORKBENCH_STATE_DIR"

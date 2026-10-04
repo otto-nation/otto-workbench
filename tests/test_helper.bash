@@ -171,6 +171,20 @@ sandbox_state_dir() {
   export WORKBENCH_STATE_DIR="$TMPDIR/state"
 }
 
+# skip_if_root — skips a test whose subject is a permission-bit failure.
+# Root ignores mode bits, so a chmod meant to make a read or write fail does
+# not, and the test asserts the opposite of what it is named for. CI runs as a
+# normal user on ubuntu-24.04, where these tests still run; this is for a
+# container that runs the suite as root. Calls bats_skip, not skip, so it
+# still skips in a file whose setup sources lib/ui.sh. Call it from a test body
+# or setup() only: inside `run` or a $(...) subshell the skip's exit leaves just
+# that subshell and the test carries on.
+skip_if_root() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    bats_skip "root ignores the permission bits this test removes"
+  fi
+}
+
 # source_lib — loads all lib/ai/*.sh files into the current test context.
 source_lib() {
   local f

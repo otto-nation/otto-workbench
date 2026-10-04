@@ -373,6 +373,7 @@ _run_summary() {
 }
 
 @test "a real removal failure during a reinstall is reported, not swallowed as hand-written" {
+  skip_if_root
   _make_skill reviewer reviewer
   _make_agent reviewer "REVIEW PROTOCOL BODY"
   _run_step

@@ -237,6 +237,7 @@ _run_all_migrations_in_fake() {
 }
 
 @test "an unreadable source warns, is skipped, and the rest of the carry finishes" {
+  skip_if_root
   _seed_review_trail "repo-1" '{"ts":"a"}
 '
   _seed_review_trail "repo-2" '{"ts":"b"}
@@ -261,6 +262,7 @@ _run_all_migrations_in_fake() {
   # destination is that call's precondition. When the only source cannot be
   # read, that leaves an empty monthless file otto-log would open on every
   # query forever — for a carry that never happened.
+  skip_if_root
   _seed_review_trail "repo-1" '{"ts":"a"}
 '
   chmod 000 "$STATE/reviews/repo-1/trail.jsonl"
@@ -297,6 +299,7 @@ _run_all_migrations_in_fake() {
   # explicit "$fn_name" call returns 0, and skips recording — with "will
   # retry on next run" — otherwise. repo-1 stays unreadable across the whole
   # first sync; repo-2 must still be carried in that same run.
+  skip_if_root
   _build_fake_workbench "retry"
   mkdir -p "$FAKE_STATE/reviews/repo-1" "$FAKE_STATE/reviews/repo-2"
   printf '{"ts":"a"}\n' > "$FAKE_STATE/reviews/repo-1/trail.jsonl"

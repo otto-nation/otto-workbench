@@ -124,11 +124,8 @@ _run_migration() {
   # as applied and never retries — the directory then survives with nothing
   # left to look at it.
   # Root ignores the permission bits, so the rmdir would succeed and the test
-  # would assert the opposite of what it is named for. CI runs as a normal
-  # user on ubuntu-24.04; this is for a container that does not.
-  if [[ "$(id -u)" -eq 0 ]]; then
-    skip "root ignores the write bit this test removes"
-  fi
+  # would assert the opposite of what it is named for.
+  skip_if_root
 
   local stray="$HOME/.claude/projects/-private-tmp"
   mkdir -p "$stray/memory"
@@ -150,9 +147,7 @@ _run_migration() {
   # like work and never asks again. Every other case here seeds a carriable
   # directory in setup(), so `carried` is never 0 and this branch is
   # unreachable from them — the baseline has to go for the guard to be tested.
-  if [[ "$(id -u)" -eq 0 ]]; then
-    skip "root ignores the write bit this test removes"
-  fi
+  skip_if_root
 
   rm -rf "$HOME/.claude/projects/$SLUG"
 

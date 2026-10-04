@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Callable
 
+import batch.outcomes
 import batch.publish
 import core.timeouts
 import git.push
@@ -23,6 +24,7 @@ ACTIONS: dict[DecisionKind, frozenset[str]] = {
     DecisionKind.REBASE_CONFLICT: frozenset({"retry", "abort", "open-chat"}),
     DecisionKind.REBASE_REFUSED: frozenset({"drop-pr", "force"}),
     DecisionKind.OPEN_FINDINGS: frozenset({"accept", "open-chat"}),
+    DecisionKind.STEP_REVIEW: frozenset({"accept", "retry", "skip-step", "undo", "open-chat"}),
     DecisionKind.DIRTY_WORKTREE: frozenset({"retry", "drop-pr", "open-chat"}),
     DecisionKind.FAILED: frozenset({"retry", "skip-step", "drop-pr", "force-publish"}),
     DecisionKind.INTERRUPTED: frozenset({"retry", "skip-step", "drop-pr"}),
@@ -58,7 +60,7 @@ def default_runner(argv: list[str]) -> int:
                           start_new_session=True, timeout=core.timeouts.UNBOUNDED).returncode
 
 
-def _validate(decision: Decision, request: Request) -> None:
+def _validate(decision: Decision, request: Request, item: Item) -> None:
     a = request.action
     if not decision.open:
         raise ResolveError(f"{decision.id} is already resolved ({decision.resolution})")
@@ -78,6 +80,8 @@ def _validate(decision: Decision, request: Request) -> None:
     if a == "force-publish" and decision.payload.get("reason") != \
             batch.publish.Refusal.NOT_INCORPORATED_REMOTE.value:
         raise ResolveError("force-publish only answers a not_incorporated_remote refusal")
+    if a == "undo" and (decision.step != Step.REBASE.value or not item.pre_rebase_head):
+        raise ResolveError("undo needs a rebase step_review with a recorded pre-rebase head")
 
 
 def command_for(decision: Decision, item: Item, request: Request,
@@ -94,6 +98,10 @@ def command_for(decision: Decision, item: Item, request: Request,
     if a == "reply":
         return [[pr_bin, "comments", "--reply", decision.payload["id"],
                  "--body-file", request.body_file, "--post"] + wt]
+    if a == "undo":
+        # A reset, not `pr rebase --abort`: the rebase has completed, so there
+        # is no replay left to abort.
+        return [["git", "-C", item.worktree, "reset", "--hard", item.pre_rebase_head]]
     if a == "abort":
         return [[pr_bin, "rebase", "--abort"] + wt]
     if a == "force":
@@ -144,10 +152,21 @@ def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> 
         if ok:
             rec = item.step(Step.REBASE)
             rec.status, rec.drafted = StepStatus.DONE, True
+            # Its stdout went to the operator's terminal, so the tip is read back from
+            # the record the forced run saved.
+            item.pre_rebase_head = batch.outcomes.recorded_pre_rebase_head(item)
+        else:
+            created.append(_fail(run, item, "rebase"))
+    elif action == "undo":
+        if ok:
+            rec = item.step(Step.REBASE)
+            rec.status, rec.drafted = StepStatus.SKIPPED, False
+            item.pre_rebase_head = ""
         else:
             created.append(_fail(run, item, "rebase"))
     elif action == "accept":
-        item.step(Step.REVIEW).status = StepStatus.DONE
+        if step:
+            item.step(step).status = StepStatus.DONE
     elif decision.kind is DecisionKind.COMMENT_ITEM:
         if action == "track":
             item.track.append(decision.payload["id"])
@@ -191,7 +210,7 @@ def apply(run: Run, request: Request, *, pr_bin: str,
           tree: Callable[[Item], batch.publish.TreeState] | None = None) -> list[Decision]:
     decision = run.decision(request.decision)
     item = run.item(decision.item)
-    _validate(decision, request)
+    _validate(decision, request, item)
     run_cmd = default_runner if runner is None else runner
     if request.action in ("publish", "force-publish"):
         created = _publish(run, item, pr_bin, run_cmd, tree or batch.publish.read_tree,

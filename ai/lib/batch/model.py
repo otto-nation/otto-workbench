@@ -57,10 +57,29 @@ class DecisionKind(StrEnum):
     REBASE_CONFLICT = "rebase_conflict"
     REBASE_REFUSED = "rebase_refused"
     OPEN_FINDINGS = "open_findings"
+    # One per (item, step) needing a person; payload {"evidence": [...]}.
+    # OPEN_FINDINGS is no longer emitted and stays only so older state files load.
+    STEP_REVIEW = "step_review"
     DIRTY_WORKTREE = "dirty_worktree"
     FAILED = "failed"
     INTERRUPTED = "interrupted"
     PUBLISH = "publish"
+
+
+class EvidenceKind(StrEnum):
+    """What a `step_review` decision's evidence entries are, and where each is read.
+
+    open_findings — review.md's open findings; checks_unverified — a Fix-Checks
+    trailer of red/timed_out/error on the step's commits; ci_unfixed — ci-check's
+    stdout tally; one_sided — `pr rebase`'s stdout report; stacked_on — another
+    item in the run whose publish goes first.
+    """
+
+    OPEN_FINDINGS = "open_findings"
+    CHECKS_UNVERIFIED = "checks_unverified"
+    CI_UNFIXED = "ci_unfixed"
+    ONE_SIDED = "one_sided"
+    STACKED_ON = "stacked_on"
 
 
 TERMINAL_ITEM = frozenset({ItemStatus.DONE, ItemStatus.DROPPED, ItemStatus.SKIPPED_CLOSED})

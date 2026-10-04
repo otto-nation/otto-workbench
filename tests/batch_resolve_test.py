@@ -271,3 +271,70 @@ def test_failed_abort_leaves_a_failed_decision_and_does_not_skip_rebase():
     # apply() resolves the triggering decision even though the command failed;
     # the new FAILED decision above is where the operator acts next.
     assert run.decision("d1").resolution == "abort" and not run.decision("d1").open
+
+
+from types import SimpleNamespace  # noqa: E402
+
+import batch.outcomes  # noqa: E402
+from conftest import commit_all, git_out, init_repo  # noqa: E402
+
+
+def test_accept_on_a_ci_step_review_finishes_ci_not_review():
+    run = _run(_d(batch.model.DecisionKind.STEP_REVIEW, "ci", {"evidence": []}))
+    batch.resolve.apply(run, batch.resolve.Request("d1", "accept"), pr_bin="pr", runner=Recorder())
+    it = run.items[0]
+    assert it.step(batch.model.Step.CI).status is batch.model.StepStatus.DONE
+    assert it.step(batch.model.Step.REVIEW).status is batch.model.StepStatus.PENDING
+
+
+def test_skip_step_on_a_step_review_skips_that_step():
+    run = _run(_d(batch.model.DecisionKind.STEP_REVIEW, "comments", {"evidence": []}))
+    batch.resolve.apply(run, batch.resolve.Request("d1", "skip-step"), pr_bin="pr",
+                        runner=Recorder())
+    assert run.items[0].step(batch.model.Step.COMMENTS).status is batch.model.StepStatus.SKIPPED
+
+
+def test_undo_resets_to_the_pre_rebase_head_and_undrafts_the_rebase():
+    run = _run(_d(batch.model.DecisionKind.STEP_REVIEW, "rebase", {"evidence": []}))
+    it = run.items[0]
+    it.pre_rebase_head = "p0"
+    it.step(batch.model.Step.REBASE).drafted = True
+    rec = Recorder()
+    batch.resolve.apply(run, batch.resolve.Request("d1", "undo"), pr_bin="pr", runner=rec)
+    assert rec.calls == [["git", "-C", "/wt", "reset", "--hard", "p0"]]
+    rb = it.step(batch.model.Step.REBASE)
+    assert rb.status is batch.model.StepStatus.SKIPPED and rb.drafted is False
+    assert it.pre_rebase_head == ""
+
+
+def test_undo_is_refused_off_a_rebase_or_without_a_recorded_tip():
+    run = _run(_d(batch.model.DecisionKind.STEP_REVIEW, "review", {"evidence": []}))
+    run.items[0].pre_rebase_head = "p0"
+    with pytest.raises(batch.resolve.ResolveError, match="undo"):
+        batch.resolve.apply(run, batch.resolve.Request("d1", "undo"), pr_bin="pr",
+                            runner=Recorder())
+    bare = _run(_d(batch.model.DecisionKind.STEP_REVIEW, "rebase", {"evidence": []}))
+    with pytest.raises(batch.resolve.ResolveError, match="undo"):
+        batch.resolve.apply(bare, batch.resolve.Request("d1", "undo"), pr_bin="pr",
+                            runner=Recorder())
+
+
+def test_undo_really_restores_the_worktree(tmp_path):
+    repo = init_repo(tmp_path / "wt")
+    (repo / "a.txt").write_text("a\n")
+    commit_all(repo, "before")
+    pre = git_out(repo, "rev-parse", "HEAD").strip()
+    (repo / "b.txt").write_text("b\n")
+    commit_all(repo, "rebased")
+    run = _run(_d(batch.model.DecisionKind.STEP_REVIEW, "rebase", {"evidence": []}))
+    run.items[0].worktree, run.items[0].pre_rebase_head = str(repo), pre
+    batch.resolve.apply(run, batch.resolve.Request("d1", "undo"), pr_bin="pr")
+    assert git_out(repo, "rev-parse", "HEAD").strip() == pre
+
+
+def test_a_forced_rebase_records_the_tip_it_started_from(monkeypatch):
+    monkeypatch.setattr(batch.outcomes, "_load_pr_state",
+                        lambda item: SimpleNamespace(rebase=SimpleNamespace(pre_rebase_head="p9")))
+    run = _run(_d(batch.model.DecisionKind.REBASE_REFUSED, "rebase", {"override": "--force"}))
+    batch.resolve.apply(run, batch.resolve.Request("d1", "force"), pr_bin="pr", runner=Recorder())
+    assert run.items[0].pre_rebase_head == "p9"

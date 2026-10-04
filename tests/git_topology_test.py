@@ -134,10 +134,14 @@ def test_current_branch_detached_head_exits(mock_sub):
         git.topology.current_branch("/repo")
 
 
-def _paused_rebase(tmp_path, *rebase_args: str, branch: str | None = "feat") -> Path:
+def _paused_rebase(
+    tmp_path, *rebase_args: str, branch: str | None = "feat", worktree: bool = False,
+) -> Path:
     """A repo stopped mid-rebase on a conflict, HEAD detached.
 
     *branch* None starts the rebase from a detached HEAD instead of a branch.
+    *worktree* runs the rebase in a linked worktree at ``tmp_path/feat-wt`` and
+    returns that path; the main checkout stays at ``tmp_path/repo`` on main.
     """
     repo = init_repo(tmp_path / "repo")
     (repo / "f").write_text("base\n")
@@ -148,15 +152,20 @@ def _paused_rebase(tmp_path, *rebase_args: str, branch: str | None = "feat") -> 
     git_in(repo, "checkout", "-q", "main")
     (repo / "f").write_text("main\n")
     commit_all(repo, "main")
-    git_in(repo, "checkout", "-q", "feat" if branch else "--detach")
-    if branch is None:
-        git_in(repo, "reset", "-q", "--hard", "feat")
+    where = repo
+    if worktree:
+        where = tmp_path / "feat-wt"
+        git_in(repo, "worktree", "add", "-q", str(where), "feat")
+    else:
+        git_in(repo, "checkout", "-q", "feat" if branch else "--detach")
+        if branch is None:
+            git_in(repo, "reset", "-q", "--hard", "feat")
     result = subprocess.run(
         ["git", "rebase", *rebase_args, "main"],
-        cwd=repo, capture_output=True, text=True,
+        cwd=where, capture_output=True, text=True,
     )
     assert result.returncode != 0, "fixture expected the rebase to stop on a conflict"
-    return repo
+    return where
 
 
 @pytest.mark.parametrize("backend", ["--merge", "--apply"])
@@ -169,20 +178,8 @@ def test_current_branch_names_the_branch_a_paused_rebase_is_on(tmp_path, backend
 
 def test_current_branch_names_the_rebasing_branch_in_a_linked_worktree(tmp_path):
     """A linked worktree keeps its rebase state in its own git dir, not the shared one."""
-    repo = init_repo(tmp_path / "repo")
-    (repo / "f").write_text("base\n")
-    commit_all(repo, "base")
-    git_in(repo, "branch", "feat")
-    (repo / "f").write_text("main\n")
-    commit_all(repo, "main")
-    wt = tmp_path / "feat-wt"
-    git_in(repo, "worktree", "add", "-q", str(wt), "feat")
-    (wt / "f").write_text("feat\n")
-    commit_all(wt, "feat")
-    result = subprocess.run(
-        ["git", "rebase", "main"], cwd=wt, capture_output=True, text=True,
-    )
-    assert result.returncode != 0, "fixture expected the rebase to stop on a conflict"
+    wt = _paused_rebase(tmp_path, worktree=True)
+    repo = tmp_path / "repo"
     assert git.topology.current_branch(str(wt)) == "feat"
     assert git.topology.current_branch(str(repo)) == "main"
 

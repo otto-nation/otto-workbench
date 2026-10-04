@@ -152,6 +152,9 @@ class TestPresent:
         assert not present("body\n\nCloses #12", "#1")
         assert present("body\n\nCloses #12", "#12")
 
+    def test_colon_form_counts_as_present(self):
+        assert present("body\n\nCloses: #941", "#941")
+
 
 # ── append ──────────────────────────────────────────────────────────────────
 
@@ -191,6 +194,12 @@ class TestAppend:
 
     def test_a_ref_the_body_already_closes_under_another_keyword_is_not_duplicated(self):
         result = append("body\n\nFixes #941", ["#941"])
+        assert result.body.count("941") == 1
+        assert result.linked == ()
+        assert result.already == ("#941",)
+
+    def test_a_hand_written_colon_form_is_not_duplicated(self):
+        result = append("body\n\nCloses: #941", ["#941"])
         assert result.body.count("941") == 1
         assert result.linked == ()
         assert result.already == ("#941",)

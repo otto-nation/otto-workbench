@@ -321,9 +321,9 @@ teardown() {
 @test "every WORKBENCH_ROOT path a lib/ai module reaches is in the guard's list" {
   # The tier the guard actually owns, asserted so the comment above it stops
   # being prose. A path resolved through WORKBENCH_ROOT is reached mid-run by
-  # python3 — ai/lib/core/pr_template.py at pr.sh:229, and lib/config_cli.py
-  # at pr.sh:314 with stderr discarded and 0 returned, which reports nothing at
-  # all. A lib/ai module that gains another must teach the
+  # python3 — ai/lib/core/pr_template.py at pr.sh:233, and lib/config_cli.py at
+  # pr.sh:318 with stderr discarded and 0 returned, so a missing path there
+  # reports nothing at all. A lib/ai module that gains another must teach the
   # guard about it. Modules a task sources by name are deliberately out of
   # scope: those fail on the body's first three lines, naming the path.
   local guard list refs p

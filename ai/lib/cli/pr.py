@@ -1,7 +1,7 @@
 """`pr`'s parser, its dispatcher, and the two commands that shape argv.
 
 The entry point, and only the entry point. Every subcommand's work lives
-below this layer: three in `cli.pr_commands`, six behind a `CommandSpec`
+below this layer: three in `cli.pr_commands`, seven behind a `CommandSpec`
 handler the registry names. What is here is the two-pass global parse, the
 usage text, the ordering of resolve/register/fetch/lock, and the routing.
 

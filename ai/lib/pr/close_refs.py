@@ -68,10 +68,11 @@ def present(body: str, ref: str) -> bool:
     """Whether ``body`` already closes ``ref`` under any GitHub closing keyword.
 
     The trailing ``(?!\\d)`` is what keeps ``#1`` from matching a body that
-    closes ``#12``.
+    closes ``#12``. An optional ``:`` after the keyword matches GitHub's own
+    ``Closes: #941`` form, so a hand-written colon ref is not duplicated.
     """
     pattern = (
-        rf"(?i)\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+"
+        rf"(?i)\b(close[sd]?|fix(e[sd])?|resolve[sd]?):?\s+"
         rf"{re.escape(ref)}(?!\d)"
     )
     return re.search(pattern, body) is not None

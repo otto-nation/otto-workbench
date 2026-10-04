@@ -2,7 +2,7 @@
 
 `status`, `fix` and `gc` ran inside `ai/bin/pr`, which is not an importable
 module, so `CommandSpec.handler` could not name them. They live here so the
-field means one thing across the nine: a `"<module>:<attr>"` string that
+field means one thing across the ten: a `"<module>:<attr>"` string that
 importlib can resolve, or None.
 
 `cmd_fix`'s three passes are in-process calls through `cli.dispatch`.

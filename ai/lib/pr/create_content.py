@@ -168,7 +168,9 @@ def generate(
             log(f"✓ Found issue number: {issue}")
 
     if facts.count == 1:
-        title, body = _single(wt, template, facts, repo, log)
+        title, body = _single(
+            wt, template, facts, repo, log, skip_ai=bool(req.body),
+        )
     else:
         title, body = _multi(wt, req, template, facts, issue, repo)
 
@@ -237,10 +239,15 @@ def _ask(
 
 def _single(
     wt: Path, template: PRTemplate, facts: BranchFacts, repo: str,
-    log: Callable[[str], None],
+    log: Callable[[str], None], *, skip_ai: bool = False,
 ) -> tuple[str, str]:
     title = facts.head_subject
     if template.found:
+        if skip_ai:
+            # The caller supplied --body/--body-file, so whatever the AI
+            # would fill the template with is about to be discarded anyway.
+            log("→ Single commit — body supplied, skipping AI template fill")
+            return title, ""
         log("→ Single commit — using commit message as title, AI filling template")
         prompt = (
             "Fill out this PR template based on the commit below.\n"

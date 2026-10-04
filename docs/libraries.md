@@ -1130,6 +1130,10 @@ State set by its functions: `BRANCH`, `DEFAULT_BRANCH`, `SKIP_ISSUE`,
 `PR_BASE`, `PR_ISSUE`, `PR_CLOSES`, `PR_TEMPLATE`, `PR_TEMPLATE_PATH`,
 `PR_HAS_TEMPLATE`, `PR_TITLE`, `PR_DESCRIPTION`.
 
+PR creation itself is not here: `pr create` drives it natively through
+ai/lib/pr/create.py and never calls this module. What remains serves
+`task pr:update` only.
+
 | Function | Purpose |
 |----------|---------|
 | `load_pr_context` | Loads the AI command, resolves the current branch context and verifies the effective base has a remote-tracking ref. Sets BRANCH and DEFAULT_BRANCH. Returns 1 on failure. |

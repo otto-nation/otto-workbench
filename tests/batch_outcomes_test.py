@@ -169,7 +169,8 @@ def test_a_one_sided_rebase_is_a_step_review():
 def test_fix_checks_reads_the_trailer_from_the_steps_commits(tmp_path, status, flagged):
     repo = init_repo(tmp_path / "wt")
     (repo / "a.txt").write_text("a\n")
-    commit_all(repo, "base")
+    # An earlier run's red verdict, before the step's lower bound, is not this step's.
+    commit_all(repo, "fix: an earlier run\n\nFix-Checks: red")
     before = git_out(repo, "rev-parse", "HEAD").strip()
     (repo / "a.txt").write_text("b\n")
     commit_all(repo, f"fix: address CI failures\n\nFix-Checks: {status}")
@@ -199,3 +200,26 @@ def test_comments_carry_their_items_and_a_step_review_together(monkeypatch):
                                 head_before="h0")
     assert [d.kind for d in r.decisions] == [batch.model.DecisionKind.COMMENT_ITEM,
                                              batch.model.DecisionKind.STEP_REVIEW]
+
+
+def test_an_unreadable_commit_range_is_checks_unverified(monkeypatch):
+    monkeypatch.setattr(batch.outcomes, "open_findings", lambda item: [])
+    monkeypatch.setattr(batch.outcomes.git.client, "run",
+                        lambda *a, **k: SimpleNamespace(ok=False, stdout="", stderr="boom"))
+    r = batch.outcomes.classify(batch.model.Step.REVIEW, 0, "", item=ITEM, log_tail=[],
+                                head_before="h0")
+    assert r.status is batch.model.StepStatus.NEEDS_DECISION
+    assert r.decisions[0].payload["evidence"] == [
+        {"kind": "checks_unverified", "commit": "", "status": "unreadable"}]
+
+
+def test_ci_unfixed_and_a_red_trailer_are_one_step_review():
+    stdout = _tally_stdout(unfixed=[{"id": "i-1"}])
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(batch.outcomes, "fix_checks",
+                   lambda wt, hb: [{"commit": "c1", "status": "red"}])
+        r = batch.outcomes.classify(batch.model.Step.CI, 0, stdout, item=ITEM, log_tail=[],
+                                    head_before="h0")
+    assert [d.kind for d in r.decisions] == [batch.model.DecisionKind.STEP_REVIEW]
+    assert [e["kind"] for e in r.decisions[0].payload["evidence"]] == [
+        "ci_unfixed", "checks_unverified"]

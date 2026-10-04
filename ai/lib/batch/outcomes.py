@@ -87,16 +87,21 @@ def fix_checks(worktree: str, head_before: str) -> list[dict]:
     Each entry is `{"commit", "status"}`. Read off the commits the step made,
     so a verdict some earlier run left behind can never be mistaken for this
     one. A commit with no trailer — one an agent made outside the fix engine —
-    is no evidence rather than an error.
+    is no evidence rather than an error. A range git cannot read is one entry
+    with status `unreadable`, so the step is held for a person rather than
+    taken as clean.
     """
+    # With no lower bound there is no range of the step's own commits to read:
+    # every commit reachable from HEAD would be scanned, and a verdict an
+    # earlier run left behind would be taken for this step's.
     if not (worktree and head_before):
         return []
     fmt = f"--format=%H%x09%(trailers:key={pr.fix.CHECKS_TRAILER},valueonly,separator=%x2C)"
     r = git.client.run("log", fmt, f"{head_before}..HEAD", cwd=worktree)
-    # An unreadable range yields no trailer verdicts; the scheduler's own HEAD
-    # comparison still decides whether the step drafted anything.
+    # Fail closed: a failed or timed-out read says nothing about the verdicts,
+    # and an empty list would let a `Fix-Checks: red` commit classify DONE.
     if not r.ok:
-        return []
+        return [{"commit": "", "status": "unreadable"}]
     found = []
     for line in r.stdout.splitlines():
         sha, _, values = line.partition("\t")
@@ -177,8 +182,8 @@ def classify(step: Step, exit_code: int, stdout: str, *, item: Item,
 
     A clean exit yields at most one `step_review` decision, carrying every
     piece of evidence found, so two decisions on one step cannot disagree.
-    *head_before* is the HEAD the step started from; its `Fix-Checks:`
-    trailers are read from the commits after it.
+    *head_before* is the HEAD the step's first attempt started from; the
+    `Fix-Checks:` trailers are read from every commit after it.
     """
     if step is Step.REBASE and exit_code == CONFLICTS_EXIT:
         return _needs(DecisionKind.REBASE_CONFLICT, [_rebase_payload(stdout, log_tail)])

@@ -196,11 +196,14 @@ class Scheduler:
 
     def _finish(self, live: _Live, code: int) -> None:
         item, rec = live.item, live.rec
+        # The HEAD the step's first attempt started from: trailers and movement
+        # are read across every attempt, so a retry that commits nothing cannot
+        # hide a `Fix-Checks: red` commit an earlier attempt left drafted.
+        base = rec.start_head or live.head_before
         result = batch.outcomes.classify(rec.step, code, live.proc.stdout(), item=item,
-                                         log_tail=list(live.tail),
-                                         head_before=live.head_before)
+                                         log_tail=list(live.tail), head_before=base)
         rec.exit_code, rec.ended_at, rec.status = code, batch.store.now_iso(), result.status
-        moved = self._head(item.worktree) != (rec.start_head or live.head_before)
+        moved = self._head(item.worktree) != base
         # Drafted means this step left work the publish owes the remote: commits
         # since its first attempt started, or — for a comments pass, which drafts
         # its replies even when it commits nothing — any clean exit. Sticky: a

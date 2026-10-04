@@ -81,6 +81,26 @@ def test_a_retry_that_commits_nothing_keeps_what_the_failed_attempt_drafted():
     assert [d.kind for d in h.run.open_decisions()] == [DecisionKind.PUBLISH]
 
 
+def test_a_retry_that_commits_nothing_still_sees_the_first_attempts_red_trailer(monkeypatch):
+    h = Harness([row(1, ONLY_REVIEW)], moves={("review", "/wt/b1")})
+    # The first attempt's commit, `review-1`, carries `Fix-Checks: red`; it is in
+    # the range only when the read starts from before the first attempt.
+    monkeypatch.setattr(batch.outcomes, "fix_checks", lambda wt, hb: (
+        [{"commit": "review-1", "status": "red"}]
+        if hb == "h0" and h.heads.get(wt) == "review-1" else []))
+    assert h.sched.run_until_blocked() is RunStatus.WAITING
+    d = h.run.open_decisions()[0]
+    assert d.kind is DecisionKind.STEP_REVIEW
+    batch.store.save(h.run)
+    batch.store.write_request(h.run.id, {"decision": d.id, "action": "retry"})
+    h.moves.clear()
+    assert h.sched.run_until_blocked() is RunStatus.WAITING
+    assert [x[1] for x in h.spawned] == ["review", "review"]
+    again = h.run.open_decisions()
+    assert [x.kind for x in again] == [DecisionKind.STEP_REVIEW]
+    assert again[0].payload["evidence"][0]["kind"] == "checks_unverified"
+
+
 def test_a_retry_keeps_the_draft_in_state_written_before_start_head_existed():
     h = Harness([row(1, ONLY_REVIEW)], codes={("review", "/wt/b1"): 1},
                 moves={("review", "/wt/b1")})

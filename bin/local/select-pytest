@@ -112,6 +112,9 @@ NO_DEPS_TESTS = {
     "tests/review_agent_diagnostics_support.py",
     # Three string constants the eval.floors suites share; it imports nothing.
     "tests/eval_floors_support.py",
+    # Real git remotes for the batch suites: conftest and git only, nothing
+    # in-repo; the suites importing it carry the deps.
+    "tests/batch_git_support.py",
 }
 
 _LOAD_LIB = re.compile(r'_load_lib\(\s*"([^"]+)"\s*\)')

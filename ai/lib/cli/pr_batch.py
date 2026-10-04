@@ -123,8 +123,15 @@ def _plan(args) -> batch.plan.Plan:
     return batch.plan.build_plan(args.checkout)
 
 
-def _drop_refs(run) -> None:
-    batch.plan.drop_refs(run.ref_dirs, run.ref_namespace)
+def _save(run) -> None:
+    """Persist *run*, then drop its refs if it has ended.
+
+    Saving first means a cleanup that fails can never leave the stored run
+    short of the terminal status it reached.
+    """
+    batch.store.save(run)
+    if run.status in (RunStatus.DONE, RunStatus.CANCELLED):
+        batch.plan.drop_refs(run.ref_dirs, run.ref_namespace)
 
 
 def _apply_loaded(run, bin_dir: Path) -> list[str]:
@@ -141,7 +148,6 @@ def _apply_loaded(run, bin_dir: Path) -> list[str]:
     if (run.status in (RunStatus.WAITING, RunStatus.RUNNING)
             and run.items and all(item.terminal for item in run.items)):
         run.status = RunStatus.DONE
-        _drop_refs(run)
     return errors
 
 
@@ -154,7 +160,7 @@ def _held_drive(run, bin_dir: Path, cfg) -> int:
     status = batch.scheduler.Scheduler(
         run, pr_bin=str(bin_dir / "pr"), cfg=cfg).run_until_blocked()
     errors = _apply_loaded(run, bin_dir)
-    batch.store.save(run)
+    _save(run)
     if run.status is RunStatus.DONE:
         status = RunStatus.DONE
     if errors:
@@ -178,19 +184,25 @@ def _cmd_run(args, bin_dir: Path) -> int:
     if active:
         return _err(f"run {active} is still active; resolve its decisions or cancel it first")
     plan = _plan(args)
-    keys = {k for k in args.prs.split(",") if k}
-    rows = [r for r in plan.rows if not keys or r.key in keys]
-    selected = {s.key: s.steps for s in args.select} if args.select else None
-    dirs = sorted({r.repo_dir for r in rows}) or (args.checkout or [])
-    cfg = _cfg(dirs)
-    run = batch.scheduler.new_run(rows, steps=args.steps, selected=selected,
-                                  pool=batch.admission.ceiling(args.pool, cfg),
-                                  auto_publish=args.auto_publish,
-                                  now=datetime.now(timezone.utc),
-                                  ref_namespace=plan.ref_namespace, ref_dirs=plan.ref_dirs)
-    trail = Trail.start(script="pr-batch", context={"run": run.id}, record=True)
-    run.trail_root = os.environ.get(TRAIL_ROOT_ENV, "")
-    batch.store.save(run)
+    try:
+        keys = {k for k in args.prs.split(",") if k}
+        rows = [r for r in plan.rows if not keys or r.key in keys]
+        selected = {s.key: s.steps for s in args.select} if args.select else None
+        dirs = sorted({r.repo_dir for r in rows}) or (args.checkout or [])
+        cfg = _cfg(dirs)
+        run = batch.scheduler.new_run(rows, steps=args.steps, selected=selected,
+                                      pool=batch.admission.ceiling(args.pool, cfg),
+                                      auto_publish=args.auto_publish,
+                                      now=datetime.now(timezone.utc),
+                                      ref_namespace=plan.ref_namespace, ref_dirs=plan.ref_dirs)
+        trail = Trail.start(script="pr-batch", context={"run": run.id}, record=True)
+        run.trail_root = os.environ.get(TRAIL_ROOT_ENV, "")
+        batch.store.save(run)
+    except BaseException:
+        # Until the run is saved nothing records the plan's refs, so nothing
+        # would ever drop them.
+        batch.plan.drop_refs(plan.ref_dirs, plan.ref_namespace)
+        raise
     batch.events.emit("run_started", run=run.id, pool=run.pool, trail_root=run.trail_root,
                 steps=[s.value for s in run.steps],
                 auto_publish=[s.value for s in run.auto_publish])
@@ -227,7 +239,7 @@ def _apply_pending(run_id: str, bin_dir: Path, decision_id: str) -> int:
                                    batch.store.now_iso()):
             run = batch.store.load(run_id)
             errors = _apply_loaded(run, bin_dir)
-            batch.store.save(run)
+            _save(run)
     except batch.store.RunNotFound as exc:
         return _err(str(exc))
     except core.run_lock.LockBusy:
@@ -280,8 +292,7 @@ def _cmd_cancel(args) -> int:
         run = batch.store.load(run_id)
         if run.status not in (RunStatus.DONE, RunStatus.CANCELLED):
             run.status = RunStatus.CANCELLED
-            _drop_refs(run)
-            batch.store.save(run)
+            _save(run)
     core.report.emit_json({"cancelled": True, "run": run_id})
     return EXIT_OK
 
@@ -306,10 +317,13 @@ def cmd_batch(argv: list[str], ctx, *, bin_dir: Path, schema_version: str | None
     try:
         if args.command == "plan":
             plan = batch.plan.build_plan(args.checkout)
-            core.report.emit_json(core.serde.to_dict(plan))
-            # Nothing runs from a standalone plan, so its refs go now; a saved
-            # plan passed to `run --plan` reads mergeStateStatus instead.
-            batch.plan.drop_refs(plan.ref_dirs, plan.ref_namespace)
+            try:
+                core.report.emit_json(core.serde.to_dict(plan))
+            finally:
+                # Nothing runs from a standalone plan, so its refs go now, even
+                # when the reader has gone; a saved plan passed to `run --plan`
+                # reads mergeStateStatus instead.
+                batch.plan.drop_refs(plan.ref_dirs, plan.ref_namespace)
             return EXIT_OK
         if args.command == "run":
             return _cmd_run(args, bin_dir)

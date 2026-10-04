@@ -14,6 +14,7 @@ import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import core.log
 import gh.client
 import git.client
 import git.topology
@@ -179,9 +180,15 @@ def drop_refs(repo_dirs: list[str], namespace: str) -> None:
     if not namespace.startswith(f"{NAMESPACE_ROOT}/"):
         return
     for repo_dir in sorted(set(repo_dirs)):
+        # A checkout removed since the plan has no refs left to drop, and git
+        # cannot even start with it as the working directory.
+        if not Path(repo_dir).is_dir():
+            continue
         for ref in git.client.lines("for-each-ref", "--format=%(refname)", namespace,
                                     cwd=repo_dir):
-            git.client.run("update-ref", "-d", ref, cwd=repo_dir)
+            r = git.client.run("update-ref", "-d", ref, cwd=repo_dir)
+            if not r.ok:
+                core.log.warn(f"could not delete {ref} in {repo_dir}: {r.stderr.strip()}")
 
 
 def comments_need(threads: list[dict], settled: set[str]) -> StepNeed:
@@ -303,14 +310,17 @@ def build_plan(repo_dirs: list[str]) -> Plan:
         dupes = sorted({s for s in slugs if slugs.count(s) > 1})
         raise PlanError("--checkout names the same repo more than once: " + ", ".join(dupes))
     namespace = new_namespace()
-    fetched = [d for d in repo_dirs if fetch_namespace(d, namespace)]
     try:
+        fetched = [d for d in repo_dirs if fetch_namespace(d, namespace)]
         data = _graphql(_SEARCH, {"q": search_query(sorted(by_slug))})
-    except PlanError:
-        drop_refs(fetched, namespace)
+        rows = rows_from_search(data, by_slug, {d: namespace for d in fetched})
+    except BaseException:
+        # No plan comes back to own the refs — Ctrl-C included — so drop them
+        # here, in every repo: a fetch that failed part-way may still have
+        # written some.
+        drop_refs(repo_dirs, namespace)
         raise
-    return Plan(viewer=(data.get("viewer") or {}).get("login", ""),
-                rows=rows_from_search(data, by_slug, {d: namespace for d in fetched}),
+    return Plan(viewer=(data.get("viewer") or {}).get("login", ""), rows=rows,
                 ref_namespace=namespace, ref_dirs=fetched)
 
 

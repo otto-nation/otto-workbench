@@ -1,15 +1,9 @@
 """A bare `origin` and a clone of it, for the batch suites that read real refs."""
 
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from conftest import commit_all, git_in, git_out, init_repo, run_checked
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
-LIB_DIR = REPO_ROOT / "ai" / "lib"
-if str(LIB_DIR) not in sys.path:
-    sys.path.insert(0, str(LIB_DIR))
 
 
 @dataclass(frozen=True)

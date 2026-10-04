@@ -45,7 +45,9 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
                 for s in STEP_ORDER if s in steps]
         items.append(Item(key=r.key, repo=r.repo, repo_dir=r.repo_dir, pr=r.pr, branch=r.branch,
                           head_sha=r.head_sha, steps=recs))
-    by_branch = {(r.repo, r.branch): r.key for r in rows}
+    # A fork's head branch names a branch in another repo — often `main` —
+    # so keying it under the base repo would stack every PR based on `main`.
+    by_branch = {(r.repo, r.branch): r.key for r in rows if not r.is_fork}
     queued = {it.key for it in items}
     bases = {r.key: by_branch.get((r.repo, r.base_ref), "") for r in rows if r.base_ref}
     for it in items:
@@ -313,9 +315,11 @@ class Scheduler:
 
     def _settle(self, status: RunStatus) -> RunStatus:
         self.run.status = status
+        # Save before dropping: cleanup that fails must never leave the stored
+        # run claiming it is still RUNNING.
+        batch.store.save(self.run)
         if status in (RunStatus.DONE, RunStatus.CANCELLED):
             batch.plan.drop_refs(self.run.ref_dirs, self.run.ref_namespace)
-        batch.store.save(self.run)
         self._emit("run_waiting" if status is RunStatus.WAITING else "run_finished",
                    run=self.run.id, status=status.value,
                    open_decisions=len(self.run.open_decisions()))

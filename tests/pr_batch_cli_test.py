@@ -2,6 +2,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -299,3 +301,58 @@ def test_a_command_that_ignores_argv_answers_help_without_running(monkeypatch, c
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("ran")))
     assert _main(["status", "-h"]) == 0
     assert "usage" in capsys.readouterr().out
+
+
+def _failing_drop(monkeypatch):
+    def drop(dirs, ns):
+        raise OSError("cleanup failed")
+
+    monkeypatch.setattr(batch.plan, "drop_refs", drop)
+
+
+def test_cancel_saves_cancelled_before_dropping_refs(monkeypatch):
+    run = _saved_run_with_decision()
+    _failing_drop(monkeypatch)
+    with pytest.raises(OSError):
+        _main(["batch", "cancel", run.id])
+    assert batch.store.load(run.id).status is batch.model.RunStatus.CANCELLED
+
+
+def test_resolve_saves_done_before_dropping_refs(monkeypatch):
+    run = _saved_run_with_decisions(1, kind=batch.model.DecisionKind.FAILED)
+    _failing_drop(monkeypatch)
+    with pytest.raises(OSError):
+        _main(["batch", "resolve", run.id, "d1", "--action", "drop-pr"])
+    assert batch.store.load(run.id).status is batch.model.RunStatus.DONE
+
+
+def _plan_with_refs():
+    return Plan("me", [], ref_namespace="refs/pr-batch/abcd", ref_dirs=["/r"])
+
+
+def test_plan_drops_its_refs_when_the_reader_has_gone(monkeypatch):
+    dropped = []
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: _plan_with_refs())
+    monkeypatch.setattr(batch.plan, "drop_refs", lambda dirs, ns: dropped.append((dirs, ns)))
+
+    def gone(_payload):
+        raise BrokenPipeError
+
+    monkeypatch.setattr(cli.pr_batch.core.report, "emit_json", gone)
+    with pytest.raises(BrokenPipeError):
+        _main(["batch", "plan", "--checkout", "/r"])
+    assert dropped == [(["/r"], "refs/pr-batch/abcd")]
+
+
+def test_run_drops_the_plans_refs_when_it_fails_before_saving(monkeypatch):
+    dropped = []
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: _plan_with_refs())
+    monkeypatch.setattr(batch.plan, "drop_refs", lambda dirs, ns: dropped.append((dirs, ns)))
+
+    def broken_config(dirs):
+        raise ValueError("bad config")
+
+    monkeypatch.setattr(cli.pr_batch, "_cfg", broken_config)
+    with pytest.raises(ValueError):
+        _main(["batch", "run", "--checkout", "/r"])
+    assert dropped == [(["/r"], "refs/pr-batch/abcd")]

@@ -24,6 +24,7 @@ import review.format
 import gh.pr_data
 import gh.pr_reads
 import review.paths
+import review.post_file
 import review.posting
 import review.sections
 
@@ -74,145 +75,13 @@ from review.sections import ReviewSections
 SCRIPT = "review-post"
 
 _SUBMODULES = (
-    gh.client, review.dedup, review.format, gh.pr_data, gh.pr_reads, review.paths, review.posting, review.sections, git.client, core.log, core.module_proxy, core.proc,
+    gh.client, review.dedup, review.format, gh.pr_data, gh.pr_reads, review.paths, review.post_file, review.posting, review.sections, git.client, core.log, core.module_proxy, core.proc,
 )
 
 core.module_proxy.install(__name__, _SUBMODULES)
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
-
-def _run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
-    severity_filter = set(args.severity.upper().split(","))
-    text = review_path.read_text()
-
-    sha_match = HEAD_SHA_RE.search(text)
-    review_sha = sha_match.group(1) if sha_match else None
-
-    sections = ReviewSections.from_text(text)
-
-    doc = ReviewDocument.parse(text)
-    declared = doc.findings
-    core.log.info(f"Parsed {len(declared)} findings from review file")
-    trail.info("parse_findings", f"parsed {len(declared)} findings",
-               data={"total": len(declared), "review_sha": review_sha})
-
-    # A finding whose box the fix pass ticked is resolved, and posting it asks a
-    # reviewer to look at work that is already done. Dropped outright rather than
-    # stated in the body, which is where a *declined* finding goes: a decline is a
-    # judgement someone may still want to read, a fix is nothing left to say.
-    # `open_findings` is the document's own reading of which is which.
-    all_findings = doc.open_findings
-    fixed = len(declared) - len(all_findings)
-    if fixed:
-        core.log.info(f"Excluded {fixed} finding{plural(fixed)} the fix pass already resolved")
-    trail.decision(
-        "filter_fixed",
-        f"kept {len(all_findings)} of {len(declared)} findings",
-        reason="a checked finding is resolved and has nothing to post",
-        data={"kept": len(all_findings), "excluded": fixed},
-    )
-
-    findings = [f for f in all_findings if f.severity in severity_filter]
-    filtered = len(all_findings) - len(findings)
-    if filtered:
-        core.log.info(f"Filtered to {len(findings)} findings (excluded {filtered} by severity)")
-    trail.decision(
-        "filter_severity",
-        f"kept {len(findings)} of {len(all_findings)} findings",
-        reason=f"severity filter: {args.severity}",
-        data={"kept": len(findings), "excluded": filtered, "filter": args.severity},
-    )
-
-    if not findings:
-        core.log.warn("No findings to post")
-        return 0
-
-    head_sha = sidecar.head_sha
-    head_ref = sidecar.head_ref
-    base_ref = sidecar.base_ref
-    pr_data = None
-    if not args.dry_run:
-        pr_data = fetch_pr_data(repo, args.pr)
-        head_sha = pr_data.head_sha
-        head_ref = head_ref or pr_data.head_ref
-        base_ref = base_ref or pr_data.base_ref
-    else:
-        head_sha = head_sha or review_sha or "dry-run"
-
-    sha_drifted = bool(review_sha and review_sha != head_sha)
-    if sha_drifted:
-        core.log.warn(
-            f"Review was written against {git.client.abbrev(review_sha)}, "
-            f"PR HEAD is now {git.client.abbrev(head_sha)}")
-        core.log.info("Re-verifying positions against current diff")
-        trail.info(
-            "sha_drift",
-            f"review SHA {git.client.abbrev(review_sha) or '?'} "
-            f"!= HEAD {git.client.abbrev(head_sha) or '?'}",
-            data={"review_sha": review_sha, "head_sha": head_sha},
-        )
-
-    if args.dry_run:
-        core.log.info("Fetching diff for classification...")
-    diff_text = _get_diff(repo, args.pr)
-    inline, file_level, skipped = classify_findings(findings, diff_text)
-    core.log.info(f"Classified: {len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped")
-    trail.info("classify_findings",
-               f"{len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped",
-               data={"inline": len(inline), "file_level": len(file_level), "skipped": len(skipped)})
-
-    all_postable = inline + file_level
-    if not args.dry_run and all_postable:
-        kept, deduped = dedup_against_posted(all_postable, repo, args.pr, pr_data)
-        if deduped:
-            core.log.info(f"Skipped {len(deduped)} findings duplicating existing comments")
-            skipped.extend(deduped)
-            inline = [f for f in kept if f.classification == CLASS_INLINE]
-            file_level = [f for f in kept if f.classification == CLASS_FILE_LEVEL]
-        trail.info("dedup", f"removed {len(deduped) if deduped else 0} duplicate findings",
-                   data={"deduped": len(deduped) if deduped else 0, "kept": len(kept)})
-
-    body_findings = file_level + skipped
-
-    findings_for_links = inline + body_findings
-    resolve_permalinks(findings_for_links, repo, diff_text, head_ref, base_ref,
-                       sidecar.host)
-
-    inline, body_findings = renumber_for_posting(inline, body_findings)
-
-    inline_comments = [format_inline_comment(f) for f in inline]
-    body_text = format_body_text(
-        body_findings, len(inline) > 0, severity_filter,
-        sections=sections,
-    )
-
-    commit_id = head_sha
-    chunk_size = args.chunk_size
-
-    if args.dry_run:
-        trail.decision("post_mode", "dry-run mode", reason="--dry-run flag set")
-        payload = {
-            "commit_id": commit_id,
-            "body": body_text,
-        }
-        if inline_comments:
-            payload["comments"] = inline_comments
-        _print_dry_run(payload, inline, body_findings, skipped, chunk_size)
-        return 0
-
-    trail.decision("post_mode", "posting to GitHub",
-                   reason="not dry-run",
-                   data={"inline_count": len(inline_comments), "has_body": bool(body_text)})
-    _post_and_track(
-        args, inline_comments, body_text,
-        inline, body_findings, skipped,
-        commit_id, head_sha, chunk_size, severity_filter, pr_data,
-        review_sha=review_sha or head_sha, sha_drifted=sha_drifted,
-        sections=sections,
-    )
-    return 0
-
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog=SCRIPT,
@@ -277,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     try:
-        return _run_post(trail, args, repo, sidecar, review_path)
+        return review.post_file.run_post(trail, args, repo, sidecar, review_path)
     except KeyboardInterrupt:
         return core.proc.INTERRUPT_RETURNCODE
     except Exception as exc:

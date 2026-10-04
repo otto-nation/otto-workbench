@@ -2563,6 +2563,16 @@ Enforcement comes from the supported set being allowed to *shrink* —
 hand-stamps a version into the document: the field echoes back what the caller
 declared and this build agreed to serve, so it cannot go stale on its own.
 
+### review/post_file.py
+
+Post one review file to its PR: parse, check positions, renumber, and post as a PENDING review.
+
+`run_post` is the flow `review-post` runs: read the review document and its
+sidecar, resolve the PR's refs and diff, drop findings already posted,
+classify the rest as inline or body comments, and post them in chunks — or
+print the plan on a dry run. `cli.review_post` is the command over this; the
+posting mechanics are `review.posting`, formatting is `review.format`.
+
 ### review/posting.py
 
 High-level posting orchestration for review-post.

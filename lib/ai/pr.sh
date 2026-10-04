@@ -11,6 +11,10 @@
 # State set by its functions: `BRANCH`, `DEFAULT_BRANCH`, `SKIP_ISSUE`,
 # `PR_BASE`, `PR_ISSUE`, `PR_CLOSES`, `PR_TEMPLATE`, `PR_TEMPLATE_PATH`,
 # `PR_HAS_TEMPLATE`, `PR_TITLE`, `PR_DESCRIPTION`.
+#
+# PR creation itself is not here: `pr create` drives it natively through
+# ai/lib/pr/create.py and never calls this module. What remains serves
+# `task pr:update` only.
 
 # WORKBENCH_ROOT comes from ai/core.sh, which this file requires be sourced
 # first (see the header above). _pr_load_template asks git for the repo root,

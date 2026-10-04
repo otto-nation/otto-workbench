@@ -291,6 +291,18 @@ def test_single_commit_with_template_uses_subject_and_ai_body(tmp_path, monkeypa
     assert any("AI filling template" in line for line in logs)
 
 
+def test_single_commit_with_template_and_body_skips_the_ai_call(tmp_path, monkeypatch):
+    wt = _repo(tmp_path)
+    _write(wt, ".github/PULL_REQUEST_TEMPLATE.md", _WHAT_WHY)
+    _feature(wt)
+    _empty(wt, "feat: one")
+    calls = _stub(monkeypatch, _desc(_ON_TEMPLATE))
+    result = _generate(wt, _req(body=_ON_TEMPLATE))
+    assert calls == []
+    assert result.title == "feat: one"
+    assert result.body == _ON_TEMPLATE
+
+
 def test_single_commit_no_template_keeps_blank_lines_in_the_body(tmp_path, monkeypatch):
     wt = _repo(tmp_path)
     _feature(wt)

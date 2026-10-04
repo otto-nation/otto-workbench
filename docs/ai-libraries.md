@@ -6082,7 +6082,7 @@ answers no question anyone asks of it.
 `pr`'s parser, its dispatcher, and the two commands that shape argv.
 
 The entry point, and only the entry point. Every subcommand's work lives
-below this layer: three in `cli.pr_commands`, six behind a `CommandSpec`
+below this layer: three in `cli.pr_commands`, seven behind a `CommandSpec`
 handler the registry names. What is here is the two-pass global parse, the
 usage text, the ordering of resolve/register/fetch/lock, and the routing.
 
@@ -6124,7 +6124,7 @@ The three `pr` subcommands that used to be defined inside the binary.
 
 `status`, `fix` and `gc` ran inside `ai/bin/pr`, which is not an importable
 module, so `CommandSpec.handler` could not name them. They live here so the
-field means one thing across the nine: a `"<module>:<attr>"` string that
+field means one thing across the ten: a `"<module>:<attr>"` string that
 importlib can resolve, or None.
 
 `cmd_fix`'s three passes are in-process calls through `cli.dispatch`.

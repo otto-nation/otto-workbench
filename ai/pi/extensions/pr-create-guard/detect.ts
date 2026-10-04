@@ -4,7 +4,7 @@
  * index.ts imports `isToolCallEventType` from the Pi SDK as a value, so it can
  * only be loaded from somewhere the SDK resolves — inside a Pi session. This
  * file imports only ../_shared, which imports nothing, so
- * tests/pi_extensions.bats can run it under plain `node`.
+ * tests/pi_extensions_testpipe.bats can run it under plain `node`.
  *
  * Why this rule is shared where twelve of Claude's are not: the Claude-only
  * ones exist to dodge that harness's permission-prompt engine, and each of

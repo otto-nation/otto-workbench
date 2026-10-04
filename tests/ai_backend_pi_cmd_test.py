@@ -389,7 +389,7 @@ class TestExtensionFlag:
         Read from detect.ts, where `canonical` and `within` live: review-guard.ts
         imports the Pi SDK and loads only inside a session, so the predicates
         moved to the sibling that plain `node` can load and the behaviour itself
-        is asserted in tests/pi_extensions.bats. What is checked here is that
+        is asserted in tests/pi_extensions_review_guard.bats. What is checked here is that
         the extension still routes through them rather than comparing lexically.
         """
         source = _detect_source()

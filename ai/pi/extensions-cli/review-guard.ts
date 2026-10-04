@@ -43,7 +43,7 @@ import { bypassesTheCommitScope, isScratchPath, unscopedTestRun, within } from "
 
 // `canonical`, `within`, `isScratchPath` and `unscopedTestRun` live in
 // detect.ts, which imports no SDK and so loads under plain `node`:
-// tests/pi_extensions.bats exercises them directly rather than by grepping
+// tests/pi_extensions_review_guard.bats exercises them directly rather than by grepping
 // this file's source.
 
 export default function (pi: ExtensionAPI) {

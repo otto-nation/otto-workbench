@@ -4,7 +4,7 @@
  *
  * index.ts imports its event-type helper from the Pi SDK as a value, so it can
  * only be loaded from inside a Pi session. This file imports nothing at all, so
- * tests/pi_extensions.bats can exercise every branch under plain `node`.
+ * tests/pi_extensions_job_poll.bats can exercise every branch under plain `node`.
  *
  * What "still running" can honestly mean here. The jobs tools live in another
  * repo (usemaximum/pi-extensions), their JobManager is closure-local, they

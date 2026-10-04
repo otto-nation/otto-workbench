@@ -47,7 +47,13 @@ ALWAYS_RUN_TESTS=(
   migrations_run
   migrations_scope
   migrations_targets
-  pi_extensions
+  pi_extensions_bootstrap
+  pi_extensions_install
+  pi_extensions_issues
+  pi_extensions_job_poll
+  pi_extensions_review_guard
+  pi_extensions_testpipe
+  pi_extensions_tokenize
   run_tests
   skills_install
   validate_all

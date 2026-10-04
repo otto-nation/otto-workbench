@@ -8,7 +8,7 @@ import { execFileSync } from "node:child_process";
  * index.ts imports `isToolCallEventType` from the Pi SDK as a value, so it can
  * only be loaded from somewhere the SDK resolves — inside a Pi session. This
  * file pulls in ../_shared and two node builtins, all of which resolve without
- * the SDK, so tests/pi_extensions.bats can run it under plain `node`.
+ * the SDK, so tests/pi_extensions_issues.bats can run it under plain `node`.
  *
  * The filesystem probe lives here rather than in index.ts for exactly that
  * reason: it is the half most likely to break silently — a renamed review

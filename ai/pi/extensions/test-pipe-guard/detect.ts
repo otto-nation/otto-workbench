@@ -4,7 +4,7 @@
  * index.ts imports `isToolCallEventType` from the Pi SDK as a value, so it can
  * only be loaded from somewhere the SDK resolves — inside a Pi session. This
  * file imports only ../_shared, which imports nothing, so
- * tests/pi_extensions.bats can still run it under plain `node`.
+ * tests/pi_extensions_testpipe.bats can still run it under plain `node`.
  *
  * What counts as a piped test run here is meant to match
  * ai/claude/bin/claude-bash-guard decision for decision: same runners, same
@@ -31,7 +31,7 @@ import { tokenize } from "../_shared/tokenize.ts";
  *
  * Matched on the last path segment, so `bin/local/run-tests` and a bare
  * `run-tests` are the same command. Kept in step with TEST_RUNNERS in
- * ai/claude/bin/claude-bash-guard — tests/pi_extensions.bats holds the two lists
+ * ai/claude/bin/claude-bash-guard — tests/pi_extensions_testpipe.bats holds the two lists
  * to one set rather than letting the harnesses drift.
  */
 export const TEST_RUNNERS = [

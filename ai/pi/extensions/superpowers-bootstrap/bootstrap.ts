@@ -17,7 +17,7 @@ import { dirname } from "node:path";
  * ai/pi/settings.json filters upstream's extension out of the package and keeps
  * its skills; this module replaces only the delivery.
  *
- * Imports nothing but node built-ins, so tests/pi_extensions.bats can load it
+ * Imports nothing but node built-ins, so tests/pi_extensions_bootstrap.bats can load it
  * under plain `node` — index.ts is the half that only resolves inside Pi.
  */
 

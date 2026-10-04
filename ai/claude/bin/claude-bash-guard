@@ -40,7 +40,7 @@ block() {
 # Where a `sleep` stops being a pipeline step and starts being a wait for something
 # that reports itself. Kept in step with the Pi guard's own constant —
 # ai/pi/extensions/sleep-guard/detect.ts enforces the same rule for the harness this
-# hook does not run in, and tests/pi_extensions.bats holds the two to one value.
+# hook does not run in, and tests/pi_extensions_tokenize.bats holds the two to one value.
 SLEEP_WAIT_THRESHOLD_SECONDS=10
 
 # _branch_review_has_open_findings — true when a self-review for the current
@@ -77,7 +77,7 @@ _branch_review_has_open_findings() {
 
 # The commands whose exit status is the thing a caller is reading, and the
 # filters that discard it. Kept in step with TEST_RUNNERS in
-# ai/pi/extensions/test-pipe-guard/detect.ts — tests/pi_extensions.bats holds the
+# ai/pi/extensions/test-pipe-guard/detect.ts — tests/pi_extensions_testpipe.bats holds the
 # two lists to one set, so adding a runner here alone fails the suite rather
 # than letting the harnesses disagree about a given command.
 TEST_RUNNERS='pytest|bats|run-tests|validate-all|go|cargo|npm|pnpm|yarn|jest|vitest'
@@ -239,7 +239,7 @@ cmd=$(jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
 #
 # The scan is the bash counterpart of ai/pi/extensions/_shared/tokenize.ts and
 # _shared/statements.ts, and it is a port rather than a parallel invention:
-# tests/pi_extensions.bats runs a command corpus through both and requires the
+# tests/pi_extensions_testpipe.bats runs a command corpus through both and requires the
 # same statements out of each. Quoting is the whole reason it exists. A `;`
 # inside quotes is an argument and a `>` inside quotes is a filename, and the
 # sed passes could see neither — `bash -c 'rm -rf x; echo done'` was cut into
@@ -465,7 +465,7 @@ _scan_line() {
   # which costs at most one refusal of a command that was already unparseable.
   #
   # Mirrors the same fallback in ai/pi/extensions/_shared/statements.ts, and the
-  # corpus test in tests/pi_extensions.bats requires the two to agree.
+  # corpus test in tests/pi_extensions_testpipe.bats requires the two to agree.
   SCAN_STATEMENTS=("${SCAN_STATEMENTS[@]:0:$line_first}")
   SCAN_PIPED=("${SCAN_PIPED[@]:0:$line_first}")
   # Walked rather than split on IFS, because the separator run has to be read as
@@ -543,7 +543,7 @@ _scan "$cmd"
 # its sections, appends a closing ref per --closes, assigns the PR, and pushes
 # first. That is coding policy and it holds under any harness, so Pi enforces it
 # too — ai/pi/extensions/pr-create-guard/ is the same rule, and
-# tests/pi_extensions.bats holds the two to one set of answers.
+# tests/pi_extensions_testpipe.bats holds the two to one set of answers.
 #
 # Statement-anchored rather than a substring of $cmd. Matching the raw command
 # refused `echo gh pr create` and any grep whose pattern contained the phrase,
@@ -567,7 +567,7 @@ fi
 # § Avoid Compound `cd` Commands) would otherwise slip past on a raw scan of
 # $cmd, which $stripped's `; `-joining exists to prevent. Kept in step with
 # ISSUE_CREATE in ai/pi/extensions/issue-defer-guard/detect.ts —
-# tests/pi_extensions.bats holds the two to one set of answers.
+# tests/pi_extensions_issues.bats holds the two to one set of answers.
 re_issue_create='(^|[;&|][[:space:]]*)gh[[:space:]]+issue[[:space:]]+create([[:space:]]|$)'
 if [[ "$stripped" =~ $re_issue_create ]] && _branch_review_has_open_findings; then
   block "This branch's self-review has open findings, and filing an issue for one is a deferral that needs my agreement first — read what the fix pass did before acting on any finding yourself. If this issue is unrelated to the review, say so and file it. See general.md § Code Quality."

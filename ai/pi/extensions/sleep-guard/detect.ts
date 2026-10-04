@@ -6,7 +6,7 @@ import { statements } from "../_shared/statements.ts";
  * index.ts imports `isToolCallEventType` from the Pi SDK as a value, so it can
  * only be loaded from somewhere the SDK resolves — inside a Pi session. This
  * file pulls in nothing but ../_shared, which imports nothing itself, so
- * tests/pi_extensions.bats can run it under plain `node` and assert the shapes
+ * tests/pi_extensions_tokenize.bats can run it under plain `node` and assert the shapes
  * it does and does not match.
  *
  * What counts as a sleep here is meant to match ai/claude/bin/claude-bash-guard
@@ -24,7 +24,7 @@ import { statements } from "../_shared/statements.ts";
  * real step, and blocking it would make this guard's refusals noise. Nothing at
  * ten seconds and up is that: it is a wait for something that will announce
  * itself. Kept in step with SLEEP_WAIT_THRESHOLD_SECONDS in
- * ai/claude/bin/claude-bash-guard — tests/pi_extensions.bats holds the two to one
+ * ai/claude/bin/claude-bash-guard — tests/pi_extensions_tokenize.bats holds the two to one
  * value, so changing this one alone fails the suite rather than letting the
  * harnesses drift.
  */

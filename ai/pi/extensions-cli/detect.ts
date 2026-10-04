@@ -39,7 +39,7 @@
  * Same split as the guards under ai/pi/extensions/: review-guard.ts imports
  * `isToolCallEventType` from the Pi SDK as a value, so it only loads inside a
  * Pi session. This file imports only node builtins, ../extensions/_shared, and
- * so runs under plain `node` — which is what lets tests/pi_extensions.bats
+ * so runs under plain `node` — which is what lets tests/pi_extensions_review_guard.bats
  * assert its behaviour rather than grep its source.
  */
 

@@ -4,7 +4,7 @@
  * index.ts imports `isToolCallEventType` from the Pi SDK as a value, so it can
  * only be loaded from somewhere the SDK resolves — inside a Pi session. This
  * file imports only ../_shared, which imports nothing, so
- * tests/pi_extensions.bats can run it under plain `node`.
+ * tests/pi_extensions_issues.bats can run it under plain `node`.
  *
  * The Claude twin is ai/claude/bin/claude-issue-capture, and the two answer the
  * same question about the same command. This one is the *recording* half of a

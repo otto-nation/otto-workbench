@@ -3,7 +3,7 @@
  *
  * index.ts imports `isToolCallEventType` from the Pi SDK as a value, so it can
  * only be loaded from somewhere the SDK resolves — inside a Pi session. This
- * file imports nothing, which is what lets tests/pi_extensions.bats run it under
+ * file imports nothing, which is what lets tests/pi_extensions_tokenize.bats run it under
  * plain `node` and assert the shapes it does and does not match.
  *
  * What counts as backgrounding here is meant to match the `re_background` and

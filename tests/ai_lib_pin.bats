@@ -245,10 +245,15 @@ PY
   # through \$WORKBENCH_LIB_DIR". A new script writing the bare insert pins
   # itself to the installed checkout while its siblings follow the pin, and
   # nothing else reports that.
-  local bad
-  bad=$(grep -rln 'sys.path.insert(0, str(.*parent.* / "lib"))' \
-      "$REPO_ROOT/ai/bin" "$REPO_ROOT/ai/claude/bin" \
-    | xargs grep -L 'WORKBENCH_AI_LIB_DIR') || true
+  # A loop rather than `| xargs grep -L`: with no inserting script left, GNU
+  # xargs still runs grep once on empty stdin, which reports "(standard input)".
+  local inserters bad="" f
+  inserters=$(grep -rln 'sys.path.insert(0, str(.*parent.* / "lib"))' \
+      "$REPO_ROOT/ai/bin" "$REPO_ROOT/ai/claude/bin") || true
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    grep -q 'WORKBENCH_AI_LIB_DIR' "$f" || bad+="$f"$'\n'
+  done <<< "$inserters"
   [ -z "$bad" ]
 }
 

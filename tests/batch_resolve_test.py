@@ -10,6 +10,8 @@ if str(LIB_DIR) not in sys.path:
 
 import batch.model  # noqa: E402
 import batch.resolve  # noqa: E402
+from batch.publish import TreeState  # noqa: E402
+from rebase.types import RefDivergence  # noqa: E402
 
 
 def _run(*decisions):
@@ -22,6 +24,17 @@ def _run(*decisions):
 
 def _d(kind, step, payload=None, id="d1"):
     return batch.model.Decision(id=id, item="o/r#1", step=step, kind=kind, payload=payload or {})
+
+
+def _ff(item):
+    return TreeState(local="new", remote=item.remote_sha,
+                     divergence=RefDivergence(ahead=1, behind=0, comparable=True))
+
+
+def _stale(item):
+    return TreeState(local="new", remote=item.remote_sha,
+                     divergence=RefDivergence(ahead=1, behind=1, comparable=True),
+                     unincorporated=("c1 elsewhere",))
 
 
 class Recorder:
@@ -139,45 +152,11 @@ def test_skip_step_on_a_publish_failure_drops_the_item():
     assert run.items[0].status is batch.model.ItemStatus.DROPPED
 
 
-WT = ["--repo-dir", "/wt"]
-PUSH_ONLY = ["pr", "rebase", "--push-only", *WT]
-GIT_PUSH = ["git-push", "/wt"]
-COMMENTS_FINISH = ["pr", "comments", "--finish", "--post", *WT]
-
-
-@pytest.mark.parametrize("drafted,want", [
-    ((), []),
-    (("rebase",), [PUSH_ONLY]),
-    (("comments",), [GIT_PUSH, COMMENTS_FINISH]),
-    (("review",), [GIT_PUSH]),
-    (("rebase", "comments"), [PUSH_ONLY, COMMENTS_FINISH]),
-    (("rebase", "review"), [PUSH_ONLY]),
-    (("comments", "review"), [GIT_PUSH, COMMENTS_FINISH]),
-    (("rebase", "comments", "review"), [PUSH_ONLY, COMMENTS_FINISH]),
-])
-def test_publish_commands_for_every_drafted_combination(drafted, want):
-    it = _run().items[0]
-    for name in drafted:
-        it.step(batch.model.Step(name)).drafted = True
-    assert batch.resolve.publish_commands(it, "pr") == want
-
-
-def test_publish_commands_order_and_tracking():
-    it = _run().items[0]
-    it.step(batch.model.Step.REBASE).drafted = True
-    it.step(batch.model.Step.COMMENTS).drafted = True
-    it.track = ["T1", "T2"]
-    assert batch.resolve.publish_commands(it, "pr") == [
-        ["pr", "rebase", "--push-only", "--repo-dir", "/wt"],
-        ["pr", "comments", "--finish", "--post", "--track", "T1", "--track", "T2",
-         "--repo-dir", "/wt"],
-    ]
-
-
 def test_failed_publish_leaves_a_failed_decision():
     run = _run(_d(batch.model.DecisionKind.PUBLISH, "publish"))
     run.items[0].step(batch.model.Step.REVIEW).drafted = True
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr", runner=Recorder(code=1))
+    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr", runner=Recorder(code=1),
+                        tree=_ff)
     new = run.open_decisions()
     assert run.items[0].status is batch.model.ItemStatus.AWAITING_DECISION
     assert [(d.kind, d.step) for d in new] == [(batch.model.DecisionKind.FAILED, "publish")]
@@ -186,7 +165,28 @@ def test_failed_publish_leaves_a_failed_decision():
 def test_successful_publish_finishes_the_item():
     run = _run(_d(batch.model.DecisionKind.PUBLISH, "publish"))
     run.items[0].step(batch.model.Step.REVIEW).drafted = True
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr", runner=Recorder())
+    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr", runner=Recorder(),
+                        tree=_ff)
+    assert run.items[0].status is batch.model.ItemStatus.DONE
+    assert run.items[0].remote_sha == "new"
+
+
+def test_force_publish_answers_only_a_not_incorporated_remote_refusal():
+    run = _run(_d(batch.model.DecisionKind.PUBLISH, "publish"),
+               _d(batch.model.DecisionKind.FAILED, "publish", {"reason": "error"}, id="d0"))
+    with pytest.raises(batch.resolve.ResolveError, match="not_incorporated_remote"):
+        batch.resolve.apply(run, batch.resolve.Request("d0", "force-publish"), pr_bin="pr",
+                            runner=Recorder(), tree=_stale)
+    rec = Recorder()
+    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr", runner=rec,
+                        tree=_stale)
+    refusal = run.open_decisions()[-1]
+    assert rec.calls == []
+    assert (refusal.kind, refusal.payload["reason"], refusal.payload["commits"]) == (
+        batch.model.DecisionKind.FAILED, "not_incorporated_remote", ["c1 elsewhere"])
+    batch.resolve.apply(run, batch.resolve.Request(refusal.id, "force-publish"), pr_bin="pr",
+                        runner=rec, tree=_stale)
+    assert rec.calls == [["pr", "rebase", "--push-only", "--expect", "s", "--repo-dir", "/wt"]]
     assert run.items[0].status is batch.model.ItemStatus.DONE
 
 

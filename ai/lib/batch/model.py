@@ -119,6 +119,14 @@ class Item:
     remote_sha: str = ""
     # The key of another item in this run whose branch is this PR's base; its publish goes first.
     stacked_on: str = ""
+    # The PR's base branch from the plan: publish bounds its search for remote
+    # commits the local branch dropped at the merge-base with origin's copy.
+    base_ref: str = ""
+    # The tip a batch rebase of this item started from, from the rebase's own
+    # report: what `undo` resets to, and what publish checks holds remote_sha.
+    pre_rebase_head: str = ""
+    # The head a batch publish pushed, or "" when nothing was pushed.
+    published_sha: str = ""
 
     def __post_init__(self) -> None:
         if not self.remote_sha:

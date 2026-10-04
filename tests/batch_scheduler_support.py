@@ -1,0 +1,109 @@
+"""The scheduler harness the batch_scheduler suites share.
+
+A Scheduler whose spawn, replan, worktrees, head, publish runner and tree reads
+are all fakes, so a run can be driven tick by tick with no git and no network.
+"""
+
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+LIB_DIR = REPO_ROOT / "ai" / "lib"
+if str(LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(LIB_DIR))
+
+import batch.admission  # noqa: E402
+import batch.model  # noqa: E402
+import batch.outcomes  # noqa: E402
+import batch.scheduler  # noqa: E402
+from batch.plan import PlanRow, StepNeed  # noqa: E402
+from batch.publish import TreeState  # noqa: E402
+from batch.steps import WorktreeResult  # noqa: E402
+from config.workbench_config import BatchConfig  # noqa: E402
+from rebase.types import RefDivergence  # noqa: E402
+
+GiB = 1024 ** 3
+NEED = StepNeed(True, "x")
+NO = StepNeed(False, "y")
+ALL = {batch.model.Step.REBASE: NEED, batch.model.Step.COMMENTS: NEED, batch.model.Step.REVIEW: NEED}
+HEALTHY = batch.admission.HostSample(8 * GiB, 1.0, 0.0)
+
+
+def row(n, needs=ALL, *, repo="o/r", repo_dir="/r", **extra):
+    return PlanRow(repo, repo_dir, n, f"t{n}", f"b{n}", "h", False, dict(needs), **extra)
+
+
+def ff_tree(item):
+    """The remote is still the planned head and the local branch is one commit ahead."""
+    return TreeState(local=f"{item.remote_sha}+1", remote=item.remote_sha,
+                     divergence=RefDivergence(ahead=1, behind=0, comparable=True))
+
+
+@pytest.fixture(autouse=True)
+def _quiet_outcomes(monkeypatch):
+    monkeypatch.setattr(batch.outcomes, "comment_items", lambda item: [])
+    monkeypatch.setattr(batch.outcomes, "open_findings", lambda item: [])
+
+
+class Harness:
+    def __init__(self, rows, *, codes=None, auto_publish=(), pool=2, host=HEALTHY,
+                 replan=None, worktrees=None, heads=None, selected=None, cfg=None,
+                 runner=None, tree=None):
+        self.codes = codes or {}
+        self.spawned, self.events, self.live, self.max_live = [], [], 0, 0
+        self.published, self.publish_code = [], 0
+        self.run = batch.scheduler.new_run(rows, steps=list(batch.model.STEP_ORDER), selected=selected, pool=pool,
+                               auto_publish=list(auto_publish))
+        self.heads = heads or {}
+        self.sched = batch.scheduler.Scheduler(
+            self.run, pr_bin="pr", cfg=cfg or BatchConfig(pool_max=4),
+            host=lambda: host, spawn=self._spawn,
+            replan=replan or (lambda r: r),
+            worktrees=worktrees or (lambda d, b: WorktreeResult(f"/wt/{b}", False, "")),
+            head=lambda wt: self.heads.get(wt, "h0"), rss=lambda pid: 0,
+            emit=lambda kind, **f: self.events.append((kind, f)), sleep=lambda s: None,
+            estimates=batch.admission.Estimates({}),
+            runner=runner or self._publish, tree=tree or ff_tree,)
+
+    def _publish(self, argv):
+        self.published.append(argv)
+        return self.publish_code
+
+    def _spawn(self, argv, *, log_path, trail_root):
+        h = self
+        # One past the number of processes spawned so far, not a constant: a
+        # test asserting on which pid got killed needs spawns to be
+        # distinguishable from each other.
+        next_pid = len(self.spawned) + 1
+
+        class Proc:
+            pid = next_pid
+            polls = 0
+
+            def poll(self):
+                self.polls += 1
+                if self.polls < 2:
+                    return None
+                if not getattr(self, "done", False):
+                    self.done = True
+                    h.live -= 1
+                return h.codes.get((argv[1], argv[-1]), 0)
+
+            def drain_lines(self):
+                return []
+
+            def stdout(self):
+                return "{}"
+
+            def kill(self):
+                pass
+
+        self.live += 1
+        self.max_live = max(self.max_live, self.live)
+        self.spawned.append(argv)
+        return Proc()
+
+    def kinds(self):
+        return [k for k, _ in self.events]

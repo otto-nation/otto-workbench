@@ -12,84 +12,12 @@ if str(LIB_DIR) not in sys.path:
 import batch.admission  # noqa: E402
 import batch.events  # noqa: E402
 import batch.model  # noqa: E402
-import batch.outcomes  # noqa: E402
-import batch.resolve  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
-from batch.plan import PlanError, PlanRow, StepNeed  # noqa: E402
+from batch.plan import PlanError  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
-from config.workbench_config import BatchConfig  # noqa: E402
-
-GiB = 1024 ** 3
-NEED = StepNeed(True, "x")
-NO = StepNeed(False, "y")
-ALL = {batch.model.Step.REBASE: NEED, batch.model.Step.COMMENTS: NEED, batch.model.Step.REVIEW: NEED}
-HEALTHY = batch.admission.HostSample(8 * GiB, 1.0, 0.0)
-
-
-def row(n, needs=ALL):
-    return PlanRow("o/r", "/r", n, f"t{n}", f"b{n}", "h", False, dict(needs))
-
-
-@pytest.fixture(autouse=True)
-def _quiet_outcomes(monkeypatch):
-    monkeypatch.setattr(batch.outcomes, "comment_items", lambda item: [])
-    monkeypatch.setattr(batch.outcomes, "open_findings", lambda item: [])
-
-
-class Harness:
-    def __init__(self, rows, *, codes=None, auto_publish=(), pool=2, host=HEALTHY,
-                 replan=None, worktrees=None, heads=None, selected=None, cfg=None):
-        self.codes = codes or {}
-        self.spawned, self.events, self.live, self.max_live = [], [], 0, 0
-        self.run = batch.scheduler.new_run(rows, steps=list(batch.model.STEP_ORDER), selected=selected, pool=pool,
-                               auto_publish=list(auto_publish))
-        self.heads = heads or {}
-        self.sched = batch.scheduler.Scheduler(
-            self.run, pr_bin="pr", cfg=cfg or BatchConfig(pool_max=4),
-            host=lambda: host, spawn=self._spawn,
-            replan=replan or (lambda r: r),
-            worktrees=worktrees or (lambda d, b: WorktreeResult(f"/wt/{b}", False, "")),
-            head=lambda wt: self.heads.get(wt, "h0"), rss=lambda pid: 0,
-            emit=lambda kind, **f: self.events.append((kind, f)), sleep=lambda s: None,
-            estimates=batch.admission.Estimates({}))
-
-    def _spawn(self, argv, *, log_path, trail_root):
-        h = self
-        # One past the number of processes spawned so far, not a constant: a
-        # test asserting on which pid got killed needs spawns to be
-        # distinguishable from each other.
-        next_pid = len(self.spawned) + 1
-
-        class Proc:
-            pid = next_pid
-            polls = 0
-
-            def poll(self):
-                self.polls += 1
-                if self.polls < 2:
-                    return None
-                if not getattr(self, "done", False):
-                    self.done = True
-                    h.live -= 1
-                return h.codes.get((argv[1], argv[-1]), 0)
-
-            def drain_lines(self):
-                return []
-
-            def stdout(self):
-                return "{}"
-
-            def kill(self, *, force=False):
-                pass
-
-        self.live += 1
-        self.max_live = max(self.max_live, self.live)
-        self.spawned.append(argv)
-        return Proc()
-
-    def kinds(self):
-        return [k for k, _ in self.events]
+from batch_scheduler_support import (ALL, GiB, HEALTHY, NEED, NO, Harness,  # noqa: F401,E402
+                                     _quiet_outcomes, row)
 
 
 def test_draft_run_ends_waiting_with_one_publish_decision_per_pr():
@@ -383,13 +311,13 @@ def test_publish_and_dirty_worktree_emit_decision_created():
     assert "publish" in kinds
 
 
-def test_failed_publish_via_request_emits_decision_created(monkeypatch):
+def test_failed_publish_via_request_emits_decision_created():
     h = Harness([row(1)])
     h.sched.run_until_blocked()
     d = next(x for x in h.run.open_decisions() if x.kind is batch.model.DecisionKind.PUBLISH)
     batch.store.save(h.run)
     batch.store.write_request(h.run.id, {"decision": d.id, "action": "publish"})
-    monkeypatch.setattr(batch.resolve, "default_runner", lambda argv: 1)
+    h.publish_code = 1
     h.sched.run_until_blocked()
     created = [f for k, f in h.events if k == "decision_created"]
     assert any(f["decision_kind"] == "failed" and f["step"] == "publish" for f in created)

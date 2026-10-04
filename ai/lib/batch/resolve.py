@@ -10,6 +10,7 @@ import sys
 from dataclasses import dataclass
 from typing import Callable
 
+import batch.publish
 import core.timeouts
 import git.push
 from batch.model import Decision, DecisionKind, Item, ItemStatus, Run, Step, StepStatus
@@ -22,13 +23,13 @@ ACTIONS: dict[DecisionKind, frozenset[str]] = {
     DecisionKind.REBASE_REFUSED: frozenset({"drop-pr", "force"}),
     DecisionKind.OPEN_FINDINGS: frozenset({"accept", "open-chat"}),
     DecisionKind.DIRTY_WORKTREE: frozenset({"retry", "drop-pr", "open-chat"}),
-    DecisionKind.FAILED: frozenset({"retry", "skip-step", "drop-pr"}),
+    DecisionKind.FAILED: frozenset({"retry", "skip-step", "drop-pr", "force-publish"}),
     DecisionKind.INTERRUPTED: frozenset({"retry", "skip-step", "drop-pr"}),
     DecisionKind.PUBLISH: frozenset({"publish", "discard"}),
 }
 _SETTLE_AS = {"settle-fixed": "fixed", "settle-addressed": "already_addressed",
               "settle-dismissed": "dismissed"}
-GIT_PUSH = "git-push"
+GIT_PUSH = batch.publish.GIT_PUSH
 
 
 class ResolveError(ValueError):
@@ -73,20 +74,9 @@ def _validate(decision: Decision, request: Request) -> None:
         raise ResolveError("reply needs --body-file")
     if a == "force" and not decision.payload.get("override"):
         raise ResolveError("this refusal names no override; force is not available")
-
-
-def publish_commands(item: Item, pr_bin: str) -> list[list[str]]:
-    wt = ["--repo-dir", item.worktree]
-    drafted = {rec.step for rec in item.steps if rec.drafted}
-    cmds = []
-    if Step.REBASE in drafted:
-        cmds.append([pr_bin, "rebase", "--push-only"] + wt)
-    elif Step.REVIEW in drafted or Step.COMMENTS in drafted:
-        cmds.append([GIT_PUSH, item.worktree])
-    if Step.COMMENTS in drafted or item.track:
-        track = [arg for t in item.track for arg in ("--track", t)]
-        cmds.append([pr_bin, "comments", "--finish", "--post", *track] + wt)
-    return cmds
+    if a == "force-publish" and decision.payload.get("reason") != \
+            batch.publish.Refusal.NOT_INCORPORATED_REMOTE.value:
+        raise ResolveError("force-publish only answers a not_incorporated_remote refusal")
 
 
 def command_for(decision: Decision, item: Item, request: Request,
@@ -107,15 +97,17 @@ def command_for(decision: Decision, item: Item, request: Request,
         return [[pr_bin, "rebase", "--abort"] + wt]
     if a == "force":
         return [[pr_bin, "rebase", "--fix", "--force", "--no-push"] + wt]
-    if a == "publish":
-        return publish_commands(item, pr_bin)
     return []
 
 
-def _fail(run: Run, item: Item, step: str) -> Decision:
-    d = Decision(
-        id=secrets.token_hex(4), item=item.key, step=step, kind=DecisionKind.FAILED,
-        payload={"reason": "error", "exit_code": 1, "log_tail": []}, created_at=now_iso())
+def _fail(run: Run, item: Item, step: str, *, reason: str = "error",
+          detail: str = "", extra: dict | None = None) -> Decision:
+    payload = {"reason": reason, "exit_code": 1, "log_tail": []}
+    if detail:
+        payload["detail"] = detail
+    payload.update(extra or {})
+    d = Decision(id=secrets.token_hex(4), item=item.key, step=step,
+                 kind=DecisionKind.FAILED, payload=payload, created_at=now_iso())
     run.decisions.append(d)
     item.status = ItemStatus.AWAITING_DECISION
     return d
@@ -132,11 +124,6 @@ def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> 
         item.status = ItemStatus.DROPPED
     elif action == "discard":
         item.status = ItemStatus.DONE
-    elif action == "publish":
-        if ok:
-            item.status = ItemStatus.DONE
-        else:
-            created.append(_fail(run, item, "publish"))
     elif action == "retry" and step:
         item.step(step).status = StepStatus.PENDING
     elif action == "skip-step":
@@ -170,12 +157,40 @@ def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> 
     return created
 
 
+def _publish(run: Run, item: Item, pr_bin: str, run_cmd: Callable[[list[str]], int],
+             read: Callable[[Item], batch.publish.TreeState], *,
+             confirmed: bool = False) -> list[Decision]:
+    """Push what the tree says to push; a refusal or a failed command is a decision."""
+    tree = read(item)
+    plan = batch.publish.plan(item, pr_bin, tree, confirmed=confirmed)
+    if not plan.ok:
+        extra = {"commits": plan.commits} if plan.commits else None
+        return [_fail(run, item, "publish", reason=plan.refusal.value, detail=plan.detail,
+                      extra=extra)]
+    for argv in plan.commands:
+        if run_cmd(argv) != 0:
+            return [_fail(run, item, "publish")]
+    if plan.pushes:
+        # Leased on what the branch holds after the commands, not before: a
+        # landing may commit (hook regeneration) before it pushes. The tree
+        # seam re-reads it; an unreadable branch falls back to the pre-push tip.
+        item.remote_sha = item.published_sha = read(item).local or tree.local
+    item.status = ItemStatus.DONE
+    return []
+
+
 def apply(run: Run, request: Request, *, pr_bin: str,
-          runner: Callable[[list[str]], int] | None = None) -> list[Decision]:
+          runner: Callable[[list[str]], int] | None = None,
+          tree: Callable[[Item], batch.publish.TreeState] | None = None) -> list[Decision]:
     decision = run.decision(request.decision)
     item = run.item(decision.item)
     _validate(decision, request)
     run_cmd = default_runner if runner is None else runner
+    if request.action in ("publish", "force-publish"):
+        created = _publish(run, item, pr_bin, run_cmd, tree or batch.publish.read_tree,
+                           confirmed=request.action == "force-publish")
+        decision.resolution, decision.resolved_at = request.action, now_iso()
+        return created
     ok = _run_commands(decision, item, request, pr_bin, run_cmd)
     decision.resolution, decision.resolved_at = request.action, now_iso()
     return _effect(run, item, decision, request.action, ok)

@@ -15,6 +15,7 @@ import batch.admission
 import batch.events
 import batch.outcomes
 import batch.plan
+import batch.publish
 import batch.resolve
 import batch.store
 import git.client
@@ -44,7 +45,7 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
                            explicit=explicit and s in chosen)
                 for s in STEP_ORDER if s in steps]
         items.append(Item(key=r.key, repo=r.repo, repo_dir=r.repo_dir, pr=r.pr, branch=r.branch,
-                          head_sha=r.head_sha, steps=recs))
+                          head_sha=r.head_sha, steps=recs, base_ref=r.base_ref))
     # A fork's head branch names a branch in another repo — often `main` —
     # so keying it under the base repo would stack every PR based on `main`.
     by_branch = {(r.repo, r.branch): r.key for r in rows if not r.is_fork}
@@ -116,7 +117,9 @@ class Scheduler:
                  rss: Callable[[int], int] = batch.admission.tree_rss,
                  estimates: batch.admission.Estimates | None = None,
                  emit: Callable[..., None] = batch.events.emit,
-                 sleep: Callable[[float], None] = time.sleep, tick: float = 0.5):
+                 sleep: Callable[[float], None] = time.sleep, tick: float = 0.5,
+                 runner: Callable[[list[str]], int] | None = None,
+                 tree: Callable[[Item], batch.publish.TreeState] | None = None):
         self.run, self.pr_bin, self.cfg = run, pr_bin, cfg
         # Looked up at construction, not bound as a default, so a patched
         # batch.plan.replan_row is the one used.
@@ -126,6 +129,8 @@ class Scheduler:
         self._estimates = estimates or batch.admission.Estimates.load()
         self._emit, self._sleep, self._tick = emit, sleep, tick
         self._live: dict[str, _Live] = {}
+        # The publish seams: None takes resolve's real runner and tree read.
+        self._runner, self._tree = runner, tree
 
     # ── requests and cancel ──────────────────────────────────────────────
 
@@ -138,7 +143,8 @@ class Scheduler:
             req = batch.resolve.Request.from_dict(raw)
             item = self.run.item(self.run.decision(req.decision).item)
             was_terminal = item.terminal
-            created = batch.resolve.apply(self.run, req, pr_bin=self.pr_bin)
+            created = batch.resolve.apply(self.run, req, pr_bin=self.pr_bin,
+                                          runner=self._runner, tree=self._tree)
             self._emit("decision_resolved", run=self.run.id, decision=req.decision,
                        action=req.action)
             for d in created:

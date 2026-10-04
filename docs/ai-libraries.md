@@ -3377,6 +3377,30 @@ One GraphQL search covers every repo and asks only for fields whose cost does
 not scale with comment volume — no nested `comments` connection — so a plan
 over dozens of PRs costs a point or two of the hourly GraphQL budget.
 
+### batch/publish.py
+
+What a batch publish pushes, read from the tree, and the lease it pushes under.
+
+Publish is the only thing in a batch run that reaches the remote. It fetches the
+one branch, compares the local branch with origin's, and checks the remote is
+still the head the batch planned from (`Item.remote_sha`):
+
+| Tree | Command |
+|---|---|
+| the fetch failed | refuse: `fetch_failed` |
+| origin is not `remote_sha` (somebody pushed) | refuse: `remote_moved` |
+| refs not comparable | refuse: `not_comparable` |
+| local == origin, or only behind | nothing to push |
+| local is a fast-forward of origin | `git-push` |
+| diverged, from a batch rebase that started without `remote_sha` | refuse: `not_incorporated` |
+| diverged, a remote commit has no patch-equivalent locally | refuse: `not_incorporated_remote` |
+| diverged | `pr rebase --push-only --expect <remote_sha>` |
+
+`pr comments --finish --post` follows when the comments step drafted or an item
+is tracked. A refusal is a `failed` decision on step `publish` carrying `reason`;
+a `not_incorporated_remote` one also lists the remote commits, and the operator
+answers it with `force-publish` (push anyway) or drops the PR.
+
 ### batch/resolve.py
 
 Apply an operator's answer to one decision, then move the item on.

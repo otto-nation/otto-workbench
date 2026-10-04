@@ -3,12 +3,15 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.model  # noqa: E402
+import batch.store  # noqa: E402
 from batch.model import STEP_ORDER, DecisionKind, ItemStatus, RunStatus, Step  # noqa: E402
 from batch.publish import GIT_PUSH  # noqa: E402
 
@@ -60,6 +63,50 @@ def test_auto_publish_waits_when_a_drafted_step_is_not_listed():
                 moves={("rebase", "/wt/b1"), ("review", "/wt/b1")}, auto_publish=[Step.REVIEW])
     assert h.sched.run_until_blocked() is RunStatus.WAITING
     assert h.published == []
+    assert [d.kind for d in h.run.open_decisions()] == [DecisionKind.PUBLISH]
+
+
+def test_a_retry_that_commits_nothing_keeps_what_the_failed_attempt_drafted():
+    h = Harness([row(1, ONLY_REVIEW)], codes={("review", "/wt/b1"): 1},
+                moves={("review", "/wt/b1")})
+    assert h.sched.run_until_blocked() is RunStatus.WAITING
+    d = h.run.open_decisions()[0]
+    batch.store.save(h.run)
+    batch.store.write_request(h.run.id, {"decision": d.id, "action": "retry"})
+    h.codes.clear()
+    h.moves.clear()
+    assert h.sched.run_until_blocked() is RunStatus.WAITING
+    assert [x[1] for x in h.spawned] == ["review", "review"]
+    assert [d.kind for d in h.run.open_decisions()] == [DecisionKind.PUBLISH]
+
+
+def test_a_retry_keeps_the_draft_in_state_written_before_start_head_existed():
+    h = Harness([row(1, ONLY_REVIEW)], codes={("review", "/wt/b1"): 1},
+                moves={("review", "/wt/b1")})
+    h.sched.run_until_blocked()
+    h.run.items[0].step(Step.REVIEW).start_head = ""
+    d = h.run.open_decisions()[0]
+    batch.store.save(h.run)
+    batch.store.write_request(h.run.id, {"decision": d.id, "action": "retry"})
+    h.codes.clear()
+    h.moves.clear()
+    assert h.sched.run_until_blocked() is RunStatus.WAITING
+    assert [d.kind for d in h.run.open_decisions()] == [DecisionKind.PUBLISH]
+
+
+def test_a_retry_after_an_interrupt_keeps_what_the_interrupted_attempt_committed():
+    h = Harness([row(1, ONLY_REVIEW)], moves={("review", "/wt/b1")})
+    h.sched._sleep = lambda _: (_ for _ in ()).throw(KeyboardInterrupt())
+    with pytest.raises(KeyboardInterrupt):
+        h.sched.run_until_blocked()
+    d = h.run.open_decisions()[0]
+    assert d.kind is DecisionKind.INTERRUPTED
+    h.run = batch.store.load(h.run.id)
+    h.resume()
+    batch.store.write_request(h.run.id, {"decision": d.id, "action": "retry"})
+    h.moves.clear()
+    assert h.sched.run_until_blocked() is RunStatus.WAITING
+    assert [x[1] for x in h.spawned] == ["review", "review"]
     assert [d.kind for d in h.run.open_decisions()] == [DecisionKind.PUBLISH]
 
 

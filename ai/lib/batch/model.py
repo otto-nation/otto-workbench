@@ -76,6 +76,10 @@ class StepRecord:
     log_path: str = ""
     # Ran without publishing; its push/post is owed to the item's publish decision.
     drafted: bool = False
+    # HEAD when the step first started, kept across retries: work an earlier attempt
+    # committed — even one interrupted before it finished — stays work the publish owes.
+    # Empty in state written before it existed, which means "this attempt's start".
+    start_head: str = ""
     # Named by --select: an instruction, so admission never skips it as not needed.
     explicit: bool = False
 

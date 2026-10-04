@@ -58,7 +58,7 @@ class Harness:
         self.run = batch.scheduler.new_run(rows, steps=list(batch.model.STEP_ORDER), selected=selected, pool=pool,
                                auto_publish=list(auto_publish))
         self.heads = heads or {}
-        self.sched = batch.scheduler.Scheduler(
+        self._make = lambda: batch.scheduler.Scheduler(
             self.run, pr_bin="pr", cfg=cfg or BatchConfig(pool_max=4),
             host=lambda: host, spawn=self._spawn,
             replan=replan or (lambda r: r),
@@ -68,6 +68,12 @@ class Harness:
             estimates=batch.admission.Estimates({}),
             runner=runner or self._publish, tree=tree or ff_tree,
             contains=contains or (lambda wt, sha: True))
+        self.sched = self._make()
+
+    def resume(self):
+        """A fresh Scheduler over the same run, as `pr batch resume` builds after an interrupt."""
+        self.sched = self._make()
+        return self.sched
 
     def _publish(self, argv):
         self.published.append(argv)

@@ -199,11 +199,12 @@ class Scheduler:
         result = batch.outcomes.classify(rec.step, code, live.proc.stdout(), item=item,
                                    log_tail=list(live.tail))
         rec.exit_code, rec.ended_at, rec.status = code, batch.store.now_iso(), result.status
-        moved = self._head(item.worktree) != live.head_before
-        # Drafted means this step left work the publish owes the remote: commits,
-        # or — for a comments pass, which drafts its replies even when it commits
-        # nothing — any clean exit.
-        rec.drafted = moved or (rec.step is Step.COMMENTS and code == 0)
+        moved = self._head(item.worktree) != (rec.start_head or live.head_before)
+        # Drafted means this step left work the publish owes the remote: commits
+        # since its first attempt started, or — for a comments pass, which drafts
+        # its replies even when it commits nothing — any clean exit. Sticky: a
+        # retry that commits nothing never forgets what an earlier attempt drafted.
+        rec.drafted = rec.drafted or moved or (rec.step is Step.COMMENTS and code == 0)
         if result.pre_rebase_head:
             item.pre_rebase_head = result.pre_rebase_head
         if rec.step is not Step.REVIEW and moved:
@@ -250,10 +251,13 @@ class Scheduler:
                     emit=self._emit)
         item.status = ItemStatus.READY_TO_PUBLISH
         # --auto-publish answers the publish decision itself, and only for an
-        # item that closed with nothing open and every drafted step listed.
+        # item that closed with nothing open and every drafted step listed and
+        # finished DONE — a step the operator skipped or that failed left work
+        # nobody vouched for, so its publish stays the operator's to answer.
         # _apply_one emits the outcome — item_finished on DONE, or the refusal's
         # decision — so READY_TO_PUBLISH is not announced first.
-        if set(drafted) <= set(self.run.auto_publish):
+        finished = all(r.status is StepStatus.DONE for r in item.steps if r.drafted)
+        if finished and set(drafted) <= set(self.run.auto_publish):
             self._apply_one({"decision": d.id, "action": "publish"})
             return
         self._emit("item_finished", run=self.run.id, item=item.key, status=item.status.value)
@@ -336,6 +340,7 @@ class Scheduler:
         argv = step_argv(rec.step, self.pr_bin, item.worktree, remote_sha=item.remote_sha)
         # Sample HEAD before spawn: the harness mutates it inside `_spawn`.
         head_before = self._head(item.worktree)
+        rec.start_head = rec.start_head or head_before
         proc = self._spawn(argv, log_path=log, trail_root=self.run.trail_root)
         rec.status, rec.started_at, rec.log_path = StepStatus.RUNNING, batch.store.now_iso(), str(log)
         item.status, item.wait_reason = ItemStatus.RUNNING, ""

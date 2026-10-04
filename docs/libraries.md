@@ -25,6 +25,18 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 
 ## Core Modules
 
+### ai_init.sh
+
+Project AI scaffold — `otto-workbench ai init`. Streams Claude tool-use
+progress while `/analyze-project` runs, then writes `.claude/` in the
+current git worktree.
+
+Sourced by `bin/otto-workbench`. `cmd_ai_init` is a one-line wrapper.
+
+| Function | Purpose |
+|----------|---------|
+| `ai_init_run [ --force \| --analyze \| -h \| --help ]` | scaffold `.claude/` in the current git worktree. `--force` re-scaffolds; `--analyze` runs /analyze-project after. Returns rather than exiting so the CLI wrapper can keep the process. |
+
 ### branch_state.sh
 
 "Has this branch's work finished?", shared by the cleanup tools.
@@ -325,6 +337,14 @@ Sourced directly by `lib/ai/core.sh` and the git generation scripts
 | `has_breaking_footer MSG` | true when MSG declares a breaking change in its body. |
 | `declared_footers MSG` | every declaration footer line in MSG, in order. |
 
+### discover.sh
+
+Discover printers for installed components, registered scripts, and
+scheduled agents (launchd on macOS, systemd user timers on Linux).
+
+Sourced by `bin/otto-workbench`. Reads `_format_interval`, `_SYSTEMD_USER_DIR`,
+and `_MAINTENANCE_*` from `lib/maintenance.sh`.
+
 ### env.sh
 
 Reading a single variable's value out of ~/.env.local.
@@ -512,6 +532,14 @@ Sourced by the top-level `install.sh` and by `bin/otto-workbench`. Requires
 | `parse_install_flags ARGS...` | parses --all and component targets. Sets INSTALL_ALL, INSTALL_TARGETS, INSTALL_TARGETED in caller's scope. |
 | `print_install_summary` | prints the final "All done" screen with a consolidated file listing, editable configs, and per-component summaries. |
 
+### maintenance.sh
+
+Maintenance scheduling on both platforms — launchd agent on macOS, systemd
+user timer on Linux.
+
+Sourced by `bin/otto-workbench`; `lib/discover.sh` reads its globals
+(`_MAINTENANCE_*`, `_SYSTEMD_*`, `_format_interval`).
+
 ### migrations.sh
 
 Migration framework with state tracking.
@@ -577,6 +605,15 @@ output.
 | `summary_info MESSAGE` | indented dim detail line. Suppressed during sync. |
 
 Loaded via `ui.sh`.
+
+### overrides.sh
+
+User-override helpers for AI agents, skills, and rules — list, copy, disable,
+enable, and status against the defaults under the workbench tree.
+
+Sourced by `bin/otto-workbench`. Reads path constants (`USER_*`, `CLAUDE_*`,
+`SKILLS_*`, `GUIDELINES_*`) and colour vars from `lib/ui.sh`; nothing from
+CLI-local state.
 
 ### portable.sh
 

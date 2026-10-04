@@ -41,14 +41,12 @@ from file_size import MAX_CODE_LINES, code_lines  # noqa: E402
 from repo_scan import BASE_SKIP_DIRS  # noqa: E402
 
 
-# The file still over the cap, with the issue that splits it: #853's, the shell
-# half of the workbench, which no phase of #754 touches.
+# Every source file is under the cap. The dict stays, empty, so the gate keeps
+# one shape until #911 removes the exemption mechanism with the test pinning it.
 #
-# ceiling: one named exemption, because failing on it would block every push
-# on work owned elsewhere. Delete the entry when its file comes under the cap;
-# once the dict is empty this gate is the unconditional one #911 specifies.
+# ceiling: an empty exemption dict rather than none. Upgrade trigger: #911's
+# validator lands and deletes the dict and its pin test together.
 KNOWN_OVER = {
-    "bin/otto-workbench": "#853",
 }
 
 SCAN_ROOTS = ("ai", "bin", "lib")

@@ -272,10 +272,8 @@ MCPs). `ai override` manages user overrides.
 `sync` is pure config reconciliation: re-symlinks scripts, `zsh/`,
 `git/.gitconfig`, Taskfile, `lib/`; syncs Claude `settings.json`, `CLAUDE.md`,
 `rules/`, `skills/`, `agents/`, MCPs; merges Zed/Sublime editor settings;
-reconciles the Ghostty theme key; and checks for install-needed changes
-(missing brew packages, unconfigured components), printing actionable
-`install.sh <component>` commands. Tool context regenerates during sync via
-`sync_zsh`.
+and reconciles the Ghostty theme key. Tool context regenerates during sync
+via `sync_zsh`.
 
 `sync` does not do one-time setup — that is `otto-workbench install`: Homebrew
 packages or casks, Docker runtime, iTerm themes, Ghostty config from template.

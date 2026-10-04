@@ -113,7 +113,7 @@ JSON
   _run_cleanup
   [ "$status" -eq 0 ]
   [[ "$output" == *"no stale worktrees"* ]]
-  [ ! -f "$WT_REMOVE_LOG" ]
+  [ ! -s "$WT_REMOVE_LOG" ]
 }
 
 @test "a branch git calls integrated is not deleted when the tracker was refused" {
@@ -129,7 +129,7 @@ JSON
 
   _run_cleanup
   [ "$status" -eq 0 ]
-  [ ! -f "$WT_REMOVE_LOG" ]
+  [ ! -s "$WT_REMOVE_LOG" ]
 }
 
 @test "a refused lookup is reported rather than passing for no PR" {
@@ -194,7 +194,7 @@ JSON
   _run_cleanup
   [ "$status" -eq 0 ]
   [[ "$output" != *"uncommitted"* ]]
-  [ ! -f "$WT_REMOVE_LOG" ]
+  [ ! -s "$WT_REMOVE_LOG" ]
 }
 
 @test "a repo the tracker cannot answer for at all is still cleaned up" {

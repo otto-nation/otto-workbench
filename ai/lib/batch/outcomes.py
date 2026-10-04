@@ -51,10 +51,7 @@ def _rebase_payload(stdout: str, log_tail: list[str]) -> dict:
 
 
 def _load_pr_state(item: Item):
-    try:
-        key = pr.target.repo_key_from_origin(item.worktree or item.repo_dir)
-    except OSError:
-        return None
+    key = pr.target.repo_key_from_origin(item.worktree or item.repo_dir)
     return pr.state.load_state(pr.target.target_dir(key, item.branch)) if key else None
 
 
@@ -107,5 +104,6 @@ def classify(step: Step, exit_code: int, stdout: str, *, item: Item,
         return _needs(DecisionKind.COMMENT_ITEM, owed)
     if step is Step.REVIEW and (findings := open_findings(item)):
         return _needs(DecisionKind.OPEN_FINDINGS, [{"findings": findings}])
-    pre = str((_json(stdout) or {}).get("pre_rebase_head", "")) if step is Step.REBASE else ""
+    raw = (_json(stdout) or {}).get("pre_rebase_head", "") if step is Step.REBASE else ""
+    pre = raw if isinstance(raw, str) else ""
     return StepResult(StepStatus.DONE, [], pre_rebase_head=pre)

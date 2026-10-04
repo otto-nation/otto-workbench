@@ -108,7 +108,8 @@ def test_force_needs_an_override():
         batch.resolve.apply(run, batch.resolve.Request("d1", "force"), pr_bin="pr", runner=Recorder())
 
 
-def test_force_runs_a_forced_draft_rebase_and_marks_it_drafted():
+def test_force_runs_a_forced_draft_rebase_and_marks_it_drafted(monkeypatch):
+    monkeypatch.setattr(batch.outcomes, "recorded_pre_rebase_head", lambda item: "")
     run = _run(_d(batch.model.DecisionKind.REBASE_REFUSED, "rebase", {"override": "--force"}))
     rec = Recorder()
     batch.resolve.apply(run, batch.resolve.Request("d1", "force"), pr_bin="pr", runner=rec)

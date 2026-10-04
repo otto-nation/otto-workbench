@@ -33,6 +33,12 @@ def test_rebase_clean_is_done():
     assert batch.outcomes.classify(batch.model.Step.REBASE, 0, "{}", item=ITEM, log_tail=[]).status is batch.model.StepStatus.DONE
 
 
+def test_rebase_null_pre_rebase_head_is_empty():
+    r = batch.outcomes.classify(
+        batch.model.Step.REBASE, 0, '{"pre_rebase_head": null}', item=ITEM, log_tail=[])
+    assert r.pre_rebase_head == ""
+
+
 def test_rebase_conflicts_carry_the_conflict_report():
     report = {"status": "conflicts", "files": ["a.py"], "rebase_head": "abc",
               "rebase_head_subject": "s", "remaining_commits": 2}

@@ -31,6 +31,13 @@ import core.run_lock
 from pr_rebase_support import _pushed, _lands, _TARGET, _OTHER_BASE, _OTHER_TARGET
 
 
+@pytest.fixture(autouse=True)
+def _no_recorded_rebase(monkeypatch):
+    """cmd_start's resume path reads the prior run's record; these cases have none."""
+    monkeypatch.setattr(rebase.lifecycle, "resumed_tally",
+                        lambda cwd, ctx: rebase.types.ResolutionTally())
+
+
 def _tool_schema(capsys) -> dict:
     """The --tool-schema document, which parse_args prints before resolving."""
     with mock.patch("sys.argv", ["pr-rebase", "--tool-schema"]), pytest.raises(SystemExit):

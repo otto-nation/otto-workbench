@@ -672,6 +672,11 @@ class RebaseSummary(Domain):
     # The remote tip the replay was based on. Carried across the gap between a
     # `--no-push` rebase and the push that finishes it; see RebaseOutcome.
     lease_expect: str = ""
+    # Files the rebase resolved to one side, their regions, and the tip it
+    # started from; see RebaseOutcome. Defaulted so older state files load.
+    files_one_sided: list[str] = field(default_factory=list)
+    one_sided_regions: list[str] = field(default_factory=list)
+    pre_rebase_head: str = ""
 
     def render_status(self) -> list[str]:
         if not self.updated_at:
@@ -695,6 +700,11 @@ class RebaseSummary(Domain):
             lines.append(
                 f"**Rebase**: not regenerated: {', '.join(self.files_stale)} — "
                 "content is the incoming side, unmerged"
+            )
+        if self.files_one_sided:
+            lines.append(
+                f"**Rebase**: resolved to one side: {', '.join(self.files_one_sided)} — "
+                "review before pushing (`pr rebase --push-only`)"
             )
         return lines
 

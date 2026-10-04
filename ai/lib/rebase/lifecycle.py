@@ -14,6 +14,7 @@ import dataclasses
 
 import agent.backend
 import core.log
+import core.publishing
 from core.proc import CmdResult
 from core.trail import Trail, tdecision, terr, tfail, tinfo, tspan
 import git.client
@@ -199,6 +200,40 @@ def _drive_one_step(
     return None, True
 
 
+def _stopped_outcome(tally: ResolutionTally, *, target_ref: str) -> RebaseOutcome:
+    """The `conflicts` outcome a stopped run records, one-sided regions included.
+
+    The regions are saved at every stop because the resume is a new process:
+    `resumed_tally` reads them back, so a region resolved before the stop
+    still holds the eventual push.
+    """
+    return RebaseOutcome(
+        status=RebaseStatus.CONFLICTS,
+        conflicts_resolved=len(tally.files),
+        files_resolved=tally.files,
+        files_stale=tally.stale,
+        files_one_sided=tally.one_sided,
+        one_sided_regions=tally.one_sided_regions,
+        pre_rebase_head=tally.pre_rebase_head,
+        target_base=target_ref,
+    )
+
+
+def resumed_tally(cwd: str, ctx: pr.context.ResolvedContext) -> ResolutionTally:
+    """The tally a resumed rebase continues from.
+
+    The tip it started at comes from git's own `orig-head`; the one-sided
+    regions from the stop an earlier process recorded — only when that record
+    is a stop, so a finished rebase's regions never leak into the next one.
+    """
+    prior = rebase_types.load_or_init(ctx).rebase
+    tally = ResolutionTally(pre_rebase_head=rebase_inspect.rebase_orig_head(cwd))
+    if prior.status == RebaseStatus.CONFLICTS.value:
+        tally.one_sided = list(prior.files_one_sided)
+        tally.one_sided_regions = list(prior.one_sided_regions)
+    return tally
+
+
 def _report_conflicts_and_stop(
     cwd: str, ctx: pr.context.ResolvedContext, *, target_ref: str,
     tally: ResolutionTally | None = None,
@@ -212,13 +247,7 @@ def _report_conflicts_and_stop(
     ``status=conflicts`` would report a run that did nothing.
     """
     tally = tally if tally is not None else ResolutionTally()
-    RebaseOutcome(
-        status=RebaseStatus.CONFLICTS,
-        conflicts_resolved=len(tally.files),
-        files_resolved=tally.files,
-        files_stale=tally.stale,
-        target_base=target_ref,
-    ).save(ctx)
+    _stopped_outcome(tally, target_ref=target_ref).save(ctx)
     ConflictReport.from_repo(cwd).emit()
     return rebase_types.CONFLICTS_EXIT
 
@@ -260,13 +289,7 @@ def _record_failed(
     leaves the next reader — `pr status`, `cmd_push`, the operator — with the
     previous run's summary and no sign that anything happened since.
     """
-    RebaseOutcome(
-        status=RebaseStatus.CONFLICTS,
-        conflicts_resolved=len(tally.files),
-        files_resolved=tally.files,
-        files_stale=tally.stale,
-        target_base=target_ref,
-    ).save(ctx)
+    _stopped_outcome(tally, target_ref=target_ref).save(ctx)
 
 
 def _restore_conflicts(cwd: str, paths: list[str]) -> None:
@@ -334,6 +357,8 @@ def _halt_if_discarding(
         return None
     if audit.flagged:
         core.log.warn(replay_audit.render_advisory(audit))
+        tally.note_one_sided([f.path for f in audit.flagged],
+                             replay_audit.advisory_block(audit))
     if audit.ok:
         return None
     refused = [f.path for f in audit.refused]
@@ -351,13 +376,7 @@ def _halt_if_discarding(
         return None
     if restore:
         _restore_conflicts(cwd, refused)
-    RebaseOutcome(
-        status=RebaseStatus.CONFLICTS,
-        conflicts_resolved=len(tally.files),
-        files_resolved=tally.files,
-        files_stale=tally.stale,
-        target_base=target_ref,
-    ).save(ctx)
+    _stopped_outcome(tally, target_ref=target_ref).save(ctx)
     report = ConflictReport.from_repo(cwd)
     dataclasses.replace(report, files=sorted(set(report.files) | set(refused))).emit()
     return rebase_types.CONFLICTS_EXIT
@@ -695,14 +714,15 @@ def fresh(
     replay = (
         ["--onto", target_ref, replay_from] if replay_from else [target_ref]
     )
+    # Threaded into the loop below rather than created there: the loop's first
+    # action may be to resolve a conflict this call left behind, and a tally
+    # made inside it would not be the one the whole run accumulates into.
+    # Made before the replay so it holds the tip the replay starts from.
+    tally = ResolutionTally(pre_rebase_head=git.client.head_sha(cwd=cwd))
     r = git.client.run(
         "rebase", "--autosquash", *replay, cwd=cwd, config=REBASE_CONFIG,
         env=unattended_env(),
     )
-    # Threaded into the loop below rather than created there: the loop's first
-    # action may be to resolve a conflict this call left behind, and a tally
-    # made inside it would not be the one the whole run accumulates into.
-    tally = ResolutionTally()
 
     if r.ok and not rebase_inspect.rebase_in_progress(cwd):
         return rebase_success(
@@ -743,6 +763,15 @@ def rebase_success(
     # gate — shut for those modes — is what stops it, and a held landing is what
     # carries the force-push command back as data.
     lands_here = mode is not RunMode.PUSH
+    one_sided = sorted(set(tally.one_sided))
+    # Held, not refused: the replay is fine to keep, but a region resolved to
+    # one side may have dropped the other side's change, so nothing reaches
+    # the remote until somebody has looked — in a batch, in `pr ci --fix`, and
+    # by hand alike. Under RunMode.PUSH the push is cmd_push's, after this
+    # returns, and `pr rebase` skips it while the gate is held. The hold lasts
+    # for the rest of this process, by design.
+    if one_sided and mode.reaches_remote:
+        core.publishing.hold(f"the rebase resolved {len(one_sided)} file(s) to one side")
 
     label = "Rebase complete" if not tally.commits else (
         f"Rebase complete — resolved {len(tally.files)} file(s) "
@@ -765,6 +794,9 @@ def rebase_success(
             conflicts_resolved=len(tally.files),
             files_resolved=tally.files,
             files_stale=tally.stale,
+            files_one_sided=tally.one_sided,
+            one_sided_regions=tally.one_sided_regions,
+            pre_rebase_head=tally.pre_rebase_head,
             force_pushed=False,
             target_base=target_ref,
         ).save(ctx)
@@ -774,7 +806,7 @@ def rebase_success(
     if lands_here:
         # Announced only when the push will actually happen; a held run says the
         # same thing once at the end, through the label and the resume line.
-        if mode.reaches_remote:
+        if mode.reaches_remote and not one_sided:
             rebase_pr_snapshot.name_the_open_pr(snapshot, trail=trail)
             core.log.info(f"{label} — force-pushing...")
         # Deduplicated: this is the candidate set the pre-push repair matches a
@@ -796,6 +828,9 @@ def rebase_success(
         conflicts_resolved=len(tally.files),
         files_resolved=tally.files,
         files_stale=tally.stale,
+        files_one_sided=tally.one_sided,
+        one_sided_regions=tally.one_sided_regions,
+        pre_rebase_head=tally.pre_rebase_head,
         # None rather than False for a run that never tried: a held landing did
         # exactly what --no-push asked for, and recording it as a failed push
         # would be the summary's own invention.
@@ -815,6 +850,10 @@ def rebase_success(
             return 0
         core.log.error("Force-push failed.")
         return 1
+
+    if one_sided:
+        core.log.warn(f"Resolved to one side: {', '.join(one_sided)} — push held. "
+                      "Review the regions above, then publish with `pr rebase --push-only`.")
 
     # The label holds in every mode that reaches here — the rebase finished.
     # Under FIX_ONLY the AI's work is the whole point of the run and the user is

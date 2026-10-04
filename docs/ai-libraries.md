@@ -5430,8 +5430,9 @@ needs it rather than because it is part of resolving: nothing here reads a
 other half of that split and points the other way — it takes a resolved context
 and acts on it.
 
-The transport is plain `subprocess`: these are local reads with a `timeouts.LOCAL`
-bound, and the one unbounded call is `wt switch`, which creates a checkout.
+The local reads stay on plain `subprocess` with a `timeouts.LOCAL` bound, and the
+one unbounded call is `wt switch`, which creates a checkout. The one network call,
+the fetch ahead of `wt switch`, goes through `git.client` for its `TRANSFER` bound.
 
 `stack_parent` is the name a stacked branch should be measured against. It asks
 git for the branches that are ancestors of HEAD but not of the trunk, and takes

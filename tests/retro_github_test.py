@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -405,3 +407,96 @@ def test_a_thread_within_the_page_is_not_refetched():
         retro.github.fetch_repo_review_data("owner/repo", _JUN)
 
     refetch.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("LGTM", True),
+        ("Looks good!", True),
+        ("+1", True),
+        ("This should validate the redirect URI against an allowlist", False),
+        ("nit", True),
+        ("\U0001f44d", True),
+        ("nit: rename this to fooBar for consistency", False),
+        ("approved with one nit: rename X", False),
+        ("LGTM!", True),
+    ],
+)
+# passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
+def test_is_noise(text, expected):
+    assert retro.github.is_noise(text) is expected
+
+
+# passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
+def test_parse_review_comment_extracts_fields_from_api_response():
+    comment = {
+        "user": {"login": "reviewer1"},
+        "body": "This should validate the redirect URI",
+        "path": "src/auth.go",
+        "line": 45,
+        "html_url": "https://github.com/org/repo/pull/1#discussion_r123",
+    }
+    parsed = retro.github.parse_review_comment(comment)
+    assert parsed["author"] == "reviewer1"
+    assert parsed["path"] == "src/auth.go"
+    assert parsed["line"] == 45
+
+
+# passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
+def test_parse_review_comment_handles_missing_path():
+    comment = {
+        "user": {"login": "reviewer1"},
+        "body": "Overall this looks good but consider X",
+    }
+    parsed = retro.github.parse_review_comment(comment)
+    assert parsed["path"] is None
+    assert parsed["line"] is None
+
+
+# passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
+def test_parse_review_comment_truncates_long_bodies():
+    comment = {
+        "user": {"login": "r"},
+        "body": "x" * 1000,
+    }
+    parsed = retro.github.parse_review_comment(comment)
+    assert len(parsed["body"]) <= 500
+
+
+# passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
+def test_threads_for_uses_the_batch_nodes_when_nothing_was_truncated(monkeypatch):
+    def _refetch(*_a):
+        raise AssertionError("refetched")
+
+    monkeypatch.setattr(retro.github, "fetch_review_threads", _refetch)
+    pr_node = {
+        "number": 7,
+        "reviewThreads": {
+            "totalCount": 2,
+            "nodes": [{"path": "a.py"}, {"path": "b.py"}],
+        },
+    }
+    assert len(retro.github._threads_for("o/r", pr_node)) == 2
+
+
+# passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
+def test_threads_for_refetches_every_thread_when_the_batch_query_truncated(
+    monkeypatch,
+):
+    calls = []
+
+    def _refetch(repo, pr):
+        calls.append((repo, pr))
+        return ThreadSet([{"path": f"f{i}.py"} for i in range(114)])
+
+    monkeypatch.setattr(retro.github, "fetch_review_threads", _refetch)
+    pr_node = {
+        "number": 7,
+        "reviewThreads": {
+            "totalCount": 114,
+            "nodes": [{"path": "a.py"}] * 100,
+        },
+    }
+    assert len(retro.github._threads_for("o/r", pr_node)) == 114
+    assert calls == [("o/r", 7)]

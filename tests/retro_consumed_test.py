@@ -15,20 +15,15 @@ directory name that escapes the reviews root — and pins the refusal.
 import sys
 from pathlib import Path
 
-from conftest import load_script
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import retro.consumed  # noqa: E402
 from retro.consumed import (  # noqa: E402
     ConsumedReview,
     ConsumeRecord,
     deletable,
     read_record,
     write_record,
-)
-
-retro_consume = load_script(
-    "retro_consume", Path(__file__).resolve().parent.parent / "ai" / "bin" / "retro-consume"
 )
 
 
@@ -183,19 +178,18 @@ def test_a_review_with_no_recorded_timestamp_is_still_deletable(tmp_path):
     assert skipped == []
 
 
-# ── The binary's deletion loop ──────────────────────────────────────────────
+# ── The consume() deletion loop ─────────────────────────────────────────────
 #
-# `deletable()` above decides what may go; the loop in `ai/bin/retro-consume`
+# `deletable()` above decides what may go; the loop in `retro.consumed.consume()`
 # is what goes and does it. The gap between the two is a real window — the
 # check is a `is_dir()` and the delete is a separate syscall — so the loop is
-# exercised here through the binary rather than reasoned about.
+# exercised here through `consume()` rather than reasoned about.
 
 
 def _run_consume(monkeypatch, tmp_path, scan_id: str):
-    """Run retro-consume's main() against a state root under tmp_path."""
+    """Run consume() against a state root under tmp_path."""
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setattr(sys, "argv", ["retro-consume", "--scan-id", scan_id])
-    retro_consume.main()
+    assert retro.consumed.consume(scan_id) == 0
 
 
 def test_a_review_deleted_mid_loop_does_not_abort_the_run(monkeypatch, tmp_path, capsys):
@@ -216,7 +210,7 @@ def test_a_review_deleted_mid_loop_does_not_abort_the_run(monkeypatch, tmp_path,
         )
     )
 
-    real_rmtree = retro_consume.shutil.rmtree
+    real_rmtree = retro.consumed.shutil.rmtree
 
     def _rmtree_racing(target, *args, **kwargs):
         # The sweep lands between the check and this call for one entry only.
@@ -225,7 +219,7 @@ def test_a_review_deleted_mid_loop_does_not_abort_the_run(monkeypatch, tmp_path,
             raise FileNotFoundError(2, "No such file or directory", str(target))
         return real_rmtree(target, *args, **kwargs)
 
-    monkeypatch.setattr(retro_consume.shutil, "rmtree", _rmtree_racing)
+    monkeypatch.setattr(retro.consumed.shutil, "rmtree", _rmtree_racing)
 
     _run_consume(monkeypatch, tmp_path, "s")
 
@@ -264,6 +258,7 @@ def test_a_clean_run_does_not_report_a_race_that_did_not_happen(monkeypatch, tmp
 
     _run_consume(monkeypatch, tmp_path, "s")
 
-    summary = "".join(capsys.readouterr())
+    captured = capsys.readouterr()
+    summary = captured.out + captured.err
     assert "Deleted 2 consumed review(s), kept 0" in summary
     assert "raced" not in summary

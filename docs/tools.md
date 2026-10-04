@@ -1018,7 +1018,7 @@ alone.
 |------|-------------|
 | `-V`, `--version` | print version and exit. |
 | `--home` `<dir>` | home directory override (default: `$HOME`). |
-| `--workbench` `<dir>` | workbench directory (default: $OTTO_WORKBENCH or ~/git/personal/otto-nation/otto-workbench/main). |
+| `--workbench` `<dir>` | workbench directory (default: $OTTO_WORKBENCH, else the checkout this runs from). |
 | `--since` `<duration>` | override scan window (e.g. 7d, 24h, 30m). |
 | `--consume` | record the local reviews read, so the retro may delete them when it completes. |
 

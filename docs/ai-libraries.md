@@ -5862,8 +5862,9 @@ completion presents the scan ID it believes it is completing. A record that
 does not answer to that ID is refused rather than honoured, and an entry whose
 review has changed since the scan is left alone rather than deleted.
 
-Writing it is `retro-scan`'s under `--consume`; reading and enforcing it is
-`retro-consume`'s, which the skill calls in place of an inline `rm`.
+Writing the record is `retro.scan`'s (run by `retro-scan --consume`), and
+reading and enforcing it is `consume()` below (run by `retro-consume`, which
+the skill calls in place of an inline `rm`).
 
 ### retro/github.py
 
@@ -5928,6 +5929,18 @@ question the retro asks is whether any rule *covers* a finding, not which rule
 is least unlike it. An unnormalized count over a whole file answers the second
 question: it grows with the file's vocabulary, so the longest file wins nearly
 every comparison and no finding is ever reported as a gap.
+
+### retro/scan.py
+
+One scan of the retro.
+
+Resolves the Project Registry to GitHub repos, fetches their merged-PR review
+comments and the local self-reviews, cross-references both against the rule
+files, and prints the report. With `--consume` it records what it read.
+
+Not: fetching (`retro.github`), local-review parsing (`retro.reviews`),
+matching (`retro.rules`), rendering (`retro.report`), the consume record
+(`retro.consumed`), argument parsing (`cli.retro_scan`).
 
 ### wiki/backup.py
 
@@ -6262,6 +6275,32 @@ more — dispatch imports `handler` instead — but MCP still executes the shim
 by path, so the field is the declaration of which `ai/bin` name that is. The
 command/domain/phase join in `tests/cli_join_test.py` is what keeps it from
 going stale now that no `pr` code path would notice if it did.
+
+### cli/retro_consume.py
+
+Delete the local reviews a retro consumed, if the record answers to it.
+
+Phase 4 of the retro skill. `retro-scan --consume` recorded which reviews it
+read and stamped the record with its own scan ID; this presents that ID back
+and deletes only what that scan claimed, and only where the review on disk is
+still the one it read.
+
+A record that names a different scan is refused rather than honoured: it
+belongs to a retro that was never completed, or to a debug run, and the
+reviews it lists are not this retro's to delete.
+
+Usage:
+  retro-consume --scan-id ID [--dry-run]
+
+### cli/retro_scan.py
+
+Scan PR review comments and cross-reference against coding rules.
+
+Replaces Phase 1 of the retro skill (Orient).
+Outputs a structured markdown report to stdout.
+
+Usage:
+  retro-scan [--home DIR] [--workbench DIR] [--since DURATION] [--consume]
 
 ### cli/reuse_mode_tracker.py
 

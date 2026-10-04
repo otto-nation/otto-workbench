@@ -154,8 +154,16 @@ _render() {
   _make_seed
   _make_container
 
-  # node and git stay reachable; the workbench's bin/ does not.
-  PATH="$(dirname "$(command -v node)"):$(dirname "$(command -v git)"):/usr/bin:/bin" _context "$CONTAINER"
+  # node, git and bash stay reachable; the workbench's bin/ does not.
+  #
+  # node's directory comes from process.execPath, not `command -v`: a version
+  # manager's shim resolves node by searching the rest of PATH and the cwd's
+  # config, and from the temp container with PATH narrowed it finds neither.
+  # bash's comes from $BASH because the resolver needs 4.3+, and on macOS the
+  # /bin/bash that /usr/bin:/bin leaves is 3.2.
+  local node_dir
+  node_dir="$(dirname "$(node -p 'process.execPath')")"
+  PATH="$node_dir:$(dirname "$BASH"):$(dirname "$(command -v git)"):/usr/bin:/bin" _context "$CONTAINER"
   [[ "$output" == *"\"kind\":\"resolved\""* ]]
 }
 

@@ -49,7 +49,8 @@ fi
 # shellcheck source=/dev/null
 . "$(dirname "$_ai_core_dir")/git_remote.sh"
 # The workbench checkout, kept because lib/ai/pr.sh runs with the *target* repo
-# as its cwd and still has to find ai/lib/git/push.py. `_ai_core_dir` is <root>/lib/ai.
+# as its cwd and still has to find ai/lib/core/pr_template.py and lib/config_cli.py.
+# `_ai_core_dir` is <root>/lib/ai.
 WORKBENCH_ROOT="$(dirname "$(dirname "$_ai_core_dir")")"
 unset _ai_core_dir
 

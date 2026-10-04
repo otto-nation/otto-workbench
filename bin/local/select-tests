@@ -57,7 +57,6 @@ ALWAYS_RUN_TESTS=(
 NO_REFS_TESTS=(
   claude_rules_install
   compact_diff
-  create_pr
   files_frontmatter
   find_commitlint_config
   install_cask
@@ -67,7 +66,6 @@ NO_REFS_TESTS=(
   parse_pr_flags
   pi_skill_override
   pr_issue_link
-  push_branch
   run_ai
   session_count
   step_install_claude
@@ -81,7 +79,9 @@ NO_REFS_TESTS=(
 FULL_SUITE_TRIGGERS=(
   tests/test_helper.bash
   tests/validate_registries_helper.bash
+  tests/wt_cleanup_helper.bash
   tests/conftest.py
+  tests/validate_migrations_helper.bash
   bin/local/run-tests
   bin/local/select-tests
 )

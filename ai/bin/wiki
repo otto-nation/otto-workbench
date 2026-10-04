@@ -1,5 +1,38 @@
 #!/usr/bin/env python3
-"""Mechanical operations over a compiled knowledge base."""
+"""Mechanical operations over a compiled knowledge base.
+
+The `wiki` skill (`ai/skills/wiki`) owns compilation, querying, and judgement.
+This CLI owns only what is decidable without reading for meaning: link graphs,
+word counts, file hashes, dates.
+
+```
+wiki init    [--vault|--in-repo|--wiki DIR] [--domain TEXT] [--audience TEXT] [DIR]
+wiki path    [--wiki DIR] [DIR]
+wiki status  [--wiki DIR] [--json] [DIR]
+wiki lint    [--wiki DIR] [--json] [--signals] [DIR]
+wiki signals [--wiki DIR] [--json] [DIR]
+wiki sources [--wiki DIR] [--new] [--json] [DIR]
+wiki index   [--wiki DIR] [--check] [DIR]
+wiki backup  [--list|--restore NAME] [--keep N] [--wiki DIR] [DIR]
+wiki link    [--wiki DIR] [DIR]
+wiki ingest  --stage SRC [--type T] [--title TEXT] [--wiki DIR] [DIR]
+wiki archive SLUG [--force] [--wiki DIR] [DIR]
+```
+
+A knowledge base is a directory holding SCHEMA.md, an `articles/` tree of
+compiled markdown, and a `raw/` tree of the immutable sources they were compiled
+from. `_index.md`, `_sources.md`, and `_log.md` are generated bookkeeping.
+
+It lives in one of two places, and `init` asks which when a repo has not said:
+in the repo (committed and shared), or in this machine's vault (private, outside
+every worktree, one folder per repo). The vault is found through `wiki.root`, so
+it reads the same from every worktree of a repo and survives the worktree being
+removed.
+
+`status`, `lint`, `signals`, and `sources` accept `--json`. `lint` and
+`index --check` exit 1 when they have findings. Exit 2 means the knowledge base
+could not be located — or, from `init` alone, no location was chosen.
+"""
 
 import os
 import sys

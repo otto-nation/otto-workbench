@@ -113,11 +113,13 @@ class ReviewMode:
       existing review takes; a mode that needs less says so.
     * ``schema_versions`` — the row-schema versions this mode can serve, empty
       for a mode with no versioned document to hand a caller.
+    * ``help`` — one-line description of the mode, for generated CLI reference.
     """
 
     handler: Callable[..., int] | None = None
     need: Need = REVIEW_MODE_NEED
     schema_versions: tuple[int, ...] = ()
+    help: str = ""
 
 
 def review_modes(argv: Sequence[str], modes: Mapping[str, ReviewMode]) -> list[str]:
@@ -144,7 +146,7 @@ def review_modes(argv: Sequence[str], modes: Mapping[str, ReviewMode]) -> list[s
 def review_need(argv: Sequence[str], modes: Mapping[str, ReviewMode]) -> Need:
     """`review`'s need, which its mode flag decides.
 
-    The one command that declares a callable rather than a constant. A mode
+    One of the commands that declare a callable rather than a constant. A mode
     flag means the subject is a review that already exists, and a bare `review`
     means the subject is the branch — which is the whole of why the fetch
     differs between them. Reading the declaration off the mode table is what

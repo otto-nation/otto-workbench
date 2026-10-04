@@ -65,6 +65,22 @@ action, and the listing exists to be polled: the two records a dispatch writes
 cost more than the query itself, and they land in the file every `otto-log`
 query then reads. The exemption is read off these same three axes — `Need`
 carries no trail flag of its own for a command to add itself to.
+
+`base_branch` is the other thing this module resolves once per run: the branch
+every range a review (or rebase, or supersession check) measures against, most
+authoritative source first — operator `--base`/`--onto`, the PR's `baseRefName`,
+`git.topology.stack_parent` (nearest local ancestor of HEAD that is not the
+trunk), then the repo's default branch. It returns a *name*; callers spell
+`origin/<name>` themselves, so a local ref sitting at a stale position can
+nominate a base without being the commit anything is measured against. The run
+logs which rung answered and why. A `--base` naming a branch that exists in
+neither `origin/` nor locally is refused by `review.preflight.refuse_unresolvable_base`
+before the review runs — that is the one rung that can name something that does
+not exist. A derived base that does not resolve is not refused; the range
+fallbacks in `review.collect.base_ref` handle it. `--base` is also the override
+for a stale neighbour that won on distance (a `wip` parked mid-stack, a detached
+HEAD whose own branch ref is gone — `--recover`, or a PR whose branch was
+deleted); `git.topology.stack_parent` is that guess.
 """
 
 # doc-group: pr-state

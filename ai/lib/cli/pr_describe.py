@@ -3,7 +3,22 @@
 Run after the branch stops moving — a description written before the fix passes
 describes a PR that no longer exists. The pass is commit-aware: it records the
 HEAD it described, and a repeated run against an unchanged branch is a no-op
-rather than another AI call.
+rather than another AI call, which is what lets `pr fix` call it unconditionally
+at the end of every run. `--force` ignores the recorded SHA; `--dry-run` prints
+the revision instead of applying it.
+
+The edit itself answers to the same publishing gate as every other GitHub write:
+without `--post` the revised body is drafted to stderr and the PR is untouched.
+`--dry-run` is the narrower request of the two — it prints the revision and
+records nothing, where a draft still records that the pass ran. `pr fix`
+forwards `--post` to the description for this reason, and forwards nothing else.
+
+The template is resolved by `core.pr_template`, which owns the candidate list
+for every caller — this command, `pr create`, and the SessionStart context line.
+It checks `pull_request_template.md`, in either case, in `.github/`, the repo
+root, and `docs/`, and takes the first that exists. A repo with none of them
+gets the built-in fallback (Summary / Changes / Testing only). A differently-named
+template, and GitHub's `PULL_REQUEST_TEMPLATE/` directory form, are not detected.
 
 Exit codes:
   0  Success (description current, revised, or nothing to do)
@@ -403,10 +418,12 @@ def build_parser() -> ToolParser:
         description="Revise the PR description against the repo's PR template",
         output_schema=DescribeSummary,
     )
-    parser.add_argument("--repo-dir", "--worktree", dest="repo_dir",
+    parser.add_argument("--repo-dir", "--worktree", dest="repo_dir", metavar="PATH",
                         help="Git worktree directory")
-    parser.add_argument("--branch", help="Branch name (injected by pr dispatcher)")
-    parser.add_argument("--pr", help="PR number (injected by pr dispatcher)")
+    parser.add_argument("--branch", metavar="NAME",
+                        help="Branch name (injected by pr dispatcher)")
+    parser.add_argument("--pr", metavar="NUM|URL",
+                        help="PR number or URL (injected by pr dispatcher)")
     parser.add_argument("--force", action="store_true",
                         help="Revise even when HEAD has not moved since the last pass")
     parser.add_argument("--dry-run", action="store_true",

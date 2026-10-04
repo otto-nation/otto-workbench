@@ -1,17 +1,27 @@
 #!/usr/bin/env bash
-# Verify dream memory file integrity.
+# Verify dream memory file integrity across all projects.
 #
-# Usage: dream-verify
+# Walks every repo memory directory under `$WORKBENCH_MEMORY_DIR` that contains
+# a `MEMORY.md` and checks:
 #
-# Checks across every repo's memory directory under $WORKBENCH_MEMORY_DIR:
-#   1. MEMORY.md under 200 lines
-#   2. All (filename.md) references in MEMORY.md resolve to files
-#   3. No relative dates in topic files
-#   4. No duplicate name: frontmatter across topic files
+# 1. `MEMORY.md` is at most 200 lines
+# 2. Every `(filename.md)` reference in `MEMORY.md` resolves to a file
+# 3. Topic files contain no relative dates (`yesterday`, `last week`, …)
+# 4. No duplicate `name:` frontmatter across topic files
 #
-# Exit codes:
-#   0  All checks pass
-#   1  One or more checks fail
+# ```
+# dream-verify
+# ```
+#
+# | Flag | Description |
+# |------|-------------|
+# | `-V`, `--version` | Show version |
+# | `-h`, `--help` | Show help |
+#
+# | Exit | Meaning |
+# |------|---------|
+# | `0` | All checks pass, or no memory directories found |
+# | `1` | One or more checks fail |
 
 set -e
 

@@ -2,7 +2,7 @@
 
 ## Before PR Creation
 
-Before creating a PR (via `task pr:create`, `gh pr create`, or any method):
+Before creating a PR (via `pr create`, `gh pr create`, or any method):
 
 1. Run `pr review --self --fix` on the current branch
 2. Read the review file from `~/.local/state/workbench/reviews/` and present what the fix
@@ -27,11 +27,11 @@ when you want the findings *without* the edits — sizing up a branch you are no
 ship, or reading what a review says before deciding whether to act on it.
 
 Add `--push` only when the branch already has an open PR, so the fix commit reaches the
-branch someone is reading. Before the PR exists, `task pr:create` does the pushing and the
+branch someone is reading. Before the PR exists, `pr create` does the pushing and the
 local commit is enough. `--push` requires `--fix`, which in turn requires `--self`.
 
 The `self-review-fix` skill is the one documented exception: it always passes `--push`,
-because it has no promise that `task pr:create` runs immediately afterward, and leaving a
+because it has no promise that `pr create` runs immediately afterward, and leaving a
 gap between the fix commit and its push is the same risk this rule exists to close. Follow
 the conditional form above for a manual invocation that PR-creates itself right after.
 

@@ -7,7 +7,6 @@ check_surface_compat.bats	66.00
 claude_env_vars.bats	2.63
 claude_rules_install.bats	2.63
 claude_settings.bats	314.29
-claude_wrapper.bats	9.16
 collect_component_registries.bats	0.82
 commit_breaking_change.bats	15.07
 compact_diff.bats	2.48
@@ -15,7 +14,6 @@ compose_docs.bats	11.38
 config.bats	5.77
 config_cli.bats	19.01
 container_source.bats	5.71
-create_pr.bats	3.11
 docker_registry.bats	0.73
 docker_setup.bats	1.67
 dream_scan.bats	4.07
@@ -86,7 +84,6 @@ pre_push_hook.bats	26.74
 pre_push_open_pr_notice.bats	16.90
 projects.bats	28.13
 promote_scan.bats	3.22
-push_branch.bats	8.78
 registries_cache.bats	6.19
 registry_permissions.bats	1.60
 resolve_branch.bats	5.29
@@ -150,5 +147,6 @@ vertex_shim.bats	0.37
 workbench_roots.bats	6.86
 workbench_rules.bats	14.52
 worktree.bats	4.32
+worktree_launch.bats	9.16
 wt_cleanup.bats	78.69
 wt_fetch_default.bats	8.15

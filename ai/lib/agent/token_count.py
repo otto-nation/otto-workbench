@@ -26,6 +26,11 @@ per backend; `review.budget` owns the measured figures and the reserve built
 from them (see the comment above `OVERHEAD_RESERVE_TOKENS`). A caller comparing
 a count against a context window owes itself that margin until the two are
 wired together.
+
+The review pipeline records each count in `prompt-stats.json` (see
+`review.prompt`). That write, the `WORKBENCH_AI_MEASURE_TOKENS=0` opt-out, and
+the measured round-trip latency live there, not here: this module only asks the
+endpoint and returns `None` when it cannot.
 """
 
 # doc-group: backend

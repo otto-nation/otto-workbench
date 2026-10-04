@@ -1,6 +1,5 @@
-"""git.push reporting: the resume command, the report text and the bash bridge."""
+"""git.push reporting: the resume command and the report text."""
 
-import json
 import sys
 from pathlib import Path
 
@@ -14,12 +13,8 @@ if str(LIB_DIR) not in sys.path:
 import git.client  # noqa: E402
 import core.proc  # noqa: E402
 import git.push  # noqa: E402
-import core.workbench_paths  # noqa: E402
 
-from conftest import _last_event  # noqa: E402
-
-# `pushable` is a fixture: imported so pytest finds it here, never called by name.
-from push_support import _commit, pushable, _lose_pushes, _RESET_DUMP_FULL
+from push_support import _RESET_DUMP_FULL  # noqa: E402
 
 
 # ── the resume command ──────────────────────────────────────────────────────
@@ -269,160 +264,3 @@ def test_every_retry_state_has_a_report_line():
     """A LOST report claiming a retry that never ran is the wrong-reporting
     failure this module exists to remove."""
     assert set(git.push._RETRY_NOTE) == set(git.push.Retry)
-
-
-# ── the bash bridge ─────────────────────────────────────────────────────────
-
-
-def test_cli_exit_codes_cover_every_status():
-    """A status with no exit code would raise KeyError at the worst moment."""
-    assert set(git.push._EXIT_CODES) == set(git.push.PushStatus)
-
-
-def test_cli_exits_zero_on_a_verified_push(pushable):
-    wt, _ = pushable
-    _commit(wt, "work")
-    assert git.push.main(["--cwd", str(wt), "--branch", "main"]) == 0
-
-
-def test_cli_reports_a_lost_push(pushable, capsys):
-    wt, remote = pushable
-    _commit(wt, "work")
-    _lose_pushes(remote)
-    assert git.push.main(["--cwd", str(wt), "--branch", "main"]) == 2
-    assert "the remote did not move" in capsys.readouterr().err
-
-
-def test_cli_exits_one_when_git_refuses(pushable, monkeypatch):
-    """A refusal and a lost push get different codes so bash can tell them apart."""
-    wt, _ = pushable
-    _commit(wt, "work")
-    monkeypatch.setattr(
-        git.client, "run",
-        lambda *cmd, **kw: core.proc.CmdResult(1, "", "error: failed to push some refs"),
-    )
-    assert git.push.main(["--cwd", str(wt), "--branch", "main"]) == 1
-
-
-def test_cli_exits_three_when_the_remote_cannot_be_asked(pushable, monkeypatch):
-    """Unverified is its own code — the shell warns rather than aborting."""
-    wt, _ = pushable
-    _commit(wt, "work")
-    monkeypatch.setattr(git.push, "remote_head", lambda *a, **k: None)
-    assert git.push.main(["--cwd", str(wt), "--branch", "main"]) == 3
-
-
-def _trail_events() -> list[dict]:
-    """Every record in the sandboxed trail root, not only the last.
-
-    `conftest._last_event` answers for a run whose final event is the subject;
-    these assert that a particular event is *somewhere* in the run, which the
-    last one alone cannot show — `finish` always follows it.
-    """
-    root = core.workbench_paths.trail_dir()
-    return [json.loads(line)
-            for p in sorted(root.glob("*.jsonl"))
-            for line in p.read_text().splitlines() if line.strip()]
-
-
-_FAILING_GATE = """#!/usr/bin/env bash
-echo "→ Running pytest (203/203 files)..."
-echo "FAILED tests/tree_lock_test.py::test_a_signal_racing_the_spawn"
-echo "✗ Pytest failed"
-exit 1
-"""
-
-
-def _refusing_gate(wt: Path) -> None:
-    """Install a pre-push hook that fails the way the workbench gate does."""
-    hook = wt / ".git" / "hooks" / "pre-push"
-    hook.parent.mkdir(parents=True, exist_ok=True)
-    hook.write_text(_FAILING_GATE)
-    hook.chmod(0o755)
-
-
-def test_cli_keeps_the_whole_gate_output_when_the_hook_refuses(pushable):
-    """The bash bridge is an entry point, so it opens the trail that keeps it.
-
-    Without one, a gate that ran for half an hour and printed the only copy of
-    a rare test failure leaves a 20-line excerpt on a terminal and nothing on
-    disk — which is how one such failure was lost. Driven through a real
-    refusing hook rather than a stubbed `git.client.run`, because what is under
-    test is that the hook's own words reach the artifact.
-    """
-    wt, _ = pushable
-    _commit(wt, "work")
-    _refusing_gate(wt)
-
-    assert git.push.main(["--cwd", str(wt), "--branch", "main"]) == 1
-
-    artifacts = sorted(core.workbench_paths.trail_dir().glob("artifacts/*/*-push.log"))
-    assert len(artifacts) == 1, "the refusal left no artifact to diagnose from"
-    kept = artifacts[0].read_text()
-    assert "test_a_signal_racing_the_spawn" in kept, (
-        "the artifact holds the gate's banner but not the failure under it"
-    )
-    assert "✗ Pytest failed" in kept
-
-
-def test_cli_names_the_artifact_it_wrote(pushable, capsys):
-    """An artifact nobody is told about is one nobody reads."""
-    wt, _ = pushable
-    _commit(wt, "work")
-    _refusing_gate(wt)
-
-    git.push.main(["--cwd", str(wt), "--branch", "main"])
-
-    assert "full output: " in capsys.readouterr().err
-
-
-def test_cli_records_the_branch_it_pushed(pushable):
-    """`otto-log --repo` filters on context, so an unlabelled trail is unfindable."""
-    wt, _ = pushable
-    _commit(wt, "work")
-    _refusing_gate(wt)
-
-    git.push.main(["--cwd", str(wt), "--branch", "main"])
-
-    assert _last_event()["context"]["branch"] == "main"
-
-
-def test_cli_records_an_unexpected_exception(pushable, monkeypatch):
-    """`finish` writes one summary with no verdict, so a crash needs its own event.
-
-    Without it the trail of a run that died mid-push reads exactly like the
-    trail of a clean one, which is the wrong-reporting failure a trail exists
-    to prevent.
-    """
-    wt, _ = pushable
-    _commit(wt, "work")
-
-    def boom(*_args, **_kwargs):
-        raise RuntimeError("the remote fell over")
-
-    monkeypatch.setattr(git.push, "push", boom)
-
-    with pytest.raises(RuntimeError):
-        git.push.main(["--cwd", str(wt), "--branch", "main"])
-
-    crashes = [e for e in _trail_events() if e["action"] == "unexpected_error"]
-    assert crashes, "the crash left a trail indistinguishable from a clean run"
-    assert "the remote fell over" in crashes[0]["detail"]
-    assert "RuntimeError" in crashes[0]["data"]["traceback"]
-
-
-def test_script_imports_with_pythonpath_overwritten(tmp_path):
-    """push.py runs as a script under an interpreter whose PYTHONPATH points elsewhere.
-
-    A mise shim assigns PYTHONPATH from the workspace's own [env] before exec'ing
-    python, replacing anything the caller exported. Passing ai/lib in from the
-    shell therefore cannot be relied on, so the script puts it on sys.path itself.
-    The hostile value here stands in for that overwrite.
-    """
-    result = core.proc.run(
-        [sys.executable, str(LIB_DIR / "git" / "push.py"), "--help"],
-        timeout=30,
-        env={"PYTHONPATH": str(tmp_path), "PATH": "/usr/bin:/bin"},
-    )
-    assert result.returncode == 0, result.stderr
-    assert "usage: push.py" in result.stdout

@@ -11,6 +11,15 @@ phase body lives in the module that owns its subject — `pr.triage`,
 `fix.comments`, `pr.settlement`, `pr.thread_replies`, `review.closeout` — and
 this module knows only which one to call and in what order.
 
+Two axes, and they have to stay apart: `--triage`/`--fix`/`--finish`/`--reply`/
+`--settle` choose the work; `--post` decides whether it leaves the machine.
+`--settle` publishes nothing and refuses `--post` and every other phase flag
+alongside it. `--track` / `--track-all` are not implied by `--finish`.
+
+A comment `pr comments` has already read is dropped from triage decomposition
+(`_mark_seen`), keyed on the comment id *and* `last_edited_at` — see
+`pr.comments` for how that stamp is fetched.
+
 `main` returns rather than exits, as every module under `cli/` does; the shim at
 `ai/bin/review-threads` owns the process exit. That now holds through the
 phases too: `closeout.finish_deferred_work` reports a refused `--track` rather
@@ -322,8 +331,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="PR review threads. Phase flags (--triage/--fix/--finish/"
                     "--reply/--settle) pick the work; --post publishes it.")
-    parser.add_argument("--pr", help="PR number")
-    parser.add_argument("--branch", help="Branch name (resolved via resolve-branch)")
+    parser.add_argument("--pr", metavar="NUM|URL", help="PR number or URL")
+    parser.add_argument("--branch", metavar="NAME",
+                        help="Branch name (resolved via resolve-branch)")
     parser.add_argument("--triage", action="store_true",
                         help="Phase: classify threads via AI and auto-resolve verified")
     parser.add_argument("--fix", action="store_true",
@@ -348,7 +358,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Gate, not a phase: publish whatever the chosen phase "
                              "produced — replies, summaries, resolutions "
                              "(default: print drafts to stderr and post nothing)")
-    parser.add_argument("--repo-dir", "--worktree",
+    parser.add_argument("--repo-dir", "--worktree", metavar="PATH",
                         help="Git worktree directory (skips git toplevel detection)")
     parser.add_argument("--reply", metavar="THREAD_OR_COMMENT_ID",
                         help="Reply to one thread, editing our standing reply if it "

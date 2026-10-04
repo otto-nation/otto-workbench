@@ -17,7 +17,7 @@ env:
   #   task --global WORKBENCH_LIB_DIR=/path/to/worktree commit
   #
   # It pins the checkout root, not lib/ alone: lib/ai/core.sh derives
-  # WORKBENCH_ROOT from the same value, so ai/lib/git/push.py and
+  # WORKBENCH_ROOT from the same value, so ai/lib/core/pr_template.py and
   # lib/config_cli.py come from the tree that owns the shell libs calling them.
   # Pinning only the source lines would load a branch's core.sh over main's
   # conventions.sh and compact_diff.sh, which is a build neither tree has.
@@ -56,49 +56,49 @@ tasks:
     # core.sh resolves the default through that link to the real checkout,
     # which is why the default path works and why the farm is not checked as
     # though it were a pin. Pinning at the farm itself is correctly refused:
-    # that root is the one whose missing push.py broke pr:create.
+    # that root has no ai/ tree, and its missing ai/ script once broke PR
+    # creation.
     #
     # `if`, not `[ ... ] && exit 0` — that form leaves the line's own status at
     # 1 whenever the pin is an override, which is a task failure the moment
     # anything runs this body under errexit.
     #
     # The loop is a witness set, not the closure of what a task reaches.
-    # Three of the seven stand for a directory the pin must supply at all:
-    # lib/ai/core.sh for lib/ai, lib/conventions.sh for the rest of lib, and
-    # ai/lib/git/push.py for the ai/ tree the installed symlink farm has no
-    # link to. The fourth stands for a silence: lib/config_cli.py is read at
-    # lib/ai/pr.sh:422, which discards stderr and returns 0, so a checkout
+    # Two of the six stand for a directory the pin must supply at all:
+    # lib/ai/core.sh for lib/ai and lib/conventions.sh for the rest of lib.
+    # The ai/ tree the installed symlink farm has no link to is witnessed by
+    # the two ai/lib files below, which are in the list on their own account.
+    # The third stands for a silence: lib/config_cli.py is read at
+    # lib/ai/pr.sh:314, which discards stderr and returns 0, so a checkout
     # missing it loses issue-provider resolution and reports nothing at all.
-    # push.py is reached the same way (pr.sh:39) and fails inside python3
-    # after the nesting sweep and the push — that run is N1, and late or
-    # silent is what earns a path a place in this list.
+    # The other three each earn their place for a reason given below: a
+    # failure that is late, or that names $WORKBENCH_ROOT rather than the pin.
     #
-    # The fifth, lib/gitenv.sh, is sourced directly at pr.sh:21 rather than
+    # The fourth, lib/gitenv.sh, is sourced directly at pr.sh:19 rather than
     # reached mid-run, so on its own it would belong with the excluded
     # modules below. It stays in because it resolves through
     # $WORKBENCH_ROOT/lib/gitenv.sh rather than a path relative to
     # BASH_SOURCE the way git_remote.sh and compact_diff.sh do, and a pin
     # missing it fails while sourcing pr.sh — one of the body's first three
     # `.` lines, just as the excluded modules do, but through WORKBENCH_ROOT
-    # the way config_cli.py, push.py, pr_template.py and gh_token.py are
-    # reached. The remaining two, core.sh and conventions.sh, are directory
-    # witnesses, not WORKBENCH_ROOT-reached files.
+    # the way config_cli.py, pr_template.py and gh_token.py are reached. The
+    # remaining two, core.sh and conventions.sh, are directory witnesses, not
+    # WORKBENCH_ROOT-reached files.
     #
-    # The sixth, ai/lib/core/pr_template.py, is a third failure mode next to
-    # the silent and the late: pr.sh:337 reaches it mid-run, through
-    # $WORKBENCH_ROOT, and a missing file fails inside python3 with its own
-    # error path — _pr_load_template prints "Could not resolve this repo's
-    # PR template" and returns 1, rather than losing a value silently
-    # (config_cli.py) or failing deep inside a later stage (push.py).
+    # The fifth, ai/lib/core/pr_template.py, is a second failure mode next to
+    # the silent one: pr.sh:229 reaches it mid-run, through $WORKBENCH_ROOT,
+    # and a missing file fails inside python3 with its own error path —
+    # _pr_load_template prints "Could not resolve this repo's PR template"
+    # and returns 1, rather than losing a value silently (config_cli.py).
     #
-    # The seventh, ai/lib/pr/gh_token.py, is reached by load_gh_token before
+    # The sixth, ai/lib/pr/gh_token.py, is reached by load_gh_token before
     # any gh call. A missing file fails inside python3 and load_gh_token
     # returns 1 — loud, but it would name python's error rather than the pin.
     #
     # The modules a task names itself are otherwise absent, as are
     # lib/git_remote.sh and lib/ai/compact_diff.sh behind them. Each fails
-    # while the body's first three `.` lines run, before git, the AI or any
-    # push, and the shell prints the absolute path it could not open — under
+    # while the body's first three `.` lines run, before git or the AI is
+    # touched, and the shell prints the absolute path it could not open — under
     # a pin, the pinned root and the rest. Restating them here would mirror
     # the source graph by hand to improve on a failure that already stops
     # the run at its first line and shows the pin in what it prints.
@@ -111,7 +111,7 @@ tasks:
           /*) ;;
           *) echo "WORKBENCH_LIB_DIR must be an absolute path: $WORKBENCH_LIB_DIR" >&2; exit 1 ;;
         esac
-        for _f in lib/ai/core.sh lib/gitenv.sh lib/conventions.sh ai/lib/git/push.py lib/config_cli.py ai/lib/core/pr_template.py ai/lib/pr/gh_token.py; do
+        for _f in lib/ai/core.sh lib/gitenv.sh lib/conventions.sh lib/config_cli.py ai/lib/core/pr_template.py ai/lib/pr/gh_token.py; do
           if [ ! -f "$WORKBENCH_LIB_DIR/$_f" ]; then
             echo "WORKBENCH_LIB_DIR does not contain $_f: $WORKBENCH_LIB_DIR" >&2
             exit 1
@@ -327,70 +327,6 @@ tasks:
           fi
         fi
 
-  pr:content:
-    desc: "Preview AI-generated PR title and description (-- --no-issue, --issue <ID>, --closes <ID>, --base <branch>)"
-    silent: true
-    dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
-    deps: [_lib-dir-guard]
-    env:
-      _CLI_ARGS: '{{.CLI_ARGS}}'
-    cmds:
-      - |
-        . "$WORKBENCH_LIB_DIR/lib/ai/core.sh"
-        . "$WORKBENCH_LIB_DIR/lib/ai/prompts.sh"
-        . "$WORKBENCH_LIB_DIR/lib/ai/pr.sh"
-        load_pr "$_CLI_ARGS" || exit 1
-
-        TARGET_BASE="${PR_BASE:-$DEFAULT_BRANCH}"
-        echo "→ Analyzing changes: $BRANCH"
-        generate_pr_content "$BRANCH" "$TARGET_BASE" || exit 1
-        echo "✓ Content ready"
-        echo ""
-        echo "→ PR Title:"
-        echo "   $PR_TITLE"
-        echo ""
-        echo "→ PR Description:"
-        echo "$PR_DESCRIPTION"
-
-  pr:create:
-    desc: "Create AI-powered pull request (-- --no-issue, --issue <ID>, --closes <ID>, --draft, --base <branch>, --title <title>, --body <body>, --body-file <path>)"
-    silent: true
-    dir: '{{.REPO_DIR | default .USER_WORKING_DIR | default .TASKFILE_DIR}}'
-    deps: [_lib-dir-guard]
-    env:
-      _CLI_ARGS: '{{.CLI_ARGS}}'
-    cmds:
-      - |
-        . "$WORKBENCH_LIB_DIR/lib/ai/core.sh"
-        . "$WORKBENCH_LIB_DIR/lib/ai/prompts.sh"
-        . "$WORKBENCH_LIB_DIR/lib/ai/pr.sh"
-        load_pr "$_CLI_ARGS" || exit 1
-
-        TARGET_BASE="${PR_BASE:-$DEFAULT_BRANCH}"
-        NESTING_OUTPUT=$(validate-nesting --diff "origin/$TARGET_BASE" --quiet 2>&1) || {
-          NESTING_STATUS=$?
-          if [[ "$NESTING_STATUS" -eq 2 ]]; then
-            echo "✗ Nesting check could not run — fix before creating PR"
-          else
-            echo "✗ New code introduces nesting violations — fix before creating PR"
-          fi
-          echo ""
-          echo "$NESTING_OUTPUT"
-          exit 1
-        }
-
-        push_branch "$BRANCH" || exit 1
-
-        echo "→ Analyzing changes: $BRANCH"
-        generate_pr_content "$BRANCH" "$TARGET_BASE" || exit 1
-        echo "✓ Content ready"
-        echo "→ Creating PR..."
-
-        GH_ARGS=(--title "$PR_TITLE" --body "$PR_DESCRIPTION" --assignee @me)
-        [[ "${PR_DRAFT}" = "true" ]] && GH_ARGS+=(--draft)
-        [[ -n "${PR_BASE:-}" ]] && GH_ARGS+=(--base "$PR_BASE")
-        create_pr "${GH_ARGS[@]}" || exit 1
-
   pr:update:
     desc: "Update current PR description (-- --no-issue, --issue <ID>, --closes <ID>, --base <branch>, --title <title>, --body <body>)"
     silent: true
@@ -417,7 +353,7 @@ tasks:
 
         if [ -z "$PR_NUMBER" ]; then
           echo "✗ No PR found for branch: $BRANCH"
-          echo "→ Use 'task pr:create' to create a new PR"
+          echo "→ Use 'pr create' to create a new PR"
           exit 1
         fi
 
@@ -500,7 +436,7 @@ tasks:
         PR_NUMBER=$(gh pr view --json number -q .number 2>/dev/null)
         if [ -z "$PR_NUMBER" ]; then
           echo "✗ No PR found for current branch"
-          echo "→ Use 'task pr:create' to create a new PR"
+          echo "→ Use 'pr create' to create a new PR"
           exit 1
         fi
 
@@ -586,8 +522,6 @@ tasks:
         echo "   commit            AI-generated commit messages"
         echo "   commit:reword     AI reword of a commit (default: HEAD; or: task commit:reword -- SHA)"
         echo "   review            AI review of staged, unstaged, and committed changes"
-        echo "   pr:content        Preview AI-generated PR title and description"
-        echo "   pr:create         AI-generated PR (auto-pushes if needed)"
         echo "   pr:update         Update existing PR description"
         echo "   pr:review         AI review of the current PR"
         echo "   Pass -- --no-issue to skip issue prompts, or --issue <ID> to link one directly"

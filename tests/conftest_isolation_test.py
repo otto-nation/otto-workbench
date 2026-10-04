@@ -277,10 +277,10 @@ def test_the_measured_path_takes_no_round_trip_when_it_is_patched():
 
     with patch.object(review.prompt, "count_tokens", return_value=123) as counter:
         with patch.dict(os.environ, {"WORKBENCH_AI_MEASURE_TOKENS": "1"}):
-            measured = review.prompt._measured_tokens(
+            measured = review.prompt.measured_tokens(
                 "prompt", Phase.SCOUT, "claude-sonnet-5",
             )
-    assert measured == (123, "claude-sonnet-5")
+    assert measured == 123
     assert counter.called
 
 

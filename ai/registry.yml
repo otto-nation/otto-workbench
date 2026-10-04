@@ -14,25 +14,25 @@ tools:
     description: "Records an issue filed by hand in the branch's follow-up ledger — called by both harnesses' post-execution hooks"
 
   - name: pr
+    parser: cli.pr:reference_shape
     permission: true
     visibility: full
-    description: "Unified PR lifecycle CLI — CI failures, code review, and review comments"
-    when_to_use: "Managing PR lifecycle: checking CI status, running reviews, addressing comments, or viewing unified PR status"
-    usage: "pr status  |  pr ci [--fix]  |  pr review [--self] [--fix] [--push] [--post] [--repair] [--summary] [--recover]  |  pr review --list [--schema-version N]  |  pr comments [--triage] [--fix] [--finish] [--post]  |  pr comments --settle <id> [--as fixed|dismissed|already_addressed] [--reason <text>] [--commit <sha>]  |  pr fix  |  pr rebase [--fix] [--no-push] [--force] [--abort] [--onto <ref>] [--fork-point <ref>] [--no-verify] [--push-only]  |  pr gc  |  pr batch plan|run|resume|resolve|cancel|status [--checkout DIR] [--pool N] [--auto-publish STEPS]"
+    description: "Unified PR lifecycle CLI — creation, CI failures, code review, and review comments"
+    when_to_use: "Managing PR lifecycle: opening a PR, checking CI status, running reviews, addressing comments, or viewing unified PR status"
 
   - name: review
+    parser: cli.review_entry:build_parser
     permission: true
     visibility: full
     description: "Run the configured review agent on a PR with local worktree checkout and iterative review support"
     when_to_use: "Running a structured code review on a PR; supports re-reviews that track resolved vs open findings. Use --self for self-review before PR creation. Use --recover to finish a review whose agents failed — it completes at the commit the run started from, even if the branch has new commits (so it cannot be combined with --fix once HEAD has moved). For multiple PRs, dispatch separate subagents — do not background with &"
-    usage: "review <pr_url_or_number>  |  review --no-post <pr_url_or_number>  |  review --self [<pr_url_or_number>]  |  review [--self] --recover [<pr_url_or_number>]"
 
   - name: otto-log
+    parser: cli.otto_log:build_parser
     permission: true
     visibility: full
     description: "Query the unified trail root and AI usage across otto-workbench scripts — audit trail plus cost and token stats"
     when_to_use: "Tracing what an AI script did (recent, query, show, list), seeing what AI calls cost across scripts, tasks, models, and days (stats), or reclaiming the trail root ahead of its retention horizon (prune). One user command spans several processes; show takes any of their invocation IDs and renders the whole command"
-    usage: "otto-log recent [--repo org/repo]  |  otto-log list --script pr  |  otto-log query --pr 641  |  otto-log query --root <invocation>  |  otto-log show <invocation> [--only]  |  otto-log stats [--since 7d] [--by script|task|model|day] [--json]  |  otto-log prune [--keep 6]"
 
   - name: workbench-rules
     permission: true
@@ -40,11 +40,13 @@ tools:
     description: "Manages this machine's own coding-rule layers — local additions and overrides, for whichever harnesses are installed"
 
   - name: ceiling-scan
+    parser: ai/bin/ceiling-scan:build_parser
     permission: true
     visibility: brief
     description: "Scan for ceiling: and ceiling-permanent: markers and produce a structured debt ledger"
 
   - name: dream-scan
+    parser: ai/bin/dream-scan:build_parser
     permission: true
     visibility: brief
     description: "Scan session transcripts and memory state for dream consolidation"
@@ -55,21 +57,25 @@ tools:
     description: "Verify dream memory file integrity across all projects"
 
   - name: promote-scan
+    parser: ai/bin/promote-scan:build_parser
     permission: true
     visibility: brief
     description: "Scan memories and workbench artifacts for promotion evaluation"
 
   - name: retro-scan
+    parser: ai/bin/retro-scan:build_parser
     permission: true
     visibility: brief
     description: "Scan PR review comments and cross-reference against coding rules"
 
   - name: retro-consume
+    parser: ai/bin/retro-consume:build_parser
     permission: true
     visibility: brief
     description: "Delete the local reviews a retro consumed, for the scan ID that recorded them"
 
   - name: wiki
+    parser: cli.wiki:build_parser
     permission: true
     visibility: brief
     description: "Mechanical operations over a compiled knowledge base — status, lint, signals, archive, source hashes, index, browsing link, snapshots"
@@ -137,6 +143,7 @@ tools:
   - name: otto-mcp-server
     permission: false
     visibility: hidden
+    reference: true
     description: "MCP server — offers the tools the component registries declare, with schemas imported in-process"
 
   - name: build-otto-ai-tools-tarball

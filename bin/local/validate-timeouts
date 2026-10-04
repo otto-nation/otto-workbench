@@ -26,6 +26,21 @@ A third shape is rejected at the call sites that launch a subprocess —
 
   proc.run(cmd)  no bound written down at all            -> a tier
 
+A fourth shape is rejected on a name bound, in the same function, from a
+call whose callee ends in `Popen` or is one of `core.children`'s launchers
+(`spawn`, `owned`) — or `with ... Popen(...) as name`, likewise:
+
+  proc.wait()         a reap with no bound written down  -> a tier
+  proc.communicate()  same                               -> a tier
+
+`Popen` itself takes no bound, so the launch is still unchecked; the wait
+that follows is where the duration is decided, and omitting `timeout=` there
+is the same silence as omitting it on `subprocess.run`.  `Event.wait` and any
+other receiver not assigned from `Popen` in that function are ignored.  A bound
+may be the keyword or its positional slot — `proc.wait(budget)`, or the second
+argument of `proc.communicate(input, budget)` — and a literal in that slot is
+flagged the same as `timeout=30`.
+
 Reading only the bounds that were written down leaves the omission invisible,
 which is the case the table exists to eliminate: a call with no `timeout=` is
 indistinguishable from nobody having thought about one.  A `**kwargs` splat
@@ -36,6 +51,16 @@ renames it — `def fetch(*, budget)` handing `budget` to `subprocess.run` — h
 its literal from this check.  And a runner is recognised by its written name, so
 `from subprocess import run` escapes the omission check.  The convention is to
 keep both names; a call site that does is fully covered.
+
+The Popen-reap check sees only a plain name bound from `Popen` in the same
+function.  It reads statements in source order, with no branch analysis: a
+plain rebinding of the name to anything else (`p = threading.Event()`) drops it,
+but a rebinding on one branch of an `if` drops it for the code after the other
+branch too.  Scopes are the function bodies only: nested functions are skipped,
+while lambda and class bodies written inside a function are read as part of it.  It does not see `self.proc = Popen(...)` followed by
+`self.proc.wait()`, a module-level `p = Popen(...); p.wait()`, or a closure
+that waits on its enclosing function's Popen.  A clean run is not coverage of
+those.
 
 Exit code: 0 if all files pass, 1 if any have violations.
 """
@@ -56,8 +81,8 @@ UNBOUNDED = f'{TABLE}.UNBOUNDED'
 A_TIER = f'a tier from `{TABLE}`'
 
 # The runners that launch a subprocess and accept `timeout=`.  `Popen` is absent
-# on purpose: it takes no bound, and the one its `communicate` takes belongs to
-# that call rather than to the launch.
+# on purpose: it takes no bound.  The one its `wait` / `communicate` take is
+# checked separately, on the name bound from the launch.
 RUNNERS = {
     ('proc', 'run'),
     ('subprocess', 'run'),
@@ -65,6 +90,9 @@ RUNNERS = {
     ('subprocess', 'check_call'),
     ('subprocess', 'check_output'),
 }
+
+# Where `timeout` sits positionally on a Popen reap.
+REAP_TIMEOUT_SLOT = {'wait': 0, 'communicate': 1}
 
 SEARCH_DIRS = ('ai',)
 SKIP_DIRS = {'.git', '__pycache__', '.venv', 'node_modules'}
@@ -169,6 +197,147 @@ def _param_defaults(tree):
     return found
 
 
+def _iter_scope(node):
+    """Direct statements in *node*'s function, skipping nested functions.
+
+    A wait inside a nested helper is a different scope; assignments there do
+    not bind the outer name, and the outer's Popen does not bind the inner's.
+    """
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, SCOPE_NODES):
+            continue
+        yield child
+        yield from _iter_scope(child)
+
+
+# `core.children` launches through `Popen` and hands the process back, so a
+# name bound from either wrapper is a Popen the caller must reap with a bound.
+# Matched on the module's last segment and the function, so `children.spawn`
+# and `core.children.spawn` both count and an unrelated `spawn` does not.
+POPEN_WRAPPERS = {('children', 'spawn'), ('children', 'owned')}
+
+
+def _ends_with_popen_call(node) -> bool:
+    """True when *node* launches a Popen: `Popen(...)` or a `core.children` wrapper."""
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id == 'Popen'
+    if not isinstance(func, ast.Attribute):
+        return False
+    if func.attr == 'Popen':
+        return True
+    owner = func.value
+    owner_name = owner.attr if isinstance(owner, ast.Attribute) else getattr(owner, 'id', None)
+    return (owner_name, func.attr) in POPEN_WRAPPERS
+
+
+def _name_ids(targets) -> list[str]:
+    """Plain names among *targets*, ignoring attributes and tuples."""
+    found = []
+    for target in targets:
+        if isinstance(target, ast.Name):
+            found.append(target.id)
+    return found
+
+
+def _bind_with_popen(node, names: set[str]) -> None:
+    for item in node.items:
+        bound = item.optional_vars
+        if not isinstance(bound, ast.Name):
+            continue
+        if _ends_with_popen_call(item.context_expr):
+            names.add(bound.id)
+        else:
+            names.discard(bound.id)
+
+
+def _is_popen_annassign(node) -> bool:
+    """True for `name: T = Popen(...)`."""
+    if not isinstance(node, ast.AnnAssign) or not isinstance(node.target, ast.Name):
+        return False
+    return node.value is not None and _ends_with_popen_call(node.value)
+
+
+def _bind_popen_names(node, names: set[str]) -> None:
+    """Add names *node* binds from a Popen launch; drop ones it rebinds to anything else."""
+    if isinstance(node, ast.Assign):
+        if _ends_with_popen_call(node.value):
+            names.update(_name_ids(node.targets))
+        else:
+            names.difference_update(_name_ids(node.targets))
+        return
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        if _is_popen_annassign(node):
+            names.add(node.target.id)
+        elif node.value is not None:
+            names.discard(node.target.id)
+        return
+    if isinstance(node, (ast.With, ast.AsyncWith)):
+        _bind_with_popen(node, names)
+
+
+def _popen_reap_receiver(call: ast.Call) -> str | None:
+    """The plain name a `.wait()` / `.communicate()` is called on, if any."""
+    func = call.func
+    if not isinstance(func, ast.Attribute) or func.attr not in ('wait', 'communicate'):
+        return None
+    if not isinstance(func.value, ast.Name):
+        return None
+    return func.value.id
+
+
+def _unbounded_popen_reaps(tree) -> list[Violation]:
+    """`.wait()` / `.communicate()` on a name bound from `Popen` with no timeout=.
+
+    A `**kwargs` splat counts as a bound, matching `_unbounded_launches`.
+    """
+    found = []
+    for func in ast.walk(tree):
+        if not isinstance(func, SCOPE_NODES):
+            continue
+        found += _reaps_in_function(func)
+    return found
+
+
+def _reaps_in_function(func) -> list[Violation]:
+    names: set[str] = set()
+    found = []
+    for node in _iter_scope(func):
+        _bind_popen_names(node, names)
+        violation = _unbounded_reap(node, names)
+        if violation is not None:
+            found.append(violation)
+    return found
+
+
+def _unbounded_reap(node, names: set[str]) -> Violation | None:
+    if not isinstance(node, ast.Call):
+        return None
+    receiver = _popen_reap_receiver(node)
+    if receiver is None or receiver not in names:
+        return None
+    if any(kw.arg in (KEYWORD, None) for kw in node.keywords):
+        return None
+    attr = node.func.attr
+    # `wait(timeout=None)`, `communicate(input=None, timeout=None)`.
+    slot = REAP_TIMEOUT_SLOT[attr]
+    if any(isinstance(a, ast.Starred) for a in node.args):
+        return None
+    if len(node.args) > slot:
+        literal = _literal(node.args[slot])
+        if literal is None:
+            return None
+        return Violation(line=node.lineno, found=f'{KEYWORD}={literal}',
+                         suggestion=_suggestion(literal))
+    return Violation(
+        line=node.lineno,
+        found=f'{receiver}.{attr}() with no {KEYWORD}=',
+        suggestion=A_TIER,
+    )
+
+
 def check_file(filepath: str) -> list[Violation]:
     with open(filepath) as f:
         source = f.read()
@@ -185,7 +354,8 @@ def check_file(filepath: str) -> list[Violation]:
     found = [Violation(line=v.lineno, found=f'{KEYWORD}={lit}',
                        suggestion=_suggestion(lit))
              for v in values for lit in [_literal(v)] if lit is not None]
-    return sorted(found + _unbounded_launches(tree), key=lambda v: v.line)
+    return sorted(found + _unbounded_launches(tree) + _unbounded_popen_reaps(tree),
+                  key=lambda v: v.line)
 
 
 # ── Discovery ────────────────────────────────────────────────────────────────

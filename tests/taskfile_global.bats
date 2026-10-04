@@ -6,7 +6,7 @@ setup() {
   load 'test_helper'
   common_setup
   # go-task's env: block exports these into every child, including this suite
-  # when it runs under `task pr:create`. Tests that assert on the pin assume
+  # when it runs under a `task --global` run. Tests that assert on the pin assume
   # a clean environment and set the value themselves; an inherited value wins
   # over `task WORKBENCH_LIB_DIR=...` CLI assignments and hides the case.
   unset WORKBENCH_LIB_DIR TASKFILE_DIR 2>/dev/null || true
@@ -70,7 +70,7 @@ teardown() {
 @test "WORKBENCH_ROOT reaches ai/ through a symlinked TASKFILE_DIR" {
   # The install links lib/ into the checkout and nothing else, so a root taken
   # from TASKFILE_DIR itself finds conventions.sh and no ai/ script at all —
-  # which is how pr:create came to invoke an ai/lib/git/push.py that wasn't there.
+  # which is how PR creation once came to invoke an ai/ script that wasn't there.
   #
   # dash, not sh: on macOS /bin/sh is bash, which sets BASH_SOURCE even under
   # `sh -c`, so `sh -c` here would exercise the BASH_SOURCE branch instead of
@@ -80,7 +80,7 @@ teardown() {
 
   run dash -c "TASKFILE_DIR='$fake_task_dir' . '$fake_task_dir/lib/ai/core.sh' && echo \"\$WORKBENCH_ROOT\""
   [ "$status" -eq 0 ]
-  [ -f "$output/ai/lib/git/push.py" ]
+  [ -f "$output/ai/lib/core/pr_template.py" ]
 }
 
 # ─── All lib/ai sourcing goes through the pin ────────────────────────────────
@@ -198,7 +198,7 @@ teardown() {
 
   run dash -c "TASKFILE_DIR='/nonexistent' WORKBENCH_LIB_DIR='$fake_task_dir' . '$fake_task_dir/lib/ai/core.sh' && echo \"\$WORKBENCH_ROOT\""
   [ "$status" -eq 0 ]
-  [ -f "$output/ai/lib/git/push.py" ]
+  [ -f "$output/ai/lib/core/pr_template.py" ]
 }
 
 @test "core.sh falls back to TASKFILE_DIR when WORKBENCH_LIB_DIR is unset" {
@@ -209,7 +209,7 @@ teardown() {
 
   run dash -c "unset WORKBENCH_LIB_DIR; TASKFILE_DIR='$fake_task_dir' . '$fake_task_dir/lib/ai/core.sh' && echo \"\$WORKBENCH_ROOT\""
   [ "$status" -eq 0 ]
-  [ -f "$output/ai/lib/git/push.py" ]
+  [ -f "$output/ai/lib/core/pr_template.py" ]
 }
 
 @test "core.sh ignores WORKBENCH_LIB_DIR when BASH_SOURCE resolves the path" {
@@ -278,7 +278,7 @@ teardown() {
 
 @test "a partial checkout is refused by the missing path's name" {
   # N1. lib/ai/core.sh alone passed the old gate, and the run then failed
-  # inside python3 on an ai/lib/git/push.py that was never there, with nothing
+  # inside python3 on an ai/ script that was never there, with nothing
   # naming the variable that sent it. Each path a task reaches is checked, and
   # the message names the one that is missing.
   command -v task >/dev/null 2>&1 || skip "task not installed"
@@ -292,7 +292,7 @@ teardown() {
   run task --taskfile "$REPO_ROOT/Taskfile.global.yml" \
     "WORKBENCH_LIB_DIR=$partial" commit
   [ "$status" -ne 0 ]
-  [[ "$output" == *"ai/lib/git/push.py"* ]]
+  [[ "$output" == *"ai/lib/core/pr_template.py"* ]]
   [[ "$output" == *"WORKBENCH_LIB_DIR"* ]]
 }
 
@@ -321,9 +321,9 @@ teardown() {
 @test "every WORKBENCH_ROOT path a lib/ai module reaches is in the guard's list" {
   # The tier the guard actually owns, asserted so the comment above it stops
   # being prose. A path resolved through WORKBENCH_ROOT is reached mid-run by
-  # python3 — ai/lib/git/push.py after the nesting sweep and the push, and
-  # lib/config_cli.py at pr.sh:363 with stderr discarded and 0 returned, which
-  # reports nothing at all. A lib/ai module that gains another must teach the
+  # python3 — ai/lib/core/pr_template.py at pr.sh:229, and lib/config_cli.py
+  # at pr.sh:314 with stderr discarded and 0 returned, which reports nothing at
+  # all. A lib/ai module that gains another must teach the
   # guard about it. Modules a task sources by name are deliberately out of
   # scope: those fail on the body's first three lines, naming the path.
   local guard list refs p
@@ -339,7 +339,7 @@ teardown() {
   [ -n "$refs" ]
 
   while IFS= read -r p; do
-    # -f drops ai/lib, which is pr.sh:28's PYTHONPATH directory rather than a
+    # -f drops any directory reference (a PYTHONPATH entry, say) rather than a
     # file to check — a filter, not a hand-kept exclusion list that could rot.
     [ -f "$REPO_ROOT/$p" ] || continue
     [[ " $list " == *" $p "* ]]
@@ -372,9 +372,9 @@ teardown() {
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 
-  # And pinning *at* the farm is still refused — it is the root whose missing
-  # push.py broke pr:create, so it must not pass as an explicit override.
+  # And pinning *at* the farm is still refused — it has no ai/ tree, the gap
+  # that once broke PR creation, so it must not pass as an explicit override.
   run env "WORKBENCH_LIB_DIR=$fake_task_dir" TASKFILE_DIR=/elsewhere sh -c "$guard"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"ai/lib/git/push.py"* ]]
+  [[ "$output" == *"ai/lib/core/pr_template.py"* ]]
 }

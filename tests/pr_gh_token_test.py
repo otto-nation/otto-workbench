@@ -16,7 +16,9 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import gh.client
 import pr.gh_token
+from core.proc import CmdResult
 from pr.gh_token import Token, TokenNotConfigured, TokenSource
 
 
@@ -257,7 +259,7 @@ def test_script_failure_keeps_stdout_empty(tmp_path, home):
 
 
 def test_script_runs_from_any_cwd_with_a_hostile_pythonpath(tmp_path, home):
-    # The mise-shim case git/push.py documents: PYTHONPATH replaced wholesale.
+    # The mise-shim case gh_token.py documents: PYTHONPATH replaced wholesale.
     _global(home, "GH_TOKEN=ghp_default\n")
     r = _run_script(_repo(tmp_path), home, {"PYTHONPATH": str(tmp_path)})
     assert r.returncode == 0
@@ -278,3 +280,130 @@ def test_script_reports_an_unreadable_global_file_instead_of_a_traceback(tmp_pat
     assert "Traceback" not in r.stderr
     assert str(env_file) in r.stderr
     assert r.stderr.startswith("\u2717")
+
+
+# --- use_for_publishing ------------------------------------------------------
+
+_FALLBACK = (
+    "⚠  Automation token cannot access this repo — "
+    "falling back to interactive gh auth"
+)
+_INTERACTIVE_MISSING = (
+    "✗ Interactive gh auth also not available — run: gh auth login"
+)
+_GUIDANCE = "✗ GH_TOKEN not configured for AI automation."
+
+
+def _unset_token(monkeypatch) -> None:
+    """Unset GH_TOKEN so monkeypatch restores it, even when it was absent.
+
+    ``delenv(..., raising=False)`` on an absent var records nothing, so a
+    value ``use_for_publishing`` writes afterwards outlives the test. Setting
+    it first is what gives the undo something to undo.
+    """
+    monkeypatch.setenv("GH_TOKEN", "placeholder")
+    monkeypatch.delenv("GH_TOKEN")
+
+
+def _ok(**kw) -> CmdResult:
+    return CmdResult(returncode=0, **kw)
+
+
+def _fail(**kw) -> CmdResult:
+    return CmdResult(returncode=1, **kw)
+
+
+def test_use_for_publishing_sets_env_and_returns_the_source(tmp_path, monkeypatch):
+    _unset_token(monkeypatch)
+    token = Token("ghp_ok", TokenSource.DEFAULT, "GH_TOKEN")
+    monkeypatch.setattr(pr.gh_token, "resolve", lambda cwd: token)
+
+    def fake_run(*args, cwd=None):
+        assert args[:2] == ("repo", "view")
+        assert cwd == tmp_path
+        return _ok(stdout="widget\n")
+
+    monkeypatch.setattr(gh.client, "run", fake_run)
+    source = pr.gh_token.use_for_publishing(tmp_path)
+    assert source is TokenSource.DEFAULT
+    assert os.environ["GH_TOKEN"] == "ghp_ok"
+
+
+def test_use_for_publishing_rejected_token_falls_back_to_interactive(
+        tmp_path, monkeypatch, capsys):
+    _unset_token(monkeypatch)
+    token = Token("ghp_bad", TokenSource.ORG, "GH_TOKEN__ACME")
+    monkeypatch.setattr(pr.gh_token, "resolve", lambda cwd: token)
+
+    def fake_run(*args, cwd=None):
+        if args[:2] == ("repo", "view"):
+            return _fail(stderr="HTTP 404")
+        if args[:2] == ("auth", "status"):
+            return _ok(stdout="Logged in\n")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(gh.client, "run", fake_run)
+    source = pr.gh_token.use_for_publishing(tmp_path)
+    assert source is None
+    assert "GH_TOKEN" not in os.environ
+    assert _FALLBACK in capsys.readouterr().err
+
+
+def test_use_for_publishing_rejected_token_and_no_interactive_auth(
+        tmp_path, monkeypatch):
+    _unset_token(monkeypatch)
+    token = Token("ghp_bad", TokenSource.DEFAULT, "GH_TOKEN")
+    monkeypatch.setattr(pr.gh_token, "resolve", lambda cwd: token)
+
+    def fake_run(*args, cwd=None):
+        if args[:2] == ("repo", "view"):
+            return _fail(stderr="HTTP 404")
+        if args[:2] == ("auth", "status"):
+            return _fail(stderr="not logged in")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(gh.client, "run", fake_run)
+    with pytest.raises(TokenNotConfigured) as exc:
+        pr.gh_token.use_for_publishing(tmp_path)
+    assert _INTERACTIVE_MISSING in exc.value.guidance
+    assert "GH_TOKEN" not in os.environ
+
+
+def test_use_for_publishing_no_token_with_interactive_auth_returns_none(
+        tmp_path, monkeypatch):
+    # D10: no token configured, but `gh auth status` succeeds.
+    _unset_token(monkeypatch)
+
+    def no_token(cwd):
+        raise TokenNotConfigured(_GUIDANCE)
+
+    monkeypatch.setattr(pr.gh_token, "resolve", no_token)
+
+    def fake_run(*args, cwd=None):
+        assert args[:2] == ("auth", "status")
+        return _ok(stdout="Logged in\n")
+
+    monkeypatch.setattr(gh.client, "run", fake_run)
+    assert pr.gh_token.use_for_publishing(tmp_path) is None
+    assert "GH_TOKEN" not in os.environ
+
+
+def test_use_for_publishing_no_token_and_no_interactive_auth_raises(
+        tmp_path, monkeypatch):
+    # D10: no token, and no interactive login either.
+    _unset_token(monkeypatch)
+
+    def no_token(cwd):
+        raise TokenNotConfigured(_GUIDANCE)
+
+    monkeypatch.setattr(pr.gh_token, "resolve", no_token)
+
+    def fake_run(*args, cwd=None):
+        assert args[:2] == ("auth", "status")
+        return _fail(stderr="not logged in")
+
+    monkeypatch.setattr(gh.client, "run", fake_run)
+    with pytest.raises(TokenNotConfigured) as exc:
+        pr.gh_token.use_for_publishing(tmp_path)
+    assert exc.value.guidance == _GUIDANCE
+    assert _INTERACTIVE_MISSING not in exc.value.guidance

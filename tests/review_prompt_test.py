@@ -17,7 +17,7 @@ from core.phases import Mode, Phase
 
 from unittest.mock import patch
 
-from review.prompt import _build_common_sections, _log_prompt_size
+from review.prompt import build_common_sections, log_prompt_size
 import review.registry
 from conftest import TEST_MODEL
 
@@ -32,7 +32,7 @@ class TestSharedPromptBodies:
 
     def _vars(self, phase, output, mode=Mode.PR, **extra):
         job = _make_job(_make_preflight(), mode=mode)
-        common = _build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
+        common = build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
         built = review.registry.for_phase(phase).build(job, common, extra, output)
         return built.builder.vars
 
@@ -280,7 +280,7 @@ class TestPromptStatsConcurrentAppends:
         n = 32
 
         def write(i):
-            _log_prompt_size(
+            log_prompt_size(
                 f"t{i}", f"p{i}", {}, job,
                 budget_bytes=10_000, model=TEST_MODEL,
             )
@@ -301,7 +301,7 @@ class TestPromptStatsConcurrentAppends:
 
         monkeypatch.setattr("review.prompt.write_json", _boom)
 
-        _log_prompt_size(
+        log_prompt_size(
             "t", "p", {}, job,
             budget_bytes=10_000, model=TEST_MODEL,
         )

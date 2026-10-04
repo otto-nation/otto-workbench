@@ -81,7 +81,9 @@ A slot is *held* for the length of the run, so a suite starting beside another o
 what that one is holding rather than what the load average has got round to reporting:
 three concurrent runs on an 18-core box get 12, 5 and 2. Set `TEST_JOBS` to take the
 sizing back — which also skips the pool — and `TEST_JOBS=1` to get the serial ordering
-when bisecting a test that only fails under concurrency.
+when bisecting a test that only fails under concurrency. `TEST_HEARTBEAT_SECS`
+(default 60, 0 disables) writes a stderr progress line while a suite runs so a
+slow run is distinguishable from a stuck one; it never writes to stdout.
 
 The pool replaced sizing from the one-minute load average, which could not work: two
 suites launched within a minute of each other both read an idle machine and both took the
@@ -292,12 +294,14 @@ nothing to move by hand: once the mirror is there, a container-rooted session
 and a worktree-rooted one start from the same grants.
 
 Fewer sessions root there now. The `claude` shell wrapper in
-[`zsh/config.d/tools/claude.zsh`](zsh/config.d/tools/claude.zsh) sends a launch
-from the container into the worktree its default branch is checked out into, and
-says so on the way. The mirror still matters — `command claude` bypasses the
-wrapper, and a shell without the workbench's zsh config has no wrapper at all —
-but the container is now where a session passes through rather than where it
-settles.
+[`zsh/config.d/tools/claude.zsh`](zsh/config.d/tools/claude.zsh) — one binding
+of the helper in
+[`_worktree_launch.zsh`](zsh/config.d/tools/_worktree_launch.zsh), which `pi`
+shares — sends a launch from the container into the worktree its default branch
+is checked out into, and says so on the way. The mirror still matters —
+`command claude` bypasses the wrapper, and a shell without the workbench's zsh
+config has no wrapper at all — but the container is now where a session passes
+through rather than where it settles.
 
 ### The rest of the machine
 
@@ -349,7 +353,7 @@ prevent.
 | `SYMLINK_MODE=no-prompt` | `bin/otto-workbench sync` | Skips the interactive overwrite prompt in `install_symlink` — real files at the target path are warned about and skipped instead of prompting |
 | `NO_COLOR` | shell environment | Disables all ANSI color output from `lib/ui.sh` helpers (follows [no-color.org](https://no-color.org)) |
 | `WORKBENCH_DIR` | auto-derived or caller | Override the repo root; set by `install.sh` and auto-derived from `lib/constants.sh` otherwise |
-| `WORKBENCH_LIB_DIR` | `task --global` variable | Pins the checkout whose `lib/ai/` and `ai/lib/` the global tasks load, so a change to them can be exercised from the branch that makes it. Defaults to the Taskfile's own directory (always `main/`). Must be absolute and hold the seven paths `_lib-dir-guard` takes as witnesses that the pin is a whole checkout (`lib/ai/core.sh`, `lib/gitenv.sh`, `lib/conventions.sh`, `ai/lib/git/push.py`, `lib/config_cli.py`, `ai/lib/core/pr_template.py`, `ai/lib/pr/gh_token.py`), or the task fails before running, naming the missing one. A module a task sources by name is not among them: that failure lands on the body's first three lines, printing the path it could not open, before git or the AI is touched. Checked by the `_lib-dir-guard` task the library-loading tasks depend on, so tasks that load no library are unaffected |
+| `WORKBENCH_LIB_DIR` | `task --global` variable | Pins the checkout whose `lib/ai/` and `ai/lib/` the global tasks load, so a change to them can be exercised from the branch that makes it. Defaults to the Taskfile's own directory (always `main/`). Must be absolute and hold the six paths `_lib-dir-guard` takes as witnesses that the pin is a whole checkout (`lib/ai/core.sh`, `lib/gitenv.sh`, `lib/conventions.sh`, `lib/config_cli.py`, `ai/lib/core/pr_template.py`, `ai/lib/pr/gh_token.py`), or the task fails before running, naming the missing one. A module a task sources by name is not among them: that failure lands on the body's first three lines, printing the path it could not open, before git or the AI is touched. Checked by the `_lib-dir-guard` task the library-loading tasks depend on, so tasks that load no library are unaffected |
 | `WORKBENCH_AI_LIB_DIR` | caller's environment | Pins the checkout whose `ai/lib` the Python entry points under `ai/bin` and `ai/claude/bin` import, so a change to them can be exercised from the branch that makes it — `~/.local/bin/pr` is a symlink into `main/`, and `Path(__file__).resolve()` follows it. Unset, resolution is exactly what it was: the entry point's own `../lib`, one `sys.path` entry, and nothing else importable. Set, it must be absolute and hold the four paths `ai/bin/_libdir.py` takes as witnesses that the pin is a whole checkout (`ai/lib/core/__init__.py`, `lib/git_remote.py`, `ai/lib/review-templates/self-review.md`, `lib/nesting/__init__.py`), or the tool exits 2 before importing anything, naming the missing one. Deliberately not `WORKBENCH_LIB_DIR`, which also moves `WORKBENCH_ROOT` for the shell half; a run that wants both sets both |
 
 ## Versioning & breaking changes

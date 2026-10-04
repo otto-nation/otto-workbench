@@ -66,34 +66,41 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("plan", help="Show which PRs need which steps")
-    p.add_argument("--checkout", action="append", required=True, metavar="DIR")
+    p.add_argument("--checkout", action="append", required=True, metavar="DIR",
+                   help="A checkout whose open PRs to plan for; repeatable")
 
     r = sub.add_parser("run", help="Start a run")
     src = r.add_mutually_exclusive_group(required=True)
-    src.add_argument("--checkout", action="append", metavar="DIR")
+    src.add_argument("--checkout", action="append", metavar="DIR",
+                     help="A checkout whose open PRs to run on; repeatable")
     src.add_argument("--plan", metavar="FILE", help="A saved `pr batch plan` document")
-    r.add_argument("--steps", type=_steps, default=list(STEP_ORDER))
+    r.add_argument("--steps", type=_steps, default=list(STEP_ORDER), metavar="STEPS",
+                   help="Comma-separated steps to run (default: rebase,comments,review)")
     r.add_argument("--pool", type=int, default=None, help="Concurrency ceiling")
-    r.add_argument("--auto-publish", type=_steps, default=[])
+    r.add_argument("--auto-publish", type=_steps, default=[], metavar="STEPS",
+                   help="Comma-separated steps whose results publish without asking")
     r.add_argument("--prs", default="", help="Comma-separated repo#number keys to include")
     r.add_argument("--select", type=_selection, action="append", default=[],
                    metavar="KEY=STEPS", help="Run exactly these steps for one PR")
 
-    sub.add_parser("resume", help="Continue a run").add_argument("run_id", nargs="?")
+    sub.add_parser("resume", help="Continue a run").add_argument(
+        "run_id", nargs="?", help="Run to continue (default: the latest)")
 
     v = sub.add_parser("resolve", help="Answer one decision")
-    v.add_argument("run_id")
-    v.add_argument("decision_id")
-    v.add_argument("--action", required=True)
-    v.add_argument("--reason", default="")
-    v.add_argument("--body-file", default="")
-    v.add_argument("--commit", default="")
+    v.add_argument("run_id", help="Run the decision belongs to")
+    v.add_argument("decision_id", help="Decision to answer")
+    v.add_argument("--action", required=True,
+                   help="The answer; which actions apply depends on the decision's kind")
+    v.add_argument("--reason", default="", help="Why, recorded with the answer")
+    v.add_argument("--body-file", default="", help="File holding a reply body, for actions that post one")
+    v.add_argument("--commit", default="", help="Commit that settles the decision, for actions that cite one")
 
     c = sub.add_parser("cancel", help="Stop starting new steps")
-    c.add_argument("run_id", nargs="?")
+    c.add_argument("run_id", nargs="?", help="Run to cancel (default: the latest)")
     c.add_argument("--kill", action="store_true", help="Also terminate running steps")
 
-    sub.add_parser("status", help="Print a run's state").add_argument("run_id", nargs="?")
+    sub.add_parser("status", help="Print a run's state").add_argument(
+        "run_id", nargs="?", help="Run to show (default: the latest)")
     return parser
 
 

@@ -56,6 +56,7 @@ class TestPhaseDomains:
             Phase.REBASE: PhaseDomain.REBASE,
             Phase.PREPUSH_FIX: PhaseDomain.REBASE,
             Phase.DESCRIBE: PhaseDomain.DESCRIBE,
+            Phase.CREATE: PhaseDomain.DESCRIBE,
         }
         assert {p: s.domain for p, s in PHASES.items()} == expected
 
@@ -95,6 +96,7 @@ class TestPhaseThinkingDefaults:
             Phase.REBASE: None,
             Phase.PREPUSH_FIX: None,
             Phase.DESCRIBE: None,
+            Phase.CREATE: None,
         }
         assert {p: s.thinking for p, s in PHASES.items()} == expected
 
@@ -178,7 +180,7 @@ class TestPhaseShapes:
     def test_only_the_stateless_phases_are_prompts(self):
         stateless = {p for p, s in PHASES.items() if s.shape is PhaseShape.PROMPT}
         assert stateless == {
-            Phase.COMMENTS_TRIAGE, Phase.REBASE, Phase.DESCRIBE,
+            Phase.COMMENTS_TRIAGE, Phase.REBASE, Phase.DESCRIBE, Phase.CREATE,
         }
 
     def test_every_shape_the_vocabulary_names_is_in_use(self):

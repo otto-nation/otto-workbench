@@ -6,6 +6,12 @@ setup() {
   load 'test_helper'
   common_setup
   OTTO="$REPO_ROOT/bin/otto-workbench"
+  # The CLI reaches the scaffold through component discovery, which select-tests
+  # cannot follow; naming the file maps this suite to the code it exercises.
+  # SCAFFOLD_SH is otherwise unused below by design — it exists only for
+  # select-tests to grep, so do not remove it as dead code.
+  SCAFFOLD_SH="$REPO_ROOT/ai/claude/scaffold.sh"
+  [ -f "$SCAFFOLD_SH" ]
   export HOME="$TMPDIR/home"
   mkdir -p "$HOME"
   sandbox_state_dir

@@ -1,50 +1,39 @@
 #!/usr/bin/env bash
 # Manage your workbench developer environment.
 #
-# Usage: otto-workbench [--workbench-dir <path>] <command>
+# ```
+# otto-workbench [--workbench-dir <path>] <command>
+# ```
 #
-# Global flags:
-#   --workbench-dir <path>  Override workbench root (e.g. a worktree checkout)
+# | Flag | Description |
+# |------|-------------|
+# | `--workbench-dir <path>` | Override workbench root (e.g. a worktree checkout) |
 #
-# Commands:
-#   install [--all] [COMPONENT ...]  Bootstrap the workbench (first-time setup)
-#   sync                  Re-apply all workbench configuration to ~/
-#   ai <subcmd>           Manage AI tools — scaffold projects, sync config, manage overrides
-#   config <subcmd>       Write a workbench config key, checked against the key surface
-#   discover [regenerate] Show installed components, scripts, and launchd agents
-#   projects <subcmd>     The repos on this machine that use the workbench
-#   permissions <subcmd>  Claude Code permission grants across the registered repos
-#   maintenance <subcmd>  Scheduled pull, sync, and cleanup via launchd
-#   changelog             Show recent changes from conventional commits
+# The subcommands, rendered from `bin/registry.yml`'s `commands:` list rather
+# than restated here:
 #
-# What install does:
-#   Runs first-time setup: installs Homebrew (if missing), syncs core
-#   components (bin, git, task, zsh), presents a menu of optional
-#   components (brew packages, docker, terminals, editors, ai, mise),
-#   and runs pending migrations. Safe to re-run — idempotent.
-#   Use --all to skip menus, or name specific components.
+# <!-- include: bin/local/generate-tool-context --emit workbench-commands -->
 #
-# What ai does:
-#   ai init — scaffolds a .claude/ directory in the current git repo (if one
-#   doesn't exist) with stack-detected rules and a project anatomy file.
-#   Use --force to re-scaffold, --analyze to run /analyze-project after.
-#   ai sync — syncs machine-level AI config (settings, rules, skills, agents, MCPs).
-#   ai override <type> [name] [--add|--disable|--enable|--status] — manage user overrides.
+# `install` runs first-time setup: installs Homebrew (if missing), syncs core
+# components (bin, git, task, zsh), presents a menu of optional components
+# (brew packages, docker, terminals, editors, ai, mise), and runs pending
+# migrations. Safe to re-run — idempotent. Use `--all` to skip menus, or name
+# specific components.
 #
-# What sync does (pure config reconciliation):
-#   - Re-symlinks scripts, zsh/, git/.gitconfig, Taskfile, lib/
-#   - Syncs Claude settings.json, CLAUDE.md, rules/, skills/, agents/, MCPs
-#   - Merges Zed/Sublime editor settings
-#   - Reconciles Ghostty theme key
+# `ai init` scaffolds a `.claude/` directory in the current git repo (if one
+# does not exist) with stack-detected rules and a project anatomy file. Use
+# `--force` to re-scaffold, `--analyze` to run `/analyze-project` after.
+# `ai sync` syncs machine-level AI config (settings, rules, skills, agents,
+# MCPs). `ai override` manages user overrides.
 #
-# What sync does NOT do (one-time setup via otto-workbench install):
-#   - Install Homebrew packages or casks
-#   - Configure Docker runtime
-#   - Import iTerm themes
-#   - Create Ghostty config from template
-#   - Regenerate tool context (now runs during sync via sync_zsh)
+# `sync` is pure config reconciliation: re-symlinks scripts, `zsh/`,
+# `git/.gitconfig`, Taskfile, `lib/`; syncs Claude `settings.json`, `CLAUDE.md`,
+# `rules/`, `skills/`, `agents/`, MCPs; merges Zed/Sublime editor settings;
+# and reconciles the Ghostty theme key. Tool context regenerates during sync
+# via `sync_zsh`.
 #
-# To run first-time setup or those components: otto-workbench install [COMPONENT ...]
+# `sync` does not do one-time setup — that is `otto-workbench install`: Homebrew
+# packages or casks, Docker runtime, iTerm themes, Ghostty config from template.
 
 set -e
 

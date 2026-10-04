@@ -137,7 +137,7 @@ tools:
   - name: validate-test-layout
     permission: false
     visibility: brief
-    description: "Fails when a Python module under tests/ is neither <subject>_test.py nor a declared support module, or passes the 600-code-line cap the source gate uses. No exemptions"
+    description: "Fails when a Python module under tests/ is neither <subject>_test.py nor a declared support module, or when a Python or bats suite passes the 600-code-line cap the source gate uses. The bats suites already over are named with the issue that splits them"
 
   - name: check-new-tests
     permission: false
@@ -194,6 +194,11 @@ tools:
     visibility: brief
     description: "Renders a module reference from the doc blocks of a source set's own modules"
 
+  - name: generate-cli-reference
+    permission: false
+    visibility: brief
+    description: "Renders a registered tool's usage line or flag tables from its own argparse parser"
+
   - name: generate-tool-context
     permission: false
     visibility: brief
@@ -233,6 +238,11 @@ tools:
     permission: false
     visibility: brief
     description: "Holds a share of the machine's test-parallelism slots while a command runs, so concurrent suites in several worktrees divide the cores instead of each taking all of them"
+
+  - name: suite-watch
+    permission: false
+    visibility: brief
+    description: "Supervises a test-suite child and writes a periodic stderr heartbeat of elapsed time and in-flight work, so a slow run is distinguishable from a stuck one"
 
   - name: validate-test-deps
     permission: false

@@ -34,24 +34,12 @@ teardown() {
   [ "$PR_BASE" = "feature/parent" ]
 }
 
-@test "--no-verify sets PR_NO_VERIFY, and it defaults off" {
-  parse_pr_flags "--no-issue"
-  [ "$PR_NO_VERIFY" = "false" ]
-  parse_pr_flags "--no-issue --no-verify"
-  [ "$PR_NO_VERIFY" = "true" ]
-}
-
-@test "--no-verify reaches git push as a flag, not as an environment variable" {
-  # The gate is skipped by what the push command says, so the skip is visible
-  # in the invocation and dies with it. An exported GIT_* or an edited hook
-  # would outlive the one push it was meant for.
-  run bash -c '
-    set -e
-    . "'"$REPO_ROOT"'/lib/ai/pr.sh" 2>/dev/null || true
-    grep -n "no-verify" "'"$REPO_ROOT"'/lib/ai/pr.sh"
-  '
-  [[ "$output" == *"--no-verify"* ]]
-  grep -q -- '--no-verify' "$REPO_ROOT/ai/lib/git/push.py"
+@test "--draft and --no-verify are accepted and inert" {
+  # Creating and pushing moved to `pr create`; pr:update callers that still
+  # pass these must not be refused as unknown flags.
+  run parse_pr_flags "--no-issue --draft --no-verify"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
 }
 
 @test "--base without value fails" {
@@ -131,7 +119,6 @@ teardown() {
 @test "--closes coexists with the other create flags" {
   parse_pr_flags "--no-issue --draft --closes 941 --title \"my title\""
   [ "$SKIP_ISSUE" = "true" ]
-  [ "$PR_DRAFT" = "true" ]
   [ "$PR_TITLE_OVERRIDE" = "my title" ]
   [ "${PR_CLOSES[0]}" = "#941" ]
 }
@@ -155,7 +142,6 @@ teardown() {
 @test "--issue and --draft together" {
   parse_pr_flags "--issue PROJ-42 --draft"
   [ "$PR_ISSUE_OVERRIDE" = "PROJ-42" ]
-  [ "$PR_DRAFT" = "true" ]
 }
 
 @test "--title with quoted multi-word value" {

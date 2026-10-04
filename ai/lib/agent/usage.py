@@ -18,24 +18,8 @@ A call that reports no usage records nothing rather than a zero row. An
 unmeasured call is then visibly absent instead of looking free, which a zeroed
 row cannot be told apart from.
 
-`otto-log stats` reads the ledger back. Its `--by model` breakdown shows cost
-only, because the CLI reports cost per model but tokens per session — leaving the
-token columns blank beats counting one session's tokens against every model it
-used.
-
-`--by phase` is the one breakdown that reports turns, and the only one it could
-be: a turn budget is set per phase, so a distribution rolled up by script or by
-day mixes a 15-turn review agent with an 80-turn fix pass and describes neither.
-Its `AT CAP` column is the share of a phase's runs that spent their whole
-budget, which is the reading that says whether the budget is calibrated — a
-phase hitting its cap on a third of runs is one whose constant is too low.
-
-That column is blank, not zero, for a phase whose records never said what they
-were allowed. Spent turns and the allocated budget shared one key until
-`record` split them, so every record written before that carries a number with
-no way to tell which it is; counting those as under-cap would report every
-phase as comfortably sized on the strength of records that cannot say. The
-column fills in as new runs land.
+`otto-log stats` reads the ledger back; how it groups and what it leaves blank is
+`agent.usage_stats`.
 """
 
 # doc-group: backend
@@ -113,6 +97,82 @@ class SessionUsage:
     def cache_read_ratio(self) -> float:
         """Share of billed input served from cache, 0.0-1.0."""
         return self.cache_read_tokens / self.billed_input if self.billed_input else 0.0
+
+
+@dataclass(frozen=True)
+class FirstTurnUsage:
+    """The first request of a session: the model that served it, and its input.
+
+    `input_tokens` is billed input — raw input plus cache read and cache write
+    — because that is what occupies the context window. `served_model` is the
+    id the backend reported, which can differ from the alias the phase asked
+    for.
+    """
+
+    served_model: str
+    input_tokens: int
+
+
+def first_turn_usage(records: list[dict]) -> FirstTurnUsage | None:
+    """First-request input and served model from a session JSONL, or None.
+
+    Claude stream-json: the first `{type:system, subtype:init}` line names the
+    model, and the first assistant message's `usage` is billed as
+    `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`.
+
+    Pi `--mode json`: the first `message_end` whose message role is assistant
+    carries `message.model` and `usage` as `input + cacheRead + cacheWrite`.
+    """
+    claude = _first_turn_claude(records)
+    if claude is not None:
+        return claude
+    return _first_turn_pi(records)
+
+
+def _first_turn_claude(records: list[dict]) -> FirstTurnUsage | None:
+    model = ""
+    for rec in records:
+        if rec.get("type") == "system" and rec.get("subtype") == "init":
+            model = str(rec.get("model") or "")
+            break
+    for rec in records:
+        if rec.get("type") != "assistant":
+            continue
+        message = rec.get("message") or {}
+        usage = message.get("usage") or {}
+        billed = (
+            int(usage.get("input_tokens") or 0)
+            + int(usage.get("cache_read_input_tokens") or 0)
+            + int(usage.get("cache_creation_input_tokens") or 0)
+        )
+        if billed == 0:
+            # No usage block, or the zeros block of a synthetic API-error
+            # message: neither is a served request. Keep scanning.
+            continue
+        served = str(message.get("model") or model)
+        return FirstTurnUsage(served_model=served, input_tokens=billed)
+    return None
+
+
+def _first_turn_pi(records: list[dict]) -> FirstTurnUsage | None:
+    for rec in records:
+        if rec.get("type") != "message_end":
+            continue
+        message = rec.get("message") or {}
+        if message.get("role") != "assistant":
+            continue
+        usage = message.get("usage") or rec.get("usage") or {}
+        billed = (
+            int(usage.get("input") or 0)
+            + int(usage.get("cacheRead") or 0)
+            + int(usage.get("cacheWrite") or 0)
+        )
+        if billed == 0:
+            # An errored or aborted turn carries no usage; keep scanning.
+            continue
+        served = str(message.get("model") or "")
+        return FirstTurnUsage(served_model=served, input_tokens=billed)
+    return None
 
 
 # The CLI emits two spellings for the same fields: modelUsage entries are camelCase,

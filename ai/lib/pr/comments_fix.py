@@ -23,6 +23,17 @@ vocabulary of its own, beside a top-level ``commit_sha``/``commit_status``/
 ``head_sha``. :meth:`FixSummary._from_raw` reads that shape into the record, so
 a review cycle in flight keeps the outcomes, the reply queue and the deferred
 issue it had accumulated rather than resuming from an empty one.
+
+``CloseoutDebt`` is what ``pr status`` prints as ``⚠ closeout owed``. The reply
+count is derived from the recorded outcomes — the fixed, already-addressed, and
+dismissed threads ``--finish`` drains. A queue that still owes replies but
+carries no outcomes to count says ``replies`` without a number rather than
+claiming zero. An unfiled tracking issue reads as ``deferred tracking issue`` in
+the same line. A draft run owes nothing: the publishing gate declining a write
+is the gate working, so it neither posts an error to the trail nor counts against
+merge readiness. ``FixSummary.ages`` is false — bookkeeping, not a measurement —
+so an undelivered closeout still blocks at any age and a delivered one never
+starts to.
 """
 
 # doc-group: pr-state

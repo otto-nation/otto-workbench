@@ -1,16 +1,29 @@
 #!/usr/bin/env bash
-# Resolve a fuzzy branch name to an exact git branch.
+# Resolve a fuzzy branch name to an exact git branch — tries exact, worktree,
+# separator, then fuzzy.
 #
-# Usage: resolve-branch <input>
+# ```
+# resolve-branch <input>
+# ```
 #
-# Resolution cascade (stops at first match):
-#   1. Exact match against local and remote branches
-#   2. Worktree directory basename match
-#   3. Separator normalization (- → / for first two segments)
-#   4. Case-insensitive fuzzy search
+# | Flag | Description |
+# |------|-------------|
+# | `-h`, `--help` | Show help |
 #
-# Output: resolved branch name on stdout (cleaned of remotes/origin/ prefix)
-# Exit:   0 on success, 1 on failure (error/candidates on stderr)
+# Resolution cascade (stops at the first match):
+#
+# 1. Exact match against local and remote branches (`origin/<input>` included)
+# 2. Worktree directory basename match (including a worktree mid-rebase)
+# 3. Separator normalization (`-` → `/` for the first two segments)
+# 4. Case-insensitive fuzzy search
+#
+# The resolved name is printed on stdout with a `remotes/origin/` prefix stripped.
+# Several fuzzy hits are listed on stderr rather than guessed.
+#
+# | Exit | Meaning |
+# |------|---------|
+# | `0` | Resolved; branch name on stdout |
+# | `1` | No match, several fuzzy hits, or missing `<input>` |
 
 set -e
 

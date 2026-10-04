@@ -799,7 +799,7 @@ _shared_rule_verdict() {
     *"is a wait for something"*) echo sleep ;;
     *"Backgrounding with"*) echo background ;;
     *"Piping a test suite"*) echo test-pipe ;;
-    *"task pr:create"*) echo pr-create ;;
+    *"Use pr create instead of gh pr create"*) echo pr-create ;;
     *"self-review has open findings"*) echo issue-defer ;;
     *"BLOCKED:"*) echo claude-only ;;
     *) echo allowed ;;

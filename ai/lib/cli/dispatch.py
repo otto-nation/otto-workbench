@@ -44,11 +44,12 @@ import core.tool_parser
 import pr.context
 
 # The parser factory that answers "which of this command's options consume a
-# following token", per subcommand. Not a CommandSpec field: the three
-# scriptless commands have no delegate parser at all — their parser is one of
-# the entry point's own subparsers — so a field would be filled for five
-# entries and structurally empty for three, which is the two-meanings-in-one-
-# field shape the handler seam was careful to avoid.
+# following token", and `pr <command> --help`, per subcommand. Not a
+# CommandSpec field: three of the scriptless commands have no parser of their
+# own at all — theirs is one of the entry point's own subparsers — so a field
+# would be structurally empty for them, which is the two-meanings-in-one-field
+# shape the handler seam was careful to avoid. `create` is scriptless and has
+# one: its handler runs in `pr`, but its flags are its own parser's.
 #
 # Not derivable from `handler` either, though four of the five would work:
 # `review`'s handler is the wrapper that injects `--self` and routes the mode
@@ -61,7 +62,13 @@ PARSER_FACTORIES = {
     "rebase": "cli.pr_rebase:build_parser",
     "describe": "cli.pr_describe:build_parser",
     "batch": "cli.pr_batch:build_parser",
+    "create": "cli.pr_create:build_parser",
 }
+
+
+def has_parser_factory(name: str) -> bool:
+    """Whether `pr <name>` has a parser of its own to answer `--help` with."""
+    return name in PARSER_FACTORIES
 
 
 def target_flags(ctx: pr.context.ResolvedContext, *,
@@ -145,8 +152,8 @@ def positional_index(extra: list[str], value_flags: frozenset[str]) -> int:
 def print_delegate_help(spec: CommandSpec) -> None:
     """Print *spec*'s delegate's own help, in this process.
 
-    `pr <command> --help` is answered by the delegate, because a delegating
-    subparser declares no flags of its own. This used to spawn the script
+    `pr <command> --help` is answered by the command's own parser, because
+    its subparser declares no flags of its own. This used to spawn the script
     with `--help` and let argparse exit; it asks the parser directly instead,
     because a delegate `main` resolves context and claims a run lock before
     argparse ever sees the flag — in-process, running one to print its usage

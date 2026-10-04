@@ -88,7 +88,7 @@ def subcommand_schema(command: str) -> dict | None:
     codes — the contracts those commands already declare and that
     `pr --tool-schema` cannot carry, because it answers for all ten at once.
 
-    None has two causes, and they are the same answer to a consumer. Four
+    None has two causes, and they are the same answer to a consumer. Three
     commands `pr` runs itself have no delegate parser at all. Three more —
     `review`, `comments`, and `batch` — have one, but it is a plain
     `ArgumentParser`, not a ToolParser document, so there is no output schema
@@ -96,6 +96,8 @@ def subcommand_schema(command: str) -> dict | None:
     without a versioned output document. A `ToolParser` would advertise a
     contract they do not keep. Converting them to say nothing more loudly is
     not worth a wire format.
+    `create` is the third shape: a `ToolParser` with no output schema, so it
+    reports the flags it accepts and promises no document.
 
     Renamed from the document's own `name` so it reads as the invocation a
     user types. A consumer reading `"pr ci"` can run that string; reading

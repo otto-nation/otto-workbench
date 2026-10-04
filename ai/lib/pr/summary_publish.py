@@ -11,6 +11,20 @@ Whether to edit the existing comment or post a fresh one is decided here too,
 because it changes what the round is allowed to leave out: an edit rewrites its
 target wholesale, a fresh post replaces nothing. `pr.summary_rounds` does that
 arithmetic; this hands it the decision.
+
+A review cycle posts `Review Comments Addressed` comments as it goes. A round
+nobody has spoken over since the last one edits that comment in place; a round a
+reviewer has commented, reviewed, or replied below posts a new one, because an
+edit notifies nobody. A comment covers its own round rather than the whole PR.
+A thread quiet since the round that published it is left in that comment and
+counted in a note. A footer links every earlier summary, so the newest comment
+is the entry point to the whole record. Re-classification is read as an outcome,
+not as cell text — one outcome has several wordings, so a round that only
+re-words a cell changes nothing (`pr.summary_rounds`). A cell somebody rewrote
+by hand states no outcome at all. An edit is the case that can destroy a row:
+the comment is read before the edit and any row this run cannot account for is
+carried forward verbatim, counted as `N carried over`, and logged. An edit never
+drops a row it is the only comment holding.
 """
 
 # ceiling: the immediate path and the --finish re-render are kept in one module

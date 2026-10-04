@@ -290,7 +290,7 @@ class TestFixWritesSessionLog:
                 self.stdin = types.SimpleNamespace(write=lambda s: None, close=lambda: None)
                 self.returncode = returncode
 
-            def wait(self):
+            def wait(self, timeout=None):
                 return self.returncode
 
         monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: FakeProc())

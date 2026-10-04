@@ -68,6 +68,22 @@ class TestTheBudgetComesFromTheModel:
         reserved = COMPLETION_RESERVE_TOKENS + OVERHEAD_RESERVE_TOKENS
         assert prompt_budget_tokens(model) == MODEL_CONTEXT_TOKENS[model] - reserved
 
+    def test_pi_reserves_less_overhead_than_claude(self, monkeypatch):
+        from core.phases import Backend
+        from review.budget import (
+            OVERHEAD_RESERVE_TOKENS, PI_OVERHEAD_RESERVE_TOKENS,
+            overhead_reserve_tokens, prompt_budget_tokens,
+        )
+
+        assert overhead_reserve_tokens(Backend.PI) == PI_OVERHEAD_RESERVE_TOKENS
+        assert overhead_reserve_tokens(Backend.CLAUDE) == OVERHEAD_RESERVE_TOKENS
+        monkeypatch.setattr("agent.backend.selected_backend", lambda: None)
+        assert overhead_reserve_tokens() == OVERHEAD_RESERVE_TOKENS
+        model = "claude-sonnet-4-6"
+        assert prompt_budget_tokens(model, Backend.PI) > prompt_budget_tokens(
+            model, Backend.CLAUDE,
+        )
+
     def test_an_unresolved_alias_takes_its_tier_floor(self):
         """The ordinary first-party-API setup, and not an error.
 

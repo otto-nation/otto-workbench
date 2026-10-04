@@ -11,7 +11,7 @@ require the documentation it would tax.
 Scope is Python and shell source under `ai/`, `bin/` and `lib/` — the two
 languages `code_lines` reads. Tests are not covered here: `tests/` has its
 own gate, `bin/local/validate-test-layout`, which applies the same cap
-alongside the suite naming rule and carries its own exemptions (#910).
+alongside the suite naming rule and carries its own exemptions (#853).
 
 Exit code: 0 if every file over the cap is a known exemption, 1 otherwise.
 
@@ -41,14 +41,12 @@ from file_size import MAX_CODE_LINES, code_lines  # noqa: E402
 from repo_scan import BASE_SKIP_DIRS  # noqa: E402
 
 
-# The files still over the cap, each with the issue that splits it — #853, the
-# shell half of the workbench, which no phase of #754 touches.
+# Every source file is under the cap. The dict stays, empty, so the gate keeps
+# one shape until #911 removes the exemption mechanism with the test pinning it.
 #
-# ceiling: named exemptions, because failing on them would block every push on
-# work owned elsewhere. Delete an entry when its file comes under the cap; once
-# the dict is empty this gate is the unconditional one #911 specifies.
+# ceiling: an empty exemption dict rather than none. Upgrade trigger: #911's
+# validator lands and deletes the dict and its pin test together.
 KNOWN_OVER = {
-    "ai/claude/steps.sh": "#853",
 }
 
 SCAN_ROOTS = ("ai", "bin", "lib")

@@ -63,6 +63,44 @@ class TestScopeDiff:
         assert "b.go" in result
 
 
+class TestDiffSectionSizes:
+    def test_sizes_are_per_file_and_account_for_the_whole_diff(self):
+        a = "diff --git a/a.go b/a.go\ncontent a\n"
+        b = "diff --git a/b.go b/b.go\ncontent bb é\n"
+        sizes = review.collect.diff_section_sizes(a + b)
+        assert sizes == {"a.go": len(a.encode()), "b.go": len(b.encode())}
+
+    def test_a_set_size_matches_scope_diff_without_rescanning(self):
+        diff = (
+            "diff --git a/a.go b/a.go\ncontent a\n"
+            "diff --git a/b.go b/b.go\ncontent b\n"
+            "diff --git a/c.go b/c.go\ncontent c\n"
+        )
+        sizes = review.collect.diff_section_sizes(diff)
+        scoped = review.collect.scope_diff(diff, ["a.go", "c.go"])
+        # scope_diff strips the trailing newline; the sections themselves do not.
+        assert sizes["a.go"] + sizes["c.go"] == len(scoped.encode()) + 1
+
+    def test_no_headers_is_empty(self):
+        assert review.collect.diff_section_sizes("not a diff") == {}
+
+    def test_a_path_appearing_twice_is_summed(self):
+        first = "diff --git a/a.go b/a.go\ncontent one\n"
+        other = "diff --git a/b.go b/b.go\ncontent b\n"
+        second = "diff --git a/a.go b/a.go\ncontent two!\n"
+        sizes = review.collect.diff_section_sizes(first + other + second)
+        assert sizes == {
+            "a.go": len(first.encode()) + len(second.encode()),
+            "b.go": len(other.encode()),
+        }
+
+    def test_a_rename_is_keyed_by_its_old_path(self):
+        renamed = "diff --git a/old.go b/new.go\nrename from old.go\n"
+        sizes = review.collect.diff_section_sizes(renamed)
+        assert sizes == {"old.go": len(renamed.encode())}
+        assert "new.go" not in sizes
+
+
 # ── truncate_diff ───────────────────────────────────────────────────────────
 
 

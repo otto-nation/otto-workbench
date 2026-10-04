@@ -65,6 +65,22 @@ action, and the listing exists to be polled: the two records a dispatch writes
 cost more than the query itself, and they land in the file every `otto-log`
 query then reads. The exemption is read off these same three axes — `Need`
 carries no trail flag of its own for a command to add itself to.
+
+`base_branch` is the other thing this module resolves once per run: the branch
+every range a review (or rebase, or supersession check) measures against, most
+authoritative source first — operator `--base`/`--onto`, the PR's `baseRefName`,
+`git.topology.stack_parent` (nearest local ancestor of HEAD that is not the
+trunk), then the repo's default branch. It returns a *name*; callers spell
+`origin/<name>` themselves, so a local ref sitting at a stale position can
+nominate a base without being the commit anything is measured against. The run
+logs which rung answered and why. A `--base` naming a branch that exists in
+neither `origin/` nor locally is refused by `review.preflight.refuse_unresolvable_base`
+before the review runs — that is the one rung that can name something that does
+not exist. A derived base that does not resolve is not refused; the range
+fallbacks in `review.collect.base_ref` handle it. `--base` is also the override
+for a stale neighbour that won on distance (a `wip` parked mid-stack, a detached
+HEAD whose own branch ref is gone — `--recover`, or a PR whose branch was
+deleted); `git.topology.stack_parent` is that guess.
 """
 
 # doc-group: pr-state
@@ -318,6 +334,21 @@ def resolve(
                     "stamps state with its head SHA")
             sys.exit(1)
         branch_name = head.branch
+        # Resolved again now that the head branch is known. The first pass
+        # could not name a branch, so it fell back to the caller's checkout:
+        # the default branch's worktree when run from a bare repo, or whatever
+        # checkout the caller started in. A --pr run then refused to check the
+        # head out there, while --branch on the same head went to the right
+        # worktree. This puts --pr in the same worktree --branch would use.
+        #
+        # A second pass that finds nothing (bare repo, head branch not
+        # available locally, ``wt`` missing) must not discard the first pass's
+        # worktree: the run degrades to it rather than losing its worktree.
+        head_root, head_cwd = _resolve_worktree(
+            repo_dir, pr_ref=pr_ref, branch=branch_name,
+        )
+        if head_root is not None:
+            worktree_root, cwd = head_root, head_cwd
         # The PR's HEAD, not the caller's: state written for this run belongs to
         # the PR, and the caller may be sitting on an unrelated branch.
         head_sha = head.sha

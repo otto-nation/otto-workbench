@@ -129,12 +129,15 @@ class TestCountTokens:
             assert agent.token_count.count_tokens("some prompt", "claude-sonnet-5") is None
         urlopen.assert_not_called()
 
-    def test_transport_failure_is_none_not_an_exception(self, monkeypatch):
+    def test_transport_failure_is_none_not_an_exception(self, monkeypatch, capsys):
         """An uncounted prompt is a missing measurement, never a failed review."""
         _on_vertex(monkeypatch)
         with patch("agent.token_count.access_token", return_value="tok"), \
              patch("urllib.request.urlopen", side_effect=urllib.error.URLError("down")):
             assert agent.token_count.count_tokens("some prompt", "claude-sonnet-5") is None
+        err_text = capsys.readouterr().err
+        assert "using estimate" not in err_text
+        assert "count skipped" in err_text
 
     def test_malformed_response_is_none(self, monkeypatch):
         _on_vertex(monkeypatch)
@@ -175,3 +178,31 @@ class TestCountTokens:
         assert agent.token_count._endpoint("proj", "us-east5").startswith(
             "https://us-east5-aiplatform.googleapis.com/"
         )
+
+    def test_multi_region_hosts_use_the_rep_frontend(self):
+        """`us` and `eu` are not `{region}-aiplatform` — that host 404s."""
+        assert agent.token_count._endpoint("proj", "us").startswith(
+            "https://aiplatform.us.rep.googleapis.com/"
+        )
+        assert agent.token_count._endpoint("proj", "eu").startswith(
+            "https://aiplatform.eu.rep.googleapis.com/"
+        )
+        assert "locations/us" in agent.token_count._endpoint("proj", "us")
+
+    def test_http_error_names_the_status_and_does_not_claim_an_estimate(
+        self, monkeypatch, capsys,
+    ):
+        """A 404 is a 404, not a URLError, and nothing estimated anything."""
+        _on_vertex(monkeypatch)
+        err = urllib.error.HTTPError(
+            "https://example.invalid", 404, "Not Found",
+            hdrs=None, fp=io.BytesIO(b"nope"),
+        )
+        with patch("agent.token_count.access_token", return_value="tok"), \
+             patch("urllib.request.urlopen", side_effect=err):
+            assert agent.token_count.count_tokens(
+                "some prompt", "claude-sonnet-5",
+            ) is None
+        err_text = capsys.readouterr().err
+        assert "HTTP 404" in err_text
+        assert "using estimate" not in err_text

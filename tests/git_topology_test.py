@@ -134,6 +134,74 @@ def test_current_branch_detached_head_exits(mock_sub):
         git.topology.current_branch("/repo")
 
 
+def _paused_rebase(
+    tmp_path, *rebase_args: str, branch: str | None = "feat", worktree: bool = False,
+) -> Path:
+    """A repo stopped mid-rebase on a conflict, HEAD detached.
+
+    *branch* None starts the rebase from a detached HEAD instead of a branch.
+    *worktree* runs the rebase in a linked worktree at ``tmp_path/feat-wt`` and
+    returns that path; the main checkout stays at ``tmp_path/repo`` on main.
+    *worktree* implies a branch: it cannot be combined with ``branch=None``.
+    """
+    assert branch or not worktree, "worktree=True needs a branch; branch=None is unsupported"
+    repo = init_repo(tmp_path / "repo")
+    (repo / "f").write_text("base\n")
+    commit_all(repo, "base")
+    git_in(repo, "checkout", "-qb", "feat")
+    (repo / "f").write_text("feat\n")
+    commit_all(repo, "feat")
+    git_in(repo, "checkout", "-q", "main")
+    (repo / "f").write_text("main\n")
+    commit_all(repo, "main")
+    where = repo
+    if worktree:
+        where = tmp_path / "feat-wt"
+        git_in(repo, "worktree", "add", "-q", str(where), "feat")
+    else:
+        git_in(repo, "checkout", "-q", "feat" if branch else "--detach")
+        if branch is None:
+            git_in(repo, "reset", "-q", "--hard", "feat")
+    result = subprocess.run(
+        ["git", "rebase", *rebase_args, "main"],
+        cwd=where, capture_output=True, text=True,
+    )
+    assert result.returncode != 0, "fixture expected the rebase to stop on a conflict"
+    return where
+
+
+@pytest.mark.parametrize("backend", ["--merge", "--apply"])
+def test_current_branch_names_the_branch_a_paused_rebase_is_on(tmp_path, backend):
+    """A rebase stopped on a conflict detaches HEAD; the branch is still the one being rebased."""
+    repo = _paused_rebase(tmp_path, backend)
+    assert git.topology.current_branch_quiet(str(repo)) is None
+    assert git.topology.current_branch(str(repo)) == "feat"
+
+
+def test_current_branch_names_the_rebasing_branch_in_a_linked_worktree(tmp_path):
+    """A linked worktree keeps its rebase state in its own git dir, not the shared one."""
+    wt = _paused_rebase(tmp_path, worktree=True)
+    repo = tmp_path / "repo"
+    assert git.topology.current_branch(str(wt)) == "feat"
+    assert git.topology.current_branch(str(repo)) == "main"
+
+
+def test_current_branch_exits_for_a_rebase_started_from_detached_head(tmp_path):
+    """No branch is being rebased, so there is still nothing to name."""
+    repo = _paused_rebase(tmp_path, "--merge", branch=None)
+    with pytest.raises(SystemExit):
+        git.topology.current_branch(str(repo))
+
+
+def test_current_branch_exits_when_detached_with_no_rebase(tmp_path):
+    repo = init_repo(tmp_path / "repo")
+    (repo / "f").write_text("base\n")
+    commit_all(repo, "base")
+    git_in(repo, "checkout", "-q", "--detach")
+    with pytest.raises(SystemExit):
+        git.topology.current_branch(str(repo))
+
+
 # ── Branch resolution ──────────────────────────────────────────────────────
 
 
@@ -456,6 +524,18 @@ def test_find_bare_repo_worktree_creates_nothing_without_a_branch(
 # ── create_worktree_for_branch ─────────────────────────────────────────────
 
 
+@pytest.fixture
+def no_fetch(monkeypatch):
+    """Keep the fetch ahead of `wt switch` off the network.
+
+    Without it these tests reach the mocked `subprocess.run` only because
+    `core.proc` happens to call the same module object; a move to `Popen` would
+    run a real `git fetch` here. The fetch itself is covered separately below.
+    """
+    monkeypatch.setattr(git.topology, "_fetch_remote_branch", lambda *a: None)
+
+
+@pytest.mark.usefixtures("no_fetch")
 @patch("git.topology.subprocess.run")
 def test_create_worktree_for_branch_returns_path(mock_run):
     mock_run.return_value = MagicMock(
@@ -466,6 +546,7 @@ def test_create_worktree_for_branch_returns_path(mock_run):
     assert mock_run.call_args.args[0][:3] == ["wt", "switch", "feat/x"]
 
 
+@pytest.mark.usefixtures("no_fetch")
 @patch("git.topology.subprocess.run")
 def test_create_worktree_for_branch_passes_cwd(mock_run):
     mock_run.return_value = MagicMock(
@@ -475,18 +556,21 @@ def test_create_worktree_for_branch_passes_cwd(mock_run):
     assert mock_run.call_args.args[0][-2:] == ["-C", "/repo"]
 
 
+@pytest.mark.usefixtures("no_fetch")
 @patch("git.topology.subprocess.run")
 def test_create_worktree_for_branch_returns_none_when_wt_fails(mock_run):
     mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="boom")
     assert git.topology.create_worktree_for_branch("feat/x") is None
 
 
+@pytest.mark.usefixtures("no_fetch")
 @patch("git.topology.subprocess.run")
 def test_create_worktree_for_branch_survives_malformed_json(mock_run):
     mock_run.return_value = MagicMock(returncode=0, stdout="{not json}\n", stderr="")
     assert git.topology.create_worktree_for_branch("feat/x") is None
 
 
+@pytest.mark.usefixtures("no_fetch")
 @patch("core.log")
 @patch("git.topology.subprocess.run",
        side_effect=FileNotFoundError(2, "No such file or directory", "wt"))
@@ -496,6 +580,7 @@ def test_create_worktree_warns_once_when_wt_is_missing(_mock_run, mock_log):
     assert "not installed" in mock_log.warn.call_args.args[0]
 
 
+@pytest.mark.usefixtures("no_fetch")
 @patch("core.log")
 @patch("git.topology.subprocess.run",
        side_effect=PermissionError(13, "Permission denied", "wt"))
@@ -505,6 +590,7 @@ def test_create_worktree_warns_once_when_wt_cannot_run(_mock_run, mock_log):
     assert "Permission denied" in mock_log.warn.call_args.args[0]
 
 
+@pytest.mark.usefixtures("no_fetch")
 @patch("core.log")
 @patch("git.topology.subprocess.run")
 def test_create_worktree_warns_once_when_wt_reports_no_path(mock_run, mock_log):
@@ -522,6 +608,9 @@ def test_create_worktree_warns_once_when_wt_reports_no_path(mock_run, mock_log):
 def _stub_raise(monkeypatch, exc):
     def boom(*args, **kwargs):
         raise exc
+    # The fetch ahead of `wt switch` is not what these cases are about, and
+    # would otherwise be the first call to hit the raising stub.
+    monkeypatch.setattr(git.topology, "_fetch_remote_branch", lambda *a: None)
     monkeypatch.setattr(git.topology.subprocess, "run", boom)
 
 
@@ -542,6 +631,7 @@ def test_wt_switch_does_not_call_a_permission_error_a_missing_binary(monkeypatch
     assert "Permission denied" in err
 
 
+@pytest.mark.usefixtures("no_fetch")
 def test_wt_switch_reports_a_failed_run_rather_than_returning_none_silently(
         monkeypatch, capsys):
     _stub_run(monkeypatch, 1, stderr="error: no branch named feat/x")
@@ -550,11 +640,95 @@ def test_wt_switch_reports_a_failed_run_rather_than_returning_none_silently(
     assert "no branch named feat/x" in capsys.readouterr().err
 
 
+@pytest.mark.usefixtures("no_fetch")
 def test_wt_switch_stays_quiet_when_it_lands_on_a_worktree(monkeypatch, capsys):
     _stub_run(monkeypatch, 0, stdout='{"path": "/repo/feat-x"}\n')
 
     assert git.topology.wt_switch("feat/x") == "/repo/feat-x"
     assert capsys.readouterr().err == ""
+
+
+def _clone_missing_a_new_branch(tmp_path) -> Path:
+    """A clone fetched before ``feat/new`` was pushed to its origin."""
+    origin = tmp_path / "origin.git"
+    git_in(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+    seed = init_repo(tmp_path / "seed")
+    _commit(seed, "m1")
+    git_in(seed, "push", "-q", str(origin), "main")
+    clone = tmp_path / "clone"
+    git_in(tmp_path, "clone", "-q", str(origin), str(clone))
+    git_in(seed, "checkout", "-qb", "feat/new")
+    _commit(seed, "f1")
+    git_in(seed, "push", "-q", str(origin), "feat/new")
+    return clone
+
+
+def _has_ref(repo: Path, ref: str) -> bool:
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--verify", "-q", ref],
+        capture_output=True, check=False,
+    ).returncode == 0
+
+
+def test_wt_switch_fetches_a_branch_pushed_after_the_last_fetch(tmp_path, monkeypatch):
+    """`--no-hooks` skips worktrunk's fetch hook, so wt_switch has to fetch itself."""
+    clone = _clone_missing_a_new_branch(tmp_path)
+    assert not _has_ref(clone, "refs/remotes/origin/feat/new")
+    real_run = subprocess.run
+    seen_at_switch = []
+
+    def fake_wt(cmd, **kwargs):
+        if cmd[0] != "wt":
+            return real_run(cmd, **kwargs)
+        seen_at_switch.append(_has_ref(clone, "refs/remotes/origin/feat/new"))
+        return subprocess.CompletedProcess(cmd, 0, '{"path": "/wt/feat-new"}\n', "")
+
+    monkeypatch.setattr(git.topology.subprocess, "run", fake_wt)
+
+    assert git.topology.wt_switch("feat/new", str(clone)) == "/wt/feat-new"
+    assert seen_at_switch == [True]
+
+
+def test_wt_switch_still_switches_when_the_fetch_finds_nothing(tmp_path, monkeypatch):
+    clone = _clone_missing_a_new_branch(tmp_path)
+    real_run = subprocess.run
+    switched = []
+
+    def fake_wt(cmd, **kwargs):
+        if cmd[0] != "wt":
+            return real_run(cmd, **kwargs)
+        switched.append(cmd[2])
+        return subprocess.CompletedProcess(cmd, 0, '{"path": "/wt/local-only"}\n', "")
+
+    monkeypatch.setattr(git.topology.subprocess, "run", fake_wt)
+
+    assert git.topology.wt_switch("local-only", str(clone)) == "/wt/local-only"
+    assert switched == ["local-only"]
+
+
+def test_wt_switch_does_not_raise_when_cwd_does_not_exist(tmp_path, monkeypatch, capsys):
+    """`git.client` raises on a missing cwd; wt_switch has to keep answering None."""
+    real_run = subprocess.run
+
+    def fake_wt(cmd, **kwargs):
+        if cmd[0] != "wt":
+            return real_run(cmd, **kwargs)
+        return subprocess.CompletedProcess(cmd, 1, "", "error: no such directory")
+
+    monkeypatch.setattr(git.topology.subprocess, "run", fake_wt)
+
+    assert git.topology.wt_switch("feat/x", str(tmp_path / "gone")) is None
+    assert "no such directory" in capsys.readouterr().err
+
+
+def test_wt_switch_leaves_a_pr_ref_to_worktrunk(monkeypatch):
+    fetched = []
+    monkeypatch.setattr(git.topology, "_fetch_remote_branch",
+                        lambda branch, cwd: fetched.append(branch))
+    _stub_run(monkeypatch, 0, stdout='{"path": "/wt/pr-12"}\n')
+
+    assert git.topology.wt_switch("pr:12") == "/wt/pr-12"
+    assert fetched == []
 
 
 # ── stack parent derivation ─────────────────────────────────────────────────

@@ -17,6 +17,11 @@ import pytest
 
 from repo_config_guard_support import _REPO_CONFIG, _assert_config_unchanged, _config_bytes
 
+# The suite heartbeat's in-flight records, as a plugin of their own so this
+# module keeps the fixtures and stays within the test-layout cap.
+# Environment-variable isolation fixtures, split out for the same reason.
+pytest_plugins = ["suite_status_support", "env_isolation_support"]
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -194,42 +199,6 @@ def _clear_git_hook_env():
     """Clear git env vars inherited from hooks (e.g. pre-push)."""
     saved = {k: os.environ.pop(k) for k in _GIT_HOOK_VARS if k in os.environ}
     yield
-    os.environ.update(saved)
-
-
-def _agent_env_keys() -> list[str]:
-    """The agent-config vars exported right now, by the prefix their owner defines.
-
-    Imported lazily, like the other fixtures that reach into ai/lib: a
-    module-scope import here would make every test's collection depend on
-    phases importing cleanly.
-    """
-    if LIB_DIR not in sys.path:
-        sys.path.insert(0, LIB_DIR)
-    from core.phases import ENV_PREFIX
-    return [k for k in os.environ if k.startswith(ENV_PREFIX)]
-
-
-@pytest.fixture(autouse=True)
-def _clear_agent_env():
-    """Run every test with the agent config env unset.
-
-    Model, thinking, and provider settings are read straight from the
-    environment with no injection point, so a developer who exports
-    WORKBENCH_AI_THINKING for their own runs answers those tests' assertions
-    from their shell. Modules that resolve config guard themselves today; this
-    is the floor, so the next one does not have to remember.
-
-    Matching on the prefix rather than a list is what makes it a floor: the
-    per-phase keys are generated from the Phase enum, so a new phase brings new
-    keys that no list here would know about. Teardown drops whatever the test
-    left behind before restoring, so a test that writes os.environ directly
-    cannot leak into the next one either.
-    """
-    saved = {k: os.environ.pop(k) for k in _agent_env_keys()}
-    yield
-    for key in _agent_env_keys():
-        del os.environ[key]
     os.environ.update(saved)
 
 

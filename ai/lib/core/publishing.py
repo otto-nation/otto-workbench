@@ -22,12 +22,22 @@ of that run, so the two only ever compose in the safe direction at both scopes.
 The next `run` starts clean: both the flag and the hold reset, or a hold would
 outrank a `--post` nobody in that invocation asked to refuse.
 
-What that means at the CLI: `pr comments` writes nothing outward unless you
-pass `--post`. Replies, the fix summary, thread resolutions, deferral tracking
-issues, the PR description, and the push are all printed to stderr as drafts
-instead, prefixed `DRAFT (not published)`. Code fixes and the commit are
-unaffected: they are local and undoable, and they are what makes the work
-reviewable at all. The gate covers what leaves the machine.
+What that means at the CLI: `--post` is the gate, not a phase. The phase flags
+(`--triage`, `--fix`, `--finish`, `--reply`, `--settle`) choose which work the
+run does; `--post` decides whether that work leaves the machine. Every phase
+drafts to stderr and publishes nothing without it, so `--post` neither implies
+a phase nor is implied by one. `--finish --post` is therefore not saying the
+same thing twice. The same `--post` gates `pr review` and `--reply`; it is one
+switch for the whole process, not a `comments` flag.
+
+`pr comments` writes nothing outward unless you pass `--post`. Replies, the fix
+summary, thread resolutions, deferral tracking issues, the PR description, and
+the push are all printed to stderr as drafts instead, prefixed `DRAFT (not
+published)`. Code fixes and the commit are unaffected: they are local and
+undoable, and they are what makes the work reviewable at all. The gate covers
+what leaves the machine. A held push prints the command that would send it —
+`git.land` owns the commit (ungated) and the push (gated), and
+`push.resume_command` renders the one thing to run.
 
 `pr ci --fix` and `pr review --fix` answer to the same flag and mean the same
 thing by it. Both commit what their agent fixed and both draft the push without
@@ -39,6 +49,10 @@ otherwise be made, so `review` forwards the flag to it rather than
 opening a gate the pass would never see. That forwarding predates in-process
 dispatch and survives it: the flag is how the pass learns, and `scope()` is
 what keeps the answer from outliving the run.
+
+`pr ci --fix`'s rebase-if-behind is in-process too (`cli.ci_check._rebase_if_behind`),
+so this run's gate is the one the rebase's push asks. A draft run rebases locally
+and drafts the force-push.
 
 A hand-written `pr comments --reply <id> --body-file <path>` is no exception: it
 drafts the body and reports the draft, and only `--post` sends it.

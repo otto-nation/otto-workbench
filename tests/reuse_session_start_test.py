@@ -1,5 +1,6 @@
 """Tests for the SessionStart hook's context lines."""
 
+import os
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -190,10 +191,14 @@ class TestWhereTheSessionStarted:
             rss.main()
         assert "Issue tracker: linear" in capsys.readouterr().out
 
-    def test_a_container_with_no_worktree_stays_silent(
+    def test_a_container_with_no_worktree_names_no_tracker(
         self, rss, tmp_path, monkeypatch, capsys,
     ):
-        """Exit 1 from resolve-worktree is a refusal, not a path to guess at."""
+        """Exit 1 from resolve-worktree is a refusal, not a path to guess at.
+
+        No tracker is read — there is no tree to read it from — but the session
+        is told why its repo context is missing, rather than nothing at all.
+        """
         from conftest import run_checked, seed_repo
 
         seed = seed_repo(tmp_path / "seed")
@@ -202,7 +207,59 @@ class TestWhereTheSessionStarted:
         monkeypatch.chdir(root)
         with patch.object(rss, "_ceiling_counts", return_value=None):
             rss.main()
-        assert "Issue tracker" not in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "Issue tracker" not in out
+        assert "is a bare-repo container with no resolvable worktree" in out
+
+    def test_a_container_rooted_session_is_told_it_started_at_one(
+        self, rss, container, monkeypatch, capsys,
+    ):
+        """The backstop. Past the wrapper, nothing else says it.
+
+        A session started at a container never loaded the repo's CLAUDE.md, and
+        looks exactly like one that did. The line names the worktree that
+        speaks for it, which is `resolve-worktree`'s answer.
+        """
+        monkeypatch.chdir(container)
+        with patch.object(rss, "_ceiling_counts", return_value=None):
+            rss.main()
+        out = capsys.readouterr().out
+        worktree = os.path.realpath(container / "main")
+        assert "is a bare-repo container, so this session did not load" in out
+        assert f"Its worktree is {worktree}" in out
+
+    def test_a_worktree_rooted_session_is_not_told_about_containers(
+        self, rss, container, monkeypatch, capsys,
+    ):
+        monkeypatch.chdir(container / "main")
+        with patch.object(rss, "_ceiling_counts", return_value=None):
+            rss.main()
+        assert "Session root" not in capsys.readouterr().out
+
+    def test_a_missing_resolver_at_a_container_is_reported_not_silent(
+        self, rss, container, monkeypatch, capsys,
+    ):
+        """The wrapper asks the same resolver, so its absence disables both.
+
+        Reading UNAVAILABLE as "not a container" would make this layer go quiet
+        at exactly the moment the one in front of it has, too.
+        """
+        monkeypatch.chdir(container)
+        unavailable = rss.git_layout.Worktree(None, rss.git_layout.UNAVAILABLE)
+        with patch.object(rss, "_ceiling_counts", return_value=None), \
+                patch.object(rss.git_layout, "worktree_for", return_value=unavailable):
+            rss.main()
+        assert "with no resolvable worktree" in capsys.readouterr().out
+
+    def test_a_missing_resolver_outside_a_container_stays_silent(
+        self, rss, container, monkeypatch, capsys,
+    ):
+        monkeypatch.chdir(container / "main")
+        unavailable = rss.git_layout.Worktree(None, rss.git_layout.UNAVAILABLE)
+        with patch.object(rss, "_ceiling_counts", return_value=None), \
+                patch.object(rss.git_layout, "worktree_for", return_value=unavailable):
+            rss.main()
+        assert "Session root" not in capsys.readouterr().out
 
     def test_outside_a_repo_stays_silent(self, rss, tmp_path, monkeypatch, capsys):
         plain = tmp_path / "plain"

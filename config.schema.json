@@ -132,7 +132,8 @@
               "ci_fix",
               "rebase",
               "prepush_fix",
-              "describe"
+              "describe",
+              "create"
             ]
           }
         }

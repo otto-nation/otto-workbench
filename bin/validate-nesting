@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
-"""Validate that scripts do not exceed a maximum nesting depth per function.
+"""Validate bash, Python, and Go script nesting depth to enforce flat control flow.
 
-Usage: validate-nesting [--quiet] [--max-depth N] [--diff BASE_REF] [file...]
+Each language's checker in `lib/nesting/` owns its default max depth as
+`DEFAULT_MAX_DEPTH`; `--max-depth` overrides all of them. The numbers are
+deliberately not restated here — this text once said Go was 3 while every
+checker had long since settled on 2.
 
-Checks nesting depth in bash, Python, and Go scripts. Each language's checker
-in lib/nesting/ owns its default max depth as DEFAULT_MAX_DEPTH; --max-depth
-overrides all of them. The numbers are deliberately not restated here — this
-text said go was 3 while every checker had long since settled on 2.
+```
+validate-nesting [--quiet] [--max-depth N] [--diff BASE_REF] [file...]
+```
 
-When no files are given, discovers all scripts in the repo by extension
-and shebang. With --diff, only reports violations on lines added since
-BASE_REF (mutually exclusive with positional files).
+When no files are given, discovers all scripts in the repo by extension and
+shebang. `--diff` is mutually exclusive with positional files. The flag table
+below the exit codes is rendered from the parser, so it is not written here.
 
-Exit code: 0 if all files pass, 1 if any exceed max depth.
+| Exit | Meaning |
+|------|---------|
+| `0` | All files pass |
+| `1` | Any file exceeds max depth |
+| `2` | Usage error (`--diff` with positional files, or `BASE_REF` did not resolve) |
 """
 
 import argparse
@@ -178,15 +184,23 @@ def _resolve_diff_files(base_ref: str, repo_root: str):
     return sorted(result, key=lambda t: t[0])
 
 
-def main():
-    parser = argparse.ArgumentParser(description='Validate script nesting depth.')
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog='validate-nesting',
+        description='Validate script nesting depth.',
+    )
     parser.add_argument('--quiet', action='store_true', help='Only show failures and summary')
-    parser.add_argument('--max-depth', type=int, default=None,
+    parser.add_argument('--max-depth', type=int, default=None, metavar='N',
                         help='Maximum nesting depth (overrides per-language defaults)')
     parser.add_argument('--diff', metavar='BASE_REF',
                         help='Only check violations in lines added since BASE_REF')
-    parser.add_argument('files', nargs='*', help='Files to check (auto-discovers if omitted)')
-    args = parser.parse_args()
+    parser.add_argument('files', nargs='*', metavar='FILE',
+                        help='Files to check (auto-discovers if omitted)')
+    return parser
+
+
+def main():
+    args = build_parser().parse_args()
 
     if args.diff and args.files:
         print('error: --diff and positional files are mutually exclusive', file=sys.stderr)

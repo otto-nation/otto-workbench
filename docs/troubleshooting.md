@@ -301,7 +301,10 @@ It shows up as a handful of failures in arbitrary tests that never repeat — a 
 ```bash
 bin/local/run-tests --pytest          # re-run once the machine is idle
 TEST_JOBS=2 bin/local/run-tests       # or leave capacity for whatever else is running
+TEST_HEARTBEAT_SECS=15 bin/local/run-tests   # tighter progress while you watch
 ```
+
+To tell a slow run from a stuck one, see [A suite is quiet: slow or stuck?](#a-suite-is-quiet-slow-or-stuck).
 
 `TEST_JOBS` also skips the slot pool entirely — a caller that names a number is not asking to be sized.
 
@@ -314,6 +317,14 @@ TEST_JOBS=2 bin/local/run-tests       # or leave capacity for whatever else is r
 See what is holding slots with `bin/local/claim-job-slots --show`. A record there names the *last* holder of each slot, not necessarily a live one — a dead pid is the normal resting state of a released slot, and the kernel drops a flock however the holder exited.
 
 The pool bounds the overshoot rather than eliminating it: a run that finds every slot taken proceeds at the floor of 2 rather than waiting, deliberately, because queueing would make the third worktree's pre-push sit silent for the length of two suites. Several suites plus a build can still land here.
+
+## A suite is quiet: slow or stuck?
+
+A parallel bats run buffers TAP until the head file finishes, so a slow suite and a stuck one both look silent. `TEST_HEARTBEAT_SECS` (default 60, 0 disables) writes one stderr line every N seconds naming the suite, elapsed time, jobs, and what is in flight. A name whose age keeps growing across heartbeats is the one to look at; ages that jump by the length of a nap say the machine slept. TAP stays on stdout for the pre-push parser, and the heartbeat never uses a TAP-like prefix.
+
+```bash
+TEST_HEARTBEAT_SECS=15 bin/local/run-tests   # a line every 15s
+```
 
 ## The same hint under a failure that looks like a real assertion
 

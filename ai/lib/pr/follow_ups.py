@@ -64,7 +64,7 @@ class IssueRef:
 
     Not a bare string. `review.issue` already has to tell these apart —
     `_ISSUE_PATTERN_JIRA_LINEAR` and `_GITHUB_CLOSE_PATTERN` match different
-    shapes, and `_pr_add_close_ref` in lib/ai/pr.sh refuses a tracker key
+    shapes, and `pr.close_refs` refuses a tracker key
     outright unless the provider is Linear — so a ledger that stored `"1455"`
     would be handing every reader that discrimination problem again.
 

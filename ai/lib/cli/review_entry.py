@@ -67,19 +67,32 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run the configured review agent on a PR",
         add_help=True,
     )
-    parser.add_argument("--no-post", action="store_true")
-    parser.add_argument("--post", action="store_true")
-    parser.add_argument("--submit", action="store_true")
-    parser.add_argument("--self", action="store_true", dest="self_review")
-    parser.add_argument("--fix", action="store_true")
-    parser.add_argument("--push", action="store_true")
-    parser.add_argument("--skip-user-verification", action="store_true")
-    parser.add_argument("--force", action="store_true")
-    parser.add_argument("--recover", action="store_true")
+    parser.add_argument("--no-post", action="store_true",
+                        help="Do not post the review to GitHub")
+    parser.add_argument("--post", action="store_true",
+                        help="Post the review to GitHub when it finishes")
+    parser.add_argument("--submit", action="store_true",
+                        help="Submit the GitHub review after posting (default: leave PENDING)")
+    parser.add_argument("--self", action="store_true", dest="self_review",
+                        help="Review a local checkout of the current branch, or of "
+                             "the branch or PR ref given")
+    parser.add_argument("--fix", action="store_true",
+                        help="Apply findings after the review (requires --self)")
+    parser.add_argument("--push", action="store_true",
+                        help="Push the --fix commit (requires --fix)")
+    parser.add_argument("--skip-user-verification", action="store_true",
+                        help="Skip the PR-ownership check when --self is given a PR ref")
+    parser.add_argument("--force", action="store_true",
+                        help="Skip stale-review and pending-review prompts; not with --recover")
+    parser.add_argument("--recover", action="store_true",
+                        help="Finish a review whose agents failed, at the commit it started from")
     add_phase_skip_flags(parser)
-    parser.add_argument("--disprove", action="store_true", default=None)
-    parser.add_argument("--json-summary", action="store_true")
-    parser.add_argument("--issue")
+    parser.add_argument("--disprove", action="store_true", default=None,
+                        help="Enable the disprove-it gate (default: effort-based)")
+    parser.add_argument("--json-summary", action="store_true",
+                        help="Print a machine-readable summary on stdout")
+    parser.add_argument("--issue", metavar="URL",
+                        help="Related issue to include in the review prompt")
     # `--onto` is accepted for symmetry with `pr rebase`, which spells the same
     # question that way. The value differs in kind from that one, though: this
     # is a bare branch name resolved as `origin/<name>`, where rebase takes any
@@ -91,20 +104,29 @@ def build_parser() -> argparse.ArgumentParser:
                              "the PR's base, else the branch this one is stacked "
                              "on, else the repo's default branch")
     parser.add_argument(
-        "--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL,
+        "--max-parallel", type=int, default=DEFAULT_MAX_PARALLEL, metavar="N",
         help="Max concurrent group reviews (default: from the machine slot pool, cap 4)",
     )
-    parser.add_argument("--max-cost", type=float)
-    parser.add_argument("--model")
+    parser.add_argument("--max-cost", type=float, metavar="USD",
+                        help="Max total review cost in USD")
+    parser.add_argument("--model", metavar="NAME",
+                        help="Override the model for all agents (e.g. sonnet, opus)")
     parser.add_argument("--effort", choices=["low", "medium", "high"], default=None,
                         help="Effort preset (default: review.effort in config.yml, else medium)")
-    parser.add_argument("--max-groups", type=int, default=None)
-    parser.add_argument("--generated", action="store_true")
-    parser.add_argument("--repo-dir", "--worktree", dest="repo_dir")
-    parser.add_argument("--branch")
-    parser.add_argument("--pr")
-    parser.add_argument("-V", "--version", action="store_true")
-    parser.add_argument("args", nargs="*")
+    parser.add_argument("--max-groups", type=int, default=None, metavar="N",
+                        help="Max file groups in multi-phase reviews (default: effort-based)")
+    parser.add_argument("--generated", action="store_true",
+                        help="Include tier3-generated files (skipped by default)")
+    parser.add_argument("--repo-dir", "--worktree", dest="repo_dir", metavar="PATH",
+                        help="Git worktree directory")
+    parser.add_argument("--branch", metavar="NAME",
+                        help="Branch to review (injected by the pr dispatcher)")
+    parser.add_argument("--pr", metavar="NUM|URL",
+                        help="PR number or URL (injected by the pr dispatcher)")
+    parser.add_argument("-V", "--version", action="store_true",
+                        help="Print version and exit")
+    parser.add_argument("args", nargs="*", metavar="PR|BRANCH",
+                        help="PR number, URL, or branch name")
     add_trail_args(parser)
     return parser
 

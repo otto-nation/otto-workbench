@@ -1,4 +1,23 @@
 #!/usr/bin/env bash
+# Check GCP application-default credentials and re-login if expired, with a
+# self-managed launchd agent.
+#
+# With no command, prints whether credentials are valid and, if not, launches
+# `gcloud auth application-default login`. `gcloud` is resolved via mise when
+# that install exists, otherwise from `PATH`.
+#
+# ```
+# gcloud-reauth [<command>]
+# ```
+#
+# | Command | Description |
+# |---------|-------------|
+# | *(none)* | Check credentials, launch login if expired |
+# | `install` | Install launchd agent (runs every 12h) |
+# | `uninstall` | Remove launchd agent |
+# | `status` | Show agent status |
+# | `-h`, `--help` | Show help |
+
 set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"

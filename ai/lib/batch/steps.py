@@ -111,23 +111,39 @@ class StepProcess:
     def stdout(self) -> str:
         return "".join(self._out)
 
-    def kill(self) -> None:
+    def kill(self, *, force: bool = False) -> None:
         """Signal the process group, escalating to SIGKILL once TERM has had its chance.
 
         Cancel and interrupt both poll by calling this again every tick while the
         process stays alive, so a first call sends SIGTERM and starts the grace
         window; a later call past ``KILL_GRACE_S`` sends SIGKILL instead, so a
         child that ignores or is slow to act on TERM still ends.
+
+        ``force`` skips straight to SIGKILL regardless of the grace window. The
+        scheduler uses it once the tracked step itself has already exited: the
+        "give TERM a chance" concern is about the step we are watching, not about
+        whatever it left running in its group, and that group gets no further
+        ``kill()`` calls once the step is reaped.
         """
         now = time.monotonic()
-        if self._kill_sent_at is None:
+        if force:
+            sig = signal.SIGKILL
+        elif self._kill_sent_at is None:
             self._kill_sent_at = now
             sig = signal.SIGTERM
         elif now - self._kill_sent_at >= self.KILL_GRACE_S:
             sig = signal.SIGKILL
         else:
             sig = signal.SIGTERM
+        # Signal the group even when the step itself has exited: anything it left
+        # running in the background is still in the group and must end too.
         try:
             os.killpg(self._popen.pid, sig)
         except ProcessLookupError:
             pass
+        except PermissionError:
+            # macOS answers EPERM rather than ESRCH when the only process left in the
+            # group is the step's own unreaped zombie: it has already exited. Reaping
+            # it confirms that; a step still running means the signal was refused.
+            if self._popen.poll() is None:
+                raise

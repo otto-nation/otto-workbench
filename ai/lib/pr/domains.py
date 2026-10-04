@@ -23,6 +23,13 @@ I/O, and imports this module — never the other way round. So does
 ``pr.comments_fix``, which holds the comment pass's domain: the closeout only
 that pass owes, over the same record every domain here carries.
 
+``PushDomain`` is how far the local branch is ahead of ``origin/<branch>``.
+``pr status`` refreshes it live and does not persist it. ``ahead`` is None for a
+branch with no remote ref and a count otherwise, so "never pushed" and "pushed
+and up to date" are different answers. The dashboard line and the merge-readiness
+blocker are the same three states: branch not pushed, N commit(s) not pushed,
+up to date (no block).
+
 #### Rebase refusals
 
 The already-landed signals answer "is this work already in the base?". Two more

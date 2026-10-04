@@ -5,7 +5,10 @@ PR's threads and conversation, carry the state file's records forward, mark
 what has been seen, and hand off to triage, the fix pass, or settlement as the
 arguments ask. `cli.review_threads` is the command over this — the parser, the
 run lock, the trail. Thread state is `pr.comments_state`; triage is
-`pr.triage`; the fix pass is `pr.comments_fix`.
+`pr.triage`; the fix pass is `pr.comments_fix`. This is also where the
+fix-engine and GitHub-read dependency moved: `fix.comments` and
+`gh.pr_data` used to be pulled in by `cli.review_threads` directly, and now
+live here instead.
 """
 
 # doc-group: publishing

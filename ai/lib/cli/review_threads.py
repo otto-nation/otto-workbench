@@ -1,15 +1,13 @@
 """Fetch PR review threads, compute lifecycle states, and output status.
 
-Renders a human-readable dashboard to stderr and structured JSON to stdout.
-Manages local state in the run's target directory, at pr-comments/state.json;
-`pr.comments.threads_state_path` owns that join.
-
 What is left here is what an entry point is: argument parsing, the flag
 conflicts that have to be refused before anything runs, context resolution, the
-run lock and the trail, and the dispatch that picks one of five phases. Every
-phase body lives in the module that owns its subject — `pr.triage`,
-`fix.comments`, `pr.settlement`, `pr.thread_replies`, `review.closeout` — and
-this module knows only which one to call and in what order.
+run lock and the trail, and the dispatch that picks one of five phases.
+`review.comment_threads.run_threads` is the one call every phase goes through;
+that module is what knows which of `pr.triage`, `fix.comments`,
+`pr.settlement`, `pr.thread_replies`, `review.closeout` to call and in what
+order, and it owns the dashboard-to-stderr/JSON-to-stdout rendering and the
+local state file this command used to manage directly.
 
 Two axes, and they have to stay apart: `--triage`/`--fix`/`--finish`/`--reply`/
 `--settle` choose the work; `--post` decides whether it leaves the machine.
@@ -17,8 +15,8 @@ Two axes, and they have to stay apart: `--triage`/`--fix`/`--finish`/`--reply`/
 alongside it. `--track` / `--track-all` are not implied by `--finish`.
 
 A comment `pr comments` has already read is dropped from triage decomposition
-(`_mark_seen`), keyed on the comment id *and* `last_edited_at` — see
-`pr.comments` for how that stamp is fetched.
+(`review.comment_threads.mark_seen`), keyed on the comment id *and*
+`last_edited_at` — see `pr.comments` for how that stamp is fetched.
 
 `main` returns rather than exits, as every module under `cli/` does; the shim at
 `ai/bin/review-threads` owns the process exit. That now holds through the
@@ -44,16 +42,11 @@ import core.log
 import core.publishing
 import core.run_lock
 from core.trail import Trail, add_trail_args
-import pr.comments
 import pr.comments_fix
-import pr.comments_state
 import pr.context
-import pr.domains
 import pr.settlement
 import pr.state
 import pr.thread_replies
-import pr.triage
-import pr.triage_round
 from pr.fix import FixOutcome
 import review.closeout
 import review.comment_threads

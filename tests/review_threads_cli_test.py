@@ -25,7 +25,7 @@ import pr.settlement
 from pr.fix import FixOutcome
 from pr.thread_models import PRReport
 import cli.review_threads
-import review.comment_threads  # noqa: E402
+import review.comment_threads
 import review.closeout
 
 

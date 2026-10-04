@@ -40,6 +40,8 @@ RESOLVE_BRANCH = Path(__file__).resolve().parent.parent.parent.parent / "bin" / 
 # Where remote-tracking refs live, spelled once. `stack_parent` both filters on
 # this prefix and strips it, and the two have to agree.
 REMOTE_REF_PREFIX = f"refs/remotes/{git_remote.GIT_REMOTE}/"
+BRANCH_REF_PREFIX = "refs/heads/"
+_REBASE_STATE_DIRS = ("rebase-merge", "rebase-apply")
 
 
 @dataclass(frozen=True)
@@ -80,8 +82,8 @@ def _parse_worktree_block(block: str) -> WorktreeEntry | None:
             return None
         if line.startswith("worktree "):
             path = Path(line.removeprefix("worktree "))
-        elif line.startswith("branch refs/heads/"):
-            branch = line.removeprefix("branch refs/heads/")
+        elif line.startswith(f"branch {BRANCH_REF_PREFIX}"):
+            branch = line.removeprefix(f"branch {BRANCH_REF_PREFIX}")
     return WorktreeEntry(path, branch) if path else None
 
 
@@ -324,7 +326,7 @@ def _short_ref(ref: str) -> str:
     """
     if ref.startswith(REMOTE_REF_PREFIX):
         return ref.removeprefix(REMOTE_REF_PREFIX)
-    return ref.removeprefix("refs/heads/")
+    return ref.removeprefix(BRANCH_REF_PREFIX)
 
 
 def _git_out(args: list[str], cwd: str | None = None) -> str:
@@ -448,13 +450,51 @@ def current_branch(cwd: str | None = None) -> str:
         core.log.error(failure_message("Cannot determine current branch", r))
         sys.exit(1)
     if branch == "HEAD":
+        # A rebase stopped on a conflict detaches HEAD, but it is still working
+        # on one branch and will move that branch when it finishes. Resuming
+        # such a rebase has to target that branch, so it counts as current.
+        rebasing = _rebasing_branch(cwd)
+        if rebasing:
+            return rebasing
         core.log.error("Cannot determine current branch — HEAD is detached")
         sys.exit(1)
     return branch
 
 
+def _rebasing_branch(cwd: str | None) -> str | None:
+    """The branch a paused rebase will update, or None when no branch rebase is under way.
+
+    Git records it in ``head-name`` under the rebase's state directory, which
+    the merge backend keeps in ``rebase-merge/`` and the apply backend in
+    ``rebase-apply/``. A rebase started from a detached HEAD records
+    ``detached HEAD`` there instead of a ref, and that answers None.
+    ``--git-dir`` resolves the directory for a linked worktree, whose rebase
+    state lives in its own git dir rather than the shared one.
+    """
+    r = subprocess.run(
+        ["git", "rev-parse", "--git-dir"],
+        capture_output=True, text=True, cwd=cwd, timeout=core.timeouts.LOCAL,
+    )
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    git_dir = Path(cwd or ".") / r.stdout.strip()
+    for state_dir in _REBASE_STATE_DIRS:
+        try:
+            ref = (git_dir / state_dir / "head-name").read_text().strip()
+        except OSError:
+            continue
+        if ref.startswith(BRANCH_REF_PREFIX):
+            return ref.removeprefix(BRANCH_REF_PREFIX)
+    return None
+
+
 def current_branch_quiet(cwd: str | None = None) -> str | None:
-    """Return current branch name, or None on failure (e.g. detached HEAD)."""
+    """Return current branch name, or None on failure (e.g. detached HEAD).
+
+    Deliberately stays None mid-rebase, unlike ``current_branch``: HEAD is
+    mid-replay then, so callers such as ``stack_parent`` should not treat the
+    rebasing branch as checked out.
+    """
     r = subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
         capture_output=True, text=True, cwd=cwd, timeout=core.timeouts.LOCAL,

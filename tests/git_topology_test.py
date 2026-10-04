@@ -134,6 +134,74 @@ def test_current_branch_detached_head_exits(mock_sub):
         git.topology.current_branch("/repo")
 
 
+def _paused_rebase(
+    tmp_path, *rebase_args: str, branch: str | None = "feat", worktree: bool = False,
+) -> Path:
+    """A repo stopped mid-rebase on a conflict, HEAD detached.
+
+    *branch* None starts the rebase from a detached HEAD instead of a branch.
+    *worktree* runs the rebase in a linked worktree at ``tmp_path/feat-wt`` and
+    returns that path; the main checkout stays at ``tmp_path/repo`` on main.
+    *worktree* implies a branch: it cannot be combined with ``branch=None``.
+    """
+    assert branch or not worktree, "worktree=True needs a branch; branch=None is unsupported"
+    repo = init_repo(tmp_path / "repo")
+    (repo / "f").write_text("base\n")
+    commit_all(repo, "base")
+    git_in(repo, "checkout", "-qb", "feat")
+    (repo / "f").write_text("feat\n")
+    commit_all(repo, "feat")
+    git_in(repo, "checkout", "-q", "main")
+    (repo / "f").write_text("main\n")
+    commit_all(repo, "main")
+    where = repo
+    if worktree:
+        where = tmp_path / "feat-wt"
+        git_in(repo, "worktree", "add", "-q", str(where), "feat")
+    else:
+        git_in(repo, "checkout", "-q", "feat" if branch else "--detach")
+        if branch is None:
+            git_in(repo, "reset", "-q", "--hard", "feat")
+    result = subprocess.run(
+        ["git", "rebase", *rebase_args, "main"],
+        cwd=where, capture_output=True, text=True,
+    )
+    assert result.returncode != 0, "fixture expected the rebase to stop on a conflict"
+    return where
+
+
+@pytest.mark.parametrize("backend", ["--merge", "--apply"])
+def test_current_branch_names_the_branch_a_paused_rebase_is_on(tmp_path, backend):
+    """A rebase stopped on a conflict detaches HEAD; the branch is still the one being rebased."""
+    repo = _paused_rebase(tmp_path, backend)
+    assert git.topology.current_branch_quiet(str(repo)) is None
+    assert git.topology.current_branch(str(repo)) == "feat"
+
+
+def test_current_branch_names_the_rebasing_branch_in_a_linked_worktree(tmp_path):
+    """A linked worktree keeps its rebase state in its own git dir, not the shared one."""
+    wt = _paused_rebase(tmp_path, worktree=True)
+    repo = tmp_path / "repo"
+    assert git.topology.current_branch(str(wt)) == "feat"
+    assert git.topology.current_branch(str(repo)) == "main"
+
+
+def test_current_branch_exits_for_a_rebase_started_from_detached_head(tmp_path):
+    """No branch is being rebased, so there is still nothing to name."""
+    repo = _paused_rebase(tmp_path, "--merge", branch=None)
+    with pytest.raises(SystemExit):
+        git.topology.current_branch(str(repo))
+
+
+def test_current_branch_exits_when_detached_with_no_rebase(tmp_path):
+    repo = init_repo(tmp_path / "repo")
+    (repo / "f").write_text("base\n")
+    commit_all(repo, "base")
+    git_in(repo, "checkout", "-q", "--detach")
+    with pytest.raises(SystemExit):
+        git.topology.current_branch(str(repo))
+
+
 # ── Branch resolution ──────────────────────────────────────────────────────
 
 

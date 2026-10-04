@@ -77,11 +77,13 @@ def test_comments_with_nothing_owed_is_done(monkeypatch):
     assert batch.outcomes.classify(batch.model.Step.COMMENTS, 0, "{}", item=ITEM, log_tail=[]).status is batch.model.StepStatus.DONE
 
 
-def test_review_open_findings_become_one_decision(monkeypatch):
-    monkeypatch.setattr(batch.outcomes, "open_findings", lambda item: [{"severity": "must-fix", "title": "x"}])
+def test_review_open_findings_become_one_step_review(monkeypatch):
+    finding = {"severity": "must-fix", "title": "x"}
+    monkeypatch.setattr(batch.outcomes, "open_findings", lambda item: [finding])
     r = batch.outcomes.classify(batch.model.Step.REVIEW, 0, "", item=ITEM, log_tail=[])
-    assert r.decisions == [batch.outcomes.DecisionDraft(batch.model.DecisionKind.OPEN_FINDINGS,
-                                             {"findings": [{"severity": "must-fix", "title": "x"}]})]
+    assert r.decisions == [batch.outcomes.DecisionDraft(
+        batch.model.DecisionKind.STEP_REVIEW,
+        {"evidence": [{"kind": "open_findings", "findings": [finding]}]})]
 
 
 def test_lock_busy_is_a_failed_decision_with_reason_busy():
@@ -117,3 +119,83 @@ def test_open_findings_reads_unchecked_findings(tmp_path, monkeypatch):
         {"severity": "should-fix", "title": OPEN_TITLE, "declined": False},
         {"severity": "should-fix", "title": DECLINED_TITLE, "declined": True},
     ]
+
+
+import pytest  # noqa: E402
+
+from conftest import commit_all, git_out, init_repo  # noqa: E402
+
+
+def _tally_stdout(**tally):
+    body = {"failures": [], "fixed": [], "unfixed": [], "skipped": [], "suite_status": "",
+            "commit": "", "type": "fix", **tally}
+    return '{"run_id": 1}\n---\n' + json.dumps(body) + "\n"
+
+
+# passes-at-base: before evidence existed classify(Step.CI) was always DONE
+def test_a_clean_ci_tally_is_done():
+    r = batch.outcomes.classify(batch.model.Step.CI, 0, _tally_stdout(fixed=["a"]),
+                                item=ITEM, log_tail=[])
+    assert r.status is batch.model.StepStatus.DONE
+
+
+def test_an_all_skipped_ci_run_is_ci_unfixed():
+    stdout = _tally_stdout(skipped=[{"id": "i-1", "kind": "infra"}])
+    r = batch.outcomes.classify(batch.model.Step.CI, 0, stdout, item=ITEM, log_tail=[])
+    assert r.status is batch.model.StepStatus.NEEDS_DECISION
+    assert r.decisions[0].payload["evidence"] == [
+        {"kind": "ci_unfixed", "unfixed": [], "skipped": [{"id": "i-1", "kind": "infra"}]}]
+
+
+def test_a_ci_run_with_no_tally_is_not_taken_as_clean():
+    r = batch.outcomes.classify(batch.model.Step.CI, 0, "", item=ITEM, log_tail=[])
+    assert r.decisions[0].payload["evidence"][0]["kind"] == "ci_unfixed"
+
+
+def test_a_one_sided_rebase_is_a_step_review():
+    report = {"status": "completed", "files_one_sided": ["a.py"],
+              "one_sided_regions": ["abc subj\n  a.py"], "pre_rebase_head": "p0"}
+    r = batch.outcomes.classify(batch.model.Step.REBASE, 0, json.dumps(report),
+                                item=ITEM, log_tail=[])
+    assert r.decisions[0].payload["evidence"] == [
+        {"kind": "one_sided", "files": ["a.py"], "regions": ["abc subj\n  a.py"]}]
+    assert r.pre_rebase_head == "p0"
+
+
+@pytest.mark.parametrize("status,flagged", [
+    ("red", True), ("timed_out", True), ("error", True), ("green", False),
+    ("not_declared", False),
+])
+def test_fix_checks_reads_the_trailer_from_the_steps_commits(tmp_path, status, flagged):
+    repo = init_repo(tmp_path / "wt")
+    (repo / "a.txt").write_text("a\n")
+    commit_all(repo, "base")
+    before = git_out(repo, "rev-parse", "HEAD").strip()
+    (repo / "a.txt").write_text("b\n")
+    commit_all(repo, f"fix: address CI failures\n\nFix-Checks: {status}")
+    found = batch.outcomes.fix_checks(str(repo), before)
+    assert bool(found) is flagged
+    if flagged:
+        assert found[0]["status"] == status
+
+
+def test_a_red_trailer_on_a_review_fix_is_checks_unverified(monkeypatch):
+    monkeypatch.setattr(batch.outcomes, "open_findings", lambda item: [])
+    monkeypatch.setattr(batch.outcomes, "fix_checks",
+                        lambda wt, hb: [{"commit": "c1", "status": "red"}])
+    r = batch.outcomes.classify(batch.model.Step.REVIEW, 0, "", item=ITEM, log_tail=[],
+                                head_before="h0")
+    assert r.decisions[0].payload["evidence"] == [
+        {"kind": "checks_unverified", "commit": "c1", "status": "red"}]
+
+
+def test_comments_carry_their_items_and_a_step_review_together(monkeypatch):
+    owed = [{"id": "PRRT_1", "outcome": "needs_human", "summary": "s", "reason": "",
+             "file": "", "line": 0, "replyable": True}]
+    monkeypatch.setattr(batch.outcomes, "comment_items", lambda item: owed)
+    monkeypatch.setattr(batch.outcomes, "fix_checks",
+                        lambda wt, hb: [{"commit": "c1", "status": "timed_out"}])
+    r = batch.outcomes.classify(batch.model.Step.COMMENTS, 0, "", item=ITEM, log_tail=[],
+                                head_before="h0")
+    assert [d.kind for d in r.decisions] == [batch.model.DecisionKind.COMMENT_ITEM,
+                                             batch.model.DecisionKind.STEP_REVIEW]

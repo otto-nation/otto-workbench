@@ -45,6 +45,8 @@ def ff_tree(item):
 def _quiet_outcomes(monkeypatch):
     monkeypatch.setattr(batch.outcomes, "comment_items", lambda item: [])
     monkeypatch.setattr(batch.outcomes, "open_findings", lambda item: [])
+    monkeypatch.setattr(batch.outcomes, "fix_checks", lambda wt, hb: [])
+    monkeypatch.setattr(batch.outcomes, "ci_unfixed", lambda stdout: None)
 
 
 class Harness:

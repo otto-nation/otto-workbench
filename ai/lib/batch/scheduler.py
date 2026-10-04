@@ -197,7 +197,8 @@ class Scheduler:
     def _finish(self, live: _Live, code: int) -> None:
         item, rec = live.item, live.rec
         result = batch.outcomes.classify(rec.step, code, live.proc.stdout(), item=item,
-                                   log_tail=list(live.tail))
+                                         log_tail=list(live.tail),
+                                         head_before=live.head_before)
         rec.exit_code, rec.ended_at, rec.status = code, batch.store.now_iso(), result.status
         moved = self._head(item.worktree) != (rec.start_head or live.head_before)
         # Drafted means this step left work the publish owes the remote: commits

@@ -8,12 +8,14 @@ import json
 import re
 from dataclasses import dataclass
 
+import git.client
+import pr.ci_report
 import pr.fix
 import pr.state
 import pr.target
 import review.document
 import review.paths
-from batch.model import DecisionKind, Item, Step, StepStatus
+from batch.model import DecisionKind, EvidenceKind, Item, Step, StepStatus
 from rebase.types import CONFLICTS_EXIT, REFUSAL_EXIT
 from review.types import severity_by_key
 
@@ -43,6 +45,83 @@ def _json(stdout: str) -> dict | None:
     except ValueError:
         return None
     return value if isinstance(value, dict) else None
+
+
+def stream_reports(stdout: str) -> list[dict]:
+    """Every JSON object a child printed, whether alone or as `---`-led stream documents.
+
+    Splits only on lines that are exactly `---`, so a report carrying a diff
+    header such as `--- a/file` stays one document.
+    """
+    docs = []
+    for chunk in re.split(r"^---$", stdout, flags=re.M):
+        value = _json(chunk.strip())
+        if value is not None:
+            docs.append(value)
+    return docs
+
+
+def last_report(stdout: str, report_type: str) -> dict | None:
+    """The last stream document of *report_type*, or None."""
+    typed = [d for d in stream_reports(stdout) if d.get("type") == report_type]
+    return typed[-1] if typed else None
+
+
+def ci_unfixed(stdout: str) -> dict | None:
+    """The CI failures this run left standing, from ci-check's own tally.
+
+    A run that printed no tally is not taken as clean: every successful
+    `--fix` prints one, so its absence is something a person should look at.
+    """
+    tally = last_report(stdout, pr.ci_report.FIX_TALLY_TYPE)
+    if tally is None:
+        return {"detail": "ci-check printed no fix tally"}
+    if tally.get("unfixed") or tally.get("skipped"):
+        return {"unfixed": tally.get("unfixed", []), "skipped": tally.get("skipped", [])}
+    return None
+
+
+def fix_checks(worktree: str, head_before: str) -> list[dict]:
+    """Unverified `Fix-Checks:` trailers on the commits in head_before..HEAD.
+
+    Each entry is `{"commit", "status"}`. Read off the commits the step made,
+    so a verdict some earlier run left behind can never be mistaken for this
+    one. A commit with no trailer — one an agent made outside the fix engine —
+    is no evidence rather than an error.
+    """
+    if not (worktree and head_before):
+        return []
+    fmt = f"--format=%H%x09%(trailers:key={pr.fix.CHECKS_TRAILER},valueonly,separator=%x2C)"
+    r = git.client.run("log", fmt, f"{head_before}..HEAD", cwd=worktree)
+    # An unreadable range yields no trailer verdicts; the scheduler's own HEAD
+    # comparison still decides whether the step drafted anything.
+    if not r.ok:
+        return []
+    found = []
+    for line in r.stdout.splitlines():
+        sha, _, values = line.partition("\t")
+        for value in (v.strip() for v in values.split(",")):
+            if value in pr.fix.UNVERIFIED_CHECKS:
+                found.append({"commit": sha, "status": value})
+    return found
+
+
+def _evidence(step: Step, stdout: str, item: Item, head_before: str) -> list[dict]:
+    found: list[dict] = []
+    if step is Step.REVIEW and (findings := open_findings(item)):
+        found.append({"kind": EvidenceKind.OPEN_FINDINGS.value, "findings": findings})
+    if step is Step.REBASE:
+        report = _json(stdout) or {}
+        if report.get("files_one_sided"):
+            found.append({"kind": EvidenceKind.ONE_SIDED.value,
+                          "files": report["files_one_sided"],
+                          "regions": report.get("one_sided_regions", [])})
+    if step is Step.CI and (unfixed := ci_unfixed(stdout)):
+        found.append({"kind": EvidenceKind.CI_UNFIXED.value, **unfixed})
+    if step in (Step.REVIEW, Step.CI, Step.COMMENTS):
+        found.extend({"kind": EvidenceKind.CHECKS_UNVERIFIED.value, **check}
+                     for check in fix_checks(item.worktree, head_before))
+    return found
 
 
 def _rebase_payload(stdout: str, log_tail: list[str]) -> dict:
@@ -93,17 +172,26 @@ def _needs(kind: DecisionKind, payloads: list[dict]) -> StepResult:
 
 
 def classify(step: Step, exit_code: int, stdout: str, *, item: Item,
-             log_tail: list[str]) -> StepResult:
+             log_tail: list[str], head_before: str = "") -> StepResult:
+    """The status and decisions a finished step leaves, read from its stdout and the tree.
+
+    A clean exit yields at most one `step_review` decision, carrying every
+    piece of evidence found, so two decisions on one step cannot disagree.
+    *head_before* is the HEAD the step started from; its `Fix-Checks:`
+    trailers are read from the commits after it.
+    """
     if step is Step.REBASE and exit_code == CONFLICTS_EXIT:
         return _needs(DecisionKind.REBASE_CONFLICT, [_rebase_payload(stdout, log_tail)])
     if step is Step.REBASE and exit_code == REFUSAL_EXIT:
         return _needs(DecisionKind.REBASE_REFUSED, [_rebase_payload(stdout, log_tail)])
     if exit_code != 0:
         return _failed(exit_code, log_tail)
-    if step is Step.COMMENTS and (owed := comment_items(item)):
-        return _needs(DecisionKind.COMMENT_ITEM, owed)
-    if step is Step.REVIEW and (findings := open_findings(item)):
-        return _needs(DecisionKind.OPEN_FINDINGS, [{"findings": findings}])
+    drafts: list[DecisionDraft] = []
+    if step is Step.COMMENTS:
+        drafts.extend(DecisionDraft(DecisionKind.COMMENT_ITEM, p) for p in comment_items(item))
+    if evidence := _evidence(step, stdout, item, head_before):
+        drafts.append(DecisionDraft(DecisionKind.STEP_REVIEW, {"evidence": evidence}))
     raw = (_json(stdout) or {}).get("pre_rebase_head", "") if step is Step.REBASE else ""
     pre = raw if isinstance(raw, str) else ""
-    return StepResult(StepStatus.DONE, [], pre_rebase_head=pre)
+    status = StepStatus.NEEDS_DECISION if drafts else StepStatus.DONE
+    return StepResult(status, drafts, pre_rebase_head=pre)

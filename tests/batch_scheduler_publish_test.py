@@ -11,6 +11,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.model  # noqa: E402
+import batch.outcomes  # noqa: E402
 import batch.store  # noqa: E402
 from batch.model import STEP_ORDER, DecisionKind, ItemStatus, RunStatus, Step  # noqa: E402
 from batch.publish import GIT_PUSH  # noqa: E402
@@ -142,3 +143,13 @@ def batch_row_with_head(r, head):
     import dataclasses
     return dataclasses.replace(r, head_sha=head,
                                needs={Step.REBASE: NEED, Step.COMMENTS: NO, Step.REVIEW: NEED})
+
+
+def test_the_scheduler_hands_classify_the_head_before_the_step(monkeypatch):
+    seen = []
+    real = batch.outcomes.classify
+    monkeypatch.setattr(batch.outcomes, "classify",
+                        lambda *a, **k: seen.append(k.get("head_before")) or real(*a, **k))
+    h = Harness([row(1, ONLY_REVIEW)], heads={"/wt/b1": "before1"})
+    h.sched.run_until_blocked()
+    assert seen == ["before1"]

@@ -67,7 +67,6 @@ KNOWN_OVER = {
     "tests/migrations.bats": "#853",
     "tests/claude_settings.bats": "#853",
     "tests/validate_registries.bats": "#853",
-    "tests/wt_cleanup.bats": "#853",
     "tests/review_orchestrate_pipeline.bats": "#853",
     "tests/projects.bats": "#853",
     "tests/validate_skills.bats": "#853",

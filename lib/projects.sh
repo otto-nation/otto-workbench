@@ -103,7 +103,7 @@
 # file would cost a session for a bookkeeping entry. The filename is declared
 # once in [`constants.sh`](#constantssh) as `PROJECTS_REGISTRY_NAME` and once in
 # `workbench_paths.py`; `tests/workbench_roots.bats` fails when the two drift,
-# and `tests/projects.bats` cross-validates the halves against one file.
+# and `tests/projects_agreement.bats` cross-validates the halves against one file.
 
 # Guard: constants must be loaded (provides PROJECTS_REGISTRY_FILE, plus the
 # state and cache roots the exclusion rules below refer to)

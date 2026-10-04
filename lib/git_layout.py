@@ -153,7 +153,7 @@ def shared_dir(directory: str) -> str | None:
 
     The environment is cleared because ``GIT_DIR`` beats ``-C``. The pre-push
     hook exports one, and without the clear this would name the hook's
-    repository. ``tests/projects.bats`` cross-validates the two languages.
+    repository. ``tests/projects_agreement.bats`` cross-validates the two languages.
     """
     common = git(directory, 'rev-parse', '--git-common-dir')
     if not common:

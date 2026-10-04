@@ -45,7 +45,7 @@ common_setup() {
   #
   # Pinned here rather than in each setup() so the rule has one statement to
   # keep true. A file needing a different form still sets TMPDIR after calling
-  # this and wins — worktree.bats and projects.bats take the `pwd -P` form,
+  # this and wins — worktree.bats and the projects_* suites take the `pwd -P` form,
   # because on macOS $BATS_TEST_TMPDIR is under /var while a tool that
   # canonicalises reports /private/var, and a test comparing the two paths as
   # strings fails on the difference.

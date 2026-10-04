@@ -1,6 +1,7 @@
 """Tests for the Python half of the project registry (ai/lib/config/workbench_projects.py).
 
-The shell half and the agreement between the two live in tests/projects.bats;
+The shell half lives in tests/projects_{registry,identity,cli}.bats and the
+agreement between the two in tests/projects_agreement.bats;
 what is here is the behaviour only this side has — the callers that register are
 a SessionStart hook and the `pr` CLI, so nothing may raise and nothing may fork.
 """

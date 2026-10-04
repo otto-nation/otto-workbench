@@ -79,6 +79,8 @@ NO_REFS_TESTS=(
 FULL_SUITE_TRIGGERS=(
   tests/test_helper.bash
   tests/validate_registries_helper.bash
+  tests/validate_skills_helper.bash
+  tests/projects_helper.bash
   tests/wt_cleanup_helper.bash
   tests/conftest.py
   tests/validate_migrations_helper.bash

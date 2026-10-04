@@ -403,7 +403,7 @@ neighbouring question — the *container*, the shared git dir's parent, and
 deliberately nothing for an ordinary clone whose parent belongs to somebody
 else. This one is total, because the caller here wants an identity rather than
 a directory to write into, and `/repo/.git` is a perfectly good identity.
-`tests/projects.bats` cross-validates the two.
+`tests/projects_agreement.bats` cross-validates the two.
 
 `bin/resolve-worktree` owns the other direction — container → the worktree it
 stands in for.
@@ -727,7 +727,7 @@ command run for some other reason, and a hook that died on an unwritable state
 file would cost a session for a bookkeeping entry. The filename is declared
 once in [`constants.sh`](#constantssh) as `PROJECTS_REGISTRY_NAME` and once in
 `workbench_paths.py`; `tests/workbench_roots.bats` fails when the two drift,
-and `tests/projects.bats` cross-validates the halves against one file.
+and `tests/projects_agreement.bats` cross-validates the halves against one file.
 
 | Function | Purpose |
 |----------|---------|

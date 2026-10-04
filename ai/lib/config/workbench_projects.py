@@ -12,7 +12,7 @@ one absolute path per line, optionally followed by a tab and the repo identity
 the shell half records from the sync. This side reads the path ahead of that tab
 and writes bare paths, because resolving an identity means forking git on a
 session's startup path. Text rather than YAML because every write is an append
-and every read is a scan. ``tests/projects.bats`` cross-validates the two halves
+and every read is a scan. ``tests/projects_agreement.bats`` cross-validates the two halves
 against the same file.
 
 Nothing here raises. Registration is a side effect of a command that was run for

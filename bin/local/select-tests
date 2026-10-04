@@ -75,6 +75,7 @@ NO_REFS_TESTS=(
 # Fallback triggers — changes to these run the full suite.
 FULL_SUITE_TRIGGERS=(
   tests/test_helper.bash
+  tests/wt_cleanup_helper.bash
   tests/conftest.py
   tests/validate_migrations_helper.bash
   bin/local/run-tests

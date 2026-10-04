@@ -6,6 +6,7 @@ setup() {
   load 'test_helper'
   load 'validate_migrations_helper'
   common_setup
+  # shellcheck disable=SC2034  # read by _run_validate in validate_migrations_helper.bash
   VALIDATE_MIGRATIONS="$REPO_ROOT/bin/local/validate-migrations"
 
   # Build a fake workbench root the script can discover migration dirs from.

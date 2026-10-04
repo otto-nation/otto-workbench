@@ -1,5 +1,8 @@
 #!/usr/bin/env bats
 # Tests for the 2-layer git configuration: bootstrap, include stanza, template.
+# GITCONFIG_FILE is assigned per case and read by the git/steps.sh functions
+# under test, which ShellCheck cannot see from here.
+# shellcheck disable=SC2034
 
 setup() {
   load 'test_helper'

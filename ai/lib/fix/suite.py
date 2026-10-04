@@ -42,8 +42,10 @@ ceiling `fix.reconcile` already documents, walked from the other end.
 **Why before the commit and not after.** The commit body is the artifact people
 read, and a body that says ``4 fixed`` over a red suite is the whole defect. So
 this runs between the agent and the landing, and the summary is rendered from
-outcomes it has already touched. Selection is by the committed diff and
-execution is against the worktree, which is what makes that ordering work: the
+outcomes it has already touched. Selection is the repo's business — this repo's
+selectors read the working tree, diffed from the `FIX_BASE_ENV` this module
+exports — and execution is against the worktree, which is what makes that
+ordering work: the
 agent's edits are uncommitted but they are *in the tree the tests import*, and
 the files it may touch are restricted to the branch's own (`fix.scope`), which
 the committed diff already names.
@@ -92,6 +94,11 @@ NOT_DECLARED_NOTE = (
     "No verification command declared (fix.verify_command) — "
     "nothing was run against these changes."
 )
+
+# What a fix pass exports to its verify command: the commit HEAD was at before
+# the pass. A generic contract — any repo's command may read it to select what
+# the pass's own edits reach instead of everything the branch reaches.
+FIX_BASE_ENV = "WORKBENCH_FIX_BASE"
 
 
 class SuiteStatus(StrEnum):
@@ -205,6 +212,8 @@ def run(
     command: str,
     timeout_s: int,
     trail: Trail | None = None,
+    *,
+    base: str = "",
 ) -> SuiteResult:
     """Run the repo's declared checks in `workdir` and report what they said.
 
@@ -212,6 +221,8 @@ def run(
     blew up must still land its work — the edits are real whatever the runner
     did, and losing them to a broken declaration would be a worse failure than
     the one this module prevents.
+
+    *base*, when given, is exported to the command as `FIX_BASE_ENV`.
     """
     if not command.strip():
         result = SuiteResult(status=SuiteStatus.NOT_DECLARED)
@@ -248,7 +259,7 @@ def run(
     core.log.info(f"Verifying the pass against the repo's checks: {command}")
     started = time.monotonic()
     try:
-        result = _invoke(argv, workdir, command, timeout_s, started)
+        result = _invoke(argv, workdir, command, timeout_s, started, base=base)
     except OSError as exc:
         # The command could not be started at all — missing, not executable, a
         # bad interpreter line. A broken declaration, not a red branch.
@@ -269,7 +280,8 @@ _TERM_GRACE_S = 5
 
 def _invoke(
     argv: list[str], workdir: Path, command: str,
-    timeout_s: int, started: float,
+    timeout_s: int, started: float, *,
+    base: str = "",
 ) -> SuiteResult:
     """Run `argv` to completion or to the timeout, and read its exit status.
 
@@ -291,9 +303,10 @@ def _invoke(
     output is captured rather than piped to a filter, so the status read below
     is the runner's own and not some `tail`'s.
     """
+    env = {**os.environ, FIX_BASE_ENV: base} if base else None
     proc = core.children.spawn(
         argv, cwd=workdir, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, start_new_session=True,
+        text=True, start_new_session=True, env=env,
     )
     try:
         stdout, stderr = proc.communicate(timeout=timeout_s)
@@ -490,6 +503,7 @@ def should_run(outcomes: list[ItemOutcome], changed: set[str] | None) -> bool:
 
 
 __all__ = [
+    "FIX_BASE_ENV",
     "NOT_DECLARED_NOTE",
     "RED_DETAIL",
     "SuiteResult",

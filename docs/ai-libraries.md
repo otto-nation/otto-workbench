@@ -5042,8 +5042,10 @@ ceiling `fix.reconcile` already documents, walked from the other end.
 **Why before the commit and not after.** The commit body is the artifact people
 read, and a body that says ``4 fixed`` over a red suite is the whole defect. So
 this runs between the agent and the landing, and the summary is rendered from
-outcomes it has already touched. Selection is by the committed diff and
-execution is against the worktree, which is what makes that ordering work: the
+outcomes it has already touched. Selection is the repo's business — this repo's
+selectors read the working tree, diffed from the `FIX_BASE_ENV` this module
+exports — and execution is against the worktree, which is what makes that
+ordering work: the
 agent's edits are uncommitted but they are *in the tree the tests import*, and
 the files it may touch are restricted to the branch's own (`fix.scope`), which
 the committed diff already names.

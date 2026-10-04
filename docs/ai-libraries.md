@@ -1699,7 +1699,7 @@ opening a gate the pass would never see. That forwarding predates in-process
 dispatch and survives it: the flag is how the pass learns, and `scope()` is
 what keeps the answer from outliving the run.
 
-`pr ci --fix`'s rebase-if-behind is in-process too (`cli.ci_check._rebase_if_behind`),
+`pr ci --fix`'s rebase-if-behind is in-process too (`rebase.ci_fix.rebase_if_behind`),
 so this run's gate is the one the rebase's push asks. A draft run rebases locally
 and drafts the force-push.
 
@@ -2639,6 +2639,16 @@ what every domain can answer.
 Like `pr.fix`, this sits below the domains: it imports the standard library and
 nothing else from ``ai/lib``, so the shared fix machinery can depend on it
 without pulling a review or comments layer in behind it.
+
+### pr/ci_check.py
+
+Report a branch's CI: the run's failures, classified, as a dashboard and a structured report.
+
+`run_ci` reads one run (the latest for the branch, or the one named);
+`run_ci_wait` polls until it finishes, reporting each poll that finds
+something new. Both render through `report_run`. `cli.ci_check` is the command
+over these; the run reads are `gh.run_reads`, classification is
+`pr.ci_failures`, and the report shape is `pr.ci_report`.
 
 ### pr/ci_failures.py
 
@@ -5557,6 +5567,15 @@ passes through it on the way to work that has nothing to do with pushing, so an
 escaping exception would take the whole CLI down over a side-feature. Warning
 rather than passing is what keeps a bug in here loud without coupling anything
 to it.
+
+### rebase/ci_fix.py
+
+Fix a branch's failing CI: rebase it if it has fallen behind, then run the fix engine.
+
+`run_fix` takes the report `pr.ci_check` produced; `rebase_if_behind` brings the
+branch up to its target first when it is behind, through `rebase.commands`.
+`cli.ci_check` is the command over these; the fix itself is `fix.ci` on
+`fix.engine`.
 
 ### rebase/commands.py
 

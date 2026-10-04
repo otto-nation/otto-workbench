@@ -116,7 +116,7 @@ def poll_until_complete(
         run_ids = [row.run_id for row in discovery.rows]
 
         # `head_sha` is the branch's current head, not the pinned run's commit
-        # once `run_id` names one — see `cli.ci_check._run_ci`'s identical guard.
+        # once `run_id` names one — see `pr.ci_check.run_ci`'s identical guard.
         # Passing it through would let the rollup answer for whatever the branch
         # head has moved on to and splice that commit's external checks into a
         # report about a different, pinned run.

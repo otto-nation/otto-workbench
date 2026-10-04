@@ -50,7 +50,7 @@ opening a gate the pass would never see. That forwarding predates in-process
 dispatch and survives it: the flag is how the pass learns, and `scope()` is
 what keeps the answer from outliving the run.
 
-`pr ci --fix`'s rebase-if-behind is in-process too (`cli.ci_check._rebase_if_behind`),
+`pr ci --fix`'s rebase-if-behind is in-process too (`rebase.ci_fix.rebase_if_behind`),
 so this run's gate is the one the rebase's push asks. A draft run rebases locally
 and drafts the force-push.
 

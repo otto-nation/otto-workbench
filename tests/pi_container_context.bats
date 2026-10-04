@@ -162,7 +162,7 @@ _render() {
   # bash's comes from $BASH because the resolver needs 4.3+, and on macOS the
   # /bin/bash that /usr/bin:/bin leaves is 3.2.
   local node_dir
-  node_dir="$(dirname "$(node -p 'process.execPath')")"
+  node_dir="$(dirname "$(node --input-type=module -e 'process.stdout.write(process.execPath)')")"
   PATH="$node_dir:$(dirname "$BASH"):$(dirname "$(command -v git)"):/usr/bin:/bin" _context "$CONTAINER"
   [[ "$output" == *"\"kind\":\"resolved\""* ]]
 }

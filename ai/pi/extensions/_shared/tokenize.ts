@@ -21,7 +21,7 @@
  * cannot represent it reports (see `Token.unparsed`) rather than guessing,
  * because a guess is what the old pattern scan was.
  *
- * Imports nothing, so tests/pi_extensions.bats can load it under plain `node`
+ * Imports nothing, so tests/pi_extensions_tokenize.bats can load it under plain `node`
  * the way it loads each detect.ts.
  */
 

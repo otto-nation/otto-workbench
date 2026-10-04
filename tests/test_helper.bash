@@ -583,8 +583,8 @@ _guard_in() {
 # interpolation, since a command under test may carry embedded quotes or
 # newlines that naive interpolation would emit as unparseable JSON — which a
 # guard's `|| exit 0` fallback would then read as an allow that says nothing
-# about the guard's actual pattern match. Shared by pi_extensions.bats, whose
-# parity tests build this same payload for two different guard comparisons.
+# about the guard's actual pattern match. Shared by pi_extensions_issues.bats and
+# pi_extensions_testpipe.bats, whose parity tests build this same payload for two different guard comparisons.
 _json_command_payload() {
   python3 -c '
 import json, sys

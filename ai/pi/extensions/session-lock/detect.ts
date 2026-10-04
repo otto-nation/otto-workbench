@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
  *
  * index.ts imports from the Pi SDK as a value, so it can only load inside a
  * session. This file pulls in one node builtin and nothing else, so
- * tests/pi_extensions.bats can exercise it under plain `node` — which matters
+ * tests/pi_extensions_issues.bats can exercise it under plain `node` — which matters
  * most here, because a renamed binary or a moved lock path makes the claim
  * silently never happen, and a session that never recorded itself looks
  * exactly like one nobody is editing.

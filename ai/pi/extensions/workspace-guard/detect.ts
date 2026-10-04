@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
  *
  * index.ts imports its event-type helper from the Pi SDK as a value, so it can
  * only be loaded from inside a Pi session. This file pulls in node builtins and
- * nothing else, so tests/pi_extensions.bats can run it under plain `node` —
+ * nothing else, so tests/resolve_workspace.bats can run it under plain `node` —
  * which matters most for the probe below, the half that would otherwise break
  * silently: a renamed binary or a changed layout makes it answer "fine" forever,
  * and a guard that has stopped working looks exactly like a guard with nothing

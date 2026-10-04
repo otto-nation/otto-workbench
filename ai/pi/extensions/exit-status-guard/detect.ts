@@ -6,7 +6,7 @@ import { statements } from "../_shared/statements.ts";
  * index.ts imports `isToolCallEventType` from the Pi SDK as a value, so it can
  * only be loaded from somewhere the SDK resolves — inside a Pi session. This
  * file pulls in nothing but ../_shared, which imports nothing itself, so
- * tests/pi_extensions.bats can run it under plain `node` and assert the shapes
+ * tests/pi_extensions_testpipe.bats can run it under plain `node` and assert the shapes
  * it does and does not match.
  *
  * This is the sibling of test-pipe-guard, and the same rule wearing a different

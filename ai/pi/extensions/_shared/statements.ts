@@ -14,7 +14,7 @@
  * parsed as a shell wrapper or as a write, and the delete was permitted. One
  * `; true` appended to any refused command defeated the guard.
  *
- * Imports only ./tokenize.ts, which imports nothing, so tests/pi_extensions.bats
+ * Imports only ./tokenize.ts, which imports nothing, so tests/pi_extensions_tokenize.bats
  * can load it under plain `node` the way it loads each detect.ts.
  *
  * Not an extension itself: step_pi_extensions skips a `_`-prefixed directory by

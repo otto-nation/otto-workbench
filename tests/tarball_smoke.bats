@@ -118,6 +118,18 @@ teardown() {
   [[ "$output" == *"Query trail files"* ]]
 }
 
+@test "retro-consume runs from the tarball layout" {
+  run "$TARBALL_ROOT/bin/retro-consume" --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"retro-consume"* ]]
+}
+
+@test "retro-scan runs from the tarball layout" {
+  run "$TARBALL_ROOT/bin/retro-scan" --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"retro-scan"* ]]
+}
+
 # ── 7. review-orchestrate Python imports ────────────────────────────────────
 
 @test "review-orchestrate Python imports succeed from tarball layout" {

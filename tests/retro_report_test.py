@@ -16,6 +16,7 @@ from retro.report import (  # noqa: E402
     MATCH_SNIPPET_MAX,
     _format_comment,
     format_matched_snippet,
+    format_report,
 )
 from retro.rules import (  # noqa: E402
     build_rule,
@@ -192,3 +193,155 @@ class TestRenderedRow:
         })
         assert any(line.endswith("Nearest rule: self-review.md") for line in lines)
         assert not any('("")' in line for line in lines)
+
+
+class TestFormatReport:
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
+    def test_produces_markdown_with_repo_sections(self):
+        scan_data = {
+            "repos": [
+                {
+                    "github": "otto-nation/myapp",
+                    "prs": [
+                        {
+                            "number": 42,
+                            "title": "feat: add auth",
+                            "merged_at": "2026-06-08",
+                            "author": "isaac",
+                            "comments": [
+                                {
+                                    "author": "reviewer1",
+                                    "body": "Validate the redirect URI",
+                                    "path": "src/auth.go",
+                                    "line": 45,
+                                    "url": "",
+                                    "nearest_rule": {
+                                        "filename": "security.md",
+                                        "match_snippet": "Never write secrets",
+                                    },
+                                    "direction": "received",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+            "rules_summary": [
+                {"filename": "security.md", "matched": 1},
+            ],
+        }
+        report = format_report(scan_data, "retro-scan test")
+        assert "otto-nation/myapp" in report
+        assert "PR #42" in report
+        assert "Validate the redirect URI" in report
+        assert "security.md" in report
+        assert "Rules Coverage Summary" in report
+
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
+    def test_handles_empty_scan(self):
+        report = format_report({"repos": [], "rules_summary": []}, "retro-scan test")
+        assert "Retro Scan Report" in report
+        assert "No PR comments found" in report
+
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
+    def test_includes_direction_counts_in_metadata(self):
+        scan_data = {
+            "repos": [{
+                "github": "org/repo",
+                "prs": [{
+                    "number": 1, "title": "t", "merged_at": "2026-06-08",
+                    "comments": [
+                        {
+                            "author": "r1", "body": "comment one",
+                            "path": None, "line": None,
+                            "nearest_rule": None, "direction": "received",
+                        },
+                        {
+                            "author": "r2", "body": "comment two",
+                            "path": None, "line": None,
+                            "nearest_rule": None, "direction": "gave",
+                        },
+                    ],
+                }],
+            }],
+            "rules_summary": [],
+            "themes": {},
+        }
+        report = format_report(scan_data, "retro-scan test")
+        assert "gave: 1" in report
+        assert "received: 1" in report
+
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
+    def test_includes_unmatched_count_per_repo(self):
+        scan_data = {
+            "repos": [{
+                "github": "org/repo",
+                "unmatched": 3,
+                "prs": [{
+                    "number": 1, "title": "t", "merged_at": "2026-06-08",
+                    "comments": [
+                        {
+                            "author": "r1", "body": "c",
+                            "path": None, "line": None,
+                            "nearest_rule": None, "direction": "received",
+                        },
+                    ],
+                }],
+            }],
+            "rules_summary": [],
+            "themes": {},
+        }
+        report = format_report(scan_data, "retro-scan test")
+        assert "3 unmatched" in report
+
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
+    def test_includes_repeated_themes_section(self):
+        scan_data = {
+            "repos": [{
+                "github": "org/repo",
+                "prs": [{
+                    "number": 1, "title": "t", "merged_at": "2026-06-08",
+                    "comments": [
+                        {
+                            "author": "r1", "body": "c",
+                            "path": None, "line": None,
+                            "nearest_rule": None, "direction": "received",
+                        },
+                    ],
+                }],
+            }],
+            "rules_summary": [],
+            "themes": {
+                "security.md": [
+                    {"pr": 1, "body": "hardcoded secret"},
+                    {"pr": 2, "body": "exposed token"},
+                    {"pr": 3, "body": "leaked credential"},
+                ],
+            },
+        }
+        report = format_report(scan_data, "retro-scan test")
+        assert "Repeated Themes" in report
+        assert "3 occurrences" in report
+        assert "hardcoded secret" in report
+
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
+    def test_skips_themes_section_when_no_repeats(self):
+        scan_data = {
+            "repos": [{
+                "github": "org/repo",
+                "prs": [{
+                    "number": 1, "title": "t", "merged_at": "2026-06-08",
+                    "comments": [
+                        {
+                            "author": "r1", "body": "c",
+                            "path": None, "line": None,
+                            "nearest_rule": None, "direction": "received",
+                        },
+                    ],
+                }],
+            }],
+            "rules_summary": [],
+            "themes": {"security.md": [{"pr": 1, "body": "only one"}]},
+        }
+        report = format_report(scan_data, "retro-scan test")
+        assert "Repeated Themes" not in report

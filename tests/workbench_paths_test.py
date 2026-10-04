@@ -214,3 +214,16 @@ class TestConsumers:
         assert not [p for p in paths if any(p.is_relative_to(root) for root in roots)]
 
 
+# ── The source checkout ──────────────────────────────────────────────────────
+
+def test_source_checkout_is_the_repo_this_code_runs_from():
+    assert core.workbench_paths.source_checkout() == REPO_ROOT
+
+
+def test_source_checkout_is_none_for_a_copy_without_the_rules_tree(tmp_path):
+    """A shipped copy of ai/lib (the otto-ai-tools tarball) has no rules tree."""
+    copy = tmp_path / "ai" / "lib" / "core" / "workbench_paths.py"
+    copy.parent.mkdir(parents=True)
+    copy.write_text((LIB_DIR / "core" / "workbench_paths.py").read_text())
+    module = exec_fresh("workbench_paths_copy", copy)
+    assert module.source_checkout() is None

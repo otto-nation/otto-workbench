@@ -3077,15 +3077,6 @@ The domains this is an envelope over live in ``pr.domains`` — and one of them,
 the comment pass's, in ``pr.comments_fix``. This module imports both; neither
 imports it.
 
-### pr/statusline.py
-
-The status line's PR segment, read from the per-target state file and never
-from ``gh`` or the network.
-
-Not: the reuse segment or the degradation when ``pr`` will not import
-(``cli.workbench_statusline``), the state schema (``pr.state``), target
-resolution (``pr.target``).
-
 ### pr/supersession.py
 
 Whether a branch's reason to exist is already gone.
@@ -3879,35 +3870,6 @@ that adding a task does not make every other task's dependencies load.
 ## Platform
 
 The shared substrate — process execution, logging, the structured trail, serialization, config, paths, and the tool framework the CLIs are built on.
-
-### config/reuse_levels.py
-
-The reuse-level vocabulary, its readers and writers, and the two hook bodies
-that are nothing but those (``/reuse`` tracking, the subagent line).
-
-Not: the config schema or keys (``config.workbench_config``), the write
-mechanics (``config.workbench_config_write``), the session-start context
-(``config.session_start``), the status line (``cli.workbench_statusline``).
-
-### config/session_start.py
-
-SessionStart hook: reuse level, container root, ceiling nudge, issue tracker, PR template.
-
-Six responsibilities, in the order run() handles them:
-1. Emit the active reuse level as session context
-2. Say when the session started at a bare-repo container, and what that costs
-3. Register the repo in the project registry
-4. Run ceiling-scan --json; if no-trigger markers exist, nudge
-5. Emit the repo's issue tracker, configured or not
-6. Emit the repo's PR template and the sections it requires
-
-The registration rides along here because this hook already resolves the repo
-root for the ceiling scan, so it costs nothing extra and it is the cheapest
-observation of "a workbench-managed session ran in this repo" the machine has.
-
-Not: the reuse vocabulary (``config.reuse_levels``), the project registry
-(``config.workbench_projects``), PR template resolution (``core.pr_template``),
-the marker scan itself (``ai/bin/ceiling-scan``).
 
 ### config/tool_registry.py
 
@@ -5862,8 +5824,9 @@ completion presents the scan ID it believes it is completing. A record that
 does not answer to that ID is refused rather than honoured, and an entry whose
 review has changed since the scan is left alone rather than deleted.
 
-Writing it is `retro-scan`'s under `--consume`; reading and enforcing it is
-`retro-consume`'s, which the skill calls in place of an inline `rm`.
+Writing the record is `retro.scan`'s (run by `retro-scan --consume`), and
+reading and enforcing it is `consume()` below (run by `retro-consume`, which
+the skill calls in place of an inline `rm`).
 
 ### retro/github.py
 
@@ -5928,6 +5891,18 @@ question the retro asks is whether any rule *covers* a finding, not which rule
 is least unlike it. An unnormalized count over a whole file answers the second
 question: it grows with the file's vocabulary, so the longest file wins nearly
 every comparison and no finding is ever reported as a gap.
+
+### retro/scan.py
+
+One scan of the retro.
+
+Resolves the Project Registry to GitHub repos, fetches their merged-PR review
+comments and the local self-reviews, cross-references both against the rule
+files, and prints the report. With `--consume` it records what it read.
+
+Not: fetching (`retro.github`), local-review parsing (`retro.reviews`),
+matching (`retro.rules`), rendering (`retro.report`), the consume record
+(`retro.consumed`), argument parsing (`cli.retro_scan`).
 
 ### wiki/backup.py
 
@@ -6263,29 +6238,31 @@ by path, so the field is the declaration of which `ai/bin` name that is. The
 command/domain/phase join in `tests/cli_join_test.py` is what keeps it from
 going stale now that no `pr` code path would notice if it did.
 
-### cli/reuse_mode_tracker.py
+### cli/retro_consume.py
 
-Reads hook JSON from stdin, checks if the prompt matches /reuse <level>,
-writes the level into the workbench config, and emits context. Which key and
-which file are ai/lib/config/workbench_config.py's to say; this only hands it a
-value.
+Delete the local reviews a retro consumed, if the record answers to it.
 
-Usage (called by settings.json UserPromptSubmit hook):
-  echo '{"prompt":"/reuse ultra"}' | reuse-mode-tracker
+Phase 4 of the retro skill. `retro-scan --consume` recorded which reviews it
+read and stamped the record with its own scan ID; this presents that ID back
+and deletes only what that scan claimed, and only where the review on disk is
+still the one it read.
 
-### cli/reuse_session_start.py
+A record that names a different scan is refused rather than honoured: it
+belongs to a retro that was never completed, or to a debug run, and the
+reviews it lists are not this retro's to delete.
 
-SessionStart hook entry point: the context lines `config.session_start`
-derives, printed for Claude Code to read. Failure is left to the hook
-command's `|| true` in settings.json (Decision F).
+Usage:
+  retro-consume --scan-id ID [--dry-run]
 
-### cli/reuse_subagent_start.py
+### cli/retro_scan.py
 
-Emits the active reuse level so subagents inherit the parent session's mode.
-Skips ceiling scan (too expensive for subagent startup).
+Scan PR review comments and cross-reference against coding rules.
 
-Usage (called by settings.json SubagentStart hook):
-  reuse-subagent-start
+Replaces Phase 1 of the retro skill (Orient).
+Outputs a structured markdown report to stdout.
+
+Usage:
+  retro-scan [--home DIR] [--workbench DIR] [--since DURATION] [--consume]
 
 ### cli/review_entry.py
 
@@ -6506,10 +6483,3 @@ Where a repo's knowledge base lives, and where a new one should go.
 Resolution consults an explicit `--wiki`, then the machine's vault, then the
 in-tree walk. Placement is the other half of that question: `init` will not
 guess between a committed base and a private one.
-
-### cli/workbench_statusline.py
-
-Claude Code's status line: the reuse level when it differs from the
-default, then the PR segment. A broken `pr` package blanks the PR segment
-and leaves the reuse segment. The help text is the shim's docstring, printed
-before `ai/lib` is loaded.

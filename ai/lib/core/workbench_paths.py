@@ -178,3 +178,16 @@ def projects_registry() -> Path:
 # it any more; bin/migrations/20260916-remove-legacy-worktree-state.sh reclaims
 # what earlier versions left behind.
 LEGACY_WORKTREE_STATE_DIRNAME = ".workbench"
+
+
+def source_checkout() -> Path | None:
+    """The workbench checkout this code is running from, or None outside one.
+
+    Derived from this file's own location (``ai/lib/core/`` sits three levels
+    below the checkout root) and confirmed by the rules tree being there, so a
+    copy of ``ai/lib`` shipped without the rest of the repo — the otto-ai-tools
+    tarball — answers None instead of naming a directory with no rules in it.
+    """
+    root = Path(__file__).resolve().parents[3]
+    return root if (root / "ai" / "guidelines" / "rules").is_dir() else None
+

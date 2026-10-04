@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+from retro_support import make_rules_dir  # noqa: E402
 from retro.rules import (  # noqa: E402
     FRONTMATTER,
     HEADING,
@@ -700,3 +701,50 @@ class TestLoadRules:
             assert rule["content"]
             assert isinstance(rule["passages"], list)
             assert isinstance(rule["keywords"], set)
+
+
+class TestLoadRulesFromDir:
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
+    def test_loads_rules_files_from_workbench(self, tmp_path):
+        make_rules_dir(tmp_path / "wb")
+        rules = load_rules(tmp_path / "wb")
+        assert len(rules) == 2
+        names = {r["filename"] for r in rules}
+        assert names == {"security.md", "general.md"}
+
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
+    def test_extracts_keywords_from_rule_text(self, tmp_path):
+        make_rules_dir(tmp_path / "wb")
+        rules = load_rules(tmp_path / "wb")
+        sec = [r for r in rules if r["filename"] == "security.md"][0]
+        assert "secrets" in sec["keywords"]
+        assert "credentials" in sec["keywords"]
+
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
+    def test_returns_empty_list_when_dir_missing(self):
+        assert load_rules(Path("/nonexistent/wb")) == []
+
+
+class TestNearestRuleSmallCorpus:
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
+    def test_matches_security_comment_to_security_md(self, tmp_path):
+        make_rules_dir(tmp_path / "wb")
+        rules = load_rules(tmp_path / "wb")
+        match = find_nearest_rule(
+            "This secret token should never be written to a tracked file", rules,
+        )
+        assert match["filename"] == "security.md"
+
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
+    def test_returns_none_for_unrelated_comment(self, tmp_path):
+        make_rules_dir(tmp_path / "wb")
+        rules = load_rules(tmp_path / "wb")
+        match = find_nearest_rule("the button color should be blue", rules)
+        assert match is None
+
+    # passes-at-base: moved verbatim from tests/retro_scan.bats; subject unchanged
+    def test_single_keyword_overlap_returns_none(self, tmp_path):
+        make_rules_dir(tmp_path / "wb")
+        rules = load_rules(tmp_path / "wb")
+        match = find_nearest_rule("This API endpoint needs work", rules)
+        assert match is None

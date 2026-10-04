@@ -51,6 +51,7 @@ import cli.wiki_placement
 from config.workbench_config import WIKI_ROOT_KEY, load_config_or_default
 import core.module_proxy
 import core.proc
+import core.version
 import wiki.backup
 import wiki.create
 import wiki.model
@@ -602,9 +603,15 @@ def build_parser(version_string: Callable[[str], str] | None = None) -> argparse
     return parser
 
 
-def main_entry(version_string: Callable[[str], str] | None = None) -> None:
+def main_entry() -> None:
+    """The `wiki` binary's entry: `main` with the release manifest's `--version`.
+
+    `core.version` resolves both the checkout and the packaged tarball layout,
+    so the shim need not import it — a shim imports one `cli` module and calls
+    it, which `validate-entry-points` holds every entry point to.
+    """
     try:
-        sys.exit(main(version_string=version_string))
+        sys.exit(main(version_string=core.version.version_string))
     except KeyboardInterrupt:
         sys.exit(core.proc.INTERRUPT_RETURNCODE)
 
@@ -613,10 +620,10 @@ def main(argv: list[str] | None = None, *,
          version_string: Callable[[str], str] | None = None) -> int:
     """Parse *argv* and run the subcommand it names.
 
-    `version_string` is injected rather than imported: it resolves the release
-    manifest beside `ai/bin`, which this layer cannot reach. The default keeps
-    `--version` answering for a caller that does not supply one — a test, or an
-    import that only wants the parser.
+    `version_string` is a parameter so a test, or an import that only wants
+    the parser, can run without the release manifest; `main_entry` passes
+    `core.version.version_string`. The default keeps `--version` answering
+    for a caller that supplies nothing.
     """
     args = build_parser(version_string).parse_args(argv)
 

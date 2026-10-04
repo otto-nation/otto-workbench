@@ -84,6 +84,11 @@ tools:
     visibility: brief
     description: "Validates that every ai/lib package imports only what the layer declaration in its __init__.py permits"
 
+  - name: validate-entry-points
+    permission: false
+    visibility: brief
+    description: "Fails when a script under ai/bin or ai/claude/bin that puts ai/lib on its path is anything but a shim — one cli import and the call into it"
+
   - name: validate-import-form
     permission: false
     visibility: brief

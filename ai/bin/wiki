@@ -47,10 +47,6 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
     _AI_LIB_DIR = pinned_ai_lib_dir()
 sys.path.insert(0, str(_AI_LIB_DIR))
 
-# Not `_version`, which is this file's own sibling under ai/bin and is not
-# shipped in the packaged tarball. `core.version` is under the lib/ this file
-# has just put on the path, and it resolves the packaged layout itself.
-from core.version import version_string  # noqa: E402
 from cli.wiki import main_entry  # noqa: E402
 
-main_entry(version_string=version_string)
+main_entry()

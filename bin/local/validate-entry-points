@@ -1,0 +1,243 @@
+#!/usr/bin/env python3
+"""Validate that every entry point reaching ai/lib is a shim over ai/lib/cli.
+
+Usage: bin/local/validate-entry-points [--quiet] [file...]
+
+A script under `ai/bin/` or `ai/claude/bin/` that puts `ai/lib` on `sys.path`
+is an entry point into the layered library, and its body belongs in the
+library: at the lowest layer its imports permit, with `ai/lib/cli/<name>.py`
+holding the parser and the call. A body left in the script is code no other
+module can import and no test reaches except by executing the file — the
+shape #754 dismantled one script at a time. This makes the shape permanent.
+
+The check is structural, read from the script's top-level AST. In order, a
+shim may hold only:
+
+  - its module docstring;
+  - imports of `os`, `sys` and `pathlib`;
+  - a `--help` preamble: an `if` testing for `--help` in `sys.argv` that
+    answers from the docstring and exits, before `ai/lib` is touched — so
+    `--help` works under a pin that would refuse to load (the status line);
+  - path bindings: assignments whose value derives from `__file__` or from an
+    earlier binding (`BIN_DIR`, `_AI_LIB_DIR`);
+  - the pin stanza: `if os.environ.get("WORKBENCH_AI_LIB_DIR"):` and the
+    `sys.path.insert` that follows it (its text is held identical across
+    carriers by `tests/ai_lib_pin.bats`);
+  - exactly one `from cli.<name> import <entry>`;
+  - a final statement calling `<entry>(...)`, directly or as
+    `sys.exit(<entry>(...))`.
+
+Anything else — a `def`, a `class`, an import of another `ai/lib` package —
+is refused, and `<name>` must be a module in `ai/lib/cli/` defining `<entry>`.
+A script that never touches `ai/lib` (ceiling-scan, workbench-reference) is a
+standalone program and out of scope by construction, not by allowlist.
+
+What `cli/<name>.py` itself may hold — parsing, output, exit codes and one
+orchestrating `main` — is a reviewed convention (CLAUDE.md), not this check:
+"computes, reads or writes state" is not something an AST can see.
+
+Exit code: 0 if every entry point is a shim, 1 otherwise.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+_WORKBENCH_DIR = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_WORKBENCH_DIR / "lib"))
+from ansi import DIM, GREEN, NC, RED  # noqa: E402
+
+BIN_DIRS = ("ai/bin", "ai/claude/bin")
+CLI_DIR = "ai/lib/cli"
+PIN_ENV = "WORKBENCH_AI_LIB_DIR"
+STDLIB_IMPORTS = frozenset({"os", "sys", "pathlib"})
+
+# A script with a whole body in it fails on every line; the first few say what
+# is wrong, and the rest would bury the next script's report.
+REPORT_LIMIT = 5
+
+
+@dataclass(frozen=True)
+class Violation:
+    line: int
+    reason: str
+
+
+def _is_python(path: Path) -> bool:
+    try:
+        first = path.read_text(encoding="utf-8").split("\n", 1)[0]
+    except (OSError, UnicodeDecodeError):
+        return False
+    return first.startswith("#!") and "python" in first
+
+
+def discover(root: Path) -> list[Path]:
+    """Every extensionless Python script directly under the bin directories, sorted.
+
+    Extensionless because a `.py` file there (`_libdir.py`, `_version.py`) is a
+    helper module the scripts import, not an entry point anyone runs.
+    """
+    found = []
+    for rel in BIN_DIRS:
+        base = root / rel
+        if base.is_dir():
+            found += [p for p in base.iterdir()
+                      if p.is_file() and not p.suffix and _is_python(p)]
+    return sorted(found)
+
+
+def in_scope(source: str) -> bool:
+    """Whether the script places ai/lib on its path — the mark of an entry point."""
+    return PIN_ENV in source
+
+
+def _names(node: ast.AST) -> set[str]:
+    return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+
+
+def _is_help_preamble(node: ast.stmt) -> bool:
+    if not isinstance(node, ast.If):
+        return False
+    test = ast.unparse(node.test)
+    return "--help" in test and "sys.argv" in test
+
+
+def _is_pin_block(node: ast.stmt) -> bool:
+    return isinstance(node, ast.If) and PIN_ENV in ast.unparse(node.test)
+
+
+def _is_path_insert(node: ast.stmt) -> bool:
+    return (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+            and ast.unparse(node.value.func) == "sys.path.insert")
+
+
+def _is_stdlib_import(node: ast.stmt) -> bool:
+    if isinstance(node, ast.Import):
+        return all(a.name.split(".")[0] in STDLIB_IMPORTS for a in node.names)
+    return (isinstance(node, ast.ImportFrom) and node.level == 0
+            and (node.module or "").split(".")[0] in STDLIB_IMPORTS)
+
+
+def _cli_import(node: ast.stmt) -> tuple[str, str] | None:
+    """(module name, entry name) for `from cli.<name> import <entry>`, else None."""
+    if (isinstance(node, ast.ImportFrom) and node.level == 0 and node.module
+            and node.module.startswith("cli.") and len(node.names) == 1):
+        return node.module.split(".", 1)[1], node.names[0].asname or node.names[0].name
+    return None
+
+
+def _calls_entry(node: ast.stmt, entry: str) -> bool:
+    """Whether *node* is `<entry>(...)` or `sys.exit(<entry>(...))`."""
+    if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)):
+        return False
+    call = node.value
+    if ast.unparse(call.func) == "sys.exit" and len(call.args) == 1:
+        call = call.args[0]
+    return isinstance(call, ast.Call) and ast.unparse(call.func) == entry
+
+
+def check_source(source: str, root: Path) -> list[Violation]:
+    """Every way *source* departs from the shim shape, in line order."""
+    body = ast.parse(source).body
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        body = body[1:]
+    bound = {"__file__", "Path"}
+    pinned = False
+    entry: tuple[str, str] | None = None
+    problems: list[Violation] = []
+    for i, node in enumerate(body):
+        last = i == len(body) - 1
+        if entry and last and _calls_entry(node, entry[1]):
+            continue
+        if _is_stdlib_import(node) or _is_path_insert(node):
+            continue
+        if _is_help_preamble(node) and not pinned:
+            continue
+        if _is_pin_block(node):
+            pinned = True
+            continue
+        if (isinstance(node, ast.Assign) and all(isinstance(t, ast.Name) for t in node.targets)
+                and _names(node.value) & bound and entry is None):
+            bound |= {t.id for t in node.targets}
+            continue
+        found = _cli_import(node)
+        if found and entry is None:
+            entry = found
+            continue
+        problems.append(Violation(node.lineno, _why(node, entry, last)))
+    if entry is None:
+        problems.append(Violation(1, "no `from cli.<name> import <entry>` — the body lives in the script"))
+    elif not body or not _calls_entry(body[-1], entry[1]):
+        problems.append(Violation(body[-1].lineno if body else 1,
+                                  f"the last statement must call `{entry[1]}(...)`"))
+    else:
+        problems += _check_target(entry, root)
+    return problems
+
+
+def _why(node: ast.stmt, entry: tuple[str, str] | None, last: bool) -> str:
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return f"defines `{node.name}` — move it into ai/lib, below the cli layer"
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        return "imports something other than os, sys, pathlib and one cli module"
+    if entry and last:
+        return f"the last statement must call `{entry[1]}(...)`"
+    return f"`{ast.unparse(node).splitlines()[0][:60]}` is not part of a shim"
+
+
+def _check_target(entry: tuple[str, str], root: Path) -> list[Violation]:
+    module, name = entry
+    target = root / CLI_DIR / f"{module}.py"
+    if not target.is_file():
+        return [Violation(1, f"cli.{module} does not exist ({CLI_DIR}/{module}.py)")]
+    defined = {n.name for n in ast.parse(target.read_text(encoding="utf-8")).body
+               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    if name not in defined:
+        return [Violation(1, f"cli.{module} defines no `{name}`")]
+    return []
+
+
+def _report(rel: Path, problems: list[Violation]) -> None:
+    print(f"{RED}✗{NC} {rel}: not a shim over ai/lib/cli", file=sys.stderr)
+    for v in problems[:REPORT_LIMIT]:
+        print(f"    line {v.line}: {DIM}{v.reason}{NC}", file=sys.stderr)
+    if len(problems) > REPORT_LIMIT:
+        print(f"    {DIM}… {len(problems) - REPORT_LIMIT} more{NC}", file=sys.stderr)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Validate that every entry point reaching ai/lib is a shim over ai/lib/cli.")
+    parser.add_argument("--quiet", action="store_true", help="Only show failures")
+    parser.add_argument("files", nargs="*", help="Scripts to check (default: discover)")
+    args = parser.parse_args(argv)
+
+    root = _WORKBENCH_DIR
+    paths = [Path(f).resolve() for f in args.files] if args.files else discover(root)
+    checked = failed = 0
+    for path in paths:
+        source = path.read_text(encoding="utf-8")
+        if not in_scope(source):
+            continue
+        checked += 1
+        problems = check_source(source, root)
+        rel = path.relative_to(root) if path.is_relative_to(root) else path
+        if problems:
+            failed += 1
+            _report(rel, problems)
+        elif not args.quiet:
+            print(f"  {GREEN}✓{NC} {rel}")
+    if failed:
+        print(f"\n{RED}✗{NC} {failed} of {checked} entry points carry a body", file=sys.stderr)
+        return 1
+    if not args.quiet:
+        print(f"\n{GREEN}✓{NC} {checked} entry points checked, every one a shim over ai/lib/cli")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

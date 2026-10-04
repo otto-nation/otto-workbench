@@ -466,7 +466,7 @@ def test_push_only_pushes_with_the_lease_and_never_rebases(monkeypatch, extra):
     monkeypatch.setattr(rebase.commands, "cmd_start",
                         lambda *a, **k: pytest.fail("--push-only must not rebase"))
 
-    def fake_push(cwd, ctx, *, target_ref, verify=True, snapshot=None, trail=None):
+    def fake_push(cwd, ctx, *, target_ref, verify=True, snapshot=None, trail=None, expect=""):
         pushed["cwd"], pushed["ref"], pushed["verify"] = cwd, target_ref, verify
         return 0
 

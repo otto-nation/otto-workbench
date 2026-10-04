@@ -6363,6 +6363,7 @@ Usage:
   pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref, used as given (or --base)
   pr-rebase --fork-point <ref>        # replay only the commits after <ref>
   pr-rebase --no-verify               # force-push without running the pre-push hook
+  pr-rebase --push-only --expect <sha> # push HEAD leasing on <sha>; no recorded rebase needed
   pr-rebase --repo-dir <path>         # specify worktree directory
 
 ### cli/promote_scan.py

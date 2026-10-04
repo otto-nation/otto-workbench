@@ -34,7 +34,7 @@ fi
 
 # Known tool entry fields — used by validate-registries to reject unknown keys
 # shellcheck disable=SC2034
-KNOWN_TOOL_FIELDS="name description when_to_use permission visibility usage docs brew_name commands auth"
+KNOWN_TOOL_FIELDS="name description when_to_use permission visibility usage docs brew_name commands auth reference parser"
 # Known command entry fields (within a tool's commands[] array)
 # shellcheck disable=SC2034
 KNOWN_COMMAND_FIELDS="name description scope when detail"

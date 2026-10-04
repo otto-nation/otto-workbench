@@ -10,7 +10,7 @@
  * ones exist to dodge that harness's permission-prompt engine, and each of
  * their block messages names a prompt or a static-analysis failure. Pi has no
  * allow-list to key on, so porting them would add noise that blocks nothing.
- * This one names neither. It says `task pr:create` loads the repo's PR
+ * This one names neither. It says `pr create` loads the repo's PR
  * template, applies the template check, appends the closing refs and assigns
  * the PR — none of which `gh pr create` does, under any harness. That is
  * coding policy, written down in git-operations.md § PR Creation, and it

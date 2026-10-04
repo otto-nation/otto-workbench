@@ -77,8 +77,8 @@ _commit() {
 # ── what it leaves alone ─────────────────────────────────────────────────────
 
 # A `-c core.hooksPath` would outrank the repo and silently turn every test that
-# asserts on a hook's refusal into a passing one — push_branch.bats reads a
-# post-receive that rewinds the ref, and reports a lost push it never saw.
+# asserts on a hook's refusal into a passing one — a suite reading a
+# post-receive that rewinds the ref would report a lost push it never saw.
 @test "a hook the test plants in the repo still runs" {
   _reject_commits
 

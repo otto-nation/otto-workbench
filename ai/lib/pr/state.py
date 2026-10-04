@@ -2,7 +2,30 @@
 
 Provides a summary envelope over per-domain state files (CI failures,
 PR comments, review artifacts). Each ``pr`` subcommand updates its own
-section; ``pr status`` reads the whole thing without network calls.
+section; ``pr status`` reads the whole thing without network calls, so a line
+on the dashboard is as old as that run. The age is printed beside the domain it
+belongs to (`age_suffix`): nothing under an hour; ``(as of 3 hours ago)`` past
+an hour; ``[STALE — 7 days ago]`` past a day; ``[STALE — age unknown]`` for a
+stamp that cannot be parsed. The marker is applied by the dashboard's fold over
+the domain registry, not by each domain, so a domain added later is dated without
+doing anything. Push is the exception and not by special case: `pr status`
+observes it live (`PushDomain.observed`) rather than reading it back, so its
+stamp is always seconds old.
+
+A verdict is also refused when it was measured against another commit, however
+recent it is (`[STALE — checked another commit]`). The commit outranks the clock.
+A domain that records no commit (`comments`, `triage`) is judged by the clock
+alone, and so is every domain when HEAD cannot be resolved.
+
+Merge readiness will not vouch for either. A domain the dashboard marks — for
+age or for commit — that says nothing is wrong is folded in as *unchecked*
+rather than as clean (`merge_readiness`), so the line reads `blocked — not
+checked: CI (last checked 9 days ago)` instead of `ready`. A domain that found
+something wrong keeps its blocker either way. Two kinds of domain are judged on
+content alone: one has no say in merging at all (a description, a rebase record,
+a supersession verdict); the other answers from bookkeeping rather than from a
+measurement (`Domain.ages` is false — `pr fix`'s closeout debt). An undelivered
+closeout still blocks at any age; a delivered one never starts to.
 
 State file: ``<state_dir()>/pr/<repo-key>-<branch-slug>/state.json``, keyed on the
 run's target — see ``pr.target.target_dir``, which owns that path.

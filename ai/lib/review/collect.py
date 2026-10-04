@@ -16,6 +16,24 @@ review can afford to inline, reading the same numbers `review.prompt` budgets
 against. How the collected files are ranked and divided is `review.grouping`'s,
 what a phase does with the block is `review.prompt`'s, and the records this
 fills in are `review.types`' and `gh.types`'.
+
+`--self` reviews the worktree, not the remote branch. Everything that differs
+from the base is in scope: unpushed commits, staged and unstaged edits, and
+untracked files (`.gitignore` still applies — `ls-files --others
+--exclude-standard`). `worktree_diff` is that surface. Re-reviews narrow to what
+changed since the prior review, and that delta follows the same rule —
+uncommitted work done since the last `--self` run is picked up.
+
+`base_ref` is the single place a base *name* becomes a ref. Every range is
+anchored through it, so the file list, the diff, the commit log and the delta
+cannot end up measured from different commits. `origin/<base>` first, and for a
+pushed base it is the only answer. The local fallback is reached only when there
+is no remote-tracking ref *and* the name is a strict ancestor of HEAD — an
+unpushed stack parent. A pushed base is always measured against the remote: the
+two disagree whenever the local branch is behind, and a review must not depend
+on a fetch it does not control. Empty when neither qualifies, which callers must
+tell from a resolved ref: `git log ... --not <missing>` looks exactly like a
+branch that changed nothing.
 """
 
 # doc-group: pipeline

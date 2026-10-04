@@ -5,6 +5,9 @@ push while a thread is still being discussed, queues the replies it drafted but
 could not send, and defers the summary until the needs-human threads have been
 answered — so by the time it returns, four separate things may be owed to a PR
 that looks, from the outside, finished. This is the phase that pays them.
+`--finish` is a second invocation on purpose — the discussion has to happen in
+between. Combining `--fix --finish` works and closes out that run's deferred
+set, but posts a summary nobody has replied to yet.
 
 Order is the whole design here, and it is not incidental. The push goes first,
 because every surface below cites a commit and a reviewer cannot follow a SHA

@@ -28,9 +28,9 @@ from pathlib import Path
 import pytest
 
 from conftest import (
-    _agent_env_keys, _backend_binaries, _clear_agent_env, _load_lib,
-    init_worktree, run_checked, seed_repo,
+    _backend_binaries, _load_lib, init_worktree, run_checked, seed_repo,
 )
+from env_isolation_support import _agent_env_keys, _clear_agent_env
 from repo_config_guard_support import (
     _assert_config_unchanged, _describe_config_change, _guarded_lines, _section_of,
 )

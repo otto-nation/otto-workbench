@@ -1,9 +1,9 @@
 """Tests for the one resolver of a repo's PR template.
 
-Three callers used to answer this question separately — `task pr:create` in
-bash, `pr describe` in Python, and now the SessionStart line. What each of them
-does with the answer is tested with that caller; what the answer *is* is tested
-here.
+Callers used to answer this question separately — `pr:update` in bash,
+`pr create` and `pr describe` in Python, and now the SessionStart line. What
+each of them does with the answer is tested with that caller; what the answer
+*is* is tested here.
 """
 
 import subprocess
@@ -81,7 +81,7 @@ def test_a_template_in_a_subdirectory_is_not_found(tmp_path):
     """Only repo-root-relative locations count, which is GitHub's own rule.
 
     A `packages/api/.github/` template is not the repo's template, and treating
-    it as one would have `pr:create` enforce sections GitHub never shows.
+    it as one would have `pr create` enforce sections GitHub never shows.
     """
     _write(tmp_path, "packages/api/.github/pull_request_template.md", "## Why\n")
     assert not core.pr_template.load(tmp_path).found

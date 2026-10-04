@@ -91,7 +91,7 @@ half of it"
   # working directory, every candidate misses from a subdirectory,
   # PR_HAS_TEMPLATE stays false, and the check returns 0 having compared
   # nothing — the silent-no-op this whole file exists to prevent, reachable by
-  # running `task pr:create` one directory down.
+  # running `task pr:update` one directory down.
   git init -q .
   mkdir -p lib/deep
   cd lib/deep || return 1
@@ -247,18 +247,17 @@ no template here"
 }
 
 @test "every call to generate_pr_content acts on its refusal" {
-  # The refusal is only worth having if a caller acts on it. All three targets
+  # The refusal is only worth having if a caller acts on it. Every target
   # called `generate_pr_content` unguarded at first, so the non-zero return
-  # printed an error and the script carried on to `create_pr` with `PR_TITLE`
-  # and `PR_DESCRIPTION` never assigned — an empty PR, opened right after an
-  # error message saying it would not be.
+  # printed an error and the script carried on with `PR_TITLE` and
+  # `PR_DESCRIPTION` never assigned — an empty PR body, published right after
+  # an error message saying it would not be.
   #
   # Counted rather than matched line-for-line: what matters is that no call
   # site is missing a guard, and a count survives the reformatting that an
-  # exact-string assertion would break on. `pr:content` prints what would be
-  # posted and `pr:update` replaces a live body, so all three owe it — hence
-  # the floor as well as the ceiling, which is what catches a guard added by
-  # deleting the call it was on.
+  # exact-string assertion would break on. `pr:update` replaces a live body,
+  # so it owes it — hence the floor as well as the ceiling, which is what
+  # catches a guard added by deleting the call it was on.
   local calls guarded
   # shellcheck disable=SC2016  # the literal `$BRANCH` is what is being matched
   calls=$(grep -c 'generate_pr_content "\$BRANCH" "\$TARGET_BASE"' \
@@ -267,7 +266,7 @@ no template here"
   guarded=$(grep -c 'generate_pr_content "\$BRANCH" "\$TARGET_BASE" || exit 1' \
     "$REPO_ROOT/Taskfile.global.yml" || true)
 
-  [ "$calls" -eq 3 ]
+  [ "$calls" -eq 1 ]
   [ "$guarded" -eq "$calls" ]
 }
 

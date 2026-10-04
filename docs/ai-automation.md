@@ -300,8 +300,6 @@ Use `--global` to run tasks from `~/.config/task/` rather than a local project T
 task --global ai:setup             # Setup AI configuration
 task --global commit               # Generate AI-powered commit message based on staged changes
 task --global commit:reword        # Reword a commit message with AI (default: HEAD; or: task reword -- SHA)
-task --global pr:content           # Preview AI-generated PR title and description (-- --no-issue, --issue <ID>, --closes <ID>, --base <branch>)
-task --global pr:create            # Create AI-powered pull request (-- --no-issue, --issue <ID>, --closes <ID>, --draft, --base <branch>, --title <title>, --body <body>, --body-file <path>)
 task --global pr:update            # Update current PR description (-- --no-issue, --issue <ID>, --closes <ID>, --base <branch>, --title <title>, --body <body>)
 task --global review               # AI review of staged, unstaged, and committed branch changes
 task --global pr:review            # AI review of the current PR
@@ -599,11 +597,11 @@ the rounds it does not restate.
 
 ### Running from a different directory
 
-All global tasks default to running in the current working directory. When your CWD is not the target repo (e.g., running from a Claude Code session rooted in a different project), pass `REPO_DIR`:
+All global tasks default to running in the current working directory. When your CWD is not the target repo (e.g., running from a Claude Code session rooted in a different project), pass `REPO_DIR` to a global task, and `--repo-dir` (or `--branch`) to `pr`:
 
 ```bash
-task --global REPO_DIR=/path/to/worktree pr:create -- --no-issue --closes 941
 task --global REPO_DIR=/path/to/worktree commit
+pr create --draft --closes 941 --repo-dir /path/to/worktree
 ```
 
 A related hazard exists one level down, for the AI subprocess rather than the
@@ -624,10 +622,10 @@ task --global WORKBENCH_LIB_DIR=/path/to/worktree REPO_DIR=/path/to/worktree com
 
 Both are go-task variables, written after `--global` — not a `VAR=value` shell
 prefix, which `claude-bash-guard` blocks. It pins the checkout root, not `lib/`
-alone, so `ai/lib/git/push.py` and `lib/config_cli.py` come from the same tree
-as the libraries calling them. Unset, nothing resolves differently than before.
+alone, so `ai/lib/core/pr_template.py` and `lib/config_cli.py` come from the
+same tree as the libraries calling them. Unset, nothing resolves differently than before.
 Set, `_lib-dir-guard` — in `deps:` on each task sourcing `lib/ai` and no other —
-requires it absolute and holding the four paths that witness a whole checkout,
+requires it absolute and holding the six paths that witness a whole checkout,
 so a partial one is refused by the missing path's name, not by a later `python3`
 failure naming nothing. A module sourced by name is not among them: it fails on
 the body's first lines. The value is read from the environment, never spliced.
@@ -646,16 +644,15 @@ WORKBENCH_AI_LIB_DIR=/path/to/worktree pr review --self --fix
 [`core/tool_parser.py`](ai-libraries.md#coretool_parserpy) — before deciding whether a
 bare token is the command's target or some other flag's argument. Without it,
 `pr comments --reply 3777767789` reads the reply ID as a PR number and swallows
-it. `_PARSER_FACTORIES` in `ai/bin/pr` names each delegate's `build_parser`.
+it. `PARSER_FACTORIES` in [`ai/lib/cli/dispatch.py`](../ai/lib/cli/dispatch.py)
+names each delegate's `build_parser`.
 
-A subcommand with no delegate has no parser to read, and one of them needs none.
-`pr create` shells out to `task pr:create`, whose flags are parsed in bash by
-`parse_pr_flags` ([`lib/ai/pr.sh`](../lib/ai/pr.sh)); it always operates on the
-current branch, and `task pr:create` has no way to accept a target. So `create`
-declares `takes_target=False` and the positional scan is skipped for it entirely —
-every bare token in `pr create --title "…" --body-file …` belongs to the flag before
-it. Mirroring `parse_pr_flags`'s arity in `pr` would have been a third copy of a list
-that already exists twice in the file that parses it.
+One delegate needs no scan at all. `pr create` declares no positional: its
+target comes from the global `--branch`/`--repo-dir`, already resolved into the
+context before `cli.pr_create` sees its argv. So `create` declares
+`takes_target=False` and the positional scan is skipped for it entirely — every
+bare token in `pr create --title "…" --body-file …` belongs to the flag before it,
+including a title that happens to be a number.
 
 That leaves `takes_target` a hand-maintained declaration, so the commands it does
 *not* excuse are guarded: `status`, `fix` and `gc` have no delegate either, and their
@@ -763,9 +760,8 @@ site, and the spread was the bug. Each owns its own reference page:
 
 They stack: `land` sits on `push` and `git_client`, which sit on `proc`, which
 requires a `timeouts` tier on every call — `bin/local/validate-timeouts` enforces
-that one across `ai/`, so a new subprocess call cannot skip the question. The bash
-half of `pr:create` reaches `push` through its CLI rather than reimplementing it,
-and a push typed by hand is recorded by the global `pre-push` hook for `pr` to reconcile.
+that one across `ai/`, so a new subprocess call cannot skip the question. `pr create`
+pushes through `push` by way of `pr.branch_sync`, and a push typed by hand is recorded by the global `pre-push` hook for `pr` to reconcile.
 
 ## Guidelines & Rules
 

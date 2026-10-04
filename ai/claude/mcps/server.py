@@ -3,30 +3,78 @@
 Tools are read from the component registries — see
 ``ai/lib/config/tool_registry.py``. An entry declares the tool, ``visibility``
 decides whether a client sees it, and the schema is built by importing it.
-Any MCP client can connect via stdio transport.
+A script is offered when its registry entry declares ``visibility: full`` or
+``brief``; a ``hidden`` entry, or a script no registry names at all, is never
+offered. Discovery is a registry read plus an import, not a scan. Scripts built
+on ``core.tool_parser.ToolParser`` can still answer ``--tool-schema`` on the
+command line, for a reader rather than for MCP.
 
-Discovery used to be a scan: glob nine ``bin`` directories, read the first
-256 KiB of every executable looking for a ``--tool-schema`` marker, then
-spawn each match under a timeout in an eight-worker pool and parse what it
-printed. Nine directories, four probe subprocesses at startup, to learn one
-thing — that ``pr`` is a tool and what it accepts. That is the last of the
-three cross-process introspection protocols #909 exists to remove, and it is
-gone: the offered set is a registry read and the schema is an import.
+There is no configuration file. The server hosts the workbench's own tools, so
+what to offer is a fact about the checkout's registries. An earlier design read
+``tool_dirs`` / ``plugin_dirs`` from ``~/.config/workbench/mcp-tools.json``; no
+setup step ever wrote that file, and the keys were removed rather than carried
+into ``config.yml``. Adding a tool means registering it in a component's
+``registry.yml``; the schema comes from ``_tool_schema()``, which imports
+``cli.schema.tool_schema``.
 
-There is no configuration file. The server exposes the workbench's own
-tools, so what is offered is a fact about the checkout rather than a
-question to ask the user.
+Today only ``pr`` is offered — ``ci-check``, ``pr-describe``, and ``pr-rebase``
+are registered hidden because they are what ``pr ci``, ``pr describe``, and
+``pr rebase`` run, and offering them beside ``pr`` asks a client to choose
+between a tool and its own internals. The description a client reads is the
+registry's, not the script's: a ``full`` entry's ``when_to_use`` and ``usage``
+lines are appended. A script's own ``--tool-schema`` description is written for
+its ``--help`` and has already drifted shorter.
 
-The client owns this process, spawning it over stdio, so nothing outside can
-restart it when a tool is added or re-signatured. A poll watches what discovery
-reads and re-runs it when that changes, and the client is told with
-``notifications/tools/list_changed`` when the tool set differs as a result.
+``bin/local/validate-registries`` holds the registries to shape statically:
+required fields, no unknown fields, no two entries in one file sharing a name,
+and — across the ``bindir`` registries — no two files claiming the same name
+either. Only ``bindir`` registries are compared, because a brew stack and an env
+alias describe different kinds of thing and legitimately share a name. It does
+not confirm that a tool's schema imports cleanly; a schema that will not import
+now fails the scan at startup and is logged.
+
+Discovery keys on the name a schema answers with, not on a filename. At runtime
+the first the scan reached in registry order wins and the other is logged at
+error level naming both paths. It is not raised: discovery runs in the thread
+that also serves re-discovery, so one ambiguity would either take the server
+down or freeze the tool list for the session.
+
+A call still spawns the script through ``_run_script``. Stdin is closed rather
+than inherited: the server's own stdin *is* the stdio JSON-RPC stream. The child
+also gets a session of its own, so an expired bound ``SIGKILL``s the whole
+process group — a tool spawns agents (``pr review``), and signalling only the
+direct child leaves them running. There is no grace window before the kill.
+
+Every couple of seconds the server fingerprints what discovery reads: every
+``registry.yml``, plus ``ai/lib/cli/schema.py`` and ``ai/lib/cli/registry.py``.
+Nothing is executed and no other source is read. The baseline every poll
+compares against is stamped *before* the startup scan, not after it. When the
+fingerprint moves, discovery runs again. Only a change to the offered set is
+announced, as ``notifications/tools/list_changed``, which the server advertises
+as the ``tools.listChanged`` capability during initialization. Nothing is sent
+before the client's first request. A tool that was working and now is not is
+logged at error level with the reason it stopped answering.
+
+Stdout that parses as JSON comes back as the text content of the result. A tool
+whose schema declares ``output_schema`` returns that JSON as structured content
+as well; such a tool that prints no JSON object is a contract breach (error
+naming the tool and quoting the head of what it printed). Tools with no
+``output_schema`` return text and nothing more. ``pr`` declares none: its one
+schema covers every subcommand, and the only shape that could be declared for
+all of them is ``PRState``, which only ``pr status`` prints — every other
+subcommand would come back ``isError``.
+
+The launcher is ``ai/bin/otto-mcp-server``, which runs ``uv run --no-project
+--with mcp``. A client spawns the server with its own project as the working
+directory, and without ``--no-project`` uv would resolve and install that
+project first.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import json
 import logging
 import os
@@ -77,21 +125,19 @@ POLL_INTERVAL = 2.0
 def _run_script(argv: list[str], timeout: float) -> core.proc.CmdResult:
     """Run *argv* to completion under *timeout*, isolated from this process.
 
-    Every script this server executes goes through here — the discovery probe
-    and the tool call alike — for the two guarantees ``proc.run`` gives a
-    caller that asks for them.
+    Every script this server executes goes through here — tool calls, not
+    discovery: the offered set is a registry read and the schema is an import,
+    so nothing is spawned to find out what exists.
 
     Its stdin is closed. This server's stdin *is* the stdio JSON-RPC stream the
     client writes requests into, so a script that reads a single byte takes
     that byte out of the transport and the session dies on a parse error naming
-    no tool. The probe is the likeliest reader: a script that does not
-    recognise ``--tool-schema`` falls through to its real work.
+    no tool.
 
     ``kill_process_group`` is what an expired bound needs here. A tool spawns
     agents — ``pr review`` is the case — and signalling only the direct child
     leaves them running against the account with nothing holding a handle to
-    them. The probe asks for it on the same grounds: a script that fell through
-    to its real work is running something nobody planned for.
+    them.
 
     A timeout comes back as ``proc.TIMEOUT_RETURNCODE`` rather than an
     exception, so both callers check for it before reading the exit code as the
@@ -139,7 +185,28 @@ def _described(schema: dict, entry: RegistryEntry) -> dict:
     schema — `input_schema`, `output_schema`, `ok_exit_codes` — passes through
     unchanged; only the one key is registry-driven.
     """
+    if entry.parser and not entry.usage:
+        entry = dataclasses.replace(entry, usage=_rendered_usage(entry))
     return {**schema, "description": entry.tool_description}
+
+
+def _rendered_usage(entry: RegistryEntry) -> str:
+    """The usage line an entry's `parser:` renders, as `tools.generated.md` shows it.
+
+    The registry's `parser:` replaces a hand-written `usage`, so the
+    description a client reads is rendered from the same parser the CLI parses
+    with — a flag the CLI gains reaches the tool description with no second
+    edit. Imported here rather than by `config.tool_registry`, which sits below
+    the layers a parser can live in.
+    """
+    # ceiling: the discovery fingerprint does not hash the modules parsers live
+    # in, so a flag added to a delegate reaches a running server's description
+    # only at its next restart or registry change. Upgrade trigger: once an MCP
+    # client relies on a tool description to choose flags mid-session, hash the
+    # files the entry's parser imports into `discovery_fingerprint`.
+    import core.cli_reference
+    return core.cli_reference.usage_line(
+        core.cli_reference.load(entry.parser, entry.name, WORKBENCH_DIR))
 
 
 def discover_tools(registry: dict[Path, RegistryEntry] | None = None) -> dict[str, dict]:
@@ -288,10 +355,10 @@ async def watch_for_tool_changes(tools: dict[str, dict], notify, ready: asyncio.
     before then would reach a client that has not finished initialising, and
     the tool list it asks for afterwards is current anyway.
 
-    Discovery runs in a thread: it executes every offered script, and the event
-    loop owns the client's connection while it does. So does the report of what
-    was lost — naming a reason re-probes each vanished tool, one subprocess
-    apiece.
+    Discovery runs in a thread: it re-reads the registries and imports the
+    schema, and the event loop owns the client's connection while it does.
+    A tool that vanished is named from the registry entry it had — its script
+    is gone, or the entry no longer offers it — not by re-spawning it.
     """
     while True:
         await asyncio.sleep(interval)

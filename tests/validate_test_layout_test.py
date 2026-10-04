@@ -188,7 +188,6 @@ def test_every_module_in_this_repo_is_named_by_the_rule():
     assert vtl.misnamed(REPO_ROOT) == []
 
 
-
 def test_no_suite_in_this_repo_is_over_the_cap():
     """The gate has no exemptions, so this repo has to satisfy it outright."""
     assert vtl.over_cap(REPO_ROOT, vtl.MAX_CODE_LINES) == []

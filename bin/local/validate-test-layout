@@ -57,7 +57,6 @@ SUPPORT_NAMES = frozenset({"conftest.py", "__init__.py"})
 BATS_SUFFIX = ".bats"
 
 
-
 def discover(root: Path, suffix: str = ".py") -> list[Path]:
     """Every file ending in *suffix* under *root*/tests, sorted.
 
@@ -153,8 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.directory).resolve()
     paths = discover(root)
     bad = misnamed(root, paths)
-    violations = over_cap(root, args.max_lines, paths + discover(root, BATS_SUFFIX))
-    over = violations
+    over = over_cap(root, args.max_lines, paths + discover(root, BATS_SUFFIX))
 
     if bad:
         _report_names(bad)

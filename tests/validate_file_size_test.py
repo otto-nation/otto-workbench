@@ -248,7 +248,6 @@ def test_it_passes_when_nothing_is_over(tmp_path):
     assert vfs.main(["--max-lines", "10", "--quiet", str(tmp_path)]) == 0
 
 
-
 def test_no_source_file_in_this_repo_is_over_the_cap():
     """The gate has no exemptions, so this repo has to satisfy it outright."""
     assert vfs.over_cap(REPO_ROOT, vfs.MAX_CODE_LINES) == []

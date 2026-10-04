@@ -16,6 +16,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import cli.ci_check  # noqa: E402
+import rebase.commands  # noqa: E402
 import agent.retry  # noqa: E402
 import git.land  # noqa: E402
 import core.publishing  # noqa: E402
@@ -92,7 +93,7 @@ def _rebase_returning(rc, *, posting):
     """
     with patch.object(rebase.target, "resolve_target_ref",
                       return_value="origin/main"), \
-         patch.object(cli.ci_check.pr_rebase, "cmd_start", return_value=rc) as start, \
+         patch.object(rebase.commands, "cmd_start", return_value=rc) as start, \
          patch.object(core.publishing, "enabled", return_value=posting):
         yield start
 

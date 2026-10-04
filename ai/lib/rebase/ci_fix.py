@@ -13,27 +13,16 @@ from __future__ import annotations
 
 import core.log
 import core.publishing
-import core.report
-import core.run_lock
 import fix.ci
 import fix.engine
 from git.land import CommitStatus
-import pr.ci_failures
 import pr.ci_report
-import pr.ci_runs
-import pr.ci_wait
-import pr.context
-import pr.domains
 import pr.state
 import rebase.commands
 import rebase.inspect
 import rebase.target
 import rebase.types
 
-
-# The binary a user runs and the trail records, which is not this module's own
-# name. Spelled out rather than derived, so the shim can be renamed only by
-# changing the name in both places at once.
 
 def rebase_if_behind(trail, report: pr.ci_report.CIReport, ctx) -> bool:
     """Rebase onto origin/main if branch is behind. Returns True if rebased and pushed.
@@ -99,6 +88,7 @@ def rebase_if_behind(trail, report: pr.ci_report.CIReport, ctx) -> bool:
     trail.info("rebase_done", "rebased and force-pushed")
     core.log.ok("Rebased onto main and force-pushed — CI will re-run on new HEAD")
     return True
+
 
 def run_fix(trail, report: pr.ci_report.CIReport, ctx) -> int:
     """Apply AI-driven fixes for CI failures. Returns exit code."""

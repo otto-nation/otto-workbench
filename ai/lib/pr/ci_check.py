@@ -14,22 +14,14 @@ from __future__ import annotations
 import sys
 
 import core.log
-import core.publishing
 import core.report
-import core.run_lock
 import gh.run_reads
 import pr.ci_failures
 import pr.ci_report
 import pr.ci_runs
 import pr.ci_wait
-import pr.context
-import pr.domains
 import pr.state
 
-
-# The binary a user runs and the trail records, which is not this module's own
-# name. Spelled out rather than derived, so the shim can be renamed only by
-# changing the name in both places at once.
 
 # The binary a user runs and the trail records, which is not this module's own
 # name. Spelled out rather than derived, so the shim can be renamed only by
@@ -107,6 +99,7 @@ def report_run(trail, ctx, merged, run_ids, counts=None, show_status=False) -> p
 
     return report
 
+
 def run_ci(trail, args, ctx) -> pr.ci_report.CIReport:
     repo = ctx.repo
     branch = ctx.branch
@@ -152,6 +145,7 @@ def run_ci(trail, args, ctx) -> pr.ci_report.CIReport:
         core.report.emit_json(report.to_json())
 
     return report
+
 
 def run_ci_wait(trail, args, ctx) -> pr.ci_report.CIReport:
     """Poll CI until all jobs complete, emitting partial reports as failures arrive."""

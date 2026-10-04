@@ -16,20 +16,20 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import cli.ci_check  # noqa: E402
-import rebase.ci_fix  # noqa: E402
-import pr.ci_check  # noqa: E402
-import rebase.commands  # noqa: E402
 import agent.retry  # noqa: E402
 import git.land  # noqa: E402
 import core.publishing  # noqa: E402
 from git.land import CommitStatus  # noqa: E402
 import pr.ci_annotations  # noqa: E402
+import pr.ci_check  # noqa: E402
 import pr.ci_failures  # noqa: E402
 import gh.run_reads  # noqa: E402
 import pr.ci_runs  # noqa: E402
 from pr.ci_report import CIReport  # noqa: E402
 import core.run_lock
 import pr.context
+import rebase.ci_fix
+import rebase.commands
 import rebase.target
 import rebase.types
 

@@ -64,7 +64,6 @@ BATS_SUFFIX = ".bats"
 # to exactly the set of files over the cap, so it can only shrink.
 KNOWN_OVER = {
     "tests/pi_extensions.bats": "#853",
-    "tests/migrations.bats": "#853",
     "tests/claude_settings.bats": "#853",
     "tests/validate_registries.bats": "#853",
     "tests/wt_cleanup.bats": "#853",

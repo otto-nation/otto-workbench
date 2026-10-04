@@ -202,7 +202,7 @@ _run_all_migrations_in_fake() {
 
 @test "a resumed run does not duplicate an already-carried record" {
   # Mirrors "adoption resumes a run that was interrupted partway through a
-  # directory" in tests/migrations.bats: repo-1 already finished its carry in
+  # directory" in tests/migrations_adopt.bats: repo-1 already finished its carry in
   # a prior partial run (record in legacy.jsonl, source gone), repo-2 is
   # still pending (source present). Resuming must add repo-2 exactly once
   # without touching repo-1's record.
@@ -277,7 +277,7 @@ _run_all_migrations_in_fake() {
   # errexit. The real framework (lib/migrations.sh) has to find the file by
   # its name, derive the function name from it, source it, and call it as the
   # condition of an `if` — where errexit is suppressed. Build a fake workbench
-  # root, matching the tests/migrations.bats FAKE_ROOT pattern, and go through
+  # root, matching tests/migrations_helper.bash's FAKE_ROOT pattern, and go through
   # run_all_migrations for real.
   _build_fake_workbench "dispatch"
   mkdir -p "$FAKE_STATE/reviews/repo-1"

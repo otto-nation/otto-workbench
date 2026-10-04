@@ -3,9 +3,9 @@
 # renames issues.jira_url to issues.base_url in the .workbench.yml beside a bare
 # repo's worktrees.
 #
-# Its own file rather than a block in migrations.bats, for the reason
+# Its own file rather than a block in migrations_config.bats, for the reason
 # migration_rename_issue_tracker_container.bats is: this migration shells out to
-# bin/resolve-worktree, and migrations.bats builds a fake workbench whose
+# bin/resolve-worktree, and the migrations_* suites build a fake workbench whose
 # BIN_SRC_DIR holds nothing. That fixture is right for testing the framework and
 # wrong for testing a migration that reaches a real script.
 bats_require_minimum_version 1.5.0

@@ -252,6 +252,17 @@ def test_a_directory_without_an_init_is_not_a_subpackage(tmp_path):
     assert val.subpackages(str(tmp_path)) == []
 
 
+def test_an_init_inside_pycache_is_not_a_subpackage(tmp_path):
+    """A stray `__init__.py` under `__pycache__` is skipped, not reported.
+
+    `__pycache__` never holds source today, but `rglob` would find it there if
+    it ever did, and `SKIP_DIRS` is what keeps that from becoming a false
+    subpackage.
+    """
+    _tree(tmp_path, "pr/__init__.py", "pr/__pycache__/__init__.py")
+    assert val.subpackages(str(tmp_path)) == []
+
+
 def test_the_repo_has_no_subpackages():
     assert val.subpackages(str(REPO_ROOT)) == []
 

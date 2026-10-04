@@ -27,10 +27,11 @@ Four things are checked:
   3. Every cross-package import, however it is spelled, is in the importing
      package's permitted set.
   4. No package holds a subpackage. The tree is flat by design, and every
-     reader that walks it one level down (`generate-doc-reference`, the
-     tarball and import-form tests) is correct only while it stays so. A
-     nested `__init__.py` would also escape check 1, which reads the first
-     level only — so it is refused rather than half-covered.
+     reader that walks it one level down (`generate-doc-reference` and the
+     tarball, import-form, compile, schema and observability tests) is
+     correct only while it stays so. A nested `__init__.py` would also
+     escape check 1, which reads the first level only — so it is refused
+     rather than half-covered.
 
 What the rule buys is that the stack can be read off the imports: `core` cannot
 be made to depend on `review` by an accident in a merge, so anything at layer 1
@@ -167,12 +168,20 @@ def read_layers(repo_root: str) -> dict[str, Layer]:
 
 
 def subpackages(repo_root: str) -> list[str]:
-    """Every `__init__.py` below a package's own, relative to `ai/lib/`, sorted."""
+    """Every `__init__.py` below a package's own, relative to `ai/lib/`, sorted.
+
+    `__pycache__` and `.git` are pruned out of the walk itself, the same way
+    `discover_files` prunes them, rather than filtered out of the result after
+    the fact — one way of expressing the exclusion, not two.
+    """
     lib_root = Path(repo_root) / LIB_DIR
-    found = (init for package in package_names(repo_root)
-             for init in (lib_root / package).rglob('*/__init__.py'))
-    return sorted(str(init.relative_to(lib_root)) for init in found
-                  if not SKIP_DIRS & set(init.relative_to(lib_root).parts))
+    found = []
+    for package in package_names(repo_root):
+        for dirpath, dirnames, filenames in os.walk(lib_root / package):
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+            if dirpath != str(lib_root / package) and '__init__.py' in filenames:
+                found.append(Path(dirpath, '__init__.py'))
+    return sorted(str(init.relative_to(lib_root)) for init in found)
 
 
 def undeclared_packages(repo_root: str, layers: dict[str, Layer]) -> list[str]:

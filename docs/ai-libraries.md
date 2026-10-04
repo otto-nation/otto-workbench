@@ -5725,6 +5725,15 @@ the same loop, which advances a step at a time until git says the rebase is
 over and ``rebase_success`` lands what was replayed. Every exit is either that,
 a refusal, or an abort that leaves the branch where it started.
 
+### rebase/need.py
+
+Whether a branch needs a rebase, read from refs rather than from GitHub.
+
+GitHub's `mergeStateStatus` answers a different question — `UNKNOWN` while it
+computes, `BLOCKED` outranking `BEHIND` — so a branch two commits behind its base
+can read as up to date. This counts the commits the base has that the head does
+not, and says "cannot tell" rather than "current" when either ref is missing.
+
 ### rebase/pr_snapshot.py
 
 What GitHub says about the PR being rebased, read once per run.

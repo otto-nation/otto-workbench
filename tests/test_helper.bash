@@ -545,7 +545,7 @@ gate_sessions() {
 
 # _review_sandbox BRANCH [FINDING_STATE] — a repo on BRANCH with a review whose
 # finding is open (' ') or fixed ('x'). Omit FINDING_STATE for no review at all.
-# Printed, for _guard_in. Shared by claude_settings.bats and pi_extensions.bats,
+# Printed, for _guard_in. Shared by claude_settings_sync.bats and pi_extensions.bats,
 # which both exercise the branch-review deferral guard against the same
 # on-disk layout — a copy in each would let the two drift apart silently.
 _review_sandbox() {
@@ -602,7 +602,7 @@ print(json.dumps({"tool_input": {"command": sys.argv[1]}}))
 # then blocks until the holder exits, which is never, so the test hangs before
 # it reaches its first assertion.
 #
-# Shared by claude_settings.bats and pi_extensions.bats: both harnesses' guards
+# Shared by claude_settings_hooks.bats and pi_extensions.bats: both harnesses' guards
 # read one lock through `with-tree-lock --check`, so both suites need to take
 # that lock for real. A copy per suite is a copy that can diverge from the one
 # fact they are each asserting on.

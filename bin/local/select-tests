@@ -33,7 +33,10 @@ TESTS_DIR="$WORKBENCH_DIR/tests"
 # specific files. A file addition breaks these without co-editing any .bats file.
 ALWAYS_RUN_TESTS=(
   bin_scripts
-  claude_settings
+  claude_settings_hooks
+  claude_settings_sync
+  claude_settings_template
+  claude_settings_writes
   collect_component_registries
   export_config
   generate_public_surface
@@ -87,6 +90,7 @@ FULL_SUITE_TRIGGERS=(
   tests/validate_skills_helper.bash
   tests/projects_helper.bash
   tests/wt_cleanup_helper.bash
+  tests/claude_settings_helper.bash
   tests/conftest.py
   tests/validate_migrations_helper.bash
   bin/local/run-tests

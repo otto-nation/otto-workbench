@@ -8,7 +8,7 @@ Patterns that trigger unsuppressible permission prompts in Claude Code's static 
 
 § Subagents Reset the Working Directory is the exception, and it has now been checked rather than assumed. A Pi subagent given a bare `cd` into a feature worktree answered `main` to `git rev-parse --abbrev-ref HEAD` on its very next call — the same silent wrong-tree failure, under the other harness. The harness-independent statement of it therefore lives in `git-operations.md` § Cross-Worktree Safety, which every harness loads, and that is the copy to read if you only read one. The section below restates it in full rather than deferring — a Claude session that hit the permission detail would otherwise have to follow a pointer to learn why any of it matters — and adds what only applies here: the Write-tool wrapper, `Bash(bash:*)` versus `sh`, and the grant shapes. The duplication is deliberate; when the two disagree, `git-operations.md` is the one to correct.
 
-`ai/claude/bin/claude-bash-guard`, the PreToolUse hook for the Bash tool, enforces the patterns below that can be matched mechanically — not every section has a guard rule. Each block message cites the section holding its alternatives (`See bash-tool.md § <Section>`), so a new guard rule needs a section here to cite; `tests/claude_settings.bats` fails if it has none.
+`ai/claude/bin/claude-bash-guard`, the PreToolUse hook for the Bash tool, enforces the patterns below that can be matched mechanically — not every section has a guard rule. Each block message cites the section holding its alternatives (`See bash-tool.md § <Section>`), so a new guard rule needs a section here to cite; `tests/claude_settings_writes.bats` fails if it has none.
 
 ## Avoid Command Substitution in Arguments
 

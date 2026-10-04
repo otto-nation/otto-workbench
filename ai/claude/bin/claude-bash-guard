@@ -8,7 +8,7 @@
 # Every block message names the alternative, then cites the rules section that
 # holds the rest: `See <file>.md § <Section>`. The citation is the contract —
 # a rule whose section is missing blocks Claude without telling it what to do
-# instead. tests/claude_settings.bats enforces that every block call carries one
+# instead. tests/claude_settings_writes.bats enforces that every block call carries one
 # and that every cited section exists.
 #
 # Usage: claude-bash-guard        (stdin: {"tool_input":{"command":"..."}})
@@ -68,7 +68,7 @@ _branch_review_has_open_findings() {
 
   # REVIEWS_DIR from lib/constants.sh, spelled out for the same reason the
   # directory name is: this hook sources nothing, so it cannot read the
-  # constant. tests/claude_settings.bats holds the two spellings together.
+  # constant. tests/claude_settings_sync.bats holds the two spellings together.
   review_file="${WORKBENCH_STATE_DIR:-$HOME/.local/state/workbench}/reviews/${repo_name}-self-${branch//\//-}/review.md"
   [[ -f "$review_file" ]] || return 1
 

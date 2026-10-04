@@ -176,7 +176,14 @@ a pr subcommand reports one only when its delegate's parser is a ToolParser"
   # to hold the same pair as REQUIRED_SCHEMA_KEYS, checking what a probe
   # printed; it builds the document itself now, so this is the only place left
   # that reads one it did not write.
-  if jq -e 'has("name") and has("input_schema")' <<< "$schema_out" > /dev/null 2>&1; then
+  #
+  # The document is pulled with `input` under -n rather than fed as jq's input:
+  # with no input at all, `jq -e` exits 4 from jq 1.7 on but 0 under 1.6, so a
+  # tool printing nothing would pass on any machine with the older jq. `input`
+  # fails on empty input under both, and the type check keeps has() from
+  # erroring on a scalar or an array.
+  if jq -en 'input | type == "object" and has("name") and has("input_schema")' \
+    <<< "$schema_out" > /dev/null 2>&1; then
     _pass "$display: output_schema tool '$tool_name' supports --tool-schema"
   else
     _fail "$display: output_schema tool '$tool_name' emits an invalid --tool-schema document"

@@ -555,19 +555,21 @@ def test_create_worktree_for_branch_survives_malformed_json(mock_run):
     assert git.topology.create_worktree_for_branch("feat/x") is None
 
 
+@patch("git.topology._fetch_remote_branch")
 @patch("core.log")
 @patch("git.topology.subprocess.run",
        side_effect=FileNotFoundError(2, "No such file or directory", "wt"))
-def test_create_worktree_warns_once_when_wt_is_missing(_mock_run, mock_log):
+def test_create_worktree_warns_once_when_wt_is_missing(_mock_run, mock_log, _mock_fetch):
     assert git.topology.create_worktree_for_branch("feat/x") is None
     assert mock_log.warn.call_count == 1
     assert "not installed" in mock_log.warn.call_args.args[0]
 
 
+@patch("git.topology._fetch_remote_branch")
 @patch("core.log")
 @patch("git.topology.subprocess.run",
        side_effect=PermissionError(13, "Permission denied", "wt"))
-def test_create_worktree_warns_once_when_wt_cannot_run(_mock_run, mock_log):
+def test_create_worktree_warns_once_when_wt_cannot_run(_mock_run, mock_log, _mock_fetch):
     assert git.topology.create_worktree_for_branch("feat/x") is None
     assert mock_log.warn.call_count == 1
     assert "Permission denied" in mock_log.warn.call_args.args[0]
@@ -590,6 +592,9 @@ def test_create_worktree_warns_once_when_wt_reports_no_path(mock_run, mock_log):
 def _stub_raise(monkeypatch, exc):
     def boom(*args, **kwargs):
         raise exc
+    # The fetch ahead of `wt switch` is not what these cases are about, and
+    # would otherwise be the first call to hit the raising stub.
+    monkeypatch.setattr(git.topology, "_fetch_remote_branch", lambda *a: None)
     monkeypatch.setattr(git.topology.subprocess, "run", boom)
 
 
@@ -623,6 +628,74 @@ def test_wt_switch_stays_quiet_when_it_lands_on_a_worktree(monkeypatch, capsys):
 
     assert git.topology.wt_switch("feat/x") == "/repo/feat-x"
     assert capsys.readouterr().err == ""
+
+
+def _clone_missing_a_new_branch(tmp_path) -> Path:
+    """A clone fetched before ``feat/new`` was pushed to its origin."""
+    origin = tmp_path / "origin.git"
+    git_in(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+    seed = init_repo(tmp_path / "seed")
+    _commit(seed, "m1")
+    git_in(seed, "push", "-q", str(origin), "main")
+    clone = tmp_path / "clone"
+    git_in(tmp_path, "clone", "-q", str(origin), str(clone))
+    git_in(seed, "checkout", "-qb", "feat/new")
+    _commit(seed, "f1")
+    git_in(seed, "push", "-q", str(origin), "feat/new")
+    return clone
+
+
+def _has_ref(repo: Path, ref: str) -> bool:
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--verify", "-q", ref],
+        capture_output=True, check=False,
+    ).returncode == 0
+
+
+def test_wt_switch_fetches_a_branch_pushed_after_the_last_fetch(tmp_path, monkeypatch):
+    """`--no-hooks` skips worktrunk's fetch hook, so wt_switch has to fetch itself."""
+    clone = _clone_missing_a_new_branch(tmp_path)
+    assert not _has_ref(clone, "refs/remotes/origin/feat/new")
+    real_run = subprocess.run
+    seen_at_switch = []
+
+    def fake_wt(cmd, **kwargs):
+        if cmd[0] != "wt":
+            return real_run(cmd, **kwargs)
+        seen_at_switch.append(_has_ref(clone, "refs/remotes/origin/feat/new"))
+        return subprocess.CompletedProcess(cmd, 0, '{"path": "/wt/feat-new"}\n', "")
+
+    monkeypatch.setattr(git.topology.subprocess, "run", fake_wt)
+
+    assert git.topology.wt_switch("feat/new", str(clone)) == "/wt/feat-new"
+    assert seen_at_switch == [True]
+
+
+def test_wt_switch_still_switches_when_the_fetch_finds_nothing(tmp_path, monkeypatch):
+    clone = _clone_missing_a_new_branch(tmp_path)
+    real_run = subprocess.run
+    switched = []
+
+    def fake_wt(cmd, **kwargs):
+        if cmd[0] != "wt":
+            return real_run(cmd, **kwargs)
+        switched.append(cmd[2])
+        return subprocess.CompletedProcess(cmd, 0, '{"path": "/wt/local-only"}\n', "")
+
+    monkeypatch.setattr(git.topology.subprocess, "run", fake_wt)
+
+    assert git.topology.wt_switch("local-only", str(clone)) == "/wt/local-only"
+    assert switched == ["local-only"]
+
+
+def test_wt_switch_leaves_a_pr_ref_to_worktrunk(monkeypatch):
+    fetched = []
+    monkeypatch.setattr(git.topology, "_fetch_remote_branch",
+                        lambda branch, cwd: fetched.append(branch))
+    _stub_run(monkeypatch, 0, stdout='{"path": "/wt/pr-12"}\n')
+
+    assert git.topology.wt_switch("pr:12") == "/wt/pr-12"
+    assert fetched == []
 
 
 # ── stack parent derivation ─────────────────────────────────────────────────

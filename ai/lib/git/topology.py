@@ -34,6 +34,7 @@ from pathlib import Path
 
 import core.log
 import core.timeouts
+import git.client
 from core.proc import failure_message
 
 # `git_remote` is a workbench-wide module rather than an `ai/lib` one, because
@@ -53,6 +54,8 @@ RESOLVE_BRANCH = Path(__file__).resolve().parent.parent.parent.parent / "bin" / 
 REMOTE_REF_PREFIX = f"refs/remotes/{git_remote.GIT_REMOTE}/"
 BRANCH_REF_PREFIX = "refs/heads/"
 _REBASE_STATE_DIRS = ("rebase-merge", "rebase-apply")
+# worktrunk's spelling for a PR ref, which it resolves through gh itself.
+_WT_PR_REF_PREFIX = "pr:"
 
 
 @dataclass(frozen=True)
@@ -181,7 +184,13 @@ def wt_switch(ref: str, cwd: str | None = None) -> str | None:
 
     *ref* is anything worktrunk accepts — a branch name or a ``pr:<n>`` ref.
     Non-interactive and hook-free so it is safe to call from tooling.
+
+    Hook-free also skips the ``fetch-default`` pre-switch hook, so a branch
+    name is fetched here first — otherwise a branch pushed after the clone's
+    last fetch has no remote-tracking ref for ``wt`` to create a worktree from.
     """
+    if not ref.startswith(_WT_PR_REF_PREFIX):
+        _fetch_remote_branch(ref, cwd)
     try:
         r = subprocess.run(
             ["wt", "switch", ref, "--no-cd", "--no-hooks", "--format", "json", "-y"]
@@ -198,6 +207,21 @@ def wt_switch(ref: str, cwd: str | None = None) -> str | None:
     if not path:
         core.log.warn(failure_message(f"wt switch {ref} reported no worktree path", r))
     return path
+
+
+def _fetch_remote_branch(branch: str, cwd: str | None) -> None:
+    """Update ``origin/<branch>`` from the remote, best-effort.
+
+    A failure is deliberately not reported: a branch that exists only locally,
+    or a machine that is offline, has nothing to fetch and is still a valid
+    target for ``wt switch``, which reports for itself if the branch is truly
+    missing.
+    """
+    git.client.run(
+        "fetch", "--quiet", git_remote.GIT_REMOTE,
+        f"+{BRANCH_REF_PREFIX}{branch}:{REMOTE_REF_PREFIX}{branch}",
+        cwd=cwd,
+    )
 
 
 def parse_wt_switch_path(stdout: str) -> str | None:

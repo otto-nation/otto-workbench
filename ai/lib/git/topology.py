@@ -6,8 +6,9 @@ needs it rather than because it is part of resolving: nothing here reads a
 other half of that split and points the other way — it takes a resolved context
 and acts on it.
 
-The transport is plain `subprocess`: these are local reads with a `timeouts.LOCAL`
-bound, and the one unbounded call is `wt switch`, which creates a checkout.
+The local reads stay on plain `subprocess` with a `timeouts.LOCAL` bound, and the
+one unbounded call is `wt switch`, which creates a checkout. The one network call,
+the fetch ahead of `wt switch`, goes through `git.client` for its `TRANSFER` bound.
 
 `stack_parent` is the name a stacked branch should be measured against. It asks
 git for the branches that are ancestors of HEAD but not of the trunk, and takes
@@ -215,13 +216,25 @@ def _fetch_remote_branch(branch: str, cwd: str | None) -> None:
     A failure is deliberately not reported: a branch that exists only locally,
     or a machine that is offline, has nothing to fetch and is still a valid
     target for ``wt switch``, which reports for itself if the branch is truly
-    missing.
+    missing. That includes a *cwd* that does not exist, which ``git.client``
+    raises as ``OSError`` rather than returning: ``wt_switch`` has always
+    answered None with a warning for every failure of its own, and the fetch
+    must not turn a bad directory into an exception.
+
+    Offline fails fast, but a remote that accepts the connection and then stalls
+    is held to ``git.client``'s ``TRANSFER`` bound (600s) before this gives up,
+    so ``wt switch`` can be delayed that long. Accepted: a fetch cut short would
+    leave a just-pushed branch invisible, which is the failure this exists to
+    prevent.
     """
-    git.client.run(
-        "fetch", "--quiet", git_remote.GIT_REMOTE,
-        f"+{BRANCH_REF_PREFIX}{branch}:{REMOTE_REF_PREFIX}{branch}",
-        cwd=cwd,
-    )
+    try:
+        git.client.run(
+            "fetch", "--quiet", git_remote.GIT_REMOTE,
+            f"+{BRANCH_REF_PREFIX}{branch}:{REMOTE_REF_PREFIX}{branch}",
+            cwd=cwd,
+        )
+    except OSError:
+        return
 
 
 def parse_wt_switch_path(stdout: str) -> str | None:
@@ -367,9 +380,10 @@ def _short_ref(ref: str) -> str:
 def _git_out(args: list[str], cwd: str | None = None) -> str:
     """Stripped stdout of a local read, or "" when git did not answer.
 
-    `git.client` is the usual transport for this, but it sits at the same layer
-    as this module and the two may not import each other — see the module
-    docstring on why the reads here are plain `subprocess`.
+    These reads stay on plain `subprocess` rather than `git.client`: they are
+    flat-cost local reads that degrade to "" on any failure, including the
+    `OSError` a missing `cwd` raises — which `git.client.run` would let escape.
+    See the module docstring for the one call here that does use the client.
     """
     try:
         r = subprocess.run(

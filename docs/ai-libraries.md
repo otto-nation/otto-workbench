@@ -2799,6 +2799,19 @@ for a stale neighbour that won on distance (a `wip` parked mid-stack, a detached
 HEAD whose own branch ref is gone — `--recover`, or a PR whose branch was
 deleted); `git.topology.stack_parent` is that guess.
 
+### pr/describe.py
+
+The describe pass: revise a PR's description against the repo's PR template.
+
+Reads the PR body and the branch's commits, asks the agent for a revision in
+the template's shape, validates what comes back, and applies or drafts it
+under the publishing gate. Commit-aware: the HEAD it described is recorded, so
+a repeated run against an unchanged branch is a no-op. Also projects the
+branch's filed follow-up issues into the body.
+
+`cli.pr_describe` is the command over this — arguments, target resolution, the
+run lock and the trail. Template resolution is `core.pr_template`.
+
 ### pr/domains.py
 
 The domains a PR's state is made of.
@@ -4191,7 +4204,7 @@ itself is the rule holding rather than a module patching its own attributes.
 Where a repo's PR template is, and what it says — resolved in one place.
 
 Four callers need the same answer: ``lib/ai/pr.sh`` for ``task pr:update``,
-``cli/pr_describe.py`` for ``pr describe``, ``pr/create_content.py`` for
+``pr/describe.py`` for ``pr describe``, ``pr/create_content.py`` for
 ``pr create``, and the SessionStart hook that tells the agent which template
 this repo ships. Before this module, the first two worked it out for
 themselves and carried the candidate path list and the fallback

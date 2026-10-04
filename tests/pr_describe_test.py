@@ -11,7 +11,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import cli.pr_describe  # noqa: E402
+import pr.describe  # noqa: E402
 from config.workbench_config import IssueProvider  # noqa: E402
 import pr.domains  # noqa: E402
 import pr.state  # noqa: E402
@@ -19,6 +19,8 @@ from pr.follow_ups import FollowUp, FollowUpDomain, FollowUpSource, IssueRef  # 
 import agent.invoke
 import gh.client
 import agent.backend
+import cli.pr_describe
+import pr.context
 
 
 def _ctx(worktree, head_sha="aaaa111", pr_number=7):
@@ -30,21 +32,48 @@ def _ctx(worktree, head_sha="aaaa111", pr_number=7):
 
 def _wrapped(body: str) -> str:
     """A model answer in the form run_describe accepts — markers around the body."""
-    return f"{cli.pr_describe._DESCRIBE_BEGIN}\n{body}\n{cli.pr_describe._DESCRIBE_END}"
+    return f"{pr.describe._DESCRIBE_BEGIN}\n{body}\n{pr.describe._DESCRIBE_END}"
 
 
 def _run(ctx, *, body="", ai=(_wrapped("NEW BODY"), 0), **kw):
     """Run run_describe with git, gh, and the AI backend stubbed out."""
     edits = []
-    with mock.patch.object(cli.pr_describe, "_fetch_pr_body",
+    with mock.patch.object(pr.describe, "_fetch_pr_body",
                            return_value=("title", body)), \
-         mock.patch.object(cli.pr_describe, "_git", return_value=""), \
+         mock.patch.object(pr.describe, "_git", return_value=""), \
          mock.patch.object(agent.backend, "prompt",
                            return_value=ai) as prompt, \
-         mock.patch.object(cli.pr_describe, "_apply_body",
+         mock.patch.object(pr.describe, "_apply_body",
                            side_effect=lambda r, n, b: edits.append(b) or True):
-        rc = cli.pr_describe.run_describe(ctx, **kw)
+        rc = pr.describe.run_describe(ctx, **kw)
     return rc, edits, prompt
+
+
+# ── cli imports ─────────────────────────────────────────────────────────────
+
+
+def test_cli_pr_describe_imports_core_log_directly():
+    """`main()` calls `core.log.info(...)`, so this module must import it itself.
+
+    It otherwise only resolves because `core.publishing`, `core.run_lock`, and
+    `pr.context` each transitively import `core.log`, which populates `log` as
+    an attribute of the `core` package as a side effect. That's borrowed, not
+    declared — if any of those three stopped, `core.log` would raise
+    `AttributeError` here. Checked via the AST rather than at runtime because
+    by the time this test file runs, something else in the suite has already
+    imported `core.log` and the package-level attribute is set regardless of
+    whether this module declares its own import.
+    """
+    import ast
+
+    tree = ast.parse(Path(cli.pr_describe.__file__).read_text())
+    imported = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    assert "core.log" in imported
 
 
 # ── template discovery ──────────────────────────────────────────────────────
@@ -73,21 +102,21 @@ def test_fetching_the_body_reads_the_fields_it_asked_for():
     answer = mock.MagicMock(ok=True, stdout='{"title": "t", "body": "b"}')
     with mock.patch.object(gh.client, "run",
                            return_value=answer) as run:
-        assert cli.pr_describe._fetch_pr_body("owner/repo", 7) == ("t", "b")
+        assert pr.describe._fetch_pr_body("owner/repo", 7) == ("t", "b")
     assert run.call_args[0][:3] == ("pr", "view", "7")
 
 
 def test_fetching_the_body_gives_up_when_gh_cannot_answer():
     answer = mock.MagicMock(ok=False, detail="no such pull request")
     with mock.patch.object(gh.client, "run", return_value=answer):
-        assert cli.pr_describe._fetch_pr_body("owner/repo", 7) is None
+        assert pr.describe._fetch_pr_body("owner/repo", 7) is None
 
 
 def test_applying_the_body_sends_it_on_stdin(publishing_on):
     """`--body-file -` reads the body from stdin, so gh must be given one."""
     with mock.patch.object(gh.client, "run",
                            return_value=mock.MagicMock(ok=True)) as run:
-        assert cli.pr_describe._apply_body("owner/repo", 7, "NEW BODY") is True
+        assert pr.describe._apply_body("owner/repo", 7, "NEW BODY") is True
     assert run.call_args.kwargs["input_text"] == "NEW BODY"
     assert run.call_args[0][-2:] == ("--body-file", "-")
 
@@ -146,7 +175,7 @@ def test_no_pr_is_a_no_op(worktree):
 
 
 def test_conforming_body_is_left_alone_but_still_recorded(worktree):
-    rc, edits, _ = _run(_ctx(worktree), ai=(cli.pr_describe._NO_CHANGE, 0))
+    rc, edits, _ = _run(_ctx(worktree), ai=(pr.describe._NO_CHANGE, 0))
     assert rc == 0
     assert edits == []
     state = pr.state.load_state(worktree / "target")
@@ -201,8 +230,8 @@ def test_only_the_marked_span_is_posted(worktree):
     """Text outside the markers is commentary, not description."""
     answer = (
         "Here you go!\n"
-        f"{cli.pr_describe._DESCRIBE_BEGIN}\n## Why\n\nBecause.\n"
-        f"{cli.pr_describe._DESCRIBE_END}\nHope that helps."
+        f"{pr.describe._DESCRIBE_BEGIN}\n## Why\n\nBecause.\n"
+        f"{pr.describe._DESCRIBE_END}\nHope that helps."
     )
     rc, edits, _ = _run(_ctx(worktree), ai=(answer, 0))
     assert rc == 0
@@ -217,21 +246,21 @@ def test_failed_ai_call_is_not_recorded(worktree):
 
 
 def test_unreachable_pr_stops_before_the_ai_call(worktree):
-    with mock.patch.object(cli.pr_describe, "_fetch_pr_body", return_value=None), \
+    with mock.patch.object(pr.describe, "_fetch_pr_body", return_value=None), \
          mock.patch.object(agent.backend, "prompt") as prompt:
-        rc = cli.pr_describe.run_describe(_ctx(worktree))
+        rc = pr.describe.run_describe(_ctx(worktree))
     assert rc == 1
     assert not prompt.called
 
 
 def test_a_rejected_edit_is_not_recorded(worktree, publishing_on):
     """A real `gh pr edit` failure, distinct from a draft: the gate is open."""
-    with mock.patch.object(cli.pr_describe, "_fetch_pr_body", return_value=("t", "")), \
-         mock.patch.object(cli.pr_describe, "_git", return_value=""), \
+    with mock.patch.object(pr.describe, "_fetch_pr_body", return_value=("t", "")), \
+         mock.patch.object(pr.describe, "_git", return_value=""), \
          mock.patch.object(agent.backend, "prompt",
                            return_value=(_wrapped("B"), 0)), \
-         mock.patch.object(cli.pr_describe, "_apply_body", return_value=False):
-        rc = cli.pr_describe.run_describe(_ctx(worktree))
+         mock.patch.object(pr.describe, "_apply_body", return_value=False):
+        rc = pr.describe.run_describe(_ctx(worktree))
     assert rc == 1
     assert pr.state.load_state(worktree / "target") is None
 
@@ -241,12 +270,12 @@ def test_a_rejected_edit_is_not_recorded(worktree, publishing_on):
 
 def test_a_blank_first_answer_earns_one_retry(worktree):
     answers = [("", 0), (_wrapped("SECOND"), 0)]
-    with mock.patch.object(cli.pr_describe, "_fetch_pr_body", return_value=("t", "")), \
-         mock.patch.object(cli.pr_describe, "_git", return_value=""), \
-         mock.patch.object(cli.pr_describe, "_apply_body", return_value=True), \
+    with mock.patch.object(pr.describe, "_fetch_pr_body", return_value=("t", "")), \
+         mock.patch.object(pr.describe, "_git", return_value=""), \
+         mock.patch.object(pr.describe, "_apply_body", return_value=True), \
          mock.patch.object(agent.backend, "prompt",
                            side_effect=answers) as prompt:
-        rc = cli.pr_describe.run_describe(_ctx(worktree))
+        rc = pr.describe.run_describe(_ctx(worktree))
     assert rc == 0
     assert prompt.call_count == 2
 
@@ -257,13 +286,13 @@ def test_a_blank_first_answer_earns_one_retry(worktree):
 def test_prompt_carries_the_template_and_the_branch_contents(worktree):
     (worktree / ".github").mkdir()
     (worktree / ".github" / "pull_request_template.md").write_text("## Why\n")
-    with mock.patch.object(cli.pr_describe, "_fetch_pr_body",
+    with mock.patch.object(pr.describe, "_fetch_pr_body",
                            return_value=("feat: x", "old body")), \
-         mock.patch.object(cli.pr_describe, "_git", return_value="deadbee fix: y"), \
-         mock.patch.object(cli.pr_describe, "_apply_body", return_value=True), \
+         mock.patch.object(pr.describe, "_git", return_value="deadbee fix: y"), \
+         mock.patch.object(pr.describe, "_apply_body", return_value=True), \
          mock.patch.object(agent.backend, "prompt",
                            return_value=(_wrapped("B"), 0)) as prompt:
-        cli.pr_describe.run_describe(_ctx(worktree))
+        pr.describe.run_describe(_ctx(worktree))
     text = prompt.call_args[0][0]
     assert "## Why" in text
     assert "feat: x" in text
@@ -273,12 +302,12 @@ def test_prompt_carries_the_template_and_the_branch_contents(worktree):
 
 
 def test_prompt_says_so_when_the_repo_ships_no_template(worktree):
-    with mock.patch.object(cli.pr_describe, "_fetch_pr_body", return_value=("t", "")), \
-         mock.patch.object(cli.pr_describe, "_git", return_value=""), \
-         mock.patch.object(cli.pr_describe, "_apply_body", return_value=True), \
+    with mock.patch.object(pr.describe, "_fetch_pr_body", return_value=("t", "")), \
+         mock.patch.object(pr.describe, "_git", return_value=""), \
+         mock.patch.object(pr.describe, "_apply_body", return_value=True), \
          mock.patch.object(agent.backend, "prompt",
                            return_value=(_wrapped("B"), 0)) as prompt:
-        cli.pr_describe.run_describe(_ctx(worktree))
+        pr.describe.run_describe(_ctx(worktree))
     assert "this repo ships none" in prompt.call_args[0][0]
 
 
@@ -301,10 +330,10 @@ def test_an_id_less_entry_is_not_marked_projected(worktree):
     )
     pr.state.apply(state, FollowUpDomain(entries=[anonymous], updated_at="t"))
 
-    with mock.patch.object(cli.pr_describe, "_fetch_pr_body",
+    with mock.patch.object(pr.describe, "_fetch_pr_body",
                            return_value=("t", "body")), \
-         mock.patch.object(cli.pr_describe, "_apply_body", return_value=True):
-        projection = cli.pr_describe.project_follow_ups(ctx, state)
+         mock.patch.object(pr.describe, "_apply_body", return_value=True):
+        projection = pr.describe.project_follow_ups(ctx, state)
 
     assert projection.moved is False
     assert state.follow_ups.entries[0].in_pr_body is False
@@ -317,14 +346,14 @@ def test_run_describe_without_a_worktree_exits_with_guidance(capsys):
     ctx = make_ctx(branch="isaac/feat/x", pr_number=7,
                    worktree_root=None, head_sha="aaaa111")
     assert_no_worktree_exit(capsys, "isaac/feat/x",
-                            cli.pr_describe.run_describe, ctx)
+                            pr.describe.run_describe, ctx)
 
 
 def test_no_pr_reports_before_demanding_a_worktree(capsys):
     """The trail directory degrades, so the no-PR path is not blocked by it."""
     ctx = make_ctx(branch="isaac/feat/x", pr_number=None,
                    worktree_root=None, head_sha="aaaa111")
-    assert cli.pr_describe.run_describe(ctx) == 0
+    assert pr.describe.run_describe(ctx) == 0
     assert "nothing to describe" in capsys.readouterr().err
 
 
@@ -338,7 +367,7 @@ def test_a_draft_run_does_not_edit_the_pr(capsys):
     AI-authored write that reached a PR with no flag behind it.
     """
     with mock.patch.object(gh.client, "run") as run:
-        assert cli.pr_describe._apply_body("owner/repo", 7, "NEW BODY") is False
+        assert pr.describe._apply_body("owner/repo", 7, "NEW BODY") is False
     run.assert_not_called()
     assert "DRAFT" in capsys.readouterr().err
 
@@ -346,7 +375,7 @@ def test_a_draft_run_does_not_edit_the_pr(capsys):
 def test_a_draft_run_shows_the_body_it_would_have_posted(capsys):
     """Drafting is only useful if the operator can read what was withheld."""
     with mock.patch.object(gh.client, "run"):
-        cli.pr_describe._apply_body("owner/repo", 7, "NEW BODY")
+        pr.describe._apply_body("owner/repo", 7, "NEW BODY")
     assert "NEW BODY" in capsys.readouterr().err
 
 
@@ -354,7 +383,7 @@ def test_post_lets_the_edit_through(publishing_on):
     """Pairs with the draft case: proves the gate is not refusing everything."""
     with mock.patch.object(gh.client, "run",
                            return_value=mock.MagicMock(ok=True)) as run:
-        assert cli.pr_describe._apply_body("owner/repo", 7, "NEW BODY") is True
+        assert pr.describe._apply_body("owner/repo", 7, "NEW BODY") is True
     assert run.call_args.kwargs["input_text"] == "NEW BODY"
 
 
@@ -365,12 +394,12 @@ def test_run_describe_with_the_gate_closed_is_not_a_failure(worktree, capsys):
     which stubs it to always return True — so a regression that treats a
     draft's False the same as a genuine `gh pr edit` failure fails here.
     """
-    with mock.patch.object(cli.pr_describe, "_fetch_pr_body", return_value=("t", "")), \
-         mock.patch.object(cli.pr_describe, "_git", return_value=""), \
+    with mock.patch.object(pr.describe, "_fetch_pr_body", return_value=("t", "")), \
+         mock.patch.object(pr.describe, "_git", return_value=""), \
          mock.patch.object(agent.backend, "prompt",
                            return_value=(_wrapped("NEW BODY"), 0)), \
          mock.patch.object(gh.client, "run") as run:
-        rc = cli.pr_describe.run_describe(_ctx(worktree))
+        rc = pr.describe.run_describe(_ctx(worktree))
     assert rc == 0
     run.assert_not_called()
     assert "DRAFT" in capsys.readouterr().err

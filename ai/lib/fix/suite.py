@@ -73,7 +73,7 @@ import core.children
 import core.log
 from core.trail import Trail, tinfo, twarn
 import fix.blame
-from pr.fix import ItemOutcome
+from pr.fix import CHECKS_TRAILER, ItemOutcome
 
 # What of a failing run's output is worth carrying into a commit body and a
 # terminal. The tail rather than the head: pytest and bats both put the summary
@@ -485,6 +485,25 @@ def detail_lines(result: SuiteResult) -> list[str]:
     return lines
 
 
+def checks_trailer(result: SuiteResult) -> str:
+    """The `Fix-Checks: <status>` trailer for a pass's commit, or "" when the
+    pass had nothing to check.
+
+    A trailer rather than a body line: it is tied to the commit it describes,
+    so a reader of `head_before..HEAD` is never handed a verdict some earlier
+    run left in a state file.
+    """
+    if not result.reportable:
+        return ""
+    return f"{CHECKS_TRAILER}: {result.status.value}"
+
+
+def with_trailer(message: str, result: SuiteResult) -> str:
+    """*message* with the checks trailer as its final paragraph, when there is one."""
+    trailer = checks_trailer(result)
+    return f"{message.rstrip()}\n\n{trailer}" if trailer else message
+
+
 def should_run(outcomes: list[ItemOutcome], changed: set[str] | None) -> bool:
     """Whether this pass produced anything worth running the repo's checks over.
 
@@ -509,8 +528,10 @@ __all__ = [
     "SuiteResult",
     "SuiteStatus",
     "apply_to",
+    "checks_trailer",
     "detail_lines",
     "qualify_tally",
     "run",
     "should_run",
+    "with_trailer",
 ]

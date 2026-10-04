@@ -45,6 +45,16 @@ from enum import StrEnum
 
 from git.land import CommitStatus
 
+# The git trailer a fix pass's commit carries, naming how the repo's checks
+# ended — a `fix.suite.SuiteStatus` value. Here rather than in `fix.suite`
+# because `batch` reads it back and sits on a layer that may not import `fix`.
+CHECKS_TRAILER = "Fix-Checks"
+
+# The trailer values that leave a pass's claims unverified: a red run, a
+# timeout, or a command that could not start. `tests/fix_checks_trailer_test.py`
+# fails if this drifts from `fix.suite.SuiteStatus`.
+UNVERIFIED_CHECKS = frozenset({"red", "timed_out", "error"})
+
 # The hedge an unverified fix carries, wherever one is reported. A fix pass
 # edits code and then says so; whether the edit works is a separate claim, and
 # one nothing establishes unless the verify gate ran and reached a verdict.

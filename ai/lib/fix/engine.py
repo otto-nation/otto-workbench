@@ -1042,9 +1042,11 @@ def run(
         fix.scope.report_unattributable(adapter.workdir)
     adapter.stop = settled.stop
     spec = adapter.landing(settled.outcomes, changed)
+    # The trailer is appended here, once, for every domain: the commit is what
+    # a batch reads the checks verdict back from.
     landed = git.land.land(
         adapter.workdir,
-        message=spec.message,
+        message=fix.suite.with_trailer(spec.message, adapter.suite),
         gated=True,
         trail=trail,
         regen=spec.regen,

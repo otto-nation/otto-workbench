@@ -94,7 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
                      help="A checkout whose open PRs to run on; repeatable")
     src.add_argument("--plan", metavar="FILE", help="A saved `pr batch plan` document")
     r.add_argument("--steps", type=_steps, default=list(STEP_ORDER), metavar="STEPS",
-                   help=f"Comma-separated steps, from {','.join(STEP_ORDER)} (the default). "
+                   help=f"Comma-separated steps, any of {','.join(STEP_ORDER)} (default: all). "
                         "Each runs only on PRs the plan marks as needing it")
     r.add_argument("--pool", type=int, default=None, help="Concurrency ceiling")
     r.add_argument("--auto-publish", type=_steps, default=[], metavar="STEPS",

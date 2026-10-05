@@ -901,7 +901,7 @@ Takes no flags.
 |------|-------------|
 | `--checkout` `<dir>` | A checkout whose open PRs to run on; repeatable. Not with `--plan`. |
 | `--plan` `<file>` | A saved `pr batch plan` document. Not with `--checkout`. |
-| `--steps` `<steps>` | Comma-separated steps, from rebase,ci,comments,review (the default). Each runs only on PRs the plan marks as needing it. |
+| `--steps` `<steps>` | Comma-separated steps, any of rebase,ci,comments,review (default: all). Each runs only on PRs the plan marks as needing it. |
 | `--pool` `<pool>` | Concurrency ceiling. |
 | `--auto-publish` `<steps>` | Publish an item without asking when it closes with no open decision and every drafted step is in STEPS and finished done. Steps never push while they run. |
 | `--prs` `<prs>` | Comma-separated repo#number keys to include. |

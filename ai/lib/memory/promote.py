@@ -109,16 +109,11 @@ def scan_hooks(workbench: Path) -> list[dict]:
     for event, hook_list in hooks.items():
         if not isinstance(hook_list, list):
             continue
-        for hook in hook_list:
-            if not isinstance(hook, dict):
-                continue
-            matcher = hook.get("matcher", "")
-            cmd = hook.get("command", "")
-            results.append({
-                "event": event,
-                "matcher": matcher,
-                "command": cmd[:100],
-            })
+        results += [
+            {"event": event, "matcher": hook.get("matcher", ""),
+             "command": hook.get("command", "")[:100]}
+            for hook in hook_list if isinstance(hook, dict)
+        ]
     return results
 
 

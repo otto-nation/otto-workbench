@@ -20,8 +20,9 @@ shim may hold only:
     `--help` works under a pin that would refuse to load (the Claude Code
     status line script, `workbench-statusline`, must always answer). Its body
     may only print and exit;
-  - path bindings: assignments whose value derives from `__file__` or from an
-    earlier binding (`BIN_DIR`, `_AI_LIB_DIR`);
+  - path bindings: assignments whose value is `Path(__file__)` or an earlier
+    binding (`BIN_DIR`, `_AI_LIB_DIR`), extended only by `.resolve()`,
+    `.parent` and `/ "literal"`;
   - the pin stanza: `if os.environ.get("WORKBENCH_AI_LIB_DIR"):` and the
     `sys.path.insert(0, str(_AI_LIB_DIR))` that follows it, once. The `if`
     is compared by AST to `PIN_BLOCK` below, so its body cannot carry a
@@ -111,20 +112,56 @@ def in_scope(source: str) -> bool:
     return PIN_ENV in source
 
 
-def _names(node: ast.AST) -> set[str]:
-    return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+# String methods a --help preamble may use to shape the docstring it prints.
+_TEXT_METHODS = frozenset({"strip", "lstrip", "rstrip", "splitlines"})
+
+
+def _is_pure(node: ast.AST) -> bool:
+    """Whether *node* calls nothing but the text methods in `_TEXT_METHODS`."""
+    return all(
+        not isinstance(n, ast.Call)
+        or (isinstance(n.func, ast.Attribute) and n.func.attr in _TEXT_METHODS)
+        for n in ast.walk(node))
+
+
+def _is_output_call(stmt: ast.stmt) -> bool:
+    """Whether *stmt* is `print(...)` or `sys.exit(...)` with arguments that call nothing."""
+    if not (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)):
+        return False
+    call = stmt.value
+    return (ast.unparse(call.func) in ("print", "sys.exit")
+            and all(_is_pure(a) for a in call.args)
+            and all(_is_pure(k.value) for k in call.keywords))
+
+
+def _is_output_stmt(stmt: ast.stmt) -> bool:
+    if isinstance(stmt, ast.For):
+        return not stmt.orelse and _is_pure(stmt.iter) and _only_output(stmt.body)
+    return _is_output_call(stmt)
 
 
 def _only_output(stmts: list[ast.stmt]) -> bool:
     """Whether *stmts* do nothing but `print(...)`, `sys.exit(...)` and loops over them."""
-    for stmt in stmts:
-        if isinstance(stmt, ast.For):
-            if stmt.orelse or not _only_output(stmt.body):
-                return False
-        elif not (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
-                  and ast.unparse(stmt.value.func) in ("print", "sys.exit")):
-            return False
-    return True
+    return all(_is_output_stmt(s) for s in stmts)
+
+
+def _is_path_expr(node: ast.expr, bound: set[str]) -> bool:
+    """Whether *node* is `Path(__file__)` or an earlier binding, extended only by
+    `.resolve()`, `.parent` and `/ "literal"`."""
+    if isinstance(node, ast.Name):
+        return node.id in bound
+    if isinstance(node, ast.Attribute):
+        return node.attr == "parent" and _is_path_expr(node.value, bound)
+    if isinstance(node, ast.BinOp):
+        return (isinstance(node.op, ast.Div) and isinstance(node.right, ast.Constant)
+                and isinstance(node.right.value, str) and _is_path_expr(node.left, bound))
+    if not isinstance(node, ast.Call) or node.keywords:
+        return False
+    if isinstance(node.func, ast.Name):
+        return (node.func.id == "Path" and len(node.args) == 1
+                and isinstance(node.args[0], ast.Name) and node.args[0].id == "__file__")
+    return (isinstance(node.func, ast.Attribute) and node.func.attr == "resolve"
+            and not node.args and _is_path_expr(node.func.value, bound))
 
 
 def _is_help_preamble(node: ast.stmt) -> bool:
@@ -180,7 +217,7 @@ def check_source(source: str, root: Path) -> list[Violation]:
         return [Violation(exc.lineno or 1, f"does not parse: {exc.msg}")]
     if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
         body = body[1:]
-    bound = {"__file__", "Path"}
+    bound: set[str] = set()
     pinned = inserted = False
     entry: tuple[str, str] | None = None
     problems: list[Violation] = []
@@ -193,7 +230,7 @@ def check_source(source: str, root: Path) -> list[Violation]:
             continue
         if _is_stdlib_import(node):
             continue
-        if _is_path_insert(node) and not inserted:
+        if _is_path_insert(node) and pinned and not inserted:
             inserted = True
             continue
         if _is_help_preamble(node) and not pinned:
@@ -202,7 +239,7 @@ def check_source(source: str, root: Path) -> list[Violation]:
             pinned = True
             continue
         if (isinstance(node, ast.Assign) and all(isinstance(t, ast.Name) for t in node.targets)
-                and _names(node.value) & bound and entry is None):
+                and _is_path_expr(node.value, bound) and entry is None):
             bound |= {t.id for t in node.targets}
             continue
         found = _cli_import(node)

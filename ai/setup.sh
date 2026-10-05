@@ -118,6 +118,9 @@ sync_component_bin "$SCRIPT_DIR"
 
 # Generated git and tool-context files sit in the same window: a Pi-only
 # install has no Claude Code step to hang them off, and every harness reads them.
+# Intentionally unconditional and outside register_step/run_steps, like the
+# workbench-rules sync call above it: this is a user-facing behavior change
+# from the old per-step-skippable "Tool context" Claude step, not an oversight.
 ai_generate_rules
 
 # Then each selected tool's own scripts, before running steps — a tool's setup

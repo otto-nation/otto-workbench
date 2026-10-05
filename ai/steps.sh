@@ -35,6 +35,13 @@ unset _ai_sub _AI_DIR
 # Harness-neutral: every harness reads these files, so neither Claude Code's
 # install steps nor Pi's guidelines compose may own the regeneration. Called
 # from sync_ai and ai/setup.sh after workbench-rules sync, before any tool.
+#
+# The tool-context and git-rules blocks below are structurally identical
+# (executable check -> conditional info -> quiet-gated invocation -> warn on
+# missing) apart from the git-rules branch's extra cwd/subshell pinning. Not
+# worth a shared helper for two call sites, but if a third generator joins
+# this function, factor out a `_run_rule_generator name path output_var
+# output_path` helper then.
 ai_generate_rules() {
   local tool_gen="$BIN_SRC_DIR/local/generate-tool-context"
   local git_gen="$WORKBENCH_DIR/git/bin/local/generate-git-rules"

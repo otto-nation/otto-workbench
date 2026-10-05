@@ -2839,18 +2839,9 @@ The describe pass: revise a PR's description against the repo's PR template.
 
 Reads the PR body and the branch's commits, asks the agent for a revision in
 the template's shape, validates what comes back, and applies or drafts it
-under the publishing gate. Commit-aware: the HEAD it described is recorded,
-with whether the result was published, so a repeated run against an unchanged
-branch that was already published is a no-op — a draft does not count. Also
-projects the branch's filed follow-up issues into the body.
-
-`DescribeOptions` carries the hand overrides `pr create` also takes: a title or
-body (the body template-checked as `pr create` checks one, and replacing the
-AI revision) and `--closes` refs (the `pr.close_refs` contract). Any of them
-bypasses the HEAD gate; a title or refs alone, at a HEAD already published, are
-applied to the current body without another AI call. Closing references that the old body carried are re-appended
-when the new body drops them, whoever wrote it. The range the AI reads is
-measured against the PR's base (`pr.context.base_branch`), fetched first.
+under the publishing gate. Commit-aware: the HEAD it described is recorded, so
+a repeated run against an unchanged branch is a no-op. Also projects the
+branch's filed follow-up issues into the body.
 
 `cli.pr_describe` is the command over this — arguments, target resolution, the
 run lock and the trail. Template resolution is `core.pr_template`.
@@ -3652,6 +3643,16 @@ into ``~/.env.local``.
 
 The eval harness: fixture tasks, the scorers that grade each task's output, and the aggregation the CI ratchet gates on.
 
+### eval/baselines.py
+
+What a finished eval session writes down and is judged against.
+
+That is the session document (`build_output`), the per-backend, per-model
+baseline files, the comparison against them, and the refusals that keep a
+bad pass from overwriting a good baseline (`run_post_eval`). Not: running
+arms (`eval.run`), the floors ratchet (`eval.floors`), metrics and tables
+(`eval.scoring`), argument parsing (`cli.eval_models`).
+
 ### eval/conditions.py
 
 The two rule prefixes an A/B run compares, and the trees they are served from.
@@ -3727,6 +3728,19 @@ bills the prefix as cache writes and a warm one as cache reads — the same
 prefix, moved between two fields. A check keyed on writes reads a warm run as a
 zero delta, so it would pass on the first CI run of the day and fail on the
 second for no reason anyone could act on.
+
+This module also holds the measurement the `rules-canary` command runs
+(`measure`, `check`). Argument parsing is `cli.rules_canary`'s.
+
+### eval/run.py
+
+One eval pass over the corpus.
+
+It discovers the cases, seeds one rule tree per arm, runs each case through
+the task its manifest names, prints the summary and A/B tables, and hands the
+session to `eval.baselines`. Not: scoring (`eval.task` and its scorers),
+seeding policy (`eval.conditions`), what may be written afterwards
+(`eval.baselines`), argument parsing (`cli.eval_models`).
 
 ### eval/scoring.py
 
@@ -4284,10 +4298,10 @@ itself is the rule holding rather than a module patching its own attributes.
 
 Where a repo's PR template is, and what it says — resolved in one place.
 
-Three callers need the same answer: ``pr/describe.py`` for ``pr describe``,
-``pr/create_content.py`` for ``pr create``, and the SessionStart hook that
-tells the agent which template this repo ships. Before this module, the
-since-retired Taskfile updater and ``pr describe`` each worked it out for
+Four callers need the same answer: ``lib/ai/pr.sh`` for ``task pr:update``,
+``pr/describe.py`` for ``pr describe``, ``pr/create_content.py`` for
+``pr create``, and the SessionStart hook that tells the agent which template
+this repo ships. Before this module, the first two worked it out for
 themselves and carried the candidate path list and the fallback
 template as literals, under a comment asking whoever edited one to remember the
 other. They had already drifted from GitHub: neither looked in ``docs/``, which
@@ -5539,42 +5553,6 @@ detached HEAD (a `--recover` pin, or a PR whose branch was deleted) the guard
 that normally skips the current branch has no name to match, so the same stale
 neighbour can win on distance alone.
 
-### memory/dream.py
-
-Scan session transcripts and memory state for dream consolidation.
-
-Sessions come from `core.sessions`, which owns what a session is and where one
-lives across every harness. The report header prints a per-harness transcript
-count, so a harness that has stopped being discovered reads as a zero.
-
-Not: transcript discovery, record shapes or automation filtering
-(`core.sessions`), the store (`core.memory`), argument parsing
-(`cli.dream_scan`).
-
-### memory/promote.py
-
-One promotion scan.
-
-It reports every registered repo's memory, the backed-up memories in the
-workbench, and the workbench's rules, scripts, hooks and agents, for the
-promote skill to weigh.
-
-Not: the store, its keys or topic-file parsing (`core.memory`), where the
-registry lives (`config.workbench_projects`), argument parsing or the
-default workbench (`cli.promote_scan`, `core.workbench_paths`).
-
-### memory/state.py
-
-Shared memory-state scan for dream and promote.
-
-Both scans read every registered repo's memory forward from the registry
-and format a last-run stamp plus topic-file rows. The reports stay
-byte-identical; only the stamp name, the dict key, and whether topic
-bodies are included differ.
-
-Not: the store (`core.memory`), argument parsing, or the report layout
-each scan owns.
-
 ### pr/push_intent.py
 
 What every push on this machine was about to do, and whether it did it.
@@ -6128,22 +6106,17 @@ delegate's flags mean.
 Neither property is the delegate's to maintain. A handler that forgets either
 is still correct, and a new one cannot reintroduce the leak by omission.
 
-### cli/dream_scan.py
+### cli/eval_models.py
 
-Scan session transcripts and memory state for dream consolidation.
+Evaluation runner for AI calls made through the workbench.
 
-Replaces Phases 1+2 of the `dream` skill (`ai/skills/dream`): Orient + Gather
-Signal. The `architecture` skill also uses the path-discovery flags rather than
-globbing a harness tree.
+Runs each corpus case through the task its manifest declares — review today,
+ci-fix next — and scores the result against that case's expectations.
 
-```
-dream-scan [--days N] [--home DIR]
-dream-scan [--days N] [--home DIR] --list-transcripts
-dream-scan --memory-dir REPO
-```
-
-`--list-transcripts` prints every transcript path in the window, one per line,
-and exits. `--memory-dir REPO` prints that repo's memory directory and exits.
+Usage:
+  eval-models --corpus eval/corpus/ --models sonnet,opus --effort medium
+  eval-models --entry unchecked-error-go --runs 3
+  eval-models --dry-run
 
 ### cli/needs.py
 
@@ -6269,16 +6242,15 @@ Revise a PR description against the repo's PR template.
 
 Run after the branch stops moving — a description written before the fix passes
 describes a PR that no longer exists. The pass is commit-aware: it records the
-HEAD it described and whether the result was published, and a repeated run
-against an unchanged, published branch is a no-op rather than another AI call,
-which is what lets `pr fix` call it unconditionally at the end of every run.
-A draft is not published, so the `--post` run after it goes ahead. `--force` ignores the recorded SHA; `--dry-run` prints
+HEAD it described, and a repeated run against an unchanged branch is a no-op
+rather than another AI call, which is what lets `pr fix` call it unconditionally
+at the end of every run. `--force` ignores the recorded SHA; `--dry-run` prints
 the revision instead of applying it.
 
 The edit itself answers to the same publishing gate as every other GitHub write:
 without `--post` the revised body is drafted to stderr and the PR is untouched.
 `--dry-run` is the narrower request of the two — it prints the revision and
-records nothing, where a draft records that the pass ran unpublished. `pr fix`
+records nothing, where a draft still records that the pass ran. `pr fix`
 forwards `--post` to the description for this reason, and forwards nothing else.
 
 The template is resolved by `core.pr_template`, which owns the candidate list
@@ -6288,33 +6260,14 @@ root, and `docs/`, and takes the first that exists. A repo with none of them
 gets the built-in fallback (Summary / Changes / Testing only). A differently-named
 template, and GitHub's `PULL_REQUEST_TEMPLATE/` directory form, are not detected.
 
-`--title`, `--body`/`--body-file` and `--closes` are the hand overrides
-`pr create` also takes. A hand body replaces the AI revision, after the
-template check `pr create` applies; `--title` replaces the title (nothing
-else changes it); `--closes` appends a closing line, under the `pr create`
-contract (a tracker key only on Linear). Any of them runs whatever HEAD
-says — explicit intent is never "already done" — though `--title` or
-`--closes` alone, at a HEAD already published, skip the AI revision and
-edit the current body. Closing references that the old
-body carried are re-appended when a revision drops them. `--no-issue` is
-accepted and does nothing. The range the AI reads is measured against the
-PR's own base, fetched first. `--post` claims the publishing token before any
-work (not under `--dry-run`, which publishes nothing), falling back to the
-interactive `gh` login; `--closes` is checked ahead of it, so a
-ref nothing can close is refused without a token lookup.
-
 Exit codes:
-  0  Success (description current, revised, or no PR and nothing asked of one)
-  1  Error (no PR for --title/--body/--closes, gh failure, unusable AI output,
-     refused --closes or --body, no publishing token under --post)
-  2  Usage error (bad flags, unreadable --body-file)
+  0  Success (description current, revised, or nothing to do)
+  1  Error (no PR, gh failure, unusable AI output)
 
 Usage:
   pr-describe                         # revise if HEAD moved since the last pass
   pr-describe --force                 # revise regardless of HEAD
   pr-describe --dry-run               # print the revision, do not push it
-  pr-describe --closes 941 --post     # link an issue for auto-close on merge
-  pr-describe --title "feat: x" --body-file body.md --post
   pr-describe --repo-dir <path>       # specify worktree directory
 
 ### cli/pr_rebase.py
@@ -6351,20 +6304,6 @@ Usage:
   pr-rebase --fork-point <ref>        # replay only the commits after <ref>
   pr-rebase --no-verify               # force-push without running the pre-push hook
   pr-rebase --repo-dir <path>         # specify worktree directory
-
-### cli/promote_scan.py
-
-Scan memories and workbench artifacts for promotion evaluation.
-
-Replaces Phase 1 of the `promote` skill (`ai/skills/promote`): Orient. Reads
-every registered repo's memory plus the workbench checkout's rules, scripts,
-hooks, and agents.
-
-```
-promote-scan [--home DIR] [--workbench DIR]
-```
-
-`--workbench` defaults to `$OTTO_WORKBENCH`, else the checkout this runs from.
 
 ### cli/registry.py
 
@@ -6586,6 +6525,27 @@ Usage:
   review-threads --fix
   review-threads --settle THREAD_ID [--as fixed|dismissed|already_addressed]
   review-threads --finish
+
+### cli/rules_canary.py
+
+Check that `--add-dir` still loads the operator's coding rules.
+
+Usage:
+  rules-canary [--json] [--floor N]
+
+Runs one trivial prompt twice against the same planted fixture directory,
+differing only in whether `--add-dir` is passed, and fails when the difference
+in billed input tokens falls below the floor. Why the check is a difference of
+two runs rather than one absolute reading is on `eval/rules_canary.py`.
+
+Spends two real model calls — a few cents cold, near-free warm. It is not a
+pull-request gate: it runs in the weekly Eval workflow, before the corpus run
+that spends the real money.
+
+Exit codes:
+  0  the rules still arrive
+  1  they do not — every agent is running without coding rules
+  2  the canary could not measure (no CLI, no credentials, a run billing zero)
 
 ### cli/schema.py
 

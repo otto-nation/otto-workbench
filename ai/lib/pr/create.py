@@ -28,7 +28,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import config.workbench_config
 import core.proc
 import core.timeouts
 from core.trail import Trail
@@ -40,7 +39,7 @@ import pr.branch_sync
 import pr.create_content
 import pr.gh_token
 from pr.branch_sync import SyncOutcome
-from pr.close_refs import CloseRefError, normalise, stage
+from pr.close_refs import CloseRefError, normalise_all
 from pr.context import ResolvedContext
 from pr.create_content import ContentError, ContentRequest
 
@@ -124,23 +123,6 @@ def _fetch_refusal(wt: Path, base: str, default: str, *, explicit: bool) -> str:
     return _with_set_head_hint(
         [f"✗ Could not fetch {GIT_REMOTE}/{base}: {detail}"], default, explicit=explicit,
     )
-
-
-def _closes(raw: tuple[str, ...], wt: Path) -> tuple[str, ...]:
-    """Normalise every ``--closes`` value; raises CloseRefError on the first bad one.
-
-    The provider decides what a ref may be, so a config that cannot be read
-    raises ConfigError rather than defaulting: a guessed provider would accept
-    or refuse refs the operator's tracker would not. Read only when there are
-    refs to judge, so a broken config costs nothing to a create without any.
-    """
-    if not raw:
-        return ()
-    provider = config.workbench_config.load_config(wt).issues.provider
-    refs: list[str] = []
-    for value in raw:
-        refs = stage(refs, normalise(value, provider))
-    return tuple(refs)
 
 
 def _nesting_gate(wt: Path, base: str) -> bool:
@@ -231,9 +213,9 @@ def _preflight(
         _say(refusal)
         return None
     try:
-        return _closes(opts.closes, wt)
-    except (CloseRefError, config.workbench_config.ConfigError) as exc:
-        _say(str(exc) if isinstance(exc, CloseRefError) else f"✗ {exc}")
+        return normalise_all(opts.closes, wt)
+    except CloseRefError as exc:
+        _say(str(exc))
         return None
 
 
@@ -241,16 +223,7 @@ def _publishable(
     wt: Path, base: str, branch: str, opts: CreateOptions, trail: Trail | None,
 ) -> bool:
     """Token, nesting gate, push — the steps a dry run skips."""
-    try:
-        pr.gh_token.use_for_publishing(wt)
-    except pr.gh_token.TokenNotConfigured as exc:
-        print(exc.guidance, file=sys.stderr, flush=True)
-        return False
-    except OSError as exc:
-        # The same wording as `pr.gh_token.main`: an unreadable credentials
-        # file is a fault to name, not a traceback.
-        path = exc.filename or "a GH_TOKEN config file"
-        _say(f"✗ Could not read {path}: {exc.strerror or exc}")
+    if not pr.gh_token.ready_for_publishing(wt):
         return False
     if not _nesting_gate(wt, base):
         return False

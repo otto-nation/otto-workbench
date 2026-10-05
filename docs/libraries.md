@@ -1099,7 +1099,7 @@ POSIX-compatible for the go-task path.
 Foundation module: AI command loading, GitHub token resolution (handed off
 to ai/lib/pr/gh_token.py), response handling.
 
-Sourced first by `commit.sh`, `pr.sh`, and `review.sh`, and by the Taskfile
+Sourced first by `commit.sh` and `review.sh`, and by the Taskfile
 tasks that drive them. It inherits the commit conventions by sourcing
 [`conventions.sh`](#conventionssh), so `COMMIT_TYPES` and the length limits
 have one owner across both halves.
@@ -1115,40 +1115,13 @@ State set by its functions: `AI_COMMAND`, `AI_RESPONSE`.
 | `load_gh_token` | Hands GitHub token resolution off to ai/lib/pr/gh_token.py and exports GH_TOKEN. Returns 1 on failure, with the guidance already on stderr. |
 | `run_ai PROMPT [AGENT_OVERRIDE] [TASK_LABEL]` | Requires AI_COMMAND. When AGENT_OVERRIDE is provided, replaces --agent <name> in AI_COMMAND so different tasks can route to the appropriate agent. TASK_LABEL names the call in the usage ledger. Sets AI_RESPONSE. |
 
-### ai/pr.sh
-
-PR content generation: title, description, issue linking, template loading.
-
-Requires [`ai/core.sh`](#aicoresh) to be sourced first. Typical call sequence:
-
-```bash
-load_pr [ARGS]                     # sets SKIP_ISSUE, PR_BASE, AI_COMMAND, BRANCH, DEFAULT_BRANCH
-generate_pr_content BRANCH DEFAULT # sets PR_TITLE, PR_DESCRIPTION
-```
-
-State set by its functions: `BRANCH`, `DEFAULT_BRANCH`, `SKIP_ISSUE`,
-`PR_BASE`, `PR_ISSUE`, `PR_CLOSES`, `PR_TEMPLATE`, `PR_TEMPLATE_PATH`,
-`PR_HAS_TEMPLATE`, `PR_TITLE`, `PR_DESCRIPTION`.
-
-PR creation itself is not here: `pr create` drives it natively through
-ai/lib/pr/create.py and never calls this module. What remains serves
-`task pr:update` only.
-
-| Function | Purpose |
-|----------|---------|
-| `load_pr_context` | Loads the AI command, resolves the current branch context and verifies the effective base has a remote-tracking ref. Sets BRANCH and DEFAULT_BRANCH. Returns 1 on failure. |
-| `parse_pr_flags ARGS` | Parses PR-specific flags from the CLI_ARGS string. Sets SKIP_ISSUE, PR_BASE, PR_TITLE_OVERRIDE, PR_BODY_OVERRIDE, PR_CLOSES. Returns 1 on unknown flag, missing value, or an unclosable --closes reference. |
-| `load_pr [ARGS]` | Parses PR flags from ARGS, then loads the PR context. Sets SKIP_ISSUE, PR_BASE, AI_COMMAND, BRANCH, DEFAULT_BRANCH. Returns 1 on failure. |
-| `pr_preserve_close_refs OLD_BODY` | Re-appends to PR_DESCRIPTION any closing reference OLD_BODY carried that the regenerated body lost. For pr:update, where `gh pr edit --body` replaces the published body outright: an issue somebody linked on the PR stays linked across a regeneration it had no part in. |
-| `generate_pr_content BRANCH DEFAULT_BRANCH` | Requires AI_COMMAND (unless PR_TITLE_OVERRIDE and PR_BODY_OVERRIDE are set). Sets PR_TITLE and PR_DESCRIPTION. |
-
 ### ai/prompts.sh
 
 Prompt templates for all AI automation — pure text generation, no side
 effects.
 
 Each function prints a filled prompt to stdout. Callers pass the dynamic values
-as arguments; the configuration globals (`COMMIT_RULES`, `PR_TEMPLATE`,
+as arguments; the configuration globals (`COMMIT_RULES`,
 `COMMIT_HEADER_MAX_LEN`, and the rest) are read straight from
 [`ai/core.sh`](#aicoresh), which must be sourced first.
 
@@ -1156,8 +1129,6 @@ as arguments; the configuration globals (`COMMIT_RULES`, `PR_TEMPLATE`,
 |----------|---------|
 | `prompt_commit DIFF_CONTENT FILES_SECTION [RETRY_PREAMBLE] [SURFACE_NOTE]` | Generates the commit message prompt. RETRY_PREAMBLE is prepended to it and SURFACE_NOTE is rendered directly after COMMIT_RULES, each when non-empty. |
 | `prompt_commit_retry HEADER HEADER_LEN OVER PREFIX SUBJECT_BUDGET` | Outputs a retry preamble that gives the AI the exact character budget it needs. Passed as RETRY_PREAMBLE to a second call of prompt_commit. |
-| `prompt_pr_single_commit COMMIT_SUBJECT COMMIT_BODY CHANGED_FILES` | For single-commit branches where a PR template exists: asks the AI to fill the template using the commit message. Reads PR_TEMPLATE global. |
-| `prompt_pr_multi_commit BRANCH ISSUE COMMITS COMMIT_COUNT CHANGED_FILES` | For multi-commit branches: asks the AI to generate a PR title and fill the template. Reads PR_TEMPLATE, PR_TITLE_MARKER, PR_DESCRIPTION_MARKER globals. |
 | `prompt_diff_review CONTEXT` | CONTEXT is a pre-built string of labelled diff sections (committed, staged, unstaged). Built by generate_diff_review before calling this function. Review instructions come from the reviewer agent — this prompt provides data only. |
 | `prompt_pr_review PR_NUMBER PR_TITLE PR_BODY COMPACT_DIFF` | Review instructions come from the reviewer agent — this prompt provides data only. |
 

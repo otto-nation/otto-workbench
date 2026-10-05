@@ -16,17 +16,12 @@ into the context — create declares no positional and no target flag.
 from __future__ import annotations
 
 import argparse
-import sys
-from pathlib import Path
 
 import pr.context
 import pr.create
-from core.tool_parser import ToolParser
+from core.tool_parser import EXIT_USAGE, ToolParser, read_file_arg
 
 SCRIPT = "pr create"
-
-# argparse's own usage-error status, which an unreadable --body-file shares.
-_EXIT_USAGE = 2
 
 
 def build_parser() -> ToolParser:
@@ -60,15 +55,6 @@ def build_parser() -> ToolParser:
     return parser
 
 
-def _read_body(path: str) -> str | None:
-    try:
-        return Path(path).read_text()
-    except (OSError, UnicodeDecodeError) as exc:
-        reason = getattr(exc, "strerror", None) or str(exc)
-        print(f"✗ --body-file {path}: {reason}", file=sys.stderr, flush=True)
-        return None
-
-
 def cmd_create(
     argv: list[str], ctx: pr.context.ResolvedContext, *, trail=None, **_kw,
 ) -> int:
@@ -80,9 +66,9 @@ def cmd_create(
     args = build_parser().parse_args(argv)
     body = args.body
     if args.body_file:
-        body = _read_body(args.body_file)
+        body = read_file_arg("--body-file", args.body_file)
         if body is None:
-            return _EXIT_USAGE
+            return EXIT_USAGE
     opts = pr.create.CreateOptions(
         draft=args.draft,
         no_verify=args.no_verify,

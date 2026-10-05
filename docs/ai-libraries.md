@@ -2839,9 +2839,18 @@ The describe pass: revise a PR's description against the repo's PR template.
 
 Reads the PR body and the branch's commits, asks the agent for a revision in
 the template's shape, validates what comes back, and applies or drafts it
-under the publishing gate. Commit-aware: the HEAD it described is recorded, so
-a repeated run against an unchanged branch is a no-op. Also projects the
-branch's filed follow-up issues into the body.
+under the publishing gate. Commit-aware: the HEAD it described is recorded,
+with whether the result was published, so a repeated run against an unchanged
+branch that was already published is a no-op — a draft does not count. Also
+projects the branch's filed follow-up issues into the body.
+
+`DescribeOptions` carries the hand overrides `pr create` also takes: a title or
+body (the body template-checked as `pr create` checks one, and replacing the
+AI revision) and `--closes` refs (the `pr.close_refs` contract). Any of them
+bypasses the HEAD gate; a title or refs alone, at a HEAD already published, are
+applied to the current body without another AI call. Closing references that the old body carried are re-appended
+when the new body drops them, whoever wrote it. The range the AI reads is
+measured against the PR's base (`pr.context.base_branch`), fetched first.
 
 `cli.pr_describe` is the command over this — arguments, target resolution, the
 run lock and the trail. Template resolution is `core.pr_template`.
@@ -4275,10 +4284,10 @@ itself is the rule holding rather than a module patching its own attributes.
 
 Where a repo's PR template is, and what it says — resolved in one place.
 
-Four callers need the same answer: ``lib/ai/pr.sh`` for ``task pr:update``,
-``pr/describe.py`` for ``pr describe``, ``pr/create_content.py`` for
-``pr create``, and the SessionStart hook that tells the agent which template
-this repo ships. Before this module, the first two worked it out for
+Three callers need the same answer: ``pr/describe.py`` for ``pr describe``,
+``pr/create_content.py`` for ``pr create``, and the SessionStart hook that
+tells the agent which template this repo ships. Before this module, the
+since-retired Taskfile updater and ``pr describe`` each worked it out for
 themselves and carried the candidate path list and the fallback
 template as literals, under a comment asking whoever edited one to remember the
 other. They had already drifted from GitHub: neither looked in ``docs/``, which
@@ -6260,15 +6269,16 @@ Revise a PR description against the repo's PR template.
 
 Run after the branch stops moving — a description written before the fix passes
 describes a PR that no longer exists. The pass is commit-aware: it records the
-HEAD it described, and a repeated run against an unchanged branch is a no-op
-rather than another AI call, which is what lets `pr fix` call it unconditionally
-at the end of every run. `--force` ignores the recorded SHA; `--dry-run` prints
+HEAD it described and whether the result was published, and a repeated run
+against an unchanged, published branch is a no-op rather than another AI call,
+which is what lets `pr fix` call it unconditionally at the end of every run.
+A draft is not published, so the `--post` run after it goes ahead. `--force` ignores the recorded SHA; `--dry-run` prints
 the revision instead of applying it.
 
 The edit itself answers to the same publishing gate as every other GitHub write:
 without `--post` the revised body is drafted to stderr and the PR is untouched.
 `--dry-run` is the narrower request of the two — it prints the revision and
-records nothing, where a draft still records that the pass ran. `pr fix`
+records nothing, where a draft records that the pass ran unpublished. `pr fix`
 forwards `--post` to the description for this reason, and forwards nothing else.
 
 The template is resolved by `core.pr_template`, which owns the candidate list
@@ -6278,14 +6288,33 @@ root, and `docs/`, and takes the first that exists. A repo with none of them
 gets the built-in fallback (Summary / Changes / Testing only). A differently-named
 template, and GitHub's `PULL_REQUEST_TEMPLATE/` directory form, are not detected.
 
+`--title`, `--body`/`--body-file` and `--closes` are the hand overrides
+`pr create` also takes. A hand body replaces the AI revision, after the
+template check `pr create` applies; `--title` replaces the title (nothing
+else changes it); `--closes` appends a closing line, under the `pr create`
+contract (a tracker key only on Linear). Any of them runs whatever HEAD
+says — explicit intent is never "already done" — though `--title` or
+`--closes` alone, at a HEAD already published, skip the AI revision and
+edit the current body. Closing references that the old
+body carried are re-appended when a revision drops them. `--no-issue` is
+accepted and does nothing. The range the AI reads is measured against the
+PR's own base, fetched first. `--post` claims the publishing token before any
+work (not under `--dry-run`, which publishes nothing), falling back to the
+interactive `gh` login; `--closes` is checked ahead of it, so a
+ref nothing can close is refused without a token lookup.
+
 Exit codes:
-  0  Success (description current, revised, or nothing to do)
-  1  Error (no PR, gh failure, unusable AI output)
+  0  Success (description current, revised, or no PR and nothing asked of one)
+  1  Error (no PR for --title/--body/--closes, gh failure, unusable AI output,
+     refused --closes or --body, no publishing token under --post)
+  2  Usage error (bad flags, unreadable --body-file)
 
 Usage:
   pr-describe                         # revise if HEAD moved since the last pass
   pr-describe --force                 # revise regardless of HEAD
   pr-describe --dry-run               # print the revision, do not push it
+  pr-describe --closes 941 --post     # link an issue for auto-close on merge
+  pr-describe --title "feat: x" --body-file body.md --post
   pr-describe --repo-dir <path>       # specify worktree directory
 
 ### cli/pr_rebase.py

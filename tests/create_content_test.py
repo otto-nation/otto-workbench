@@ -118,6 +118,25 @@ def test_extract_strips_the_span_between_markers():
     assert extract("<<<TITLE>>>\n  feat: x  \n<<<END_TITLE>>>", "TITLE") == "feat: x"
 
 
+def test_extract_accepts_markers_inline():
+    text = "x <<<DESCRIPTION>>>body<<<END_DESCRIPTION>>> y"
+    assert extract(text, "DESCRIPTION") == "body"
+
+
+def test_extract_returns_none_when_the_end_precedes_the_start():
+    text = "<<<END_TITLE>>>\nfeat: x\n<<<TITLE>>>"
+    assert extract(text, "TITLE") is None
+
+
+def test_extract_takes_the_first_end_marker_after_the_start():
+    text = "<<<END_TITLE>>> stray\n<<<TITLE>>>\nfeat: x\n<<<END_TITLE>>>"
+    assert extract(text, "TITLE") == "feat: x"
+
+
+def test_extract_returns_none_for_an_empty_span():
+    assert extract("<<<TITLE>>>\n   \n<<<END_TITLE>>>", "TITLE") is None
+
+
 # ── resolve_issue ───────────────────────────────────────────────────────────
 
 

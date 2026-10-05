@@ -317,16 +317,13 @@ SCRIPT
   PATH="$TMPDIR/bin:$PATH"
 }
 
-# _make_repo_no_default_branch DIR [INITIAL_BRANCH] [EXTRA_BRANCH] — bare remote +
-# clone with one commit, the way an unfetched clone or a `wt-init`-converted
-# repo ends up: no refs/remotes/origin/HEAD symref, because the clone happened
-# before the remote had any commit for HEAD to point at. When EXTRA_BRANCH is
-# given, checks it out with one more commit on top — for callers that also
-# need to be off the default branch (e.g. load_pr_context's protected-branch guard).
+# _make_repo_no_default_branch DIR [INITIAL_BRANCH] — bare remote + clone with
+# one commit, the way an unfetched clone or a `wt-init`-converted repo ends up:
+# no refs/remotes/origin/HEAD symref, because the clone happened before the
+# remote had any commit for HEAD to point at.
 _make_repo_no_default_branch() {
   local dir="$1"
   local initial_branch="${2:-main}"
-  local extra_branch="${3:-}"
   git init --bare "$dir/remote.git" --quiet --initial-branch="$initial_branch"
   git clone "$dir/remote.git" "$dir/repo" --quiet 2>/dev/null
   git -C "$dir/repo" config user.email "test@example.com"
@@ -335,12 +332,6 @@ _make_repo_no_default_branch() {
   git -C "$dir/repo" add .
   git -C "$dir/repo" commit -m "initial" --quiet
   git -C "$dir/repo" push --quiet
-
-  [[ -z "$extra_branch" ]] && return 0
-  git -C "$dir/repo" checkout -b "$extra_branch" --quiet
-  echo "feature" > "$dir/repo/feature.txt"
-  git -C "$dir/repo" add .
-  git -C "$dir/repo" commit -m "feat: add feature" --quiet
 }
 
 # make_git_remote REMOTE_DIR LOCAL_DIR BRANCH — sets up a bare remote, clones it,

@@ -1,8 +1,8 @@
 """Tests for `pr.close_refs` — the `--closes` contract `pr create` will own.
 
 Ported from the C cases of `tests/pr_issue_link.bats` and the `--closes` cases
-of `tests/parse_pr_flags.bats`. Bash stays until PR 3; these pin the Python
-owner to the same acceptance, staging, presence, and append rules.
+of `tests/parse_pr_flags.bats`, both since deleted with the bash owner; these
+pin the Python owner to the same acceptance, staging, presence, and append rules.
 """
 
 from __future__ import annotations
@@ -18,9 +18,11 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest  # noqa: E402
 
+import config.workbench_config  # noqa: E402
 from config.workbench_config import IssueProvider  # noqa: E402
 from pr.close_refs import (  # noqa: E402
-    CloseRefError, LinkResult, append, normalise, present, stage,
+    CloseRefError, LinkResult, append, normalise, normalise_all, present, preserve,
+    stage,
 )
 
 
@@ -108,6 +110,49 @@ class TestNormalise:
             "✗ --closes banana: expected a GitHub issue number (941 or #941) "
             "or an uppercase tracker key (ENG-123)"
         )
+
+
+# ── normalise_all ───────────────────────────────────────────────────────────
+
+
+class TestNormaliseAll:
+    """The provider lookup both `pr create` and `pr describe` make for `--closes`."""
+
+    @staticmethod
+    def _provider(monkeypatch, provider):
+        class Issues:
+            pass
+
+        class Config:
+            issues = Issues()
+
+        Config.issues.provider = provider
+        monkeypatch.setattr(config.workbench_config, "load_config", lambda wt: Config())
+
+    def test_no_refs_never_reads_the_config(self, monkeypatch, tmp_path):
+        def broken(wt):
+            raise AssertionError("config read with nothing to judge")
+        monkeypatch.setattr(config.workbench_config, "load_config", broken)
+        assert normalise_all((), tmp_path) == ()
+
+    def test_refs_are_normalised_and_deduplicated(self, monkeypatch, tmp_path):
+        self._provider(monkeypatch, IssueProvider.GITHUB)
+        assert normalise_all(("941", "#941", "942"), tmp_path) == ("#941", "#942")
+
+    def test_the_provider_decides_a_tracker_key(self, monkeypatch, tmp_path):
+        self._provider(monkeypatch, IssueProvider.LINEAR)
+        assert normalise_all(("ENG-1",), tmp_path) == ("ENG-1",)
+        self._provider(monkeypatch, IssueProvider.GITHUB)
+        with pytest.raises(CloseRefError, match="only auto-closes on Linear"):
+            normalise_all(("ENG-1",), tmp_path)
+
+    def test_an_unreadable_config_is_a_close_ref_refusal(self, monkeypatch, tmp_path):
+        def broken(wt):
+            raise config.workbench_config.ConfigError("bad config.yml")
+        monkeypatch.setattr(config.workbench_config, "load_config", broken)
+        with pytest.raises(CloseRefError) as exc:
+            normalise_all(("941",), tmp_path)
+        assert str(exc.value) == "✗ bad config.yml"
 
 
 # ── stage ───────────────────────────────────────────────────────────────────
@@ -219,3 +264,59 @@ class TestAppend:
         assert result.linked == ("#942",)
         assert result.already == ("#941",)
         assert result.body == "body\n\nCloses #941\n\nCloses #942"
+
+
+# ── preserve ────────────────────────────────────────────────────────────────
+# Ported from the `pr_preserve_close_refs` cases of `tests/pr_issue_link.bats`.
+
+
+class TestPreserve:
+    def test_restores_a_ref_the_regenerated_body_dropped(self):
+        result = preserve("old body\n\nCloses #941", "a fresh body")
+        assert result.body == "a fresh body\n\nCloses #941"
+        assert result.linked == ("#941",)
+
+    def test_a_fixes_keyword_is_restored_as_closes(self):
+        result = preserve("old body\n\nFixes #941", "a fresh body")
+        assert result.body.endswith("Closes #941")
+        assert "Fixes" not in result.body
+
+    def test_a_lowercase_keyword_is_recognised(self):
+        result = preserve("old body\n\nfixes #941", "a fresh body")
+        assert result.body == "a fresh body\n\nCloses #941"
+
+    def test_does_not_duplicate_a_ref_the_new_body_kept(self):
+        result = preserve("old body\n\nCloses #941", "fresh body\n\nCloses #941")
+        assert result.body.count("Closes #941") == 1
+        assert result.linked == ()
+        assert result.already == ("#941",)
+
+    def test_is_a_no_op_on_an_empty_old_body(self):
+        result = preserve("", "fresh body")
+        assert result == LinkResult(body="fresh body", linked=(), already=())
+
+    def test_is_a_no_op_when_the_old_body_only_mentions_a_ref(self):
+        result = preserve("old body with no refs, and a bare #941 mention", "fresh body")
+        assert result == LinkResult(body="fresh body", linked=(), already=())
+
+    def test_a_tracker_key_is_restored(self):
+        result = preserve("old body\n\nResolves ENG-12", "fresh body")
+        assert result.body == "fresh body\n\nCloses ENG-12"
+
+    def test_the_colon_form_is_recognised(self):
+        result = preserve("old body\n\nCloses: #941", "fresh body")
+        assert result.body == "fresh body\n\nCloses #941"
+
+    def test_a_lowercase_tracker_key_is_not_restored(self):
+        result = preserve("old body\n\ncloses eng-12", "fresh body")
+        assert result == LinkResult(body="fresh body", linked=(), already=())
+
+    def test_an_uppercase_keyword_with_a_tracker_key_is_restored(self):
+        result = preserve("old body\n\nCLOSES ENG-12", "fresh body")
+        assert result.body == "fresh body\n\nCloses ENG-12"
+
+    def test_refs_are_unique_and_kept_in_first_seen_order(self):
+        old = "Closes #942\n\nFixes #941\n\nresolved #942"
+        result = preserve(old, "fresh body")
+        assert result.body == "fresh body\n\nCloses #942\n\nCloses #941"
+        assert result.linked == ("#942", "#941")

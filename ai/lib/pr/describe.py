@@ -2,9 +2,18 @@
 
 Reads the PR body and the branch's commits, asks the agent for a revision in
 the template's shape, validates what comes back, and applies or drafts it
-under the publishing gate. Commit-aware: the HEAD it described is recorded, so
-a repeated run against an unchanged branch is a no-op. Also projects the
-branch's filed follow-up issues into the body.
+under the publishing gate. Commit-aware: the HEAD it described is recorded,
+with whether the result was published, so a repeated run against an unchanged
+branch that was already published is a no-op — a draft does not count. Also
+projects the branch's filed follow-up issues into the body.
+
+`DescribeOptions` carries the hand overrides `pr create` also takes: a title or
+body (the body template-checked as `pr create` checks one, and replacing the
+AI revision) and `--closes` refs (the `pr.close_refs` contract). Any of them
+bypasses the HEAD gate; a title or refs alone, at a HEAD already published, are
+applied to the current body without another AI call. Closing references that the old body carried are re-appended
+when the new body drops them, whoever wrote it. The range the AI reads is
+measured against the PR's base (`pr.context.base_branch`), fetched first.
 
 `cli.pr_describe` is the command over this — arguments, target resolution, the
 run lock and the trail. Template resolution is `core.pr_template`.
@@ -16,22 +25,30 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import sys
 from pathlib import Path
 
 import agent.invoke
 import gh.client
 import git.client
-import git.topology
 import core.log
 import core.pr_template
 import core.publishing
 import pr.context
 import pr.follow_ups
 import pr.state
+from pr.close_refs import CloseRefError, append, normalise_all, preserve
+from pr.create_content import extract, missing_sections, template_refusal
 from core.phases import Phase
 from pr.domains import DescribeSummary
 from core.trail import Trail
 
+# `git_remote` is a workbench-wide module, not an `ai/lib` one; see
+# `pr.branch_sync` for the path arithmetic, which is the same here.
+_WORKBENCH_LIB = Path(__file__).resolve().parent.parent.parent.parent / "lib"
+if _WORKBENCH_LIB.is_dir() and str(_WORKBENCH_LIB) not in sys.path:
+    sys.path.insert(0, str(_WORKBENCH_LIB))
+import git_remote  # noqa: E402
 
 # The binary a user runs and the trail records, which is not this module's own
 # name. Spelled out rather than derived, so the shim can be renamed only by
@@ -43,9 +60,11 @@ SCRIPT = "pr-describe"
 _NO_CHANGE = "DESCRIPTION_CURRENT"
 
 # Extraction markers: the model wraps the revised description in these so we can
-# parse and validate the response before posting it to GitHub.
-_DESCRIBE_BEGIN = "<<<DESCRIPTION>>>"
-_DESCRIBE_END = "<<<END_DESCRIPTION>>>"
+# parse and validate the response before posting it to GitHub. The name is what
+# `pr.create_content.extract` takes; the two spellings are for the prompt.
+_MARKER = "DESCRIPTION"
+_DESCRIBE_BEGIN = f"<<<{_MARKER}>>>"
+_DESCRIBE_END = f"<<<END_{_MARKER}>>>"
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -57,6 +76,28 @@ def _git(cwd: Path, *args: str) -> str:
         core.log.warn(f"git {' '.join(args)} failed: {r.detail}")
         return ""
     return r.stdout.strip()
+
+
+def _fetch_refusal(wt: Path, base: str) -> str:
+    """Bring ``origin/<base>`` current; the ✗ refusal when that fails, else "".
+
+    The range the AI reads is measured against ``origin/<base>``, which is
+    otherwise only as fresh as the clone's last fetch — the same reasoning as
+    ``pr.create``'s fetch ahead of its own measurements. A fetch that exits
+    zero does not guarantee ``origin/<base>`` resolves afterwards (a remote
+    with a non-default refspec, or a base deleted/renamed upstream), so this
+    checks the ref too, as ``pr.create``'s ``_fetch_refusal``/``_base_refusal``
+    pair does — otherwise `_git` in `_ai_revision` would silently degrade
+    ``commits``/``changed_files`` to "" rather than refusing.
+    """
+    r = git.client.run("fetch", git_remote.GIT_REMOTE, base, "--quiet", cwd=wt)
+    if not r.ok:
+        return (f"✗ Could not fetch {git_remote.GIT_REMOTE}/{base}: "
+                f"{r.detail or f'exit {r.returncode}'}")
+    if not git_remote.remote_branch_ref_exists(base, cwd=str(wt)):
+        return (f"✗ {git_remote.GIT_REMOTE}/{base} does not resolve — cannot measure "
+                f"a description against a base that doesn't exist")
+    return ""
 
 
 def _fetch_pr_body(repo: str, pr_number: int) -> tuple[str, str] | None:
@@ -127,25 +168,12 @@ Otherwise wrap the complete revised description in {_DESCRIBE_BEGIN} and \
 {_DESCRIBE_END}"""
 
 
-def _extract_description(text: str) -> str | None:
-    """Extract the revised description from between the extraction markers.
-
-    Returns None when either marker is missing or the content is blank —
-    the caller must not post an unparseable response to GitHub.
-    """
-    begin = text.find(_DESCRIBE_BEGIN)
-    end = text.find(_DESCRIBE_END)
-    if begin == -1 or end == -1 or end <= begin:
-        return None
-    return text[begin + len(_DESCRIBE_BEGIN):end].strip() or None
-
-
 def _usable_revision(text: str) -> bool:
     """The response must be the no-change sentinel or contain parseable markers."""
     t = text.strip()
     if t == _NO_CHANGE:
         return True
-    return _extract_description(t) is not None
+    return extract(t, _MARKER) is not None
 
 
 def _apply_body(repo: str, pr_number: int, body: str) -> bool:
@@ -263,12 +291,117 @@ def _mark_projected(state, entries) -> bool:
     return True
 
 
+@dataclasses.dataclass(frozen=True)
+class DescribeOptions:
+    """What the command line asked of a describe pass.
+
+    ``title`` and ``body`` replace the PR's own; ``body`` also replaces the AI
+    revision. ``closes`` is raw and normalised inside :func:`run_describe`.
+    Any of the three is explicit intent, which the HEAD gate never skips.
+    """
+
+    force: bool = False
+    dry_run: bool = False
+    title: str = ""
+    body: str = ""
+    closes: tuple[str, ...] = ()
+
+    @property
+    def overrides(self) -> bool:
+        return bool(self.title or self.body or self.closes)
+
+
+def _apply_title(repo: str, pr_number: int, title: str) -> bool:
+    """Replace the PR title, when publishing is on. Returns whether it landed.
+
+    The same gate as :func:`_apply_body`, beside the write for the same reason.
+    """
+    if not core.publishing.enabled():
+        core.publishing.draft(f"pr edit {repo}#{pr_number} --title", title)
+        return False
+    r = gh.client.run("pr", "edit", str(pr_number), "--repo", repo, "--title", title)
+    if not r.ok:
+        core.log.error(f"gh pr edit --title failed: {r.detail}")
+        return False
+    return True
+
+
+def _ai_revision(
+    ctx: pr.context.ResolvedContext, wt_path: Path, template, title: str, body: str,
+    *, trail: Trail | None,
+) -> str | None:
+    """The AI's revision of *body*, *body* itself when it says no change, None on failure.
+
+    The range is measured against the PR's own base, so a PR targeting
+    ``release`` is described by what it adds to ``release`` — and the base is
+    fetched first, so the range is not measured against a stale ref.
+    """
+    base = pr.context.base_branch(ctx, cwd=str(wt_path), trail=trail)
+    refusal = _fetch_refusal(wt_path, base)
+    if refusal:
+        print(refusal, file=sys.stderr, flush=True)
+        if trail:
+            trail.error("describe", "could not fetch the base", data={"base": base})
+        return None
+    commits = _git(wt_path, "log", "--oneline", f"origin/{base}..HEAD")
+    changed_files = _git(wt_path, "diff", "--name-only", f"origin/{base}...HEAD")
+
+    prompt = _build_prompt(
+        template.text, template.found, title, body, commits, changed_files,
+    )
+    answer = agent.invoke.run_prompt(
+        Phase.DESCRIBE, prompt,
+        cwd=wt_path, usable=_usable_revision, task=SCRIPT,
+        repo=ctx.repo, pr=str(ctx.pr_number),
+    )
+    if not answer.ok:
+        if trail:
+            trail.error("describe", "AI prompt failed", data={"exit_code": answer.exit_code})
+        core.log.error("ai prompt failed")
+        return None
+
+    raw = answer.text.strip()
+    if raw == _NO_CHANGE:
+        return body
+    revised = extract(raw, _MARKER)
+    if revised is None:
+        # _usable_revision already passed, so this should not happen, but guard
+        # against a caller that bypasses agent.invoke.run_prompt and so never
+        # ran that check.
+        if trail:
+            trail.error("describe", "AI response missing extraction markers")
+        core.log.error("ai response missing extraction markers — not posting to GitHub")
+    return revised
+
+
+def _finish_body(revised: str, old_body: str, entries, closes: tuple[str, ...]) -> str:
+    """Re-inject what a wholesale replacement would otherwise have deleted.
+
+    The follow-up block, then every close ref the old body carried, then the
+    `--closes` refs. Re-injected rather than asked for in the prompt: a hand
+    body was never prompted, and a model told to keep a line can still drop it.
+    """
+    revised = pr.follow_ups.project(revised, entries)
+    kept = preserve(old_body, revised)
+    if kept.linked:
+        core.log.ok("Preserved existing issue link(s): "
+                    + " ".join(f"Closes {ref}" for ref in kept.linked))
+    linked = append(kept.body, closes)
+    if linked.linked:
+        core.log.ok("Linked for auto-close on merge: "
+                    + " ".join(f"Closes {ref}" for ref in linked.linked))
+    return linked.body
+
+
 def run_describe(
-    ctx: pr.context.ResolvedContext, *,
-    force: bool = False, dry_run: bool = False,
+    ctx: pr.context.ResolvedContext, opts: DescribeOptions = DescribeOptions(), *,
     trail: Trail | None = None,
 ) -> int:
     """Revise the PR description if HEAD moved since the last pass.
+
+    `opts.title`, `opts.body` and `opts.closes` are explicit requests and run
+    whatever HEAD says; a hand body replaces the AI revision outright, after
+    the same template check `pr create` applies.
 
     Callers must hold the target's run lock before calling this: it writes to
     GitHub (via `project_follow_ups`) and to the state file ahead of the
@@ -278,22 +411,38 @@ def run_describe(
     it too rather than invoke this concurrently.
     """
     if not ctx.pr_number:
+        # An override is a request to change a PR, and there is none to change.
+        # Without one this stays a no-op, which is what lets `pr fix` call
+        # describe unconditionally.
+        if opts.overrides:
+            print(f"✗ No PR found for {ctx.branch} — --title/--body/--closes need one; "
+                  "use pr create", file=sys.stderr, flush=True)
+            return 1
         core.log.info("No PR for this branch — nothing to describe")
         return 0
 
     wt_path = ctx.require_worktree()
+    try:
+        closes = normalise_all(opts.closes, wt_path)
+    except CloseRefError as exc:
+        print(str(exc), file=sys.stderr, flush=True)
+        return 1
     state = pr.state.load_state(ctx.target_dir)
 
     # Ahead of the HEAD gate: see project_follow_ups. Skipped on a dry run,
     # which must not write to GitHub.
     projection = Projection()
-    if state and not dry_run:
+    if state and not opts.dry_run:
         projection = project_follow_ups(ctx, state, trail=trail)
         if projection.moved:
             pr.state.save_state(ctx.target_dir, state)
 
+    # Only a published run counts as done: a draft at this HEAD wrote nothing,
+    # so the `--post` that follows it must not be skipped.
     last_sha = state.describe.head_sha if state else ""
-    if last_sha and last_sha == ctx.head_sha and not force:
+    published_at_head = bool(
+        last_sha and last_sha == ctx.head_sha and state.describe.published)
+    if published_at_head and not (opts.force or opts.overrides):
         core.log.info(
             f"Description already written for {git.client.abbrev(ctx.head_sha)} — skipping")
         return 0
@@ -312,74 +461,103 @@ def run_describe(
         return 1
     title, body = fetched
 
-    base = git.topology.default_branch(wt_path)
-    commits = _git(wt_path, "log", "--oneline", f"origin/{base}..HEAD")
-    changed_files = _git(wt_path, "diff", "--name-only", f"origin/{base}...HEAD")
+    if opts.body:
+        missing = missing_sections(template, opts.body)
+        if missing:
+            print(template_refusal(template, missing), file=sys.stderr, flush=True)
+            return 1
+        revised = opts.body
+    elif published_at_head and not opts.force:
+        # Only --title/--closes were asked for, against a body already
+        # published for this HEAD: the revision would be the same AI call the
+        # gate exists to save, so they are applied to the body as it stands.
+        revised = body
+    else:
+        revised = _ai_revision(ctx, wt_path, template, title, body, trail=trail)
+        if revised is None:
+            return 1
 
-    prompt = _build_prompt(
-        template.text, template.found, title, body, commits, changed_files,
-    )
-    answer = agent.invoke.run_prompt(
-        Phase.DESCRIBE, prompt,
-        cwd=wt_path, usable=_usable_revision, task=SCRIPT,
-        repo=ctx.repo, pr=str(ctx.pr_number),
-    )
-    if not answer.ok:
-        if trail:
-            trail.error("describe", "AI prompt failed", data={"exit_code": answer.exit_code})
-        core.log.error("ai prompt failed")
-        return 1
+    entries = state.follow_ups.entries if state else []
+    revised = _finish_body(revised, body, entries, closes)
 
-    raw = answer.text.strip()
-    if raw == _NO_CHANGE:
+    # Measured against what the PR holds once the follow-ups are in it, not
+    # against the body as read. In a draft — or on a dry run, which skips the
+    # projection pass — the read body lacks the follow-up block, so a no-change
+    # answer would otherwise come back from _finish_body as a revision and be
+    # drafted, and recorded as one, a second time.
+    projected = pr.follow_ups.project(body, entries) if entries else body
+    if revised.strip() == projected.strip() and not opts.title:
         core.log.info("Description already matches the template — no change")
-        _persist(wt_path, ctx, DescribeSummary(
-            head_sha=ctx.head_sha, template_path=template.path,
-            changed=False, updated_at=pr.state.now_iso(),
-        ))
+        if not opts.dry_run:
+            _persist(wt_path, ctx, DescribeSummary(
+                head_sha=ctx.head_sha, template_path=template.path,
+                changed=False, published=True, updated_at=pr.state.now_iso(),
+            ))
         return 0
 
-    revised = _extract_description(raw)
-    if revised is not None and state:
-        # The AI replaces the body wholesale, so a block it did not reproduce is
-        # a block this pass would have deleted. Re-injected rather than asked
-        # for in the prompt: the prompt already asks for closing keywords
-        # verbatim and `pr_preserve_close_refs` still exists as the backstop for
-        # a one-line ref, so a multi-line block will not survive on instruction.
-        revised = pr.follow_ups.project(revised, state.follow_ups.entries)
-    if revised is None:
-        # _usable_revision already passed, so this should not happen, but guard
-        # against a caller that bypasses agent.invoke.run_prompt and so never
-        # ran that check.
-        if trail:
-            trail.error("describe", "AI response missing extraction markers")
-        core.log.error("ai response missing extraction markers — not posting to GitHub")
-        return 1
-
-    if dry_run:
+    if opts.dry_run:
+        if opts.title:
+            print(opts.title)
+            print()
         print(revised)
         return 0
 
-    applied = _apply_body(ctx.repo, ctx.pr_number, revised)
-    if not applied and core.publishing.enabled():
-        # The gate was open and the write still failed — a real error, not a
-        # draft. publishing.enabled() is what tells the two apart: _apply_body
-        # returns False for both, and a draft is not a failure.
-        if trail:
-            trail.error("describe", "could not write the PR body",
-                        data={"pr": ctx.pr_number})
+    written = _write(ctx, revised, body, opts.title, template, trail=trail)
+    if not written.ok:
         return 1
+    # Recorded either way, with whether it reached the PR: _write returned
+    # True, so with the gate open every write it attempted landed. A draft
+    # records published=False, which the HEAD gate reads as not yet done.
+    # `changed` is the comparison `_write` itself acted on — threaded through
+    # rather than recomputed, so persisting can never drift from what `_write`
+    # did. A title-only override against a body that did not move (e.g. a
+    # published HEAD) must not be reported as a body change.
+    _persist(wt_path, ctx, DescribeSummary(
+        head_sha=ctx.head_sha, template_path=template.path,
+        changed=written.changed, published=core.publishing.enabled(),
+        updated_at=pr.state.now_iso(),
+    ))
+    return 0
 
+
+@dataclasses.dataclass(frozen=True)
+class WriteResult:
+    """What `_write` did: whether it failed, and whether the body moved.
+
+    ``ok`` is False only on a real failure — a draft is not one, since both
+    writes return False with the gate closed, and `core.publishing.enabled()`
+    is what tells a draft from a rejected edit. ``changed`` is `_write`'s own
+    revised/body comparison, for the caller to persist without recomputing it
+    and risking the two drifting apart.
+    """
+
+    ok: bool
+    changed: bool
+
+
+def _write(
+    ctx: pr.context.ResolvedContext, revised: str, body: str, title: str, template,
+    *, trail: Trail | None,
+) -> WriteResult:
+    """Apply the body (when it changed) and the title (when given). See `WriteResult`."""
+    publishing = core.publishing.enabled()
+    changed = revised.strip() != body.strip()
+    applied = changed and _apply_body(ctx.repo, ctx.pr_number, revised)
+    if changed and not applied and publishing:
+        return WriteResult(_write_failed(trail, ctx, "could not write the PR body"), changed)
     if applied:
-        core.log.info(f"Revised PR description against {template.path or 'the default template'}")
+        core.log.info(
+            f"Revised PR description against {template.path or 'the default template'}")
         if trail:
             trail.info("describe", "description revised",
                        data={"template": template.path, "head_sha": ctx.head_sha})
-    # Recorded either way: a draft still reflects a real revision the AI
-    # produced at this HEAD, so a repeated run before `--post` should not
-    # re-earn the AI call — see the module docstring's commit-awareness note.
-    _persist(wt_path, ctx, DescribeSummary(
-        head_sha=ctx.head_sha, template_path=template.path,
-        changed=True, updated_at=pr.state.now_iso(),
-    ))
-    return 0
+    if title and not _apply_title(ctx.repo, ctx.pr_number, title) and publishing:
+        return WriteResult(_write_failed(trail, ctx, "could not write the PR title"), changed)
+    return WriteResult(True, changed)
+
+
+def _write_failed(trail: Trail | None, ctx: pr.context.ResolvedContext, what: str) -> bool:
+    """Record a rejected write on the trail; always False, for `_write` to return."""
+    if trail:
+        trail.error("describe", what, data={"pr": ctx.pr_number})
+    return False

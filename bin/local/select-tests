@@ -75,10 +75,7 @@ NO_REFS_TESTS=(
   install_cask
   load_ai_command
   load_gh_token_shim
-  load_pr_context
-  parse_pr_flags
   pi_skill_override
-  pr_issue_link
   run_ai
   session_count
   step_install_claude

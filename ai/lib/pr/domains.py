@@ -756,10 +756,17 @@ class DescribeSummary(Domain):
     ``head_sha`` is what makes the pass commit-aware: a description already
     written for the current HEAD does not need rewriting, so a repeated run is
     a no-op instead of another AI call against an unchanged branch.
+
+    ``published`` says the run's result reached the PR — the body, and the
+    title when one was asked for, were written, or nothing needed writing. A
+    draft records False, so the later ``--post`` at the same HEAD is not
+    skipped as already done. State written before the field existed reads as
+    False, which costs one re-run.
     """
     head_sha: str = ""
     template_path: str = ""
     changed: bool = False
+    published: bool = False
 
 
 class SupersessionKind(StrEnum):

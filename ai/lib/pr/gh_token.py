@@ -207,6 +207,30 @@ def use_for_publishing(cwd: Path) -> TokenSource | None:
     raise TokenNotConfigured(guidance)
 
 
+def _unreadable(exc: OSError) -> str:
+    """The ✗ line for a credentials file that exists but cannot be read."""
+    path = exc.filename or "a GH_TOKEN config file"
+    return f"\u2717 Could not read {path}: {exc.strerror or exc}"
+
+
+def ready_for_publishing(cwd: Path) -> bool:
+    """:func:`use_for_publishing`, reporting a refusal on stderr. True when ready.
+
+    For a command about to write to GitHub: no token and no interactive login
+    prints the guidance, and an unreadable credentials file is named rather
+    than escaping as a traceback.
+    """
+    try:
+        use_for_publishing(cwd)
+    except TokenNotConfigured as exc:
+        print(exc.guidance, file=sys.stderr, flush=True)
+        return False
+    except OSError as exc:
+        print(_unreadable(exc), file=sys.stderr, flush=True)
+        return False
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     """Print the resolved token, or the guidance on stderr and exit 1."""
     parser = argparse.ArgumentParser(description="Resolve GH_TOKEN for AI automation.")
@@ -222,9 +246,7 @@ def main(argv: list[str] | None = None) -> int:
         # unreadable credentials file is a fault to report, not a tier to
         # skip) — report it the same way as every other failure here instead
         # of letting a raw traceback out of the CLI entry point.
-        path = exc.filename or "a GH_TOKEN config file"
-        reason = exc.strerror or str(exc)
-        print(f"\u2717 Could not read {path}: {reason}", file=sys.stderr)
+        print(_unreadable(exc), file=sys.stderr)
         return 1
     print(token.value)
     return 0

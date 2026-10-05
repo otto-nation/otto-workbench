@@ -4,8 +4,8 @@ Driven with the argv a user types, with `pr.create.run_create` stubbed: what
 is under test is that each flag reaches `CreateOptions` intact (D12), that a
 flag value is never classified as a PR target, the `--body-file` contract
 (D11), and that `pr create --help` / `--tool-schema` answer from create's own
-parser. Ported from `tests/parse_pr_flags.bats` and the create-forwarding
-tests that lived in `tests/pr_cli_test.py`.
+parser. Ported from `tests/parse_pr_flags.bats`, since deleted with the bash
+owner, and the create-forwarding tests that lived in `tests/pr_cli_test.py`.
 """
 
 from __future__ import annotations

@@ -881,6 +881,10 @@ Takes no flags.
 | `--force` | Revise even when HEAD has not moved since the last pass. |
 | `--dry-run` | Print the revision instead of applying it. |
 | `--post` | Apply the revision to the PR; without it the edit is drafted. |
+| `--title` `<text>` | Replace the PR title. |
+| `--body` `<text>` | Replace the PR body instead of revising it. Not with `--body-file`. |
+| `--body-file` `<path>` | Read the replacement body from this file. Not with `--body`. |
+| `--closes` `<id>` | Issue to close on merge (repeatable). |
 
 **`pr batch plan`** — Show which PRs need which steps
 

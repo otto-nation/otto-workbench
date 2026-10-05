@@ -3,7 +3,7 @@
 # effects.
 #
 # Each function prints a filled prompt to stdout. Callers pass the dynamic values
-# as arguments; the configuration globals (`COMMIT_RULES`, `PR_TEMPLATE`,
+# as arguments; the configuration globals (`COMMIT_RULES`,
 # `COMMIT_HEADER_MAX_LEN`, and the rest) are read straight from
 # [`ai/core.sh`](#aicoresh), which must be sourced first.
 
@@ -56,53 +56,6 @@ prompt_commit_retry() {
 PREVIOUS ATTEMPT FAILED: '${header}' is ${header_len} characters — ${over} over the limit.
 
 You used the prefix '${prefix}' (${#prefix} chars). That leaves EXACTLY ${subject_budget} characters for the subject. Write a subject of ${subject_budget} characters or fewer. Count every character. Use the same prefix unless it genuinely does not fit.
-EOF
-}
-
-# prompt_pr_single_commit COMMIT_SUBJECT COMMIT_BODY CHANGED_FILES
-# For single-commit branches where a PR template exists: asks the AI to fill
-# the template using the commit message. Reads PR_TEMPLATE global.
-prompt_pr_single_commit() {
-  local commit_subject="$1" commit_body="$2" changed_files="$3"
-
-  cat <<EOF
-Fill out this PR template based on the commit below. Return only the filled template body — no title, no markers, no extra commentary.
-
-Template:
-${PR_TEMPLATE}
-
-Commit subject: ${commit_subject}
-Commit body: ${commit_body:-<none>}
-
-Changed files:
-${changed_files}
-EOF
-}
-
-# prompt_pr_multi_commit BRANCH ISSUE COMMITS COMMIT_COUNT CHANGED_FILES
-# For multi-commit branches: asks the AI to generate a PR title and fill the
-# template. Reads PR_TEMPLATE, PR_TITLE_MARKER, PR_DESCRIPTION_MARKER globals.
-prompt_pr_multi_commit() {
-  local branch="$1" issue="$2" commits="$3" commit_count="$4" changed_files="$5"
-
-  cat <<EOF
-Generate a professional PR title and fill out this template based on the changes:
-
-Template:
-${PR_TEMPLATE}
-
-Branch: ${branch}
-Issue: ${issue:-None}
-Commits: ${commit_count}
-
-Recent commits:
-${commits}
-
-Changed files:
-${changed_files}
-
-Return: ${PR_TITLE_MARKER} <title>
-${PR_DESCRIPTION_MARKER} <filled template>
 EOF
 }
 

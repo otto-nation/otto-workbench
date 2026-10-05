@@ -27,6 +27,7 @@ _stub_selectors() {
     printf '#!/usr/bin/env bash\necho "%s $*"\n' "$name" > "$dir/bin/local/$name"
     chmod +x "$dir/bin/local/$name"
   done
+  # shellcheck disable=SC2034  # read by select_changed in bin/local/run-tests
   WORKBENCH_DIR="$dir"
 }
 
@@ -41,6 +42,7 @@ _stub_selectors() {
 @test "WORKBENCH_FIX_BASE is the default base" {
   _stub_selectors
   CHANGED_BASE=""
+  # shellcheck disable=SC2034  # read by select_changed in bin/local/run-tests
   WORKBENCH_FIX_BASE=abc123
   select_changed all
   [ "$BATS_FILES" = "select-tests --base abc123" ]
@@ -48,6 +50,7 @@ _stub_selectors() {
 
 @test "with neither, the base stays origin/main" {
   _stub_selectors
+  # shellcheck disable=SC2034  # read by select_changed in bin/local/run-tests
   CHANGED_BASE=""
   select_changed all
   [ "$PYTEST_FILES" = "select-pytest --base origin/main" ]

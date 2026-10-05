@@ -3,8 +3,8 @@
 
 Usage: bin/local/validate-entry-points [--quiet] [file...]
 
-A script under `ai/bin/` or `ai/claude/bin/` that puts `ai/lib` on `sys.path`
-is an entry point into the layered library, and its body belongs in the
+A script under `ai/bin/` or `ai/claude/bin/` that carries the `ai/lib` pin or
+imports an `ai/lib` package is an entry point into the layered library, and its body belongs in the
 library: at the lowest layer its imports permit, with `ai/lib/cli/<name>.py`
 holding the parser and the call. A body left in the script is code no other
 module can import and no test reaches except by executing the file. Every
@@ -107,9 +107,39 @@ def discover(root: Path) -> list[Path]:
     return sorted(found)
 
 
-def in_scope(source: str) -> bool:
-    """Whether the script places ai/lib on its path — the mark of an entry point."""
-    return PIN_ENV in source
+def _lib_packages(root: Path) -> frozenset[str]:
+    """The importable packages under ai/lib — every directory with an `__init__.py`."""
+    lib = root / "ai" / "lib"
+    if not lib.is_dir():
+        return frozenset()
+    return frozenset(p.name for p in lib.iterdir() if (p / "__init__.py").is_file())
+
+
+def _imported_roots(source: str) -> set[str]:
+    """The first segment of every absolute import anywhere in *source*."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+    roots = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            roots |= {a.name.split(".")[0] for a in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            roots.add(node.module.split(".")[0])
+    return roots
+
+
+def in_scope(source: str, root: Path | None = None) -> bool:
+    """Whether the script is an entry point into ai/lib.
+
+    It is when it carries the pin, or when it imports an ai/lib package by any
+    route. The second arm is what keeps a script from leaving the check by
+    dropping the pin stanza: the shape check then refuses it for the missing pin.
+    """
+    if PIN_ENV in source:
+        return True
+    return bool(_imported_roots(source) & _lib_packages(root or _WORKBENCH_DIR))
 
 
 # String methods a --help preamble may use to shape the docstring it prints.
@@ -313,7 +343,7 @@ def main(argv: list[str] | None = None) -> int:
             failed += 1
             _report(rel, [Violation(1, f"cannot read: {exc}")])
             continue
-        if not in_scope(source):
+        if not in_scope(source, root):
             continue
         checked += 1
         problems = check_source(source, root)

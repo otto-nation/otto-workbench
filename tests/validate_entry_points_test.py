@@ -11,7 +11,7 @@ SCRIPT = REPO_ROOT / "bin" / "local" / "validate-entry-points"
 
 # The entry points the repo ships. Asserted exactly, so adding or retiring one
 # is a deliberate edit here and discovery silently losing some cannot pass.
-MIN_SHIMS = 23
+SHIM_COUNT = 23
 
 vep = load_script("validate_entry_points", SCRIPT)
 
@@ -203,6 +203,19 @@ def test_a_standalone_script_is_out_of_scope():
     assert vep.in_scope(_shim())
 
 
+def test_a_script_importing_ai_lib_without_the_pin_is_in_scope_and_refused(root):
+    """Dropping the pin stanza must not take a script out of the check."""
+    source = (HEADER + 'sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))\n'
+              "from core.version import version_string\n\nprint(version_string())\n")
+    assert vep.in_scope(source)
+    assert vep.check_source(source, root) != []
+
+
+def test_a_script_importing_only_a_bin_helper_is_out_of_scope():
+    """`_version` is a sibling helper in the bin directory, not an ai/lib package."""
+    assert not vep.in_scope(HEADER + "from _version import version_string\n\nprint(version_string())\n")
+
+
 def test_discover_skips_helper_modules_and_non_python(tmp_path):
     bin_dir = tmp_path / "ai" / "bin"
     bin_dir.mkdir(parents=True)
@@ -237,7 +250,7 @@ def test_every_shim_in_this_repo_passes():
     """The shims the repo ships; a body creeping back into one fails here."""
     shims = [p for p in vep.discover(REPO_ROOT) if vep.in_scope(p.read_text())]
     # Fails if discovery or the scope test silently stops finding entry points.
-    assert len(shims) == MIN_SHIMS
+    assert len(shims) == SHIM_COUNT
     offenders = {
         str(p.relative_to(REPO_ROOT)): vep.check_source(p.read_text(), REPO_ROOT)
         for p in shims

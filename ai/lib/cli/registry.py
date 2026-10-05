@@ -138,7 +138,7 @@ _SPECS: tuple[CommandSpec, ...] = (
     # Orchestrates other commands across many PRs, so it resolves no target of
     # its own and takes no lock: each child `pr` locks its own PR and worktree,
     # and the run holds a per-run lock under the batch state root.
-    CommandSpec("batch",    "Run rebase, comments and self-review across my open PRs",
+    CommandSpec("batch",    "Run rebase, CI fixes, comments and self-review across my open PRs",
                 Need(NONE,   update=False, lock=False), takes_target=False,
                 handler="cli.pr_batch:cmd_batch", parses_own_argv=True),
     CommandSpec("gc",       "Clean up stale PR artifacts",

@@ -1,4 +1,24 @@
-"""Apply an operator's answer to one decision, then move the item on."""
+"""Apply an operator's answer to one decision, then move the item on.
+
+| Kind | Action | Effect |
+|---|---|---|
+| `step_review` | `accept` | the decision's own step → `done`; its commits stay drafted |
+| | `retry` | that step → `pending`. A `stacked_on` review is retried by the scheduler once its base item is terminal |
+| | `skip-step` | that step → `skipped`; commits it made stay drafted |
+| | `undo` | rebase only: `git reset --hard <pre_rebase_head>`, rebase → `skipped` and undrafted; failure → `failed` |
+| `comment_item` | `settle-fixed` / `settle-addressed` / `settle-dismissed` / `reply` / `track` | comments step `done` once no `comment_item` remains; `settle-dismissed` needs `--reason`; `reply` needs `--body-file` and a replyable item |
+| `rebase_conflict` | `retry` / `abort` | rebase → `pending`, resuming the paused replay / `skipped`; a failed abort → `failed` |
+| `rebase_refused` | `drop-pr` / `force` | item → `dropped` / forced draft rebase: rebase `done` and drafted (needs payload `override`) |
+| `open_findings` | `accept` | from runs saved before `step_review`; review step `done` |
+| `dirty_worktree` | `retry` / `drop-pr` | re-checked when the item is next admitted (the payload names a stash command) / item → `dropped` |
+| `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped`; item → `dropped` |
+| `failed` | `force-publish` | only `reason: not_incorporated_remote`; same as `publish` past exactly the commits listed in the refusal (a newly appeared remote commit refuses again) |
+| `publish` | `publish` | see `batch.publish`; success → item `done`, or reopened once for `--watch-ci`; a refusal or failed command → `failed` on step `publish`, `reason` set |
+| | `discard` | item → `done`; local commits stay and nothing is pushed |
+
+`open-chat` is offered where listed and refused by the CLI, leaving the
+decision open.
+"""
 
 # doc-group: batch
 

@@ -3340,7 +3340,7 @@ and another repo that wants to know what has been reviewed asks the CLI (see
 
 ## Batch
 
-Running rebase, comments and self-review across many open PRs at once: admission, scheduling, step processes, and the decisions a run waits on.
+Running rebase, CI fixes, comments and self-review across many open PRs at once: admission, scheduling, step processes, publishing, and the decisions a run waits on.
 
 ### batch/admission.py
 
@@ -3406,6 +3406,25 @@ the push lands, so a failure in the replies after it never strands the item.
 ### batch/resolve.py
 
 Apply an operator's answer to one decision, then move the item on.
+
+| Kind | Action | Effect |
+|---|---|---|
+| `step_review` | `accept` | the decision's own step → `done`; its commits stay drafted |
+| | `retry` | that step → `pending`. A `stacked_on` review is retried by the scheduler once its base item is terminal |
+| | `skip-step` | that step → `skipped`; commits it made stay drafted |
+| | `undo` | rebase only: `git reset --hard <pre_rebase_head>`, rebase → `skipped` and undrafted; failure → `failed` |
+| `comment_item` | `settle-fixed` / `settle-addressed` / `settle-dismissed` / `reply` / `track` | comments step `done` once no `comment_item` remains; `settle-dismissed` needs `--reason`; `reply` needs `--body-file` and a replyable item |
+| `rebase_conflict` | `retry` / `abort` | rebase → `pending`, resuming the paused replay / `skipped`; a failed abort → `failed` |
+| `rebase_refused` | `drop-pr` / `force` | item → `dropped` / forced draft rebase: rebase `done` and drafted (needs payload `override`) |
+| `open_findings` | `accept` | from runs saved before `step_review`; review step `done` |
+| `dirty_worktree` | `retry` / `drop-pr` | re-checked when the item is next admitted (the payload names a stash command) / item → `dropped` |
+| `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped`; item → `dropped` |
+| `failed` | `force-publish` | only `reason: not_incorporated_remote`; same as `publish` past exactly the commits listed in the refusal (a newly appeared remote commit refuses again) |
+| `publish` | `publish` | see `batch.publish`; success → item `done`, or reopened once for `--watch-ci`; a refusal or failed command → `failed` on step `publish`, `reason` set |
+| | `discard` | item → `done`; local commits stay and nothing is pushed |
+
+`open-chat` is offered where listed and refused by the CLI, leaving the
+decision open.
 
 ### batch/scheduler.py
 
@@ -6245,7 +6264,7 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
 
 ### cli/pr_batch.py
 
-`pr batch` — run rebase, comments and self-review across my open PRs.
+`pr batch` — rebase, fix CI, address comments and self-review across my open PRs.
 
     pr batch plan   --checkout DIR …           which PRs need which steps (JSON)
     pr batch run    --checkout DIR … [opts]    start a run; NDJSON events on stdout
@@ -6253,6 +6272,8 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
     pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
     pr batch cancel [RUN_ID] [--kill]
     pr batch status [RUN_ID]
+
+Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish.
 
 Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions.
 

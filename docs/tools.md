@@ -6,14 +6,14 @@ description: Complete catalog of workbench scripts, installed tools, and shell a
 
 # Tools & Scripts Reference
 
-Complete catalog of workbench scripts, installed tools, and shell aliases. Generated from the [tool registries](registries.md) and from the scripts themselves — nothing on this page is written here.
+Complete catalog of workbench scripts, installed tools, and shell aliases. Auto-generated from [tool registries](registries.md) — do not edit the generated sections directly.
 
 ## Scripts
 
 | Script | Description |
 |--------|-------------|
 | `record-filed-issue` | Records an issue filed by hand in the branch's follow-up ledger — called by both harnesses' post-execution hooks |
-| `pr` | Unified PR lifecycle CLI — creation, CI failures, code review, and review comments |
+| `pr` | Unified PR lifecycle CLI — CI failures, code review, and review comments |
 | `review` | Run the configured review agent on a PR with local worktree checkout and iterative review support |
 | `otto-log` | Query the unified trail root and AI usage across otto-workbench scripts — audit trail plus cost and token stats |
 | `workbench-rules` | Manages this machine's own coding-rule layers — local additions and overrides, for whichever harnesses are installed |
@@ -85,8 +85,8 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `validate-skip-coverage` | Validates that a platform skip does not silence a test whose subject is a tracked file — CI is Linux-only, so a darwin guard over a repo file is an assertion that never runs |
 | `validate-permissions` | Validates that every Bash permission rule can match a command, that no untracked settings file duplicates a tracked grant or re-grants a gated one, and that a tracked allow bucket is in the codepoint order both ai sync and Claude Code write it back in — --fix prunes the duplicates and sorts the bucket |
 | `validate-ceiling` | Validates that every ceiling marker names an upgrade trigger or is marked permanent |
-| `validate-file-size` | Fails when a source file passes 600 code lines — blanks, comments and docstrings are not counted, so documenting a file never pushes it over. No exemptions |
-| `validate-test-layout` | Fails when a Python module under tests/ is neither <subject>_test.py nor a declared support module, or when a Python or bats suite passes the 600-code-line cap the source gate uses. No exemptions |
+| `validate-file-size` | Fails when a source file passes 600 code lines — blanks, comments and docstrings are not counted, so documenting a file never pushes it over. The files already over are named with the issue that splits each |
+| `validate-test-layout` | Fails when a Python module under tests/ is neither <subject>_test.py nor a declared support module, or when a Python or bats suite passes the 600-code-line cap the source gate uses. The bats suites already over are named with the issue that splits them |
 | `check-new-tests` | Runs the tests a change adds against a worktree at the merge base and reports any that pass without the change — the revert check the testing rule prescribes, done once from the diff |
 | `validate-yq-version` | Fails when this machine's yq is older than the one CI pins — an expression the older parser rejects fails every registry read at once |
 | `validate-eval-baselines` | Validates eval baseline files for schema correctness and corpus coverage |
@@ -98,7 +98,6 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `validate-rules` | Validates rule frontmatter conventions — harness scoping resolves, no Claude-only tool vocabulary in a rule that reaches Pi |
 | `compose-docs` | Composes docs/*.md from docs/*.src.md by expanding include directives into generator output |
 | `generate-doc-reference` | Renders a module reference from the doc blocks of a source set's own modules |
-| `generate-cli-reference` | Renders a registered tool's usage line or flag tables from its own argparse parser |
 | `generate-tool-context` | Generates tools.generated*.md rule files from the domain registries |
 | `generate-config-schema` | Generates config.schema.json and the docs key reference from WorkbenchConfig |
 | `generate-public-surface` | Generates the per-package public surface snapshot from the registries, config schema, and shipped artifacts |
@@ -119,104 +118,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 
 ## Script Reference
 
-Each section below is the script's own header — the comment block under its shebang, or a Python script's docstring — so the description lives beside the code it describes and changes with it. Which scripts appear is the registries' decision: every `full` or `brief` tool is here unless its entry says `reference: false`, and a `hidden` one only when it says `reference: true` (see [Registries](registries.md#tool-entries)). The workbench's own validators and generators in `bin/local/` are documented in [CONTRIBUTING.md](https://github.com/otto-nation/otto-workbench/blob/main/CONTRIBUTING.md) instead.
-
-How the AI subsystem behaves behind these entry points — review phases, publishing, settlement, the summary record — is in [AI Automation](ai-automation.md), and each module's own account is in [AI Libraries](ai-libraries.md).
-
-**Workbench scripts** — general-purpose scripts installed onto `PATH` by `otto-workbench sync`.
-
-### `gcloud-reauth`
-
-Check GCP application-default credentials and re-login if expired, with a
-self-managed launchd agent.
-
-With no command, prints whether credentials are valid and, if not, launches
-`gcloud auth application-default login`. `gcloud` is resolved via mise when
-that install exists, otherwise from `PATH`.
-
-```
-gcloud-reauth [<command>]
-```
-
-| Command | Description |
-|---------|-------------|
-| *(none)* | Check credentials, launch login if expired |
-| `install` | Install launchd agent (runs every 12h) |
-| `uninstall` | Remove launchd agent |
-| `status` | Show agent status |
-| `-h`, `--help` | Show help |
-
-### `get-secret`
-
-Interactively retrieve a secret from AWS Secrets Manager by listing and selecting.
-
-Lists all secrets in the configured region, prompts for selection by number,
-then prints the raw `SecretString` value to stdout.
-
-```
-get-secret
-```
-
-| Flag | Description |
-|------|-------------|
-| `-h`, `--help` | Show help |
-
-| Environment Variable | Description | Default |
-|---------------------|-------------|---------|
-| `AWS_REGION` | Target region | `us-east-1` |
-| `AWS_PROFILE` | Credential profile | ambient credential chain |
-
-### `lint-sweep`
-
-Sweep lint violations across multiple Go repos — detect, report, and optionally
-create fix branches.
-
-Detects violations of a given golangci-lint rule across a set of repos (paths
-that contain `go.mod`) and reports a per-repo count. With `--fix`, creates a
-worktree per repo that has violations (requires `wt`) on branch
-`<user>/fix/<rule>` unless `--branch` overrides it.
-
-```
-lint-sweep --rule <name> --repos <glob> [--fix] [--branch <name>] [--dry-run] [--json]
-```
-
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--rule <name>` | Lint rule to sweep (required) | — |
-| `--repos <glob>` | Glob or comma-separated list of repo paths (required) | — |
-| `--fix` | Create worktrees and branches for fixing | report only |
-| `--branch <name>` | Branch name override | `<user>/fix/<rule>` |
-| `--dry-run` | Show what would be done | — |
-| `--json` | Output results as JSON | — |
-| `-h`, `--help` | Show help | — |
-
-Requires `golangci-lint`. Repos that are not Go modules are skipped; matching
-nothing is an error.
-
-### `mem-analyze`
-
-macOS memory analysis report — pressure, swap usage, top processes, per-user totals.
-
-Prints a formatted report with system information (model, installed RAM),
-memory pressure (normal / warning / critical), a page breakdown from `vm_stat`,
-swap usage, the top 10 processes by memory, every process above the process
-warning threshold, per-user totals, and a summary with recommendations based
-on pressure plus swap state.
-
-```
-mem-analyze
-```
-
-| Flag | Description |
-|------|-------------|
-| `-h`, `--help` | Show help |
-
-| Environment Variable | Description | Default |
-|---------------------|-------------|---------|
-| `SWAP_WARN_THRESHOLD_MB` | Swap warning threshold in MB | `10240` |
-| `PROCESS_WARN_THRESHOLD_KB` | Process memory warning threshold in KB | `500000` |
-
-macOS-only — requires: `system_profiler`, `memory_pressure`, `vm_stat`, `sysctl`, `bc`, `perl`.
+Detailed usage for user-facing scripts. Internal scripts (validators, generators, scanners) are listed in the table above but not detailed here.
 
 ### `otto-workbench`
 
@@ -228,10 +130,9 @@ otto-workbench [--workbench-dir <path>] <command>
 
 | Flag | Description |
 |------|-------------|
-| `--workbench-dir <path>` | Override workbench root (e.g. a worktree checkout) |
+| `--workbench-dir <path>` | Override workbench root (e.g., a worktree checkout) |
 
-The subcommands, rendered from `bin/registry.yml`'s `commands:` list rather
-than restated here:
+**Commands:**
 
 | Command | Scope | Description |
 |---------|-------|-------------|
@@ -257,149 +158,9 @@ than restated here:
 | `otto-workbench config get KEY [DIR ...]` | Project | Resolve one key for this repo, or for each named one, with the scope that answered |
 | `otto-workbench config status` | Project | Show every scope, every resolved value, and the file each came from |
 
-`install` runs first-time setup: installs Homebrew (if missing), syncs core
-components (bin, git, task, zsh), presents a menu of optional components
-(brew packages, docker, terminals, editors, ai, mise), and runs pending
-migrations. Safe to re-run — idempotent. Use `--all` to skip menus, or name
-specific components.
-
-`ai init` scaffolds a `.claude/` directory in the current git repo (if one
-does not exist) with stack-detected rules and a project anatomy file. Use
-`--force` to re-scaffold, `--analyze` to run `/analyze-project` after.
-`ai sync` syncs machine-level AI config (settings, rules, skills, agents,
-MCPs). `ai override` manages user overrides.
-
-`sync` is pure config reconciliation: re-symlinks scripts, `zsh/`,
-`git/.gitconfig`, Taskfile, `lib/`; syncs Claude `settings.json`, `CLAUDE.md`,
-`rules/`, `skills/`, `agents/`, MCPs; merges Zed/Sublime editor settings;
-and reconciles the Ghostty theme key. Git and tool-context rule files
-regenerate during `sync_ai`.
-
-`sync` does not do one-time setup — that is `otto-workbench install`: Homebrew
-packages or casks, Docker runtime, iTerm themes, Ghostty config from template.
-
-### `resolve-branch`
-
-Resolve a fuzzy branch name to an exact git branch — tries exact, worktree,
-separator, then fuzzy.
-
-```
-resolve-branch <input>
-```
-
-| Flag | Description |
-|------|-------------|
-| `-h`, `--help` | Show help |
-
-Resolution cascade (stops at the first match):
-
-1. Exact match against local and remote branches (`origin/<input>` included)
-2. Worktree directory basename match (including a worktree mid-rebase)
-3. Separator normalization (`-` → `/` for the first two segments)
-4. Case-insensitive fuzzy search
-
-The resolved name is printed on stdout with a `remotes/origin/` prefix stripped.
-Several fuzzy hits are listed on stderr rather than guessed.
-
-| Exit | Meaning |
-|------|---------|
-| `0` | Resolved; branch name on stdout |
-| `1` | No match, several fuzzy hits, or missing `<input>` |
-
-### `resolve-workspace`
-
-Print the workspace directory holding a repository's plans and specs —
-`<container>/workspace`, outside every checkout.
-
-A plan or a spec is about the repository, not about one branch of it. Written
-inside a worktree it is duplicated across every sibling checkout, invisible
-from the others, and destroyed by `wt remove` — so it goes at the container,
-the directory holding the bare `.git` with every worktree as a peer. Nothing
-there is inside any checkout, which is also why it needs no `.gitignore` entry.
-
-```
-resolve-workspace [<path>]
-```
-
-| Flag | Description |
-|------|-------------|
-| `-h`, `--help` | Show help |
-
-`<path>` defaults to the current directory.
-
-| Exit | Meaning |
-|------|---------|
-| `0` | Resolved; the workspace path is on stdout |
-| `1` | An ordinary clone, which has no container to write into, or a directory that is not in a git repository |
-| `64` | Usage error |
-
-Exit `1` is a refusal and not a fallback. Writing to `<repo>/workspace` in an
-ordinary clone would put the artifact back inside the checkout, which is the
-arrangement this exists to end; convert the repo with `wt-init` instead.
-
-The single owner of this path. Both halves of the answer are borrowed rather
-than re-derived: `lib/git_layout.sh`'s `git_shared_dir` names the shared git
-dir, whose parent is the container, and `bin/resolve-worktree` decides whether
-that parent really is one.
-`bin/migrations/20260922-rename-issues-jira-url-container.sh` composes the
-same two for the same reason. `lib/git_layout.py`'s
-`container_dir` is the Python spelling of the pair and returns None exactly
-where this exits `1`; `tests/resolve_workspace.bats` holds them to one answer.
-
-### `resolve-worktree`
-
-Print the worktree a bare-repo container stands in for — the checkout of its
-default branch.
-
-A bare repo has no working tree, so anything rooted at the container sees none
-of the repo's tracked files — no `CLAUDE.md`, no `.claude/`, no source. This
-prints the worktree checked out on the repo's default branch: the tree such a
-tool should read and write instead.
-
-```
-resolve-worktree [<path>]
-```
-
-| Flag | Description |
-|------|-------------|
-| `-h`, `--help` | Show help |
-
-`<path>` defaults to the current directory. The default branch is the one the
-container's own `HEAD` names — git guarantees that ref exists, it needs no
-remote, and it is what `git clone` reads to pick the branch a new checkout
-lands on. `refs/remotes/origin/HEAD` is deliberately not consulted: `git clone
---bare` creates no remote-tracking refs, so reading it would mean guessing
-between `master` and `main` for most containers.
-
-| Exit | Meaning |
-|------|---------|
-| `0` | Resolved; the worktree path is on stdout |
-| `1` | A bare repo, but no worktree holds the default branch (or its `HEAD` is detached) |
-| `2` | Not a bare repository — nothing to resolve |
-| `64` | Usage error |
-
-Exit `2` is the ordinary answer for an everyday repo, a worktree, or a
-directory outside any repo, so callers treat it as "carry on here" rather than
-a failure. This is the one owner of that resolution in bash. The `claude` and
-`pi` shell wrappers reach it through
-[`_worktree_launch.zsh`](architecture.md#shell-zsh) — redirecting a launch is
-all they want. A tool that resolves a tree in order to *write* a project
-artifact into it calls [`lib/worktree.sh`](libraries.md)'s `project_root`
-instead, which lets a working tree name itself first and falls back to this
-only when there is none; the ceiling-debt Stop hook, `serena-mcp`,
-`workbench-rules`, and `otto-workbench ai init` all reach it that way.
-
-[`lib/permission_mirror.py`](libraries.md) applies the same rule in Python to
-pick the worktree a container's permission mirror is copied from. The two must
-agree — a session redirected to a worktree the mirror never wrote from is a
-session missing the grants the mirror exists to deliver, with nothing to say
-so — and `tests/container_source.bats` fails if they diverge.
-
 ### `task`
 
-Wrapper around go-task that adds `--global` support. Installed to
-`~/.local/bin/task`, which takes precedence over the real binary; the wrapper
-finds the real `task` by dropping that directory from `PATH`.
+Wrapper around go-task that adds `--global` support.
 
 ```
 task [--global] <task-name> [-- <task-args>]
@@ -410,51 +171,28 @@ task [--global] <task-name> [-- <task-args>]
 | `--global` | Use the global Taskfile (`~/.config/task/Taskfile.yml`) from any directory |
 | `-h`, `--help` | Show help |
 
-Without `--global`, uses a Taskfile in the current directory (`Taskfile.yml` /
-`Taskfile.yaml`, either case) and passes through to the real binary unchanged.
-Missing both a local Taskfile and `--global` is an error.
+Without `--global`, uses `./Taskfile.yml` in the current directory.
 
-### `validate-nesting`
+### `mem-analyze`
 
-Validate bash, Python, and Go script nesting depth to enforce flat control flow.
-
-Each language's checker in `lib/nesting/` owns its default max depth as
-`DEFAULT_MAX_DEPTH`; `--max-depth` overrides all of them. The numbers are
-deliberately not restated here — this text once said Go was 3 while every
-checker had long since settled on 2.
+macOS memory analysis report — pressure, swap usage, top processes, per-user totals.
 
 ```
-validate-nesting [--quiet] [--max-depth N] [--diff BASE_REF] [file...]
+mem-analyze
 ```
-
-When no files are given, discovers all scripts in the repo by extension and
-shebang. `--diff` is mutually exclusive with positional files. The flag table
-below the exit codes is rendered from the parser, so it is not written here.
-
-| Exit | Meaning |
-|------|---------|
-| `0` | All files pass |
-| `1` | Any file exceeds max depth |
-| `2` | Usage error (`--diff` with positional files, or `BASE_REF` did not resolve) |
-
-**Flags**
 
 | Flag | Description |
 |------|-------------|
-| `--quiet` | Only show failures and summary. |
-| `--max-depth` `<n>` | Maximum nesting depth (overrides per-language defaults). |
-| `--diff` `<base-ref>` | Only check violations in lines added since BASE_REF. |
-| `[<file> ...]` | Files to check (auto-discovers if omitted). |
+| `-h`, `--help` | Show help |
+
+| Environment Variable | Description | Default |
+|---------------------|-------------|---------|
+| `SWAP_WARN_THRESHOLD_MB` | Swap warning threshold in MB | `10240` |
+| `PROCESS_WARN_THRESHOLD_KB` | Process memory warning threshold in KB | `500000` |
 
 ### `wt-cleanup`
 
 Remove stale git worktrees — merged branches and optionally age-based cleanup.
-
-By default, removes worktrees whose branches are fully merged (safe to delete),
-and deletes the branch with the worktree — including a squash merge, which git's
-own ancestry check cannot see. With `--age <days>`, also removes worktrees with
-no commits newer than that many days; those branches are kept, since inactivity
-says nothing about whether the work landed.
 
 ```
 wt-cleanup [--age <days>] [--no-grace-period] [--dry-run] [--quiet]
@@ -468,38 +206,30 @@ wt-cleanup [--age <days>] [--no-grace-period] [--dry-run] [--quiet]
 | `--quiet` | No output (for hooks) | — |
 | `-h`, `--help` | Show help | — |
 
-A merged worktree holding uncommitted changes is reported rather than removed,
-and the question of what counts as a change is asked of the default branch rather
-than of the worktree's own index. The branch is already in the default branch, so
-the default branch's ignore rules are the ones that decide whether a file is worth
-preserving — and a worktree cut before a rule landed does not carry it, which is
-the only reason git reports the file at all. A file whose lines merely moved is
-forgiven on the same grounds: a reordering of a branch that already landed is
-residue, not work. The same check applies to an `--age` removal of an unmerged
-worktree — disposable residue there does not hold it back either.
+A merged worktree holding uncommitted changes is reported rather than removed, and the
+question of what counts as a change is asked of the default branch rather than of the
+worktree's own index. The branch is already in the default branch, so the default
+branch's ignore rules are the ones that decide whether a file is worth preserving —
+and a worktree cut before a rule landed does not carry it, which is the only reason git
+reports the file at all. A file whose lines merely moved is forgiven on the same
+grounds: a reordering of a branch that already landed is residue, not work.
 
-Nothing else is forgiven. A file the default branch does not ignore, one that
-gained or lost a line, a staged change, a rename, and a deletion all still hold
-the worktree back and are named in the summary. Every path the check forgives is
-written to `~/.local/state/workbench/logs/wt-cleanup.log` with its reason, so a
-removal this widens can be audited afterwards.
+Nothing else is forgiven. A file the default branch does not ignore, one that gained or
+lost a line, a staged change, a rename, and a deletion all still hold the worktree back
+and are named in the summary. Every path the check forgives is written to
+`~/.local/state/workbench/logs/wt-cleanup.log` with its reason, so a removal this
+widens can be audited afterwards.
 
-The worktree list comes from `wt list --format json`, whose payload carries a
-`schema` number. The script reads schema 2 and refuses any other with an error
-rather than reading fields that may have moved — a mismatch means worktrunk
-changed the format and `wt-cleanup` needs updating for it. This is deliberately
-noisy: the bump to schema 2 moved every field the script read, and because the
-call site swallowed the failure it no-opped silently on every session exit
-instead of reporting anything.
+The worktree list comes from `wt list --format json`, whose payload carries a `schema`
+number. The script reads one schema and refuses any other with an error rather than
+reading fields that may have moved — a mismatch means worktrunk changed the format and
+`wt-cleanup` needs updating for it. This is deliberately noisy: the bump to schema 2
+moved every field the script read, and because the call site swallowed the failure it
+no-opped silently on every session exit instead of reporting anything.
 
 ### `wt-init`
 
 Convert a regular git repo to a bare repo with worktrees.
-
-The current branch's working tree (including uncommitted changes) is moved
-into a named worktree directory inside the bare repo root. Existing worktrees
-(e.g. Claude agent worktrees in `.claude/worktrees/`) are preserved in place
-and relocated to the bare root. Requires `wt` (worktrunk).
 
 ```
 wt-init [--dry-run] [<path>]
@@ -510,520 +240,85 @@ wt-init [--dry-run] [<path>]
 | `--dry-run` | Preview what would happen |
 | `-h`, `--help` | Show help |
 
-`<path>` defaults to the current directory. Must be run from the repo root
-(after `cd` into `<path>`). A detached HEAD is refused — checkout a branch
-first. Safe to re-run: a repo that is already bare is skipped, with an offer
-to create a missing default-branch worktree.
+`<path>` defaults to the current directory.
 
-**AI tooling** — the `pr` and `review` CLIs, the scanners the workbench skills drive, and the MCP launchers.
+### `resolve-worktree`
 
-### `ceiling-scan`
-
-Scan for `ceiling:` / `ceiling-permanent:` markers and produce a structured debt ledger.
-
-Called by the `ceiling-debt` skill (`ai/skills/ceiling-debt`). Walks a tree,
-skips binaries, oversized files, and minified lines, and reports every marker
-that opens its own comment line.
+Print the worktree a bare-repo container stands in for — the checkout of its default branch.
 
 ```
-ceiling-scan [--summary-only] [--json] [--output PATH] [DIR]
-```
-
-Two forms: `ceiling:` is a simplification that should end at a named condition;
-`ceiling-permanent:` is accepted for good and counted apart. The trigger is an
-explicit "Upgrade trigger:" sentence, or the first clause turning on if / once /
-when / unless / until. A `ceiling:` marker with no such clause is **no-trigger**
-(what `bin/local/validate-ceiling` rejects).
-
-Default output is a markdown ledger grouped by file. `--summary-only` prints one
-count line. `--json` prints `{"total": N, "no_trigger": M, "permanent": P}`
-(counts only, not the markers). `--output PATH` writes the ledger and removes
-the file when no markers remain.
-
-Exit code is always 0 (informational), including when DIR is not a directory.
-
-**Flags**
-
-| Flag | Description |
-|------|-------------|
-| `[<dir>]` | Directory to scan (default: current directory). |
-| `--summary-only` | Output only the summary line. |
-| `--json` | Output counts as JSON: {"total": N, "no_trigger": M, "permanent": P}. |
-| `--output` `<path>` | Write ledger to file instead of stdout; removes the file when no markers remain. |
-| `-V`, `--version` | show program's version number and exit. |
-
-### `dream-scan`
-
-Scan session transcripts and memory state for dream consolidation.
-
-Replaces Phases 1+2 of the `dream` skill (`ai/skills/dream`): Orient + Gather
-Signal. The `architecture` skill also uses the path-discovery flags rather than
-globbing a harness tree.
-
-Sessions come from `core.sessions`, which owns what a session is and where one
-lives across every harness. The report header prints a per-harness transcript
-count, so a harness that has stopped being discovered reads as a zero.
-
-```
-dream-scan [--days N] [--home DIR]
-dream-scan [--days N] [--home DIR] --list-transcripts
-dream-scan --memory-dir REPO
-```
-
-Default stdout is a markdown report: an HTML comment carrying the trail root
-(`<!-- scan-id: ... -->`), a Sessions Scanned header, Memory State (per
-registered repo), and Session Signals grouped by category (correction,
-preference, decision, pattern, review_feedback).
-
-`--list-transcripts` prints every transcript path in the window, one per line,
-and exits. `--memory-dir REPO` prints that repo's memory directory and exits.
-
-**Flags**
-
-| Flag | Description |
-|------|-------------|
-| `-V`, `--version` | print version and exit. |
-| `--days` `<n>` | scan sessions from last N days (default: 7). |
-| `--home` `<dir>` | home directory override (for testing; default: `$HOME`). |
-| `--list-transcripts` | print transcript paths for the window, one per line, and exit. Not with `--memory-dir`. |
-| `--memory-dir` `<repo>` | print the memory directory for the repo at REPO, and exit. Not with `--list-transcripts`. |
-
-### `dream-verify`
-
-Verify dream memory file integrity across all projects.
-
-Walks every repo memory directory under `$WORKBENCH_MEMORY_DIR` that contains
-a `MEMORY.md` and checks:
-
-1. `MEMORY.md` is at most 200 lines
-2. Every `(filename.md)` reference in `MEMORY.md` resolves to a file
-3. Topic files contain no relative dates (`yesterday`, `last week`, …)
-4. No duplicate `name:` frontmatter across topic files
-
-```
-dream-verify
+resolve-worktree [<path>]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `-V`, `--version` | Show version |
 | `-h`, `--help` | Show help |
+
+`<path>` defaults to the current directory. The default branch is the one the container's own `HEAD` names — git guarantees that ref exists, it needs no remote, and it is what `git clone` reads to pick the branch a new checkout lands on. `refs/remotes/origin/HEAD` is deliberately not consulted: `git clone --bare` creates no remote-tracking refs, so reading it would mean guessing between `master` and `main` for most containers.
 
 | Exit | Meaning |
 |------|---------|
-| `0` | All checks pass, or no memory directories found |
-| `1` | One or more checks fail |
+| `0` | Resolved; the worktree path is on stdout |
+| `1` | A bare repo, but no worktree holds the default branch (or its `HEAD` is detached) |
+| `2` | Not a bare repository — nothing to resolve |
+| `64` | Usage error |
 
-### `otto-log`
+Exit `2` is the ordinary answer for an everyday repo, a worktree, or a directory outside any repo, so callers treat it as "carry on here" rather than a failure. This is the one owner of that resolution in bash. The [`claude` shell wrapper](architecture.md#shell-zsh) calls it directly — redirecting a launch is all it wants. A tool that resolves a tree in order to *write* a project artifact into it calls [`lib/worktree.sh`](libraries.md)'s `project_root` instead, which lets a working tree name itself first and falls back to this only when there is none; the ceiling-debt Stop hook, `serena-mcp`, `workbench-rules`, and `otto-workbench ai init` all reach it that way.
 
-Query the unified trail root and AI usage across otto-workbench scripts.
+[`lib/permission_mirror.py`](libraries.md) applies the same rule in Python to pick the worktree a container's [permission mirror](../CONTRIBUTING.md#permission-grants) is copied from. The two must agree — a session redirected to a worktree the mirror never wrote from is a session missing the grants the mirror exists to deliver, with nothing to say so — and `tests/container_source.bats` fails if they diverge.
 
-Trails are monthly files under the state root (`workbench_paths.trail_dir()`).
-`stats` reads a separate monthly-rotated AI usage ledger that every AI call
-appends to.
+### `lint-sweep`
 
-One user command spans several processes, each with its own `invocation` and all
-sharing a `root`. `show` takes any of those IDs and renders the whole command;
-`--only` narrows it to the named process. `list` rows are whole commands for the
-same reason — `pr review` is one row rather than three.
-
-A time window selects *commands*, not events: a command whose first event
-predates the window is listed whole when any part of it falls inside.
+Sweep lint violations across multiple Go repos — detect, report, and optionally create fix branches.
 
 ```
-otto-log recent [--since 1h] [--repo org/repo]
-otto-log query [--script NAME] [--level L] [--pr N] [--root ID] [--since WINDOW]
-otto-log show <invocation> [--only]
-otto-log list [--script NAME] [--since WINDOW] [--repo org/repo]
-otto-log record --script NAME --action KEY [--detail TEXT] [--level info|warn|error]
-otto-log prune [--keep N]
-otto-log stats [--since 7d] [--by script|task|model|day|phase]
+lint-sweep --rule <name> --repos <glob> [--fix] [--branch <name>] [--dry-run] [--json]
 ```
 
-`--json` on `recent`, `query`, `show`, and `list` emits JSONL. On `stats` it
-emits one JSON object per group (`group`, `calls`, `cost`, token fields,
-`median_duration_ms`; plus turn percentiles when `--by phase`).
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--rule <name>` | Lint rule to sweep (required) | — |
+| `--repos <glob>` | Glob or comma-separated list of repo paths (required) | — |
+| `--fix` | Create worktrees and branches for fixing | report only |
+| `--branch <name>` | Branch name override | `<user>/fix/<rule>` |
+| `--dry-run` | Show what would be done | — |
+| `--json` | Output results as JSON | — |
+| `-h`, `--help` | Show help | — |
 
-`record` writes one event for callers that cannot open a `Trail` themselves
-(shell close-out scripts, agents between a scan and its close). It inherits
-`WORKBENCH_TRAIL_ROOT` so a record written inside a larger command is filed
-under that command, and prints the invocation ID.
+### `gcloud-reauth`
 
-`prune` drops trail months older than `--keep` (default: the same horizon every
-trail already sweeps as it opens).
-
-What the ledger records, and what each stats column means, is on `agent/usage.py`
-in docs/ai-libraries.md.
-
-**`otto-log recent`** — Recent events (default: last 1h)
-
-| Flag | Description |
-|------|-------------|
-| `--since` `<since>` | Time window (e.g. 2h, 1d, 30m). Default: `1h`. |
-| `--repo` `<repo>` | Filter by repo (org/repo). |
-| `--json` | Output raw JSONL. |
-
-**`otto-log query`** — Filter events
-
-| Flag | Description |
-|------|-------------|
-| `--script` `<script>` | Filter by script name. |
-| `--level` `<level>` | Filter by level (debug, info, warn, error). |
-| `--event-type` `<event-type>` | Filter by event type. |
-| `--invocation` `<invocation>` | Filter by invocation ID (one process). |
-| `--root` `<root>` | Filter by root invocation ID (one whole user command). |
-| `--pr` `<pr>` | Filter by PR number. |
-| `--repo` `<repo>` | Filter by repo (org/repo). |
-| `--since` `<since>` | Time window (e.g. 2h, 1d). |
-| `--json` | Output raw JSONL. |
-
-**`otto-log show`** — Show one command's timeline
-
-| Flag | Description |
-|------|-------------|
-| `<invocation>` | Invocation ID — the command's own, or any process under it. |
-| `--only` | Just the named process, not the whole command it belongs to. |
-| `--json` | Output raw JSONL. |
-
-**`otto-log list`** — List invocations
-
-| Flag | Description |
-|------|-------------|
-| `--script` `<script>` | Filter by script name — lists the whole command that reached it. |
-| `--since` `<since>` | Time window (e.g. 2h, 1d) — selects commands active in it, each listed whole even if it started earlier. |
-| `--repo` `<repo>` | Filter by repo (org/repo). |
-| `--json` | Output raw JSONL. |
-
-**`otto-log record`** — Write one event to the trail (for shell and agent callers)
-
-| Flag | Description |
-|------|-------------|
-| `--script` `<script>` | Name the event is filed under. Required. |
-| `--action` `<action>` | What happened, as a short key. Required. |
-| `--detail` `<detail>` | One line of prose about it. |
-| `--level` `<info\|warn\|error>` | Severity (default: info). |
-| `--data` `<key=value>` | Structured field, repeatable — numeric values are stored as numbers. |
-| `--repo` `<repo>` | Subject repo (org/repo), recorded as context. |
-| `--pr` `<pr>` | Subject PR number, recorded as context. |
-
-**`otto-log prune`** — Drop trail months past the horizon
-
-| Flag | Description |
-|------|-------------|
-| `--keep` `<keep>` | Months of history to keep (default: 6). |
-
-**`otto-log stats`** — Aggregate AI cost and token usage
-
-| Flag | Description |
-|------|-------------|
-| `--since` `<since>` | Time window (e.g. 24h, 7d). Default: `7d`. |
-| `--by` `<script\|task\|model\|day\|phase>` | Group rows by. Default: `script`. |
-| `--json` | Output one JSON object per group. |
-
-### `otto-mcp-server`
-
-MCP server launcher. Offers the tools the component registries declare, over
-stdio. Registered in `~/.claude.json` as `otto-workbench` by
-`otto-workbench ai sync`.
+Check GCP application-default credentials and re-login if expired, with self-managed launchd agent.
 
 ```
-otto-mcp-server
+gcloud-reauth [<command>]
 ```
 
-Discovery reads the component registries — the same files that document every
-workbench script — rather than globbing `bin/` directories or probing
-executables. `ai/lib/config/tool_registry.py` maps each registered script's
-path to its entry; the Python server (`ai/claude/mcps/server.py`) reads that
-mapping.
+| Command | Description |
+|---------|-------------|
+| *(none)* | Check credentials, launch login if expired |
+| `install` | Install launchd agent (runs every 12h) |
+| `uninstall` | Remove launchd agent |
+| `status` | Show agent status |
+| `-h`, `--help` | Show help |
 
-There is no configuration file. The server hosts the workbench's own tools, so
-what to offer is a fact about the checkout's registries. Adding a tool means
-registering it in a component's `registry.yml`.
+### `get-secret`
 
-The launcher runs `uv run --no-project --with mcp`. A client spawns the server
-with its own project as the working directory, and without `--no-project` uv
-would resolve and install that project first — writing a virtualenv and a lock
-file into somebody else's checkout, and failing outright where the project
-does not build. The server needs `mcp` and nothing from wherever it was
-launched.
-
-Requires: `uv`, the `mcp` Python package.
-
-### `pr`
-
-Unified PR lifecycle CLI — creation, CI, code review, comments, rebasing, and push state.
-
-`pr [global flags] <command> [flags]`. The global flags work in any position and
-name which worktree, branch, or PR a command acts on; omit them and all three
-are resolved from the current directory. `pr <command> --help` prints that
-command's own flags, and `--tool-schema` prints a JSON document describing the
-tool (or, after a command, that command) and exits.
-
-The flag tables below are rendered from the parsers `pr` parses with. How each
-command behaves — phases, review modes, comment settlement, rebase conflict
-handling — is in [AI Automation](ai-automation.md), and each module's own account
-is in [AI Libraries](ai-libraries.md).
-
-**Global flags**
-
-| Flag | Description |
-|------|-------------|
-| `--repo-dir`, `--worktree` `<path>` | Git worktree to act on; detected from the current directory when omitted. |
-| `--branch` `<name>` | Branch to act on, resolved to the worktree it is checked out in. |
-| `--pr` `<num\|url>` | PR number or URL to act on. |
-| `--schema-version` `<n>` | Serve a versioned JSON document on stdout instead of a human table, where the command has a contract. |
-
-**`pr create`** — Create a PR, or preview it with --dry-run
-
-| Flag | Description |
-|------|-------------|
-| `--draft` | Open the PR as a draft. |
-| `--no-verify` | Skip the pre-push hook when pushing the branch. |
-| `--dry-run` | Print the title and body; push nothing, create nothing. |
-| `--base` `<branch>` | Branch the PR targets (default: the repo's default branch). |
-| `--title` `<text>` | Use this title instead of generating one. |
-| `--body` `<text>` | Use this body instead of generating one. Not with `--body-file`. |
-| `--body-file` `<path>` | Read the body from this file instead of generating one. Not with `--body`. |
-| `--issue` `<id>` | Issue to give the description context about; closes nothing. |
-| `--closes` `<id>` | Issue to close on merge (repeatable). |
-
-**`pr status`** — Show CI, review, and comment status dashboard
-
-Takes no flags.
-
-**`pr ci`** — Check CI failures
-
-| Flag | Description |
-|------|-------------|
-| `--run` `<id>` | Specific run ID. |
-| `--fix` | Invoke AI to fix failures after diagnosis. |
-| `--post` | Push the fixes; without it the push is drafted. |
-| `--wait` | Poll until all jobs complete, emitting incremental reports. |
-| `--wait-timeout` `<sec>` | Max wait time in seconds (default: 900). |
-| `--wait-interval` `<sec>` | Poll interval in seconds (default: 30). |
-
-**`pr review`** — Run code review
-
-| Flag | Description |
-|------|-------------|
-| `--no-post` | Do not post the review to GitHub. |
-| `--submit` | Submit the GitHub review after posting (default: leave PENDING). |
-| `--self` | Review a local checkout of the current branch, or of the branch or PR ref given. |
-| `--fix` | Apply findings after the review (requires --self). |
-| `--push` | Push the --fix commit (requires --fix). |
-| `--skip-user-verification` | Skip the PR-ownership check when --self is given a PR ref. |
-| `--force` | Skip stale-review and pending-review prompts; not with --recover. |
-| `--no-holistic` | Skip the holistic scan phase. |
-| `--no-scout` | Skip the scout phase. |
-| `--no-group` | Skip the group review phase. |
-| `--no-synthesis` | Skip the synthesis phase. |
-| `--no-disprove` | Skip the disprove gate phase. |
-| `--disprove` | Enable the disprove-it gate (default: effort-based). |
-| `--json-summary` | Print a machine-readable summary on stdout. |
-| `--issue` `<url>` | Related issue to include in the review prompt. |
-| `--base`, `--onto` `<base>` | Branch to review against, as a bare name. Default: the PR's base, else the branch this one is stacked on, else the repo's default branch. |
-| `--max-parallel` `<n>` | Max concurrent group reviews (default: from the machine slot pool, cap 4). |
-| `--max-cost` `<usd>` | Max total review cost in USD. |
-| `--model` `<name>` | Override the model for all agents (e.g. sonnet, opus). |
-| `--effort` `<low\|medium\|high>` | Effort preset (default: review.effort in config.yml, else medium). |
-| `--max-groups` `<n>` | Max file groups in multi-phase reviews (default: effort-based). |
-| `--generated` | Include tier3-generated files (skipped by default). |
-| `-V`, `--version` | Print version and exit. |
-| `[<pr\|branch> ...]` | PR number, URL, or branch name. |
-| `--post` | Post an existing review to GitHub — a mode; excludes the other mode flags. |
-| `--repair` | Repair broken review artifacts via summary or rebuild — a mode; excludes the other mode flags. |
-| `--summary` | Print a JSON summary of an existing review — a mode; excludes the other mode flags. |
-| `--recover` | Finish a review whose agents failed, at the commit it started from — a mode; excludes the other mode flags. |
-| `--list` | List every review in the user's state root — a mode; excludes the other mode flags. |
-
-**`pr comments`** — Fetch and manage PR review threads
-
-| Flag | Description |
-|------|-------------|
-| `--triage` | Phase: classify threads via AI and auto-resolve verified. |
-| `--fix` | Phase: triage threads and apply mechanical fixes via Claude agent. |
-| `--no-verify` | Skip the verify gate after --fix. The gate runs the project's own checks against each claimed fix and demotes the ones that do not hold up; without it every fix publishes as unverified. |
-| `--finish` | Phase: close out deferred work — replies, tracking issue, summary. Drafts them unless --post is given. |
-| `--track` `<thread-id>` | File this deferred thread on the tracking issue (repeatable). Deferral is a per-thread decision, so --finish files nothing unless told which threads. |
-| `--track-all` | File every deferred thread. Only for a set the user has actually reviewed. |
-| `--post` | Gate, not a phase: publish whatever the chosen phase produced — replies, summaries, resolutions (default: print drafts to stderr and post nothing). |
-| `--reply` `<thread-or-comment-id>` | Reply to one thread, editing our standing reply if it is still the last comment. Accepts a thread node ID, a comment ID, or a #discussion_r... URL. A write like any other: needs --post to leave the machine. |
-| `--body-file` `<path>` | File holding the --reply body ('-' for stdin). |
-| `--settle` `<thread-id>` | Phase: record that you settled this thread by hand (repeatable). Writes local state and nothing else; --finish then replies, resolves and reports it like any other settled thread. |
-| `--as` `<fixed\|dismissed\|already_addressed>` | What --settle records (default: fixed). |
-| `--reason` `<text>` | Why, for --settle --as dismissed — it becomes the reply the reviewer reads. |
-| `--commit` `<sha>` | The commit carrying a --settle --as fixed change, for a fix that landed away from the line the thread is anchored to (default: inferred from that line). Applies to every --settle in the run, so a batch where only some threads need it takes two runs. |
-
-**`pr fix`** — Fix CI + review + comments
-
-| Flag | Description |
-|------|-------------|
-| `--post` | Publish what the passes produce, the revised PR description included (default: print drafts and post nothing). |
-| `[<review-or-ci-flag> ...]` | Any other flag is forwarded to the review pass and the CI pass; see `pr review` and `pr ci`. |
-
-**`pr rebase`** — Rebase onto the branch's base
-
-| Flag | Description |
-|------|-------------|
-| `--onto`, `--base` `<ref>` | Ref to rebase onto — overrides the PR's base branch and the repo's default branch. |
-| `--fork-point` `<ref>` | Replay only the commits after REF, onto the target — for a branch whose earlier commits already landed. The partially-landed refusal names the ref to pass. |
-| `--fix` | Autonomous mode — resolve conflicts with AI and rebase (force-pushes unless --no-push). |
-| `--no-push` | Skip the force-push — print the command instead. |
-| `--push-only` | Push HEAD with the lease an earlier --no-push run recorded; do not rebase. |
-| `--no-verify` | Skip the pre-push hook on the force-push. For a hook failure already understood — a flake, or one the branch did not cause. |
-| `--force` | Rebase even when the branch's work already landed on the target ref. |
-| `--abort` | Abort in-progress rebase. |
-
-**`pr describe`** — Revise the PR description
-
-| Flag | Description |
-|------|-------------|
-| `--force` | Revise even when HEAD has not moved since the last pass. |
-| `--dry-run` | Print the revision instead of applying it. |
-| `--post` | Apply the revision to the PR; without it the edit is drafted. |
-| `--title` `<text>` | Replace the PR title. |
-| `--body` `<text>` | Replace the PR body instead of revising it. Not with `--body-file`. |
-| `--body-file` `<path>` | Read the replacement body from this file. Not with `--body`. |
-| `--closes` `<id>` | Issue to close on merge (repeatable). |
-
-**`pr batch plan`** — Show which PRs need which steps
-
-| Flag | Description |
-|------|-------------|
-| `--checkout` `<dir>` | A checkout whose open PRs to plan for; repeatable. Required. |
-
-**`pr batch run`** — Start a run
-
-| Flag | Description |
-|------|-------------|
-| `--checkout` `<dir>` | A checkout whose open PRs to run on; repeatable. Not with `--plan`. |
-| `--plan` `<file>` | A saved `pr batch plan` document. Not with `--checkout`. |
-| `--steps` `<steps>` | Comma-separated steps to run (default: rebase,comments,review). |
-| `--pool` `<pool>` | Concurrency ceiling. |
-| `--auto-publish` `<steps>` | Comma-separated steps whose results publish without asking. |
-| `--prs` `<prs>` | Comma-separated repo#number keys to include. |
-| `--select` `<key=steps>` | Run exactly these steps for one PR. Repeatable. |
-
-**`pr batch resume`** — Continue a run
-
-| Flag | Description |
-|------|-------------|
-| `[<run-id>]` | Run to continue (default: the latest). |
-
-**`pr batch resolve`** — Answer one decision
-
-| Flag | Description |
-|------|-------------|
-| `<run-id>` | Run the decision belongs to. |
-| `<decision-id>` | Decision to answer. |
-| `--action` `<action>` | The answer; which actions apply depends on the decision's kind. Required. |
-| `--reason` `<reason>` | Why, recorded with the answer. |
-| `--body-file` `<body-file>` | File holding a reply body, for actions that post one. |
-| `--commit` `<commit>` | Commit that settles the decision, for actions that cite one. |
-
-**`pr batch cancel`** — Stop starting new steps
-
-| Flag | Description |
-|------|-------------|
-| `[<run-id>]` | Run to cancel (default: the latest). |
-| `--kill` | Also terminate running steps. |
-
-**`pr batch status`** — Print a run's state
-
-| Flag | Description |
-|------|-------------|
-| `[<run-id>]` | Run to show (default: the latest). |
-
-**`pr gc`** — Clean up stale PR artifacts
-
-Takes no flags.
-
-### `promote-scan`
-
-Scan memories and workbench artifacts for promotion evaluation.
-
-Replaces Phase 1 of the `promote` skill (`ai/skills/promote`): Orient. Reads
-every registered repo's memory plus the workbench checkout's rules, scripts,
-hooks, and agents.
+Interactively retrieves a secret from AWS Secrets Manager by listing and selecting.
 
 ```
-promote-scan [--home DIR] [--workbench DIR]
+get-secret
 ```
-
-`--workbench` defaults to `$OTTO_WORKBENCH`, else the checkout this runs from.
-
-Stdout is a markdown report with Memory State (topic files, last-promote stamp),
-Backed-Up Memories (`ai/memory` in the workbench), and Workbench Artifacts
-(rules, scripts, hooks, agents). Topic bodies are truncated to a preview.
-
-**Flags**
 
 | Flag | Description |
 |------|-------------|
-| `-V`, `--version` | print version and exit. |
-| `--home` `<dir>` | home directory override (for testing; default: `$HOME`). |
-| `--workbench` `<dir>` | workbench directory (default: $OTTO_WORKBENCH, else the checkout this runs from). |
+| `-h`, `--help` | Show help |
 
-### `retro-consume`
+| Environment Variable | Description | Default |
+|---------------------|-------------|---------|
+| `AWS_REGION` | Target region | `us-east-1` |
+| `AWS_PROFILE` | Credential profile | ambient credential chain |
 
-Delete the local reviews a retro consumed, if the record answers to it.
-
-Phase 4 of the `retro` skill (`ai/skills/retro`). `retro-scan --consume` recorded
-which reviews it read and stamped the record with its scan ID; this presents that
-ID back and deletes only what that scan claimed, and only where the review on
-disk is still the one it read.
-
-```
-retro-consume --scan-id ID [--dry-run]
-```
-
-A record that names a different scan is refused (exit 1) rather than honoured.
-No consume record is not an error — nothing to clean up. `--dry-run` reports
-targets and deletes nothing. The record is cleared only after the deletions it
-authorised have happened, so a crash mid-run can be retried with the same ID.
-`--scan-id` is required (exit 2 if omitted).
-
-**Flags**
-
-| Flag | Description |
-|------|-------------|
-| `-V`, `--version` | print version and exit. |
-| `--scan-id` `<id>` | the scan ID retro-scan --consume reported. |
-| `--dry-run` | report what would be deleted, delete nothing. |
-
-### `retro-scan`
-
-Scan PR review comments and cross-reference them against coding rules.
-
-Replaces Phase 1 of the `retro` skill (`ai/skills/retro`): Orient. Resolves
-GitHub remotes from the machine profile's Project Registry, fetches merged-PR
-review comments since the last retro (or `--since`), scores each against the
-workbench rule set, and folds in local self-review files (deduped against GitHub).
-
-```
-retro-scan [--home DIR] [--workbench DIR] [--since DURATION]
-retro-scan --consume
-```
-
-Stdout is a markdown report of comments grouped by repo/PR, nearest-rule matches,
-unmatched comments, and themes (matched comments grouped by rule file).
-`--consume` also writes a consume record of the local reviews it read, stamped
-with this run's trail root, and prints `<!-- scan-id: ID | consumed: N -->` after
-the report so the skill can quote the ID into `retro-consume`.
-
-`--consume` cannot be combined with `--since`. Exit 1 if no registered project
-resolves to a GitHub repo — the scan refuses to bank a window over local reviews
-alone.
-
-**Flags**
-
-| Flag | Description |
-|------|-------------|
-| `-V`, `--version` | print version and exit. |
-| `--home` `<dir>` | home directory override (default: `$HOME`). |
-| `--workbench` `<dir>` | workbench directory (default: $OTTO_WORKBENCH, else the checkout this runs from). |
-| `--since` `<duration>` | override scan window (e.g. 7d, 24h, 30m). |
-| `--consume` | record the local reviews read, so the retro may delete them when it completes. |
+Outputs the raw SecretString value to stdout.
 
 ### `review`
 
@@ -1035,239 +330,98 @@ review --self [<pr_url_or_number>]
 review [--self] --recover [<pr_url_or_number>]
 ```
 
-`--self` reviews the local worktree (unpushed commits, staged and unstaged
-edits, untracked files) rather than the remote branch. `--recover` finishes a
-review whose agents failed, at the commit the run started from.
-
 The `gc`, `post`, `rebuild`, `summary` and `threads` subcommands this binary
 once carried have moved to `pr` — `pr gc`, `pr review --post`, `pr review
 --repair`, `pr review --summary` and `pr comments` respectively. Each is still
 recognised here and refused with the command to use instead, rather than being
 read as the name of a branch to review.
 
-`--no-post` and `--post` are mutually exclusive. Pipeline phases, base-branch
-resolution, model selection, and Vertex quota preflight are in
-[AI Automation](ai-automation.md) and the modules in [AI Libraries](ai-libraries.md).
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--no-post` | Skip all interactive prompts; run review and exit | — |
+| `--post` | Run review then post automatically (fully headless) | — |
+| `--submit` | Submit the review (use with `--post` for fully headless) | — |
+| `--self` | Self-review mode: output to `~/.local/state/workbench/reviews/<repo>-self-<branch>/review.md` | — |
+| `--skip-user-verification` | Skip ownership check in self-review mode | — |
+| `--force` | Skip pending review and stale review warnings | — |
+| `--no-<phase>` | Skip an optional phase of a multi-phase review — see below | — |
+| `--disprove` | Run the disprove gate even when the effort preset drops it | effort-based |
+| `--json-summary` | Suppress human output; emit JSON summary to stdout | — |
+| `--issue <link>` | Attach an issue link for reviewer context | — |
+| `--base <branch>`, `--onto <branch>` | Branch to review against, as a bare name — see "Which base a review measures against" below | derived |
+| `--max-parallel <N>` | Max concurrent group reviews | `1` |
+| `--max-cost <USD>` | Max total review cost in USD | `20` |
+| `--model <name>` | Override model for all agents (e.g., `sonnet`, `opus`) | — |
+| `--repo-dir <path>` | Path to local repo or worktree (aliases: `--repo`, `--worktree`) | auto-detected |
+| `-V`, `--version` | Show version | — |
+| `-h`, `--help` | Show help | — |
 
-**Flags**
+`--no-post` and `--post` are mutually exclusive.
 
-| Flag | Description |
-|------|-------------|
-| `--no-post` | Do not post the review to GitHub. |
-| `--post` | Post the review to GitHub when it finishes. |
-| `--submit` | Submit the GitHub review after posting (default: leave PENDING). |
-| `--self` | Review a local checkout of the current branch, or of the branch or PR ref given. |
-| `--fix` | Apply findings after the review (requires --self). |
-| `--push` | Push the --fix commit (requires --fix). |
-| `--skip-user-verification` | Skip the PR-ownership check when --self is given a PR ref. |
-| `--force` | Skip stale-review and pending-review prompts; not with --recover. |
-| `--recover` | Finish a review whose agents failed, at the commit it started from. |
-| `--no-holistic` | Skip the holistic scan phase. |
-| `--no-scout` | Skip the scout phase. |
-| `--no-group` | Skip the group review phase. |
-| `--no-synthesis` | Skip the synthesis phase. |
-| `--no-disprove` | Skip the disprove gate phase. |
-| `--disprove` | Enable the disprove-it gate (default: effort-based). |
-| `--json-summary` | Print a machine-readable summary on stdout. |
-| `--issue` `<url>` | Related issue to include in the review prompt. |
-| `--base`, `--onto` `<base>` | Branch to review against, as a bare name. Default: the PR's base, else the branch this one is stacked on, else the repo's default branch. |
-| `--max-parallel` `<n>` | Max concurrent group reviews (default: from the machine slot pool, cap 4). |
-| `--max-cost` `<usd>` | Max total review cost in USD. |
-| `--model` `<name>` | Override the model for all agents (e.g. sonnet, opus). |
-| `--effort` `<low\|medium\|high>` | Effort preset (default: review.effort in config.yml, else medium). |
-| `--max-groups` `<n>` | Max file groups in multi-phase reviews (default: effort-based). |
-| `--generated` | Include tier3-generated files (skipped by default). |
-| `--repo-dir`, `--worktree` `<path>` | Git worktree directory. |
-| `--branch` `<name>` | Branch to review (injected by the pr dispatcher). |
-| `--pr` `<num\|url>` | PR number or URL (injected by the pr dispatcher). |
-| `-V`, `--version` | Print version and exit. |
-| `[<pr\|branch> ...]` | PR number, URL, or branch name. |
+#### Switching a phase off
 
-### `serena-mcp`
+Every phase the multi-phase pipeline has a path around is marked `optional` in `PHASES` ([`ai/lib/agent/registry.py`](../ai/lib/agent/registry.py)), and each one gets a `--no-<phase>` flag generated from that mark: `--no-holistic`, `--no-scout`, `--no-group`, `--no-synthesis`, `--no-disprove`. Marking a new phase optional is the whole change — the flag, its forwarding to `review-orchestrate`, and the pipeline's skip all read the same field.
 
-Scaffold Serena MCP into a project's `.mcp.json` for project-scoped code
-intelligence.
+Phase 1 is one scan chosen from two candidates, so `--no-holistic` alone falls back to the scout scan and `--no-scout` alone falls back to the holistic scan. Only both together drop phase 1.
 
-```
-serena-mcp <command>
-```
+`--no-group` and `--no-synthesis` leave the review partial rather than clean: the merge still runs and reports every group as `skipped`, and the status header says `partial`. A review that reviewed nothing must not read like one that found nothing.
 
-| Command | Description |
-|---------|-------------|
-| `init` | Add Serena to `.mcp.json` in the current project (creates if missing) |
-| `status` | Show whether Serena is configured in the current project |
-| `-h`, `--help` | Show help |
+The `--effort` preset drops phases the same way — `low` skips the phase-1 scans, synthesis, and the disprove gate. `--disprove` buys the gate back from a preset that dropped it; `--no-disprove` beats `--disprove` and switches it off outright.
 
-`.mcp.json` and `.gitignore` are both tracked project files, so the project is
-the working tree the current directory belongs to rather than the directory
-itself. A shell sitting in a bare-repo container has no working tree, and
-`resolve-worktree` names the one the container stands in for; a container whose
-default branch has no checkout is an error rather than a write into the
-container, where nothing would read the file and no `.gitignore` rule, review,
-or CI check could reach it. A directory outside any repository is left alone —
-scaffolding there is a real thing to want.
+#### What self-review reads
 
-### `wiki`
+`--self` reviews the worktree, not the remote branch. Everything that differs from the base branch is in scope: unpushed commits, staged and unstaged edits, and untracked files (`.gitignore` still applies). The head SHA and the changed-file list come from `git`, never from GitHub. When the branch already has a PR, its title, body and labels supply context but do not define the diff — the review logs the local head whenever it differs from the PR's.
 
-Mechanical operations over a compiled knowledge base.
+Re-reviews narrow to what changed since the prior review, and that delta follows the same rule — uncommitted work done since the last `--self` run is picked up. PR mode is unaffected: it reviews the pushed commits only.
 
-The `wiki` skill (`ai/skills/wiki`) owns compilation, querying, and judgement.
-This CLI owns only what is decidable without reading for meaning: link graphs,
-word counts, file hashes, dates.
+#### Which base a review measures against
 
-```
-wiki init    [--vault|--in-repo|--wiki DIR] [--domain TEXT] [--audience TEXT] [DIR]
-wiki path    [--wiki DIR] [DIR]
-wiki status  [--wiki DIR] [--json] [DIR]
-wiki lint    [--wiki DIR] [--json] [--signals] [DIR]
-wiki signals [--wiki DIR] [--json] [DIR]
-wiki sources [--wiki DIR] [--new] [--json] [DIR]
-wiki index   [--wiki DIR] [--check] [DIR]
-wiki backup  [--list|--restore NAME] [--keep N] [--wiki DIR] [DIR]
-wiki link    [--wiki DIR] [DIR]
-wiki ingest  --stage SRC [--type T] [--title TEXT] [--wiki DIR] [DIR]
-wiki archive SLUG [--force] [--wiki DIR] [DIR]
-```
+Every range a review reads is anchored to `origin/<base>`, and the base is resolved once per run, most authoritative source first:
 
-A knowledge base is a directory holding SCHEMA.md, an `articles/` tree of
-compiled markdown, and a `raw/` tree of the immutable sources they were compiled
-from. `_index.md`, `_sources.md`, and `_log.md` are generated bookkeeping.
+| Rung | Source | When it answers |
+|------|--------|-----------------|
+| 1 | `--base` / `--onto` | The operator passed one |
+| 2 | The PR's `baseRefName` | The branch has an open PR that GitHub will report (`gh pr list` defaults to open PRs) |
+| 3 | Nearest local ancestor of HEAD | The branch is stacked on another branch that has no PR yet |
+| 4 | The repo's default branch | Everything else — the ordinary branch off trunk |
 
-It lives in one of two places, and `init` asks which when a repo has not said:
-in the repo (committed and shared), or in this machine's vault (private, outside
-every worktree, one folder per repo). The vault is found through `wiki.root`, so
-it reads the same from every worktree of a repo and survives the worktree being
-removed.
+Rung 3 is what makes a stacked branch reviewable before its parent has a PR. It asks git for the branches that are ancestors of HEAD but not of the trunk, and takes the nearest; an ordinary branch off trunk has none, so the common case falls to rung 4 with no special case for it. The rung yields a *name*, which is then resolved as `origin/<name>` — so a local ref sitting at a stale position can nominate a base without being the commit anything is measured against.
 
-`status`, `lint`, `signals`, and `sources` accept `--json`. `lint` and
-`index --check` exit 1 when they have findings. Exit 2 means the knowledge base
-could not be located — or, from `init` alone, no location was chosen.
+A parent that has not been pushed has no `origin/` ref, and every range would resolve to nothing — which is not an error but an empty review, since a diff that spans no commits looks exactly like a branch that changed nothing. So the base resolves to the local branch when, and only when, there is no remote-tracking ref *and* it is a strict ancestor of HEAD. A pushed base is always measured against the remote: the two disagree whenever the local branch is behind, and a review must not depend on a fetch it does not control.
 
-**Global flags**
+Measuring a stacked branch against the trunk is wrong in a way nothing reports: the parent's commits read as this branch's own, and every finding about them is a finding about code the author did not write here. The same base also feeds the supersession gate, which would otherwise refuse the branch — before spending anything — over skew it measured against the wrong trunk.
 
-| Flag | Description |
-|------|-------------|
-| `-V`, `--version` | show program's version number and exit. |
+Where derivation guesses wrong, `--base` is the override. The case that calls for it is a stale branch parked between you and your real parent — a `wip`, a backup, a bisect leftover — which is nearer and therefore wins. The same applies on a detached HEAD whose own branch ref is gone (a `--recover` pin, or a PR whose branch was deleted): the guard that normally skips the current branch has no name to match, so a stale neighbour can win on distance alone. The run says which rung answered and why, so a bad guess is visible rather than silent.
 
-**`wiki init`** — Create a knowledge base
+A `--base` naming a branch that exists in neither `origin/` nor locally is refused before the review runs. This is the one rung that can name something that does not exist — the derived ones read refs out of git — and the failure it prevents is the quiet kind: every range would anchor to a ref git cannot resolve, the diff would come back empty, and the review would report no findings for a branch it never read. A *derived* base that does not resolve is not refused, since that is a gap in the derivation rather than a typo, and the range fallbacks handle it.
 
-| Flag | Description |
-|------|-------------|
-| `[<dir>]` | Where to start looking (default: cwd). |
-| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
-| `--domain` `<domain>` | What the knowledge base is about. |
-| `--audience` `<audience>` | Who will use it. |
-| `--vault` | Keep it in the machine-level vault, private to this machine. Not with `--in-repo`. |
-| `--in-repo` | Keep it in the repo, committed and shared with whoever clones it. Not with `--vault`. |
+#### Model selection
 
-**`wiki path`** — Print the resolved knowledge base directory
+Each pipeline phase resolves its model as **`--model` flag > `WORKBENCH_AI_<PHASE>_MODEL` > `WORKBENCH_AI_MODEL` > phase default**. The phase names and their defaults live in `PHASES` ([`ai/lib/agent/registry.py`](../ai/lib/agent/registry.py)) — the env key is derived from each name by convention, so adding a phase needs no change here.
 
-| Flag | Description |
-|------|-------------|
-| `[<dir>]` | Where to start looking (default: cwd). |
-| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
+Bare aliases (`sonnet`, `opus`, `haiku`) resolve through `AI_SONNET_MODEL`, `AI_OPUS_MODEL`, and `AI_HAIKU_MODEL` when those are set, falling back to the `ANTHROPIC_DEFAULT_*_MODEL` names they were renamed from; otherwise the alias is passed to the CLI as-is.
 
-**`wiki status`** — Counts, uncompiled sources, and recent activity
+#### Prompt token measurement
 
-| Flag | Description |
-|------|-------------|
-| `[<dir>]` | Where to start looking (default: cwd). |
-| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
-| `--json` | Emit JSON. |
+Each rendered prompt is verified before it is sent: bytes against the spend ceiling always, and tokens plus a per-backend overhead reserve against the model's window when a count exists. A missing count is recorded as `token_verified: false` with a reason — never treated as a pass. The count is one round trip per render (0.29s for 6KB, 0.55s for 374KB). Set `WORKBENCH_AI_MEASURE_TOKENS=0` to opt out; a machine with no Vertex credentials skips the count the same way. After the agent runs, the same record gains `served_model` and `overhead_tokens` (first-turn billed input minus counted prompt tokens).
 
-**`wiki lint`** — Mechanical health checks over articles and sources
+The count comes from the model's own tokenizer, so it is only meaningful against the model that will serve the request — `claude-sonnet-5` counts the same text around 27% denser than `claude-sonnet-4-5`. It needs the same Vertex configuration and application-default credentials as the quota preflight below; without them the run proceeds and records the unverified state rather than recording a guess.
 
-| Flag | Description |
-|------|-------------|
-| `[<dir>]` | Where to start looking (default: cwd). |
-| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
-| `--json` | Emit JSON. |
-| `--signals` | Also report the counted signals. |
+It counts the rendered prompt alone. The system prompt and tool schemas the CLI assembles internally are charged to the same request and are reserved per backend (64k on Claude, covering a measured max of 51k; 32k on pi, covering 26k). An unknown backend takes the larger reserve.
 
-**`wiki signals`** — Counted evidence for the judgements lint leaves open
+#### Vertex AI quota preflight
 
-| Flag | Description |
-|------|-------------|
-| `[<dir>]` | Where to start looking (default: cwd). |
-| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
-| `--json` | Emit JSON. |
+When the Claude backend is pointed at Vertex AI, the review aborts before spending anything if a model it would use has no provisioned quota in the target project. The env vars are declared in [`ai/lib/vertex.env.yml`](../ai/lib/vertex.env.yml) and scaffolded into `~/.env.local`.
 
-**`wiki sources`** — Raw sources with their hashes and compile state
+The gate is fail-open: it only stops runs it can prove are misconfigured. It proceeds — with a note — when the CLI is not on Vertex, when project/region are unset, when there are no application-default credentials, when the Service Usage API errors, or when the model is a bare alias the CLI resolves internally. On failure it lists the provisioned models and names the `WORKBENCH_AI_<PHASE>_MODEL` keys worth changing. Quota lookups are cached per project/region for 5 minutes in `${WORKBENCH_CACHE_DIR}/vertex-quota/` — see [Libraries — roots.sh](libraries.md#rootssh).
 
-| Flag | Description |
-|------|-------------|
-| `[<dir>]` | Where to start looking (default: cwd). |
-| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
-| `--json` | Emit JSON. |
-| `--new` | Only new or changed sources. |
+Requires application-default credentials (`gcloud auth application-default login`) with read access to `serviceusage.googleapis.com`. The check is skipped entirely on non-Claude backends (`AI_BACKEND=pi`).
 
-**`wiki index`** — Rebuild the master index from article frontmatter
-
-| Flag | Description |
-|------|-------------|
-| `[<dir>]` | Where to start looking (default: cwd). |
-| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
-| `--check` | Report staleness without writing. |
-
-**`wiki backup`** — Snapshot the knowledge base, list snapshots, or restore one
-
-| Flag | Description |
-|------|-------------|
-| `[<dir>]` | Where to start looking (default: cwd). |
-| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
-| `--list` | List snapshots instead of making one. |
-| `--restore` `<name>` | Extract a snapshot beside the base; NAME or 'latest'. |
-| `--keep` `<keep>` | How many snapshots to keep (default: 10). |
-
-**`wiki link`** — Create or remove the browsing symlink from this repo to its base
-
-| Flag | Description |
-|------|-------------|
-| `[<dir>]` | Where to start looking (default: cwd). |
-| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
-
-**`wiki ingest`** — Copy a source into raw/ with frontmatter and a real hash
-
-| Flag | Description |
-|------|-------------|
-| `[<dir>]` | Where to start looking (default: cwd). |
-| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
-| `--stage` `<src>` | File to copy into raw/. Required. |
-| `--type` `<type>` | Source type recorded in frontmatter. Default: `file`. |
-| `--title` `<title>` | Title, used for the filename and frontmatter. |
-
-**`wiki archive`** — Retire an article to archive/, keeping it readable
-
-| Flag | Description |
-|------|-------------|
-| `<slug>` | Article to retire. |
-| `[<dir>]` | Where to start looking (default: cwd). |
-| `--wiki` `<dir>` | Use this knowledge base instead of searching. |
-| `--force` | Archive even while live articles link to it. |
-
-### `workbench-reference`
-
-Print a reference card of all workbench skills, agents, and reuse modes.
-
-Called by the `reference` skill (`ai/skills/reference`). Discovers from SKILL.md
-frontmatter under `~/.claude/skills/` and agent `.md` files under
-`~/.claude/agents/` (`CLAUDE_DIR` overrides that root).
-
-Usage: workbench-reference
-
-Stdout is markdown: a Skills table (invocation, description), an Agents table
-(name, description), and a Reuse Modes table. Skill descriptions are trimmed at
-the TRIGGER/SKIP/Use-when clause so the card stays short.
-
-`-h` / `--help` prints this text.
+Which backend serves AI calls is set by `AI_BACKEND` or by the `agent.backend` config key, and has no default — a machine that has not chosen gets an error naming both, not a silent pick. The env var wins where both are set, so a one-off run can override the machine's standing choice without editing config.
 
 ### `workbench-rules`
 
-Manage this machine's own coding-rule layers — the local additions and
-overrides that no harness ships. Installing the merged set is each harness's
-own sync step (`step_claude_rules` symlinks it into `~/.claude/rules/`,
-`step_pi_guidelines` concatenates it into `~/.pi/agent/AGENTS.md`), so a
-machine running either harness alone gets the same rules.
+Manages this machine's own coding-rule layers — the local additions and overrides that no harness ships. Installing the merged set is each harness's own sync step (`step_claude_rules` symlinks it into `~/.claude/rules/`, `step_pi_guidelines` concatenates it into `~/.pi/agent/AGENTS.md`), so a machine running either harness alone gets the same rules.
 
 ```
 workbench-rules <command> [<args>]
@@ -1286,6 +440,540 @@ workbench-rules <command> [<args>]
 | `-h`, `--help` | Show help |
 
 Domain aliases: `ts`/`js` → `typescript`, `py` → `python`, `sh`/`shell` → `bash`, `yml` → `yaml`.
+
+### `pr`
+
+Unified PR lifecycle CLI — manages CI, code review, comments, rebasing, and push state.
+
+```
+pr [global flags] <command> [flags]
+```
+
+| Global flag | Description |
+|-------------|-------------|
+| `--repo-dir PATH` | Git worktree directory (auto-detected from CWD when omitted) |
+| `--branch NAME` | Branch name override |
+| `--pr NUM\|URL` | PR number or URL |
+
+**Commands:**
+
+| Command | Description |
+|---------|-------------|
+| `status` | Show unified dashboard: CI, review, comments, rebase, and push state |
+| `ci [--fix] [--post]` | Fetch and classify CI failures; `--fix` attempts automated repair, `--post` pushes the fix |
+| `review [--self] [--fix] [--push] [--post] [--repair] [--summary]` | Run code review via `review` |
+| `comments [--triage] [--fix] [--finish] [--track THREAD_ID] [--track-all] [--post] [--reply <id> --body-file <path> --post] [--settle <id> --as <outcome>]` | Fetch and manage PR review threads (see phases below); `--post` publishes (default: drafts) |
+| `fix` | Run fix passes for CI, review, and comments in one step, then revise the description |
+| `rebase [--fix] [--push] [--abort] [--onto <ref>] [--push-only] [--expect SHA]` | Rebase onto the branch's base — `--onto`, else the PR's base branch, else the branch this one is stacked on, else the repo's default branch. Holds its own push when a file was resolved to one side. `--push-only --expect SHA` pushes HEAD leasing on SHA without rebasing |
+| `describe [--force] [--dry-run] [--post]` | Revise the PR description against the repo's PR template; `--post` applies it (default: drafts) |
+| `gc` | Clean up stale PR review artifacts and cached state |
+
+**Every AI call `pr` makes is a phase.** Not only the review pipeline's: the
+conflict resolutions and lockfile commands behind `pr rebase --fix`, the
+description `pr describe` writes, and the thread triage `pr comments` runs each
+resolve their model and thinking level from `PHASES`
+([`ai/lib/agent/registry.py`](../ai/lib/agent/registry.py)) through the same
+chain, so `WORKBENCH_AI_REBASE_MODEL`, `WORKBENCH_AI_DESCRIBE_THINKING` and
+their siblings move calls that used to take whatever the CLI defaulted to. The
+env keys are derived from the phase name, so the list here is the registry's.
+
+**`pr comments` flags fall on two axes — phase and gate:**
+
+The phase flags (`--triage`, `--fix`, `--finish`, `--reply`, `--settle`) choose
+which work the run does. `--post` is the gate: it decides whether that work
+leaves the machine. Every phase drafts to stderr and publishes nothing without
+it, so `--post` neither implies a phase nor is implied by one.
+`--finish --post` is therefore not saying the same thing twice — the first
+names the work, the second opens the gate. The same `--post` gates `pr review`
+and `--reply`; it is one switch for the whole process, not a `comments` flag —
+see `ai/lib/core/publishing.py`, which owns it.
+
+**Every fix pass answers to the same gate.** `pr ci --fix` and `pr review --fix`
+commit what their agent fixed and draft the push without `--post`, exactly as
+`pr comments --fix` does. The commit always happens: it is local, it is what
+makes the work reviewable, and it keeps the next round from reading its own
+dirty tree as a refused commit. A fix commit carries a `Fix-Checks:` trailer
+naming how the repo's checks ended. The push is the outward act, so it waits. A held
+push prints the command that would send it, and every outcome short of a landed
+push carries that command as data — `ai/lib/git/land.py` owns the commit and the
+push under it, and `push.resume_command` renders the one thing to run.
+
+Alongside `--fix`, `--post` is a modifier rather than a mode: `pr review --fix
+--post` means publish what this run produces — post the findings, push the
+commit — while `pr review --post` on its own publishes the review already on
+disk. One caveat on `pr ci --fix --post`: the rebase it may run first pushes
+through a subprocess the gate does not reach, so that push happens either way.
+
+The work itself runs in two phases:
+
+`--fix` triages threads, applies mechanical fixes, and resolves the verified
+ones. It withholds the summary comment whenever threads need human input,
+because the summary is meant to describe a finished conversation.
+
+`--finish` closes out what `--fix` held back: replies on threads whose commit
+had not yet been pushed, a tracking issue for the threads named by `--track`,
+and the summary comment. It is a second invocation on purpose — the discussion
+has to happen in between. ⚠️ Combining them (`--fix --finish`) works and closes
+out that run's deferred set, but posts a summary nobody has replied to yet.
+
+`--track THREAD_ID` is repeatable and selects which deferred threads get filed
+on the tracking issue; `--track-all` selects every one and overrides any
+`--track` ids passed alongside it. Neither is implied by `--finish`. A thread is
+deferred because the fix pass ran out of budget, not because anyone decided to
+postpone it, and filing it posts a reply under the PR author's name saying a
+reviewer's finding was triaged and postponed — so the selection is the user's,
+per thread. A `--finish` logs the deferral ids it left unfiled, whether the
+selection was empty or partial. Naming an id that is not a deferred thread is an
+error rather than a silent skip, so a typo cannot pass for agreement.
+
+**`--settle` records a thread you handled yourself:**
+
+`--fix` marks a thread `needs_human` when it is contested, ambiguous, or too
+complex to attempt, and marks it `deferred` when it ran out of budget. Either
+way the ending is usually the same: you write the fix, commit it, and push. None
+of that reaches the snapshot, so `--finish` goes on reporting a settled thread as
+open — no reply, no resolution, an Action cell reading `Needs discussion`, and a
+closeout `pr status` keeps quoting as owed.
+
+`--settle <id>` is how you tell the CLI what you did. It is repeatable, and
+`--as` picks which of the three terminal outcomes to record — `fixed` (the
+default), `dismissed`, or `already_addressed`. From there the thread is
+indistinguishable from one the pass settled: `--finish` replies on it, resolves
+it, and gives it a summary row attributed to the commit that carries the change.
+
+- `--as dismissed` requires `--reason <text>`, which becomes the body of the
+  reply. Telling a reviewer their point does not apply, with nothing for them to
+  argue with, is worse than not replying. The other two outcomes render no
+  reason and refuse the flag rather than swallowing it.
+- `--as fixed` finds the commit itself, from the branch history of the line the
+  thread is anchored to, and cites it only once the remote has it — a link to a
+  commit still sitting on your machine 404s for the reviewer it was written for.
+  Pass `--commit <sha>` when the fix landed somewhere else; a `--commit` the
+  remote does not hold is an error rather than a dropped citation. When neither
+  resolves, the row reads `Addressed outside the fix pass` and the run says so.
+  `--finish` renders that same cell for a thread it reconciled against GitHub.
+  Neither is credited afterwards to whatever commit last touched the line the
+  thread is anchored to: that history is evidence about a fix the pass landed,
+  and both of these say it did not. What withholds the citation is the record of
+  who settled the row, not the wording of the reason printed beside it.
+- Naming an id no fix pass recorded is an error listing the threads that are
+  waiting on a person, for the same reason `--track` errors on one. Recording
+  the outcome a thread already carries is a no-op that says so; recording a
+  different terminal outcome replaces it and reports what it replaced.
+
+Recording is its own step, so `--settle` publishes nothing and refuses `--post`
+and every other phase flag alongside it. Run it, read the state back, then run
+`pr comments --finish --post` — the same gate every other write here answers to.
+
+That per-line search is also what attributes a pass whose own commit never
+landed — a hook rejected it, or you committed the work yourself before
+publishing. The branch having moved says work landed outside the pass; it does
+not say which row any of it carries, and the number of commits that landed
+cannot make it say so. A fix record spans rounds, so it holds rows an earlier
+round settled and recorded no SHA for, which the newest commit provably does not
+contain. So the moved HEAD supplies a tree for the file permalinks and nothing
+more, and every uncredited row is resolved from its own line history. A row that
+cannot be — its line's only commit predates the review, or it was decomposed out
+of a review-level comment and is anchored to no line — reads
+`Fix applied (commit not recorded)` rather than borrowing a commit.
+
+**Replies are one per thread:**
+
+Every reply — generated by `--fix`/`--finish` or hand-written via `--reply` —
+edits our standing reply in place while that reply is still the last comment on
+the thread, and posts a new one only once a reviewer has answered. Editing under
+a reviewer's reply would rewrite the text they were responding to; leaving a
+second comment when nobody has answered leaves them holding two of our positions
+with no way to tell which stands. Whether the thread is resolved makes no
+difference: `--finish --post` resolves the threads it answers, and the reply it
+left there is still the one to revise.
+
+A reply that no longer reads as one of ours was rewritten by hand, and the
+thread is then left alone for the life of the PR — the round logs it and moves
+on rather than posting a templated answer under a position a person already
+stated. A reviewer answering does not retire that: the thread having become a
+conversation is the strongest reason not to talk over it. Use
+`--reply <id> --body-file <path> --post` to replace a hand-written reply on
+purpose.
+
+`--reply <id> --body-file <path> --post` accepts a thread node ID, any comment
+`databaseId` in the thread, or a `...#discussion_r<id>` URL, and warns when the
+body carries no `blob/<sha>/` permalink to back its claims. Pass `-` as the path
+to read the body from stdin. Like every other write here it needs `--post`;
+without it the body is printed under `DRAFT (not published)` and nothing is
+sent. Use it instead of `gh api .../replies`, which bypasses the dedup entirely.
+
+**The summary is a chain of comments, one per round:**
+
+A review cycle posts `Review Comments Addressed` comments as it goes. A round
+nobody has spoken over since the last one edits that comment in place; a round a
+reviewer has commented, reviewed, or replied below posts a new one, because an
+edit notifies nobody. Any of the five thread outcomes can appear — fixed,
+already addressed, dismissed, deferred, and the ones still awaiting discussion.
+
+A comment covers its own round rather than the whole PR: a thread it has not
+seen before, one a reviewer has spoken on since the last summary, and one this
+round gave a different outcome than the comment chain already reports. A thread
+quiet since the round that published it is left in that comment and counted in a
+note — one note for the settled ones, a second for the ones still awaiting an
+answer, because "settled" is the wrong word for a question still owed one. A
+footer links every earlier summary, so the newest comment is the entry point to
+the whole record and an open thread is one link away rather than restated for
+the life of the PR.
+
+Re-classification is read as an outcome, not as cell text. One outcome has
+several wordings — a fix reported with a commit and the same fix reported
+without one — so a round that only re-words a cell changes nothing and the row
+stays where it was published. A cell somebody rewrote by hand states no outcome
+at all: it is held as published, never treated as a change, and never restated.
+
+An edit is the case that can destroy a row, since it replaces a body. The
+replacement is built from local state, which is per-target and per-worktree, and
+routinely absent for a round the comment already covers: `pr gc`, a recreated
+worktree, a later round run from another machine. So the comment is read before
+the edit and any row this run cannot account for is carried forward verbatim,
+counted as `N carried over`, and logged. An edit never drops a row it is the
+only comment holding; a row an earlier comment also carries is scoped like any
+other, since the chain still holds it.
+
+**An edited comment is read again:**
+
+A comment `pr comments` has already read is dropped from triage decomposition,
+so the record of what was read decides what an agent ever sees. That record is
+keyed on the comment id *and* the time its body was last edited — an edit keeps
+the id and does not move the comment, so a reviewer who rewrites a comment to
+add a demand would otherwise have it silently discarded as already handled.
+
+The stamp is GitHub's `lastEditedAt`, which is null until the first edit. The
+issue-comment REST path has no such field and reconstructs it from
+`updated_at`, collapsing the never-edited case (`updated_at == created_at`) to
+the same empty stamp — without that, the two fetch paths would disagree about
+an untouched comment and re-report it on every round.
+
+`fetch_review_body_comments` takes its `PRData` as a required argument for the
+same reason. It had a REST fallback and no caller for it, and the reviews REST
+payload carries no edit stamp at all — not `lastEditedAt`, not `updated_at` —
+so a run down that path could not have told an edited review body from an
+untouched one. A path that silently degrades a correctness check is worse than
+a missing one, so it is gone rather than documented.
+
+A state file written before the stamps existed reads as "nothing seen" and
+re-reports one round's comments. That is the deliberate direction: a false
+unseen is noise once, a false seen loses a reviewer's words for good.
+
+The same edit reopens a *thread*. A thread whose last comment is ours is
+`addressed`, which `settlement_for` grades `settled_elsewhere` — so a reviewer
+who edits their comment to add a demand after we replied had it recorded as
+answered and closed out, not merely missed. A thread anyone other than us
+rewrote after our last word is `ambiguous` instead, which carries no settlement
+and is included in triage.
+
+The comparison is against the time we last spoke, so a reviewer who tidied
+their comment *before* we answered leaves the thread addressed — we answered
+the text as it now stands. Our own later edit does not reopen anything, and a
+resolved thread stays resolved: the button is the reviewer's own word on how it
+ended.
+
+**`pr fix` only trusts a clean verdict about the commit in hand:**
+
+`pr fix` decides whether to run each pass by reading the same cached state
+`pr status` prints. A cached "nothing to do" is honoured only when the domain
+can say it was measured against the current HEAD — `ReviewSummary.head_sha` for
+the review, the latest stored run's `headSha` for CI. A verdict about another
+commit, or one that names no commit, re-runs the pass and says why.
+
+The two ways of being wrong are not symmetrical, which is what sets the
+default:
+
+| Cache says | Truth | Outcome |
+|---|---|---|
+| clean, same commit | clean | pass skipped — the saving this gate preserves |
+| clean, **another commit** | broken | pass **runs**; without the check it was silently skipped |
+| work pending | already fixed | pass runs, re-fetches, finds nothing, says so |
+
+Running an unnecessary pass costs one spawn, and every pass re-fetches its own
+subject before acting. Skipping a necessary one is silent and permanent:
+nothing downstream looks again, and `pr fix` reports success having done
+nothing. So the gate errs toward running whenever it cannot place the verdict.
+
+Each pass is asked about the commit *its own child* will act on, and under
+`--pr` those differ. `ctx.head_sha` is then the PR's remote head — the right
+question for CI, whose runs are about what was pushed, and the wrong one for
+the review, which `--self` runs against the worktree. Asking the review about
+the remote head skips it after a clean review followed by unpushed commits,
+leaving the local tree nobody has read unexamined.
+
+The comment hint is not gated this way. It never spawns the comment pass, and
+`CommentsSummary` records no commit, so a stale count there costs a misleading
+line rather than skipped work.
+
+**`pr describe` is commit-aware:**
+
+The pass records the HEAD it described. A repeated run against an unchanged
+branch is a no-op rather than another AI call, which is what lets `pr fix` call
+it unconditionally at the end of every run. `--force` ignores the recorded SHA;
+`--dry-run` prints the revision instead of applying it.
+
+The edit itself answers to the same publishing gate as every other GitHub write:
+without `--post` the revised body is drafted to stderr and the PR is untouched.
+`--dry-run` is the narrower request of the two — it prints the revision and
+records nothing, where a draft still records that the pass ran. `pr fix`
+forwards `--post` to the description for this reason, and forwards nothing else.
+
+The template is resolved by `ai/lib/core/pr_template.py`, which owns the candidate
+list for every caller — this command, `task pr:create`, and the SessionStart context
+line. It checks `pull_request_template.md`, in either case, in `.github/`, the repo
+root, and `docs/`, and takes the first that exists. A repo with none of them gets the
+built-in fallback (Summary / Changes / Testing only). A differently-named template,
+and GitHub's `PULL_REQUEST_TEMPLATE/` directory form, are not detected.
+
+**Every line is dated:**
+
+`pr status` makes no network calls — it reads the state file each subcommand
+wrote when it last ran, so a line on the dashboard is as old as that run. The
+age is printed beside the domain it belongs to:
+
+| Age of the domain's last write | What the line carries |
+|---|---|
+| Under an hour | nothing — the one case a reader may take as current |
+| An hour or more | `(as of 3 hours ago)` |
+| A day or more | `[STALE — 7 days ago]` |
+| A stamp that cannot be parsed | `[STALE — age unknown]` |
+
+```
+**CI** (red): failure — 65 failure(s) [STALE — 7 days ago]
+  test: 65
+  run #12
+```
+
+The marker is applied by the dashboard's fold over the domain registry, not by
+each domain, so a domain added later is dated without doing anything. Push is
+the exception and not by special case: `pr status` observes it live rather than
+reading it back, so its stamp is always seconds old.
+
+A verdict is also refused when it was measured against another commit, however
+recent it is: run `pr ci`, commit, push, and the CI line is minutes old and
+describes the commit before yours. That reads `[STALE — checked another
+commit]`, and the commit outranks the clock — dating a superseded verdict "as
+of 5 minutes ago" would argue it is still current. A domain that records no
+commit (`comments`, `triage`) is judged by the clock alone, and so is every
+domain when HEAD cannot be resolved: unknown on either side is not evidence of
+a mismatch.
+
+**Merge readiness will not vouch for either.** A domain the dashboard marks —
+for age or for commit — that says nothing is wrong is folded in as *unchecked*
+rather than as clean, so the line reads `blocked — not checked: CI (last
+checked 9 days ago)` instead of `ready`. "We looked a week ago and it was fine"
+is not the same claim as "it is fine", and `ready` is read as the second: a
+dashboard that marks a line `[STALE]` and then declares the PR mergeable two
+lines below is the trap this closes. Both surfaces read the same two checks, so
+the marker above and the readiness line below cannot disagree.
+
+A domain that found something wrong keeps its blocker either way. An old
+failure is still a reason not to merge, and downgrading it to "unchecked" would
+make an unvouchable domain quieter than a current one.
+
+Two kinds of domain are judged on content alone. One has no say in merging at
+all — a description, a rebase record, a supersession verdict — so the age of
+its snapshot is not a reason to block. The other answers from bookkeeping
+rather than from a measurement: `pr fix`'s closeout debt is recorded in the
+state file itself, so it is as true a week later as when written and
+re-running the pass could not refresh it. An undelivered closeout still blocks
+at any age; a delivered one never starts to.
+
+**Push status in `pr status`:**
+
+`pr status` detects unpushed commits by comparing local HEAD against `origin/<branch>`.
+The Push verdict appears in the dashboard and gates the **Merge readiness** line:
+
+| Push state | Dashboard line | Effect on merge readiness |
+|------------|----------------|--------------------------|
+| Branch not pushed | `**Push**: branch not pushed to remote` | Blocks: "branch not pushed" |
+| Commits ahead | `**Push**: N commit(s) not pushed` | Blocks: "N unpushed commit(s)" |
+| Up to date | `**Push**: up to date` | No block |
+
+**The undelivered closeout shows up too:**
+
+A `--fix` run that ends with open `needs_human` threads, or that runs without
+`--post`, holds back the summary comment and the per-thread replies and records
+that in state. A tracking issue that was owed for the deferred threads and could
+not be filed — no tracker configured, a provider that cannot create issues, a
+tracker keyed by team with `issues.team` unset, or a creation that failed — is
+recorded the same way. The team key is read from config alone — never inferred
+from the branch — so the unset-team case is fixed once, by running:
+
+```
+otto-workbench config set issues.team TEAM --project
+```
+
+`pr status` reads those flags back out, so the debt is visible after the stderr
+line has scrolled past:
+
+```
+**Fix**: 11 fixed · 2 need discussion · 1 dismissed · 3 already addressed (commit: 9f2c1ab, push_held)
+  ⚠ closeout owed: summary + 15 replies — run: pr comments --finish --post
+
+**Merge readiness**: blocked — closeout not delivered (run: pr comments --finish --post)
+```
+
+The reply count is derived from the recorded outcomes — the fixed,
+already-addressed, and dismissed threads `--finish` drains. A queue that still
+owes replies but carries no outcomes to count says `replies` without a number
+rather than claiming zero. An unfiled tracking issue reads as
+`deferred tracking issue` in the same line.
+
+A draft run owes nothing: the publishing gate declining a write is the gate
+working, so it neither posts an error to the trail nor counts against merge
+readiness.
+
+### `otto-mcp-server`
+
+MCP server. Offers the tools the component registries declare, over stdio. Registered in
+`~/.claude.json` as `otto-workbench` by `otto-workbench ai sync`.
+
+```
+otto-mcp-server
+```
+
+A script is offered when its registry entry declares `visibility: full` or `brief`; a
+`hidden` entry, or a script no registry names at all, is never offered. The schema comes
+from importing the tool rather than running it — `pr`, the one tool offered today, publishes
+its schema as `cli.schema.tool_schema()` — so discovery is a registry read plus an import,
+not a scan. Scripts built on `ToolParser`
+([`ai/lib/core/tool_parser.py`](../ai/lib/core/tool_parser.py)) can still answer their own
+`--tool-schema` flag on the command line, for a reader rather than for MCP.
+
+**Where it looks.** The component registries — see [Registries](registries.md) — the same
+files that document every workbench script for a reader and, for `full` entries, for the
+rule layers Claude loads. `ai/lib/config/tool_registry.py` maps each registered script's
+path to its entry; the MCP server reads that mapping rather than globbing `bin/`
+directories or running anything to find out what exists.
+
+**There is no configuration file.** The server hosts the workbench's own tools, so what
+to offer is a fact about the checkout's registries — there is nothing to hand-author and
+nothing to keep in sync. An earlier design read `tool_dirs` and `plugin_dirs` from
+`~/.config/workbench/mcp-tools.json` to let outside directories register tools; no setup
+step ever wrote that file, no machine was found holding one, and the keys were removed
+rather than carried into `config.yml`. Adding a tool means registering it in a component's
+`registry.yml`, as below; the schema comes from `_tool_schema()`, the function in
+`ai/claude/mcps/server.py` that imports it.
+
+**What a client is offered.** Today only `pr` is offered — `ci-check`, `pr-describe`, and
+`pr-rebase` are registered hidden because they are what `pr ci`, `pr describe`, and
+`pr rebase` run, and offering them beside `pr` asks a client to choose between a tool and
+its own internals.
+
+The description a client reads is the registry's, not the script's: the registries own tool
+documentation, and a `full` entry's `when_to_use` and `usage` lines are appended to it —
+they answer a caller's real questions, and a client has no access to the rule files they
+otherwise render into. A script's own `--tool-schema` description is written for its
+`--help` and has already drifted shorter.
+
+`bin/local/validate-registries` is what holds the registries to shape statically, before
+anything reads them here: required fields, no unknown fields, and no two entries in one
+file sharing a name, and — across the `bindir` registries, the ones that name
+executables — no two files claiming the same name either. It does not confirm that a
+tool's schema imports cleanly; nothing does at build time, but a schema that will not
+import now fails the scan at startup and is logged, where a probe that would not answer
+used to leave the tool silently absent.
+
+**Two scripts, one name.** Discovery keys on the name a schema answers with, not on a
+filename, so two entries could claim one tool. At runtime the first the scan reached in
+registry order wins and the other is logged at error level naming both paths. It is not
+raised: discovery runs in the thread that also serves re-discovery, so one ambiguity
+would either take the server down or freeze the tool list for the session, and first-wins
+leaves a working tool working.
+
+Which means the build is the only place a collision can be an error rather than a log
+line, and `validate-registries` is where that happens — both within a file and across
+them. The cross-file half arrived with registry-driven discovery: the deleted
+`validate-tool-schema` had compared names across every candidate it probed, and nothing
+replaced that until the check above. Only `bindir` registries are compared, because a
+brew stack and an env alias describe different kinds of thing and legitimately share a
+name — `linear` is both today — and neither is a script the server can offer.
+
+**How a tool call is run.** A call still spawns the script — `pr`, the one tool offered —
+through a spawn helper that gives the child two things `subprocess.run` does not. Its
+stdin is closed rather than inherited: the server's own stdin *is* the stdio JSON-RPC
+stream the client writes requests into, so a script that reads a single byte takes that
+byte out of the transport and the session dies on a parse error naming no tool. The child
+also gets a session of its own, so an expired bound `SIGKILL`s the whole process group
+instead of the one process — a tool spawns agents (`pr review` is the case), and signalling
+only the direct child leaves them running against the account with nothing holding a
+handle to them. There is no grace window before the kill: the budget has already expired,
+and a TERM-then-KILL ladder would double the worst case on a call that is already late.
+
+**Staying current without a restart.** The client owns this process — it spawns the server
+over stdio and nothing outside can restart it — so a tool added, re-signatured, or
+registered differently after startup would otherwise stay invisible until the next client
+session. Every couple of seconds the server fingerprints what discovery reads: every
+`registry.yml`, plus the two modules the schema is built from
+(`ai/lib/cli/schema.py` and `ai/lib/cli/registry.py`). Nothing is executed and no other
+source is read, so a poll that finds nothing costs one `stat` per watched file; the
+interval is a bound on staleness rather than a cost to trade against.
+
+The baseline every poll compares against is stamped before the startup scan, not after it,
+and travels with the tool set that scan produced. A baseline taken later would already hold
+whatever landed in between, so no poll would ever see that file appear and the tool would
+stay missing for the whole session. Stamping first costs at most one redundant re-scan on
+the first poll.
+
+When the fingerprint moves, discovery runs again. Only a change to the offered set is
+announced — pulling a branch touches many files and usually changes no tools — and the
+announcement is `notifications/tools/list_changed`, which the server advertises as the
+`tools.listChanged` capability during initialization. A client that never saw that promise
+has no reason to re-list, so the notification and the capability ship together. Nothing is
+sent before the client's first request, since a notification arriving mid-handshake is one
+a client is entitled to reject.
+
+A tool that was working and now is not is logged at error level with the reason it stopped
+answering — its script is gone, or its registry entry no longer offers it. A silent
+disappearance from `tools/list` is the failure this exists to prevent: the client shows one
+fewer tool and says nothing about why.
+
+**What a call returns.** Stdout that parses as JSON comes back as the text content of the
+result, so a client sees the tool's own output rather than a rendering of it. A tool whose
+schema declares `output_schema` returns that JSON as structured content as well, because a
+client validates the reply against the schema `tools/list` advertised and rejects a text-only
+answer before the caller sees it. Such a tool that prints no JSON object is therefore a
+contract breach, not a plain result: the call comes back as an error naming the tool and
+quoting the head of what it did print. Tools with no `output_schema` return text and
+nothing more.
+
+That contract is per tool, and `pr` is one command wrapping nine subcommands, so it
+declares none. It used to declare `PRState` for every invocation, which only `pr status`
+prints — and not even that one before a state file exists — so the other eight came back
+`isError` for printing no JSON object. Declaring an output schema is worth it once it can
+be per subcommand.
+
+The launcher runs `uv run --no-project --with mcp`. A client spawns the server with its own
+project as the working directory, and without `--no-project` uv would resolve and install
+that project first — writing a virtualenv and a lock file into somebody else's checkout,
+and failing outright where the project does not build. The server needs `mcp` and nothing
+from wherever it was launched.
+
+### `serena-mcp`
+
+Scaffolds Serena MCP into a project's `.mcp.json` for project-scoped code intelligence.
+
+```
+serena-mcp <command>
+```
+
+| Command | Description |
+|---------|-------------|
+| `init` | Add Serena to `.mcp.json` in the current project (creates if missing) |
+| `status` | Show whether Serena is configured in the current project |
+| `-h`, `--help` | Show help |
+
+`.mcp.json` and `.gitignore` are both tracked project files, so the project is the
+working tree the current directory belongs to rather than the directory itself. A
+shell sitting in a bare-repo container has no working tree, and
+[`resolve-worktree`](#resolve-worktree) names the one the container stands in for;
+a container whose default branch has no checkout is an error rather than a write
+into the container, where nothing would read the file and no `.gitignore` rule,
+review, or CI check could reach it. A directory outside any repository is left
+alone — scaffolding there is a real thing to want.
 
 ## Installed Tools
 
@@ -1391,4 +1079,4 @@ Domain aliases: `ts`/`js` → `typescript`, `py` → `python`, `sh`/`shell` → 
 
 ## Adding a Tool
 
-See [Registries](registries.md#adding-an-entry) for the full schema and step-by-step instructions. A script in a `bindir` registry needs a header before it can ship: the reference above is rendered from it, and the build fails when a script in the reference has none.
+See [Registries](registries.md#adding-an-entry) for the full schema and step-by-step instructions.

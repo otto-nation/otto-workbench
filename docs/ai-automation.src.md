@@ -409,9 +409,9 @@ command as taking no target, or give it a delegate to read.
 
 ### pr batch
 
-`pr batch` runs rebase, comments, and self-review across your open PRs. Every
-step is a child `pr` in a new session with stdin closed — no prompt in any
-child can reach a TTY.
+`pr batch` rebases, CI-fixes, addresses comments on and self-reviews your open
+PRs. Every step is a child `pr` in a new session with stdin closed, and every
+step runs drafted — the batch is the only thing that pushes.
 
 ```bash
 pr batch plan --checkout DIR …           # which PRs need which steps (JSON)
@@ -423,45 +423,41 @@ pr batch cancel [RUN_ID] [--kill]
 pr batch status [RUN_ID]
 ```
 
-`--checkout` is required on `plan`, and on `run` unless `--plan` names a saved
-plan. `--pool` caps concurrency; `--auto-publish STEPS` publishes those steps
-as they finish. Without it, a successful step is drafted and the item waits on
-a `publish` decision. `pr rebase --push-only` is what publish uses for a
-drafted rebase: it pushes HEAD with the lease the earlier `--no-push` run
-recorded, and does not rebase.
+Steps run in the order `rebase`, `ci`, `comments`, `review`. `rebase` is needed
+when the branch is behind its PR's base, from refs in a private `refs/pr-batch/`
+namespace (GitHub merge state fallback; `UNKNOWN` counts as needed). `ci` runs
+`ci-check --fix --no-rebase --head-sha <planned remote head>` (not `pr ci`)
+when the rollup failed, with `--wait` if it was still running. Fork heads skip
+both. A stacked PR waits for its base's publish; `resume` retries `stacked_on`
+once that base is terminal. One fetching rebase or CI step per repo at a time
+(a waiting CI step excepted). No start in a dirty worktree (`dirty_worktree`),
+except a rebase resuming its own paused replay.
 
-A run that still has open decisions exits **10**. `resume` continues it and
-clears a pending cancel. `open-chat` is UI-only — the CLI refuses it and leaves
-the decision open. A failed abort, force, or publish creates a `failed`
-decision; so does a GitHub error during replan (`reason: github`).
-`decision_created` events carry `decision_kind`. `discard` leaves local drafts
-(held rebase, unpushed commits) in the worktree.
+An item that closes with drafted work opens one `publish` decision. Publish
+fetches the branch and refuses (`failed`) with `fetch_failed`, `remote_moved`,
+`not_comparable`, `not_incorporated`, or `not_incorporated_remote`. Otherwise
+it fast-forwards, or force-pushes with `pr rebase --push-only --expect
+<planned head>`, then posts comment replies. `force-publish` answers only
+`not_incorporated_remote` for the listed commits — a new remote commit refuses
+again. `--auto-publish STEPS` resolves that decision when the item closes with
+no open decision and every drafted step is listed and finished `done`.
+`--watch-ci` re-checks CI once after a push and reopens on red; `run_finished`
+lists `ci_not_rechecked`.
 
-Admission starts the next step when free memory minus `batch.mem_reserve`
-covers that step's observed peak (or a seed estimate until a peak is seen) and
-CPU/memory pressure stay under `batch.cpu_pressure_max` /
-`batch.mem_pressure_max`, with an always-admit-one floor so a run is never
-stuck at zero. `--pool` and `batch.pool_max` (default 2) cap concurrency. Hosts
-with no pressure metrics (macOS) fall back to `batch.pool_default` (1).
-Running steps are never paused.
+A step that needs a person opens one `step_review` whose `evidence` is
+`open_findings`, `checks_unverified` (`Fix-Checks:` of `red`/`timed_out`/`error`,
+or `unreadable` when trailers cannot be read), `ci_unfixed`, `one_sided`, or
+`stacked_on`. Actions: `accept`, `retry`, `skip-step`, `undo` (rebase:
+`git reset --hard` to the pre-rebase head). Kinds and actions are tabled in
+[`batch/resolve.py`](ai-libraries.md#batchresolvepy).
 
-State lives under `~/.local/state/workbench/batch/<run-id>/` (`state.json` is
-authoritative).
-
-| Kind | Action | Effect |
-|---|---|---|
-| `comment_item` | `settle-fixed` / `settle-addressed` / `settle-dismissed` / `reply` / `track` | comments step `done` once no `comment_item` remains for the item; `settle-dismissed` needs `--reason`; `reply` needs `--body-file` and a replyable item |
-| any with `open-chat` | `open-chat` | refused by the CLI; decision stays open |
-| `rebase_conflict` | `retry` | rebase step → `pending` |
-| | `abort` | rebase → `skipped`; failure → new `failed` decision |
-| `rebase_refused` | `drop-pr` | item → `dropped` |
-| | `force` | only if payload `override`; success → rebase `done` and drafted; failure → `failed` |
-| `open_findings` | `accept` | review step `done` |
-| `dirty_worktree` | `retry` | worktree re-checked when the scheduler next picks the item |
-| | `drop-pr` | item → `dropped` |
-| `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped`; item → `dropped` |
-| `publish` | `publish` | success → item `done`; failure → new `failed` decision on step `publish` |
-| | `discard` | item → `done` (local commits stay, nothing pushed) |
+A run with open decisions exits **10**; `resume` continues it and clears a
+pending cancel. `open-chat` is UI-only. Admission starts a step when free memory
+minus `batch.mem_reserve` covers its observed peak and CPU/memory pressure stay
+under `batch.cpu_pressure_max` / `batch.mem_pressure_max`, always admitting
+one. `--pool` and `batch.pool_max` (default 2) cap concurrency; hosts with no
+pressure metrics (macOS) use `batch.pool_default` (1). State lives under
+`~/.local/state/workbench/batch/<run-id>/` (`state.json` is authoritative).
 
 ### The Pi package the sync declares, and who gets it
 

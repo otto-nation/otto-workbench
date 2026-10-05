@@ -47,7 +47,7 @@ What a pull request is right now: its target, its threads, its CI, whether it ha
 
 ## Batch
 
-Running rebase, comments and self-review across many open PRs at once: admission, scheduling, step processes, and the decisions a run waits on.
+Running rebase, CI fixes, comments and self-review across many open PRs at once: admission, scheduling, step processes, publishing, and the decisions a run waits on.
 
 <!-- include: bin/local/generate-doc-reference --set ai-lib --group batch -->
 

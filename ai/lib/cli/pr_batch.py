@@ -1,4 +1,4 @@
-"""`pr batch` — run rebase, comments and self-review across my open PRs.
+"""`pr batch` — rebase, fix CI, address comments and self-review across my open PRs.
 
     pr batch plan   --checkout DIR …           which PRs need which steps (JSON)
     pr batch run    --checkout DIR … [opts]    start a run; NDJSON events on stdout
@@ -6,6 +6,8 @@
     pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
     pr batch cancel [RUN_ID] [--kill]
     pr batch status [RUN_ID]
+
+Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish.
 
 Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions.
 """

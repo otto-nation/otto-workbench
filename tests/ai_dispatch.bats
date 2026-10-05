@@ -12,6 +12,7 @@ setup() {
   export WORKBENCH_STATE_DIR="$FAKE_HOME/.local/state/workbench"
   GENERATED_RULES="$WORKBENCH_STATE_DIR/rules"
   RAN="$TMPDIR/ran"
+  FAKE_WB="$TMPDIR/wb"
 }
 
 teardown() {
@@ -29,27 +30,83 @@ _selection() {
   done
 }
 
+# _install_gen_stubs DEST [RAN] — plants generate-tool-context and
+# generate-git-rules at the paths ai_generate_rules resolves from BIN_SRC_DIR
+# and WORKBENCH_DIR. Silent when RAN is omitted, so existing dispatch tests do
+# not invoke the real generators against the worktree. When RAN is set, each
+# stub appends its name (and, for git rules, cwd and GIT_RULES_OUTPUT).
+_install_gen_stubs() {
+  local dest="$1" ran="${2:-}"
+  mkdir -p "$dest/bin/local" "$dest/git/bin/local"
+  if [[ -n "$ran" ]]; then
+    printf '%s\n' '#!/usr/bin/env bash' \
+      "echo generate-tool-context >> \"$ran\"" \
+      > "$dest/bin/local/generate-tool-context"
+    printf '%s\n' '#!/usr/bin/env bash' \
+      "echo generate-git-rules cwd=\$(pwd) out=\${GIT_RULES_OUTPUT:-} >> \"$ran\"" \
+      > "$dest/git/bin/local/generate-git-rules"
+  else
+    printf '%s\n' '#!/usr/bin/env bash' 'exit 0' \
+      > "$dest/bin/local/generate-tool-context"
+    printf '%s\n' '#!/usr/bin/env bash' 'exit 0' \
+      > "$dest/git/bin/local/generate-git-rules"
+  fi
+  chmod +x "$dest/bin/local/generate-tool-context" \
+    "$dest/git/bin/local/generate-git-rules"
+}
+
 # _run_dispatch — sources the real dispatcher against the fake HOME, replaces
 # every sync_<tool> with a stub that records its name, and dispatches.
 #
 # Each stub also records whether the shared rule layers were already refreshed
 # when it ran, which is the ordering the dispatcher owes every harness.
+#
+# BIN_SRC_DIR and WORKBENCH_DIR are retargeted at silent generator stubs after
+# sourcing, so workbench-rules (a subprocess that re-derives the real root)
+# still refreshes the shared layers, while the generators this dispatcher now
+# owns cannot write into the worktree.
 _run_dispatch() {
+  _install_gen_stubs "$FAKE_WB"
   run bash -c '
     HOME="$2"
     # Named rather than read as $3 inside the stubs: a positional referenced in
     # a function body belongs to the function, not to the shell that runs it.
     ran="$3"
     generated="$4"
+    fake_wb="$5"
     . "$1/lib/ui.sh"
     . "$1/ai/steps.sh"
+    BIN_SRC_DIR="$fake_wb/bin"
+    WORKBENCH_DIR="$fake_wb"
     _note() { [[ -f "$generated/workbench.md" ]] && echo "rules_ready" >> "$ran"; }
     sync_claude() { _note; echo sync_claude >> "$ran"; }
     sync_pi()     { _note; echo sync_pi     >> "$ran"; }
     sync_skills() { _note; echo sync_skills >> "$ran"; }
     sync_serena() { _note; echo sync_serena >> "$ran"; }
     sync_ai
-  ' _ "$REPO_ROOT" "$FAKE_HOME" "$RAN" "$GENERATED_RULES"
+  ' _ "$REPO_ROOT" "$FAKE_HOME" "$RAN" "$GENERATED_RULES" "$FAKE_WB"
+}
+
+# _run_dispatch_logged — like _run_dispatch, but the generator stubs append to
+# RAN so a test can assert they ran, and ran before any sync_<tool>.
+_run_dispatch_logged() {
+  _install_gen_stubs "$FAKE_WB" "$RAN"
+  run bash -c '
+    HOME="$2"
+    ran="$3"
+    generated="$4"
+    fake_wb="$5"
+    . "$1/lib/ui.sh"
+    . "$1/ai/steps.sh"
+    BIN_SRC_DIR="$fake_wb/bin"
+    WORKBENCH_DIR="$fake_wb"
+    _note() { [[ -f "$generated/workbench.md" ]] && echo "rules_ready" >> "$ran"; }
+    sync_claude() { _note; echo sync_claude >> "$ran"; }
+    sync_pi()     { _note; echo sync_pi     >> "$ran"; }
+    sync_skills() { _note; echo sync_skills >> "$ran"; }
+    sync_serena() { _note; echo sync_serena >> "$ran"; }
+    sync_ai
+  ' _ "$REPO_ROOT" "$FAKE_HOME" "$RAN" "$GENERATED_RULES" "$FAKE_WB"
 }
 
 @test "the shared rule layers are refreshed before any tool syncs" {
@@ -103,4 +160,55 @@ _run_dispatch() {
     "$REPO_ROOT/ai/setup.sh"
   [ "$status" -eq 0 ]
   [ "$output" = "1" ]
+}
+
+@test "git and tool rules regenerate before any tool syncs, including Pi-only" {
+  # The generated layers used to refresh only as a Claude Code install step, so
+  # otto-workbench sync never rewrote them, and a Pi-only machine never saw
+  # them generated at all. Both generators must run, and both must run before
+  # any harness reads the files they write.
+  _selection pi
+
+  _run_dispatch_logged
+  [ "$status" -eq 0 ]
+  [ -f "$RAN" ]
+  run cat "$RAN"
+  [ "${lines[0]}" = "generate-tool-context" ]
+  [[ "${lines[1]}" == generate-git-rules* ]]
+  [ "${lines[2]}" = "rules_ready" ]
+  [ "${lines[3]}" = "sync_pi" ]
+  [[ "${lines[1]}" == *"cwd=$FAKE_WB"* ]]
+  [[ "${lines[1]}" == *"out=$FAKE_WB/ai/guidelines/rules/git.generated.md"* ]]
+}
+
+@test "setup regenerates git and tool rules after workbench-rules and before tool steps" {
+  # No seam to run setup.sh without installing onto the machine. The function
+  # must exist on the dispatcher, and setup.sh must call it in that window.
+  run bash -c '
+    . "$1/lib/ui.sh"
+    . "$1/ai/steps.sh"
+    declare -f ai_generate_rules >/dev/null
+  ' _ "$REPO_ROOT"
+  [ "$status" -eq 0 ]
+
+  run awk '
+    /workbench-rules" sync$/{ rules=1 }
+    /ai_generate_rules/{ if (rules) gens=1 }
+    /register_\$\{_tool\}_steps"/{ print gens+0; exit }
+  ' "$REPO_ROOT/ai/setup.sh"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+}
+
+@test "tool-context generation is not a Claude Code install step" {
+  # Harness-neutral: a Pi-only install has no register_claude_steps to hang
+  # this off, so it cannot live there.
+  run bash -c '
+    . "$1/lib/ui.sh"
+    . "$1/ai/claude/steps.sh"
+    register_step() { echo "$1"; }
+    register_claude_steps
+  ' _ "$REPO_ROOT"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Tool context"* ]]
 }

@@ -55,7 +55,7 @@ Run with `/pr-rebase` or `/pr-rebase <branch>`.
   field, or the user named one; it changes which commits end up on the branch.
   Not git's boolean `--fork-point`, and it is ignored on a resumed rebase.
 - `--no-verify` (optional): Force-push without running the pre-push hook. The
-  same rule as `pr:create --no-verify`: only for a hook failure already read
+  same rule as `pr create --draft --no-verify`: only for a hook failure already read
   and judged a flake or not the branch's doing, or when the user asks. It also
   skips the AI repair of pre-push failures, since no hook output exists to
   repair. Never add it to get past a failure nobody has read.

@@ -3,9 +3,8 @@
 #
 # The migration relies on _encode_slug, _repo_key, _gate_repo_dir and
 # _gate_stamp_file, all defined in lib/ai/session-count.sh. Nothing else on the
-# migration framework's load path pulls that file in, so a run that skips
-# sourcing it fails closed: every slug is reported as an unresolvable orphan
-# and the memory tree is never carried.
+# migration framework's load path pulls that file in, so the migration checks
+# for them and retries rather than reading every slug as having no repo.
 
 setup() {
   load 'test_helper'
@@ -100,7 +99,8 @@ _run_migration() {
 @test "does not report a registered repo's memory as orphaned" {
   _run_migration
   [ "$status" -eq 0 ]
-  [[ "$output" != *"Could not resolve a repo"* ]]
+  [[ "$output" != *"No repo for"* ]]
+  [ ! -e "$WORKBENCH_DATA_DIR/memory-unkeyed" ]
 }
 
 @test "removes an unresolvable empty memory directory instead of orphaning it" {
@@ -114,7 +114,8 @@ _run_migration() {
   _run_migration
 
   [ "$status" -eq 0 ]
-  [[ "$output" != *"Could not resolve a repo"* ]]
+  [[ "$output" != *"No repo for"* ]]
+  [ ! -e "$WORKBENCH_DATA_DIR/memory-unkeyed" ]
   [ ! -d "$stray/memory" ]
 }
 
@@ -196,6 +197,25 @@ _run_migration() {
   [ ! -d "$stray/memory" ]
 }
 
+@test "retries rather than parks a git tree it cannot key" {
+  # Inside a git tree, a keying failure is git refusing or missing — transient
+  # — so parking it would strand a real repo's memory outside the keyed store.
+  local broken="$TMPDIR/broken"
+  mkdir -p "$broken"
+  echo "gitdir: $TMPDIR/nowhere" > "$broken/.git"
+  local stray="$HOME/.claude/projects/-broken"
+  mkdir -p "$stray/memory"
+  echo "note" > "$stray/memory/notes.md"
+  printf '{"cwd":"%s"}\n' "$broken" > "$stray/session.jsonl"
+
+  _run_migration
+
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Could not key"* ]]
+  [ ! -e "$WORKBENCH_DATA_DIR/memory-unkeyed/-broken" ]
+  [ -f "$stray/memory/notes.md" ]
+}
+
 @test "parks a directory whose transcript cwd is not a repo" {
   # The transcript fallback resolves a real directory, but git cannot key it.
   # That is as permanent as no answer at all.
@@ -223,7 +243,8 @@ _run_migration() {
   _run_migration "shopt -s nullglob"
 
   [ "$status" -eq 0 ]
-  [[ "$output" != *"Could not resolve a repo"* ]]
+  [[ "$output" != *"No repo for"* ]]
+  [ ! -e "$WORKBENCH_DATA_DIR/memory-unkeyed" ]
   [ ! -d "$stray/memory" ]
 }
 

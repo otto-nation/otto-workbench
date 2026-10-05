@@ -31,6 +31,14 @@ migration_20260930_memory_to_data_root() {
   # shellcheck source=../../../lib/ai/session-count.sh
   . "$LIB_SRC_DIR/ai/session-count.sh"
 
+  # Refused outright when the helpers did not arrive. Without _encode_slug no
+  # slug matches the registry, and every directory would read as having no
+  # repo and be parked — a retry is the honest answer to a broken load path.
+  if ! declare -F _encode_slug _repo_key >/dev/null; then
+    warn "lib/ai/session-count.sh did not define the slug helpers — retrying next run"
+    return 1
+  fi
+
   local projects_dir="$CLAUDE_DIR/projects"
 
   # NOOP rather than DEFERRED: a machine with no Claude projects tree has
@@ -46,11 +54,8 @@ migration_20260930_memory_to_data_root() {
     [[ -d "$mem_dir" ]] || continue
 
     # Before resolution, and before the slug is even taken: an empty directory
-    # holds nothing to carry and so cannot be an orphan. The orphan path below
-    # returns non-zero so the next sync retries a directory whose repo might
-    # resolve later; an empty one never gains content — every writer now writes
-    # the new location — so reporting it there fails the migration on every run
-    # forever over memory that does not exist. Removed rather than skipped, so
+    # holds nothing to carry, so parking it would leave an empty directory in
+    # the data root for nobody to look at. Removed rather than skipped, so
     # the sweep shrinks: rmdir refuses a directory that is not empty, which is
     # the guarantee that this can never take authored memory.
     if _migration_dir_is_empty "$mem_dir"; then
@@ -66,20 +71,25 @@ migration_20260930_memory_to_data_root() {
     # an inference, so that is the fallback.
     repo_dir="$(_migration_repo_for_slug "$slug")" || repo_dir=""
 
-    # Both misses below are permanent, so they park rather than retry. A slug
-    # nothing resolves is a session started outside any repo (~/git, say), and
-    # a transcript cwd git cannot key is the same directory reached the other
-    # way; neither gains a repo by waiting. Retrying them failed the migration
-    # on every sync forever. Parked under the slug, so a person who knows which
-    # repo it belonged to can still move it by hand.
-    key=""
-    if [[ -n "$repo_dir" ]]; then
-      key="$(_repo_key "$repo_dir")" || key=""
-    fi
-    if [[ -z "$key" ]]; then
+    # Parked rather than retried only when the miss is permanent: nothing names
+    # a directory for the slug, or the one named sits in no git tree — a
+    # session started outside any repo (~/git, say). Neither gains a repo by
+    # waiting, and retrying them failed the migration on every sync forever.
+    # Parked under the slug, so a person who knows which repo it belonged to
+    # can still move it by hand.
+    #
+    # A directory inside a git tree that still cannot be keyed is the opposite
+    # case — git missing from PATH, a safe.directory refusal — and retries, or
+    # a registered repo's memory would be parked over a transient failure.
+    if [[ -z "$repo_dir" ]] || ! _migration_inside_git_tree "$repo_dir"; then
       _migration_park_unkeyed "$mem_dir" "$slug" "$stamp_date" && orphaned=$((orphaned + 1)) || unresolved=1
       continue
     fi
+    key="$(_repo_key "$repo_dir")" || {
+      warn "Could not key $repo_dir — left $mem_dir in place"
+      unresolved=1
+      continue
+    }
     dest="$WORKBENCH_MEMORY_DIR/$key"
     mkdir -p "$dest"
 
@@ -113,9 +123,9 @@ migration_20260930_memory_to_data_root() {
   [[ "$merged" -gt 0 ]] && info "$merged file(s) kept under a slug-qualified name — several worktrees held the same topic"
   [[ "$orphaned" -gt 0 ]] && warn "$orphaned memory directory/directories had no repo and were parked under $WORKBENCH_DATA_DIR/memory-unkeyed"
 
-  # Non-zero so the next sync retries: only the transient failures reach here
-  # now — a refused rmdir, a park whose copy failed — and those can succeed on
-  # a later run.
+  # Non-zero so the next sync retries: only the transient failures reach here —
+  # a refused rmdir, a park whose copy failed, a repo git would not key — and
+  # those can succeed on a later run.
   [[ "$unresolved" -eq 1 ]] && return 1
   return 0
 }
@@ -189,6 +199,19 @@ _migration_dir_is_empty() {
   local entries=()
   _migration_dir_entries "$1" entries
   [[ "${#entries[@]}" -eq 0 ]]
+}
+
+# _migration_inside_git_tree DIR — true when DIR or an ancestor holds a .git.
+#
+# Read off the filesystem rather than asked of git, so a git that is missing
+# or refuses the repo answers "inside a tree" and the caller retries.
+_migration_inside_git_tree() {
+  local dir="$1"
+  while [[ -n "$dir" && "$dir" != "/" ]]; do
+    [[ -e "$dir/.git" ]] && return 0
+    dir="$(dirname "$dir")"
+  done
+  return 1
 }
 
 # _migration_park_unkeyed MEM_DIR SLUG STAMP_DATE — carry a directory no repo

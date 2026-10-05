@@ -129,6 +129,33 @@ def test_a_saved_plan_whose_fetch_fails_carries_no_namespace(monkeypatch):
     assert [r.ref_namespace for r in plan.rows] == [""]
 
 
+def test_a_saved_plan_whose_checkout_is_gone_carries_no_namespace(tmp_path):
+    saved = Plan("me", [PlanRow("o/a", str(tmp_path / "removed-checkout"), 7, "t", "feat", "h",
+                                False, {}, ref_namespace="refs/pr-batch/gone")])
+    plan = batch.plan.refetch(saved)
+    assert plan.ref_dirs == []
+    assert [r.ref_namespace for r in plan.rows] == [""]
+
+
+@pytest.mark.parametrize("exc", [RuntimeError, KeyboardInterrupt])
+def test_a_refetch_that_dies_mid_fetch_leaves_no_refs(tmp_path, monkeypatch, exc):
+    first, second = remote_and_clone(tmp_path / "a"), remote_and_clone(tmp_path / "b")
+    real = batch.plan.fetch_namespace
+
+    def fetch(d, ns):
+        if d == str(second.work):
+            raise exc("boom")
+        return real(d, ns)
+
+    monkeypatch.setattr(batch.plan, "fetch_namespace", fetch)
+    saved = Plan("me", [PlanRow("o/a", str(p.work), 7, "t", "feat", "h", False, {})
+                        for p in (first, second)])
+    with pytest.raises(exc):
+        batch.plan.refetch(saved)
+    for pair in (first, second):
+        assert git_out(pair.work, "for-each-ref", batch.plan.NAMESPACE_ROOT) == ""
+
+
 def test_drop_refs_removes_the_namespace_and_nothing_else(tmp_path):
     pair = remote_and_clone(tmp_path)
     ns = batch.plan.new_namespace()

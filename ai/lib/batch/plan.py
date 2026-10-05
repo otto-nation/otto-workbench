@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import secrets
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -166,7 +167,13 @@ def new_namespace() -> str:
 
 
 def fetch_namespace(repo_dir: str, namespace: str) -> bool:
-    """Fetch every branch of origin into *namespace*, leaving origin's refs alone."""
+    """Fetch every branch of origin into *namespace*, leaving origin's refs alone.
+
+    False when the fetch fails or *repo_dir* no longer exists — git cannot start
+    with a missing working directory, and a saved plan can outlive its checkouts.
+    """
+    if not Path(repo_dir).is_dir():
+        return False
     # An empty --refmap is what stops git's opportunistic update: with a
     # command-line refspec it still applies remote.origin.fetch and would move
     # refs/remotes/origin/* alongside the namespace.
@@ -307,23 +314,31 @@ def _graphql(query: str, variables: dict) -> dict:
         raise PlanError(f"GitHub query failed: {detail}") from exc
 
 
+@contextmanager
+def _fetched_namespace(repo_dirs: list[str]):
+    """Yield a new namespace and the repos it was fetched into, dropping it if the body raises.
+
+    No plan comes back to own the refs on a failure — Ctrl-C included — so they
+    are dropped in every repo: a fetch that failed part-way may still have
+    written some.
+    """
+    namespace = new_namespace()
+    try:
+        yield namespace, [d for d in repo_dirs if fetch_namespace(d, namespace)]
+    except BaseException:
+        drop_refs(repo_dirs, namespace)
+        raise
+
+
 def build_plan(repo_dirs: list[str]) -> Plan:
     slugs = [_repo_slug(d) for d in repo_dirs]
     by_slug = dict(zip(slugs, repo_dirs))
     if len(by_slug) != len(repo_dirs):
         dupes = sorted({s for s in slugs if slugs.count(s) > 1})
         raise PlanError("--checkout names the same repo more than once: " + ", ".join(dupes))
-    namespace = new_namespace()
-    try:
-        fetched = [d for d in repo_dirs if fetch_namespace(d, namespace)]
+    with _fetched_namespace(repo_dirs) as (namespace, fetched):
         data = _graphql(_SEARCH, {"q": search_query(sorted(by_slug))})
         rows = rows_from_search(data, by_slug, {d: namespace for d in fetched})
-    except BaseException:
-        # No plan comes back to own the refs — Ctrl-C included — so drop them
-        # here, in every repo: a fetch that failed part-way may still have
-        # written some.
-        drop_refs(repo_dirs, namespace)
-        raise
     return Plan(viewer=(data.get("viewer") or {}).get("login", ""), rows=rows,
                 ref_namespace=namespace, ref_dirs=fetched)
 
@@ -337,12 +352,8 @@ def refetch(plan: Plan) -> Plan:
     CLEAN wherever the base does not require branches to be up to date.
     """
     repo_dirs = sorted({r.repo_dir for r in plan.rows})
-    namespace = new_namespace()
-    try:
-        fetched = [d for d in repo_dirs if fetch_namespace(d, namespace)]
-    except BaseException:
-        drop_refs(repo_dirs, namespace)
-        raise
+    with _fetched_namespace(repo_dirs) as (namespace, fetched):
+        pass
     rows = [replace(r, ref_namespace=namespace if r.repo_dir in fetched else "")
             for r in plan.rows]
     return replace(plan, rows=rows, ref_namespace=namespace, ref_dirs=fetched)

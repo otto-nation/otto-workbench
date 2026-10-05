@@ -28,9 +28,10 @@ closed quoted span — so the shell counter measures a suite the way it
 measures a script. Naming stays Python-only: nothing collects a misnamed
 `.bats` under a retired convention, which is the hazard rule 1 exists for.
 
-Exit code: 0 if every name is allowed and every file over the cap is a known
-exemption, 1 otherwise. `--quiet` suppresses the success banner and the
-exemption notice; a failure is always reported.
+Exit code: 0 if every name is allowed and every suite is within the cap, 1
+otherwise. There are no exemptions: the suites over the line when this gate
+landed were split before it became unconditional. `--quiet` suppresses the
+success banner; a failure is always reported.
 """
 
 from __future__ import annotations
@@ -42,7 +43,7 @@ from pathlib import Path
 
 _WORKBENCH_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_WORKBENCH_DIR / "lib"))
-from ansi import DIM, GREEN, NC, RED, YELLOW  # noqa: E402
+from ansi import DIM, GREEN, NC, RED  # noqa: E402
 from file_size import MAX_CODE_LINES, code_lines  # noqa: E402
 
 TESTS_DIR = "tests"
@@ -54,16 +55,6 @@ SUPPORT_SUFFIX = "_support.py"
 SUPPORT_NAMES = frozenset({"conftest.py", "__init__.py"})
 
 BATS_SUFFIX = ".bats"
-
-# The bats suites over the cap when the gate reached them, each split by #853
-# along the sections it already has.
-#
-# ceiling: named exemptions, because failing on them would block every push on
-# work #853 owns. Delete an entry in the PR that splits its suite; once the dict
-# is empty #911 deletes it and the gate is unconditional. The test suite pins it
-# to exactly the set of files over the cap, so it can only shrink.
-KNOWN_OVER = {
-}
 
 
 def discover(root: Path, suffix: str = ".py") -> list[Path]:
@@ -147,14 +138,6 @@ def _report_size(over: list[tuple[str, int]], max_lines: int) -> None:
           file=sys.stderr)
 
 
-def _report_known(known: list[tuple[str, int]]) -> None:
-    """Print the exemptions on a direct run, so the debt stays visible."""
-    print(f"{YELLOW}▲{NC} {len(known)} test file(s) over the cap, each owned by an open issue",
-          file=sys.stderr)
-    for relpath, count in known:
-        print(f"      {relpath}: {count}  ({KNOWN_OVER[relpath]})", file=sys.stderr)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Check the test suites under tests/ for name and size.",
@@ -169,9 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.directory).resolve()
     paths = discover(root)
     bad = misnamed(root, paths)
-    violations = over_cap(root, args.max_lines, paths + discover(root, BATS_SUFFIX))
-    over = [(p, n) for p, n in violations if p not in KNOWN_OVER]
-    known = [(p, n) for p, n in violations if p in KNOWN_OVER]
+    over = over_cap(root, args.max_lines, paths + discover(root, BATS_SUFFIX))
 
     if bad:
         _report_names(bad)
@@ -181,10 +162,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if args.quiet:
         return 0
-    if known:
-        _report_known(known)
-    print(f"{GREEN}✓{NC} every test module is named and every new one within "
-          f"{args.max_lines} code lines")
+    print(f"{GREEN}✓{NC} every test module is named and within {args.max_lines} code lines")
     return 0
 
 

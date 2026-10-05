@@ -11,20 +11,11 @@ require the documentation it would tax.
 Scope is Python and shell source under `ai/`, `bin/` and `lib/` — the two
 languages `code_lines` reads. Tests are not covered here: `tests/` has its
 own gate, `bin/local/validate-test-layout`, which applies the same cap
-alongside the suite naming rule and carries its own exemptions (#853).
+alongside the suite naming rule.
 
-Exit code: 0 if every file over the cap is a known exemption, 1 otherwise.
-
-A file already over the line when this landed is listed in KNOWN_OVER with the
-issue that owns its split, and does not fail the build. Anything else does,
-immediately — which is the point, since the risk during #754 is a *new* file
-crossing the line unnoticed, and phase 5 produced two of those before anything
-was watching.
-
-This is not the allowlist #911 forbids. #911's gate lands with no exemptions at
-all — it splits whatever is still over the line in its own PR — and this list is
-what that PR deletes. The test suite pins it to exactly the set of files over
-the cap, so it can only shrink.
+Exit code: 0 if every source file is within the cap, 1 otherwise. There are no
+exemptions: the files over the line when this gate landed were split before it
+became unconditional, so a file over the line is a new one.
 """
 
 from __future__ import annotations
@@ -36,18 +27,10 @@ from pathlib import Path
 
 _WORKBENCH_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_WORKBENCH_DIR / "lib"))
-from ansi import DIM, GREEN, NC, RED, YELLOW  # noqa: E402
+from ansi import DIM, GREEN, NC, RED  # noqa: E402
 from file_size import MAX_CODE_LINES, code_lines  # noqa: E402
 from repo_scan import BASE_SKIP_DIRS  # noqa: E402
 
-
-# Every source file is under the cap. The dict stays, empty, so the gate keeps
-# one shape until #911 removes the exemption mechanism with the test pinning it.
-#
-# ceiling: an empty exemption dict rather than none. Upgrade trigger: #911's
-# validator lands and deletes the dict and its pin test together.
-KNOWN_OVER = {
-}
 
 SCAN_ROOTS = ("ai", "bin", "lib")
 
@@ -164,20 +147,6 @@ def _report(new: list[tuple[str, int]], max_lines: int) -> None:
           file=sys.stderr)
 
 
-def _report_known(known: list[tuple[str, int]]) -> None:
-    """Print the exemptions on success, so the debt stays visible.
-
-    validate-all discards a passing validator's output, so this only shows on a
-    direct run. That is the right audience: the push is not blocked by these,
-    and whoever runs the gate by hand is the person deciding what to split.
-    """
-    print(f"{YELLOW}▲{NC} {len(known)} file(s) over the cap, each owned by an open issue",
-          file=sys.stderr)
-    for relpath, count in known:
-        owner = KNOWN_OVER.get(relpath, "?")
-        print(f"      {relpath}: {count}  ({owner})", file=sys.stderr)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Report source files whose code exceeds the size cap.",
@@ -191,15 +160,10 @@ def main(argv: list[str] | None = None) -> int:
 
     root = Path(args.directory).resolve()
     violations = over_cap(root, args.max_lines)
-    new = [(path, n) for path, n in violations if path not in KNOWN_OVER]
-    known = [(path, n) for path, n in violations if path in KNOWN_OVER]
 
-    if new:
-        _report(new, args.max_lines)
+    if violations:
+        _report(violations, args.max_lines)
         return 1
-    if known and not args.quiet:
-        _report_known(known)
-        return 0
     if not args.quiet:
         print(f"{GREEN}✓{NC} every source file is within {args.max_lines} code lines")
     return 0

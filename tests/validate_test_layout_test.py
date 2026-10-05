@@ -155,20 +155,6 @@ def test_a_bats_test_header_counts_as_one_line(tmp_path):
     assert vtl.over_cap(tmp_path, 8) == [("tests/a.bats", 9)]
 
 
-def test_a_known_bats_suite_over_the_cap_does_not_fail(tmp_path, monkeypatch):
-    monkeypatch.setitem(vtl.KNOWN_OVER, "tests/a.bats", "#853")
-    _write(tmp_path, "tests/a.bats", _lines(11))
-    assert _run(tmp_path) == 0
-
-
-def test_a_new_bats_suite_fails_even_beside_a_known_one(tmp_path, monkeypatch):
-    """An exemption must not carry cover for anything but itself."""
-    monkeypatch.setitem(vtl.KNOWN_OVER, "tests/known.bats", "#853")
-    _write(tmp_path, "tests/known.bats", _lines(11))
-    _write(tmp_path, "tests/new.bats", _lines(11))
-    assert _run(tmp_path) == 1
-
-
 def test_prose_does_not_count_against_the_cap(tmp_path):
     body = '"""Doc.\n' + "prose\n" * 50 + '"""\n' + "# why\n" * 20 + _lines(5)
     _write(tmp_path, "tests/a_test.py", body)
@@ -202,15 +188,6 @@ def test_every_module_in_this_repo_is_named_by_the_rule():
     assert vtl.misnamed(REPO_ROOT) == []
 
 
-def test_the_exemptions_are_exactly_what_is_over_the_cap():
-    """Pins the list so it can only shrink.
-
-    An entry added to quiet a newly oversized suite fails here, and so does one
-    left behind after its suite was split under the cap.
-    """
-    over = {p for p, _ in vtl.over_cap(REPO_ROOT, vtl.MAX_CODE_LINES)}
-    assert over == set(vtl.KNOWN_OVER)
-
-
-def test_every_exemption_names_the_issue_that_owns_it():
-    assert all(owner.startswith("#") for owner in vtl.KNOWN_OVER.values())
+def test_no_suite_in_this_repo_is_over_the_cap():
+    """The gate has no exemptions, so this repo has to satisfy it outright."""
+    assert vtl.over_cap(REPO_ROOT, vtl.MAX_CODE_LINES) == []

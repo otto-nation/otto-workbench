@@ -148,6 +148,12 @@ teardown() {
   [[ "$output" != *"Traceback"* ]]
 }
 
+@test "rules-canary runs from the tarball layout" {
+  run "$TARBALL_ROOT/bin/rules-canary" --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"rules-canary"* ]]
+}
+
 # ── 7. review-orchestrate Python imports ────────────────────────────────────
 
 @test "review-orchestrate Python imports succeed from tarball layout" {

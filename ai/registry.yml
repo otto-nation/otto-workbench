@@ -136,6 +136,7 @@ tools:
     description: "Evaluation runner — scores AI calls against a corpus, one task per manifest"
 
   - name: rules-canary
+    parser: cli.rules_canary:build_parser
     permission: false
     visibility: hidden
     description: "Canary for the --add-dir coupling — fails when coding rules stop reaching an agent"

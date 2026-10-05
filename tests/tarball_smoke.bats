@@ -129,6 +129,12 @@ teardown() {
   [[ "$output" == *"retro-scan"* ]]
 }
 
+@test "promote-scan runs from the tarball layout" {
+  run "$TARBALL_ROOT/bin/promote-scan" --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"promote-scan"* ]]
+}
+
 # ── 7. review-orchestrate Python imports ────────────────────────────────────
 
 @test "review-orchestrate Python imports succeed from tarball layout" {

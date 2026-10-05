@@ -57,7 +57,7 @@ tools:
     description: "Verify dream memory file integrity across all projects"
 
   - name: promote-scan
-    parser: ai/bin/promote-scan:build_parser
+    parser: cli.promote_scan:build_parser
     permission: true
     visibility: brief
     description: "Scan memories and workbench artifacts for promotion evaluation"

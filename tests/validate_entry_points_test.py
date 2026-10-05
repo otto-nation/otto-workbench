@@ -198,7 +198,7 @@ def test_a_cli_module_without_the_entry_is_refused(root):
 
 
 def test_a_standalone_script_is_out_of_scope():
-    """A script that never places ai/lib on its path is a program, not an entry point."""
+    """A script that carries no pin and imports no ai/lib package is a program, not an entry point."""
     assert not vep.in_scope(HEADER + "def main():\n    print('hi')\n\nmain()\n")
     assert vep.in_scope(_shim())
 

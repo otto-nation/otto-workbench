@@ -24,6 +24,22 @@ def test_first_heading_returns_empty_string_for_no_headings(tmp_path):
     assert memory.promote.first_heading(path) == ""
 
 
+def test_scan_hooks_skips_a_non_dict_hooks_value_instead_of_raising(tmp_path):
+    settings = tmp_path / "ai" / "claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text('{"hooks": "not-a-dict"}')
+    assert memory.promote.scan_hooks(tmp_path) == []
+
+
+def test_scan_hooks_skips_a_non_dict_hook_entry_instead_of_raising(tmp_path):
+    settings = tmp_path / "ai" / "claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text('{"hooks": {"PreToolUse": ["not-a-dict", {"matcher": "m", "command": "c"}]}}')
+    assert memory.promote.scan_hooks(tmp_path) == [
+        {"event": "PreToolUse", "matcher": "m", "command": "c"},
+    ]
+
+
 def test_run_scan_returns_0_rather_than_exiting(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("WORKBENCH_DATA_DIR", str(tmp_path / "data"))
@@ -32,8 +48,13 @@ def test_run_scan_returns_0_rather_than_exiting(tmp_path, monkeypatch, capsys):
     (wb / "ai" / "claude" / "agents").mkdir(parents=True)
     (wb / "ai" / "memory").mkdir(parents=True)
     (wb / "bin").mkdir(parents=True)
+    (wb / "ai" / "claude" / "settings.json").write_text(
+        '{"hooks": {"PreToolUse": [{"matcher": "Bash", "command": "echo hi"}]}}'
+    )
     assert memory.promote.run_scan(str(tmp_path), str(wb)) == 0
-    assert "## Workbench Artifacts" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "## Workbench Artifacts" in out
+    assert "PreToolUse" in out
 
 
 def test_cli_refuses_to_run_without_a_workbench(monkeypatch, capsys):

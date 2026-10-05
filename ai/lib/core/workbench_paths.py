@@ -200,7 +200,9 @@ def default_workbench() -> str | None:
 
     An exported empty string is treated as unset.
     """
-    return os.environ.get(WORKBENCH_ENV_VAR) or (
-        str(c) if (c := source_checkout()) else None
-    )
+    env = os.environ.get(WORKBENCH_ENV_VAR)
+    if env:
+        return env
+    checkout = source_checkout()
+    return str(checkout) if checkout else None
 

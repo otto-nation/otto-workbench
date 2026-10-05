@@ -585,8 +585,8 @@ and exits. `--memory-dir REPO` prints that repo's memory directory and exits.
 | `-V`, `--version` | print version and exit. |
 | `--days` `<n>` | scan sessions from last N days (default: 7). |
 | `--home` `<dir>` | home directory override (for testing; default: `$HOME`). |
-| `--list-transcripts` | print transcript paths for the window, one per line, and exit. |
-| `--memory-dir` `<repo>` | print the memory directory for the repo at REPO, and exit. |
+| `--list-transcripts` | print transcript paths for the window, one per line, and exit. Not with `--memory-dir`. |
+| `--memory-dir` `<repo>` | print the memory directory for the repo at REPO, and exit. Not with `--list-transcripts`. |
 
 ### `dream-verify`
 

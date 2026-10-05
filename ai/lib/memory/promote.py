@@ -36,6 +36,7 @@ SETTINGS_REL = Path("ai") / "claude" / "settings.json"
 BACKED_UP_MEMORY_REL = Path("ai") / "memory"
 BIN_REL = Path("bin")
 
+
 def first_heading(path: Path) -> str:
     try:
         lines = path.read_text().splitlines()
@@ -102,11 +103,15 @@ def scan_hooks(workbench: Path) -> list[dict]:
         return []
 
     hooks = data.get("hooks", {})
+    if not isinstance(hooks, dict):
+        return []
     results = []
     for event, hook_list in hooks.items():
         if not isinstance(hook_list, list):
             continue
         for hook in hook_list:
+            if not isinstance(hook, dict):
+                continue
             matcher = hook.get("matcher", "")
             cmd = hook.get("command", "")
             results.append({

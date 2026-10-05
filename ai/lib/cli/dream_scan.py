@@ -38,12 +38,13 @@ def build_parser() -> argparse.ArgumentParser:
                         help=f"scan sessions from last N days (default: {memory.dream.DEFAULT_DAYS})")
     parser.add_argument("--home", type=str, default=os.environ.get("HOME", ""), metavar="DIR",
                         help="home directory override (for testing; default: `$HOME`)")
-    parser.add_argument(
+    exclusive = parser.add_mutually_exclusive_group()
+    exclusive.add_argument(
         "--list-transcripts",
         action="store_true",
         help="print transcript paths for the window, one per line, and exit",
     )
-    parser.add_argument(
+    exclusive.add_argument(
         "--memory-dir",
         metavar="REPO",
         help="print the memory directory for the repo at REPO, and exit",

@@ -187,6 +187,16 @@ PI
   [[ "$output" != *"Session Signals"* ]]
 }
 
+@test "dream-scan --list-transcripts and --memory-dir together is a usage error" {
+  local repo="$TMPDIR/repos/plain"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+
+  run "$DREAM_SCAN" --home "$TMPDIR" --list-transcripts --memory-dir "$repo"
+  [[ "$status" -ne 0 ]]
+  [[ "$output" == *"not allowed with"* ]]
+}
+
 @test "dream-scan --list-transcripts prints one path per line across harnesses" {
   _make_session_jsonl "$TMPDIR/.claude/projects/test-proj/c.jsonl" "I prefer tabs"
   _make_session_jsonl "$TMPDIR/.pi/agent/sessions/--repo--/p.jsonl" "I prefer spaces"

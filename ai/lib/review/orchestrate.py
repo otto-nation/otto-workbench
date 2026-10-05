@@ -1,0 +1,501 @@
+"""Orchestrate one review run: pick a pipeline for the change, run its phases, and write the outcome.
+
+`run_orchestrate` is the flow `review-orchestrate` runs once its arguments are
+parsed: log the AI backend, collect preflight data, decide whether a
+re-review is a no-op, size the review to choose a pipeline, run the phases,
+file open findings, and run the fix pass when asked. `cli.review_orchestrate`
+is the command over this; the phases themselves are `review.pipeline` and
+`review.steps`, and what a phase is lives in `review.phases`.
+"""
+
+# doc-group: pipeline
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from pathlib import Path
+
+import agent.diagnosis
+import agent.invoke
+import agent.phases
+import agent.usage
+import review.prompt
+import review.prompt_prior
+import review.prompt_sections
+import review.registry
+import agent.session
+import review.pipeline
+import review.finding_issue
+import review.fix
+import review.gc
+import review.paths
+import review.phases
+import review.steps
+import review.outcome
+import review.retry
+import review.state
+import review.types
+
+import core.log
+import core.module_proxy
+import pr.state
+import core.proc
+
+import pr.target
+from agent.registry import phase_skips
+from core.phases import Effort, Mode
+from review.document import (
+    SECTION_STATIC_ANALYSIS, SECTION_VERDICT, set_section,
+)
+from review.paths import (
+    read_review_meta, stamp_reviewed,
+)
+# The function rather than the module: `git.client` binds `run` and `ok`, which
+# `core.proc` and `core.log` also bind, and the proxy cannot patch a name that
+# means two things. `abbrev` is pure formatting of a sha already in hand.
+import git.numstat
+from git.client import abbrev
+# Same collision: `core.publishing.run` is not `core.proc.run`.
+from review.budget import UnknownModelWindow, prompt_budget_bytes
+from review.collect import collect_preflight_data
+from review.outcome import write_unchanged_review
+from review.reply_threads import fetch_reply_threads
+from review.types import DeltaAttribution, Pipeline, ReviewJob, ViewerRole
+from agent.invoke import QuotaThrottle
+from review.fix import run_fix_pass
+from review.gc import cleaned_on_success
+from agent.phases import ModelAlias, collect_phase_models, resolve_effort
+from review.pipeline import (
+    EFFORT_PRESETS, fetch_metadata,
+    run_multi_phase, run_single_agent,
+)
+from review.static_analysis import (
+    added_lines, format_static_analysis, run_static_analysis,
+)
+import agent.backend
+
+
+# ── The run ──────────────────────────────────────────────────────────────────────
+
+_AI_ENV_PREFIXES = ("ANTHROPIC_", "CLAUDE_CODE_", "CLOUD_ML_")
+_AI_ENV_EXACT = ("AI_BACKEND",)
+_SENSITIVE_FRAGMENTS = ("KEY", "TOKEN", "SECRET")
+
+
+def _log_ai_backend(trail) -> None:
+    data: dict[str, str] = {}
+    for key, val in sorted(os.environ.items()):
+        if not (key.startswith(_AI_ENV_PREFIXES) or key in _AI_ENV_EXACT):
+            continue
+        if any(f in key for f in _SENSITIVE_FRAGMENTS):
+            data[key] = "empty" if val == "" else "set"
+        else:
+            data[key] = val or ""
+    trail.info("ai_backend", "resolved AI backend configuration", data=data)
+
+
+def _budgets_are_derivable(phase_models, trail) -> bool:
+    """Whether every phase's model has a context window to budget against.
+
+    Checked here, beside the backend preflight, because the alternative is
+    discovering it once per phase after the review has already paid for
+    metadata and preflight collection.
+
+    An unresolved tier alias is not a failure — it is what `AI_SONNET_MODEL`
+    being unset looks like, which is the ordinary first-party-API setup — but
+    it does mean the budget is the tier's conservative floor rather than the
+    model's real window, so it is said out loud rather than left to be
+    inferred from a smaller review.
+    """
+    for model, phases in sorted(phase_models.items()):
+        named = ", ".join(str(p) for p in phases)
+        try:
+            budget = prompt_budget_bytes(model)
+        except UnknownModelWindow as exc:
+            core.log.error(f"Cannot budget prompts for {named}: {exc}")
+            trail.decision(
+                "prompt_budget", "aborting review", reason=str(exc),
+            )
+            return False
+        alias = ModelAlias.parse(model)
+        if alias is not None:
+            core.log.warn(
+                f"{model!r} is an unresolved tier alias, so the tier floor "
+                f"({budget // 1024}KB) is the budget for {named} rather than "
+                f"the model's own window. Set {alias.env_key} to budget "
+                f"against the real one."
+            )
+            trail.decision(
+                "prompt_budget", "budgeting against the tier floor",
+                reason=f"{model} did not resolve to a concrete model id",
+            )
+    return True
+
+
+def _inject_static_analysis_section(job: ReviewJob) -> dict | None:
+    """Write the `## Static Analysis` section, and hand the results to the job.
+
+    The results go on the job because the fix pass runs next and needs the same
+    list: these violations are work it can take, and re-deriving them there
+    would measure a tree the section has already described.
+
+    Not reached on the no-op re-review path, which returns above — and that
+    stays consistent rather than leaving a gap. No agent runs there, the fix
+    pass is never called, and `_carried_findings` drops `## Static Analysis`
+    from the document it carries forward, so the section and the empty
+    `job.static_results` agree: this run measured nothing and claims nothing.
+    The next run with a real delta writes both.
+    """
+    review_path = Path(job.review_file)
+    if not review_path.is_file():
+        return None
+    changed_files = [f["path"] for f in job.pr.files]
+    # Against the PR or stack base, the same ref `job.pr.files` was collected
+    # over, so the lines and the file list describe one branch. A base that
+    # does not resolve gives None, which reports every violation and offers
+    # none of them as work.
+    base = f"origin/{job.pr.base}" if job.pr.base else ""
+    if not base:
+        # No PR/stack base on this job shape (see `fix.py`'s `pr.base or
+        # "HEAD"`) — falling back to unscoped, whole-file analysis. Logged
+        # here because `_static_items` only reports the fallback once a
+        # violation exists to report it about, and by then the reason base
+        # resolution was skipped is gone.
+        core.log.warn("Static analysis: no base to diff against, scanning whole files")
+    try:
+        added = added_lines(job.wt_path, base) if base else None
+        results = run_static_analysis(changed_files, job.wt_path, added)
+    except Exception as exc:
+        # A checker is a reporting step that now runs over every changed file
+        # in full, and `_CHECKERS` is a registry built to be extended. An
+        # exception here used to reach `main` and take the whole run with it:
+        # the review was already written and the agents already paid for, and
+        # the run would end with no verdict stamped and no fix pass. A
+        # violation nobody hears about is a worse report; it is not a worse
+        # review.
+        core.log.warn(f"Static analysis failed, skipping the section: {exc}")
+        return None
+    declined = read_review_meta(Path(job.artifact_dir)).static_declined
+    section = format_static_analysis(results, declined)
+    if not section:
+        return None
+    job.static_results = results
+    review_path.write_text(set_section(
+        review_path.read_text(), SECTION_STATIC_ANALYSIS, section, before=SECTION_VERDICT,
+    ))
+    return {
+        "checkers_run": len(results),
+        "files_checked": sum(r.files_checked for r in results),
+        "violations": sum(len(r.violations) for r in results),
+    }
+
+
+def _is_no_op_rereview(job) -> bool:
+    """Whether this run has nothing to review and can say so without an agent.
+
+    Three things have to hold, and the middle one is the point: this is a
+    re-review, the delta walk *proved* the author committed nothing, and there
+    is a prior review whose findings can be carried forward in place of the one
+    this run is not going to write.
+
+    An *attributed* empty delta rather than an empty file list, because those
+    are not the same claim. An unresolvable base ref, a git read that failed,
+    and a self-review all produce no files without establishing that none
+    changed — and acting on that would skip the review of real work, advance
+    the marker past it, and leave the next run measuring from a commit nobody
+    read. There is no later pass that would catch it: the change would simply
+    never be reviewed. `review.collect` reports `ATTRIBUTED` at one place,
+    after every guard it has; everything else leaves it `UNATTRIBUTED`.
+    """
+    return bool(
+        review.prompt_sections._is_incremental(job)
+        and job.preflight.delta_proven_empty
+        and job.prior_review
+    )
+
+
+@dataclass(frozen=True)
+class ReviewScale:
+    """How much work a run has in front of it, and which count says so.
+
+    `basis` is on the record rather than inferred by the reader because it is
+    what the trail reports: a pipeline choice that looks wrong for the PR is
+    read entirely differently once it says it sized itself by the delta.
+
+    `lines` and `raw_lines` are both here for the same reason `basis` is. The
+    first is review effort, which prices a deleted line below an added one and
+    is what the thresholds are compared against; the second is what the diff
+    really contains. A pipeline choice that looks wrong for the diff size is a
+    different thing once the reader can see the two numbers differ, and
+    reporting only the weighted one would make every run silently
+    incomparable with one recorded before the weighting existed.
+    """
+
+    files: int
+    lines: int
+    basis: str
+    raw_lines: int = 0
+
+
+def _review_scale(job) -> ReviewScale:
+    """How much work this run has in front of it: files, lines, and whose count.
+
+    A re-review is sized by its own delta rather than by the PR, because the
+    two can differ by orders of magnitude: one fix commit on a large reviewed
+    PR is a single-agent job, and sizing it by the whole PR bought the
+    multi-phase pipeline's group plan and fan-out to review one line. The delta
+    is the author's work by ancestry, so a merge of the base does not inflate
+    it.
+
+    Only an *attributed* delta is used. An unattributed one is the whole range
+    since the prior review with no line count behind it, and reading that as a
+    size would put a run whose delta could not be measured on the pipeline
+    meant for a small one — sizing down on the strength of a failure. A
+    first-pass review has no delta at all. Both fall back to the PR's own
+    stats, which is the only measure of them there is.
+
+    Either count is weighted before it is compared against a threshold: a
+    deleted line is less review than an added one, and pricing them alike is
+    what put branches that mostly removed code on the multi-agent pipeline.
+    `git.numstat.weighted_lines` owns the weighting and says why it is not
+    also applied to group sizing.
+    """
+    pf = job.preflight
+    attributed = (
+        review.prompt_sections._is_incremental(job)
+        and pf.delta_attribution is DeltaAttribution.ATTRIBUTED
+    )
+    if attributed:
+        return ReviewScale(
+            len(pf.delta_files), pf.delta_weighted_lines, "delta",
+            raw_lines=pf.delta_raw_lines,
+        )
+    return ReviewScale(
+        job.pr.changed_files,
+        git.numstat.weighted_lines(job.pr.additions, job.pr.deletions),
+        "pr",
+        raw_lines=job.pr.total_lines,
+    )
+
+
+def _pipeline_thresholds(job, explicit_effort: Effort | None = None) -> tuple[int, int]:
+    """Line and file counts that push this job onto the multi-phase path.
+
+    A self-review uses ``review.self_effort`` for these two numbers only —
+    phase skips, thinking, and budgets still follow ``job.effort``. Unset,
+    that key takes low's thresholds so a small local diff stays on the
+    single-agent path without dropping disprove.
+
+    ``explicit_effort`` is ``--effort`` when the caller passed one, and it wins
+    here as it does everywhere else: the precedence is ``CLI flag > env >
+    project > container > global``, and this branch used to read the config key
+    alone. That made the flag look like it worked and silently not — it moved
+    every budget while leaving the path decision on the config's value, so a
+    diff too big for one agent stayed on the single-agent path and the run
+    burned its turns without writing. The config key is still the default; it
+    is no longer the only answer.
+    """
+    preset = EFFORT_PRESETS[job.effort]
+    if job.mode != Mode.SELF:
+        return preset.multi_phase_line_threshold, preset.multi_phase_file_threshold
+    self_effort = explicit_effort or job.config.review.self_effort or Effort.LOW
+    chosen = EFFORT_PRESETS[self_effort]
+    return chosen.multi_phase_line_threshold, chosen.multi_phase_file_threshold
+
+
+def _choose_pipeline(
+    job, explicit_effort: Effort | None = None,
+) -> tuple[Pipeline, ReviewScale, int, int]:
+    """Which pipeline this job runs, and the numbers that chose it."""
+    line_threshold, file_threshold = _pipeline_thresholds(job, explicit_effort)
+    scale = _review_scale(job)
+    is_large = scale.lines > line_threshold or scale.files > file_threshold
+    pipeline = Pipeline.MULTI if is_large else Pipeline.SINGLE
+    return pipeline, scale, line_threshold, file_threshold
+
+
+def _file_open_findings(args, job, trail) -> None:
+    """File the findings the pass left open, for the ones `--track` named.
+
+    After `run_fix_pass`, which is what writes them to the sidecar. Nothing is
+    filed without a `--track`, and `create_issue` drafts without `--post`, so
+    the default of both flags is to record the findings and file nothing.
+
+    A `--track` id naming no open finding is reported by `file_and_link` and
+    does not stop the run: the review itself succeeded, and the pipeline's exit
+    status is about the review.
+    """
+    # Read defensively: `--fix` has other callers that build their own args, and
+    # a review that files nothing is the correct behaviour for all of them.
+    if getattr(args, "track_all", False):
+        track = review.finding_issue.TRACK_ALL
+    else:
+        track = frozenset(getattr(args, "track", ()) or ())
+    if not track:
+        review.finding_issue.report_unfiled(Path(job.artifact_dir), track)
+        return
+    with trail.span("file_findings"):
+        review.finding_issue.file_and_link(Path(job.artifact_dir), job, track, trail)
+
+
+def _run_phases(trail, args, job) -> Pipeline:
+    """Every phase of one run, in order, returning the pipeline it chose.
+
+    Split out from `_run_orchestrate` so the whole sequence sits inside one
+    `cleaned_on_success` statement: what the sweep covers is exactly what this
+    function does, and a phase added here is swept without anyone remembering
+    to sweep it.
+    """
+    if _is_no_op_rereview(job):
+        trail.decision(
+            "empty_delta", "no agent ran",
+            reason="the author has committed nothing since the prior review",
+            data={"prior_sha": job.preflight.prior_head_sha, "head_sha": job.pr.head_sha},
+        )
+        core.log.warn(
+            "No author changes since the prior review — carrying its findings "
+            f"forward ({abbrev(job.preflight.prior_head_sha)}.."
+            f"{abbrev(job.pr.head_sha)})")
+        write_unchanged_review(job)
+        return Pipeline.SINGLE
+
+    pipeline, scale, line_threshold, file_threshold = _choose_pipeline(job, args.effort)
+
+    trail.decision(
+        "select_pipeline",
+        f"chose {pipeline}",
+        reason=f"{scale.basis}: files={scale.files} lines={scale.raw_lines} "
+               f"weighted={scale.lines} "
+               f"thresholds=(files={file_threshold} lines={line_threshold})",
+        data={
+            "pipeline": pipeline, "changed_files": scale.files,
+            # `total_lines` keeps meaning the diff's own count, so a record
+            # from before the weighting still compares. The number that chose
+            # the pipeline is the one beside it.
+            "total_lines": scale.raw_lines, "weighted_lines": scale.lines,
+            "basis": scale.basis,
+        },
+    )
+
+    if pipeline is Pipeline.MULTI:
+        with trail.span("multi_phase"):
+            run_multi_phase(
+                job, max_parallel=args.max_parallel,
+                max_cost=args.max_cost, max_groups=args.max_groups,
+                disprove=args.disprove,
+            )
+    else:
+        with trail.span("single_agent"):
+            run_single_agent(job, disprove=args.disprove)
+
+    if job.verification:
+        v = job.verification
+        detail = f"checked={v['findings_checked']} passed={v['findings_passed']} dropped={v['findings_dropped']}"
+        trail.info("evidence_verification", detail, data=v)
+
+    sa_summary = _inject_static_analysis_section(job)
+    if sa_summary is not None:
+        detail = f"checkers={sa_summary['checkers_run']} files={sa_summary['files_checked']} violations={sa_summary['violations']}"
+        trail.info("static_analysis", detail, data=sa_summary)
+
+    if args.fix and Path(job.review_file).exists():
+        trail.decision("fix_pass", "running fix pass", reason="--fix flag set and review file exists")
+        with trail.span("fix_pass"):
+            run_fix_pass(job, trail)
+        _file_open_findings(args, job, trail)
+    elif args.fix:
+        trail.decision("fix_pass", "skipping fix pass", reason="review file not found")
+
+    return pipeline
+
+
+def run_orchestrate(trail, args, repo, session_log) -> int:
+    _log_ai_backend(trail)
+    # Against the worktree's own config, not just the global scope: this is the
+    # same resolution `ReviewJob.config` makes, and checking a different one
+    # would clear a model the review never runs while missing the one it does.
+    phase_models = collect_phase_models(args.model, args.repo_dir)
+    if not agent.backend.preflight(phase_models, trail):
+        return 1
+    if not _budgets_are_derivable(phase_models, trail):
+        return 1
+    run_ctx = fetch_metadata(
+        repo, args.pr, args.mode, args.repo_dir, args.recover_sha, base=args.base,
+    )
+    pr_number, ctx, pr_data = run_ctx.pr, run_ctx.context, run_ctx.data
+
+    prior_review = ""
+    if args.prior_review and Path(args.prior_review).exists():
+        prior_review = Path(args.prior_review).read_text()
+
+    # Read separately from `repo` because `--repo` may name a repo the cwd is
+    # not: the slug can be handed in, the host can only be read off the remote.
+    # Taken only when the origin names the same repo the run is reviewing — the
+    # host is evidence about *that* remote, and a scratch checkout or a fork
+    # whose `--repo` points elsewhere would otherwise stamp its own forge onto
+    # someone else's review. Disagreement falls back to the empty host and
+    # renders public GitHub, which is the answer this gave before the host
+    # existed; a wrong enterprise host is worse than a known-generic one.
+    origin = pr.target.repo_identity_from_origin(args.repo_dir)
+    host = origin.host if origin and origin.label == repo else ""
+
+    job = ReviewJob(
+        repo=repo, host=host, pr_number=args.pr, pr=pr_number, ctx=ctx,
+        wt_path=args.repo_dir, review_file=args.review_file,
+        session_log=session_log,
+        issue_link=args.issue, issue_context=args.issue_context,
+        prior_review=prior_review, mode=args.mode,
+        generator_version=args.generator_version,
+        model=args.model, effort=resolve_effort(args.effort),
+        skip_phases=phase_skips(args),
+        include_generated=args.generated,
+    )
+
+    job.throttle = QuotaThrottle()
+    # Handed to us, not derived: --repo-dir may be a detached review worktree,
+    # which has no branch to key on.
+    job.pr_state_data = (
+        pr.state.load_state(Path(args.target_dir)) if args.target_dir else None
+    )
+
+    if pr_data and args.mode != Mode.SELF:
+        viewer = pr_data.viewer_login
+        pr_author = getattr(pr_number, "author", "")
+        if pr_author and pr_author.lower() == viewer.lower():
+            job.viewer_role = ViewerRole.AUTHOR
+        elif viewer.lower() in [r.lower() for r in getattr(pr_data, "requested_reviewers", [])]:
+            job.viewer_role = ViewerRole.REQUESTED
+        else:
+            job.viewer_role = ViewerRole.REVIEWER
+
+    core.log.info("Collecting file data...")
+    if prior_review and args.pr:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pf_future = pool.submit(collect_preflight_data, job)
+            rt_future = pool.submit(fetch_reply_threads, repo, args.pr, "", pr_data)
+            job.preflight = pf_future.result()
+            job.reply_threads = rt_future.result()
+    else:
+        job.preflight = collect_preflight_data(job)
+
+    with cleaned_on_success(Path(job.artifact_dir)):
+        pipeline = _run_phases(trail, args, job)
+
+    # The one place a run is known to have finished with a review in hand: a
+    # phase that produced none exits the process rather than returning, so
+    # nothing below this line runs for it. Stamping here rather than beside the
+    # sidecar write is what makes `reviewed_at` mean reviewed.
+    stamp_reviewed(Path(job.artifact_dir))
+
+    result = {
+        "review_file": job.review_file,
+        "session_log": job.session_log,
+        "mode": pipeline,
+    }
+    json.dump(result, sys.stdout)
+    print()
+    return 0

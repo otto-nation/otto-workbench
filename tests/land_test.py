@@ -96,10 +96,11 @@ def test_an_unverified_push_is_not_folded_into_lost():
 
 
 def test_land_owns_the_commit_vocabulary():
-    """The enum land maps push results into is land's own, not pr.fix's.
+    """land's `CommitStatus` spells every outcome a caller records.
 
-    `pr.fix` sits above `git` in the layer order, so an enum land imports from
-    it is an upward edge — and land is the only consumer of it below `pr`.
+    This holds the values only. That the enum lives in `git.land` rather than
+    being imported from `pr.fix` above it is `bin/local/validate-ai-layers`'s
+    to enforce, not this test's.
     """
     assert git.land.CommitStatus.PUSHED == "pushed"
     assert {s.value for s in git.land.CommitStatus} >= {

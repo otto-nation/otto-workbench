@@ -172,8 +172,45 @@ _run_migration() {
 
   _run_migration
 
-  [[ "$output" == *"Could not resolve a repo"* ]]
+  [[ "$output" == *"No repo for"* ]]
   [[ "$output" == *"holds .last-dream"* ]]
+}
+
+@test "parks an unresolvable directory under the data root and succeeds" {
+  # A session started outside any repo (~/git, say) leaves memory no registry
+  # entry or transcript will ever key. Retrying it failed the migration on
+  # every sync forever; parking it keeps the files and lets the run finish.
+  local stray="$HOME/.claude/projects/-private-tmp"
+  mkdir -p "$stray/memory"
+  echo "loose note" > "$stray/memory/notes.md"
+
+  _run_migration
+
+  [ "$status" -eq 0 ]
+  [ "$(cat "$WORKBENCH_DATA_DIR/memory-unkeyed/-private-tmp/notes.md")" = "loose note" ]
+  # Outside the keyed store, so nothing walking it reads a slug as a repo key.
+  [ ! -e "$WORKBENCH_DATA_DIR/memory/-private-tmp" ]
+  local migrated=("$stray"/memory-migrated-*)
+  [ "${#migrated[@]}" -eq 1 ]
+  [ -f "${migrated[0]}/notes.md" ]
+  [ ! -d "$stray/memory" ]
+}
+
+@test "parks a directory whose transcript cwd is not a repo" {
+  # The transcript fallback resolves a real directory, but git cannot key it.
+  # That is as permanent as no answer at all.
+  local plain="$TMPDIR/plain"
+  mkdir -p "$plain"
+  local stray="$HOME/.claude/projects/-plain"
+  mkdir -p "$stray/memory"
+  echo "loose note" > "$stray/memory/notes.md"
+  printf '{"cwd":"%s"}\n' "$plain" > "$stray/session.jsonl"
+
+  _run_migration
+
+  [ "$status" -eq 0 ]
+  [ -f "$WORKBENCH_DATA_DIR/memory-unkeyed/-plain/notes.md" ]
+  [ ! -d "$stray/memory" ]
 }
 
 @test "reads an empty directory as empty under a caller's nullglob" {

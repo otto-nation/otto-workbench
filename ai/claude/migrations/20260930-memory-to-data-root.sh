@@ -66,18 +66,20 @@ migration_20260930_memory_to_data_root() {
     # an inference, so that is the fallback.
     repo_dir="$(_migration_repo_for_slug "$slug")" || repo_dir=""
 
-    if [[ -z "$repo_dir" ]]; then
-      _migration_report_orphan "$mem_dir"
-      orphaned=$((orphaned + 1))
-      unresolved=1
+    # Both misses below are permanent, so they park rather than retry. A slug
+    # nothing resolves is a session started outside any repo (~/git, say), and
+    # a transcript cwd git cannot key is the same directory reached the other
+    # way; neither gains a repo by waiting. Retrying them failed the migration
+    # on every sync forever. Parked under the slug, so a person who knows which
+    # repo it belonged to can still move it by hand.
+    key=""
+    if [[ -n "$repo_dir" ]]; then
+      key="$(_repo_key "$repo_dir")" || key=""
+    fi
+    if [[ -z "$key" ]]; then
+      _migration_park_unkeyed "$mem_dir" "$slug" "$stamp_date" && orphaned=$((orphaned + 1)) || unresolved=1
       continue
     fi
-
-    key="$(_repo_key "$repo_dir")" || {
-      warn "Could not key $repo_dir — left $mem_dir in place"
-      unresolved=1
-      continue
-    }
     dest="$WORKBENCH_MEMORY_DIR/$key"
     mkdir -p "$dest"
 
@@ -109,11 +111,11 @@ migration_20260930_memory_to_data_root() {
   [[ "$empty" -gt 0 ]] && info "Removed $empty empty memory directory/directories"
   [[ "$carried" -gt 0 ]] && success "Carried $carried memory directory/directories to $WORKBENCH_MEMORY_DIR"
   [[ "$merged" -gt 0 ]] && info "$merged file(s) kept under a slug-qualified name — several worktrees held the same topic"
-  [[ "$orphaned" -gt 0 ]] && warn "$orphaned memory directory/directories could not be resolved and were left in place"
+  [[ "$orphaned" -gt 0 ]] && warn "$orphaned memory directory/directories had no repo and were parked under $WORKBENCH_DATA_DIR/memory-unkeyed"
 
-  # Non-zero so the next sync retries: a repo that gains a registry entry, or a
-  # transcript that is still on disk, resolves on a later run. Reported rather
-  # than guessed at.
+  # Non-zero so the next sync retries: only the transient failures reach here
+  # now — a refused rmdir, a park whose copy failed — and those can succeed on
+  # a later run.
   [[ "$unresolved" -eq 1 ]] && return 1
   return 0
 }
@@ -189,20 +191,29 @@ _migration_dir_is_empty() {
   [[ "${#entries[@]}" -eq 0 ]]
 }
 
-# _migration_report_orphan MEM_DIR — name an unresolvable directory and its files.
+# _migration_park_unkeyed MEM_DIR SLUG STAMP_DATE — carry a directory no repo
+# keys to $WORKBENCH_DATA_DIR/memory-unkeyed/SLUG. Non-zero when the copy fails.
 #
-# Through _migration_dir_entries so the listing covers dotfiles: a directory
-# reaching here holds something (the empty ones are removed before resolution),
-# and one holding only gate stamps would otherwise be reported as holding
-# nothing at all.
-_migration_report_orphan() {
-  local mem_dir="$1" f entries=()
-  warn "Could not resolve a repo for $mem_dir — left in place"
+# Beside the keyed store rather than inside it: everything walking
+# $WORKBENCH_MEMORY_DIR reads each entry as a repo key, and memory_orphans
+# would report the slug as a repo that has gone. Copied first and renamed
+# after, as the carry path is, so a failed copy leaves the source untouched.
+#
+# The listing goes through _migration_dir_entries so it covers dotfiles: a
+# directory holding only gate stamps would otherwise read as holding nothing.
+_migration_park_unkeyed() {
+  local mem_dir="$1" slug="$2" stamp_date="$3" f entries=()
+  local dest="$WORKBENCH_DATA_DIR/memory-unkeyed/$slug"
+  warn "No repo for $mem_dir — parking it at $dest"
   _migration_dir_entries "$mem_dir" entries
   for f in "${entries[@]}"; do
     info "  holds $(basename "$f")"
   done
-  return 0
+  if ! { mkdir -p "$dest" && cp -R "$mem_dir/." "$dest/"; }; then
+    warn "Could not copy $mem_dir to $dest — left in place"
+    return 1
+  fi
+  mv "$mem_dir" "$(dirname "$mem_dir")/memory-migrated-$stamp_date"
 }
 
 # _migration_match_slug SLUG CANDIDATE... — the first candidate encoding to SLUG.

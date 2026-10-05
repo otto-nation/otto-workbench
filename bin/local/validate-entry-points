@@ -8,7 +8,8 @@ is an entry point into the layered library, and its body belongs in the
 library: at the lowest layer its imports permit, with `ai/lib/cli/<name>.py`
 holding the parser and the call. A body left in the script is code no other
 module can import and no test reaches except by executing the file — the
-shape #754 dismantled one script at a time. This makes the shape permanent.
+shape the #754 refactor (moving script bodies into ai/lib) undid one script at a
+time. This makes the shape permanent.
 
 The check is structural, read from the script's top-level AST. In order, a
 shim may hold only:
@@ -17,12 +18,16 @@ shim may hold only:
   - imports of `os`, `sys` and `pathlib`;
   - a `--help` preamble: an `if` testing for `--help` in `sys.argv` that
     answers from the docstring and exits, before `ai/lib` is touched — so
-    `--help` works under a pin that would refuse to load (the status line);
+    `--help` works under a pin that would refuse to load (the Claude Code
+    status line script, `workbench-statusline`, must always answer). Its body
+    may only print and exit;
   - path bindings: assignments whose value derives from `__file__` or from an
     earlier binding (`BIN_DIR`, `_AI_LIB_DIR`);
   - the pin stanza: `if os.environ.get("WORKBENCH_AI_LIB_DIR"):` and the
-    `sys.path.insert` that follows it (its text is held identical across
-    carriers by `tests/ai_lib_pin.bats`);
+    `sys.path.insert(0, str(_AI_LIB_DIR))` that follows it, once. The `if`
+    is compared by AST to `PIN_BLOCK` below, so its body cannot carry a
+    program; the same text is also held identical across carriers by
+    `tests/ai_lib_pin.bats`;
   - exactly one `from cli.<name> import <entry>`;
   - a final statement calling `<entry>(...)`, directly or as
     `sys.exit(<entry>(...))`.
@@ -55,6 +60,18 @@ BIN_DIRS = ("ai/bin", "ai/claude/bin")
 CLI_DIR = "ai/lib/cli"
 PIN_ENV = "WORKBENCH_AI_LIB_DIR"
 STDLIB_IMPORTS = frozenset({"os", "sys", "pathlib"})
+
+# The pin stanza every shim carries, verbatim. Compared by AST, so formatting
+# and comments may differ but a statement added to or removed from it may not.
+PIN_BLOCK = """\
+if os.environ.get("WORKBENCH_AI_LIB_DIR"):
+    sys.path.insert(0, str(_AI_LIB_DIR.parent / "bin"))
+    from _libdir import pinned_ai_lib_dir
+    del sys.path[0]
+    _AI_LIB_DIR = pinned_ai_lib_dir()
+"""
+_PIN_DUMP = ast.dump(ast.parse(PIN_BLOCK).body[0])
+_PATH_INSERT_DUMP = ast.dump(ast.parse("sys.path.insert(0, str(_AI_LIB_DIR))").body[0])
 
 # A script with a whole body in it fails on every line; the first few say what
 # is wrong, and the rest would bury the next script's report.
@@ -99,20 +116,36 @@ def _names(node: ast.AST) -> set[str]:
     return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
 
 
+def _only_output(stmts: list[ast.stmt]) -> bool:
+    """Whether *stmts* do nothing but `print(...)`, `sys.exit(...)` and loops over them."""
+    for stmt in stmts:
+        if isinstance(stmt, ast.For):
+            if stmt.orelse or not _only_output(stmt.body):
+                return False
+        elif not (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
+                  and ast.unparse(stmt.value.func) in ("print", "sys.exit")):
+            return False
+    return True
+
+
 def _is_help_preamble(node: ast.stmt) -> bool:
-    if not isinstance(node, ast.If):
+    if not isinstance(node, ast.If) or node.orelse:
         return False
     test = ast.unparse(node.test)
-    return "--help" in test and "sys.argv" in test
+    if not ("--help" in test and "sys.argv" in test):
+        return False
+    last = node.body[-1]
+    exits = (isinstance(last, ast.Expr) and isinstance(last.value, ast.Call)
+             and ast.unparse(last.value.func) == "sys.exit")
+    return exits and _only_output(node.body)
 
 
 def _is_pin_block(node: ast.stmt) -> bool:
-    return isinstance(node, ast.If) and PIN_ENV in ast.unparse(node.test)
+    return isinstance(node, ast.If) and ast.dump(node) == _PIN_DUMP
 
 
 def _is_path_insert(node: ast.stmt) -> bool:
-    return (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
-            and ast.unparse(node.value.func) == "sys.path.insert")
+    return ast.dump(node) == _PATH_INSERT_DUMP
 
 
 def _is_stdlib_import(node: ast.stmt) -> bool:
@@ -142,18 +175,27 @@ def _calls_entry(node: ast.stmt, entry: str) -> bool:
 
 def check_source(source: str, root: Path) -> list[Violation]:
     """Every way *source* departs from the shim shape, in line order."""
-    body = ast.parse(source).body
+    try:
+        body = ast.parse(source).body
+    except SyntaxError as exc:
+        return [Violation(exc.lineno or 1, f"does not parse: {exc.msg}")]
     if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
         body = body[1:]
     bound = {"__file__", "Path"}
-    pinned = False
+    pinned = inserted = False
     entry: tuple[str, str] | None = None
     problems: list[Violation] = []
     for i, node in enumerate(body):
         last = i == len(body) - 1
-        if entry and last and _calls_entry(node, entry[1]):
+        # A call displaced by trailing work is skipped too, so the report names
+        # the trailing work and "last statement must call", not the valid call.
+        if entry and _calls_entry(node, entry[1]) and (
+                last or not _calls_entry(body[-1], entry[1])):
             continue
-        if _is_stdlib_import(node) or _is_path_insert(node):
+        if _is_stdlib_import(node):
+            continue
+        if _is_path_insert(node) and not inserted:
+            inserted = True
             continue
         if _is_help_preamble(node) and not pinned:
             continue
@@ -197,7 +239,11 @@ def _check_target(entry: tuple[str, str], root: Path) -> list[Violation]:
     target = root / CLI_DIR / f"{module}.py"
     if not target.is_file():
         return [Violation(1, f"cli.{module} does not exist ({CLI_DIR}/{module}.py)")]
-    defined = {n.name for n in ast.parse(target.read_text(encoding="utf-8")).body
+    try:
+        tree = ast.parse(target.read_text(encoding="utf-8"))
+    except SyntaxError as exc:
+        return [Violation(1, f"cli.{module} does not parse: {exc.msg} (line {exc.lineno})")]
+    defined = {n.name for n in tree.body
                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
     if name not in defined:
         return [Violation(1, f"cli.{module} defines no `{name}`")]
@@ -223,12 +269,18 @@ def main(argv: list[str] | None = None) -> int:
     paths = [Path(f).resolve() for f in args.files] if args.files else discover(root)
     checked = failed = 0
     for path in paths:
-        source = path.read_text(encoding="utf-8")
+        rel = path.relative_to(root) if path.is_relative_to(root) else path
+        try:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            checked += 1
+            failed += 1
+            _report(rel, [Violation(1, f"cannot read: {exc}")])
+            continue
         if not in_scope(source):
             continue
         checked += 1
         problems = check_source(source, root)
-        rel = path.relative_to(root) if path.is_relative_to(root) else path
         if problems:
             failed += 1
             _report(rel, problems)

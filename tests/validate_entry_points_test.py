@@ -61,6 +61,38 @@ def test_a_help_preamble_before_the_pin_passes(root):
     assert vep.check_source(_shim(preamble), root) == []
 
 
+def test_a_program_inside_the_help_preamble_is_refused(root):
+    preamble = ('if "--help" in sys.argv:\n    print(__doc__)\n'
+                '    os.system("make")\n    sys.exit(0)\n\n')
+    assert vep.check_source(_shim(preamble), root) != []
+
+
+def test_a_help_preamble_that_does_not_exit_is_refused(root):
+    preamble = 'if "--help" in sys.argv:\n    print(__doc__)\n\n'
+    assert vep.check_source(_shim(preamble), root) != []
+
+
+def test_a_program_inside_the_pin_block_is_refused(root):
+    source = _shim().replace("    del sys.path[0]\n", "    del sys.path[0]\n    os.system('make')\n")
+    assert vep.check_source(source, root) != []
+
+
+def test_a_program_in_a_pin_test_is_refused(root):
+    source = _shim().replace('if os.environ.get("WORKBENCH_AI_LIB_DIR"):\n',
+                             'if os.environ.get("WORKBENCH_AI_LIB_DIR") and os.system("make"):\n')
+    assert vep.check_source(source, root) != []
+
+
+def test_a_stray_path_insert_is_refused(root):
+    source = _shim("sys.path.insert(0, '/elsewhere')\n")
+    assert any("sys.path.insert" in r for r in _reasons(source, root))
+
+
+def test_a_repeated_path_insert_is_refused(root):
+    source = _shim().replace("\nfrom cli.tool", "sys.path.insert(0, str(_AI_LIB_DIR))\nfrom cli.tool")
+    assert any("sys.path.insert" in r for r in _reasons(source, root))
+
+
 def test_a_function_in_the_script_is_refused(root):
     source = _shim("def helper():\n    return 1\n\n")
     assert any("defines `helper`" in r for r in _reasons(source, root))
@@ -92,6 +124,7 @@ def test_work_after_the_entry_call_is_refused(root):
     source = _shim(tail="sys.exit(main(sys.argv[1:]))\nprint('after')\n")
     reasons = _reasons(source, root)
     assert sum("print('after')" in r for r in reasons) == 1
+    assert not any("sys.exit(main" in r and "not part of a shim" in r for r in reasons)
     assert sum("last statement must call" in r for r in reasons) == 1
 
 
@@ -119,6 +152,20 @@ def test_discover_skips_helper_modules_and_non_python(tmp_path):
     assert vep.discover(tmp_path) == [bin_dir / "tool"]
 
 
+def test_a_cli_module_that_does_not_parse_is_refused(root):
+    (root / "ai" / "lib" / "cli" / "broken.py").write_text("def main(:\n")
+    assert any("does not parse" in r for r in _reasons(_shim(module="broken"), root))
+
+
+def test_a_script_that_does_not_parse_is_refused(root):
+    assert any("does not parse" in r for r in _reasons(_shim() + "def (:\n", root))
+
+
+def test_main_reports_a_missing_file_instead_of_raising(tmp_path, capsys):
+    assert vep.main(["--quiet", str(tmp_path / "absent")]) == 1
+    assert "cannot read" in capsys.readouterr().err
+
+
 def test_main_exits_1_and_names_the_script(tmp_path, capsys):
     bad = tmp_path / "tool"
     bad.write_text(_shim("def helper():\n    return 1\n\n"))
@@ -129,6 +176,8 @@ def test_main_exits_1_and_names_the_script(tmp_path, capsys):
 def test_every_shim_in_this_repo_passes():
     """The shims the repo ships; a body creeping back into one fails here."""
     shims = [p for p in vep.discover(REPO_ROOT) if vep.in_scope(p.read_text())]
+    # A floor, not a count: it fails if discovery or the scope test silently
+    # stops finding the entry points (the repo shipped 17 when this was written).
     assert len(shims) >= 17
     offenders = {
         str(p.relative_to(REPO_ROOT)): vep.check_source(p.read_text(), REPO_ROOT)

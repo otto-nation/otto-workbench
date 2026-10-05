@@ -129,6 +129,25 @@ teardown() {
   [[ "$output" == *"retro-scan"* ]]
 }
 
+@test "promote-scan runs from the tarball layout" {
+  run "$TARBALL_ROOT/bin/promote-scan" --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"promote-scan"* ]]
+}
+
+@test "dream-scan runs from the tarball layout" {
+  run "$TARBALL_ROOT/bin/dream-scan" --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dream-scan"* ]]
+}
+
+@test "promote-scan refuses without a workbench in the tarball layout" {
+  run env -u OTTO_WORKBENCH "$TARBALL_ROOT/bin/promote-scan"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--workbench"* ]]
+  [[ "$output" != *"Traceback"* ]]
+}
+
 # ── 7. review-orchestrate Python imports ────────────────────────────────────
 
 @test "review-orchestrate Python imports succeed from tarball layout" {

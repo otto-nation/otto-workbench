@@ -585,8 +585,8 @@ and exits. `--memory-dir REPO` prints that repo's memory directory and exits.
 | `-V`, `--version` | print version and exit. |
 | `--days` `<n>` | scan sessions from last N days (default: 7). |
 | `--home` `<dir>` | home directory override (for testing; default: `$HOME`). |
-| `--list-transcripts` | print transcript paths for the window, one per line, and exit. |
-| `--memory-dir` `<repo>` | print the memory directory for the repo at REPO, and exit. |
+| `--list-transcripts` | print transcript paths for the window, one per line, and exit. Not with `--memory-dir`. |
+| `--memory-dir` `<repo>` | print the memory directory for the repo at REPO, and exit. Not with `--list-transcripts`. |
 
 ### `dream-verify`
 
@@ -946,8 +946,7 @@ hooks, and agents.
 promote-scan [--home DIR] [--workbench DIR]
 ```
 
-`--workbench` defaults to `$OTTO_WORKBENCH` or the machine's main workbench
-checkout.
+`--workbench` defaults to `$OTTO_WORKBENCH`, else the checkout this runs from.
 
 Stdout is a markdown report with Memory State (topic files, last-promote stamp),
 Backed-Up Memories (`ai/memory` in the workbench), and Workbench Artifacts
@@ -959,7 +958,7 @@ Backed-Up Memories (`ai/memory` in the workbench), and Workbench Artifacts
 |------|-------------|
 | `-V`, `--version` | print version and exit. |
 | `--home` `<dir>` | home directory override (for testing; default: `$HOME`). |
-| `--workbench` `<dir>` | workbench directory (default: $OTTO_WORKBENCH or ~/git/personal/otto-nation/otto-workbench/main). |
+| `--workbench` `<dir>` | workbench directory (default: $OTTO_WORKBENCH, else the checkout this runs from). |
 
 ### `retro-consume`
 

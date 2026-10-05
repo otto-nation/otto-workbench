@@ -1,0 +1,291 @@
+"""Scan session transcripts and memory state for dream consolidation.
+
+Sessions come from `core.sessions`, which owns what a session is and where one
+lives across every harness. The report header prints a per-harness transcript
+count, so a harness that has stopped being discovered reads as a zero.
+
+Not: transcript discovery, record shapes or automation filtering
+(`core.sessions`), the store (`core.memory`), argument parsing
+(`cli.dream_scan`).
+"""
+
+# doc-group: platform
+
+from __future__ import annotations
+
+import re
+from collections import Counter
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import core.log
+import core.memory
+import core.sessions
+import core.trail
+import memory.state
+
+
+# The binary a user runs and the trail records, which is not this module's own
+# name. Spelled out rather than derived, so the shim can be renamed only by
+# changing the name in both places at once.
+SCRIPT = "dream-scan"
+MAX_TEXT_LENGTH = 500
+TEXT_PREVIEW_LENGTH = 200
+DEFAULT_DAYS = 7
+
+LAST_DREAM_STAMP = "last-dream"
+
+SIGNAL_PATTERNS: dict[str, re.Pattern] = {
+    "correction": re.compile(
+        r"\b(?:actually|wrong|incorrect|not right|stop doing|don't do"
+        r"|I said|I meant|that's not|correction)\b"
+        r"|(?:^|\W)no,",
+        re.IGNORECASE,
+    ),
+    "preference": re.compile(
+        r"\b(?:I prefer|always use|never use|I like|I don't like|I want"
+        r"|from now on|going forward|remember that|keep in mind"
+        r"|make sure to|default to)\b",
+        re.IGNORECASE,
+    ),
+    "decision": re.compile(
+        r"\b(?:let's go with|I decided|we're using|the plan is"
+        r"|switch to|move to|chosen|picked|decision|we agreed)\b",
+        re.IGNORECASE,
+    ),
+    "pattern": re.compile(
+        r"\b(?:every time|keep forgetting|as usual|same as before"
+        r"|like last time|we always|the usual)\b"
+        r"|(?:^|\W)again\b",
+        re.IGNORECASE,
+    ),
+    "review_feedback": re.compile(
+        r"\b(?:accepted|rejected|won't-fix|false positive|not applying)\b",
+        re.IGNORECASE,
+    ),
+}
+
+SIGNAL_PRIORITY = ["correction", "preference", "decision", "pattern", "review_feedback"]
+
+
+def classify_signal(text: str) -> str | None:
+    for category in SIGNAL_PRIORITY:
+        if SIGNAL_PATTERNS[category].search(text):
+            return category
+    return None
+
+
+def _signals_in(session: core.sessions.Session) -> list[dict]:
+    """Every classified human turn in one transcript.
+
+    Each signal is dated from its own record rather than from the file, which
+    is what makes "how many distinct dates mention this" — how dream weighs a
+    signal — mean anything. Dating by mtime gave every turn in a session the
+    date the session last ended, so a week of work in one long-running session
+    counted once.
+    """
+    signals = []
+    for message in core.sessions.iter_user_messages(session):
+        category = classify_signal(message.text)
+        if category is None:
+            continue
+        signals.append({
+            "category": category,
+            "text": message.text[:MAX_TEXT_LENGTH],
+            "project_id": _project_id_of(message),
+            "session_date": message.date,
+        })
+    return signals
+
+
+def _project_id_of(message: core.sessions.UserMessage) -> str:
+    """What to file a signal under.
+
+    The canonical slug of the cwd the session recorded, which is stable across
+    harnesses — the same repo worked in from Claude and from Pi files under one
+    id rather than two, because the harnesses' own directory names encode
+    differently. A transcript that never stated a cwd is filed under its
+    harness, which is all that is known about it.
+    """
+    if message.project_path is None:
+        return message.harness
+    return core.sessions.canonical_slug(message.project_path)
+
+
+def scan_sessions(discovered: list[core.sessions.Session]) -> list[dict]:
+    signals = []
+    for session in discovered:
+        signals.extend(_signals_in(session))
+    return signals
+
+
+def _format_memory_state(state: dict) -> list[str]:
+    lines = [f"### {state['project_id']}"]
+    lines.append(f"MEMORY.md: {state['line_count']} lines")
+    if state["last_dream"]:
+        lines.append(f"Last dream: {state['last_dream']}")
+    lines.append("")
+
+    if not state["topic_files"]:
+        return lines
+
+    lines.append("| File | Name | Description | Type | Modified | Age |")
+    lines.append("|------|------|-------------|------|----------|-----|")
+    for tf in state["topic_files"]:
+        stale_marker = " **STALE**" if tf["stale"] else ""
+        lines.append(
+            f"| {tf['filename']} | {tf['name']} | {tf['description']} "
+            f"| {tf['type']} | {tf['modified']} | {tf['age_days']}d{stale_marker} |"
+        )
+    lines.append("")
+
+    stale_files = [tf for tf in state["topic_files"] if tf["stale"]]
+    if stale_files:
+        lines.append(f"**Stale entries (>90 days):** {', '.join(tf['filename'] for tf in stale_files)}")
+        lines.append("")
+    return lines
+
+
+def _format_signal_category(category: str, cat_signals: list[dict]) -> list[str]:
+    lines = [f"### {category} ({len(cat_signals)})\n"]
+    for sig in cat_signals:
+        lines.append(f"- **[{sig['session_date']}]** `{sig['project_id']}`")
+        text_preview = sig["text"].replace("\n", " ")[:TEXT_PREVIEW_LENGTH]
+        lines.append(f"  > {text_preview}")
+        lines.append("")
+    return lines
+
+
+def format_report(
+    memory_states: list[dict],
+    signals: list[dict],
+    counts: dict[str, int] | None = None,
+    scan_id: str | None = None,
+) -> str:
+    """The scan's markdown report, headed by the run that produced it.
+
+    The scan ID is in the report rather than only on stderr because the agent
+    reading this is what carries it forward: the phases it then runs record
+    against this run's trail, and it can only name a root it was told. It is
+    the trail *root* rather than this process's own invocation, so a scan
+    spawned under a larger command reports the ID that command is filed under —
+    the same spelling `retro-scan --consume` prints. See the dream skill's
+    Phase 3.
+    """
+    lines: list[str] = []
+    if scan_id:
+        lines.append(f"<!-- scan-id: {scan_id} -->\n")
+    if counts is not None:
+        lines.extend(_format_counts(counts))
+    lines.append("## Memory State\n")
+    lines.extend(_format_memory_section(memory_states))
+    lines.append("## Session Signals\n")
+    lines.extend(_format_signals_section(signals))
+    return "\n".join(lines)
+
+
+def _format_counts(counts: dict[str, int]) -> list[str]:
+    """Transcripts scanned, per harness.
+
+    Stated because it is the only thing that makes a harness going undiscovered
+    visible: the failure is silent otherwise, and was — a scan of Claude alone
+    reported a full-looking corpus for months while most sessions were Pi's.
+    A zero here is the signal to check the layout table in core/sessions.py.
+    """
+    total = sum(counts.values())
+    per = ", ".join(f"{name} {n}" for name, n in sorted(counts.items()))
+    return ["## Sessions Scanned\n", f"{total} transcripts — {per}\n"]
+
+
+def _format_memory_section(states: list[dict]) -> list[str]:
+    if not states:
+        return ["No memory directories found.\n"]
+    lines: list[str] = []
+    for state in states:
+        lines.extend(_format_memory_state(state))
+    return lines
+
+
+def _format_signals_section(signals: list[dict]) -> list[str]:
+    if not signals:
+        return ["No signals found in recent sessions.\n"]
+    lines: list[str] = []
+    for category in SIGNAL_PRIORITY:
+        cat_signals = [s for s in signals if s["category"] == category]
+        if not cat_signals:
+            continue
+        lines.extend(_format_signal_category(category, cat_signals))
+    return lines
+
+
+def list_transcripts(home: Path, days: int) -> int:
+    """Print every transcript path in the window, one per line.
+
+    Phases 5 and 5b of the dream skill grep the corpus for architectural and
+    machine-level facts, which needs the file list rather than the report.
+    Printing it here keeps one answer to "where are the sessions": a skill
+    globbing a harness directory itself is what went blind when work moved to
+    Pi.
+    """
+    cutoff = datetime.now() - timedelta(days=days)
+    for session in core.sessions.discover_sessions(home, since=cutoff):
+        print(session.path)
+    return 0
+
+
+def print_memory_dir(repo: str) -> int:
+    """Print that repo's memory directory.
+
+    The architecture skill reads a repo's memory before proposing changes, and
+    was building the directory name with a transform of its own that did not
+    match Claude's — so it resolved to nothing for any repo whose path holds a
+    `_` or a `.`. Same reasoning as the branch above: the script that owns the
+    location answers, rather than each skill deriving it again.
+    """
+    print(core.memory.memory_dir(repo))
+    return 0
+
+
+def run_scan(home: Path, days: int, *, debug: bool = False) -> int:
+    trail = core.trail.Trail.start(
+        script=SCRIPT,
+        context={"days": days},
+        debug=debug,
+    )
+
+    try:
+        core.log.info(f"Scanning sessions from last {days} days")
+        core.log.info(f"Home: {home}")
+
+        memory_states = memory.state.scan_memory_state(LAST_DREAM_STAMP, "last_dream")
+        core.log.info(f"Found {len(memory_states)} project(s) with memory")
+        trail.info("scan_memories", f"found {len(memory_states)} memory files across {sum(len(s.get('topic_files', [])) for s in memory_states)} topics")
+
+        cutoff = datetime.now() - timedelta(days=days)
+        discovered = core.sessions.discover_sessions(home, since=cutoff)
+        # Tallied off the list already in hand, not by a second discovery pass:
+        # every Session carries the harness that wrote it. Seeded from HARNESSES
+        # first so a harness that went undiscovered reports `pi 0` rather than
+        # dropping out of the header — the silent failure _format_counts exists
+        # to make visible, and what tests/dream_scan.bats asserts end to end.
+        counts = {h.name: 0 for h in core.sessions.HARNESSES}
+        counts.update(Counter(s.harness for s in discovered))
+        core.log.info(f"Sessions: {counts}")
+
+        signals = scan_sessions(discovered)
+        core.log.info(f"Found {len(signals)} signal(s)")
+        trail.info(
+            "scan_sessions",
+            f"scanned {sum(counts.values())} transcripts ({counts}) from last "
+            f"{days} days, found {len(signals)} signals",
+        )
+
+        report = format_report(memory_states, signals, counts, scan_id=trail.root)
+        trail.info("generate_report", f"report generated, {len(report)} chars")
+        print(report)
+        return 0
+    except Exception as exc:
+        trail.error("unexpected_error", str(exc))
+        raise
+    finally:
+        trail.finish()

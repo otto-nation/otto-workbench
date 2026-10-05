@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for promote-scan Python script — memory and workbench artifact scanning.
+# Tests for the promote-scan CLI. In-process cases live in tests/memory_promote_test.py and tests/memory_test.py.
 
 bats_require_minimum_version 1.5.0
 
@@ -16,26 +16,6 @@ setup() {
 
 teardown() {
   common_teardown
-}
-
-# Helper: run Python expression importing from promote-scan
-_py() {
-  python3 -c "
-import sys, importlib.util, importlib.machinery
-loader = importlib.machinery.SourceFileLoader('promote_scan', '$PROMOTE_SCAN')
-spec = importlib.util.spec_from_loader('promote_scan', loader)
-mod = importlib.util.module_from_spec(spec)
-sys.modules['promote_scan'] = mod
-spec.loader.exec_module(mod)
-$1
-"
-}
-
-# Helper: like _py but reads code from stdin
-_py_here() {
-  local code
-  code=$(cat)
-  _py "$code"
 }
 
 # Helper: create a memory directory with MEMORY.md and topic files
@@ -126,109 +106,6 @@ _make_settings() {
   }
 }
 EOF
-}
-
-# ── parse_frontmatter ────────────────────────────────────────────────────────
-
-@test "parse_frontmatter: extracts name, description, type" {
-  local tmpfile="$TMPDIR/test_topic.md"
-  cat > "$tmpfile" <<'FM'
----
-name: my-topic
-description: a test topic
-metadata:
-  type: feedback
----
-
-Body content here.
-FM
-  result=$(_py_here <<PY
-fm = mod.parse_frontmatter("$tmpfile")
-print(fm.get("name"), fm.get("description"))
-PY
-)
-  [[ "$result" == "my-topic a test topic" ]]
-}
-
-@test "parse_frontmatter: returns empty dict for no frontmatter" {
-  local tmpfile="$TMPDIR/no_fm.md"
-  printf 'Just plain text\n' > "$tmpfile"
-  result=$(_py_here <<PY
-fm = mod.parse_frontmatter("$tmpfile")
-print(len(fm))
-PY
-)
-  [[ "$result" == "0" ]]
-}
-
-@test "parse_frontmatter: returns empty dict for missing file" {
-  result=$(_py_here <<PY
-fm = mod.parse_frontmatter("$TMPDIR/nonexistent.md")
-print(len(fm))
-PY
-)
-  [[ "$result" == "0" ]]
-}
-
-# ── read_body ─────────────────────────────────────────────────────────────────
-
-@test "read_body: extracts content after frontmatter" {
-  local tmpfile="$TMPDIR/body_test.md"
-  cat > "$tmpfile" <<'FM'
----
-name: test
-description: test desc
----
-
-This is the body content.
-FM
-  result=$(_py_here <<PY
-from pathlib import Path
-print(mod.read_body(Path("$tmpfile")))
-PY
-)
-  [[ "$result" == "This is the body content." ]]
-}
-
-@test "read_body: returns all content when no frontmatter" {
-  local tmpfile="$TMPDIR/no_fm_body.md"
-  printf 'Plain text content\n' > "$tmpfile"
-  result=$(_py_here <<PY
-from pathlib import Path
-print(mod.read_body(Path("$tmpfile")))
-PY
-)
-  [[ "$result" == "Plain text content" ]]
-}
-
-# ── first_heading ─────────────────────────────────────────────────────────────
-
-@test "first_heading: extracts first heading" {
-  local tmpfile="$TMPDIR/heading_test.md"
-  cat > "$tmpfile" <<'MD'
-# My Heading
-
-Some content.
-
-## Sub heading
-MD
-  result=$(_py_here <<PY
-from pathlib import Path
-print(mod.first_heading(Path("$tmpfile")))
-PY
-)
-  [[ "$result" == "My Heading" ]]
-}
-
-@test "first_heading: returns empty string for no headings" {
-  local tmpfile="$TMPDIR/no_heading.md"
-  printf 'Just text\n' > "$tmpfile"
-  result=$(_py_here <<PY
-from pathlib import Path
-print(mod.first_heading(Path("$tmpfile")))
-PY
-)
-  [[ "$result" == "" ]]
 }
 
 # ── CLI ───────────────────────────────────────────────────────────────────────

@@ -12,7 +12,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 
 import core.log
@@ -21,13 +20,10 @@ import core.workbench_paths
 import retro.scan
 from core.trail import add_trail_args
 
-WORKBENCH_ENV_VAR = "OTTO_WORKBENCH"
-
 
 def build_parser() -> argparse.ArgumentParser:
     """The retro-scan parser, for `main` and for rendering its usage and flag tables."""
-    checkout = core.workbench_paths.source_checkout()
-    default_wb = os.environ.get(WORKBENCH_ENV_VAR) or (str(checkout) if checkout else None)
+    default_wb = core.workbench_paths.default_workbench()
     parser = argparse.ArgumentParser(
         prog=retro.scan.SCRIPT,
         description="Scan PR review comments and cross-reference against coding rules.",
@@ -36,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--home", type=str, default=str(Path.home()), metavar="DIR",
                         help="home directory override (default: `$HOME`)")
     parser.add_argument("--workbench", type=str, default=default_wb, metavar="DIR",
-                        help=f"workbench directory (default: ${WORKBENCH_ENV_VAR}, else the checkout this runs from)")
+                        help=f"workbench directory (default: ${core.workbench_paths.WORKBENCH_ENV_VAR}, else the checkout this runs from)")
     parser.add_argument("--since", type=str, default=None, metavar="DURATION",
                         help="override scan window (e.g. 7d, 24h, 30m)")
     parser.add_argument(
@@ -55,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if not args.workbench:
-        core.log.error(f"no workbench checkout found: pass --workbench or set {WORKBENCH_ENV_VAR}")
+        core.log.error(f"no workbench checkout found: pass --workbench or set {core.workbench_paths.WORKBENCH_ENV_VAR}")
         return 2
 
     if args.consume and args.since:

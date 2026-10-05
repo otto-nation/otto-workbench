@@ -46,7 +46,7 @@ tools:
     description: "Scan for ceiling: and ceiling-permanent: markers and produce a structured debt ledger"
 
   - name: dream-scan
-    parser: ai/bin/dream-scan:build_parser
+    parser: cli.dream_scan:build_parser
     permission: true
     visibility: brief
     description: "Scan session transcripts and memory state for dream consolidation"
@@ -57,7 +57,7 @@ tools:
     description: "Verify dream memory file integrity across all projects"
 
   - name: promote-scan
-    parser: ai/bin/promote-scan:build_parser
+    parser: cli.promote_scan:build_parser
     permission: true
     visibility: brief
     description: "Scan memories and workbench artifacts for promotion evaluation"

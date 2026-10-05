@@ -103,3 +103,43 @@ def test_scan_topic_file_marks_stale_after_threshold(tmp_path):
     assert row is not None
     assert row.stale is True
     assert row.age_days == core.memory.STALE_DAYS + 1
+
+
+# passes-at-base: moved verbatim from tests/promote_scan.bats; subject unchanged
+def test_parse_frontmatter_extracts_name_and_description(tmp_path):
+    path = tmp_path / "test_topic.md"
+    path.write_text(
+        "---\nname: my-topic\ndescription: a test topic\nmetadata:\n"
+        "  type: feedback\n---\n\nBody content here.\n"
+    )
+    fm = core.memory.parse_frontmatter(path)
+    assert fm.get("name") == "my-topic"
+    assert fm.get("description") == "a test topic"
+
+
+# passes-at-base: moved verbatim from tests/promote_scan.bats; subject unchanged
+def test_parse_frontmatter_returns_empty_dict_with_no_frontmatter(tmp_path):
+    path = tmp_path / "no_fm.md"
+    path.write_text("Just plain text\n")
+    assert core.memory.parse_frontmatter(path) == {}
+
+
+# passes-at-base: moved verbatim from tests/promote_scan.bats; subject unchanged
+def test_parse_frontmatter_returns_empty_dict_for_a_missing_file(tmp_path):
+    assert core.memory.parse_frontmatter(tmp_path / "nonexistent.md") == {}
+
+
+# passes-at-base: moved verbatim from tests/promote_scan.bats; subject unchanged
+def test_read_body_strips_the_frontmatter(tmp_path):
+    path = tmp_path / "body_test.md"
+    path.write_text(
+        "---\nname: test\ndescription: test desc\n---\n\nThis is the body content.\n"
+    )
+    assert core.memory.read_body(path) == "This is the body content."
+
+
+# passes-at-base: moved verbatim from tests/promote_scan.bats; subject unchanged
+def test_read_body_returns_all_content_when_there_is_no_frontmatter(tmp_path):
+    path = tmp_path / "no_fm_body.md"
+    path.write_text("Plain text content\n")
+    assert core.memory.read_body(path) == "Plain text content"

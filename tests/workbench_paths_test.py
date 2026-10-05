@@ -227,3 +227,27 @@ def test_source_checkout_is_none_for_a_copy_without_the_rules_tree(tmp_path):
     copy.write_text((LIB_DIR / "core" / "workbench_paths.py").read_text())
     module = exec_fresh("workbench_paths_copy", copy)
     assert module.source_checkout() is None
+
+
+def test_default_workbench_env_wins_over_checkout(monkeypatch, tmp_path):
+    monkeypatch.setenv("OTTO_WORKBENCH", str(tmp_path / "from-env"))
+    monkeypatch.setattr(core.workbench_paths, "source_checkout", lambda: tmp_path / "checkout")
+    assert core.workbench_paths.default_workbench() == str(tmp_path / "from-env")
+
+
+def test_default_workbench_unset_falls_back_to_checkout(monkeypatch, tmp_path):
+    monkeypatch.delenv("OTTO_WORKBENCH", raising=False)
+    monkeypatch.setattr(core.workbench_paths, "source_checkout", lambda: tmp_path)
+    assert core.workbench_paths.default_workbench() == str(tmp_path)
+
+
+def test_default_workbench_empty_string_falls_back_to_checkout(monkeypatch, tmp_path):
+    monkeypatch.setenv("OTTO_WORKBENCH", "")
+    monkeypatch.setattr(core.workbench_paths, "source_checkout", lambda: tmp_path)
+    assert core.workbench_paths.default_workbench() == str(tmp_path)
+
+
+def test_default_workbench_none_when_unset_and_no_checkout(monkeypatch):
+    monkeypatch.delenv("OTTO_WORKBENCH", raising=False)
+    monkeypatch.setattr(core.workbench_paths, "source_checkout", lambda: None)
+    assert core.workbench_paths.default_workbench() is None

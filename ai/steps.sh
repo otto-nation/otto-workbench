@@ -31,6 +31,39 @@ while IFS= read -r _ai_sub; do
 done < <(ai_sub_tool_dirs "$_AI_DIR")
 unset _ai_sub _AI_DIR
 
+# ai_generate_rules — regenerates git.generated.md and tools.generated*.md.
+# Harness-neutral: every harness reads these files, so neither Claude Code's
+# install steps nor Pi's guidelines compose may own the regeneration. Called
+# from sync_ai and ai/setup.sh after workbench-rules sync, before any tool.
+ai_generate_rules() {
+  local tool_gen="$BIN_SRC_DIR/local/generate-tool-context"
+  local git_gen="$WORKBENCH_DIR/git/bin/local/generate-git-rules"
+  local -a gen_args=()
+  [[ "${WORKBENCH_SYNC:-}" == true ]] && gen_args=(--quiet)
+
+  if [[ -x "$tool_gen" ]]; then
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Generating tool context" || true
+    TOOL_CONTEXT_OUTPUT="$WORKBENCH_DIR/$TOOLS_GENERATED_RELPATH" \
+      "$tool_gen" "${gen_args[@]}"
+  else
+    warn "generate-tool-context not found — skipping tool context generation"
+  fi
+
+  if [[ -x "$git_gen" ]]; then
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Generating git rules" || true
+    # generate-git-rules derives REPO_ROOT from cwd via git rev-parse, so a
+    # sync started outside the workbench tree would write into whatever repo
+    # that cwd belongs to. Pin both the cwd and the output path.
+    (
+      cd "$WORKBENCH_DIR"
+      GIT_RULES_OUTPUT="$WORKBENCH_DIR/$GIT_GENERATED_RELPATH" \
+        "$git_gen" "${gen_args[@]}"
+    )
+  else
+    warn "generate-git-rules not found — skipping git rules generation"
+  fi
+}
+
 # sync_ai — dispatches to each installed AI sub-tool's sync function.
 # Called automatically by otto-workbench sync via the sync_<component> convention.
 sync_ai() {
@@ -48,6 +81,10 @@ sync_ai() {
   # Pi alone used to get its rules only because Claude Code's sync had written
   # them, and so on a machine without it got none at all.
   "$AI_SRC_DIR/bin/workbench-rules" sync
+
+  # Same window, same reason: the generated git and tool-context files are
+  # inputs to every harness, not outputs of one.
+  ai_generate_rules
 
   while IFS= read -r _tool; do
     [[ -z "$_tool" ]] && continue

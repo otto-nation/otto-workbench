@@ -116,6 +116,10 @@ sync_component_bin "$SCRIPT_DIR"
 # step installs from them, and none of them owns them.
 "$SCRIPT_DIR/bin/workbench-rules" sync
 
+# Generated git and tool-context files sit in the same window: a Pi-only
+# install has no Claude Code step to hang them off, and every harness reads them.
+ai_generate_rules
+
 # Then each selected tool's own scripts, before running steps — a tool's setup
 # steps may call its own bin scripts.
 for _tool in "${SELECTED_TOOLS[@]}"; do

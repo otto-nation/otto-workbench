@@ -104,11 +104,15 @@ def fix_checks(worktree: str, head_before: str) -> list[dict]:
         return [{"commit": "", "status": "unreadable"}]
     found = []
     for line in r.stdout.splitlines():
-        sha, _, values = line.partition("\t")
-        for value in (v.strip() for v in values.split(",")):
-            if value in pr.fix.UNVERIFIED_CHECKS:
-                found.append({"commit": sha, "status": value})
+        found.extend(_unverified_from_line(line))
     return found
+
+
+def _unverified_from_line(line: str) -> list[dict]:
+    sha, _, values = line.partition("\t")
+    return [{"commit": sha, "status": value}
+            for value in (v.strip() for v in values.split(","))
+            if value in pr.fix.UNVERIFIED_CHECKS]
 
 
 def _evidence(step: Step, stdout: str, item: Item, head_before: str) -> list[dict]:

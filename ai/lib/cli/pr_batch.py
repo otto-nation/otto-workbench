@@ -319,20 +319,24 @@ def _cmd_status(args) -> int:
     return EXIT_OK
 
 
+def _cmd_plan(args) -> int:
+    plan = batch.plan.build_plan(args.checkout)
+    try:
+        core.report.emit_json(core.serde.to_dict(plan))
+    finally:
+        # Nothing runs from a standalone plan, so its refs go now, even
+        # when the reader has gone; a saved plan passed to `run --plan`
+        # reads mergeStateStatus instead.
+        batch.plan.drop_refs(plan.ref_dirs, plan.ref_namespace)
+    return EXIT_OK
+
+
 def cmd_batch(argv: list[str], ctx, *, bin_dir: Path, schema_version: str | None = None,
               **_kw) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.command == "plan":
-            plan = batch.plan.build_plan(args.checkout)
-            try:
-                core.report.emit_json(core.serde.to_dict(plan))
-            finally:
-                # Nothing runs from a standalone plan, so its refs go now, even
-                # when the reader has gone; a saved plan passed to `run --plan`
-                # reads mergeStateStatus instead.
-                batch.plan.drop_refs(plan.ref_dirs, plan.ref_namespace)
-            return EXIT_OK
+            return _cmd_plan(args)
         if args.command == "run":
             return _cmd_run(args, bin_dir)
         if args.command == "resume":

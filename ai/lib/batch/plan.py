@@ -180,15 +180,19 @@ def drop_refs(repo_dirs: list[str], namespace: str) -> None:
     if not namespace.startswith(f"{NAMESPACE_ROOT}/"):
         return
     for repo_dir in sorted(set(repo_dirs)):
-        # A checkout removed since the plan has no refs left to drop, and git
-        # cannot even start with it as the working directory.
-        if not Path(repo_dir).is_dir():
-            continue
-        for ref in git.client.lines("for-each-ref", "--format=%(refname)", namespace,
-                                    cwd=repo_dir):
-            r = git.client.run("update-ref", "-d", ref, cwd=repo_dir)
-            if not r.ok:
-                core.log.warn(f"could not delete {ref} in {repo_dir}: {r.stderr.strip()}")
+        _drop_repo_refs(repo_dir, namespace)
+
+
+def _drop_repo_refs(repo_dir: str, namespace: str) -> None:
+    # A checkout removed since the plan has no refs left to drop, and git
+    # cannot even start with it as the working directory.
+    if not Path(repo_dir).is_dir():
+        return
+    for ref in git.client.lines("for-each-ref", "--format=%(refname)", namespace,
+                                cwd=repo_dir):
+        r = git.client.run("update-ref", "-d", ref, cwd=repo_dir)
+        if not r.ok:
+            core.log.warn(f"could not delete {ref} in {repo_dir}: {r.stderr.strip()}")
 
 
 def comments_need(threads: list[dict], settled: set[str]) -> StepNeed:

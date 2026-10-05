@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for dream-scan Python script — session signal extraction and memory state reporting.
+# Tests for the dream-scan CLI. In-process cases live in tests/memory_dream_test.py and tests/memory_test.py.
 
 bats_require_minimum_version 1.5.0
 
@@ -17,26 +17,6 @@ setup() {
 
 teardown() {
   common_teardown
-}
-
-# Helper: run Python expression importing from dream-scan
-_py() {
-  python3 -c "
-import sys, importlib.util, importlib.machinery
-loader = importlib.machinery.SourceFileLoader('dream_scan', '$DREAM_SCAN')
-spec = importlib.util.spec_from_loader('dream_scan', loader)
-mod = importlib.util.module_from_spec(spec)
-sys.modules['dream_scan'] = mod
-spec.loader.exec_module(mod)
-$1
-"
-}
-
-# Helper: like _py but reads code from stdin
-_py_here() {
-  local code
-  code=$(cat)
-  _py "$code"
 }
 
 # Helper: create a session JSONL file with user messages
@@ -158,65 +138,6 @@ PI
   [[ "$output" == *"Sessions Scanned"* ]]
   [[ "$output" == *"claude 1"* ]]
   [[ "$output" == *"pi 0"* ]]
-}
-
-# ── classify_signal ──────────────────────────────────────────────────────────
-
-@test "classify_signal: correction patterns" {
-  result=$(_py "print(mod.classify_signal(\"actually, that's wrong\"))")
-  [[ "$result" == "correction" ]]
-}
-
-@test "classify_signal: preference patterns" {
-  result=$(_py 'print(mod.classify_signal("I prefer tabs over spaces"))')
-  [[ "$result" == "preference" ]]
-}
-
-@test "classify_signal: decision patterns" {
-  result=$(_py "print(mod.classify_signal(\"let's go with option A\"))")
-  [[ "$result" == "decision" ]]
-}
-
-@test "classify_signal: pattern patterns" {
-  result=$(_py 'print(mod.classify_signal("you keep forgetting this"))')
-  [[ "$result" == "pattern" ]]
-}
-
-@test "classify_signal: review feedback patterns" {
-  result=$(_py 'print(mod.classify_signal("that is a false positive"))')
-  [[ "$result" == "review_feedback" ]]
-}
-
-@test "classify_signal: no match returns None" {
-  result=$(_py 'print(mod.classify_signal("please read this file for me"))')
-  [[ "$result" == "None" ]]
-}
-
-@test "classify_signal: case insensitive" {
-  result=$(_py 'print(mod.classify_signal("I PREFER spaces"))')
-  [[ "$result" == "preference" ]]
-}
-
-# ── parse_frontmatter ────────────────────────────────────────────────────────
-
-@test "parse_frontmatter: extracts name, description, type" {
-  local tmpfile="$TMPDIR/test_topic.md"
-  cat > "$tmpfile" <<'FM'
----
-name: my-topic
-description: a test topic
-metadata:
-  type: feedback
----
-
-Body content here.
-FM
-  result=$(_py_here <<PY
-fm = mod.parse_frontmatter("$tmpfile")
-print(fm.get("name"), fm.get("description"))
-PY
-)
-  [[ "$result" == "my-topic a test topic" ]]
 }
 
 # ── CLI ───────────────────────────────────────────────────────────────────────

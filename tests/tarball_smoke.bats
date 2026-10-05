@@ -135,6 +135,12 @@ teardown() {
   [[ "$output" == *"promote-scan"* ]]
 }
 
+@test "dream-scan runs from the tarball layout" {
+  run "$TARBALL_ROOT/bin/dream-scan" --version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dream-scan"* ]]
+}
+
 # ── 7. review-orchestrate Python imports ────────────────────────────────────
 
 @test "review-orchestrate Python imports succeed from tarball layout" {

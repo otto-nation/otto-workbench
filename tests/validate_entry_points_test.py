@@ -90,7 +90,9 @@ def test_a_script_with_no_cli_import_is_refused(root):
 
 def test_work_after_the_entry_call_is_refused(root):
     source = _shim(tail="sys.exit(main(sys.argv[1:]))\nprint('after')\n")
-    assert vep.check_source(source, root) != []
+    reasons = _reasons(source, root)
+    assert sum("print('after')" in r for r in reasons) == 1
+    assert sum("last statement must call" in r for r in reasons) == 1
 
 
 def test_a_cli_module_that_does_not_exist_is_refused(root):

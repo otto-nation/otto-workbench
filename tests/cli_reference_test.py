@@ -290,8 +290,8 @@ class TestPrShape:
 
 
 @pytest.mark.parametrize(("script", "spec"), [
-    ("dream-scan", "ai/bin/dream-scan:build_parser"),
-    ("promote-scan", "ai/bin/promote-scan:build_parser"),
+    ("dream-scan", "cli.dream_scan:build_parser"),
+    ("promote-scan", "cli.promote_scan:build_parser"),
     ("retro-scan", "cli.retro_scan:build_parser"),
 ])
 def test_a_home_default_is_not_rendered_into_the_tables(script, spec, monkeypatch):

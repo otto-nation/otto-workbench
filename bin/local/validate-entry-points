@@ -135,8 +135,9 @@ def in_scope(source: str, root: Path | None = None) -> bool:
     """Whether the script is an entry point into ai/lib.
 
     It is when it carries the pin, when it imports an ai/lib package by any
-    route, or when it does not parse. The second arm is what keeps a script from leaving the check by
-    dropping the pin stanza: the shape check then refuses it for the missing pin.
+    route, or when it does not parse. The import case is what keeps a script
+    from leaving the check by dropping the pin stanza: the shape check then
+    refuses it for the missing pin.
     """
     if PIN_ENV in source:
         return True

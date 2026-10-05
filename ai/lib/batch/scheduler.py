@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import collections
 import secrets
+import shlex
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -19,6 +20,7 @@ import batch.publish
 import batch.resolve
 import batch.store
 import git.client
+import rebase.inspect
 from batch.model import (STEP_ORDER, Decision, DecisionKind, Item, ItemStatus, Run, RunStatus,
                          Step, StepRecord, StepStatus)
 from batch.plan import PlanRow
@@ -124,7 +126,9 @@ class Scheduler:
                  sleep: Callable[[float], None] = time.sleep, tick: float = 0.5,
                  runner: Callable[[list[str]], int] | None = None,
                  tree: Callable[[Item], batch.publish.TreeState] | None = None,
-                 contains: Callable[[str, str], bool] = _contains_commit):
+                 contains: Callable[[str, str], bool] = _contains_commit,
+                 dirty: Callable[[str], bool] = git.client.is_dirty,
+                 rebasing: Callable[[str], bool] = rebase.inspect.rebase_in_progress):
         self.run, self.pr_bin, self.cfg = run, pr_bin, cfg
         # Looked up at construction, not bound as a default, so a patched
         # batch.plan.replan_row is the one used.
@@ -137,6 +141,7 @@ class Scheduler:
         # The publish seams: None takes resolve's real runner and tree read.
         self._runner, self._tree = runner, tree
         self._contains = contains
+        self._dirty, self._rebasing = dirty, rebasing
 
     # ── requests and cancel ──────────────────────────────────────────────
 
@@ -316,6 +321,29 @@ class Scheduler:
         return batch.admission.HostSample(max(0, sample.mem_available - pending),
                                           sample.cpu_some_avg10, sample.mem_some_avg10)
 
+    def _tree_blocks(self, item: Item, rec: StepRecord) -> bool:
+        """Whether *item*'s worktree may not take *rec* now, deciding when it may not.
+
+        Checked before every start, not only on first assignment: a step that
+        was interrupted, or failed after editing, leaves work a retry would run
+        over. A paused rebase is dirty by design and a retried rebase resumes
+        it, so while one is in progress only a rebase step may start. No stash
+        action is offered — it would throw away staged resolutions — but the
+        payload names the command for the operator.
+        """
+        if self._rebasing(item.worktree):
+            if rec.step is Step.REBASE:
+                return False
+            reason = "rebase_in_progress"
+        elif self._dirty(item.worktree):
+            reason = "dirty"
+        else:
+            return False
+        stash = f"git -C {shlex.quote(item.worktree)} stash push --include-untracked"
+        _decide(self.run, item, rec.step.value, DecisionKind.DIRTY_WORKTREE,
+                {"path": item.worktree, "reason": reason, "stash": stash}, emit=self._emit)
+        return True
+
     def _admit(self) -> None:
         for item in self.run.items:
             if not self._ready(item) or not self._ensure_worktree(item):
@@ -323,6 +351,8 @@ class Scheduler:
             rec = self._pending(item)
             if rec is None:
                 self._close(item)
+                continue
+            if self._tree_blocks(item, rec):
                 continue
             verdict = batch.admission.decide(self._host_for_admit(), running=len(self._live),
                                        limit=max(1, self.run.pool),

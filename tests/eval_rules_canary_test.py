@@ -4,7 +4,7 @@ The live invocation is not exercised here — `_no_live_backend` forbids spawnin
 a real CLI, and the two-call measurement is what the Eval workflow runs. What is
 covered is everything between the CLI's reply and the verdict: the envelope
 parsing, the floor comparison, and the unmeasured-run cases that must not read
-as a regression. The spawn `measure` and `_run_half` would make is stubbed, not
+as a regression. The spawn that `measure` and `_run_half` would make is stubbed, not
 live.
 
 The envelope fixtures are real output from Claude Code 2.1.265, trimmed to the

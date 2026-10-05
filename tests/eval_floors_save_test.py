@@ -64,6 +64,36 @@ class TestSaveBaselinesRefusesRegression:
         assert code != 0
         assert path.read_text() == original
 
+    def test_a_floor_regression_names_accept_regression_not_the_corpus(
+        self, tmp_path, capsys,
+    ):
+        """A floor-gate refusal and a comparison refusal need different remediation,
+        so the final summary line should not read identically for both."""
+        results = tmp_path / "results"
+        results.mkdir()
+        baseline = eval.baselines._baseline_document(
+            "sonnet", "low", 3,
+            {INCIDENT_ENTRY: _complete_metrics(0.556)},
+            "claude",
+        )
+        (results / "claude-sonnet.json").write_text(json.dumps(baseline, indent=2) + "\n")
+        (results / "floors.json").write_text(json.dumps({
+            "schema_version": 1,
+            "backends": {STEM: {INCIDENT_ENTRY: {
+                "recall_mean": {"floor": 1.0, "best": 1.0},
+            }}},
+        }) + "\n")
+        output = {
+            "backend": "claude", "effort": "low", "runs_per_entry": 3,
+            "entries": {INCIDENT_ENTRY: {"sonnet": _complete_metrics(0.556)}},
+        }
+        code = eval.baselines.run_post_eval(_save_args(results), output, tmp_path)
+        assert code != 0
+        err = capsys.readouterr().err
+        assert "floor regression" in err
+        assert "--accept-regression" in err
+        assert "comparison regression" not in err
+
     def test_single_run_save_refuses_a_recall_collapse(self, tmp_path):
         results = tmp_path / "results"
         results.mkdir()

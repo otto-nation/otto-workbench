@@ -16,11 +16,11 @@ LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-import eval.task
-import eval.run
-import eval.baselines
 import core.proc
 import core.timeouts
+import eval.baselines
+import eval.run
+import eval.task
 from agent.usage import SessionUsage
 import eval.scoring
 from eval.scoring import ScoringResult
@@ -269,7 +269,7 @@ class TestReportRun:
             "", "", 0, recall=1.0,
             false_positive_count=fp_count, false_positive_ok=fp_ok,
         )
-        eval.run._report_run(eval.task.RunArtifacts(), result, 1)
+        eval.run._report_run(eval.task.RunArtifacts(), result)
         return capsys.readouterr().err
 
     def test_over_budget_is_called_out(self, capsys):
@@ -322,7 +322,7 @@ class TestReportUnmeasuredRun:
         """recall 0% for a run that never happened is the confusion, not the report."""
         result = ScoringResult(
             "", "", 0, recall=0.0, outcome=eval.scoring.RunOutcome.NOT_RUN)
-        eval.run._report_run(eval.task.RunArtifacts(), result, 3)
+        eval.run._report_run(eval.task.RunArtifacts(), result)
         err = capsys.readouterr().err
         assert "not scored" in err
         assert "recall" not in err

@@ -218,21 +218,31 @@ def run_post_eval(
         print(f"error: {accept_err}", file=sys.stderr)
         return 3
 
+    floor_regression = False
     if args.compare or args.save_baselines:
         exit_code = _run_comparison(args, output, repo_root)
     if args.save_baselines:
         floor_code = _run_floors_gate(args, output, repo_root, accepts)
         if floor_code:
             exit_code = floor_code
+            floor_regression = True
 
     if not args.save_baselines:
         return exit_code
 
     if exit_code != 0:
-        print(
-            "warning: skipping baseline save — regressions detected",
-            file=sys.stderr,
-        )
+        if floor_regression:
+            print(
+                "warning: skipping baseline save — floor regression detected "
+                "(pass --accept-regression to allow it)",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "warning: skipping baseline save — comparison regression detected "
+                "(check the model/corpus)",
+                file=sys.stderr,
+            )
         return exit_code
 
     # A trimmed-only session nests condition and has no full arm. Flattening

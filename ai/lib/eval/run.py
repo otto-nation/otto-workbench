@@ -92,7 +92,7 @@ def _cleanup(temp_dirs: list[str], keep: bool) -> None:
             shutil.rmtree(path, ignore_errors=True)
 
 
-def _report_run(artifacts, result: eval.scoring.ScoringResult, total_expected: int) -> None:
+def _report_run(artifacts, result: eval.scoring.ScoringResult) -> None:
     usage = artifacts.usage
     summary = artifacts.data.get("summary", "")
     print(
@@ -114,7 +114,7 @@ def _report_run(artifacts, result: eval.scoring.ScoringResult, total_expected: i
     # is recorded in the baseline JSON and never surfaces where a human looks.
     over = "" if result.false_positive_ok else " (over budget)"
     print(
-        f"  recall: {result.recall:.0%} ({matched}/{total_expected}), "
+        f"  recall: {result.recall:.0%} ({matched}/{len(result.matches)}), "
         f"FP: {result.false_positive_count}{over}",
         file=sys.stderr,
     )
@@ -175,7 +175,7 @@ def _run_single(
             result, entry_name=entry["name"], model=recorded,
             run_index=run_idx, condition=arm,
         )
-        _report_run(artifacts, result, len(result.matches))
+        _report_run(artifacts, result)
         return result
     finally:
         _cleanup(artifacts.temp_dirs, args.keep_temp)

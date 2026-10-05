@@ -191,3 +191,16 @@ def source_checkout() -> Path | None:
     root = Path(__file__).resolve().parents[3]
     return root if (root / "ai" / "guidelines" / "rules").is_dir() else None
 
+
+WORKBENCH_ENV_VAR = "OTTO_WORKBENCH"
+
+
+def default_workbench() -> str | None:
+    """Return `$OTTO_WORKBENCH`, else the checkout this code runs from, else None.
+
+    An exported empty string is treated as unset.
+    """
+    return os.environ.get(WORKBENCH_ENV_VAR) or (
+        str(c) if (c := source_checkout()) else None
+    )
+

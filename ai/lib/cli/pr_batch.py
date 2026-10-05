@@ -63,6 +63,22 @@ def _selection(text: str) -> Selection:
     return Selection(key, _steps(steps))
 
 
+_RUN_EPILOG = """\
+recipes:
+  pr batch run --checkout DIR --steps rebase,ci   rebase and fix CI where needed
+  pr batch run --checkout DIR                     every step, where needed
+
+`run` plans for itself — no `pr batch plan` first. It is long-running and
+streams NDJSON events; start it as a background job.
+
+Nothing is pushed until a publish decision is answered. Exit 10 means the
+run is waiting: `pr batch status` prints the run and its decisions (JSON),
+`pr batch resolve RUN_ID DECISION_ID --action publish` (or discard, accept,
+retry, …) answers one, and `pr batch resume` continues. --auto-publish STEPS
+answers clean publishes without asking.
+"""
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pr batch", description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -71,13 +87,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--checkout", action="append", required=True, metavar="DIR",
                    help="A checkout whose open PRs to plan for; repeatable")
 
-    r = sub.add_parser("run", help="Start a run")
+    r = sub.add_parser("run", help="Start a run", epilog=_RUN_EPILOG,
+                       formatter_class=argparse.RawDescriptionHelpFormatter)
     src = r.add_mutually_exclusive_group(required=True)
     src.add_argument("--checkout", action="append", metavar="DIR",
                      help="A checkout whose open PRs to run on; repeatable")
     src.add_argument("--plan", metavar="FILE", help="A saved `pr batch plan` document")
     r.add_argument("--steps", type=_steps, default=list(STEP_ORDER), metavar="STEPS",
-                   help="Comma-separated steps to run (default: rebase,comments,review)")
+                   help=f"Comma-separated steps, any of {','.join(STEP_ORDER)} (default: all). "
+                        "Each runs only on PRs the plan marks as needing it")
     r.add_argument("--pool", type=int, default=None, help="Concurrency ceiling")
     r.add_argument("--auto-publish", type=_steps, default=[], metavar="STEPS",
                    help="Publish an item without asking when it closes with no open decision "

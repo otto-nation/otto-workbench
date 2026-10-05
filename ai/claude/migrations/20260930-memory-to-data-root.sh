@@ -25,9 +25,7 @@ migration_20260930_memory_to_data_root() {
   # migration file to discover its function, so a file-scope source runs on
   # every migration run including the ones that never call this. The helpers
   # below — _encode_slug, _repo_key, _gate_repo_dir, _gate_stamp_file — live
-  # in lib/ai/session-count.sh and are on nothing else's load path here, and
-  # without them every slug resolves as an unresolvable orphan and no memory
-  # is carried at all.
+  # in lib/ai/session-count.sh and are on nothing else's load path here.
   # shellcheck source=../../../lib/ai/session-count.sh
   . "$LIB_SRC_DIR/ai/session-count.sh"
 
@@ -247,7 +245,7 @@ _migration_inside_git_tree() {
 _migration_park_unkeyed() {
   local mem_dir="$1" slug="$2" stamp_date="$3" f entries=()
   local dest="$WORKBENCH_DATA_DIR/memory-unkeyed/$slug"
-  warn "No repo for $mem_dir — parking it at $dest"
+  warn "No repo owns $mem_dir — parking it at $dest"
   _migration_dir_entries "$mem_dir" entries
   for f in "${entries[@]}"; do
     info "  holds $(basename "$f")"

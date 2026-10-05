@@ -99,7 +99,7 @@ _run_migration() {
 @test "does not report a registered repo's memory as orphaned" {
   _run_migration
   [ "$status" -eq 0 ]
-  [[ "$output" != *"No repo for"* ]]
+  [[ "$output" != *"No repo owns"* ]]
   [ ! -e "$WORKBENCH_DATA_DIR/memory-unkeyed" ]
 }
 
@@ -114,7 +114,7 @@ _run_migration() {
   _run_migration
 
   [ "$status" -eq 0 ]
-  [[ "$output" != *"No repo for"* ]]
+  [[ "$output" != *"No repo owns"* ]]
   [ ! -e "$WORKBENCH_DATA_DIR/memory-unkeyed" ]
   [ ! -d "$stray/memory" ]
 }
@@ -173,7 +173,7 @@ _run_migration() {
 
   _run_migration
 
-  [[ "$output" == *"No repo for"* ]]
+  [[ "$output" == *"No repo owns"* ]]
   [[ "$output" == *"holds .last-dream"* ]]
 }
 
@@ -282,7 +282,7 @@ _run_migration() {
   _run_migration "shopt -s nullglob"
 
   [ "$status" -eq 0 ]
-  [[ "$output" != *"No repo for"* ]]
+  [[ "$output" != *"No repo owns"* ]]
   [ ! -e "$WORKBENCH_DATA_DIR/memory-unkeyed" ]
   [ ! -d "$stray/memory" ]
 }

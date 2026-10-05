@@ -128,7 +128,7 @@ class FloorAccept:
 
 
 def baseline_stem(backend: str, model: str) -> str:
-    """Filename stem matching eval-models: ``{backend}-{sanitized-model}``."""
+    """Filename stem `eval.baselines._baseline_filename` writes: ``{backend}-{sanitized-model}``."""
     cleaned = model.replace("(", "").replace(")", "")
     cleaned = _MODEL_SANITIZE_RE.sub("-", cleaned).strip("-") or "default"
     return f"{backend}-{cleaned}"

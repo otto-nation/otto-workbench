@@ -154,6 +154,12 @@ teardown() {
   [[ "$output" == *"rules-canary"* ]]
 }
 
+# passes-at-base: guards the new cli.eval_models → eval.run → eval.baselines import closure in the tarball
+@test "eval-models --help runs from the tarball layout" {
+  run "$TARBALL_ROOT/bin/eval-models" --help
+  [ "$status" -eq 0 ]
+}
+
 # ── 7. review-orchestrate Python imports ────────────────────────────────────
 
 @test "review-orchestrate Python imports succeed from tarball layout" {

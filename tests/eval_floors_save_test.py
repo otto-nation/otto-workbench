@@ -14,6 +14,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import eval.baselines
 from eval.floors import parse_accept_regression, save_floor_gate_messages
 
 from eval_floors_support import STEM, INCIDENT_ENTRY
@@ -37,11 +38,11 @@ def _complete_metrics(recall: float) -> dict:
 
 
 class TestSaveBaselinesRefusesRegression:
-    def test_bare_save_baselines_refuses_and_leaves_the_file(self, em, tmp_path):
+    def test_bare_save_baselines_refuses_and_leaves_the_file(self, tmp_path):
         """Previous file already decayed to 0.556; floors still hold 1.0."""
         results = tmp_path / "results"
         results.mkdir()
-        baseline = em._baseline_document(
+        baseline = eval.baselines._baseline_document(
             "sonnet", "low", 3,
             {INCIDENT_ENTRY: _complete_metrics(0.556)},
             "claude",
@@ -59,14 +60,14 @@ class TestSaveBaselinesRefusesRegression:
             "backend": "claude", "effort": "low", "runs_per_entry": 3,
             "entries": {INCIDENT_ENTRY: {"sonnet": _complete_metrics(0.556)}},
         }
-        code = em._run_post_eval(_save_args(results), output, tmp_path)
+        code = eval.baselines.run_post_eval(_save_args(results), output, tmp_path)
         assert code != 0
         assert path.read_text() == original
 
-    def test_single_run_save_refuses_a_recall_collapse(self, em, tmp_path):
+    def test_single_run_save_refuses_a_recall_collapse(self, tmp_path):
         results = tmp_path / "results"
         results.mkdir()
-        baseline = em._baseline_document(
+        baseline = eval.baselines._baseline_document(
             "sonnet", "low", 1,
             {INCIDENT_ENTRY: _complete_metrics(0.0)},
             "claude",
@@ -84,11 +85,11 @@ class TestSaveBaselinesRefusesRegression:
             "backend": "claude", "effort": "low", "runs_per_entry": 1,
             "entries": {INCIDENT_ENTRY: {"sonnet": _complete_metrics(0.0)}},
         }
-        code = em._run_post_eval(_save_args(results), output, tmp_path)
+        code = eval.baselines.run_post_eval(_save_args(results), output, tmp_path)
         assert code != 0
         assert path.read_text() == original
 
-    def test_accept_regression_without_a_reason_writes_nothing(self, em, tmp_path):
+    def test_accept_regression_without_a_reason_writes_nothing(self, tmp_path):
         results = tmp_path / "results"
         results.mkdir()
         path = results / "claude-sonnet.json"
@@ -101,16 +102,16 @@ class TestSaveBaselinesRefusesRegression:
             results,
             accept_regression=[f"{INCIDENT_ENTRY}/recall_mean=0.556"],
         )
-        code = em._run_post_eval(args, output, tmp_path)
+        code = eval.baselines.run_post_eval(args, output, tmp_path)
         assert code != 0
         assert path.read_text() == "{}\n"
 
     def test_save_does_not_recreate_deleted_floors_when_baselines_exist(
-        self, em, tmp_path,
+        self, tmp_path,
     ):
         results = tmp_path / "results"
         results.mkdir()
-        baseline = em._baseline_document(
+        baseline = eval.baselines._baseline_document(
             "sonnet", "low", 3,
             {INCIDENT_ENTRY: _complete_metrics(1.0)},
             "claude",
@@ -122,17 +123,17 @@ class TestSaveBaselinesRefusesRegression:
             "backend": "claude", "effort": "low", "runs_per_entry": 3,
             "entries": {INCIDENT_ENTRY: {"sonnet": _complete_metrics(1.0)}},
         }
-        code = em._run_post_eval(_save_args(results), output, tmp_path)
+        code = eval.baselines.run_post_eval(_save_args(results), output, tmp_path)
         assert code != 0
         assert not (results / "floors.json").exists()
         assert path.read_text() == original
 
-    def test_save_establishes_a_first_floor_for_a_new_case(self, em, tmp_path):
+    def test_save_establishes_a_first_floor_for_a_new_case(self, tmp_path):
         results = tmp_path / "results"
         results.mkdir()
         kept = _complete_metrics(1.0)
         path = results / "claude-sonnet.json"
-        path.write_text(json.dumps(em._baseline_document(
+        path.write_text(json.dumps(eval.baselines._baseline_document(
             "sonnet", "low", 3, {INCIDENT_ENTRY: kept}, "claude",
         ), indent=2) + "\n")
         (results / "floors.json").write_text(json.dumps({
@@ -148,7 +149,7 @@ class TestSaveBaselinesRefusesRegression:
                 "new-case": {"sonnet": _complete_metrics(1.0)},
             },
         }
-        code = em._run_post_eval(_save_args(results), output, tmp_path)
+        code = eval.baselines.run_post_eval(_save_args(results), output, tmp_path)
         assert code == 0
         floors = json.loads((results / "floors.json").read_text())
         rec = floors["backends"][STEM]["new-case"]["recall_mean"]
@@ -157,7 +158,7 @@ class TestSaveBaselinesRefusesRegression:
         saved = json.loads(path.read_text())
         assert "new-case" in saved["entries"]
 
-    def test_save_establishes_floors_for_a_new_backend(self, em, tmp_path):
+    def test_save_establishes_floors_for_a_new_backend(self, tmp_path):
         results = tmp_path / "results"
         results.mkdir()
         (results / "floors.json").write_text(json.dumps({
@@ -170,7 +171,7 @@ class TestSaveBaselinesRefusesRegression:
             "backend": "pi", "effort": "low", "runs_per_entry": 3,
             "entries": {INCIDENT_ENTRY: {"opus": _complete_metrics(1.0)}},
         }
-        code = em._run_post_eval(_save_args(results), output, tmp_path)
+        code = eval.baselines.run_post_eval(_save_args(results), output, tmp_path)
         assert code == 0
         floors = json.loads((results / "floors.json").read_text())
         rec = floors["backends"]["pi-opus"][INCIDENT_ENTRY]["recall_mean"]
@@ -180,14 +181,14 @@ class TestSaveBaselinesRefusesRegression:
         assert (results / "pi-opus.json").is_file()
 
     def test_unfloored_entry_already_on_disk_still_refuses_save(
-        self, em, tmp_path,
+        self, tmp_path,
     ):
         results = tmp_path / "results"
         results.mkdir()
         kept = _complete_metrics(1.0)
         orphan = _complete_metrics(1.0)
         path = results / "claude-sonnet.json"
-        original_doc = em._baseline_document(
+        original_doc = eval.baselines._baseline_document(
             "sonnet", "low", 3,
             {INCIDENT_ENTRY: kept, "orphan": orphan},
             "claude",
@@ -207,13 +208,13 @@ class TestSaveBaselinesRefusesRegression:
                 "orphan": {"sonnet": orphan},
             },
         }
-        code = em._run_post_eval(_save_args(results), output, tmp_path)
+        code = eval.baselines.run_post_eval(_save_args(results), output, tmp_path)
         assert code != 0
         assert path.read_text() == original
         floors = json.loads((results / "floors.json").read_text())
         assert "orphan" not in floors["backends"][STEM]
 
-    def test_corrupt_on_disk_baseline_refuses_save(self, em, tmp_path):
+    def test_corrupt_on_disk_baseline_refuses_save(self, tmp_path):
         results = tmp_path / "results"
         results.mkdir()
         path = results / "claude-sonnet.json"
@@ -232,7 +233,7 @@ class TestSaveBaselinesRefusesRegression:
                 "new-case": {"sonnet": _complete_metrics(1.0)},
             },
         }
-        code = em._run_post_eval(_save_args(results), output, tmp_path)
+        code = eval.baselines.run_post_eval(_save_args(results), output, tmp_path)
         assert code != 0
         assert path.read_text() == original
         floors = json.loads((results / "floors.json").read_text())
@@ -270,12 +271,12 @@ class TestSaveBaselinesRefusesRegression:
         assert "new-case" in rest
 
     def test_seed_floors_prints_a_warning_when_it_reseeds(
-        self, em, tmp_path, capsys,
+        self, tmp_path, capsys,
     ):
         results = tmp_path / "results"
         results.mkdir()
         path = results / "claude-sonnet.json"
-        path.write_text(json.dumps(em._baseline_document(
+        path.write_text(json.dumps(eval.baselines._baseline_document(
             "sonnet", "low", 3,
             {INCIDENT_ENTRY: _complete_metrics(1.0)}, "claude",
         ), indent=2) + "\n")
@@ -284,7 +285,7 @@ class TestSaveBaselinesRefusesRegression:
             "entries": {INCIDENT_ENTRY: {"sonnet": _complete_metrics(1.0)}},
         }
         args = _save_args(results, seed_floors=True)
-        code = em._run_post_eval(args, output, tmp_path)
+        code = eval.baselines.run_post_eval(args, output, tmp_path)
         assert code == 0
         err = capsys.readouterr().err
         assert "--seed-floors is reseeding floors.json from this run" in err

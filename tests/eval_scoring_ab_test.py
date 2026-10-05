@@ -12,6 +12,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import eval.baselines
 import eval.scoring
 from eval.scoring import RunOutcome, ScoringResult, format_ab_table
 
@@ -33,8 +34,8 @@ def _r(**overrides) -> ScoringResult:
     )
 
 
-def test_the_session_output_nests_condition_under_model(em):
-    out = em._build_output(
+def test_the_session_output_nests_condition_under_model():
+    out = eval.baselines.build_output(
         {("e", "sonnet", "full"): [_r()], ("e", "sonnet", "trimmed"): [_r()]},
         "low", 1,
     )
@@ -43,8 +44,8 @@ def test_the_session_output_nests_condition_under_model(em):
     assert "billed_input_mean" in out["entries"]["e"]["sonnet"]["full"]
 
 
-def test_a_per_run_record_carries_the_tokens_an_ab_needs(em):
-    row = em._serialize_run(_r(billed_input=40000, output_tokens=2800))
+def test_a_per_run_record_carries_the_tokens_an_ab_needs():
+    row = eval.baselines._serialize_run(_r(billed_input=40000, output_tokens=2800))
     assert row["billed_input"] == 40000
     assert row["output_tokens"] == 2800
 
@@ -56,8 +57,8 @@ def _save_baseline_args(tmp_path):
     )
 
 
-def test_a_baseline_file_keeps_the_flat_schema_3_shape(em, tmp_path):
-    session = em._build_output(
+def test_a_baseline_file_keeps_the_flat_schema_3_shape(tmp_path):
+    session = eval.baselines.build_output(
         {
             ("e", "sonnet", "full"): [_r(model="sonnet", recall=0.9)],
             ("e", "sonnet", "trimmed"): [
@@ -67,7 +68,7 @@ def test_a_baseline_file_keeps_the_flat_schema_3_shape(em, tmp_path):
         "low", 1,
     )
     session["backend"] = "claude"
-    assert em._run_post_eval(_save_baseline_args(tmp_path), session, tmp_path) == 0
+    assert eval.baselines.run_post_eval(_save_baseline_args(tmp_path), session, tmp_path) == 0
     base = json.loads((tmp_path / "results" / "claude-sonnet.json").read_text())
     assert base["backend"] == "claude"
     assert base["schema_version"] == eval.scoring.SCHEMA_VERSION
@@ -76,8 +77,8 @@ def test_a_baseline_file_keeps_the_flat_schema_3_shape(em, tmp_path):
     assert "trimmed" not in base["entries"]["e"]
 
 
-def test_save_baselines_refuses_a_trimmed_only_session(em, tmp_path, capsys):
-    session = em._build_output(
+def test_save_baselines_refuses_a_trimmed_only_session(tmp_path, capsys):
+    session = eval.baselines.build_output(
         {("e", "sonnet", "trimmed"): [
             _r(model="sonnet", recall=0.1, condition="trimmed"),
         ]},
@@ -87,7 +88,7 @@ def test_save_baselines_refuses_a_trimmed_only_session(em, tmp_path, capsys):
     results.mkdir()
     good = results / "sonnet.json"
     good.write_text('{"keep": true}\n')
-    code = em._run_post_eval(_save_baseline_args(tmp_path), session, tmp_path)
+    code = eval.baselines.run_post_eval(_save_baseline_args(tmp_path), session, tmp_path)
     assert code == 3
     assert good.read_text() == '{"keep": true}\n'
     err = capsys.readouterr().err

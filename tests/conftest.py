@@ -598,9 +598,6 @@ def _guard_repo_config():
     _assert_config_unchanged(_REPO_CONFIG, before, _config_bytes(_REPO_CONFIG))
 
 
-EVAL_MODELS = REPO_ROOT / "ai" / "bin" / "eval-models"
-
-
 def init_worktree(path) -> Path:
     """Make *path* a git worktree and return it.
 
@@ -1299,11 +1296,6 @@ def ro():
         sys.path.insert(0, LIB_DIR)
     import cli.review_orchestrate
     return cli.review_orchestrate
-
-
-@pytest.fixture(scope="session")
-def em():
-    return load_script("eval_models", EVAL_MODELS)
 
 
 # One temp root for every make_ctx() default target_dir, not a tmp_path-scoped

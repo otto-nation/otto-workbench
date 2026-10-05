@@ -131,6 +131,7 @@ tools:
     description: "Bridge shell-invoked AI calls into the global usage ledger — render, unwrap, record"
 
   - name: eval-models
+    parser: cli.eval_models:build_parser
     permission: false
     visibility: hidden
     description: "Evaluation runner — scores AI calls against a corpus, one task per manifest"

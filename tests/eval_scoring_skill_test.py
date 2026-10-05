@@ -291,7 +291,7 @@ class TestScore:
         assert result.severity_accuracy == 0.0
 
     def test_matches_satisfy_the_serializer_contract(self):
-        """eval-models._serialize_run reads these two names off every element."""
+        """eval.baselines._serialize_run reads these two names off every element."""
         matches = [eval.scoring_skill.TraceMatch(("a",), True, "a run")]
         result = eval.scoring_skill.SkillTask().score(_artifacts(matches, []), {})
         assert [m.matched_finding_id for m in result.matches if m.matched] == ["a run"]

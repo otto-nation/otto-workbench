@@ -131,11 +131,13 @@ tools:
     description: "Bridge shell-invoked AI calls into the global usage ledger — render, unwrap, record"
 
   - name: eval-models
+    parser: cli.eval_models:build_parser
     permission: false
     visibility: hidden
     description: "Evaluation runner — scores AI calls against a corpus, one task per manifest"
 
   - name: rules-canary
+    parser: cli.rules_canary:build_parser
     permission: false
     visibility: hidden
     description: "Canary for the --add-dir coupling — fails when coding rules stop reaching an agent"

@@ -16,9 +16,11 @@ LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-import eval.task
 import core.proc
 import core.timeouts
+import eval.baselines
+import eval.run
+import eval.task
 from agent.usage import SessionUsage
 import eval.scoring
 from eval.scoring import ScoringResult
@@ -234,48 +236,48 @@ def stub_run(monkeypatch, tmp_path):
 
 
 class TestRunnerDispatch:
-    def test_dispatches_on_the_manifest_task(self, em, stub_run):
+    def test_dispatches_on_the_manifest_task(self, stub_run):
         task, entry, args = stub_run
-        em._run_single(entry, "claude-opus-5", "opus", 0, args)
+        eval.run._run_single(entry, "claude-opus-5", "opus", 0, args)
         assert task.opts == eval.task.RunOptions(
             model="claude-opus-5", effort="medium", timeout=42, verbose=False,
         )
 
-    def test_runner_fills_identity_the_scorer_leaves_blank(self, em, stub_run):
+    def test_runner_fills_identity_the_scorer_leaves_blank(self, stub_run):
         _, entry, args = stub_run
-        result = em._run_single(entry, "claude-opus-5", "opus", 2, args)
+        result = eval.run._run_single(entry, "claude-opus-5", "opus", 2, args)
         assert (result.entry_name, result.model, result.run_index) == ("case-a", "opus", 2)
         assert result.recall == 0.5
 
-    def test_temp_dirs_are_removed(self, em, stub_run):
+    def test_temp_dirs_are_removed(self, stub_run):
         task, entry, args = stub_run
-        em._run_single(entry, "", "(default)", 0, args)
+        eval.run._run_single(entry, "", "(default)", 0, args)
         assert not Path(task.temp_dir).exists()
 
-    def test_keep_temp_leaves_them(self, em, stub_run):
+    def test_keep_temp_leaves_them(self, stub_run):
         task, entry, args = stub_run
         args.keep_temp = True
-        em._run_single(entry, "", "(default)", 0, args)
+        eval.run._run_single(entry, "", "(default)", 0, args)
         assert Path(task.temp_dir).exists()
 
 
 class TestReportRun:
     """false_positives_max is only a budget if exceeding it is visible."""
 
-    def _report(self, em, capsys, *, fp_count, fp_ok):
+    def _report(self, capsys, *, fp_count, fp_ok):
         result = ScoringResult(
             "", "", 0, recall=1.0,
             false_positive_count=fp_count, false_positive_ok=fp_ok,
         )
-        em._report_run(eval.task.RunArtifacts(), result, 1)
+        eval.run._report_run(eval.task.RunArtifacts(), result)
         return capsys.readouterr().err
 
-    def test_over_budget_is_called_out(self, em, capsys):
+    def test_over_budget_is_called_out(self, capsys):
         assert "FP: 5 (over budget)" in self._report(
-            em, capsys, fp_count=5, fp_ok=False)
+            capsys, fp_count=5, fp_ok=False)
 
-    def test_within_budget_is_not_annotated(self, em, capsys):
-        err = self._report(em, capsys, fp_count=2, fp_ok=True)
+    def test_within_budget_is_not_annotated(self, capsys):
+        err = self._report(capsys, fp_count=2, fp_ok=True)
         assert "FP: 2" in err
         assert "over budget" not in err
 
@@ -316,11 +318,11 @@ class TestOutcomeFor:
 
 
 class TestReportUnmeasuredRun:
-    def test_a_dead_run_reports_no_score(self, em, capsys):
+    def test_a_dead_run_reports_no_score(self, capsys):
         """recall 0% for a run that never happened is the confusion, not the report."""
         result = ScoringResult(
             "", "", 0, recall=0.0, outcome=eval.scoring.RunOutcome.NOT_RUN)
-        em._report_run(eval.task.RunArtifacts(), result, 3)
+        eval.run._report_run(eval.task.RunArtifacts(), result)
         err = capsys.readouterr().err
         assert "not scored" in err
         assert "recall" not in err
@@ -350,42 +352,42 @@ class TestSaveBaselineRefusal:
             }}},
         }
 
-    def test_a_complete_pass_is_saved(self, em, tmp_path, capsys):
-        code = em._run_post_eval(self._args(tmp_path), self._output(3, 3), tmp_path)
+    def test_a_complete_pass_is_saved(self, tmp_path, capsys):
+        code = eval.baselines.run_post_eval(self._args(tmp_path), self._output(3, 3), tmp_path)
         assert code == 0
         path = tmp_path / "results" / "claude-sonnet.json"
         assert path.is_file()
         assert json.loads(path.read_text())["backend"] == "claude"
 
-    def test_an_unresolved_model_is_not_saved(self, em, tmp_path, capsys):
-        code = em._run_post_eval(
+    def test_an_unresolved_model_is_not_saved(self, tmp_path, capsys):
+        code = eval.baselines.run_post_eval(
             self._args(tmp_path), self._output(3, 3, model="(default)"), tmp_path,
         )
         assert code == 3
         assert not (tmp_path / "results").exists()
         assert "model was not resolved" in capsys.readouterr().err
 
-    def test_a_pass_with_dead_runs_is_refused(self, em, tmp_path, capsys):
-        code = em._run_post_eval(self._args(tmp_path), self._output(1, 3), tmp_path)
+    def test_a_pass_with_dead_runs_is_refused(self, tmp_path, capsys):
+        code = eval.baselines.run_post_eval(self._args(tmp_path), self._output(1, 3), tmp_path)
         assert code == 3
         assert not (tmp_path / "results").exists()
 
-    def test_the_refusal_names_the_entry_and_its_counts(self, em, tmp_path, capsys):
-        em._run_post_eval(self._args(tmp_path), self._output(1, 3), tmp_path)
+    def test_the_refusal_names_the_entry_and_its_counts(self, tmp_path, capsys):
+        eval.baselines.run_post_eval(self._args(tmp_path), self._output(1, 3), tmp_path)
         err = capsys.readouterr().err
         assert "case-a / sonnet: 1/3 runs measured" in err
         assert "--entry" in err
 
-    def test_an_existing_baseline_survives_the_refusal(self, em, tmp_path):
+    def test_an_existing_baseline_survives_the_refusal(self, tmp_path):
         """The overwritten file is the thing that cannot be re-attempted."""
         results = tmp_path / "results"
         results.mkdir()
         good = results / "sonnet.json"
         good.write_text('{"keep": true}\n')
-        em._run_post_eval(self._args(tmp_path), self._output(0, 3), tmp_path)
+        eval.baselines.run_post_eval(self._args(tmp_path), self._output(0, 3), tmp_path)
         assert good.read_text() == '{"keep": true}\n'
 
-    def test_two_backends_write_distinct_files(self, em, tmp_path):
+    def test_two_backends_write_distinct_files(self, tmp_path):
         metrics = {
             "recall_mean": 1.0, "precision_mean": 1.0,
             "runs_measured": 3, "runs_attempted": 3,
@@ -399,8 +401,8 @@ class TestSaveBaselineRefusal:
             "entries": {"case-a": {"sonnet": metrics}},
         }
         results = str(tmp_path / "results")
-        em._save_baselines(claude, results)
-        em._save_baselines(pi, results)
+        eval.baselines._save_baselines(claude, results)
+        eval.baselines._save_baselines(pi, results)
         names = sorted(p.name for p in (tmp_path / "results").glob("*.json"))
         assert names == ["claude-sonnet.json", "pi-sonnet.json"]
 
@@ -423,11 +425,11 @@ class TestBaselineBackendCompare:
         }
 
     def test_a_different_backend_baseline_is_not_a_regression(
-        self, em, tmp_path, capsys,
+        self, tmp_path, capsys,
     ):
         results = tmp_path / "results"
         results.mkdir()
-        pi = em._baseline_document(
+        pi = eval.baselines._baseline_document(
             "sonnet", "low", 1, {"case-a": self._metrics(1.0)}, "pi",
         )
         (results / "pi-sonnet.json").write_text(json.dumps(pi) + "\n")
@@ -435,17 +437,17 @@ class TestBaselineBackendCompare:
             "backend": "claude",
             "entries": {"case-a": {"sonnet": self._metrics(0.0)}},
         }
-        code = em._run_comparison(self._args(tmp_path), current, tmp_path)
+        code = eval.baselines._run_comparison(self._args(tmp_path), current, tmp_path)
         assert code == 0
         assert "No baselines found for comparison" in capsys.readouterr().err
 
-    def test_the_same_backend_still_compares(self, em, tmp_path, capsys):
+    def test_the_same_backend_still_compares(self, tmp_path, capsys):
         results = tmp_path / "results"
         results.mkdir()
-        claude = em._baseline_document(
+        claude = eval.baselines._baseline_document(
             "sonnet", "low", 1, {"case-a": self._metrics(1.0)}, "claude",
         )
-        pi = em._baseline_document(
+        pi = eval.baselines._baseline_document(
             "sonnet", "low", 1, {"case-a": self._metrics(1.0)}, "pi",
         )
         (results / "claude-sonnet.json").write_text(json.dumps(claude) + "\n")
@@ -454,14 +456,14 @@ class TestBaselineBackendCompare:
             "backend": "claude",
             "entries": {"case-a": {"sonnet": self._metrics(0.0)}},
         }
-        code = em._run_comparison(self._args(tmp_path), current, tmp_path)
+        code = eval.baselines._run_comparison(self._args(tmp_path), current, tmp_path)
         assert code == 2
         err = capsys.readouterr().err
         assert "regression" in err
 
 
 class TestServedModelLabel:
-    def test_empty_model_records_the_served_model(self, em, stub_run):
+    def test_empty_model_records_the_served_model(self, stub_run):
         task, entry, args = stub_run
 
         def run(_case_dir, _opts):
@@ -474,10 +476,10 @@ class TestServedModelLabel:
             )
 
         task.run = run
-        result = em._run_single(entry, "", "(default)", 0, args)
+        result = eval.run._run_single(entry, "", "(default)", 0, args)
         assert result.model == "claude-opus-5"
 
-    def test_an_ambiguous_session_log_keeps_the_placeholder(self, em, stub_run):
+    def test_an_ambiguous_session_log_keeps_the_placeholder(self, stub_run):
         task, entry, args = stub_run
 
         def run(_case_dir, _opts):
@@ -490,38 +492,38 @@ class TestServedModelLabel:
             )
 
         task.run = run
-        result = em._run_single(entry, "", "(default)", 0, args)
+        result = eval.run._run_single(entry, "", "(default)", 0, args)
         assert result.model == "(default)"
 
 
 class TestTaskFilter:
     """--task narrows the corpus to one kind before any model is invoked."""
 
-    def test_the_task_filter_selects_every_case_of_one_kind(self, tmp_path, em):
+    def test_the_task_filter_selects_every_case_of_one_kind(self, tmp_path):
         _make_case(tmp_path, "a", task="ci-fix")
         _make_case(tmp_path, "b", task="ci-fix")
         _make_case(tmp_path, "c", task="review")
-        found = em.discover_entries(str(tmp_path), "", "ci-fix")
+        found = eval.run.discover_entries(str(tmp_path), "", "ci-fix")
         assert sorted(e["name"] for e in found) == ["a", "b"]
 
-    def test_the_two_filters_narrow_together(self, tmp_path, em):
+    def test_the_two_filters_narrow_together(self, tmp_path):
         _make_case(tmp_path, "a", task="ci-fix")
         _make_case(tmp_path, "b", task="ci-fix")
-        assert [e["name"] for e in em.discover_entries(str(tmp_path), "a", "ci-fix")] == ["a"]
+        assert [e["name"] for e in eval.run.discover_entries(str(tmp_path), "a", "ci-fix")] == ["a"]
 
     def test_a_task_filter_matching_nothing_exits_rather_than_running_an_empty_pass(
-        self, tmp_path, em,
+        self, tmp_path,
     ):
         _make_case(tmp_path, "a", task="review")
         with pytest.raises(SystemExit):
-            em.discover_entries(str(tmp_path), "", "ci-fix")
+            eval.run.discover_entries(str(tmp_path), "", "ci-fix")
 
-    def test_run_eval_passes_the_task_filter_to_discover(self, tmp_path, em, capsys):
+    def test_run_eval_passes_the_task_filter_to_discover(self, tmp_path, capsys):
         corpus = tmp_path / "corpus"
         _make_case(corpus, "ci-only-a", task="ci-fix")
         _make_case(corpus, "ci-only-b", task="ci-fix")
         _make_case(corpus, "review-only-a", task="review")
-        em.run_eval(_args(tmp_path, task="ci-fix", dry_run=True))
+        eval.run.run_eval(_args(tmp_path, task="ci-fix", dry_run=True), tmp_path)
         err = capsys.readouterr().err
         assert "ci-only-a" in err
         assert "ci-only-b" in err
@@ -585,28 +587,28 @@ def _fake_claude(path: Path) -> Path:
     return path
 
 
-def test_empty_conditions_is_an_error(tmp_path, em):
+def test_empty_conditions_is_an_error(tmp_path):
     (tmp_path / "corpus").mkdir()
     args = _args(tmp_path, conditions="", dry_run=True)
     with pytest.raises(SystemExit, match="unknown condition"):
-        em.run_eval(args)
+        eval.run.run_eval(args, tmp_path)
 
 
-def test_each_condition_gets_its_own_seeded_tree_and_row(tmp_path, monkeypatch, em):
+def test_each_condition_gets_its_own_seeded_tree_and_row(tmp_path, monkeypatch):
     _make_case(tmp_path / "corpus", "a", task="ci-fix")
     _fake_claude(tmp_path / "claude")
     monkeypatch.setenv("AI_BACKEND", "claude")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str((tmp_path / "claude").resolve()))
     calls = []
-    monkeypatch.setattr(em, "get_task", _recording_task(calls))
+    monkeypatch.setattr(eval.task, "get_task", _recording_task(calls))
     args = _args(tmp_path, conditions="full,trimmed", runs=1)
-    em.run_eval(args)
+    eval.run.run_eval(args, tmp_path)
     dirs = {c["rules_home"] for c in calls}
     assert len(dirs) == 2, "each arm needs its own tree"
     assert all(Path(d).is_absolute() for d in dirs)
 
 
-def test_a_pi_backend_seeds_from_pi_layers_not_claude(tmp_path, monkeypatch, em):
+def test_a_pi_backend_seeds_from_pi_layers_not_claude(tmp_path, monkeypatch):
     _make_case(tmp_path / "corpus", "a", task="ci-fix")
     seen = {}
 
@@ -620,14 +622,14 @@ def test_a_pi_backend_seeds_from_pi_layers_not_claude(tmp_path, monkeypatch, em)
     monkeypatch.setattr(agent.backend, "selected_backend", lambda: agent.backend.Backend.PI)
     monkeypatch.setattr(eval.conditions, "prepare_seed_source", fake_prepare)
     calls = []
-    monkeypatch.setattr(em, "get_task", _recording_task(calls))
-    em.run_eval(_args(tmp_path, conditions="full,trimmed", runs=1))
+    monkeypatch.setattr(eval.task, "get_task", _recording_task(calls))
+    eval.run.run_eval(_args(tmp_path, conditions="full,trimmed", runs=1), tmp_path)
     assert seen["kind"] == "pi"
     assert len({c["rules_home"] for c in calls}) == 2
 
 
 def test_a_missing_pi_source_fails_loudly_rather_than_seeding_empty(
-    tmp_path, monkeypatch, em,
+    tmp_path, monkeypatch,
 ):
     _make_case(tmp_path / "corpus", "a", task="ci-fix")
 
@@ -637,30 +639,30 @@ def test_a_missing_pi_source_fails_loudly_rather_than_seeding_empty(
     monkeypatch.setattr(agent.backend, "selected_backend", lambda: agent.backend.Backend.PI)
     monkeypatch.setattr(eval.conditions, "prepare_seed_source", fake_prepare)
     with pytest.raises(SystemExit, match="Pi rule layers produced no files"):
-        em.run_eval(_args(tmp_path, conditions="full", runs=1))
+        eval.run.run_eval(_args(tmp_path, conditions="full", runs=1), tmp_path)
 
 
-def _seed_claude_and_stub_task(tmp_path, monkeypatch, em, get_task):
+def _seed_claude_and_stub_task(tmp_path, monkeypatch, get_task):
     _make_case(tmp_path / "corpus", "a", task="ci-fix")
     _fake_claude(tmp_path / "claude")
     monkeypatch.setenv("AI_BACKEND", "claude")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str((tmp_path / "claude").resolve()))
-    monkeypatch.setattr(em, "get_task", get_task)
+    monkeypatch.setattr(eval.task, "get_task", get_task)
 
 
-def test_a_two_arm_run_prints_the_ab_table(tmp_path, monkeypatch, em, capsys):
-    _seed_claude_and_stub_task(tmp_path, monkeypatch, em, _recording_task([]))
-    em.run_eval(_args(tmp_path, conditions="full,trimmed", runs=1))
+def test_a_two_arm_run_prints_the_ab_table(tmp_path, monkeypatch, capsys):
+    _seed_claude_and_stub_task(tmp_path, monkeypatch, _recording_task([]))
+    eval.run.run_eval(_args(tmp_path, conditions="full,trimmed", runs=1), tmp_path)
     out = capsys.readouterr().out
     assert "| Arm |" in out, "two-arm stdout must include the A/B table"
     assert "delta" in out
 
 
 def test_a_single_arm_run_does_not_print_the_ab_table(
-    tmp_path, monkeypatch, em, capsys,
+    tmp_path, monkeypatch, capsys,
 ):
-    _seed_claude_and_stub_task(tmp_path, monkeypatch, em, _recording_task([]))
-    em.run_eval(_args(tmp_path, conditions="full", runs=1))
+    _seed_claude_and_stub_task(tmp_path, monkeypatch, _recording_task([]))
+    eval.run.run_eval(_args(tmp_path, conditions="full", runs=1), tmp_path)
     out = capsys.readouterr().out
     assert "| Arm |" not in out
     assert "delta" not in out
@@ -695,10 +697,10 @@ def _task_trimmed_never_ran():
 
 
 def test_an_unmeasured_trimmed_arm_is_not_zero_in_the_ab_table(
-    tmp_path, monkeypatch, em, capsys,
+    tmp_path, monkeypatch, capsys,
 ):
-    _seed_claude_and_stub_task(tmp_path, monkeypatch, em, _task_trimmed_never_ran())
-    em.run_eval(_args(tmp_path, conditions="full,trimmed", runs=1))
+    _seed_claude_and_stub_task(tmp_path, monkeypatch, _task_trimmed_never_ran())
+    eval.run.run_eval(_args(tmp_path, conditions="full,trimmed", runs=1), tmp_path)
     out = capsys.readouterr().out
     assert "| Arm |" in out, "two-arm stdout must include the A/B table"
     ab = out.split("| Arm |", 1)[1]

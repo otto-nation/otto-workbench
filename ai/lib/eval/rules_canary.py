@@ -38,6 +38,9 @@ bills the prefix as cache writes and a warm one as cache reads — the same
 prefix, moved between two fields. A check keyed on writes reads a warm run as a
 zero delta, so it would pass on the first CI run of the day and fail on the
 second for no reason anyone could act on.
+
+This module also holds the measurement the `rules-canary` command runs
+(`measure`, `check`). Argument parsing is `cli.rules_canary`'s.
 """
 
 # doc-group: eval
@@ -45,9 +48,13 @@ second for no reason anyone could act on.
 from __future__ import annotations
 
 import json
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+import core.log
+import core.proc
+import core.timeouts
 from agent.usage import usage_from_records
 
 # One line of plausible rule prose, repeated to build a fixture of known size.
@@ -80,6 +87,10 @@ RULES_PREFIX_FLOOR = 4000
 # model has to think about would put output tokens in the way of the one number
 # this measures.
 CANARY_PROMPT = "Reply with only the word OK."
+
+# The codes `rules-canary` exits with, which `eval.yml` branches on.
+EXIT_REGRESSION = 1
+EXIT_UNMEASURED = 2
 
 
 def fixture_text() -> str:
@@ -187,3 +198,103 @@ def billed_input_from_envelope(stdout: str) -> int:
         return 0
     records = envelope if isinstance(envelope, list) else [envelope]
     return usage_from_records([r for r in records if isinstance(r, dict)]).billed_input
+
+
+# ── The measurement ──
+
+
+def _canary_cmd(add_dir: str | None) -> list[str]:
+    """The fix path's flag set, minus what would change what is measured.
+
+    `--bare` and `--output-format json` are the two that matter: the first is
+    what makes `--add-dir` load-bearing in the first place, the second is what
+    carries the usage envelope. The tool and permission flags the real fix
+    command passes are left off deliberately — they widen what the agent may do
+    without changing the prompt prefix, and this prompt does nothing.
+    """
+    cmd = ["claude", "-p", "--bare", "--output-format", "json"]
+    if add_dir:
+        cmd += ["--add-dir", add_dir]
+    return cmd
+
+
+def _run_half(cwd: Path, add_dir: str | None) -> CanaryRun:
+    """One half of the comparison.
+
+    A CLI that is not installed raises out of the spawn rather than returning a
+    result, and this is the check that runs where it is least likely to be
+    there. That is the unmeasured case, not a crash: it comes back as
+    `MISSING_RETURNCODE` so the verdict reports a canary that could not measure
+    and exits 2, instead of a traceback that reads as the check itself being
+    broken.
+
+    `NETWORK` is the tier by the table's own reasoning: the prompt is trivial
+    and the reply is four tokens, so what this waits on is latency rather than
+    generation. A breach comes back as a non-zero return code, which reads as an
+    unmeasured run — the honest answer, since a canary that timed out measured
+    nothing.
+    """
+    try:
+        result = core.proc.run(
+            _canary_cmd(add_dir),
+            timeout=core.timeouts.NETWORK,
+            cwd=str(cwd),
+            input_text=CANARY_PROMPT,
+        )
+    except (FileNotFoundError, PermissionError) as exc:
+        core.log.dim(f"claude could not be run: {exc}")
+        return CanaryRun(billed_input=0, exit_code=core.proc.MISSING_RETURNCODE)
+    return CanaryRun(
+        billed_input=billed_input_from_envelope(result.stdout),
+        exit_code=result.returncode,
+    )
+
+
+def measure(floor: int) -> CanaryResult:
+    """Run both halves against one planted fixture and compare them.
+
+    The fixture directory is the working directory for both runs, and the
+    `--add-dir` target is a second, empty directory: naming the fixture itself
+    would confound "the flag loads rules from the directory it names" with "the
+    flag loads rules from the working directory", and it is the latter the fix
+    path actually relies on.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        fixture = write_fixture(root / "fixture")
+        elsewhere = root / "elsewhere"
+        elsewhere.mkdir()
+        return CanaryResult(
+            with_add_dir=_run_half(fixture, str(elsewhere)),
+            without_add_dir=_run_half(fixture, None),
+            floor=floor,
+        )
+
+
+def check(floor: int, *, as_json: bool = False) -> int:
+    """Measure, print the verdict, and return the canary's exit code.
+
+    Returns 0 when the rules arrive, `EXIT_REGRESSION` when they do not, and
+    `EXIT_UNMEASURED` when the canary could not measure.
+    """
+    result = measure(floor)
+
+    if as_json:
+        print(json.dumps({
+            "with_add_dir": result.with_add_dir.billed_input,
+            "without_add_dir": result.without_add_dir.billed_input,
+            "delta": result.delta,
+            "floor": result.floor,
+            "measured": result.measured,
+            "ok": result.ok,
+        }, indent=2))
+    elif result.ok:
+        core.log.ok(result.summary)
+    else:
+        core.log.error(result.summary)
+
+    if not result.measured:
+        return EXIT_UNMEASURED
+    if not result.ok:
+        return EXIT_REGRESSION
+    return 0

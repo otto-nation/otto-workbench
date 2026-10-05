@@ -4,7 +4,8 @@ The live invocation is not exercised here — `_no_live_backend` forbids spawnin
 a real CLI, and the two-call measurement is what the Eval workflow runs. What is
 covered is everything between the CLI's reply and the verdict: the envelope
 parsing, the floor comparison, and the unmeasured-run cases that must not read
-as a regression.
+as a regression. The spawn that `measure` and `_run_half` would make is stubbed, not
+live.
 
 The envelope fixtures are real output from Claude Code 2.1.265, trimmed to the
 fields the parser reads.
@@ -15,12 +16,15 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import core.proc  # noqa: E402
+import eval.rules_canary  # noqa: E402
 from eval.rules_canary import (  # noqa: E402
     RULES_PREFIX_FLOOR,
     CanaryResult,
@@ -183,3 +187,87 @@ class TestFixture:
     def test_the_fixture_is_large_enough_to_measure(self):
         """A fixture worth fewer tokens than the floor could never clear it."""
         assert len(fixture_text()) > RULES_PREFIX_FLOOR * 4
+
+
+class TestCheck:
+    def test_rules_arriving_returns_0(self, monkeypatch):
+        monkeypatch.setattr(
+            eval.rules_canary, "measure",
+            lambda floor: CanaryResult(
+                _run(REFERENCE_WITH_ADD_DIR), _run(REFERENCE_WITHOUT_ADD_DIR),
+                floor=floor,
+            ),
+        )
+        assert eval.rules_canary.check(RULES_PREFIX_FLOOR) == 0
+
+    def test_a_delta_below_the_floor_returns_1(self, monkeypatch):
+        monkeypatch.setattr(
+            eval.rules_canary, "measure",
+            lambda floor: CanaryResult(_run(10000), _run(9000), floor=floor),
+        )
+        assert eval.rules_canary.check(RULES_PREFIX_FLOOR) == 1
+
+    def test_an_unmeasured_canary_returns_2_not_1(self, monkeypatch):
+        monkeypatch.setattr(
+            eval.rules_canary, "measure",
+            lambda floor: CanaryResult(_run(0), _run(0), floor=floor),
+        )
+        assert eval.rules_canary.check(RULES_PREFIX_FLOOR) == 2
+
+    def test_json_carries_both_readings_the_delta_and_the_verdict(
+        self, monkeypatch, capsys,
+    ):
+        monkeypatch.setattr(
+            eval.rules_canary, "measure",
+            lambda floor: CanaryResult(
+                _run(REFERENCE_WITH_ADD_DIR), _run(REFERENCE_WITHOUT_ADD_DIR),
+                floor=floor,
+            ),
+        )
+        assert eval.rules_canary.check(RULES_PREFIX_FLOOR, as_json=True) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["with_add_dir"] == REFERENCE_WITH_ADD_DIR
+        assert payload["without_add_dir"] == REFERENCE_WITHOUT_ADD_DIR
+        assert payload["delta"] == REFERENCE_DELTA
+        assert payload["floor"] == RULES_PREFIX_FLOOR
+        assert payload["measured"] is True
+        assert payload["ok"] is True
+
+
+class TestMeasure:
+    def test_the_two_halves_differ_only_in_add_dir(self, monkeypatch):
+        seen = []
+
+        def fake(cmd, **kwargs):
+            cwd = Path(kwargs["cwd"])
+            seen.append((list(cmd), cwd, (cwd / "CLAUDE.md").is_file()))
+            return SimpleNamespace(stdout="{}", returncode=0)
+
+        monkeypatch.setattr(core.proc, "run", fake)
+        eval.rules_canary.measure(RULES_PREFIX_FLOOR)
+        assert len(seen) == 2
+        prefix = ["claude", "-p", "--bare", "--output-format", "json"]
+        cmds = [cmd for cmd, _cwd, _planted in seen]
+        assert all(cmd[:5] == prefix for cmd in cmds)
+        with_flag = [cmd for cmd in cmds if "--add-dir" in cmd]
+        without_flag = [cmd for cmd in cmds if "--add-dir" not in cmd]
+        assert len(with_flag) == 1 and len(without_flag) == 1
+        cwds = {cwd for _cmd, cwd, _planted in seen}
+        assert len(cwds) == 1
+        assert all(planted for _cmd, _cwd, planted in seen)
+        add_target = Path(with_flag[0][with_flag[0].index("--add-dir") + 1])
+        assert add_target != next(iter(cwds))
+
+    def test_a_missing_cli_is_unmeasured_not_a_crash(self, tmp_path, monkeypatch):
+        def fake(*_args, **_kwargs):
+            raise FileNotFoundError("claude")
+
+        monkeypatch.setattr(core.proc, "run", fake)
+        run = eval.rules_canary._run_half(tmp_path, None)
+        assert run == CanaryRun(0, core.proc.MISSING_RETURNCODE)
+
+
+def test_cli_version_names_the_command(capsys):
+    import cli.rules_canary
+    assert cli.rules_canary.main(["--version"]) == 0
+    assert "rules-canary" in capsys.readouterr().out

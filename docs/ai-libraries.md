@@ -3663,6 +3663,16 @@ into ``~/.env.local``.
 
 The eval harness: fixture tasks, the scorers that grade each task's output, and the aggregation the CI ratchet gates on.
 
+### eval/baselines.py
+
+What a finished eval session writes down and is judged against.
+
+That is the session document (`build_output`), the per-backend, per-model
+baseline files, the comparison against them, and the refusals that keep a
+bad pass from overwriting a good baseline (`run_post_eval`). Not: running
+arms (`eval.run`), the floors ratchet (`eval.floors`), metrics and tables
+(`eval.scoring`), argument parsing (`cli.eval_models`).
+
 ### eval/conditions.py
 
 The two rule prefixes an A/B run compares, and the trees they are served from.
@@ -3738,6 +3748,19 @@ bills the prefix as cache writes and a warm one as cache reads — the same
 prefix, moved between two fields. A check keyed on writes reads a warm run as a
 zero delta, so it would pass on the first CI run of the day and fail on the
 second for no reason anyone could act on.
+
+This module also holds the measurement the `rules-canary` command runs
+(`measure`, `check`). Argument parsing is `cli.rules_canary`'s.
+
+### eval/run.py
+
+One eval pass over the corpus.
+
+It discovers the cases, seeds one rule tree per arm, runs each case through
+the task its manifest names, prints the summary and A/B tables, and hands the
+session to `eval.baselines`. Not: scoring (`eval.task` and its scorers),
+seeding policy (`eval.conditions`), what may be written afterwards
+(`eval.baselines`), argument parsing (`cli.eval_models`).
 
 ### eval/scoring.py
 
@@ -6156,6 +6179,18 @@ dream-scan --memory-dir REPO
 `--list-transcripts` prints every transcript path in the window, one per line,
 and exits. `--memory-dir REPO` prints that repo's memory directory and exits.
 
+### cli/eval_models.py
+
+Evaluation runner for AI calls made through the workbench.
+
+Runs each corpus case through the task its manifest declares — review today,
+ci-fix next — and scores the result against that case's expectations.
+
+Usage:
+  eval-models --corpus eval/corpus/ --models sonnet,opus --effort medium
+  eval-models --entry unchecked-error-go --runs 3
+  eval-models --dry-run
+
 ### cli/needs.py
 
 What a `pr` subcommand needs of dispatch before its handler runs.
@@ -6597,6 +6632,27 @@ Usage:
   review-threads --fix
   review-threads --settle THREAD_ID [--as fixed|dismissed|already_addressed]
   review-threads --finish
+
+### cli/rules_canary.py
+
+Check that `--add-dir` still loads the operator's coding rules.
+
+Usage:
+  rules-canary [--json] [--floor N]
+
+Runs one trivial prompt twice against the same planted fixture directory,
+differing only in whether `--add-dir` is passed, and fails when the difference
+in billed input tokens falls below the floor. Why the check is a difference of
+two runs rather than one absolute reading is on `eval/rules_canary.py`.
+
+Spends two real model calls — a few cents cold, near-free warm. It is not a
+pull-request gate: it runs in the weekly Eval workflow, before the corpus run
+that spends the real money.
+
+Exit codes:
+  0  the rules still arrive
+  1  they do not — every agent is running without coding rules
+  2  the canary could not measure (no CLI, no credentials, a run billing zero)
 
 ### cli/schema.py
 

@@ -97,7 +97,7 @@ class TraceMatch:
     """One `requires` group and whether the trace satisfied it.
 
     `matched` and `matched_finding_id` are not this task's names for these
-    things — they are the duck-typed contract `eval-models._serialize_run`
+    things — they are the duck-typed contract `eval.baselines._serialize_run`
     reads off every element of `ScoringResult.matches`. `ci-fix` sidesteps it
     by leaving `matches` empty, which is why its run report reads `(0/0)`.
     """
@@ -507,7 +507,7 @@ class SkillTask:
         # Resolved before either temp dir exists: a bad skill name or a
         # malformed responses.json below would otherwise leak a git repo and a
         # work dir on every raise, since the runner's cleanup only covers the
-        # code after run() returns (ai/bin/eval-models:221-232).
+        # code after run() returns (`eval.run._run_single`'s `finally`).
         skill = skill_body(manifest["skill"])
         prompt = manifest["prompt"]
 
@@ -553,7 +553,7 @@ class SkillTask:
         except Exception:
             # A raise past this point leaves both temp dirs behind: the
             # runner's own cleanup only runs once run() has already returned
-            # artifacts naming them (ai/bin/eval-models:221-232).
+            # artifacts naming them (`eval.run._run_single`'s `finally`).
             shutil.rmtree(repo_dir, ignore_errors=True)
             shutil.rmtree(work_dir, ignore_errors=True)
             raise

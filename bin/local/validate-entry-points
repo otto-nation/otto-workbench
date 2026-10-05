@@ -6,9 +6,10 @@ Usage: bin/local/validate-entry-points [--quiet] [file...]
 A script under `ai/bin/` or `ai/claude/bin/` that carries the `ai/lib` pin or
 imports an `ai/lib` package is an entry point into the layered library, and
 its body belongs in the library: at the lowest layer its imports permit, with
-`ai/lib/cli/<name>.py` holding the parser and the call. A body left in the script is code no other
-module can import and no test reaches except by executing the file. Every
-entry point has been moved out of that shape; this keeps it out.
+`ai/lib/cli/<name>.py` holding the parser and the call. A body left in the
+script is code no other module can import and no test reaches except by
+executing the file. Every entry point has been moved out of that shape; this
+keeps it out.
 
 The check is structural, read from the script's top-level AST. In order, a
 shim may hold only:
@@ -116,11 +117,11 @@ def _lib_packages(root: Path) -> frozenset[str]:
 
 
 def _imported_roots(source: str) -> set[str]:
-    """The first segment of every absolute import anywhere in *source*."""
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return set()
+    """The first segment of every absolute import anywhere in *source*.
+
+    Raises SyntaxError when *source* does not parse.
+    """
+    tree = ast.parse(source)
     roots = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -133,13 +134,19 @@ def _imported_roots(source: str) -> set[str]:
 def in_scope(source: str, root: Path | None = None) -> bool:
     """Whether the script is an entry point into ai/lib.
 
-    It is when it carries the pin, or when it imports an ai/lib package by any
-    route. The second arm is what keeps a script from leaving the check by
+    It is when it carries the pin, when it imports an ai/lib package by any
+    route, or when it does not parse. The second arm is what keeps a script from leaving the check by
     dropping the pin stanza: the shape check then refuses it for the missing pin.
     """
     if PIN_ENV in source:
         return True
-    return bool(_imported_roots(source) & _lib_packages(root or _WORKBENCH_DIR))
+    try:
+        roots = _imported_roots(source)
+    except SyntaxError:
+        # Unreadable as Python, so scope cannot be ruled out: let check_source
+        # report "does not parse" rather than skip the script silently.
+        return True
+    return bool(roots & _lib_packages(root or _WORKBENCH_DIR))
 
 
 # String methods a --help preamble may use to shape the docstring it prints.

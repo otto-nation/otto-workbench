@@ -87,7 +87,7 @@ tools:
   - name: validate-entry-points
     permission: false
     visibility: brief
-    description: "Fails when a script under ai/bin or ai/claude/bin that puts ai/lib on its path is anything but a shim — one cli import and the call into it"
+    description: "Fails when a script under ai/bin or ai/claude/bin that carries the ai/lib pin or imports an ai/lib package is anything but a shim — one cli import and the call into it"
 
   - name: validate-import-form
     permission: false

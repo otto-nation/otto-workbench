@@ -234,6 +234,12 @@ def test_a_script_that_does_not_parse_is_refused(root):
     assert any("does not parse" in r for r in _reasons(_shim() + "def (:\n", root))
 
 
+def test_an_unparseable_script_without_the_pin_is_in_scope(root):
+    source = HEADER + "def (:\n"
+    assert vep.in_scope(source, root)
+    assert any("does not parse" in r for r in _reasons(source, root))
+
+
 def test_main_reports_a_missing_file_instead_of_raising(tmp_path, capsys):
     assert vep.main(["--quiet", str(tmp_path / "absent")]) == 1
     assert "cannot read" in capsys.readouterr().err
@@ -248,7 +254,7 @@ def test_main_exits_1_and_names_the_script(tmp_path, capsys):
 
 def test_every_shim_in_this_repo_passes():
     """The shims the repo ships; a body creeping back into one fails here."""
-    shims = [p for p in vep.discover(REPO_ROOT) if vep.in_scope(p.read_text())]
+    shims = [p for p in vep.discover(REPO_ROOT) if vep.in_scope(p.read_text(), REPO_ROOT)]
     # Fails if discovery or the scope test silently stops finding entry points.
     assert len(shims) == SHIM_COUNT
     offenders = {

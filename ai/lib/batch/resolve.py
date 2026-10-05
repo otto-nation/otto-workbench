@@ -1,4 +1,24 @@
-"""Apply an operator's answer to one decision, then move the item on."""
+"""Apply an operator's answer to one decision, then move the item on.
+
+| Kind | Action | Effect |
+|---|---|---|
+| `step_review` | `accept` | the decision's own step → `done`; its commits stay drafted |
+| | `retry` | that step → `pending`. A `stacked_on` review is retried by the scheduler once its base item is terminal |
+| | `skip-step` | that step → `skipped`; commits it made stay drafted |
+| | `undo` | rebase only: `git reset --hard <pre_rebase_head>`, rebase → `skipped` and undrafted; failure → `failed` |
+| `comment_item` | `settle-fixed` / `settle-addressed` / `settle-dismissed` / `reply` / `track` | comments step `done` once no `comment_item` remains; `settle-dismissed` needs `--reason`; `reply` needs `--body-file` and a replyable item |
+| `rebase_conflict` | `retry` / `abort` | rebase → `pending`, resuming the paused replay / `skipped`; a failed abort → `failed` |
+| `rebase_refused` | `drop-pr` / `force` | item → `dropped` / forced draft rebase: rebase `done` and drafted (needs payload `override`) |
+| `open_findings` | `accept` | from runs saved before `step_review`; review step `done` |
+| `dirty_worktree` | `retry` / `drop-pr` | re-checked when the item is next admitted (the payload names a stash command) / item → `dropped` |
+| `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped`; item → `dropped` |
+| `failed` | `force-publish` | only `reason: not_incorporated_remote`; same as `publish` past exactly the commits listed in the refusal (a newly appeared remote commit refuses again) |
+| `publish` | `publish` | see `batch.publish`; success → item `done`, or reopened once for `--watch-ci`; a refusal or failed command → `failed` on step `publish`, `reason` set |
+| | `discard` | item → `done`; local commits stay and nothing is pushed |
+
+`open-chat` is offered where listed and refused by the CLI, leaving the
+decision open.
+"""
 
 # doc-group: batch
 
@@ -7,9 +27,12 @@ from __future__ import annotations
 import secrets
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Callable
 
+import batch.outcomes
+import batch.publish
 import core.timeouts
 import git.push
 from batch.model import Decision, DecisionKind, Item, ItemStatus, Run, Step, StepStatus
@@ -21,14 +44,15 @@ ACTIONS: dict[DecisionKind, frozenset[str]] = {
     DecisionKind.REBASE_CONFLICT: frozenset({"retry", "abort", "open-chat"}),
     DecisionKind.REBASE_REFUSED: frozenset({"drop-pr", "force"}),
     DecisionKind.OPEN_FINDINGS: frozenset({"accept", "open-chat"}),
+    DecisionKind.STEP_REVIEW: frozenset({"accept", "retry", "skip-step", "undo", "open-chat"}),
     DecisionKind.DIRTY_WORKTREE: frozenset({"retry", "drop-pr", "open-chat"}),
-    DecisionKind.FAILED: frozenset({"retry", "skip-step", "drop-pr"}),
+    DecisionKind.FAILED: frozenset({"retry", "skip-step", "drop-pr", "force-publish"}),
     DecisionKind.INTERRUPTED: frozenset({"retry", "skip-step", "drop-pr"}),
     DecisionKind.PUBLISH: frozenset({"publish", "discard"}),
 }
 _SETTLE_AS = {"settle-fixed": "fixed", "settle-addressed": "already_addressed",
               "settle-dismissed": "dismissed"}
-GIT_PUSH = "git-push"
+GIT_PUSH = batch.publish.GIT_PUSH
 
 
 class ResolveError(ValueError):
@@ -56,7 +80,7 @@ def default_runner(argv: list[str]) -> int:
                           start_new_session=True, timeout=core.timeouts.UNBOUNDED).returncode
 
 
-def _validate(decision: Decision, request: Request) -> None:
+def _validate(decision: Decision, request: Request, item: Item) -> None:
     a = request.action
     if not decision.open:
         raise ResolveError(f"{decision.id} is already resolved ({decision.resolution})")
@@ -73,20 +97,11 @@ def _validate(decision: Decision, request: Request) -> None:
         raise ResolveError("reply needs --body-file")
     if a == "force" and not decision.payload.get("override"):
         raise ResolveError("this refusal names no override; force is not available")
-
-
-def publish_commands(item: Item, pr_bin: str) -> list[list[str]]:
-    wt = ["--repo-dir", item.worktree]
-    drafted = {rec.step for rec in item.steps if rec.drafted}
-    cmds = []
-    if Step.REBASE in drafted:
-        cmds.append([pr_bin, "rebase", "--push-only"] + wt)
-    elif Step.REVIEW in drafted or Step.COMMENTS in drafted:
-        cmds.append([GIT_PUSH, item.worktree])
-    if Step.COMMENTS in drafted or item.track:
-        track = [arg for t in item.track for arg in ("--track", t)]
-        cmds.append([pr_bin, "comments", "--finish", "--post", *track] + wt)
-    return cmds
+    if a == "force-publish" and decision.payload.get("reason") != \
+            batch.publish.Refusal.NOT_INCORPORATED_REMOTE.value:
+        raise ResolveError("force-publish only answers a not_incorporated_remote refusal")
+    if a == "undo" and (decision.step != Step.REBASE.value or not item.pre_rebase_head):
+        raise ResolveError("undo needs a rebase step_review with a recorded pre-rebase head")
 
 
 def command_for(decision: Decision, item: Item, request: Request,
@@ -103,19 +118,25 @@ def command_for(decision: Decision, item: Item, request: Request,
     if a == "reply":
         return [[pr_bin, "comments", "--reply", decision.payload["id"],
                  "--body-file", request.body_file, "--post"] + wt]
+    if a == "undo":
+        # A reset, not `pr rebase --abort`: the rebase has completed, so there
+        # is no replay left to abort.
+        return [["git", "-C", item.worktree, "reset", "--hard", item.pre_rebase_head]]
     if a == "abort":
         return [[pr_bin, "rebase", "--abort"] + wt]
     if a == "force":
         return [[pr_bin, "rebase", "--fix", "--force", "--no-push"] + wt]
-    if a == "publish":
-        return publish_commands(item, pr_bin)
     return []
 
 
-def _fail(run: Run, item: Item, step: str) -> Decision:
-    d = Decision(
-        id=secrets.token_hex(4), item=item.key, step=step, kind=DecisionKind.FAILED,
-        payload={"reason": "error", "exit_code": 1, "log_tail": []}, created_at=now_iso())
+def _fail(run: Run, item: Item, step: str, *, reason: str = "error",
+          detail: str = "", extra: dict | None = None) -> Decision:
+    payload = {"reason": reason, "exit_code": 1, "log_tail": []}
+    if detail:
+        payload["detail"] = detail
+    payload.update(extra or {})
+    d = Decision(id=secrets.token_hex(4), item=item.key, step=step,
+                 kind=DecisionKind.FAILED, payload=payload, created_at=now_iso())
     run.decisions.append(d)
     item.status = ItemStatus.AWAITING_DECISION
     return d
@@ -132,11 +153,6 @@ def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> 
         item.status = ItemStatus.DROPPED
     elif action == "discard":
         item.status = ItemStatus.DONE
-    elif action == "publish":
-        if ok:
-            item.status = ItemStatus.DONE
-        else:
-            created.append(_fail(run, item, "publish"))
     elif action == "retry" and step:
         item.step(step).status = StepStatus.PENDING
     elif action == "skip-step":
@@ -156,10 +172,21 @@ def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> 
         if ok:
             rec = item.step(Step.REBASE)
             rec.status, rec.drafted = StepStatus.DONE, True
+            # Its stdout went to the operator's terminal, so the tip is read back from
+            # the record the forced run saved.
+            item.pre_rebase_head = batch.outcomes.recorded_pre_rebase_head(item)
+        else:
+            created.append(_fail(run, item, "rebase"))
+    elif action == "undo":
+        if ok:
+            rec = item.step(Step.REBASE)
+            rec.status, rec.drafted = StepStatus.SKIPPED, False
+            item.pre_rebase_head = ""
         else:
             created.append(_fail(run, item, "rebase"))
     elif action == "accept":
-        item.step(Step.REVIEW).status = StepStatus.DONE
+        if step:
+            item.step(step).status = StepStatus.DONE
     elif decision.kind is DecisionKind.COMMENT_ITEM:
         if action == "track":
             item.track.append(decision.payload["id"])
@@ -170,12 +197,68 @@ def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> 
     return created
 
 
+def _reopen_for_ci(run: Run, item: Item) -> None:
+    """With --watch-ci, send a just-published item back for one CI re-check.
+
+    Once per item per run: `ci_watched` is spent here, so a red re-check is
+    fixed and published once more and never watched again.
+    """
+    if not (run.watch_ci and item.has(Step.CI) and not item.ci_watched):
+        return
+    item.ci_watched = True
+    for rec in item.steps:
+        rec.drafted = False
+    ci = item.step(Step.CI)
+    ci.status, ci.watch = StepStatus.PENDING, True
+    item.status = ItemStatus.QUEUED
+
+
+def _publish(run: Run, item: Item, pr_bin: str, run_cmd: Callable[[list[str]], int],
+             read: Callable[[Item], batch.publish.TreeState], *,
+             confirmed: Sequence[str] = ()) -> list[Decision]:
+    """Push what the tree says to push; a refusal or a failed command is a decision."""
+    tree = read(item)
+    plan = batch.publish.plan(item, pr_bin, tree, confirmed=confirmed)
+    if not plan.ok:
+        extra = {"commits": plan.commits} if plan.commits else None
+        return [_fail(run, item, "publish", reason=plan.refusal.value, detail=plan.detail,
+                      extra=extra)]
+    rest = plan.commands
+    if plan.pushes:
+        push, *rest = plan.commands
+        if run_cmd(push) != 0:
+            return [_fail(run, item, "publish")]
+        # The lease moves as soon as the push lands, before anything after it
+        # can fail: a retry must see our own push as the planned head, not as
+        # somebody else's. Leased on what the branch holds after the push, not
+        # before, since a landing may commit (hook regeneration) first. The tree
+        # seam re-reads it; an unreadable branch falls back to the pre-push tip.
+        item.remote_sha = item.published_sha = read(item).local or tree.local
+        # CI on the head just pushed has not been read, whatever an earlier
+        # re-check of an earlier push found.
+        item.ci_rechecked = False
+    for argv in rest:
+        if run_cmd(argv) != 0:
+            return [_fail(run, item, "publish")]
+    item.status = ItemStatus.DONE
+    if plan.pushes:
+        _reopen_for_ci(run, item)
+    return []
+
+
 def apply(run: Run, request: Request, *, pr_bin: str,
-          runner: Callable[[list[str]], int] | None = None) -> list[Decision]:
+          runner: Callable[[list[str]], int] | None = None,
+          tree: Callable[[Item], batch.publish.TreeState] | None = None) -> list[Decision]:
     decision = run.decision(request.decision)
     item = run.item(decision.item)
-    _validate(decision, request)
+    _validate(decision, request, item)
     run_cmd = default_runner if runner is None else runner
+    if request.action in ("publish", "force-publish"):
+        created = _publish(run, item, pr_bin, run_cmd, tree or batch.publish.read_tree,
+                           confirmed=decision.payload.get("commits", [])
+                           if request.action == "force-publish" else ())
+        decision.resolution, decision.resolved_at = request.action, now_iso()
+        return created
     ok = _run_commands(decision, item, request, pr_bin, run_cmd)
     decision.resolution, decision.resolved_at = request.action, now_iso()
     return _effect(run, item, decision, request.action, ok)

@@ -70,26 +70,32 @@ def cmd_push(
     verify: bool = True,
     snapshot: rebase.pr_snapshot.PRSnapshot | None = None,
     trail: Trail | None = None,
+    expect: str = "",
 ) -> int:
-    """Force-push after a completed rebase."""
+    """Force-push after a completed rebase.
+
+    *expect* names the lease directly — the remote tip the caller planned from —
+    instead of the one a `--no-push` run recorded, and a missing record is then
+    no error. `pr batch` passes it, which also covers a branch rebased by hand.
+    """
     if rebase.inspect.rebase_in_progress(cwd):
         core.trail.terr(trail, "push", "rebase still in progress")
         core.log.error("Cannot push — rebase still in progress.")
         return 1
 
     state = rebase.types.load_or_init(ctx)
-    if not state.rebase.updated_at:
+    if not expect and not state.rebase.updated_at:
         core.trail.terr(trail, "push", "no recorded rebase to push")
         core.log.error("Cannot push — no rebase recorded for this branch.")
-        core.log.dim("Run `pr rebase` first, or push by hand.")
+        core.log.dim("Run `pr rebase` first, pass --expect <sha>, or push by hand.")
         return 1
 
-    # The lease the rebase recorded, not one rebuilt here. By now HEAD is the
-    # rewritten tip and origin/<branch> is whatever the rebase's own fetch
-    # brought down, so neither reading can say what the remote was at before
-    # the replay — which is the only thing a lease may name.
+    # The lease the caller named, or the one the rebase recorded — never one
+    # rebuilt here. By now HEAD is the rewritten tip and origin/<branch> is
+    # whatever the rebase's own fetch brought down, so neither reading can say
+    # what the remote was at before the replay.
     lease = rebase.lease.PushLease(
-        branch=ctx.branch, expect=state.rebase.lease_expect,
+        branch=ctx.branch, expect=expect or state.rebase.lease_expect,
     )
     # An empty expect is a real value ("the remote must not have this ref
     # yet"), but it is also what a state file written before `lease_expect`
@@ -129,7 +135,7 @@ def cmd_push(
         files_resolved=state.rebase.files_resolved,
         files_stale=state.rebase.files_stale,
         force_pushed=True,
-        lease_expect=state.rebase.lease_expect,
+        lease_expect=lease.expect,
         target_base=target_ref,
     ).save(ctx)
     core.log.ok("Force-pushed successfully.")
@@ -169,6 +175,7 @@ def cmd_start(
         try:
             return rebase.lifecycle.drive_to_completion(
                 cwd, ctx, mode, target_ref=target_ref, force=True,
+                tally=rebase.lifecycle.resumed_tally(cwd, ctx),
                 verify=verify, snapshot=snapshot, trail=trail,
             )
         finally:
@@ -242,6 +249,7 @@ def _run(args, ctx: pr.context.ResolvedContext, cwd: str, trail: Trail) -> int:
             return cmd_push(
                 target.cwd, target.ctx, target_ref=target.target_ref,
                 verify=_verify(args, trail), trail=trail,
+                expect=args.expect,
             )
 
     if args.abort:
@@ -289,7 +297,10 @@ def _run(args, ctx: pr.context.ResolvedContext, cwd: str, trail: Trail) -> int:
                        fork_point=args.fork_point or "", verify=verify,
                        snapshot=snapshot, trail=trail)
 
-        if rc == 0 and mode is rebase.types.RunMode.PUSH:
+        # A hold here is the rebase's own: it resolved a region to one side,
+        # and cmd_push would report the held landing as a failed force-push.
+        if (rc == 0 and mode is rebase.types.RunMode.PUSH
+                and not core.publishing.held()):
             rc = cmd_push(cwd, ctx, target_ref=target_ref, verify=verify,
                           snapshot=snapshot, trail=trail)
         return rc

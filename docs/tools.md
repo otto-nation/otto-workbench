@@ -801,6 +801,8 @@ Takes no flags.
 | `--wait` | Poll until all jobs complete, emitting incremental reports. |
 | `--wait-timeout` `<sec>` | Max wait time in seconds (default: 900). |
 | `--wait-interval` `<sec>` | Poll interval in seconds (default: 30). |
+| `--head-sha` `<head-sha>` | Report the runs and checks of this commit instead of the worktree's HEAD. |
+| `--no-rebase` | With --fix: do not rebase onto main before fixing. |
 
 **`pr review`** — Run code review
 
@@ -870,6 +872,7 @@ Takes no flags.
 | `--fix` | Autonomous mode — resolve conflicts with AI and rebase (force-pushes unless --no-push). |
 | `--no-push` | Skip the force-push — print the command instead. |
 | `--push-only` | Push HEAD with the lease an earlier --no-push run recorded; do not rebase. |
+| `--expect` `<sha>` | With --push-only: lease against SHA instead of the lease a recorded rebase saved; no recorded rebase is needed. |
 | `--no-verify` | Skip the pre-push hook on the force-push. For a hook failure already understood — a flake, or one the branch did not cause. |
 | `--force` | Rebase even when the branch's work already landed on the target ref. |
 | `--abort` | Abort in-progress rebase. |
@@ -900,9 +903,10 @@ Takes no flags.
 | `--plan` `<file>` | A saved `pr batch plan` document. Not with `--checkout`. |
 | `--steps` `<steps>` | Comma-separated steps to run (default: rebase,comments,review). |
 | `--pool` `<pool>` | Concurrency ceiling. |
-| `--auto-publish` `<steps>` | Comma-separated steps whose results publish without asking. |
+| `--auto-publish` `<steps>` | Publish an item without asking when it closes with no open decision and every drafted step is in STEPS and finished done. Steps never push while they run. |
 | `--prs` `<prs>` | Comma-separated repo#number keys to include. |
 | `--select` `<key=steps>` | Run exactly these steps for one PR. Repeatable. |
+| `--watch-ci` | After a publish pushes, re-check CI once (ci-check --wait, up to its 900s --wait-timeout per item) and reopen the item on red. |
 
 **`pr batch resume`** — Continue a run
 

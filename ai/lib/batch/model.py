@@ -15,11 +15,12 @@ from enum import StrEnum
 
 class Step(StrEnum):
     REBASE = "rebase"
+    CI = "ci"
     COMMENTS = "comments"
     REVIEW = "review"
 
 
-STEP_ORDER: tuple[Step, ...] = (Step.REBASE, Step.COMMENTS, Step.REVIEW)
+STEP_ORDER: tuple[Step, ...] = (Step.REBASE, Step.CI, Step.COMMENTS, Step.REVIEW)
 
 
 class StepStatus(StrEnum):
@@ -56,10 +57,29 @@ class DecisionKind(StrEnum):
     REBASE_CONFLICT = "rebase_conflict"
     REBASE_REFUSED = "rebase_refused"
     OPEN_FINDINGS = "open_findings"
+    # One per (item, step) needing a person; payload {"evidence": [...]}.
+    # OPEN_FINDINGS is no longer emitted and stays only so older state files load.
+    STEP_REVIEW = "step_review"
     DIRTY_WORKTREE = "dirty_worktree"
     FAILED = "failed"
     INTERRUPTED = "interrupted"
     PUBLISH = "publish"
+
+
+class EvidenceKind(StrEnum):
+    """What a `step_review` decision's evidence entries are, and where each is read.
+
+    open_findings — review.md's open findings; checks_unverified — a Fix-Checks
+    trailer of red/timed_out/error on the step's commits; ci_unfixed — ci-check's
+    stdout tally; one_sided — `pr rebase`'s stdout report; stacked_on — another
+    item in the run whose publish goes first.
+    """
+
+    OPEN_FINDINGS = "open_findings"
+    CHECKS_UNVERIFIED = "checks_unverified"
+    CI_UNFIXED = "ci_unfixed"
+    ONE_SIDED = "one_sided"
+    STACKED_ON = "stacked_on"
 
 
 TERMINAL_ITEM = frozenset({ItemStatus.DONE, ItemStatus.DROPPED, ItemStatus.SKIPPED_CLOSED})
@@ -75,8 +95,14 @@ class StepRecord:
     log_path: str = ""
     # Ran without publishing; its push/post is owed to the item's publish decision.
     drafted: bool = False
+    # HEAD when the step first started, kept across retries: work an earlier attempt
+    # committed — even one interrupted before it finished — stays work the publish owes.
+    # Empty in state written before it existed, which means "this attempt's start".
+    start_head: str = ""
     # Named by --select: an instruction, so admission never skips it as not needed.
     explicit: bool = False
+    # The next run of this step is the one post-publish CI re-check, not a fix.
+    watch: bool = False
 
 
 @dataclass
@@ -112,6 +138,29 @@ class Item:
     wait_reason: str = ""
     # Local HEAD moved during this run, so a self-review is owed whatever GitHub's head says.
     head_moved: bool = False
+    # The PR head GitHub reported when the batch planned this item: the commit
+    # the batch worked from, and so the lease its publish pushes under. Empty
+    # only in runs saved before the field existed; see __post_init__.
+    remote_sha: str = ""
+    # The key of another item in this run whose branch is this PR's base; its publish goes first.
+    stacked_on: str = ""
+    # The PR's base branch from the plan: publish bounds its search for remote
+    # commits the local branch dropped at the merge-base with origin's copy.
+    base_ref: str = ""
+    # The tip a batch rebase of this item started from, from the rebase's own
+    # report: what `undo` resets to, and what publish checks holds remote_sha.
+    pre_rebase_head: str = ""
+    # The head a batch publish pushed, or "" when nothing was pushed.
+    published_sha: str = ""
+    # The one post-publish CI re-check --watch-ci allows this item has been spent.
+    ci_watched: bool = False
+    # That re-check read a final CI report. A re-check that found no checks yet
+    # spends the watch without reading CI, so the summary still names the item.
+    ci_rechecked: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.remote_sha:
+            self.remote_sha = self.head_sha
 
     def step(self, step: Step) -> StepRecord:
         for rec in self.steps:
@@ -138,6 +187,12 @@ class Run:
     trail_root: str = ""
     items: list[Item] = field(default_factory=list)
     decisions: list[Decision] = field(default_factory=list)
+    # Re-check CI once after a publish pushes (`pr batch run --watch-ci`).
+    watch_ci: bool = False
+    # The plan's private ref namespace and the repos it was fetched into;
+    # dropped when the run reaches a terminal state.
+    ref_namespace: str = ""
+    ref_dirs: list[str] = field(default_factory=list)
     schema_version: int = 1
 
     def item(self, key: str) -> Item:

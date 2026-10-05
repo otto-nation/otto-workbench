@@ -289,6 +289,12 @@ def render_advisory(audit: CommitAudit) -> str:
     ])
 
 
+def advisory_block(audit: CommitAudit) -> str:
+    """The one-sided regions of one replayed commit, headed by the commit."""
+    return "\n".join([f"{git.client.abbrev(audit.commit)} {audit.subject}",
+                      *_file_lines(audit.flagged, refused=False)])
+
+
 def render_dropped(dropped: Sequence[CommitAudit], orig_head: str) -> str:
     """The commits a rebase dropped with their changes, and how to get them back."""
     lines = [f"✗ This rebase dropped {len(dropped)} commit(s) whose changes are not in the result:"]

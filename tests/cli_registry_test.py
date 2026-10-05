@@ -498,3 +498,7 @@ def test_no_cli_module_installs_a_signal_handler():
         if installs_a_handler(node)
     ]
     assert offenders == [], offenders
+
+
+def test_only_batch_parses_its_own_argv():
+    assert {n for n, s in COMMANDS.items() if s.parses_own_argv} == {"batch"}

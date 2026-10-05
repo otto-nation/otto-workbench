@@ -143,9 +143,11 @@ Options:
   --pytest-files LIST
                   Run only the pytest files in LIST (newline-separated paths).
                   The pytest counterpart of --files.
-  --changed       Run only the files the diff against origin/main can reach,
-                  via select-tests and select-pytest. Falls back to the whole
-                  suite when a selector is missing or declines to narrow.
+  --changed       Run only the files the diff can reach, working tree
+                  included, via select-tests and select-pytest. Falls back to
+                  the whole suite when a selector is missing or declines.
+  --base REF      With --changed: diff against REF. Default: WORKBENCH_FIX_BASE
+                  when set (a fix pass's starting commit), else origin/main.
   --              Pass every remaining argument through to the runner
   -h, --help      Show this help
 
@@ -154,6 +156,7 @@ Environment:
                   and within that to whatever share of the machine this repo's
                   other test runs are not already holding. Set it to take the
                   sizing back; TEST_JOBS=1 restores the serial ordering.
+  WORKBENCH_FIX_BASE  Default --base for --changed; a fix pass exports it.
   TEST_HEARTBEAT_SECS
                   Seconds between stderr progress lines while a suite runs.
                   Default 60. 0 disables the heartbeat (the child is still
@@ -496,13 +499,18 @@ PYTEST_FILES=""
 # CHANGED — when true, ask the selectors what the diff can reach.
 CHANGED=false
 
+# CHANGED_BASE — the ref --changed diffs against. Empty means WORKBENCH_FIX_BASE
+# when a fix pass exported one (the commit it started from, so the selection is
+# what the pass's own edits reach), and origin/main otherwise.
+CHANGED_BASE=""
+
 # select_changed — fill BATS_FILES and PYTEST_FILES from the selectors.
 #
 # A selector that is missing, fails, or prints nothing leaves its variable
 # empty, which run_bats and run_pytest read as "the whole suite". That is the
 # only safe direction to fail: a selection that silently narrowed to nothing
 # would report a green gate having run no tests.
-# No --base, so the selectors use their own default of origin/main, and no
+# The base defaults to origin/main (see CHANGED_BASE), and there is no
 # fetch either — unlike the pre-push hook, which passes the ref it has just
 # fetched. That divergence is deliberate and safe in this direction: both
 # selectors diff `origin/main...HEAD`, which resolves through the merge base,
@@ -511,13 +519,13 @@ CHANGED=false
 # many tests, never too few. Fetching instead would put a network round trip
 # in front of the target developers run between edits.
 select_changed() {
-  local selected
+  local selected base="${CHANGED_BASE:-${WORKBENCH_FIX_BASE:-origin/main}}"
   if [[ "$1" != pytest ]] && [[ -x "$WORKBENCH_DIR/bin/local/select-tests" ]]; then
-    selected=$("$WORKBENCH_DIR/bin/local/select-tests" 2>/dev/null) || selected=""
+    selected=$("$WORKBENCH_DIR/bin/local/select-tests" --base "$base" 2>/dev/null) || selected=""
     BATS_FILES="$selected"
   fi
   if [[ "$1" != bats ]] && [[ -x "$WORKBENCH_DIR/bin/local/select-pytest" ]]; then
-    selected=$("$WORKBENCH_DIR/bin/local/select-pytest" 2>/dev/null) || selected=""
+    selected=$("$WORKBENCH_DIR/bin/local/select-pytest" --base "$base" 2>/dev/null) || selected=""
     PYTEST_FILES="$selected"
   fi
 }
@@ -560,6 +568,9 @@ main() {
       --files) shift; BATS_FILES="$1" ;;
       --pytest-files) shift; PYTEST_FILES="$1" ;;
       --changed) CHANGED=true ;;
+      --base)
+        [[ -n "${2:-}" ]] || { err "--base requires an argument"; exit 2; }
+        shift; CHANGED_BASE="$1" ;;
       --) shift; runner_args=("$@"); break ;;
       *) err "Unknown option: $1"; usage >&2; exit 1 ;;
     esac
@@ -583,6 +594,11 @@ main() {
 
   if $CHANGED && [[ -n "$SHARD$BATS_FILES$PYTEST_FILES" ]]; then
     err "--changed cannot be combined with --shard, --files or --pytest-files"
+    exit 1
+  fi
+
+  if [[ -n "$CHANGED_BASE" ]] && ! $CHANGED; then
+    err "--base only applies with --changed"
     exit 1
   fi
 

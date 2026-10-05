@@ -237,7 +237,12 @@ def commits_behind_main(repo: str, branch: str, cwd: str | None = None) -> int:
     if branch == default:
         return 0
     if cwd:
-        local = _local_commits_behind(cwd, branch, default)
+        # Trusts the remote-tracking refs as they stand and does not fetch: the
+        # caller is expected to have fetched recently. A stale ref under-reports,
+        # which skips a rebase rather than firing one that was not needed.
+        local = git.client.commits_behind(
+            cwd, head_ref=f"origin/{branch}", base_ref=f"origin/{default}",
+        )
         if local is not None:
             return local
     r = gh.client.api(f"repos/{repo}/compare/{branch}...{default}", jq=".ahead_by")
@@ -255,25 +260,6 @@ def _remote_default_branch(repo: str) -> str:
     r = gh.client.api(f"repos/{repo}", jq=".default_branch")
     val = r.stdout.strip()
     return val if r.ok and val else "main"
-
-
-def _local_commits_behind(cwd: str, branch: str, default: str) -> int | None:
-    """The count from remote-tracking refs, or None when git cannot answer it.
-
-    None rather than zero so the caller falls back to the API instead of
-    reporting a branch current with a trunk it could not read.
-
-    Trusts whatever the remote-tracking refs currently resolve to and does not
-    fetch first — the caller is expected to have fetched recently, the same
-    way a stale `origin/HEAD` is an accepted risk elsewhere in this ladder.
-    A stale ref under-reports rather than over-reports, which silently skips
-    a rebase rather than firing one that was not needed.
-    """
-    base, head = f"origin/{branch}", f"origin/{default}"
-    if not all(git.client.ok("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", cwd=cwd)
-               for ref in (base, head)):
-        return None
-    return git.client.commits_ahead(cwd, target_ref=base, rev=head)
 
 
 # ── Every check on a commit, not only the Actions ones ──────────────────────

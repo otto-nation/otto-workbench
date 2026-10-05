@@ -362,3 +362,19 @@ def commits_ahead(
     """
     out_ = out("rev-list", "--count", f"{target_ref}..{rev}", cwd=cwd)
     return int(out_) if out_.isdigit() else 0
+
+
+def commits_behind(
+    cwd: str | Path | None = None, *, head_ref: str, base_ref: str,
+) -> int | None:
+    """How many commits *base_ref* has that *head_ref* does not, or None when
+    either ref does not resolve to a commit.
+
+    None rather than zero is the whole contract: `commits_ahead` reads an
+    unresolvable ref as 0, and 0 here means "current with the base", which is
+    the one wrong answer a caller silently acts on by skipping a rebase.
+    """
+    for ref in (head_ref, base_ref):
+        if not ok("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", cwd=cwd):
+            return None
+    return commits_ahead(cwd, target_ref=head_ref, rev=base_ref)

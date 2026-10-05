@@ -20,8 +20,17 @@ from conftest import seed_repo  # noqa: E402
 def _fake_pr(bin_dir: Path, log: Path) -> None:
     bin_dir.mkdir()
     script = bin_dir / "pr"
-    script.write_text(f'#!/bin/sh\nprintf "%s\\n" "$*" >> {log}\necho working >&2\nexit 0\n')
+    tally = ('{"failures": [], "fixed": [], "unfixed": [], "skipped": [], '
+             '"suite_status": "", "commit": "", "type": "fix"}')
+    script.write_text(
+        f'#!/bin/sh\nprintf "%s\\n" "$*" >> {log}\necho working >&2\nexit 0\n')
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    # The batch's CI step runs the backing script beside `pr`, not `pr ci`.
+    ci = bin_dir / "ci-check"
+    ci.write_text(
+        f'#!/bin/sh\nprintf "ci %s\\n" "$*" >> {log}\necho working >&2\n'
+        f'printf -- "---\\n%s\\n" \'{tally}\'\nexit 0\n')
+    ci.chmod(ci.stat().st_mode | stat.S_IEXEC)
 
 
 def _main(argv, bin_dir):
@@ -51,7 +60,7 @@ def test_run_resolve_status_round_trip(tmp_path, monkeypatch, capsys):
     assert all(l["schema_version"] == 1 for l in lines)
 
     calls = log.read_text().splitlines()
-    assert [c.split()[0] for c in calls] == ["rebase", "comments", "review"]
+    assert [c.split()[0] for c in calls] == ["rebase", "ci", "comments", "review"]
     assert all(c.endswith(f"--repo-dir {repo}") or c.endswith(f"--repo-dir {repo.resolve()}")
                for c in calls)
     assert "--no-push" in calls[0]

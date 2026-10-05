@@ -3351,7 +3351,7 @@ and another repo that wants to know what has been reviewed asks the CLI (see
 
 ## Batch
 
-Running rebase, comments and self-review across many open PRs at once: admission, scheduling, step processes, and the decisions a run waits on.
+Running rebase, CI fixes, comments and self-review across many open PRs at once: admission, scheduling, step processes, publishing, and the decisions a run waits on.
 
 ### batch/admission.py
 
@@ -3388,9 +3388,54 @@ One GraphQL search covers every repo and asks only for fields whose cost does
 not scale with comment volume — no nested `comments` connection — so a plan
 over dozens of PRs costs a point or two of the hourly GraphQL budget.
 
+### batch/publish.py
+
+What a batch publish pushes, read from the tree, and the lease it pushes under.
+
+Publish is the only thing in a batch run that reaches the remote. It fetches the
+one branch, compares the local branch with origin's, and checks the remote is
+still the head the batch planned from (`Item.remote_sha`):
+
+| Tree | Command |
+|---|---|
+| the fetch failed | refuse: `fetch_failed` |
+| origin is not `remote_sha` (somebody pushed) | refuse: `remote_moved` |
+| refs not comparable | refuse: `not_comparable` |
+| local == origin, or only behind | nothing to push |
+| local is a fast-forward of origin | `git-push` |
+| diverged, from a batch rebase that started without `remote_sha` | refuse: `not_incorporated` |
+| diverged, a remote commit has no patch-equivalent locally | refuse: `not_incorporated_remote` |
+| diverged | `pr rebase --push-only --expect <remote_sha>` |
+
+`pr comments --finish --post` follows when the comments step drafted or an item
+is tracked. A refusal is a `failed` decision on step `publish` carrying `reason`;
+a `not_incorporated_remote` one also lists the remote commits, and the operator
+answers it with `force-publish` (push past exactly those commits; one that
+appeared since is refused again) or drops the PR. The lease advances as soon as
+the push lands, so a failure in the replies after it never strands the item.
+
 ### batch/resolve.py
 
 Apply an operator's answer to one decision, then move the item on.
+
+| Kind | Action | Effect |
+|---|---|---|
+| `step_review` | `accept` | the decision's own step → `done`; its commits stay drafted |
+| | `retry` | that step → `pending`. A `stacked_on` review is retried by the scheduler once its base item is terminal |
+| | `skip-step` | that step → `skipped`; commits it made stay drafted |
+| | `undo` | rebase only: `git reset --hard <pre_rebase_head>`, rebase → `skipped` and undrafted; failure → `failed` |
+| `comment_item` | `settle-fixed` / `settle-addressed` / `settle-dismissed` / `reply` / `track` | comments step `done` once no `comment_item` remains; `settle-dismissed` needs `--reason`; `reply` needs `--body-file` and a replyable item |
+| `rebase_conflict` | `retry` / `abort` | rebase → `pending`, resuming the paused replay / `skipped`; a failed abort → `failed` |
+| `rebase_refused` | `drop-pr` / `force` | item → `dropped` / forced draft rebase: rebase `done` and drafted (needs payload `override`) |
+| `open_findings` | `accept` | from runs saved before `step_review`; review step `done` |
+| `dirty_worktree` | `retry` / `drop-pr` | re-checked when the item is next admitted (the payload names a stash command) / item → `dropped` |
+| `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped`; item → `dropped` |
+| `failed` | `force-publish` | only `reason: not_incorporated_remote`; same as `publish` past exactly the commits listed in the refusal (a newly appeared remote commit refuses again) |
+| `publish` | `publish` | see `batch.publish`; success → item `done`, or reopened once for `--watch-ci`; a refusal or failed command → `failed` on step `publish`, `reason` set |
+| | `discard` | item → `done`; local commits stay and nothing is pushed |
+
+`open-chat` is offered where listed and refused by the CLI, leaving the
+decision open.
 
 ### batch/scheduler.py
 
@@ -3398,7 +3443,7 @@ Drive a run: admit steps, reap them, and stop when only decisions remain.
 
 ### batch/steps.py
 
-The child `pr` processes a batch run spawns, and the worktrees they run in.
+The child processes a batch run spawns — `pr`, or `ci-check` for CI — and their worktrees.
 
 Every step is its own process so concurrent steps share no interpreter state,
 and each gets a new session with stdin closed: no prompt in any child can
@@ -5076,8 +5121,10 @@ ceiling `fix.reconcile` already documents, walked from the other end.
 **Why before the commit and not after.** The commit body is the artifact people
 read, and a body that says ``4 fixed`` over a red suite is the whole defect. So
 this runs between the agent and the landing, and the summary is rendered from
-outcomes it has already touched. Selection is by the committed diff and
-execution is against the worktree, which is what makes that ordering work: the
+outcomes it has already touched. Selection is the repo's business — this repo's
+selectors read the working tree, diffed from the `FIX_BASE_ENV` this module
+exports — and execution is against the worktree, which is what makes that
+ordering work: the
 agent's edits are uncommitted but they are *in the tree the tests import*, and
 the files it may touch are restricted to the branch's own (`fix.scope`), which
 the committed diff already names.
@@ -5759,6 +5806,15 @@ the same loop, which advances a step at a time until git says the rebase is
 over and ``rebase_success`` lands what was replayed. Every exit is either that,
 a refusal, or an abort that leaves the branch where it started.
 
+### rebase/need.py
+
+Whether a branch needs a rebase, read from refs rather than from GitHub.
+
+GitHub's `mergeStateStatus` answers a different question — `UNKNOWN` while it
+computes, `BLOCKED` outranking `BEHIND` — so a branch two commits behind its base
+can read as up to date. This counts the commits the base has that the head does
+not, and says "cannot tell" rather than "current" when either ref is missing.
+
 ### rebase/pr_snapshot.py
 
 What GitHub says about the PR being rebased, read once per run.
@@ -6126,6 +6182,8 @@ Usage:
   ci-check --pr <number_or_url> # discover branch from PR
   ci-check --repo-dir <path>    # specify worktree directory
   ci-check --fix                # diagnose then invoke AI to fix failures
+  ci-check --head-sha <sha>     # runs and checks of this commit, not local HEAD
+  ci-check --fix --no-rebase    # fix without rebasing first (pr batch rebases itself)
 
 ### cli/dispatch.py
 
@@ -6252,7 +6310,7 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
 
 ### cli/pr_batch.py
 
-`pr batch` — run rebase, comments and self-review across my open PRs.
+`pr batch` — rebase, fix CI, address comments and self-review across my open PRs.
 
     pr batch plan   --checkout DIR …           which PRs need which steps (JSON)
     pr batch run    --checkout DIR … [opts]    start a run; NDJSON events on stdout
@@ -6260,6 +6318,8 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
     pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
     pr batch cancel [RUN_ID] [--kill]
     pr batch status [RUN_ID]
+
+Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish.
 
 Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions.
 
@@ -6396,6 +6456,7 @@ Usage:
   pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref, used as given (or --base)
   pr-rebase --fork-point <ref>        # replay only the commits after <ref>
   pr-rebase --no-verify               # force-push without running the pre-push hook
+  pr-rebase --push-only --expect <sha> # push HEAD leasing on <sha>; no recorded rebase needed
   pr-rebase --repo-dir <path>         # specify worktree directory
 
 ### cli/promote_scan.py

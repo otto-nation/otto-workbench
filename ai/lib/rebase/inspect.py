@@ -50,6 +50,21 @@ def rebase_in_progress(cwd: str) -> bool:
     )
 
 
+def rebase_orig_head(cwd: str) -> str:
+    """The branch tip an in-progress rebase started from, or "" when none is recorded.
+
+    git keeps it as `orig-head` in the rebase state directory: the local tip
+    when the rebase began, which is what undoing the rebase restores.
+    """
+    git_path = git_dir(cwd)
+    for state_dir in (GIT_REBASE_MERGE_DIR, GIT_REBASE_APPLY_DIR):
+        try:
+            return (git_path / state_dir / "orig-head").read_text().strip()
+        except OSError:
+            continue
+    return ""
+
+
 # ── Conflict and patch state ───────────────────────────────────────────────
 
 

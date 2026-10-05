@@ -29,6 +29,7 @@ Usage:
   pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref, used as given (or --base)
   pr-rebase --fork-point <ref>        # replay only the commits after <ref>
   pr-rebase --no-verify               # force-push without running the pre-push hook
+  pr-rebase --push-only --expect <sha> # push HEAD leasing on <sha>; no recorded rebase needed
   pr-rebase --repo-dir <path>         # specify worktree directory
 """
 
@@ -52,7 +53,6 @@ import rebase.commands
 import rebase.types
 
 SCRIPT = "pr-rebase"
-
 
 
 def build_parser() -> ToolParser:
@@ -98,6 +98,11 @@ def build_parser() -> ToolParser:
         help="Push HEAD with the lease an earlier --no-push run recorded; do not rebase",
     )
     parser.add_argument(
+        "--expect", metavar="SHA", default="",
+        help="With --push-only: lease against SHA instead of the lease a recorded "
+             "rebase saved; no recorded rebase is needed",
+    )
+    parser.add_argument(
         "--no-verify", action="store_true",
         help="Skip the pre-push hook on the force-push. For a hook failure "
              "already understood — a flake, or one the branch did not cause",
@@ -116,6 +121,8 @@ def _parse_args(argv: list[str] | None):
     args = parser.parse_args(argv)
     if args.push_only and (args.fix or args.abort or not args.push):
         parser.error("--push-only cannot be combined with --fix, --abort or --no-push")
+    if args.expect and not args.push_only:
+        parser.error("--expect only applies with --push-only")
     return args
 
 

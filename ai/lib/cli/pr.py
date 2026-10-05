@@ -285,6 +285,8 @@ def _build_parser() -> argparse.ArgumentParser:
     its own — its argv is forwarded whole and `pr <command> --help` is answered
     by the factory's parser — so add_help is left off for those. That is every
     delegate and `create`, whose handler runs here but whose parser is its own.
+    A command that parses its own argv (`CommandSpec.parses_own_argv`) is left
+    without one too, so its subcommands answer their own help.
 
     The subparsers are not returned alongside: what a command declares is read
     back off the built parser with tool_parser.subparsers, which is what keeps
@@ -300,7 +302,8 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
     for name, spec in COMMANDS.items():
         sub.add_parser(name, help=spec.help,
-                       add_help=not cli.dispatch.has_parser_factory(name))
+                       add_help=not (cli.dispatch.has_parser_factory(name)
+                                     or spec.parses_own_argv))
     return parser
 
 
@@ -406,6 +409,12 @@ def _dispatch(args, ctx: pr.context.ResolvedContext, extra: list[str], global_ar
             cli.dispatch.delegate_argv(spec, extra, ctx,
                                    original_pr=original_pr,
                                    original_branch=original_branch),
+            # `pr` installed the identical handler at its own entry point, and
+            # `signal.signal` neither chains nor restores — a second install
+            # would replace the one that reports the interrupt for the whole
+            # invocation with one that reports it for the delegate alone.
+            **({"install_signal_handler": False}
+               if spec.handler == "cli.ci_check:main" else {}),
         )
     except Exception as exc:
         trail.error("unexpected_error", str(exc))
@@ -499,8 +508,11 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     # The command's own parser prints its own help, in this process. It is
     # asked for the parser rather than run with `--help`, because a delegate
     # `main` does more than parse before argparse ever sees the flag. Keyed on
-    # the factory, not on `script`: `create` has a parser and no script.
-    if {"-h", "--help"} & set(extra) and cli.dispatch.has_parser_factory(spec.name):
+    # the factory, not on `script`: `create` has a parser and no script. A
+    # command that parses its own argv is skipped: its subcommands answer their
+    # own help, which the top-level parser printed here would not name.
+    if ({"-h", "--help"} & set(extra) and cli.dispatch.has_parser_factory(spec.name)
+            and not spec.parses_own_argv):
         cli.dispatch.print_delegate_help(spec)
         return 0
 

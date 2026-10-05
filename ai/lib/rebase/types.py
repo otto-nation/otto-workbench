@@ -278,6 +278,24 @@ class ResolutionTally:
     stale: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
     commits: int = 0
+    # Files resolved to exactly one side anywhere in this rebase, and each
+    # stopped commit's rendered regions. Advisory — they never refuse the
+    # commit — but a push of them is held so somebody looks first.
+    one_sided: list[str] = field(default_factory=list)
+    one_sided_regions: list[str] = field(default_factory=list)
+    # The branch tip the rebase started from: what an undo resets to, and what
+    # a publish checks contains the remote head it is about to overwrite.
+    pre_rebase_head: str = ""
+
+    def note_one_sided(self, files: list[str], region: str) -> None:
+        """Fold one stopped commit's one-sided files and rendered regions in.
+
+        Idempotent per region: a stopped commit is re-audited after a refusal
+        and after a resume, and a resume is seeded with the regions already seen.
+        """
+        self.one_sided.extend(f for f in files if f not in self.one_sided)
+        if region not in self.one_sided_regions:
+            self.one_sided_regions.append(region)
 
     def absorb(self, resolution: Resolution) -> None:
         """Fold one step's resolution into the running totals."""
@@ -445,6 +463,9 @@ class RebaseOutcome:
     # rewritten local tip and a tracking ref the fetch has moved — the two
     # values a lease must not be built from.
     lease_expect: str = ""
+    files_one_sided: list[str] = field(default_factory=list)
+    one_sided_regions: list[str] = field(default_factory=list)
+    pre_rebase_head: str = ""
     # Keyword-only and required: the recorded base is what a caller reading
     # state.json uses to tell which branch a run actually replayed onto, so a
     # default here would let an outcome report a base the rebase never used.
@@ -461,6 +482,9 @@ class RebaseOutcome:
             files_stale=self.files_stale,
             force_pushed=self.force_pushed is True,
             lease_expect=self.lease_expect,
+            files_one_sided=self.files_one_sided,
+            one_sided_regions=self.one_sided_regions,
+            pre_rebase_head=self.pre_rebase_head,
             updated_at=pr.state.now_iso(),
         ))
         pr.state.save_state(ctx.target_dir, state)
@@ -472,6 +496,9 @@ class RebaseOutcome:
             "conflicts_resolved": self.conflicts_resolved,
             "files_resolved": self.files_resolved,
             "files_stale": self.files_stale,
+            "files_one_sided": self.files_one_sided,
+            "one_sided_regions": self.one_sided_regions,
+            "pre_rebase_head": self.pre_rebase_head,
         }
         if self.force_pushed is not None:
             report["force_pushed"] = self.force_pushed

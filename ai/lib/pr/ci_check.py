@@ -104,8 +104,12 @@ def run_ci(trail, args, ctx) -> pr.ci_report.CIReport:
     repo = ctx.repo
     branch = ctx.branch
 
+    # --head-sha names the commit GitHub has: after a drafted rebase, local
+    # HEAD is one it has never seen, and no run would be found for it.
+    head_sha = args.head_sha or ctx.head_sha
+
     discovery = (gh.run_reads.RunDiscovery(rows=(gh.run_reads.RunRow(run_id=args.run),))
-                 if args.run else gh.run_reads.fetch_latest_runs(repo, branch, ctx.head_sha))
+                 if args.run else gh.run_reads.fetch_latest_runs(repo, branch, head_sha))
     run_ids = [row.run_id for row in discovery.rows]
 
     trail.info("fetch_runs", f"fetching {len(run_ids)} run(s)", data={"run_ids": run_ids})
@@ -117,7 +121,7 @@ def run_ci(trail, args, ctx) -> pr.ci_report.CIReport:
     # this run's report. Withholding it here leaves rows[0].head_sha (empty for
     # a pinned run) as the only candidate, so `_commit_checks` finds nothing to
     # ask about and the rollup is skipped rather than answered for the wrong sha.
-    rollup_head_sha = "" if args.run else ctx.head_sha
+    rollup_head_sha = "" if args.run else head_sha
 
     # Not gated on there being a workflow run: a commit can be checked by
     # something that is not a workflow, and bailing here on an empty run list
@@ -150,13 +154,13 @@ def run_ci(trail, args, ctx) -> pr.ci_report.CIReport:
 def run_ci_wait(trail, args, ctx) -> pr.ci_report.CIReport:
     """Poll CI until all jobs complete, emitting partial reports as failures arrive."""
     poll = pr.ci_wait.poll_until_complete(
-        ctx.repo, ctx.branch, run_id=args.run, head_sha=ctx.head_sha,
+        ctx.repo, ctx.branch, run_id=args.run, head_sha=args.head_sha or ctx.head_sha,
         timeout=args.wait_timeout, interval=args.wait_interval, trail=trail,
     )
 
     report = report_run(
         trail, ctx, poll.merged, poll.run_ids, counts=poll.counts, show_status=True,
     )
-    core.report.emit_stream_json(report.to_json(), "final")
+    core.report.emit_stream_json(report.to_json(), pr.ci_report.FINAL_REPORT_TYPE)
 
     return report

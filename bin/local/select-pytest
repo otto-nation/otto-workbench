@@ -112,6 +112,9 @@ NO_DEPS_TESTS = {
     "tests/review_agent_diagnostics_support.py",
     # Three string constants the eval.floors suites share; it imports nothing.
     "tests/eval_floors_support.py",
+    # Real git remotes for the batch suites: conftest and git only, nothing
+    # in-repo; the suites importing it carry the deps.
+    "tests/batch_git_support.py",
 }
 
 _LOAD_LIB = re.compile(r'_load_lib\(\s*"([^"]+)"\s*\)')
@@ -559,17 +562,33 @@ def _selects(test: str, deps: set[str], changed: list[str]) -> bool:
     return False
 
 
-def _changed_files(base: str) -> list[str]:
-    """Paths differing from *base*, or an empty list when git cannot say."""
-    for args in (["diff", "--name-only", f"{base}...HEAD"],
-                 ["diff", "--name-only", base, "HEAD"]):
-        result = subprocess.run(
-            ["git", "-C", str(REPO_ROOT), *args],
-            capture_output=True, text=True, check=False,
-        )
-        if result.returncode == 0:
-            return [line for line in result.stdout.splitlines() if line.strip()]
-    return []
+def _git_lines(root: Path, *args: str) -> list[str] | None:
+    """A git command's non-blank output lines, or None when it failed."""
+    result = subprocess.run(
+        ["git", "-C", str(root), *args],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+def _changed_files(base: str, root: Path = REPO_ROOT) -> list[str]:
+    """Paths differing from *base* in the working tree, or [] when git cannot say.
+
+    Committed since the merge base, staged, unstaged and untracked alike: a fix
+    pass runs this before it commits, so its own edits are in the tree and not
+    yet in history, and a test reached only through them would otherwise never
+    be selected. Empty — which selects everything — when *base* does not
+    resolve, the same safe direction as before.
+    """
+    merge_base = _git_lines(root, "merge-base", base, "HEAD")
+    since = merge_base[0] if merge_base else base
+    diffed = _git_lines(root, "diff", "--name-only", since)
+    if diffed is None:
+        return []
+    untracked = _git_lines(root, "ls-files", "--others", "--exclude-standard") or []
+    return sorted(set(diffed) | set(untracked))
 
 
 def _all_tests() -> list[str]:

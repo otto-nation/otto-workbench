@@ -346,3 +346,33 @@ def test_every_no_deps_entry_names_a_file_that_exists():
     """A stale entry is a test nobody notices has stopped being covered."""
     for name in sp.NO_DEPS_TESTS:
         assert (REPO_ROOT / name).is_file(), name
+
+
+# ── what counts as changed ──────────────────────────────────────────
+
+
+def _repo_at_base(tmp_path):
+    from conftest import commit_all, git_out, init_repo
+    repo = init_repo(tmp_path / "r")
+    (repo / "kept.py").write_text("x = 1\n")
+    commit_all(repo, "base")
+    return repo, git_out(repo, "rev-parse", "HEAD").strip()
+
+
+def test_an_uncommitted_edit_is_a_change(tmp_path):
+    """A fix pass verifies before it commits, so its edits are uncommitted."""
+    repo, base = _repo_at_base(tmp_path)
+    (repo / "kept.py").write_text("x = 2\n")
+    assert sp._changed_files(base, repo) == ["kept.py"]
+
+
+def test_an_untracked_file_is_a_change(tmp_path):
+    repo, base = _repo_at_base(tmp_path)
+    (repo / "new_test.py").write_text("def test_x():\n    pass\n")
+    assert sp._changed_files(base, repo) == ["new_test.py"]
+
+
+def test_an_unresolvable_base_reports_nothing_so_everything_runs(tmp_path):
+    repo, _ = _repo_at_base(tmp_path)
+    (repo / "new_test.py").write_text("")
+    assert sp._changed_files("refs/heads/nope", repo) == []

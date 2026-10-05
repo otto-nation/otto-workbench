@@ -15,6 +15,8 @@ Usage:
   ci-check --pr <number_or_url> # discover branch from PR
   ci-check --repo-dir <path>    # specify worktree directory
   ci-check --fix                # diagnose then invoke AI to fix failures
+  ci-check --head-sha <sha>     # runs and checks of this commit, not local HEAD
+  ci-check --fix --no-rebase    # fix without rebasing first (pr batch rebases itself)
 """
 
 # doc-group: cli
@@ -24,6 +26,7 @@ from __future__ import annotations
 import sys
 
 import core.log
+import core.proc
 import core.publishing
 import core.run_lock
 from core.tool_parser import ToolParser
@@ -63,11 +66,29 @@ def build_parser() -> ToolParser:
                         help="Max wait time in seconds (default: 900)")
     parser.add_argument("--wait-interval", type=int, default=30, metavar="SEC",
                         help="Poll interval in seconds (default: 30)")
+    parser.add_argument("--head-sha", default="",
+                        help="Report the runs and checks of this commit instead of "
+                             "the worktree's HEAD")
+    parser.add_argument("--no-rebase", action="store_true",
+                        help="With --fix: do not rebase onto main before fixing")
     add_trail_args(parser)
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *,
+         install_signal_handler: bool = True) -> int:
+    """Parse *argv* and run the CI check it asks for.
+
+    `install_signal_handler` defaults True because the common caller is the
+    `ai/bin` shim, for which this is the whole process. An in-process caller
+    that owns its own handler passes False.
+    """
+    # Only when this module is the process. `pr ci` reaches here having
+    # installed the identical handler at its own entry point, and a second
+    # install would replace the caller's without chaining or restoring it.
+    if install_signal_handler:
+        core.proc.install_stop_handler(core.log.interrupted)
+
     parser = build_parser()
     argv = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(argv)
@@ -101,7 +122,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         try:
             report = pr.ci_check.run_ci_wait(trail, args, ctx) if args.wait else pr.ci_check.run_ci(trail, args, ctx)
-            return rebase.ci_fix.run_fix(trail, report, ctx) if args.fix else 0
+            return rebase.ci_fix.run_fix(trail, report, ctx, rebase_first=not args.no_rebase) if args.fix else 0
         except pr.ci_runs.RunUnavailable as exc:
             # Expected: there is no run to report on. Trailed where it was raised,
             # so it is the exit code that is left to decide.

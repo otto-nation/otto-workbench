@@ -3,9 +3,9 @@ issues:
   provider: github
 fix:
   # What a fix pass runs against its own edits before it writes the commit body
-  # claiming they worked. `--changed` is the same selection the pre-push hook
-  # makes — select-tests and select-pytest against origin/main, then run-tests
-  # — so this is the gate's own definition of green reached earlier, not a
-  # second one assembled here.
+  # claiming they worked. `--changed` selects what the working tree reaches,
+  # diffed from WORKBENCH_FIX_BASE — the commit the pass started from — so a
+  # pass verifies the tests its own edits reach; the branch as a whole stays
+  # the pre-push gate's job.
   verify_command: bin/local/run-tests --changed
   verify_timeout: 900

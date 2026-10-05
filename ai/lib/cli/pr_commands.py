@@ -257,6 +257,9 @@ def cmd_fix(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
             "ci", ["--fix"] + list(argv), ctx,
             original_pr=_kw.get("original_pr"),
             original_branch=_kw.get("original_branch"),
+            # This process already has the handler `pr` installed; see
+            # `cli.ci_check.main`.
+            install_signal_handler=False,
         )
         if rc != 0:
             exit_code = 1

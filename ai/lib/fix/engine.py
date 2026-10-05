@@ -807,6 +807,7 @@ def _verify_suite(
     adapter: FixAdapter, outcomes: list[ItemOutcome],
     changed: set[str] | None, trail: Trail | None,
     by_id: dict[str, FixItem] | None = None,
+    *, base: str = "",
 ) -> fix.suite.SuiteResult:
     """Run the repo's declared checks over the pass's work and apply the verdict.
 
@@ -814,6 +815,8 @@ def _verify_suite(
     config, run it, and let a red result withdraw the pass's verification
     claims before `landing` renders a body that would otherwise say those
     claims held.
+
+    *base* is the HEAD the pass started from, exported as `fix.suite.FIX_BASE_ENV`.
 
     Config is re-read from the worktree rather than taken from `adapter.config`
     because a pass launched from another directory carries the config of
@@ -826,7 +829,7 @@ def _verify_suite(
     config = adapter.config or load_config_or_default(adapter.workdir)
     result = fix.suite.run(
         adapter.workdir, config.fix.verify_command,
-        config.fix.verify_timeout, trail,
+        config.fix.verify_timeout, trail, base=base,
     )
     fix.suite.apply_to(outcomes, result)
     if result.demotes:
@@ -1023,7 +1026,7 @@ def run(
     # as fixed: no per-item hook can see a suite demotion, because the item
     # stays FIXED. `_verify_suite` holds publishing itself for that.
     adapter.suite = _verify_suite(
-        adapter, settled.outcomes, changed, trail, by_id)
+        adapter, settled.outcomes, changed, trail, by_id, base=head_before)
 
     # Between the verdicts and the push, which is the only window that works:
     # both gates have spoken here — the per-item one above and the batch suite
@@ -1039,9 +1042,11 @@ def run(
         fix.scope.report_unattributable(adapter.workdir)
     adapter.stop = settled.stop
     spec = adapter.landing(settled.outcomes, changed)
+    # The trailer is appended here, once, for every domain: the commit is what
+    # a batch reads the checks verdict back from.
     landed = git.land.land(
         adapter.workdir,
-        message=spec.message,
+        message=fix.suite.with_trailer(spec.message, adapter.suite),
         gated=True,
         trail=trail,
         regen=spec.regen,

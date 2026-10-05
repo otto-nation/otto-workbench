@@ -347,7 +347,7 @@ class TestReviewTask:
         The transient backend failures that poisoned the baseline came back
         exactly like this: no findings, no cost, and a non-zero exit.
         """
-        monkeypatch.setattr(eval.scoring_review, "run_orchestrate", lambda *a, **kw: 1)
+        monkeypatch.setattr(eval.scoring_review, "_run_orchestrate", lambda *a, **kw: 1)
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "a.go").write_text("package main\n")
 
@@ -361,7 +361,7 @@ class TestReviewTask:
 
     def test_a_review_that_cost_money_is_measured_even_when_it_exits_non_zero(
             self, monkeypatch, tmp_path):
-        monkeypatch.setattr(eval.scoring_review, "run_orchestrate", lambda *a, **kw: 1)
+        monkeypatch.setattr(eval.scoring_review, "_run_orchestrate", lambda *a, **kw: 1)
         monkeypatch.setattr(
             eval.scoring_review, "parse_review_output",
             lambda *a: ([], SessionUsage(cost=0.22)))

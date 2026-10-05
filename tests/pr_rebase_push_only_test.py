@@ -17,6 +17,7 @@ import cli.pr_rebase  # noqa: E402
 import core.run_lock  # noqa: E402
 import git.client  # noqa: E402
 import pr.context  # noqa: E402
+import rebase.commands  # noqa: E402
 import rebase.inspect  # noqa: E402
 import rebase.types  # noqa: E402
 
@@ -42,7 +43,7 @@ def test_expect_pushes_a_hand_rebase_with_no_recorded_rebase():
          mock.patch.object(rebase.types.RebaseOutcome, "save", lambda self, c: None), \
          mock.patch.object(git.client, "commits_ahead", return_value=2), \
          _lands(_pushed()) as owner:
-        assert cli.pr_rebase.cmd_push("/fake", ctx, target_ref=_TARGET, expect="deadbee") == 0
+        assert rebase.commands.cmd_push("/fake", ctx, target_ref=_TARGET, expect="deadbee") == 0
     assert owner.call_args.kwargs["args"] == (
         "--force-with-lease=refs/heads/isaac/feat/x:deadbee",)
 
@@ -54,15 +55,15 @@ def test_without_expect_a_missing_record_is_still_refused():
     with mock.patch.object(rebase.inspect, "rebase_in_progress", return_value=False), \
          mock.patch.object(rebase.types, "load_or_init", return_value=_no_record()), \
          _lands(_pushed()) as owner:
-        assert cli.pr_rebase.cmd_push("/fake", ctx, target_ref=_TARGET) == 1
+        assert rebase.commands.cmd_push("/fake", ctx, target_ref=_TARGET) == 1
     owner.assert_not_called()
 
 
 def test_expect_reaches_cmd_push_from_the_command_line(monkeypatch):
     seen = {}
-    monkeypatch.setattr(cli.pr_rebase, "cmd_push", lambda cwd, ctx, **k: seen.update(k) or 0)
-    monkeypatch.setattr(cli.pr_rebase, "_resolve",
-                        lambda args: cli.pr_rebase.RebaseTarget(make_ctx(), "/wt", "origin/main"))
+    monkeypatch.setattr(rebase.commands, "cmd_push", lambda cwd, ctx, **k: seen.update(k) or 0)
+    monkeypatch.setattr(rebase.commands, "_resolve",
+                        lambda args: rebase.commands.RebaseTarget(make_ctx(), "/wt", "origin/main"))
     fake_ctx = mock.MagicMock()
     fake_ctx.require_worktree.return_value = Path("/fake")
     monkeypatch.setattr(pr.context, "resolve", lambda **k: fake_ctx)

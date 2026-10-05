@@ -21,8 +21,11 @@ import fix.engine  # noqa: E402
 import gh.run_reads  # noqa: E402
 import pr.ci_failures  # noqa: E402
 import pr.ci_report  # noqa: E402
+import pr.ci_check  # noqa: E402
 import pr.ci_runs  # noqa: E402
 import pr.context  # noqa: E402
+import rebase.ci_fix  # noqa: E402
+import rebase.commands  # noqa: E402
 import rebase.target  # noqa: E402
 import rebase.types  # noqa: E402
 from fix.suite import SuiteResult, SuiteStatus  # noqa: E402
@@ -67,7 +70,7 @@ def test_head_sha_finds_the_runs_of_the_remote_commit():
          patch("gh.run_reads.fetch_commit_checks",
                return_value=gh.run_reads.CommitChecks()), \
          pytest.raises(pr.ci_runs.RunUnavailable):
-        cli.ci_check._run_ci(MagicMock(), _args(head_sha="remote1"), make_ctx(head_sha="local1"))
+        pr.ci_check.run_ci(MagicMock(), _args(head_sha="remote1"), make_ctx(head_sha="local1"))
     assert runs.call_args[0][2] == "remote1"
 
 
@@ -80,7 +83,7 @@ def test_wait_polls_the_remote_commit():
 
     with patch("pr.ci_wait.poll_until_complete", side_effect=poll), \
          pytest.raises(pr.ci_runs.RunUnavailable):
-        cli.ci_check._run_ci_wait(MagicMock(), _args(head_sha="remote1"), make_ctx(head_sha="local1"))
+        pr.ci_check.run_ci_wait(MagicMock(), _args(head_sha="remote1"), make_ctx(head_sha="local1"))
     assert seen["head"] == "remote1"
 
 
@@ -89,8 +92,8 @@ def test_no_rebase_reaches_the_fix_phase():
     with patch.object(pr.context, "resolve", return_value=make_ctx()), \
          patch.object(core.run_lock, "claim_for_process"), \
          patch.object(cli.ci_check.Trail, "start", return_value=MagicMock()), \
-         patch.object(cli.ci_check, "_run_ci", return_value=_report({})), \
-         patch.object(cli.ci_check, "_run_fix",
+         patch.object(pr.ci_check, "run_ci", return_value=_report({})), \
+         patch.object(rebase.ci_fix, "run_fix",
                       side_effect=lambda t, r, c, **k: seen.update(k) or 0):
         assert cli.ci_check.main(["--fix", "--no-rebase"]) == 0
     assert seen["rebase_first"] is False
@@ -98,9 +101,9 @@ def test_no_rebase_reaches_the_fix_phase():
 
 def test_a_fix_without_rebase_never_rebases(tmp_path):
     report = _report({"b": _group(pr.ci_failures.FailureKind.BUILD, "b-1")})
-    with patch.object(cli.ci_check, "_rebase_if_behind") as rebase_first, \
+    with patch.object(rebase.ci_fix, "rebase_if_behind") as rebase_first, \
          patch.object(fix.engine, "run", return_value=fix.engine.FixRun()):
-        cli.ci_check._run_fix(MagicMock(), report,
+        rebase.ci_fix.run_fix(MagicMock(), report,
                               make_ctx(worktree_root=tmp_path, target_dir=tmp_path),
                               rebase_first=False)
     rebase_first.assert_not_called()
@@ -108,7 +111,7 @@ def test_a_fix_without_rebase_never_rebases(tmp_path):
 
 def test_an_all_skipped_run_reports_its_skips_on_stdout(tmp_path, capsys):
     report = _report({"i": _group(pr.ci_failures.FailureKind.INFRA, "i-1")})
-    assert cli.ci_check._run_fix(MagicMock(), report,
+    assert rebase.ci_fix.run_fix(MagicMock(), report,
                                  make_ctx(worktree_root=tmp_path, target_dir=tmp_path)) == 0
     tally = _tally(capsys)
     assert tally["skipped"] == [{"id": "i-1", "kind": "infra"}]
@@ -123,9 +126,9 @@ def test_a_fix_pass_reports_what_it_fixed_and_the_suite(tmp_path, capsys):
                   ItemOutcome(id="c-1", outcome=FixOutcome.DECLINED)],
         landed=LandResult(CommitStatus.PUSH_HELD, sha="c0ffee"),
         suite=SuiteResult(status=SuiteStatus.RED))
-    with patch.object(cli.ci_check, "_rebase_if_behind", return_value=False), \
+    with patch.object(rebase.ci_fix, "rebase_if_behind", return_value=False), \
          patch.object(fix.engine, "run", return_value=ran):
-        cli.ci_check._run_fix(MagicMock(), report,
+        rebase.ci_fix.run_fix(MagicMock(), report,
                               make_ctx(worktree_root=tmp_path, target_dir=tmp_path))
     tally = _tally(capsys)
     assert tally["fixed"] == ["b-1"] and tally["unfixed"] == ["c-1"]
@@ -139,7 +142,7 @@ def test_a_rebase_whose_push_was_held_is_not_reported_as_pushed():
     ctx = MagicMock()
     ctx.require_worktree.return_value = Path("/tmp/wt")
     with patch.object(rebase.target, "resolve_target_ref", return_value="origin/main"), \
-         patch.object(cli.ci_check.pr_rebase, "cmd_start", return_value=0), \
+         patch.object(rebase.commands, "cmd_start", return_value=0), \
          patch.object(core.publishing, "enabled", return_value=True), \
          patch.object(rebase.types, "load_or_init", return_value=state):
-        assert cli.ci_check._rebase_if_behind(MagicMock(), _report({}), ctx) is False
+        assert rebase.ci_fix.rebase_if_behind(MagicMock(), _report({}), ctx) is False

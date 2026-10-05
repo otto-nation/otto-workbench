@@ -508,8 +508,11 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     # The command's own parser prints its own help, in this process. It is
     # asked for the parser rather than run with `--help`, because a delegate
     # `main` does more than parse before argparse ever sees the flag. Keyed on
-    # the factory, not on `script`: `create` has a parser and no script.
-    if {"-h", "--help"} & set(extra) and cli.dispatch.has_parser_factory(spec.name):
+    # the factory, not on `script`: `create` has a parser and no script. A
+    # command that parses its own argv is skipped: its subcommands answer their
+    # own help, which the top-level parser printed here would not name.
+    if ({"-h", "--help"} & set(extra) and cli.dispatch.has_parser_factory(spec.name)
+            and not spec.parses_own_argv):
         cli.dispatch.print_delegate_help(spec)
         return 0
 

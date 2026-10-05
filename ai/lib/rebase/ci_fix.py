@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import core.log
 import core.publishing
+import core.report
 import fix.ci
 import fix.engine
 from git.land import CommitStatus
@@ -78,11 +79,15 @@ def rebase_if_behind(trail, report: pr.ci_report.CIReport, ctx) -> bool:
         core.log.warn("Rebase failed — continuing with CI fixes on current base")
         return False
 
-    # `cmd_start` in FIX mode lands through the same gate this run opened, so a
-    # draft run reports what it would have pushed rather than pushing it.
-    if not core.publishing.enabled():
-        trail.info("rebase_done", "rebased; force-push drafted")
-        core.log.ok("Rebased onto main — force-push drafted, pass --post to send it")
+    # Read from the outcome the rebase just saved, not inferred from the gate:
+    # `pr rebase` holds its own push when it resolved a region to one side,
+    # even in a run that may publish.
+    if not rebase.types.load_or_init(ctx).rebase.force_pushed:
+        held = core.publishing.held()
+        trail.info("rebase_done", "rebased; force-push drafted",
+                   data={"held": held} if held else None)
+        core.log.ok("Rebased onto main — force-push drafted"
+                    + (f" ({held})" if held else ", pass --post to send it"))
         return False
 
     trail.info("rebase_done", "rebased and force-pushed")
@@ -90,14 +95,39 @@ def rebase_if_behind(trail, report: pr.ci_report.CIReport, ctx) -> bool:
     return True
 
 
-def run_fix(trail, report: pr.ci_report.CIReport, ctx) -> int:
-    """Apply AI-driven fixes for CI failures. Returns exit code."""
+def _emit_tally(tally: pr.ci_report.CIFixTally) -> None:
+    core.report.emit_stream_json(tally.to_json(), pr.ci_report.FIX_TALLY_TYPE)
+
+
+def _tally(adapter: fix.ci.CIFixAdapter,
+           run: fix.engine.FixRun | None = None) -> pr.ci_report.CIFixTally:
+    """The tally for *adapter*'s failures, after *run* when the pass ran."""
+    outcomes = run.outcomes if run is not None else []
+    fixed = [o.id for o in outcomes if o.outcome.counts_as_fixed]
+    return pr.ci_report.CIFixTally(
+        failures=[f.id for f in adapter.fixable + adapter.skipped],
+        fixed=fixed,
+        unfixed=[f.id for f in adapter.fixable if f.id not in fixed],
+        skipped=[{"id": f.id, "kind": f.group.kind.value} for f in adapter.skipped],
+        suite_status=run.suite.status.value if run is not None else "",
+        commit=run.landed.sha if run is not None and run.landed else "",
+    )
+
+
+def run_fix(trail, report: pr.ci_report.CIReport, ctx, *, rebase_first: bool = True) -> int:
+    """Apply AI-driven fixes for CI failures. Returns exit code.
+
+    *rebase_first* False skips `rebase_if_behind`: `pr batch` rebases in a
+    step of its own, and a drafted rebase has not moved `origin/<branch>`, so
+    the behind count would draft a second force-push.
+    """
     if not ctx.worktree_root:
         core.log.error("--fix requires a worktree (use --repo-dir)")
         return 1
 
     if not report.failures:
         core.log.info("No failures to fix")
+        _emit_tally(pr.ci_report.CIFixTally())
         return 0
 
     state = pr.state.load_or_init(
@@ -112,12 +142,14 @@ def run_fix(trail, report: pr.ci_report.CIReport, ctx) -> int:
         # never empty here.
         kinds = sorted({f.group.kind.value for f in adapter.skipped})
         core.log.info(f"No fixable failures (all {'/'.join(kinds)})")
+        _emit_tally(_tally(adapter))
         return 0
 
     # Rebase before the pass, not before the report — the original run has the
     # failures we need to fix, but the branch should be current before applying
     # fixes.
-    rebase_if_behind(trail, report, ctx)
+    if rebase_first:
+        rebase_if_behind(trail, report, ctx)
 
     # A rebase that stopped part-way leaves its replay in the worktree, and a
     # fix pass turned loose on a mid-rebase index edits files still carrying
@@ -136,6 +168,7 @@ def run_fix(trail, report: pr.ci_report.CIReport, ctx) -> int:
     core.log.info(f"Fixing {len(adapter.fixable)} CI failure(s)...")
 
     run = fix.engine.run(adapter, trail=trail)
+    _emit_tally(_tally(adapter, run))
 
     fixed = sum(1 for o in run.outcomes if o.outcome.counts_as_fixed)
     unresolved = len(run.outcomes) - fixed

@@ -17,6 +17,7 @@ import core.report  # noqa: E402
 import git.client  # noqa: E402
 import git.land  # noqa: E402
 import pr.domains  # noqa: E402
+import rebase.commands  # noqa: E402
 import rebase.inspect  # noqa: E402
 import rebase.land  # noqa: E402
 import rebase.lifecycle  # noqa: E402
@@ -90,9 +91,9 @@ def test_a_one_sided_rebase_in_push_mode_skips_the_push():
 
     with mock.patch.object(rebase.pr_snapshot, "fetch", return_value=None), \
          mock.patch.object(rebase.target, "resolve_target_ref", return_value=_TARGET), \
-         mock.patch.object(cli.pr_rebase, "cmd_start", side_effect=start), \
-         mock.patch.object(cli.pr_rebase, "cmd_push", return_value=1) as push:
-        rc = cli.pr_rebase._run(args, mock.MagicMock(), "/fake", mock.MagicMock())
+         mock.patch.object(rebase.commands, "cmd_start", side_effect=start), \
+         mock.patch.object(rebase.commands, "cmd_push", return_value=1) as push:
+        rc = rebase.commands._run(args, mock.MagicMock(), "/fake", mock.MagicMock())
     assert rc == 0
     push.assert_not_called()
 
@@ -142,7 +143,7 @@ def test_cmd_start_resumes_with_the_recorded_tally():
          mock.patch.object(rebase.target, "resume_target_ref", return_value=_TARGET), \
          mock.patch.object(rebase.lifecycle, "resumed_tally", return_value=seeded), \
          mock.patch.object(rebase.lifecycle, "drive_to_completion", return_value=0) as drive:
-        cli.pr_rebase.cmd_start("/fake", mock.MagicMock(), rebase.types.RunMode.FIX,
+        rebase.commands.cmd_start("/fake", mock.MagicMock(), rebase.types.RunMode.FIX,
                                 target_ref=_TARGET)
     assert drive.call_args.kwargs["tally"] is seeded
 

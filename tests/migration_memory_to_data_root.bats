@@ -216,6 +216,28 @@ _run_migration() {
   [ -f "$stray/memory/notes.md" ]
 }
 
+@test "carries a removed worktree's memory into the repo above it" {
+  # `wt remove` deletes the checkout but not Claude's project directory, whose
+  # transcripts still name the gone path. The repo is still there, so the
+  # memory belongs in its keyed store, not parked.
+  rm -rf "$HOME/.claude/projects/$SLUG"
+  local stray="$HOME/.claude/projects/-gone"
+  mkdir -p "$stray/memory"
+  echo "worktree note" > "$stray/memory/notes.md"
+  printf '{"cwd":"%s"}\n' "$REPO_DIR/gone-worktree" > "$stray/session.jsonl"
+
+  _run_migration
+
+  [ "$status" -eq 0 ]
+  key="$(bash -c "
+    . '$REPO_ROOT/lib/ui.sh'
+    . '$REPO_ROOT/lib/ai/session-count.sh'
+    _repo_key '$REPO_DIR'
+  ")"
+  [ -f "$WORKBENCH_DATA_DIR/memory/$key/notes.md" ]
+  [ ! -e "$WORKBENCH_DATA_DIR/memory-unkeyed" ]
+}
+
 @test "parks a directory whose transcript cwd is not a repo" {
   # The transcript fallback resolves a real directory, but git cannot key it.
   # That is as permanent as no answer at all.

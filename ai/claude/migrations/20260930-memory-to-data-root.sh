@@ -71,12 +71,16 @@ migration_20260930_memory_to_data_root() {
     # an inference, so that is the fallback.
     repo_dir="$(_migration_repo_for_slug "$slug")" || repo_dir=""
 
-    # Parked rather than retried only when the miss is permanent: nothing names
-    # a directory for the slug, or the one named sits in no git tree — a
-    # session started outside any repo (~/git, say). Neither gains a repo by
-    # waiting, and retrying them failed the migration on every sync forever.
-    # Parked under the slug, so a person who knows which repo it belonged to
-    # can still move it by hand.
+    # Parked when nothing on disk ties the slug to a repo: no registry entry or
+    # transcript names a surviving directory for it, or the one named sits in
+    # no git tree — a session started outside any repo (~/git, say). Retrying
+    # those failed the migration on every sync forever.
+    #
+    # ceiling: a repo that is merely absent this run — an unmounted volume, a
+    # checkout never registered whose transcripts have rotated away — parks
+    # rather than retries. Upgrade trigger: if parked directories turn out to
+    # belong to live repos, move them back into retry. Parked under the slug,
+    # so a person who knows which repo it belonged to can move it by hand.
     #
     # A directory inside a git tree that still cannot be keyed is the opposite
     # case — git missing from PATH, a safe.directory refusal — and retries, or
@@ -152,7 +156,16 @@ _migration_repo_for_slug() {
   done < <(project_repo_worktrees)
 
   candidate="$(_migration_cwd_from_transcripts "$CLAUDE_DIR/projects/$slug")" || return 1
-  [[ -n "$candidate" && -d "$candidate" ]] || return 1
+  [[ "$candidate" == /* ]] || return 1
+  # A worktree removed with `wt remove` leaves transcripts naming a path that is
+  # gone, while the repo it belonged to is still above it — a bare container
+  # keys to the same shared git dir its worktrees do. The nearest surviving
+  # ancestor is handed back, and the caller's git-tree check decides whether it
+  # is a repo to carry into or a plain directory to park.
+  while [[ ! -d "$candidate" && "$candidate" != "/" ]]; do
+    candidate="$(dirname "$candidate")"
+  done
+  [[ "$candidate" != "/" ]] || return 1
   printf '%s' "$candidate"
 }
 
@@ -207,7 +220,10 @@ _migration_dir_is_empty() {
 # or refuses the repo answers "inside a tree" and the caller retries.
 _migration_inside_git_tree() {
   local dir="$1"
-  while [[ -n "$dir" && "$dir" != "/" ]]; do
+  # Absolute only: dirname of a relative path bottoms out at "." and the walk
+  # below would never reach "/".
+  [[ "$dir" == /* ]] || return 1
+  while [[ "$dir" != "/" ]]; do
     [[ -e "$dir/.git" ]] && return 0
     dir="$(dirname "$dir")"
   done

@@ -946,8 +946,7 @@ hooks, and agents.
 promote-scan [--home DIR] [--workbench DIR]
 ```
 
-`--workbench` defaults to `$OTTO_WORKBENCH` or the machine's main workbench
-checkout.
+`--workbench` defaults to `$OTTO_WORKBENCH`, else the checkout this runs from.
 
 Stdout is a markdown report with Memory State (topic files, last-promote stamp),
 Backed-Up Memories (`ai/memory` in the workbench), and Workbench Artifacts
@@ -959,7 +958,7 @@ Backed-Up Memories (`ai/memory` in the workbench), and Workbench Artifacts
 |------|-------------|
 | `-V`, `--version` | print version and exit. |
 | `--home` `<dir>` | home directory override (for testing; default: `$HOME`). |
-| `--workbench` `<dir>` | workbench directory (default: $OTTO_WORKBENCH or ~/git/personal/otto-nation/otto-workbench/main). |
+| `--workbench` `<dir>` | workbench directory (default: $OTTO_WORKBENCH, else the checkout this runs from). |
 
 ### `retro-consume`
 

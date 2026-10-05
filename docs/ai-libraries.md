@@ -5530,6 +5530,42 @@ detached HEAD (a `--recover` pin, or a PR whose branch was deleted) the guard
 that normally skips the current branch has no name to match, so the same stale
 neighbour can win on distance alone.
 
+### memory/dream.py
+
+Scan session transcripts and memory state for dream consolidation.
+
+Sessions come from `core.sessions`, which owns what a session is and where one
+lives across every harness. The report header prints a per-harness transcript
+count, so a harness that has stopped being discovered reads as a zero.
+
+Not: transcript discovery, record shapes or automation filtering
+(`core.sessions`), the store (`core.memory`), argument parsing
+(`cli.dream_scan`).
+
+### memory/promote.py
+
+One promotion scan.
+
+It reports every registered repo's memory, the backed-up memories in the
+workbench, and the workbench's rules, scripts, hooks and agents, for the
+promote skill to weigh.
+
+Not: the store, its keys or topic-file parsing (`core.memory`), where the
+registry lives (`config.workbench_projects`), argument parsing or the
+default workbench (`cli.promote_scan`, `core.workbench_paths`).
+
+### memory/state.py
+
+Shared memory-state scan for dream and promote.
+
+Both scans read every registered repo's memory forward from the registry
+and format a last-run stamp plus topic-file rows. The reports stay
+byte-identical; only the stamp name, the dict key, and whether topic
+bodies are included differ.
+
+Not: the store (`core.memory`), argument parsing, or the report layout
+each scan owns.
+
 ### pr/push_intent.py
 
 What every push on this machine was about to do, and whether it did it.
@@ -6083,6 +6119,23 @@ delegate's flags mean.
 Neither property is the delegate's to maintain. A handler that forgets either
 is still correct, and a new one cannot reintroduce the leak by omission.
 
+### cli/dream_scan.py
+
+Scan session transcripts and memory state for dream consolidation.
+
+Replaces Phases 1+2 of the `dream` skill (`ai/skills/dream`): Orient + Gather
+Signal. The `architecture` skill also uses the path-discovery flags rather than
+globbing a harness tree.
+
+```
+dream-scan [--days N] [--home DIR]
+dream-scan [--days N] [--home DIR] --list-transcripts
+dream-scan --memory-dir REPO
+```
+
+`--list-transcripts` prints every transcript path in the window, one per line,
+and exits. `--memory-dir REPO` prints that repo's memory directory and exits.
+
 ### cli/needs.py
 
 What a `pr` subcommand needs of dispatch before its handler runs.
@@ -6269,6 +6322,20 @@ Usage:
   pr-rebase --fork-point <ref>        # replay only the commits after <ref>
   pr-rebase --no-verify               # force-push without running the pre-push hook
   pr-rebase --repo-dir <path>         # specify worktree directory
+
+### cli/promote_scan.py
+
+Scan memories and workbench artifacts for promotion evaluation.
+
+Replaces Phase 1 of the `promote` skill (`ai/skills/promote`): Orient. Reads
+every registered repo's memory plus the workbench checkout's rules, scripts,
+hooks, and agents.
+
+```
+promote-scan [--home DIR] [--workbench DIR]
+```
+
+`--workbench` defaults to `$OTTO_WORKBENCH`, else the checkout this runs from.
 
 ### cli/registry.py
 

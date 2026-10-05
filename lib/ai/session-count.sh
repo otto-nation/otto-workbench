@@ -84,13 +84,21 @@ _has_enough_sessions() {
 # fails when the two drift.
 #
 # LC_ALL is local to this function: unpinned, ${#s} and ${s:i:1} count bytes
-# and reproduce the GNU `tr` behaviour this exists to avoid. C.UTF-8 rather
-# than en_US.UTF-8 because glibc has it built in and macOS carries it too.
+# and reproduce the GNU `tr` behaviour this exists to avoid. C.UTF-8 first
+# because glibc has it built in; en_US.UTF-8 after it because macOS does not
+# ship C.UTF-8, and pinning only that printed a setlocale warning on every call
+# there and left the caller's locale in force. Each candidate is assigned with
+# the warning silenced and kept once a two-byte letter measures one character —
+# a test of the property the loop needs, without forking `locale -a`. When
+# neither exists the loop counts bytes, as it would have unpinned.
 # The class stays an ASCII range for the same reason it is not [[:alnum:]],
 # which under this locale is Unicode-aware and would keep an accented letter.
 _encode_slug() {
-  local s="$1" class="$2" out="" i c
-  local LC_ALL=C.UTF-8
+  local s="$1" class="$2" out="" i c loc probe='é'
+  for loc in C.UTF-8 en_US.UTF-8; do
+    local LC_ALL="$loc" 2>/dev/null
+    ((${#probe} == 1)) && break
+  done
   for ((i = 0; i < ${#s}; i++)); do
     c="${s:i:1}"
     case "$c" in

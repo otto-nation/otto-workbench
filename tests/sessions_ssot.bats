@@ -162,6 +162,18 @@ make_memory() {
   [ "$(slug_python "$p")" = "$want" ]
 }
 
+@test "the shell slug counts characters and stays silent under a non-UTF-8 locale" {
+  # The pin inside _encode_slug has to land on a locale the machine actually
+  # has. macOS ships no C.UTF-8, so pinning that alone printed a setlocale
+  # warning on every call and fell back to whatever the caller inherited —
+  # under LANG=C, one hyphen per byte. 2>&1 so the warning fails the match.
+  local p="/Users/dev/git/café/naïve" want="--Users-dev-git-caf--na-ve--"
+  run env -u LC_ALL -u LC_CTYPE LANG=C bash -c \
+    '. "$1/lib/ai/session-count.sh"; _canonical_slug "$2"' _ "$REPO_ROOT" "$p"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$want" ]
+}
+
 @test "both languages preserve underscores in a slug" {
   local p="/Users/dev/git/repo/feat-add_auth"
   [ "$(slug_shell "$p")" = "$(slug_python "$p")" ]

@@ -18,11 +18,11 @@ from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import config.workbench_projects
 import core.log
 import core.memory
 import core.sessions
 import core.trail
+import memory.state
 
 
 # The binary a user runs and the trail records, which is not this module's own
@@ -34,8 +34,6 @@ TEXT_PREVIEW_LENGTH = 200
 DEFAULT_DAYS = 7
 
 LAST_DREAM_STAMP = "last-dream"
-
-DATETIME_FMT = "%Y-%m-%d %H:%M"
 
 SIGNAL_PATTERNS: dict[str, re.Pattern] = {
     "correction": re.compile(
@@ -75,58 +73,6 @@ def classify_signal(text: str) -> str | None:
         if SIGNAL_PATTERNS[category].search(text):
             return category
     return None
-
-
-def _read_last_dream(repo_path: Path) -> str | None:
-    """When this repo last dreamed, read from the gate stamp.
-
-    The stamp is regenerable state and sits under the gates root with the
-    other cooldowns, rather than among the authored topic files it used to
-    share a directory with.
-    """
-    stamp = core.memory.gate_stamp_file(repo_path, LAST_DREAM_STAMP)
-    try:
-        ts = int(stamp.read_text().strip())
-    except (ValueError, OSError):
-        return None
-    return datetime.fromtimestamp(ts).strftime(DATETIME_FMT)
-
-
-def _topic_row(tf: core.memory.TopicFile) -> dict:
-    return {
-        "filename": tf.filename,
-        "name": tf.name,
-        "description": tf.description,
-        "type": tf.type,
-        "modified": tf.modified,
-        "stale": tf.stale,
-        "age_days": tf.age_days,
-    }
-
-
-def scan_memory_state() -> list[dict]:
-    """Every registered repo's memory, read forward from the registry.
-
-    Forward rather than by globbing the memory root and working back: the key
-    is a truncated slug plus a digest, so a directory name cannot say which
-    repo it belongs to.
-    """
-    states = []
-    for repo_path in config.workbench_projects.registered():
-        try:
-            directory = core.memory.memory_dir(repo_path)
-        except ValueError:
-            continue
-        state = core.memory.state_of(directory)
-        if state is None:
-            continue
-        states.append({
-            "project_id": state.repo_key,
-            "line_count": state.line_count,
-            "last_dream": _read_last_dream(repo_path),
-            "topic_files": [_topic_row(tf) for tf in state.topic_files],
-        })
-    return states
 
 
 def _signals_in(session: core.sessions.Session) -> list[dict]:
@@ -311,7 +257,7 @@ def run_scan(home: Path, days: int, *, debug: bool = False) -> int:
         core.log.info(f"Scanning sessions from last {days} days")
         core.log.info(f"Home: {home}")
 
-        memory_states = scan_memory_state()
+        memory_states = memory.state.scan_memory_state(LAST_DREAM_STAMP, "last_dream")
         core.log.info(f"Found {len(memory_states)} project(s) with memory")
         trail.info("scan_memories", f"found {len(memory_states)} memory files across {sum(len(s.get('topic_files', [])) for s in memory_states)} topics")
 

@@ -18,10 +18,10 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-import config.workbench_projects
 import core.log
 import core.memory
 import core.trail
+import memory.state
 
 
 # The binary a user runs and the trail records, which is not this module's own
@@ -36,11 +36,6 @@ SETTINGS_REL = Path("ai") / "claude" / "settings.json"
 BACKED_UP_MEMORY_REL = Path("ai") / "memory"
 BIN_REL = Path("bin")
 
-DATETIME_FMT = "%Y-%m-%d %H:%M"
-
-BODY_PREVIEW_LENGTH = 500
-
-
 def first_heading(path: Path) -> str:
     try:
         lines = path.read_text().splitlines()
@@ -50,57 +45,6 @@ def first_heading(path: Path) -> str:
         if line.startswith("#"):
             return line.lstrip("#").strip()
     return ""
-
-
-def _read_last_promote(repo_path: Path) -> str | None:
-    """When this repo last promoted, read from the gate stamp.
-
-    The stamp is regenerable state and sits under the gates root with the
-    other cooldowns, rather than among the authored topic files.
-    """
-    stamp = core.memory.gate_stamp_file(repo_path, LAST_PROMOTE_STAMP)
-    try:
-        ts = int(stamp.read_text().strip())
-    except (ValueError, OSError):
-        return None
-    return datetime.fromtimestamp(ts).strftime(DATETIME_FMT)
-
-
-def _topic_row(tf: core.memory.TopicFile) -> dict:
-    return {
-        "filename": tf.filename,
-        "name": tf.name,
-        "description": tf.description,
-        "type": tf.type,
-        "body": (tf.body or "")[:BODY_PREVIEW_LENGTH],
-        "modified": tf.modified,
-        "stale": tf.stale,
-        "age_days": tf.age_days,
-    }
-
-
-def scan_memory_state() -> list[dict]:
-    """Every registered repo's memory, read forward from the registry.
-
-    Forward rather than by globbing the memory root: the key is a truncated
-    slug plus a digest, so a directory name cannot say which repo it is.
-    """
-    states = []
-    for repo_path in config.workbench_projects.registered():
-        try:
-            directory = core.memory.memory_dir(repo_path)
-        except ValueError:
-            continue
-        state = core.memory.state_of(directory, with_body=True)
-        if state is None:
-            continue
-        states.append({
-            "project_id": state.repo_key,
-            "line_count": state.line_count,
-            "last_promote": _read_last_promote(repo_path),
-            "topic_files": [_topic_row(tf) for tf in state.topic_files],
-        })
-    return states
 
 
 def scan_backed_up_memories(workbench: Path) -> list[dict]:
@@ -113,7 +57,7 @@ def scan_backed_up_memories(workbench: Path) -> list[dict]:
     for f in sorted(memory_dir.glob(core.memory.TOPIC_GLOB)):
         tf = core.memory.scan_topic_file(f, now, with_body=True)
         if tf is not None:
-            results.append(_topic_row(tf))
+            results.append(memory.state.topic_row(tf, with_body=True))
     return results
 
 
@@ -129,7 +73,7 @@ def scan_rules(workbench: Path) -> list[dict]:
         results.append({
             "filename": f.name,
             "heading": heading,
-            "body": body[:BODY_PREVIEW_LENGTH],
+            "body": body[:memory.state.BODY_PREVIEW_LENGTH],
         })
     return results
 
@@ -325,7 +269,9 @@ def run_scan(home: str, workbench: str, *, debug: bool = False) -> int:
         core.log.info(f"Home: {home_path}")
         core.log.info(f"Workbench: {workbench_path}")
 
-        memory_states = scan_memory_state()
+        memory_states = memory.state.scan_memory_state(
+            LAST_PROMOTE_STAMP, "last_promote", with_body=True,
+        )
         core.log.info(f"Found {len(memory_states)} project(s) with memory")
         trail.info("scan_memories", f"found {len(memory_states)} memory files across {sum(len(s.get('topic_files', [])) for s in memory_states)} topics")
 

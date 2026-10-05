@@ -26,6 +26,7 @@ from __future__ import annotations
 import sys
 
 import core.log
+import core.proc
 import core.publishing
 import core.run_lock
 from core.tool_parser import ToolParser
@@ -74,7 +75,20 @@ def build_parser() -> ToolParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *,
+         install_signal_handler: bool = True) -> int:
+    """Parse *argv* and run the CI check it asks for.
+
+    `install_signal_handler` defaults True because the common caller is the
+    `ai/bin` shim, for which this is the whole process. An in-process caller
+    that owns its own handler passes False.
+    """
+    # Only when this module is the process. `pr ci` reaches here having
+    # installed the identical handler at its own entry point, and a second
+    # install would replace the caller's without chaining or restoring it.
+    if install_signal_handler:
+        core.proc.install_stop_handler(core.log.interrupted)
+
     parser = build_parser()
     argv = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(argv)

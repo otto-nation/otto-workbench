@@ -409,6 +409,12 @@ def _dispatch(args, ctx: pr.context.ResolvedContext, extra: list[str], global_ar
             cli.dispatch.delegate_argv(spec, extra, ctx,
                                    original_pr=original_pr,
                                    original_branch=original_branch),
+            # `pr` installed the identical handler at its own entry point, and
+            # `signal.signal` neither chains nor restores — a second install
+            # would replace the one that reports the interrupt for the whole
+            # invocation with one that reports it for the delegate alone.
+            **({"install_signal_handler": False}
+               if spec.handler == "cli.ci_check:main" else {}),
         )
     except Exception as exc:
         trail.error("unexpected_error", str(exc))

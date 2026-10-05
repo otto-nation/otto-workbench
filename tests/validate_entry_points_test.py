@@ -177,7 +177,8 @@ def test_every_shim_in_this_repo_passes():
     """The shims the repo ships; a body creeping back into one fails here."""
     shims = [p for p in vep.discover(REPO_ROOT) if vep.in_scope(p.read_text())]
     # A floor, not a count: it fails if discovery or the scope test silently
-    # stops finding the entry points (the repo shipped 17 when this was written).
+    # stops finding the entry points. 23 ship today; the floor sits below that
+    # so retiring one is not a test edit.
     assert len(shims) >= 17
     offenders = {
         str(p.relative_to(REPO_ROOT)): vep.check_source(p.read_text(), REPO_ROOT)

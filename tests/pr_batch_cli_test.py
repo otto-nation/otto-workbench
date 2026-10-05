@@ -371,3 +371,26 @@ def test_watch_ci_reaches_the_run(monkeypatch):
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
     assert _main(["batch", "run", "--checkout", "/r", "--watch-ci"]) == 0
     assert seen["watch_ci"] is True
+
+
+def test_run_from_a_saved_plan_uses_refs_it_fetched_itself(monkeypatch, tmp_path):
+    # `pr batch plan` dropped the namespace it saved, so a run that kept it
+    # would read every rebase need from GitHub's merge state instead.
+    rows = [PlanRow("o/r", "/r", 1, "t", "b1", "h", False,
+                    {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER},
+                    ref_namespace="refs/pr-batch/gone")]
+    saved = tmp_path / "plan.json"
+    saved.write_text(json.dumps(cli.pr_batch.core.serde.to_dict(
+        Plan("me", rows, ref_namespace="refs/pr-batch/gone", ref_dirs=["/r"]))))
+    monkeypatch.setattr(batch.plan, "new_namespace", lambda: "refs/pr-batch/fresh")
+    monkeypatch.setattr(batch.plan, "fetch_namespace", lambda d, ns: True)
+    monkeypatch.setattr(batch.plan, "drop_refs", lambda dirs, ns: None)
+    seen = {}
+
+    def fake_run(self):
+        seen["ns"], seen["dirs"] = self.run.ref_namespace, self.run.ref_dirs
+        return batch.model.RunStatus.DONE
+
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    assert _main(["batch", "run", "--plan", str(saved)]) == 0
+    assert seen == {"ns": "refs/pr-batch/fresh", "dirs": ["/r"]}

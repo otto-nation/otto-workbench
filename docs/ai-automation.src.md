@@ -416,7 +416,7 @@ closed, and every step runs drafted — the batch is the only thing that pushes.
 ```bash
 pr batch plan --checkout DIR …           # which PRs need which steps (JSON)
 pr batch run --checkout DIR … [opts]     # start; NDJSON events on stdout
-pr batch run --plan FILE …               # start from a saved plan
+pr batch run --plan FILE …               # start from a saved plan (refetches refs)
 pr batch resume [RUN_ID]                 # continue waiting or interrupted
 pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
 pr batch cancel [RUN_ID] [--kill]
@@ -426,6 +426,9 @@ pr batch status [RUN_ID]
 Steps run in the order `rebase`, `ci`, `comments`, `review`. `rebase` is needed
 when the branch is behind its PR's base, from refs in a private `refs/pr-batch/`
 namespace (GitHub merge state fallback; `UNKNOWN` and `DIRTY` count as needed).
+`plan` drops its refs on exit, so `run --plan` fetches a fresh namespace: the
+fallback reads a behind branch as `CLEAN` wherever the base does not require
+up-to-date branches.
 `ci` runs `ci-check --fix --no-rebase --head-sha <planned remote head>` (not
 `pr ci`) when the rollup failed, with `--wait` if it was still running. Fork
 heads skip both. A stacked PR waits for its base's publish; `resume` retries

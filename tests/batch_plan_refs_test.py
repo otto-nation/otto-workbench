@@ -19,7 +19,7 @@ import batch.store  # noqa: E402
 import core.proc  # noqa: E402
 import git.client  # noqa: E402
 from batch.model import STEP_ORDER, RunStatus, Step  # noqa: E402
-from batch.plan import PlanRow, StepNeed  # noqa: E402
+from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
 from config.workbench_config import BatchConfig  # noqa: E402
 
 
@@ -99,6 +99,34 @@ def test_replan_reads_need_from_the_rows_namespace(monkeypatch):
     batch.plan.replan_row(PlanRow("o/a", "/r", 7, "t", "feat", "h", False, {},
                                   ref_namespace="refs/pr-batch/abcd"))
     assert seen["ns"] == "refs/pr-batch/abcd"
+
+
+def test_a_saved_plan_refetched_counts_a_clean_branch_that_is_behind(tmp_path, monkeypatch):
+    # CLEAN is what GitHub reports for a branch behind a base that does not
+    # require branches to be up to date; only the refs can tell.
+    _quiet(monkeypatch)
+    pair = remote_and_clone(tmp_path)
+    advance(pair.seed, "main", "upstream")
+    gone = "refs/pr-batch/gone"
+    saved = Plan("me", [PlanRow("o/a", str(pair.work), 7, "t", "feat", "h", False, {},
+                                ref_namespace=gone)], ref_namespace=gone, ref_dirs=[])
+    plan = batch.plan.refetch(saved)
+    [row] = plan.rows
+    assert plan.ref_namespace not in ("", gone)
+    assert plan.ref_dirs == [str(pair.work)]
+    assert row.ref_namespace == plan.ref_namespace
+    fresh = batch.plan._row(_node(merge_state="CLEAN"), row.repo_dir, row.repo, "",
+                            row.ref_namespace)
+    assert fresh.needs[Step.REBASE] == StepNeed(True, "1 behind main")
+
+
+def test_a_saved_plan_whose_fetch_fails_carries_no_namespace(monkeypatch):
+    monkeypatch.setattr(batch.plan, "fetch_namespace", lambda d, ns: False)
+    saved = Plan("me", [PlanRow("o/a", "/r", 7, "t", "feat", "h", False, {},
+                                ref_namespace="refs/pr-batch/gone")])
+    plan = batch.plan.refetch(saved)
+    assert plan.ref_dirs == []
+    assert [r.ref_namespace for r in plan.rows] == [""]
 
 
 def test_drop_refs_removes_the_namespace_and_nothing_else(tmp_path):

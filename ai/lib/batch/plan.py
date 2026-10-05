@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import secrets
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import core.log
@@ -326,6 +326,26 @@ def build_plan(repo_dirs: list[str]) -> Plan:
         raise
     return Plan(viewer=(data.get("viewer") or {}).get("login", ""), rows=rows,
                 ref_namespace=namespace, ref_dirs=fetched)
+
+
+def refetch(plan: Plan) -> Plan:
+    """*plan* with refs of its own, fetched into a new namespace in each of its rows' repos.
+
+    A saved plan names a namespace that `pr batch plan` dropped on exit. Every
+    step re-reads its rebase need from the run's refs, and without them it falls
+    back to GitHub's merge state, which reports a branch that is behind as
+    CLEAN wherever the base does not require branches to be up to date.
+    """
+    repo_dirs = sorted({r.repo_dir for r in plan.rows})
+    namespace = new_namespace()
+    try:
+        fetched = [d for d in repo_dirs if fetch_namespace(d, namespace)]
+    except BaseException:
+        drop_refs(repo_dirs, namespace)
+        raise
+    rows = [replace(r, ref_namespace=namespace if r.repo_dir in fetched else "")
+            for r in plan.rows]
+    return replace(plan, rows=rows, ref_namespace=namespace, ref_dirs=fetched)
 
 
 def replan_row(row: PlanRow) -> PlanRow | None:

@@ -679,9 +679,6 @@ pr batch status [RUN_ID]
 Steps run in the order `rebase`, `ci`, `comments`, `review`. `rebase` is needed
 when the branch is behind its PR's base, from refs in a private `refs/pr-batch/`
 namespace (GitHub merge state fallback; `UNKNOWN` and `DIRTY` count as needed).
-`plan` drops its refs on exit, so `run --plan` fetches a fresh namespace: the
-fallback reads a behind branch as `CLEAN` wherever the base does not require
-up-to-date branches.
 `ci` runs `ci-check --fix --no-rebase --head-sha <planned remote head>` (not
 `pr ci`) when the rollup failed, with `--wait` if it was still running. Fork
 heads skip both. A stacked PR waits for its base's publish; `resume` retries

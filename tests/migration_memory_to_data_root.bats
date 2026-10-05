@@ -238,6 +238,23 @@ _run_migration() {
   [ ! -e "$WORKBENCH_DATA_DIR/memory-unkeyed" ]
 }
 
+@test "parks a deleted path rather than carry it into an unrelated repo above" {
+  # The deleted clone sat in a plain directory under another repo's tree. That
+  # outer repo is not the one the memory came from, so it must not claim it.
+  local outer="$TMPDIR/outer"
+  mkdir -p "$outer/plain"
+  git -C "$outer" init --quiet
+  local stray="$HOME/.claude/projects/-deleted"
+  mkdir -p "$stray/memory"
+  echo "clone note" > "$stray/memory/notes.md"
+  printf '{"cwd":"%s"}\n' "$outer/plain/deleted-clone" > "$stray/session.jsonl"
+
+  _run_migration
+
+  [ "$status" -eq 0 ]
+  [ -f "$WORKBENCH_DATA_DIR/memory-unkeyed/-deleted/notes.md" ]
+}
+
 @test "parks a directory whose transcript cwd is not a repo" {
   # The transcript fallback resolves a real directory, but git cannot key it.
   # That is as permanent as no answer at all.

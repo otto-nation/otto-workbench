@@ -160,12 +160,16 @@ _migration_repo_for_slug() {
   # A worktree removed with `wt remove` leaves transcripts naming a path that is
   # gone, while the repo it belonged to is still above it — a bare container
   # keys to the same shared git dir its worktrees do. The nearest surviving
-  # ancestor is handed back, and the caller's git-tree check decides whether it
-  # is a repo to carry into or a plain directory to park.
+  # ancestor is accepted only when it holds a .git itself: any repo further up
+  # (a dotfiles repo at ~/.git, say) is a stranger to the deleted path, and
+  # carrying into it would file one repo's memory under another's. A miss
+  # there parks, where a person can look.
+  local recorded="$candidate"
   while [[ ! -d "$candidate" && "$candidate" != "/" ]]; do
     candidate="$(dirname "$candidate")"
   done
   [[ "$candidate" != "/" ]] || return 1
+  [[ "$candidate" == "$recorded" || -e "$candidate/.git" ]] || return 1
   printf '%s' "$candidate"
 }
 

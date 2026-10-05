@@ -81,13 +81,13 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--pool", type=int, default=None, help="Concurrency ceiling")
     r.add_argument("--auto-publish", type=_steps, default=[], metavar="STEPS",
                    help="Publish an item without asking when it closes with no open decision "
-                        "and every step that drafted work is in STEPS. Steps never push "
-                        "while they run")
+                        "and every drafted step is in STEPS and finished done. Steps never "
+                        "push while they run")
     r.add_argument("--prs", default="", help="Comma-separated repo#number keys to include")
     r.add_argument("--select", type=_selection, action="append", default=[],
                    metavar="KEY=STEPS", help="Run exactly these steps for one PR")
     r.add_argument("--watch-ci", action="store_true",
-                   help="After a publish pushes, re-check CI once (pr ci --wait, up to "
+                   help="After a publish pushes, re-check CI once (ci-check --wait, up to "
                         "its 900s --wait-timeout per item) and reopen the item on red")
 
     sub.add_parser("resume", help="Continue a run").add_argument(

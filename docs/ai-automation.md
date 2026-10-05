@@ -663,8 +663,8 @@ command as taking no target, or give it a delegate to read.
 ### pr batch
 
 `pr batch` rebases, CI-fixes, addresses comments on and self-reviews your open
-PRs. Every step is a child `pr` in a new session with stdin closed, and every
-step runs drafted — the batch is the only thing that pushes.
+PRs. Every step is a child `pr` (CI: `ci-check`) in a new session with stdin
+closed, and every step runs drafted — the batch is the only thing that pushes.
 
 ```bash
 pr batch plan --checkout DIR …           # which PRs need which steps (JSON)
@@ -678,19 +678,21 @@ pr batch status [RUN_ID]
 
 Steps run in the order `rebase`, `ci`, `comments`, `review`. `rebase` is needed
 when the branch is behind its PR's base, from refs in a private `refs/pr-batch/`
-namespace (GitHub merge state fallback; `UNKNOWN` counts as needed). `ci` runs
-`ci-check --fix --no-rebase --head-sha <planned remote head>` (not `pr ci`)
-when the rollup failed, with `--wait` if it was still running. Fork heads skip
-both. A stacked PR waits for its base's publish; `resume` retries `stacked_on`
-once that base is terminal. One fetching rebase or CI step per repo at a time
-(a waiting CI step excepted). No start in a dirty worktree (`dirty_worktree`),
+namespace (GitHub merge state fallback; `UNKNOWN` and `DIRTY` count as needed).
+`ci` runs `ci-check --fix --no-rebase --head-sha <planned remote head>` (not
+`pr ci`) when the rollup failed, with `--wait` if it was still running. Fork
+heads skip both. A stacked PR waits for its base's publish; `resume` retries
+`stacked_on` once that base is terminal. One fetching rebase or CI step per
+repo at a time (a waiting CI step excepted). No start in a dirty worktree
+(`dirty_worktree`),
 except a rebase resuming its own paused replay.
 
 An item that closes with drafted work opens one `publish` decision. Publish
 fetches the branch and refuses (`failed`) with `fetch_failed`, `remote_moved`,
 `not_comparable`, `not_incorporated`, or `not_incorporated_remote`. Otherwise
 it fast-forwards, or force-pushes with `pr rebase --push-only --expect
-<planned head>`, then posts comment replies. `force-publish` answers only
+<planned head>`, then posts comment replies only when the comments step
+drafted or items were tracked. `force-publish` answers only
 `not_incorporated_remote` for the listed commits — a new remote commit refuses
 again. `--auto-publish STEPS` resolves that decision when the item closes with
 no open decision and every drafted step is listed and finished `done`.
@@ -699,8 +701,9 @@ lists `ci_not_rechecked`.
 
 A step that needs a person opens one `step_review` whose `evidence` is
 `open_findings`, `checks_unverified` (`Fix-Checks:` of `red`/`timed_out`/`error`,
-or `unreadable` when trailers cannot be read), `ci_unfixed`, `one_sided`, or
-`stacked_on`. Actions: `accept`, `retry`, `skip-step`, `undo` (rebase:
+or `unreadable` when the step's commit-range `git log` failed; a commit with
+no trailer is not evidence), `ci_unfixed`, `one_sided`, or `stacked_on`.
+Actions: `accept`, `retry`, `skip-step`, `undo` (rebase:
 `git reset --hard` to the pre-rebase head). Kinds and actions are tabled in
 [`batch/resolve.py`](ai-libraries.md#batchresolvepy).
 

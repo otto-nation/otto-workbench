@@ -217,3 +217,8 @@ def test_ensure_worktree_finds_the_checkout_and_reports_dirt(tmp_path):
     res = batch.steps.ensure_worktree(str(repo), branch)
     assert res.ok and res.dirty
     assert Path(res.path).resolve() == repo.resolve()
+
+
+def test_a_watch_run_reads_ci_for_the_pushed_head_without_fixing():
+    assert batch.steps.step_argv(Step.CI, "pr", "/wt", remote_sha="new", watch=True) == \
+        ["pr", "ci", "--head-sha", "new", "--wait", "--repo-dir", "/wt"]

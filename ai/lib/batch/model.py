@@ -101,6 +101,8 @@ class StepRecord:
     start_head: str = ""
     # Named by --select: an instruction, so admission never skips it as not needed.
     explicit: bool = False
+    # The next run of this step is the one post-publish CI re-check, not a fix.
+    watch: bool = False
 
 
 @dataclass
@@ -150,6 +152,11 @@ class Item:
     pre_rebase_head: str = ""
     # The head a batch publish pushed, or "" when nothing was pushed.
     published_sha: str = ""
+    # The one post-publish CI re-check --watch-ci allows this item has been spent.
+    ci_watched: bool = False
+    # That re-check read a final CI report. A re-check that found no checks yet
+    # spends the watch without reading CI, so the summary still names the item.
+    ci_rechecked: bool = False
 
     def __post_init__(self) -> None:
         if not self.remote_sha:
@@ -180,6 +187,8 @@ class Run:
     trail_root: str = ""
     items: list[Item] = field(default_factory=list)
     decisions: list[Decision] = field(default_factory=list)
+    # Re-check CI once after a publish pushes (`pr batch run --watch-ci`).
+    watch_ci: bool = False
     # The plan's private ref namespace and the repos it was fetched into;
     # dropped when the run reaches a terminal state.
     ref_namespace: str = ""

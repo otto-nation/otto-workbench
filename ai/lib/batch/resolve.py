@@ -177,6 +177,22 @@ def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> 
     return created
 
 
+def _reopen_for_ci(run: Run, item: Item) -> None:
+    """With --watch-ci, send a just-published item back for one CI re-check.
+
+    Once per item per run: `ci_watched` is spent here, so a red re-check is
+    fixed and published once more and never watched again.
+    """
+    if not (run.watch_ci and item.has(Step.CI) and not item.ci_watched):
+        return
+    item.ci_watched = True
+    for rec in item.steps:
+        rec.drafted = False
+    ci = item.step(Step.CI)
+    ci.status, ci.watch = StepStatus.PENDING, True
+    item.status = ItemStatus.QUEUED
+
+
 def _publish(run: Run, item: Item, pr_bin: str, run_cmd: Callable[[list[str]], int],
              read: Callable[[Item], batch.publish.TreeState], *,
              confirmed: Sequence[str] = ()) -> list[Decision]:
@@ -198,10 +214,15 @@ def _publish(run: Run, item: Item, pr_bin: str, run_cmd: Callable[[list[str]], i
         # before, since a landing may commit (hook regeneration) first. The tree
         # seam re-reads it; an unreadable branch falls back to the pre-push tip.
         item.remote_sha = item.published_sha = read(item).local or tree.local
+        # CI on the head just pushed has not been read, whatever an earlier
+        # re-check of an earlier push found.
+        item.ci_rechecked = False
     for argv in rest:
         if run_cmd(argv) != 0:
             return [_fail(run, item, "publish")]
     item.status = ItemStatus.DONE
+    if plan.pushes:
+        _reopen_for_ci(run, item)
     return []
 
 

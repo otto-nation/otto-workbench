@@ -53,13 +53,13 @@ class Harness:
     def __init__(self, rows, *, codes=None, auto_publish=(), pool=2, host=HEALTHY,
                  replan=None, worktrees=None, heads=None, selected=None, cfg=None,
                  runner=None, tree=None, moves=(), stdouts=None, contains=None,
-                 dirty=None, rebasing=None):
+                 dirty=None, rebasing=None, watch_ci=False):
         self.codes = codes or {}
         self.moves, self.stdouts = set(moves), stdouts or {}
         self.spawned, self.events, self.live, self.max_live = [], [], 0, 0
         self.published, self.publish_code = [], 0
         self.run = batch.scheduler.new_run(rows, steps=list(batch.model.STEP_ORDER), selected=selected, pool=pool,
-                               auto_publish=list(auto_publish))
+                               auto_publish=list(auto_publish), watch_ci=watch_ci)
         self.heads = heads or {}
         self._make = lambda: batch.scheduler.Scheduler(
             self.run, pr_bin="pr", cfg=cfg or BatchConfig(pool_max=4),

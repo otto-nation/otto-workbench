@@ -356,3 +356,18 @@ def test_run_drops_the_plans_refs_when_it_fails_before_saving(monkeypatch):
     with pytest.raises(ValueError):
         _main(["batch", "run", "--checkout", "/r"])
     assert dropped == [(["/r"], "refs/pr-batch/abcd")]
+
+
+def test_watch_ci_reaches_the_run(monkeypatch):
+    rows = [PlanRow("o/r", "/r", 1, "t", "b1", "h", False,
+                    {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})]
+    seen = {}
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", rows))
+
+    def fake_run(self):
+        seen["watch_ci"] = self.run.watch_ci
+        return batch.model.RunStatus.DONE
+
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    assert _main(["batch", "run", "--checkout", "/r", "--watch-ci"]) == 0
+    assert seen["watch_ci"] is True

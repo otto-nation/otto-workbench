@@ -1,5 +1,6 @@
 """Scheduler rules about the tree: dirtiness, one fetcher per repo, stacks, CI waits."""
 
+import dataclasses
 import sys
 from pathlib import Path
 
@@ -85,3 +86,89 @@ def test_a_stacked_pr_waits_for_its_base_and_resumes_when_it_finishes():
     batch.store.write_request(h.run.id, {"decision": publish.id, "action": "discard"})
     h.sched.run_until_blocked()
     assert any(a[1] == "rebase" and a[-1] == "/wt/b2" for a in h.spawned)
+
+
+RED = '---\n{"type": "final", "failures": {"build": {"job": "build"}}}\n'
+GREEN = '---\n{"type": "final", "failures": {}}\n'
+REVIEW_AND_CI = {Step.REBASE: NO, Step.CI: NO, Step.COMMENTS: NO, Step.REVIEW: NEED}
+
+
+def _ci_spawns(h):
+    return [a for a in h.spawned if a[1] == "ci"]
+
+
+def test_a_running_rollup_makes_the_ci_step_wait():
+    pending = row(1, {Step.CI: NEED}, ci_state="PENDING")
+    h = Harness([pending], replan=lambda r: pending)
+    h.sched.run_until_blocked()
+    assert "--wait" in _ci_spawns(h)[0]
+
+
+def test_a_waiting_ci_step_does_not_hold_the_repos_fetch_slot():
+    """A CI step polling GitHub for minutes must not hold back a rebase in its repo."""
+    rows = {1: row(1, {Step.CI: NEED}, ci_state="PENDING"), 2: row(2, ONLY_REBASE)}
+    h = Harness(list(rows.values()), pool=2, replan=lambda r: rows[r.pr])
+    h.sched.run_until_blocked()
+    assert h.max_live == 2
+    assert "--wait" in _ci_spawns(h)[0]
+
+
+def test_watch_ci_rechecks_once_and_reopens_on_red():
+    h = Harness([row(1, REVIEW_AND_CI)], moves={("review", "/wt/b1")},
+                auto_publish=[Step.REVIEW], watch_ci=True, stdouts={("ci", "/wt/b1"): RED})
+    real = h.sched._spawn
+
+    def spawn(argv, **kw):
+        if argv[1] == "ci" and "--fix" in argv:
+            h.heads["/wt/b1"] = "ci-fixed"
+        return real(argv, **kw)
+
+    h.sched._spawn = spawn
+    assert h.sched.run_until_blocked() is RunStatus.WAITING
+    watch, fix = _ci_spawns(h)
+    assert "--fix" not in watch and "--wait" in watch
+    assert "--fix" in fix
+    publish = h.run.open_decisions()[0]
+    assert publish.kind is DecisionKind.PUBLISH
+    batch.store.save(h.run)
+    batch.store.write_request(h.run.id, {"decision": publish.id, "action": "publish"})
+    assert h.sched.run_until_blocked() is RunStatus.DONE
+    assert len(_ci_spawns(h)) == 2
+    assert h.run.items[0].ci_watched is True
+    # The fix was pushed after the one re-check, so its CI was never read.
+    finished = [f for k, f in h.events if k == "run_finished"]
+    assert finished[-1]["ci_not_rechecked"] == ["o/r#1"]
+
+
+def test_a_green_recheck_finishes_the_item():
+    """The replan says CI is not needed — a just-pushed head reports no checks yet — so
+    only the watch flag gets the re-check past `_confirm`."""
+    h = Harness([row(1, REVIEW_AND_CI)], moves={("review", "/wt/b1")},
+                auto_publish=[Step.REVIEW], watch_ci=True, stdouts={("ci", "/wt/b1"): GREEN},
+                replan=lambda r: dataclasses.replace(r, needs=dict(REVIEW_AND_CI)))
+    assert h.sched.run_until_blocked() is RunStatus.DONE
+    assert len(_ci_spawns(h)) == 1
+    finished = [f for k, f in h.events if k == "run_finished"]
+    assert finished[-1]["ci_not_rechecked"] == []
+
+
+def test_a_watch_run_with_no_checks_yet_is_reported_not_rechecked():
+    """`pr ci --wait` exits 1 with "No checks found" seconds after a push: no report, no
+    failure decision, and the summary says CI was not re-checked."""
+    h = Harness([row(1, REVIEW_AND_CI)], moves={("review", "/wt/b1")},
+                auto_publish=[Step.REVIEW], watch_ci=True,
+                codes={("ci", "/wt/b1"): 1}, stdouts={("ci", "/wt/b1"): ""})
+    assert h.sched.run_until_blocked() is RunStatus.DONE
+    assert len(_ci_spawns(h)) == 1
+    assert not [d for d in h.run.decisions if d.kind is DecisionKind.FAILED]
+    finished = [f for k, f in h.events if k == "run_finished"]
+    assert finished[-1]["ci_not_rechecked"] == ["o/r#1"]
+
+
+def test_without_watch_ci_the_summary_names_what_was_not_rechecked():
+    h = Harness([row(1, REVIEW_AND_CI)], moves={("review", "/wt/b1")},
+                auto_publish=[Step.REVIEW])
+    h.sched.run_until_blocked()
+    finished = [f for k, f in h.events if k == "run_finished"]
+    assert finished[-1]["ci_not_rechecked"] == ["o/r#1"]
+    assert _ci_spawns(h) == []

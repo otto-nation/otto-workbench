@@ -20,6 +20,7 @@ import batch.publish
 import batch.resolve
 import batch.store
 import git.client
+import pr.ci_report
 import rebase.inspect
 from batch.model import (STEP_ORDER, Decision, DecisionKind, EvidenceKind, Item, ItemStatus, Run,
                          RunStatus, Step, StepRecord, StepStatus)
@@ -28,7 +29,8 @@ from batch.steps import StepProcess, WorktreeResult, ensure_worktree, step_argv
 from config.workbench_config import BatchConfig
 
 # Steps that fetch into the repo's shared `.git`. Two at once contend for its
-# locks, which today degrades to a "potentially stale" warning mid-rebase.
+# locks, which today degrades to a "potentially stale" warning mid-rebase. A
+# CI step started with --wait is not counted while live (see `_repo_busy`).
 _FETCHING = frozenset({Step.REBASE, Step.CI})
 
 
@@ -42,7 +44,8 @@ def _contains_commit(worktree: str, sha: str) -> bool:
 
 def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[Step]] | None,
             pool: int, auto_publish: list[Step], now: datetime | None = None,
-            ref_namespace: str = "", ref_dirs: list[str] | None = None) -> Run:
+            ref_namespace: str = "", ref_dirs: list[str] | None = None,
+            watch_ci: bool = False) -> Run:
     now = now or datetime.now(timezone.utc)
     items = []
     explicit = selected is not None
@@ -67,7 +70,7 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
             it.stacked_on = base
     return Run(id=batch.store.new_run_id(now), started_at=now.isoformat(timespec="seconds"),
                steps=list(steps), pool=pool, auto_publish=list(auto_publish), items=items,
-               ref_namespace=ref_namespace, ref_dirs=list(ref_dirs or []))
+               ref_namespace=ref_namespace, ref_dirs=list(ref_dirs or []), watch_ci=watch_ci)
 
 
 def row_for(item: Item, local_head: str = "", ref_namespace: str = "") -> PlanRow:
@@ -113,6 +116,8 @@ class _Live:
     rec: StepRecord
     proc: object
     head_before: str
+    # Started with --wait: it spends minutes polling GitHub, not fetching.
+    waits: bool = False
     peak: int = 0
     tail: collections.deque = field(default_factory=lambda: collections.deque(maxlen=40))
 
@@ -210,8 +215,13 @@ class Scheduler:
         # hide a `Fix-Checks: red` commit an earlier attempt left drafted.
         base = rec.start_head or live.head_before
         result = batch.outcomes.classify(rec.step, code, live.proc.stdout(), item=item,
-                                         log_tail=list(live.tail), head_before=base)
+                                         log_tail=list(live.tail), head_before=base,
+                                         watch=rec.watch)
         rec.exit_code, rec.ended_at, rec.status = code, batch.store.now_iso(), result.status
+        if rec.watch and batch.outcomes.last_report(live.proc.stdout(),
+                                                    pr.ci_report.FINAL_REPORT_TYPE):
+            item.ci_rechecked = True
+        rec.watch = False
         moved = self._head(item.worktree) != base
         # Drafted means this step left work the publish owes the remote: commits
         # since its first attempt started, or — for a comments pass, which drafts
@@ -304,7 +314,9 @@ class Scheduler:
             return None
         self._refresh_remote(item, fresh.head_sha)
         need = fresh.needs.get(rec.step)
-        forced = rec.explicit or (rec.step is Step.REVIEW and item.head_moved)
+        # A watch re-check is forced: a just-pushed head's rollup is usually
+        # absent or pending, which would read as "not needed".
+        forced = rec.explicit or rec.watch or (rec.step is Step.REVIEW and item.head_moved)
         if need is not None and not need.needed and not forced:
             rec.status = StepStatus.SKIPPED
             return None
@@ -349,9 +361,16 @@ class Scheduler:
         return True
 
     def _repo_busy(self, item: Item, rec: StepRecord) -> bool:
+        """Whether another fetching step is live in *item*'s repo.
+
+        A live CI step started with --wait does not count: it holds no git lock
+        while it polls GitHub, for up to its wait timeout, and holding the slot
+        that long would stall every rebase in the repo. The fetch a fix makes
+        after the wait may then overlap one, which degrades only to a warning.
+        """
         return rec.step in _FETCHING and any(
             live.item.repo_dir == item.repo_dir and live.rec.step in _FETCHING
-            for live in self._live.values())
+            and not live.waits for live in self._live.values())
 
     def _stacked_wait(self, item: Item, rec: StepRecord) -> bool:
         """Hold a stacked PR's rebase behind its base item's publish.
@@ -412,14 +431,16 @@ class Scheduler:
         attempt = sum(1 for _ in batch.store.logs_dir(self.run.id).glob(
             f"{slug}-{item.pr}-{rec.step.value}-*"))
         log = batch.store.logs_dir(self.run.id) / f"{slug}-{item.pr}-{rec.step.value}-{attempt}.log"
-        argv = step_argv(rec.step, self.pr_bin, item.worktree, remote_sha=item.remote_sha)
+        wait = rec.step is Step.CI and fresh.ci_state in batch.plan.CI_RUNNING
+        argv = step_argv(rec.step, self.pr_bin, item.worktree, remote_sha=item.remote_sha,
+                         wait=wait, watch=rec.watch)
         # Sample HEAD before spawn: the harness mutates it inside `_spawn`.
         head_before = self._head(item.worktree)
         rec.start_head = rec.start_head or head_before
         proc = self._spawn(argv, log_path=log, trail_root=self.run.trail_root)
         rec.status, rec.started_at, rec.log_path = StepStatus.RUNNING, batch.store.now_iso(), str(log)
         item.status, item.wait_reason = ItemStatus.RUNNING, ""
-        self._live[item.key] = _Live(item, rec, proc, head_before)
+        self._live[item.key] = _Live(item, rec, proc, head_before, waits=wait or rec.watch)
         self._emit("step_started", run=self.run.id, item=item.key, step=rec.step.value,
                    argv=argv, log_path=str(log))
 
@@ -432,9 +453,11 @@ class Scheduler:
         batch.store.save(self.run)
         if status in (RunStatus.DONE, RunStatus.CANCELLED):
             batch.plan.drop_refs(self.run.ref_dirs, self.run.ref_namespace)
+        unchecked = [i.key for i in self.run.items if i.published_sha and not i.ci_rechecked]
         self._emit("run_waiting" if status is RunStatus.WAITING else "run_finished",
                    run=self.run.id, status=status.value,
-                   open_decisions=len(self.run.open_decisions()))
+                   open_decisions=len(self.run.open_decisions()),
+                   ci_not_rechecked=unchecked)
         return status
 
     def _kill_live(self) -> None:

@@ -84,6 +84,9 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--prs", default="", help="Comma-separated repo#number keys to include")
     r.add_argument("--select", type=_selection, action="append", default=[],
                    metavar="KEY=STEPS", help="Run exactly these steps for one PR")
+    r.add_argument("--watch-ci", action="store_true",
+                   help="After a publish pushes, re-check CI once (pr ci --wait, up to "
+                        "its 900s --wait-timeout per item) and reopen the item on red")
 
     sub.add_parser("resume", help="Continue a run").add_argument(
         "run_id", nargs="?", help="Run to continue (default: the latest)")
@@ -196,7 +199,8 @@ def _cmd_run(args, bin_dir: Path) -> int:
                                       pool=batch.admission.ceiling(args.pool, cfg),
                                       auto_publish=args.auto_publish,
                                       now=datetime.now(timezone.utc),
-                                      ref_namespace=plan.ref_namespace, ref_dirs=plan.ref_dirs)
+                                      ref_namespace=plan.ref_namespace, ref_dirs=plan.ref_dirs,
+                                      watch_ci=args.watch_ci)
         trail = Trail.start(script="pr-batch", context={"run": run.id}, record=True)
         run.trail_root = os.environ.get(TRAIL_ROOT_ENV, "")
         batch.store.save(run)

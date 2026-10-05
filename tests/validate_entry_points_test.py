@@ -9,8 +9,8 @@ from conftest import load_script
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "bin" / "local" / "validate-entry-points"
 
-# The entry points the repo ships. Adding or retiring one is a deliberate edit
-# here, so discovery silently losing some cannot pass.
+# The entry points the repo ships. Asserted exactly, so adding or retiring one
+# is a deliberate edit here and discovery silently losing some cannot pass.
 MIN_SHIMS = 23
 
 vep = load_script("validate_entry_points", SCRIPT)
@@ -107,6 +107,24 @@ def test_a_call_in_a_help_preamble_loop_iterable_is_refused(root):
     preamble = ('if "--help" in sys.argv:\n    for line in os.popen("make"):\n'
                 '        print(line)\n    sys.exit(0)\n\n')
     assert vep.check_source(_shim(preamble), root) != []
+
+
+@pytest.mark.parametrize("test", [
+    '"--help" in sys.argv and os.system("make")',
+    'os.system("make") or "--help" in sys.argv',
+])
+def test_a_program_in_the_help_preamble_test_is_refused(root, test):
+    preamble = f'if {test}:\n    print(__doc__)\n    sys.exit(0)\n\n'
+    assert vep.check_source(_shim(preamble), root) != []
+
+
+def test_a_second_pin_block_is_refused(root):
+    block = PIN.split("sys.path.insert(0, str(_AI_LIB_DIR))\n")[0].split("\n", 1)[1]
+    assert vep.check_source(_shim(block), root) != []
+
+
+def test_a_stdlib_import_after_the_cli_import_is_refused(root):
+    assert vep.check_source(_shim(tail="import os\nsys.exit(main())\n"), root) != []
 
 
 def test_a_help_preamble_that_does_not_exit_is_refused(root):
@@ -219,7 +237,7 @@ def test_every_shim_in_this_repo_passes():
     """The shims the repo ships; a body creeping back into one fails here."""
     shims = [p for p in vep.discover(REPO_ROOT) if vep.in_scope(p.read_text())]
     # Fails if discovery or the scope test silently stops finding entry points.
-    assert len(shims) >= MIN_SHIMS
+    assert len(shims) == MIN_SHIMS
     offenders = {
         str(p.relative_to(REPO_ROOT)): vep.check_source(p.read_text(), REPO_ROOT)
         for p in shims

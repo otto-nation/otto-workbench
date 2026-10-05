@@ -168,7 +168,7 @@ def _is_help_preamble(node: ast.stmt) -> bool:
     if not isinstance(node, ast.If) or node.orelse:
         return False
     test = ast.unparse(node.test)
-    if not ("--help" in test and "sys.argv" in test):
+    if not ("--help" in test and "sys.argv" in test and _is_pure(node.test)):
         return False
     last = node.body[-1]
     exits = (isinstance(last, ast.Expr) and isinstance(last.value, ast.Call)
@@ -228,14 +228,14 @@ def check_source(source: str, root: Path) -> list[Violation]:
         if entry and _calls_entry(node, entry[1]) and (
                 last or not _calls_entry(body[-1], entry[1])):
             continue
-        if _is_stdlib_import(node):
+        if _is_stdlib_import(node) and entry is None:
             continue
         if _is_path_insert(node) and pinned and not inserted:
             inserted = True
             continue
         if _is_help_preamble(node) and not pinned:
             continue
-        if _is_pin_block(node):
+        if _is_pin_block(node) and not pinned and entry is None:
             pinned = True
             continue
         if (isinstance(node, ast.Assign) and all(isinstance(t, ast.Name) for t in node.targets)

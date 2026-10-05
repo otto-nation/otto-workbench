@@ -32,7 +32,15 @@ def test_no_step_argv_forces_a_rebase():
 
 def test_the_ci_step_fixes_without_rebasing_against_the_remote_head():
     assert batch.steps.step_argv(Step.CI, "pr", "/wt", remote_sha="abc") == \
-        ["pr", "ci", "--fix", "--no-rebase", "--head-sha", "abc", "--repo-dir", "/wt"]
+        ["ci-check", "--fix", "--no-rebase", "--head-sha", "abc", "--repo-dir", "/wt"]
+
+
+def test_the_ci_step_runs_ci_check_beside_pr_not_the_pr_dispatcher():
+    """`pr ci` fetches into the shared .git before the command starts; a CI step that
+    waits on GitHub must hold no git lock, so it runs the backing script directly."""
+    argv = batch.steps.step_argv(Step.CI, "/wb/ai/bin/pr", "/wt", remote_sha="abc", wait=True)
+    assert argv[0] == "/wb/ai/bin/ci-check"
+    assert "ci" not in argv
 
 
 def test_the_ci_step_waits_when_asked():
@@ -221,4 +229,4 @@ def test_ensure_worktree_finds_the_checkout_and_reports_dirt(tmp_path):
 
 def test_a_watch_run_reads_ci_for_the_pushed_head_without_fixing():
     assert batch.steps.step_argv(Step.CI, "pr", "/wt", remote_sha="new", watch=True) == \
-        ["pr", "ci", "--head-sha", "new", "--wait", "--repo-dir", "/wt"]
+        ["ci-check", "--head-sha", "new", "--wait", "--repo-dir", "/wt"]

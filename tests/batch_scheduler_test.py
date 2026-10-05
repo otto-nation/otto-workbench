@@ -452,5 +452,5 @@ def test_does_not_settle_while_requests_are_pending(monkeypatch):
 def test_a_ci_step_runs_against_the_planned_remote_head():
     h = Harness([row(1, {batch.model.Step.CI: NEED})])
     h.sched.run_until_blocked()
-    assert h.spawned == [["pr", "ci", "--fix", "--no-rebase", "--head-sha", "h",
+    assert h.spawned == [["ci-check", "--fix", "--no-rebase", "--head-sha", "h",
                           "--repo-dir", "/wt/b1"]]

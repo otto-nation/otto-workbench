@@ -20,7 +20,6 @@ import batch.publish
 import batch.resolve
 import batch.store
 import git.client
-import pr.ci_report
 import rebase.inspect
 from batch.model import (STEP_ORDER, Decision, DecisionKind, EvidenceKind, Item, ItemStatus, Run,
                          RunStatus, Step, StepRecord, StepStatus)
@@ -30,7 +29,8 @@ from config.workbench_config import BatchConfig
 
 # Steps that fetch into the repo's shared `.git`. Two at once contend for its
 # locks, which today degrades to a "potentially stale" warning mid-rebase. A
-# CI step started with --wait is not counted while live (see `_repo_busy`).
+# CI step started with --wait is not counted while live: it runs `ci-check`
+# directly, which makes no startup fetch (see `_repo_busy`).
 _FETCHING = frozenset({Step.REBASE, Step.CI})
 
 
@@ -218,8 +218,7 @@ class Scheduler:
                                          log_tail=list(live.tail), head_before=base,
                                          watch=rec.watch)
         rec.exit_code, rec.ended_at, rec.status = code, batch.store.now_iso(), result.status
-        if rec.watch and batch.outcomes.last_report(live.proc.stdout(),
-                                                    pr.ci_report.FINAL_REPORT_TYPE):
+        if rec.watch and batch.outcomes.settled_report(live.proc.stdout()):
             item.ci_rechecked = True
         rec.watch = False
         moved = self._head(item.worktree) != base
@@ -365,8 +364,11 @@ class Scheduler:
 
         A live CI step started with --wait does not count: it holds no git lock
         while it polls GitHub, for up to its wait timeout, and holding the slot
-        that long would stall every rebase in the repo. The fetch a fix makes
-        after the wait may then overlap one, which degrades only to a warning.
+        that long would stall every rebase in the repo. That holds because the
+        step runs `ci-check` itself rather than `pr ci` — the `pr` dispatcher
+        fetches into the shared `.git` at child start, before any wait — and
+        ci-check claims its run lock without fetching; with --no-rebase it
+        fetches nothing. A new CI step is still refused while a rebase is live.
         """
         return rec.step in _FETCHING and any(
             live.item.repo_dir == item.repo_dir and live.rec.step in _FETCHING
@@ -453,12 +455,15 @@ class Scheduler:
         batch.store.save(self.run)
         if status in (RunStatus.DONE, RunStatus.CANCELLED):
             batch.plan.drop_refs(self.run.ref_dirs, self.run.ref_namespace)
-        unchecked = [i.key for i in self.run.items if i.published_sha and not i.ci_rechecked]
         self._emit("run_waiting" if status is RunStatus.WAITING else "run_finished",
                    run=self.run.id, status=status.value,
                    open_decisions=len(self.run.open_decisions()),
-                   ci_not_rechecked=unchecked)
+                   ci_not_rechecked=self._ci_not_rechecked())
         return status
+
+    def _ci_not_rechecked(self) -> list[str]:
+        """Items this run published whose CI on the pushed head was never read."""
+        return [i.key for i in self.run.items if i.published_sha and not i.ci_rechecked]
 
     def _kill_live(self) -> None:
         for live in self._live.values():
@@ -514,6 +519,7 @@ class Scheduler:
         pending.append(("run_finished", {
             "run": self.run.id, "status": RunStatus.INTERRUPTED.value,
             "open_decisions": len(self.run.open_decisions()),
+            "ci_not_rechecked": self._ci_not_rechecked(),
         }))
         self._flush(pending)
 

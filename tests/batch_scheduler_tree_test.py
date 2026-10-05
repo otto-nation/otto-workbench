@@ -4,6 +4,8 @@ import dataclasses
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -12,7 +14,7 @@ if str(LIB_DIR) not in sys.path:
 import batch.store  # noqa: E402
 from batch.model import DecisionKind, RunStatus, Step, StepStatus  # noqa: E402
 
-from batch_scheduler_support import ALL, NEED, NO, Harness, _quiet_outcomes, row  # noqa: F401
+from batch_scheduler_support import ALL, NEED, NO, Harness, _quiet_outcomes, row, step_name  # noqa: F401
 
 ONLY_REVIEW = {Step.REBASE: NO, Step.COMMENTS: NO, Step.REVIEW: NEED}
 ONLY_REBASE = {Step.REBASE: NEED, Step.COMMENTS: NO, Step.REVIEW: NO}
@@ -88,13 +90,14 @@ def test_a_stacked_pr_waits_for_its_base_and_resumes_when_it_finishes():
     assert any(a[1] == "rebase" and a[-1] == "/wt/b2" for a in h.spawned)
 
 
-RED = '---\n{"type": "final", "failures": {"build": {"job": "build"}}}\n'
-GREEN = '---\n{"type": "final", "failures": {}}\n'
+RED = '---\n{"type": "final", "status": "completed", "failures": {"build": {"job": "build"}}}\n'
+GREEN = '---\n{"type": "final", "status": "completed", "failures": {}}\n'
+TIMED_OUT = '---\n{"type": "final", "status": "in_progress", "failures": {}}\n'
 REVIEW_AND_CI = {Step.REBASE: NO, Step.CI: NO, Step.COMMENTS: NO, Step.REVIEW: NEED}
 
 
 def _ci_spawns(h):
-    return [a for a in h.spawned if a[1] == "ci"]
+    return [a for a in h.spawned if step_name(a) == "ci"]
 
 
 def test_a_running_rollup_makes_the_ci_step_wait():
@@ -113,13 +116,22 @@ def test_a_waiting_ci_step_does_not_hold_the_repos_fetch_slot():
     assert "--wait" in _ci_spawns(h)[0]
 
 
+def test_a_waiting_ci_step_is_still_refused_while_a_rebase_is_live():
+    """The rebase holds the repo's fetch slot; a CI step does not start beside it."""
+    rows = {1: row(1, ONLY_REBASE), 2: row(2, {Step.CI: NEED}, ci_state="PENDING")}
+    h = Harness(list(rows.values()), pool=2, replan=lambda r: rows[r.pr])
+    h.sched.run_until_blocked()
+    assert h.max_live == 1
+    assert "--wait" in _ci_spawns(h)[0]
+
+
 def test_watch_ci_rechecks_once_and_reopens_on_red():
     h = Harness([row(1, REVIEW_AND_CI)], moves={("review", "/wt/b1")},
                 auto_publish=[Step.REVIEW], watch_ci=True, stdouts={("ci", "/wt/b1"): RED})
     real = h.sched._spawn
 
     def spawn(argv, **kw):
-        if argv[1] == "ci" and "--fix" in argv:
+        if step_name(argv) == "ci" and "--fix" in argv:
             h.heads["/wt/b1"] = "ci-fixed"
         return real(argv, **kw)
 
@@ -162,6 +174,34 @@ def test_a_watch_run_with_no_checks_yet_is_reported_not_rechecked():
     assert len(_ci_spawns(h)) == 1
     assert not [d for d in h.run.decisions if d.kind is DecisionKind.FAILED]
     finished = [f for k, f in h.events if k == "run_finished"]
+    assert finished[-1]["ci_not_rechecked"] == ["o/r#1"]
+
+
+def test_a_watch_run_that_timed_out_is_reported_not_rechecked():
+    """A wait that timed out still prints a final report; it read nothing whole."""
+    h = Harness([row(1, REVIEW_AND_CI)], moves={("review", "/wt/b1")},
+                auto_publish=[Step.REVIEW], watch_ci=True,
+                codes={("ci", "/wt/b1"): 1}, stdouts={("ci", "/wt/b1"): TIMED_OUT})
+    assert h.sched.run_until_blocked() is RunStatus.DONE
+    assert len(_ci_spawns(h)) == 1
+    assert h.run.items[0].ci_rechecked is False
+    finished = [f for k, f in h.events if k == "run_finished"]
+    assert finished[-1]["ci_not_rechecked"] == ["o/r#1"]
+
+
+def test_an_interrupted_run_names_what_was_not_rechecked():
+    h = Harness([row(1, ONLY_REVIEW), row(2)], moves={("review", "/wt/b1")},
+                auto_publish=[Step.REVIEW])
+
+    def sleep(_):
+        if h.run.items[0].published_sha:
+            raise KeyboardInterrupt
+
+    h.sched._sleep = sleep
+    with pytest.raises(KeyboardInterrupt):
+        h.sched.run_until_blocked()
+    finished = [f for k, f in h.events if k == "run_finished"]
+    assert finished[-1]["status"] == "interrupted"
     assert finished[-1]["ci_not_rechecked"] == ["o/r#1"]
 
 

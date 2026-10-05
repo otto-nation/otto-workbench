@@ -3413,7 +3413,7 @@ Drive a run: admit steps, reap them, and stop when only decisions remain.
 
 ### batch/steps.py
 
-The child `pr` processes a batch run spawns, and the worktrees they run in.
+The child processes a batch run spawns — `pr`, or `ci-check` for CI — and their worktrees.
 
 Every step is its own process so concurrent steps share no interpreter state,
 and each gets a new session with stdin closed: no prompt in any child can

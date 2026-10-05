@@ -23,9 +23,14 @@ def _fake_pr(bin_dir: Path, log: Path) -> None:
     tally = ('{"failures": [], "fixed": [], "unfixed": [], "skipped": [], '
              '"suite_status": "", "commit": "", "type": "fix"}')
     script.write_text(
-        f'#!/bin/sh\nprintf "%s\\n" "$*" >> {log}\necho working >&2\n'
-        f'[ "$1" = ci ] && printf -- "---\\n%s\\n" \'{tally}\'\nexit 0\n')
+        f'#!/bin/sh\nprintf "%s\\n" "$*" >> {log}\necho working >&2\nexit 0\n')
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    # The batch's CI step runs the backing script beside `pr`, not `pr ci`.
+    ci = bin_dir / "ci-check"
+    ci.write_text(
+        f'#!/bin/sh\nprintf "ci %s\\n" "$*" >> {log}\necho working >&2\n'
+        f'printf -- "---\\n%s\\n" \'{tally}\'\nexit 0\n')
+    ci.chmod(ci.stat().st_mode | stat.S_IEXEC)
 
 
 def _main(argv, bin_dir):

@@ -172,14 +172,24 @@ def _failed(exit_code: int, log_tail: list[str]) -> StepResult:
         "reason": reason, "exit_code": exit_code, "log_tail": log_tail})])
 
 
+def settled_report(stdout: str) -> dict | None:
+    """The final report of a `--wait` run whose CI completed, or None.
+
+    A wait that timed out still prints a final report, with whatever failures
+    had arrived by then, so a report that is not `completed` read nothing whole.
+    """
+    final = last_report(stdout, pr.ci_report.FINAL_REPORT_TYPE)
+    return final if final is not None and final.get("status") == "completed" else None
+
+
 def _watched(stdout: str) -> StepResult:
     """A post-publish re-check: green finishes the step, red re-runs it as a fix.
 
-    No final report means no checks were found yet — `pr ci --wait` exits
-    non-zero seconds after a push — which is not a failure to decide on: the
-    step finishes and the run summary says CI was not re-checked.
+    No settled report — no checks found yet (`ci-check --wait` exits non-zero
+    seconds after a push), or a wait that timed out — is not a failure to
+    decide on: the step finishes and the run summary says CI was not re-checked.
     """
-    final = last_report(stdout, pr.ci_report.FINAL_REPORT_TYPE)
+    final = settled_report(stdout)
     red = final is not None and bool(final.get("failures"))
     return StepResult(StepStatus.PENDING if red else StepStatus.DONE, [])
 

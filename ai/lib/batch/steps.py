@@ -1,4 +1,4 @@
-"""The child `pr` processes a batch run spawns, and the worktrees they run in.
+"""The child processes a batch run spawns — `pr`, or `ci-check` for CI — and their worktrees.
 
 Every step is its own process so concurrent steps share no interpreter state,
 and each gets a new session with stdin closed: no prompt in any child can
@@ -27,17 +27,24 @@ from batch.model import Step
 
 def step_argv(step: Step, pr_bin: str, worktree: str, *, remote_sha: str = "",
               wait: bool = False, watch: bool = False) -> list[str]:
-    """The child `pr` for one step. Every step runs drafted — nothing here pushes
+    """The child process for one step. Every step runs drafted — nothing here pushes
     or posts — because publishing is the batch's own decision, made once per item
-    against the tree."""
+    against the tree.
+
+    The CI step runs `ci-check`, from the same directory as *pr_bin*, rather than
+    `pr ci`: the `pr` dispatcher fetches into the repo's shared `.git` before the
+    command starts, and a CI step that waits on GitHub must hold no git lock.
+    """
     if step is Step.REBASE:
         argv = [pr_bin, "rebase", "--fix", "--no-push"]
     elif step is Step.CI:
-        # A watch run only reads CI for the head a publish just pushed; a fix
-        # run also fixes. --no-rebase because the batch rebases in its own step,
-        # and --head-sha because after a drafted rebase local HEAD is a commit
-        # GitHub has no runs for.
-        argv = [pr_bin, "ci"] + ([] if watch else ["--fix", "--no-rebase"])
+        # ci-check claims the run lock itself and makes no startup fetch. A
+        # watch run only reads CI for the head a publish just pushed; a fix run
+        # also fixes. --no-rebase because the batch rebases in its own step
+        # (and with it ci-check fetches nothing), and --head-sha because after
+        # a drafted rebase local HEAD is a commit GitHub has no runs for.
+        ci_bin = str(Path(pr_bin).with_name("ci-check"))
+        argv = [ci_bin] + ([] if watch else ["--fix", "--no-rebase"])
         if remote_sha:
             argv += ["--head-sha", remote_sha]
         if wait or watch:

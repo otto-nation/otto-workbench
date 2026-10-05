@@ -35,6 +35,11 @@ def row(n, needs=ALL, *, repo="o/r", repo_dir="/r", **extra):
     return PlanRow(repo, repo_dir, n, f"t{n}", f"b{n}", "h", False, dict(needs), **extra)
 
 
+def step_name(argv):
+    """The step a spawned argv runs: `pr <step> ...`, or `ci-check ...` for CI."""
+    return "ci" if Path(argv[0]).name == "ci-check" else argv[1]
+
+
 def ff_tree(item):
     """The remote is still the planned head and the local branch is one commit ahead."""
     return TreeState(local=f"{item.remote_sha}+1", remote=item.remote_sha,
@@ -89,9 +94,10 @@ class Harness:
         # test asserting on which pid got killed needs spawns to be
         # distinguishable from each other.
         next_pid = len(self.spawned) + 1
-        if (argv[1], argv[-1]) in self.moves:
-            self.heads[argv[-1]] = f"{argv[1]}-{next_pid}"
-        out = self.stdouts.get((argv[1], argv[-1]), "{}")
+        key = (step_name(argv), argv[-1])
+        if key in self.moves:
+            self.heads[argv[-1]] = f"{key[0]}-{next_pid}"
+        out = self.stdouts.get(key, "{}")
 
         class Proc:
             pid = next_pid
@@ -104,7 +110,7 @@ class Harness:
                 if not getattr(self, "done", False):
                     self.done = True
                     h.live -= 1
-                return h.codes.get((argv[1], argv[-1]), 0)
+                return h.codes.get(key, 0)
 
             def drain_lines(self):
                 return []

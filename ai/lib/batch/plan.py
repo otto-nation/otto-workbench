@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import secrets
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -314,9 +315,16 @@ def _graphql(query: str, variables: dict) -> dict:
         raise PlanError(f"GitHub query failed: {detail}") from exc
 
 
+@dataclass(frozen=True)
+class FetchedRefs:
+    """A new ref namespace and the repos it was fetched into."""
+    namespace: str
+    dirs: list[str]
+
+
 @contextmanager
-def _fetched_namespace(repo_dirs: list[str]):
-    """Yield a new namespace and the repos it was fetched into, dropping it if the body raises.
+def _fetched_namespace(repo_dirs: list[str]) -> Iterator[FetchedRefs]:
+    """Yield refs fetched into a new namespace, dropping them if the body raises.
 
     No plan comes back to own the refs on a failure — Ctrl-C included — so they
     are dropped in every repo: a fetch that failed part-way may still have
@@ -324,7 +332,7 @@ def _fetched_namespace(repo_dirs: list[str]):
     """
     namespace = new_namespace()
     try:
-        yield namespace, [d for d in repo_dirs if fetch_namespace(d, namespace)]
+        yield FetchedRefs(namespace, [d for d in repo_dirs if fetch_namespace(d, namespace)])
     except BaseException:
         drop_refs(repo_dirs, namespace)
         raise
@@ -336,11 +344,11 @@ def build_plan(repo_dirs: list[str]) -> Plan:
     if len(by_slug) != len(repo_dirs):
         dupes = sorted({s for s in slugs if slugs.count(s) > 1})
         raise PlanError("--checkout names the same repo more than once: " + ", ".join(dupes))
-    with _fetched_namespace(repo_dirs) as (namespace, fetched):
+    with _fetched_namespace(repo_dirs) as refs:
         data = _graphql(_SEARCH, {"q": search_query(sorted(by_slug))})
-        rows = rows_from_search(data, by_slug, {d: namespace for d in fetched})
+        rows = rows_from_search(data, by_slug, {d: refs.namespace for d in refs.dirs})
     return Plan(viewer=(data.get("viewer") or {}).get("login", ""), rows=rows,
-                ref_namespace=namespace, ref_dirs=fetched)
+                ref_namespace=refs.namespace, ref_dirs=refs.dirs)
 
 
 def refetch(plan: Plan) -> Plan:
@@ -352,11 +360,10 @@ def refetch(plan: Plan) -> Plan:
     CLEAN wherever the base does not require branches to be up to date.
     """
     repo_dirs = sorted({r.repo_dir for r in plan.rows})
-    with _fetched_namespace(repo_dirs) as (namespace, fetched):
-        pass
-    rows = [replace(r, ref_namespace=namespace if r.repo_dir in fetched else "")
-            for r in plan.rows]
-    return replace(plan, rows=rows, ref_namespace=namespace, ref_dirs=fetched)
+    with _fetched_namespace(repo_dirs) as refs:
+        rows = [replace(r, ref_namespace=refs.namespace if r.repo_dir in refs.dirs else "")
+                for r in plan.rows]
+    return replace(plan, rows=rows, ref_namespace=refs.namespace, ref_dirs=refs.dirs)
 
 
 def replan_row(row: PlanRow) -> PlanRow | None:

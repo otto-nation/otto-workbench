@@ -21,11 +21,15 @@ import batch.resolve
 import batch.store
 import git.client
 import rebase.inspect
-from batch.model import (STEP_ORDER, Decision, DecisionKind, Item, ItemStatus, Run, RunStatus,
-                         Step, StepRecord, StepStatus)
+from batch.model import (STEP_ORDER, Decision, DecisionKind, EvidenceKind, Item, ItemStatus, Run,
+                         RunStatus, Step, StepRecord, StepStatus)
 from batch.plan import PlanRow
 from batch.steps import StepProcess, WorktreeResult, ensure_worktree, step_argv
 from config.workbench_config import BatchConfig
+
+# Steps that fetch into the repo's shared `.git`. Two at once contend for its
+# locks, which today degrades to a "potentially stale" warning mid-rebase.
+_FETCHING = frozenset({Step.REBASE, Step.CI})
 
 
 def _local_head(worktree: str) -> str:
@@ -344,7 +348,39 @@ class Scheduler:
                 {"path": item.worktree, "reason": reason, "stash": stash}, emit=self._emit)
         return True
 
+    def _repo_busy(self, item: Item, rec: StepRecord) -> bool:
+        return rec.step in _FETCHING and any(
+            live.item.repo_dir == item.repo_dir and live.rec.step in _FETCHING
+            for live in self._live.values())
+
+    def _stacked_wait(self, item: Item, rec: StepRecord) -> bool:
+        """Hold a stacked PR's rebase behind its base item's publish.
+
+        Rebasing onto the base's pre-push tip would carry the base's old
+        commits, so the rebase waits as a decision — which lets the run settle —
+        and `_release_stacked` retries it once the base item is terminal.
+        """
+        if rec.step is not Step.REBASE or not item.stacked_on:
+            return False
+        base = self.run.item(item.stacked_on)
+        if base.terminal:
+            return False
+        _decide(self.run, item, rec.step.value, DecisionKind.STEP_REVIEW,
+                {"evidence": [{"kind": EvidenceKind.STACKED_ON.value, "item": base.key}]},
+                emit=self._emit)
+        return True
+
+    def _release_stacked(self) -> None:
+        for d in self.run.open_decisions():
+            if d.kind is not DecisionKind.STEP_REVIEW:
+                continue
+            bases = [e.get("item") for e in d.payload.get("evidence", [])
+                     if e.get("kind") == EvidenceKind.STACKED_ON.value]
+            if bases and all(self.run.item(k).terminal for k in bases):
+                self._apply_one({"decision": d.id, "action": "retry"})
+
     def _admit(self) -> None:
+        self._release_stacked()
         for item in self.run.items:
             if not self._ready(item) or not self._ensure_worktree(item):
                 continue
@@ -353,6 +389,11 @@ class Scheduler:
                 self._close(item)
                 continue
             if self._tree_blocks(item, rec):
+                continue
+            if self._stacked_wait(item, rec):
+                continue
+            if self._repo_busy(item, rec):
+                self._refuse(item, rec, f"another rebase or CI step is fetching in {item.repo_dir}")
                 continue
             verdict = batch.admission.decide(self._host_for_admit(), running=len(self._live),
                                        limit=max(1, self.run.pool),

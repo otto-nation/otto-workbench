@@ -136,7 +136,9 @@ def test_unrealised_headroom_blocks_a_second_admit_in_the_same_tick():
 
 def test_admission_wait_is_reported_and_the_floor_still_progresses():
     short = batch.admission.HostSample(2 * GiB, 1.0, 0.0)
-    h = Harness([row(1), row(2)], host=short, auto_publish=batch.model.STEP_ORDER)
+    # Two repos, so the one-fetcher-per-repo rule cannot be what holds row 2 back.
+    h = Harness([row(1), row(2, repo="o/s", repo_dir="/s")], host=short,
+                auto_publish=batch.model.STEP_ORDER)
     assert h.sched.run_until_blocked() is batch.model.RunStatus.DONE
     waits = [f for k, f in h.events if k == "admission_wait"]
     assert waits and waits[0]["reason"].startswith("waiting for memory")

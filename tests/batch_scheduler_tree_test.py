@@ -55,3 +55,33 @@ def test_only_a_rebase_may_start_while_one_is_paused():
     d = h.run.open_decisions()[0]
     assert d.kind is DecisionKind.DIRTY_WORKTREE and d.payload["reason"] == "rebase_in_progress"
     assert h.spawned == []
+
+
+def test_two_rebases_in_one_repo_never_run_together():
+    h = Harness([row(1, ONLY_REBASE), row(2, ONLY_REBASE)], pool=2)
+    h.sched.run_until_blocked()
+    assert h.max_live == 1
+
+
+# passes-at-base: the control for the per-repo rule — two repos never contended
+def test_rebases_in_different_repos_run_together():
+    h = Harness([row(1, ONLY_REBASE), row(2, ONLY_REBASE, repo="o/s", repo_dir="/s")], pool=2)
+    h.sched.run_until_blocked()
+    assert h.max_live == 2
+
+
+def test_a_stacked_pr_waits_for_its_base_and_resumes_when_it_finishes():
+    base = row(1, ONLY_REVIEW)
+    stacked = row(2, ONLY_REBASE, base_ref="b1")
+    # The base's review moves HEAD, so it closes with a publish decision.
+    h = Harness([base, stacked], pool=2, moves={("review", "/wt/b1")})
+    assert h.sched.run_until_blocked() is RunStatus.WAITING
+    waiting = [d for d in h.run.open_decisions("o/r#2")]
+    assert waiting[0].kind is DecisionKind.STEP_REVIEW
+    assert waiting[0].payload["evidence"] == [{"kind": "stacked_on", "item": "o/r#1"}]
+    assert not any(a[1] == "rebase" for a in h.spawned)
+    publish = h.run.open_decisions("o/r#1")[0]
+    batch.store.save(h.run)
+    batch.store.write_request(h.run.id, {"decision": publish.id, "action": "discard"})
+    h.sched.run_until_blocked()
+    assert any(a[1] == "rebase" and a[-1] == "/wt/b2" for a in h.spawned)

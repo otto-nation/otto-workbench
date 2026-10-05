@@ -247,7 +247,7 @@ class TestStaticAnalysisIntegration:
 
 
 class TestCleanupScope:
-    """What `_run_orchestrate` leaves in the review directory when it returns.
+    """What `run_orchestrate` leaves in the review directory when it returns.
 
     Driven through the whole run rather than through the sweep, because the
     leak this covers was in the order the phases run and not in any one of
@@ -277,7 +277,7 @@ class TestCleanupScope:
         return SimpleNamespace(**defaults)
 
     def _run(self, ro, monkeypatch, tmp_path, pipeline=None, out=None, **arg_overrides):
-        """Drive `_run_orchestrate` over *tmp_path* with every phase faked.
+        """Drive `run_orchestrate` over *tmp_path* with every phase faked.
 
         Pass *out* to keep the result JSON the run prints; the default throws
         it away, since what most of these tests read is the directory.
@@ -328,11 +328,11 @@ class TestCleanupScope:
 
         args = self._args(ro, review_file, tmp_path, **arg_overrides)
         with contextlib.redirect_stdout(out if out is not None else io.StringIO()):
-            ro._run_orchestrate(MagicMock(), args, "org/repo", str(review_dir / "session.jsonl"))
+            ro.run_orchestrate(MagicMock(), args, "org/repo", str(review_dir / "session.jsonl"))
         return review_dir
 
     def _host_for_origin(self, ro, monkeypatch, tmp_path, identity):
-        """The host `_run_orchestrate` puts on the job, for a given origin read.
+        """The host `run_orchestrate` puts on the job, for a given origin read.
 
         Captured off the `ReviewJob` rather than read back from `meta.json`:
         the faked pipeline writes that file itself, so the sidecar on disk is

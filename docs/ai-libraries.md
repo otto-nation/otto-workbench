@@ -857,6 +857,17 @@ drifting from it.
 orchestration that its fix pass may push. The gate it opens used to be scoped
 by this being a subprocess; `publishing.call_entry_point` scopes it now.
 
+### review/orchestrate.py
+
+Orchestrate one review run: pick a pipeline for the change, run its phases, and write the outcome.
+
+`run_orchestrate` is the flow `review-orchestrate` runs once its arguments are
+parsed: log the AI backend, collect preflight data, decide whether a
+re-review is a no-op, size the review to choose a pipeline, run the phases,
+file open findings, and run the fix pass when asked. `cli.review_orchestrate`
+is the command over this; the phases themselves are `review.pipeline` and
+`review.steps`, and what a phase is lives in `review.phases`.
+
 ### review/outcome.py
 
 What a run writes to the review file, and what it claims about itself.

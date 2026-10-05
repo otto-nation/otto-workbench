@@ -4,9 +4,9 @@
 Usage: bin/local/validate-entry-points [--quiet] [file...]
 
 A script under `ai/bin/` or `ai/claude/bin/` that carries the `ai/lib` pin or
-imports an `ai/lib` package is an entry point into the layered library, and its body belongs in the
-library: at the lowest layer its imports permit, with `ai/lib/cli/<name>.py`
-holding the parser and the call. A body left in the script is code no other
+imports an `ai/lib` package is an entry point into the layered library, and
+its body belongs in the library: at the lowest layer its imports permit, with
+`ai/lib/cli/<name>.py` holding the parser and the call. A body left in the script is code no other
 module can import and no test reaches except by executing the file. Every
 entry point has been moved out of that shape; this keeps it out.
 

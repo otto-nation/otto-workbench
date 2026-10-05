@@ -2,7 +2,7 @@
 # Foundation module: AI command loading, GitHub token resolution (handed off
 # to ai/lib/pr/gh_token.py), response handling.
 #
-# Sourced first by `commit.sh`, `pr.sh`, and `review.sh`, and by the Taskfile
+# Sourced first by `commit.sh` and `review.sh`, and by the Taskfile
 # tasks that drive them. It inherits the commit conventions by sourcing
 # [`conventions.sh`](#conventionssh), so `COMMIT_TYPES` and the length limits
 # have one owner across both halves.
@@ -13,7 +13,7 @@
 # State set by its functions: `AI_COMMAND`, `AI_RESPONSE`.
 
 # ─── Configuration ────────────────────────────────────────────────────────────
-# shellcheck disable=SC2034  # All config variables are used by sourcing scripts (commit.sh, pr.sh, review.sh)
+# shellcheck disable=SC2034  # All config variables are used by sourcing scripts (commit.sh, review.sh)
 
 # Git convention constants (COMMIT_TYPES, COMMIT_HEADER_MAX_LEN, COMMIT_BODY_MAX_LEN)
 # are defined in lib/conventions.sh — sourced here so AI automation inherits them.
@@ -48,8 +48,8 @@ fi
 # hook needs the same answer and must not pay for this module to get it.
 # shellcheck source=/dev/null
 . "$(dirname "$_ai_core_dir")/git_remote.sh"
-# The workbench checkout, kept because lib/ai/pr.sh runs with the *target* repo
-# as its cwd and still has to find ai/lib/core/pr_template.py and lib/config_cli.py.
+# The workbench checkout, kept because the tasks run with the *target* repo as
+# their cwd and load_gh_token still has to find ai/lib/pr/gh_token.py.
 # `_ai_core_dir` is <root>/lib/ai.
 WORKBENCH_ROOT="$(dirname "$(dirname "$_ai_core_dir")")"
 unset _ai_core_dir
@@ -60,10 +60,6 @@ unset _ai_core_dir
 # omitted files are listed by name so the AI still knows the full scope of changes.
 DIFF_MAX_CHARS=8000
 
-# When true, skips both issue-related prompts in generate_pr_content.
-# Set by parse_pr_flags; pass --no-issue after -- in task invocations.
-SKIP_ISSUE=false
-
 # Global env file path — single source of truth is lib/constants.sh (TASKFILE_ENV).
 # When sourced via Taskfile tasks (sh, not bash), lib/constants.sh is not available,
 # so we fall back to the same value defined there.
@@ -71,11 +67,6 @@ SKIP_ISSUE=false
 
 # Local per-project override takes priority over the global TASKFILE_ENV.
 AI_LOCAL_ENV_PATH=".taskfile/taskfile.env"
-
-# Markers the AI must use when returning PR content.
-# Must stay in sync with the prompt in generate_pr_content.
-PR_TITLE_MARKER="TITLE:"
-PR_DESCRIPTION_MARKER="DESCRIPTION:"
 # ──────────────────────────────────────────────────────────────────────────────
 
 # _resolve_env_file — finds the active env file (local override or global).

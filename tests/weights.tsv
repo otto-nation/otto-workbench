@@ -38,7 +38,6 @@ lint_sweep.bats	4.83
 list_shell_scripts.bats	2.02
 load_ai_command.bats	2.85
 load_gh_token_shim.bats	7.79
-load_pr_context.bats	6.10
 machine_profile.bats	15.18
 maintenance_auto_tasks.bats	8.71
 mcp_manifests.bats	0.32
@@ -70,7 +69,6 @@ migrations_skills_override_root.bats	0.73
 model_env_vars.bats	5.70
 otto_workbench_ai_init.bats	3.40
 output.bats	0.22
-parse_pr_flags.bats	6.22
 permissions_cli.bats	5.22
 pi_extensions.bats	34.71
 pi_guidelines.bats	3.28
@@ -78,8 +76,6 @@ pi_session_dir.bats	5.00
 pi_settings.bats	21.36
 pi_skill_override.bats	1.45
 portable.bats	0.79
-pr_body_template.bats	6.78
-pr_issue_link.bats	8.98
 pre_push_hook.bats	26.74
 pre_push_open_pr_notice.bats	16.90
 projects.bats	28.13

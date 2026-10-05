@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Coverage for lib/git_remote.sh — the one ladder answering "which branch is
-# trunk" for load_pr_context (lib/ai/pr.sh), the `review:` Taskfile task, both
+# trunk" for the `review:` Taskfile task, both
 # pre-push hooks, and bin/local/check-surface-compat. `git rev-parse
 # --abbrev-ref origin/HEAD` echoes "origin/HEAD" to stdout even when it fails,
 # which used to defeat a "${DEFAULT_BRANCH:-main}" fallback at both call sites.
@@ -196,9 +196,9 @@ teardown() {
 }
 
 @test "lib/ai/core.sh still re-exports the ladder to its own callers" {
-  # load_pr_context and the `review:` Taskfile task call resolve_default_branch
-  # having sourced only core.sh. Moving the function out must not have moved it
-  # out of their reach.
+  # The `review:` Taskfile task calls resolve_default_branch having sourced
+  # only core.sh. Moving the function out must not have moved it out of its
+  # reach.
   source_lib
   _make_repo_no_default_branch "$TMPDIR" "master"
 

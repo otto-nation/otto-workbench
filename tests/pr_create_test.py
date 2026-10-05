@@ -2,7 +2,8 @@
 
 Ported from the bash `create_pr` suite (gh's exit code decides, only a real
 `/pull/<n>` URL is reported) and `tests/load_pr_context.bats` (default-branch
-and base refusals), plus D5, D7-order, D10 and D13 and the dry-run contract.
+and base refusals), since deleted with the bash owner, plus D5, D7-order, D10
+and D13 and the dry-run contract.
 
 Real temp repo with a bare origin, so the push is a real push. `gh`, the AI
 call and the publishing token are stubbed; the nesting gate is a fake
@@ -262,6 +263,7 @@ def test_pr_url_re_takes_the_first_pull_url():
 
 
 # ── tests/load_pr_context.bats ──────────────────────────────────────────────
+# Ported from `tests/load_pr_context.bats`, since deleted with the bash owner.
 
 
 def test_falls_back_to_main_when_origin_head_is_missing(h):

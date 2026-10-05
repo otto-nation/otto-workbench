@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 from conftest import assert_no_worktree_exit, make_ctx
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -21,6 +23,12 @@ import gh.client
 import agent.backend
 import cli.pr_describe
 import pr.context
+
+
+@pytest.fixture(autouse=True)
+def _fetched(monkeypatch):
+    """Every run's `git fetch origin <base>` succeeds; the worktree has no origin."""
+    monkeypatch.setattr(pr.describe, "_fetch_refusal", lambda wt, base: "")
 
 
 def _ctx(worktree, head_sha="aaaa111", pr_number=7):
@@ -45,7 +53,7 @@ def _run(ctx, *, body="", ai=(_wrapped("NEW BODY"), 0), **kw):
                            return_value=ai) as prompt, \
          mock.patch.object(pr.describe, "_apply_body",
                            side_effect=lambda r, n, b: edits.append(b) or True):
-        rc = pr.describe.run_describe(ctx, **kw)
+        rc = pr.describe.run_describe(ctx, pr.describe.DescribeOptions(**kw))
     return rc, edits, prompt
 
 
@@ -127,7 +135,7 @@ def test_applying_the_body_sends_it_on_stdin(publishing_on):
 def test_unchanged_head_skips_the_ai_call(worktree):
     state = pr.state.new_state("owner/repo", "b", pr_number=7, head_sha="aaaa111",
                                worktree_root=str(worktree))
-    pr.state.apply(state, pr.domains.DescribeSummary(head_sha="aaaa111"))
+    pr.state.apply(state, pr.domains.DescribeSummary(head_sha="aaaa111", published=True))
     pr.state.save_state(worktree / "target", state)
 
     rc, edits, prompt = _run(_ctx(worktree))
@@ -194,6 +202,26 @@ def test_revision_is_applied_and_recorded(worktree):
     state = pr.state.load_state(worktree / "target")
     assert state.describe.changed is True
     assert state.describe.template_path == ".github/pull_request_template.md"
+
+
+def test_title_only_override_against_published_body_is_not_a_body_change(worktree):
+    """A title override at a published HEAD must not mark the body as changed.
+
+    `_write` and `run_describe` each have their own `revised`/`body` comparison
+    in source; this pins `changed` to the one `_write` actually acted on, so a
+    future edit that lets the two expressions diverge is caught here.
+    """
+    state = pr.state.new_state("owner/repo", "b", pr_number=7, head_sha="aaaa111",
+                               worktree_root=str(worktree))
+    pr.state.apply(state, pr.domains.DescribeSummary(head_sha="aaaa111", published=True))
+    pr.state.save_state(worktree / "target", state)
+
+    rc, edits, prompt = _run(_ctx(worktree), body="same body", title="New Title")
+    assert rc == 0
+    assert not prompt.called
+    assert edits == []
+    state = pr.state.load_state(worktree / "target")
+    assert state.describe.changed is False
 
 
 def test_dry_run_prints_without_applying_or_recording(worktree, capsys):
@@ -406,3 +434,48 @@ def test_run_describe_with_the_gate_closed_is_not_a_failure(worktree, capsys):
     state = pr.state.load_state(worktree / "target")
     assert state.describe.head_sha == "aaaa111"
     assert state.describe.changed is True
+
+
+def _state_with_a_pending_follow_up(ctx, worktree):
+    """A saved state whose one follow-up has not reached the PR body yet."""
+    state = pr.state.new_state(ctx.repo, ctx.branch, pr_number=ctx.pr_number,
+                               head_sha="old0000", worktree_root=str(worktree))
+    entry = FollowUp(
+        ref=IssueRef(provider=IssueProvider.GITHUB, id="941",
+                     url="https://github.com/owner/repo/issues/941"),
+        title="a pending follow-up", source=FollowUpSource.SELF_REVIEW,
+    )
+    pr.state.apply(state, FollowUpDomain(entries=[entry], updated_at="t"))
+    pr.state.save_state(ctx.target_dir, state)
+
+
+def test_a_draft_with_no_change_drafts_the_projection_once(worktree, capsys):
+    """No change from the AI is no change, even with follow-ups still unprojected.
+
+    In a draft the projection pass drafts the projected body and leaves the PR
+    holding the unprojected one. The no-change answer is measured against what
+    the PR would hold after projection, so it is not drafted a second time and
+    not recorded as a revision.
+    """
+    ctx = _ctx(worktree)
+    _state_with_a_pending_follow_up(ctx, worktree)
+    with mock.patch.object(pr.describe, "_fetch_pr_body", return_value=("t", "body")), \
+         mock.patch.object(pr.describe, "_git", return_value=""), \
+         mock.patch.object(agent.backend, "prompt",
+                           return_value=(pr.describe._NO_CHANGE, 0)), \
+         mock.patch.object(gh.client, "run") as run:
+        rc = pr.describe.run_describe(ctx)
+    assert rc == 0
+    run.assert_not_called()
+    assert capsys.readouterr().err.count("DRAFT") == 1
+    state = pr.state.load_state(ctx.target_dir)
+    assert state.describe.head_sha == "aaaa111"
+    assert state.describe.changed is False
+
+
+def test_a_dry_run_with_no_change_records_nothing(worktree):
+    """`--dry-run` writes no state, on the already-matches path as on any other."""
+    rc, edits, _ = _run(_ctx(worktree), ai=(pr.describe._NO_CHANGE, 0), dry_run=True)
+    assert rc == 0
+    assert edits == []
+    assert pr.state.load_state(worktree / "target") is None

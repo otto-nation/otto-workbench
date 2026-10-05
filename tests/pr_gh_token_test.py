@@ -407,3 +407,27 @@ def test_use_for_publishing_no_token_and_no_interactive_auth_raises(
         pr.gh_token.use_for_publishing(tmp_path)
     assert exc.value.guidance == _GUIDANCE
     assert _INTERACTIVE_MISSING not in exc.value.guidance
+
+
+# --- ready_for_publishing -----------------------------------------------------
+
+
+def test_ready_for_publishing_is_true_when_a_token_or_login_answers(tmp_path, monkeypatch):
+    monkeypatch.setattr(pr.gh_token, "use_for_publishing", lambda cwd: None)
+    assert pr.gh_token.ready_for_publishing(tmp_path) is True
+
+
+def test_ready_for_publishing_prints_the_guidance(tmp_path, monkeypatch, capsys):
+    def refuse(cwd):
+        raise pr.gh_token.TokenNotConfigured("set GH_TOKEN in taskfile.env")
+    monkeypatch.setattr(pr.gh_token, "use_for_publishing", refuse)
+    assert pr.gh_token.ready_for_publishing(tmp_path) is False
+    assert "set GH_TOKEN in taskfile.env" in capsys.readouterr().err
+
+
+def test_ready_for_publishing_names_an_unreadable_file(tmp_path, monkeypatch, capsys):
+    def unreadable(cwd):
+        raise PermissionError(13, "Permission denied", "/cfg/taskfile.env")
+    monkeypatch.setattr(pr.gh_token, "use_for_publishing", unreadable)
+    assert pr.gh_token.ready_for_publishing(tmp_path) is False
+    assert "✗ Could not read /cfg/taskfile.env: Permission denied" in capsys.readouterr().err

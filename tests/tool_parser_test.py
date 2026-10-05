@@ -281,3 +281,20 @@ def test_a_multi_value_option_does_not_break_normal_parsing():
     parser = argparse.ArgumentParser(prog="bad-delegate", add_help=False)
     parser.add_argument("--track", nargs="+")
     assert parser.parse_args(["--track", "a", "b"]).track == ["a", "b"]
+
+
+# ── read_file_arg ───────────────────────────────────────────────────────────
+
+
+def test_read_file_arg_returns_the_text(tmp_path):
+    from core.tool_parser import read_file_arg
+    path = tmp_path / "body.md"
+    path.write_text("hello\n")
+    assert read_file_arg("--body-file", str(path)) == "hello\n"
+
+
+def test_read_file_arg_names_the_flag_and_the_reason(tmp_path, capsys):
+    from core.tool_parser import read_file_arg
+    missing = tmp_path / "nope"
+    assert read_file_arg("--body-file", str(missing)) is None
+    assert f"✗ --body-file {missing}: No such file or directory" in capsys.readouterr().err

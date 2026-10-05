@@ -18,11 +18,18 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
+import config.workbench_config
 from config.workbench_config import IssueProvider
 
 _NUMERIC = re.compile(r"[0-9]+")
 _TRACKER = re.compile(r"[A-Z]+-[0-9]+")
+# Every ref a body closes, under any GitHub closing keyword and with GitHub's
+# optional colon — the same keyword set `present` recognises. Only the keyword
+# is case-insensitive: a tracker key is uppercase, so `closes eng-12` is prose,
+# not a link, matching the bash owner this replaced.
+_KEPT = re.compile(r"\b(?i:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+(#\d+|[A-Z]+-\d+)")
 
 
 class CloseRefError(ValueError):
@@ -50,6 +57,28 @@ def normalise(value: str, provider: IssueProvider | None) -> str:
         f"✗ --closes {raw}: expected a GitHub issue number (941 or #941) "
         f"or an uppercase tracker key (ENG-123)"
     )
+
+
+def normalise_all(raw: Sequence[str], wt: Path) -> tuple[str, ...]:
+    """Normalise every ``--closes`` value against ``wt``'s issue provider.
+
+    Raises :class:`CloseRefError` on the first value nothing can close, and
+    also when the config cannot be read — its message is then ``✗ <reason>``.
+    The provider decides what a ref may be, so a config that cannot be read is
+    a refusal rather than a default: a guessed provider would accept or refuse
+    refs the operator's tracker would not. Read only when there are refs to
+    judge, so a broken config costs nothing to a command without any.
+    """
+    if not raw:
+        return ()
+    try:
+        provider = config.workbench_config.load_config(wt).issues.provider
+    except config.workbench_config.ConfigError as exc:
+        raise CloseRefError(f"✗ {exc}") from exc
+    refs: list[str] = []
+    for value in raw:
+        refs = stage(refs, normalise(value, provider))
+    return tuple(refs)
 
 
 def stage(refs: list[str], ref: str) -> list[str]:
@@ -113,3 +142,17 @@ def append(body: str, refs: Sequence[str]) -> LinkResult:
         linked=tuple(linked),
         already=tuple(already),
     )
+
+
+def preserve(old_body: str, new_body: str) -> LinkResult:
+    """Re-append to ``new_body`` every ref ``old_body`` closed that it lost.
+
+    For a regeneration that replaces a published body outright: an issue
+    somebody linked on the PR stays linked across a rewrite it had no part in.
+    Refs are taken once each, in first-seen order, and the keyword is
+    normalised to ``Closes`` by :func:`append`, which also skips any ref
+    ``new_body`` still closes. A bare ``#941`` mention closes nothing and is
+    not carried over.
+    """
+    refs = list(dict.fromkeys(m.group(1) for m in _KEPT.finditer(old_body)))
+    return append(new_body, refs)

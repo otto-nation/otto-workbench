@@ -59,6 +59,7 @@ import sys
 from argparse import SUPPRESS, ArgumentParser, ArgumentTypeError, _SubParsersAction
 from collections.abc import Callable
 from enum import StrEnum
+from pathlib import Path
 from typing import TypeVar
 
 _EnumT = TypeVar("_EnumT", bound=StrEnum)
@@ -187,6 +188,26 @@ def enum_arg(enum_cls: type[_EnumT]) -> Callable[[str], _EnumT]:
             ) from None
 
     return parse
+
+
+# argparse's own usage-error status, which an unreadable file argument shares.
+EXIT_USAGE = 2
+
+
+def read_file_arg(flag: str, path: str) -> str | None:
+    """The text of the file a ``flag PATH`` option names, or None when unreadable.
+
+    An unreadable file is a usage error like any other bad argument, so the
+    refusal is printed here as ``✗ <flag> <path>: <reason>`` and the caller
+    exits :data:`EXIT_USAGE`. Read after parsing rather than as an argparse
+    ``type``, so `--help` and `--tool-schema` never touch the filesystem.
+    """
+    try:
+        return Path(path).read_text()
+    except (OSError, UnicodeDecodeError) as exc:
+        reason = getattr(exc, "strerror", None) or str(exc)
+        print(f"✗ {flag} {path}: {reason}", file=sys.stderr, flush=True)
+        return None
 
 
 def value_taking_options(parser: ArgumentParser) -> list[str]:

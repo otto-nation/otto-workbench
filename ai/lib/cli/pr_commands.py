@@ -272,8 +272,10 @@ def cmd_fix(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
 
     # Last, because the description has to describe the branch as it ends up.
     # pr-describe re-resolves HEAD itself and no-ops when nothing landed, so
-    # this is free on a run where every fix pass was a skip. The user's argv is
-    # not forwarded: --fix and friends mean nothing here.
+    # on a run where every fix pass was a skip it costs no AI call. It is not
+    # free under --post: the publishing token is claimed before describe's HEAD
+    # gate, which spends one or two gh calls even when nothing is revised. The
+    # user's argv is not forwarded: --fix and friends mean nothing here.
     #
     # `--post` is the exception, and it is forwarded rather than passed along
     # with the rest for the same reason the rest are dropped: it is the one

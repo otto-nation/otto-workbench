@@ -75,23 +75,21 @@ class PRContent:
 
 
 def extract(text: str, name: str) -> str | None:
-    """Content between ``<<<NAME>>>`` and ``<<<END_NAME>>>`` lines, stripped.
+    """Content between ``<<<NAME>>>`` and ``<<<END_NAME>>>``, stripped.
 
-    ``None`` if either marker is absent, the end precedes the start, or the
-    span is empty.
+    The markers may sit anywhere — on their own lines or inline in prose — and
+    the end marker is the first one after the start. ``None`` if either marker
+    is absent, no end follows the start, or the span is blank.
     """
-    begin = f"<<<{name}>>>"
-    end = f"<<<END_{name}>>>"
-    lines = text.splitlines()
-    try:
-        start = lines.index(begin)
-        stop = lines.index(end)
-    except ValueError:
+    begin_marker = f"<<<{name}>>>"
+    end_marker = f"<<<END_{name}>>>"
+    begin = text.find(begin_marker)
+    if begin == -1:
         return None
-    if stop <= start:
+    end = text.find(end_marker, begin + len(begin_marker))
+    if end == -1:
         return None
-    content = "\n".join(lines[start + 1:stop]).strip()
-    return content or None
+    return text[begin + len(begin_marker):end].strip() or None
 
 
 def resolve_issue(branch: str, override: str) -> str:

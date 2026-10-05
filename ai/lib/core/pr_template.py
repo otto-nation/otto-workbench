@@ -1,9 +1,9 @@
 """Where a repo's PR template is, and what it says — resolved in one place.
 
-Four callers need the same answer: ``lib/ai/pr.sh`` for ``task pr:update``,
-``pr/describe.py`` for ``pr describe``, ``pr/create_content.py`` for
-``pr create``, and the SessionStart hook that tells the agent which template
-this repo ships. Before this module, the first two worked it out for
+Three callers need the same answer: ``pr/describe.py`` for ``pr describe``,
+``pr/create_content.py`` for ``pr create``, and the SessionStart hook that
+tells the agent which template this repo ships. Before this module, the
+since-retired Taskfile updater and ``pr describe`` each worked it out for
 themselves and carried the candidate path list and the fallback
 template as literals, under a comment asking whoever edited one to remember the
 other. They had already drifted from GitHub: neither looked in ``docs/``, which

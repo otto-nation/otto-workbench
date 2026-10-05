@@ -1,9 +1,9 @@
 """Tests for the one resolver of a repo's PR template.
 
-Callers used to answer this question separately — `pr:update` in bash,
-`pr create` and `pr describe` in Python, and now the SessionStart line. What
-each of them does with the answer is tested with that caller; what the answer
-*is* is tested here.
+Callers used to answer this question separately — the retired Taskfile
+updater in bash, `pr create` and `pr describe` in Python, and now the
+SessionStart line. What each of them does with the answer is tested with
+that caller; what the answer *is* is tested here.
 """
 
 import os

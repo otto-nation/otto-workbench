@@ -36,7 +36,7 @@
 _LIB_GIT_REMOTE_SH=1
 
 # Git remote name used for push/fetch/range operations.
-# shellcheck disable=SC2034  # read by lib/ai/pr.sh and the functions below
+# shellcheck disable=SC2034  # read by the functions below
 GIT_REMOTE="origin"
 
 # resolve_default_branch [DIR]

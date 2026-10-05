@@ -80,7 +80,7 @@ teardown() {
 
   run dash -c "TASKFILE_DIR='$fake_task_dir' . '$fake_task_dir/lib/ai/core.sh' && echo \"\$WORKBENCH_ROOT\""
   [ "$status" -eq 0 ]
-  [ -f "$output/ai/lib/core/pr_template.py" ]
+  [ -f "$output/ai/lib/pr/gh_token.py" ]
 }
 
 # ─── All lib/ai sourcing goes through the pin ────────────────────────────────
@@ -198,7 +198,7 @@ teardown() {
 
   run dash -c "TASKFILE_DIR='/nonexistent' WORKBENCH_LIB_DIR='$fake_task_dir' . '$fake_task_dir/lib/ai/core.sh' && echo \"\$WORKBENCH_ROOT\""
   [ "$status" -eq 0 ]
-  [ -f "$output/ai/lib/core/pr_template.py" ]
+  [ -f "$output/ai/lib/pr/gh_token.py" ]
 }
 
 @test "core.sh falls back to TASKFILE_DIR when WORKBENCH_LIB_DIR is unset" {
@@ -209,7 +209,7 @@ teardown() {
 
   run dash -c "unset WORKBENCH_LIB_DIR; TASKFILE_DIR='$fake_task_dir' . '$fake_task_dir/lib/ai/core.sh' && echo \"\$WORKBENCH_ROOT\""
   [ "$status" -eq 0 ]
-  [ -f "$output/ai/lib/core/pr_template.py" ]
+  [ -f "$output/ai/lib/pr/gh_token.py" ]
 }
 
 @test "core.sh ignores WORKBENCH_LIB_DIR when BASH_SOURCE resolves the path" {
@@ -285,14 +285,12 @@ teardown() {
   local partial="$BATS_TEST_TMPDIR/partial"
   mkdir -p "$partial/lib/ai"
   cp "$REPO_ROOT/lib/ai/core.sh" "$partial/lib/ai/core.sh"
-  cp "$REPO_ROOT/lib/gitenv.sh" "$partial/lib/gitenv.sh"
   cp "$REPO_ROOT/lib/conventions.sh" "$partial/lib/conventions.sh"
-  cp "$REPO_ROOT/lib/config_cli.py" "$partial/lib/config_cli.py"
 
   run task --taskfile "$REPO_ROOT/Taskfile.global.yml" \
     "WORKBENCH_LIB_DIR=$partial" commit
   [ "$status" -ne 0 ]
-  [[ "$output" == *"ai/lib/core/pr_template.py"* ]]
+  [[ "$output" == *"ai/lib/pr/gh_token.py"* ]]
   [[ "$output" == *"WORKBENCH_LIB_DIR"* ]]
 }
 
@@ -321,11 +319,11 @@ teardown() {
 @test "every WORKBENCH_ROOT path a lib/ai module reaches is in the guard's list" {
   # The tier the guard actually owns, asserted so the comment above it stops
   # being prose. A path resolved through WORKBENCH_ROOT is reached mid-run by
-  # python3 — ai/lib/core/pr_template.py at pr.sh:233, and lib/config_cli.py at
-  # pr.sh:318 with stderr discarded and 0 returned, so a missing path there
-  # reports nothing at all. A lib/ai module that gains another must teach the
-  # guard about it. Modules a task sources by name are deliberately out of
-  # scope: those fail on the body's first three lines, naming the path.
+  # python3 — today only ai/lib/pr/gh_token.py, from load_gh_token in core.sh —
+  # so a missing one fails late and names python's error rather than the pin.
+  # A lib/ai module that gains another must teach the guard about it. Modules
+  # a task sources by name are deliberately out of scope: those fail on the
+  # body's first three lines, naming the path.
   local guard list refs p
   guard=$(yq -r '.tasks."_lib-dir-guard".cmds[0]' "$REPO_ROOT/Taskfile.global.yml")
   list=$(printf '%s\n' "$guard" | sed -n 's/^ *for _f in \(.*\); do$/\1/p')
@@ -376,5 +374,5 @@ teardown() {
   # that once broke PR creation, so it must not pass as an explicit override.
   run env "WORKBENCH_LIB_DIR=$fake_task_dir" TASKFILE_DIR=/elsewhere sh -c "$guard"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"ai/lib/core/pr_template.py"* ]]
+  [[ "$output" == *"ai/lib/pr/gh_token.py"* ]]
 }

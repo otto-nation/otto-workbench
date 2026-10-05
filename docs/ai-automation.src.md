@@ -413,12 +413,6 @@ command as taking no target, or give it a delegate to read.
 PRs. Every step is a child `pr` (CI: `ci-check`) in a new session with stdin
 closed, and every step runs drafted — the batch is the only thing that pushes.
 
-To rebase and fix CI across your open PRs, run `pr batch run --checkout DIR
---steps rebase,ci`. `run` plans for itself, and each step runs only on PRs the
-plan marks as needing it, so there's no need to run `plan` first. When it
-exits 10, `pr batch status` prints the run and its decisions, `pr batch resolve
-… --action publish` pushes one item, and `pr batch resume` continues.
-
 ```bash
 pr batch plan --checkout DIR …           # which PRs need which steps (JSON)
 pr batch run --checkout DIR … [opts]     # start; NDJSON events on stdout
@@ -429,7 +423,8 @@ pr batch cancel [RUN_ID] [--kill]
 pr batch status [RUN_ID]
 ```
 
-Steps run in the order `rebase`, `ci`, `comments`, `review`. `rebase` is needed
+Steps run in the order `rebase`, `ci`, `comments`, `review`, each only where
+needed (`run` plans for itself; `run --help` has recipes). `rebase` is needed
 when the branch is behind its PR's base, from refs in a private `refs/pr-batch/`
 namespace (GitHub merge state fallback; `UNKNOWN` and `DIRTY` count as needed).
 `ci` runs `ci-check --fix --no-rebase --head-sha <planned remote head>` (not
@@ -437,8 +432,7 @@ namespace (GitHub merge state fallback; `UNKNOWN` and `DIRTY` count as needed).
 heads skip both. A stacked PR waits for its base's publish; `resume` retries
 `stacked_on` once that base is terminal. One fetching rebase or CI step per
 repo at a time (a waiting CI step excepted). No start in a dirty worktree
-(`dirty_worktree`),
-except a rebase resuming its own paused replay.
+(`dirty_worktree`), except a rebase resuming its own paused replay.
 
 An item that closes with drafted work opens one `publish` decision. Publish
 fetches the branch and refuses (`failed`) with `fetch_failed`, `remote_moved`,

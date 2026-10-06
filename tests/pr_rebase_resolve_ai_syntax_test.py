@@ -96,20 +96,21 @@ def test_judge_answer_names_the_syntax_failure():
 def test_a_file_that_never_parsed_is_not_refused():
     """A side that already fails the checker makes the check uninformative.
 
-    A Helm template is `.yaml` and is not YAML. Refusing every resolution of
-    one would stop the rebase over something the merge did not change.
+    A `tsconfig.json` carries comments and is not JSON; a Helm template is
+    `.yaml` and is not YAML. Refusing every resolution of such a file would
+    stop the rebase over something the merge did not change. JSON stands in
+    because its checker is stdlib, so the case holds on a machine without
+    PyYAML.
     """
-    template = "replicas: {{ .Values.replicas }\n"
-    stages = rebase.conflicts.StageTexts(
-        base=template, target=template, replayed=template,
-    )
+    jsonc = '{\n  // strict mode\n  "strict": true\n}\n'
+    stages = rebase.conflicts.StageTexts(base=jsonc, target=jsonc, replayed=jsonc)
     wrapped = (
-        f"{rebase.conflicts.RESOLVE_BEGIN}\n{template}"
+        f"{rebase.conflicts.RESOLVE_BEGIN}\n{jsonc}"
         f"{rebase.conflicts.RESOLVE_END}\n"
     )
-    assert not rebase.resolve_ai.core.syntax.check("t.yaml", template).ok
+    assert not rebase.resolve_ai.core.syntax.check("tsconfig.json", jsonc).ok
 
-    verdict = rebase.resolve_ai.judge_answer("templates/t.yaml", stages, wrapped)
+    verdict = rebase.resolve_ai.judge_answer("tsconfig.json", stages, wrapped)
 
     assert verdict.usable
-    assert verdict.resolved == template
+    assert verdict.resolved == jsonc

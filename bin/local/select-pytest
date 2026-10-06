@@ -115,6 +115,9 @@ NO_DEPS_TESTS = {
     # Real git remotes for the batch suites: conftest and git only, nothing
     # in-repo; the suites importing it carry the deps.
     "tests/batch_git_support.py",
+    # Spawn-race helper for the signal-relay suite; stdlib only, and the suite
+    # importing it carries the deps.
+    "tests/signal_relay_support.py",
 }
 
 _LOAD_LIB = re.compile(r'_load_lib\(\s*"([^"]+)"\s*\)')

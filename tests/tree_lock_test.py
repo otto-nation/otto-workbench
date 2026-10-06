@@ -1,7 +1,6 @@
 """Tests for the tree validation lock."""
 
 import os
-import signal
 import subprocess
 import sys
 import textwrap
@@ -227,41 +226,19 @@ def test_git_timeout_is_treated_as_no_lock(tmp_path, monkeypatch):
     assert is_locked(tmp_path) is False
 
 
-def test_a_signal_racing_the_spawn_still_reaches_the_child(monkeypatch):
-    """A signal landing before the child exists is held, not dropped.
+def test_the_cli_runs_the_child_through_the_shared_runner(monkeypatch):
+    """The wrapper must not grow its own spawn; the relay owns that."""
+    seen: list[tuple[list[str], dict]] = []
 
-    The ordering bug this pins: with the handlers installed *after* the spawn,
-    a signal in that window is taken with default disposition, the wrapper dies
-    without forwarding, and the child — alone in its own session, so outside the
-    signalled process group — runs on with the lock released.
+    def fake_run(argv, **kwargs):
+        seen.append((list(argv), kwargs))
+        return 0
 
-    Driven deterministically rather than by racing a real one: `Popen` is
-    wrapped so the wrapper signals *itself* at the instant the window would be
-    open, which is the one moment the old ordering cannot survive and the new
-    one must.
-    """
-    real_popen = subprocess.Popen
-    delivered: list[int] = []
-
-    def signalling_popen(*args, **kwargs):
-        os.kill(os.getpid(), signal.SIGTERM)
-        return real_popen(*args, **kwargs)
-
-    # The relay lives in `core.signal_relay`, which both wrappers share, so the
-    # delivery is stubbed there rather than on this module.
-    monkeypatch.setattr(core.tree_lock_cli.subprocess, "Popen", signalling_popen)
-    monkeypatch.setattr(
-        core.signal_relay.os, "killpg",
-        lambda _pgid, signum: delivered.append(signum),
-    )
-
-    code = core.tree_lock_cli._run_child([sys.executable, "-c", "pass"])
-
-    assert delivered == [signal.SIGTERM], (
-        "the signal taken before the child existed was dropped rather than "
-        "forwarded once it did"
-    )
-    assert code == 0
+    monkeypatch.setattr(core.signal_relay, "run_child", fake_run)
+    assert core.tree_lock_cli._run_child(["echo", "ok"]) == 0
+    argv, kwargs = seen[0]
+    assert argv == ["echo", "ok"]
+    assert kwargs.get("origin") == "tree_lock_cli"
 
 
 def test_inherited_git_dir_does_not_hijack_resolution(tmp_path, monkeypatch):

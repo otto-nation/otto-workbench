@@ -275,8 +275,8 @@ report_for() {
   [ "$status" -eq 0 ]
   local calls="$output" line
   while IFS= read -r line; do
-    [[ "$line" =~ _run_watched\ (bats|pytest)\ \"\$watch_jobs\"\ (bats|pytest)\  ]]
-    [ "${BASH_REMATCH[1]}" = "${BASH_REMATCH[2]}" ]
+    [[ "$line" =~ _run_watched\ bats\ \"\$watch_jobs\"\ bats\  ]] \
+      || [[ "$line" =~ _run_watched\ pytest\ \"\$watch_jobs\"\ \"\$pytest_bin\"\  ]]
   done <<< "$calls"
   [[ "$calls" == *"_run_watched bats "* ]]
   [[ "$calls" == *"_run_watched pytest "* ]]
@@ -286,25 +286,34 @@ report_for() {
 # jobs the heartbeat announces can be read without starting a suite.
 @test "a serial pytest run announces one job, not the grant" {
   _run_watched() { printf '%s\n' "$@"; }
-  pytest() { echo "pytest 8.0 (no plugins)"; }
+  local dir="$TMPDIR/pytest-serial"
+  mkdir -p "$dir"
+  printf '#!/usr/bin/env bash\necho "pytest 8.0 (no plugins)"\n' > "$dir/pytest"
+  chmod +x "$dir/pytest"
   # shellcheck disable=SC2034  # read by run_pytest in bin/local/run-tests
   PYTEST_DEBUG_TEMPROOT=$BATS_TEST_TMPDIR
   JOBS=12
-  run --separate-stderr run_pytest
+  PATH="$dir:/usr/bin:/bin" run --separate-stderr run_pytest
   [ "$status" -eq 0 ]
   [ "${lines[0]}" = pytest ]
   [ "${lines[1]}" = 1 ]
+  [ "${lines[2]}" = "$dir/pytest" ]
 }
 
 @test "a parallel pytest run announces the granted jobs" {
   _run_watched() { printf '%s\n' "$@"; }
-  pytest() { echo "pytest 8.0 xdist-3.0"; }
+  local dir="$TMPDIR/pytest-parallel"
+  mkdir -p "$dir"
+  printf '#!/usr/bin/env bash\necho "pytest 8.0 xdist-3.0"\n' > "$dir/pytest"
+  chmod +x "$dir/pytest"
   # shellcheck disable=SC2034  # read by run_pytest in bin/local/run-tests
   PYTEST_DEBUG_TEMPROOT=$BATS_TEST_TMPDIR
   JOBS=12
-  run --separate-stderr run_pytest
+  PATH="$dir:/usr/bin:/bin" run --separate-stderr run_pytest
   [ "$status" -eq 0 ]
+  [ "${lines[0]}" = pytest ]
   [ "${lines[1]}" = 12 ]
+  [ "${lines[2]}" = "$dir/pytest" ]
 }
 
 @test "a serial bats run announces one job, not the grant" {
@@ -591,8 +600,8 @@ EOF
 #
 # A suite that loses xdist runs several times slower and says nothing, so the
 # only signal is a wall time nobody has a baseline for. These cover the message
-# that replaces that silence — and specifically the shadowing case, which is a
-# different remedy from a genuinely missing plugin.
+# that replaces that silence, and the PATH walk that prefers a later pytest
+# which does have the plugin over a shadowing one that does not.
 
 @test "a serial run names the pytest it is using" {
   pytest() { [[ "$1" == "-VV" ]] && echo "no plugins here"; }
@@ -602,20 +611,29 @@ EOF
   [[ "$output" == *"using:"* ]]
 }
 
-@test "a shadowed pytest is reported as shadowing, with its path" {
+@test "run-tests prefers a later pytest that has xdist over a shadowing one that does not" {
   # The real case on a machine where a version manager's shim directory sits
-  # ahead of pipx's: `pytest` resolves to an interpreter that never had xdist
-  # injected, while the one that does sits second and unused.
+  # ahead of pipx's: `pytest` would resolve to an interpreter that never had
+  # xdist injected, while the one that does sits second. The runner takes the
+  # second rather than running serially against the first.
+  _run_watched() { printf '%s\n' "$@"; }
   local dir_a="$TMPDIR/bin-a" dir_b="$TMPDIR/bin-b"
   mkdir -p "$dir_a" "$dir_b"
   printf '#!/usr/bin/env bash\necho "pytest 9.0.0"\n' > "$dir_a/pytest"
   printf '#!/usr/bin/env bash\necho "pytest-xdist-3.8.0"\n' > "$dir_b/pytest"
   chmod +x "$dir_a/pytest" "$dir_b/pytest"
 
-  PATH="$dir_a:$dir_b:$PATH" run report_missing_xdist
-  [[ "$output" == *"shadowing: $dir_b/pytest"* ]]
-  [[ "$output" == *"which does have xdist"* ]]
-  [[ "$output" != *"pipx inject"* ]]
+  # shellcheck disable=SC2034  # read by run_pytest in bin/local/run-tests
+  PYTEST_DEBUG_TEMPROOT=$BATS_TEST_TMPDIR
+  JOBS=4
+  PATH="$dir_a:$dir_b:/usr/bin:/bin" run --separate-stderr run_pytest
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = pytest ]
+  [ "${lines[1]}" = 4 ]
+  [ "${lines[2]}" = "$dir_b/pytest" ]
+  [[ "$stderr" == *"skipping $dir_a/pytest"* ]]
+  [[ "$stderr" == *"using $dir_b/pytest"* ]]
+  [[ "$stderr" != *"pipx inject"* ]]
 }
 
 @test "a genuinely missing plugin is reported as an install, not a shadow" {
@@ -633,19 +651,21 @@ EOF
   [[ "$output" != *"shadowing:"* ]]
 }
 
-# passes-at-base: a negative case — at base the function prints nothing at all, so the string it refuses is absent either way
-@test "the pytest in use is not reported as shadowing itself" {
-  # The candidate walk finds the primary too, so it has to be excluded by name.
-  # Without that, a pytest that does carry xdist but is being probed for some
-  # other reason names itself as its own shadow — advice that cannot be acted
-  # on, pointing at the file already in use.
+@test "the first pytest is not reported as skipped when it has xdist" {
+  # The skip line is for a shadowing miss, not for the binary actually used.
+  _run_watched() { printf '%s\n' "$@"; }
   local dir_a="$TMPDIR/self-bin"
   mkdir -p "$dir_a"
   printf '#!/usr/bin/env bash\necho "pytest-xdist-3.8.0"\n' > "$dir_a/pytest"
   chmod +x "$dir_a/pytest"
 
-  PATH="$dir_a:/usr/bin:/bin" run report_missing_xdist
-  [[ "$output" != *"shadowing: $dir_a/pytest"* ]]
+  # shellcheck disable=SC2034  # read by run_pytest in bin/local/run-tests
+  PYTEST_DEBUG_TEMPROOT=$BATS_TEST_TMPDIR
+  JOBS=4
+  PATH="$dir_a:/usr/bin:/bin" run --separate-stderr run_pytest
+  [ "$status" -eq 0 ]
+  [ "${lines[2]}" = "$dir_a/pytest" ]
+  [[ "$stderr" != *"skipping"* ]]
 }
 
 @test "pytest missing entirely is reported as missing, not as a blank path" {

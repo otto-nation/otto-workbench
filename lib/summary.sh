@@ -121,7 +121,6 @@ print_workbench_summary() {
   local shared_rel="${GIT_SHARED_CONFIG#"$WORKBENCH_DIR/"}"
   echo -e "  ${DIM}  git shared        ${GITCONFIG_FILE/#"$HOME"/$home_short} includes ${shared_rel}${NC}"
   echo -e "  ${DIM}  git hooks         ${GIT_HOOKS_DIR/#"$HOME"/$home_short}/{pre-commit,pre-push}${NC}"
-  echo -e "  ${DIM}  global Taskfile   ${TASK_CONFIG_DIR/#"$HOME"/$home_short}/{Taskfile.yml,lib/}${NC}"
 
   # Claude — only if installed
   if [[ -d "$CLAUDE_DIR" ]]; then

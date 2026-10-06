@@ -57,6 +57,7 @@ SSH_KNOWN_HOSTS_FILE="$SSH_DIR/known_hosts"
 LOCAL_BIN_DIR="$HOME/.local/bin"
 ZSH_CONFIG_DIR="$HOME/.config/zsh/config.d"
 STARSHIP_CONFIG_FILE="$HOME/.config/starship.toml"
+# Holds only taskfile.env (GH_TOKEN for pr commands); not the task runner.
 TASK_CONFIG_DIR="$HOME/.config/task"
 TASKFILE_ENV="$TASK_CONFIG_DIR/taskfile.env"
 # Mirrors the tiers ai/lib/pr/gh_token.py reads; an empty value is unset.
@@ -75,7 +76,7 @@ GH_TOKEN_SET_RE='^GH_TOKEN(__[A-Z0-9_]+)?=.+'
 LEGACY_WORKBENCH_ROOT="$HOME/.config/workbench"
 
 # Core components — always synced, never tracked in install.yml.
-CORE_COMPONENTS="bin git zsh task"
+CORE_COMPONENTS="bin git zsh"
 
 # ─── Docker / Colima ──────────────────────────────────────────────────────────
 DOCKER_RUN_DIR="$HOME/.docker/run"
@@ -238,7 +239,6 @@ PI_INSTALL_URL="https://pi.dev/install.sh"
 BIN_SRC_DIR="$WORKBENCH_DIR/bin"
 BIN_REGISTRY_FILE="$WORKBENCH_DIR/bin/registry.yml"
 LIB_SRC_DIR="$WORKBENCH_DIR/lib"
-TASKFILE_SRC="$WORKBENCH_DIR/Taskfile.global.yml"
 INSTALL_COMPONENTS_FILE="$WORKBENCH_DIR/install.components"
 
 # ─── Workbench source — brew ─────────────────────────────────────────────────

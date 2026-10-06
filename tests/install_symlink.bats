@@ -89,7 +89,7 @@ teardown() {
   mkdir "$TMPDIR/source_dir"
   ln -s "$TMPDIR/source_dir" "$TMPDIR/link_dir"
 
-  # Simulate what install_symlink does on a second run (e.g. lib/ → ~/.config/task/lib)
+  # Simulate what install_symlink does on a second run (e.g. bin/<script> → ~/.local/bin/<script>)
   ln -sfh "$TMPDIR/source_dir" "$TMPDIR/link_dir"
 
   # No nested symlink must have been created inside source_dir

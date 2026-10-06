@@ -64,7 +64,6 @@ _source_with_fake_home() {
 
   # Infrastructure entries match
   [[ " $CORE_COMPONENTS " == *" bin "* ]]
-  [[ " $CORE_COMPONENTS " == *" task "* ]]
   [[ " $CORE_COMPONENTS " == *" git "* ]]
   [[ " $CORE_COMPONENTS " == *" zsh "* ]]
 

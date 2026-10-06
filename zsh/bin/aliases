@@ -187,9 +187,8 @@ for script in "$SCRIPTS_BIN"/*; do
 
   script_name=$(basename "$script")
 
-  # Skip self and the task wrapper
+  # Skip self
   [[ "$script_name" == "aliases" ]] && continue
-  [[ "$script_name" == "task" ]] && continue
 
   matches_filter "$script_name" || continue
 

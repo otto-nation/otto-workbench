@@ -11,7 +11,7 @@ setup() {
   # Provide the constants that state.sh requires
   export INSTALLED_STATE_FILE="$FAKE_STATE/installed.components"
   export INSTALL_YML_FILE="$FAKE_STATE/install.yml"
-  export CORE_COMPONENTS="bin git zsh task"
+  export CORE_COMPONENTS="bin git zsh"
 
   # Stub UI functions not available outside lib/ui.sh
   info() { echo "$*"; }
@@ -52,7 +52,6 @@ teardown() {
   state_record "bin"
   state_record "git"
   state_record "zsh"
-  state_record "task"
 
   # No YAML file should be created for core-only records
   [[ ! -f "$INSTALL_YML_FILE" ]]
@@ -97,8 +96,6 @@ teardown() {
   run state_is_installed "git"
   [ "$status" -eq 0 ]
   run state_is_installed "zsh"
-  [ "$status" -eq 0 ]
-  run state_is_installed "task"
   [ "$status" -eq 0 ]
 }
 

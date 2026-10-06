@@ -111,7 +111,6 @@ sync_idempotency.bats	55.90
 sync_state.bats	1.63
 tarball_smoke.bats	2.07
 taskfile.bats	0.53
-taskfile_global.bats	3.29
 template.bats	0.13
 test_helper_isolation.bats	1.27
 tree_lock_cli.bats	3.76

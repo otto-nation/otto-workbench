@@ -177,31 +177,6 @@ _zsh_setup() {
   grep -qF ".config/zsh/config.d/loader.zsh" "$FAKE_HOME/.zshrc"
 }
 
-# ─── sync_task ───────────────────────────────────────────────────────────────
-
-@test "sync_task: second run produces identical symlinks in TASK_CONFIG_DIR" {
-  _source_with "$FAKE_HOME" "task/steps.sh"
-
-  sync_task >/dev/null 2>&1
-  state1=$(_symlinks "$FAKE_HOME/.config/task")
-
-  sync_task >/dev/null 2>&1
-  state2=$(_symlinks "$FAKE_HOME/.config/task")
-
-  [[ "$state1" == "$state2" ]]
-}
-
-@test "sync_task: symlinks are valid" {
-  _source_with "$FAKE_HOME" "task/steps.sh"
-  sync_task >/dev/null 2>&1
-
-  local broken=0
-  while IFS= read -r lnk; do
-    [[ -e "$lnk" ]] || { echo "broken symlink: $lnk"; broken=1; }
-  done < <(find "$FAKE_HOME/.config/task" -maxdepth 1 -type l 2>/dev/null)
-  (( broken == 0 ))
-}
-
 # ─── sync_serena ─────────────────────────────────────────────────────────────
 
 @test "sync_serena: second run produces identical symlinks" {

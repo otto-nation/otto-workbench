@@ -627,6 +627,44 @@ def test_a_two_arm_run_prints_the_ab_table(tmp_path, monkeypatch, capsys):
     assert "delta" in out
 
 
+def test_an_omitted_model_is_resolved_for_the_label_but_not_handed_to_the_task(
+    tmp_path, monkeypatch,
+):
+    """The task gets "" and resolves its own model; only the label is resolved.
+
+    Handing the resolved label over instead made the review task pass
+    `--model`, which overrides every phase of a medium or high review eval.
+    """
+    handed = []
+
+    def _get_task(_name=""):
+        class Rec:
+            name = "stub"
+            phase = eval.task.Phase.CI_FIX
+
+            def run(self, case_dir, opts):
+                handed.append(opts.model)
+                return eval.task.RunArtifacts(
+                    usage=SessionUsage(cost=0.01, input_tokens=10),
+                    data={"summary": "stub"},
+                )
+
+            def score(self, artifacts, manifest):
+                return ScoringResult("", "", 0, recall=1.0, cost_usd=0.01)
+
+        return Rec()
+
+    _seed_claude_and_stub_task(tmp_path, monkeypatch, _get_task)
+    monkeypatch.setattr(
+        eval.task.agent.phases, "phase_model",
+        lambda phase, explicit, cfg=None: "resolved-label-model",
+    )
+    output, _ = eval.run.run_eval(_args(tmp_path, runs=1), tmp_path)
+
+    assert handed == [""]
+    assert "resolved-label-model" in output["entries"]["a"]
+
+
 def test_a_single_arm_run_does_not_print_the_ab_table(
     tmp_path, monkeypatch, capsys,
 ):

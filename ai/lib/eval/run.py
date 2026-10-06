@@ -280,13 +280,19 @@ def run_eval(args: argparse.Namespace, repo_root: Path | None) -> tuple[dict, in
         seeded = _seed_arms(repo_root, Path(tmpdir), arms)
 
         all_results: dict[tuple[str, str, str], list] = {}
-        cells = [
-            (entry, model) for entry in entries
-            for model in explicit or [_resolve_entry_model(entry)]
-        ]
-        for (entry, model), arm in product(cells, arms):
+        # A cell is (entry, model handed to the task, label). Only a model the
+        # operator named is handed over; with none, the task resolves its own
+        # through the same phase the label was resolved from. Handing the
+        # label over instead would force a review eval's every phase onto the
+        # `single` model through `review-orchestrate --model`.
+        cells = (
+            [(entry, m, m) for entry in entries for m in explicit]
+            if explicit else
+            [(entry, "", _resolve_entry_model(entry)) for entry in entries]
+        )
+        for (entry, model, label), arm in product(cells, arms):
             _store_arm(
-                all_results, entry, model, model, arm, args, str(seeded[arm]),
+                all_results, entry, model, label, arm, args, str(seeded[arm]),
             )
 
         print("\n" + eval.scoring.format_summary_table(all_results))

@@ -1,0 +1,16 @@
+# Herdr registry — agent multiplexer installed via its vendor installer.
+# Regenerate: generate-tool-context
+#
+# No permission entry: herdr is operator-facing. Agents that could drive it
+# would gain a second job facility beside job_start/run_in_background.
+
+meta:
+  section: "AI Tooling"
+  validation: none
+
+tools:
+  - name: herdr
+    permission: false
+    visibility: brief
+    description: "Agent multiplexer — persistent panes, working/blocked/idle state per agent, remote machines over SSH. Operator tool; use wt, not herdr worktree"
+    docs: "https://herdr.dev/docs/"

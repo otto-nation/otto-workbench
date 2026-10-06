@@ -181,6 +181,14 @@ state_detect_installed() {
     state_record "ai/serena"
   fi
 
+  # AI / Herdr — detect by the binary on PATH. Herdr's installer writes
+  # $HOME/.local/bin/herdr, but a Homebrew or mise install lands elsewhere and
+  # is still this tool.
+  if command -v herdr > /dev/null 2>&1; then
+    state_record "ai"
+    state_record "ai/herdr"
+  fi
+
   # Terminals / Ghostty — detect by config directory
   if [[ -d "$GHOSTTY_CONFIG_DIR" ]]; then
     state_record "terminals"

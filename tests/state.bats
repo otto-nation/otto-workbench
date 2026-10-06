@@ -229,6 +229,36 @@ teardown() {
   [ "$status" -ne 0 ]
 }
 
+@test "state_detect_installed detects herdr by the binary on PATH" {
+  HOME="$TMPDIR/home"
+  mkdir -p "$HOME" "$TMPDIR/bin"
+  export WORKBENCH_DIR="$REPO_ROOT"
+  export NO_COLOR=1
+  . "$REPO_ROOT/lib/ui.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$TMPDIR/bin/herdr"
+  chmod +x "$TMPDIR/bin/herdr"
+  PATH="$TMPDIR/bin:$PATH"
+
+  state_detect_installed
+
+  run state_is_installed "ai/herdr"
+  [ "$status" -eq 0 ]
+}
+
+@test "state_detect_installed does not record herdr when it is absent" {
+  HOME="$TMPDIR/home"
+  mkdir -p "$HOME"
+  export WORKBENCH_DIR="$REPO_ROOT"
+  export NO_COLOR=1
+  . "$REPO_ROOT/lib/ui.sh"
+  command -v herdr > /dev/null 2>&1 && skip "herdr is installed on this machine"
+
+  state_detect_installed
+
+  run state_is_installed "ai/herdr"
+  [ "$status" -ne 0 ]
+}
+
 # ─── state_prune_orphans ──────────────────────────────────────────────────
 
 @test "state_prune_orphans removes entries with no step file" {

@@ -36,6 +36,24 @@ Prompts for confirmation at each step. Safe to re-run. This installs Claude Code
 
 <!-- include: bin/local/generate-tool-context --emit lifecycle -->
 
+## Herdr
+
+Selecting `herdr` in `ai/setup.sh` installs [herdr](https://herdr.dev/) with its
+own installer (`~/.local/bin/herdr`) and, on every sync, runs `herdr update` and
+reinstalls its Pi and Claude Code integrations for whichever harness is
+configured. The integrations let herdr resume a Pi or Claude session after its
+server restarts; Pi also reports working/blocked/idle directly.
+
+Herdr is an operator tool. Agents get no permission to run it, so it never
+competes with `job_start`/`run_in_background` as a way to spawn work.
+
+- Create worktrees with `wt`, not `herdr worktree` — herdr's default
+  `~/.herdr/worktrees` sits outside the workbench layout.
+- After setup, register a remote machine with
+  `herdr machine add <ssh-host> --label <name>`; setup prints a reminder while
+  none is registered.
+- `~/.config/herdr/config.toml` is not managed yet (#1660).
+
 ## Configuration
 
 ### Usage ledger

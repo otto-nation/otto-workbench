@@ -87,6 +87,8 @@ _scaffold() {
   [ "$status" -eq 1 ]
   run grep -qE "$GH_TOKEN_SET_RE" <<< 'GH_TOKENX=x'
   [ "$status" -eq 1 ]
+  run grep -qE "$GH_TOKEN_SET_RE" <<< 'GH_TOKEN__org=x'
+  [ "$status" -eq 1 ]
 }
 
 @test "a pre-existing world-readable file is tightened to 600 with contents unchanged" {

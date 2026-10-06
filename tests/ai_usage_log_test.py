@@ -118,7 +118,7 @@ class TestRecord:
         assert self._only(ledger)["cost"] == pytest.approx(0.5)
 
     def test_prose_response_records_nothing(self, monkeypatch, tmp_path, ledger):
-        """A pluggable non-Claude binary reports no usage; a zero row would lie."""
+        """A response with no usage record (plain prose) records nothing; a zero row would lie."""
         raw = tmp_path / "raw.txt"
         raw.write_text("just prose\n")
         self._record(monkeypatch, raw)

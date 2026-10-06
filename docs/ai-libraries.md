@@ -2063,8 +2063,8 @@ extraction is the only parse of the model answer — nothing outside
 
 GitHub token resolution for the commands that publish a PR.
 
-One owner for the per-org PAT routing ``task pr:*`` has used since the
-automation token was split from the interactive ``gh`` login. Resolution order,
+One owner for the per-org PAT routing the ``pr`` commands use, kept apart
+from the interactive ``gh`` login. Resolution order,
 first match wins:
 
 1. ``GH_TOKEN`` in ``<repo>/.taskfile/taskfile.env`` — a per-repo pin

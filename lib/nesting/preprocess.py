@@ -23,10 +23,9 @@ def heredoc_delimiter(line: str, in_squote: bool, in_dquote: bool) -> str | None
     as ``cat <<`` and the heredoc is never seen to start — its body then gets
     scanned as ordinary shell, silently dropping the blank and ``#``-led lines
     a caller may promise to count. Searching the raw line instead finds a
-    ``<<`` that is only being talked about, in a comment (``# unquoted <<EOF,
-    not <<'EOF'``) or inside a string, and opens a
-    heredoc that never existed — swallowing the rest of the file up to a
-    delimiter that never arrives.
+    ``<<`` that is only being talked about, in a comment (``# note the <<EOF
+    form``) or inside a string, and opens a heredoc that never existed —
+    swallowing the rest of the file up to a delimiter that never arrives.
 
     So the scan walks the line itself: a heredoc opens where the ``<<``
     operator sits in code, outside both kinds of quote and before any

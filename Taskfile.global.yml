@@ -49,7 +49,7 @@ tasks:
     silent: true
     cmds:
       - |
-        TASKFILE_PATH="${TASKFILE}"
+        TASKFILE_PATH="{{.TASKFILE}}"
         IS_GLOBAL=false
 
         if [[ "$TASKFILE_PATH" == *".config/task/Taskfile.yml"* ]]; then

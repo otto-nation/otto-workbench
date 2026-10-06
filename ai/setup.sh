@@ -153,13 +153,6 @@ run_steps
 state_record "ai"
 state_set_list "$_STATE_KEY" "${SELECTED_TOOLS[@]}"
 
-echo
-success "AI tools setup complete!"
-for _tool in "${SELECTED_TOOLS[@]}"; do
-  if declare -f "print_${_tool}_summary" > /dev/null; then "print_${_tool}_summary"; fi
-done
-unset _tool
-
 # ─── GitHub token file ────────────────────────────────────────────────────
 
 # configure_gh_token — ensures $TASKFILE_ENV holds the GH_TOKEN template and
@@ -182,3 +175,10 @@ configure_gh_token() {
 }
 
 configure_gh_token
+
+echo
+success "AI tools setup complete!"
+for _tool in "${SELECTED_TOOLS[@]}"; do
+  if declare -f "print_${_tool}_summary" > /dev/null; then "print_${_tool}_summary"; fi
+done
+unset _tool

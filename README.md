@@ -49,7 +49,7 @@ Re-applies all workbench config — migrations, symlinks, tool context, AI setti
 - **Shell** — ZSH configuration with [modular config layers](docs/architecture.md#shell-zsh), Starship prompt, and lazy-loaded plugin management
 - **Git** — [two-layer gitconfig](docs/architecture.md#git), global hooks (secret scanning, linting, rebase conflict-resolution audit), and conventional commit conventions
 - **[Tools](docs/tools.md#installed-tools)** — CLI tools managed via Homebrew, organized by domain (shell, infra, languages, dev)
-- **[AI](docs/ai-automation.md)** — Claude Code integration with skills, agents, guidelines, and AI-powered git automation
+- **[AI](docs/ai-automation.md)** — Claude Code integration with skills, agents, guidelines, and the `pr` CLI (`pr create`, `pr describe`, `pr review`) for AI-powered git automation
 - **[Task automation](docs/ai-automation.md#task-automation)** — global Taskfile for Homebrew helpers
 
 ## How It Works

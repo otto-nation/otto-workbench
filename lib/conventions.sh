@@ -18,8 +18,8 @@
 # shellcheck disable=SC2034  # All constants are used by sourcing scripts
 
 # Maximum length of the commit header (type + optional scope + colon + space + subject).
-# Rendered into git.generated.md by git/bin/local/generate-git-rules; checked by
-# ai/lib/core/conventions.py.
+# Rendered into git.generated.md by git/bin/local/generate-git-rules; duplicated (not
+# read) as COMMIT_HEADER_MAX in ai/lib/core/conventions.py — keep the two in step.
 COMMIT_HEADER_MAX_LEN=72
 
 # Maximum length of each line in the commit body.

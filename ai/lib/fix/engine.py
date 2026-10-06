@@ -307,6 +307,17 @@ class FixAdapter(ABC):
         unable to tell an in-scope path from an out-of-scope one.
         """
 
+    def commit_scope(self, changed: set[str] | None) -> set[str] | None:
+        """The part of *changed* this domain will commit. All of it by default.
+
+        Asked before the repo's checks run rather than inside `landing`,
+        because a file kept out of the commit is still on disk while they run:
+        the engine has to know what will be left out to say that a green run
+        was not over the commit. A domain that narrows its commit narrows it
+        here, and `landing` is handed the result.
+        """
+        return changed
+
     @abstractmethod
     def landing(self, outcomes: list[ItemOutcome], changed: set[str] | None) -> LandSpec:
         """The commit this pass wants for what its agent produced.
@@ -807,7 +818,7 @@ def _verify_suite(
     adapter: FixAdapter, outcomes: list[ItemOutcome],
     changed: set[str] | None, trail: Trail | None,
     by_id: dict[str, FixItem] | None = None,
-    *, base: str = "",
+    *, base: str = "", left_out: set[str] | frozenset[str] = frozenset(),
 ) -> fix.suite.SuiteResult:
     """Run the repo's declared checks over the pass's work and apply the verdict.
 
@@ -817,6 +828,10 @@ def _verify_suite(
     claims held.
 
     *base* is the HEAD the pass started from, exported as `fix.suite.FIX_BASE_ENV`.
+
+    *left_out* is what `commit_scope` keeps out of the commit. Those files are
+    in the tree the checks run over, so a green run becomes PARTIAL — see
+    `fix.suite.scoped_to`.
 
     Config is re-read from the worktree rather than taken from `adapter.config`
     because a pass launched from another directory carries the config of
@@ -831,6 +846,7 @@ def _verify_suite(
         adapter.workdir, config.fix.verify_command,
         config.fix.verify_timeout, trail, base=base,
     )
+    result = fix.suite.scoped_to(result, set(left_out))
     fix.suite.apply_to(outcomes, result)
     if result.demotes:
         # Only on red, and only as a lead. `fix.blame` reads the pass's own
@@ -1015,6 +1031,8 @@ def run(
     # After the agent and before the commit — the one moment the difference is
     # the agent's work and nothing else's.
     changed = fix.scope.agent_changed(adapter.workdir, dirty_before)
+    committed = adapter.commit_scope(changed)
+    left_out = (changed or set()) - (committed or set())
 
     # Between the agent's edits and everything that reports on them. The two
     # agents above check the pass's claims; this is the only thing that asks
@@ -1026,7 +1044,8 @@ def run(
     # as fixed: no per-item hook can see a suite demotion, because the item
     # stays FIXED. `_verify_suite` holds publishing itself for that.
     adapter.suite = _verify_suite(
-        adapter, settled.outcomes, changed, trail, by_id, base=head_before)
+        adapter, settled.outcomes, changed, trail, by_id,
+        base=head_before, left_out=left_out)
 
     # Between the verdicts and the push, which is the only window that works:
     # both gates have spoken here — the per-item one above and the batch suite
@@ -1041,7 +1060,7 @@ def run(
         # adapter to be the one that stays quiet.
         fix.scope.report_unattributable(adapter.workdir)
     adapter.stop = settled.stop
-    spec = adapter.landing(settled.outcomes, changed)
+    spec = adapter.landing(settled.outcomes, committed)
     # The trailer is appended here, once, for every domain: the commit is what
     # a batch reads the checks verdict back from.
     landed = git.land.land(

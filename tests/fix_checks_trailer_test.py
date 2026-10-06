@@ -43,7 +43,8 @@ def test_git_reads_the_trailer_back():
 
 def test_the_unverified_values_are_suite_statuses():
     assert pr.fix.UNVERIFIED_CHECKS == {
-        SuiteStatus.RED.value, SuiteStatus.TIMED_OUT.value, SuiteStatus.ERROR.value}
+        SuiteStatus.RED.value, SuiteStatus.TIMED_OUT.value, SuiteStatus.ERROR.value,
+        SuiteStatus.PARTIAL.value}
 
 
 def test_the_engine_commits_the_trailer(tmp_path, landed, head, snapshots):

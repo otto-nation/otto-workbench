@@ -264,12 +264,9 @@ class TestTheCommitScope:
         self, git_wt, tmp_path, capsys,
     ):
         adapter = self._adapter(git_wt, tmp_path, files=["a.py"])
-        spec = adapter.landing(
-            [_outcome("M1", FixOutcome.FIXED)],
-            {"a.py", "lib/nesting/bash.py"},
-        )
+        kept = adapter.commit_scope({"a.py", "lib/nesting/bash.py"})
 
-        assert spec.paths == {"a.py"}
+        assert kept == {"a.py"}
         err = capsys.readouterr().err
         assert "lib/nesting/bash.py" in err
         assert "not committing" in err

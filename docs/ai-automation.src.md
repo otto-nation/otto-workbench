@@ -450,7 +450,7 @@ no open decision and every drafted step is listed and finished `done`.
 lists `ci_not_rechecked`.
 
 A step that needs a person opens one `step_review` whose `evidence` is
-`open_findings`, `checks_unverified` (`Fix-Checks:` of `red`/`timed_out`/`error`,
+`open_findings`, `checks_unverified` (`Fix-Checks:` `red`/`timed_out`/`error`/`partial`,
 or `unreadable` when the step's commit-range `git log` failed; a commit with
 no trailer is not evidence), `ci_unfixed`, `one_sided`, or `stacked_on`.
 Actions: `accept`, `retry`, `skip-step`, `undo` (rebase:

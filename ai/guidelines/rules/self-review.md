@@ -44,8 +44,10 @@ Skip if the user explicitly requests it ("skip the review", "just create the PR"
 ## The Summary Is a Claim About the Tree
 
 A fix pass's commit message and terminal summary are rendered from the agent's own boxes
-on the tracking file. The commit is not: staging takes every path the pass touched, with
-the outcomes unread. Attribution between the two is by path, and an agent that answers a
+on the tracking file. The commit is not: staging takes every path the pass touched that
+belongs on the branch, with the outcomes unread. "Belongs" means a branch file, a finding
+anchor, or a test or `_support` module named for one; anything else stays in the worktree
+with a warning. Attribution between the two is by path, and an agent that answers a
 finding by editing its caller or its test moves a file no check can tie back to it.
 
 So `Skipped: [M1] no auto-fix` could sit on top of a commit containing the edit for M1,
@@ -85,6 +87,7 @@ the result qualifies the tally in the line itself:
 | `3 fixed, 1 skipped — but the repo's checks are RED with these changes` | At least one of those fixes is wrong, or a test beside one is stale. The failing output is in the body |
 | `3 fixed, 1 skipped (unverified: no fix.verify_command declared)` | Nothing ran. This is the pre-gate behaviour, and the parenthetical is there so it stops reading like the green case |
 | `3 fixed, 1 skipped (unverified: the repo's checks did not answer)` | The command timed out or could not start. Neither a pass nor a fail |
+| `3 fixed, 1 skipped (unverified: the checks ran with N file(s) this commit leaves out)` | Green, but over a tree holding files the pass touched and did not commit, so it says nothing about the commit. The body names the files. `Fix-Checks: partial` |
 
 This closes the *collateral* half of the problem — an edit that breaks something no finding
 named. It does not close the attribution half above: one command over the whole pass cannot

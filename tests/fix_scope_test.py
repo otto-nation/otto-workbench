@@ -232,6 +232,41 @@ class TestDropOutside:
         )
         assert kept == {"tests/unit/foo_test.py"}
 
+    @pytest.mark.parametrize("candidate,source", [
+        # This repo's convention: the package leads the suite's name.
+        ("tests/eval_scoring_review_test.py", "ai/lib/eval/scoring_review.py"),
+        # A support module named for an in-branch source.
+        ("tests/eval_task_support.py", "ai/lib/eval/task.py"),
+        # A support module extracted from an in-branch suite.
+        ("tests/eval_task_support.py", "tests/eval_task_test.py"),
+    ])
+    def test_the_repos_own_test_and_support_names_are_kept(
+        self, tmp_path, capsys, candidate, source,
+    ):
+        """The two shapes a fix pass left uncommitted, breaking the commit.
+
+        A pass moved a suite's helpers into a new `*_support.py` and edited a
+        `tests/<package>_<module>_test.py` suite; both were dropped, while the
+        suite importing the new module was committed without it.
+        """
+        kept = fix.scope.drop_outside(
+            {candidate},
+            fix.scope.commit_allowed({source}, set()),
+            tmp_path,
+            {source},
+        )
+        assert kept == {candidate}
+        assert "not committing" not in capsys.readouterr().err
+
+    def test_a_support_module_for_another_subject_is_still_dropped(self, tmp_path):
+        kept = fix.scope.drop_outside(
+            {"tests/eval_floors_support.py"},
+            fix.scope.commit_allowed({"tests/eval_task_test.py"}, set()),
+            tmp_path,
+            {"tests/eval_task_test.py"},
+        )
+        assert kept == set()
+
     def test_an_unrelated_suite_edit_is_still_dropped(self, tmp_path):
         """Only a test named for an in-branch source is admitted."""
         kept = fix.scope.drop_outside(

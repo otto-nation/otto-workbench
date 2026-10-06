@@ -65,6 +65,7 @@ import shlex
 import signal
 import subprocess
 import time
+import dataclasses
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -121,6 +122,10 @@ class SuiteStatus(StrEnum):
     NOT_DECLARED = "not_declared"
     # Ran, exit 0.
     GREEN = "green"
+    # Ran, exit 0, but over a tree holding files the commit leaves out — the
+    # verdict is about a superset of what lands, so it establishes nothing
+    # about the commit itself. A red run on that tree stays RED.
+    PARTIAL = "partial"
     # Ran, non-zero exit.
     RED = "red"
     # Killed at `fix.verify_timeout`.
@@ -145,6 +150,9 @@ class SuiteResult:
     # and empty on a red one is the ordinary case — it means nothing could be
     # pointed at, never that nothing is wrong.
     pointers: tuple[fix.blame.Pointer, ...] = ()
+    # Paths in the tree the checks ran over that the commit leaves out. Set on
+    # PARTIAL, where they are the reason the green run does not count.
+    left_out: tuple[str, ...] = ()
 
     @property
     def ran(self) -> bool:
@@ -179,6 +187,12 @@ class SuiteResult:
             return f"Checks green: {self.command} ({self.duration_s:.0f}s)"
         if self.status is SuiteStatus.RED:
             return f"Checks RED: {self.command} ({self.duration_s:.0f}s)"
+        if self.status is SuiteStatus.PARTIAL:
+            return (
+                f"Checks green but not on this commit: {self.command} ran with "
+                f"{', '.join(self.left_out)} in the tree, which the commit "
+                "leaves out"
+            )
         if self.status is SuiteStatus.TIMED_OUT:
             return (
                 f"Checks did not finish: {self.command} timed out after "
@@ -459,6 +473,11 @@ def qualify_tally(tally: str, result: SuiteResult) -> str:
         return f"{tally} (unverified: no fix.verify_command declared)"
     if result.status in (SuiteStatus.TIMED_OUT, SuiteStatus.ERROR):
         return f"{tally} (unverified: the repo's checks did not answer)"
+    if result.status is SuiteStatus.PARTIAL:
+        return (
+            f"{tally} (unverified: the checks ran with {len(result.left_out)} "
+            "file(s) this commit leaves out)"
+        )
     return tally
 
 
@@ -504,6 +523,22 @@ def with_trailer(message: str, result: SuiteResult) -> str:
     return f"{message.rstrip()}\n\n{trailer}" if trailer else message
 
 
+def scoped_to(result: SuiteResult, left_out: set[str]) -> SuiteResult:
+    """*result*, demoted to PARTIAL when it is green over files the commit drops.
+
+    The checks run in the worktree, so a file a domain keeps out of the commit
+    is still on disk and importable while they run. A green verdict then
+    describes a tree the commit is not, and a commit missing a module its own
+    suite imports reads as checked. Red is left alone: it withdraws the claims
+    either way, and the commit may well be red too.
+    """
+    if result.status is not SuiteStatus.GREEN or not left_out:
+        return result
+    return dataclasses.replace(
+        result, status=SuiteStatus.PARTIAL, left_out=tuple(sorted(left_out)),
+    )
+
+
 def should_run(outcomes: list[ItemOutcome], changed: set[str] | None) -> bool:
     """Whether this pass produced anything worth running the repo's checks over.
 
@@ -532,6 +567,7 @@ __all__ = [
     "detail_lines",
     "qualify_tally",
     "run",
+    "scoped_to",
     "should_run",
     "with_trailer",
 ]

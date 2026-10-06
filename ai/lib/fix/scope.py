@@ -141,7 +141,12 @@ def _subjects(path: Path) -> set[str]:
     """The names a test or support module for *path* would be built from."""
     stem = path.stem
     if _in_test_dir(path):
-        subject = _test_subject(stem)
+        # A support module is written with its suite, so it names the same
+        # subject the suite does: `tests/foo_support.py` admits `foo_test.py`.
+        if stem.endswith("_support"):
+            subject = stem.removesuffix("_support")
+        else:
+            subject = _test_subject(stem)
         return {subject} if subject else set()
     subjects = {stem}
     if path.parent.name:

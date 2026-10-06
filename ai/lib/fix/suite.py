@@ -65,8 +65,7 @@ import shlex
 import signal
 import subprocess
 import time
-import dataclasses
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 
@@ -80,6 +79,9 @@ from pr.fix import CHECKS_TRAILER, ItemOutcome
 # terminal. The tail rather than the head: pytest and bats both put the summary
 # of what failed at the end, and a head-clip of a verbose runner is the banner.
 OUTPUT_TAIL_CHARS = 2000
+
+# How many left-out paths a PARTIAL note names before it settles for a count.
+LEFT_OUT_SHOWN = 3
 
 # The hedge a red run puts on every fix the pass claimed. Phrased as the state
 # of the tree rather than as an accusation about the item — one run cannot tell
@@ -188,10 +190,13 @@ class SuiteResult:
         if self.status is SuiteStatus.RED:
             return f"Checks RED: {self.command} ({self.duration_s:.0f}s)"
         if self.status is SuiteStatus.PARTIAL:
+            shown = ", ".join(self.left_out[:LEFT_OUT_SHOWN])
+            more = len(self.left_out) - LEFT_OUT_SHOWN
+            if more > 0:
+                shown += f" and {more} more"
             return (
                 f"Checks green but not on this commit: {self.command} ran with "
-                f"{', '.join(self.left_out)} in the tree, which the commit "
-                "leaves out"
+                f"{shown} in the tree, which the commit leaves out"
             )
         if self.status is SuiteStatus.TIMED_OUT:
             return (
@@ -534,7 +539,7 @@ def scoped_to(result: SuiteResult, left_out: set[str]) -> SuiteResult:
     """
     if result.status is not SuiteStatus.GREEN or not left_out:
         return result
-    return dataclasses.replace(
+    return replace(
         result, status=SuiteStatus.PARTIAL, left_out=tuple(sorted(left_out)),
     )
 

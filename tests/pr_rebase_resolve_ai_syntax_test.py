@@ -114,3 +114,27 @@ def test_a_file_that_never_parsed_is_not_refused():
 
     assert verdict.usable
     assert verdict.resolved == jsonc
+
+
+def test_the_sides_are_parsed_once_across_distinct_answers():
+    """A retry judges a new spliced text, not new stages."""
+    stages = rebase.conflicts.StageTexts(
+        base="x = 1\n", target="x = 1\n", replayed="x = 2\n",
+    )
+    real = rebase.resolve_ai.core.syntax.check
+    calls = []
+
+    def counting(path, text):
+        calls.append(text)
+        return real(path, text)
+
+    sides_parse = rebase.resolve_ai.cache(
+        lambda: rebase.resolve_ai._sides_parse("mod.py", lambda: stages),
+    )
+    with mock.patch.object(rebase.resolve_ai.core.syntax, "check", counting):
+        for broken in ("def f(\n", "def g(\n"):
+            reason = rebase.resolve_ai._syntax_failure("mod.py", broken, sides_parse)
+            assert reason.startswith(rebase.types.ParseFailure.DOES_NOT_PARSE)
+
+    assert calls.count("x = 1\n") == 1
+    assert calls.count("x = 2\n") == 1

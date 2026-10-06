@@ -239,6 +239,8 @@ class TestDropOutside:
         ("tests/eval_task_support.py", "ai/lib/eval/task.py"),
         # A support module extracted from an in-branch suite.
         ("tests/eval_task_support.py", "tests/eval_task_test.py"),
+        # A suite named for an in-branch support module.
+        ("tests/eval_task_test.py", "tests/eval_task_support.py"),
     ])
     def test_the_repos_own_test_and_support_names_are_kept(
         self, tmp_path, capsys, candidate, source,

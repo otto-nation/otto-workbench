@@ -240,24 +240,29 @@ class AnswerVerdict:
         return self.resolved is not None and not self.losses
 
 
+def _sides_parse(filepath: str, sides: Callable[[], conflicts.StageTexts]) -> bool:
+    """Whether every conflict side that exists parses on its own."""
+    stages = sides()
+    present = [t for t in (stages.target, stages.replayed) if t is not None]
+    return all(core.syntax.check(filepath, t).ok for t in present)
+
+
 def _syntax_failure(
-    filepath: str, resolved: str, sides: Callable[[], conflicts.StageTexts],
+    filepath: str, resolved: str, sides_parse: Callable[[], bool],
 ) -> str:
     """Empty unless the merge broke parsing, else a DOES_NOT_PARSE reason naming why.
 
-    *sides* yields the conflict's stages, and is only read when *resolved*
-    fails to parse. The failure counts only when every side that exists still
-    parses on its own. A file that never parsed as its suffix claims (a Helm
-    template under `templates/*.yaml`, JSON with comments) fails the checker
-    on every resolution, and refusing it would stop each rebase that touches it
-    over a property the merge did not change.
+    *sides_parse* says whether the conflict's stages each parse, and is only
+    called when *resolved* fails to parse. The failure counts only when every
+    side that exists still parses on its own. A file that never parsed as its
+    suffix claims (a Helm template under `templates/*.yaml`, JSON with
+    comments) fails the checker on every resolution, and refusing it would stop
+    each rebase that touches it over a property the merge did not change.
     """
     result = core.syntax.check(filepath, resolved)
     if result.ok:
         return ""
-    stages = sides()
-    present = [t for t in (stages.target, stages.replayed) if t is not None]
-    if not all(core.syntax.check(filepath, t).ok for t in present):
+    if not sides_parse():
         return ""
     return f"{ParseFailure.DOES_NOT_PARSE}:{result.detail}"
 
@@ -267,7 +272,9 @@ def judge_answer(filepath: str, stages: conflicts.StageTexts, text: str) -> Answ
     resolved, reason = conflicts.parse_resolved_content(text)
     if resolved is None:
         return AnswerVerdict(None, reason, ())
-    syntax_reason = _syntax_failure(filepath, resolved, lambda: stages)
+    syntax_reason = _syntax_failure(
+        filepath, resolved, lambda: _sides_parse(filepath, lambda: stages),
+    )
     if syntax_reason:
         return AnswerVerdict(None, syntax_reason, ())
     losses = survival.audit(
@@ -394,13 +401,16 @@ def resolve_chunked(
            data={"blocks": len(blocks), "total_lines": content.count("\n") + 1})
 
     sides = cache(lambda: conflicts.stage_texts(filepath, cwd))
+    # The stages do not change between retries, so whether they parse is
+    # settled once rather than once per distinct spliced answer.
+    sides_parse = cache(lambda: _sides_parse(filepath, sides))
 
     # The checker is an external process, and one spliced file is judged by
     # `usable`, by `retry_hint`, and once more after the prompt returns, so each
     # distinct file is checked once and the verdict shared.
     @cache
     def syntax_failure(spliced: str) -> str:
-        return _syntax_failure(filepath, spliced, sides)
+        return _syntax_failure(filepath, spliced, sides_parse)
 
     def chunked_failure(text: str) -> str:
         parsed = conflicts.parse_chunked_resolutions(text, blocks)

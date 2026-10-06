@@ -90,6 +90,18 @@ _run_migration() {
   [ "$status" -eq 3 ]
 }
 
+@test "a link that cannot be removed fails so the framework retries" {
+  [ "$(id -u)" -ne 0 ] || skip "root ignores directory permissions"
+  ln -s "$REPO_ROOT/lib" "$CFG/lib"
+  chmod 500 "$CFG"
+  TASK_CONFIG_DIR="$CFG" run _run_migration
+  chmod 700 "$CFG"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"WARN Could not remove $CFG/lib"* ]]
+  [[ "$output" != *"OK Removed"* ]]
+  [ -L "$CFG/lib" ]
+}
+
 # The migration's empty-$TASK_CONFIG_DIR guard is deliberately not covered.
 # With the variable empty the targets collapse to "/Taskfile.yml" and "/lib",
 # which `-L` rejects on any machine that does not have those as symlinks at

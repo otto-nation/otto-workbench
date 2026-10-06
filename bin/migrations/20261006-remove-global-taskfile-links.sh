@@ -8,7 +8,7 @@
 # here: bin's own sync prunes a symlink whose source was deleted.
 
 migration_20261006_remove_global_taskfile_links() {
-  # Defensive only: the framework always exports TASK_CONFIG_DIR, but
+  # Defensive only: the framework always defines TASK_CONFIG_DIR, but
   # there is no `set -u` here, and an empty value would collapse the targets
   # to "/Taskfile.yml" and "/lib" on a script that deletes files.
   [[ -n "$TASK_CONFIG_DIR" ]] || return "$MIGRATION_NOOP"
@@ -16,7 +16,10 @@ migration_20261006_remove_global_taskfile_links() {
   local removed=0 link
   for link in "$TASK_CONFIG_DIR/Taskfile.yml" "$TASK_CONFIG_DIR/lib"; do
     if [[ -L "$link" ]]; then
-      rm -f "$link"
+      if ! rm -f "$link"; then
+        warn "Could not remove $link"
+        return 1
+      fi
       success "Removed $link"
       removed=1
     fi

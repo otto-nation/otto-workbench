@@ -247,11 +247,14 @@ teardown() {
 
 @test "state_detect_installed does not record herdr when it is absent" {
   HOME="$TMPDIR/home"
-  mkdir -p "$HOME"
+  mkdir -p "$HOME" "$TMPDIR/bin"
   export WORKBENCH_DIR="$REPO_ROOT"
   export NO_COLOR=1
   . "$REPO_ROOT/lib/ui.sh"
-  command -v herdr > /dev/null 2>&1 && skip "herdr is installed on this machine"
+  ln -sf "$(command -v yq)" "$TMPDIR/bin/yq"
+  ln -sf "$(command -v jq)" "$TMPDIR/bin/jq"
+  ln -sf "$BASH" "$TMPDIR/bin/bash"
+  PATH="$TMPDIR/bin:/usr/bin:/bin"
 
   state_detect_installed
 

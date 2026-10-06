@@ -18,19 +18,30 @@ fi
 # Keeping an installed herdr current is step_update_herdr's job.
 step_install_herdr() {
   install_via_installer herdr "$HERDR_INSTALL_URL" "Herdr"
+  # The installer writes LOCAL_BIN_DIR/herdr. That directory is often missing
+  # from PATH until the next login, so later steps in this same run would skip.
+  if ! command -v herdr > /dev/null 2>&1; then
+    export PATH="$LOCAL_BIN_DIR:$PATH"
+  fi
 }
 
 # step_update_herdr — moves herdr to the current release.
 #
 # Plain `herdr update` leaves compatible running servers alive; --handoff is
-# experimental and is never passed. Non-fatal: an offline machine still gets
-# the rest of its config, as with step_update_pi.
+# experimental and is never passed. Stdin is closed so a restart prompt cannot
+# hang an unattended sync. Failure (and a zero-exit "was not updated") surfaces
+# herdr's own message — a Homebrew install prints the brew upgrade command —
+# rather than a hardcoded `herdr update`. Non-fatal: an offline machine still
+# gets the rest of its config, as with step_update_pi.
 step_update_herdr() {
   command -v herdr > /dev/null 2>&1 || { warn "herdr not found in PATH — skipping"; return 0; }
-  if herdr update > /dev/null 2>&1; then
-    [[ "${WORKBENCH_SYNC:-}" != true ]] && success "herdr is current" || true
+  local output status=0 first_line
+  output=$(herdr update < /dev/null 2>&1) || status=$?
+  first_line="${output%%$'\n'*}"
+  if [[ "$status" -ne 0 || "$output" == *"was not updated"* ]]; then
+    warn "herdr was not updated${first_line:+: $first_line}"
   else
-    warn "Could not update herdr — run: herdr update"
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && success "herdr is current" || true
   fi
   return 0
 }

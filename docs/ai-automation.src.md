@@ -50,8 +50,9 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
 - Create worktrees with `wt`, not `herdr worktree` — herdr's default
   `~/.herdr/worktrees` sits outside the workbench layout.
 - After setup, register a remote machine with
-  `herdr machine add <ssh-host> --label <name>`; setup prints a reminder while
-  none is registered.
+  `herdr machine add <ssh-host> --label <name>`; the reminder prints during
+  setup and `otto-workbench ai sync` while none is registered, not during a
+  regular `otto-workbench sync`.
 - `~/.config/herdr/config.toml` is not managed yet (#1660).
 
 ## Configuration

@@ -491,7 +491,7 @@ resolve_pytest() {
 
 # _pytest_candidates — every pytest on PATH, in resolution order.
 #
-# `command -v -a` is not portable to the bash 3.2 that ships with macOS, so the
+# `command -v -a` is not portable across shells and bash versions, so the
 # lookup walks PATH itself.
 _pytest_candidates() {
   local dir

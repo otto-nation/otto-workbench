@@ -214,7 +214,7 @@ def _resolve_entry_model(entry: dict) -> str:
     try:
         task = eval.task.get_task(eval.task.task_name(entry["manifest"]))
     except KeyError as exc:
-        sys.exit(f"error: {exc}")
+        sys.exit(f"error: {exc.args[0]}")
     return eval.task.resolved_model(task, "")
 
 

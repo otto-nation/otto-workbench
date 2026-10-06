@@ -47,13 +47,15 @@ def test_explicit_models_still_wins(tmp_path, monkeypatch, capsys):
     assert "opus, haiku" in err
 
 
-def test_empty_model_tokens_are_dropped(tmp_path, monkeypatch, capsys):
+def test_explicit_models_drops_empty_tokens(tmp_path):
+    assert eval.run._explicit_models(_args(tmp_path, models=", opus,")) == ["opus"]
+    assert eval.run._explicit_models(_args(tmp_path, models=",")) is None
+
+
+def test_all_empty_models_resolves_through_phase(tmp_path, monkeypatch, capsys):
     _make_case(tmp_path / "corpus", "a", task="ci-fix")
     monkeypatch.setattr(
         agent.phases, "phase_model", lambda phase, explicit, cfg=None: "resolved-empty")
-
-    assert eval.run._explicit_models(_args(tmp_path, models=", opus,")) == ["opus"]
-    assert eval.run._explicit_models(_args(tmp_path, models=",")) is None
     eval.run.run_eval(_args(tmp_path, models=",", dry_run=True), tmp_path)
     err = capsys.readouterr().err
     assert "Models: resolved-empty" in err
@@ -100,4 +102,5 @@ def test_unknown_manifest_task_exits_with_a_message(tmp_path, capsys):
     _make_case(tmp_path / "corpus", "a", task="nope")
     with pytest.raises(SystemExit) as exc:
         eval.run.run_eval(_args(tmp_path, dry_run=True), tmp_path)
-    assert "unknown eval task 'nope'" in str(exc.value)
+    # A KeyError's str() is repr(msg); the exit text must be the bare message.
+    assert str(exc.value).startswith("error: unknown eval task 'nope'")

@@ -71,6 +71,59 @@ ai_generate_rules() {
   fi
 }
 
+# ai_scaffold_gh_token_env FILE — writes the commented GH_TOKEN template that
+# `pr create` and `pr describe --post` resolve their token from
+# (ai/lib/pr/gh_token.py). Creates FILE, owner-only, when absent; appends the
+# GH_TOKEN section to an existing FILE that mentions GH_TOKEN nowhere; leaves
+# any other FILE byte-identical. Never rewrites a line already present, so it
+# is safe to re-run.
+#
+# An existing file's leftover AI_COMMAND / ANTHROPIC_API_KEY lines are inert
+# and deliberately kept: the file is the operator's, and nothing reads them.
+ai_scaffold_gh_token_env() {
+  local file="$1"
+  mkdir -p "$(dirname "$file")"
+  if [[ ! -f "$file" ]]; then
+    (
+      umask 077
+      {
+        printf '# GitHub tokens for pr create and pr describe --post.\n'
+        printf '# See ai/guidelines/rules/security-secrets.md for the two-file secret model.\n\n'
+        _ai_gh_token_section
+        printf '\n'
+        _ai_gh_org_section
+      } > "$file"
+    )
+    success "Created ${file}"
+    return 0
+  fi
+  if grep -q 'GH_TOKEN' "$file"; then
+    return 0
+  fi
+  { printf '\n'; _ai_gh_token_section; } >> "$file"
+  success "Added GH_TOKEN section to ${file}"
+}
+
+_ai_gh_token_section() {
+  cat <<'EOF'
+# ── GitHub token (used by: pr create, pr describe --post) ──────────────────────
+# Create a fine-grained PAT at https://github.com/settings/tokens/new
+# Permissions: Contents (read/write), Pull requests (read/write)
+# Scope to specific repos only — never "All repositories"
+# GH_TOKEN=github_pat_
+EOF
+}
+
+_ai_gh_org_section() {
+  cat <<'EOF'
+# ── Per-org tokens (optional — overrides GH_TOKEN for repos in that org) ──────
+# Use GH_TOKEN__<ORG> with the org name uppercased and hyphens as underscores.
+# Each PAT should be scoped to that org's repos only.
+# GH_TOKEN__OTTO_NATION=github_pat_
+# GH_TOKEN__MY_WORK_ORG=github_pat_
+EOF
+}
+
 # sync_ai — dispatches to each installed AI sub-tool's sync function.
 # Called automatically by otto-workbench sync via the sync_<component> convention.
 sync_ai() {

@@ -150,23 +150,17 @@ print_workbench_summary() {
     summary_warn "shell secrets     ${DIM}${ENV_LOCAL_FILE/#"$HOME"/$home_short}  not created — see ${ENV_LOCAL_FILE/#"$HOME"/$home_short}.template${NC}"
   fi
 
-  # AI tokens — check AI_COMMAND and GH_TOKEN in taskfile.env
-  local _ai_cmd="" _gh_set=false
+  # GitHub token — the tiers pr/gh_token.py reads from taskfile.env
+  local _gh_set=false
   if [[ -f "$TASKFILE_ENV" ]]; then
-    _ai_cmd=$(grep -m1 '^AI_COMMAND=' "$TASKFILE_ENV" 2>/dev/null | sed 's/^AI_COMMAND=//')
-    if grep -q '^GH_TOKEN=' "$TASKFILE_ENV" 2>/dev/null; then
+    if grep -qE '^GH_TOKEN(__[A-Z0-9_]+)?=.+' "$TASKFILE_ENV" 2>/dev/null; then
       _gh_set=true
     fi
-  fi
-  if [[ -n "$_ai_cmd" ]]; then
-    summary_ok "AI command        ${DIM}${TASKFILE_ENV/#"$HOME"/$home_short}  ${_ai_cmd}${NC}"
-  else
-    summary_warn "AI command        ${DIM}${TASKFILE_ENV/#"$HOME"/$home_short}  not configured — run: task --global ai:setup${NC}"
   fi
   if [[ "$_gh_set" == true ]]; then
     summary_ok "GH_TOKEN          ${DIM}${TASKFILE_ENV/#"$HOME"/$home_short}  configured${NC}"
   else
-    summary_warn "GH_TOKEN          ${DIM}${TASKFILE_ENV/#"$HOME"/$home_short}  not set${NC}"
+    summary_warn "GH_TOKEN          ${DIM}${TASKFILE_ENV/#"$HOME"/$home_short}  not set — run: otto-workbench install ai${NC}"
   fi
 
   summary_info "shell rc          ${DIM}${ZSHRC_FILE/#"$HOME"/$home_short}${NC}"

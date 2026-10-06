@@ -102,61 +102,6 @@ tasks:
   # ============================================================================
   # GIT AUTOMATION
   # ============================================================================
-  ai:setup:
-    desc: "Setup AI configuration"
-    silent: true
-    cmds:
-      - |
-        CONFIG_DIR="$HOME/.config/task"
-        ENV_FILE="$CONFIG_DIR/taskfile.env"
-
-        mkdir -p "$CONFIG_DIR"
-
-        if [ ! -f "$ENV_FILE" ]; then
-          {
-            printf '# Taskfile AI Configuration\n'
-            printf '# See ai/guidelines/rules/security.md for the two-file secret model.\n'
-            printf '\n'
-            printf '# ── AI command ───────────────────────────────────────────────────────────────\n'
-            printf '# Uncomment one of the examples below or add your own\n'
-            printf '# --output-format json lets the call be recorded in the usage ledger\n'
-            printf '# (otto-log stats); without it the response is used but not measured.\n'
-            printf '# AI_COMMAND=claude -p --output-format json --agent ci-cd --strict-mcp-config\n'
-            printf '# AI_COMMAND=copilot --agent ci-cd -p\n'
-            printf '\n'
-            printf '# ── GitHub token (required for: task pr:*) ───────────────────────────────────\n'
-            printf '# Create a fine-grained PAT at https://github.com/settings/tokens/new\n'
-            printf '# Permissions: Contents (read/write), Pull requests (read/write)\n'
-            printf '# Scope to specific repos only — never "All repositories"\n'
-            printf '# GH_TOKEN=github_pat_\n'
-            printf '\n'
-            printf '# ── Per-org tokens (optional — overrides GH_TOKEN for repos in that org) ────\n'
-            printf '# Use GH_TOKEN__<ORG> with org name uppercased and hyphens as underscores.\n'
-            printf '# Each PAT should be scoped to that org'\''s repos only.\n'
-            printf '# GH_TOKEN__OTTO_NATION=github_pat_\n'
-            printf '# GH_TOKEN__MY_WORK_ORG=github_pat_\n'
-            printf '\n'
-            printf '# ── Anthropic API key (optional — isolates automation billing) ────────────────\n'
-            printf '# When set, overrides ANTHROPIC_API_KEY from your shell for task runs only\n'
-            printf '# ANTHROPIC_API_KEY=sk-ant-api03-\n'
-          } > "$ENV_FILE"
-          printf "  ✓ Created %s\n" "$ENV_FILE"
-          echo "→ Edit to configure your AI command and GitHub token"
-        else
-          printf "→ %s already exists\n" "$ENV_FILE"
-          if ! grep -q "GH_TOKEN" "$ENV_FILE"; then
-            {
-              printf '\n'
-              printf '# ── GitHub token (required for: task pr:*) ───────────────────────────────────\n'
-              printf '# Create a fine-grained PAT at https://github.com/settings/tokens/new\n'
-              printf '# Permissions: Contents (read/write), Pull requests (read/write)\n'
-              printf '# Scope to specific repos only — never "All repositories"\n'
-              printf '# GH_TOKEN=github_pat_\n'
-            } >> "$ENV_FILE"
-            printf "  ✓ Added GH_TOKEN section to %s\n" "$ENV_FILE"
-          fi
-        fi
-
   commit:
     desc: "Generate AI-powered commit message based on staged changes"
     silent: true
@@ -450,7 +395,6 @@ tasks:
         fi
 
         echo "AI-Powered Git Automation:"
-        echo "   ai:setup          Setup AI configuration (first-time setup)"
         echo "   commit            AI-generated commit messages"
         echo "   commit:reword     AI reword of a commit (default: HEAD; or: task commit:reword -- SHA)"
         echo "   review            AI review of staged, unstaged, and committed changes"

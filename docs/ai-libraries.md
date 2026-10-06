@@ -3660,7 +3660,7 @@ The shell bridge into the usage ledger.
 
 It renders a stream-json feed while teeing the raw stream, unwraps a
 `--output-format json` envelope, and appends one ledger record from a teed
-file. Run by `ai-usage-log` for the two shell callers that cannot use
+file. Run by `ai-usage-log` for the shell caller that cannot use
 `agent.backend` (`run-auto-task`).
 
 Not: parsing usage (`agent.usage`), rendering an event

@@ -94,6 +94,11 @@ class ParseFailure(StrEnum):
     # which reads to the next person as a live failure mode that simply never
     # fires — see `conflicts.trim_echoed_context`.
     WHOLLY_ECHOED = "wholly_echoed_context"
+    # Markers were right; the merged text does not parse as the language the
+    # path claims. Distinct from a surviving conflict marker: those never made
+    # it out of git's conflict syntax, and this one did, then failed the
+    # language's own checker. See `core.syntax.check`.
+    DOES_NOT_PARSE = "does_not_parse"
 
 
 class RunMode(StrEnum):

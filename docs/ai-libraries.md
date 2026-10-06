@@ -4792,6 +4792,23 @@ Waiting on the child is :data:`core.timeouts.UNBOUNDED` because the suite *is*
 the work. A bound would convert a large or contended run into a false failure;
 the heartbeat is what makes that wait observable rather than a hang.
 
+### core/syntax.py
+
+Cheap syntax checks for text that has just been merged.
+
+`pr rebase --fix` used to treat a marker-valid resolution as success, so a Go
+file that ended with an extra `}` reported the rebase complete and printed a
+force-push command. The pre-push hook was the first thing that objected, after
+the user had already been handed that command.
+
+This module answers one question: does this text still parse as the language
+its path claims? It is not a formatter, a linter, or a build. `gofmt`
+whitespace differences do not fail. Unknown suffixes pass. The checkers that
+exist are the cheap ones — `gofmt -e` on stdin, `ast.parse`, `bash -n`,
+`json.loads`, `yaml.safe_load_all`, `tomllib.loads` — and anything they cannot
+run is a pass, because a rebase blocked on a missing parser is worse than one
+that ships a file the next hook will catch.
+
 ### core/text.py
 
 Text a human reads, formatted the same way wherever it is written.

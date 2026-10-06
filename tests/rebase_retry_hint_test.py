@@ -47,6 +47,7 @@ class TestHintForReason:
         ("surviving_conflict_marker:<<<<<<<", agent.retry.SURVIVING_MARKER_HINT),
         ("missing_markers_for_block_2", agent.retry.BLANK_RESPONSE_HINT),
         ("missing_both_markers", agent.retry.BLANK_RESPONSE_HINT),
+        ("does_not_parse", agent.retry.DOES_NOT_PARSE_HINT),
         ("", agent.retry.BLANK_RESPONSE_HINT),
     ])
     def test_each_failure_earns_its_own_correction(self, reason, expected):
@@ -96,6 +97,16 @@ class TestHintForReason:
             reason = rebase.conflicts.parse_resolved_content(text)[1]
             if reason:
                 emitted.add(reason.split(":", 1)[0])
+        syntax = rebase.resolve_ai.judge_answer(
+            "mod.py",
+            rebase.conflicts.StageTexts(
+                base="x = 1\n", target="x = 1\n", replayed="x = 2\n",
+            ),
+            f"{rebase.conflicts.RESOLVE_BEGIN}\ndef f(\n"
+            f"{rebase.conflicts.RESOLVE_END}",
+        )
+        if syntax.reason:
+            emitted.add(syntax.reason.split(":", 1)[0])
 
         for failure in rebase.resolve_ai._HINT_FOR_FAILURE:
             assert any(e == failure.value or e.startswith(f"{failure.value}_")
@@ -106,6 +117,13 @@ class TestHintForReason:
         assert rebase.resolve_ai.hint_for_reason(
             "some_future_failure_in_block_1",
         ) is agent.retry.BLANK_RESPONSE_HINT
+
+    def test_a_syntax_failure_hint_includes_the_parser_detail(self):
+        hint = rebase.resolve_ai.hint_for_reason(
+            "does_not_parse:expected declaration, found '}'",
+        )
+        assert hint.startswith(agent.retry.DOES_NOT_PARSE_HINT)
+        assert "expected declaration, found '}'" in hint
 
 
 class TestTheRetryIsToldWhatWentWrong:

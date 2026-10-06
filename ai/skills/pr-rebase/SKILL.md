@@ -199,12 +199,15 @@ Four runs reach this, and the difference is what the console said, not the JSON:
   user whether they want AI resolution. If yes, `pr rebase --fix --branch
   <branch>` resumes the in-progress rebase with AI resolution and force-pushes.
 - **`--fix` mode, where a file could not be resolved.** The AI's answer for that
-  file would not parse twice over, or the file is binary. Everything else in the
-  step is already resolved and staged, and every commit replayed so far is
-  intact — the rebase is *paused*, not aborted, and `files_resolved` in
-  `state.json` records what it kept. `files` names only what is still
-  unresolved. Report those, offer to resolve them by hand, and finish with
-  `pr rebase --fix --branch <branch>`, which resumes from where it stopped.
+  file would not parse twice over (missing resolution markers, surviving git
+  conflict markers, or a merged file that no longer parses as its language —
+  `gofmt -e`, `ast.parse`, `bash -n`, JSON/YAML/TOML), or the file is binary.
+  The broken file is not written or staged. Everything else in the step is
+  already resolved and staged, and every commit replayed so far is intact — the
+  rebase is *paused*, not aborted, and `files_resolved` in `state.json` records
+  what it kept. `files` names only what is still unresolved. Report those, offer
+  to resolve them by hand, and finish with `pr rebase --fix --branch <branch>`,
+  which resumes from where it stopped.
 - **`--fix` mode, where the AI backend is unavailable.** The console says so
   directly ("Cannot resolve conflicts — AI backend unavailable.") before any
   file is even attempted. Resuming with `pr rebase --fix --branch <branch>`

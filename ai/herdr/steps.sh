@@ -29,12 +29,12 @@ step_install_herdr() {
 #
 # Plain `herdr update` leaves compatible running servers alive; --handoff is
 # experimental and is never passed. Stdin is closed so a restart prompt cannot
-# block an unattended sync; the call's runtime is not bounded (no bash timeout
-# helper exists in this repo). Failure (and a zero-exit "was not updated")
-# surfaces the last non-empty line of herdr's own output — the reason comes
-# after any banner or progress lines, and a Homebrew install prints the brew
-# upgrade command there — rather than a hardcoded `herdr update`. Non-fatal: an offline machine still
-# gets the rest of its config, as with step_update_pi.
+# block an unattended sync; the call's runtime is not bounded. Failure (and a
+# zero-exit "was not updated") surfaces the last non-empty line of herdr's own
+# output — the reason comes after any banner or progress lines, and a Homebrew
+# install prints the brew upgrade command there — rather than a hardcoded
+# `herdr update`. Non-fatal: an offline machine still gets the rest of its
+# config, as with step_update_pi.
 step_update_herdr() {
   command -v herdr > /dev/null 2>&1 || { warn "herdr not found in PATH — skipping"; return 0; }
   local output status=0 last_line

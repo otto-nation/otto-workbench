@@ -1,15 +1,7 @@
 # Workbench repo — local development tasks
 # These tasks are only relevant when contributing to this repo.
-#
-# Global Homebrew helpers live in Taskfile.global.yml and are
-# installed to ~/.config/task/Taskfile.yml by task/steps.sh.
-# Run them from anywhere with: task --global --list
 
 version: "3"
-
-includes:
-  global:
-    taskfile: ./Taskfile.global.yml
 
 tasks:
   test:
@@ -86,3 +78,14 @@ tasks:
       - 'printf "#!/usr/bin/env bash\nexec \"\$(git rev-parse --show-toplevel)/git/hooks/pre-commit-workbench\" \"\$@\"\n" > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit'
       - 'printf "#!/usr/bin/env bash\nexec \"\$(git rev-parse --show-toplevel)/git/hooks/pre-push-workbench\" \"\$@\"\n" > .git/hooks/pre-push && chmod +x .git/hooks/pre-push'
       - 'echo "✓ Git hooks activated (pre-commit: auto-regenerate, pre-push: lint + test)"'
+
+  brew:dump:
+    desc: "Regenerate brew/Brewfile from current state"
+    silent: true
+    cmds:
+      - |
+        TARGET="{{.TASKFILE_DIR}}/brew/Brewfile"
+        echo "→ Updating Brewfile from current state..."
+        brew bundle dump --force --describe --file="$TARGET"
+        echo "✓ Saved to $TARGET"
+        echo "→ Review changes: git diff $TARGET"

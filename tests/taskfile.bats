@@ -105,3 +105,21 @@ setup() {
   [[ "$output" == *"run-tests"* ]]
   [[ "$output" == *'--files "tests/{{.FILENAME}}"'* ]]
 }
+
+# ── brew:dump ─────────────────────────────────────────────────────────
+#
+# Lives here rather than in a global Taskfile: TASKFILE_DIR is then the
+# worktree being worked in, so the dump lands in that checkout's Brewfile.
+
+@test "brew:dump writes this checkout's Brewfile" {
+  run yq -r '.tasks["brew:dump"].cmds[0]' "$TASKFILE"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'{{.TASKFILE_DIR}}/brew/Brewfile'* ]]
+  [[ "$output" == *'brew bundle dump --force --describe'* ]]
+}
+
+@test "the Taskfile includes no other Taskfile" {
+  run yq -r '.includes // "none"' "$TASKFILE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "none" ]
+}

@@ -10,8 +10,13 @@
 migration_20261006_remove_global_taskfile_links() {
   # Defensive only: the framework always defines TASK_CONFIG_DIR, but
   # there is no `set -u` here, and an empty value would collapse the targets
-  # to "/Taskfile.yml" and "/lib" on a script that deletes files.
-  [[ -n "$TASK_CONFIG_DIR" ]] || return "$MIGRATION_NOOP"
+  # to "/Taskfile.yml" and "/lib" on a script that deletes files. It fails
+  # rather than answering NOOP: NOOP is recorded, which would retire the
+  # migration without it ever having looked at the real directory.
+  if [[ -z "$TASK_CONFIG_DIR" ]]; then
+    warn "TASK_CONFIG_DIR is empty; not touching any task config links"
+    return 1
+  fi
 
   local removed=0 link
   for link in "$TASK_CONFIG_DIR/Taskfile.yml" "$TASK_CONFIG_DIR/lib"; do

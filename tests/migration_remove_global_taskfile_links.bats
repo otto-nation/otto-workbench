@@ -102,11 +102,12 @@ _run_migration() {
   [ -L "$CFG/lib" ]
 }
 
-# The migration's empty-$TASK_CONFIG_DIR guard is deliberately not covered.
-# With the variable empty the targets collapse to "/Taskfile.yml" and "/lib",
-# which `-L` rejects on any machine that does not have those as symlinks at
-# the filesystem root — so a test for it passes identically with the guard
-# deleted, and asserts nothing. Covering it honestly would mean creating
-# symlinks at `/`. The guard stays as defence in depth on a line that
-# deletes files; this note is here so its absence from the suite reads as a
-# decision rather than an omission.
+# With TASK_CONFIG_DIR empty the targets collapse to "/Taskfile.yml" and "/lib",
+# which are absent on any normal machine, so only the returned status shows the
+# guard ran. It must fail (retried next sync) and not answer NOOP, which the
+# framework records as applied — retiring the migration unlooked-at.
+@test "an empty TASK_CONFIG_DIR fails rather than recording the migration as done" {
+  TASK_CONFIG_DIR="" run _run_migration
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"TASK_CONFIG_DIR is empty"* ]]
+}

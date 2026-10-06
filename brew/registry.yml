@@ -64,9 +64,9 @@ tools:
     docs: "https://cli.github.com/manual/"
 
   - name: go-task
-    permission: false
+    permission: "task"
     visibility: hidden
-    description: "Task runner with YAML-defined tasks (used via the 'task' wrapper script)"
+    description: "Task runner with YAML-defined tasks (runs the repo-local Taskfile.yml)"
     docs: "https://taskfile.dev"
 
   - name: shellcheck

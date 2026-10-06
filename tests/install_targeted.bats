@@ -31,9 +31,9 @@ _make_workbench() {
   mkdir -p "$dir/brew"
   printf '#!/usr/bin/env bash\nstep_brew_install() { true; }\n' > "$dir/brew/steps.sh"
 
-  # Core components that were formerly preflight
-  mkdir -p "$dir/task"
-  printf '#!/usr/bin/env bash\n# description: Task runner\nstep_task_install() { true; }\nsync_task() { echo "sync_task"; }\ninstall_task() { step_task_install; sync_task; }\n' > "$dir/task/steps.sh"
+  # Synthetic extra core (no setup.conf) so the discovery loop has more than bin/git
+  mkdir -p "$dir/demo"
+  printf '#!/usr/bin/env bash\n# description: Demo component\nstep_demo_install() { true; }\nsync_demo() { echo "sync_demo"; }\ninstall_demo() { step_demo_install; sync_demo; }\n' > "$dir/demo/steps.sh"
 
   # Optional components (setup.conf + setup.sh)
   printf 'label = Homebrew packages\ndescription = Install formulae and casks\n' > "$dir/brew/setup.conf"
@@ -79,7 +79,7 @@ _is_targeted() {
 
   [[ " ${KNOWN_CORE[*]} " == *" bin "* ]]
   [[ " ${KNOWN_CORE[*]} " == *" git "* ]]
-  [[ " ${KNOWN_CORE[*]} " == *" task "* ]]
+  [[ " ${KNOWN_CORE[*]} " == *" demo "* ]]
   [[ " ${KNOWN_CORE[*]} " != *" mise "* ]]
   [[ " ${KNOWN_CORE[*]} " != *" brew "* ]]
 }

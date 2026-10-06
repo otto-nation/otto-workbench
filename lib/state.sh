@@ -2,7 +2,7 @@
 # Component installation state tracking.
 #
 # Records which components and sub-tools are installed in a structured YAML
-# file. Core components — bin, git, zsh, task — are omitted, since they always
+# file. Core components — bin, git, zsh — are omitted, since they always
 # sync.
 #
 # State file: `$INSTALL_YML_FILE` — `install.yml` under the state root. The flat

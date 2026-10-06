@@ -76,7 +76,6 @@ NO_REFS_TESTS=(
   step_install_claude
   step_install_pi
   taskfile
-  taskfile_global
   test_helper_isolation
 )
 
@@ -355,7 +354,7 @@ _has_source_refs() {
 # Looks for $REPO_ROOT/path and $WORKBENCH_DIR/path patterns.
 _extract_refs() {
   local file="$1"
-  grep -oE '(\$REPO_ROOT|\$WORKBENCH_DIR|\$\{REPO_ROOT\}|\$\{WORKBENCH_DIR\})/(lib|bin|ai|git|zsh|docker|brew|eval|task|site|maintenance|terminals|editors|mise|Formula|scripts|\.github)/[^ "'\''}\)]+' "$file" 2>/dev/null \
+  grep -oE '(\$REPO_ROOT|\$WORKBENCH_DIR|\$\{REPO_ROOT\}|\$\{WORKBENCH_DIR\})/(lib|bin|ai|git|zsh|docker|brew|eval|site|maintenance|terminals|editors|mise|Formula|scripts|\.github)/[^ "'\''}\)]+' "$file" 2>/dev/null \
     | sed -E 's/^\$(\{)?(REPO_ROOT|WORKBENCH_DIR)\}?\///' \
     | sort -u
 }

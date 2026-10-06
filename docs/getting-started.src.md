@@ -11,7 +11,7 @@ description: Install the workbench, run your first sync, and find your way aroun
 - bash (to run `install.sh`)
 - git (to clone the repo)
 
-Everything else — Task, Homebrew, Docker, language tooling — is either auto-installed or available through the optional component menu.
+Everything else — Homebrew, Docker, language tooling — is either auto-installed or available through the optional component menu. Task (go-task) is only needed to contribute to the workbench itself; install it first (`brew install go-task/tap/go-task`) before running `task dev:setup`.
 
 ## Installation
 
@@ -24,7 +24,7 @@ cd ~/otto-workbench
 The installer runs in three stages:
 
 1. **Bootstrap** — installs Homebrew if not present
-2. **Core components** — presents a menu of always-synced components (`bin`, `git`, `task`, `zsh`). Press Enter to install all.
+2. **Core components** — presents a menu of always-synced components (`bin`, `git`, `zsh`). Press Enter to install all.
 3. **Optional components** — presents a menu of opt-in components (Homebrew packages, Docker, Terminals, Editors, AI tools, Mise). Press Enter to install all.
 
 You can also skip menus: `./install.sh --all` installs everything, `./install.sh brew docker` installs only named components.

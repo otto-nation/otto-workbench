@@ -13,7 +13,7 @@ What happens when you run `install.sh` or `otto-workbench sync`, step by step.
 
 ```
 1. Bootstrap         installs Homebrew if missing
-2. Core components   bin, git, task, zsh — selectable menu (Enter = all)
+2. Core components   bin, git, zsh — selectable menu (Enter = all)
 3. Path setup        adds ~/.local/bin to shell rc if needed
 4. Migrations        runs any pending migration scripts
 5. Optional components  brew, docker, terminals, editors, ai, mise — selectable menu (Enter = all)
@@ -37,7 +37,7 @@ What happens when you run `install.sh` or `otto-workbench sync`, step by step.
 4. Summary          print changes, detect uninstalled components
 ```
 
-**State gating:** sync only runs components that are recorded as installed, with one exception — infrastructure components (`bin`, `task`, `git`, `zsh`) always sync regardless of state.
+**State gating:** sync only runs components that are recorded as installed, with one exception — infrastructure components (`bin`, `git`, `zsh`) always sync regardless of state.
 
 **No prompts:** sync runs in `SYMLINK_MODE=no-prompt` — if a real file conflicts with a symlink, it warns and skips instead of prompting. Run `install.sh` for interactive resolution.
 
@@ -101,7 +101,7 @@ The workbench uses different strategies depending on whether a file should track
 
 ### Symlinks (`install_symlink`, `symlink_dir`)
 
-Used for files that should always reflect the workbench source: executable scripts, git hooks, Taskfile.
+Used for files that should always reflect the workbench source: executable scripts, git hooks.
 
 - If symlink already points to the correct source → no-op
 - If a real file exists → prompt (install) or warn and skip (sync)
@@ -149,7 +149,7 @@ These files are derived from source data and must never be edited directly. Edit
 | [`tools.generated.md`](../ai/guidelines/rules/tools.generated.md) | [`generate-tool-context`](../bin/local/generate-tool-context) | `*/registry.yml` |
 | [`git.generated.md`](../ai/guidelines/rules/git.generated.md) | [`generate-git-rules`](../git/bin/local/generate-git-rules) | [`lib/conventions.sh`](../lib/conventions.sh) |
 | `docs/tools.md` | [`compose-docs`](../bin/local/compose-docs) | `docs/tools.src.md` + registries |
-| `docs/ai-automation.md` | [`compose-docs`](../bin/local/compose-docs) | `docs/ai-automation.src.md` + skills, agents, Taskfile |
+| `docs/ai-automation.md` | [`compose-docs`](../bin/local/compose-docs) | `docs/ai-automation.src.md` + skills, agents |
 | `docs/components.md` | [`compose-docs`](../bin/local/compose-docs) | `docs/components.src.md` + component discovery |
 | `docs/getting-started.md` | [`compose-docs`](../bin/local/compose-docs) | `docs/getting-started.src.md` + `setup.conf` post-install notes |
 | `docs/libraries.md` | [`compose-docs`](../bin/local/compose-docs) | `docs/libraries.src.md` + the `lib/*.sh` module headers |

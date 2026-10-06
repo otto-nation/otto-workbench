@@ -7,14 +7,6 @@ meta:
   source: bin
 
 tools:
-  - name: task
-    permission: true
-    visibility: full
-    description: "go-task wrapper adding --global for the workbench's global Taskfile"
-    when_to_use: "Running a repo-local Taskfile task (e.g. `task test`) or listing global tasks (`task --global --list`)"
-    usage: "task test  |  task --global --list"
-    docs: "https://taskfile.dev"
-
   - name: otto-workbench
     permission: true
     visibility: full

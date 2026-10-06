@@ -14,7 +14,7 @@ The workbench has two modes of operation:
 ```
 otto-workbench install (first-time, interactive)
 ├── Bootstrap: installs Homebrew if missing
-├── Core menu: bin, git, task, zsh — selectable, Enter = all
+├── Core menu: bin, git, zsh — selectable, Enter = all
 └── Optional menu: brew packages, docker, terminals, editors, ai, mise — selectable, Enter = all
 
 otto-workbench sync (ongoing, non-interactive)
@@ -29,7 +29,7 @@ otto-workbench sync (ongoing, non-interactive)
 
 Components are organized into two tiers based on when and how they run. Homebrew is installed as a bootstrap step before any components run — it's the only hard prerequisite.
 
-**Core** components (`bin`, `git`, `task`, `zsh`) are always synced. Each defines a [`sync_<name>()`](components.md#sync_name-contract) function in its `steps.sh`. Adding a new core component requires only creating the directory with `steps.sh` — no edits to `bin/otto-workbench`.
+**Core** components (`bin`, `git`, `zsh`) are always synced. Each defines a [`sync_<name>()`](components.md#sync_name-contract) function in its `steps.sh`. Adding a new core component requires only creating the directory with `steps.sh` — no edits to `bin/otto-workbench`.
 
 **Optional** components (`brew`, `docker`, `terminals`, `editors`, `ai`, `mise`) appear in the install menu. Each has a [`setup.conf`](components.md#tier-2--optional-components) for metadata and a `setup.sh` for interactive install. Components with idempotent operations also define `steps.sh` for sync coverage.
 

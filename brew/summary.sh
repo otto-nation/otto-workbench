@@ -19,6 +19,6 @@ print_brew_summary() {
     return
   fi
 
-  summary_info "After installing new packages: ${DIM}task --global brew:dump${NC}"
+  summary_info "After installing new packages: ${DIM}task brew:dump${NC} (from the workbench checkout)"
   summary_info "Optional stacks: ${DIM}brew bundle --file=brew/<category>/<stack>.Brewfile${NC}"
 }

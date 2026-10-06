@@ -67,7 +67,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 fi
 ```
 
-**Existing core components:** `bin`, `git`, `task`, `zsh`
+**Existing core components:** `bin`, `git`, `zsh`
 
 ---
 

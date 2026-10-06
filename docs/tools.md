@@ -40,7 +40,6 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `build-otto-ai-tools-tarball` | Package otto-ai-tools into a self-contained tarball for distribution |
 | `build-claude-config-tarball` | Package Claude Code configuration into a tarball for server or container deployment |
 | `workbench-export` | Export workbench Claude configs as a self-contained tarball, filtered by profile |
-| `task` | go-task wrapper adding --global for the workbench's global Taskfile |
 | `otto-workbench` | Manage your workbench developer environment |
 | `mem-analyze` | macOS memory analysis report — pressure, swap usage, top processes, per-user totals |
 | `wt-cleanup` | Remove stale git worktrees — merged branches and optionally age-based cleanup |
@@ -259,7 +258,7 @@ than restated here:
 | `otto-workbench config status` | Project | Show every scope, every resolved value, and the file each came from |
 
 `install` runs first-time setup: installs Homebrew (if missing), syncs core
-components (bin, git, task, zsh), presents a menu of optional components
+components (bin, git, zsh), presents a menu of optional components
 (brew packages, docker, terminals, editors, ai, mise), and runs pending
 migrations. Safe to re-run — idempotent. Use `--all` to skip menus, or name
 specific components.
@@ -271,7 +270,7 @@ does not exist) with stack-detected rules and a project anatomy file. Use
 MCPs). `ai override` manages user overrides.
 
 `sync` is pure config reconciliation: re-symlinks scripts, `zsh/`,
-`git/.gitconfig`, Taskfile, `lib/`; syncs Claude `settings.json`, `CLAUDE.md`,
+`git/.gitconfig`; syncs Claude `settings.json`, `CLAUDE.md`,
 `rules/`, `skills/`, `agents/`, MCPs; merges Zed/Sublime editor settings;
 and reconciles the Ghostty theme key. Git and tool-context rule files
 regenerate during `sync_ai`.
@@ -395,25 +394,6 @@ pick the worktree a container's permission mirror is copied from. The two must
 agree — a session redirected to a worktree the mirror never wrote from is a
 session missing the grants the mirror exists to deliver, with nothing to say
 so — and `tests/container_source.bats` fails if they diverge.
-
-### `task`
-
-Wrapper around go-task that adds `--global` support. Installed to
-`~/.local/bin/task`, which takes precedence over the real binary; the wrapper
-finds the real `task` by dropping that directory from `PATH`.
-
-```
-task [--global] <task-name> [-- <task-args>]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--global` | Use the global Taskfile (`~/.config/task/Taskfile.yml`) from any directory |
-| `-h`, `--help` | Show help |
-
-Without `--global`, uses a Taskfile in the current directory (`Taskfile.yml` /
-`Taskfile.yaml`, either case) and passes through to the real binary unchanged.
-Missing both a local Taskfile and `--global` is an error.
 
 ### `validate-nesting`
 
@@ -1303,7 +1283,7 @@ Domain aliases: `ts`/`js` → `typescript`, `py` → `python`, `sh`/`shell` → 
 | [jq](https://jqlang.github.io/jq/manual/) | JSON processor for querying, filtering, and transforming JSON data |
 | [yq](https://mikefarah.gitbook.io/yq/) | YAML/JSON/TOML processor — like jq but for YAML |
 | [gh](https://cli.github.com/manual/) | GitHub CLI — manage PRs, issues, repos, checks, and releases from the terminal |
-| [go-task](https://taskfile.dev) | Task runner with YAML-defined tasks (used via the 'task' wrapper script) |
+| [go-task](https://taskfile.dev) | Task runner with YAML-defined tasks (runs the repo-local Taskfile.yml) |
 | [shellcheck](https://www.shellcheck.net/) | Static analysis tool for shell scripts — catches bugs and style issues |
 | [bats-core](https://bats-core.readthedocs.io/) | Bash Automated Testing System — unit testing framework for shell scripts |
 | [parallel](https://www.gnu.org/software/parallel/) | GNU parallel — run shell commands in parallel (required by bats --jobs for parallel test execution) |

@@ -1,6 +1,6 @@
 # Core packages — belongs on any personal dev machine.
 # Install: brew bundle --file=brew/Brewfile
-# Update:  task --global brew:dump
+# Update:  task brew:dump  (from the workbench checkout)
 
 # ---------------------------------------------------------------------------
 # Taps

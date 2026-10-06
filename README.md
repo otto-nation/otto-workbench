@@ -27,7 +27,7 @@ cd ~/otto-workbench
 exec zsh
 ```
 
-The installer installs Homebrew (if missing), symlinks scripts, zsh configs, git config, and the global Taskfile, then presents an optional component menu. See [Components](docs/components.md) for what is on it.
+The installer installs Homebrew (if missing), symlinks scripts, zsh configs, and git config, then presents an optional component menu. See [Components](docs/components.md) for what is on it.
 
 ## After Install
 
@@ -50,13 +50,12 @@ Re-applies all workbench config — migrations, symlinks, tool context, AI setti
 - **Git** — [two-layer gitconfig](docs/architecture.md#git), global hooks (secret scanning, linting, rebase conflict-resolution audit), and conventional commit conventions
 - **[Tools](docs/tools.md#installed-tools)** — CLI tools managed via Homebrew, organized by domain (shell, infra, languages, dev)
 - **[AI](docs/ai-automation.md)** — Claude Code integration with skills, agents, guidelines, and the `pr` CLI (`pr create`, `pr describe`, `pr review`) for AI-powered git automation
-- **[Task automation](docs/tools.md#task)** — global Taskfile for Homebrew helpers, run with `task --global`
 
 ## How It Works
 
 The workbench uses a [component framework](docs/architecture.md#component-model) with two tiers:
 
-1. **Core** (`bin`, `git`, `task`, `zsh`) — always synced on every machine
+1. **Core** (`bin`, `git`, `zsh`) — always synced on every machine
 2. **Optional** (`brew`, `docker`, `terminals`, `editors`, `ai`, `mise`) — opt-in via install menu
 
 On first run, `install.sh` installs Homebrew (if missing), then presents menus for core and optional components. `otto-workbench sync` re-applies everything non-interactively. Both auto-discover components via glob patterns — adding a new component requires no edits to the installer.
@@ -80,7 +79,6 @@ These are owned by the workbench and updated every time you sync. Do not edit di
 | `~/.gitconfig` | includes `git/gitconfig.shared` | include stanza |
 | `~/.git-hooks/*` | `git/hooks/` | symlinked |
 | `~/.ssh/config` | `git/steps.sh` | marker-delimited `Host github.com` block — the rest of the file is yours |
-| `~/.config/task/{Taskfile.yml,lib/}` | `Taskfile.global.yml`, `lib/` | symlinked |
 | `~/.claude/*` | `ai/claude/` | mixed (merge/copy/symlink) |
 
 ### Editable configs (yours — never overwritten)
@@ -105,7 +103,7 @@ These are created once (from templates or by first-time setup) and never modifie
 - [Registries](docs/registries.md) — tool registry schema, validation, adding entries
 - [Libraries](docs/libraries.md) — all lib/ modules: purpose and key functions
 - [Tools & Scripts](docs/tools.md) — full catalog of installed tools and workbench scripts
-- [AI Automation](docs/ai-automation.md) — Claude Code setup, skills, agents, and task automation
+- [AI Automation](docs/ai-automation.md) — Claude Code setup, skills, agents, and the `pr` CLI
 - [AI Libraries](docs/ai-libraries.md) — all ai/lib/ modules: the Python behind the `pr` scripts
 - [User Overrides](docs/user-overrides.md) — customizing AI config without editing tracked files
 - [Troubleshooting](docs/troubleshooting.md) — common issues and solutions

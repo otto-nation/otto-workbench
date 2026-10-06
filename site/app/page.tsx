@@ -21,11 +21,10 @@ const ITEMS: CardItem[] = [
   { title: 'Git', href: '/docs/architecture#git', body: 'Two-layer gitconfig, global hooks, and conventional commit conventions' },
   { title: 'Tools', href: '/docs/tools#installed-tools', body: 'CLI tools managed via Homebrew, organized by domain' },
   { title: 'AI', href: '/docs/ai-automation', body: 'Claude Code integration with skills, agents, guidelines, and git automation' },
-  { title: 'Task automation', href: '/docs/tools#task', body: 'Global Taskfile for Homebrew helpers' },
 ];
 
 const TIERS: CardItem[] = [
-  { title: 'Core', accent: 'var(--ow-amarillo)', body: 'Always synced, on every machine', meta: 'bin · git · task · zsh' },
+  { title: 'Core', accent: 'var(--ow-amarillo)', body: 'Always synced, on every machine', meta: 'bin · git · zsh' },
   { title: 'Optional', accent: 'var(--ow-rosa)', body: 'Opt in from the install menu', meta: 'brew · docker · terminals · editors · ai · mise' },
 ];
 

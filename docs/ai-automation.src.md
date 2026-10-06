@@ -36,14 +36,6 @@ Prompts for confirmation at each step. Safe to re-run. This installs Claude Code
 
 <!-- include: bin/local/generate-tool-context --emit lifecycle -->
 
-## Task Automation
-
-The global Taskfile holds Homebrew helpers. Use `--global` to run them from `~/.config/task/` rather than a local project Taskfile.
-
-```bash
-task --global --list
-```
-
 ## Configuration
 
 ### Usage ledger

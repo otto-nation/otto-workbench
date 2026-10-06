@@ -282,14 +282,6 @@ Additionally, `wt-cleanup --quiet` runs on every session exit to remove stale gi
 
 Every lifecycle skill can be run on demand by its invocation in the Skill Reference above.
 
-## Task Automation
-
-The global Taskfile holds Homebrew helpers. Use `--global` to run them from `~/.config/task/` rather than a local project Taskfile.
-
-```bash
-task --global --list
-```
-
 ## Configuration
 
 ### Usage ledger

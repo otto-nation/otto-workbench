@@ -48,13 +48,13 @@ def test_explicit_models_still_wins(tmp_path, monkeypatch, capsys):
 def test_empty_model_tokens_are_dropped(tmp_path, monkeypatch, capsys):
     _make_case(tmp_path / "corpus", "a", task="ci-fix")
     monkeypatch.setattr(
-        agent.phases, "phase_model", lambda phase, explicit, cfg=None: "resolved")
+        agent.phases, "phase_model", lambda phase, explicit, cfg=None: "resolved-empty")
 
     assert eval.run._explicit_models(_args(tmp_path, models=", opus,")) == ["opus"]
     assert eval.run._explicit_models(_args(tmp_path, models=",")) is None
     eval.run.run_eval(_args(tmp_path, models=",", dry_run=True), tmp_path)
     err = capsys.readouterr().err
-    assert "resolved" in err
+    assert "Models: resolved-empty" in err
 
 
 def test_ci_fix_env_override_is_honoured(tmp_path, monkeypatch, capsys):

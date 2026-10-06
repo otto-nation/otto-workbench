@@ -87,7 +87,8 @@ def _python(text: str) -> SyntaxResult:
 
 def _json(text: str) -> SyntaxResult:
     try:
-        json.loads(text)
+        # json.loads rejects a leading BOM; editors and Windows tools write one.
+        json.loads(text.lstrip("\ufeff"))
     except json.JSONDecodeError as exc:
         return SyntaxResult(False, str(exc))
     except RecursionError:
@@ -104,6 +105,8 @@ def _yaml(text: str) -> SyntaxResult:
         list(yaml.safe_load_all(text))
     except yaml.YAMLError as exc:
         return SyntaxResult(False, str(exc))
+    except RecursionError:
+        return SyntaxResult(True)
     return SyntaxResult(True)
 
 

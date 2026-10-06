@@ -61,6 +61,9 @@ class TestJson:
     def test_valid_passes(self):
         assert core.syntax.check("a.json", '{"a": 1}').ok
 
+    def test_leading_bom_passes(self):
+        assert core.syntax.check("a.json", '\ufeff{"a": 1}').ok
+
     def test_truncated_fails(self):
         result = core.syntax.check("a.json", "{")
         assert not result.ok
@@ -88,6 +91,13 @@ class TestYaml:
 class TestPathologicalNesting:
     def test_json_nested_past_the_recursion_limit_passes(self):
         assert core.syntax.check("a.json", "[" * 200_000).ok
+
+    def test_yaml_nested_past_the_recursion_limit_passes(self):
+        try:
+            import yaml  # noqa: F401
+        except ImportError:
+            pytest.skip("PyYAML not installed")
+        assert core.syntax.check("a.yaml", "[" * 200_000).ok
 
     @pytest.mark.parametrize("exc", [RecursionError, MemoryError])
     def test_python_that_exhausts_the_parser_passes(self, exc):

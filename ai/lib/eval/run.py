@@ -182,7 +182,11 @@ def _run_single(
 
 
 def _dry_run(entries: list[dict], runs_per_entry: int) -> tuple[dict, int]:
-    """Describe what would run. Resolves each task so an unknown one fails here."""
+    """Describe what would run.
+
+    Resolves each task, so an unknown one fails here when `--models` is given
+    and earlier, in `_model_banner`, when it is omitted.
+    """
     print("\n-- Dry run --", file=sys.stderr)
     for entry in entries:
         manifest = entry["manifest"]

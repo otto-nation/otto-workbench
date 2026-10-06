@@ -1,6 +1,6 @@
 """Tests for ai-usage-log, the shell bridge into the global usage ledger.
 
-run-auto-task and the Taskfile's AI_COMMAND cannot route through ai_backend, so this
+run-auto-task cannot route through ai_backend, so this
 tool is the only thing standing between those calls and an unmeasured pipeline.
 """
 
@@ -67,7 +67,7 @@ class TestUnwrap:
         assert capsys.readouterr().out == "the reply"
 
     def test_passes_prose_through_unchanged(self, monkeypatch, capsys):
-        """A non-Claude AI_COMMAND emits prose, not an envelope."""
+        """A reply with no JSON envelope passes through intact."""
         _run(["unwrap"], "just prose\nline two\n", monkeypatch)
         assert capsys.readouterr().out == "just prose\nline two\n"
 
@@ -118,7 +118,7 @@ class TestRecord:
         assert self._only(ledger)["cost"] == pytest.approx(0.5)
 
     def test_prose_response_records_nothing(self, monkeypatch, tmp_path, ledger):
-        """A pluggable non-Claude binary reports no usage; a zero row would lie."""
+        """A response with no usage record (plain prose) records nothing; a zero row would lie."""
         raw = tmp_path / "raw.txt"
         raw.write_text("just prose\n")
         self._record(monkeypatch, raw)

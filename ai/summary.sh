@@ -4,7 +4,7 @@
 # No top-level execution; safe to source without side effects.
 
 # print_ai_summary — prints AI-specific summary info.
-# AI_COMMAND and GH_TOKEN status are now shown by the central summary in lib/summary.sh.
+# GH_TOKEN status is shown by the central summary in lib/summary.sh.
 print_ai_summary() {
   summary_section "AI Tasks"
 
@@ -14,5 +14,5 @@ print_ai_summary() {
     summary_warn "Claude CLI not found — install: ${DIM}brew install claude${NC}"
   fi
 
-  summary_info "Available commands: ${DIM}task commit, pr create, task review${NC}"
+  summary_info "Available commands: ${DIM}pr create, pr describe, pr review${NC}"
 }

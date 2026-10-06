@@ -77,7 +77,7 @@ Patterns that trigger unsuppressible permission prompts in Claude Code's static 
 ## Avoid Env-Var Prefix Syntax
 
 - Never prefix a command with `VAR=value command` — Claude Code's permission matcher sees `VAR=value` as the command name, triggering a prompt every time. This applies wherever a statement begins, not just at the start of the command: `true; W=/tmp x` counts. Use tool-native alternatives:
-  - `task --global REPO_DIR=/path commit` (go-task variable syntax, not `REPO_DIR=/path task ...`)
+  - `git -C /path status` (not `cd /path && git status` or `GIT_DIR=… git status`)
   - `pr create --repo-dir /path ...` (not `REPO_DIR=/path pr create ...`)
   - `mise -C /path run ...` (not `REPO_DIR=/path mise run ...`)
   - `otto-workbench --workbench-dir /path ...` (not `WORKBENCH_DIR=/path otto-workbench ...`)

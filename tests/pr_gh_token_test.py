@@ -55,7 +55,7 @@ def test_fails_with_no_env_file_and_no_environment(tmp_path, home):
 
 
 def test_a_file_without_the_key_is_not_configured(tmp_path, home):
-    _global(home, "AI_COMMAND=claude\n")
+    _global(home, "UNRELATED_KEY=claude\n")
     with pytest.raises(TokenNotConfigured):
         pr.gh_token.resolve(_repo(tmp_path), environ={}, home=home)
 

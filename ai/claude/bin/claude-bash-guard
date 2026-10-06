@@ -623,7 +623,7 @@ fi
 
 re_var='(^|[;&|][[:space:]]*)[A-Z_][A-Z0-9_]*='
 if [[ "$stripped" =~ $re_var ]]; then
-  block 'A VAR=value prefix is read as the command name and prompts every time. Use tool-native flags instead (task --global REPO_DIR=..., mise -C ...). See bash-tool.md § Avoid Env-Var Prefix Syntax.'
+  block 'A VAR=value prefix is read as the command name and prompts every time. Use tool-native flags instead (pr --repo-dir ..., git -C ..., mise -C ...). See bash-tool.md § Avoid Env-Var Prefix Syntax.'
 fi
 
 re_cd='(^|[;&|][[:space:]]*)cd[[:space:]]'

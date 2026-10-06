@@ -1,16 +1,15 @@
 #!/usr/bin/env bats
 # Coverage for lib/git_remote.sh — the one ladder answering "which branch is
-# trunk" for the `review:` Taskfile task, both
-# pre-push hooks, and bin/local/check-surface-compat. `git rev-parse
-# --abbrev-ref origin/HEAD` echoes "origin/HEAD" to stdout even when it fails,
-# which used to defeat a "${DEFAULT_BRANCH:-main}" fallback at both call sites.
-# `git symbolic-ref` prints nothing on failure, so the fallback here actually
-# fires.
+# trunk" for both pre-push hooks and bin/local/check-surface-compat. `git
+# rev-parse --abbrev-ref origin/HEAD` echoes "origin/HEAD" to stdout even when
+# it fails, which used to defeat a "${DEFAULT_BRANCH:-main}" fallback at both
+# call sites. `git symbolic-ref` prints nothing on failure, so the fallback
+# here actually fires.
 #
-# Sourced directly rather than through source_lib: the global pre-push hook
-# loads this file on its own, without lib/ai/core.sh, and a suite that only ever
-# reached it through the facade would not notice the day it stopped standing
-# alone. `sources standalone` below asserts that reachability explicitly.
+# Sourced directly: the global pre-push hook loads this file on its own, and a
+# suite that only ever reached it through another library would not notice the
+# day it stopped standing alone. `sources standalone` below asserts that
+# reachability explicitly.
 bats_require_minimum_version 1.5.0
 
 setup() {
@@ -181,30 +180,13 @@ teardown() {
 }
 
 @test "sources under a POSIX shell without emitting a bashism" {
-  # lib/ai/core.sh sources this file, and go-task runs the tasks that source
-  # core.sh under /bin/sh — dash on CI. A `[[` here does not abort the source,
-  # it writes "[[: not found" to stderr and carries on, so the caller's next
-  # `$(...)` capture silently gains a line of shell diagnostics.
-  #
-  # dash, not sh: macOS /bin/sh is bash, which would run the bashism happily.
+  # No current caller is /bin/sh — the hooks that source this are bash. The
+  # file still stays POSIX so a dash source does not emit "[[: not found" into
+  # a capture. dash, not sh: macOS /bin/sh is bash.
   _make_repo_no_default_branch "$TMPDIR" "master"
 
   run dash -c \
     ". '$REPO_ROOT/lib/git_remote.sh' && cd '$TMPDIR/repo' && default_base_ref" 2>&1
   [ "$status" -eq 0 ]
   [ "$output" = "origin/master" ]
-}
-
-@test "lib/ai/core.sh still re-exports the ladder to its own callers" {
-  # The `review:` Taskfile task calls resolve_default_branch having sourced
-  # only core.sh. Moving the function out must not have moved it out of its
-  # reach.
-  source_lib
-  _make_repo_no_default_branch "$TMPDIR" "master"
-
-  cd "$TMPDIR/repo"
-  run resolve_default_branch
-  [ "$status" -eq 0 ]
-  [ "$output" = "master" ]
-  [ "$GIT_REMOTE" = "origin" ]
 }

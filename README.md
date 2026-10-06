@@ -49,8 +49,8 @@ Re-applies all workbench config — migrations, symlinks, tool context, AI setti
 - **Shell** — ZSH configuration with [modular config layers](docs/architecture.md#shell-zsh), Starship prompt, and lazy-loaded plugin management
 - **Git** — [two-layer gitconfig](docs/architecture.md#git), global hooks (secret scanning, linting, rebase conflict-resolution audit), and conventional commit conventions
 - **[Tools](docs/tools.md#installed-tools)** — CLI tools managed via Homebrew, organized by domain (shell, infra, languages, dev)
-- **[AI](docs/ai-automation.md)** — Claude Code integration with skills, agents, guidelines, and AI-powered git automation
-- **[Task automation](docs/ai-automation.md#task-automation)** — global Taskfile for AI-powered commits, PRs, and reviews
+- **[AI](docs/ai-automation.md)** — Claude Code integration with skills, agents, guidelines, and the `pr` CLI (`pr create`, `pr describe`, `pr review`) for AI-powered git automation
+- **[Task automation](docs/tools.md#task)** — global Taskfile for Homebrew helpers, run with `task --global`
 
 ## How It Works
 
@@ -92,7 +92,7 @@ These are created once (from templates or by first-time setup) and never modifie
 | `~/.config/workbench/config.yml` | Reuse level, review pipeline, issue tracker, GitHub SSH route — edit it, or write one key with `otto-workbench config set KEY VALUE`. `otto-workbench config status` shows what every key resolves to and which file supplied it; see [libraries.md](docs/libraries.md#configsh) | `bin/migrations/20260814-unify-workbench-config.sh` |
 | `~/.gitconfig` | Git identity, GPG, credentials | `git/gitconfig.template` |
 | `~/.env.local` | Shell secrets, API keys, env overrides | `zsh/.env.local.template` |
-| `~/.config/task/taskfile.env` | AI automation tokens (`GH_TOKEN`, `AI_COMMAND`) | `task --global ai:setup` |
+| `~/.config/task/taskfile.env` | GitHub PATs for `pr create` / `pr describe --post` (`GH_TOKEN`, `GH_TOKEN__<ORG>`) | `otto-workbench install ai` |
 | `~/.zshrc` | Shell rc file | `zsh/.zshrc` |
 | `~/.config/ghostty/config` | Terminal config | `terminals/ghostty/config.template` |
 

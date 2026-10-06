@@ -198,7 +198,7 @@ teardown() {
 }
 
 @test "path_matches: directory containment" {
-  run _path_matches "lib/ai/core.sh" "lib/ai"
+  run _path_matches "lib/ai/session-count.sh" "lib/ai"
   [ "$status" -eq 0 ]
 }
 

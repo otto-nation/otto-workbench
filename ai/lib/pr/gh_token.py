@@ -1,7 +1,7 @@
 """GitHub token resolution for the commands that publish a PR.
 
-One owner for the per-org PAT routing ``task pr:*`` has used since the
-automation token was split from the interactive ``gh`` login. Resolution order,
+One owner for the per-org PAT routing the ``pr`` commands use, kept apart
+from the interactive ``gh`` login. Resolution order,
 first match wins:
 
 1. ``GH_TOKEN`` in ``<repo>/.taskfile/taskfile.env`` — a per-repo pin
@@ -18,9 +18,8 @@ parser every other ``pr`` command keys on — so every remote spelling git
 accepts routes the same way, and a GitHub Enterprise remote links its own PAT
 page in the failure guidance.
 
-Run as a script, the token is the only thing on stdout (for ``load_gh_token``
-in ``lib/ai/core.sh``) and the guidance goes to stderr, so a failure can never
-be captured into ``GH_TOKEN``.
+Run as a script, the token is the only thing on stdout and the guidance goes to
+stderr, so a failure can never be captured into ``GH_TOKEN``.
 """
 
 # doc-group: publishing
@@ -129,7 +128,7 @@ def _guidance(env_file: Path, org: str, host: str) -> str:
     # github.com creates a token for the wrong instance and gets a 401.
     lines.append(f"  Create a fine-grained PAT: {pr.target.forge_base_url(host)}/settings/tokens/new")
     lines.append("  Required: Contents (read/write), Pull requests (read/write) — scoped to specific repos")
-    lines.append("  Run: task --global ai:setup")
+    lines.append("  Run: otto-workbench install ai")
     return "\n".join(lines)
 
 

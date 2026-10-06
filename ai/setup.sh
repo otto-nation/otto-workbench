@@ -153,44 +153,32 @@ run_steps
 state_record "ai"
 state_set_list "$_STATE_KEY" "${SELECTED_TOOLS[@]}"
 
+# ─── GitHub token file ────────────────────────────────────────────────────
+
+# configure_gh_token — ensures $TASKFILE_ENV holds the GH_TOKEN template and
+# offers to edit it when no token is set yet. "Set" means an uncommented
+# GH_TOKEN or GH_TOKEN__<ORG> line with a value — the tiers gh_token.py reads.
+configure_gh_token() {
+  echo; info "GitHub token for pr create / pr describe --post"
+  ai_scaffold_gh_token_env "$TASKFILE_ENV"
+  if grep -qE "$GH_TOKEN_SET_RE" "$TASKFILE_ENV"; then
+    success "GH_TOKEN already configured"
+    return 0
+  fi
+  [[ -t 0 ]] || { warn "Edit $TASKFILE_ENV before running pr create"; return 0; }
+  if confirm "  Add a GitHub token now?"; then
+    ${EDITOR:-nano} "$TASKFILE_ENV"
+    success "Token file updated"
+  else
+    warn "Edit $TASKFILE_ENV before running pr create"
+  fi
+}
+
+configure_gh_token
+
 echo
 success "AI tools setup complete!"
 for _tool in "${SELECTED_TOOLS[@]}"; do
   if declare -f "print_${_tool}_summary" > /dev/null; then "print_${_tool}_summary"; fi
 done
 unset _tool
-
-# ─── AI command configuration ─────────────────────────────────────────────────
-
-# configure_ai_command — ensures ~/.config/task/taskfile.env exists and contains
-# an active AI_COMMAND. Skips all prompts if a command is already configured.
-#
-# "Active" means an uncommented AI_COMMAND= line — same definition used by
-# load_ai_command() in lib/ai/core.sh at runtime.
-configure_ai_command() {
-  command -v task >/dev/null 2>&1 || return
-
-  local env_file="$TASKFILE_ENV"
-  local active_cmd
-  active_cmd=$(grep -m1 '^AI_COMMAND=' "$env_file" 2>/dev/null | sed 's/^AI_COMMAND=//')
-
-  echo; info "Taskfile AI command"
-
-  if [[ -n "$active_cmd" ]]; then
-    success "AI command already configured: ${active_cmd}"
-    return
-  fi
-
-  # File absent or all examples commented out — create it and offer to configure
-  task --global ai:setup
-
-  echo
-  if confirm "  Configure your AI command now?"; then
-    ${EDITOR:-nano} "$env_file"
-    success "AI configuration updated"
-  else
-    warn "Remember to edit $env_file before using AI tasks"
-  fi
-}
-
-configure_ai_command

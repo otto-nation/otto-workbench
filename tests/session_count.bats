@@ -5,7 +5,8 @@
 setup() {
   load 'test_helper'
   common_setup
-  source_lib
+  # shellcheck source=../lib/ai/session-count.sh
+  . "$REPO_ROOT/lib/ai/session-count.sh"
   SESSIONS="$(mktemp -d)/"
 }
 

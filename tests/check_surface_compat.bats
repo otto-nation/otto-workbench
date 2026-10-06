@@ -344,9 +344,8 @@ BREAKING CHANGE: beta replaces the old entrypoint"
 }
 
 # The other half of the union, and the reason the working-tree read cannot just
-# be swapped for a HEAD one: lib/ai/commit.sh consults this gate before the
-# commit exists, so an uncommitted removal has to be visible or the
-# commit-message prompt loses the entries it is supposed to name.
+# be swapped for a HEAD one: a run by hand has to see an uncommitted removal
+# or it cannot catch the removal before the commit exists.
 @test "an uncommitted working-tree removal is still reported" {
   _seed_base_ab
   _write_snapshot "public-surface.json" "otto-workbench" '["command:alpha"]'

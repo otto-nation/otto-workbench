@@ -2,14 +2,11 @@ ai_dispatch.bats	8.48
 ai_lib_pin.bats	2.03
 bin_scripts.bats	20.61
 branch_state.bats	3.92
-build_commit_rules.bats	3.29
 check_surface_compat.bats	66.00
 claude_env_vars.bats	2.63
 claude_rules_install.bats	2.63
 claude_settings.bats	314.29
 collect_component_registries.bats	0.82
-commit_breaking_change.bats	15.07
-compact_diff.bats	2.48
 compose_docs.bats	11.38
 config.bats	5.77
 config_cli.bats	19.01
@@ -21,7 +18,6 @@ dream_verify.bats	2.93
 env_local.bats	14.35
 export_config.bats	26.55
 files_frontmatter.bats	2.76
-find_commitlint_config.bats	2.41
 generate_anatomy.bats	14.04
 generate_ceiling_debt.bats	4.92
 generate_doc_reference.bats	14.41
@@ -36,8 +32,6 @@ install_symlink.bats	0.33
 install_targeted.bats	1.64
 lint_sweep.bats	4.83
 list_shell_scripts.bats	2.02
-load_ai_command.bats	2.85
-load_gh_token_shim.bats	7.79
 machine_profile.bats	15.18
 maintenance_auto_tasks.bats	8.71
 mcp_manifests.bats	0.32
@@ -91,7 +85,6 @@ review_orchestrate_backend.bats	6.62
 review_orchestrate_merge.bats	2.27
 review_orchestrate_pipeline.bats	15.05
 review_orchestrate_prompt.bats	4.55
-run_ai.bats	2.39
 run_auto_task.bats	4.55
 run_tests.bats	23.70
 select_tests.bats	4.54
@@ -126,7 +119,6 @@ ui.bats	11.82
 ui_facade.bats	3.19
 validate_all.bats	16.77
 validate_cli_flags.bats	0.15
-validate_commit_msg.bats	3.85
 validate_components.bats	1.59
 validate_doc_budget.bats	4.79
 validate_doc_reference.bats	26.12

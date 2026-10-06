@@ -1,9 +1,8 @@
 """Bridge shell-invoked AI calls into the global usage ledger.
 
-Python callers go through ai_backend, which records usage itself. Two paths cannot:
-run-auto-task needs slash commands, which ai_backend disables, and the Taskfile's
-AI_COMMAND is deliberately pluggable to non-Claude binaries. Both are shell, so they
-reach the ledger through this tool instead.
+Python callers go through ai_backend, which records usage itself. The shell caller
+that cannot is run-auto-task: it needs slash commands, which ai_backend disables,
+so it reaches the ledger through this tool instead.
 
   render   stdin JSONL -> readable stdout, raw stream teed to a file
   unwrap   stdin --output-format json envelope -> reply text, raw teed to a file

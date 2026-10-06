@@ -2,10 +2,9 @@
 # Tests for WORKBENCH_AI_LIB_DIR — the pin that lets an ai/bin entry point load
 # ai/lib out of the checkout it was invoked for rather than out of main/.
 #
-# The counterpart to the WORKBENCH_LIB_DIR block in tests/taskfile_global.bats,
-# and asserted the same way: unset changes nothing, a valid pin moves the
-# resolution, and a pin that is not a checkout is refused by the missing path's
-# name rather than by a later import failure.
+# Unset changes nothing, a valid pin moves the resolution, and a pin that is
+# not a checkout is refused by the missing path's name rather than by a later
+# import failure.
 
 bats_require_minimum_version 1.5.0
 
@@ -239,10 +238,8 @@ PY
 # ─── The stanza itself ───────────────────────────────────────────────────────
 
 @test "every entry point that places ai/lib goes through the pin" {
-  # The counterpart to taskfile_global.bats's "every lib/ai source line goes
-  # through \$WORKBENCH_LIB_DIR". A new script writing the bare insert pins
-  # itself to the installed checkout while its siblings follow the pin, and
-  # nothing else reports that.
+  # A new script writing the bare insert pins itself to the installed checkout
+  # while its siblings follow the pin, and nothing else reports that.
   # A loop rather than `| xargs grep -L`: with no inserting script left, GNU
   # xargs still runs grep once on empty stdin, which reports "(standard input)".
   local inserters bad="" f

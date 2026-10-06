@@ -123,7 +123,7 @@ def test_a_double_quoted_heredoc_delimiter_is_recognised():
 
 
 def test_a_heredoc_mentioned_in_a_comment_opens_nothing():
-    """lib/ai/commit.sh explains its unquoted `<<EOF` in a comment above it.
+    """A comment can mention `<<EOF` without opening a heredoc.
 
     Reading the delimiter off the raw line finds this one and swallows the
     rest of the file waiting for a terminator that never comes.

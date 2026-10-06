@@ -185,23 +185,6 @@ skip_if_root() {
   fi
 }
 
-# source_lib — loads all lib/ai/*.sh files into the current test context.
-source_lib() {
-  local f
-  for f in "$REPO_ROOT/lib/ai/"*.sh; do
-    # shellcheck disable=SC1090
-    source "$f"
-  done
-}
-
-# make_ai_config DIR COMMAND — writes a taskfile.env with AI_COMMAND=COMMAND.
-make_ai_config() {
-  local dir="$1"
-  local command="$2"
-  mkdir -p "$dir/.config/task"
-  echo "AI_COMMAND=$command" > "$dir/.config/task/taskfile.env"
-}
-
 # make_container_seed DIR — commits whatever DIR already holds as one commit on
 # `main`, and adds a `feat` branch. The repo a bare-repo container is cloned from.
 #
@@ -267,18 +250,6 @@ make_fake_binary() {
 shim_untrap() {
   # shellcheck disable=SC2016  # the expansion belongs to the generated shim, not to us
   printf 'PATH="${PATH//"%s:"/}"' "$1"
-}
-
-# make_fake_task_dir REPO_ROOT — creates $TMPDIR/fake-task-config with a
-# `lib` symlink into REPO_ROOT, echoing the fake dir's path. Simulates the
-# ~/.config/task install layout: Taskfile.yml and lib/ are symlinks, and
-# nothing else is reachable from the fake dir.
-make_fake_task_dir() {
-  local repo_root="$1"
-  local fake_task_dir="$BATS_TEST_TMPDIR/fake-task-config"
-  mkdir -p "$fake_task_dir"
-  ln -s "$repo_root/lib" "$fake_task_dir/lib"
-  printf '%s' "$fake_task_dir"
 }
 
 # make_fake_ai_pin REPO_ROOT — creates $BATS_TEST_TMPDIR/fake-ai-pin with `ai`,

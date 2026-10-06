@@ -24,9 +24,8 @@ _self="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 _workbench="$(cd "$(dirname "$_self")/../.." 2>/dev/null && pwd)" || _workbench=""
 
 # "Which branch is trunk" has one owner, and this is how the hook reaches it
-# without loading lib/ai/core.sh — that module resolves TASKFILE_DIR and the AI
-# configuration, which is not something to do on every push in every repository
-# on the machine.
+# without loading anything else — a push should not pull in AI configuration
+# on every repository on the machine.
 #
 # Guarded on the file being there, not just on `set -e` tolerating the source:
 # the same moved checkout that empties `_workbench` above would otherwise refuse

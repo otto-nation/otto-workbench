@@ -43,7 +43,6 @@
 #   REGISTRY_SCAN_DIR    root directory for registry discovery (default: REPO_ROOT)
 #   BREW_STACKS_DIR      brew/ directory (scanned for *.registry.yml stacks)
 #   TOOL_CONTEXT_OUTPUT  tools.generated.md path
-#   TASKFILE_PATH        Taskfile.global.yml path
 #   AI_DIR               ai/ directory
 
 _SELF="${BASH_SOURCE[0]}"
@@ -330,27 +329,6 @@ _emit_scripts_table() {
       _iter_tools "$_reg" _tool_readme_row
     fi
   done
-}
-
-_emit_tasks_block() {
-  local count i key desc
-  printf '```bash\n'
-  reg_load "$TASKFILE_PATH" || return 1
-  # A Taskfile's tasks are a map, so the keys are the task names — there is no
-  # `to_entries` index to count. reg_keys answers them in document order,
-  # which is the order `yq '.tasks | to_entries'` walked too.
-  local -a keys=()
-  mapfile -t keys < <(reg_keys "$TASKFILE_PATH" tasks)
-  count=${#keys[@]}
-  for (( i=0; i<count; i++ )); do
-    key="${keys[$i]}"
-    desc=$(reg_get "$TASKFILE_PATH" tasks "$key" desc)
-    # Exclude utility/infrastructure tasks; only surface user-facing AI tasks
-    [[ "$key" == brew:* || "$key" == "help" ]] && continue
-    [[ -z "$desc" || "$desc" == "null" ]] && continue
-    printf 'task --global %-20s # %s\n' "$key" "$desc"
-  done
-  printf '```\n'
 }
 
 _emit_ai_installs() {
@@ -710,7 +688,6 @@ _init_paths() {
   MISE_REGISTRY="${MISE_REGISTRY:-"$REPO_ROOT/mise/registry.yml"}"
   BIN_REGISTRY="${BIN_REGISTRY:-"$REPO_ROOT/bin/registry.yml"}"
   OUTPUT="${TOOL_CONTEXT_OUTPUT:-"$REPO_ROOT/$TOOLS_GENERATED_RELPATH"}"
-  TASKFILE_PATH="${TASKFILE_PATH:-"$REPO_ROOT/Taskfile.global.yml"}"
   AI_DIR="${AI_DIR:-"$REPO_ROOT/ai"}"
   COMPONENTS_FILE="${COMPONENTS_FILE:-"$REPO_ROOT/install.components"}"
 }

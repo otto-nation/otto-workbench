@@ -3,31 +3,33 @@
 #
 # Constants: `COMMIT_TYPES`, `COMMIT_HEADER_MAX_LEN`, `COMMIT_BODY_MAX_LEN`,
 # `BREAKING_CHANGE_FOOTER`, `BREAKING_CHANGE_FOOTER_ALT`, `NOT_BREAKING_FOOTER`,
-# `BREAKING_FOOTER_RE`, `DECLARED_FOOTER_RE`. To add a commit type, append it to
+# `BREAKING_FOOTER_RE`. To add a commit type, append it to
 # `COMMIT_TYPES` — no other change is needed.
 #
-# The footer helpers answer one question — "does this message declare a breaking
-# change" — for all three readers that ask it: the pre-push gate
-# (`bin/local/check-surface-compat`), the local commit validator
-# (`validate_commit_msg`), and the reword path that carries an existing footer
-# onto a regenerated message. POSIX only: the file is sourced by `/bin/sh` on the
-# go-task path, so no `[[`, no `<<<`, no pattern-replacement expansion.
+# has_breaking_footer is called only by bin/local/check-surface-compat.
+# git/bin/local/generate-git-rules and git/bin/generate-changelog source the
+# constants and render them. ai/lib/core/conventions.py parses COMMIT_TYPES=
+# as text; it does not source this file.
 #
-# Sourced directly by `lib/ai/core.sh` and the git generation scripts
-# (`git/bin/generate-changelog`, `git/bin/local/generate-git-rules`).
+# No current caller needs POSIX — every sourcer is bash. The file stays POSIX
+# (no `[[`, no `<<<`, no pattern-replacement expansion) so the bats cases that
+# source it under sh keep holding that property.
 
 # shellcheck disable=SC2034  # All constants are used by sourcing scripts
 
 # Maximum length of the commit header (type + optional scope + colon + space + subject).
-# Enforced in both the AI prompt and the fallback validator.
+# Rendered into git.generated.md by git/bin/local/generate-git-rules; duplicated (not
+# read) as COMMIT_HEADER_MAX in ai/lib/core/conventions.py — keep the two in step.
 COMMIT_HEADER_MAX_LEN=72
 
 # Maximum length of each line in the commit body.
-# Referenced in the AI prompt only — not machine-validated locally.
+# Rendered into git.generated.md by git/bin/local/generate-git-rules; not
+# machine-validated locally.
 COMMIT_BODY_MAX_LEN=100
 
 # Space-separated list of allowed commit types.
-# Used to build the AI prompt rules and the fallback format validator.
+# Rendered into git.generated.md by git/bin/local/generate-git-rules; read by
+# git/bin/generate-changelog and ai/lib/core/conventions.py.
 COMMIT_TYPES="feat fix perf deps revert docs style refactor test build ci chore"
 
 # Footer token that marks a breaking change. Release-please reads it from the
@@ -45,7 +47,7 @@ BREAKING_CHANGE_FOOTER="BREAKING CHANGE"
 # it, so every reader below accepts either spelling.
 #
 # tr rather than "${BREAKING_CHANGE_FOOTER/ /-}": pattern replacement is a
-# bashism, and this file is sourced by dash on the go-task path.
+# bashism, and this file stays POSIX.
 BREAKING_CHANGE_FOOTER_ALT=$(printf '%s' "$BREAKING_CHANGE_FOOTER" | tr ' ' '-')
 
 # Footer recording a public-surface removal that is deliberately not breaking.
@@ -58,11 +60,6 @@ NOT_BREAKING_FOOTER="Not-Breaking"
 # bare token, because the reason landing in git history is the whole point.
 BREAKING_FOOTER_RE="^(${BREAKING_CHANGE_FOOTER}|${BREAKING_CHANGE_FOOTER_ALT}): .+"
 
-# ERE matching any footer that declares how a public-surface change was handled
-# — breaking, or deliberately not. Both are authored once and must survive
-# every rewrite of the message that carries them.
-DECLARED_FOOTER_RE="^(${BREAKING_CHANGE_FOOTER}|${BREAKING_CHANGE_FOOTER_ALT}|${NOT_BREAKING_FOOTER}): .+"
-
 # has_breaking_footer MSG — true when MSG declares a breaking change in its body.
 #
 # The subject-level `!` marker is deliberately not consulted, here or anywhere
@@ -71,13 +68,4 @@ DECLARED_FOOTER_RE="^(${BREAKING_CHANGE_FOOTER}|${BREAKING_CHANGE_FOOTER_ALT}|${
 # whole message, not about the header.
 has_breaking_footer() {
   printf '%s\n' "$1" | grep -qE "$BREAKING_FOOTER_RE"
-}
-
-# declared_footers MSG — every declaration footer line in MSG, in order.
-#
-# Prints nothing when MSG declares nothing. Whole lines, not just the reason:
-# a caller re-appending one to a regenerated message has to reproduce the
-# footer byte for byte.
-declared_footers() {
-  printf '%s\n' "$1" | grep -E "$DECLARED_FOOTER_RE" || true
 }

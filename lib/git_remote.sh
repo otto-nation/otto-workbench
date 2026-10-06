@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # The remote, its default branch, and whether a branch exists on it.
 #
-# One ladder for "which branch is trunk", because four callers had grown their
-# own: the AI automation in `lib/ai/`, the global pre-push hook, this repo's own
-# pre-push hook, and the surface-compatibility gate. Three of them spelled
-# `main` as a literal and the fourth walked `origin/HEAD`, `origin/main`,
-# `origin/master` by hand, so a `master` repo got a different answer depending
-# on which one asked.
+# One ladder for "which branch is trunk". Sourced by the global pre-push hook
+# (`git/hooks/pre-push`), this repo's own pre-push hook
+# (`git/hooks/pre-push-workbench`), and the surface-compatibility gate
+# (`bin/local/check-surface-compat`). Without it, each spelled `main` as a
+# literal or walked `origin/HEAD`, `origin/main`, `origin/master` by hand, so a
+# `master` repo got a different answer depending on which one asked.
 #
 # Two contracts, deliberately separate. `resolve_default_branch` always answers,
 # because a caller printing a hint needs a name even when it is a guess.
@@ -15,8 +15,8 @@
 # somebody else's error message on it.
 #
 # It has no dependencies, so a caller that has not loaded the facade can source
-# it on its own — which the global pre-push hook does, since `lib/ai/core.sh`
-# would drag the whole AI configuration surface into every push on the machine:
+# it on its own — which the global pre-push hook does, so a push does not load
+# the rest of the workbench:
 #
 # ```bash
 # . "$WORKBENCH_DIR/lib/git_remote.sh"
@@ -28,9 +28,11 @@
 # directory passes nothing and reads exactly as it did before. A positional and
 # not a `-C` flag, so no bash array is needed to pass it on — see below.
 #
-# POSIX only, for the same reason `conventions.sh` is: `lib/ai/core.sh` sources
-# both, and go-task runs the tasks that source it under `/bin/sh`. So no `[[`,
-# no `<<<`, no arrays, no pattern-replacement expansion.
+# POSIX only as a kept guarantee, not a current need: every caller is bash
+# (`git/hooks/pre-push`, `git/hooks/pre-push-workbench`,
+# `bin/local/check-surface-compat`). tests/git_remote.bats sources it under
+# dash so a bashism cannot land silently. So no `[[`, no `<<<`, no arrays,
+# no pattern-replacement expansion.
 
 [ -n "${_LIB_GIT_REMOTE_SH:-}" ] && return
 _LIB_GIT_REMOTE_SH=1

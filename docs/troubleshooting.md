@@ -71,16 +71,6 @@ Several workbench scripts depend on `yq` for YAML processing:
 brew install yq
 ```
 
-## AI setup: "AI_COMMAND not configured"
-
-The global Taskfile needs an AI tool configured. Run:
-
-```bash
-task --global ai:setup
-```
-
-This creates `~/.config/task/taskfile.env` and prompts you for `AI_COMMAND`, `GH_TOKEN`, and optionally `ANTHROPIC_API_KEY`.
-
 ## "Cannot connect to the Docker daemon"
 
 Start your Docker runtime:

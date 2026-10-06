@@ -40,7 +40,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `build-otto-ai-tools-tarball` | Package otto-ai-tools into a self-contained tarball for distribution |
 | `build-claude-config-tarball` | Package Claude Code configuration into a tarball for server or container deployment |
 | `workbench-export` | Export workbench Claude configs as a self-contained tarball, filtered by profile |
-| `task` | AI-powered Git automation runner; wraps go-task with global/local Taskfile routing |
+| `task` | go-task wrapper adding --global for the workbench's global Taskfile |
 | `otto-workbench` | Manage your workbench developer environment |
 | `mem-analyze` | macOS memory analysis report — pressure, swap usage, top processes, per-user totals |
 | `wt-cleanup` | Remove stale git worktrees — merged branches and optionally age-based cleanup |

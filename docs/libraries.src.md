@@ -32,6 +32,6 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 
 ## AI Modules (`lib/ai/`)
 
-These modules power the AI-driven git automation (commits, PRs, reviews). All are sourced directly by Taskfile tasks — none go through the `ui.sh` facade.
+`lib/ai/` holds `session-count.sh`, sourced directly — it does not go through the `ui.sh` facade.
 
 <!-- include: bin/local/generate-doc-reference --set lib --group ai -->

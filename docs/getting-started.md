@@ -36,7 +36,7 @@ Re-running is safe — existing symlinks are updated silently; real files prompt
 
 1. **Reload your shell**: `exec zsh`
 2. **Docker** (if installed): start your runtime — `colima start` or OrbStack (macOS), or `sudo systemctl start docker` (Linux)
-3. **AI tools** (if installed): run `task --global ai:setup` to configure your `AI_COMMAND` and tokens
+3. **AI tools** (if installed): add a GitHub token to `~/.config/task/taskfile.env` — `otto-workbench install ai` scaffolds it
 
 Secrets and machine-specific env vars go in `~/.env.local` — sourced first by the shell loader, never committed. See [`zsh/.env.local.template`](../zsh/.env.local.template) for the documented starting point.
 

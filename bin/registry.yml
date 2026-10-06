@@ -10,9 +10,9 @@ tools:
   - name: task
     permission: true
     visibility: full
-    description: "AI-powered Git automation runner; wraps go-task with global/local Taskfile routing"
+    description: "go-task wrapper adding --global for the workbench's global Taskfile"
     when_to_use: "Running any dev workflow — commits, PRs, brew management"
-    usage: "task commit  |  task pr:review  |  task --global <cmd>"
+    usage: "task test  |  task --global brew:dump"
     docs: "https://taskfile.dev"
 
   - name: otto-workbench

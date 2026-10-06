@@ -319,23 +319,18 @@ Git convention constants — single source of truth for commit and PR formatting
 
 Constants: `COMMIT_TYPES`, `COMMIT_HEADER_MAX_LEN`, `COMMIT_BODY_MAX_LEN`,
 `BREAKING_CHANGE_FOOTER`, `BREAKING_CHANGE_FOOTER_ALT`, `NOT_BREAKING_FOOTER`,
-`BREAKING_FOOTER_RE`, `DECLARED_FOOTER_RE`. To add a commit type, append it to
+`BREAKING_FOOTER_RE`. To add a commit type, append it to
 `COMMIT_TYPES` — no other change is needed.
 
 The footer helpers answer one question — "does this message declare a breaking
-change" — for all three readers that ask it: the pre-push gate
-(`bin/local/check-surface-compat`), the local commit validator
-(`validate_commit_msg`), and the reword path that carries an existing footer
-onto a regenerated message. POSIX only: the file is sourced by `/bin/sh` on the
-go-task path, so no `[[`, no `<<<`, no pattern-replacement expansion.
-
-Sourced directly by `lib/ai/core.sh` and the git generation scripts
-(`git/bin/generate-changelog`, `git/bin/local/generate-git-rules`).
+change" — for the readers that ask it: the git generation scripts,
+`bin/local/check-surface-compat`, and `ai/lib/core/conventions.py`. POSIX only
+so a `/bin/sh` can source it and so the Python reader can parse the
+assignments as text. No `[[`, no `<<<`, no pattern-replacement expansion.
 
 | Function | Purpose |
 |----------|---------|
 | `has_breaking_footer MSG` | true when MSG declares a breaking change in its body. |
-| `declared_footers MSG` | every declaration footer line in MSG, in order. |
 
 ### discover.sh
 
@@ -446,7 +441,7 @@ the one caller that must leave the environment alone, so it asks
 The remote, its default branch, and whether a branch exists on it.
 
 One ladder for "which branch is trunk", because four callers had grown their
-own: the AI automation in `lib/ai/`, the global pre-push hook, this repo's own
+own: the AI automation under `lib/ai/`, the global pre-push hook, this repo's own
 pre-push hook, and the surface-compatibility gate. Three of them spelled
 `main` as a literal and the fourth walked `origin/HEAD`, `origin/main`,
 `origin/master` by hand, so a `master` repo got a different answer depending
@@ -459,8 +454,8 @@ caller about to diff against it turns a wrong guess into a failure with
 somebody else's error message on it.
 
 It has no dependencies, so a caller that has not loaded the facade can source
-it on its own — which the global pre-push hook does, since `lib/ai/core.sh`
-would drag the whole AI configuration surface into every push on the machine:
+it on its own — which the global pre-push hook does, so a push does not load
+the rest of the workbench:
 
 ```bash
 . "$WORKBENCH_DIR/lib/git_remote.sh"
@@ -472,9 +467,9 @@ defaulting to `.`. `git -C .` is the cwd, so a caller that has already changed
 directory passes nothing and reads exactly as it did before. A positional and
 not a `-C` flag, so no bash array is needed to pass it on — see below.
 
-POSIX only, for the same reason `conventions.sh` is: `lib/ai/core.sh` sources
-both, and go-task runs the tasks that source it under `/bin/sh`. So no `[[`,
-no `<<<`, no arrays, no pattern-replacement expansion.
+POSIX only, for the same reason `conventions.sh` is: a `/bin/sh` reader can
+source the assignments without requiring bash. So no `[[`, no `<<<`, no arrays,
+no pattern-replacement expansion.
 
 | Function | Purpose |
 |----------|---------|
@@ -1055,97 +1050,7 @@ Sourced directly by the top-level `install.sh` and `bin/otto-workbench`.
 
 ## AI Modules (`lib/ai/`)
 
-These modules power the AI-driven git automation (commits, PRs, reviews). All are sourced directly by Taskfile tasks — none go through the `ui.sh` facade.
-
-### ai/commit.sh
-
-Commit message generation with validation and automatic retry on length
-violations.
-
-Requires [`ai/core.sh`](#aicoresh) to be sourced first. Typical call sequence:
-
-```bash
-find_commitlint_config   # sets COMMITLINT_CONFIG
-build_commit_rules       # sets COMMIT_RULES (derived from COMMITLINT_CONFIG)
-generate_commit_msg DIFF # sets AI_MSG
-validate_commit_msg MSG  # validates; returns 1 on failure
-```
-
-State set by its functions: `COMMITLINT_CONFIG`, `COMMIT_RULES`, `AI_MSG`.
-
-| Function | Purpose |
-|----------|---------|
-| `find_commitlint_config` | Sets COMMITLINT_CONFIG to the first config found, or empty string if none. configuration files picked from: https://github.com/conventional-changelog/commitlint?tab=readme-ov-file#config |
-| `build_commit_rules` | Requires COMMITLINT_CONFIG (set by find_commitlint_config). Sets COMMIT_RULES. Uses COMMIT_TYPES for the allowed-types list. |
-| `generate_commit_msg DIFF [FILE_LIST]` | Requires AI_COMMAND and COMMIT_RULES. Sets AI_MSG. Retries once with a precise character budget if the header exceeds COMMIT_HEADER_MAX_LEN, and returns 1 if the retry also fails. |
-| `validate_commit_msg MSG` | Requires COMMITLINT_CONFIG (set by find_commitlint_config). Uses commitlint when available; falls back to a basic header length check. Returns 1 on validation failure. |
-| `preserve_declared_footers ORIGINAL_MSG` | Re-appends to AI_MSG every declaration footer ORIGINAL_MSG carries that the generated message does not already have. |
-
-### ai/compact_diff.sh
-
-Diff compaction: splits diffs into per-file chunks and greedily includes as
-many as fit within a character budget.
-
-Its only entry point is `_compact_diff`. Smallest files go in first, which
-maximises how many are covered; the ones that do not fit are listed by name in
-a trailing note. Requires [`ai/core.sh`](#aicoresh) to be sourced first, for
-`DIFF_MAX_CHARS`.
-
-Kept out of `core.sh` because it uses bash arrays, and `core.sh` has to stay
-POSIX-compatible for the go-task path.
-
-### ai/core.sh
-
-Foundation module: AI command loading, GitHub token resolution (handed off
-to ai/lib/pr/gh_token.py), response handling.
-
-Sourced first by `commit.sh` and `review.sh`, and by the Taskfile
-tasks that drive them. It inherits the commit conventions by sourcing
-[`conventions.sh`](#conventionssh), so `COMMIT_TYPES` and the length limits
-have one owner across both halves.
-
-POSIX-compatible: go-task sources it through `sh -c`, which is why the array
-work lives in [`compact_diff.sh`](#aicompact_diffsh) instead.
-
-State set by its functions: `AI_COMMAND`, `AI_RESPONSE`.
-
-| Function | Purpose |
-|----------|---------|
-| `load_ai_command` | Finds the AI config and validates the binary exists. Sets AI_COMMAND. Returns 1 on failure. |
-| `load_gh_token` | Hands GitHub token resolution off to ai/lib/pr/gh_token.py and exports GH_TOKEN. Returns 1 on failure, with the guidance already on stderr. |
-| `run_ai PROMPT [AGENT_OVERRIDE] [TASK_LABEL]` | Requires AI_COMMAND. When AGENT_OVERRIDE is provided, replaces --agent <name> in AI_COMMAND so different tasks can route to the appropriate agent. TASK_LABEL names the call in the usage ledger. Sets AI_RESPONSE. |
-
-### ai/prompts.sh
-
-Prompt templates for all AI automation — pure text generation, no side
-effects.
-
-Each function prints a filled prompt to stdout. Callers pass the dynamic values
-as arguments; the configuration globals (`COMMIT_RULES`,
-`COMMIT_HEADER_MAX_LEN`, and the rest) are read straight from
-[`ai/core.sh`](#aicoresh), which must be sourced first.
-
-| Function | Purpose |
-|----------|---------|
-| `prompt_commit DIFF_CONTENT FILES_SECTION [RETRY_PREAMBLE] [SURFACE_NOTE]` | Generates the commit message prompt. RETRY_PREAMBLE is prepended to it and SURFACE_NOTE is rendered directly after COMMIT_RULES, each when non-empty. |
-| `prompt_commit_retry HEADER HEADER_LEN OVER PREFIX SUBJECT_BUDGET` | Outputs a retry preamble that gives the AI the exact character budget it needs. Passed as RETRY_PREAMBLE to a second call of prompt_commit. |
-| `prompt_diff_review CONTEXT` | CONTEXT is a pre-built string of labelled diff sections (committed, staged, unstaged). Built by generate_diff_review before calling this function. Review instructions come from the reviewer agent — this prompt provides data only. |
-| `prompt_pr_review PR_NUMBER PR_TITLE PR_BODY COMPACT_DIFF` | Review instructions come from the reviewer agent — this prompt provides data only. |
-
-### ai/review.sh
-
-Code review generation for branch changes and existing PRs.
-
-Requires [`ai/core.sh`](#aicoresh) to be sourced first. Each diff section is
-compacted independently through `_compact_diff`, so a large file in one section
-cannot crowd the others out.
-
-State set by its functions: `AI_RESPONSE`.
-
-| Function | Purpose |
-|----------|---------|
-| `generate_diff_review STAGED UNSTAGED COMMITS COMMITTED_DIFF BRANCH DEFAULT_BRANCH` | Requires AI_COMMAND. Builds a review prompt from three diff sources (committed, staged, unstaged). Each section is independently compacted via _compact_diff. Sets AI_RESPONSE. |
-| `generate_pr_review PR_NUMBER PR_TITLE PR_BODY PR_DIFF` | Requires AI_COMMAND. Builds a review prompt from PR metadata and its diff. Sets AI_RESPONSE. |
+`lib/ai/` holds `session-count.sh`, sourced directly — it does not go through the `ui.sh` facade.
 
 ### ai/session-count.sh
 

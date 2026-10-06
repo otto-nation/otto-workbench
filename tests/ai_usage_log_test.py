@@ -1,6 +1,6 @@
 """Tests for ai-usage-log, the shell bridge into the global usage ledger.
 
-run-auto-task and the Taskfile's AI_COMMAND cannot route through ai_backend, so this
+run-auto-task cannot route through ai_backend, so this
 tool is the only thing standing between those calls and an unmeasured pipeline.
 """
 
@@ -67,7 +67,7 @@ class TestUnwrap:
         assert capsys.readouterr().out == "the reply"
 
     def test_passes_prose_through_unchanged(self, monkeypatch, capsys):
-        """A non-Claude AI_COMMAND emits prose, not an envelope."""
+        """A reply with no JSON envelope passes through intact."""
         _run(["unwrap"], "just prose\nline two\n", monkeypatch)
         assert capsys.readouterr().out == "just prose\nline two\n"
 

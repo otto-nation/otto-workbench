@@ -10,13 +10,6 @@ WORKBENCH_AI_LIB_DIR names the checkout a run should load instead::
 
     WORKBENCH_AI_LIB_DIR=/path/to/worktree pr review --self --fix
 
-This is the Python half of what WORKBENCH_LIB_DIR does for the shell half, and
-is deliberately not that variable. ``lib/ai/core.sh`` derives WORKBENCH_ROOT
-from WORKBENCH_LIB_DIR, so one name would move the shell libraries too for a
-caller who only meant to move ``ai/lib``, and a value left behind in an
-environment would start redirecting both halves at once. A run that wants both
-sets both.
-
 It pins a checkout root rather than ``ai/lib`` itself, because ``ai/lib`` is not
 self-contained: ``config/workbench_config.py``, ``pr/push_intent.py``,
 ``git/topology.py`` and ``review/static_analysis.py`` each reach up to
@@ -36,8 +29,8 @@ all.
 # worse: the pin is what is being vouched for, so a tree trusted to supply its
 # own validator is not being checked — and a pin that is not a checkout has no
 # copy to supply, which turns the refusal back into the traceback it exists to
-# replace. ``_lib-dir-guard`` accepts the same trade for the shell half, and
-# ``tests/ai_lib_pin.bats`` drives this file against temporary trees instead.
+# replace. ``tests/ai_lib_pin.bats`` drives this file against temporary trees
+# instead.
 
 Stdlib only, like the entry points' own headers: this runs before ``ai/lib``
 exists on the path, so it has nothing else to reach for.
@@ -52,10 +45,8 @@ from typing import NoReturn
 
 PIN_VAR = "WORKBENCH_AI_LIB_DIR"
 
-# Four paths that together witness a whole checkout, in the shape
-# `_lib-dir-guard` (Taskfile.global.yml) uses for the shell half: three stand
-# for a directory the pin must supply at all, and the fourth stands for a
-# silence.
+# Four paths that together witness a whole checkout: three stand for a
+# directory the pin must supply at all, and the fourth stands for a silence.
 #
 # `ai/lib/core/__init__.py` stands for the layered package tree. A file rather
 # than the directory, because an empty `ai/lib` passes a directory test and then
@@ -117,9 +108,9 @@ def pinned_ai_lib_dir() -> Path:
     exported to nothing is nobody asking for a pin.
 
     The value is checked as given rather than resolved, so the refusal names the
-    path the caller typed. Unlike ``_lib-dir-guard`` there is no equality
-    short-circuit: the default here is not this variable, so a pin naming the
-    entry point's own root is checked like any other and passes.
+    path the caller typed. There is no equality short-circuit: the default here
+    is not this variable, so a pin naming the entry point's own root is checked
+    like any other and passes.
     """
     pin = os.environ[PIN_VAR]
     root = Path(pin)

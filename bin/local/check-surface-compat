@@ -58,8 +58,8 @@ shopt -s inherit_errexit
 _SELF="${BASH_SOURCE[0]}"
 # See bin/local/validate-public-surface for why this is path arithmetic and not
 # `git rev-parse --show-toplevel`. This script needs both properties that form
-# gives: the pre-push hook runs it with GIT_DIR exported, and task commit runs it
-# by absolute path from whatever directory the contributor is standing in. Note
+# gives: the pre-push hook runs it with GIT_DIR exported, and a run by hand
+# invokes it by absolute path from whatever directory the contributor is standing in. Note
 # this locates the script's own repo, for sourcing lib/; the repo under
 # inspection is REPO_DIR, which --repo-dir sets.
 REPO_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
@@ -283,7 +283,7 @@ _head_entries() {
 #
 # The head side is the *union* of two removals: one against the working tree,
 # one against HEAD. Neither alone is sound. The working tree read is what lets
-# lib/ai/commit.sh consult this gate before a commit exists, but `git push`
+# a run by hand catch a removal before it is committed, but `git push`
 # publishes HEAD, so a removal committed in HEAD and then reverted in the tree
 # (git stash, an uncommitted revert, a partially staged one) would sail through
 # pre-push on a tree-only read. An entry present in only one of the two is
@@ -337,8 +337,8 @@ fi
 COMMIT_BODIES=$(git -C "$REPO_DIR" log --format='%B' "$MERGE_BASE..HEAD")
 
 # A BREAKING CHANGE footer covers every removal in the range. The predicate
-# lives in lib/conventions.sh so that lib/ai/commit.sh rejects locally exactly
-# what this gate rejects at push time, rather than the two drifting apart.
+# lives in lib/conventions.sh so every reader of a breaking footer uses the
+# same predicate this gate uses at push time, rather than drifting apart.
 HAS_BREAKING=false
 if has_breaking_footer "$COMMIT_BODIES"; then
   HAS_BREAKING=true

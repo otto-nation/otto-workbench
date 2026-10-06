@@ -26,16 +26,7 @@ ai/setup.sh
 
 Prompts for confirmation at each step. Safe to re-run. This installs Claude Code configuration, rules, and agents, plus skills — shared between Claude Code (`~/.claude/skills/`) and Pi (`~/.agents/skills/`) from the one `ai/skills/` tree.
 
-After setup, configure the AI tool for global task automation:
-
-```bash
-task --global ai:setup
-```
-
-This creates `~/.config/task/taskfile.env` with:
-- `AI_COMMAND` — which AI tool to use (e.g., `claude -p --output-format json --agent ci-cd`)
-- `GH_TOKEN` — GitHub PAT for PR automation (fine-grained, scoped to specific repos)
-- `ANTHROPIC_API_KEY` — optional, for isolating automation API usage
+`ai/setup.sh` also scaffolds `~/.config/task/taskfile.env`, the GitHub PATs `pr create` and `pr describe --post` publish with (`GH_TOKEN`, optional `GH_TOKEN__<ORG>`). See `security-secrets.md` for the two-file secret model.
 
 ## What Gets Installed
 
@@ -47,20 +38,13 @@ This creates `~/.config/task/taskfile.env` with:
 
 ## Task Automation
 
-Use `--global` to run tasks from `~/.config/task/` rather than a local project Taskfile.
-
-<!-- include: bin/local/generate-tool-context --emit tasks-block -->
-
-## Configuration
-
-Override which AI tool the global Taskfile uses:
+The global Taskfile holds Homebrew helpers. Use `--global` to run them from `~/.config/task/` rather than a local project Taskfile.
 
 ```bash
-# ~/.config/task/taskfile.env
-AI_COMMAND=claude -p --output-format json --agent ci-cd
+task --global brew:dump
 ```
 
-Override per-project with `.taskfile/taskfile.env` in a project root.
+## Configuration
 
 ### Usage ledger
 
@@ -346,10 +330,9 @@ the rounds it does not restate.
 
 ### Running from a different directory
 
-All global tasks default to running in the current working directory. When your CWD is not the target repo (e.g., running from a Claude Code session rooted in a different project), pass `REPO_DIR` to a global task, and `--repo-dir` (or `--branch`) to `pr`:
+When your CWD is not the target repo (e.g., running from a Claude Code session rooted in a different project), pass `--repo-dir` (or `--branch`) to `pr`:
 
 ```bash
-task --global REPO_DIR=/path/to/worktree commit
 pr create --draft --closes 941 --repo-dir /path/to/worktree
 ```
 
@@ -360,27 +343,7 @@ required `cwd` — see [`agent/backend.py`](ai-libraries.md#agentbackendpy).
 
 ### Running a branch's own libraries
 
-`REPO_DIR` sets the working directory. It does not change where the task's
-libraries come from — that is the Taskfile's own directory, which through the
-`~/.config/task` symlink is always `main/`. A change to `lib/ai/*.sh` therefore
-runs `main`'s copy unless the run pins `WORKBENCH_LIB_DIR` at the worktree:
-
-```bash
-task --global WORKBENCH_LIB_DIR=/path/to/worktree REPO_DIR=/path/to/worktree commit
-```
-
-Both are go-task variables, written after `--global` — not a `VAR=value` shell
-prefix, which `claude-bash-guard` blocks. It pins the checkout root, not `lib/`
-alone, so `ai/lib/core/pr_template.py` and `lib/config_cli.py` come from the
-same tree as the libraries calling them. Unset, nothing resolves differently than before.
-Set, `_lib-dir-guard` — in `deps:` on each task sourcing `lib/ai` and no other —
-requires it absolute and holding the six paths that witness a whole checkout,
-so a partial one is refused by the missing path's name, not by a later `python3`
-failure naming nothing. A module sourced by name is not among them: it fails on
-the body's first lines. The value is read from the environment, never spliced.
-
-That covers what `task --global` loads. The Python entry points route through
-no task and take their own pin, since `~/.local/bin/pr` is a symlink into
+The Python entry points take their own pin, since `~/.local/bin/pr` is a symlink into
 `main/` and `Path(__file__).resolve()` follows it — see `ai/bin/_libdir.py`:
 
 ```bash

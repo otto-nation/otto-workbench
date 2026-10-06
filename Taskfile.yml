@@ -1,9 +1,9 @@
 # Workbench repo — local development tasks
 # These tasks are only relevant when contributing to this repo.
 #
-# Global AI/git automation tasks live in Taskfile.global.yml and are
+# Global Homebrew helpers live in Taskfile.global.yml and are
 # installed to ~/.config/task/Taskfile.global.yml by install.sh.
-# Run them from anywhere with: task --global commit, task --global review, etc.
+# Run them from anywhere with: task --global brew:dump, etc.
 
 version: "3"
 

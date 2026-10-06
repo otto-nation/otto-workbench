@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Tests for ai_scaffold_gh_token_env (ai/steps.sh) — the token-file scaffold
-# ai/setup.sh runs in place of the retired `task --global ai:setup`.
+# ai/setup.sh runs the token-file scaffold.
 bats_require_minimum_version 1.5.0
 
 setup() {
@@ -37,7 +37,7 @@ _scaffold() {
 @test "the created file names no retired setting" {
   _scaffold
   [ "$status" -eq 0 ]
-  run grep -E 'AI_COMMAND|ANTHROPIC_API_KEY|task pr:|ai:setup' "$ENV_FILE"
+  run grep -E 'ANTHROPIC_API_KEY|task pr:' "$ENV_FILE"
   [ "$status" -eq 1 ]
 }
 
@@ -50,10 +50,10 @@ _scaffold() {
 
 @test "a file without a GH_TOKEN section gains one and keeps its contents" {
   mkdir -p "$(dirname "$ENV_FILE")"
-  printf 'AI_COMMAND=claude -p\n' > "$ENV_FILE"
+  printf 'EXISTING=keep-me\n' > "$ENV_FILE"
   _scaffold
   [ "$status" -eq 0 ]
-  [ "$(head -1 "$ENV_FILE")" = "AI_COMMAND=claude -p" ]
+  [ "$(head -1 "$ENV_FILE")" = "EXISTING=keep-me" ]
   grep -q '^# GH_TOKEN=github_pat_$' "$ENV_FILE"
 }
 

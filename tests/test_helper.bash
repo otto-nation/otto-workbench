@@ -252,18 +252,6 @@ shim_untrap() {
   printf 'PATH="${PATH//"%s:"/}"' "$1"
 }
 
-# make_fake_task_dir REPO_ROOT — creates $TMPDIR/fake-task-config with a
-# `lib` symlink into REPO_ROOT, echoing the fake dir's path. Simulates the
-# ~/.config/task install layout: Taskfile.yml and lib/ are symlinks, and
-# nothing else is reachable from the fake dir.
-make_fake_task_dir() {
-  local repo_root="$1"
-  local fake_task_dir="$BATS_TEST_TMPDIR/fake-task-config"
-  mkdir -p "$fake_task_dir"
-  ln -s "$repo_root/lib" "$fake_task_dir/lib"
-  printf '%s' "$fake_task_dir"
-}
-
 # make_fake_ai_pin REPO_ROOT — creates $BATS_TEST_TMPDIR/fake-ai-pin with `ai`,
 # `lib` and `bin` symlinks into REPO_ROOT, echoing the pin's path. Every witness
 # in ai/bin/_libdir.py resolves through the links, so the pin is valid while its

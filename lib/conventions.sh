@@ -7,13 +7,10 @@
 # `COMMIT_TYPES` — no other change is needed.
 #
 # The footer helpers answer one question — "does this message declare a breaking
-# change" — for all three readers that ask it: the pre-push gate
-# (`bin/local/check-surface-compat`), the local commit validator
-# (`validate_commit_msg`), and the reword path that carries an existing footer
-# onto a regenerated message. POSIX only: the file is sourced by `/bin/sh` on the
-# go-task path, so no `[[`, no `<<<`, no pattern-replacement expansion.
-#
-# Sourced directly by the git generation scripts and bin/local/check-surface-compat.
+# change" — for the readers that ask it: the git generation scripts,
+# `bin/local/check-surface-compat`, and `ai/lib/core/conventions.py`. POSIX only
+# so a `/bin/sh` can source it and so the Python reader can parse the
+# assignments as text. No `[[`, no `<<<`, no pattern-replacement expansion.
 
 # shellcheck disable=SC2034  # All constants are used by sourcing scripts
 
@@ -44,7 +41,7 @@ BREAKING_CHANGE_FOOTER="BREAKING CHANGE"
 # it, so every reader below accepts either spelling.
 #
 # tr rather than "${BREAKING_CHANGE_FOOTER/ /-}": pattern replacement is a
-# bashism, and this file is sourced by dash on the go-task path.
+# bashism, and this file stays POSIX.
 BREAKING_CHANGE_FOOTER_ALT=$(printf '%s' "$BREAKING_CHANGE_FOOTER" | tr ' ' '-')
 
 # Footer recording a public-surface removal that is deliberately not breaking.
@@ -66,5 +63,4 @@ BREAKING_FOOTER_RE="^(${BREAKING_CHANGE_FOOTER}|${BREAKING_CHANGE_FOOTER_ALT}): 
 has_breaking_footer() {
   printf '%s\n' "$1" | grep -qE "$BREAKING_FOOTER_RE"
 }
-
 

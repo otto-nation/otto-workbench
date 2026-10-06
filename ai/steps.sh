@@ -78,7 +78,7 @@ ai_generate_rules() {
 # any other FILE byte-identical. Never rewrites a line already present, so it
 # is safe to re-run.
 #
-# An existing file's leftover AI_COMMAND / ANTHROPIC_API_KEY lines are inert
+# An existing file's leftover retired-command and billing-key lines are inert
 # and deliberately kept: the file is the operator's, and nothing reads them.
 ai_scaffold_gh_token_env() {
   local file="$1"

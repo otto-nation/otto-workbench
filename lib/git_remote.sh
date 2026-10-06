@@ -2,7 +2,7 @@
 # The remote, its default branch, and whether a branch exists on it.
 #
 # One ladder for "which branch is trunk", because four callers had grown their
-# own: the AI automation in `lib/ai/`, the global pre-push hook, this repo's own
+# own: the AI automation under `lib/ai/`, the global pre-push hook, this repo's own
 # pre-push hook, and the surface-compatibility gate. Three of them spelled
 # `main` as a literal and the fourth walked `origin/HEAD`, `origin/main`,
 # `origin/master` by hand, so a `master` repo got a different answer depending
@@ -15,8 +15,8 @@
 # somebody else's error message on it.
 #
 # It has no dependencies, so a caller that has not loaded the facade can source
-# it on its own — which the global pre-push hook does, since `lib/ai/core.sh`
-# would drag the whole AI configuration surface into every push on the machine:
+# it on its own — which the global pre-push hook does, so a push does not load
+# the rest of the workbench:
 #
 # ```bash
 # . "$WORKBENCH_DIR/lib/git_remote.sh"
@@ -28,9 +28,9 @@
 # directory passes nothing and reads exactly as it did before. A positional and
 # not a `-C` flag, so no bash array is needed to pass it on — see below.
 #
-# POSIX only, for the same reason `conventions.sh` is: `lib/ai/core.sh` sources
-# both, and go-task runs the tasks that source it under `/bin/sh`. So no `[[`,
-# no `<<<`, no arrays, no pattern-replacement expansion.
+# POSIX only, for the same reason `conventions.sh` is: a `/bin/sh` reader can
+# source the assignments without requiring bash. So no `[[`, no `<<<`, no arrays,
+# no pattern-replacement expansion.
 
 [ -n "${_LIB_GIT_REMOTE_SH:-}" ] && return
 _LIB_GIT_REMOTE_SH=1

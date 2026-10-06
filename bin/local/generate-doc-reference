@@ -153,7 +153,7 @@ _set_keys() {
 # of the set, however the set finds its members.
 #
 # The default travels with the file rather than being looked up later: bash
-# pattern matching lets `*` cross a `/`, so `lib/*.sh` would claim `lib/ai/core.sh`
+# pattern matching lets `*` cross a `/`, so `lib/*.sh` would claim `lib/ai/session-count.sh`
 # if a file were matched back against the globs after the fact. The title is the
 # section heading, so a registry member can be headed by its tool name — which
 # is the anchor every `tools.md#<name>` link already uses.

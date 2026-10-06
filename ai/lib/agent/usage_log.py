@@ -3,7 +3,7 @@
 It renders a stream-json feed while teeing the raw stream, unwraps a
 `--output-format json` envelope, and appends one ledger record from a teed
 file. Run by `ai-usage-log` for the two shell callers that cannot use
-`agent.backend` (`run-auto-task`, the Taskfile's `AI_COMMAND`).
+`agent.backend` (`run-auto-task`).
 
 Not: parsing usage (`agent.usage`), rendering an event
 (`agent.backend_events`), argument parsing (`cli.ai_usage_log`).
@@ -60,7 +60,7 @@ def render(tee: str | None) -> int:
 def unwrap(tee: str | None) -> int:
     """Print the reply text from a JSON envelope, passing plain output through.
 
-    A non-Claude AI_COMMAND emits prose, not an envelope; that must survive intact.
+    A reply with no JSON envelope passes through intact.
     """
     stdout = sys.stdin.read()
     sink = _tee(tee)

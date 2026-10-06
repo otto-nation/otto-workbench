@@ -33,8 +33,8 @@ Options:
   -h, --help  Show this help
 
 Examples:
-  task commit              Run a task from ./Taskfile.yml in the current directory
-  task --global commit     Run a global task from ~/.config/task/Taskfile.yml
+  task test                Run a task from ./Taskfile.yml in the current directory
+  task --global brew:dump  Run a global task from ~/.config/task/Taskfile.yml
 EOF
 }
 
@@ -67,7 +67,7 @@ done
 if [ "$USE_GLOBAL" = true ]; then
   if [ ! -f "$GLOBAL_TASKFILE" ]; then
     err "Global Taskfile not found at $GLOBAL_TASKFILE"
-    err "Run: task --global ai:setup"
+    err "Run: otto-workbench sync"
     exit 1
   fi
   exec "$TASK_BIN" --taskfile "$GLOBAL_TASKFILE" "${FILTERED_ARGS[@]}"

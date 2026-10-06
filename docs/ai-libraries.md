@@ -2081,9 +2081,8 @@ parser every other ``pr`` command keys on — so every remote spelling git
 accepts routes the same way, and a GitHub Enterprise remote links its own PAT
 page in the failure guidance.
 
-Run as a script, the token is the only thing on stdout (for ``load_gh_token``
-in ``lib/ai/core.sh``) and the guidance goes to stderr, so a failure can never
-be captured into ``GH_TOKEN``.
+Run as a script, the token is the only thing on stdout and the guidance goes to
+stderr, so a failure can never be captured into ``GH_TOKEN``.
 
 ### pr/permalinks.py
 
@@ -3645,9 +3644,8 @@ the dependency.
 Every AI call made through the workbench appends one record to a monthly JSONL
 file under `~/.local/state/workbench/usage/` — cost, tokens, cache hit rate, and
 the task that made the call. Python entry points record automatically through
-`agent.backend`; the two shell paths that cannot use it — `run-auto-task`, which
-needs slash commands, and `AI_COMMAND`, which is pluggable — go through
-`ai-usage-log`.
+`agent.backend`; the shell caller that cannot use it — `run-auto-task`, which
+needs slash commands — goes through `ai-usage-log`.
 
 A call that reports no usage records nothing rather than a zero row. An
 unmeasured call is then visibly absent instead of looking free, which a zeroed
@@ -3663,7 +3661,7 @@ The shell bridge into the usage ledger.
 It renders a stream-json feed while teeing the raw stream, unwraps a
 `--output-format json` envelope, and appends one ledger record from a teed
 file. Run by `ai-usage-log` for the two shell callers that cannot use
-`agent.backend` (`run-auto-task`, the Taskfile's `AI_COMMAND`).
+`agent.backend` (`run-auto-task`).
 
 Not: parsing usage (`agent.usage`), rendering an event
 (`agent.backend_events`), argument parsing (`cli.ai_usage_log`).
@@ -6198,10 +6196,9 @@ The top of the stack. A binary under `ai/bin/` is a shim over one module here: t
 
 Bridge shell-invoked AI calls into the global usage ledger.
 
-Python callers go through ai_backend, which records usage itself. Two paths cannot:
-run-auto-task needs slash commands, which ai_backend disables, and the Taskfile's
-AI_COMMAND is deliberately pluggable to non-Claude binaries. Both are shell, so they
-reach the ledger through this tool instead.
+Python callers go through ai_backend, which records usage itself. The shell caller
+that cannot is run-auto-task: it needs slash commands, which ai_backend disables,
+so it reaches the ledger through this tool instead.
 
   render   stdin JSONL -> readable stdout, raw stream teed to a file
   unwrap   stdin --output-format json envelope -> reply text, raw teed to a file

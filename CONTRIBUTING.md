@@ -111,11 +111,11 @@ records those kills, and `tests/conftest.py` attaches the record to a failing te
 Read it the same way. A failure with no such section had an empty record, which is
 positive evidence rather than a missing marker.
 
-Tests live in `tests/`. Each file targets a single library function or script behaviour. The shared helper `tests/test_helper.bash` provides `source_lib`, `make_ai_config`, `make_fake_binary`, and `make_git_remote`.
+Tests live in `tests/`. Each file targets a single library function or script behaviour. The shared helper `tests/test_helper.bash` provides `common_setup`, `make_fake_binary`, and `make_git_remote`.
 
 ## Writing Tests
 
-- Match the style of existing test files: `setup()` -> `source_lib` -> `@test` blocks.
+- Match the style of existing test files: `setup()` -> `common_setup` -> `@test` blocks.
 - Use `run` + `$status` / `$output` for functions with side effects or exit codes.
 - Call functions directly (without `run`) when asserting variable state.
 - Use `TMPDIR="$(mktemp -d)"` in `setup()` and `rm -rf "$TMPDIR"` in `teardown()` for any filesystem work.
@@ -354,8 +354,7 @@ prevent.
 | `SYMLINK_MODE=no-prompt` | `bin/otto-workbench sync` | Skips the interactive overwrite prompt in `install_symlink` — real files at the target path are warned about and skipped instead of prompting |
 | `NO_COLOR` | shell environment | Disables all ANSI color output from `lib/ui.sh` helpers (follows [no-color.org](https://no-color.org)) |
 | `WORKBENCH_DIR` | auto-derived or caller | Override the repo root; set by `install.sh` and auto-derived from `lib/constants.sh` otherwise |
-| `WORKBENCH_LIB_DIR` | `task --global` variable | Pins the checkout whose `lib/ai/` and `ai/lib/` the global tasks load, so a change to them can be exercised from the branch that makes it. Defaults to the Taskfile's own directory (always `main/`). Must be absolute and hold the three paths `_lib-dir-guard` takes as witnesses that the pin is a whole checkout (`lib/ai/core.sh`, `lib/conventions.sh`, `ai/lib/pr/gh_token.py`), or the task fails before running, naming the missing one. A module a task sources by name is not among them: that failure lands on the body's first three lines, printing the path it could not open, before git or the AI is touched. Checked by the `_lib-dir-guard` task the library-loading tasks depend on, so tasks that load no library are unaffected |
-| `WORKBENCH_AI_LIB_DIR` | caller's environment | Pins the checkout whose `ai/lib` the Python entry points under `ai/bin` and `ai/claude/bin` import, so a change to them can be exercised from the branch that makes it — `~/.local/bin/pr` is a symlink into `main/`, and `Path(__file__).resolve()` follows it. Unset, resolution is exactly what it was: the entry point's own `../lib`, one `sys.path` entry, and nothing else importable. Set, it must be absolute and hold the four paths `ai/bin/_libdir.py` takes as witnesses that the pin is a whole checkout (`ai/lib/core/__init__.py`, `lib/git_remote.py`, `ai/lib/review-templates/self-review.md`, `lib/nesting/__init__.py`), or the tool exits 2 before importing anything, naming the missing one. Deliberately not `WORKBENCH_LIB_DIR`, which also moves `WORKBENCH_ROOT` for the shell half; a run that wants both sets both |
+| `WORKBENCH_AI_LIB_DIR` | caller's environment | Pins the checkout whose `ai/lib` the Python entry points under `ai/bin` and `ai/claude/bin` import, so a change to them can be exercised from the branch that makes it — `~/.local/bin/pr` is a symlink into `main/`, and `Path(__file__).resolve()` follows it. Unset, resolution is exactly what it was: the entry point's own `../lib`, one `sys.path` entry, and nothing else importable. Set, it must be absolute and hold the four paths `ai/bin/_libdir.py` takes as witnesses that the pin is a whole checkout (`ai/lib/core/__init__.py`, `lib/git_remote.py`, `ai/lib/review-templates/self-review.md`, `lib/nesting/__init__.py`), or the tool exits 2 before importing anything, naming the missing one |
 
 ## Versioning & breaking changes
 
@@ -424,7 +423,7 @@ separator before anything else.
 the merge base with `origin/main`, and fails an undeclared removal. It reads the
 head side twice — your working tree *and* `HEAD` — and treats an entry as removed
 when either read has lost it. Both halves are load-bearing: the working-tree read
-is what lets `task commit` consult the gate before a commit exists, and the `HEAD`
+is what lets a run by hand catch a removal before the commit exists, and the `HEAD`
 read is what `git push` actually publishes, so restoring a snapshot in the tree
 without committing it (a stash, an uncommitted `git revert --no-commit`) cannot
 turn pre-push green. Deleting a snapshot outright counts as removing every entry
@@ -435,34 +434,6 @@ Exit 0 and 1 are its verdict — anything else (2 for a usage error or a non-blo
 snapshot at the merge base, 5 for a jq failure, 128 for a git one) means the check
 never completed rather than that it passed. Both callers treat every non-zero
 status as a hard fail.
-
-### `task commit` catches it early
-
-`task --global commit` runs the same gate before asking the AI to write the
-message — this is the call the working-tree read exists for, since at that point
-the commit that would carry the footer does not exist yet. If it finds an
-undeclared removal, the AI is told which entries disappeared and is instructed to
-add either a `BREAKING CHANGE:` footer or a `Not-Breaking:` footer per entry,
-depending on whether the removal is actually breaking — so you see the correction
-while writing the commit, not as a pre-push rejection afterward.
-
-The gate is advisory here: it never blocks the commit, and the hard check still
-happens at push time. Four ways the hint does not appear, none of which stop you
-committing:
-
-- **No gate binary**, or one that is not executable — silent, since a repo that
-  sources this library without shipping the gate is not misconfigured.
-- **The gate ran but could not finish** — no `origin/main` to diff against, not a
-  git repo, a malformed snapshot at the merge base. `task commit` prints a
-  one-line note to stderr and writes the message without the hint.
-- **The snapshot is stale.** Nothing regenerates it for you: run
-  `bin/local/generate-public-surface` before `task commit` if you just removed
-  something. Until you do, the working-tree snapshot still lists the old entry, so
-  the gate sees no removal and has nothing to report — the hint appears on the
-  *next* commit, once the snapshot is caught up. `validate-public-surface` (part
-  of pre-push) is what catches the staleness itself.
-- **The removal is already declared** — a footer covering every removed entry is
-  the passing case, and the gate stays quiet.
 
 ### Commits that touch both packages
 

@@ -24,7 +24,7 @@ def heredoc_delimiter(line: str, in_squote: bool, in_dquote: bool) -> str | None
     scanned as ordinary shell, silently dropping the blank and ``#``-led lines
     a caller may promise to count. Searching the raw line instead finds a
     ``<<`` that is only being talked about, in a comment (``# unquoted <<EOF,
-    not <<'EOF'``, in lib/ai/commit.sh) or inside a string, and opens a
+    not <<'EOF'``) or inside a string, and opens a
     heredoc that never existed — swallowing the rest of the file up to a
     delimiter that never arrives.
 

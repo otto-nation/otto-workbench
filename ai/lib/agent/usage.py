@@ -10,9 +10,8 @@ the dependency.
 Every AI call made through the workbench appends one record to a monthly JSONL
 file under `~/.local/state/workbench/usage/` — cost, tokens, cache hit rate, and
 the task that made the call. Python entry points record automatically through
-`agent.backend`; the two shell paths that cannot use it — `run-auto-task`, which
-needs slash commands, and `AI_COMMAND`, which is pluggable — go through
-`ai-usage-log`.
+`agent.backend`; the shell caller that cannot use it — `run-auto-task`, which
+needs slash commands — goes through `ai-usage-log`.
 
 A call that reports no usage records nothing rather than a zero row. An
 unmeasured call is then visibly absent instead of looking free, which a zeroed

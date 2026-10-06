@@ -34,7 +34,7 @@ OUTPUT="${GIT_RULES_OUTPUT:-"$REPO_ROOT/$GIT_GENERATED_RELPATH"}"
 PR_TEMPLATE_PY="${PR_TEMPLATE_PY:-"$REPO_ROOT/ai/lib/core/pr_template.py"}"
 
 # Sourced rather than grepped, the way every other reader of the file does it
-# (`lib/ai/core.sh`, `bin/local/check-surface-compat`, `git/bin/generate-changelog`).
+# (`bin/local/check-surface-compat`, `git/bin/generate-changelog`).
 # A pattern match only ever sees a literal assignment, so a constant the file
 # derives — BREAKING_CHANGE_FOOTER_ALT — would come back as its own source text.
 # An unreadable conventions file aborts here under errexit, which is right:

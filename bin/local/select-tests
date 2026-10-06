@@ -142,7 +142,7 @@ _source_edges_for() {
 
   # Form 3: $(dirname "$_*_dir")/X.sh, $(dirname "${BASH_SOURCE...")/X.sh, or
   # $(dirname "$_SELF")/../../X.sh — dirname of $BASH_SOURCE/$_SELF is the
-  # file's own dir → sibling; dirname of $_ai_core_dir (= lib/ai) → lib/
+  # file's own dir → sibling; dirname of a $_foo_dir living in lib/ai → lib/
   # (parent). Any ../ hops after the dirname(...) call climb further still.
   grep -oE '"\$\(dirname [^)]+\)[a-z_./]*\.sh"' "$file" 2>/dev/null \
     | sed 's/^"//; s/"$//' \

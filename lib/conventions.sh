@@ -15,15 +15,18 @@
 # shellcheck disable=SC2034  # All constants are used by sourcing scripts
 
 # Maximum length of the commit header (type + optional scope + colon + space + subject).
-# Enforced in both the AI prompt and the fallback validator.
+# Rendered into git.generated.md by git/bin/local/generate-git-rules; checked by
+# ai/lib/core/conventions.py.
 COMMIT_HEADER_MAX_LEN=72
 
 # Maximum length of each line in the commit body.
-# Referenced in the AI prompt only — not machine-validated locally.
+# Rendered into git.generated.md by git/bin/local/generate-git-rules; not
+# machine-validated locally.
 COMMIT_BODY_MAX_LEN=100
 
 # Space-separated list of allowed commit types.
-# Used to build the AI prompt rules and the fallback format validator.
+# Rendered into git.generated.md by git/bin/local/generate-git-rules; read by
+# git/bin/generate-changelog and ai/lib/core/conventions.py.
 COMMIT_TYPES="feat fix perf deps revert docs style refactor test build ci chore"
 
 # Footer token that marks a breaking change. Release-please reads it from the

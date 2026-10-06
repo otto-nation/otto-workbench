@@ -11,7 +11,7 @@ tools:
     permission: true
     visibility: full
     description: "go-task wrapper adding --global for the workbench's global Taskfile"
-    when_to_use: "Running any dev workflow — commits, PRs, brew management"
+    when_to_use: "Running a repo-local Taskfile task (e.g. `task test`) or a global Homebrew helper (`task --global brew:dump`)"
     usage: "task test  |  task --global brew:dump"
     docs: "https://taskfile.dev"
 

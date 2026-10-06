@@ -336,10 +336,10 @@ When your CWD is not the target repo (e.g., running from a Claude Code session r
 pr create --draft --closes 941 --repo-dir /path/to/worktree
 ```
 
-A related hazard exists one level down, for the AI subprocess rather than the
-shell task: a backend CLI inherits the launching process's working directory
-unless it is told otherwise. Every `ai_backend` entry point therefore takes a
-required `cwd` — see [`agent/backend.py`](ai-libraries.md#agentbackendpy).
+A related hazard exists one level down, for the AI subprocess: a backend CLI
+inherits the launching process's working directory unless it is told otherwise.
+Every `ai_backend` entry point therefore takes a required `cwd` — see
+[`agent/backend.py`](ai-libraries.md#agentbackendpy).
 
 ### Running a branch's own libraries
 

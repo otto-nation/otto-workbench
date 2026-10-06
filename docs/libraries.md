@@ -440,12 +440,12 @@ the one caller that must leave the environment alone, so it asks
 
 The remote, its default branch, and whether a branch exists on it.
 
-One ladder for "which branch is trunk", because four callers had grown their
-own: the AI automation under `lib/ai/`, the global pre-push hook, this repo's own
-pre-push hook, and the surface-compatibility gate. Three of them spelled
-`main` as a literal and the fourth walked `origin/HEAD`, `origin/main`,
-`origin/master` by hand, so a `master` repo got a different answer depending
-on which one asked.
+One ladder for "which branch is trunk". Sourced by the global pre-push hook
+(`git/hooks/pre-push`), this repo's own pre-push hook
+(`git/hooks/pre-push-workbench`), and the surface-compatibility gate
+(`bin/local/check-surface-compat`). Without it, each spelled `main` as a
+literal or walked `origin/HEAD`, `origin/main`, `origin/master` by hand, so a
+`master` repo got a different answer depending on which one asked.
 
 Two contracts, deliberately separate. `resolve_default_branch` always answers,
 because a caller printing a hint needs a name even when it is a guess.

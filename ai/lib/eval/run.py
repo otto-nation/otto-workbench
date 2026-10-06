@@ -211,7 +211,10 @@ def _explicit_models(args: argparse.Namespace) -> list[str] | None:
 
 def _resolve_entry_model(entry: dict) -> str:
     """The production model the entry's task measures, chosen up front."""
-    task = eval.task.get_task(eval.task.task_name(entry["manifest"]))
+    try:
+        task = eval.task.get_task(eval.task.task_name(entry["manifest"]))
+    except KeyError as exc:
+        sys.exit(f"error: {exc}")
     return eval.task.resolved_model(task, "")
 
 

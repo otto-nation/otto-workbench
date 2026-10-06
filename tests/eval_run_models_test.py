@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
@@ -92,3 +94,10 @@ def test_skill_omitted_models_resolves_comments_fix(tmp_path, monkeypatch, capsy
     eval.run.run_eval(_args(tmp_path, dry_run=True), tmp_path)
     assert seen == [Phase.COMMENTS_FIX]
     assert "resolved-skill" in capsys.readouterr().err
+
+
+def test_unknown_manifest_task_exits_with_a_message(tmp_path, capsys):
+    _make_case(tmp_path / "corpus", "a", task="nope")
+    with pytest.raises(SystemExit) as exc:
+        eval.run.run_eval(_args(tmp_path, dry_run=True), tmp_path)
+    assert "unknown eval task 'nope'" in str(exc.value)

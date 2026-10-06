@@ -99,6 +99,9 @@ class TestPathologicalNesting:
             pytest.skip("PyYAML not installed")
         assert core.syntax.check("a.yaml", "[" * 200_000).ok
 
+    def test_toml_nested_past_the_recursion_limit_passes(self):
+        assert core.syntax.check("a.toml", "a = " + "[" * 200_000).ok
+
     @pytest.mark.parametrize("exc", [RecursionError, MemoryError])
     def test_python_that_exhausts_the_parser_passes(self, exc):
         with mock.patch("ast.parse", side_effect=exc):

@@ -115,6 +115,8 @@ def _toml(text: str) -> SyntaxResult:
         tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
         return SyntaxResult(False, str(exc))
+    except RecursionError:
+        return SyntaxResult(True)
     return SyntaxResult(True)
 
 

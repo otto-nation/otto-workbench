@@ -130,7 +130,7 @@ _run() {
   run _run sync_herdr
   [ "$status" -eq 0 ]
   run cat "$ARGV"
-  [ "$output" = "$(printf 'update\nintegration install pi')" ]
+  [ "$output" = "$(printf 'update\nintegration install pi\nmachine list --json')" ]
 }
 
 @test "sync leaves a machine without herdr alone" {
@@ -138,4 +138,47 @@ _run() {
   run _run sync_herdr
   [ "$status" -eq 0 ]
   [ ! -e "$ARGV" ]
+}
+
+@test "machine note is printed when no machines are registered" {
+  _stub_herdr 0 '[]'
+  run _run step_herdr_machine_note
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"herdr: no remote machines registered — add one with: herdr machine add <ssh-host> --label <name>"* ]]
+}
+
+@test "machine note is silent when a machine is registered" {
+  _stub_herdr 0 '[{"id":"m1","label":"homelab","target":"homelab","session":"default","enabled":true,"selected":false}]'
+  run _run step_herdr_machine_note
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"no remote machines"* ]]
+}
+
+@test "machine note is silent under WORKBENCH_SYNC=true" {
+  _stub_herdr 0 '[]'
+  WORKBENCH_SYNC=true run _run step_herdr_machine_note
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"no remote machines"* ]]
+  [ ! -e "$ARGV" ]
+}
+
+@test "machine note is silent when herdr errors" {
+  _stub_herdr 1 '[]'
+  run _run step_herdr_machine_note
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"no remote machines"* ]]
+}
+
+@test "machine note is silent when herdr prints something that is not JSON" {
+  _stub_herdr 0 'not json'
+  run _run step_herdr_machine_note
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"no remote machines"* ]]
+}
+
+@test "machine note is silent when herdr is absent" {
+  _hide_herdr
+  run _run step_herdr_machine_note
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"no remote machines"* ]]
 }

@@ -61,6 +61,25 @@ step_herdr_integrations() {
   return 0
 }
 
+# step_herdr_machine_note — tells the operator how to register a remote
+# machine when herdr's catalog has none.
+#
+# Informational only: registering is left to the operator because an
+# interactive `herdr machine add` may install herdr on the remote, and the
+# workbench never learns a host name. Silent inside a regular sync (it would
+# repeat for anyone using herdr locally on purpose) and on any error.
+step_herdr_machine_note() {
+  [[ "${WORKBENCH_SYNC:-}" == true ]] && return 0
+  command -v herdr > /dev/null 2>&1 || return 0
+  local listing count
+  listing=$(herdr machine list --json 2> /dev/null) || return 0
+  count=$(jq 'if type == "array" then length else -1 end' <<< "$listing" 2> /dev/null) || return 0
+  if [[ "$count" == "0" ]]; then
+    info "herdr: no remote machines registered — add one with: herdr machine add <ssh-host> --label <name>"
+  fi
+  return 0
+}
+
 # sync_herdr — runs the herdr sync steps non-interactively.
 # Called automatically by otto-workbench sync via the sync_<tool> convention.
 #
@@ -74,12 +93,15 @@ sync_herdr() {
 
   sync_header "herdr integrations"
   step_herdr_integrations
+
+  step_herdr_machine_note
 }
 
 register_herdr_steps() {
   register_step "Install herdr"      step_install_herdr
   register_step "Update herdr"       step_update_herdr
   register_step "Herdr integrations" step_herdr_integrations
+  register_step "Herdr machines"     step_herdr_machine_note
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

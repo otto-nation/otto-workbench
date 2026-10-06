@@ -254,6 +254,9 @@ teardown() {
   ln -sf "$(command -v yq)" "$TMPDIR/bin/yq"
   ln -sf "$(command -v jq)" "$TMPDIR/bin/jq"
   ln -sf "$BASH" "$TMPDIR/bin/bash"
+  if PATH=/usr/bin:/bin command -v herdr > /dev/null 2>&1; then
+    skip "herdr is installed in /usr/bin or /bin, so it cannot be hidden"
+  fi
   PATH="$TMPDIR/bin:/usr/bin:/bin"
 
   state_detect_installed

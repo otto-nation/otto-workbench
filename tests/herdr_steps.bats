@@ -33,8 +33,12 @@ SCRIPT
   PATH="$BIN:$PATH"
 }
 
-# _hide_herdr — a PATH with no herdr on it.
+# _hide_herdr — a PATH with no herdr on it. Skips the test when herdr lives in
+# /usr/bin or /bin (a distro package), since those stay on the PATH.
 _hide_herdr() {
+  if PATH=/usr/bin:/bin command -v herdr > /dev/null 2>&1; then
+    skip "herdr is installed in /usr/bin or /bin, so it cannot be hidden"
+  fi
   ln -sf "$BASH" "$BIN/bash"
   PATH="$BIN:/usr/bin:/bin"
 }
@@ -112,6 +116,14 @@ SCRIPT
   [[ "$output" == *"WARN"*"herdr was not updated"* ]]
   [[ "$output" != *"herdr is current"* ]]
   [ "$(cat "$ARGV.stdin")" = "EOF" ]
+}
+
+@test "update warns with herdr's reason, not a banner line before it" {
+  _stub_herdr 0 "$(printf 'herdr 1.2.3 checking for updates\nHerdr was not updated: installed by apt')"
+  run _run step_update_herdr
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WARN"*"installed by apt"* ]]
+  [[ "$output" != *"checking for updates"* ]]
 }
 
 @test "a brew-disabled self-update surfaces herdr's own message" {

@@ -29,17 +29,19 @@ step_install_herdr() {
 #
 # Plain `herdr update` leaves compatible running servers alive; --handoff is
 # experimental and is never passed. Stdin is closed so a restart prompt cannot
-# hang an unattended sync. Failure (and a zero-exit "was not updated") surfaces
-# herdr's own message — a Homebrew install prints the brew upgrade command —
-# rather than a hardcoded `herdr update`. Non-fatal: an offline machine still
+# block an unattended sync; the call's runtime is not bounded (no bash timeout
+# helper exists in this repo). Failure (and a zero-exit "was not updated")
+# surfaces the last non-empty line of herdr's own output — the reason comes
+# after any banner or progress lines, and a Homebrew install prints the brew
+# upgrade command there — rather than a hardcoded `herdr update`. Non-fatal: an offline machine still
 # gets the rest of its config, as with step_update_pi.
 step_update_herdr() {
   command -v herdr > /dev/null 2>&1 || { warn "herdr not found in PATH — skipping"; return 0; }
-  local output status=0 first_line
+  local output status=0 last_line
   output=$(herdr update < /dev/null 2>&1) || status=$?
-  first_line="${output%%$'\n'*}"
+  last_line=$(printf '%s\n' "$output" | awk 'NF { line = $0 } END { print line }')
   if [[ "$status" -ne 0 || "$output" == *"was not updated"* ]]; then
-    warn "herdr was not updated${first_line:+: $first_line}"
+    warn "herdr was not updated${last_line:+: $last_line}"
   else
     [[ "${WORKBENCH_SYNC:-}" != true ]] && success "herdr is current" || true
   fi

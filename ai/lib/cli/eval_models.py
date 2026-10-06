@@ -33,7 +33,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--models", default="",
-        help="Comma-separated model names (default: review-orchestrate default)",
+        help="Comma-separated model names (default: the task's production "
+             "phase model, via agent.phases.phase_model)",
     )
     parser.add_argument(
         "--effort", default="low",

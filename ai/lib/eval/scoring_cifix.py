@@ -24,8 +24,11 @@ import tempfile
 from pathlib import Path
 
 import agent.backend
+import agent.phases
 import agent.usage
+from core.phases import Phase
 from eval.scoring import RunOutcome, ScoringResult
+import eval.task
 from eval.task import RunArtifacts, RunOptions, clean_env, create_temp_repo, outcome_for
 
 FIX_MAX_TURNS = 30
@@ -90,6 +93,7 @@ class CiFixTask:
     """Fix a failing check in a throwaway repo, then re-run the check."""
 
     name = "ci-fix"
+    phase = Phase.CI_FIX
 
     def run(self, case_dir: Path, opts: RunOptions) -> RunArtifacts:
         manifest = json.loads((case_dir / "manifest.json").read_text())
@@ -113,7 +117,9 @@ class CiFixTask:
             add_dirs=[repo_dir],
             max_turns=FIX_MAX_TURNS,
             max_budget=FIX_MAX_BUDGET,
-            model=opts.model or "",
+            model=eval.task.resolved_model(self, opts.model),
+            thinking=agent.phases.phase_thinking(self.phase),
+            provider=agent.phases.phase_provider(),
             task="eval-ci-fix",
             repo="eval/corpus",
             rules_home=opts.rules_home,

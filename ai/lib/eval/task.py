@@ -33,6 +33,13 @@ start.
 
 Task implementations live in `eval_scoring_<task>.py` and are resolved lazily so
 that adding a task does not make every other task's dependencies load.
+
+Each task names the production `Phase` it measures (review: `single`, ci-fix:
+`ci_fix`, skill: `comments_fix`). With `--models` omitted, `resolved_model`
+picks that phase's model through `agent.phases.phase_model` before the run, so
+results are labelled with the id that served them rather than `(default)`, and
+the eval measures what production runs instead of the backend's interactive
+default. `--models` still wins when given.
 """
 
 # doc-group: eval
@@ -46,9 +53,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+import agent.phases
 import core.proc
 import core.timeouts
 from agent.usage import SessionUsage
+from core.phases import Phase
 from eval.scoring import RunOutcome, ScoringResult
 
 DEFAULT_TASK = "review"
@@ -126,6 +135,10 @@ class RunArtifacts:
 
 class EvalTask(Protocol):
     name: str
+    # The production Phase this task measures. Omitted `--models` resolves
+    # through `agent.phases.phase_model` for this phase so the eval pins the
+    # same model production uses, rather than Pi's interactive defaultModel.
+    phase: Phase
 
     def run(self, case_dir: Path, opts: RunOptions) -> RunArtifacts:
         ...
@@ -284,3 +297,16 @@ def get_task(name: str) -> EvalTask:
         known = ", ".join(sorted(_TASK_FACTORIES))
         raise KeyError(f"unknown eval task {name!r} — known tasks: {known}")
     return _TASK_FACTORIES[name]()
+
+
+
+def resolved_model(task: EvalTask, explicit: str) -> str:
+    """The model *task* runs: *explicit* when given, else its production phase's.
+
+    The one rule for an omitted `--models`, read both where the run labels its
+    results and where the task invokes the agent, so the label and the model
+    that served it cannot disagree. Resolving through `agent.phases.phase_model`
+    pins what production uses rather than falling through to the backend's
+    interactive default.
+    """
+    return explicit or agent.phases.phase_model(task.phase, None)

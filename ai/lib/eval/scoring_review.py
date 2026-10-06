@@ -27,7 +27,9 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+import eval.task
 import agent.usage
+from core.phases import Phase
 from eval.scoring import RunOutcome, ScoringResult
 from eval.task import RunArtifacts, RunOptions, clean_env, create_temp_repo, outcome_for
 from review.document import ReviewDocument
@@ -187,8 +189,7 @@ def _run_orchestrate(repo_dir: str, review_file: str, opts: RunOptions) -> int:
         "--review-file", review_file,
         "--repo", "eval/corpus",
     ]
-    if opts.model:
-        cmd += ["--model", opts.model]
+    cmd += ["--model", eval.task.resolved_model(ReviewTask, opts.model)]
     try:
         result = subprocess.run(
             cmd,
@@ -215,6 +216,9 @@ class ReviewTask:
     """Review a corpus case and score the findings it produced."""
 
     name = "review"
+    # SINGLE: the eval reviews with `--mode self --effort low`, which drops the
+    # scans, synthesis and disprove and runs the single-agent review.
+    phase = Phase.SINGLE
 
     def run(self, case_dir: Path, opts: RunOptions) -> RunArtifacts:
         repo_dir = create_temp_repo(str(case_dir / "src"), prefix="eval-review-")

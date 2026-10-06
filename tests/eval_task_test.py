@@ -70,6 +70,12 @@ class TestTaskRegistry:
             manifest = json.loads(path.read_text())
             assert eval.task.get_task(eval.task.task_name(manifest)) is not None
 
+    def test_each_task_declares_the_production_phase(self):
+        from core.phases import Phase
+        assert eval.task.get_task("review").phase is Phase.SINGLE
+        assert eval.task.get_task("ci-fix").phase is Phase.CI_FIX
+        assert eval.task.get_task("skill").phase is Phase.COMMENTS_FIX
+
 
 class TestRunArtifacts:
     def test_defaults_are_empty_not_absent(self):
@@ -537,6 +543,7 @@ def _recording_task(calls):
     def _get_task(_name=""):
         class Rec:
             name = "stub"
+            phase = eval.task.Phase.SINGLE
 
             def run(self, case_dir, opts):
                 calls.append({
@@ -672,6 +679,7 @@ def _task_trimmed_never_ran():
     def _get_task(_name=""):
         class Rec:
             name = "stub"
+            phase = eval.task.Phase.SINGLE
             condition = "full"
 
             def run(self, case_dir, opts):

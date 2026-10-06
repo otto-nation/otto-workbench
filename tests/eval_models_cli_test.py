@@ -45,6 +45,12 @@ def test_a_relative_corpus_outside_a_checkout_is_refused(monkeypatch, capsys):
     assert seen == []
 
 
+def test_models_help_names_the_production_phase_default():
+    help_text = cli.eval_models.build_parser().format_help()
+    assert "review-orchestrate default" not in help_text
+    assert "phase_model" in help_text
+
+
 def test_absolute_paths_run_without_a_checkout(tmp_path, monkeypatch):
     monkeypatch.setattr(core.workbench_paths, "source_checkout", lambda: None)
     seen = _capture(monkeypatch)

@@ -21,10 +21,12 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from agent.usage import SessionUsage
+from core.phases import Phase
 from eval.scoring_cifix import CiFixTask, run_verify, verify_command
 from eval.scoring import RunOutcome, ScoringResult, aggregate_runs
 from eval.task import RunArtifacts, RunOptions, get_task, outcome_for
 import agent.backend
+import agent.phases
 
 CORPUS = REPO_ROOT / "eval" / "corpus"
 
@@ -214,6 +216,57 @@ class TestCiFixTaskRun:
         assert "bash verify.sh" in seen["prompt"]
         assert seen["model"] == "sonnet"
         assert seen["task"] == "eval-ci-fix"
+        _rm(artifacts)
+
+    def test_empty_model_resolves_through_phase_model_before_invoke_fix(
+            self, tmp_path, monkeypatch):
+        seen = {}
+
+        def fake_fix(inv):
+            seen["model"] = inv.model
+            seen["thinking"] = inv.thinking
+            seen["provider"] = inv.provider
+            return 0
+
+        monkeypatch.setattr(agent.backend, "invoke_fix", fake_fix)
+        monkeypatch.setattr(
+            agent.phases, "phase_model",
+            lambda phase, explicit, cfg=None: "resolved-ci-fix",
+        )
+        monkeypatch.setattr(
+            agent.phases, "phase_thinking",
+            lambda phase, effort=None, cfg=None: "low",
+        )
+        monkeypatch.setattr(
+            agent.phases, "phase_provider", lambda cfg=None: "anthropic",
+        )
+        case_dir = _case(tmp_path, "exit 1\n")
+
+        artifacts = CiFixTask().run(
+            case_dir, RunOptions(timeout=VERIFY_TIMEOUT))
+
+        assert seen["model"] == "resolved-ci-fix"
+        assert seen["thinking"] == "low"
+        assert seen["provider"] == "anthropic"
+        assert CiFixTask.phase is Phase.CI_FIX
+        _rm(artifacts)
+
+    def test_ci_fix_env_override_reaches_invoke_fix(self, tmp_path, monkeypatch):
+        seen = {}
+
+        def fake_fix(inv):
+            seen["model"] = inv.model
+            return 0
+
+        monkeypatch.setattr(agent.backend, "invoke_fix", fake_fix)
+        monkeypatch.setenv("WORKBENCH_AI_CI_FIX_MODEL", "env-ci-fix-model")
+        case_dir = _case(tmp_path, "exit 1\n")
+
+        artifacts = CiFixTask().run(
+            case_dir, RunOptions(timeout=VERIFY_TIMEOUT))
+
+        assert seen["model"] == "env-ci-fix-model"
+        assert seen["model"]
         _rm(artifacts)
 
     def test_cleans_up_nothing_itself_but_reports_its_temp_dirs(self, tmp_path, monkeypatch):

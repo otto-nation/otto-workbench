@@ -4008,6 +4008,13 @@ start.
 Task implementations live in `eval_scoring_<task>.py` and are resolved lazily so
 that adding a task does not make every other task's dependencies load.
 
+Each task names the production `Phase` it measures (review: `single`, ci-fix:
+`ci_fix`, skill: `comments_fix`). With `--models` omitted, `resolved_model`
+picks that phase's model through `agent.phases.phase_model` before the run, so
+results are labelled with the id that served them rather than `(default)`, and
+the eval measures what production runs instead of the backend's interactive
+default. `--models` still wins when given.
+
 ## Platform
 
 The shared substrate — process execution, logging, the structured trail, serialization, config, paths, and the tool framework the CLIs are built on.

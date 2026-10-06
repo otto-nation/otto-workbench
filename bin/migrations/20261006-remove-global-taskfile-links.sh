@@ -15,14 +15,13 @@ migration_20261006_remove_global_taskfile_links() {
 
   local removed=0 link
   for link in "$TASK_CONFIG_DIR/Taskfile.yml" "$TASK_CONFIG_DIR/lib"; do
-    if [[ -L "$link" ]]; then
-      if ! rm -f "$link"; then
-        warn "Could not remove $link"
-        return 1
-      fi
-      success "Removed $link"
-      removed=1
+    [[ -L "$link" ]] || continue
+    if ! rm -f "$link"; then
+      warn "Could not remove $link"
+      return 1
     fi
+    success "Removed $link"
+    removed=1
   done
   if [[ "$removed" -eq 0 ]]; then
     return "$MIGRATION_NOOP"

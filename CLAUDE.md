@@ -69,9 +69,10 @@ and `.venv/bin/python -m pytest` reach nothing the bare command does not, and ne
 allow-listed, so they only add a permission prompt.
 
 `pytest-xdist` is the one Python package the suite wants but does not require:
-`bin/local/run-tests` passes `-n` when it is importable and runs serially when it is not.
-Install it into the same pipx venv as pytest — `pipx inject pytest pytest-xdist` — to get
-the parallel run locally. CI installs it explicitly.
+`bin/local/run-tests` walks PATH, invokes the first pytest that has xdist, and
+runs serially only when none do. Install it into the same pipx venv as pytest —
+`pipx inject pytest pytest-xdist` — to get the parallel run locally when no
+other pytest on PATH already has it. CI installs it explicitly.
 
 The runner sizes the run from the cores the machine is *not* already using: the core count
 less the one-minute load average, floored at 2 and capped at 12. A second whole-suite run

@@ -742,18 +742,13 @@ class ReviewFixAdapter(fix.engine.FixAdapter):
             "finding_anchors": _bullet_paths(self._anchor_files()),
         }
 
-    def landing(
-        self, outcomes: list[ItemOutcome], changed: set[str] | None,
-    ) -> fix.engine.LandSpec:
-        """Commit the files the agent touched that belong on this branch.
+    def commit_scope(self, changed: set[str] | None) -> set[str] | None:
+        """The files the agent touched that belong on this branch.
 
-        A snapshot that failed arrives as None and lands an empty scope, which
-        commits nothing — `record` is what then says where the work was left.
-
-        Paths outside the branch, the finding anchors, and their tests are
-        dropped here — the same warn-and-leave contract as `_drop_scratch`,
-        applied after attribution so a file already dirty when the pass
-        started is still never credited.
+        Paths outside the branch, the finding anchors, and their tests and
+        support modules are dropped here — the same warn-and-leave contract as
+        `_drop_scratch`, applied after attribution so a file already dirty when
+        the pass started is still never credited.
 
         A rename is exempt, because dropping half of one is worse than
         committing the whole: the branch file set is fixed when the PR is
@@ -762,14 +757,24 @@ class ReviewFixAdapter(fix.engine.FixAdapter):
         as in it. Committing only the deletion leaves a tree that does not
         build and content stranded in the worktree.
         """
-        if changed is not None:
-            sources = self._branch_files() | self._anchor_files()
-            keep = fix.scope.drop_outside(
-                changed, self._allowed_paths(), self.workdir, sources,
-            )
-            changed = keep | fix.scope.rename_partners(
-                changed - keep, keep, self.workdir,
-            )
+        if changed is None:
+            return None
+        sources = self._branch_files() | self._anchor_files()
+        keep = fix.scope.drop_outside(
+            changed, self._allowed_paths(), self.workdir, sources,
+        )
+        return keep | fix.scope.rename_partners(
+            changed - keep, keep, self.workdir,
+        )
+
+    def landing(
+        self, outcomes: list[ItemOutcome], changed: set[str] | None,
+    ) -> fix.engine.LandSpec:
+        """Commit what `commit_scope` kept.
+
+        A snapshot that failed arrives as None and lands an empty scope, which
+        commits nothing — `record` is what then says where the work was left.
+        """
         self.changed = changed
         self.summary = _summary(
             outcomes, self._descriptions(), changed,

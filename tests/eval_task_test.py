@@ -26,22 +26,7 @@ import eval.scoring
 from eval.scoring import ScoringResult
 import agent.backend
 import eval.conditions
-
-
-def _make_case(root: Path, name: str, task: str = "review") -> Path:
-    """A corpus case is a directory with manifest.json and src/.
-
-    The briefs call this helper; it does not exist elsewhere in tests/, so it
-    is part of this deliverable. Shape matches eval/corpus/<name>/.
-    """
-    case = root / name
-    src = case / "src"
-    src.mkdir(parents=True)
-    (src / "file.py").write_text("x = 1\n")
-    (case / "manifest.json").write_text(
-        json.dumps({"name": name, "task": task}) + "\n",
-    )
-    return case
+from eval_task_support import _args, _make_case
 
 
 class TestTaskRegistry:
@@ -69,6 +54,12 @@ class TestTaskRegistry:
         for path in manifests:
             manifest = json.loads(path.read_text())
             assert eval.task.get_task(eval.task.task_name(manifest)) is not None
+
+    def test_each_task_declares_the_production_phase(self):
+        from core.phases import Phase
+        assert eval.task.get_task("review").phase is Phase.SINGLE
+        assert eval.task.get_task("ci-fix").phase is Phase.CI_FIX
+        assert eval.task.get_task("skill").phase is Phase.COMMENTS_FIX
 
 
 class TestRunArtifacts:
@@ -537,6 +528,7 @@ def _recording_task(calls):
     def _get_task(_name=""):
         class Rec:
             name = "stub"
+            phase = eval.task.Phase.SINGLE
 
             def run(self, case_dir, opts):
                 calls.append({
@@ -554,29 +546,6 @@ def _recording_task(calls):
         return Rec()
 
     return _get_task
-
-
-def _args(tmp_path, **overrides):
-    """Namespace for run_eval. The briefs call _args(); it did not exist."""
-    ns = dict(
-        corpus=str(tmp_path / "corpus"),
-        entry="",
-        task="",
-        models="",
-        effort="low",
-        timeout=42,
-        verbose=False,
-        keep_temp=False,
-        dry_run=False,
-        runs=1,
-        conditions="full",
-        output="",
-        save_baselines=False,
-        compare=False,
-        results_dir=str(tmp_path / "results"),
-    )
-    ns.update(overrides)
-    return argparse.Namespace(**ns)
 
 
 def _fake_claude(path: Path) -> Path:
@@ -658,6 +627,44 @@ def test_a_two_arm_run_prints_the_ab_table(tmp_path, monkeypatch, capsys):
     assert "delta" in out
 
 
+def test_an_omitted_model_is_resolved_for_the_label_but_not_handed_to_the_task(
+    tmp_path, monkeypatch,
+):
+    """The task gets "" and resolves its own model; only the label is resolved.
+
+    Handing the resolved label over instead made the review task pass
+    `--model`, which overrides every phase of a medium or high review eval.
+    """
+    handed = []
+
+    def _get_task(_name=""):
+        class Rec:
+            name = "stub"
+            phase = eval.task.Phase.CI_FIX
+
+            def run(self, case_dir, opts):
+                handed.append(opts.model)
+                return eval.task.RunArtifacts(
+                    usage=SessionUsage(cost=0.01, input_tokens=10),
+                    data={"summary": "stub"},
+                )
+
+            def score(self, artifacts, manifest):
+                return ScoringResult("", "", 0, recall=1.0, cost_usd=0.01)
+
+        return Rec()
+
+    _seed_claude_and_stub_task(tmp_path, monkeypatch, _get_task)
+    monkeypatch.setattr(
+        eval.task.agent.phases, "phase_model",
+        lambda phase, explicit, cfg=None: "resolved-label-model",
+    )
+    output, _ = eval.run.run_eval(_args(tmp_path, runs=1), tmp_path)
+
+    assert handed == [""]
+    assert "resolved-label-model" in output["entries"]["a"]
+
+
 def test_a_single_arm_run_does_not_print_the_ab_table(
     tmp_path, monkeypatch, capsys,
 ):
@@ -672,6 +679,7 @@ def _task_trimmed_never_ran():
     def _get_task(_name=""):
         class Rec:
             name = "stub"
+            phase = eval.task.Phase.SINGLE
             condition = "full"
 
             def run(self, case_dir, opts):

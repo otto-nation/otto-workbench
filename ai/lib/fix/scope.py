@@ -119,19 +119,71 @@ def _colocated_tests(sources: set[str]) -> set[str]:
     return tests
 
 
+# What a test is named for. A test module's subject is its name without the
+# test marker (`eval_task_test.py` is about `eval_task`); a source module's is
+# its stem, and also its stem behind its package (`ai/lib/eval/task.py` is
+# `task` and `eval_task`), because this repo names suites
+# `tests/<package>_<module>_test.py`.
+_TEST_MARKERS = (("test_", ""), ("", "_test"), ("", ".test"))
+
+
+def _test_subject(stem: str) -> str:
+    """*stem* without its test marker, or "" when it carries none."""
+    for prefix, suffix in _TEST_MARKERS:
+        if prefix and stem.startswith(prefix):
+            return stem[len(prefix):]
+        if suffix and stem.endswith(suffix):
+            return stem[: -len(suffix)]
+    return ""
+
+
+def _subjects(path: Path) -> set[str]:
+    """The names a test or support module for *path* would be built from."""
+    stem = path.stem
+    if _in_test_dir(path):
+        # A support module is written with its suite, so it names the same
+        # subject the suite does: `tests/foo_support.py` admits `foo_test.py`.
+        if stem.endswith("_support"):
+            subject = stem.removesuffix("_support")
+        else:
+            subject = _test_subject(stem)
+        return {subject} if subject else set()
+    subjects = {stem}
+    if path.parent.name:
+        subjects.add(f"{path.parent.name}_{stem}")
+    return subjects
+
+
+def _test_root_names(path: Path) -> set[str]:
+    """Filenames under a test root that belong to *path*.
+
+    Every test marker on each subject, plus `<subject>_support`, the module a
+    suite's shared helpers live in. A suite and its support module are written
+    together, so a pass that extracts helpers into a new support module is
+    leaving behind the same work as one that edits the suite.
+    """
+    suffix = path.suffix
+    names: set[str] = set()
+    for subject in _subjects(path):
+        names.add(f"{subject}_support{suffix}")
+        names.update(f"{pre}{subject}{post}{suffix}" for pre, post in _TEST_MARKERS)
+    return names
+
+
 def _is_test_for(path: str, sources: set[str]) -> bool:
-    """Whether `path` is a test under a test root named for one of `sources`.
+    """Whether `path` is a test or support module under a test root for one of `sources`.
 
     The directory-independent half of `_colocated_tests`: a path anywhere
-    under a `tests/`-style root whose filename is the test name for an
-    in-branch source. `tests/foo_test.py` and `tests/unit/foo_test.py` both
-    answer for `ai/lib/foo.py`.
+    under a `tests/`-style root whose filename belongs to an in-branch source.
+    `tests/foo_test.py`, `tests/unit/foo_test.py` and `tests/lib_foo_test.py`
+    all answer for `ai/lib/foo.py`; `tests/foo_support.py` answers for it and
+    for `tests/foo_test.py`.
     """
     candidate = Path(path)
     if not _in_test_dir(candidate):
         return False
     return any(
-        candidate.name in _stem_names(Path(source)) for source in sources
+        candidate.name in _test_root_names(Path(source)) for source in sources
     )
 
 

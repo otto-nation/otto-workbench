@@ -79,9 +79,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import agent.backend
+import agent.phases
 import agent.usage
 import git.client
+from core.phases import Phase
 from eval.scoring import RunOutcome, ScoringResult
+import eval.task
 from eval.task import (
     RunArtifacts,
     RunOptions,
@@ -492,6 +495,11 @@ class SkillTask:
     """Drive a SKILL.md against a fixture and grade the commands it issued."""
 
     name = "skill"
+    # COMMENTS_FIX: this harness is a tool-using agent following a procedure
+    # (SKILL.md), which is the comments-fix agent's shape. pr-rebase cases
+    # share the task; PREPUSH_FIX would pin a different env key for the same
+    # invoke_fix call.
+    phase = Phase.COMMENTS_FIX
 
     def run(self, case_dir: Path, opts: RunOptions) -> RunArtifacts:
         manifest = json.loads((case_dir / "manifest.json").read_text())
@@ -539,7 +547,9 @@ class SkillTask:
                 add_dirs=[repo_dir],
                 max_turns=SKILL_MAX_TURNS,
                 max_budget=SKILL_MAX_BUDGET,
-                model=opts.model or "",
+                model=eval.task.resolved_model(self, opts.model),
+                thinking=agent.phases.phase_thinking(self.phase),
+                provider=agent.phases.phase_provider(),
                 env=env,
                 task="eval-skill",
                 repo="eval/corpus",

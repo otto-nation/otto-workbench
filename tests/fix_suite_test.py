@@ -465,6 +465,17 @@ def test_a_pass_with_nothing_to_check_stays_silent(tmp_path):
     assert fix.suite.SuiteResult().note == ""
 
 
+def test_a_partial_note_names_a_few_left_out_paths_and_counts_the_rest():
+    paths = tuple(f"tests/f{i}_support.py" for i in range(10))
+    result = fix.suite.SuiteResult(
+        status=fix.suite.SuiteStatus.PARTIAL, command="c", left_out=paths,
+    )
+
+    assert "tests/f0_support.py" in result.note
+    assert "tests/f3_support.py" not in result.note
+    assert "and 7 more" in result.note
+
+
 def _kill_runner_group(pid_file: Path) -> None:
     """Best-effort SIGKILL of the group whose leader wrote *pid_file*."""
     try:

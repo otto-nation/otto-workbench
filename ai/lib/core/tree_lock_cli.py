@@ -11,14 +11,12 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import core.signal_relay
-import core.timeouts
 from core.tree_lock import acquire, holders, is_locked
 
 
@@ -38,27 +36,8 @@ def _check(tree_root: Path) -> int:
 
 
 def _run_child(child: list[str]) -> int:
-    """Run *child* in its own process group and wait until that group is gone.
-
-    SIGINT, SIGTERM, and SIGHUP are forwarded to the group rather than killing
-    this process. The lock is held for as long as we wait, so dropping it while
-    descendants are still running is the failure this wrapper exists to
-    prevent. A terminal Ctrl-C no longer reaches the child by process-group
-    membership (it is in a new session), so the SIGINT handler is what
-    delivers it. SIGHUP is the same gap for a closed terminal: without a
-    handler the wrapper dies, the flock drops, and the suite keeps running.
-
-    :func:`signal_relay.forwarding_signals` owns that relay and the ordering
-    it depends on: it wraps the spawn rather than following it, so there is no
-    window in which a child exists and no handler does.
-    """
-    with core.signal_relay.forwarding_signals() as relay:
-        proc = subprocess.Popen(child, start_new_session=True)
-        relay.forward_to(proc)
-        code = proc.wait(timeout=core.timeouts.UNBOUNDED)
-    # A negative returncode is -signal. sys.exit(-N) becomes 256-N;
-    # callers expect the shell convention 128+N (SIGTERM -> 143).
-    return 128 + (-code) if code < 0 else code
+    """Run *child* under the shared relay. The lock is held for as long as we wait."""
+    return core.signal_relay.run_child(child, origin="tree_lock_cli")
 
 
 def main(argv: list[str], child: list[str]) -> int:

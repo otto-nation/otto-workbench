@@ -1,10 +1,30 @@
 """The verify gate: when it runs, and what its verdicts mean.
 
 ``fix.verify`` owns the one call that produces verdicts. This module owns
-everything around it — what the gate is shown for a fix, a decline and a
-contradicted deferral, and how an answer it gives (or withholds) changes an
-item's outcome. Split from ``fix.engine``, which owns the batch/invoke/retry
-pipeline and nothing about judgement.
+everything around it — what the gate is shown for a fix, a decline, a
+contradicted deferral and an already-addressed verdict, and how an answer it
+gives (or withholds) changes an item's outcome. Split from ``fix.engine``, which
+owns the batch/invoke/retry pipeline and nothing about judgement.
+
+A ticked `fixed` box says an edit was made, not that it works. The review
+(`pr review --self --fix`), comments (`pr comments --fix`) and CI
+(`pr ci --fix`) fix passes all hand every claimed fix here before the commit,
+each sized and prompted as its own phase — `fix_verify`, `comments_verify` and
+`ci_verify`, configurable under `agent.phases` like any other. A claim the gate
+calls **broken** is demoted to *needs a person*; one it could not check stays
+as claimed and is reported unverified. `pr comments` and `pr ci` take
+`--no-verify` to skip the gate; the review pass has no such flag. The rebase's
+pre-push fix pass is not gated: `land` pushes the moment it finishes, and the
+push runs the checks it was repairing.
+
+`pr comments --fix` also sends every `already_addressed` triage verdict here
+before its reply goes out, including on a round with nothing for the agent to
+fix. The gate is asked whether the code at the cited line does what the
+reviewer asked; triage has already refused a citation that does not resolve, so
+it judges behaviour only. A **broken** verdict is never posted or resolved: it
+moves to *needs a person*, is recorded that way in state so `--finish` cannot
+republish it, and holds publishing for the round. One the gate could not settle
+goes out with the `Not verified automatically` hedge.
 """
 
 # doc-group: pipeline
@@ -125,6 +145,58 @@ def _decline_block(reason: str, noun: str) -> str:
     return f"{heading} {reason}\n\n{ask}"
 
 
+# An already-addressed verdict is the third kind of claim, and asks a question
+# neither of the others does. Nobody edited anything, so there is no change to
+# run; and it is not an argument that the reviewer is wrong, so there is no
+# reason to hold against the tree. It says the behaviour the reviewer asked for
+# is already there, at a line triage cited — and that is checked by reading that
+# line and, where something can be run, exercising it.
+#
+# The citation itself is not in question. Triage refuses an already-addressed
+# verdict whose cited line does not resolve before it ever gets here
+# (`pr.triage.downgrade_unsupported_verdicts`), so a gate re-checking that the
+# line exists would spend turns on the one thing already established and say
+# nothing about the thing that is not: whether that line does what was asked.
+_ADDRESSED_HEADING = (
+    "**Triage judged this {noun} already addressed — the code is said to do "
+    "what the reviewer asked without any change.**"
+)
+
+_ADDRESSED_ASK = (
+    "Does the code at the cited line actually do what the reviewer asked? "
+    "The citation resolves — that was checked before you were asked — so do "
+    "not spend turns confirming the line exists. Judge only the behaviour.\n\n"
+    "Two ways the verdict commonly fails, both of which read as sound prose:\n\n"
+    "1. **The cited code is near the ask but not the ask.** A guard on a "
+    "neighbouring path, a check that runs on one caller and not the one the "
+    "reviewer named, a default that is overridden before it matters.\n"
+    "2. **It does part of what was asked.** The reviewer asked for two things "
+    "and the cited line does one of them.\n\n"
+    "Answer **broken** when the behaviour is absent or wrong: this reply would "
+    "tell the reviewer their point was moot and resolve their thread, so a "
+    "verdict that does not hold goes to a person instead. Answer **verified** "
+    "when you read or ran it and it does what was asked, and **not verified** "
+    "when you cannot tell."
+)
+
+
+def _addressed_block(outcome: ItemOutcome, noun: str) -> str:
+    """An already-addressed verdict as the gate is asked to check it.
+
+    Names the cited location in words as well as in the anchor: the anchor is
+    where the gate is pointed, and saying "this is triage's citation" is what
+    tells it the line is evidence for the verdict rather than the reviewer's own.
+    """
+    heading = _ADDRESSED_HEADING.format(noun=noun)
+    where = (
+        f" Triage cited `{outcome.evidence_file}:{outcome.evidence_line}` as "
+        "where it does so."
+        if outcome.evidence_file and outcome.evidence_line else ""
+    )
+    said = f" It said: {outcome.reason}" if outcome.reason else ""
+    return f"{heading}{where}{said}\n\n{_ADDRESSED_ASK.format(noun=noun)}"
+
+
 # A contradicted deferral asks the gate the inverse of every other item here.
 # The rest say "I changed this, check it works"; this one says "I changed
 # nothing" while its own file moved in the same run. Handing it over under the
@@ -203,6 +275,8 @@ def _verify_item(
     claim = (
         _decline_block(outcome.reason, noun)
         if outcome.outcome is FixOutcome.DECLINED
+        else _addressed_block(outcome, noun)
+        if _gated_addressed(outcome)
         else _undone_block(outcome.reason, noun)
         if outcome.outcome in fix.reconcile.CLAIMS_NO_WORK
         else _claim_block(outcome.reason)
@@ -242,6 +316,20 @@ def _gated_decline(outcome: ItemOutcome) -> bool:
     return outcome.outcome is FixOutcome.DECLINED and bool(outcome.reason)
 
 
+def _gated_addressed(outcome: ItemOutcome) -> bool:
+    """Whether this is an already-addressed verdict the gate should check.
+
+    Every one is, reason or not — unlike a decline, the claim does not live in
+    the reason. It is "the code at the cited line does what was asked", and the
+    citation and the reviewer's ask are both in front of the gate either way.
+
+    Only `fix.comments` hands the gate one: it is a triage verdict, never an
+    agent outcome, so no fix pass produces it and the engine's own call never
+    sees one.
+    """
+    return outcome.outcome is FixOutcome.ALREADY_ADDRESSED
+
+
 def _no_scope(_outcome: ItemOutcome) -> fix.scope.BatchScope:
     """The scope lookup for a caller that supplied no observations.
 
@@ -273,6 +361,11 @@ def verify_claims(
     own edit had just produced, and cited a commit that did not contain the
     change. The edit was committed anyway, because staging reads the worktree
     diff and not the boxes, so the fix shipped recorded as "not a defect".
+
+    An already-addressed triage verdict is the third claim, handed here by
+    `fix.comments` before its reply goes out: it resolves a reviewer's thread
+    as moot on triage's word, and a falsified one is demoted to NEEDS_HUMAN on
+    the same rule as the other two.
 
     Only falsification demotes. A verdict of None, and an id the gate never
     answered at all, both leave the outcome FIXED and unverified — silence is
@@ -308,7 +401,8 @@ def verify_claims(
         return
     claimed = [
         o for o in outcomes
-        if o.outcome.counts_as_fixed or _gated_decline(o) or o.id in contradicted
+        if o.outcome.counts_as_fixed or _gated_decline(o) or _gated_addressed(o)
+        or o.id in contradicted
     ]
     if not claimed:
         return
@@ -360,12 +454,9 @@ def verify_claims(
         # retry, and an edit that is present but wrong is not work the next
         # identical attempt gets right — it is a call for a person, and the
         # reason carries what the gate saw so they do not start from nothing.
-        was_declined = outcome.outcome is FixOutcome.DECLINED
+        outcome.reason = verdict.detail or _FALSIFIED_REASON.get(
+            outcome.outcome, "the fix did not hold up when run")
         outcome.outcome = FixOutcome.NEEDS_HUMAN
-        outcome.reason = verdict.detail or (
-            "the reason given for declining this did not hold up"
-            if was_declined else "the fix did not hold up when run"
-        )
         outcome.verified = False
         falsified += 1
 
@@ -391,6 +482,17 @@ def verify_claims(
                 "verified": sum(1 for o in claimed if o.verified),
             },
         )
+
+
+# What a falsified claim records when the gate said only "broken", keyed by the
+# kind of claim it was. A fix is the default and is not listed.
+_FALSIFIED_REASON = {
+    FixOutcome.DECLINED: "the reason given for declining this did not hold up",
+    FixOutcome.ALREADY_ADDRESSED: (
+        "triage called this already addressed, but the cited code does not do "
+        "what the reviewer asked"
+    ),
+}
 
 
 def _report_ungated(contradicted: set[str], trail: Trail | None) -> None:

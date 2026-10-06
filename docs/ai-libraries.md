@@ -514,10 +514,30 @@ be a fix pass asserting something outward nobody approved.
 The verify gate: when it runs, and what its verdicts mean.
 
 ``fix.verify`` owns the one call that produces verdicts. This module owns
-everything around it — what the gate is shown for a fix, a decline and a
-contradicted deferral, and how an answer it gives (or withholds) changes an
-item's outcome. Split from ``fix.engine``, which owns the batch/invoke/retry
-pipeline and nothing about judgement.
+everything around it — what the gate is shown for a fix, a decline, a
+contradicted deferral and an already-addressed verdict, and how an answer it
+gives (or withholds) changes an item's outcome. Split from ``fix.engine``, which
+owns the batch/invoke/retry pipeline and nothing about judgement.
+
+A ticked `fixed` box says an edit was made, not that it works. The review
+(`pr review --self --fix`), comments (`pr comments --fix`) and CI
+(`pr ci --fix`) fix passes all hand every claimed fix here before the commit,
+each sized and prompted as its own phase — `fix_verify`, `comments_verify` and
+`ci_verify`, configurable under `agent.phases` like any other. A claim the gate
+calls **broken** is demoted to *needs a person*; one it could not check stays
+as claimed and is reported unverified. `pr comments` and `pr ci` take
+`--no-verify` to skip the gate; the review pass has no such flag. The rebase's
+pre-push fix pass is not gated: `land` pushes the moment it finishes, and the
+push runs the checks it was repairing.
+
+`pr comments --fix` also sends every `already_addressed` triage verdict here
+before its reply goes out, including on a round with nothing for the agent to
+fix. The gate is asked whether the code at the cited line does what the
+reviewer asked; triage has already refused a citation that does not resolve, so
+it judges behaviour only. A **broken** verdict is never posted or resolved: it
+moves to *needs a person*, is recorded that way in state so `--finish` cannot
+republish it, and holds publishing for the round. One the gate could not settle
+goes out with the `Not verified automatically` hedge.
 
 ### fix/reconcile.py
 
@@ -3988,6 +4008,13 @@ start.
 Task implementations live in `eval_scoring_<task>.py` and are resolved lazily so
 that adding a task does not make every other task's dependencies load.
 
+Each task names the production `Phase` it measures (review: `single`, ci-fix:
+`ci_fix`, skill: `comments_fix`). With `--models` omitted, `resolved_model`
+picks that phase's model through `agent.phases.phase_model` before the run, so
+results are labelled with the id that served them rather than `(default)`, and
+the eval measures what production runs instead of the backend's interactive
+default. `--models` still wins when given.
+
 ## Platform
 
 The shared substrate — process execution, logging, the structured trail, serialization, config, paths, and the tool framework the CLIs are built on.
@@ -4791,6 +4818,23 @@ pre-push hook parses — writes one heartbeat line to stderr every
 Waiting on the child is :data:`core.timeouts.UNBOUNDED` because the suite *is*
 the work. A bound would convert a large or contended run into a false failure;
 the heartbeat is what makes that wait observable rather than a hang.
+
+### core/syntax.py
+
+Cheap syntax checks for text that has just been merged.
+
+`pr rebase --fix` used to treat a marker-valid resolution as success, so a Go
+file that ended with an extra `}` reported the rebase complete and printed a
+force-push command. The pre-push hook was the first thing that objected, after
+the user had already been handed that command.
+
+This module answers one question: does this text still parse as the language
+its path claims? It is not a formatter, a linter, or a build. `gofmt`
+whitespace differences do not fail. Unknown suffixes pass. The checkers that
+exist are the cheap ones — `gofmt -e` on stdin, `ast.parse`, `bash -n`,
+`json.loads`, `yaml.safe_load_all`, `tomllib.loads` — and anything they cannot
+run is a pass, because a rebase blocked on a missing parser is worse than one
+that ships a file the next hook will catch.
 
 ### core/text.py
 
@@ -6184,6 +6228,7 @@ Usage:
   ci-check --fix                # diagnose then invoke AI to fix failures
   ci-check --head-sha <sha>     # runs and checks of this commit, not local HEAD
   ci-check --fix --no-rebase    # fix without rebasing first (pr batch rebases itself)
+  ci-check --fix --no-verify    # fix without running the verify gate
 
 ### cli/dispatch.py
 

@@ -384,6 +384,10 @@ def _drive_fix(tmp_path, *, tick, landed=None, exit_code=0):
     agent that answers something has to answer it from inside the call — `tick`
     says whether it does.
 
+    The verify gate is off: these tests count and read the fix agent's own
+    calls, and the gate is a second agent on the same backend whose behaviour
+    `fix_ci_gate_test` covers.
+
     Returns (the exit code, the invoke mock, the Trail mock).
     """
     artifacts = tmp_path / "ci-failures"
@@ -410,6 +414,7 @@ def _drive_fix(tmp_path, *, tick, landed=None, exit_code=0):
         rc = rebase.ci_fix.run_fix(
             trail, report,
             make_ctx(worktree_root=tmp_path, target_dir=tmp_path),
+            verify=False,
         )
     return rc, inv, trail
 

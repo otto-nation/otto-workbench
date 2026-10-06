@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -339,6 +340,28 @@ class TestReviewTask:
         whole eval at the first subprocess rather than at import.
         """
         assert eval.scoring_review._REVIEW_ORCHESTRATE.exists()
+
+    @pytest.mark.parametrize("opts,expected", [
+        (RunOptions(effort="high"), None),
+        (RunOptions(model="opus", effort="high"), "opus"),
+    ])
+    def test_model_is_passed_to_orchestrate_only_when_the_user_named_one(
+            self, monkeypatch, opts, expected):
+        """`--model` overrides every phase, so an unasked one flattens a high eval."""
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cmd"] = cmd
+            return subprocess.CompletedProcess(cmd, 0)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        eval.scoring_review._run_orchestrate("/repo", "/review.md", opts)
+
+        cmd = seen["cmd"]
+        if expected is None:
+            assert "--model" not in cmd
+        else:
+            assert cmd[cmd.index("--model") + 1] == expected
 
     def test_a_dead_orchestrate_run_is_not_a_review_that_found_nothing(
             self, monkeypatch, tmp_path):

@@ -153,6 +153,17 @@ SURVIVING_MARKER_HINT = (
     "them. Decide what the merged text should be and emit only that.\n\n"
 )
 
+# Addressed to a resolution whose markers were right but whose merged text
+# does not parse. The caller appends the checker's own message, since "fix
+# the syntax" without naming the error is the instruction the first attempt
+# already failed to satisfy.
+DOES_NOT_PARSE_HINT = (
+    "IMPORTANT: A previous attempt produced a file that does not parse. "
+    "The markers were right; the merged text is syntactically invalid. "
+    "Fix the syntax error named below and emit the same markers around the "
+    "corrected file. The parser said:\n"
+)
+
 # Addressed to a whole-file resolution that parsed but threw away a change git
 # had already merged cleanly — usually by emitting one side's copy of the file.
 # The caller appends the changes that went missing, since "keep both sides"

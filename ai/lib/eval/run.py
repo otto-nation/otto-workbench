@@ -182,7 +182,11 @@ def _run_single(
 
 
 def _dry_run(entries: list[dict], runs_per_entry: int) -> tuple[dict, int]:
-    """Describe what would run. Resolves each task so an unknown one fails here."""
+    """Describe what would run.
+
+    Resolves each task, so an unknown one fails here when `--models` is given
+    and earlier, in `_model_banner`, when it is omitted.
+    """
     print("\n-- Dry run --", file=sys.stderr)
     for entry in entries:
         manifest = entry["manifest"]
@@ -195,6 +199,37 @@ def _dry_run(entries: list[dict], runs_per_entry: int) -> tuple[dict, int]:
         print(f"  {entry['name']} [{task.name}]: {detail}", file=sys.stderr)
     print(f"\nTotal runs: {len(entries) * runs_per_entry}", file=sys.stderr)
     return {}, 0
+
+
+def _explicit_models(args: argparse.Namespace) -> list[str] | None:
+    """`--models` as typed, or None to resolve each entry through its phase."""
+    # Empty tokens (`--models ","`, `--models ", opus"`) name no model, so an
+    # all-empty list is the same as an omitted flag.
+    models = [m.strip() for m in (args.models or "").split(",")]
+    return [m for m in models if m] or None
+
+
+def _resolve_entry_model(entry: dict) -> str:
+    """The production model the entry's task measures, chosen up front."""
+    try:
+        task = eval.task.get_task(eval.task.task_name(entry["manifest"]))
+    except KeyError as exc:
+        sys.exit(f"error: {exc.args[0]}")
+    return eval.task.resolved_model(task, "")
+
+
+def _model_banner(explicit: list[str] | None, entries: list[dict]) -> list[str]:
+    """Labels for the Models: line — resolved ids, never `(default)`."""
+    if explicit is not None:
+        return explicit
+    labels: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        model = _resolve_entry_model(entry)
+        if model not in seen:
+            seen.add(model)
+            labels.append(model)
+    return labels
 
 
 def _seed_kind() -> str:
@@ -227,8 +262,8 @@ def run_eval(args: argparse.Namespace, repo_root: Path | None) -> tuple[dict, in
         corpus_dir = str(repo_root / corpus_dir)
 
     entries = discover_entries(corpus_dir, args.entry, args.task)
-    models = [m.strip() for m in args.models.split(",")] if args.models else [""]
-    model_labels = [m or "(default)" for m in models]
+    explicit = _explicit_models(args)
+    model_labels = _model_banner(explicit, entries)
 
     arms = [c.strip() for c in args.conditions.split(",")]
     for arm in arms:
@@ -241,15 +276,24 @@ def run_eval(args: argparse.Namespace, repo_root: Path | None) -> tuple[dict, in
     print(f"Effort: {args.effort}, Runs: {args.runs}", file=sys.stderr)
 
     if args.dry_run:
-        return _dry_run(entries, len(models) * len(arms) * args.runs)
+        n_models = len(explicit) if explicit is not None else 1
+        return _dry_run(entries, n_models * len(arms) * args.runs)
 
     with tempfile.TemporaryDirectory(prefix="eval-cc-") as tmpdir:
         seeded = _seed_arms(repo_root, Path(tmpdir), arms)
 
         all_results: dict[tuple[str, str, str], list] = {}
-        for entry, (model, label), arm in product(
-            entries, zip(models, model_labels), arms,
-        ):
+        # A cell is (entry, model handed to the task, label). Only a model the
+        # operator named is handed over; with none, the task resolves its own
+        # through the same phase the label was resolved from. Handing the
+        # label over instead would force a review eval's every phase onto the
+        # `single` model through `review-orchestrate --model`.
+        cells = (
+            [(entry, m, m) for entry in entries for m in explicit]
+            if explicit else
+            [(entry, "", _resolve_entry_model(entry)) for entry in entries]
+        )
+        for (entry, model, label), arm in product(cells, arms):
             _store_arm(
                 all_results, entry, model, label, arm, args, str(seeded[arm]),
             )

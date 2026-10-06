@@ -380,7 +380,7 @@ def phase_retry_turns(phase: Phase, original: int) -> int:
 
     Only the four phases a `FixAdapter` names as its own reach here, through
     `fix.engine._retry`: `fix`, `comments_fix`, `ci_fix` and `prepush_fix`. The
-    two verify gates are a `verify_phase`, sized by `phase_turns` in
+    three verify gates are a `verify_phase`, sized by `phase_turns` in
     `fix.verify` and never retried, and the review phases escalate through
     `agent.retry.turns_for` instead. A ceiling at or below a phase's
     `turns_cap` therefore silently disables the bump for that phase, which is

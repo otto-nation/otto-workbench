@@ -35,6 +35,7 @@ from core.trail import Trail
 import fix.comment_checklist
 import fix.comment_replies
 import fix.engine
+import fix.gate
 import fix.suite
 import fix.types
 import fix.verify
@@ -81,9 +82,9 @@ class CommentFixAdapter(fix.engine.FixAdapter):
     """
 
     phase = Phase.COMMENTS_FIX
-    # The only domain that runs the verify gate, so the only one that declares
-    # the gate's phase. Without it the gate is sized and prompted as the fix
-    # pass, which hands a checking agent a template telling it to edit source.
+    # Every domain that runs the verify gate declares the gate's phase. Without
+    # it the gate is sized and prompted as the fix pass, which hands a checking
+    # agent a template telling it to edit source.
     verify_phase = Phase.COMMENTS_VERIFY
     action = "applying review comment suggestions"
     item_noun = "thread"
@@ -376,6 +377,78 @@ def _result_for(
     )
 
 
+def _at_evidence(entries: list[CommentItem]) -> list[CommentItem]:
+    """Entries re-anchored at the line triage cited, where it cited one.
+
+    The gate is asked about the code that is said to already do the work, so
+    that is the code it is shown context for and pointed at — not the line the
+    reviewer happened to comment on.
+    """
+    return [
+        dataclasses.replace(
+            e, file=e.evidence_file or e.file, line=e.evidence_line or e.line,
+        )
+        for e in entries
+    ]
+
+
+def _addressed_outcome(entry: CommentItem) -> ItemOutcome:
+    """An already-addressed verdict in the shape the verify gate checks."""
+    anchored = _at_evidence([entry])[0]
+    return ItemOutcome(
+        id=entry.id,
+        outcome=FixOutcome.ALREADY_ADDRESSED,
+        summary=entry.summary,
+        reason=entry.reasoning or entry.reason,
+        file=anchored.file,
+        line=anchored.line,
+        read_sha=entry.read_sha,
+        evidence_file=entry.evidence_file,
+        evidence_line=entry.evidence_line,
+    )
+
+
+def check_addressed(
+    round_: pr.triage_round.TriagedRound,
+    adapter: CommentFixAdapter,
+    verify: fix.gate.VerifyFn | None,
+    trail: Trail | None = None,
+) -> pr.triage_round.TriagedRound:
+    """Hold triage's already-addressed verdicts against the behaviour they claim.
+
+    The verdict is the least-checked outcome the pass produces and the one with
+    the most reach: it tells a reviewer their point was moot and resolves their
+    thread under the author's name. Triage has already refused any whose cited
+    line does not resolve; this asks the existing verify gate the question that
+    leaves open — does the code there do what was asked?
+
+    Through `fix.gate.verify_claims` rather than a mechanism of its own: the
+    gate's meaning of silence (unverified, not falsified) and of `broken`
+    (NEEDS_HUMAN) is the one every other claim is held to. A falsified verdict
+    is moved to `needs_human` on the returned round and placed under the same
+    hold a falsified fix earns, so the replies that follow go out — or wait —
+    accordingly.
+
+    `verify` None (`--no-verify`) and a round with nothing already addressed
+    return the round unchanged.
+    """
+    if verify is None or not round_.already_addressed:
+        return round_
+    outcomes = [_addressed_outcome(e) for e in round_.already_addressed]
+    items = fix.comment_checklist.fix_items(
+        _at_evidence(round_.threads.already_addressed), adapter.threads_by_id,
+        adapter.workdir,
+        fixable_items=_at_evidence(round_.items.already_addressed),
+        default_branch=git.topology.default_branch_cached(adapter.workdir),
+    )
+    fix.gate.verify_claims(
+        outcomes, verify, adapter, {i.id: i for i in items}, trail,
+    )
+    settled = pr.triage_round.settle_addressed(round_, outcomes)
+    adapter.after_verify(outcomes)
+    return settled
+
+
 def run_pass(
     triage_result: TriageResult,
     report: PRReport,
@@ -393,7 +466,9 @@ def run_pass(
     `verify` runs the gate that holds each claimed fix against what actually
     runs before anything is committed or replied to. On by default: a fix pass
     publishes a claim about behaviour under the operator's name, and the gate is
-    what makes that claim worth something.
+    what makes that claim worth something. The same gate checks triage's
+    already-addressed verdicts first, before their replies are sent — see
+    `check_addressed` — including on a round with nothing for the agent to fix.
     """
     threads_by_id = {t.id: t for t in report.threads}
 
@@ -411,18 +486,23 @@ def run_pass(
         git.client.head_sha(short=True, cwd=wt_path),
     )
 
+    adapter = CommentFixAdapter(report, ctx, wt_path, round_, trail=trail)
+    gate = fix.verify.run if verify else None
+
+    # Before any reply goes out: an already-addressed reply resolves the thread
+    # the moment it is posted, so a verdict the gate falsifies has to have left
+    # that bucket — and the hold it places has to be shut — by the time
+    # `post_triage_replies` reads either.
+    round_ = check_addressed(round_, adapter, gate, trail)
     round_ = dataclasses.replace(
         round_, replies=fix.comment_replies.post_triage_replies(round_, threads_by_id, report, ctx, wt_path),
     )
+    adapter.round = round_
 
-    adapter = CommentFixAdapter(report, ctx, wt_path, round_, trail=trail)
     if round_.has_fixables:
         # The engine batches the entries, runs the agent, lands the commit and
         # calls `record` itself.
-        fix.engine.run(
-            adapter, trail=trail,
-            verify=fix.verify.run if verify else None,
-        )
+        fix.engine.run(adapter, trail=trail, verify=gate)
     else:
         # `fix.engine.run` returns an empty `FixRun` for a pass with no items
         # and never reaches `record`, which is the right contract — there is

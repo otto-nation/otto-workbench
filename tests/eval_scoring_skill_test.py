@@ -19,9 +19,11 @@ if LIB_DIR not in sys.path:
 
 import eval.scoring_skill
 from agent.usage import SessionUsage
+from core.phases import Phase
 from eval.scoring import RunOutcome
 from eval.task import RunArtifacts, RunOptions
 import agent.backend
+import agent.phases
 
 from eval_scoring_skill_support import _run, _artifacts, _skill_case
 
@@ -412,6 +414,43 @@ class TestRunWiring:
             assert artifacts.temp_dirs == [inv.cwd, str(bin_dir.parent)]
             assert [m.matched for m in artifacts.data["matches"]] == [True]
             assert artifacts.data["violations"] == []
+        finally:
+            for path in artifacts.temp_dirs:
+                shutil.rmtree(path, ignore_errors=True)
+
+    def test_empty_model_resolves_through_phase_model_before_invoke_fix(
+            self, monkeypatch, tmp_path):
+        case_dir = _skill_case(
+            tmp_path, skill="pr-rebase", prompt="go",
+            requires=[["git", "rebase"]],
+        )
+        captured = {}
+
+        def stub_invoke_fix(inv):
+            captured["model"] = inv.model
+            captured["thinking"] = inv.thinking
+            captured["provider"] = inv.provider
+            return 0
+
+        monkeypatch.setattr(agent.backend, "invoke_fix", stub_invoke_fix)
+        monkeypatch.setattr(
+            agent.phases, "phase_model",
+            lambda phase, explicit, cfg=None: "resolved-skill",
+        )
+        monkeypatch.setattr(
+            agent.phases, "phase_thinking",
+            lambda phase, effort=None, cfg=None: "low",
+        )
+        monkeypatch.setattr(
+            agent.phases, "phase_provider", lambda cfg=None: "anthropic",
+        )
+
+        artifacts = eval.scoring_skill.SkillTask().run(case_dir, RunOptions())
+        try:
+            assert captured["model"] == "resolved-skill"
+            assert captured["thinking"] == "low"
+            assert captured["provider"] == "anthropic"
+            assert eval.scoring_skill.SkillTask.phase is Phase.COMMENTS_FIX
         finally:
             for path in artifacts.temp_dirs:
                 shutil.rmtree(path, ignore_errors=True)

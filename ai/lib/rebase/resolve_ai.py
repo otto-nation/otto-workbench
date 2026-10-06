@@ -8,12 +8,15 @@ accepts a ``trail`` parameter for audit logging.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 
 import agent.invoke
 import agent.retry
 import core.log
+import core.syntax
 from core.phases import Phase
 from core.trail import Trail, billed_to, terr, tfail, tinfo, tspan
 import git.regenerate
@@ -184,7 +187,11 @@ def build_chunked_prompt(
 _HINT_FOR_FAILURE = {
     ParseFailure.WHOLLY_ECHOED: agent.retry.ECHOED_CONTEXT_HINT,
     ParseFailure.SURVIVING_CONFLICT_MARKER: agent.retry.SURVIVING_MARKER_HINT,
+    ParseFailure.DOES_NOT_PARSE: agent.retry.DOES_NOT_PARSE_HINT,
 }
+
+
+_NO_PARSER_MESSAGE = "(the parser gave no message)"
 
 
 def hint_for_reason(reason: str) -> str:
@@ -195,11 +202,23 @@ def hint_for_reason(reason: str) -> str:
     a separator, not a bare substring, since ``echoed_context`` and
     ``wholly_echoed_context`` would otherwise match each other.
     """
-    head = reason.split(":", 1)[0].split("_in_block_", 1)[0]
-    for failure, hint in _HINT_FOR_FAILURE.items():
-        if head == failure.value or head.startswith(f"{failure.value}_"):
-            return hint
-    return agent.retry.BLANK_RESPONSE_HINT
+    head, sep, rest = reason.partition(":")
+    head = head.split("_in_block_", 1)[0]
+    failure = next(
+        (f for f in _HINT_FOR_FAILURE
+         if head == f.value or head.startswith(f"{f.value}_")),
+        None,
+    )
+    if failure is None:
+        return agent.retry.BLANK_RESPONSE_HINT
+    hint = _HINT_FOR_FAILURE[failure]
+    # A parse failure carries the checker's message after the separator, and
+    # the retry is only useful if the model is told what the checker said.
+    # A checker that failed with no message still leaves the hint's last line
+    # open ("The parser said:"), so say that it said nothing.
+    if failure is ParseFailure.DOES_NOT_PARSE and sep:
+        return f"{hint}{rest or _NO_PARSER_MESSAGE}\n"
+    return hint
 
 
 # ── Survival of the clean changes ────────────────────────────────────────
@@ -221,10 +240,44 @@ class AnswerVerdict:
         return self.resolved is not None and not self.losses
 
 
+def _sides_parse(filepath: str, sides: Callable[[], conflicts.StageTexts]) -> bool:
+    """Whether every conflict side that exists parses on its own."""
+    stages = sides()
+    present = [t for t in (stages.target, stages.replayed) if t is not None]
+    return all(core.syntax.check(filepath, t).ok for t in present)
+
+
+def _syntax_failure(
+    filepath: str, resolved: str, sides_parse: Callable[[], bool],
+) -> str:
+    """Empty unless the merge broke parsing, else a DOES_NOT_PARSE reason naming why.
+
+    *sides_parse* says whether the conflict's stages each parse, and is only
+    called when *resolved* fails to parse. The failure counts only when every
+    side that exists still parses on its own. A file that never parsed as its
+    suffix claims (a Helm template under `templates/*.yaml`, JSON with
+    comments) fails the checker on every resolution, and refusing it would stop
+    each rebase that touches it over a property the merge did not change.
+    """
+    result = core.syntax.check(filepath, resolved)
+    if result.ok:
+        return ""
+    if not sides_parse():
+        return ""
+    return f"{ParseFailure.DOES_NOT_PARSE}:{result.detail}"
+
+
 def judge_answer(filepath: str, stages: conflicts.StageTexts, text: str) -> AnswerVerdict:
     """Parse a whole-file answer and audit it against the conflict's three stages."""
     resolved, reason = conflicts.parse_resolved_content(text)
-    losses = () if resolved is None else survival.audit(
+    if resolved is None:
+        return AnswerVerdict(None, reason, ())
+    syntax_reason = _syntax_failure(
+        filepath, resolved, lambda: _sides_parse(filepath, lambda: stages),
+    )
+    if syntax_reason:
+        return AnswerVerdict(None, syntax_reason, ())
+    losses = survival.audit(
         filepath, base=stages.base, target=stages.target,
         replayed=stages.replayed, resolved=resolved,
     ).blocking
@@ -346,18 +399,39 @@ def resolve_chunked(
     )
     tinfo(trail, "chunked_resolve", f"using chunked resolution for {filepath}",
            data={"blocks": len(blocks), "total_lines": content.count("\n") + 1})
+
+    sides = cache(lambda: conflicts.stage_texts(filepath, cwd))
+    # The stages do not change between retries, so whether they parse is
+    # settled once rather than once per distinct spliced answer.
+    sides_parse = cache(lambda: _sides_parse(filepath, sides))
+
+    # The checker is an external process, and one spliced file is judged by
+    # `usable`, by `retry_hint`, and once more after the prompt returns, so each
+    # distinct file is checked once and the verdict shared.
+    @cache
+    def syntax_failure(spliced: str) -> str:
+        return _syntax_failure(filepath, spliced, sides_parse)
+
+    def chunked_failure(text: str) -> str:
+        parsed = conflicts.parse_chunked_resolutions(text, blocks)
+        if not parsed.ok:
+            return parsed.reason
+        spliced = conflicts.splice_resolutions(
+            content, blocks, parsed.resolutions,
+        )
+        return syntax_failure(spliced)
+
     answer = agent.invoke.run_prompt(
         Phase.REBASE, prompt, cwd=cwd,
         label=f"chunked resolution for {filepath}",
-        usable=lambda s: conflicts.parse_chunked_resolutions(s, blocks).ok,
+        usable=lambda s: not chunked_failure(s),
         task="conflict-resolve-chunked",
         # The parser's own failure reason picks the correction. Discarding it
         # and taking the default is what sent a lecture about emitting markers
         # to an answer whose markers were perfect and whose mistake was
-        # repeating the context back.
-        retry_hint=lambda text: hint_for_reason(
-            conflicts.parse_chunked_resolutions(text, blocks).reason,
-        ),
+        # repeating the context back. A spliced file that does not parse is
+        # the same contract: the retry is told the checker's message.
+        retry_hint=lambda text: hint_for_reason(chunked_failure(text)),
         **billed_to(trail),
     )
     if answer.exit_code != 0:
@@ -394,6 +468,18 @@ def resolve_chunked(
     resolved_content = conflicts.splice_resolutions(
         content, blocks, parsed.resolutions,
     )
+    syntax_reason = syntax_failure(resolved_content)
+    if syntax_reason:
+        tfail(
+            trail, "resolve_conflicts",
+            f"failed to parse resolution for {filepath}",
+            output=answer.text,
+            data={"filepath": filepath, "reason": syntax_reason},
+        )
+        core.log.error(
+            f"Failed to parse resolution for {filepath} ({syntax_reason})"
+        )
+        return None
     full_path.write_text(resolved_content)
     if not conflicts.git_add(filepath, cwd):
         return None

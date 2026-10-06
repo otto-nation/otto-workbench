@@ -96,6 +96,11 @@ class CIFixAdapter(fix.engine.FixAdapter):
     """
 
     phase = Phase.CI_FIX
+    # The gate's own phase, so it is sized and prompted as a gate rather than
+    # handed `fix-ci.md`. Its checklists and session logs land beside this
+    # pass's own under `artifacts`, through the inherited
+    # `verify_tracking_path` and `verify_session_log`.
+    verify_phase = Phase.CI_VERIFY
     action = "fixing CI failures"
     item_noun = "failure"
     # The shared hint is written for review findings. This one names the same

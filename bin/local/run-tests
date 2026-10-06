@@ -283,13 +283,13 @@ shard_files() {
   local -a bucket_assign=()
   local i
   for (( i = 0; i < total; i++ )); do
-    bucket_load[$i]=0
+    bucket_load[i]=0
   done
   for (( i = 0; i < ${#files[@]}; i++ )); do
     local min_idx
     min_idx=$(_find_min_bucket "$total")
-    bucket_assign[$i]=$min_idx
-    bucket_load[$min_idx]=$(( ${bucket_load[$min_idx]} + ${weights[$i]} ))
+    bucket_assign[i]=$min_idx
+    bucket_load[min_idx]=$(( bucket_load[min_idx] + weights[i] ))
   done
 
   # Emit files assigned to the requested shard (0-indexed internally).
@@ -405,8 +405,14 @@ run_bats() {
 # BATS_RUN_TMPDIR, and left behind on exit because pytest's own `keep=3`
 # retention is what collects it.
 run_pytest() {
+  local pytest_bin="" has_xdist=0
+  resolve_pytest pytest_bin has_xdist
+  # No candidate on PATH: keep the bare name so the failure is `pytest: not
+  # found` from the runner rather than a silent skip of the suite.
+  [[ -n "$pytest_bin" ]] || pytest_bin=pytest
+
   local jobs_flag=()
-  if pytest -VV 2>/dev/null | grep -q xdist; then
+  if (( has_xdist )); then
     jobs_flag=(-n "$(granted_jobs)")
   else
     report_missing_xdist
@@ -430,20 +436,18 @@ run_pytest() {
       err "--pytest-files: no files provided"
       return 1
     fi
-    _run_watched pytest "$watch_jobs" pytest "${file_list[@]}" "${jobs_flag[@]}" "${basetemp_flag[@]}" "$@"
+    _run_watched pytest "$watch_jobs" "$pytest_bin" "${file_list[@]}" "${jobs_flag[@]}" "${basetemp_flag[@]}" "$@"
     return
   fi
-  _run_watched pytest "$watch_jobs" pytest "$WORKBENCH_DIR/tests/" "${jobs_flag[@]}" "${basetemp_flag[@]}" "$@"
+  _run_watched pytest "$watch_jobs" "$pytest_bin" "$WORKBENCH_DIR/tests/" "${jobs_flag[@]}" "${basetemp_flag[@]}" "$@"
 }
 
 # report_missing_xdist — say the run is serial, and why, before it starts.
 #
 # A serial suite is six times slower and otherwise silent: the only signal is a
-# wall time nobody has a baseline for. The likely cause is not a missing
-# install but a shadowed one — a version manager's shim directory ahead of
-# pipx's on PATH means `pytest` resolves to an interpreter that never had xdist
-# injected, while the pipx pytest that does sits second and unused. Naming both
-# paths is what turns "tests are slow today" into a one-line fix.
+# wall time nobody has a baseline for. resolve_pytest already walked PATH and
+# took the first xdist-capable pytest when one exists, so reaching here means
+# none of them have the plugin — the remedy is the install, not un-shadowing.
 #
 # To stderr, because the pre-push hook parses this script's stdout for test
 # results.
@@ -456,25 +460,38 @@ report_missing_xdist() {
   else
     info "  using: $primary" >&2
   fi
-
-  # A second pytest further down PATH that *does* have xdist is the shadowing
-  # case, and it has a different remedy from a genuinely missing plugin.
-  local other
-  while IFS= read -r other; do
-    [[ "$other" == "$primary" ]] && continue
-    if "$other" -VV 2>/dev/null | grep -q xdist; then
-      info "  shadowing: $other — which does have xdist" >&2
-      info "  fix: remove the shadowing pytest, or put its directory later on PATH" >&2
-      return 0
-    fi
-  done < <(_pytest_candidates)
-
   info "  fix: pipx inject pytest pytest-xdist" >&2
+}
+
+# resolve_pytest BIN_NAMEREF XDIST_NAMEREF — pick the pytest this run will invoke.
+#
+# Walks PATH in resolution order. The first candidate that has xdist wins;
+# otherwise the first candidate, which is what `pytest` would have resolved to
+# and which then runs serially. A version-manager shim sitting ahead of pipx's
+# pytest is the case this exists for: probing only the first name left the
+# xdist-capable one unused.
+resolve_pytest() {
+  local -n __bin=$1
+  local -n __xdist=$2
+  local first="" candidate=""
+  __bin=""
+  __xdist=0
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    [[ -n "$first" ]] || first="$candidate"
+    "$candidate" -VV 2>/dev/null | grep -q xdist || continue
+    [[ "$candidate" == "$first" ]] || info "pytest: skipping $first (no xdist); using $candidate" >&2
+    __bin="$candidate"
+    __xdist=1
+    return 0
+  done < <(_pytest_candidates)
+  __bin="$first"
+  return 0
 }
 
 # _pytest_candidates — every pytest on PATH, in resolution order.
 #
-# `command -v -a` is not portable to the bash 3.2 that ships with macOS, so the
+# `command -v -a` is not portable across shells and bash versions, so the
 # lookup walks PATH itself.
 _pytest_candidates() {
   local dir

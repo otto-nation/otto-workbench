@@ -231,6 +231,38 @@ class TestVerifySuite:
 
         assert run.suite.pointers == ()
 
+    def test_a_green_run_over_files_the_commit_leaves_out_is_partial(
+        self, tmp_path, landed, head, snapshots,
+    ):
+        """The checks run in the worktree, where a dropped file still sits.
+
+        A pass committed a suite whose helper module it left out of the commit;
+        the checks imported the module off disk, and the commit read as
+        checked. The verdict has to say it was not over the commit.
+        """
+        adapter = self._configured(tmp_path, self._script(tmp_path, "exit 0"))
+        adapter.commit_scope = lambda changed: {"a.py"}
+        snapshots.side_effect = _reads(set(), {"a.py", "tests/a_support.py"})
+
+        with patch.object(agent.invoke, "run_fix", _answer(adapter)):
+            fix.engine.run(adapter)
+
+        assert adapter.suite.status is fix.suite.SuiteStatus.PARTIAL
+        assert adapter.suite.left_out == ("tests/a_support.py",)
+        assert adapter.landing_scope == {"a.py"}
+        assert "Fix-Checks: partial" in landed.call_args.kwargs["message"]
+
+    def test_a_green_run_over_exactly_the_commit_stays_green(
+        self, tmp_path, landed, head, snapshots,
+    ):
+        adapter = self._configured(tmp_path, self._script(tmp_path, "exit 0"))
+        snapshots.side_effect = _reads(set(), {"a.py"})
+
+        with patch.object(agent.invoke, "run_fix", _answer(adapter)):
+            fix.engine.run(adapter)
+
+        assert adapter.suite.status is fix.suite.SuiteStatus.GREEN
+
     def test_a_green_suite_leaves_publishing_open(
         self, tmp_path, landed, head, snapshots, publishing_on,
     ):

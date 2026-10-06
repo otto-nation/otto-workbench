@@ -26,6 +26,9 @@ import contextlib
 import os
 import signal
 import subprocess
+import sys
+
+import core.timeouts
 
 # What a wrapper forwards. SIGINT is the terminal Ctrl-C, SIGTERM the ordinary
 # ask-to-stop, and SIGHUP the closed terminal — each of which would otherwise
@@ -55,6 +58,9 @@ class SignalRelay:
         try:
             os.killpg(os.getpgid(self._proc.pid), signum)
         except ProcessLookupError:
+            # The child is already gone. On macOS this also covers a zombie
+            # (exited but not yet wait()ed): getpgid raises ESRCH there, and a
+            # signal to a dead child is moot either way.
             pass
 
     def forward_to(self, proc: subprocess.Popen) -> None:
@@ -100,3 +106,33 @@ def forwarding_signals():
     finally:
         for signum, handler in previous.items():
             signal.signal(signum, handler)
+
+
+def run_child(
+    argv: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    origin: str = "run_child",
+) -> int:
+    """Run *argv* in its own session and wait until that group is gone.
+
+    SIGINT, SIGTERM, and SIGHUP are forwarded to the group rather than killing
+    this process. :func:`forwarding_signals` wraps the spawn, so there is no
+    window in which a child exists and no handler does.
+
+    Both lock wrappers call this rather than each copying the wait. A missing
+    command is 127 with a one-line message, matching the shell, rather than an
+    uncaught OSError that would be the one path without a ``cli:`` prefix.
+    *origin* is that prefix (``job_slots_cli``, ``tree_lock_cli``).
+    """
+    with forwarding_signals() as relay:
+        try:
+            proc = subprocess.Popen(argv, start_new_session=True, env=env)
+        except OSError as exc:
+            print(f"{origin}: cannot run {argv[0]}: {exc}", file=sys.stderr)
+            return 127
+        relay.forward_to(proc)
+        code = proc.wait(timeout=core.timeouts.UNBOUNDED)
+    # A negative returncode is -signal. sys.exit(-N) becomes 256-N;
+    # callers expect the shell convention 128+N (SIGTERM -> 143).
+    return 128 + (-code) if code < 0 else code

@@ -804,6 +804,7 @@ Takes no flags.
 | `--wait-interval` `<sec>` | Poll interval in seconds (default: 30). |
 | `--head-sha` `<head-sha>` | Report the runs and checks of this commit instead of the worktree's HEAD. |
 | `--no-rebase` | With --fix: do not rebase onto main before fixing. |
+| `--no-verify` | Skip the verify gate after --fix. The gate has an agent exercise each claimed fix against the tree and demotes the ones that do not hold up; without it every fix lands unverified. |
 
 **`pr review`** — Run code review
 

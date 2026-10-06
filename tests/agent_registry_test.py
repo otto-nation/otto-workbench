@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import agent.registry
-from agent.registry import PHASES, REVIEW_PHASES
+from agent.registry import PHASES, RETRYABLE_FIX_PHASES, REVIEW_PHASES
 from agent.types import EFFORT_PRESETS
 from core.phases import AgentKind, Phase, PhaseDomain, PhaseShape, Thinking
 
@@ -53,6 +53,7 @@ class TestPhaseDomains:
             Phase.COMMENTS_VERIFY: PhaseDomain.COMMENTS,
             Phase.COMMENTS_TRIAGE: PhaseDomain.COMMENTS,
             Phase.CI_FIX: PhaseDomain.CI,
+            Phase.CI_VERIFY: PhaseDomain.CI,
             Phase.REBASE: PhaseDomain.REBASE,
             Phase.PREPUSH_FIX: PhaseDomain.REBASE,
             Phase.DESCRIBE: PhaseDomain.DESCRIBE,
@@ -89,6 +90,7 @@ class TestPhaseThinkingDefaults:
             Phase.COMMENTS_FIX: None,
             Phase.COMMENTS_VERIFY: Thinking.LOW,
             Phase.CI_FIX: None,
+            Phase.CI_VERIFY: Thinking.LOW,
             # Nor did any prompt-shaped call, which had no way to name one:
             # ai_backend.prompt took no thinking argument until they became
             # phases. Their default is still the backend's.
@@ -123,6 +125,7 @@ class TestPhaseMaxTurnsDefaults:
             Phase.COMMENTS_FIX: 20,
             Phase.COMMENTS_VERIFY: 15,
             Phase.CI_FIX: 20,
+            Phase.CI_VERIFY: 15,
             Phase.PREPUSH_FIX: 20,
         }
         assert {
@@ -143,12 +146,18 @@ class TestPhaseBudgetDefaults:
         pinned = {p for p, s in PHASES.items() if s.max_budget is not None}
         assert pinned == {
             Phase.COMMENTS_FIX, Phase.COMMENTS_VERIFY, Phase.CI_FIX,
-            Phase.PREPUSH_FIX,
+            Phase.CI_VERIFY, Phase.PREPUSH_FIX,
         }
 
     def test_preserves_current_caps(self):
         assert PHASES[Phase.COMMENTS_FIX].max_budget == 2.0
         assert PHASES[Phase.CI_FIX].max_budget == 3.0
+
+    def test_the_ci_gate_is_sized_as_the_comments_gate(self):
+        """Neither runs under an `--effort`, so both pin the same cap and rates."""
+        ci, comments = PHASES[Phase.CI_VERIFY], PHASES[Phase.COMMENTS_VERIFY]
+        assert ci.max_budget == comments.max_budget
+        assert ci.scaling == comments.scaling
 
 
 class TestPhaseChunking:
@@ -167,6 +176,25 @@ class TestPhaseChunking:
         assert PHASES[Phase.CI_FIX].scaling.chunk_size == 10
 
 
+class TestVerifyPhases:
+    """Each gated domain has a gate phase of its own, and no gate is retried."""
+
+    def test_the_gates_are_the_three_verify_phases(self):
+        assert agent.registry._VERIFY_PHASES == {
+            Phase.FIX_VERIFY, Phase.COMMENTS_VERIFY, Phase.CI_VERIFY,
+        }
+
+    def test_every_gate_renders_the_gate_template(self):
+        gates = {
+            p for p, s in PHASES.items()
+            if s.template and s.template_for() == "verify-fixes.md"
+        }
+        assert gates == agent.registry._VERIFY_PHASES
+
+    def test_no_gate_is_a_retryable_fix_pass(self):
+        assert not agent.registry._VERIFY_PHASES & set(RETRYABLE_FIX_PHASES)
+
+
 class TestPhaseShapes:
     """A phase's shape is the backend entry point it is allowed to reach."""
 
@@ -174,7 +202,8 @@ class TestPhaseShapes:
         editing = {p for p, s in PHASES.items() if s.shape is PhaseShape.FIX}
         assert editing == {
             Phase.FIX, Phase.FIX_VERIFY, Phase.COMMENTS_FIX,
-            Phase.COMMENTS_VERIFY, Phase.CI_FIX, Phase.PREPUSH_FIX,
+            Phase.COMMENTS_VERIFY, Phase.CI_FIX, Phase.CI_VERIFY,
+            Phase.PREPUSH_FIX,
         }
 
     def test_only_the_stateless_phases_are_prompts(self):

@@ -16,6 +16,7 @@ import core.publishing
 import core.report
 import fix.ci
 import fix.engine
+import fix.verify
 from git.land import CommitStatus
 import pr.ci_report
 import pr.state
@@ -114,12 +115,18 @@ def _tally(adapter: fix.ci.CIFixAdapter,
     )
 
 
-def run_fix(trail, report: pr.ci_report.CIReport, ctx, *, rebase_first: bool = True) -> int:
+def run_fix(trail, report: pr.ci_report.CIReport, ctx, *,
+            rebase_first: bool = True, verify: bool = True) -> int:
     """Apply AI-driven fixes for CI failures. Returns exit code.
 
     *rebase_first* False skips `rebase_if_behind`: `pr batch` rebases in a
     step of its own, and a drafted rebase has not moved `origin/<branch>`, so
     the behind count would draft a second force-push.
+
+    *verify* runs the verify gate over every claimed fix, as the review and
+    comments passes do: a ticked box is a claim an edit was made, not that it
+    clears the failure, and the gate demotes the ones it finds broken. False
+    (`--no-verify`) skips it and every fix lands unverified.
     """
     if not ctx.worktree_root:
         core.log.error("--fix requires a worktree (use --repo-dir)")
@@ -167,7 +174,9 @@ def run_fix(trail, report: pr.ci_report.CIReport, ctx, *, rebase_first: bool = T
     trail.info("fix_start", f"{len(adapter.fixable)} fixable failure(s)")
     core.log.info(f"Fixing {len(adapter.fixable)} CI failure(s)...")
 
-    run = fix.engine.run(adapter, trail=trail)
+    run = fix.engine.run(
+        adapter, trail=trail, verify=fix.verify.run if verify else None,
+    )
     _emit_tally(_tally(adapter, run))
 
     fixed = sum(1 for o in run.outcomes if o.outcome.counts_as_fixed)

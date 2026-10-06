@@ -205,6 +205,19 @@ _SPECS: tuple[PhaseSpec, ...] = (
         # unchanged and still binds first on a pass that is failing expensively.
         retry=RetryBudget(ceiling=30, turns_min=30, bump=10),
     ),
+    # The CI fix pass's verify gate. The comments gate in everything but its
+    # domain: CI has no `--effort` either, so it pins its own dollar cap, and it
+    # is skippable the same way — `pr ci --no-verify` hands `fix.engine.run` no
+    # `verify=`, which is why this is not `optional`.
+    PhaseSpec(
+        Phase.CI_VERIFY, PhaseDomain.CI, "Verify gate",
+        template="verify-fixes.md",
+        thinking=Thinking.LOW, max_turns=15, max_budget=1.5,
+        shape=PhaseShape.FIX,
+        scales_with_omitted=False,
+        scaling=ItemScaling(turns_per_item=5, turns_cap=40,
+                            budget_per_item=0.4, budget_cap=3.0),
+    ),
     # The prompt-shaped phases below are one stateless call each: no agent
     # loop, so no turn budget, no dollar cap and no agent persona to pick.
     # What they have that a hardcoded call did not is a model and a thinking
@@ -269,7 +282,7 @@ REVIEW_PHASES: tuple[Phase, ...] = tuple(
 # `SCAN_PHASES` is: nothing on a `PhaseSpec` says "gate", and the field that
 # would say so is declared on the adapter, which this module sits beneath.
 _VERIFY_PHASES: frozenset[Phase] = frozenset(
-    {Phase.FIX_VERIFY, Phase.COMMENTS_VERIFY}
+    {Phase.FIX_VERIFY, Phase.COMMENTS_VERIFY, Phase.CI_VERIFY}
 )
 
 # The phases whose retry budget `agent.phases.phase_retry_turns` actually

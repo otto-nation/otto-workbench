@@ -59,6 +59,8 @@ The script outputs:
 
 **With `--fix`:** Always pass `--wait` to capture all failures before applying fixes: `pr ci --fix --wait 2>&1`
 
+**The verify gate.** `pr ci --fix` puts every claimed fix through the same verify gate the review and comments fix passes use, before the commit: a fix it finds broken is committed but recorded as needing a person rather than as fixed, and one it could not check stays fixed but unverified. `--no-verify` skips the gate, and every fix then lands unverified.
+
 **Early exit — check BEFORE proceeding to step 2.** If the command failed (non-zero exit) or all checks passed, report the result to the user and **stop — do not proceed further**. Without `--wait`, all-pass means no JSON report in the output. With `--wait`, the final JSON is always emitted — check for `"failures": []` in the `"type": "final"` report instead.
 
 **`failures: []` is not on its own a pass.** Check `unread` first: a non-empty list names the checks this run could not read — a rollup the API refused, a run whose payload did not come back, more checks than were listed. The failures reported are then what was *found*, not what there is, and `conclusion` is cleared rather than `success`. Report the unread reasons to the user and treat the result as unknown; do not tell them CI is green, and do not start fixing as though the list were complete. A re-run of `pr ci` is usually enough, since most causes are transient.

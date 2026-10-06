@@ -261,6 +261,58 @@ def hold_after_verify(
         )
 
 
+def settle_addressed(
+    round_: "TriagedRound", outcomes: list["ItemOutcome"],
+) -> "TriagedRound":
+    """The round with the verify gate's verdicts on its already-addressed entries.
+
+    An entry the gate falsified leaves `already_addressed` for `needs_human`:
+    the code does not do what the reviewer asked and nobody has changed it, so
+    it is a question for a person rather than a thread to resolve as moot. Its
+    reason is the generic needs-discussion token, because the summary renders
+    the Action cell from that vocabulary; what the gate actually found travels
+    in `verify_detail`, which the record persists beside it.
+
+    A survivor stays where it was and carries the gate's tri-state, so its reply
+    can hedge on a verdict nobody could establish and `--finish` — which renders
+    out of state — hedges it the same way.
+
+    A new round rather than an edit: `TriagedRound` is frozen, and the buckets it
+    holds are the only record of what triage decided. Moving an entry here is
+    what lets `by_outcome` write it to state as NEEDS_HUMAN, which is what stops
+    `--finish` republishing a verdict the gate took back.
+    """
+    by_id = {o.id: o for o in outcomes}
+
+    def side(result: ClassificationResult) -> ClassificationResult:
+        kept: list[CommentItem] = []
+        demoted: list[CommentItem] = []
+        for entry in result.already_addressed:
+            checked = by_id.get(entry.id)
+            if checked is None:
+                kept.append(entry)
+                continue
+            stamped = dataclass_replace(
+                entry, verified=checked.verified,
+                verify_detail=checked.verify_detail,
+            )
+            if checked.outcome is FixOutcome.NEEDS_HUMAN:
+                demoted.append(dataclass_replace(
+                    stamped,
+                    reason=pr.summary_model.HumanReason.NEEDS_DISCUSSION.value,
+                ))
+            else:
+                kept.append(stamped)
+        return dataclass_replace(
+            result, already_addressed=kept,
+            needs_human=[*result.needs_human, *demoted],
+        )
+
+    return dataclass_replace(
+        round_, threads=side(round_.threads), items=side(round_.items),
+    )
+
+
 @dataclass(frozen=True)
 class TriagedRound:
     """Every comment's disposition for one round, and what the round already said.

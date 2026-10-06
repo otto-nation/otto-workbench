@@ -37,6 +37,7 @@
     "config:agent.phases.*.thinking=low",
     "config:agent.phases.*.thinking=medium",
     "config:agent.phases=ci_fix",
+    "config:agent.phases=ci_verify",
     "config:agent.phases=comments_fix",
     "config:agent.phases=comments_triage",
     "config:agent.phases=comments_verify",

@@ -20,6 +20,7 @@ import fix.comment_checklist
 import fix.comments
 import fix.engine
 import fix.suite
+import fix.verify
 from pr.comments_state import ThreadState
 import git.client
 import git.land
@@ -415,7 +416,11 @@ class TestAnAlreadyAddressedDraftRoundOwesItsSummary:
                                   comments=[{"databaseId": 100}])],
         )
         ctx = _fake_ctx(tmp_path)
-        with patch.object(pr.thread_context, "diff_context_for_file", return_value=""), \
+        # The verify gate checks the verdict before its reply; it answers
+        # nothing here, which leaves the verdict standing unverified — the
+        # round under test is the one whose verdicts all survive.
+        with patch.object(fix.verify, "run", return_value={}), \
+             patch.object(pr.thread_context, "diff_context_for_file", return_value=""), \
              patch.object(fix.comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git.topology, "default_branch_cached", return_value="main"), \
              patch.object(pr.fix_state, "persist"), \

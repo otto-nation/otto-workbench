@@ -486,15 +486,15 @@ def post_already_addressed_replies(
             commit_url = pr.permalinks.commit_permalink(repo, sha, host)
             lead = "Fixed in" if framing.in_response else "Addressed in"
             parts.append(f"{lead} [`{git.client.abbrev(sha)}`]({commit_url}).")
-        # Only on the `acted` path: that half landed a change and is making the
-        # same claim `post_fix_replies` makes, so it owes the same hedge. A true
-        # already-addressed reply asserts the code was already right and the
-        # reviewer can read it at the link above — the gate never ran on it and
-        # has nothing to hedge.
-        if acted:
-            note = unverified_note(entry)
-            if note:
-                parts.append(note)
+        # Both paths owe the hedge now. The `acted` half landed a change and
+        # makes the claim `post_fix_replies` makes; a true already-addressed
+        # reply is checked by the verify gate before it is sent
+        # (`fix.comments.check_addressed`), and one the gate could not settle
+        # says so. An entry the gate never saw carries `verified is None`, for
+        # which the note is empty — the reply reads as it always did.
+        note = unverified_note(entry)
+        if note:
+            parts.append(note)
         if len(parts) == 1 and not framing.in_response:
             return (
                 f"{ADDRESSED_REPLY_PREFIX} in the current implementation: "

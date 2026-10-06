@@ -18,6 +18,7 @@ import cli.ci_check  # noqa: E402
 import core.publishing  # noqa: E402
 import core.run_lock  # noqa: E402
 import fix.engine  # noqa: E402
+import fix.verify  # noqa: E402
 import gh.run_reads  # noqa: E402
 import pr.ci_failures  # noqa: E402
 import pr.ci_report  # noqa: E402
@@ -97,6 +98,38 @@ def test_no_rebase_reaches_the_fix_phase():
                       side_effect=lambda t, r, c, **k: seen.update(k) or 0):
         assert cli.ci_check.main(["--fix", "--no-rebase"]) == 0
     assert seen["rebase_first"] is False
+
+
+def test_the_fix_phase_is_gated_unless_no_verify_is_given():
+    seen = []
+    with patch.object(pr.context, "resolve", return_value=make_ctx()), \
+         patch.object(core.run_lock, "claim_for_process"), \
+         patch.object(cli.ci_check.Trail, "start", return_value=MagicMock()), \
+         patch.object(pr.ci_check, "run_ci", return_value=_report({})), \
+         patch.object(rebase.ci_fix, "run_fix",
+                      side_effect=lambda t, r, c, **k: seen.append(k) or 0):
+        assert cli.ci_check.main(["--fix"]) == 0
+        assert cli.ci_check.main(["--fix", "--no-verify"]) == 0
+    assert [k["verify"] for k in seen] == [True, False]
+
+
+def _engine_verify(tmp_path, **kw):
+    """The `verify=` `run_fix` hands the engine for a run with one fixable failure."""
+    report = _report({"b": _group(pr.ci_failures.FailureKind.BUILD, "b-1")})
+    with patch.object(rebase.ci_fix, "rebase_if_behind", return_value=False), \
+         patch.object(fix.engine, "run", return_value=fix.engine.FixRun()) as run:
+        rebase.ci_fix.run_fix(MagicMock(), report,
+                              make_ctx(worktree_root=tmp_path, target_dir=tmp_path), **kw)
+    return run.call_args.kwargs.get("verify")
+
+
+def test_a_claimed_ci_fix_goes_to_the_verify_gate_by_default(tmp_path):
+    """The review and comments passes gate their claims; CI's are claims too."""
+    assert _engine_verify(tmp_path) is fix.verify.run
+
+
+def test_no_verify_hands_the_engine_no_gate(tmp_path):
+    assert _engine_verify(tmp_path, verify=False) is None
 
 
 def test_a_fix_without_rebase_never_rebases(tmp_path):

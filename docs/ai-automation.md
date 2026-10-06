@@ -421,6 +421,9 @@ Counts alone map to `Request changes` (any must-fix), `Needs discussion` (any
 should-fix), or `Approve`. Nits and idioms do not affect the verdict, and a review
 file that does not exist records no verdict rather than an approval.
 
+Review, comments and CI fixes, and `already_addressed` verdicts, are checked by
+one verify gate before they land or post: [`fix/gate.py`](ai-libraries.md#fixgatepy).
+
 ### Which files the rebase fix pass is allowed to touch
 
 When a rebase's force-push is rejected by a pre-push check, `pr rebase` runs a

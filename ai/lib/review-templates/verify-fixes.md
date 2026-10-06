@@ -12,6 +12,14 @@ decline closes a reviewer's finding on the pass's word alone and leaves no diff
 to read, so it is checked by reading rather than by running: does the reason
 hold against the tree? The item itself tells you what to look for.
 
+Others are **already-addressed verdicts** — triage judged that the code already
+does what the reviewer asked, with no change, and cited the line that does it.
+That reply tells the reviewer their point was moot and resolves their thread, so
+it is checked before it goes out. The citation is known to resolve; do not
+re-check that it exists. Read the cited code against the reviewer's ask, run it
+where something can be run, and judge whether it actually does what they asked.
+Behaviour that is absent, partial, or on a neighbouring path is **broken**.
+
 ## Fixes to verify
 
 ${tracking_content}

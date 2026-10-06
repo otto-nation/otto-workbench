@@ -298,16 +298,19 @@ def write(
 # `broken` is deliberately the narrow one: it means something was run and it
 # failed, and it is the only verdict that costs the operator a fix. The prompt
 # in verify-fixes.md says to default to `not verified` when uncertain.
-# The gate answers for two kinds of claim — a fix that was applied, and a
-# decline that rejected the {noun} instead — so each contract has to read
-# correctly for both. "the claim" covers them where "the fix" would leave an
-# agent checking a decline with no box that describes what it found.
+# The gate answers for three kinds of claim — a fix that was applied, a
+# decline that rejected the {noun} instead, and a triage verdict that the code
+# already does what was asked — so each contract has to read correctly for all
+# of them. "the claim" covers them where "the fix" would leave an agent checking
+# a decline or an already-addressed verdict with no box that describes what it
+# found.
 VERIFY_BOXES: tuple[_Box, ...] = (
     _Box("verified", FixOutcome.FIXED,
          "the claim holds. For a fix, you ran something against the changed "
          "path and it did what the reviewer asked; for a decline, you checked "
-         "the reason against the tree and it is true. Replace `<why>` with what "
-         "you ran or read"),
+         "the reason against the tree and it is true; for an already-addressed "
+         "verdict, the code at the cited line does what the reviewer asked. "
+         "Replace `<why>` with what you ran or read"),
     _Box("not verified", FixOutcome.DEFERRED,
          "you could not establish it either way — nothing runnable covers this "
          "path, or the only test that does is vacuous. Replace `<why>` with "
@@ -316,7 +319,9 @@ VERIFY_BOXES: tuple[_Box, ...] = (
          "the claim does not hold. For a fix, you ran something and it did not "
          "work; for a decline, the reason is false against the tree — it "
          "describes the pass's own uncommitted edits, or cites a commit that "
-         "does not contain what it claims. Replace `<why>` with what you found"),
+         "does not contain what it claims; for an already-addressed verdict, "
+         "the behaviour the reviewer asked for is absent or wrong at the cited "
+         "line. Replace `<why>` with what you found"),
 )
 
 _VERIFY_BOX_RE = box_pattern(VERIFY_BOXES)

@@ -98,14 +98,9 @@ class TestPostAlreadyAddressedReplies:
         assert pr.thread_replies.UNVERIFIED_REPLY_NOTE in body
         assert "no runnable check" in body
 
-    def test_a_satisfied_reply_carries_no_hedge(self, tmp_path):
-        """Not acted: the code was already right and no gate ran on it.
-
-        Hedging here would caveat a claim the reviewer can check at the link in
-        the same reply, and would put the note on rows that never earned one.
-        """
+    def _satisfied_body(self, tmp_path, **entry_kw):
         fixed = [CommentItem(id="t1", summary="use helper", file="src/app.py",
-                             verified=False, verify_detail="no runnable check")]
+                             **entry_kw)]
         threads_by_id = {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])}
         with (
             patch("pr.comments.post_thread_reply", return_value=True) as mock_reply,
@@ -114,8 +109,25 @@ class TestPostAlreadyAddressedReplies:
             pr.thread_replies.post_already_addressed_replies(
                 fixed, threads_by_id, "owner/repo", 42, tmp_path,
             )
-        body = mock_reply.call_args[0][3]
+        return mock_reply.call_args[0][3]
+
+    def test_a_satisfied_reply_the_gate_never_saw_carries_no_hedge(self, tmp_path):
+        """Not acted, and no gate ran (`--no-verify`): the reply reads as it always did.
+
+        Hedging here would caveat a claim the reviewer can check at the link in
+        the same reply, and would put the note on rows that never earned one.
+        """
+        body = self._satisfied_body(tmp_path)
         assert pr.thread_replies.UNVERIFIED_REPLY_NOTE not in body
+
+    def test_a_satisfied_reply_the_gate_could_not_settle_is_hedged(self, tmp_path):
+        """Not acted, but checked: the verify gate now sees every such verdict
+        before its reply goes out, and one it could not settle says so.
+        """
+        body = self._satisfied_body(
+            tmp_path, verified=False, verify_detail="no runnable check")
+        assert pr.thread_replies.UNVERIFIED_REPLY_NOTE in body
+        assert "no runnable check" in body
 
 
 # ── the host reaches the reply bodies ────────────────────────────────────

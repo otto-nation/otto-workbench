@@ -213,7 +213,9 @@ If they differ, say so and push the branch; do not report the work as shipped.
 - **Gated.** Every claimed fix goes to a verify gate before the commit: it runs
   the reviewer's repro, exercises the changed path, or checks the test the fix
   pass named, and a fix it falsifies is committed but recorded as needing a
-  person rather than as fixed. There is no flag to switch this off.
+  person rather than as fixed. There is no flag to switch this off. The CI
+  (`pr ci --fix`) and comments (`pr comments --fix`) fix passes run the same
+  gate, and each of those does offer `--no-verify`.
 - **Idempotent.** Running twice on the same review skips already-fixed findings.
 - **Review preserved.** The review file is kept in `~/.local/state/workbench/reviews/`
   for retro analysis — it is not deleted after fixing.

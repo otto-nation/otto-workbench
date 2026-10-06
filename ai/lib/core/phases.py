@@ -86,6 +86,7 @@ class Phase(StrEnum):
     COMMENTS_VERIFY = "comments_verify"
     COMMENTS_TRIAGE = "comments_triage"
     CI_FIX = "ci_fix"
+    CI_VERIFY = "ci_verify"
     REBASE = "rebase"
     PREPUSH_FIX = "prepush_fix"
     DESCRIBE = "describe"

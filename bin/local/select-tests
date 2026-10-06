@@ -31,8 +31,11 @@ TESTS_DIR="$WORKBENCH_DIR/tests"
 
 # Tests that always run because they depend on directory listings rather than
 # specific files. A file addition breaks these without co-editing any .bats file.
+# That includes every suite handing the repo root to a collect_* scanner: it
+# asserts over registry and env files it never names. --validate enforces it.
 ALWAYS_RUN_TESTS=(
   bin_scripts
+  claude_env_vars
   claude_settings_hooks
   claude_settings_sync
   claude_settings_template
@@ -47,6 +50,7 @@ ALWAYS_RUN_TESTS=(
   migrations_run
   migrations_scope
   migrations_targets
+  model_env_vars
   pi_extensions_bootstrap
   pi_extensions_install
   pi_extensions_issues
@@ -54,6 +58,7 @@ ALWAYS_RUN_TESTS=(
   pi_extensions_review_guard
   pi_extensions_testpipe
   pi_extensions_tokenize
+  registry_permissions
   run_tests
   skills_install
   validate_all
@@ -380,20 +385,44 @@ _all_test_files() {
   find "$TESTS_DIR" -maxdepth 1 -name '*.bats' -print | LC_ALL=C sort
 }
 
-# _validate_test_refs — fail if any test has no refs and is not in an always-run list.
+# _scans_real_tree TEST_FILE — returns 0 if the test hands the repo root itself
+# to a collect_* scanner on an uncommented line.
+#
+# Such a suite asserts over every registry or env file the scan globs, none of
+# which it names as a path literal, so a change to one selects nothing. Only
+# the root spellings count: a collector given a fixture directory reads files
+# the suite wrote itself, which a path-literal map has no need to see.
+_scans_real_tree() {
+  grep -qE '^[^#]*\bcollect_[a-z_]+[[:space:]][^#]*"\$\{?(REPO_ROOT|repo_root|WORKBENCH_DIR)\}?"' "$1" 2>/dev/null
+}
+
+# _validate_test_refs — fail if any test has no refs and is not in an always-run
+# list, or scans the real tree (_scans_real_tree) without being in ALWAYS_RUN_TESTS.
 _validate_test_refs() {
-  local unmapped=0
+  local unmapped=0 unguarded=0
   while IFS= read -r test_file; do
     local test_name
     test_name="$(basename "$test_file" .bats)"
-    _is_in_array "$test_name" "${ALWAYS_RUN_TESTS[@]}" "${NO_REFS_TESTS[@]}" && continue
+    _is_in_array "$test_name" "${ALWAYS_RUN_TESTS[@]}" && continue
+    if _scans_real_tree "$test_file"; then
+      err "Real-tree scan not always run: $test_name (a collect_* call is given the repo root)"
+      unguarded=$((unguarded + 1))
+      continue
+    fi
+    _is_in_array "$test_name" "${NO_REFS_TESTS[@]}" && continue
     _has_source_refs "$test_file" && continue
     err "Unmapped test: $test_name (no source refs found, not in always-run list)"
     unmapped=$((unmapped + 1))
   done < <(_all_test_files)
+  if [[ $unguarded -gt 0 ]]; then
+    err "$unguarded test(s) scan the real tree but are not always run"
+    err "Add them to ALWAYS_RUN_TESTS in bin/local/select-tests"
+  fi
   if [[ $unmapped -gt 0 ]]; then
     err "$unmapped test(s) have no source refs and are not in the always-run list"
     err "Add them to ALWAYS_RUN_TESTS or NO_REFS_TESTS in bin/local/select-tests"
+  fi
+  if [[ $unguarded -gt 0 || $unmapped -gt 0 ]]; then
     return 1
   fi
   return 0

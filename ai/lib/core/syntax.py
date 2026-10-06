@@ -79,8 +79,9 @@ def _python(text: str) -> SyntaxResult:
         ast.parse(text)
     except SyntaxError as exc:
         return SyntaxResult(False, f"{exc.msg} (line {exc.lineno})")
-    except (RecursionError, MemoryError):
-        # Pathologically nested input exhausts the parser, not the file.
+    except (RecursionError, MemoryError, ValueError):
+        # Pathologically nested input exhausts the parser, not the file; and
+        # before 3.12 a NUL byte raised ValueError rather than SyntaxError.
         return SyntaxResult(True)
     return SyntaxResult(True)
 

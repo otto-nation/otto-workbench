@@ -102,7 +102,7 @@ class TestPathologicalNesting:
     def test_toml_nested_past_the_recursion_limit_passes(self):
         assert core.syntax.check("a.toml", "a = " + "[" * 200_000).ok
 
-    @pytest.mark.parametrize("exc", [RecursionError, MemoryError])
+    @pytest.mark.parametrize("exc", [RecursionError, MemoryError, ValueError])
     def test_python_that_exhausts_the_parser_passes(self, exc):
         with mock.patch("ast.parse", side_effect=exc):
             assert core.syntax.check("mod.py", "x = 1\n").ok

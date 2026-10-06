@@ -258,3 +258,70 @@ _scratch_repo() {
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }
+
+# ── validate: suites that scan the real tree ─────────────────────────────────
+#
+# A suite that hands the repo root to a collect_* scanner asserts over every
+# registry or env file the scan finds, none of which it names as a path
+# literal — so a change to one of them selects nothing unless the suite is
+# always run. --validate refuses that shape outside ALWAYS_RUN_TESTS.
+
+# _fake_suite NAME BODY — a one-file tests dir holding NAME.bats, with a path
+# literal so the zero-refs check is not what answers.
+#
+# The collector calls below are assembled from $_COLLECT rather than written out:
+# a literal call given a root spelling on one line of this file is exactly what
+# --validate looks for, and would flag this suite as a real-tree scan.
+_COLLECT=collect_registry_permissions
+_fake_suite() {
+  TESTS_DIR="$BATS_TEST_TMPDIR/tests"
+  mkdir -p "$TESTS_DIR"
+  printf 'source "$REPO_ROOT/lib/registries.sh"\n%s\n' "$2" > "$TESTS_DIR/$1.bats"
+}
+
+@test "validate: a suite scanning the real tree must be always run" {
+  _fake_suite real_scan "  $_COLLECT perms \"\$repo_root\""
+  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
+  ALWAYS_RUN_TESTS=()
+  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
+  NO_REFS_TESTS=()
+  run _validate_test_refs
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"real_scan"* ]]
+  [[ "$output" == *"ALWAYS_RUN_TESTS"* ]]
+}
+
+@test "validate: the same suite passes once it is always run" {
+  _fake_suite real_scan "  $_COLLECT perms \"\$REPO_ROOT\""
+  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
+  ALWAYS_RUN_TESTS=(real_scan)
+  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
+  NO_REFS_TESTS=()
+  run _validate_test_refs
+  [ "$status" -eq 0 ]
+}
+
+@test "validate: a collector fed a fixture directory is not a real-tree scan" {
+  _fake_suite fixture_scan "  $_COLLECT perms \"\$TMPDIR\""
+  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
+  ALWAYS_RUN_TESTS=()
+  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
+  NO_REFS_TESTS=()
+  run _validate_test_refs
+  [ "$status" -eq 0 ]
+}
+
+@test "validate: a commented-out real-tree scan is not counted" {
+  _fake_suite commented "  # $_COLLECT perms \"\$REPO_ROOT\""
+  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
+  ALWAYS_RUN_TESTS=()
+  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
+  NO_REFS_TESTS=()
+  run _validate_test_refs
+  [ "$status" -eq 0 ]
+}
+
+@test "validate: the real tests dir passes as a whole (zero-refs and real-tree checks)" {
+  run _validate_test_refs
+  [ "$status" -eq 0 ]
+}

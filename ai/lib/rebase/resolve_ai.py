@@ -191,6 +191,9 @@ _HINT_FOR_FAILURE = {
 }
 
 
+_NO_PARSER_MESSAGE = "(the parser gave no message)"
+
+
 def hint_for_reason(reason: str) -> str:
     """The retry correction that names *reason*, or the generic marker wording.
 
@@ -211,8 +214,10 @@ def hint_for_reason(reason: str) -> str:
     hint = _HINT_FOR_FAILURE[failure]
     # A parse failure carries the checker's message after the separator, and
     # the retry is only useful if the model is told what the checker said.
-    if failure is ParseFailure.DOES_NOT_PARSE and sep and rest:
-        return f"{hint}{rest}\n"
+    # A checker that failed with no message still leaves the hint's last line
+    # open ("The parser said:"), so say that it said nothing.
+    if failure is ParseFailure.DOES_NOT_PARSE and sep:
+        return f"{hint}{rest or _NO_PARSER_MESSAGE}\n"
     return hint
 
 
@@ -390,6 +395,13 @@ def resolve_chunked(
 
     sides = cache(lambda: conflicts.stage_texts(filepath, cwd))
 
+    # The checker is an external process, and one spliced file is judged by
+    # `usable`, by `retry_hint`, and once more after the prompt returns, so each
+    # distinct file is checked once and the verdict shared.
+    @cache
+    def syntax_failure(spliced: str) -> str:
+        return _syntax_failure(filepath, spliced, sides)
+
     def chunked_failure(text: str) -> str:
         parsed = conflicts.parse_chunked_resolutions(text, blocks)
         if not parsed.ok:
@@ -397,7 +409,7 @@ def resolve_chunked(
         spliced = conflicts.splice_resolutions(
             content, blocks, parsed.resolutions,
         )
-        return _syntax_failure(filepath, spliced, sides)
+        return syntax_failure(spliced)
 
     answer = agent.invoke.run_prompt(
         Phase.REBASE, prompt, cwd=cwd,
@@ -446,7 +458,7 @@ def resolve_chunked(
     resolved_content = conflicts.splice_resolutions(
         content, blocks, parsed.resolutions,
     )
-    syntax_reason = _syntax_failure(filepath, resolved_content, sides)
+    syntax_reason = syntax_failure(resolved_content)
     if syntax_reason:
         tfail(
             trail, "resolve_conflicts",

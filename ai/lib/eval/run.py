@@ -199,9 +199,10 @@ def _dry_run(entries: list[dict], runs_per_entry: int) -> tuple[dict, int]:
 
 def _explicit_models(args: argparse.Namespace) -> list[str] | None:
     """`--models` as typed, or None to resolve each entry through its phase."""
-    if not args.models:
-        return None
-    return [m.strip() for m in args.models.split(",")]
+    # Empty tokens (`--models ","`, `--models ", opus"`) name no model, so an
+    # all-empty list is the same as an omitted flag.
+    models = [m.strip() for m in (args.models or "").split(",")]
+    return [m for m in models if m] or None
 
 
 def _resolve_entry_model(entry: dict) -> str:

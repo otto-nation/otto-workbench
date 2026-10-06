@@ -266,7 +266,6 @@ class TestCiFixTaskRun:
             case_dir, RunOptions(timeout=VERIFY_TIMEOUT))
 
         assert seen["model"] == "env-ci-fix-model"
-        assert seen["model"]
         _rm(artifacts)
 
     def test_cleans_up_nothing_itself_but_reports_its_temp_dirs(self, tmp_path, monkeypatch):

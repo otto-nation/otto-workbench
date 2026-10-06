@@ -26,22 +26,7 @@ import eval.scoring
 from eval.scoring import ScoringResult
 import agent.backend
 import eval.conditions
-
-
-def _make_case(root: Path, name: str, task: str = "review") -> Path:
-    """A corpus case is a directory with manifest.json and src/.
-
-    The briefs call this helper; it does not exist elsewhere in tests/, so it
-    is part of this deliverable. Shape matches eval/corpus/<name>/.
-    """
-    case = root / name
-    src = case / "src"
-    src.mkdir(parents=True)
-    (src / "file.py").write_text("x = 1\n")
-    (case / "manifest.json").write_text(
-        json.dumps({"name": name, "task": task}) + "\n",
-    )
-    return case
+from eval_task_support import _args, _make_case
 
 
 class TestTaskRegistry:
@@ -561,29 +546,6 @@ def _recording_task(calls):
         return Rec()
 
     return _get_task
-
-
-def _args(tmp_path, **overrides):
-    """Namespace for run_eval. The briefs call _args(); it did not exist."""
-    ns = dict(
-        corpus=str(tmp_path / "corpus"),
-        entry="",
-        task="",
-        models="",
-        effort="low",
-        timeout=42,
-        verbose=False,
-        keep_temp=False,
-        dry_run=False,
-        runs=1,
-        conditions="full",
-        output="",
-        save_baselines=False,
-        compare=False,
-        results_dir=str(tmp_path / "results"),
-    )
-    ns.update(overrides)
-    return argparse.Namespace(**ns)
 
 
 def _fake_claude(path: Path) -> Path:

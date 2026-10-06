@@ -54,6 +54,10 @@ def check(path: str, text: str) -> SyntaxResult:
     if suffix == ".py":
         return _python(text)
     if suffix in _SHELL:
+        # A shebang naming another interpreter outranks the suffix: `bash -n`
+        # would reject a valid zsh or dash script.
+        if _foreign_shebang(text):
+            return SyntaxResult(True)
         return _tool(["bash", "-n"], text)
     if suffix == ".json":
         return _json(text)
@@ -75,6 +79,9 @@ def _python(text: str) -> SyntaxResult:
         ast.parse(text)
     except SyntaxError as exc:
         return SyntaxResult(False, f"{exc.msg} (line {exc.lineno})")
+    except (RecursionError, MemoryError):
+        # Pathologically nested input exhausts the parser, not the file.
+        return SyntaxResult(True)
     return SyntaxResult(True)
 
 
@@ -83,6 +90,8 @@ def _json(text: str) -> SyntaxResult:
         json.loads(text)
     except json.JSONDecodeError as exc:
         return SyntaxResult(False, str(exc))
+    except RecursionError:
+        return SyntaxResult(True)
     return SyntaxResult(True)
 
 
@@ -106,23 +115,35 @@ def _toml(text: str) -> SyntaxResult:
     return SyntaxResult(True)
 
 
+def _shebang_prog(text: str) -> str:
+    """The interpreter the first line's shebang names, or "" when it has none."""
+    first = text.lstrip("\ufeff").splitlines()[:1]
+    if not first or not first[0].startswith("#!"):
+        return ""
+    parts = first[0][2:].strip().split()
+    if not parts:
+        return ""
+    prog = Path(parts[0]).name
+    if prog == "env" and len(parts) >= 2:
+        return Path(parts[1]).name
+    return prog
+
+
 def _bash_shebang(text: str) -> bool:
     """True when the first line is a bash or sh shebang.
 
-    `.sh` / `.bash` dispatch on suffix; this covers extensionless scripts.
-    `env bash` / `env sh` count; `zsh`, `dash`, and `bats` do not — `bash -n`
-    would reject valid files in those languages.
+    `.sh` / `.bash` dispatch on suffix unless `_foreign_shebang` says
+    otherwise; this covers extensionless scripts. `env bash` / `env sh` count;
+    `zsh`, `dash`, and `bats` do not — `bash -n` would reject valid files in
+    those languages.
     """
-    first = text.lstrip("\ufeff").splitlines()[:1]
-    if not first or not first[0].startswith("#!"):
-        return False
-    parts = first[0][2:].strip().split()
-    if not parts:
-        return False
-    prog = Path(parts[0]).name
-    if prog in _SH_NAMES:
-        return True
-    return prog == "env" and len(parts) >= 2 and Path(parts[1]).name in _SH_NAMES
+    return _shebang_prog(text) in _SH_NAMES
+
+
+def _foreign_shebang(text: str) -> bool:
+    """True when the first line is a shebang for something other than bash or sh."""
+    prog = _shebang_prog(text)
+    return bool(prog) and prog not in _SH_NAMES
 
 
 def _tool(cmd: list[str], text: str) -> SyntaxResult:

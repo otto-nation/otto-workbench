@@ -297,9 +297,13 @@ def settle_addressed(
                 verify_detail=checked.verify_detail,
             )
             if checked.outcome is FixOutcome.NEEDS_HUMAN:
+                # A bare `broken` leaves `verify_detail` empty and the gate's
+                # fallback sentence only in `reason`, which is about to become
+                # the generic token; keep the sentence so the row says why.
                 demoted.append(dataclass_replace(
                     stamped,
                     reason=pr.summary_model.HumanReason.NEEDS_DISCUSSION.value,
+                    verify_detail=checked.verify_detail or checked.reason,
                 ))
             else:
                 kept.append(stamped)

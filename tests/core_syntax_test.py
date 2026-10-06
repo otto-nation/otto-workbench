@@ -85,6 +85,16 @@ class TestYaml:
             assert core.syntax.check("a.yml", ":\n  [").ok
 
 
+class TestPathologicalNesting:
+    def test_json_nested_past_the_recursion_limit_passes(self):
+        assert core.syntax.check("a.json", "[" * 200_000).ok
+
+    @pytest.mark.parametrize("exc", [RecursionError, MemoryError])
+    def test_python_that_exhausts_the_parser_passes(self, exc):
+        with mock.patch("ast.parse", side_effect=exc):
+            assert core.syntax.check("mod.py", "x = 1\n").ok
+
+
 class TestToml:
     def test_valid_passes(self):
         assert core.syntax.check("a.toml", "foo = 1\n").ok
@@ -107,6 +117,14 @@ class TestShell:
     def test_shebang_without_suffix_is_checked(self):
         result = core.syntax.check("bin/setup", "#!/usr/bin/env bash\nif true; then\n")
         assert not result.ok
+
+    @pytest.mark.parametrize("shebang", ["#!/bin/zsh", "#!/usr/bin/env dash"])
+    def test_a_sh_suffix_with_another_interpreter_shebang_passes(self, shebang):
+        # Not bash, so `bash -n` rejecting it says nothing about the file.
+        assert core.syntax.check("a.sh", f"{shebang}\nif true; then\n").ok
+
+    def test_a_sh_suffix_with_a_bash_shebang_is_still_checked(self):
+        assert not core.syntax.check("a.sh", "#!/bin/bash\nif true; then\n").ok
 
     def test_bats_without_a_bash_shebang_passes(self):
         # `@test` is not bash; checking it would false-fail every bats file.

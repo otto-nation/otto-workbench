@@ -34,6 +34,11 @@ def assert_pending_signal_reaches_child(
     window where a ``python -c pass`` child becomes a zombie on macOS and the
     replay's getpgid raises. The blocking child cannot exit in that window;
     killpg is recorded *and* delivered so wait() returns.
+
+    Cost: this patches ``os.killpg`` process-wide for the call and sleeps
+    *delay* (0.5s by default) on every call, which is wall time added to the
+    suite. It has one caller, so that is cheap; a second caller should pass a
+    shorter *delay* or share the call.
     """
     real_popen = subprocess.Popen
     real_killpg = os.killpg

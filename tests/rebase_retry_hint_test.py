@@ -337,3 +337,49 @@ class TestAWholeFileAnswerMustKeepTheCleanChanges:
             self._resolve(tmp_path, self._answer(self._STAGES.target), retried)
 
         assert audit.call_count == 1
+
+
+class TestAChunkedAnswerIsSyntaxCheckedOnce:
+    """The checker is a subprocess; `usable`, `retry_hint` and the write share it."""
+
+    def test_the_same_answer_runs_the_checker_once(self, tmp_path):
+        content = "def f(a, b):\n" + _CONFLICT + "x = 1\n"
+        path = tmp_path / "mod.py"
+        path.write_text(content)
+        blocks = rebase.conflicts.extract_conflict_blocks(content)
+        answer = (
+            f"{rebase.conflicts.RESOLVE_BEGIN}_1\n    return (\n"
+            f"{rebase.conflicts.RESOLVE_END}_1\n"
+        )
+        sides = rebase.conflicts.StageTexts(
+            base="x = 1\n", target="x = 1\n", replayed="x = 2\n",
+        )
+
+        def fake_run_prompt(*args, usable, retry_hint, **kwargs):
+            if not usable(answer):
+                retry_hint(answer)
+            return mock.Mock(exit_code=0, text=answer)
+
+        with mock.patch.object(rebase.conflicts, "stage_texts", return_value=sides), \
+             mock.patch.object(rebase.conflicts, "get_commit_diff", return_value=""), \
+             mock.patch.object(agent.invoke, "run_prompt", side_effect=fake_run_prompt), \
+             mock.patch.object(
+                 rebase.resolve_ai.core.syntax, "check",
+                 wraps=rebase.resolve_ai.core.syntax.check,
+             ) as check:
+            result = rebase.resolve_ai.resolve_chunked(
+                "mod.py", path, content, blocks, "abc123", "feat: x",
+                str(tmp_path), target_ref="origin/main",
+            )
+
+        assert result is None
+        # One check of the spliced answer, one each for the two sides.
+        assert check.call_count == 3
+
+
+def test_a_parser_with_no_message_does_not_leave_the_hint_dangling():
+    hint = rebase.resolve_ai.hint_for_reason("does_not_parse:")
+
+    assert hint.startswith(agent.retry.DOES_NOT_PARSE_HINT)
+    assert not hint.endswith("The parser said:\n")
+    assert hint.rstrip().endswith(rebase.resolve_ai._NO_PARSER_MESSAGE)

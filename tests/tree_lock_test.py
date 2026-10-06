@@ -1,6 +1,7 @@
 """Tests for the tree validation lock."""
 
 import os
+import signal
 import subprocess
 import sys
 import textwrap
@@ -239,6 +240,20 @@ def test_the_cli_runs_the_child_through_the_shared_runner(monkeypatch):
     argv, kwargs = seen[0]
     assert argv == ["echo", "ok"]
     assert kwargs.get("origin") == "tree_lock_cli"
+
+
+def test_the_cli_reports_a_signalled_child_as_128_plus_the_signal(worktree):
+    """End to end, so the wrapper's own exit-code mapping is covered.
+
+    The mock-level test above only sees the call into the relay; this is the
+    process a caller of `with-tree-lock` actually gets an exit status from.
+    """
+    result = subprocess.run(
+        [sys.executable, str(LIB_DIR / "core" / "tree_lock_cli.py"),
+         "--tree", str(worktree), "--", "sh", "-c", "kill -TERM $$"],
+        capture_output=True, timeout=60,
+    )
+    assert result.returncode == 128 + signal.SIGTERM
 
 
 def test_inherited_git_dir_does_not_hijack_resolution(tmp_path, monkeypatch):

@@ -232,6 +232,16 @@ class TestRunPassChecksBeforeItReplies:
         assert by_id["t2"].outcome is FixOutcome.ALREADY_ADDRESSED
         assert by_id["t2"].verified is True
 
+    def test_a_bare_broken_keeps_the_fallback_sentence_on_the_demoted_row(self, tmp_path):
+        run = _Run(tmp_path, {
+            "t1": fix.gate.Verdict(ok=False),
+            "t2": fix.gate.Verdict(ok=True, detail="ok"),
+        })
+        by_id = {o.id: o for o in run.persisted.fix.items}
+        assert by_id["t1"].outcome is FixOutcome.NEEDS_HUMAN
+        assert by_id["t1"].verify_detail == fix.gate._FALSIFIED_REASON[
+            FixOutcome.ALREADY_ADDRESSED]
+
     def test_an_upheld_round_replies_and_resolves(self, tmp_path, publishing_on):
         """Pairs with the falsified cases: the gate passing changes nothing."""
         run = _Run(tmp_path, {k: fix.gate.Verdict(ok=True, detail="ok")

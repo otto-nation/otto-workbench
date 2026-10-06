@@ -299,7 +299,6 @@ def get_task(name: str) -> EvalTask:
     return _TASK_FACTORIES[name]()
 
 
-
 def resolved_model(task: EvalTask, explicit: str) -> str:
     """The model *task* runs: *explicit* when given, else its production phase's.
 

@@ -27,7 +27,6 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-import eval.task
 import agent.usage
 from core.phases import Phase
 from eval.scoring import RunOutcome, ScoringResult
@@ -189,7 +188,12 @@ def _run_orchestrate(repo_dir: str, review_file: str, opts: RunOptions) -> int:
         "--review-file", review_file,
         "--repo", "eval/corpus",
     ]
-    cmd += ["--model", eval.task.resolved_model(ReviewTask, opts.model)]
+    # Only a model the user named. `--model` overrides every agent, so passing
+    # the SINGLE phase model unasked would force the scout, group, synthesis
+    # and disprove phases of a medium or high eval onto it; omitted, each phase
+    # resolves its own, as production does.
+    if opts.model:
+        cmd += ["--model", opts.model]
     try:
         result = subprocess.run(
             cmd,
@@ -216,8 +220,9 @@ class ReviewTask:
     """Review a corpus case and score the findings it produced."""
 
     name = "review"
-    # SINGLE: the eval reviews with `--mode self --effort low`, which drops the
-    # scans, synthesis and disprove and runs the single-agent review.
+    # SINGLE: the label for an omitted `--models`. At the default `--effort low`
+    # the eval runs the single-agent review, which drops the scans, synthesis and
+    # disprove; a higher effort runs those phases on their own models.
     phase = Phase.SINGLE
 
     def run(self, case_dir: Path, opts: RunOptions) -> RunArtifacts:

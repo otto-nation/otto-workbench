@@ -2,6 +2,8 @@
 
 ## Setup
 
+Requires go-task (`brew install go-task/tap/go-task`, or `otto-workbench install brew`).
+
 ```bash
 git clone https://github.com/otto-nation/otto-workbench ~/otto-workbench
 cd ~/otto-workbench

@@ -281,7 +281,9 @@ _fake_suite() {
 
 @test "validate: a suite scanning the real tree must be always run" {
   _fake_suite real_scan "  $_COLLECT perms \"\$repo_root\""
+  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
   ALWAYS_RUN_TESTS=()
+  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
   NO_REFS_TESTS=()
   run _validate_test_refs
   [ "$status" -eq 1 ]
@@ -291,7 +293,9 @@ _fake_suite() {
 
 @test "validate: the same suite passes once it is always run" {
   _fake_suite real_scan "  $_COLLECT perms \"\$REPO_ROOT\""
+  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
   ALWAYS_RUN_TESTS=(real_scan)
+  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
   NO_REFS_TESTS=()
   run _validate_test_refs
   [ "$status" -eq 0 ]
@@ -299,7 +303,9 @@ _fake_suite() {
 
 @test "validate: a collector fed a fixture directory is not a real-tree scan" {
   _fake_suite fixture_scan "  $_COLLECT perms \"\$TMPDIR\""
+  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
   ALWAYS_RUN_TESTS=()
+  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
   NO_REFS_TESTS=()
   run _validate_test_refs
   [ "$status" -eq 0 ]
@@ -307,7 +313,9 @@ _fake_suite() {
 
 @test "validate: a commented-out real-tree scan is not counted" {
   _fake_suite commented "  # $_COLLECT perms \"\$REPO_ROOT\""
+  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
   ALWAYS_RUN_TESTS=()
+  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
   NO_REFS_TESTS=()
   run _validate_test_refs
   [ "$status" -eq 0 ]

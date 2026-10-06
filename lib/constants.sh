@@ -235,6 +235,12 @@ PI_EXTENSIONS_DIR="$PI_AGENT_DIR/extensions"
 # and handles the npm one natively.
 PI_INSTALL_URL="https://pi.dev/install.sh"
 
+# Herdr's own installer writes a single binary to $HOME/.local/bin/herdr and
+# leaves `herdr update` enabled; a Homebrew install disables self-update and
+# sync_brew never upgrades, so the vendor installer is the path that keeps
+# herdr current on sync.
+HERDR_INSTALL_URL="https://herdr.dev/install.sh"
+
 # ─── Workbench source — root ──────────────────────────────────────────────────
 BIN_SRC_DIR="$WORKBENCH_DIR/bin"
 BIN_REGISTRY_FILE="$WORKBENCH_DIR/bin/registry.yml"

@@ -34,7 +34,7 @@ Options:
 
 Examples:
   task test                Run a task from ./Taskfile.yml in the current directory
-  task --global brew:dump  Run a global task from ~/.config/task/Taskfile.yml
+  task --global --list     List tasks from ~/.config/task/Taskfile.yml
 EOF
 }
 

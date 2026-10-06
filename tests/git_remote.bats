@@ -180,12 +180,9 @@ teardown() {
 }
 
 @test "sources under a POSIX shell without emitting a bashism" {
-  # The global pre-push hook sources this file under /bin/sh — dash on CI. A
-  # `[[` here does not abort the source, it writes "[[: not found" to stderr
-  # and carries on, so the caller's next `$(...)` capture silently gains a
-  # line of shell diagnostics.
-  #
-  # dash, not sh: macOS /bin/sh is bash, which would run the bashism happily.
+  # No current caller is /bin/sh — the hooks that source this are bash. The
+  # file still stays POSIX so a dash source does not emit "[[: not found" into
+  # a capture. dash, not sh: macOS /bin/sh is bash.
   _make_repo_no_default_branch "$TMPDIR" "master"
 
   run dash -c \

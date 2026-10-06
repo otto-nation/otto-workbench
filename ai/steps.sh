@@ -75,8 +75,9 @@ ai_generate_rules() {
 # `pr create` and `pr describe --post` resolve their token from
 # (ai/lib/pr/gh_token.py). Creates FILE, owner-only, when absent; appends the
 # GH_TOKEN section to an existing FILE that mentions GH_TOKEN nowhere; leaves
-# any other FILE byte-identical. Never rewrites a line already present, so it
-# is safe to re-run.
+# any other FILE's contents byte-identical. An existing FILE is chmod 600
+# (permissions only — contents are not rewritten). Never rewrites a line
+# already present, so it is safe to re-run.
 #
 # An existing file's leftover retired-command and billing-key lines are inert
 # and deliberately kept: the file is the operator's, and nothing reads them.
@@ -97,6 +98,7 @@ ai_scaffold_gh_token_env() {
     success "Created ${file}"
     return 0
   fi
+  chmod 600 "$file"
   if grep -q 'GH_TOKEN' "$file"; then
     return 0
   fi

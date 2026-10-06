@@ -41,7 +41,7 @@ Prompts for confirmation at each step. Safe to re-run. This installs Claude Code
 The global Taskfile holds Homebrew helpers. Use `--global` to run them from `~/.config/task/` rather than a local project Taskfile.
 
 ```bash
-task --global brew:dump
+task --global --list
 ```
 
 ## Configuration

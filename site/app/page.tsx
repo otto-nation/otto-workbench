@@ -21,7 +21,7 @@ const ITEMS: CardItem[] = [
   { title: 'Git', href: '/docs/architecture#git', body: 'Two-layer gitconfig, global hooks, and conventional commit conventions' },
   { title: 'Tools', href: '/docs/tools#installed-tools', body: 'CLI tools managed via Homebrew, organized by domain' },
   { title: 'AI', href: '/docs/ai-automation', body: 'Claude Code integration with skills, agents, guidelines, and git automation' },
-  { title: 'Task automation', href: '/docs/ai-automation#task-automation', body: 'Global Taskfile for AI-powered commits, PRs, and reviews' },
+  { title: 'Task automation', href: '/docs/ai-automation#task-automation', body: 'Global Taskfile for Homebrew helpers' },
 ];
 
 const TIERS: CardItem[] = [

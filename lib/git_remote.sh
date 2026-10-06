@@ -28,8 +28,10 @@
 # directory passes nothing and reads exactly as it did before. A positional and
 # not a `-C` flag, so no bash array is needed to pass it on — see below.
 #
-# POSIX only, for the same reason `conventions.sh` is: a `/bin/sh` reader can
-# source the assignments without requiring bash. So no `[[`, no `<<<`, no arrays,
+# POSIX only as a kept guarantee, not a current need: every caller is bash
+# (`git/hooks/pre-push`, `git/hooks/pre-push-workbench`,
+# `bin/local/check-surface-compat`). tests/git_remote.bats sources it under
+# dash so a bashism cannot land silently. So no `[[`, no `<<<`, no arrays,
 # no pattern-replacement expansion.
 
 [ -n "${_LIB_GIT_REMOTE_SH:-}" ] && return

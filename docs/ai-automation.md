@@ -287,7 +287,7 @@ Every lifecycle skill can be run on demand by its invocation in the Skill Refere
 The global Taskfile holds Homebrew helpers. Use `--global` to run them from `~/.config/task/` rather than a local project Taskfile.
 
 ```bash
-task --global brew:dump
+task --global --list
 ```
 
 ## Configuration

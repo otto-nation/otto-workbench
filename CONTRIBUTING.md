@@ -118,7 +118,7 @@ Tests live in `tests/`. Each file targets a single library function or script be
 - Match the style of existing test files: `setup()` -> `common_setup` -> `@test` blocks.
 - Use `run` + `$status` / `$output` for functions with side effects or exit codes.
 - Call functions directly (without `run`) when asserting variable state.
-- Use `TMPDIR="$(mktemp -d)"` in `setup()` and `rm -rf "$TMPDIR"` in `teardown()` for any filesystem work.
+- `common_setup` pins TMPDIR to bats' per-test scratch. Never `rm -rf "$TMPDIR"`.
 - Call `common_setup` first in `setup()`. A `setup_file()` that runs git needs its own call
   as well, because that hook runs before the first `setup()` does. It is what
   detaches a temp repo from the machine's own git config — `core.fsmonitor`, the global

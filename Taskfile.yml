@@ -2,8 +2,8 @@
 # These tasks are only relevant when contributing to this repo.
 #
 # Global Homebrew helpers live in Taskfile.global.yml and are
-# installed to ~/.config/task/Taskfile.global.yml by install.sh.
-# Run them from anywhere with: task --global brew:dump, etc.
+# installed to ~/.config/task/Taskfile.yml by task/steps.sh.
+# Run them from anywhere with: task --global --list
 
 version: "3"
 

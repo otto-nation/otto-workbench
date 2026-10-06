@@ -26,7 +26,7 @@ teardown() {
   [[ "$BREAKING_CHANGE_FOOTER_ALT" == "BREAKING-CHANGE" ]]
 }
 
-# Sourced by POSIX sh callers, so it must stay POSIX.
+# No current caller is POSIX sh; the file stays POSIX and this case holds it.
 @test "conventions.sh sources under a POSIX shell" {
   run sh -c ". '$REPO_ROOT/lib/conventions.sh' && printf '%s' \"\$BREAKING_CHANGE_FOOTER_ALT\""
   [ "$status" -eq 0 ]

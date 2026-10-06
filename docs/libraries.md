@@ -322,11 +322,14 @@ Constants: `COMMIT_TYPES`, `COMMIT_HEADER_MAX_LEN`, `COMMIT_BODY_MAX_LEN`,
 `BREAKING_FOOTER_RE`. To add a commit type, append it to
 `COMMIT_TYPES` — no other change is needed.
 
-The footer helpers answer one question — "does this message declare a breaking
-change" — for the readers that ask it: the git generation scripts,
-`bin/local/check-surface-compat`, and `ai/lib/core/conventions.py`. POSIX only
-so a `/bin/sh` can source it and so the Python reader can parse the
-assignments as text. No `[[`, no `<<<`, no pattern-replacement expansion.
+has_breaking_footer is called only by bin/local/check-surface-compat.
+git/bin/local/generate-git-rules and git/bin/generate-changelog source the
+constants and render them. ai/lib/core/conventions.py parses COMMIT_TYPES=
+as text; it does not source this file.
+
+No current caller needs POSIX — every sourcer is bash. The file stays POSIX
+(no `[[`, no `<<<`, no pattern-replacement expansion) so the bats cases that
+source it under sh keep holding that property.
 
 | Function | Purpose |
 |----------|---------|
@@ -467,8 +470,10 @@ defaulting to `.`. `git -C .` is the cwd, so a caller that has already changed
 directory passes nothing and reads exactly as it did before. A positional and
 not a `-C` flag, so no bash array is needed to pass it on — see below.
 
-POSIX only, for the same reason `conventions.sh` is: a `/bin/sh` reader can
-source the assignments without requiring bash. So no `[[`, no `<<<`, no arrays,
+POSIX only as a kept guarantee, not a current need: every caller is bash
+(`git/hooks/pre-push`, `git/hooks/pre-push-workbench`,
+`bin/local/check-surface-compat`). tests/git_remote.bats sources it under
+dash so a bashism cannot land silently. So no `[[`, no `<<<`, no arrays,
 no pattern-replacement expansion.
 
 | Function | Purpose |

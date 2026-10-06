@@ -76,6 +76,7 @@ NO_REFS_TESTS=(
   step_install_claude
   step_install_pi
   taskfile
+  taskfile_global
   test_helper_isolation
 )
 

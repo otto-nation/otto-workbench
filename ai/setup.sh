@@ -168,10 +168,11 @@ unset _tool
 configure_gh_token() {
   echo; info "GitHub token for pr create / pr describe --post"
   ai_scaffold_gh_token_env "$TASKFILE_ENV"
-  if grep -qE '^GH_TOKEN(__[A-Z0-9_]+)?=.+' "$TASKFILE_ENV"; then
+  if grep -qE "$GH_TOKEN_SET_RE" "$TASKFILE_ENV"; then
     success "GH_TOKEN already configured"
     return 0
   fi
+  [[ -t 0 ]] || { warn "Edit $TASKFILE_ENV before running pr create"; return 0; }
   if confirm "  Add a GitHub token now?"; then
     ${EDITOR:-nano} "$TASKFILE_ENV"
     success "Token file updated"

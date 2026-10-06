@@ -153,7 +153,7 @@ print_workbench_summary() {
   # GitHub token — the tiers pr/gh_token.py reads from taskfile.env
   local _gh_set=false
   if [[ -f "$TASKFILE_ENV" ]]; then
-    if grep -qE '^GH_TOKEN(__[A-Z0-9_]+)?=.+' "$TASKFILE_ENV" 2>/dev/null; then
+    if grep -qE "$GH_TOKEN_SET_RE" "$TASKFILE_ENV" 2>/dev/null; then
       _gh_set=true
     fi
   fi

@@ -6,11 +6,14 @@
 # `BREAKING_FOOTER_RE`. To add a commit type, append it to
 # `COMMIT_TYPES` — no other change is needed.
 #
-# The footer helpers answer one question — "does this message declare a breaking
-# change" — for the readers that ask it: the git generation scripts,
-# `bin/local/check-surface-compat`, and `ai/lib/core/conventions.py`. POSIX only
-# so a `/bin/sh` can source it and so the Python reader can parse the
-# assignments as text. No `[[`, no `<<<`, no pattern-replacement expansion.
+# has_breaking_footer is called only by bin/local/check-surface-compat.
+# git/bin/local/generate-git-rules and git/bin/generate-changelog source the
+# constants and render them. ai/lib/core/conventions.py parses COMMIT_TYPES=
+# as text; it does not source this file.
+#
+# No current caller needs POSIX — every sourcer is bash. The file stays POSIX
+# (no `[[`, no `<<<`, no pattern-replacement expansion) so the bats cases that
+# source it under sh keep holding that property.
 
 # shellcheck disable=SC2034  # All constants are used by sourcing scripts
 
@@ -66,4 +69,3 @@ BREAKING_FOOTER_RE="^(${BREAKING_CHANGE_FOOTER}|${BREAKING_CHANGE_FOOTER_ALT}): 
 has_breaking_footer() {
   printf '%s\n' "$1" | grep -qE "$BREAKING_FOOTER_RE"
 }
-

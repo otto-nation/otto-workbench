@@ -3,7 +3,7 @@
 #
 # Constants: `COMMIT_TYPES`, `COMMIT_HEADER_MAX_LEN`, `COMMIT_BODY_MAX_LEN`,
 # `BREAKING_CHANGE_FOOTER`, `BREAKING_CHANGE_FOOTER_ALT`, `NOT_BREAKING_FOOTER`,
-# `BREAKING_FOOTER_RE`, `DECLARED_FOOTER_RE`. To add a commit type, append it to
+# `BREAKING_FOOTER_RE`. To add a commit type, append it to
 # `COMMIT_TYPES` — no other change is needed.
 #
 # The footer helpers answer one question — "does this message declare a breaking
@@ -13,8 +13,7 @@
 # onto a regenerated message. POSIX only: the file is sourced by `/bin/sh` on the
 # go-task path, so no `[[`, no `<<<`, no pattern-replacement expansion.
 #
-# Sourced directly by `lib/ai/core.sh` and the git generation scripts
-# (`git/bin/generate-changelog`, `git/bin/local/generate-git-rules`).
+# Sourced directly by the git generation scripts and bin/local/check-surface-compat.
 
 # shellcheck disable=SC2034  # All constants are used by sourcing scripts
 
@@ -58,11 +57,6 @@ NOT_BREAKING_FOOTER="Not-Breaking"
 # bare token, because the reason landing in git history is the whole point.
 BREAKING_FOOTER_RE="^(${BREAKING_CHANGE_FOOTER}|${BREAKING_CHANGE_FOOTER_ALT}): .+"
 
-# ERE matching any footer that declares how a public-surface change was handled
-# — breaking, or deliberately not. Both are authored once and must survive
-# every rewrite of the message that carries them.
-DECLARED_FOOTER_RE="^(${BREAKING_CHANGE_FOOTER}|${BREAKING_CHANGE_FOOTER_ALT}|${NOT_BREAKING_FOOTER}): .+"
-
 # has_breaking_footer MSG — true when MSG declares a breaking change in its body.
 #
 # The subject-level `!` marker is deliberately not consulted, here or anywhere
@@ -73,11 +67,4 @@ has_breaking_footer() {
   printf '%s\n' "$1" | grep -qE "$BREAKING_FOOTER_RE"
 }
 
-# declared_footers MSG — every declaration footer line in MSG, in order.
-#
-# Prints nothing when MSG declares nothing. Whole lines, not just the reason:
-# a caller re-appending one to a regenerated message has to reproduce the
-# footer byte for byte.
-declared_footers() {
-  printf '%s\n' "$1" | grep -E "$DECLARED_FOOTER_RE" || true
-}
+

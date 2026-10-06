@@ -67,7 +67,7 @@ _fail() { CHECKS=$(( CHECKS + 1 )); ERRORS=$(( ERRORS + 1 )); err "$*"; }
 # backend resolves a phase's protocol from ~/.agents/skills first and only falls
 # back to ~/.claude/agents, so without a stub every default-effort review reaches
 # into a Claude Code directory a Pi-only machine has no reason to carry.
-PROGRAMMATIC_AGENTS=(changelog ci-cd explain)
+PROGRAMMATIC_AGENTS=(changelog explain)
 
 # _agent_is_programmatic NAME — whether NAME is dispatched by code rather than
 # matched to a situation.

@@ -2,7 +2,6 @@
   "package": "otto-ai-tools",
   "entries": [
     "agent:changelog",
-    "agent:ci-cd",
     "agent:debugger",
     "agent:explain",
     "agent:incident",

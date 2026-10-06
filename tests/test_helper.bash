@@ -185,23 +185,6 @@ skip_if_root() {
   fi
 }
 
-# source_lib — loads all lib/ai/*.sh files into the current test context.
-source_lib() {
-  local f
-  for f in "$REPO_ROOT/lib/ai/"*.sh; do
-    # shellcheck disable=SC1090
-    source "$f"
-  done
-}
-
-# make_ai_config DIR COMMAND — writes a taskfile.env with AI_COMMAND=COMMAND.
-make_ai_config() {
-  local dir="$1"
-  local command="$2"
-  mkdir -p "$dir/.config/task"
-  echo "AI_COMMAND=$command" > "$dir/.config/task/taskfile.env"
-}
-
 # make_container_seed DIR — commits whatever DIR already holds as one commit on
 # `main`, and adds a `feat` branch. The repo a bare-repo container is cloned from.
 #

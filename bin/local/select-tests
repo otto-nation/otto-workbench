@@ -69,20 +69,14 @@ ALWAYS_RUN_TESTS=(
 # Tests with no resolvable path refs — they can't be mapped, so they always run.
 NO_REFS_TESTS=(
   claude_rules_install
-  compact_diff
   files_frontmatter
-  find_commitlint_config
   install_cask
-  load_ai_command
-  load_gh_token_shim
   pi_skill_override
-  run_ai
   session_count
   step_install_claude
   step_install_pi
   taskfile
   test_helper_isolation
-  validate_commit_msg
 )
 
 # Fallback triggers — changes to these run the full suite.

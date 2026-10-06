@@ -313,7 +313,7 @@ _fake_suite() {
   [ "$status" -eq 0 ]
 }
 
-@test "validate: every real suite that scans the real tree is always run" {
+@test "validate: the real tests dir passes as a whole (zero-refs and real-tree checks)" {
   run _validate_test_refs
   [ "$status" -eq 0 ]
 }

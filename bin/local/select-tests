@@ -13,7 +13,9 @@
 # Usage: select-tests [--base REF] [--validate]
 #   --base REF     Diff against REF (default: origin/main)
 #   --validate     Fail if any test file has zero refs and is not in the
-#                  always-run list (catches renames that silently break the map)
+#                  always-run list (catches renames that silently break the map),
+#                  or if a suite hands the repo root to a collect_* scanner
+#                  without being in the always-run list
 #   --all          Print all test files (used when fallback triggers fire)
 #
 # Output: one absolute path per line, suitable for passing to bats.
@@ -392,6 +394,9 @@ _all_test_files() {
 # which it names as a path literal, so a change to one selects nothing. Only
 # the root spellings count: a collector given a fixture directory reads files
 # the suite wrote itself, which a path-literal map has no need to see.
+#
+# Boundary: a double-quoted root word on a single line. A single-quoted root
+# (e.g. inside a bash -c string) or a call split across lines is not detected.
 _scans_real_tree() {
   grep -qE '^[^#]*\bcollect_[a-z_]+[[:space:]][^#]*"\$\{?(REPO_ROOT|repo_root|WORKBENCH_DIR)\}?"' "$1" 2>/dev/null
 }

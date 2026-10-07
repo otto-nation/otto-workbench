@@ -48,8 +48,8 @@ SCRIPT
   PATH="$BIN:$PATH"
 }
 
-# _run_step — runs step_pi_settings against the sandbox with the ui helpers
-# stubbed. Runs in its own bash so the step's skip() does not displace bats'.
+# _run_step [STEP] — runs STEP (default step_pi_settings; pi_models.bats passes
+# step_pi_models) against the sandbox with the ui helpers stubbed. Runs in its own bash so the step's skip() does not displace bats'.
 _run_step() {
   bash -c '
     set -e

@@ -48,12 +48,11 @@ from ansi import DIM, GREEN, NC, RED  # noqa: E402
 import config.reuse_levels  # noqa: E402
 import config.tool_registry  # noqa: E402
 import core.cli_reference  # noqa: E402
+import core.tool_parser  # noqa: E402
+import core.trail  # noqa: E402
 
 PROSE_DIRS = ("ai/claude/agents", "ai/skills", "ai/guidelines/rules", "docs")
 PROSE_FILES = ("CLAUDE.md", "README.md", "CONTRIBUTING.md")
-
-# Flags every ToolParser script accepts without declaring them per command.
-FRAMEWORK_FLAGS = frozenset({"-h", "--help", "--tool-schema", "--debug"})
 
 # Slash commands a workbench hook answers rather than a skill.
 HOOK_COMMANDS = frozenset({config.reuse_levels.SLASH_COMMAND.lstrip("/")})
@@ -73,7 +72,7 @@ FILESYSTEM_ROOTS = frozenset({
 })
 
 CODE_SPAN = re.compile(r"(?<!`)`([^`\n]+)`(?!`)")
-FENCE = re.compile(r"^\s*(```|~~~)")
+FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 SLASH_REF = re.compile(r"^/([A-Za-z][A-Za-z0-9_-]*)(?:\s|$)")
 # Synopsis notation. A `<placeholder>`, or a `[group]` holding no flag such as
 # `[global flags]`, names an argument rather than a command; what is left of
@@ -102,9 +101,23 @@ class ToolFlags:
 
 
 def _options(parser) -> frozenset[str]:
+    # `_actions` is private argparse API, the same trade `core.cli_reference`
+    # makes (see its header); the tests here fail first on an upgrade that moves it.
     if parser is None:
         return frozenset()
     return frozenset(s for a in parser._actions for s in a.option_strings)
+
+
+# Flags every ToolParser script accepts without declaring them per command, read
+# off a parser built the way the scripts build theirs: `-h` from argparse,
+# `--tool-schema` from ToolParser, `--debug` from `core.trail.add_trail_args`.
+def _framework_flags() -> frozenset[str]:
+    parser = core.tool_parser.ToolParser(prog="framework")
+    core.trail.add_trail_args(parser)
+    return _options(parser)
+
+
+FRAMEWORK_FLAGS = _framework_flags()
 
 
 def _command_flags(commands, prefix: str = "") -> dict[str, frozenset[str]]:
@@ -206,15 +219,32 @@ def _line_reasons(line: str, in_fence: bool, tools: dict[str, ToolFlags],
             for r in check_invocation(span, tools) + check_slash(span, names)]
 
 
+def _fence_after(line: str, opened: str | None) -> tuple[bool, str | None]:
+    """Whether *line* is a fence line, and the opening marker in force after it.
+
+    A fence closes only on the same character, at least as long as the opener,
+    with nothing after it, so a four-backtick block may wrap a three-backtick example.
+    """
+    m = FENCE.match(line)
+    if not m:
+        return False, opened
+    marker, info = m.groups()
+    if opened is None:
+        return True, marker
+    if marker[0] == opened[0] and len(marker) >= len(opened) and not info.strip():
+        return True, None
+    return False, opened
+
+
 def check_file(path: Path, tools: dict[str, ToolFlags], names: frozenset[str]) -> list[Violation]:
     violations: list[Violation] = []
-    in_fence = False
+    opened: str | None = None
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if FENCE.match(line):
-            in_fence = not in_fence
+        is_fence, opened = _fence_after(line, opened)
+        if is_fence:
             continue
         violations.extend(Violation(path, number, r)
-                          for r in _line_reasons(line, in_fence, tools, names))
+                          for r in _line_reasons(line, opened is not None, tools, names))
     return violations
 
 

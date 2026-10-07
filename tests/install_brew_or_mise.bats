@@ -103,6 +103,20 @@ _path_with() {
   [[ "$output" == *"RESOLVED=$MISE_DATA_DIR/shims/rtk"* ]]
 }
 
+@test "a mise install that leaves no shim warns and fails" {
+  # mise exits 0 but writes nothing to the shims dir: the later command -v
+  # would fail with no hint why.
+  cat > "$STUBS/mise" <<'EOF2'
+#!/usr/bin/env bash
+echo "$*" >> "$MISE_LOG"
+EOF2
+  chmod +x "$STUBS/mise"
+  run _run_install "$(_path_with mise)"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not on PATH"* ]]
+  [[ "$output" != *"RTK installed"* ]]
+}
+
 @test "with neither installer, the warning names both commands" {
   run _run_install "$(_path_with)"
   [ "$status" -eq 1 ]
@@ -141,9 +155,9 @@ _run_caller() {
     success() { echo "OK $*"; }
     warn()    { echo "WARN $*"; }
     info()    { echo "INFO $*"; }
-    install_brew_or_mise() { echo "HELPER $*"; return 1; }
+    install_brew_or_mise() { echo "HELPER $*"; return "${HELPER_STATUS:-1}"; }
     . "$1"
-    PATH="/usr/bin:/bin"
+    PATH="${CALLER_PATH:-/usr/bin:/bin}"
     "$2"
   ' _ "$1" "$2"
 }
@@ -158,4 +172,18 @@ _run_caller() {
   run _run_caller "$REPO_ROOT/ai/claude/steps.sh" step_claude_worktrunk_plugin
   [ "$status" -eq 0 ]
   [[ "$output" == *"HELPER wt worktrunk worktrunk worktrunk"* ]]
+}
+
+@test "the worktrunk plugin step goes on to the plugin list once worktrunk installs" {
+  cat > "$STUBS/wt" <<'EOF2'
+#!/usr/bin/env bash
+echo "WT $*"
+[[ "$*" == "config plugins list" ]] && echo "claude"
+exit 0
+EOF2
+  chmod +x "$STUBS/wt"
+  HELPER_STATUS=0 CALLER_PATH="$STUBS:/usr/bin:/bin" run _run_caller "$REPO_ROOT/ai/claude/steps.sh" step_claude_worktrunk_plugin
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Worktrunk Claude plugin already installed"* ]]
+  [[ "$output" != *"skipped"* ]]
 }

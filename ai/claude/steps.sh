@@ -567,7 +567,7 @@ register_claude_steps() {
   register_step "Claude Code rules"       step_claude_rules
   register_step "MCP servers"             step_claude_mcps
   register_step "Claude Code agents"      step_claude_agents
-  register_step "Worktrunk Claude plugin" step_claude_worktrunk_plugin
+  register_step "Install worktrunk + Claude plugin" step_claude_worktrunk_plugin
 }
 
 # _profile_excludes_skill PROFILE SKILL — returns 0 if the profile excludes the skill.

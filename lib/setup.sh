@@ -179,6 +179,10 @@ install_brew_or_mise() {
       *":$shims:"*) ;;
       *) export PATH="$shims:$PATH" ;;
     esac
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      warn "mise installed $label but $cmd is not on PATH (looked in $shims) — open a new shell or check: mise doctor"
+      return 1
+    fi
   else
     warn "Neither Homebrew nor mise found — install $label manually: $manual"
     return 1

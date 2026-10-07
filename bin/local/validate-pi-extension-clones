@@ -40,8 +40,8 @@ A provider carrying none of those adapter symbols is not always stale: one that
 hands the context, untouched, to a transport pi-ai itself ships (imported from
 `pi-ai/compat`, see TRANSPORT_SPECIFIERS) is read by the host's own code, so it
 follows whatever shape the host builds. Such a provider is exempt from the
-stale-clone finding. The exemption is one-way: a delegating clone is not
-checked against how old a host may be and still export `/compat`.
+stale-clone finding, and is checked instead against the first host whose
+`/compat` exports the transport (TRANSPORT_FACTORY_VERSION).
 
 The clone on disk is what is inspected, not a version string committed
 somewhere. A pinned-version test passes while the clone that actually serves
@@ -61,6 +61,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 _WORKBENCH_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
@@ -85,16 +86,19 @@ TRANSCRIPT_SYMBOLS = ('getCurrentSystemPrompt', 'getCurrentTools')
 # symbols above. pi exposes its built-in transports to extensions through this
 # entrypoint (vertex-claude imports anthropicMessagesApi from it).
 #
-# Only the stale-clone finding is cleared. The opposite skew is NOT detected for
-# a delegating clone: one with no adapter symbols, on a host that predates
-# `/compat`, gets no finding in either direction, because nothing in this repo
-# records which pi release introduced that entrypoint. Add a floor constant for
-# it, and flag a delegating clone below it, once that release is known.
+# A delegating clone has its own floor: the host must export the factory. A
+# host below it fails the import, so the provider registers nothing (or, if it
+# does not guard the import, fails to load) — see TRANSPORT_FACTORY_VERSION.
 TRANSPORT_SPECIFIERS = tuple(f'{pkg}/compat' for pkg in (
     '@earendil-works/pi-ai', '@mariozechner/pi-ai'))
 
 # The transport factory a delegating provider takes from that entrypoint.
 TRANSPORT_FACTORY = 'anthropicMessagesApi'
+
+# The first pi release whose `pi-ai/compat` exports TRANSPORT_FACTORY: 0.80.1,
+# the first 0.80 published (read from the published packages' dist/compat —
+# 0.79.10 has no `/compat`). Compared on major.minor like the contract version.
+TRANSPORT_FACTORY_VERSION = (0, 80)
 
 # An actual import of the entrypoint — `from "…"`, `import("…")` or
 # `require("…")` — not a mention of the specifier in a comment or a string.
@@ -289,32 +293,35 @@ def _ts_files(clone: Path):
         yield from (Path(dirpath) / f for f in filenames if f.endswith('.ts'))
 
 
-_PROVIDER = 'provider'
-_ADAPTER = 'adapter'
-_DELEGATES = 'delegates'
+class Fact(Enum):
+    """What one clone's source establishes about the transcript contract."""
+
+    PROVIDER = 'provider'
+    ADAPTER = 'adapter'
+    DELEGATES = 'delegates'
 
 
-def _file_facts(text: str) -> set[str]:
+def _file_facts(text: str) -> set[Fact]:
     """Which contract facts one `.ts` file's text establishes."""
     facts = set()
     if 'registerProvider' in text or 'provider:' in text:
-        facts.add(_PROVIDER)
+        facts.add(Fact.PROVIDER)
     if any(symbol in text for symbol in TRANSCRIPT_SYMBOLS):
-        facts.add(_ADAPTER)
+        facts.add(Fact.ADAPTER)
     # Both the import and the factory are required: importing something else
     # from `/compat` leaves a provider reading the context's fields itself.
     if TRANSPORT_FACTORY in text and _TRANSPORT_IMPORT.search(text):
-        facts.add(_DELEGATES)
+        facts.add(Fact.DELEGATES)
     return facts
 
 
-def _clone_facts(clone: Path) -> set[str]:
+def _clone_facts(clone: Path) -> set[Fact]:
     """The contract facts established anywhere in a clone, in one walk.
 
     `node_modules` is pruned by `_ts_files`, so a vendored pi-ai defining these
     very symbols establishes nothing.
     """
-    facts: set[str] = set()
+    facts: set[Fact] = set()
     for path in _ts_files(clone):
         try:
             text = path.read_text(errors='replace')
@@ -326,7 +333,7 @@ def _clone_facts(clone: Path) -> set[str]:
 
 def _declares_transcript_adapter(clone: Path) -> bool:
     """Whether a clone resolves the post-0.86 transcript symbols anywhere."""
-    return _ADAPTER in _clone_facts(clone)
+    return Fact.ADAPTER in _clone_facts(clone)
 
 
 @dataclass(frozen=True)
@@ -364,13 +371,20 @@ def check_clone(clone: Path, pi_version: tuple[int, ...]) -> Skew | None:
             remedy='update the host with: pi update')
 
     facts = _clone_facts(clone)
-    if _PROVIDER not in facts:
+    if Fact.PROVIDER not in facts:
         return None
 
     host_has_transcript = pi_version[:2] >= TRANSCRIPT_CONTRACT_VERSION
-    clone_has_adapter = _ADAPTER in facts
+    clone_has_adapter = Fact.ADAPTER in facts
+    clone_delegates = Fact.DELEGATES in facts
 
-    if host_has_transcript and not clone_has_adapter and _DELEGATES not in facts:
+    if clone_delegates and not clone_has_adapter and pi_version[:2] < TRANSPORT_FACTORY_VERSION:
+        return Skew(
+            problem=(f'clone streams through pi-ai/compat {TRANSPORT_FACTORY}, which the '
+                     f'installed pi {_version_str(pi_version)} does not export, so the provider '
+                     f'cannot load its transport and registers no model'),
+            remedy='update the host with: pi update')
+    if host_has_transcript and not clone_has_adapter and not clone_delegates:
         return Skew(
             problem=('clone predates the pi 0.86 transcript contract, so this provider '
                      'sends no system prompt and no tool declarations — the model cannot '

@@ -145,17 +145,21 @@ def test_delegation_does_not_clear_the_old_host_skew(validator, tmp_path):
     assert 'older' in skew.problem
 
 
-def test_a_delegating_clone_is_not_checked_against_an_old_host(validator, tmp_path):
-    """Pins the known gap: delegation is exempt in both directions.
-
-    A delegating clone with no adapter symbols on a host older than 0.86 gets
-    no finding, though that host may not export `pi-ai/compat` either. Nothing
-    in this repo says which release introduced it, so the validator does not
-    guess; this test fails the day someone adds the floor and should be
-    updated then.
-    """
+def test_a_delegating_clone_on_a_host_with_the_factory_passes(validator, tmp_path):
+    """Between 0.80 and 0.86 the host exports the transport but predates the
+    transcript contract; its own transport reads its own shape, so this is fine."""
     clone = _delegating_clone(tmp_path, '@earendil-works/pi-ai/compat')
     assert validator.check_clone(clone, HOST_BEFORE_TRANSCRIPT) is None
+
+
+def test_a_delegating_clone_below_the_factory_floor_is_flagged(validator, tmp_path):
+    """0.79.10 has no `pi-ai/compat`, so the provider cannot load its transport;
+    the cure is at the host end."""
+    clone = _delegating_clone(tmp_path, '@earendil-works/pi-ai/compat')
+    skew = validator.check_clone(clone, (0, 79, 10))
+    assert skew is not None
+    assert 'anthropicMessagesApi' in skew.problem
+    assert skew.remedy == 'update the host with: pi update'
 
 
 @pytest.mark.parametrize('source', [

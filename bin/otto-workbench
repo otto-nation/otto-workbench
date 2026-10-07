@@ -215,6 +215,15 @@ cmd_sync() {
   WORKBENCH_SYNC=true
   export WORKBENCH_SYNC
 
+  # Sync is often unattended (maintenance, launchd/cron), so a git credential
+  # prompt from any step — a Pi package clone, a fetch — would hang it with
+  # nobody to answer. Failing fast surfaces as that step's warning instead,
+  # and a broken credential helper is repaired by step_gitconfig later in the
+  # same run, so the next sync succeeds. The trade-off: an operator running
+  # sync by hand cannot answer a credential prompt either. Exported so child
+  # processes inherit it.
+  export GIT_TERMINAL_PROMPT=0
+
   # Collect warnings/errors for final summary replay.
   WORKBENCH_INSTALL_LOG="$(mktemp "${TMPDIR:-/tmp}/workbench-sync.XXXXXX")"
   export WORKBENCH_INSTALL_LOG
@@ -309,6 +318,10 @@ EOF
 
   title "AI sync"
   echo
+
+  # Same no-prompt rule as cmd_sync: sync_ai clones Pi packages, and a git
+  # credential prompt would hang there with nobody to answer.
+  export GIT_TERMINAL_PROMPT=0
 
   # Migrations first, the same as `otto-workbench sync`. The AI syncs read
   # ~/.env.local by variable name — step_claude_settings mirrors it into

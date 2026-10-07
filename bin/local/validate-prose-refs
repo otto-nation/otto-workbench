@@ -219,29 +219,30 @@ def _line_reasons(line: str, in_fence: bool, tools: dict[str, ToolFlags],
             for r in check_invocation(span, tools) + check_slash(span, names)]
 
 
-def _fence_after(line: str, opened: str | None) -> tuple[bool, str | None]:
-    """Whether *line* is a fence line, and the opening marker in force after it.
+def _fence_after(line: str, opened: str | None) -> str | None:
+    """The opening fence marker in force after *line*; None outside a fence.
 
     A fence closes only on the same character, at least as long as the opener,
     with nothing after it, so a four-backtick block may wrap a three-backtick example.
+    A line is a fence line exactly when it changes this state.
     """
     m = FENCE.match(line)
     if not m:
-        return False, opened
+        return opened
     marker, info = m.groups()
     if opened is None:
-        return True, marker
+        return marker
     if marker[0] == opened[0] and len(marker) >= len(opened) and not info.strip():
-        return True, None
-    return False, opened
+        return None
+    return opened
 
 
 def check_file(path: Path, tools: dict[str, ToolFlags], names: frozenset[str]) -> list[Violation]:
     violations: list[Violation] = []
     opened: str | None = None
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        is_fence, opened = _fence_after(line, opened)
-        if is_fence:
+        before, opened = opened, _fence_after(line, opened)
+        if opened != before:
             continue
         violations.extend(Violation(path, number, r)
                           for r in _line_reasons(line, opened is not None, tools, names))

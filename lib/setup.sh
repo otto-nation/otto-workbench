@@ -157,6 +157,7 @@ install_via_installer() {
 install_brew_or_mise() {
   local cmd="$1" formula="$2" mise_tool="$3" label="$4"
   local manual="brew install $formula, or: mise use -g $mise_tool"
+  local looked="PATH" doctor
   if command -v "$cmd" >/dev/null 2>&1; then
     success "$label already installed"
     return
@@ -168,6 +169,7 @@ install_brew_or_mise() {
       warn "Homebrew could not install $label — install it manually: $manual"
       return 1
     fi
+    doctor="brew doctor"
   elif command -v mise >/dev/null 2>&1; then
     info "Installing $label via mise..."
     if ! mise use -g "$mise_tool"; then
@@ -179,12 +181,16 @@ install_brew_or_mise() {
       *":$shims:"*) ;;
       *) export PATH="$shims:$PATH" ;;
     esac
-    if ! command -v "$cmd" >/dev/null 2>&1; then
-      warn "mise installed $label but $cmd is not on PATH (looked in $shims) — open a new shell or check: mise doctor"
-      return 1
-    fi
+    looked="$shims"
+    doctor="mise doctor"
   else
     warn "Neither Homebrew nor mise found — install $label manually: $manual"
+    return 1
+  fi
+  # Either installer can exit 0 and still leave $cmd unresolved (a keg-only
+  # formula, a differently named binary, a shim that was never written).
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    warn "$label was installed but $cmd is not on PATH (looked in $looked) — open a new shell or check: $doctor"
     return 1
   fi
   success "$label installed"

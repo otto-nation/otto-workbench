@@ -23,7 +23,11 @@ setup() {
   cat > "$STUBS/brew" <<'EOF'
 #!/usr/bin/env bash
 echo "$*" >> "$BREW_LOG"
-[[ -z "${BREW_INSTALL_FAILS:-}" ]]
+[[ -z "${BREW_INSTALL_FAILS:-}" ]] || exit 1
+# Models a formula that links its binary onto PATH, next to brew itself.
+[[ -n "${BREW_LEAVES_NO_BINARY:-}" ]] && exit 0
+printf '#!/bin/sh\nexit 0\n' > "$(dirname "$0")/rtk"
+chmod +x "$(dirname "$0")/rtk"
 EOF
   chmod +x "$STUBS/brew"
 
@@ -112,6 +116,14 @@ echo "$*" >> "$MISE_LOG"
 EOF2
   chmod +x "$STUBS/mise"
   run _run_install "$(_path_with mise)"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not on PATH"* ]]
+  [[ "$output" != *"RTK installed"* ]]
+}
+
+@test "a brew install that leaves no binary on PATH warns and fails" {
+  export BREW_LEAVES_NO_BINARY=1
+  run _run_install "$(_path_with brew)"
   [ "$status" -eq 1 ]
   [[ "$output" == *"is not on PATH"* ]]
   [[ "$output" != *"RTK installed"* ]]

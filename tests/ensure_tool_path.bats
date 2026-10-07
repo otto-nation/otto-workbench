@@ -72,19 +72,26 @@ _with_tool_path() {
 }
 
 # bin/otto-workbench dispatches on load, so the command functions cannot be
-# sourced; these check each sync entry point calls the function as a live line.
+# sourced; these check each entry point calls the function as a live line with
+# no top-level return/exit before it (which would skip the call).
 _fn_body() {
   awk -v fn="$1" '$0 == fn "() {" {f=1} f&&/^\}/{exit} f' "$REPO_ROOT/bin/otto-workbench"
 }
 
+_calls_ensure_tool_path_unconditionally() {
+  local before
+  before="$(_fn_body "$1" | awk '$0 == "  ensure_tool_path" {found=1; exit} {print} END {exit !found}')" || return 1
+  ! grep -qE '^  (return|exit)\b' <<<"$before"
+}
+
 @test "cmd_sync calls ensure_tool_path" {
-  run _fn_body cmd_sync
-  [ "$status" -eq 0 ]
-  grep -qx '  ensure_tool_path' <<<"$output"
+  _calls_ensure_tool_path_unconditionally cmd_sync
 }
 
 @test "cmd_ai_sync calls ensure_tool_path" {
-  run _fn_body cmd_ai_sync
-  [ "$status" -eq 0 ]
-  grep -qx '  ensure_tool_path' <<<"$output"
+  _calls_ensure_tool_path_unconditionally cmd_ai_sync
+}
+
+@test "cmd_install calls ensure_tool_path" {
+  _calls_ensure_tool_path_unconditionally cmd_install
 }

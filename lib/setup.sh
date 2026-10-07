@@ -156,7 +156,7 @@ install_via_installer() {
 ensure_tool_path() {
   local dir
   for dir in "$LOCAL_BIN_DIR" "$PI_BIN_DIR" "$MISE_SHIMS_DIR" \
-             /opt/homebrew/bin /home/linuxbrew/.linuxbrew/bin; do
+             "$HOMEBREW_BIN_DIR_MACOS" "$HOMEBREW_BIN_DIR_LINUX"; do
     [[ -d "$dir" ]] || continue
     [[ ":$PATH:" == *":$dir:"* ]] || PATH="$PATH:$dir"
   done

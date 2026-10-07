@@ -56,8 +56,13 @@ SSH_KNOWN_HOSTS_FILE="$SSH_DIR/known_hosts"
 # ─── XDG-style config and local dirs ─────────────────────────────────────────
 LOCAL_BIN_DIR="$HOME/.local/bin"
 # Where mise puts the shims for the tools it manages — resolved the way mise
-# itself resolves its data dir.
+# itself resolves its data dir, which includes XDG_DATA_HOME. (The expression
+# this replaced in install_brew_or_mise ignored XDG_DATA_HOME, so a machine
+# that sets it now gets its XDG shims dir rather than ~/.local/share/mise.)
 MISE_SHIMS_DIR="${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}/shims"
+# Homebrew's bin dir: Apple Silicon macOS, and Linuxbrew.
+HOMEBREW_BIN_DIR_MACOS="/opt/homebrew/bin"
+HOMEBREW_BIN_DIR_LINUX="/home/linuxbrew/.linuxbrew/bin"
 ZSH_CONFIG_DIR="$HOME/.config/zsh/config.d"
 STARSHIP_CONFIG_FILE="$HOME/.config/starship.toml"
 # Holds only taskfile.env (GH_TOKEN for pr commands); not the task runner.

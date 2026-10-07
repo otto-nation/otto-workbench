@@ -160,6 +160,10 @@ cmd_install() {
   echo -e "  ${DIM}✓${NC} installed  ${DIM}✓ up to date  ⊘ skipped  ⚠ attention needed${NC}"
   echo
 
+  # Before the bootstrap, so step_brew_install finds an existing Homebrew on a
+  # bare PATH, and the zsh step sees every installed tool by name.
+  ensure_tool_path
+
   # ─── Bootstrap ──────────────────────────────────────────────────────────
   if [[ "$OSTYPE" == "darwin"* ]]; then
     step_brew_install

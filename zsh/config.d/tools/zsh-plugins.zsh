@@ -5,9 +5,14 @@
 #
 # duplicate-check: share/zsh-.*/zsh-.*\.zsh
 
-for plugin in /opt/homebrew/share/zsh-*/zsh-*.zsh; do
-  [[ -f "$plugin" ]] && source "$plugin"
-done
+# BREW_PREFIX is exported by homebrew.zsh only when brew is installed; on a
+# machine without it (e.g. a Linux host) there is nothing to source. (N) keeps
+# an empty share/ from tripping zsh's nomatch error; - follows brew's symlinks.
+if [[ -n "${BREW_PREFIX:-}" ]]; then
+  for plugin in "$BREW_PREFIX"/share/zsh-*/zsh-*.zsh(-.N); do
+    source "$plugin"
+  done
+fi
 
 # history-substring-search: up/down arrows filter history by what you've already typed
 if (( $+functions[history-substring-search-up] )); then

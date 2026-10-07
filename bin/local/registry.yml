@@ -89,6 +89,11 @@ tools:
     visibility: brief
     description: "Fails when a script under ai/bin or ai/claude/bin that carries the ai/lib pin or imports an ai/lib package is anything but a shim — one cli import and the call into it"
 
+  - name: validate-prose-refs
+    permission: false
+    visibility: brief
+    description: "Fails when agent, skill, rule or doc prose names a slash command no skill or hook answers, or a CLI command or flag the tool's own parser does not accept"
+
   - name: validate-import-form
     permission: false
     visibility: brief

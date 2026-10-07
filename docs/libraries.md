@@ -929,6 +929,7 @@ Bash-only. Used primarily by `install.sh` and component setup scripts.
 | `run_remote_installer URL` | downloads the install script at URL and runs it, returning non-zero when either the download or the script fails. Prints nothing: the caller owns the message. |
 | `install_cask CMD CASK LABEL MANUAL_URL` | installs CASK through Homebrew when CMD is not already in PATH, announcing it as LABEL and returning non-zero with a pointer to MANUAL_URL when Homebrew is missing or the install fails. |
 | `install_via_installer CMD URL LABEL` | installs LABEL by running the vendor's own install script at URL, announcing it as LABEL and returning non-zero with a pointer to URL when curl is missing or the installer fails. The install is skipped when CMD is already in PATH. |
+| `ensure_tool_path` | appends the directories user-installed tools live in to PATH, each only if it exists and is not already there. |
 | `install_brew_or_mise CMD FORMULA MISE_TOOL LABEL` | installs LABEL with `brew install FORMULA` where Homebrew is available, and otherwise with `mise use -g MISE_TOOL`. Skipped when CMD is already in PATH. Returns non-zero with both install commands named when neither installer is present or the install fails. |
 | `run_migrations DIR` | DEPRECATED: Use run_component_migrations from lib/migrations.sh instead. This function sources a single migrations.sh file with no state tracking. Kept for backward compatibility until all callers are migrated. |
 

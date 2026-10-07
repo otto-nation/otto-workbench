@@ -193,6 +193,36 @@ _no_gcm() {
   [ "$(git config --file "$GITCONFIG_FILE" credential.https://dev.azure.com.useHttpPath)" = "true" ]
 }
 
+@test "repair works without git config --fixed-value (git < 2.30)" {
+  GITCONFIG_FILE="$TMPDIR/.gitconfig"
+  printf '[credential]\n\thelper =\n\thelper = %s\n' "$TMPDIR/missing/gcm" > "$GITCONFIG_FILE"
+  _git_detect_credential_helper() { echo "!/usr/bin/gh auth git-credential"; }
+  git() {
+    local a
+    for a in "$@"; do [[ "$a" == --fixed-value ]] && return 129; done
+    command git "$@"
+  }
+
+  run _gitconfig_repair_credential_helper
+
+  [ "$status" -eq 0 ]
+  run command git config --file "$GITCONFIG_FILE" --get-all credential.helper
+  [ "$output" = "$(printf '\n!/usr/bin/gh auth git-credential')" ]
+}
+
+@test "repair does not duplicate a replacement that is already configured" {
+  GITCONFIG_FILE="$TMPDIR/.gitconfig"
+  printf '[credential]\n\thelper = %s\n\thelper = !/usr/bin/gh auth git-credential\n' \
+    "$TMPDIR/missing/gcm" > "$GITCONFIG_FILE"
+  _git_detect_credential_helper() { echo "!/usr/bin/gh auth git-credential"; }
+
+  run _gitconfig_repair_credential_helper
+
+  [ "$status" -eq 0 ]
+  run git config --file "$GITCONFIG_FILE" --get-all credential.helper
+  [ "$output" = "!/usr/bin/gh auth git-credential" ]
+}
+
 @test "repair removes a missing helper path when nothing can replace it" {
   GITCONFIG_FILE="$TMPDIR/.gitconfig"
   printf '[credential]\n\thelper =\n\thelper = %s\n' "$TMPDIR/missing/gcm" > "$GITCONFIG_FILE"

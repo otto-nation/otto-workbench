@@ -147,21 +147,40 @@ _gitconfig_apply_template() {
 # from the raw template on a host without GCM, or GCM since uninstalled.
 # Shell helpers (`!cmd`) and bare names git resolves itself are left alone,
 # as are per-host credential.<url>.helper keys. Idempotent: a config whose
-# helpers all run is untouched.
+# helpers all run is untouched, and a replacement already listed is not added
+# a second time.
+#
+# The helper list is rewritten whole (unset, then re-add in order) rather than
+# edited in place with `git config --fixed-value`, which needs git 2.30 and
+# would fail on older distro gits.
 _gitconfig_repair_credential_helper() {
   [[ -f "$GITCONFIG_FILE" ]] || return 0
-  local helpers=() helper replacement
+  local helpers=() kept=() helper replacement present=0 changed=0
   mapfile -t helpers < <(git config --file "$GITCONFIG_FILE" --get-all credential.helper || true)
   replacement="$(_git_detect_credential_helper)"
-  for helper in "${helpers[@]}"; do
-    [[ "$helper" == /* && ! -x "$helper" ]] || continue
-    if [[ -n "$replacement" ]]; then
-      git config --file "$GITCONFIG_FILE" --fixed-value --replace-all credential.helper "$replacement" "$helper"
-      success "Credential helper $helper is missing — replaced with $replacement"
-    else
-      git config --file "$GITCONFIG_FILE" --fixed-value --unset-all credential.helper "$helper"
-      warn "Credential helper $helper is missing — removed it; git will prompt for HTTPS credentials"
+  for helper in ${helpers[@]+"${helpers[@]}"}; do
+    [[ -n "$replacement" && "$helper" == "$replacement" ]] && present=1
+  done
+  for helper in ${helpers[@]+"${helpers[@]}"}; do
+    if [[ "$helper" != /* || -x "$helper" ]]; then
+      kept+=("$helper")
+      continue
     fi
+    changed=1
+    if [[ -z "$replacement" ]]; then
+      warn "Credential helper $helper is missing — removed it; git will prompt for HTTPS credentials"
+    elif (( present )); then
+      success "Credential helper $helper is missing — $replacement is already configured"
+    else
+      kept+=("$replacement")
+      present=1
+      success "Credential helper $helper is missing — replaced with $replacement"
+    fi
+  done
+  (( changed )) || return 0
+  git config --file "$GITCONFIG_FILE" --unset-all credential.helper || true
+  for helper in ${kept[@]+"${kept[@]}"}; do
+    git config --file "$GITCONFIG_FILE" --add credential.helper "$helper"
   done
   return 0
 }

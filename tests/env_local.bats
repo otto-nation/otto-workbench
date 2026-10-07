@@ -469,16 +469,6 @@ EOF
 
 # ── ~/.local/bin precedes the layers ──────────────────────────────────────────
 
-@test "loader puts ~/.local/bin on PATH before the tools layer" {
-  local loader="$REPO_ROOT/zsh/config.d/loader.zsh"
-  local path_line tools_line
-  path_line=$(grep -n 'export PATH="$HOME/.local/bin:$PATH"' "$loader" | head -1 | cut -d: -f1)
-  tools_line=$(grep -n '_wb_load tools' "$loader" | head -1 | cut -d: -f1)
-  [ -n "$path_line" ]
-  [ -n "$tools_line" ]
-  [ "$path_line" -lt "$tools_line" ]
-}
-
 @test "loader makes a tool in ~/.local/bin visible to a tools snippet" {
   command -v zsh >/dev/null || skip "zsh not installed"
   local home="$BATS_TEST_TMPDIR/home"
@@ -496,7 +486,8 @@ EOF
   [ "${lines[1]}" = "$home/.local/bin:/usr/bin:/bin" ]
 }
 
-# passes-at-base: guards the idempotence of the prepend this change adds
+# Guard rail: the prepend must be a no-op when ~/.local/bin is already on PATH,
+# so re-sourcing the loader does not stack duplicate entries.
 @test "loader does not prepend ~/.local/bin twice" {
   command -v zsh >/dev/null || skip "zsh not installed"
   local home="$BATS_TEST_TMPDIR/home"

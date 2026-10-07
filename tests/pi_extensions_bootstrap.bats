@@ -66,7 +66,9 @@ _section() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"subagent tool's own model guidance"* ]]
   [[ "$output" == *'pass `model` explicitly'* ]]
-  [[ "$output" == *'pins subagents to the parent model, in which case omit it'* ]]
+  [[ "$output" == *'omit it'* ]]
+  [[ "$output" == *'model tiers'* ]]
+  [[ "$output" == *'pi-subagents'* ]]
 }
 
 @test "superpowers-bootstrap: the section names the skill directory relative paths resolve against" {

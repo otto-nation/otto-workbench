@@ -134,7 +134,6 @@ def test_a_provider_delegating_to_the_host_transport_passes(validator, tmp_path,
     assert validator.check_clone(clone, HOST_WITH_TRANSCRIPT) is None
 
 
-# passes-at-base: guards the skew direction this change was careful not to clear
 def test_delegation_does_not_clear_the_old_host_skew(validator, tmp_path):
     """Delegation only answers the stale-clone direction: a clone carrying the
     adapter is still flagged on a host that predates it."""
@@ -144,6 +143,57 @@ def test_delegation_does_not_clear_the_old_host_skew(validator, tmp_path):
     skew = validator.check_clone(clone, HOST_BEFORE_TRANSCRIPT)
     assert skew is not None
     assert 'older' in skew.problem
+
+
+def test_a_delegating_clone_is_not_checked_against_an_old_host(validator, tmp_path):
+    """Pins the known gap: delegation is exempt in both directions.
+
+    A delegating clone with no adapter symbols on a host older than 0.86 gets
+    no finding, though that host may not export `pi-ai/compat` either. Nothing
+    in this repo says which release introduced it, so the validator does not
+    guess; this test fails the day someone adds the floor and should be
+    updated then.
+    """
+    clone = _delegating_clone(tmp_path, '@earendil-works/pi-ai/compat')
+    assert validator.check_clone(clone, HOST_BEFORE_TRANSCRIPT) is None
+
+
+@pytest.mark.parametrize('source', [
+    # Something other than the transport factory taken from `/compat`.
+    'import { somethingElse } from "@earendil-works/pi-ai/compat";\n',
+    # The specifier and factory named only in a comment.
+    '// see @earendil-works/pi-ai/compat anthropicMessagesApi\n'
+    'const ctx = context.systemPrompt;\n',
+    # The factory imported from somewhere else.
+    'import { anthropicMessagesApi } from "./local";\n'
+    'const spec = "@earendil-works/pi-ai/compat";\n',
+])
+def test_a_mention_of_compat_is_not_delegation(validator, tmp_path, source):
+    """The marker is an import of the transport factory, not a substring.
+
+    A stale provider that still reads `context.systemPrompt` but touches
+    `pi-ai/compat` in passing must stay flagged, or the fabrication case this
+    validator exists for passes silently.
+    """
+    clone = _clone(tmp_path, provider=True, adapter=False)
+    (clone / 'extensions' / 'vertex-claude' / 'stream.ts').write_text(source)
+    skew = validator.check_clone(clone, HOST_WITH_TRANSCRIPT)
+    assert skew is not None
+    assert 'predates' in skew.problem
+
+
+# passes-at-base: node_modules pruning is shared via _ts_files; pins it for the new marker
+def test_delegation_in_node_modules_does_not_count(validator, tmp_path):
+    """A vendored copy of the delegating import must not bless the clone."""
+    clone = _clone(tmp_path, provider=True, adapter=False)
+    vendored = clone / 'node_modules' / 'some-dep'
+    vendored.mkdir(parents=True)
+    (vendored / 'index.ts').write_text(
+        'const c = await import("@earendil-works/pi-ai/compat");\n'
+        'c.anthropicMessagesApi();\n')
+    skew = validator.check_clone(clone, HOST_WITH_TRANSCRIPT)
+    assert skew is not None
+    assert 'predates' in skew.problem
 
 
 def test_a_package_with_no_provider_is_not_judged(validator, tmp_path):

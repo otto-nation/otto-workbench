@@ -36,6 +36,13 @@ export everything the package imports — whichever release moved the contract.
 The symbol check knows about pi 0.86 and nothing after it; the declared floor
 costs nothing and covers every contract upstream moves next.
 
+A provider carrying none of those adapter symbols is not always stale: one that
+hands the context, untouched, to a transport pi-ai itself ships (imported from
+`pi-ai/compat`, see TRANSPORT_SPECIFIERS) is read by the host's own code, so it
+follows whatever shape the host builds. Such a provider is exempt from the
+stale-clone finding. The exemption is one-way: a delegating clone is not
+checked against how old a host may be and still export `/compat`.
+
 The clone on disk is what is inspected, not a version string committed
 somewhere. A pinned-version test passes while the clone that actually serves
 the run is stale, because the clone is gitignored and CI never sees it — so a
@@ -76,12 +83,24 @@ TRANSCRIPT_SYMBOLS = ('getCurrentSystemPrompt', 'getCurrentTools')
 # a transport pi-ai itself ships. That transport is the host's own, so it reads
 # whatever shape the host builds, and the provider never names the adapter
 # symbols above. pi exposes its built-in transports to extensions through this
-# entrypoint (vertex-claude imports anthropicMessagesApi from it). A host
-# without it fails the import, and a provider that guards the import registers
-# nothing rather than sending a stripped request — so this only ever clears
-# the stale-clone finding, never the opposite skew.
-TRANSPORT_DELEGATION_MARKERS = tuple(f'{pkg}/compat' for pkg in (
+# entrypoint (vertex-claude imports anthropicMessagesApi from it).
+#
+# Only the stale-clone finding is cleared. The opposite skew is NOT detected for
+# a delegating clone: one with no adapter symbols, on a host that predates
+# `/compat`, gets no finding in either direction, because nothing in this repo
+# records which pi release introduced that entrypoint. Add a floor constant for
+# it, and flag a delegating clone below it, once that release is known.
+TRANSPORT_SPECIFIERS = tuple(f'{pkg}/compat' for pkg in (
     '@earendil-works/pi-ai', '@mariozechner/pi-ai'))
+
+# The transport factory a delegating provider takes from that entrypoint.
+TRANSPORT_FACTORY = 'anthropicMessagesApi'
+
+# An actual import of the entrypoint — `from "…"`, `import("…")` or
+# `require("…")` — not a mention of the specifier in a comment or a string.
+_TRANSPORT_IMPORT = re.compile(
+    r'(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)[\'"]('
+    + '|'.join(re.escape(spec) for spec in TRANSPORT_SPECIFIERS) + r')[\'"]')
 
 # The dependency names a package declares its pi-ai against. Both spellings
 # are the same package — pi resolves the legacy `@mariozechner` specifier to
@@ -270,43 +289,44 @@ def _ts_files(clone: Path):
         yield from (Path(dirpath) / f for f in filenames if f.endswith('.ts'))
 
 
-def _clone_mentions(clone: Path, needles: tuple[str, ...]) -> bool:
-    """Whether any `.ts` file in a clone contains one of `needles`."""
+_PROVIDER = 'provider'
+_ADAPTER = 'adapter'
+_DELEGATES = 'delegates'
+
+
+def _file_facts(text: str) -> set[str]:
+    """Which contract facts one `.ts` file's text establishes."""
+    facts = set()
+    if 'registerProvider' in text or 'provider:' in text:
+        facts.add(_PROVIDER)
+    if any(symbol in text for symbol in TRANSCRIPT_SYMBOLS):
+        facts.add(_ADAPTER)
+    # Both the import and the factory are required: importing something else
+    # from `/compat` leaves a provider reading the context's fields itself.
+    if TRANSPORT_FACTORY in text and _TRANSPORT_IMPORT.search(text):
+        facts.add(_DELEGATES)
+    return facts
+
+
+def _clone_facts(clone: Path) -> set[str]:
+    """The contract facts established anywhere in a clone, in one walk.
+
+    `node_modules` is pruned by `_ts_files`, so a vendored pi-ai defining these
+    very symbols establishes nothing.
+    """
+    facts: set[str] = set()
     for path in _ts_files(clone):
         try:
             text = path.read_text(errors='replace')
         except OSError:
             continue
-        if any(needle in text for needle in needles):
-            return True
-    return False
+        facts |= _file_facts(text)
+    return facts
 
 
 def _declares_transcript_adapter(clone: Path) -> bool:
     """Whether a clone resolves the post-0.86 transcript symbols anywhere."""
-    return _clone_mentions(clone, TRANSCRIPT_SYMBOLS)
-
-
-def _delegates_to_host_transport(clone: Path) -> bool:
-    """Whether a clone streams through a transport pi-ai itself ships."""
-    return _clone_mentions(clone, TRANSPORT_DELEGATION_MARKERS)
-
-
-def _has_provider_extension(clone: Path) -> bool:
-    """Whether a clone registers a model provider at all.
-
-    A package of plain tools has no opinion on the transcript contract, so the
-    check has nothing to say about it. Only a provider builds the request whose
-    shape 0.86 changed.
-    """
-    for path in _ts_files(clone):
-        try:
-            text = path.read_text(errors='replace')
-        except OSError:
-            continue
-        if 'registerProvider' in text or 'provider:' in text:
-            return True
-    return False
+    return _ADAPTER in _clone_facts(clone)
 
 
 @dataclass(frozen=True)
@@ -343,13 +363,14 @@ def check_clone(clone: Path, pi_version: tuple[int, ...]) -> Skew | None:
                      f'does not export and every agent dies on turn 1'),
             remedy='update the host with: pi update')
 
-    if not _has_provider_extension(clone):
+    facts = _clone_facts(clone)
+    if _PROVIDER not in facts:
         return None
 
     host_has_transcript = pi_version[:2] >= TRANSCRIPT_CONTRACT_VERSION
-    clone_has_adapter = _declares_transcript_adapter(clone)
+    clone_has_adapter = _ADAPTER in facts
 
-    if host_has_transcript and not clone_has_adapter and not _delegates_to_host_transport(clone):
+    if host_has_transcript and not clone_has_adapter and _DELEGATES not in facts:
         return Skew(
             problem=('clone predates the pi 0.86 transcript contract, so this provider '
                      'sends no system prompt and no tool declarations — the model cannot '

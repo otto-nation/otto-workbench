@@ -111,24 +111,36 @@ def run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
     if args.dry_run:
         core.log.info("Fetching diff for classification...")
     diff_text = _get_diff(repo, args.pr)
-    inline, file_level, skipped = classify_findings(findings, diff_text)
-    core.log.info(f"Classified: {len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped")
+    # `classify_findings` calls its third list "skipped", but nothing in it is
+    # left unposted: a path outside the diff and a declined finding both still
+    # go in the body, they just cannot anchor to a line. Named for where they
+    # land so the count below cannot be read as findings that never reached
+    # the PR.
+    inline, file_level, body_only = classify_findings(findings, diff_text)
+    core.log.info(
+        f"Classified: {len(inline)} inline, {len(file_level)} file-level, "
+        f"{len(body_only)} body-only (path not in diff, or declined)")
     trail.info("classify_findings",
-               f"{len(inline)} inline, {len(file_level)} file-level, {len(skipped)} skipped",
-               data={"inline": len(inline), "file_level": len(file_level), "skipped": len(skipped)})
+               f"{len(inline)} inline, {len(file_level)} file-level, {len(body_only)} body-only",
+               data={"inline": len(inline), "file_level": len(file_level),
+                     "body_only": len(body_only)})
 
+    # A duplicate is the one finding that is genuinely not posted. It is kept
+    # apart from `body_only` on purpose: the body renders every finding it is
+    # handed, so a duplicate that joined that list would be dropped from the
+    # inline comments and then posted again in the summary.
+    duplicates = []
     all_postable = inline + file_level
     if not args.dry_run and all_postable:
-        kept, deduped = dedup_against_posted(all_postable, repo, args.pr, pr_data)
-        if deduped:
-            core.log.info(f"Skipped {len(deduped)} findings duplicating existing comments")
-            skipped.extend(deduped)
+        kept, duplicates = dedup_against_posted(all_postable, repo, args.pr, pr_data)
+        if duplicates:
+            core.log.info(f"Skipped {len(duplicates)} findings duplicating existing comments")
             inline = [f for f in kept if f.classification == CLASS_INLINE]
             file_level = [f for f in kept if f.classification == CLASS_FILE_LEVEL]
-        trail.info("dedup", f"removed {len(deduped) if deduped else 0} duplicate findings",
-                   data={"deduped": len(deduped) if deduped else 0, "kept": len(kept)})
+        trail.info("dedup", f"removed {len(duplicates)} duplicate findings",
+                   data={"deduped": len(duplicates), "kept": len(kept)})
 
-    body_findings = file_level + skipped
+    body_findings = file_level + body_only
 
     findings_for_links = inline + body_findings
     resolve_permalinks(findings_for_links, repo, diff_text, head_ref, base_ref,
@@ -153,7 +165,7 @@ def run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
         }
         if inline_comments:
             payload["comments"] = inline_comments
-        _print_dry_run(payload, inline, body_findings, skipped, chunk_size)
+        _print_dry_run(payload, inline, body_findings, body_only, chunk_size)
         return 0
 
     trail.decision("post_mode", "posting to GitHub",
@@ -161,7 +173,7 @@ def run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
                    data={"inline_count": len(inline_comments), "has_body": bool(body_text)})
     _post_and_track(
         args, inline_comments, body_text,
-        inline, body_findings, skipped,
+        inline, body_findings, duplicates,
         commit_id, head_sha, chunk_size, severity_filter, pr_data,
         review_sha=review_sha or head_sha, sha_drifted=sha_drifted,
         sections=sections,

@@ -18,6 +18,10 @@ import config.workbench_config
 import config.workbench_config_write
 from config.workbench_config import ConfigError, ReuseLevel
 
+# The slash command the UserPromptSubmit hook answers. Prose that names it is
+# checked against this by bin/local/validate-prose-refs.
+SLASH_COMMAND = "/reuse"
+
 VALID_LEVELS = {str(level) for level in ReuseLevel}
 DEFAULT_LEVEL = str(ReuseLevel.FULL)
 
@@ -81,7 +85,7 @@ def track_reuse_command(stdin: TextIO) -> None:
         return
 
     prompt = data.get("prompt", "").strip()
-    if prompt != "/reuse" and not prompt.startswith("/reuse "):
+    if prompt != SLASH_COMMAND and not prompt.startswith(f"{SLASH_COMMAND} "):
         return
 
     parts = prompt.split(None, 1)

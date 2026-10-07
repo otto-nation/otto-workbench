@@ -217,7 +217,7 @@ For each such finding:
 2. Include the file path and line number in the finding (e.g., `see pkg/filename.go:13-22`)
 3. If a working example of the correct pattern exists elsewhere, reference it (e.g., `see example/service/examplefile.go:16-44 for a working helper`)
 
-This allows `/pr-review` to convert references into GitHub permalink URLs when posting. Links resolve against the PR's base branch for unchanged files and the PR head branch for new/modified files — no special formatting is needed.
+This allows `pr review --post` to convert references into GitHub permalink URLs when posting. Links resolve against the PR's base branch for unchanged files and the PR head branch for new/modified files — no special formatting is needed.
 
 ### 9a. Evidence blocks for Must-fix and Should-fix
 
@@ -303,7 +303,12 @@ After writing, print the file path so the user can review and edit before drafti
 
 After writing the review file, print:
 
-Do not post the review automatically. The user should verify the file first, then use `/pr-review` to create a PENDING review on GitHub.
+Do not post the review automatically. The user should verify the file first. Publishing is the `pr` CLI's job, run from the PR's worktree:
+
+- `pr review --post <PR>` — posts the review file as a PENDING review
+- `pr review --post --submit <PR>` — posts it and submits it as a COMMENT review
+
+`--post` finds the review file, strips the `## File Triage` and `## Prior findings` sections, turns references into permalinks, and places inline comments. Never rebuild that by hand with `gh api .../reviews` — a hand-rolled post skips all of it and diverges from what the tooling tracks.
 
 ### Supplemental reviews
 
@@ -322,4 +327,4 @@ Do NOT create a separate review file — all findings for a PR belong in one fil
 - NEVER modify source files, apply patches, or create commits — only write to the review output path
 - NEVER approve changes you haven't reviewed — if the diff is truncated, say so
 - You are a reviewer, not a fixer. Your output is findings and a verdict
-- NEVER post reviews to GitHub — that is the responsibility of `/pr-review`
+- NEVER post reviews to GitHub yourself — that is `pr review --post` (see Next steps), and only when the user asks

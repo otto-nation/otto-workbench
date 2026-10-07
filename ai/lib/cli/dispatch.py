@@ -44,7 +44,8 @@ import core.tool_parser
 import pr.context
 
 # The parser factory that answers "which of this command's options consume a
-# following token", and `pr <command> --help`, per subcommand. Not a
+# following token", per subcommand; `cli.pr._factory_reference_parser` builds on
+# it to answer `pr <command> --help` (wrapping `review`'s in the mode flags). Not a
 # CommandSpec field: three of the scriptless commands have no parser of their
 # own at all — theirs is one of the entry point's own subparsers — so a field
 # would be structurally empty for them, which is the two-meanings-in-one-field
@@ -147,26 +148,6 @@ def positional_index(extra: list[str], value_flags: frozenset[str]) -> int:
             continue
         return i
     return -1
-
-
-def print_delegate_help(spec: CommandSpec) -> None:
-    """Print *spec*'s delegate's own help, in this process.
-
-    `pr <command> --help` is answered by the command's own parser, because
-    its subparser declares no flags of its own. This used to spawn the script
-    with `--help` and let argparse exit; it asks the parser directly instead,
-    because a delegate `main` resolves context and claims a run lock before
-    argparse ever sees the flag — in-process, running one to print its usage
-    would take a lock to answer a question about syntax.
-
-    A command with no delegate parser prints nothing, and has already been
-    excluded by its caller: those declare their own flags, so argparse
-    answers for them.
-    """
-    factory = PARSER_FACTORIES.get(spec.name)
-    if factory is None:
-        return
-    resolve(factory)().print_help()
 
 
 def resolve(handler: str):

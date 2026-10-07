@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+"""Validate that hand-written prose names only commands, flags and skills that exist.
+
+Usage: bin/local/validate-prose-refs [--quiet] [file...]
+
+Agent protocols, skills, rules and docs tell a reader which command to run.
+The flag tables are generated from the parsers, but the prose around them is
+written by hand, and nothing compared it with the CLI it describes: the
+reviewer protocol sent agents to a `/pr-review` skill for years after the
+skill was deleted, and an agent asked to post a review hand-rolled a `gh api`
+call because the command it was told to use did not exist.
+
+Two checks, each against the live source of truth rather than a list kept here:
+
+  CLI invocations   A code span or fenced code line starting with a registered
+                    tool's name (every registry entry declaring `parser:`) is
+                    resolved against that tool's parsers through
+                    `core.cli_reference.load`: a subcommand must exist, and
+                    every `--flag` must be one the command, or the tool's
+                    global parser, accepts.
+  Slash commands    A code span `/name ...` must name a skill under ai/skills/,
+                    a command a workbench hook answers, a harness built-in, or
+                    a filesystem root (`/tmp`), which is a path and not a command.
+
+With no files, scans every hand-written markdown file: ai/claude/agents/,
+ai/skills/, ai/guidelines/rules/, docs/ and the top-level CLAUDE.md, README.md
+and CONTRIBUTING.md. A `*.generated.md` file, and a page composed from a
+sibling `<name>.src.md`, is skipped: its source is what gets scanned.
+
+Exit code: 0 if every reference resolves, 1 otherwise.
+"""
+
+from __future__ import annotations
+
+import argparse
+import itertools
+import re
+import shlex
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "lib"))
+sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
+
+from ansi import DIM, GREEN, NC, RED  # noqa: E402
+import config.reuse_levels  # noqa: E402
+import config.tool_registry  # noqa: E402
+import core.cli_reference  # noqa: E402
+import core.tool_parser  # noqa: E402
+import core.trail  # noqa: E402
+
+PROSE_DIRS = ("ai/claude/agents", "ai/skills", "ai/guidelines/rules", "docs")
+PROSE_FILES = ("CLAUDE.md", "README.md", "CONTRIBUTING.md")
+
+# Slash commands a workbench hook answers rather than a skill.
+HOOK_COMMANDS = frozenset({config.reuse_levels.SLASH_COMMAND.lstrip("/")})
+
+# ceiling: hand-listed harness built-ins. Upgrade trigger: once Claude Code or
+# Pi publishes its built-in slash commands machine-readably, read that instead.
+HARNESS_BUILTINS = frozenset({
+    "agents", "clear", "compact", "config", "help", "hooks", "init", "login",
+    "mcp", "memory", "model", "permissions", "reload", "resume",
+})
+
+# ceiling-permanent: POSIX and macOS filesystem roots. A `/tmp` span is a path,
+# and these names are fixed by the platforms rather than by anything here.
+FILESYSTEM_ROOTS = frozenset({
+    "bin", "dev", "etc", "home", "opt", "private", "proc", "sbin", "tmp",
+    "Users", "usr", "var", "Volumes",
+})
+
+CODE_SPAN = re.compile(r"(?<!`)`([^`\n]+)`(?!`)")
+# CommonMark: a backtick fence's info string may not contain a backtick.
+FENCE = re.compile(r"^\s*(`{3,}(?!.*`)|~{3,})(.*)$")
+SLASH_REF = re.compile(r"^/([A-Za-z][A-Za-z0-9_-]*)(?:\s|$)")
+# Synopsis notation. A `<placeholder>`, or a `[group]` holding no flag such as
+# `[global flags]`, names an argument rather than a command; what is left of
+# the grouping punctuation around `[--post]` or `(a|b)` is dropped.
+PLACEHOLDER = re.compile(r"<[^<>]*>|\[[^\[\]-]*\]")
+SYNOPSIS_PUNCT = re.compile(r"[\[\](){}|]")
+COMMAND_WORD = re.compile(r"[a-z][a-z-]*")
+
+
+@dataclass(frozen=True)
+class Violation:
+    path: Path
+    line: int
+    reason: str
+
+
+@dataclass(frozen=True)
+class ToolFlags:
+    """What one registered CLI accepts: global flags, and flags per command path."""
+
+    globals: frozenset[str]
+    commands: dict[str, frozenset[str]]
+
+    def has_commands(self) -> bool:
+        return bool(self.commands)
+
+
+def _options(parser) -> frozenset[str]:
+    # `_actions` is private argparse API, the same trade `core.cli_reference`
+    # makes (see its header); the tests here fail first on an upgrade that moves it.
+    if parser is None:
+        return frozenset()
+    return frozenset(s for a in parser._actions for s in a.option_strings)
+
+
+# Flags every ToolParser script accepts without declaring them per command, read
+# off a parser built the way the scripts build theirs: `-h` from argparse,
+# `--tool-schema` from ToolParser, `--debug` from `core.trail.add_trail_args`.
+def _framework_flags() -> frozenset[str]:
+    parser = core.tool_parser.ToolParser(prog="framework")
+    core.trail.add_trail_args(parser)
+    return _options(parser)
+
+
+FRAMEWORK_FLAGS = _framework_flags()
+
+
+def _command_flags(commands, prefix: str = "") -> dict[str, frozenset[str]]:
+    """Every command path (`batch run`) of *commands*, mapped to its option strings."""
+    out: dict[str, frozenset[str]] = {}
+    for command in commands:
+        path = f"{prefix}{command.name}"
+        out[path] = _options(command.parser)
+        nested = core.cli_reference.shape_of(command.parser, path).commands
+        out.update(_command_flags(nested, f"{path} "))
+    return out
+
+
+def load_tools(root: Path) -> dict[str, ToolFlags]:
+    """Every registered tool with a `parser:`, by the name it is invoked as."""
+    tools: dict[str, ToolFlags] = {}
+    for entry in config.tool_registry.load_registry_entries(root).values():
+        if not entry.parser:
+            continue
+        shape = core.cli_reference.load(entry.parser, entry.name, root)
+        tools[entry.name] = ToolFlags(_options(shape.globals), _command_flags(shape.commands))
+    return tools
+
+
+def load_slash_names(root: Path) -> frozenset[str]:
+    """Every name a `/name` span may resolve to."""
+    skills = {p.name for p in (root / "ai" / "skills").iterdir() if p.is_dir()}
+    return frozenset(skills) | HOOK_COMMANDS | HARNESS_BUILTINS | FILESYSTEM_ROOTS
+
+
+def _tokens(text: str) -> list[str]:
+    """*text* as shell words, with synopsis notation and `# comments` removed."""
+    plain = SYNOPSIS_PUNCT.sub(" ", PLACEHOLDER.sub(" ", text))
+    try:
+        return shlex.split(plain, comments=True)
+    except ValueError:
+        return plain.split("#", 1)[0].split()
+
+
+def _flags(tokens: list[str]) -> list[str]:
+    """The long flags among *tokens*, `--a=1` as `--a` and `--a/--b` as both."""
+    return [part.split("=", 1)[0]
+            for token in tokens if token.startswith("--")
+            for part in token.split("/") if part.startswith("--")]
+
+
+def _resolve_command(tool: ToolFlags, words: list[str]) -> str | None:
+    """The longest command path (`batch run`) *words* starts with, if any."""
+    for n in range(len(words), 0, -1):
+        path = " ".join(words[:n])
+        if path in tool.commands:
+            return path
+    return None
+
+
+def _command_reasons(name: str, tool: ToolFlags, words: list[str], rest: list[str]) -> list[str]:
+    """Reasons *words*, the leading non-flag tokens of *rest*, name no command of *tool*."""
+    if not words:
+        accepted = tool.globals | FRAMEWORK_FLAGS
+        return [f"`{name}`: no such global flag {flag}"
+                for flag in _flags(rest) if flag not in accepted]
+    # A lowercase word is a command name; anything else (`<id>`, `ENG-1`) is an argument.
+    if COMMAND_WORD.fullmatch(words[0]):
+        return [f"`{name} {words[0]}`: no such command"]
+    return []
+
+
+def check_invocation(text: str, tools: dict[str, ToolFlags]) -> list[str]:
+    """Reasons *text* is not an invocation its tool accepts; empty when it is, or is not one."""
+    tokens = _tokens(text)
+    if len(tokens) < 2 or tokens[0] not in tools:
+        return []
+    name, tool, rest = tokens[0], tools[tokens[0]], tokens[1:]
+    accepted = tool.globals | FRAMEWORK_FLAGS
+    label = name
+    if tool.has_commands():
+        words = list(itertools.takewhile(lambda t: not t.startswith("-"), rest))
+        command = _resolve_command(tool, words)
+        if command is None:
+            return _command_reasons(name, tool, words, rest)
+        accepted |= tool.commands[command]
+        label = f"{name} {command}"
+    return [f"`{label}`: no such flag {flag}" for flag in _flags(rest) if flag not in accepted]
+
+
+def check_slash(text: str, names: frozenset[str]) -> list[str]:
+    m = SLASH_REF.match(text)
+    if not m or m.group(1) in names:
+        return []
+    return [f"`/{m.group(1)}`: no skill, hook command or harness built-in has that name"]
+
+
+def _line_reasons(line: str, in_fence: bool, tools: dict[str, ToolFlags],
+                  names: frozenset[str]) -> list[str]:
+    """Reasons one non-fence line fails. Inside a fence the whole line is a command."""
+    if in_fence:
+        return check_invocation(line.strip(), tools)
+    return [r for span in CODE_SPAN.findall(line)
+            for r in check_invocation(span, tools) + check_slash(span, names)]
+
+
+def _fence_after(line: str, opened: str | None) -> str | None:
+    """The opening fence marker in force after *line*; None outside a fence.
+
+    A fence closes only on the same character, at least as long as the opener,
+    with nothing after it, so a four-backtick block may wrap a three-backtick example.
+    A line is a fence line exactly when it changes this state.
+    """
+    m = FENCE.match(line)
+    if not m:
+        return opened
+    marker, info = m.groups()
+    if opened is None:
+        return marker
+    if marker[0] == opened[0] and len(marker) >= len(opened) and not info.strip():
+        return None
+    return opened
+
+
+def check_file(path: Path, tools: dict[str, ToolFlags], names: frozenset[str]) -> list[Violation]:
+    violations: list[Violation] = []
+    opened: str | None = None
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        before, opened = opened, _fence_after(line, opened)
+        if opened != before:
+            continue
+        violations.extend(Violation(path, number, r)
+                          for r in _line_reasons(line, opened is not None, tools, names))
+    return violations
+
+
+def discover(root: Path) -> list[Path]:
+    files = [root / f for f in PROSE_FILES if (root / f).is_file()]
+    for directory in PROSE_DIRS:
+        files.extend(sorted((root / directory).rglob("*.md")))
+    return [f for f in files if not _is_generated(f)]
+
+
+def _is_generated(path: Path) -> bool:
+    if path.name.endswith(".generated.md"):
+        return True
+    return not path.name.endswith(".src.md") and path.with_suffix(".src.md").is_file()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="validate-prose-refs",
+        description="Validate that prose names only commands, flags and skills that exist.",
+    )
+    parser.add_argument("--quiet", action="store_true", help="Print only failures")
+    parser.add_argument("files", nargs="*", type=Path, help="Files to scan (default: all prose)")
+    args = parser.parse_args(argv)
+
+    tools = load_tools(REPO_ROOT)
+    names = load_slash_names(REPO_ROOT)
+    files = args.files or discover(REPO_ROOT)
+    violations = [v for f in files for v in check_file(f, tools, names)]
+    for v in violations:
+        rel = v.path.relative_to(REPO_ROOT) if v.path.is_relative_to(REPO_ROOT) else v.path
+        print(f"  {RED}✗{NC} {rel}:{v.line}: {v.reason}", file=sys.stderr)
+    if violations:
+        print(f"{RED}validate-prose-refs: {len(violations)} unresolved reference(s){NC}",
+              file=sys.stderr)
+        return 1
+    if not args.quiet:
+        print(f"  {GREEN}✓{NC} prose references resolve {DIM}({len(files)} files, "
+              f"{len(tools)} CLIs){NC}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

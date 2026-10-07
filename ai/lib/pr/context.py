@@ -20,8 +20,8 @@ because they routinely disagree:
 | `status` | local | no | **no** |
 | `ci` | remote | yes | yes |
 | `review` | remote | yes | yes |
-| `review --summary` / `--post` / `--repair` / `--recover` | remote | **no** | yes |
-| `review --list` | **none** | no | **no** |
+| `pr review --summary` / `--post` / `--repair` / `--recover` | remote | **no** | yes |
+| `pr review --list` | **none** | no | **no** |
 | `comments` | remote | yes | yes |
 | `fix` | remote | yes | yes |
 | `rebase` | remote | no | yes |
@@ -52,14 +52,14 @@ behind the repo key (`acme/widget`) rather than from `gh`. An explicit
 `--pr <n>` escalates it to remote anyway — a PR number names a branch only `gh`
 can report, and the branch is half the target key.
 
-`review --list` is the only `NONE` one, and that is not "resolve less" — it is
+`pr review --list` is the only `NONE` one, and that is not "resolve less" — it is
 "there is nothing to resolve". The listing answers from the user's own state
 root, so it has no repo, no branch, and no target, and unlike `LOCAL` it works
 from a directory that is not a git repository at all. `--pr` does not escalate
 it: there is no target for a PR number to name at that depth, so honouring one
 would spend a `gh` call on a value the handler never reads.
 
-`review --list` is also the one invocation that writes no trail at all.
+`pr review --list` is also the one invocation that writes no trail at all.
 Resolving nothing and holding no lock is the shape of a query rather than of an
 action, and the listing exists to be polled: the two records a dispatch writes
 cost more than the query itself, and they land in the file every `otto-log`

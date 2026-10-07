@@ -76,6 +76,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `validate-frozen-roots` | Validates that no module freezes a workbench root into an import-time constant |
 | `validate-ai-layers` | Validates that every ai/lib package imports only what the layer declaration in its __init__.py permits |
 | `validate-entry-points` | Fails when a script under ai/bin or ai/claude/bin that carries the ai/lib pin or imports an ai/lib package is anything but a shim — one cli import and the call into it |
+| `validate-prose-refs` | Fails when agent, skill, rule or doc prose names a slash command no skill or hook answers, or a CLI command or flag the tool's own parser does not accept |
 | `validate-import-form` | Validates that every ai/lib module is imported as `import pkg.mod` and named through its package |
 | `validate-stat-portability` | Validates that stat format flags are confined to the lib/portable.sh helpers |
 | `validate-bats-version` | Validates that a bats suite using flags on run declares bats_require_minimum_version 1.5.0 |
@@ -791,7 +792,7 @@ Takes no flags.
 | Flag | Description |
 |------|-------------|
 | `--no-post` | Do not post the review to GitHub. |
-| `--submit` | Submit the GitHub review after posting (default: leave PENDING). |
+| `--submit` | Submit the GitHub review after posting, as a COMMENT review (default: leave PENDING). |
 | `--self` | Review a local checkout of the current branch, or of the branch or PR ref given. |
 | `--fix` | Apply findings after the review (requires --self). |
 | `--push` | Push the --fix commit (requires --fix). |
@@ -1041,7 +1042,7 @@ resolution, model selection, and Vertex quota preflight are in
 |------|-------------|
 | `--no-post` | Do not post the review to GitHub. |
 | `--post` | Post the review to GitHub when it finishes. |
-| `--submit` | Submit the GitHub review after posting (default: leave PENDING). |
+| `--submit` | Submit the GitHub review after posting, as a COMMENT review (default: leave PENDING). |
 | `--self` | Review a local checkout of the current branch, or of the branch or PR ref given. |
 | `--fix` | Apply findings after the review (requires --self). |
 | `--push` | Push the --fix commit (requires --fix). |

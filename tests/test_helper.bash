@@ -230,6 +230,23 @@ make_fake_binary() {
   chmod +x "$dir/$name"
 }
 
+# narrow_path_to TOOL... — sets PATH to a scratch dir holding symlinks to the
+# named tools, followed by /usr/bin:/bin, so a detector that probes PATH with
+# `command -v` sees only what the test puts there. The developer's PATH
+# (Homebrew, ~/.local/bin, mise shims) otherwise leaks real installs into the
+# case — a herdr on the host made the detector restore ai/herdr in tests that
+# expected nothing. Call it after sourcing lib/ui.sh, which needs a modern
+# bash from that PATH. A tool not found on the current PATH is left out.
+narrow_path_to() {
+  local dir="$BATS_TEST_TMPDIR/narrow-bin" tool real
+  mkdir -p "$dir"
+  for tool in "$@"; do
+    real="$(command -v "$tool" || true)"
+    [[ -n "$real" ]] && ln -sf "$real" "$dir/$tool"
+  done
+  PATH="$dir:/usr/bin:/bin"
+}
+
 # shim_untrap DIR — prints the PATH reassignment a passthrough shim in DIR must
 # run before handing its call to the real tool.
 #

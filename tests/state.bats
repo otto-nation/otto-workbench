@@ -251,13 +251,10 @@ teardown() {
   export WORKBENCH_DIR="$REPO_ROOT"
   export NO_COLOR=1
   . "$REPO_ROOT/lib/ui.sh"
-  ln -sf "$(command -v yq)" "$TMPDIR/bin/yq"
-  ln -sf "$(command -v jq)" "$TMPDIR/bin/jq"
-  ln -sf "$BASH" "$TMPDIR/bin/bash"
   if PATH=/usr/bin:/bin command -v herdr > /dev/null 2>&1; then
     skip "herdr is installed in /usr/bin or /bin, so it cannot be hidden"
   fi
-  PATH="$TMPDIR/bin:/usr/bin:/bin"
+  narrow_path_to yq jq bash
 
   state_detect_installed
 

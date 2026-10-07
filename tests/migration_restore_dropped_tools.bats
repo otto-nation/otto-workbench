@@ -22,6 +22,8 @@ setup() {
   source "$REPO_ROOT/lib/migrations.sh"
   # shellcheck source=/dev/null
   source "$REPO_ROOT/bin/migrations/20260901-restore-dropped-tool-selections.sh"
+  # The detector probes PATH for herdr; keep the host's installs out of it.
+  narrow_path_to yq jq bash
 
   mkdir -p "$(dirname "$CLAUDE_SETTINGS_FILE")"
 }

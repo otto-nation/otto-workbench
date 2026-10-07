@@ -156,3 +156,50 @@ _commit() {
   [ "$status" -eq 0 ]
   [ "$output" = "my-stub" ]
 }
+
+# ── narrow_path_to and version-manager shims ─────────────────────────────────
+#
+# A shim decides what to run at call time, from config and installs a narrowed
+# PATH and a swapped HOME take away. Linked into narrow-bin it fails on every
+# call, so narrow_path_to links what the shim stands for instead.
+
+# _shim_fixture — a failing yq in a shims/ dir, a working yq behind it, and a
+# mise that prints $MISE_WHICH_ANSWER (or fails when it is empty).
+_shim_fixture() {
+  mkdir -p "$TMPDIR/vm/shims" "$TMPDIR/real" "$TMPDIR/installed" "$TMPDIR/mise-bin"
+  printf '#!/bin/sh\necho "shim: no version is set" >&2\nexit 1\n' > "$TMPDIR/vm/shims/yq"
+  printf '#!/bin/sh\necho real-yq\n' > "$TMPDIR/real/yq"
+  printf '#!/bin/sh\necho installed-yq\n' > "$TMPDIR/installed/yq"
+  printf '#!/bin/sh\n[ -n "$MISE_WHICH_ANSWER" ] || exit 1\necho "$MISE_WHICH_ANSWER"\n' \
+    > "$TMPDIR/mise-bin/mise"
+  chmod +x "$TMPDIR/vm/shims/yq" "$TMPDIR/real/yq" "$TMPDIR/installed/yq" "$TMPDIR/mise-bin/mise"
+  PATH="$TMPDIR/mise-bin:$TMPDIR/vm/shims:$TMPDIR/real:/usr/bin:/bin"
+}
+
+@test "narrow_path_to links what mise says a shim runs, not the shim" {
+  _shim_fixture
+  export MISE_WHICH_ANSWER="$TMPDIR/installed/yq"
+  narrow_path_to yq
+  run yq
+  [ "$status" -eq 0 ]
+  [ "$output" = installed-yq ]
+}
+
+@test "narrow_path_to falls past a shim mise cannot resolve to the next yq on PATH" {
+  _shim_fixture
+  export MISE_WHICH_ANSWER=""
+  narrow_path_to yq
+  run yq
+  [ "$status" -eq 0 ]
+  [ "$output" = real-yq ]
+}
+
+@test "narrow_path_to leaves out a tool that is only a shim mise cannot resolve" {
+  _shim_fixture
+  rm "$TMPDIR/real/yq"
+  export MISE_WHICH_ANSWER=""
+  run --separate-stderr narrow_path_to yq
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"no runnable yq on PATH"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/narrow-bin/yq" ]
+}

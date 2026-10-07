@@ -230,6 +230,33 @@ make_fake_binary() {
   chmod +x "$dir/$name"
 }
 
+# _runnable_binary TOOL — prints the executable TOOL runs as, skipping
+# version-manager shims; returns 1 when there is none.
+#
+# A shim (anything in a `shims/` directory — mise's and asdf's both live in
+# one) is not the tool: it decides what to run at call time, from config and
+# installs that a test's HOME swap and a narrowed PATH both take away. Linked
+# into narrow-bin it then fails on every call — "not a valid shim", "no version
+# is set" — while the real tool sits one PATH entry further down. So a shim is
+# replaced by what `mise which` says it runs, and when mise cannot say, by the
+# next candidate on PATH.
+_runnable_binary() {
+  local tool="$1" candidates candidate resolved
+  candidates="$(type -ap "$tool" || true)"
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    if [[ "$(dirname "$candidate")" != */shims ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+    if resolved="$(mise which "$tool" 2>/dev/null)" && [[ -x "$resolved" ]]; then
+      printf '%s' "$resolved"
+      return 0
+    fi
+  done <<< "$candidates"
+  return 1
+}
+
 # narrow_path_to TOOL... — sets PATH to a scratch dir holding symlinks to the
 # named tools, followed by /usr/bin:/bin, so a detector that probes PATH with
 # `command -v` sees only what the test puts there. The developer's PATH
@@ -238,7 +265,9 @@ make_fake_binary() {
 # expected nothing. Call it after sourcing lib/ui.sh, which needs a modern
 # bash from that PATH. `bash` links $BASH, the interpreter running the test,
 # not whatever PATH lists first (lib/output.sh exits on bash older than 4.3).
-# A tool not found on the current PATH is left out, with a warning on stderr.
+# A tool links the binary it actually runs as, never a version-manager shim:
+# see _runnable_binary. A tool with nothing runnable on the current PATH is
+# left out, with a warning on stderr.
 # Skips the test (bats_skip, since lib/ui.sh has replaced skip) when herdr sits
 # in /usr/bin or /bin, where it cannot be hidden.
 narrow_path_to() {
@@ -248,10 +277,10 @@ narrow_path_to() {
     if [[ "$tool" == bash ]]; then
       real="$BASH"
     else
-      real="$(command -v "$tool" || true)"
+      real="$(_runnable_binary "$tool" || true)"
     fi
     if [[ -z "$real" ]]; then
-      echo "narrow_path_to: $tool not found on PATH; leaving it out" >&2
+      echo "narrow_path_to: no runnable $tool on PATH; leaving it out" >&2
       continue
     fi
     ln -sf "$real" "$dir/$tool"

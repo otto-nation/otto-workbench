@@ -269,6 +269,15 @@ def _reference_parser(name: str, subs: dict[str, argparse.ArgumentParser]) -> ar
             raise RuntimeError(
                 f"pr: '{name}' has no parser factory and is not declared to take no flags")
         return subs[name]
+    return _factory_reference_parser(name)
+
+
+def _factory_reference_parser(name: str) -> argparse.ArgumentParser:
+    """The reference parser of a command that has a parser factory.
+
+    Shared by the CLI reference and `pr <command> --help`, so neither needs the
+    entry point's subparsers, which a command with a factory never reads.
+    """
     parser = cli.dispatch.resolve(cli.dispatch.PARSER_FACTORIES[name])()
     # `review`'s handler routes the mode flags before its parser runs, so `pr
     # review` accepts more than `review` does — the one command whose
@@ -283,8 +292,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     A command with a parser factory has a subparser that declares no flags of
     its own — its argv is forwarded whole and `pr <command> --help` is answered
-    by the factory's parser — so add_help is left off for those. That is every
-    delegate and `create`, whose handler runs here but whose parser is its own.
+    by the factory's reference parser (`_factory_reference_parser`, which for
+    `review` adds the mode flags `pr` routes) — so add_help is left off for
+    those. That is every delegate and `create`, whose handler runs here but
+    whose parser is its own.
     A command that parses its own argv (`CommandSpec.parses_own_argv`) is left
     without one too, so its subcommands answer their own help.
 
@@ -516,8 +527,7 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     # review there) rather than the bare `review` binary's reading of them.
     if ({"-h", "--help"} & set(extra) and cli.dispatch.has_parser_factory(spec.name)
             and not spec.parses_own_argv):
-        # A command with a factory never reads *subs*, so none is built.
-        _reference_parser(spec.name, {}).print_help()
+        _factory_reference_parser(spec.name).print_help()
         return 0
 
     original_pr = getattr(args, "pr", None)

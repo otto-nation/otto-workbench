@@ -44,7 +44,8 @@ import core.tool_parser
 import pr.context
 
 # The parser factory that answers "which of this command's options consume a
-# following token", and `pr <command> --help`, per subcommand. Not a
+# following token", per subcommand; `cli.pr._factory_reference_parser` builds on
+# it to answer `pr <command> --help` (wrapping `review`'s in the mode flags). Not a
 # CommandSpec field: three of the scriptless commands have no parser of their
 # own at all — theirs is one of the entry point's own subparsers — so a field
 # would be structurally empty for them, which is the two-meanings-in-one-field

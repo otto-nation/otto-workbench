@@ -92,7 +92,7 @@ def test_global_flags_mixed_with_subcommand_flags(mock_resolve, mock_call):
     assert "--fix" in cmd
 
 
-@patch("cli.pr._reference_parser")
+@patch("cli.pr._factory_reference_parser")
 @patch("pr.context.resolve", side_effect=AssertionError("resolve must not be called"))
 def test_help_flag_skips_context_resolution(mock_resolve, mock_help):
     rc = _run_main("ci", "--help")
@@ -102,7 +102,7 @@ def test_help_flag_skips_context_resolution(mock_resolve, mock_help):
     mock_resolve.assert_not_called()
 
 
-@patch("cli.pr._reference_parser")
+@patch("cli.pr._factory_reference_parser")
 @patch("pr.context.resolve", side_effect=AssertionError("resolve must not be called"))
 def test_help_short_flag_skips_context_resolution(mock_resolve, mock_help):
     rc = _run_main("ci", "-h")

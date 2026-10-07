@@ -100,7 +100,7 @@ _start_tree=$(_tree_snapshot)
 # ── Secret scan ──────────────────────────────────────────────────────────────
 
 if ! command -v gitleaks >/dev/null 2>&1; then
-  err "gitleaks not found — run: brew install gitleaks"
+  err "gitleaks not found — run: brew install gitleaks, or: mise use -g gitleaks"
   exit 1
 fi
 
@@ -278,7 +278,7 @@ _pass
 # ── ShellCheck ───────────────────────────────────────────────────────────────
 
 if ! command -v shellcheck >/dev/null 2>&1; then
-  err "shellcheck not found — run: brew install shellcheck"
+  err "shellcheck not found — run: brew install shellcheck, or: mise use -g shellcheck"
   exit 1
 fi
 
@@ -340,7 +340,7 @@ fi
 # ── Bats tests ───────────────────────────────────────────────────────────────
 
 if ! command -v bats >/dev/null 2>&1; then
-  err "bats not found — run: brew install bats-core"
+  err "bats not found — run: brew install bats-core, or: mise use -g bats"
   exit 1
 fi
 

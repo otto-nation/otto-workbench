@@ -163,9 +163,25 @@ ensure_tool_path() {
   export PATH
 }
 
+# _cmd_runnable CMD — succeeds when CMD resolves on PATH to something that can
+# run. A mise shim with no active version resolves but only prints an error, so
+# a shim counts only when mise can name the binary behind it.
+#
+# That state is ordinary: a tool one project pins in its own mise config is
+# installed and shimmed, but has no global version, so the shim fails in every
+# other directory.
+_cmd_runnable() {
+  local cmd="$1" path
+  path="$(command -v "$cmd" 2>/dev/null)" || return 1
+  [[ "$path" == "$MISE_SHIMS_DIR/"* ]] || return 0
+  command -v mise >/dev/null 2>&1 || return 1
+  mise which "$cmd" >/dev/null 2>&1
+}
+
 # install_brew_or_mise CMD FORMULA MISE_TOOL LABEL — installs LABEL with
 # `brew install FORMULA` where Homebrew is available, and otherwise with
-# `mise use -g MISE_TOOL`. Skipped when CMD is already in PATH. Returns non-zero
+# `mise use -g MISE_TOOL`. Skipped when CMD is already runnable from PATH — a
+# mise shim with no active version does not count. Returns non-zero
 # with both install commands named when neither installer is present or the
 # install fails.
 #
@@ -178,7 +194,7 @@ install_brew_or_mise() {
   local cmd="$1" formula="$2" mise_tool="$3" label="$4"
   local manual="brew install $formula, or: mise use -g $mise_tool"
   local looked="PATH" doctor
-  if command -v "$cmd" >/dev/null 2>&1; then
+  if _cmd_runnable "$cmd"; then
     success "$label already installed"
     return
   fi

@@ -35,6 +35,14 @@ EOF
   # shims, which is not on PATH — exactly the state a fresh mise install leaves.
   cat > "$STUBS/mise" <<'EOF'
 #!/usr/bin/env bash
+# `mise which TOOL` names the binary behind a shim; it fails for a shim with no
+# active version, which MISE_WHICH_FAILS models. Not logged: the log records
+# installs.
+if [[ "$1" == which ]]; then
+  [[ -z "${MISE_WHICH_FAILS:-}" ]] || exit 1
+  echo "$MISE_DATA_DIR/installs/$2/bin/$2"
+  exit 0
+fi
 echo "$*" >> "$MISE_LOG"
 [[ -z "${MISE_INSTALL_FAILS:-}" ]] || exit 1
 mkdir -p "$MISE_DATA_DIR/shims"
@@ -154,6 +162,34 @@ EOF2
   [[ "$output" == *"mise use -g rtk"* ]]
 }
 
+# ─── A shim with no active version ───────────────────────────────────────────
+# A tool one project pins in its own mise config is installed and shimmed but has
+# no global version, so its shim resolves on PATH and fails everywhere else.
+
+# _plant_shim — an rtk shim under the mise shims dir, as that state leaves it.
+_plant_shim() {
+  mkdir -p "$MISE_DATA_DIR/shims"
+  printf '#!/bin/sh\nexit 1\n' > "$MISE_DATA_DIR/shims/rtk"
+  chmod +x "$MISE_DATA_DIR/shims/rtk"
+}
+
+@test "a mise shim with no active version is installed globally rather than skipped" {
+  _plant_shim
+  export MISE_WHICH_FAILS=1
+  run _run_install "$MISE_DATA_DIR/shims:$(_path_with mise)"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"RTK already installed"* ]]
+  [ "$(cat "$MISE_LOG")" = "use -g rtk" ]
+}
+
+@test "a mise shim that resolves to an active version is not reinstalled" {
+  _plant_shim
+  run _run_install "$MISE_DATA_DIR/shims:$(_path_with mise)"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"RTK already installed"* ]]
+  [ ! -e "$MISE_LOG" ]
+}
+
 # ─── Callers ─────────────────────────────────────────────────────────────────
 # The callers pass their own formula and mise tool names; a swapped or misspelt
 # name installs nothing on the machines that need the fallback, so the wiring
@@ -198,4 +234,12 @@ EOF2
   [ "$status" -eq 0 ]
   [[ "$output" == *"Worktrunk Claude plugin already installed"* ]]
   [[ "$output" != *"skipped"* ]]
+}
+
+@test "the git hook-tools step installs gitleaks, bats and shellcheck through the helper" {
+  run _run_caller "$REPO_ROOT/git/steps.sh" step_install_hook_tools
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"HELPER gitleaks gitleaks gitleaks gitleaks"* ]]
+  [[ "$output" == *"HELPER bats bats-core bats bats-core"* ]]
+  [[ "$output" == *"HELPER shellcheck shellcheck shellcheck shellcheck"* ]]
 }

@@ -155,7 +155,7 @@ _assert_signing_ready() {
 _assert_signing_ready
 
 if ! command -v gitleaks >/dev/null 2>&1; then
-  echo "✗ gitleaks not found — run: brew install gitleaks"
+  echo "✗ gitleaks not found — run: brew install gitleaks, or: mise use -g gitleaks"
   exit 1
 fi
 

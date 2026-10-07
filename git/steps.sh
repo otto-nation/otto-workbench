@@ -588,6 +588,17 @@ step_global_hooks() {
   [[ "${WORKBENCH_SYNC:-}" != true ]] && success "global core.hooksPath → $GIT_HOOKS_DIR" || true
 }
 
+# step_install_hook_tools — installs what the global hooks run: gitleaks for the
+# secret scan in pre-commit and pre-push, and bats and shellcheck for the
+# workbench's own pre-push checks. Homebrew where it exists, mise otherwise — the brew component
+# is macOS-only, so on Linux nothing else installs them. Non-fatal: each hook
+# refuses with its own install hint when its tool is still missing.
+step_install_hook_tools() {
+  install_brew_or_mise gitleaks gitleaks gitleaks gitleaks || true
+  install_brew_or_mise bats bats-core bats bats-core || true
+  install_brew_or_mise shellcheck shellcheck shellcheck shellcheck || true
+}
+
 # step_local_hooks — installs repo-local hooks into .git/hooks/ for the workbench repo.
 # When core.hooksPath is set globally, git ignores .git/hooks/ entirely.
 # The global hooks delegate back to .git/hooks/ if present,
@@ -777,6 +788,7 @@ install_git() {
   echo; info "global git hooks → $GIT_HOOKS_DIR"
   step_global_hooks
   step_local_hooks
+  step_install_hook_tools
 
   echo; info "git scripts → $LOCAL_BIN_DIR/"
   sync_component_bin "$GIT_SRC_DIR"
@@ -801,6 +813,7 @@ sync_git() {
   sync_header "global git hooks → $GIT_HOOKS_DIR"
   step_global_hooks
   step_local_hooks
+  step_install_hook_tools
 
   sync_header "git scripts → $LOCAL_BIN_DIR/"
   sync_component_bin "$GIT_SRC_DIR"

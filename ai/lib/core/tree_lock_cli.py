@@ -17,15 +17,38 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import core.signal_relay
-from core.tree_lock import acquire, holders, is_locked
+from core.tree_lock import LockState, acquire, holders, probe
+
+# The line --check prints for a free tree. Exit 1 alone cannot say "free": a
+# python3 that will not start, a version-manager shim that errors, and an
+# uncaught exception all exit 1 too. A reader that must not mistake a broken
+# probe for a free tree requires this line as well — the Pi tree-lock-guard
+# does, in ai/pi/extensions/tree-lock-guard/detect.ts.
+FREE_SUFFIX = ": not being validated"
+
+# The line --check prints, after the tree path, when a validator holds the
+# tree. Readers require it alongside exit 0 for the same reason they require
+# FREE_SUFFIX alongside exit 1: a python3 or shim that exits 0 without running
+# the probe is not evidence of a holder.
+HELD_SUFFIX = ": validating"
+
+# --check could not tell. Distinct from 1 so no reader reads it as free.
+EXIT_UNKNOWN = 3
 
 
 def _check(tree_root: Path) -> int:
-    """Report holders. Exit 0 when the tree is being validated, 1 when free."""
-    if not is_locked(tree_root):
-        print(f"{tree_root}: not being validated")
+    """Report holders. Exit 0 when validated, 1 when free, 3 when it could not tell."""
+    verdict = probe(tree_root)
+    if verdict.state is LockState.UNKNOWN:
+        print(
+            f"tree_lock_cli: could not tell whether {tree_root} is being validated: {verdict.reason}",
+            file=sys.stderr,
+        )
+        return EXIT_UNKNOWN
+    if verdict.state is LockState.FREE:
+        print(f"{tree_root}{FREE_SUFFIX}")
         return 1
-    print(f"{tree_root}: validating")
+    print(f"{tree_root}{HELD_SUFFIX}")
     for record in holders(tree_root):
         pid = record.get("pid", "?")
         command = record.get("command", "unknown command")

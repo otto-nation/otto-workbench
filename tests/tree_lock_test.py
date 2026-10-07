@@ -1,5 +1,6 @@
 """Tests for the tree validation lock."""
 
+import json
 import os
 import signal
 import subprocess
@@ -17,7 +18,16 @@ import pytest
 from conftest import init_worktree, seed_repo  # noqa: E402
 import core.signal_relay  # noqa: E402
 import core.tree_lock_cli  # noqa: E402
-from core.tree_lock import LOCK_ENV, LOCK_FILE, acquire, holders, is_locked, lock_path
+from core.tree_lock import (  # noqa: E402
+    LOCK_ENV,
+    LOCK_FILE,
+    LockState,
+    acquire,
+    holders,
+    is_locked,
+    lock_path,
+    probe,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -225,6 +235,143 @@ def test_git_timeout_is_treated_as_no_lock(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, "run", boom)
     assert lock_path(tmp_path) is None
     assert is_locked(tmp_path) is False
+
+
+def test_git_timeout_is_an_unknown_probe_not_a_free_tree(tmp_path, monkeypatch):
+    """is_locked fails open on a hung git; probe must still say it could not tell."""
+
+    def boom(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd="git", timeout=1)
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    verdict = probe(tmp_path)
+    assert verdict.state is LockState.UNKNOWN
+    assert "timed out" in verdict.reason
+
+
+def test_git_that_will_not_start_is_an_unknown_probe(tmp_path, monkeypatch):
+    """A spawn failure is the probe breaking, not git saying "not a repo"."""
+
+    def boom(*_args, **_kwargs):
+        raise OSError(11, "Resource temporarily unavailable")
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    verdict = probe(tmp_path)
+    assert verdict.state is LockState.UNKNOWN
+    assert "could not run" in verdict.reason
+
+
+def test_non_repo_probe_is_free_not_unknown(tmp_path):
+    """git answering "not a repository" is an answer: nothing there to validate."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert probe(plain).state is LockState.FREE
+
+
+def test_git_failing_for_another_reason_is_unknown_not_free(tmp_path, monkeypatch):
+    """git exits 128 for every fatal error; only "not a repository" is an answer."""
+
+    def dubious(*_args, **_kwargs):
+        raise subprocess.CalledProcessError(
+            128, "git", stderr="fatal: detected dubious ownership in repository at '/x'"
+        )
+
+    monkeypatch.setattr(subprocess, "run", dubious)
+    verdict = probe(tmp_path)
+    assert verdict.state is LockState.UNKNOWN
+    assert "dubious ownership" in verdict.reason
+
+
+def test_a_missing_tree_is_free_not_unknown(tmp_path):
+    """git -C on a directory that is gone says "cannot change to": nothing to validate."""
+    assert probe(tmp_path / "gone").state is LockState.FREE
+
+
+def test_flock_failing_for_another_reason_is_unknown_not_held(worktree, monkeypatch):
+    """Only EWOULDBLOCK means someone holds it; ENOLCK is the probe failing."""
+    import errno
+    import fcntl
+
+    lock_path(worktree).write_text("")
+
+    def no_locks(*_args, **_kwargs):
+        raise OSError(errno.ENOLCK, "No locks available")
+
+    monkeypatch.setattr(fcntl, "flock", no_locks)
+    verdict = probe(worktree)
+    assert verdict.state is LockState.UNKNOWN
+    assert "could not flock" in verdict.reason
+
+
+def test_unstatable_lock_file_is_unknown(worktree, monkeypatch):
+    """An unsearchable git dir makes the existence check raise; the probe still answers."""
+    target = lock_path(worktree)
+    real_stat = Path.stat
+
+    def stat(self, *args, **kwargs):
+        if self == target:
+            raise PermissionError(13, "Permission denied")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stat)
+    verdict = probe(worktree)
+    assert verdict.state is LockState.UNKNOWN
+    assert "could not stat" in verdict.reason
+
+
+def test_probe_reports_held_and_free(worktree):
+    """Both senses through probe itself, not only through is_locked."""
+    assert probe(worktree).state is LockState.FREE
+    with acquire(worktree, command="run-tests", started="t"):
+        assert probe(worktree).state is LockState.HELD
+    assert probe(worktree).state is LockState.FREE
+
+
+def test_check_exits_3_with_a_reason_when_it_cannot_tell(tmp_path, monkeypatch, capsys):
+    """Exit 1 means free; a probe that broke must not exit 1."""
+
+    def boom(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd="git", timeout=1)
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert core.tree_lock_cli._check(tmp_path) == core.tree_lock_cli.EXIT_UNKNOWN == 3
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "could not tell" in captured.err and "timed out" in captured.err
+
+
+def test_check_prints_the_free_line_on_a_free_tree(worktree, capsys):
+    """Readers require this line alongside exit 1 to call a tree free."""
+    assert core.tree_lock_cli._check(worktree) == 1
+    assert capsys.readouterr().out == f"{worktree}{core.tree_lock_cli.FREE_SUFFIX}\n"
+
+
+def test_check_prints_the_held_line_on_a_held_tree(worktree, capsys):
+    """Readers require this line alongside exit 0 to call a tree held."""
+    with acquire(worktree, command="run-tests", started="t"):
+        assert core.tree_lock_cli._check(worktree) == 0
+    assert capsys.readouterr().out.startswith(f"{worktree}{core.tree_lock_cli.HELD_SUFFIX}\n")
+
+
+def test_claude_guard_passes_on_the_reason_when_the_probe_cannot_answer(worktree, tmp_path):
+    """Exit 3 lets the edit through but is not silent, as it is not for the Pi guard."""
+    seed_repo(worktree)
+    subprocess.run(["git", "-C", str(worktree), "checkout", "-q", "-b", "feat"], check=True)
+    shims = tmp_path / "shims"
+    shims.mkdir()
+    shim = shims / "python3"
+    shim.write_text("#!/bin/sh\necho 'tree_lock_cli: could not tell: shim' >&2\nexit 3\n")
+    shim.chmod(0o755)
+    payload = json.dumps({"tool_input": {"file_path": str(worktree / "file.txt")}})
+    result = subprocess.run(
+        [str(REPO_ROOT / "ai" / "claude" / "bin" / "claude-edit-guard")],
+        input=payload,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{shims}:{os.environ['PATH']}"},
+    )
+    assert result.returncode == 0
+    assert "could not tell: shim" in result.stderr
 
 
 def test_the_cli_runs_the_child_through_the_shared_runner(monkeypatch):

@@ -106,6 +106,12 @@ common_setup() {
   # Only set when the caller has not: a test whose subject is mise's own config
   # resolution points this elsewhere and keeps control.
   export MISE_GLOBAL_CONFIG_FILE="${MISE_GLOBAL_CONFIG_FILE:-$HOME/.config/mise/config.toml}"
+  # Its installs and auto-install, for the same reason; see run_bats in
+  # bin/local/run-tests. Like MISE_GLOBAL_CONFIG_FILE above, the default is read
+  # from $HOME at call time, so common_setup must run before a test swaps HOME —
+  # after the swap it would pin the data dir to the fake home.
+  export MISE_DATA_DIR="${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}"
+  export MISE_AUTO_INSTALL="${MISE_AUTO_INSTALL:-false}"
 
   # Shadow a live agent CLI so a test that forgot to stub it fails at once
   # instead of hanging on a real prompt. Presence is unchanged when neither

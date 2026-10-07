@@ -346,6 +346,32 @@ report_for() {
   [ "${lines[1]}" = 12 ]
 }
 
+@test "run_bats pins mise's installs to the real HOME and turns off auto-install" {
+  # A test that swaps HOME would otherwise move mise's data dir with it, and a
+  # shim finding nothing installed there downloads the runtime mid-test.
+  _run_watched() { printf '%s\n' "$MISE_DATA_DIR" "$MISE_AUTO_INSTALL"; }
+  # shellcheck disable=SC2034  # read by run_bats in bin/local/run-tests
+  BATS_RUN_TMPDIR=$BATS_TEST_TMPDIR/bats-run
+  JOBS=1
+  unset MISE_DATA_DIR MISE_AUTO_INSTALL XDG_DATA_HOME
+  HOME="$TMPDIR/real-home" run --separate-stderr run_bats
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "$TMPDIR/real-home/.local/share/mise" ]
+  [ "${lines[1]}" = false ]
+}
+
+# passes-at-base: a caller's own values were never overwritten; this holds the pin to the unset case
+@test "run_bats leaves a caller's mise data dir and auto-install alone" {
+  _run_watched() { printf '%s\n' "$MISE_DATA_DIR" "$MISE_AUTO_INSTALL"; }
+  # shellcheck disable=SC2034  # read by run_bats in bin/local/run-tests
+  BATS_RUN_TMPDIR=$BATS_TEST_TMPDIR/bats-run
+  JOBS=1
+  MISE_DATA_DIR="$TMPDIR/mine" MISE_AUTO_INSTALL=true run --separate-stderr run_bats
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "$TMPDIR/mine" ]
+  [ "${lines[1]}" = true ]
+}
+
 @test "sourcing the runner does not start a suite" {
   # The guard around main() is what makes every test above possible. Without
   # it, setup() would have run both suites before the first assertion.

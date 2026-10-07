@@ -320,6 +320,16 @@ run_bats() {
   # CI, the Taskfile — goes through.
   export MISE_GLOBAL_CONFIG_FILE="${MISE_GLOBAL_CONFIG_FILE:-$HOME/.config/mise/config.toml}"
 
+  # The same swap moves mise's data dir, where its installs live, so under the
+  # test's HOME every shim finds nothing installed. With auto_install on, the
+  # shim then downloads the runtime into that HOME on each call — tens of
+  # seconds per test, and a child that outlives its caller's timeout or fails
+  # mid-download. Pin the data dir to the real one, and never auto-install from
+  # a test: a version missing there falls through to the next one on PATH
+  # instead of fetching it.
+  export MISE_DATA_DIR="${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}"
+  export MISE_AUTO_INSTALL="${MISE_AUTO_INSTALL:-false}"
+
   # Give this worktree's run a scratch root of its own. bats derives one from
   # $TMPDIR when this is unset, so two worktrees running the suite at once take
   # sibling directories under one machine-wide parent — and the tree lock does

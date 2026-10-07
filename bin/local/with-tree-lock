@@ -12,8 +12,12 @@
 #   with-tree-lock <tree-root> [--label TEXT] -- <command> [args...]
 #   with-tree-lock --check <tree-root>
 #
-# Exit status: the command's own, or 1 from --check when nothing holds the
-# lock (so `if with-tree-lock --check "$t"` reads as "is it being validated").
+# Exit status: the command's own, or from --check: 0 when a validator holds the
+# lock (so `if with-tree-lock --check "$t"` reads as "is it being validated"),
+# 1 when nothing does, 3 when it could not tell — git hung or the lock file
+# would not open. A free tree also prints "<tree>: not being validated"; a
+# reader that must not take a broken probe for a free tree checks for that line,
+# since anything failing before the probe runs exits 1 as well.
 set -e
 
 _SELF="${BASH_SOURCE[0]}"

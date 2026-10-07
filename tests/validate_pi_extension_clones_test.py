@@ -112,6 +112,96 @@ def test_matched_old_clone_and_old_host_pass(validator, tmp_path):
     assert validator.check_clone(clone, HOST_BEFORE_TRANSCRIPT) is None
 
 
+def _delegating_clone(root: Path, specifier: str) -> Path:
+    """A provider clone that streams through pi-ai's own transport, as
+    vertex-claude does: it never names the adapter symbols."""
+    clone = _clone(root, provider=True, adapter=False)
+    (clone / 'extensions' / 'vertex-claude' / 'stream.ts').write_text(
+        f'const compat = await import("{specifier}");\n'
+        'const transport = compat.anthropicMessagesApi();\n')
+    return clone
+
+
+@pytest.mark.parametrize('specifier', [
+    '@earendil-works/pi-ai/compat',
+    '@mariozechner/pi-ai/compat',
+])
+def test_a_provider_delegating_to_the_host_transport_passes(validator, tmp_path, specifier):
+    """The host's own transport reads the host's transcript shape, so a
+    provider that hands the context to it is not stale for lacking the
+    adapter symbols."""
+    clone = _delegating_clone(tmp_path, specifier)
+    assert validator.check_clone(clone, HOST_WITH_TRANSCRIPT) is None
+
+
+# passes-at-base: base also flags an adapter-carrying clone on an old host; pins that delegation keeps it
+def test_delegation_does_not_clear_the_old_host_skew(validator, tmp_path):
+    """Delegation only answers the stale-clone direction: a clone carrying the
+    adapter is still flagged on a host that predates it."""
+    clone = _delegating_clone(tmp_path, '@earendil-works/pi-ai/compat')
+    (clone / 'extensions' / 'vertex-claude' / 'transcript.ts').write_text(
+        'import { getCurrentSystemPrompt } from "@earendil-works/pi-ai";\n')
+    skew = validator.check_clone(clone, HOST_BEFORE_TRANSCRIPT)
+    assert skew is not None
+    assert 'older' in skew.problem
+
+
+# passes-at-base: base returns None for a clone without the adapter on an old host too
+def test_a_delegating_clone_on_a_host_with_the_factory_passes(validator, tmp_path):
+    """Between 0.80 and 0.86 the host exports the transport but predates the
+    transcript contract; its own transport reads its own shape, so this is fine."""
+    clone = _delegating_clone(tmp_path, '@earendil-works/pi-ai/compat')
+    assert validator.check_clone(clone, HOST_BEFORE_TRANSCRIPT) is None
+
+
+def test_a_delegating_clone_below_the_factory_floor_is_flagged(validator, tmp_path):
+    """0.79.10 has no `pi-ai/compat`, so the provider cannot load its transport;
+    the cure is at the host end."""
+    clone = _delegating_clone(tmp_path, '@earendil-works/pi-ai/compat')
+    skew = validator.check_clone(clone, (0, 79, 10))
+    assert skew is not None
+    assert 'anthropicMessagesApi' in skew.problem
+    assert skew.remedy == 'update the host with: pi update'
+
+
+@pytest.mark.parametrize('source', [
+    # Something other than the transport factory taken from `/compat`.
+    'import { somethingElse } from "@earendil-works/pi-ai/compat";\n',
+    # The specifier and factory named only in a comment.
+    '// see @earendil-works/pi-ai/compat anthropicMessagesApi\n'
+    'const ctx = context.systemPrompt;\n',
+    # The factory imported from somewhere else.
+    'import { anthropicMessagesApi } from "./local";\n'
+    'const spec = "@earendil-works/pi-ai/compat";\n',
+])
+def test_a_mention_of_compat_is_not_delegation(validator, tmp_path, source):
+    """The marker is an import of the transport factory, not a substring.
+
+    A stale provider that still reads `context.systemPrompt` but touches
+    `pi-ai/compat` in passing must stay flagged, or the fabrication case this
+    validator exists for passes silently.
+    """
+    clone = _clone(tmp_path, provider=True, adapter=False)
+    (clone / 'extensions' / 'vertex-claude' / 'stream.ts').write_text(source)
+    skew = validator.check_clone(clone, HOST_WITH_TRANSCRIPT)
+    assert skew is not None
+    assert 'predates' in skew.problem
+
+
+# passes-at-base: node_modules pruning is shared via _ts_files; pins it for the new marker
+def test_delegation_in_node_modules_does_not_count(validator, tmp_path):
+    """A vendored copy of the delegating import must not bless the clone."""
+    clone = _clone(tmp_path, provider=True, adapter=False)
+    vendored = clone / 'node_modules' / 'some-dep'
+    vendored.mkdir(parents=True)
+    (vendored / 'index.ts').write_text(
+        'const c = await import("@earendil-works/pi-ai/compat");\n'
+        'c.anthropicMessagesApi();\n')
+    skew = validator.check_clone(clone, HOST_WITH_TRANSCRIPT)
+    assert skew is not None
+    assert 'predates' in skew.problem
+
+
 def test_a_package_with_no_provider_is_not_judged(validator, tmp_path):
     """A tools-only package has no stake in the transcript contract.
 
@@ -135,7 +225,7 @@ def test_node_modules_is_not_searched_for_the_adapter(validator, tmp_path):
     vendored.mkdir(parents=True)
     (vendored / 'index.ts').write_text('export function getCurrentSystemPrompt() {}\n')
 
-    assert validator._declares_transcript_adapter(clone) is False
+    assert validator.Fact.ADAPTER not in validator._clone_facts(clone)
     assert validator.check_clone(clone, HOST_WITH_TRANSCRIPT) is not None
 
 

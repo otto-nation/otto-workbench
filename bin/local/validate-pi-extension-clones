@@ -72,6 +72,17 @@ TRANSCRIPT_CONTRACT_VERSION = (0, 86)
 # this package's own layout choice; the import is the contract with pi-ai.
 TRANSCRIPT_SYMBOLS = ('getCurrentSystemPrompt', 'getCurrentTools')
 
+# The other way a provider meets the contract: hand the context, untouched, to
+# a transport pi-ai itself ships. That transport is the host's own, so it reads
+# whatever shape the host builds, and the provider never names the adapter
+# symbols above. pi exposes its built-in transports to extensions through this
+# entrypoint (vertex-claude imports anthropicMessagesApi from it). A host
+# without it fails the import, and a provider that guards the import registers
+# nothing rather than sending a stripped request — so this only ever clears
+# the stale-clone finding, never the opposite skew.
+TRANSPORT_DELEGATION_MARKERS = tuple(f'{pkg}/compat' for pkg in (
+    '@earendil-works/pi-ai', '@mariozechner/pi-ai'))
+
 # The dependency names a package declares its pi-ai against. Both spellings
 # are the same package — pi resolves the legacy `@mariozechner` specifier to
 # the published `@earendil-works` one, and extension sources still import it
@@ -259,16 +270,26 @@ def _ts_files(clone: Path):
         yield from (Path(dirpath) / f for f in filenames if f.endswith('.ts'))
 
 
-def _declares_transcript_adapter(clone: Path) -> bool:
-    """Whether a clone resolves the post-0.86 transcript symbols anywhere."""
+def _clone_mentions(clone: Path, needles: tuple[str, ...]) -> bool:
+    """Whether any `.ts` file in a clone contains one of `needles`."""
     for path in _ts_files(clone):
         try:
             text = path.read_text(errors='replace')
         except OSError:
             continue
-        if any(symbol in text for symbol in TRANSCRIPT_SYMBOLS):
+        if any(needle in text for needle in needles):
             return True
     return False
+
+
+def _declares_transcript_adapter(clone: Path) -> bool:
+    """Whether a clone resolves the post-0.86 transcript symbols anywhere."""
+    return _clone_mentions(clone, TRANSCRIPT_SYMBOLS)
+
+
+def _delegates_to_host_transport(clone: Path) -> bool:
+    """Whether a clone streams through a transport pi-ai itself ships."""
+    return _clone_mentions(clone, TRANSPORT_DELEGATION_MARKERS)
 
 
 def _has_provider_extension(clone: Path) -> bool:
@@ -328,7 +349,7 @@ def check_clone(clone: Path, pi_version: tuple[int, ...]) -> Skew | None:
     host_has_transcript = pi_version[:2] >= TRANSCRIPT_CONTRACT_VERSION
     clone_has_adapter = _declares_transcript_adapter(clone)
 
-    if host_has_transcript and not clone_has_adapter:
+    if host_has_transcript and not clone_has_adapter and not _delegates_to_host_transport(clone):
         return Skew(
             problem=('clone predates the pi 0.86 transcript contract, so this provider '
                      'sends no system prompt and no tool declarations — the model cannot '

@@ -584,3 +584,89 @@ class TestPostSkipsResolvedAndDeclinedFindings:
         )
         assert self._run_dry(rp, tmp_path, review_text=text) == 0
         assert "{" not in capsys.readouterr().out
+
+
+class TestDuplicateFindingsAreNotReposted:
+    """A finding already on the PR is posted nowhere: not inline, and not in
+    the summary. Dedup runs the real `dedup_against_posted` against a stubbed
+    lookup of what the bot already said, so what is under test is how the
+    poster routes the duplicates it returns."""
+
+    DIFF = (
+        "diff --git a/file.go b/file.go\n"
+        "--- a/file.go\n"
+        "+++ b/file.go\n"
+        "@@ -1,3 +1,10 @@\n"
+        "+line\n"
+    )
+
+    DUPLICATE = "the conversion error is discarded and nothing logs it"
+
+    REVIEW_TEXT = (
+        "<!-- head_sha: aaa1111bbb2222 -->\n"
+        "## Summary\nOk\n\n"
+        "## Should fix\n"
+        f"- **[S1]** **`file.go:4`** — {DUPLICATE}\n"
+        "- **[S2]** **`file.go:5`** — a separate problem nobody has raised\n"
+        "\n"
+        "## Nit\n"
+        "- **[N1]** **`elsewhere.go:9`** — outside the diff, so it goes in the body\n"
+    )
+
+    def _post(self, rp, tmp_path):
+        import argparse
+        review_dir = tmp_path / "review"
+        review_dir.mkdir()
+        review_file = review_dir / "review.md"
+        review_file.write_text(self.REVIEW_TEXT)
+
+        args = argparse.Namespace(
+            repo="org/repo", pr="1", review_file=str(review_file),
+            dry_run=False, submit=False, chunk_size=30,
+            severity="M,S,N,I", debug=False,
+        )
+        pr_data = rp.PRData(viewer_login="bot", head_sha="aaa1111bbb2222",
+                            head_ref="feat", base_ref="main", reviews=[])
+        already_posted = review.dedup.PostedFindings(
+            findings=[review.dedup.PostedFinding("file.go", self.DUPLICATE)])
+
+        payloads = []
+
+        def capture(endpoint, **kw):
+            if kw.get("input_text"):
+                payloads.append(json.loads(kw["input_text"]))
+            return {"id": 42}
+
+        with (
+            patch.object(rp, "fetch_pr_data", return_value=pr_data),
+            patch.object(rp, "_get_diff", return_value=self.DIFF),
+            patch.object(review.dedup, "_fetch_bot_comments", return_value=already_posted),
+            patch.object(rp, "fetch_bot_reviews", return_value=review.dedup.BotReviews()),
+            patch.object(rp, "check_review_already_posted", return_value=set()),
+            patch.object(rp, "_check_existing_pending", return_value=rp.PendingReview()),
+            patch("gh.client.api_json", side_effect=capture),
+            patch.object(rp, "resolve_permalinks"),
+        ):
+            rp.run_post(MagicMock(), args, "org/repo",
+                        rp.ReviewMeta(repo="org/repo"), review_file)
+
+        review_payload = next(p for p in payloads if "body" in p)
+        tracking = serde_from_dict(
+            PostTracking, json.loads((review_dir / "post.jsonl").read_text()))
+        return review_payload, tracking
+
+    def test_a_duplicate_is_not_reposted_in_the_body(self, rp, tmp_path):
+        payload, _ = self._post(rp, tmp_path)
+        assert self.DUPLICATE not in json.dumps(payload)
+
+    def test_the_new_finding_and_the_out_of_diff_finding_still_post(self, rp, tmp_path):
+        payload, _ = self._post(rp, tmp_path)
+        assert [c["path"] for c in payload.get("comments", [])] == ["file.go"]
+        assert "a separate problem nobody has raised" in payload["comments"][0]["body"]
+        assert "outside the diff, so it goes in the body" in payload["body"]
+
+    def test_tracking_counts_add_up_to_the_findings(self, rp, tmp_path):
+        """`skipped_count` is what was not posted; the out-of-diff nit is a
+        body finding, not a skip, and is counted once."""
+        _, tracking = self._post(rp, tmp_path)
+        assert (tracking.inline_count, tracking.body_count, tracking.skipped_count) == (1, 1, 1)

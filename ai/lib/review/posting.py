@@ -411,7 +411,7 @@ def _post_and_track(
     args: argparse.Namespace,
     inline_comments: list[dict], body_text: str,
     inline: list[Finding],
-    body_findings: list[Finding], skipped: list[Finding],
+    body_findings: list[Finding], duplicates: list[Finding],
     commit_id: str, head_sha: str,
     chunk_size: int, severity_filter: set[str],
     pr_data: PRData | None = None,
@@ -479,7 +479,7 @@ def _post_and_track(
         posted_as=PostedAs.REVIEW.value, status=PostEvent.COMMENT.value,
         review_ids=review_ids, commit_id=commit_id,
         inline_count=len(inline_comments),
-        body_count=len(body_findings), skipped_count=len(skipped),
+        body_count=len(body_findings), skipped_count=len(duplicates),
         submitted=submit or is_chunked, chunk_count=len(results),
         review_sha=review_sha or head_sha, head_sha_at_post=head_sha,
         sha_drifted=sha_drifted, verdict=verdict,
@@ -490,7 +490,7 @@ def _post_and_track(
 
 def _print_dry_run(
     payload: dict, inline: list[Finding],
-    body_findings: list[Finding], skipped: list[Finding],
+    body_findings: list[Finding], body_only: list[Finding],
     chunk_size: int,
 ):
     comments = payload.get("comments", [])
@@ -505,8 +505,10 @@ def _print_dry_run(
     print()
     core.log.info(f"Inline: {', '.join(f.posted_id for f in inline) or 'none'}")
     core.log.info(f"Body: {', '.join(f.posted_id for f in body_findings) or 'none'}")
-    for f in skipped:
-        core.log.warn(f"Skipped {f.id}: {f.skip_reason} ({f.path})")
+    # Placed in the body, not dropped: these are in `body_findings` above. Said
+    # as such, because "Skipped" read as a finding that would never be posted.
+    for f in body_only:
+        core.log.info(f"Body-only {f.id}: {f.skip_reason} ({f.path})")
 
 
 def _format_submit_command(repo: str, pr: str, review_id: int) -> str:

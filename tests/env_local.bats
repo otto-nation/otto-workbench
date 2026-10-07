@@ -486,8 +486,9 @@ EOF
   [ "${lines[1]}" = "$home/.local/bin:/usr/bin:/bin" ]
 }
 
-# Guard rail: the prepend must be a no-op when ~/.local/bin is already on PATH,
-# so re-sourcing the loader does not stack duplicate entries.
+# passes-at-base: the loader had no prepend before, so it could not duplicate one
+# The prepend must be a no-op when ~/.local/bin is already on PATH, so
+# re-sourcing the loader does not stack duplicate entries.
 @test "loader does not prepend ~/.local/bin twice" {
   command -v zsh >/dev/null || skip "zsh not installed"
   local home="$BATS_TEST_TMPDIR/home"

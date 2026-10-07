@@ -159,7 +159,7 @@ _gitconfig_repair_credential_helper() {
   mapfile -t helpers < <(git config --file "$GITCONFIG_FILE" --get-all credential.helper || true)
   replacement="$(_git_detect_credential_helper)"
   for helper in ${helpers[@]+"${helpers[@]}"}; do
-    [[ -n "$replacement" && "$helper" == "$replacement" ]] && present=1
+    if [[ -n "$replacement" && "$helper" == "$replacement" ]]; then present=1; fi
   done
   for helper in ${helpers[@]+"${helpers[@]}"}; do
     if [[ "$helper" != /* || -x "$helper" ]]; then

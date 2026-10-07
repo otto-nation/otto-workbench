@@ -8,6 +8,8 @@ setup() {
   load 'pi_settings_helper'
   common_setup
   pi_settings_setup
+  # Read by _run_step in pi_settings_helper.bash.
+  # shellcheck disable=SC2034
   PI_STEPS="$REPO_ROOT/ai/pi/steps.sh"
 }
 

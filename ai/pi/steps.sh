@@ -487,47 +487,6 @@ _pi_warn_unknown_models() {
   return 0
 }
 
-# _pi_warn_legacy_model_names — warn when ~/.env.local carries a model under
-# the name Claude Code reads (ANTHROPIC_MODEL, ANTHROPIC_DEFAULT_*_MODEL) and
-# not under the AI_* name the workbench reads.
-#
-# The rename migration moves those lines once and retires. A value exported
-# under the old name afterwards — copied from another machine, or from Claude
-# Code's own docs — still reaches the Claude Code CLI through the shell, so
-# Claude looks configured while Pi gets no defaultModel and falls back to
-# whatever its first provider offers. Nothing failed, so nothing said so.
-#
-# The old names are the registry's `target` fields, the names Claude Code's
-# sync publishes each AI_* var under, so the pairing is not restated here.
-_pi_warn_legacy_model_names() {
-  [[ -f "$ENV_LOCAL_FILE" ]] || return 0
-
-  if ! declare -F collect_model_env_vars > /dev/null 2>&1; then
-    # shellcheck source=../../lib/registries.sh
-    . "$LIB_SRC_DIR/registries.sh"
-  fi
-
-  local -a model_vars=() model_roles=() sources=() targets=()
-  collect_model_env_vars model_vars model_roles "$WORKBENCH_STABLE_DIR" || return 0
-  collect_claude_env_vars sources targets "$WORKBENCH_STABLE_DIR" || return 0
-
-  local -A legacy_of=()
-  local i
-  for (( i=0; i<${#sources[@]}; i++ )); do
-    legacy_of["${sources[i]}"]="${targets[i]}"
-  done
-
-  local var legacy
-  for var in ${model_vars[@]+"${model_vars[@]}"}; do
-    [[ -z "$(read_env_local_var "$var")" ]] || continue
-    legacy="${legacy_of[$var]:-}"
-    [[ -n "$legacy" && "$legacy" != "$var" ]] || continue
-    [[ -n "$(read_env_local_var "$legacy")" ]] || continue
-    warn "$legacy is exported in ~/.env.local, which the workbench does not read — rename it to $var"
-  done
-  return 0
-}
-
 # _pi_warn_no_default_model SETTINGS_JSON — warn when the merged settings leave
 # Pi with no defaultModel. Pi then picks its first provider's default, which on
 # a Vertex machine is a Gemini preview that the configured location may not
@@ -592,7 +551,6 @@ _step_pi_settings() {
   local models
   _pi_build_models models
   _pi_warn_unknown_models
-  _pi_warn_legacy_model_names
 
   local result
   result=$(jq -n \

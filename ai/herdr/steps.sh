@@ -35,8 +35,20 @@ step_install_herdr() {
 # install prints the brew upgrade command there — rather than a hardcoded
 # `herdr update`. Non-fatal: an offline machine still gets the rest of its
 # config, as with step_update_pi.
+#
+# Inside a herdr pane the update is not attempted at all: herdr refuses to
+# update from within its own session ("run `herdr update` outside herdr after
+# detaching"), so the attempt can only fail, and every interactive sync from a
+# herdr pane reported it as a warning the operator could not act on there.
+# The unattended maintenance sync runs outside any session and performs the
+# update, so this is a skip, not a failure. Detected the way herdr's own
+# integrations detect a pane: HERDR_ENV=1 with a pane id.
 step_update_herdr() {
   command -v herdr > /dev/null 2>&1 || { warn "herdr not found in PATH — skipping"; return 0; }
+  if [[ "${HERDR_ENV:-}" == 1 && -n "${HERDR_PANE_ID:-}" ]]; then
+    skip "herdr update — inside a herdr session; the next sync outside one (maintenance, or after detaching) updates it"
+    return 0
+  fi
   local output status=0 last_line
   output=$(herdr update < /dev/null 2>&1) || status=$?
   last_line=$(printf '%s\n' "$output" | awk 'NF { line = $0 } END { print line }')

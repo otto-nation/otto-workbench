@@ -212,3 +212,106 @@ _run_dispatch_logged() {
   [ "$status" -eq 0 ]
   [[ "$output" != *"Tool context"* ]]
 }
+
+# ── Legacy model names ───────────────────────────────────────────────────────
+# A model exported under Claude Code's name (ANTHROPIC_MODEL…) reaches the
+# Claude CLI through the shell but not the workbench, which reads AI_*: Pi got
+# no defaultModel and fell back to a model its location did not serve. The
+# one-shot migration had already retired, so sync renames on every run.
+
+# _env_local LINE... — writes the fake HOME's ~/.env.local.
+_env_local() {
+  printf '%s\n' "$@" > "$FAKE_HOME/.env.local"
+}
+
+# _run_adopt — runs ai_adopt_legacy_model_vars against the fake HOME.
+_run_adopt() {
+  run bash -c '
+    HOME="$2"
+    . "$1/lib/ui.sh"
+    . "$1/ai/steps.sh"
+    ai_adopt_legacy_model_vars
+  ' _ "$REPO_ROOT" "$FAKE_HOME"
+}
+
+@test "a model exported only under Claude Code's name is renamed to its AI_ name" {
+  _env_local '# --- ENV-START ---' '# export AI_MODEL=' '# --- ENV-END ---' \
+    'export ANTHROPIC_MODEL=claude-opus-5-5'
+  _run_adopt
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Renamed ANTHROPIC_MODEL to AI_MODEL"* ]]
+  grep -qx 'export AI_MODEL=claude-opus-5-5' "$FAKE_HOME/.env.local"
+  # The commented catalogue line is not an export and stays as it was.
+  grep -qx '# export AI_MODEL=' "$FAKE_HOME/.env.local"
+  run ! grep -q '^export ANTHROPIC_MODEL=' "$FAKE_HOME/.env.local"
+}
+
+@test "every tier is renamed, paired through the registry's target names" {
+  _env_local 'export ANTHROPIC_MODEL=m-default' \
+    'export ANTHROPIC_DEFAULT_OPUS_MODEL=m-opus' \
+    'export ANTHROPIC_DEFAULT_SONNET_MODEL=m-sonnet' \
+    'export ANTHROPIC_DEFAULT_HAIKU_MODEL=m-haiku'
+  _run_adopt
+  [ "$status" -eq 0 ]
+  run cat "$FAKE_HOME/.env.local"
+  [ "${lines[0]}" = "export AI_MODEL=m-default" ]
+  [ "${lines[1]}" = "export AI_OPUS_MODEL=m-opus" ]
+  [ "${lines[2]}" = "export AI_SONNET_MODEL=m-sonnet" ]
+  [ "${lines[3]}" = "export AI_HAIKU_MODEL=m-haiku" ]
+}
+
+@test "an old name beside a set AI_ name is left for the operator" {
+  # The workbench already reads AI_MODEL; renaming would leave two exports of
+  # it, and choosing between them is the operator's call.
+  _env_local 'export AI_MODEL=chosen' 'export ANTHROPIC_MODEL=other'
+  cp "$FAKE_HOME/.env.local" "$TMPDIR/before"
+  _run_adopt
+  [ "$status" -eq 0 ]
+  cmp "$TMPDIR/before" "$FAKE_HOME/.env.local"
+  [[ "$output" != *"Renamed"* ]]
+}
+
+@test "a second run changes nothing" {
+  _env_local 'export ANTHROPIC_MODEL=claude-opus-5-5'
+  _run_adopt
+  cp "$FAKE_HOME/.env.local" "$TMPDIR/after-first"
+  _run_adopt
+  [ "$status" -eq 0 ]
+  cmp "$TMPDIR/after-first" "$FAKE_HOME/.env.local"
+  [[ "$output" != *"Renamed"* ]]
+}
+
+@test "no ~/.env.local is a no-op" {
+  _run_adopt
+  [ "$status" -eq 0 ]
+  [ ! -e "$FAKE_HOME/.env.local" ]
+}
+
+@test "sync_ai renames before any tool syncs" {
+  # Claude Code's env block and Pi's defaultModel are both built from AI_*
+  # in their own syncs, so the rename has to land first, in the same run.
+  _selection pi
+  _env_local 'export ANTHROPIC_MODEL=claude-opus-5-5'
+  _install_gen_stubs "$FAKE_WB"
+  run bash -c '
+    HOME="$2"
+    ran="$3"
+    . "$1/lib/ui.sh"
+    . "$1/ai/steps.sh"
+    BIN_SRC_DIR="$4/bin"
+    WORKBENCH_DIR="$4"
+    sync_pi() { grep -h "^export AI_MODEL=" "$HOME/.env.local" >> "$ran"; }
+    sync_ai
+  ' _ "$REPO_ROOT" "$FAKE_HOME" "$RAN" "$FAKE_WB"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$RAN")" = "export AI_MODEL=claude-opus-5-5" ]
+}
+
+@test "setup renames after generating rules and before registering tool steps" {
+  # ai/setup.sh runs its flow at source time, so the order is read off the source.
+  run awk '/^ai_generate_rules$/{ g=NR } /^ai_adopt_legacy_model_vars$/{ a=NR }
+           /register_\$\{_tool\}_steps"$/{ print (g && a > g) ? "ok" : "bad"; exit }' \
+    "$REPO_ROOT/ai/setup.sh"
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok" ]
+}

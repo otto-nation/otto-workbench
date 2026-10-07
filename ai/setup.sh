@@ -122,6 +122,8 @@ sync_component_bin "$SCRIPT_DIR"
 # workbench-rules sync call above it: this is a user-facing behavior change
 # from the old per-step-skippable "Tool context" Claude step, not an oversight.
 ai_generate_rules
+# Before any harness reads model config out of ~/.env.local.
+ai_adopt_legacy_model_vars
 
 # Then each selected tool's own scripts, before running steps — a tool's setup
 # steps may call its own bin scripts.

@@ -714,46 +714,15 @@ YAML2
   _teardown_env_local
 }
 
-# ── Legacy model names and a missing default ────────────────────────────────
-# Claude Code reads ANTHROPIC_MODEL straight from the shell, so a machine whose
-# ~/.env.local carries only that name looks configured from Claude while Pi
-# gets no defaultModel and falls back to a Gemini preview its location may not
-# serve. Neither half failed loudly, so sync has to say which line is wrong.
+# ── A missing default model ─────────────────────────────────────────────────
+# Settings left with no defaultModel send pi to its first provider's default,
+# a Gemini preview its location may not serve. Nothing fails loudly, so sync
+# says so. (Claude Code's ANTHROPIC_* names are renamed to AI_* before this
+# step runs; see ai_adopt_legacy_model_vars in ai/steps.sh.)
 
 # _write_template_without_model — the shipped shape: no model keys at all.
 _write_template_without_model() {
   jq -n --arg p "$PKG" '{defaultProvider: "google-vertex-claude", packages: [$p]}' > "$TEMPLATE"
-}
-
-@test "a model exported only under Claude Code's name is named with its AI_ spelling" {
-  _seed_env_local 'export ANTHROPIC_MODEL=claude-opus-5-5'
-  _stub_gh 'echo "{}"'
-  run _run_step
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"WARN ANTHROPIC_MODEL is exported in ~/.env.local, which the workbench does not read — rename it to AI_MODEL"* ]]
-  _teardown_env_local
-}
-
-@test "a tier exported under its old name is named too" {
-  # The pairing comes from the registry's target fields, so a tier is covered
-  # the same way the default is.
-  _seed_env_local 'export AI_MODEL=claude-opus-5-5' 'export ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-4-5'
-  _stub_gh 'echo "{}"'
-  run _run_step
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"ANTHROPIC_DEFAULT_HAIKU_MODEL is exported"*"rename it to AI_HAIKU_MODEL"* ]]
-  [[ "$output" != *"ANTHROPIC_MODEL is exported"* ]]
-  _teardown_env_local
-}
-
-@test "an old name beside its AI_ spelling is left alone" {
-  # Both set is a machine mid-migration whose Pi already works.
-  _seed_env_local 'export AI_MODEL=claude-opus-5-5' 'export ANTHROPIC_MODEL=claude-opus-5-5'
-  _stub_gh 'echo "{}"'
-  run _run_step
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"which the workbench does not read"* ]]
-  _teardown_env_local
 }
 
 @test "settings left with no defaultModel warn, naming the registry's default var" {

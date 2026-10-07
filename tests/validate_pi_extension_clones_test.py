@@ -438,3 +438,99 @@ def test_json_output_when_no_clones_found(validator, monkeypatch, capsys):
     validator.main()
     payload = json.loads(capsys.readouterr().out)
     assert payload == {'pi_version': '0.87.1', 'clones_checked': 0, 'findings': []}
+
+
+# A pi supplied by a mise pin cannot be moved by `pi update`: mise re-resolves
+# the pinned version on every call. The validator once told a reader inside a
+# repo pinning pi 0.87.1 to "update the host with: pi update" while their own
+# pi was already 1.0.4 — the cure has to name the pin instead.
+
+def _executable(path: Path, body: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body)
+    path.chmod(0o755)
+    return path
+
+
+def _fake_mise(bin_dir: Path, *, install: Path, source: str, which: Path | None = None) -> Path:
+    """A mise on PATH answering `ls --current --json` and `which pi` like the real one."""
+    listing = json.dumps({'npm:@earendil-works/pi-coding-agent': [{
+        'version': '0.87.1', 'install_path': str(install),
+        'source': {'type': 'mise.toml', 'path': source}, 'active': True}]})
+    which_line = f"echo '{which}'" if which else 'exit 1'
+    return _executable(bin_dir / 'mise', f"""#!/bin/sh
+case "$1 $2" in
+  "ls --current") echo '{listing}' ;;
+  "which pi") {which_line} ;;
+  *) exit 1 ;;
+esac
+""")
+
+
+def test_a_pi_from_a_mise_tool_dir_names_its_pin(validator, tmp_path, monkeypatch):
+    """`mise activate` puts the pinned tool's own bin dir ahead of the user's pi."""
+    install = tmp_path / 'installs' / 'npm-pi' / '0.87.1'
+    tool_bin = install / 'node_modules' / '.bin'
+    _executable(tool_bin / 'pi', '#!/bin/sh\necho 0.87.1\n')
+    _fake_mise(tmp_path / 'bin', install=install, source='/repo/.mise.toml')
+    monkeypatch.setenv('PATH', f"{tool_bin}:{tmp_path / 'bin'}:/usr/bin:/bin")
+    assert validator.pi_pin_source() == '/repo/.mise.toml'
+
+
+def test_a_pi_behind_a_mise_shim_is_followed_to_its_pin(validator, tmp_path, monkeypatch):
+    """A shim is a link to mise itself, so its realpath says nothing until mise is asked."""
+    install = tmp_path / 'installs' / 'npm-pi' / '0.87.1'
+    real_pi = _executable(install / 'node_modules' / '.bin' / 'pi', '#!/bin/sh\necho 0.87.1\n')
+    mise = _fake_mise(tmp_path / 'bin', install=install, source='/repo/.mise.toml', which=real_pi)
+    shims = tmp_path / 'shims'
+    shims.mkdir()
+    (shims / 'pi').symlink_to(mise)
+    monkeypatch.setenv('PATH', f"{shims}:{tmp_path / 'bin'}:/usr/bin:/bin")
+    assert validator.pi_pin_source() == '/repo/.mise.toml'
+
+
+def test_a_pi_mise_does_not_supply_has_no_pin(validator, tmp_path, monkeypatch):
+    """pi's own install ahead of an inactive mise tool keeps the `pi update` cure."""
+    install = tmp_path / 'installs' / 'npm-pi' / '0.87.1'
+    _executable(install / 'node_modules' / '.bin' / 'pi', '#!/bin/sh\necho 0.87.1\n')
+    _fake_mise(tmp_path / 'bin', install=install, source='/repo/.mise.toml')
+    user_bin = tmp_path / 'local' / 'bin'
+    _executable(user_bin / 'pi', '#!/bin/sh\necho 1.0.4\n')
+    monkeypatch.setenv('PATH', f"{user_bin}:{tmp_path / 'bin'}:/usr/bin:/bin")
+    assert validator.pi_pin_source() is None
+
+
+def test_no_mise_means_no_pin(validator, tmp_path, monkeypatch):
+    user_bin = tmp_path / 'local' / 'bin'
+    _executable(user_bin / 'pi', '#!/bin/sh\necho 1.0.4\n')
+    monkeypatch.setenv('PATH', f"{user_bin}:/usr/bin:/bin")
+    assert validator.pi_pin_source() is None
+
+
+def test_a_pinned_host_below_the_floor_is_cured_at_the_pin(validator, tmp_path, monkeypatch, capsys):
+    """End to end: the finding's remedy names the pin and stops prescribing `pi update`."""
+    clone = _clone(tmp_path, provider=False, adapter=False,
+                   declares={'devDependencies': {'@earendil-works/pi-ai': '1.0.4'}})
+    monkeypatch.setattr(validator, 'installed_pi_version', lambda: (0, 87, 1))
+    monkeypatch.setattr(validator, 'discover_clones', lambda: [('user', clone)])
+    monkeypatch.setattr(validator, 'pi_pin_source', lambda: '/repo/.mise.toml')
+    monkeypatch.setattr(validator.sys, 'argv', ['validate-pi-extension-clones', '--json'])
+    with pytest.raises(SystemExit) as exit_info:
+        validator.main()
+    assert exit_info.value.code == 1
+    [finding] = json.loads(capsys.readouterr().out)['findings']
+    assert '/repo/.mise.toml' in finding['remedy']
+    assert finding['remedy'] != validator.PI_UPDATE_REMEDY
+
+
+def test_an_unpinned_host_below_the_floor_is_still_told_to_update(validator, tmp_path, monkeypatch, capsys):
+    clone = _clone(tmp_path, provider=False, adapter=False,
+                   declares={'devDependencies': {'@earendil-works/pi-ai': '1.0.4'}})
+    monkeypatch.setattr(validator, 'installed_pi_version', lambda: (0, 87, 1))
+    monkeypatch.setattr(validator, 'discover_clones', lambda: [('user', clone)])
+    monkeypatch.setattr(validator, 'pi_pin_source', lambda: None)
+    monkeypatch.setattr(validator.sys, 'argv', ['validate-pi-extension-clones', '--json'])
+    with pytest.raises(SystemExit):
+        validator.main()
+    [finding] = json.loads(capsys.readouterr().out)['findings']
+    assert finding['remedy'] == validator.PI_UPDATE_REMEDY

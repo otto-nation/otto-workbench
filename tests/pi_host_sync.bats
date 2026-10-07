@@ -238,3 +238,82 @@ _run_verify() {
   [ -n "$verify_line" ]
   [ "$verify_line" -gt "$packages_line" ]
 }
+
+# The pi steps speak for the user's own pi, wherever sync is started. Started
+# inside a repo whose .mise.toml pins pi, the operator's PATH resolved `pi` to
+# that pin: `pi update` targeted a binary it cannot move, and the validator
+# measured the user's clones against the project's pi and prescribed the wrong
+# cure.
+
+# _scoped_pi NAME DIR — a pi in DIR that records NAME and its cwd.
+_scoped_pi() {
+  mkdir -p "$2"
+  cat > "$2/pi" << SCRIPT
+#!/usr/bin/env bash
+echo "$1 \$PWD" > "$ARGV"
+SCRIPT
+  chmod +x "$2/pi"
+}
+
+# _run_from DIR STEP — runs STEP with cwd DIR and HOME at $TMPDIR/home.
+_run_from() {
+  bash -c '
+    set -e
+    success() { echo "OK $*"; }
+    warn()    { echo "WARN $*"; }
+    err()     { echo "ERR $*"; }
+    info()    { echo "INFO $*"; }
+    skip()    { echo "SKIP $*"; }
+    LIB_SRC_DIR="$1/lib"
+    . "$1/lib/env.sh"
+    . "$2"
+    BIN_SRC_DIR="$3/bin"
+    cd "$4"
+    "$5"
+  ' _ "$REPO_ROOT" "$REPO_ROOT/ai/pi/steps.sh" "$FAKE_ROOT" "$1" "$2"
+}
+
+@test "the host update runs pi from HOME, not from where sync started" {
+  # A shim resolves its version from the cwd, so the cwd alone decides which
+  # pi a shim-only setup updates.
+  mkdir -p "$TMPDIR/home" "$TMPDIR/project"
+  _scoped_pi user "$BIN"
+  PATH="$BIN:$PATH" HOME="$TMPDIR/home" run _run_from "$TMPDIR/project" step_update_pi
+  [ "$status" -eq 0 ]
+  [ "$(cat "$ARGV")" = "user $TMPDIR/home" ]
+}
+
+@test "a project's mise-activated pi is dropped before the host update" {
+  # Under `mise activate` the project's tool dir sits ahead of the user's pi
+  # and a cd in a child process does not remove it: only mise's hook-env,
+  # re-run from HOME, recomputes PATH. The stub mise answers hook-env the way
+  # the real one does from a directory with no pin — the user's PATH back.
+  mkdir -p "$TMPDIR/home" "$TMPDIR/project"
+  _scoped_pi project "$TMPDIR/project-tools"
+  _scoped_pi user "$BIN"
+  cat > "$BIN/mise" << SCRIPT
+#!/usr/bin/env bash
+[[ "\$1 \$2 \$3" == "hook-env -s bash" ]] || exit 1
+echo 'export PATH="$BIN:/usr/bin:/bin"'
+SCRIPT
+  chmod +x "$BIN/mise"
+  __MISE_DIFF=x PATH="$TMPDIR/project-tools:$BIN:$PATH" HOME="$TMPDIR/home" \
+    run _run_from "$TMPDIR/project" step_update_pi
+  [ "$status" -eq 0 ]
+  [ "$(cat "$ARGV")" = "user $TMPDIR/home" ]
+}
+
+@test "verification runs the validator from HOME too" {
+  # The validator asks `pi --version`; from inside a pinning repo it reported
+  # the project's pi as the machine's.
+  mkdir -p "$TMPDIR/home" "$TMPDIR/project"
+  _stub_pi 0
+  cat > "$FAKE_ROOT/bin/local/validate-pi-extension-clones" << 'SCRIPT'
+#!/usr/bin/env bash
+echo "validator cwd: $PWD"
+SCRIPT
+  chmod +x "$FAKE_ROOT/bin/local/validate-pi-extension-clones"
+  HOME="$TMPDIR/home" run _run_from "$TMPDIR/project" step_pi_verify
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"validator cwd: $TMPDIR/home"* ]]
+}

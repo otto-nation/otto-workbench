@@ -52,19 +52,26 @@ _git_detect_gpg_program() {
   fi
 }
 
-# _git_detect_credential_helper — returns the GCM path if installed.
-# Checks the Homebrew prefix first, then /usr/local (pkg installer location),
-# then falls back to PATH — the pkg installs to /usr/local regardless of arch.
+# _git_detect_credential_helper — returns the credential helper this machine
+# can actually run, or nothing. GCM first: the Homebrew prefix, then /usr/local
+# (pkg installer location, regardless of arch), then PATH. Without GCM — a
+# Linux host — gh's helper, which serves the token `gh auth login` stored.
+# Nothing at all leaves git's own prompt, which beats naming a helper that
+# does not exist: git reports the missing helper and prompts anyway.
 _git_detect_credential_helper() {
   local prefix
   prefix="$(_git_detect_brew_prefix)"
   local gcm_path="$prefix/share/gcm-core/git-credential-manager"
+  # GIT_GCM_PKG_PATH is a test seam: the pkg location is fixed in practice.
+  local pkg_path="${GIT_GCM_PKG_PATH:-/usr/local/share/gcm-core/git-credential-manager}"
   if [[ -x "$gcm_path" ]]; then
     echo "$gcm_path"
-  elif [[ -x "/usr/local/share/gcm-core/git-credential-manager" ]]; then
-    echo "/usr/local/share/gcm-core/git-credential-manager"
+  elif [[ -x "$pkg_path" ]]; then
+    echo "$pkg_path"
   elif command -v git-credential-manager &>/dev/null; then
     command -v git-credential-manager
+  elif command -v gh &>/dev/null; then
+    echo "!$(command -v gh) auth git-credential"
   fi
 }
 
@@ -121,12 +128,61 @@ _gitconfig_apply_template() {
   gpg_program="$(_git_detect_gpg_program)"
   credential_helper="$(_git_detect_credential_helper)"
 
+  # A placeholder left in place names a macOS path that does not exist on
+  # this machine, so an undetected program drops the line instead.
   if [[ -n "$gpg_program" ]]; then
     sed_i "s|program = /opt/homebrew/bin/gpg|program = $gpg_program|" "$GITCONFIG_FILE"
+  else
+    sed_i '\|program = /opt/homebrew/bin/gpg|d' "$GITCONFIG_FILE"
   fi
   if [[ -n "$credential_helper" ]]; then
     sed_i "s|helper = /opt/homebrew/share/gcm-core/git-credential-manager|helper = $credential_helper|" "$GITCONFIG_FILE"
+  else
+    sed_i '\|helper = /opt/homebrew/share/gcm-core/git-credential-manager|d' "$GITCONFIG_FILE"
   fi
+}
+
+# _gitconfig_repair_credential_helper — replaces a [credential] helper that
+# names an absolute path no longer executable here: a gitconfig bootstrapped
+# from the raw template on a host without GCM, or GCM since uninstalled.
+# Shell helpers (`!cmd`) and bare names git resolves itself are left alone,
+# as are per-host credential.<url>.helper keys. Idempotent: a config whose
+# helpers all run is untouched, and a replacement already listed is not added
+# a second time.
+#
+# The helper list is rewritten whole (unset, then re-add in order) rather than
+# edited in place with `git config --fixed-value`, which needs git 2.30 and
+# would fail on older distro gits.
+_gitconfig_repair_credential_helper() {
+  [[ -f "$GITCONFIG_FILE" ]] || return 0
+  local helpers=() kept=() helper replacement present=0 changed=0
+  mapfile -t helpers < <(git config --file "$GITCONFIG_FILE" --get-all credential.helper || true)
+  replacement="$(_git_detect_credential_helper)"
+  for helper in ${helpers[@]+"${helpers[@]}"}; do
+    if [[ -n "$replacement" && "$helper" == "$replacement" ]]; then present=1; fi
+  done
+  for helper in ${helpers[@]+"${helpers[@]}"}; do
+    if [[ "$helper" != /* || -x "$helper" ]]; then
+      kept+=("$helper")
+      continue
+    fi
+    changed=1
+    if [[ -z "$replacement" ]]; then
+      warn "Credential helper $helper is missing — removed it; git will prompt for HTTPS credentials"
+    elif (( present )); then
+      success "Credential helper $helper is missing — $replacement is already configured"
+    else
+      kept+=("$replacement")
+      present=1
+      success "Credential helper $helper is missing — replaced with $replacement"
+    fi
+  done
+  (( changed )) || return 0
+  git config --file "$GITCONFIG_FILE" --unset-all credential.helper || true
+  for helper in ${kept[@]+"${kept[@]}"}; do
+    git config --file "$GITCONFIG_FILE" --add credential.helper "$helper"
+  done
+  return 0
 }
 
 # _gitconfig_set_default_identity NAME EMAIL [SIGNING_KEY] — writes the default
@@ -422,10 +478,11 @@ _ssh_github_known_hosts() {
 
 # _gitconfig_bootstrap — copies the template into ~/.gitconfig when the file
 # does not yet exist (new machine). The template includes placeholder values
-# for identity and GPG that the user fills in.
+# for identity that the user fills in; machine paths (GPG, credential helper)
+# are detected, so a non-macOS host does not inherit Homebrew paths.
 _gitconfig_bootstrap() {
   if [[ ! -f "$GITCONFIG_FILE" ]]; then
-    cp "$GIT_CONFIG_TEMPLATE" "$GITCONFIG_FILE"
+    _gitconfig_apply_template
     warn "Created $GITCONFIG_FILE from template — edit it to set your identity and GPG key"
   fi
 }
@@ -444,6 +501,7 @@ _gitconfig_ensure_include() {
 # workbench config. Bootstraps from template on a new machine.
 step_gitconfig() {
   _gitconfig_bootstrap
+  _gitconfig_repair_credential_helper
   _gitconfig_ensure_include "$GIT_SHARED_CONFIG"
   [[ "${WORKBENCH_SYNC:-}" != true ]] && success "gitconfig includes up to date" || true
 }
@@ -669,7 +727,9 @@ install_git() {
     _gitconfig_ensure_include "$GIT_SHARED_CONFIG"
     success "gitconfig includes up to date"
   else
-    # User skipped overwrite — still ensure the include is present.
+    # User skipped overwrite — still ensure the include is present and the
+    # kept config names a credential helper this machine can run.
+    _gitconfig_repair_credential_helper
     _gitconfig_ensure_include "$GIT_SHARED_CONFIG"
     skip "gitconfig identity (kept existing)"
   fi

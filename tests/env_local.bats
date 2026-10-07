@@ -466,3 +466,38 @@ EOF
   after=$(cat "$FAKE_HOME/.env.local")
   [ "$before" = "$after" ]
 }
+
+# ── ~/.local/bin precedes the layers ──────────────────────────────────────────
+
+@test "loader makes a tool in ~/.local/bin visible to a tools snippet" {
+  command -v zsh >/dev/null || skip "zsh not installed"
+  local home="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$home/.local/bin" "$home/.config/zsh/config.d/tools"
+  cp "$REPO_ROOT/zsh/config.d/loader.zsh" "$home/.config/zsh/config.d/"
+  printf '#!/bin/sh\n' > "$home/.local/bin/fake-mise"
+  chmod +x "$home/.local/bin/fake-mise"
+  echo 'command -v fake-mise >/dev/null && echo FOUND' > "$home/.config/zsh/config.d/tools/probe.zsh"
+
+  run env -i HOME="$home" PATH=/usr/bin:/bin zsh -fc \
+    'source "$HOME/.config/zsh/config.d/loader.zsh"; print -r -- "$PATH"'
+
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "FOUND" ]
+  [ "${lines[1]}" = "$home/.local/bin:/usr/bin:/bin" ]
+}
+
+# passes-at-base: the loader had no prepend before, so it could not duplicate one
+# The prepend must be a no-op when ~/.local/bin is already on PATH, so
+# re-sourcing the loader does not stack duplicate entries.
+@test "loader does not prepend ~/.local/bin twice" {
+  command -v zsh >/dev/null || skip "zsh not installed"
+  local home="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$home/.config/zsh/config.d"
+  cp "$REPO_ROOT/zsh/config.d/loader.zsh" "$home/.config/zsh/config.d/"
+
+  run env -i HOME="$home" PATH="/usr/bin:$home/.local/bin:/bin" zsh -fc \
+    'source "$HOME/.config/zsh/config.d/loader.zsh"; print -r -- "$PATH"'
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "/usr/bin:$home/.local/bin:/bin" ]
+}

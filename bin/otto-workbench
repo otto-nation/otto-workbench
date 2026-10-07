@@ -215,6 +215,13 @@ cmd_sync() {
   WORKBENCH_SYNC=true
   export WORKBENCH_SYNC
 
+  # Sync runs unattended (maintenance, launchd/cron), so a git credential
+  # prompt from any step — a Pi package clone, a fetch — would hang it with
+  # nobody to answer. Failing fast surfaces as that step's warning instead,
+  # and a broken credential helper is repaired by step_gitconfig later in the
+  # same run, so the next sync succeeds. Exported so child processes inherit it.
+  export GIT_TERMINAL_PROMPT=0
+
   # Collect warnings/errors for final summary replay.
   WORKBENCH_INSTALL_LOG="$(mktemp "${TMPDIR:-/tmp}/workbench-sync.XXXXXX")"
   export WORKBENCH_INSTALL_LOG

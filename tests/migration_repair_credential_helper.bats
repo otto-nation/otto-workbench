@@ -56,3 +56,13 @@ _run_migration() {
   [ "$status" -eq 4 ]
   [ ! -e "$GITCONFIG" ]
 }
+
+# ── sync never waits on a credential prompt ───────────────────────────────────
+
+# cmd_sync cannot be sourced on its own — bin/otto-workbench dispatches on load —
+# so this reads the function body rather than running a full sync.
+@test "cmd_sync exports GIT_TERMINAL_PROMPT=0" {
+  run awk '/^cmd_sync\(\) \{/{f=1} f&&/^\}/{exit} f' "$REPO_ROOT/bin/otto-workbench"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"export GIT_TERMINAL_PROMPT=0"* ]]
+}

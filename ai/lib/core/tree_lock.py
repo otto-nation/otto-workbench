@@ -57,8 +57,9 @@ class LockState(enum.Enum):
     HELD = "held"
     FREE = "free"
     # The probe could not answer — git hung, would not start or failed, or the
-    # lock file would not open or lock. Not the same as FREE: a reader that fails open must
-    # still be able to say it did, or a load flake reads as "nobody validating".
+    # lock file would not open or lock. Not the same as FREE: a reader that
+    # fails open must still be able to say it did, or a load flake reads as
+    # "nobody validating".
     UNKNOWN = "unknown"
 
 

@@ -547,7 +547,9 @@ _pi_warn_no_default_model() {
   collect_model_env_vars model_vars model_roles "$WORKBENCH_STABLE_DIR" 2> /dev/null || true
   local i default_var=""
   for (( i=0; i<${#model_vars[@]}; i++ )); do
-    [[ "${model_roles[i]}" == model-default ]] && default_var="${model_vars[i]}"
+    if [[ "${model_roles[i]}" == model-default ]]; then
+      default_var="${model_vars[i]}"
+    fi
   done
   warn "Pi has no default model — set ${default_var:-the default model} in ~/.env.local, or pi falls back to its first provider's default"
   return 0

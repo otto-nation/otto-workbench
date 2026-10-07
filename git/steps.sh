@@ -524,7 +524,9 @@ _gitconfig_warn_placeholders() {
     key="${entry%%=*}"
     placeholder="${entry#*=}"
     value=$(git config --file "$GITCONFIG_FILE" --get "$key" 2> /dev/null) || continue
-    [[ "$value" == "$placeholder" ]] && unset_keys+=("$key")
+    if [[ "$value" == "$placeholder" ]]; then
+      unset_keys+=("$key")
+    fi
   done
   (( ${#unset_keys[@]} > 0 )) || return 0
   warn "git identity still has template placeholders in $GITCONFIG_FILE: ${unset_keys[*]} — set them with: git config --global <key> <value>"

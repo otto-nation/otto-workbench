@@ -72,7 +72,8 @@ FILESYSTEM_ROOTS = frozenset({
 })
 
 CODE_SPAN = re.compile(r"(?<!`)`([^`\n]+)`(?!`)")
-FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
+# CommonMark: a backtick fence's info string may not contain a backtick.
+FENCE = re.compile(r"^\s*(`{3,}(?!.*`)|~{3,})(.*)$")
 SLASH_REF = re.compile(r"^/([A-Za-z][A-Za-z0-9_-]*)(?:\s|$)")
 # Synopsis notation. A `<placeholder>`, or a `[group]` holding no flag such as
 # `[global flags]`, names an argument rather than a command; what is left of

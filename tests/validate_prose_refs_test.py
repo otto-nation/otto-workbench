@@ -91,6 +91,11 @@ def test_a_tilde_fence_is_not_closed_by_a_backtick_fence_inside_it(tmp_path, too
         "`pr review`: no such flag --nope", "`pr review`: no such flag --foo"]
 
 
+def test_a_backtick_run_with_a_backtick_in_its_info_string_is_not_a_fence(tmp_path, tools, names):
+    text = "```foo``` bar\nthen `pr review --nope`\n"
+    assert _reasons(tmp_path, text, tools, names) == ["`pr review`: no such flag --nope"]
+
+
 def test_framework_flags_are_read_from_the_parsers():
     assert {"-h", "--help", "--tool-schema", "--debug"} <= vpr.FRAMEWORK_FLAGS
 

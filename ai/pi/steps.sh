@@ -493,7 +493,13 @@ _pi_warn_unknown_models() {
   done <<< "$listing"
 
   if (( ${#listed[@]} == 0 )); then
-    warn "Pi lists no models under $provider — the provider did not load. Check GOOGLE_CLOUD_PROJECT and ADC in this shell (a shell started before ~/.env.local set them lacks them: start a new one), or run: pi update --extensions"
+    # The project/ADC advice is the Vertex extensions' alone; another provider
+    # gets only the extension-refresh hint.
+    if [[ "$provider" == google-vertex* ]]; then
+      warn "Pi lists no models under $provider — the provider did not load. Check GOOGLE_CLOUD_PROJECT and ADC in this shell (a shell started before ~/.env.local set them lacks them: start a new one), or run: pi update --extensions"
+    else
+      warn "Pi lists no models under $provider — the provider did not load. Check that its extension is installed and configured, or run: pi update --extensions"
+    fi
     return 0
   fi
 

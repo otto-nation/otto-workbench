@@ -647,6 +647,38 @@ SCRIPT
   _teardown_env_local
 }
 
+@test "a non-Vertex provider with no rows does not get Vertex advice" {
+  _write_template '[]'
+  jq '.defaultProvider = "anthropic"' "$TEMPLATE" > "$TEMPLATE.new" && mv "$TEMPLATE.new" "$TEMPLATE"
+  _seed_env_local 'export AI_MODEL=claude-opus-5-5'
+  _stub_gh 'echo "{}"'
+  _stub_pi_list_models
+
+  run _run_step step_pi_models
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Pi lists no models under anthropic"* ]]
+  [[ "$output" != *"GOOGLE_CLOUD_PROJECT"* ]]
+  [[ "$output" != *"ADC"* ]]
+  _teardown_env_local
+}
+
+@test "a provider listed only in part warns per variable, not that it did not load" {
+  # Rows exist for the provider, so it loaded: the unlisted id is the user's
+  # to fix and the listed one stays quiet.
+  _seed_env_local 'export AI_MODEL=claude-opus-5
+export AI_SONNET_MODEL=claude-sonnet-5'
+  _stub_gh 'echo "{}"'
+  _stub_pi_list_models
+
+  run _run_step step_pi_models
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"did not load"* ]]
+  [[ "$output" == *"AI_MODEL=claude-opus-5 is not listed under google-vertex-claude"* ]]
+  [[ "$output" != *"AI_SONNET_MODEL"* ]]
+  [ "$(grep -c '^WARN' <<< "$output")" -eq 1 ]
+  _teardown_env_local
+}
+
 @test "the catalog comes from the user pi asked from HOME, not from the cwd" {
   # A repo pinning an older pi (or loading its own .pi packages) serves a
   # different catalog. The stub stands in for that: from anywhere but HOME it
@@ -678,10 +710,20 @@ SCRIPT
   _seed_env_local 'export AI_MODEL=not-a-real-model'
   _stub_gh 'echo "{}"'
   _stub_pi_list_models
+  # Record every invocation so the claim is pinned directly: a stub that is
+  # never reached would leave the output assertion passing for any reason.
+  mv "$BIN/pi" "$BIN/pi.real"
+  cat > "$BIN/pi" << SCRIPT
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >> "$TMPDIR/pi-argv"
+exec "$BIN/pi.real" "\$@"
+SCRIPT
+  chmod +x "$BIN/pi"
 
   run _run_step
   [ "$status" -eq 0 ]
   [[ "$output" != *"is not listed under"* ]]
+  [ ! -e "$TMPDIR/pi-argv" ]
   _teardown_env_local
 }
 

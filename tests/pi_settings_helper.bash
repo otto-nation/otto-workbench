@@ -49,7 +49,12 @@ SCRIPT
 }
 
 # _run_step [STEP] — runs STEP (default step_pi_settings; pi_models.bats passes
-# step_pi_models) against the sandbox with the ui helpers stubbed. Runs in its own bash so the step's skip() does not displace bats'.
+# step_pi_models) from $PI_STEPS against the sandbox with the ui helpers
+# stubbed. Runs in its own bash so the step's skip() does not displace bats'.
+#
+# Each suite sets PI_STEPS in its own setup rather than this helper naming the
+# file: bin/local/select-tests maps a suite to its sources by the path literals
+# in the .bats file itself, and does not follow a load into a helper.
 _run_step() {
   bash -c '
     set -e
@@ -67,9 +72,9 @@ _run_step() {
     # test can point it at a fixture tree instead of the repo.
     WORKBENCH_STABLE_DIR="${WORKBENCH_STABLE_DIR:-$1}"
     . "$1/lib/env.sh"
-    . "$1/ai/pi/steps.sh"
+    . "$5"
     "$4"
-  ' _ "$REPO_ROOT" "$AGENT_DIR" "$TEMPLATE" "${1:-step_pi_settings}"
+  ' _ "$REPO_ROOT" "$AGENT_DIR" "$TEMPLATE" "${1:-step_pi_settings}" "$PI_STEPS"
 }
 
 _seed_env_local() {

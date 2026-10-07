@@ -8,6 +8,7 @@ setup() {
   load 'test_helper'
   load 'pi_settings_helper'
   pi_settings_setup
+  PI_STEPS="$REPO_ROOT/ai/pi/steps.sh"
 }
 
 teardown() {

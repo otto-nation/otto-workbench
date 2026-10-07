@@ -17,7 +17,16 @@ import pytest
 from conftest import init_worktree, seed_repo  # noqa: E402
 import core.signal_relay  # noqa: E402
 import core.tree_lock_cli  # noqa: E402
-from core.tree_lock import LOCK_ENV, LOCK_FILE, acquire, holders, is_locked, lock_path
+from core.tree_lock import (  # noqa: E402
+    LOCK_ENV,
+    LOCK_FILE,
+    LockState,
+    acquire,
+    holders,
+    is_locked,
+    lock_path,
+    probe,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -225,6 +234,64 @@ def test_git_timeout_is_treated_as_no_lock(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, "run", boom)
     assert lock_path(tmp_path) is None
     assert is_locked(tmp_path) is False
+
+
+def test_git_timeout_is_an_unknown_probe_not_a_free_tree(tmp_path, monkeypatch):
+    """is_locked fails open on a hung git; probe must still say it could not tell."""
+
+    def boom(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd="git", timeout=1)
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    verdict = probe(tmp_path)
+    assert verdict.state is LockState.UNKNOWN
+    assert "timed out" in verdict.reason
+
+
+def test_git_that_will_not_start_is_an_unknown_probe(tmp_path, monkeypatch):
+    """A spawn failure is the probe breaking, not git saying "not a repo"."""
+
+    def boom(*_args, **_kwargs):
+        raise OSError(11, "Resource temporarily unavailable")
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    verdict = probe(tmp_path)
+    assert verdict.state is LockState.UNKNOWN
+    assert "could not run" in verdict.reason
+
+
+def test_non_repo_probe_is_free_not_unknown(tmp_path):
+    """git answering "not a repository" is an answer: nothing there to validate."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert probe(plain).state is LockState.FREE
+
+
+def test_probe_reports_held_and_free(worktree):
+    """Both senses through probe itself, not only through is_locked."""
+    assert probe(worktree).state is LockState.FREE
+    with acquire(worktree, command="run-tests", started="t"):
+        assert probe(worktree).state is LockState.HELD
+    assert probe(worktree).state is LockState.FREE
+
+
+def test_check_exits_3_with_a_reason_when_it_cannot_tell(tmp_path, monkeypatch, capsys):
+    """Exit 1 means free; a probe that broke must not exit 1."""
+
+    def boom(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd="git", timeout=1)
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert core.tree_lock_cli._check(tmp_path) == core.tree_lock_cli.EXIT_UNKNOWN == 3
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "could not tell" in captured.err and "timed out" in captured.err
+
+
+def test_check_prints_the_free_line_on_a_free_tree(worktree, capsys):
+    """Readers require this line alongside exit 1 to call a tree free."""
+    assert core.tree_lock_cli._check(worktree) == 1
+    assert capsys.readouterr().out == f"{worktree}{core.tree_lock_cli.FREE_SUFFIX}\n"
 
 
 def test_the_cli_runs_the_child_through_the_shared_runner(monkeypatch):

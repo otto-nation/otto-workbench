@@ -252,7 +252,14 @@ See what holds it:
 bin/local/with-tree-lock --check "$(git rev-parse --show-toplevel)"
 ```
 
-It names each holder's pid, command, and start time. To stop the validator:
+It exits 0 and names each holder's pid, command, and start time when the tree
+is being validated, and exits 1 when it is not. Exit 3 means it could not tell —
+git hung or the lock file would not open — and the reason is on stderr. Both
+guards let the edit through in that case rather than block every edit on the
+machine, so a guard that stays silent under heavy load may be one whose probe
+failed. Run `--check` by hand to see which.
+
+To stop the validator:
 
 ```bash
 kill <pid>

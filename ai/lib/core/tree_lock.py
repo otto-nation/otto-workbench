@@ -32,10 +32,12 @@ publishes a fact.
 from __future__ import annotations
 
 import contextlib
+import enum
 import fcntl
 import json
 import os
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 import core.timeouts
@@ -44,13 +46,52 @@ LOCK_FILE = "workbench-validate.lock"
 LOCK_ENV = "WORKBENCH_TREE_LOCK"
 
 
+class LockState(enum.Enum):
+    """What a probe learned about a tree's validation lock."""
+
+    HELD = "held"
+    FREE = "free"
+    # The probe could not answer — git hung or would not start, or the lock
+    # file would not open. Not the same as FREE: a reader that fails open must
+    # still be able to say it did, or a load flake reads as "nobody validating".
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class LockProbe:
+    """A probe's verdict, with the reason when it is UNKNOWN."""
+
+    state: LockState
+    reason: str = ""
+
+    @property
+    def held(self) -> bool:
+        return self.state is LockState.HELD
+
+
+@dataclass(frozen=True)
+class _GitDirLookup:
+    """The git dir, or why git could not be asked. Both empty: not a repo."""
+
+    path: Path | None
+    error: str = ""
+
+
 def _git_dir(tree_root: Path) -> Path | None:
     """The worktree's private git dir, or None outside a repo.
 
     Asked of git rather than assembled as ``<root>/.git``: in a linked worktree
     that path is a file pointing at ``<bare>/worktrees/<name>``, and writing a
     lock there would put every worktree's lock in one place.
+
+    None also when git could not be asked at all; ``probe`` is the reader that
+    needs those two told apart, and goes through ``_lookup_git_dir`` for it.
     """
+    return _lookup_git_dir(tree_root).path
+
+
+def _lookup_git_dir(tree_root: Path) -> _GitDirLookup:
+    """``_git_dir``, keeping "not a repo" apart from "git did not answer"."""
     # GIT_DIR / GIT_WORK_TREE skip discovery: git -C then answers the caller's
     # repo, not tree_root. Hooks export both; strip them so a reader inside a
     # hook still resolves the tree it was asked about.
@@ -66,10 +107,15 @@ def _git_dir(tree_root: Path) -> Path | None:
             timeout=core.timeouts.LOCAL,
             env=env,
         )
-    except (OSError, subprocess.SubprocessError):
-        return None
+    except subprocess.CalledProcessError:
+        # git ran and said no: outside a repo, or a directory that is gone.
+        return _GitDirLookup(path=None)
+    except subprocess.TimeoutExpired:
+        return _GitDirLookup(path=None, error=f"git rev-parse timed out after {core.timeouts.LOCAL}s")
+    except (OSError, subprocess.SubprocessError) as exc:
+        return _GitDirLookup(path=None, error=f"git rev-parse could not run: {exc}")
     path = out.stdout.strip()
-    return Path(path) if path else None
+    return _GitDirLookup(path=Path(path) if path else None)
 
 
 def lock_path(tree_root: Path) -> Path | None:
@@ -116,21 +162,38 @@ def is_locked(tree_root: Path) -> bool:
     Deliberately ignores LOCK_ENV: a reader running inside a validator's own
     process tree is exactly the case we must still refuse, so trusting an
     inherited marker would pass through when it matters most.
+
+    A probe that could not answer is False here — every reader fails open. Use
+    ``probe`` to tell that apart from a tree nobody is validating.
     """
-    path = lock_path(tree_root)
-    if path is None or not path.exists():
-        return False
+    return probe(tree_root).held
+
+
+def probe(tree_root: Path) -> LockProbe:
+    """Whether a validator holds this tree: HELD, FREE, or UNKNOWN with a reason.
+
+    FREE outside a repo and when no validator has ever taken the lock; UNKNOWN
+    when git or the lock file could not be asked.
+    """
+    lookup = _lookup_git_dir(Path(tree_root))
+    if lookup.error:
+        return LockProbe(LockState.UNKNOWN, lookup.error)
+    if lookup.path is None:
+        return LockProbe(LockState.FREE)
+    path = lookup.path / LOCK_FILE
+    if not path.exists():
+        return LockProbe(LockState.FREE)
     try:
         handle = open(path, "a+")
-    except OSError:
-        return False
+    except OSError as exc:
+        return LockProbe(LockState.UNKNOWN, f"could not open {path}: {exc}")
     try:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
-        return True
+        return LockProbe(LockState.HELD)
     else:
         fcntl.flock(handle, fcntl.LOCK_UN)
-        return False
+        return LockProbe(LockState.FREE)
     finally:
         handle.close()
 

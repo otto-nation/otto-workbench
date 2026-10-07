@@ -32,7 +32,52 @@ export const REFUSAL =
   "it to finish, or make the edit in another worktree.";
 
 /**
- * The repository working tree containing PATH, or "" when there is none.
+ * The line `with-tree-lock --check` prints for a free tree, after the tree path.
+ * Owned by FREE_SUFFIX in ai/lib/core/tree_lock_cli.py; the free-tree test in
+ * tests/pi_extensions_issues.bats fails when the two drift.
+ */
+export const FREE_SUFFIX = ": not being validated";
+
+/** Exit status `git rev-parse` uses for "not a repository" and a missing -C dir. */
+const GIT_NOT_A_REPO = 128;
+
+/**
+ * A probe's verdict. "unknown" carries the reason the probe could not answer.
+ *
+ * Kept apart from "free" because both make the guard stay silent, and a guard
+ * that stayed silent because its probe broke is otherwise indistinguishable
+ * from one with nothing to say — under load that is a test reporting a held
+ * lock as free with no clue why.
+ */
+export type ProbeState = "held" | "free" | "unknown";
+
+export interface Probe {
+  state: ProbeState;
+  reason: string;
+}
+
+/** The answer for one edit: the refusal (or null), and why the probe failed if it did. */
+export interface LockVerdict {
+  refusal: string | null;
+  unknownReason: string;
+}
+
+/** A child process failure, described: exit status, signal, or spawn error, then its stderr. */
+function describeFailure(what: string, err: unknown): string {
+  const e = err as { status?: number | null; signal?: string | null; code?: string; stderr?: unknown };
+  const how =
+    typeof e.status === "number"
+      ? `exited ${e.status}`
+      : e.signal
+        ? `was killed by ${e.signal}`
+        : `could not run (${e.code ?? String(err)})`;
+  const stderr = String(e.stderr ?? "").trim();
+  return stderr ? `${what} ${how}: ${stderr}` : `${what} ${how}`;
+}
+
+/**
+ * The repository working tree containing PATH: root "" with no reason when
+ * there is none, root "" with a reason when git could not be asked.
  *
  * Resolved from the edited file rather than from the process's cwd, because a
  * Pi session's cwd is not necessarily the tree being written to — an agent
@@ -45,7 +90,7 @@ export const REFUSAL =
  * success. GIT_COMMON_DIR goes with them: it redirects the shared storage a
  * linked worktree reads, and the Claude twin strips the same four.
  */
-export function gitRootFor(path: string): string {
+export function gitRootFor(path: string): { root: string; reason: string } {
   const env = { ...process.env };
   delete env.GIT_DIR;
   delete env.GIT_WORK_TREE;
@@ -53,46 +98,56 @@ export function gitRootFor(path: string): string {
   delete env.GIT_COMMON_DIR;
 
   try {
-    return execFileSync("git", ["-C", dirname(path), "rev-parse", "--show-toplevel"], {
+    const root = execFileSync("git", ["-C", dirname(path), "rev-parse", "--show-toplevel"], {
       encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
+      stdio: ["ignore", "pipe", "pipe"],
       env,
     }).trim();
-  } catch {
-    return "";
+    return { root, reason: "" };
+  } catch (err) {
+    if ((err as { status?: number }).status === GIT_NOT_A_REPO) return { root: "", reason: "" };
+    return { root: "", reason: describeFailure("git rev-parse", err) };
   }
 }
 
 /**
- * True when something holds the validation lock on TREE.
+ * Whether something holds the validation lock on TREE.
  *
- * Shells to `with-tree-lock --check`, which is `tree_lock.is_locked()`, rather
+ * Shells to `with-tree-lock --check`, which is `tree_lock.probe()`, rather
  * than reimplementing the probe: node has no `fcntl.flock`, and a second
  * implementation of the one fact both harnesses read is the way they come to
- * disagree. Exit 0 means a validator holds it, 1 means free.
+ * disagree. Exit 0 is held. Free needs exit 1 *and* the free line, because a
+ * python3 or shim that fails before the probe runs exits 1 too; anything else,
+ * exit 3 included, is unknown.
  *
  * ceiling: one `git` spawn plus one `python3` spawn per Edit/Write call,
  * measured at well under the 50ms an Edit costs elsewhere. Upgrade to an
  * in-process flock probe if a measurement puts this over 50ms, or if Pi grows
  * a way to keep a helper process alive across tool calls.
  */
-export function treeIsLocked(tree: string): boolean {
+export function probeTree(tree: string): Probe {
   try {
     execFileSync(WITH_TREE_LOCK, ["--check", tree], {
-      stdio: ["ignore", "ignore", "ignore"],
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
     });
-    return true;
-  } catch {
-    return false;
+    return { state: "held", reason: "" };
+  } catch (err) {
+    const e = err as { status?: number | null; stdout?: unknown };
+    if (e.status === 1 && String(e.stdout ?? "").includes(FREE_SUFFIX)) {
+      return { state: "free", reason: "" };
+    }
+    return { state: "unknown", reason: describeFailure("with-tree-lock --check", err) };
   }
 }
 
 /**
- * The refusal for an edit to PATH, or null when the edit may proceed.
+ * The refusal for an edit to PATH (or null), and why the probe failed if it did.
  *
  * Fails open at every step — no git, no tree, no lock, or a probe that cannot
- * run all mean silence. A guard that refused because it could not answer would
- * block every edit on the machine the moment the binary moved.
+ * run all mean no refusal. A guard that refused because it could not answer
+ * would block every edit on the machine the moment the binary moved. The
+ * reason is carried so a caller that can say so — a test, a diagnostic — does.
  *
  * WORKBENCH_TREE_LOCK is deliberately not read. That variable is the writers'
  * reentrancy marker, set so a validator re-execing under the wrapper does not
@@ -100,13 +155,20 @@ export function treeIsLocked(tree: string): boolean {
  * editing is under validation, and honouring it here would let any process
  * that inherited it edit straight through the lock.
  */
-export function lockRefusal(path: string): string | null {
-  const tree = gitRootFor(path);
-  if (!tree) return null;
-  if (!treeIsLocked(tree)) return null;
+export function lockVerdict(path: string): LockVerdict {
+  const { root, reason } = gitRootFor(path);
+  if (!root) return { refusal: null, unknownReason: reason };
+  const probe = probeTree(root);
+  if (probe.state === "unknown") return { refusal: null, unknownReason: probe.reason };
+  if (probe.state === "free") return { refusal: null, unknownReason: "" };
 
   // No pid: holders() can be empty while the lock is held — a record torn
   // mid-write, or a holder that never wrote one — so naming one would be a
   // detail the guard cannot stand behind.
-  return REFUSAL;
+  return { refusal: REFUSAL, unknownReason: "" };
+}
+
+/** The refusal for an edit to PATH, or null when the edit may proceed. */
+export function lockRefusal(path: string): string | null {
+  return lockVerdict(path).refusal;
 }

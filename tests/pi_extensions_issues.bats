@@ -185,16 +185,21 @@ _probe() {
 # nothing but node builtins, so node can load it directly. index.ts is the
 # wiring no test can reach.
 #
-# The probe is with-tree-lock --check, which is is_locked(). Tests hold a real
-# flock rather than stubbing the CLI, so an inverted probe fails here the same
-# way it fails in tests/tree_lock_test.py.
+# The probe is with-tree-lock --check, which is tree_lock.probe(). Tests hold a
+# real flock rather than stubbing the CLI, so an inverted probe fails here the
+# same way it fails in tests/tree_lock_test.py.
 
-# _lock_refusal FILE — prints the refusal string, or "null".
+# _lock_refusal FILE — prints the refusal string, or "null". When the probe
+# could not answer, "probe could not answer: <reason>" goes to stderr first,
+# which `run` folds into $output: a guard that stayed silent because its probe
+# broke then fails the assertion with the cause in hand, rather than reading as
+# a free tree.
 _lock_refusal() {
   run node --input-type=module -e "
-    const { lockRefusal } = await import('$REPO_ROOT/ai/pi/extensions/tree-lock-guard/detect.ts');
-    const msg = lockRefusal(process.argv[1]);
-    process.stdout.write(msg === null ? 'null' : msg);
+    const { lockVerdict } = await import('$REPO_ROOT/ai/pi/extensions/tree-lock-guard/detect.ts');
+    const v = lockVerdict(process.argv[1]);
+    if (v.unknownReason) process.stderr.write('probe could not answer: ' + v.unknownReason + '\\n');
+    process.stdout.write(v.refusal === null ? 'null' : v.refusal);
   " -- "$1"
 }
 
@@ -326,6 +331,39 @@ time.sleep(30)
   _lock_refusal "$TMPDIR/plain/file.txt"
   [ "$status" -eq 0 ]
   [ "$output" = "null" ]
+}
+
+@test "tree-lock-guard: a probe that cannot run is reported, not read as free" {
+  # No git on PATH: gitRootFor cannot spawn it. The edit still proceeds — the
+  # guard fails open — but the verdict says why, so it is not a free tree.
+  local repo="$TMPDIR/repo" node_bin
+  mkdir -p "$repo"
+  git -C "$repo" init -q -b feat
+  touch "$repo/file.txt"
+  # The real binary, not `command -v node`: that can be a version-manager shim,
+  # which needs the PATH this test takes away.
+  node_bin="$(node -p process.execPath)"
+  run env PATH=/var/empty "$node_bin" --input-type=module -e "
+    const { lockVerdict } = await import('$REPO_ROOT/ai/pi/extensions/tree-lock-guard/detect.ts');
+    process.stdout.write(JSON.stringify(lockVerdict(process.argv[1])));
+  " -- "$repo/file.txt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"refusal":null'* ]]
+  [[ "$output" == *'"unknownReason":"git rev-parse could not run (ENOENT)"'* ]]
+}
+
+@test "tree-lock-guard: a --check that fails before probing is not free" {
+  # Exit 1 is what a broken python3 or version-manager shim returns, and what
+  # --check returns for a free tree. Only the free line tells them apart.
+  local repo="$TMPDIR/repo" bin="$TMPDIR/bin"
+  mkdir -p "$repo" "$bin"
+  git -C "$repo" init -q -b feat
+  printf '#!/bin/sh\necho "shim: config not trusted" >&2\nexit 1\n' > "$bin/python3"
+  chmod +x "$bin/python3"
+  PATH="$bin:$PATH" _lock_refusal "$repo/file.txt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"probe could not answer: with-tree-lock --check exited 1: shim: config not trusted"* ]]
+  [[ "$output" == *null ]]
 }
 
 @test "tree-lock-guard: detect.ts imports no SDK" {

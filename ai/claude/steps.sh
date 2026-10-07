@@ -540,12 +540,13 @@ step_install_claude() {
 }
 
 # step_claude_worktrunk_plugin — installs Worktrunk's Claude Code plugin for
-# worktree-isolated agent sessions. One-time interactive setup; skips if wt is
-# not installed or the plugin is already present.
+# worktree-isolated agent sessions, installing worktrunk itself first (Homebrew,
+# or mise on a machine without it) when wt is missing. Skips when worktrunk
+# cannot be installed or the plugin is already present.
 step_claude_worktrunk_plugin() {
-  command -v wt >/dev/null 2>&1 || {
-    warn "worktrunk not installed — brew install worktrunk, then re-run: otto-workbench sync ai"
-    return
+  install_brew_or_mise wt worktrunk worktrunk worktrunk || {
+    warn "Worktrunk Claude plugin skipped — re-run after installing worktrunk: otto-workbench sync ai"
+    return 0
   }
 
   if wt config plugins list 2>/dev/null | grep -q "claude"; then
@@ -566,7 +567,7 @@ register_claude_steps() {
   register_step "Claude Code rules"       step_claude_rules
   register_step "MCP servers"             step_claude_mcps
   register_step "Claude Code agents"      step_claude_agents
-  register_step "Worktrunk Claude plugin" step_claude_worktrunk_plugin
+  register_step "Install worktrunk + Claude plugin" step_claude_worktrunk_plugin
 }
 
 # _profile_excludes_skill PROFILE SKILL — returns 0 if the profile excludes the skill.

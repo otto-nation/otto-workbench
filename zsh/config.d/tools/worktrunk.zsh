@@ -3,7 +3,7 @@
 # Activates shell integration (cd-on-switch, completions) for the `wt` CLI.
 # Not deployed until worktrunk is installed; re-run: otto-workbench sync zsh
 #
-# Install:         brew install worktrunk
+# Install:         brew install worktrunk  (no Homebrew: mise use -g worktrunk)
 # Docs:            https://worktrunk.dev
 # duplicate-check: wt config shell
 # requires-cmd:    wt

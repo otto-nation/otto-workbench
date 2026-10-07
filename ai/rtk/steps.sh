@@ -15,27 +15,17 @@ fi
 sync_rtk() {
   sync_header "rtk"
   if ! command -v rtk >/dev/null 2>&1; then
-    warn "rtk not found — run: brew install rtk"
+    warn "rtk not found — run: brew install rtk, or: mise use -g rtk"
     return
   fi
   [[ "${WORKBENCH_SYNC:-}" != true ]] && success "rtk installed" || true
 }
 
-# step_install_rtk — installs rtk via brew if not already in PATH.
+# step_install_rtk — installs rtk via Homebrew, or via mise on a machine
+# without it, when not already in PATH. Non-fatal: the hook step after it skips
+# a missing rtk with its own warning.
 step_install_rtk() {
-  if command -v rtk >/dev/null 2>&1; then
-    success "rtk already installed"
-    return
-  fi
-
-  command -v brew >/dev/null 2>&1 || {
-    warn "brew not found — install Homebrew first"
-    return
-  }
-
-  info "Installing rtk via brew"
-  brew install rtk
-  success "rtk installed"
+  install_brew_or_mise rtk rtk rtk rtk || true
 }
 
 # step_rtk_hook — installs the RTK PreToolUse hook into ~/.claude/settings.json.

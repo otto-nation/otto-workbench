@@ -14,6 +14,10 @@ setup() {
   ARGV="$TMPDIR/herdr-argv"
   export FAKE_PI_AGENT_DIR="$TMPDIR/pi-agent"
   export FAKE_CLAUDE_DIR="$TMPDIR/claude"
+  # A suite run from inside a herdr pane inherits these, and step_update_herdr
+  # skips the update there; every case starts outside a session and the ones
+  # about the pane set them back explicitly.
+  unset HERDR_ENV HERDR_PANE_ID
 }
 
 teardown() {
@@ -127,11 +131,33 @@ SCRIPT
 }
 
 @test "a brew-disabled self-update surfaces herdr's own message" {
+  # Backticks are herdr's literal message text, not a command substitution.
+  # shellcheck disable=SC2016
   _stub_herdr 1 'self-update is disabled for Homebrew installs; run `brew update && brew upgrade herdr`'
   run _run step_update_herdr
   [ "$status" -eq 0 ]
   [[ "$output" == *"WARN"*"brew upgrade herdr"* ]]
   [[ "$output" != *"run: herdr update"* ]]
+}
+
+@test "inside a herdr pane the update is skipped, not attempted and warned" {
+  # herdr refuses to update from its own session, so an attempt there can only
+  # fail with a warning the operator cannot act on from that pane.
+  _stub_herdr 0
+  HERDR_ENV=1 HERDR_PANE_ID=pane-1 run _run step_update_herdr
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"SKIP herdr update"*"inside a herdr session"* ]]
+  [[ "$output" != *"WARN"* ]]
+  [ ! -f "$ARGV" ]
+}
+
+@test "HERDR_ENV without a pane id is not a session, and the update runs" {
+  # Matches herdr's own integrations, which need both before treating the
+  # process as running in a pane.
+  _stub_herdr 0
+  HERDR_ENV=1 run _run step_update_herdr
+  [ "$status" -eq 0 ]
+  grep -qx "update" "$ARGV"
 }
 
 @test "update is skipped with a warning when herdr is absent" {

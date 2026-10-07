@@ -70,7 +70,9 @@ export function bootstrapSection(
 
 Pi has no \`Skill\` tool. Where a Superpowers instruction says to invoke a skill, read that skill's SKILL.md with the \`read\` tool when it applies.
 
-Pi ships no standard subagent tool. If one such as \`subagent\` is available, use it for Superpowers subagent workflows; otherwise do the work in this session or explain the missing capability, rather than inventing \`Task\` calls.
+Pi ships no standard subagent tool. If one such as \`subagent\` is available, use it for Superpowers subagent workflows; otherwise do the work in this session or explain the missing capability, rather than inventing \`Task\` calls. Where \`references/pi-tools.md\` names \`pi-subagents\`, read it as whichever subagent tool is installed.
+
+Superpowers names model tiers (cheap, standard, most capable), not models. Translate a tier using the subagent tool's own model guidance and pass \`model\` explicitly on every dispatch, including templates that carry no \`model:\` line — unless that guidance says this session pins subagents to the parent model, in which case omit it.
 
 Pi ships no standard task-list tool. If an installed todo/task tool is available, use it; otherwise track work in a plan file or a repo-local \`TODO.md\`. Treat \`TodoWrite\` references as this task-tracking action.
 

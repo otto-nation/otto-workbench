@@ -87,8 +87,18 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 _repo_root="$(cd "$(dirname "$_SELF")/../../.." && pwd)"
 _with_tree_lock="$_repo_root/bin/local/with-tree-lock"
 
-if [[ -x "$_with_tree_lock" ]] \
-  && "$_with_tree_lock" --check "$repo_dir" >/dev/null 2>&1; then
+# Exit 3 is a probe that could not answer — git hung, or the lock file would
+# not open. The edit goes through, as for a free tree, but the reason is passed
+# on to stderr rather than discarded so a silent guard can be told from a free
+# tree. Any other non-zero is not-held, as before.
+_lock_rc=1
+if [[ -x "$_with_tree_lock" ]]; then
+  _lock_err=$("$_with_tree_lock" --check "$repo_dir" 2>&1 >/dev/null) && _lock_rc=0 || _lock_rc=$?
+fi
+if [[ "$_lock_rc" -eq 3 ]]; then
+  echo "claude-edit-guard: $_lock_err" >&2
+fi
+if [[ "$_lock_rc" -eq 0 ]]; then
   block "A validator holds this tree — a suite or a gate is reading the files you are about to change. Editing now invalidates that run: it reports against a tree that no longer exists, and a green result would be exactly as green. Wait for it to finish, or make the edit in another worktree."
 fi
 

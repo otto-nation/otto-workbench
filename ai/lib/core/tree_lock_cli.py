@@ -26,6 +26,12 @@ from core.tree_lock import LockState, acquire, holders, probe
 # does, in ai/pi/extensions/tree-lock-guard/detect.ts.
 FREE_SUFFIX = ": not being validated"
 
+# The line --check prints, after the tree path, when a validator holds the
+# tree. Readers require it alongside exit 0 for the same reason they require
+# FREE_SUFFIX alongside exit 1: a python3 or shim that exits 0 without running
+# the probe is not evidence of a holder.
+HELD_SUFFIX = ": validating"
+
 # --check could not tell. Distinct from 1 so no reader reads it as free.
 EXIT_UNKNOWN = 3
 
@@ -34,12 +40,15 @@ def _check(tree_root: Path) -> int:
     """Report holders. Exit 0 when validated, 1 when free, 3 when it could not tell."""
     verdict = probe(tree_root)
     if verdict.state is LockState.UNKNOWN:
-        print(f"tree_lock_cli: could not tell whether {tree_root} is being validated: {verdict.reason}", file=sys.stderr)
+        print(
+            f"tree_lock_cli: could not tell whether {tree_root} is being validated: {verdict.reason}",
+            file=sys.stderr,
+        )
         return EXIT_UNKNOWN
     if verdict.state is LockState.FREE:
         print(f"{tree_root}{FREE_SUFFIX}")
         return 1
-    print(f"{tree_root}: validating")
+    print(f"{tree_root}{HELD_SUFFIX}")
     for record in holders(tree_root):
         pid = record.get("pid", "?")
         command = record.get("command", "unknown command")

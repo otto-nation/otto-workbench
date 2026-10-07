@@ -45,14 +45,19 @@ import core.timeouts
 LOCK_FILE = "workbench-validate.lock"
 LOCK_ENV = "WORKBENCH_TREE_LOCK"
 
+# What git rev-parse -C says (under LC_ALL=C) when there is no repository to
+# ask about: outside one, or a -C directory that does not exist. The Pi twin
+# in ai/pi/extensions/tree-lock-guard/detect.ts matches the same two.
+_NOT_A_REPO_MARKERS = ("not a git repository", "cannot change to")
+
 
 class LockState(enum.Enum):
     """What a probe learned about a tree's validation lock."""
 
     HELD = "held"
     FREE = "free"
-    # The probe could not answer — git hung or would not start, or the lock
-    # file would not open. Not the same as FREE: a reader that fails open must
+    # The probe could not answer — git hung, would not start or failed, or the
+    # lock file would not open or lock. Not the same as FREE: a reader that fails open must
     # still be able to say it did, or a load flake reads as "nobody validating".
     UNKNOWN = "unknown"
 
@@ -98,6 +103,8 @@ def _lookup_git_dir(tree_root: Path) -> _GitDirLookup:
     env = os.environ.copy()
     env.pop("GIT_DIR", None)
     env.pop("GIT_WORK_TREE", None)
+    # git localises its messages, and the not-a-repo check below reads one.
+    env["LC_ALL"] = "C"
     try:
         out = subprocess.run(
             ["git", "-C", str(tree_root), "rev-parse", "--absolute-git-dir"],
@@ -107,9 +114,15 @@ def _lookup_git_dir(tree_root: Path) -> _GitDirLookup:
             timeout=core.timeouts.LOCAL,
             env=env,
         )
-    except subprocess.CalledProcessError:
-        # git ran and said no: outside a repo, or a directory that is gone.
-        return _GitDirLookup(path=None)
+    except subprocess.CalledProcessError as exc:
+        # git exits 128 for every fatal error, so the status alone cannot say
+        # "not a repo". Only that message, or a directory that is gone, is an
+        # answer; dubious ownership, a corrupt repo or an unreadable config is
+        # git failing to answer, and must not read as a tree nobody validates.
+        stderr = (exc.stderr or "").strip()
+        if any(marker in stderr for marker in _NOT_A_REPO_MARKERS):
+            return _GitDirLookup(path=None)
+        return _GitDirLookup(path=None, error=f"git rev-parse exited {exc.returncode}: {stderr}")
     except subprocess.TimeoutExpired:
         return _GitDirLookup(path=None, error=f"git rev-parse timed out after {core.timeouts.LOCAL}s")
     except (OSError, subprocess.SubprocessError) as exc:
@@ -173,7 +186,8 @@ def probe(tree_root: Path) -> LockProbe:
     """Whether a validator holds this tree: HELD, FREE, or UNKNOWN with a reason.
 
     FREE outside a repo and when no validator has ever taken the lock; UNKNOWN
-    when git or the lock file could not be asked.
+    when git or the lock file could not be asked. Only git saying "not a
+    repository" counts as outside one — any other git failure is UNKNOWN.
     """
     lookup = _lookup_git_dir(Path(tree_root))
     if lookup.error:
@@ -181,16 +195,24 @@ def probe(tree_root: Path) -> LockProbe:
     if lookup.path is None:
         return LockProbe(LockState.FREE)
     path = lookup.path / LOCK_FILE
-    if not path.exists():
+    # stat before open: "a+" would create the file, and a probe must not.
+    try:
+        path.stat()
+    except FileNotFoundError:
         return LockProbe(LockState.FREE)
+    except OSError as exc:
+        return LockProbe(LockState.UNKNOWN, f"could not stat {path}: {exc}")
     try:
         handle = open(path, "a+")
     except OSError as exc:
         return LockProbe(LockState.UNKNOWN, f"could not open {path}: {exc}")
     try:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    except BlockingIOError:
         return LockProbe(LockState.HELD)
+    except OSError as exc:
+        # ENOLCK, EBADF and the like: flock failed, which is not "held".
+        return LockProbe(LockState.UNKNOWN, f"could not flock {path}: {exc}")
     else:
         fcntl.flock(handle, fcntl.LOCK_UN)
         return LockProbe(LockState.FREE)

@@ -366,6 +366,60 @@ time.sleep(30)
   [[ "$output" == *null ]]
 }
 
+@test "tree-lock-guard: a --check that exits 0 without the held line is not held" {
+  # A python3 or shim that stubs the probe out exits 0 too; refusing every edit
+  # on that would be the same blind trust as reading exit 1 as free.
+  local repo="$TMPDIR/repo" bin="$TMPDIR/bin"
+  mkdir -p "$repo" "$bin"
+  git -C "$repo" init -q -b feat
+  printf '#!/bin/sh\nexit 0\n' > "$bin/python3"
+  chmod +x "$bin/python3"
+  PATH="$bin:$PATH" _lock_refusal "$repo/file.txt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"probe could not answer: with-tree-lock --check exited 0 without the"* ]]
+  [[ "$output" == *null ]]
+}
+
+@test "tree-lock-guard: git failing for a reason other than no repo is reported, not free" {
+  # git exits 128 for every fatal error. Only "not a git repository" means
+  # there is nothing to guard.
+  local repo="$TMPDIR/repo" bin="$TMPDIR/bin"
+  mkdir -p "$repo" "$bin"
+  printf '#!/bin/sh\necho "fatal: detected dubious ownership in repository" >&2\nexit 128\n' > "$bin/git"
+  chmod +x "$bin/git"
+  PATH="$bin:$PATH" _lock_refusal "$repo/file.txt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"probe could not answer: git rev-parse exited 128: fatal: detected dubious ownership"* ]]
+  [[ "$output" == *null ]]
+}
+
+@test "tree-lock-guard: a hung git is reported as a timeout, not waited on" {
+  local repo="$TMPDIR/repo" bin="$TMPDIR/bin"
+  mkdir -p "$repo" "$bin"
+  printf '#!/bin/sh\nexec sleep 30\n' > "$bin/git"
+  chmod +x "$bin/git"
+  PATH="$bin:$PATH" run node --input-type=module -e "
+    const { lockVerdict } = await import('$REPO_ROOT/ai/pi/extensions/tree-lock-guard/detect.ts');
+    process.stdout.write(JSON.stringify(lockVerdict(process.argv[1], 200)));
+  " -- "$repo/file.txt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"refusal":null'* ]]
+  [[ "$output" == *"git rev-parse timed out"* ]]
+}
+
+@test "tree-lock-guard: the free and held lines equal the ones --check prints" {
+  # The lines are one contract spelled in two languages. Each reader's tests
+  # would only notice drift indirectly; this says so directly.
+  local py ts
+  py="$(PYTHONPATH="$REPO_ROOT/ai/lib" python3 -c 'import core.tree_lock_cli as c; print(c.FREE_SUFFIX + "|" + c.HELD_SUFFIX)')"
+  ts="$(node --input-type=module -e "
+    const d = await import('$REPO_ROOT/ai/pi/extensions/tree-lock-guard/detect.ts');
+    console.log(d.FREE_SUFFIX + '|' + d.HELD_SUFFIX);
+  ")"
+  [ -n "$py" ]
+  [ "$py" = "$ts" ]
+}
+
 @test "tree-lock-guard: detect.ts imports no SDK" {
   run grep -E '@earendil-works/pi-coding-agent|isToolCallEventType' \
     "$REPO_ROOT/ai/pi/extensions/tree-lock-guard/detect.ts"

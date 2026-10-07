@@ -33,13 +33,28 @@ export const REFUSAL =
 
 /**
  * The line `with-tree-lock --check` prints for a free tree, after the tree path.
- * Owned by FREE_SUFFIX in ai/lib/core/tree_lock_cli.py; the free-tree test in
- * tests/pi_extensions_issues.bats fails when the two drift.
+ * Owned by FREE_SUFFIX in ai/lib/core/tree_lock_cli.py; a test in
+ * tests/pi_extensions_issues.bats asserts the two are equal.
  */
 export const FREE_SUFFIX = ": not being validated";
 
-/** Exit status `git rev-parse` uses for "not a repository" and a missing -C dir. */
-const GIT_NOT_A_REPO = 128;
+/** The line it prints for a held tree. Owned by HELD_SUFFIX in tree_lock_cli.py, tested the same way. */
+export const HELD_SUFFIX = ": validating";
+
+/**
+ * How long either child may run before the probe gives up and says "unknown".
+ * Matches core.timeouts.LOCAL, which bounds the same git call on the Python side.
+ */
+export const PROBE_TIMEOUT_MS = 10_000;
+
+/**
+ * What `git rev-parse` says, under LC_ALL=C, when there is no repository to ask
+ * about: outside one, or a -C directory that does not exist. Exit 128 alone is
+ * not that — git uses it for every fatal error, dubious ownership and a corrupt
+ * repository included — so the message is what separates "nothing to guard"
+ * from "git could not answer". Mirrors _NOT_A_REPO_MARKERS in tree_lock.py.
+ */
+const NOT_A_REPO_MARKERS = ["not a git repository", "cannot change to"];
 
 /**
  * A probe's verdict. "unknown" carries the reason the probe could not answer.
@@ -66,7 +81,9 @@ export interface LockVerdict {
 function describeFailure(what: string, err: unknown): string {
   const e = err as { status?: number | null; signal?: string | null; code?: string; stderr?: unknown };
   const how =
-    typeof e.status === "number"
+    e.code === "ETIMEDOUT"
+      ? "timed out"
+      : typeof e.status === "number"
       ? `exited ${e.status}`
       : e.signal
         ? `was killed by ${e.signal}`
@@ -90,8 +107,13 @@ function describeFailure(what: string, err: unknown): string {
  * success. GIT_COMMON_DIR goes with them: it redirects the shared storage a
  * linked worktree reads, and the Claude twin strips the same four.
  */
-export function gitRootFor(path: string): { root: string; reason: string } {
+export function gitRootFor(
+  path: string,
+  timeoutMs: number = PROBE_TIMEOUT_MS,
+): { root: string; reason: string } {
   const env = { ...process.env };
+  // git localises its messages, and the not-a-repo check below reads one.
+  env.LC_ALL = "C";
   delete env.GIT_DIR;
   delete env.GIT_WORK_TREE;
   delete env.GIT_INDEX_FILE;
@@ -102,10 +124,15 @@ export function gitRootFor(path: string): { root: string; reason: string } {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       env,
+      timeout: timeoutMs,
     }).trim();
     return { root, reason: "" };
   } catch (err) {
-    if ((err as { status?: number }).status === GIT_NOT_A_REPO) return { root: "", reason: "" };
+    const e = err as { status?: number | null; stderr?: unknown };
+    const stderr = String(e.stderr ?? "");
+    if (e.status === 128 && NOT_A_REPO_MARKERS.some((marker) => stderr.includes(marker))) {
+      return { root: "", reason: "" };
+    }
     return { root: "", reason: describeFailure("git rev-parse", err) };
   }
 }
@@ -116,22 +143,29 @@ export function gitRootFor(path: string): { root: string; reason: string } {
  * Shells to `with-tree-lock --check`, which is `tree_lock.probe()`, rather
  * than reimplementing the probe: node has no `fcntl.flock`, and a second
  * implementation of the one fact both harnesses read is the way they come to
- * disagree. Exit 0 is held. Free needs exit 1 *and* the free line, because a
- * python3 or shim that fails before the probe runs exits 1 too; anything else,
- * exit 3 included, is unknown.
+ * disagree. Each verdict needs its exit status *and* its line: held is exit 0
+ * with the held line, free is exit 1 with the free line. A python3 or shim that
+ * fails before the probe runs exits 1, and one that stubs it out exits 0, so
+ * a bare status is not evidence either way. Anything else, exit 3 included, is
+ * unknown.
  *
  * ceiling: one `git` spawn plus one `python3` spawn per Edit/Write call,
  * measured at well under the 50ms an Edit costs elsewhere. Upgrade to an
  * in-process flock probe if a measurement puts this over 50ms, or if Pi grows
  * a way to keep a helper process alive across tool calls.
  */
-export function probeTree(tree: string): Probe {
+export function probeTree(tree: string, timeoutMs: number = PROBE_TIMEOUT_MS): Probe {
   try {
-    execFileSync(WITH_TREE_LOCK, ["--check", tree], {
+    const stdout = execFileSync(WITH_TREE_LOCK, ["--check", tree], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: timeoutMs,
     });
-    return { state: "held", reason: "" };
+    if (stdout.includes(HELD_SUFFIX)) return { state: "held", reason: "" };
+    return {
+      state: "unknown",
+      reason: `with-tree-lock --check exited 0 without the "${HELD_SUFFIX.slice(2)}" line`,
+    };
   } catch (err) {
     const e = err as { status?: number | null; stdout?: unknown };
     if (e.status === 1 && String(e.stdout ?? "").includes(FREE_SUFFIX)) {
@@ -155,10 +189,10 @@ export function probeTree(tree: string): Probe {
  * editing is under validation, and honouring it here would let any process
  * that inherited it edit straight through the lock.
  */
-export function lockVerdict(path: string): LockVerdict {
-  const { root, reason } = gitRootFor(path);
+export function lockVerdict(path: string, timeoutMs: number = PROBE_TIMEOUT_MS): LockVerdict {
+  const { root, reason } = gitRootFor(path, timeoutMs);
   if (!root) return { refusal: null, unknownReason: reason };
-  const probe = probeTree(root);
+  const probe = probeTree(root, timeoutMs);
   if (probe.state === "unknown") return { refusal: null, unknownReason: probe.reason };
   if (probe.state === "free") return { refusal: null, unknownReason: "" };
 

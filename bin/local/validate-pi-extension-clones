@@ -58,6 +58,7 @@ import itertools
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -165,6 +166,65 @@ def installed_pi_version() -> tuple[int, ...] | None:
     if not match:
         return None
     return tuple(int(p) for p in match.groups() if p is not None)
+
+
+# The cure for a host below a clone's floor, when the host is pi's own install.
+PI_UPDATE_REMEDY = 'update the host with: pi update'
+
+
+def pi_pin_source() -> str | None:
+    """The mise config that pins the pi on PATH, or None when mise does not supply it.
+
+    `pi update` moves pi's own install. A pi supplied by a mise pin is not that
+    install — mise re-resolves the pinned version on every invocation, so the
+    update either fails or is undone, and the only cure is raising the pin.
+    Telling that reader to run `pi update` sends them to a command that
+    cannot work, which is how a project pin read as a stale host.
+
+    The pi actually run is the first on PATH. A mise shim there resolves
+    through mise, so it is followed with `mise which`; a tool directory that
+    `mise activate` put on PATH is matched against each active tool's
+    install_path.
+    """
+    on_path = shutil.which('pi')
+    if not on_path:
+        return None
+    resolved = os.path.realpath(on_path)
+    if os.path.basename(resolved) == 'mise':
+        resolved = os.path.realpath(_run(['mise', 'which', 'pi']) or resolved)
+    raw = _run(['mise', 'ls', '--current', '--json'])
+    if not raw:
+        return None
+    try:
+        tools = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(tools, dict):
+        return None
+    entries = itertools.chain.from_iterable(
+        versions for versions in tools.values() if isinstance(versions, list))
+    return next((source for source in (_pin_supplying(entry, resolved) for entry in entries)
+                 if source), None)
+
+
+def _pin_supplying(entry, resolved: str) -> str | None:
+    """The config path of one `mise ls` entry, when its install holds `resolved`."""
+    if not isinstance(entry, dict):
+        return None
+    install = entry.get('install_path')
+    source = (entry.get('source') or {}).get('path')
+    if install and source and resolved.startswith(os.path.realpath(install) + os.sep):
+        return source
+    return None
+
+
+def host_remedy(pin_source: str | None) -> str:
+    """How to move the host, given where the pi on PATH comes from."""
+    if pin_source is None:
+        return PI_UPDATE_REMEDY
+    return (f'this pi is pinned by mise in {pin_source} — raise the pin there '
+            f'(pi update cannot move it), or run from outside that directory '
+            f'to check your own pi')
 
 
 def _triple(parts) -> tuple[int, int, int]:
@@ -351,8 +411,12 @@ def _version_str(version: tuple[int, ...]) -> str:
     return '.'.join(str(part) for part in version)
 
 
-def check_clone(clone: Path, pi_version: tuple[int, ...]) -> Skew | None:
+def check_clone(clone: Path, pi_version: tuple[int, ...],
+                update_remedy: str = PI_UPDATE_REMEDY) -> Skew | None:
     """Return the skew between this clone and the installed pi, or None.
+
+    update_remedy is the cure for every finding that moving the host fixes;
+    see host_remedy for why it is not always `pi update`.
 
     The declared floor is checked for every clone, including one that registers
     no provider: any package can import a symbol a host too old to have it
@@ -365,7 +429,7 @@ def check_clone(clone: Path, pi_version: tuple[int, ...]) -> Skew | None:
             problem=(f'clone declares pi-ai {_version_str(floor)} but the installed pi '
                      f'is {_version_str(pi_version)}, so it imports symbols this host '
                      f'does not export and every agent dies on turn 1'),
-            remedy='update the host with: pi update')
+            remedy=update_remedy)
 
     facts = _clone_facts(clone)
     if Fact.PROVIDER not in facts:
@@ -380,7 +444,7 @@ def check_clone(clone: Path, pi_version: tuple[int, ...]) -> Skew | None:
             problem=(f'clone streams through pi-ai/compat {TRANSPORT_FACTORY}, which the '
                      f'installed pi {_version_str(pi_version)} does not export, so the provider '
                      f'cannot load its transport and registers no model'),
-            remedy='update the host with: pi update')
+            remedy=update_remedy)
     if host_has_transcript and not clone_has_adapter and not clone_delegates:
         return Skew(
             problem=('clone predates the pi 0.86 transcript contract, so this provider '
@@ -392,7 +456,7 @@ def check_clone(clone: Path, pi_version: tuple[int, ...]) -> Skew | None:
             problem=('clone expects the pi 0.86 transcript contract but the installed pi '
                      'is older, so the provider imports symbols its pi-ai does not export '
                      'and every agent dies on turn 1'),
-            remedy='update the host with: pi update')
+            remedy=update_remedy)
     return None
 
 
@@ -432,8 +496,9 @@ def main() -> None:
         return
 
     findings = []
+    update_remedy = host_remedy(pi_pin_source())
     for scope, clone in clones:
-        skew = check_clone(clone, pi_version)
+        skew = check_clone(clone, pi_version, update_remedy)
         sha = _clone_sha(clone)
         if skew is not None:
             findings.append({'scope': scope, 'path': str(clone), 'sha': sha,

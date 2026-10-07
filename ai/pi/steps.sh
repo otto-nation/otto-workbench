@@ -542,6 +542,37 @@ _step_pi_settings() {
   return 0
 }
 
+# _pi_user_scope CMD [ARGS...] — runs CMD from $HOME with mise's environment
+# re-derived there, so `pi` resolves to the user's own install rather than to
+# whatever the directory sync was started from pins.
+#
+# The pi steps below speak for this machine's user scope, but `pi` is resolved
+# from PATH, and PATH is the operator's shell's. Started inside a repo whose
+# .mise.toml pins npm:@earendil-works/pi-coding-agent, mise activation has put
+# that pin ahead of everything else: `pi update` then runs against a binary pi
+# cannot move, the validator compares the user clones against the project's
+# pi, and the report names a cure (`pi update`) that cannot work. The same
+# sync from $HOME reports the machine correctly.
+#
+# cd alone is not enough under `mise activate`: its hook rewrites PATH on a
+# prompt, not on a cd in a child process, so the project's paths would stay.
+# `mise hook-env` recomputes them for the new directory and drops the ones it
+# added for the old one (tracked in __MISE_DIFF). Shim-only setups need only
+# the cd — a shim resolves from the cwd. A subshell keeps both changes off the
+# rest of the sync.
+_pi_user_scope() {
+  (
+    cd "$HOME" || exit 1
+    if [[ -n "${__MISE_DIFF:-}" ]] && command -v mise > /dev/null 2>&1; then
+      # Best-effort: if mise cannot answer, the cd above still moves every
+      # shim-resolved pi to user scope, and the validator names the binary it
+      # checked, so a pin that survives is reported rather than hidden.
+      eval "$(mise hook-env -s bash 2> /dev/null)" || true
+    fi
+    "$@"
+  )
+}
+
 # step_pi_packages — refreshes the git package clones Pi resolves from
 # settings.json, so a user-scope clone cannot sit at a SHA the installed pi
 # cannot serve.
@@ -574,7 +605,7 @@ step_pi_packages() {
 
   [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Refreshing Pi packages" || true
 
-  if pi update --extensions --no-approve > /dev/null 2>&1; then
+  if _pi_user_scope pi update --extensions --no-approve > /dev/null 2>&1; then
     [[ "${WORKBENCH_SYNC:-}" != true ]] && success "Pi packages refreshed" || true
   else
     warn "Could not refresh Pi packages — run: pi update --extensions"
@@ -609,7 +640,7 @@ step_update_pi() {
 
   [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Updating Pi" || true
 
-  if pi update > /dev/null 2>&1; then
+  if _pi_user_scope pi update > /dev/null 2>&1; then
     [[ "${WORKBENCH_SYNC:-}" != true ]] && success "Pi is current" || true
   else
     warn "Could not update Pi — run: pi update"
@@ -647,7 +678,7 @@ step_pi_verify() {
 
   [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Verifying Pi clones" || true
 
-  if "$validator" --quiet; then
+  if _pi_user_scope "$validator" --quiet; then
     [[ "${WORKBENCH_SYNC:-}" != true ]] && success "Pi host and clones agree" || true
   else
     warn "Pi host and clones disagree — see above; agents may lose their tools"

@@ -497,12 +497,49 @@ _gitconfig_ensure_include() {
   fi
 }
 
+# Template placeholders in git/gitconfig.template, key=placeholder. A key
+# still holding one was never answered: the bootstrap ran where it could not
+# prompt, or the prompt was skipped.
+GITCONFIG_PLACEHOLDERS=(
+  'user.name=Your Name'
+  'user.email=you@example.com'
+  'user.signingkey=YOUR_SIGNING_KEY'
+)
+
+# _gitconfig_warn_placeholders — warns for every identity key in ~/.gitconfig
+# still holding its template placeholder.
+#
+# The template is applied without a prompt on a machine that cannot answer
+# one — an agent user provisioned over SSH, a sync from automation — so the
+# placeholders land as real values and nothing says so afterwards. The cost
+# is not cosmetic: a placeholder signing key fails every commit (gpg finds no
+# such secret key), and a placeholder name and email author every commit that
+# does land as "Your Name". The install summary checks the name once; sync is
+# what runs on every machine thereafter.
+_gitconfig_warn_placeholders() {
+  [[ -f "$GITCONFIG_FILE" ]] || return 0
+  local entry key placeholder value
+  local -a unset_keys=()
+  for entry in "${GITCONFIG_PLACEHOLDERS[@]}"; do
+    key="${entry%%=*}"
+    placeholder="${entry#*=}"
+    value=$(git config --file "$GITCONFIG_FILE" --get "$key" 2> /dev/null) || continue
+    if [[ "$value" == "$placeholder" ]]; then
+      unset_keys+=("$key")
+    fi
+  done
+  (( ${#unset_keys[@]} > 0 )) || return 0
+  warn "git identity still has template placeholders in $GITCONFIG_FILE: ${unset_keys[*]} — set them with: git config --global <key> <value>"
+  return 0
+}
+
 # step_gitconfig — ensures ~/.gitconfig exists and includes the shared
 # workbench config. Bootstraps from template on a new machine.
 step_gitconfig() {
   _gitconfig_bootstrap
   _gitconfig_repair_credential_helper
   _gitconfig_ensure_include "$GIT_SHARED_CONFIG"
+  _gitconfig_warn_placeholders
   [[ "${WORKBENCH_SYNC:-}" != true ]] && success "gitconfig includes up to date" || true
 }
 

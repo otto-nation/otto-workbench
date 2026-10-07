@@ -791,7 +791,7 @@ Takes no flags.
 | Flag | Description |
 |------|-------------|
 | `--no-post` | Do not post the review to GitHub. |
-| `--submit` | Submit the GitHub review after posting (default: leave PENDING). |
+| `--submit` | Submit the GitHub review after posting, as a COMMENT review (default: leave PENDING). |
 | `--self` | Review a local checkout of the current branch, or of the branch or PR ref given. |
 | `--fix` | Apply findings after the review (requires --self). |
 | `--push` | Push the --fix commit (requires --fix). |
@@ -1041,7 +1041,7 @@ resolution, model selection, and Vertex quota preflight are in
 |------|-------------|
 | `--no-post` | Do not post the review to GitHub. |
 | `--post` | Post the review to GitHub when it finishes. |
-| `--submit` | Submit the GitHub review after posting (default: leave PENDING). |
+| `--submit` | Submit the GitHub review after posting, as a COMMENT review (default: leave PENDING). |
 | `--self` | Review a local checkout of the current branch, or of the branch or PR ref given. |
 | `--fix` | Apply findings after the review (requires --self). |
 | `--push` | Push the --fix commit (requires --fix). |

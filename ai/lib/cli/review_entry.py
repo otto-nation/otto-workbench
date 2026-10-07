@@ -72,7 +72,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--post", action="store_true",
                         help="Post the review to GitHub when it finishes")
     parser.add_argument("--submit", action="store_true",
-                        help="Submit the GitHub review after posting (default: leave PENDING)")
+                        help="Submit the GitHub review after posting, as a COMMENT review "
+                             "(default: leave PENDING)")
     parser.add_argument("--self", action="store_true", dest="self_review",
                         help="Review a local checkout of the current branch, or of "
                              "the branch or PR ref given")

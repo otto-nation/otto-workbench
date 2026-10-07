@@ -154,7 +154,7 @@ def test_help_prints_the_create_parsers_flags(_resolve, capsys):
     assert "--no-issue" not in out
 
 
-@patch("cli.dispatch.print_delegate_help")
+@patch("cli.pr._reference_parser")
 @patch("pr.context.resolve", side_effect=AssertionError("resolve must not be called"))
 def test_a_command_with_no_parser_factory_keeps_its_own_help(_resolve, mock_help, capsys):
     """`status` has no factory: argparse's own subparser help answers, as before."""

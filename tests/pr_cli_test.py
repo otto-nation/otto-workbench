@@ -92,24 +92,40 @@ def test_global_flags_mixed_with_subcommand_flags(mock_resolve, mock_call):
     assert "--fix" in cmd
 
 
-@patch("cli.dispatch.print_delegate_help")
+@patch("cli.pr._reference_parser")
 @patch("pr.context.resolve", side_effect=AssertionError("resolve must not be called"))
 def test_help_flag_skips_context_resolution(mock_resolve, mock_help):
     rc = _run_main("ci", "--help")
     assert rc == 0
     mock_help.assert_called_once()
-    assert mock_help.call_args[0][0].name == "ci"
+    assert mock_help.call_args[0][0] == "ci"
     mock_resolve.assert_not_called()
 
 
-@patch("cli.dispatch.print_delegate_help")
+@patch("cli.pr._reference_parser")
 @patch("pr.context.resolve", side_effect=AssertionError("resolve must not be called"))
 def test_help_short_flag_skips_context_resolution(mock_resolve, mock_help):
     rc = _run_main("ci", "-h")
     assert rc == 0
     mock_help.assert_called_once()
-    assert mock_help.call_args[0][0].name == "ci"
+    assert mock_help.call_args[0][0] == "ci"
     mock_resolve.assert_not_called()
+
+
+@patch("pr.context.resolve", side_effect=AssertionError("resolve must not be called"))
+def test_review_help_describes_the_mode_flags_pr_routes(_resolve, capsys):
+    """`pr review --help` shows `--post` as the mode that posts an existing review.
+
+    The bare `review` parser reads `--post` as "post when this run finishes", so
+    help printed from it sends a reader looking to publish a finished review
+    file somewhere other than `pr review --post`.
+    """
+    assert _run_main("review", "--help") == 0
+    out = capsys.readouterr().out
+    assert "usage: pr review" in out
+    assert "Post an existing review to GitHub" in out
+    for flag in ("--repair", "--summary", "--list"):
+        assert flag in out
 
 
 # ── delegate_argv ────────────────────────────────────────────────────────

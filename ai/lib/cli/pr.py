@@ -511,9 +511,13 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     # the factory, not on `script`: `create` has a parser and no script. A
     # command that parses its own argv is skipped: its subcommands answer their
     # own help, which the top-level parser printed here would not name.
+    # It is the same parser the CLI reference documents, so `pr review --help`
+    # shows the mode flags `cmd_review` routes (`--post` publishes an existing
+    # review there) rather than the bare `review` binary's reading of them.
     if ({"-h", "--help"} & set(extra) and cli.dispatch.has_parser_factory(spec.name)
             and not spec.parses_own_argv):
-        cli.dispatch.print_delegate_help(spec)
+        # A command with a factory never reads *subs*, so none is built.
+        _reference_parser(spec.name, {}).print_help()
         return 0
 
     original_pr = getattr(args, "pr", None)

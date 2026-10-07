@@ -149,26 +149,6 @@ def positional_index(extra: list[str], value_flags: frozenset[str]) -> int:
     return -1
 
 
-def print_delegate_help(spec: CommandSpec) -> None:
-    """Print *spec*'s delegate's own help, in this process.
-
-    `pr <command> --help` is answered by the command's own parser, because
-    its subparser declares no flags of its own. This used to spawn the script
-    with `--help` and let argparse exit; it asks the parser directly instead,
-    because a delegate `main` resolves context and claims a run lock before
-    argparse ever sees the flag — in-process, running one to print its usage
-    would take a lock to answer a question about syntax.
-
-    A command with no delegate parser prints nothing, and has already been
-    excluded by its caller: those declare their own flags, so argparse
-    answers for them.
-    """
-    factory = PARSER_FACTORIES.get(spec.name)
-    if factory is None:
-        return
-    resolve(factory)().print_help()
-
-
 def resolve(handler: str):
     """Import a ``"<module>:<attr>"`` handler and return the callable.
 

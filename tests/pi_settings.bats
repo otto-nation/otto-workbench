@@ -101,8 +101,8 @@ _run_step() {
     WORKBENCH_STABLE_DIR="${WORKBENCH_STABLE_DIR:-$1}"
     . "$1/lib/env.sh"
     . "$1/ai/pi/steps.sh"
-    step_pi_settings
-  ' _ "$REPO_ROOT" "$AGENT_DIR" "$TEMPLATE"
+    "$4"
+  ' _ "$REPO_ROOT" "$AGENT_DIR" "$TEMPLATE" "${1:-step_pi_settings}"
 }
 
 # _live FILTER — the filter's answer against the merged settings file.
@@ -558,7 +558,7 @@ _hide_pi() {
   _stub_gh 'echo "{}"'
   _stub_pi_list_models
 
-  run _run_step
+  run _run_step step_pi_models
   [ "$status" -eq 0 ]
   [[ "$output" == *"AI_MODEL=not-a-real-model"* ]]
   [[ "$output" == *"google-vertex-claude"* ]]
@@ -571,7 +571,7 @@ _hide_pi() {
   _stub_gh 'echo "{}"'
   _stub_pi_list_models
 
-  run _run_step
+  run _run_step step_pi_models
   [ "$status" -eq 0 ]
   [[ "$output" != *"is not listed under"* ]]
   _teardown_env_local
@@ -582,7 +582,7 @@ _hide_pi() {
   _stub_gh 'echo "{}"'
   _hide_pi
 
-  run _run_step
+  run _run_step step_pi_models
   [ "$status" -eq 0 ]
   [[ "$output" != *"is not listed under"* ]]
   _teardown_env_local
@@ -593,7 +593,7 @@ _hide_pi() {
   _stub_gh 'echo "{}"'
   # setup already shadows pi with a failing binary.
 
-  run _run_step
+  run _run_step step_pi_models
   [ "$status" -eq 0 ]
   [[ "$output" != *"is not listed under"* ]]
   _teardown_env_local
@@ -604,7 +604,7 @@ _hide_pi() {
   _stub_gh 'echo "{}"'
   _stub_pi_list_models
 
-  run _run_step
+  run _run_step step_pi_models
   [ "$status" -eq 0 ]
   [[ "$output" == *"AI_MODEL=gemini-2.5-flash"* ]]
   [[ "$output" == *"google-vertex-claude"* ]]
@@ -616,17 +616,79 @@ _hide_pi() {
   _stub_gh 'echo "{}"'
   _stub_pi_list_models
 
-  run _run_step
+  run _run_step step_pi_models
   [ "$status" -eq 0 ]
   [[ "$output" == *"AI_MODEL=claude-opus-5"* ]]
   [[ "$output" == *"is not listed under google-vertex-claude"* ]]
   _teardown_env_local
 }
 
+@test "a provider with no rows warns once that it did not load, not per variable" {
+  # The Vertex extension registers nothing when the shell lacks a project or
+  # ADC. Every correct id then reads as unknown; one line naming the provider
+  # is the truth, a line per variable blames ~/.env.local for it.
+  _seed_env_local 'export AI_MODEL=claude-opus-5-5
+export AI_SONNET_MODEL=claude-sonnet-5'
+  _stub_gh 'echo "{}"'
+  cat > "$BIN/pi" << 'SCRIPT'
+#!/usr/bin/env bash
+[[ "$1" == "--list-models" ]] || exit 1
+printf 'provider       model             context\n'
+printf 'google-vertex  gemini-2.5-flash  1.0M\n'
+SCRIPT
+  chmod +x "$BIN/pi"
+
+  run _run_step step_pi_models
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Pi lists no models under google-vertex-claude"* ]]
+  [[ "$output" == *"GOOGLE_CLOUD_PROJECT"* ]]
+  [[ "$output" != *"is not listed under"* ]]
+  [ "$(grep -c '^WARN' <<< "$output")" -eq 1 ]
+  _teardown_env_local
+}
+
+@test "the catalog comes from the user pi asked from HOME, not from the cwd" {
+  # A repo pinning an older pi (or loading its own .pi packages) serves a
+  # different catalog. The stub stands in for that: from anywhere but HOME it
+  # omits the model the user's pi does list.
+  mkdir -p "$TMPDIR/home" "$TMPDIR/project"
+  _seed_env_local 'export AI_MODEL=claude-opus-5-5'
+  _stub_gh 'echo "{}"'
+  cat > "$BIN/pi" << SCRIPT
+#!/usr/bin/env bash
+[[ "\$1" == "--list-models" ]] || exit 1
+echo 'provider              model'
+echo 'google-vertex-claude  claude-sonnet-5'
+[[ "\$PWD" == "$TMPDIR/home" ]] && echo 'google-vertex-claude  claude-opus-5-5'
+exit 0
+SCRIPT
+  chmod +x "$BIN/pi"
+
+  cd "$TMPDIR/project"
+  HOME="$TMPDIR/home" run _run_step step_pi_models
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"is not listed under"* ]]
+  _teardown_env_local
+}
+
+@test "step_pi_settings no longer asks pi for its catalog" {
+  # The catalog comes from extension clones that step_pi_packages refreshes
+  # later in the same sync; asked here, a clone about to be repaired reads as
+  # every model unknown.
+  _seed_env_local 'export AI_MODEL=not-a-real-model'
+  _stub_gh 'echo "{}"'
+  _stub_pi_list_models
+
+  run _run_step
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"is not listed under"* ]]
+  _teardown_env_local
+}
+
 # ── one registry scan per sync, not one per collector ──────────────────────────
 
 @test "step_pi_settings shares one registry scan between build and warn" {
-  # _pi_build_models and _pi_warn_unknown_models each call
+  # _pi_build_models and _pi_warn_no_default_model each call
   # collect_model_env_vars against the same scan_dir. step_pi_settings wraps
   # both in one reg_scan_hold, so the second call must reuse the first's scan
   # rather than rescanning the directory on disk.
@@ -634,11 +696,12 @@ _hide_pi() {
   # Proven the same way registries_cache.bats proves reg_scan_hold's sharing:
   # through the hold's own cost rather than its benefit. collect_model_env_vars
   # is wrapped so its first call — _pi_build_models' — rewrites the registry
-  # out from under AI_MODEL to declare AI_OTHER_MODEL instead, which has no
-  # value in ~/.env.local. A second, unheld call would see only
-  # AI_OTHER_MODEL and find nothing set, so _pi_warn_unknown_models would stay
-  # silent regardless of whether claude-opus-5 is listed. A held call still
-  # sees AI_MODEL from the scan _pi_build_models already loaded, and warns.
+  # out from under AI_MODEL to declare AI_OTHER_MODEL instead. Nothing is set
+  # in ~/.env.local and the template carries no model, so the merge leaves no
+  # defaultModel and the warning names the registry's default var. An unheld
+  # second call would read the rewritten file and name AI_OTHER_MODEL; a held
+  # call still names AI_MODEL from the scan _pi_build_models already loaded.
+  _write_template_without_model
   mkdir -p "$TMPDIR/registries"
   cat > "$TMPDIR/registries/models.env.yml" << 'YAML'
 meta:
@@ -648,9 +711,8 @@ env:
   - var: AI_MODEL
     role: model-default
 YAML
-  _seed_env_local 'export AI_MODEL=claude-opus-5'
+  _seed_env_local '# nothing set'
   _stub_gh 'echo "{}"'
-  _stub_pi_list_models
 
   run bash -c '
     set -e
@@ -685,7 +747,7 @@ YAML2
     step_pi_settings
   ' _ "$REPO_ROOT" "$AGENT_DIR" "$TEMPLATE" "$TMPDIR/.env.local" "$TMPDIR/registries"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"AI_MODEL=claude-opus-5"* ]]
+  [[ "$output" == *"set AI_MODEL in ~/.env.local"* ]]
   _teardown_env_local
 }
 

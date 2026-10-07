@@ -698,7 +698,13 @@ merges the workbench's template into that file rather than copying over it. Scal
 keys are seeds: one the live file already carries stays as whatever set it first,
 which also means a changed template default never reaches a machine that already
 has the key. Delete the key there to be re-seeded. A model id `pi --list-models`
-does not list for the default provider is a sync warning, not a failure.
+does not list for the default provider is a sync warning, not a failure. That
+check (`step_pi_models`) runs after the package refresh and asks the user's own pi
+from `$HOME`, so neither a stale extension clone nor a repo's pinned pi reads as a
+wrong id. A default provider with no rows at all gets one warning that it did not
+load: the Vertex extensions skip registration when the shell has no
+`GOOGLE_CLOUD_PROJECT` or ADC file, which is usually a shell started before
+`~/.env.local` set them.
 
 `packages` is reconciled instead, because a list gains an entry without
 displacing one. Before declaring one, the sync asks GitHub whether this machine

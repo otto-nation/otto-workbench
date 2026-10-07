@@ -440,6 +440,18 @@ _pi_default_provider() {
 #
 # Kept out of _pi_build_models because it needs `pi`, which building the model
 # list does not, and a missing or offline `pi` must not touch the merge.
+#
+# The catalog is the user's own pi's, asked from $HOME: a repo whose
+# .mise.toml pins an older pi, or whose .pi/settings.json loads other
+# packages, lists a different catalog, and the warning would blame values
+# that are correct for the pi the operator actually runs.
+#
+# A provider with no rows at all is one pi did not load, not a set of wrong
+# ids, so it gets one warning instead of one per variable. The Vertex
+# extensions decline to register when the shell has no GOOGLE_CLOUD_PROJECT or
+# no ADC file — typically a shell started before ~/.env.local or
+# `gcloud auth application-default login` supplied them — and a missing or
+# broken extension clone looks the same from here, so the message names both.
 _pi_warn_unknown_models() {
   [[ -f "$ENV_LOCAL_FILE" ]] || return 0
 
@@ -465,7 +477,7 @@ _pi_warn_unknown_models() {
   command -v pi > /dev/null 2>&1 || return 0
 
   local listing
-  listing=$(pi --list-models 2>/dev/null) || return 0
+  listing=$(_pi_user_scope pi --list-models 2>/dev/null) || return 0
   [[ -n "$listing" ]] || return 0
 
   local provider
@@ -479,6 +491,11 @@ _pi_warn_unknown_models() {
     [[ -n "$col2" ]] || continue
     listed["$col2"]=1
   done <<< "$listing"
+
+  if (( ${#listed[@]} == 0 )); then
+    warn "Pi lists no models under $provider — the provider did not load. Check GOOGLE_CLOUD_PROJECT and ADC in this shell (a shell started before ~/.env.local set them lacks them: start a new one), or run: pi update --extensions"
+    return 0
+  fi
 
   for (( i=0; i<${#names[@]}; i++ )); do
     [[ -n "${listed[${values[i]}]+x}" ]] && continue
@@ -524,7 +541,7 @@ _pi_warn_no_default_model() {
 # — and applied after template scalars so it always wins.
 #
 # One registry scan for the whole step. _pi_build_models and
-# _pi_warn_unknown_models each call collect_model_env_vars against the same
+# _pi_warn_no_default_model each call collect_model_env_vars against the same
 # scan_dir, and each re-scans on its own, so the yq parse of every registry
 # ran twice per sync and the second threw away what the first had cached —
 # the identical duplication step_claude_settings carries a reg_scan_hold for.
@@ -550,7 +567,6 @@ _step_pi_settings() {
 
   local models
   _pi_build_models models
-  _pi_warn_unknown_models
 
   local result
   result=$(jq -n \
@@ -714,6 +730,18 @@ step_pi_verify() {
   return 0
 }
 
+# step_pi_models — checks the model ids ~/.env.local names against the catalog
+# the user's pi actually serves.
+#
+# Runs after step_pi_packages, not inside step_pi_settings: the catalog for a
+# provider comes from its extension clone, and the clone is what that step
+# refreshes. Asked earlier, a clone the same sync was about to repair lists no
+# models, and every correct id reads as unknown.
+step_pi_models() {
+  command -v pi > /dev/null 2>&1 || return 0
+  _pi_warn_unknown_models
+}
+
 # _export_pi_config DIR — copies Pi config into DIR for tarball export.
 _export_pi_config() {
   local dest="$1"
@@ -749,6 +777,9 @@ sync_pi() {
 
   sync_header "pi skew"
   step_pi_verify
+
+  sync_header "pi models"
+  step_pi_models
 }
 
 register_pi_steps() {
@@ -759,6 +790,7 @@ register_pi_steps() {
   register_step "Update pi"      step_update_pi
   register_step "Pi packages"    step_pi_packages
   register_step "Pi skew"        step_pi_verify
+  register_step "Pi models"      step_pi_models
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

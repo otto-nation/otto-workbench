@@ -239,13 +239,15 @@ make_fake_binary() {
 # into narrow-bin it then fails on every call — "not a valid shim", "no version
 # is set" — while the real tool sits one PATH entry further down. So a shim is
 # replaced by what `mise which` says it runs, and when mise cannot say, by the
-# next candidate on PATH.
+# next candidate on PATH. That fallback covers any failing `mise which` —
+# untrusted config, a swapped HOME, mise not installed — silently: its stderr is
+# discarded and the next candidate is tried.
 _runnable_binary() {
   local tool="$1" candidates candidate resolved
   candidates="$(type -ap "$tool" || true)"
   while IFS= read -r candidate; do
     [[ -n "$candidate" ]] || continue
-    if [[ "$(dirname "$candidate")" != */shims ]]; then
+    if [[ "${candidate%/*}" != */shims ]]; then
       printf '%s' "$candidate"
       return 0
     fi

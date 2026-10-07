@@ -163,16 +163,19 @@ _commit() {
 # PATH and a swapped HOME take away. Linked into narrow-bin it fails on every
 # call, so narrow_path_to links what the shim stands for instead.
 
-# _shim_fixture — a failing yq in a shims/ dir, a working yq behind it, and a
-# mise that prints $MISE_WHICH_ANSWER (or fails when it is empty).
+# _shim_fixture [TOOL] — a failing TOOL (default yq) in a shims/ dir, a working
+# one behind it, and a mise that prints $MISE_WHICH_ANSWER (or fails when it is
+# empty).
 _shim_fixture() {
+  local tool="${1:-yq}"
   mkdir -p "$TMPDIR/vm/shims" "$TMPDIR/real" "$TMPDIR/installed" "$TMPDIR/mise-bin"
-  printf '#!/bin/sh\necho "shim: no version is set" >&2\nexit 1\n' > "$TMPDIR/vm/shims/yq"
-  printf '#!/bin/sh\necho real-yq\n' > "$TMPDIR/real/yq"
-  printf '#!/bin/sh\necho installed-yq\n' > "$TMPDIR/installed/yq"
+  printf '#!/bin/sh\necho "shim: no version is set" >&2\nexit 1\n' > "$TMPDIR/vm/shims/$tool"
+  printf '#!/bin/sh\necho real-yq\n' > "$TMPDIR/real/$tool"
+  printf '#!/bin/sh\necho installed-yq\n' > "$TMPDIR/installed/$tool"
   printf '#!/bin/sh\n[ -n "$MISE_WHICH_ANSWER" ] || exit 1\necho "$MISE_WHICH_ANSWER"\n' \
     > "$TMPDIR/mise-bin/mise"
-  chmod +x "$TMPDIR/vm/shims/yq" "$TMPDIR/real/yq" "$TMPDIR/installed/yq" "$TMPDIR/mise-bin/mise"
+  chmod +x "$TMPDIR/vm/shims/$tool" "$TMPDIR/real/$tool" "$TMPDIR/installed/$tool" \
+    "$TMPDIR/mise-bin/mise"
   PATH="$TMPDIR/mise-bin:$TMPDIR/vm/shims:$TMPDIR/real:/usr/bin:/bin"
 }
 
@@ -195,11 +198,13 @@ _shim_fixture() {
 }
 
 @test "narrow_path_to leaves out a tool that is only a shim mise cannot resolve" {
-  _shim_fixture
-  rm "$TMPDIR/real/yq"
+  # A name no host has in /usr/bin or /bin, which stay on the fixture PATH.
+  local tool=shim-only-tool-xyzzy
+  _shim_fixture "$tool"
+  rm "$TMPDIR/real/$tool"
   export MISE_WHICH_ANSWER=""
-  run --separate-stderr narrow_path_to yq
+  run --separate-stderr narrow_path_to "$tool"
   [ "$status" -eq 0 ]
-  [[ "$stderr" == *"no runnable yq on PATH"* ]]
-  [ ! -e "$BATS_TEST_TMPDIR/narrow-bin/yq" ]
+  [[ "$stderr" == *"no runnable $tool on PATH"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/narrow-bin/$tool" ]
 }

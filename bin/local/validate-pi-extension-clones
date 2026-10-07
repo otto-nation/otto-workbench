@@ -100,8 +100,10 @@ TRANSPORT_FACTORY = 'anthropicMessagesApi'
 # 0.79.10 has no `/compat`). Compared on major.minor like the contract version.
 TRANSPORT_FACTORY_VERSION = (0, 80)
 
-# An actual import of the entrypoint — `from "…"`, `import("…")` or
-# `require("…")` — not a mention of the specifier in a comment or a string.
+# An import of the entrypoint — `from "…"`, `import("…")` or `require("…")` —
+# rather than the bare specifier appearing on its own. It is a text match, so
+# a `from "…"` written inside a comment or string still matches; comments are
+# not stripped first.
 _TRANSPORT_IMPORT = re.compile(
     r'(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)[\'"]('
     + '|'.join(re.escape(spec) for spec in TRANSPORT_SPECIFIERS) + r')[\'"]')
@@ -329,11 +331,6 @@ def _clone_facts(clone: Path) -> set[Fact]:
             continue
         facts |= _file_facts(text)
     return facts
-
-
-def _declares_transcript_adapter(clone: Path) -> bool:
-    """Whether a clone resolves the post-0.86 transcript symbols anywhere."""
-    return Fact.ADAPTER in _clone_facts(clone)
 
 
 @dataclass(frozen=True)

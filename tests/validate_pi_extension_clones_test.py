@@ -134,6 +134,7 @@ def test_a_provider_delegating_to_the_host_transport_passes(validator, tmp_path,
     assert validator.check_clone(clone, HOST_WITH_TRANSCRIPT) is None
 
 
+# passes-at-base: base also flags an adapter-carrying clone on an old host; pins that delegation keeps it
 def test_delegation_does_not_clear_the_old_host_skew(validator, tmp_path):
     """Delegation only answers the stale-clone direction: a clone carrying the
     adapter is still flagged on a host that predates it."""
@@ -145,6 +146,7 @@ def test_delegation_does_not_clear_the_old_host_skew(validator, tmp_path):
     assert 'older' in skew.problem
 
 
+# passes-at-base: base returns None for a clone without the adapter on an old host too
 def test_a_delegating_clone_on_a_host_with_the_factory_passes(validator, tmp_path):
     """Between 0.80 and 0.86 the host exports the transport but predates the
     transcript contract; its own transport reads its own shape, so this is fine."""
@@ -223,7 +225,7 @@ def test_node_modules_is_not_searched_for_the_adapter(validator, tmp_path):
     vendored.mkdir(parents=True)
     (vendored / 'index.ts').write_text('export function getCurrentSystemPrompt() {}\n')
 
-    assert validator._declares_transcript_adapter(clone) is False
+    assert validator.Fact.ADAPTER not in validator._clone_facts(clone)
     assert validator.check_clone(clone, HOST_WITH_TRANSCRIPT) is not None
 
 

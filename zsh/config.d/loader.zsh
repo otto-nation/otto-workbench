@@ -49,6 +49,15 @@ _wb_load() {
   done
 }
 
+# ~/.local/bin holds the workbench's own scripts and is where the mise and Pi
+# installers put their binaries. The tools layer gates each snippet on its
+# command being found (mise.zsh returns early without mise), so the directory
+# must be on PATH before any layer runs — a PATH line in ~/.zshrc after the
+# source line comes too late, and on a host with no other route to mise the
+# runtimes it manages (node, and Pi with it) are never activated. It is
+# prepended ahead of .env.local so a machine-specific PATH there still wins.
+[[ ":$PATH:" == *":$HOME/.local/bin:"* ]] || export PATH="$HOME/.local/bin:$PATH"
+
 # Machine-specific secrets and env vars — sourced first so every layer can read them.
 # See zsh/.env.local.template for what belongs here vs ~/.config/task/taskfile.env.
 [[ -f "$HOME/.env.local" ]] && source "$HOME/.env.local"

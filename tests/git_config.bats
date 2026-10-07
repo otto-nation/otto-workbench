@@ -120,3 +120,103 @@ EOF
 @test "template documents the 2-layer architecture" {
   grep -q 'gitconfig.shared' "$GIT_CONFIG_TEMPLATE"
 }
+
+# ── Credential helper ────────────────────────────────────────────────────────
+
+# _no_gcm — points every GCM lookup at a path that does not exist, so the
+# detector's answer depends only on what PATH holds.
+_no_gcm() {
+  _git_detect_brew_prefix() { echo "$TMPDIR/no-brew"; }
+  GIT_GCM_PKG_PATH="$TMPDIR/no-pkg/git-credential-manager"
+}
+
+@test "detect_credential_helper falls back to gh when GCM is absent" {
+  _no_gcm
+  mkdir -p "$TMPDIR/bin"
+  printf '#!/bin/sh\n' > "$TMPDIR/bin/gh"
+  chmod +x "$TMPDIR/bin/gh"
+  PATH="$TMPDIR/bin:/usr/bin:/bin"
+
+  run _git_detect_credential_helper
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "!$TMPDIR/bin/gh auth git-credential" ]
+}
+
+@test "detect_credential_helper prints nothing with neither GCM nor gh" {
+  _no_gcm
+  mkdir -p "$TMPDIR/empty"
+
+  # An empty PATH dir: gh may be installed in /usr/bin on a CI runner.
+  PATH="$TMPDIR/empty" run _git_detect_credential_helper
+
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "bootstrap writes the detected helper, not the template's macOS path" {
+  GITCONFIG_FILE="$TMPDIR/.gitconfig"
+  _git_detect_credential_helper() { echo "!/usr/bin/gh auth git-credential"; }
+
+  _gitconfig_bootstrap
+
+  run git config --file "$GITCONFIG_FILE" --get-all credential.helper
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf '\n!/usr/bin/gh auth git-credential')" ]
+}
+
+@test "bootstrap drops the placeholder helper when none is detected" {
+  GITCONFIG_FILE="$TMPDIR/.gitconfig"
+  _git_detect_credential_helper() { :; }
+  _git_detect_gpg_program() { :; }
+
+  _gitconfig_bootstrap
+
+  run git config --file "$GITCONFIG_FILE" --get-all credential.helper
+  [ "$status" -eq 0 ]
+  [ "$output" = "" ]
+  run git config --file "$GITCONFIG_FILE" gpg.program
+  [ "$status" -eq 1 ]
+}
+
+@test "repair replaces a helper path that is not executable" {
+  GITCONFIG_FILE="$TMPDIR/.gitconfig"
+  printf '[credential]\n\thelper =\n\thelper = %s\n[credential "https://dev.azure.com"]\n\tuseHttpPath = true\n' \
+    "$TMPDIR/missing/git-credential-manager" > "$GITCONFIG_FILE"
+  _git_detect_credential_helper() { echo "!/usr/bin/gh auth git-credential"; }
+
+  run _gitconfig_repair_credential_helper
+
+  [ "$status" -eq 0 ]
+  run git config --file "$GITCONFIG_FILE" --get-all credential.helper
+  [ "$output" = "$(printf '\n!/usr/bin/gh auth git-credential')" ]
+  [ "$(git config --file "$GITCONFIG_FILE" credential.https://dev.azure.com.useHttpPath)" = "true" ]
+}
+
+@test "repair removes a missing helper path when nothing can replace it" {
+  GITCONFIG_FILE="$TMPDIR/.gitconfig"
+  printf '[credential]\n\thelper =\n\thelper = %s\n' "$TMPDIR/missing/gcm" > "$GITCONFIG_FILE"
+  _git_detect_credential_helper() { :; }
+
+  run _gitconfig_repair_credential_helper
+
+  [ "$status" -eq 0 ]
+  run git config --file "$GITCONFIG_FILE" --get-all credential.helper
+  [ "$status" -eq 0 ]
+  [ "$output" = "" ]
+}
+
+@test "repair leaves executable, shell, and bare-name helpers alone" {
+  GITCONFIG_FILE="$TMPDIR/.gitconfig"
+  printf '#!/bin/sh\n' > "$TMPDIR/helper"
+  chmod +x "$TMPDIR/helper"
+  printf '[credential]\n\thelper = %s\n\thelper = !gh auth git-credential\n\thelper = osxkeychain\n' \
+    "$TMPDIR/helper" > "$GITCONFIG_FILE"
+  cp "$GITCONFIG_FILE" "$TMPDIR/before"
+  _git_detect_credential_helper() { echo "SHOULD-NOT-APPEAR"; }
+
+  run _gitconfig_repair_credential_helper
+
+  [ "$status" -eq 0 ]
+  cmp "$TMPDIR/before" "$GITCONFIG_FILE"
+}

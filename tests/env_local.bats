@@ -466,3 +466,46 @@ EOF
   after=$(cat "$FAKE_HOME/.env.local")
   [ "$before" = "$after" ]
 }
+
+# ── ~/.local/bin precedes the layers ──────────────────────────────────────────
+
+@test "loader puts ~/.local/bin on PATH before the tools layer" {
+  local loader="$REPO_ROOT/zsh/config.d/loader.zsh"
+  local path_line tools_line
+  path_line=$(grep -n 'export PATH="$HOME/.local/bin:$PATH"' "$loader" | head -1 | cut -d: -f1)
+  tools_line=$(grep -n '_wb_load tools' "$loader" | head -1 | cut -d: -f1)
+  [ -n "$path_line" ]
+  [ -n "$tools_line" ]
+  [ "$path_line" -lt "$tools_line" ]
+}
+
+@test "loader makes a tool in ~/.local/bin visible to a tools snippet" {
+  command -v zsh >/dev/null || skip "zsh not installed"
+  local home="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$home/.local/bin" "$home/.config/zsh/config.d/tools"
+  cp "$REPO_ROOT/zsh/config.d/loader.zsh" "$home/.config/zsh/config.d/"
+  printf '#!/bin/sh\n' > "$home/.local/bin/fake-mise"
+  chmod +x "$home/.local/bin/fake-mise"
+  echo 'command -v fake-mise >/dev/null && echo FOUND' > "$home/.config/zsh/config.d/tools/probe.zsh"
+
+  run env -i HOME="$home" PATH=/usr/bin:/bin zsh -fc \
+    'source "$HOME/.config/zsh/config.d/loader.zsh"; print -r -- "$PATH"'
+
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "FOUND" ]
+  [ "${lines[1]}" = "$home/.local/bin:/usr/bin:/bin" ]
+}
+
+# passes-at-base: guards the idempotence of the prepend this change adds
+@test "loader does not prepend ~/.local/bin twice" {
+  command -v zsh >/dev/null || skip "zsh not installed"
+  local home="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$home/.config/zsh/config.d"
+  cp "$REPO_ROOT/zsh/config.d/loader.zsh" "$home/.config/zsh/config.d/"
+
+  run env -i HOME="$home" PATH="/usr/bin:$home/.local/bin:/bin" zsh -fc \
+    'source "$HOME/.config/zsh/config.d/loader.zsh"; print -r -- "$PATH"'
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "/usr/bin:$home/.local/bin:/bin" ]
+}

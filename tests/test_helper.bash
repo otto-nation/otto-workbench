@@ -239,7 +239,8 @@ make_fake_binary() {
 # bash from that PATH. `bash` links $BASH, the interpreter running the test,
 # not whatever PATH lists first (lib/output.sh exits on bash older than 4.3).
 # A tool not found on the current PATH is left out, with a warning on stderr.
-# Skips the test when herdr sits in /usr/bin or /bin, where it cannot be hidden.
+# Skips the test (bats_skip, since lib/ui.sh has replaced skip) when herdr sits
+# in /usr/bin or /bin, where it cannot be hidden.
 narrow_path_to() {
   local dir="$BATS_TEST_TMPDIR/narrow-bin" tool real
   mkdir -p "$dir"
@@ -256,7 +257,7 @@ narrow_path_to() {
     ln -sf "$real" "$dir/$tool"
   done
   if PATH=/usr/bin:/bin command -v herdr > /dev/null 2>&1; then
-    skip "herdr is installed in /usr/bin or /bin, so it cannot be hidden"
+    bats_skip "herdr is installed in /usr/bin or /bin, so it cannot be hidden"
   fi
   PATH="$dir:/usr/bin:/bin"
 }

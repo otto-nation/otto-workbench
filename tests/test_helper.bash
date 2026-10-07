@@ -230,6 +230,38 @@ make_fake_binary() {
   chmod +x "$dir/$name"
 }
 
+# narrow_path_to TOOL... — sets PATH to a scratch dir holding symlinks to the
+# named tools, followed by /usr/bin:/bin, so a detector that probes PATH with
+# `command -v` sees only what the test puts there. The developer's PATH
+# (Homebrew, ~/.local/bin, mise shims) otherwise leaks real installs into the
+# case — a herdr on the host made the detector restore ai/herdr in tests that
+# expected nothing. Call it after sourcing lib/ui.sh, which needs a modern
+# bash from that PATH. `bash` links $BASH, the interpreter running the test,
+# not whatever PATH lists first (lib/output.sh exits on bash older than 4.3).
+# A tool not found on the current PATH is left out, with a warning on stderr.
+# Skips the test (bats_skip, since lib/ui.sh has replaced skip) when herdr sits
+# in /usr/bin or /bin, where it cannot be hidden.
+narrow_path_to() {
+  local dir="$BATS_TEST_TMPDIR/narrow-bin" tool real
+  mkdir -p "$dir"
+  for tool in "$@"; do
+    if [[ "$tool" == bash ]]; then
+      real="$BASH"
+    else
+      real="$(command -v "$tool" || true)"
+    fi
+    if [[ -z "$real" ]]; then
+      echo "narrow_path_to: $tool not found on PATH; leaving it out" >&2
+      continue
+    fi
+    ln -sf "$real" "$dir/$tool"
+  done
+  if PATH=/usr/bin:/bin command -v herdr > /dev/null 2>&1; then
+    bats_skip "herdr is installed in /usr/bin or /bin, so it cannot be hidden"
+  fi
+  PATH="$dir:/usr/bin:/bin"
+}
+
 # shim_untrap DIR — prints the PATH reassignment a passthrough shim in DIR must
 # run before handing its call to the real tool.
 #

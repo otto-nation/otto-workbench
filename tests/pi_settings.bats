@@ -7,6 +7,7 @@ bats_require_minimum_version 1.5.0
 setup() {
   load 'test_helper'
   load 'pi_settings_helper'
+  common_setup
   pi_settings_setup
   PI_STEPS="$REPO_ROOT/ai/pi/steps.sh"
 }

@@ -2,9 +2,10 @@
 # Helpers shared by the pi_settings and pi_models suites: the sandboxed agent
 # dir, the managed template, a stubbed gh and pi, and the step runner.
 
-# pi_settings_setup — call from setup() after load 'test_helper'.
+# pi_settings_setup — call from setup() after common_setup, which pins TMPDIR.
+# The pin stays in each suite's own setup() because validate-tmpdir-isolation
+# reads it there.
 pi_settings_setup() {
-  common_setup
   AGENT_DIR="$TMPDIR/pi/agent"
   # Read by the suites that load this helper, not by anything in it.
   # shellcheck disable=SC2034

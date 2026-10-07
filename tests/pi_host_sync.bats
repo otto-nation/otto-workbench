@@ -220,7 +220,7 @@ _run_verify() {
   [[ "$output" == *"WARN pi not found in PATH"* ]]
 }
 
-@test "verification runs last in sync_pi, after both updates" {
+@test "verification runs after both updates in sync_pi" {
   # Checking before the updates would report the state the sync was about to
   # change, which is the shape of a green that means nothing.
   run bash -c '
@@ -237,6 +237,25 @@ _run_verify() {
   [ -n "$packages_line" ]
   [ -n "$verify_line" ]
   [ "$verify_line" -gt "$packages_line" ]
+}
+
+@test "the model catalog check runs after the package refresh in sync_pi" {
+  # The catalog comes from the extension clones step_pi_packages refreshes;
+  # checked before it, a clone the sync was about to repair lists no models.
+  run bash -c '
+    LIB_SRC_DIR="$1/lib"
+    . "$1/lib/env.sh"
+    . "$2"
+    declare -f sync_pi | grep -n "step_pi_packages\|step_pi_models"
+  ' _ "$REPO_ROOT" "$REPO_ROOT/ai/pi/steps.sh"
+  [ "$status" -eq 0 ]
+
+  local packages_line models_line
+  packages_line=$(printf '%s\n' "$output" | grep 'step_pi_packages' | head -1 | cut -d: -f1)
+  models_line=$(printf '%s\n' "$output" | grep 'step_pi_models' | head -1 | cut -d: -f1)
+  [ -n "$packages_line" ]
+  [ -n "$models_line" ]
+  [ "$models_line" -gt "$packages_line" ]
 }
 
 # The pi steps speak for the user's own pi, wherever sync is started. Started

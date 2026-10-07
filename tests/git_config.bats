@@ -3,6 +3,9 @@
 # GITCONFIG_FILE is assigned per case and read by the git/steps.sh functions
 # under test, which ShellCheck cannot see from here.
 # shellcheck disable=SC2034
+# The _git_detect_credential_helper stubs replace the real function for the
+# step under test, which calls them; ShellCheck sees only the definitions.
+# shellcheck disable=SC2329
 
 setup() {
   load 'test_helper'
@@ -249,4 +252,59 @@ _no_gcm() {
 
   [ "$status" -eq 0 ]
   cmp "$TMPDIR/before" "$GITCONFIG_FILE"
+}
+
+# ── Placeholder identity ─────────────────────────────────────────────────────
+# The template lands without a prompt on a machine that cannot answer one, and
+# a placeholder signing key fails every commit. sync has to say so.
+
+@test "the placeholders checked are exactly what the template writes" {
+  # A second spelling of the template's values would pass while the template
+  # moved on and the warning went quiet. Read them back off a real bootstrap.
+  GITCONFIG_FILE="$TMPDIR/.gitconfig"
+  _gitconfig_bootstrap
+  local entry
+  for entry in "${GITCONFIG_PLACEHOLDERS[@]}"; do
+    [ "$(git config --file "$GITCONFIG_FILE" --get "${entry%%=*}")" = "${entry#*=}" ]
+  done
+}
+
+@test "a freshly bootstrapped gitconfig warns for every identity key" {
+  GITCONFIG_FILE="$TMPDIR/.gitconfig"
+  _gitconfig_bootstrap
+  warn() { echo "WARN $*"; }
+  run _gitconfig_warn_placeholders
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WARN git identity still has template placeholders"* ]]
+  [[ "$output" == *"user.name"* ]]
+  [[ "$output" == *"user.email"* ]]
+  [[ "$output" == *"user.signingkey"* ]]
+}
+
+@test "only the keys still holding a placeholder are named" {
+  GITCONFIG_FILE="$TMPDIR/.gitconfig"
+  _gitconfig_bootstrap
+  git config --file "$GITCONFIG_FILE" user.name "Real Person"
+  git config --file "$GITCONFIG_FILE" user.email "real@person.dev"
+  warn() { echo "WARN $*"; }
+  run _gitconfig_warn_placeholders
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"user.signingkey"* ]]
+  [[ "$output" != *"user.name"* ]]
+  [[ "$output" != *"user.email"* ]]
+}
+
+@test "a real identity is silent" {
+  GITCONFIG_FILE="$TMPDIR/.gitconfig"
+  printf '[user]\n\tname = Real Person\n\temail = real@person.dev\n\tsigningKey = ABCDEF0123456789\n' \
+    > "$GITCONFIG_FILE"
+  warn() { echo "WARN $*"; }
+  run _gitconfig_warn_placeholders
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "step_gitconfig runs the placeholder check" {
+  # The check is only worth anything if sync reaches it.
+  declare -f step_gitconfig | grep -q _gitconfig_warn_placeholders
 }

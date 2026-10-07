@@ -26,6 +26,11 @@ ai/setup.sh
 
 Prompts for confirmation at each step. Safe to re-run. This installs Claude Code configuration, rules, and agents, plus skills — shared between Claude Code (`~/.claude/skills/`) and Pi (`~/.agents/skills/`) from the one `ai/skills/` tree.
 
+rtk and worktrunk install through Homebrew where it is available. On a machine
+without it, such as an unprivileged Linux user with no writable brew prefix,
+they install through mise (`mise use -g rtk`, `mise use -g worktrunk`), so mise
+must be installed first.
+
 `ai/setup.sh` also scaffolds `~/.config/task/taskfile.env`, the GitHub PATs `pr create` and `pr describe --post` publish with (`GH_TOKEN`, optional `GH_TOKEN__<ORG>`). See `security-secrets.md` for the two-file secret model.
 
 ## What Gets Installed

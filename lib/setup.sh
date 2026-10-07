@@ -143,6 +143,49 @@ install_via_installer() {
   success "$label installed"
 }
 
+# install_brew_or_mise CMD FORMULA MISE_TOOL LABEL — installs LABEL with
+# `brew install FORMULA` where Homebrew is available, and otherwise with
+# `mise use -g MISE_TOOL`. Skipped when CMD is already in PATH. Returns non-zero
+# with both install commands named when neither installer is present or the
+# install fails.
+#
+# The mise path exists for machines without Homebrew — an unprivileged user on
+# a Linux host has no writable brew prefix, but mise installs into $HOME. After
+# a mise install the tool lives behind a shim that is not on PATH until the next
+# login, so the shims dir is prepended for the rest of this run: the steps that
+# follow look the tool up with command -v.
+install_brew_or_mise() {
+  local cmd="$1" formula="$2" mise_tool="$3" label="$4"
+  local manual="brew install $formula, or: mise use -g $mise_tool"
+  if command -v "$cmd" >/dev/null 2>&1; then
+    success "$label already installed"
+    return
+  fi
+
+  if command -v brew >/dev/null 2>&1; then
+    info "Installing $label via Homebrew..."
+    if ! brew install "$formula"; then
+      warn "Homebrew could not install $label — install it manually: $manual"
+      return 1
+    fi
+  elif command -v mise >/dev/null 2>&1; then
+    info "Installing $label via mise..."
+    if ! mise use -g "$mise_tool"; then
+      warn "mise could not install $label — install it manually: $manual"
+      return 1
+    fi
+    local shims="${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims"
+    case ":$PATH:" in
+      *":$shims:"*) ;;
+      *) export PATH="$shims:$PATH" ;;
+    esac
+  else
+    warn "Neither Homebrew nor mise found — install $label manually: $manual"
+    return 1
+  fi
+  success "$label installed"
+}
+
 # run_migrations DIR
 # DEPRECATED: Use run_component_migrations from lib/migrations.sh instead.
 # This function sources a single migrations.sh file with no state tracking.

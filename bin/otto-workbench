@@ -224,6 +224,9 @@ cmd_sync() {
   # processes inherit it.
   export GIT_TERMINAL_PROMPT=0
 
+  # Snippet deployment gates on finding each tool by name; see ensure_tool_path.
+  ensure_tool_path
+
   # Collect warnings/errors for final summary replay.
   WORKBENCH_INSTALL_LOG="$(mktemp "${TMPDIR:-/tmp}/workbench-sync.XXXXXX")"
   export WORKBENCH_INSTALL_LOG
@@ -322,6 +325,7 @@ EOF
   # Same no-prompt rule as cmd_sync: sync_ai clones Pi packages, and a git
   # credential prompt would hang there with nobody to answer.
   export GIT_TERMINAL_PROMPT=0
+  ensure_tool_path
 
   # Migrations first, the same as `otto-workbench sync`. The AI syncs read
   # ~/.env.local by variable name — step_claude_settings mirrors it into

@@ -143,6 +143,26 @@ install_via_installer() {
   success "$label installed"
 }
 
+# ensure_tool_path — appends the directories user-installed tools live in to
+# PATH, each only if it exists and is not already there.
+#
+# Sync decides which zsh snippets to deploy by `command -v` on each snippet's
+# requires-cmd, and removes a snippet whose command it cannot find. Its PATH is
+# whatever launched it: an interactive shell has these dirs from ~/.zshrc and
+# the loader, but launchd, systemd, ssh, or `sudo -i` hand over a system PATH
+# without them — and a sync from there deletes mise.zsh, pi.zsh and the rest
+# for tools that are installed. Appended, not prepended, so a PATH that already
+# orders these dirs keeps its order and only gains what it was missing.
+ensure_tool_path() {
+  local dir
+  for dir in "$LOCAL_BIN_DIR" "$PI_BIN_DIR" "$MISE_SHIMS_DIR" \
+             /opt/homebrew/bin /home/linuxbrew/.linuxbrew/bin; do
+    [[ -d "$dir" ]] || continue
+    [[ ":$PATH:" == *":$dir:"* ]] || PATH="$PATH:$dir"
+  done
+  export PATH
+}
+
 # install_brew_or_mise CMD FORMULA MISE_TOOL LABEL — installs LABEL with
 # `brew install FORMULA` where Homebrew is available, and otherwise with
 # `mise use -g MISE_TOOL`. Skipped when CMD is already in PATH. Returns non-zero
@@ -176,7 +196,7 @@ install_brew_or_mise() {
       warn "mise could not install $label — install it manually: $manual"
       return 1
     fi
-    local shims="${MISE_DATA_DIR:-$HOME/.local/share/mise}/shims"
+    local shims="$MISE_SHIMS_DIR"
     case ":$PATH:" in
       *":$shims:"*) ;;
       *) export PATH="$shims:$PATH" ;;

@@ -55,6 +55,9 @@ SSH_KNOWN_HOSTS_FILE="$SSH_DIR/known_hosts"
 
 # ─── XDG-style config and local dirs ─────────────────────────────────────────
 LOCAL_BIN_DIR="$HOME/.local/bin"
+# Where mise puts the shims for the tools it manages — resolved the way mise
+# itself resolves its data dir.
+MISE_SHIMS_DIR="${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}/shims"
 ZSH_CONFIG_DIR="$HOME/.config/zsh/config.d"
 STARSHIP_CONFIG_FILE="$HOME/.config/starship.toml"
 # Holds only taskfile.env (GH_TOKEN for pr commands); not the task runner.
@@ -215,6 +218,9 @@ AGENTS_SKILLS_DIR="$HOME/.agents/skills"
 PI_HOME="$HOME/.pi"
 PI_AGENT_DIR="$PI_HOME/agent"
 PI_SETTINGS_FILE="$PI_AGENT_DIR/settings.json"
+# Pi's managed installer puts its launcher here (macOS); on Linux it is in
+# LOCAL_BIN_DIR instead.
+PI_BIN_DIR="$PI_AGENT_DIR/bin"
 PI_LEGACY_SETTINGS_FILE="$PI_HOME/settings.json"
 # Pi's global context file — the one-file counterpart to Claude Code's
 # ~/.claude/rules/ directory. AGENTS.md rather than APPEND_SYSTEM.md because

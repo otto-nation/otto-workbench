@@ -420,6 +420,17 @@ time.sleep(30)
   [ "$py" = "$ts" ]
 }
 
+@test "tree-lock-guard: the git timeout equals core.timeouts.LOCAL and the probe outlasts it" {
+  local py ts
+  py="$(PYTHONPATH="$REPO_ROOT/ai/lib" python3 -c 'import core.timeouts as t; print(int(t.LOCAL * 1000))')"
+  ts="$(node --input-type=module -e "
+    const d = await import('$REPO_ROOT/ai/pi/extensions/tree-lock-guard/detect.ts');
+    console.log(d.GIT_TIMEOUT_MS + '|' + (d.PROBE_TIMEOUT_MS > d.GIT_TIMEOUT_MS));
+  ")"
+  [ -n "$py" ]
+  [ "$ts" = "$py|true" ]
+}
+
 @test "tree-lock-guard: detect.ts imports no SDK" {
   run grep -E '@earendil-works/pi-coding-agent|isToolCallEventType' \
     "$REPO_ROOT/ai/pi/extensions/tree-lock-guard/detect.ts"

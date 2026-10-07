@@ -42,10 +42,19 @@ export const FREE_SUFFIX = ": not being validated";
 export const HELD_SUFFIX = ": validating";
 
 /**
- * How long either child may run before the probe gives up and says "unknown".
- * Matches core.timeouts.LOCAL, which bounds the same git call on the Python side.
+ * How long the `git rev-parse` here may run before it is reported as hung.
+ * Equal to core.timeouts.LOCAL, which bounds the same call on the Python side;
+ * a test in tests/pi_extensions_issues.bats asserts the two agree.
  */
-export const PROBE_TIMEOUT_MS = 10_000;
+export const GIT_TIMEOUT_MS = 10_000;
+
+/**
+ * How long `with-tree-lock --check` may run before it is killed. Longer than
+ * GIT_TIMEOUT_MS on purpose: that child runs its own git call under the same
+ * bound, and killing it at the same instant would let this side win the race
+ * and report a bare "timed out" in place of the reason the child would print.
+ */
+export const PROBE_TIMEOUT_MS = GIT_TIMEOUT_MS + 5_000;
 
 /**
  * What `git rev-parse` says, under LC_ALL=C, when there is no repository to ask
@@ -109,7 +118,7 @@ function describeFailure(what: string, err: unknown): string {
  */
 export function gitRootFor(
   path: string,
-  timeoutMs: number = PROBE_TIMEOUT_MS,
+  timeoutMs: number = GIT_TIMEOUT_MS,
 ): { root: string; reason: string } {
   const env = { ...process.env };
   // git localises its messages, and the not-a-repo check below reads one.
@@ -189,7 +198,7 @@ export function probeTree(tree: string, timeoutMs: number = PROBE_TIMEOUT_MS): P
  * editing is under validation, and honouring it here would let any process
  * that inherited it edit straight through the lock.
  */
-export function lockVerdict(path: string, timeoutMs: number = PROBE_TIMEOUT_MS): LockVerdict {
+export function lockVerdict(path: string, timeoutMs?: number): LockVerdict {
   const { root, reason } = gitRootFor(path, timeoutMs);
   if (!root) return { refusal: null, unknownReason: reason };
   const probe = probeTree(root, timeoutMs);

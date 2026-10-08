@@ -236,7 +236,7 @@ def test_branch_no_worktree_from_the_default_checkout_creates_one(
     """
     ctx = pr.context.resolve(branch="feat-branch")
     assert ctx.worktree_root == Path("/repo/feat-branch")
-    mock_create.assert_called_once_with("feat/branch", "/repo/main")
+    mock_create.assert_called_once_with("feat-branch", "/repo/main")
 
 
 @patch.object(pr.target, "repo_identity_from_origin",
@@ -431,3 +431,29 @@ def test_classify_target_simple_branch():
     pr_ref, branch = pr.context.classify_target("feat-auth")
     assert pr_ref is None
     assert branch == "feat-auth"
+
+
+@patch.object(pr.target, "repo_identity_from_origin",
+              return_value=pr.target.RepoIdentity(label="owner/repo", key="repo"))
+@patch.object(pr.context, "_git_toplevel", return_value=Path("/repo/main"))
+@patch.object(git.topology, "current_branch_quiet", return_value="main")
+@patch.object(git.topology, "default_branch", return_value="main")
+@patch.object(git.topology, "find_worktree_by_branch", return_value=None)
+@patch.object(git.topology, "create_worktree_for_branch", return_value=Path("/repo/feat-branch"))
+@patch.object(pr.context, "detect_repo", return_value="owner/repo")
+@patch.object(pr.context, "_head_sha", return_value="abc123")
+@patch.object(pr.context, "_pr_head",
+              return_value=PRHead(branch="feat/branch", sha="pr-sha"))
+def test_pr_no_worktree_from_the_default_checkout_creates_one(
+    mock_head, mock_sha, mock_repo, mock_create, mock_find_wt,
+    mock_default, mock_current, mock_top, mock_repo_name,
+):
+    """--pr lands in the same freshly-created worktree --branch on the same head would.
+
+    The second ``_resolve_worktree`` pass in ``resolve()`` also defaults
+    ``create_missing`` to True, so a PR whose head branch has no worktree of
+    its own, resolved from the default branch's checkout, gets one here too.
+    """
+    ctx = pr.context.resolve(pr_ref="42")
+    assert ctx.worktree_root == Path("/repo/feat-branch")
+    mock_create.assert_called_once_with("feat/branch", "/repo/main")

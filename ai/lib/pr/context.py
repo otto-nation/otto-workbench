@@ -549,13 +549,35 @@ def head_sha(cwd: str | None = None) -> str:
 
 
 def _redirect_to_branch_worktree(
-    branch: str, effective_cwd: str,
+    branch: str, effective_cwd: str, current: str | None,
 ) -> Path | None:
     """If CWD's branch differs from the target, find the target's worktree."""
-    current = git.topology.current_branch_quiet(effective_cwd)
     if current is None or current == branch:
         return None
     return git.topology.find_worktree_by_branch(branch, effective_cwd)
+
+
+def _create_worktree_off_default(
+    branch: str, effective_cwd: str, current: str | None,
+) -> Path | None:
+    """A new worktree for *branch* when the caller stands in the default branch's.
+
+    The default branch's worktree is never a place to check a feature branch
+    out: the next tool that syncs it to ``origin/<default>`` hard-resets the
+    branch away, which is why ``pr rebase`` refuses to. So a branch with no
+    worktree of its own gets one here, through ``wt switch`` exactly as the
+    bare-repo path does, instead of the run falling back to the default
+    checkout and refusing. Any other current branch keeps the old behaviour:
+    the caller's own feature checkout is theirs to switch.
+
+    None when the caller is not on the default branch, or ``wt`` could not
+    create one; ``create_worktree_for_branch`` names the cause.
+    """
+    if current is None or current == branch:
+        return None
+    if current != git.topology.default_branch(effective_cwd):
+        return None
+    return git.topology.create_worktree_for_branch(branch, effective_cwd)
 
 
 def _resolve_worktree(
@@ -567,9 +589,11 @@ def _resolve_worktree(
 ) -> tuple[Path | None, str | None]:
     """Resolve worktree root, handling bare repos transparently.
 
-    ``create_missing`` is the bare-repo escape hatch: with it False a bare repo
-    hands back only worktrees that already exist. Defaulted True and left unset
-    by ``resolve`` so that the deep rung keeps creating them.
+    ``create_missing`` is the escape hatch: with it False a bare repo, or the
+    default branch's worktree, hands back only worktrees that already exist.
+
+    Defaulted True and left unset by ``resolve`` so that the deep rung keeps
+    creating them.
     """
     toplevel = _git_toplevel(cwd)
     if toplevel is None:
@@ -578,7 +602,11 @@ def _resolve_worktree(
         )
 
     if branch:
-        wt = _redirect_to_branch_worktree(branch, cwd or str(toplevel))
+        here = cwd or str(toplevel)
+        current = git.topology.current_branch_quiet(here)
+        wt = _redirect_to_branch_worktree(branch, here, current)
+        if not wt and create_missing:
+            wt = _create_worktree_off_default(branch, here, current)
         if wt:
             return wt, str(wt)
     return toplevel, cwd

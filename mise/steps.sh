@@ -12,7 +12,7 @@ fi
 # ─── Steps ────────────────────────────────────────────────────────────────────
 
 # step_mise_install — prompts to install mise if not already present.
-# Uses the official mise installer ($MISE_INSTALL_URL) which installs to ~/.local/bin.
+# Uses the official mise installer (https://mise.run, from $MISE_INSTALL_URL) which installs to ~/.local/bin.
 # No-op if mise is already installed. This is an install-time step — not called by sync_mise.
 step_mise_install() {
   command -v mise >/dev/null 2>&1 && return

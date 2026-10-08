@@ -191,7 +191,7 @@ _bootstrap_mise() {
   install_via_installer mise "$MISE_INSTALL_URL" mise || return 1
   ensure_tool_path
   if ! command -v mise >/dev/null 2>&1; then
-    warn "mise was installed but is not on PATH (looked in $LOCAL_BIN_DIR) — open a new shell and re-run"
+    warn "mise's installer ran but left no mise on PATH (looked in $LOCAL_BIN_DIR) — open a new shell and re-run"
     return 1
   fi
 }
@@ -217,6 +217,9 @@ install_brew_or_mise() {
     success "$label already installed"
     return
   fi
+  # Unlike the _cmd_runnable check above, a bare `command -v` is what we want
+  # here: a mise shim with no active version still means an installer is
+  # present, so bootstrapping mise again would be pointless.
   if ! command -v brew >/dev/null 2>&1 && ! command -v mise >/dev/null 2>&1; then
     # A failed bootstrap falls through to the neither-installer warning below.
     _bootstrap_mise || true

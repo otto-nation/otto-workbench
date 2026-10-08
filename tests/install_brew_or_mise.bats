@@ -186,7 +186,7 @@ EOF2
   chmod +x "$INSTALLER_STUB"
   run _run_install "$(_path_with)"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"mise was installed but is not on PATH"* ]]
+  [[ "$output" == *"mise's installer ran but left no mise on PATH"* ]]
   [[ "$output" != *"RTK installed"* ]]
 }
 

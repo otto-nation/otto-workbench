@@ -178,10 +178,29 @@ _cmd_runnable() {
   mise which "$cmd" >/dev/null 2>&1
 }
 
+# _bootstrap_mise — installs mise with its own installer, for a machine that
+# has neither Homebrew nor mise, and puts it on PATH for the rest of this run.
+# Returns non-zero, having said why, when the install fails or leaves no mise
+# to run.
+#
+# Core components fall back to mise for their tools, and mise is an optional
+# component installed after them, so on a fresh Linux account every one of
+# those installs found no installer at all. Bootstrapping here is what lets
+# the fallback work on the first run instead of the second.
+_bootstrap_mise() {
+  install_via_installer mise "$MISE_INSTALL_URL" mise || return 1
+  ensure_tool_path
+  if ! command -v mise >/dev/null 2>&1; then
+    warn "mise was installed but is not on PATH (looked in $LOCAL_BIN_DIR) — open a new shell and re-run"
+    return 1
+  fi
+}
+
 # install_brew_or_mise CMD FORMULA MISE_TOOL LABEL — installs LABEL with
 # `brew install FORMULA` where Homebrew is available, and otherwise with
-# `mise use -g MISE_TOOL`. Skipped when CMD is already runnable from PATH — a
-# mise shim with no active version does not count. Returns non-zero
+# `mise use -g MISE_TOOL`, installing mise itself first when neither installer
+# is present. Skipped when CMD is already runnable from PATH — a mise shim with
+# no active version does not count. Returns non-zero
 # with both install commands named when neither installer is present or the
 # install fails.
 #
@@ -197,6 +216,10 @@ install_brew_or_mise() {
   if _cmd_runnable "$cmd"; then
     success "$label already installed"
     return
+  fi
+  if ! command -v brew >/dev/null 2>&1 && ! command -v mise >/dev/null 2>&1; then
+    # A failed bootstrap falls through to the neither-installer warning below.
+    _bootstrap_mise || true
   fi
 
   if command -v brew >/dev/null 2>&1; then

@@ -726,6 +726,14 @@ step_github_ssh() {
   success "github SSH: block written — $route_note"
 }
 
+# step_install_worktrunk — installs worktrunk, which the git component
+# configures and wt-init (a core script) runs, through Homebrew or mise. The AI
+# component installs it too, but a core-only install left the config with no
+# `wt` to read it. Non-fatal: the config steps below work without the binary.
+step_install_worktrunk() {
+  install_brew_or_mise wt worktrunk worktrunk worktrunk || true
+}
+
 # step_worktrunk_config — ensures the global worktrunk config has a default
 # worktree-path so bare repos get clean directory names instead of .git.* prefix.
 step_worktrunk_config() {
@@ -839,6 +847,7 @@ install_git() {
   step_github_ssh
 
   echo; info "worktrunk config"
+  step_install_worktrunk
   step_worktrunk_config
   step_worktrunk_pre_switch_fetch
 }
@@ -864,6 +873,7 @@ sync_git() {
   step_github_ssh
 
   sync_header "worktrunk config"
+  step_install_worktrunk
   step_worktrunk_config
   step_worktrunk_pre_switch_fetch
 }

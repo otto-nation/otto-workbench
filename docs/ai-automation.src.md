@@ -28,8 +28,11 @@ Prompts for confirmation at each step. Safe to re-run. This installs Claude Code
 
 rtk and worktrunk install through Homebrew where it is available. On a machine
 without it, such as an unprivileged Linux user with no writable brew prefix,
-they install through mise (`mise use -g rtk`, `mise use -g worktrunk`), so mise
-must be installed first.
+they install through mise (`mise use -g rtk`, `mise use -g worktrunk`). When
+neither is present, `install_brew_or_mise` first installs mise itself with its
+own installer (`https://mise.run`), so a fresh Linux account needs nothing
+beforehand. worktrunk is installed by the git component as well, since that
+component configures it and `wt-init` runs it.
 
 `ai/setup.sh` also scaffolds `~/.config/task/taskfile.env`, the GitHub PATs `pr create` and `pr describe --post` publish with (`GH_TOKEN`, optional `GH_TOKEN__<ORG>`). See `security-secrets.md` for the two-file secret model.
 

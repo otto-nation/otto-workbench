@@ -128,10 +128,11 @@ _assert_signing_ready() {
   [[ -z "$key" ]] || args+=(--local-user "$key")
   # LC_ALL=C keeps gpg's wording stable for the match below; timeout (when
   # present) bounds a wedged agent. A timed-out probe leaves no matching
-  # message, so the commit proceeds as before.
+  # message, so the commit proceeds as before. The guarded expansion keeps an
+  # empty bound legal under set -u on bash 4.3, where macOS has no timeout.
   local -a bound=()
   command -v timeout >/dev/null 2>&1 && bound=(timeout 10)
-  if err="$(printf 'probe\n' | LC_ALL=C "${bound[@]}" "$gpg" "${args[@]}" 2>&1 >/dev/null)"; then
+  if err="$(printf 'probe\n' | LC_ALL=C ${bound[@]+"${bound[@]}"} "$gpg" "${args[@]}" 2>&1 >/dev/null)"; then
     return 0
   fi
   # Only a failure for want of a prompt would hang. An expired, revoked or

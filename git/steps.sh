@@ -625,10 +625,13 @@ _shellcheck_pin() {
 # at the CI pin on the mise path. A runnable shellcheck at any other version —
 # newer ones included, so this can downgrade; the CI pin is the reference — is
 # moved to the pin as well, since the helper skips anything that already runs.
+# Only where mise exists to do the moving: a distro shellcheck on a machine with
+# neither installer is left as it is, as install_brew_or_mise would leave it.
 _install_pinned_shellcheck() {
   local pin have
   pin="$(_shellcheck_pin)"
-  if [[ -n "$pin" ]] && ! command -v brew >/dev/null 2>&1 && _cmd_runnable shellcheck; then
+  if [[ -n "$pin" ]] && ! command -v brew >/dev/null 2>&1 \
+    && command -v mise >/dev/null 2>&1 && _cmd_runnable shellcheck; then
     have="$(shellcheck --version 2>/dev/null | sed -n 's/^version: //p')"
     [[ "$have" == "$pin" ]] && { success "shellcheck $pin already installed"; return 0; }
     info "Moving shellcheck $have to the CI pin $pin via mise..."

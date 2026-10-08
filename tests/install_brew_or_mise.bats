@@ -271,6 +271,17 @@ _sc_lab() {
   [ "$(cat "$MISE_LOG")" = "use -g shellcheck@$(_sc_pin)" ]
 }
 
+@test "a distro shellcheck with no mise is left to the helper rather than run through mise" {
+  # The CI runner's shape: an apt shellcheck at another version, no brew, no mise.
+  local dir="$TMPDIR/sc-nomise"
+  mkdir -p "$dir"
+  printf '#!/bin/sh\necho "ShellCheck"\necho "version: 0.0.1"\n' > "$dir/shellcheck"
+  chmod +x "$dir/shellcheck"
+  CALLER_PATH="$dir:/usr/bin:/bin" run _run_caller "$REPO_ROOT/git/steps.sh" _install_pinned_shellcheck
+  [[ "$output" != *"mise: command not found"* ]]
+  [[ "$output" == *"HELPER shellcheck shellcheck shellcheck@$(_sc_pin) shellcheck"* ]]
+}
+
 @test "a shellcheck already at the CI pin is left alone" {
   CALLER_PATH="$(_sc_lab "$(_sc_pin)")" run _run_caller "$REPO_ROOT/git/steps.sh" _install_pinned_shellcheck
   [ "$status" -eq 0 ]

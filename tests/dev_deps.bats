@@ -115,6 +115,18 @@ _sc_lab() {
   fi
 }
 
+@test "on Darwin the root deps hint brew install, not sudo apt install" {
+  mkdir -p "$STUBS/darwin-uname"
+  printf '#!/bin/sh\necho Darwin\n' > "$STUBS/darwin-uname/uname"
+  chmod +x "$STUBS/darwin-uname/uname"
+  run bash -c 'PATH="$1:$PATH"; . "$2/bin/local/dev-deps"; printf "%s\n" "${DEV_DEPS_ROOT[@]}"' \
+    _ "$STUBS/darwin-uname" "$REPO_ROOT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"zsh|zsh|brew install zsh"* ]]
+  [[ "$output" == *"GNU parallel (parallel bats runs)|brew install parallel"* ]]
+  [[ "$output" != *"sudo apt install"* ]]
+}
+
 @test "the glibc utf8 spelling of the locale counts as present" {
   printf '#!/bin/sh\necho C.utf8\necho en_US.utf8\n' > "$STUBS/locale"
   chmod +x "$STUBS/locale"

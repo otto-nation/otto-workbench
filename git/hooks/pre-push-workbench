@@ -148,6 +148,7 @@ fi
 # one declaration, so a missing one is named with its fix rather than surfacing
 # as a confusing failure halfway through. Installs nothing and runs no sudo.
 if ! "$REPO_ROOT/bin/local/dev-deps" --check; then
+  echo "" >&2
   echo "  Install them with: task dev:setup (bin/local/dev-deps), then push again." >&2
   exit 1
 fi

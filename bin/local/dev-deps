@@ -35,10 +35,19 @@ DEV_DEPS_INSTALLABLE=(
 )
 
 # CMD LABEL HINT — needs root, so checked only. HINT is the command to run.
-DEV_DEPS_ROOT=(
-  "zsh|zsh|sudo apt install zsh"
-  "parallel|GNU parallel (parallel bats runs)|sudo apt install parallel"
-)
+# On Darwin both are a plain `brew install` — no root needed there — so the
+# hint is platform-gated the same way DEV_LOCALE_HINT is below.
+if [[ "$(uname -s)" == Darwin ]]; then
+  DEV_DEPS_ROOT=(
+    "zsh|zsh|brew install zsh"
+    "parallel|GNU parallel (parallel bats runs)|brew install parallel"
+  )
+else
+  DEV_DEPS_ROOT=(
+    "zsh|zsh|sudo apt install zsh"
+    "parallel|GNU parallel (parallel bats runs)|sudo apt install parallel"
+  )
+fi
 
 # The locale tests/generate_doc_reference.bats pins collation against. macOS
 # ships it; a minimal Linux image does not.
@@ -113,6 +122,10 @@ dev_deps_install() {
 dev_deps_check() {
   local -a missing=()
   local entry cmd label hint
+  # The shellcheck/pytest entries below are check-only placeholders: only
+  # their cmd and label fields are read here, so they need not (and do not)
+  # match the real install_brew_or_mise tuples in _install_pinned_shellcheck
+  # and _install_pytest (e.g. shellcheck's real mise tool is version-pinned).
   for entry in "${DEV_DEPS_INSTALLABLE[@]}" "shellcheck shellcheck shellcheck shellcheck" \
                "pytest pytest pipx:pytest pytest"; do
     read -r cmd _ _ label <<< "$entry"

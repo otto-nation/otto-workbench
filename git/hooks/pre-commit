@@ -92,8 +92,10 @@ _assert_real_identity() {
 
 _assert_real_identity
 
-# _can_prompt — true when a pinentry could reach a person: a macOS GUI session,
-# an X11 or Wayland display, or a controlling terminal.
+# _can_prompt — true when a pinentry plausibly could reach a person: a macOS GUI
+# session, an X11 or Wayland display, or a controlling terminal. A best-effort
+# guess, not a guarantee: GPG_TTY unset, no reachable pinentry-gtk, or plain ssh
+# on Darwin still pass, and the hook then fails open.
 #
 # WORKBENCH_UNAME and WORKBENCH_TTY_DEVICE stand in for `uname -s` and
 # /dev/tty so a test can choose the answer; nothing else sets them.
@@ -124,7 +126,12 @@ _assert_signing_ready() {
   key="$(git config user.signingkey 2>/dev/null || true)"
   local args=(--batch --no-tty --pinentry-mode error --clearsign)
   [[ -z "$key" ]] || args+=(--local-user "$key")
-  if err="$(printf 'probe\n' | "$gpg" "${args[@]}" 2>&1 >/dev/null)"; then
+  # LC_ALL=C keeps gpg's wording stable for the match below; timeout (when
+  # present) bounds a wedged agent. A timed-out probe leaves no matching
+  # message, so the commit proceeds as before.
+  local -a bound=()
+  command -v timeout >/dev/null 2>&1 && bound=(timeout 10)
+  if err="$(printf 'probe\n' | LC_ALL=C "${bound[@]}" "$gpg" "${args[@]}" 2>&1 >/dev/null)"; then
     return 0
   fi
   # Only a failure for want of a prompt would hang. An expired, revoked or

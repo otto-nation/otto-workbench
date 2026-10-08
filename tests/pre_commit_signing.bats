@@ -58,6 +58,7 @@ stub_gpg() {
   cat > "$TMPDIR/bin/gpg" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$@" > "$TMPDIR/gpg-argv"
+printf '%s' "\${LC_ALL:-}" > "$TMPDIR/gpg-lc"
 cat >/dev/null
 if [[ "$mode" == locked ]]; then
   echo "gpg: signing failed: No pinentry" >&2
@@ -81,7 +82,7 @@ _hook() {
   run git -C "$TMPDIR/wt" commit -q -m msg
   [ "$status" -ne 0 ]
   [[ "$output" == *"commit signing cannot finish here"* ]]
-  [[ "$output" == *"gpg: gpg: signing failed: No pinentry"* ]]
+  [[ "$output" == *"signing failed: No pinentry"* ]]
   [[ "$output" == *"--clearsign -u ABCD1234"* ]]
   [[ "$output" == *"git -c commit.gpgsign=false commit"* ]]
   run git -C "$TMPDIR/wt" rev-parse -q --verify HEAD
@@ -145,4 +146,11 @@ _hook() {
   [ "$status" -eq 0 ]
   [[ "$output" != *"passphrase prompt"* ]]
   [ -e "$TMPDIR/gpg-argv" ]
+}
+
+@test "the probe runs gpg with LC_ALL=C so its wording is matchable" {
+  stub_gpg ok
+  LC_ALL=de_DE.UTF-8 run _hook
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TMPDIR/gpg-lc")" = C ]
 }

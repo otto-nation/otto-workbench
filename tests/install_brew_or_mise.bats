@@ -60,15 +60,26 @@ teardown() {
 # system, then reports where rtk resolves in the same shell — the property the
 # shim PATH update exists for. PATH is narrowed after lib/ui.sh loads, since
 # output.sh needs a modern bash to source at all.
+#
+# HOME is the test's own, so LOCAL_BIN_DIR (where mise's installer lands) is
+# too. run_remote_installer is always replaced: by INSTALLER_STUB when a test
+# sets one, and otherwise by a refusal, so no case can download mise for real.
 _run_install() {
   bash -c '
+    HOME="$3"
     . "$2/lib/ui.sh"
+    [[ -z "${HOMEBREW_BIN_DIR_LINUX_OVERRIDE:-}" ]] || HOMEBREW_BIN_DIR_LINUX="$HOMEBREW_BIN_DIR_LINUX_OVERRIDE"
+    run_remote_installer() {
+      [[ -n "${INSTALLER_STUB:-}" ]] || return 1
+      echo "$1" >> "$INSTALLER_LOG"
+      "$INSTALLER_STUB"
+    }
     PATH="$1"
     install_brew_or_mise rtk rtk rtk RTK
     status=$?
     echo "RESOLVED=$(command -v rtk || true)"
     exit "$status"
-  ' _ "$1" "$REPO_ROOT"
+  ' _ "$1" "$REPO_ROOT" "$TMPDIR/home"
 }
 
 # _path_with STUB... — a PATH holding only the named stubs and the base system.
@@ -137,13 +148,76 @@ EOF2
   [[ "$output" != *"RTK installed"* ]]
 }
 
-@test "with neither installer, the warning names both commands" {
+@test "with neither installer, mise is bootstrapped and then installs the tool" {
+  # The installer stub models mise.run: it writes a mise into ~/.local/bin,
+  # which is not on PATH yet — the bootstrap has to put it there itself.
+  export INSTALLER_LOG="$TMPDIR/installer-log"
+  export INSTALLER_STUB="$TMPDIR/fake-mise-installer"
+  cat > "$INSTALLER_STUB" <<EOF2
+#!/usr/bin/env bash
+mkdir -p "$TMPDIR/home/.local/bin"
+ln -sf "$STUBS/mise" "$TMPDIR/home/.local/bin/mise"
+EOF2
+  chmod +x "$INSTALLER_STUB"
+  run _run_install "$(_path_with)"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$INSTALLER_LOG")" = "https://mise.run" ]
+  [ "$(cat "$MISE_LOG")" = "use -g rtk" ]
+  [[ "$output" == *"mise installed"* ]]
+  [[ "$output" == *"RTK installed"* ]]
+}
+
+@test "the bootstrap does not pull an off-PATH Homebrew in halfway" {
+  # The CI runner's shape: Homebrew installed under its Linux prefix but not on
+  # PATH. A bootstrap that adds every tool dir would find it and switch to a
+  # real brew install mid-decision.
+  export INSTALLER_LOG="$TMPDIR/installer-log"
+  export INSTALLER_STUB="$TMPDIR/fake-mise-installer"
+  cat > "$INSTALLER_STUB" <<EOF2
+#!/usr/bin/env bash
+mkdir -p "$TMPDIR/home/.local/bin"
+ln -sf "$STUBS/mise" "$TMPDIR/home/.local/bin/mise"
+EOF2
+  chmod +x "$INSTALLER_STUB"
+  mkdir -p "$TMPDIR/linuxbrew"
+  printf '#!/bin/sh\necho "BREW $*" >> "%s"\n' "$BREW_LOG" > "$TMPDIR/linuxbrew/brew"
+  chmod +x "$TMPDIR/linuxbrew/brew"
+  HOMEBREW_BIN_DIR_LINUX_OVERRIDE="$TMPDIR/linuxbrew" run _run_install "$(_path_with)"
+  [ "$status" -eq 0 ]
+  [ ! -e "$BREW_LOG" ]
+  [ "$(cat "$MISE_LOG")" = "use -g rtk" ]
+}
+
+@test "the mise component installs from the same URL constant as the bootstrap" {
+  grep -q 'curl -fsSL "\$MISE_INSTALL_URL" | sh' "$REPO_ROOT/mise/steps.sh"
+}
+
+@test "with neither installer and a failed bootstrap, the warning names both commands" {
   run _run_install "$(_path_with)"
   [ "$status" -eq 1 ]
   [[ "$output" == *"brew install rtk"* ]]
   [[ "$output" == *"mise use -g rtk"* ]]
   [ ! -e "$BREW_LOG" ]
   [ ! -e "$MISE_LOG" ]
+}
+
+@test "a bootstrap that leaves no mise on PATH is reported, not mistaken for an install" {
+  export INSTALLER_LOG="$TMPDIR/installer-log"
+  export INSTALLER_STUB="$TMPDIR/no-op-installer"
+  printf '#!/bin/sh\nexit 0\n' > "$INSTALLER_STUB"
+  chmod +x "$INSTALLER_STUB"
+  run _run_install "$(_path_with)"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"mise's installer ran but left no mise on PATH"* ]]
+  [[ "$output" != *"RTK installed"* ]]
+}
+
+@test "brew present means mise is never bootstrapped" {
+  export INSTALLER_LOG="$TMPDIR/installer-log"
+  export INSTALLER_STUB="$TMPDIR/should-not-run"
+  run _run_install "$(_path_with brew)"
+  [ "$status" -eq 0 ]
+  [ ! -e "$INSTALLER_LOG" ]
 }
 
 @test "a failed brew install is not reported as an install" {
@@ -300,4 +374,18 @@ _sc_lab() {
   [ "$status" -eq 0 ]
   [[ "$output" != *"HELPER uv "* ]]
   [[ "$output" == *"HELPER pytest pytest "* ]]
+}
+
+@test "the git component installs worktrunk through the helper" {
+  run _run_caller "$REPO_ROOT/git/steps.sh" step_install_worktrunk
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"HELPER wt worktrunk worktrunk worktrunk"* ]]
+}
+
+@test "install_git and sync_git install worktrunk before configuring it" {
+  local fn body
+  for fn in install_git sync_git; do
+    body="$(sed -n "/^$fn()/,/^}/p" "$REPO_ROOT/git/steps.sh")"
+    [[ "$body" == *step_install_worktrunk*step_worktrunk_config* ]]
+  done
 }

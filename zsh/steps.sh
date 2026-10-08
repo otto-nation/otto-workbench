@@ -11,6 +11,8 @@
 #   2. Copies loader.zsh as a real file (survives repo move/delete)
 #   3. Ensures ~/.zshrc contains the workbench integration block
 #   4. Warns about tool initializations in ~/.zshrc now managed by snippets
+#   5. On a machine without Homebrew, installs what the layers expect Homebrew
+#      to provide: starship, oh-my-zsh, and the shell Brewfile's zsh plugins
 #
 # Adding a new snippet layer:
 #   1. Create zsh/config.d/<layer>/ and add .zsh snippet files
@@ -86,6 +88,62 @@ step_zsh() {
     [[ -L "$stale" ]] || continue
     rm "$stale"
     [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}⊘ pruned $(basename "$stale") (moved to aliases/)${NC}" || true
+  done
+}
+
+# _shell_brewfile_zsh_plugins — the zsh-* formulae the shell Brewfile lists,
+# one per line.
+_shell_brewfile_zsh_plugins() {
+  sed -n 's/^brew "\(zsh-[A-Za-z0-9_-]*\)".*/\1/p' "$SHELL_BREWFILE"
+}
+
+# _zsh_clone DIR URL LABEL — shallow-clones URL into DIR, announcing it as
+# LABEL. Skipped when DIR already exists; a failed clone leaves no partial DIR
+# behind, so the next sync tries again.
+_zsh_clone() {
+  local dir="$1" url="$2" label="$3"
+  if [[ -d "$dir" ]]; then
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && success "$label already installed" || true
+    return 0
+  fi
+  if ! command -v git >/dev/null 2>&1; then
+    warn "git not found — cannot install $label from $url"
+    return 1
+  fi
+  info "Installing $label..."
+  mkdir -p "$(dirname "$dir")"
+  if ! git clone --quiet --depth 1 "$url" "$dir"; then
+    rm -rf "$dir"
+    warn "could not clone $label — install it manually: git clone --depth 1 $url $dir"
+    return 1
+  fi
+  success "$label installed"
+}
+
+# step_zsh_shell_tools — on a machine without Homebrew, installs what the zsh
+# layers expect Homebrew to provide, so the shell is not left bare: starship
+# for prompt/, oh-my-zsh for framework/, and the shell Brewfile's zsh plugins
+# for tools/zsh-plugins.zsh. A no-op where Homebrew exists — the Brewfile owns
+# those installs there. Non-fatal: each layer already skips what is missing.
+#
+# oh-my-zsh is cloned rather than run through its installer, which would
+# rewrite ~/.zshrc and change the login shell; the framework snippet only
+# needs the checkout.
+#
+# ceiling: assumes every zsh-* formula in the shell Brewfile is a zsh-users
+# repo of the same name; upgrade to a per-plugin URL map once one is not.
+step_zsh_shell_tools() {
+  command -v brew >/dev/null 2>&1 && return 0
+  install_brew_or_mise starship starship starship starship || true
+  _zsh_clone "$OH_MY_ZSH_DIR" "https://github.com/ohmyzsh/ohmyzsh.git" oh-my-zsh || true
+
+  local plugins name
+  plugins="$(_shell_brewfile_zsh_plugins)" || {
+    warn "could not read zsh plugins from $SHELL_BREWFILE"
+    return 0
+  }
+  for name in $plugins; do
+    _zsh_clone "$ZSH_PLUGINS_DIR/$name" "https://github.com/zsh-users/$name.git" "$name" || true
   done
 }
 
@@ -375,6 +433,8 @@ step_zshrc() {
 sync_zsh() {
   sync_header "zsh configs → $ZSH_CONFIG_DIR/"
   mkdir -p "$ZSH_CONFIG_DIR"
+  # Before step_zsh: prompt/starship.zsh deploys only once starship is on PATH.
+  step_zsh_shell_tools
   step_zsh
   step_zsh_loader
   if command -v starship >/dev/null 2>&1; then

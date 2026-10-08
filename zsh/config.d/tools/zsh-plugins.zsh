@@ -1,6 +1,7 @@
-# Brew-installed zsh plugins (zsh-syntax-highlighting, zsh-history-substring-search, etc.)
+# zsh plugins (zsh-syntax-highlighting, zsh-history-substring-search, etc.)
 #
-# Auto-discovers and sources all zsh-* plugins from Homebrew's share directory.
+# Auto-discovers and sources all zsh-* plugins from Homebrew's share directory,
+# or from the clones zsh/steps.sh makes on a machine without Homebrew.
 # To add a new plugin, just add it to brew/shell/shell.Brewfile — no config changes needed.
 #
 # duplicate-check: share/zsh-.*/zsh-.*\.zsh
@@ -13,6 +14,13 @@ if [[ -n "${BREW_PREFIX:-}" ]]; then
     source "$plugin"
   done
 fi
+
+# Without Homebrew, zsh/steps.sh clones the same plugins under the XDG data dir
+# instead (ZSH_PLUGINS_DIR in lib/constants.sh, held to this path by
+# tests/zsh_plugins.bats).
+for plugin in "${XDG_DATA_HOME:-$HOME/.local/share}"/zsh/plugins/zsh-*/zsh-*.zsh(-.N); do
+  source "$plugin"
+done
 
 # history-substring-search: up/down arrows filter history by what you've already typed
 if (( $+functions[history-substring-search-up] )); then

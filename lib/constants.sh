@@ -64,6 +64,11 @@ HOMEBREW_BIN_DIR_MACOS="/opt/homebrew/bin"
 HOMEBREW_BIN_DIR_LINUX="/home/linuxbrew/.linuxbrew/bin"
 ZSH_CONFIG_DIR="$HOME/.config/zsh/config.d"
 STARSHIP_CONFIG_FILE="$HOME/.config/starship.toml"
+# Where the zsh component installs oh-my-zsh and the zsh plugins on a machine
+# without Homebrew. framework/ohmyzsh.zsh and tools/zsh-plugins.zsh resolve the
+# same paths; tests/zsh_plugins.bats holds each pair together.
+OH_MY_ZSH_DIR="$HOME/.oh-my-zsh"
+ZSH_PLUGINS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/zsh/plugins"
 # Holds only taskfile.env (GH_TOKEN for pr commands); not the task runner.
 TASK_CONFIG_DIR="$HOME/.config/task"
 TASKFILE_ENV="$TASK_CONFIG_DIR/taskfile.env"
@@ -291,6 +296,9 @@ ZSH_CONFIG_SRC_DIR="$WORKBENCH_DIR/zsh/config.d"
 ZSH_ZSHRC_TEMPLATE="$WORKBENCH_DIR/zsh/.zshrc"
 ENV_LOCAL_TEMPLATE="${ENV_LOCAL_TEMPLATE:-$WORKBENCH_DIR/zsh/.env.local.template}"
 STARSHIP_SRC_FILE="$WORKBENCH_DIR/zsh/starship.toml"
+# The shell Brewfile names the zsh plugins; a machine without Homebrew clones
+# the same list, so the Brewfile stays the one place a plugin is added.
+SHELL_BREWFILE="$WORKBENCH_DIR/brew/shell/shell.Brewfile"
 ZSH_LOADER_SRC="$ZSH_CONFIG_SRC_DIR/loader.zsh"
 ZSH_LOADER_DST="$ZSH_CONFIG_DIR/loader.zsh"
 ZSH_SNIPPET_GLOB="*.zsh"

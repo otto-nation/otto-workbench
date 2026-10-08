@@ -39,10 +39,10 @@ pushing buys nothing and costs twice.
 When CI fails, run the failing file locally, not the suite around it. When you need to know
 which files a change reaches, `bin/local/select-tests --base origin/main` and
 `bin/local/select-pytest --base origin/main` print the affected paths, one per line, without
-running anything. Read that list and run the files that matter; do not splice it into a
-command unread. The selection is the hook's, so it can be wide (a `CLAUDE.md` edit reaches
-dozens of bats files that read it), and an empty one turns `pytest $(…)` into a bare
-`pytest`, which is the whole suite.
+running anything. Read that list and run the files that matter; don't pipe the output
+straight into a command without reading it first. The selection is the hook's, so it can be
+wide (a `CLAUDE.md` edit reaches dozens of bats files that read it) — read it rather than
+trust a specific shape.
 
 The cost is not merely the wasted minutes. The runner sizes itself from the cores the machine
 is not already using — the sizing described below — so a hand-started suite racing the hook's

@@ -58,6 +58,19 @@ _section() {
   [[ "$output" == *'TodoWrite'* ]]
 }
 
+@test "superpowers-bootstrap: the section routes model tiers through the subagent tool, deferring to a pin" {
+  mkdir -p "$TMPDIR/sp"
+  printf -- '---\nname: using-superpowers\n---\nBody.\n' > "$TMPDIR/sp/SKILL.md"
+
+  _section "[{\"name\":\"using-superpowers\",\"filePath\":\"$TMPDIR/sp/SKILL.md\"}]"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"subagent tool's own model guidance"* ]]
+  [[ "$output" == *'pass `model` explicitly'* ]]
+  [[ "$output" == *'pins subagents to the parent model'* ]]
+  [[ "$output" == *'model tiers'* ]]
+  [[ "$output" == *'pi-subagents'* ]]
+}
+
 @test "superpowers-bootstrap: the section names the skill directory relative paths resolve against" {
   # The skill links references/pi-tools.md by relative path; read from the
   # system prompt it has no directory to resolve that against unless told.

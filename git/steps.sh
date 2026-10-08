@@ -622,7 +622,8 @@ _shellcheck_pin() {
 }
 
 # _install_pinned_shellcheck — installs shellcheck through install_brew_or_mise,
-# at the CI pin on the mise path. A runnable shellcheck at another version is
+# at the CI pin on the mise path. A runnable shellcheck at any other version —
+# newer ones included, so this can downgrade; the CI pin is the reference — is
 # moved to the pin as well, since the helper skips anything that already runs.
 _install_pinned_shellcheck() {
   local pin have

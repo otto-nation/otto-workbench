@@ -438,14 +438,14 @@ def collection_budget_bytes(
 
 
 def fixed_preflight_bytes(
-    claude_md: str,
+    instructions_md: str,
     architecture_md: str,
     review_checklists: dict[str, str],
     review_profiles: list | None = None,
 ) -> int:
     """The bytes of preflight data no budget lever can shrink.
 
-    `claude_md` and `architecture_md` are the project context files,
+    `instructions_md` and `architecture_md` are the project context files,
     `review_checklists` is every checklist keyed by name, and `review_profiles`
     is every profile the repo declares — the sections that go into a prompt
     whole or not at all. The diff, the pre-collected file contents, the
@@ -467,7 +467,7 @@ def fixed_preflight_bytes(
     the fields off it, and one that does not spends nothing.
     """
     return (
-        len(claude_md.encode())
+        len(instructions_md.encode())
         + len(architecture_md.encode())
         + sum(len(v.encode()) for v in review_checklists.values())
         + len(format_profiles_section(review_profiles or []).encode())

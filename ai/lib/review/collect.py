@@ -49,6 +49,7 @@ from pathlib import Path
 import git.client
 import git.topology
 import core.log
+import core.project_context
 import git.numstat
 import pr.context
 from gh.types import PRMetadata
@@ -768,12 +769,10 @@ def _collect_git_data(
 def _collect_project_context(
     wt: Path,
 ) -> tuple[str, str, dict[str, str], list]:
-    claude_md = ""
-    for name in ("CLAUDE.md", ".claude/CLAUDE.md"):
-        p = wt / name
-        if p.exists():
-            claude_md = _read_file_safe(p)
-            break
+    # AGENTS.md, else CLAUDE.md, else the legacy .claude/CLAUDE.md — the order
+    # core.project_context owns for every reader of the file.
+    instructions = core.project_context.resolve(wt)
+    instructions_md = _read_file_safe(wt / instructions.path) if instructions.found else ""
 
     architecture_md = ""
     arch_path = wt / ".claude" / "architecture.md"
@@ -788,7 +787,7 @@ def _collect_project_context(
 
     profiles = load_profiles(str(wt))
 
-    return claude_md, architecture_md, review_checklists, profiles
+    return instructions_md, architecture_md, review_checklists, profiles
 
 
 def _collect_file_data(
@@ -905,13 +904,13 @@ def collect_preflight_data(job: ReviewJob) -> PreflightData:
         job.wt_path, base, job.pr.files, include_worktree=job.mode == Mode.SELF,
         head=_delta_head(job),
     )
-    claude_md, architecture_md, review_checklists, profiles = _collect_project_context(wt)
+    instructions_md, architecture_md, review_checklists, profiles = _collect_project_context(wt)
     all_contents, all_permissions, file_changes = _collect_file_data(wt, job.pr.files)
 
     base_size = (
         len(diff.encode())
         + fixed_preflight_bytes(
-            claude_md, architecture_md, review_checklists, profiles,
+            instructions_md, architecture_md, review_checklists, profiles,
         )
         + TEMPLATE_OVERHEAD_BYTES
     )
@@ -927,7 +926,8 @@ def collect_preflight_data(job: ReviewJob) -> PreflightData:
         commit_log=commit_log,
         file_contents=fit.included,
         file_permissions=fit.permissions,
-        claude_md=claude_md,
+        instructions_md=instructions_md,
+        instructions_path=core.project_context.resolve(wt).path,
         architecture_md=architecture_md,
         review_checklists=review_checklists,
         review_profiles=profiles,
@@ -1016,17 +1016,18 @@ def build_project_context(
 ) -> str:
     """The repository's own review guidance, scoped to ``file_filter``.
 
-    CLAUDE.md, `.claude/architecture.md`, the review checklists, and the review
+    The repo's instructions file (AGENTS.md or CLAUDE.md), `.claude/architecture.md`,
+    the review checklists, and the review
     profiles whose globs the filtered files match. An unfiltered call falls back
     to every profile rather than none, since a whole-review prompt has no group
     to match against.
     """
-    has_content = data.claude_md or data.architecture_md or data.review_checklists or data.review_profiles
+    has_content = data.instructions_md or data.architecture_md or data.review_checklists or data.review_profiles
     if not has_content:
         return ""
     parts: list[str] = ["### Project context"]
-    if data.claude_md:
-        parts += ["", "#### CLAUDE.md", "", data.claude_md]
+    if data.instructions_md:
+        parts += ["", f"#### {data.instructions_path or core.project_context.AGENTS_FILE}", "", data.instructions_md]
     if data.architecture_md:
         parts += ["", "#### .claude/architecture.md", "", data.architecture_md]
     if data.review_checklists:

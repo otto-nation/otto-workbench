@@ -113,7 +113,7 @@ class TestBuildPromptPreflight:
             commit_log="abc fix",
             file_contents={"a.go": "package main"},
             file_permissions={"a.go": "0o644"},
-            claude_md="# Project",
+            instructions_md="# Project",
             architecture_md="",
         )
         job = ro.ReviewJob(
@@ -186,7 +186,7 @@ class TestBuildPromptPreflight:
             commit_log="commits",
             file_contents={"a.go": "package a", "b.go": "package b"},
             file_permissions={"a.go": "0o644", "b.go": "0o644"},
-            claude_md="",
+            instructions_md="",
             architecture_md="",
         )
         job = ro.ReviewJob(
@@ -220,7 +220,7 @@ class TestBuildPromptPreflight:
             commit_log="abc fix",
             file_contents={"a.go": "package main"},
             file_permissions={"a.go": "0o644"},
-            claude_md="# Proj",
+            instructions_md="# Proj",
             architecture_md="",
         )
         job = ro.ReviewJob(
@@ -245,7 +245,7 @@ class TestBuildPromptPreflight:
             commit_log="abc fix",
             file_contents={"a.go": "package main"},
             file_permissions={"a.go": "0o644"},
-            claude_md="",
+            instructions_md="",
             architecture_md="",
         )
         job = ro.ReviewJob(
@@ -272,7 +272,7 @@ class TestBuildPromptPreflight:
             diff="diff", commit_log="log",
             file_contents={"a.go": "pkg"},
             file_permissions={"a.go": "0o644"},
-            claude_md="", architecture_md="",
+            instructions_md="", architecture_md="",
         )
         job = ro.ReviewJob(
             repo="org/repo", pr_number="1", pr=pr, ctx=ctx,
@@ -302,7 +302,7 @@ class TestBuildPromptPreflight:
             diff="diff", commit_log="log",
             file_contents={"a.go": "pkg"},
             file_permissions={"a.go": "0o644"},
-            claude_md="", architecture_md="",
+            instructions_md="", architecture_md="",
             omitted_files=["b.go"],
         )
         job = ro.ReviewJob(

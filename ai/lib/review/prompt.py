@@ -377,7 +377,7 @@ def _fixed_preflight_bytes(
         # nothing in this reserve — the caller already registered it.
         return 0
     return fixed_preflight_bytes(
-        pf.claude_md, pf.architecture_md, pf.review_checklists,
+        pf.instructions_md, pf.architecture_md, pf.review_checklists,
         pf.review_profiles,
     )
 

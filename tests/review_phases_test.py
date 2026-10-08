@@ -102,7 +102,7 @@ def _omitted_job(tmp_path, omitted=(), effort=Effort.MEDIUM):
     job = _job(tmp_path, effort)
     job.preflight = PreflightData(
         diff="", commit_log="", file_contents={}, file_permissions={},
-        claude_md="", architecture_md="", omitted_files=list(omitted),
+        instructions_md="", architecture_md="", omitted_files=list(omitted),
     )
     return job
 

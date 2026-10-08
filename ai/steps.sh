@@ -184,6 +184,24 @@ ai_adopt_legacy_model_vars() {
 
 # sync_ai — dispatches to each installed AI sub-tool's sync function.
 # Called automatically by otto-workbench sync via the sync_<component> convention.
+# step_instructions_report — lists the registered repos whose agent
+# instructions are still in CLAUDE.md, with the rename for each. Read-only:
+# the file is tracked in a repo the workbench does not own, so it suggests and
+# never renames. Silent when every repo is on AGENTS.md.
+step_instructions_report() {
+  local path hint
+  local -a hints=()
+  # project_repo_leaders documents its lines as `<repo id><TAB><work tree>`.
+  while IFS=$'\t' read -r _ path; do
+    [[ -d "$path" ]] || continue
+    hint="$(python3 "$PROJECT_CONTEXT_PY" --root "$path" --hint 2>/dev/null)" || continue
+    [[ -n "$hint" ]] && hints+=("$path: $hint")
+  done < <(project_repo_leaders)
+  [[ ${#hints[@]} -gt 0 ]] || return 0
+  info "Repos whose agent instructions are still in CLAUDE.md (rename when ready):"
+  printf '  %s\n' "${hints[@]}"
+}
+
 sync_ai() {
   local _tool
   local -a _tools=()
@@ -206,6 +224,9 @@ sync_ai() {
 
   # Before any harness reads model config out of ~/.env.local.
   ai_adopt_legacy_model_vars
+
+  # Harness-neutral, so ahead of the per-tool syncs and whatever they select.
+  step_instructions_report
 
   while IFS= read -r _tool; do
     [[ -z "$_tool" ]] && continue

@@ -1,4 +1,5 @@
-"""SessionStart hook: reuse level, container root, ceiling nudge, issue tracker, PR template.
+"""SessionStart hook: reuse level, container root, ceiling nudge, issue tracker, PR template,
+instructions file.
 
 Six responsibilities, in the order run() handles them:
 1. Emit the active reuse level as session context
@@ -27,6 +28,7 @@ import sys
 from pathlib import Path
 
 import core.pr_template
+import core.project_context
 import core.proc
 import core.timeouts
 import config.workbench_projects
@@ -70,7 +72,7 @@ def _container_line(cwd: str) -> str | None:
     The `claude` shell wrapper launches a session started at a container in the
     worktree instead, so a session that is still rooted there came in past it —
     `command claude`, a launcher that is not zsh. Such a session never loaded
-    the repo's `CLAUDE.md` or `.claude/` rules, and every command it runs lands
+    the repo's `AGENTS.md` (or legacy `CLAUDE.md`) or `.claude/` rules, and every command it runs lands
     where `git status` fails. Nothing else says so: a session missing its
     instructions looks exactly like one that has them. This is the Claude half
     of the backstop; Pi's is `ai/pi/extensions/container-context`.
@@ -86,7 +88,7 @@ def _container_line(cwd: str) -> str | None:
     if found.ok:
         return (
             f"Session root: {cwd} is a bare-repo container, so this session"
-            f" did not load the repo's CLAUDE.md or .claude/ rules. Its"
+            f" did not load the repo's AGENTS.md or .claude/ rules. Its"
             f" worktree is {found.path} — read them there, run git and repo"
             " commands there, and suggest the user relaunch inside it"
         )
@@ -98,7 +100,7 @@ def _container_line(cwd: str) -> str | None:
         return None
     return (
         f"Session root: {cwd} is a bare-repo container with no resolvable"
-        " worktree, so the repo's CLAUDE.md, .claude/ rules and settings were"
+        " worktree, so the repo's AGENTS.md, .claude/ rules and settings were"
         " not loaded — tell the user and suggest starting inside a worktree"
     )
 
@@ -171,6 +173,16 @@ def _pr_template_line(repo: str) -> str:
         return f"PR template: none in this repo — use the fallback ({sections})"
     return f"PR template: {template.path} ({sections})"
 
+def _instructions_line(repo: str) -> str | None:
+    """A suggestion to move the repo's CLAUDE.md to AGENTS.md, or None.
+
+    Only a suggestion: the file is tracked in the repo and renaming it is the
+    repo's call, so the workbench never does it. Silent for a repo already on
+    AGENTS.md, and for one with no instructions file at all.
+    """
+    hint = core.project_context.migration_hint(core.project_context.resolve(Path(repo)))
+    return f"Instructions file: {hint}" if hint else None
+
 def run() -> None:
     lines: list[str] = []
 
@@ -196,6 +208,9 @@ def run() -> None:
     if repo:
         lines.append(_issues_line(repo))
         lines.append(_pr_template_line(repo))
+        instructions = _instructions_line(repo)
+        if instructions:
+            lines.append(instructions)
 
     if lines:
         print("\n".join(lines))

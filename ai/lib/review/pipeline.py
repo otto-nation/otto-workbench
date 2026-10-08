@@ -250,7 +250,7 @@ def _group_merge_cap(job: ReviewJob) -> int:
     fixed = TEMPLATE_OVERHEAD_BYTES
     if pf is not None:
         fixed += fixed_preflight_bytes(
-            pf.claude_md, pf.architecture_md, pf.review_checklists,
+            pf.instructions_md, pf.architecture_md, pf.review_checklists,
             pf.review_profiles,
         )
     return max(MIN_DIFF_BYTES, ladder_target_bytes(model, selected_backend()) - fixed)

@@ -262,7 +262,7 @@ class TestCollectPreflightData:
         assert "main.go" in data.file_contents
         assert "main.go" in data.file_permissions
         assert data.file_permissions["main.go"] != "?"
-        assert "# Project" in data.claude_md
+        assert "# Project" in data.instructions_md
         assert "## Known Constraints" in data.architecture_md
         assert "security.md" in data.review_checklists
         assert len(data.diff) > 0

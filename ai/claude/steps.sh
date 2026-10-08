@@ -638,6 +638,21 @@ _export_claude_config() {
   done
 }
 
+# step_claude_version — warns when the installed Claude Code predates
+# CLAUDE_CODE_MIN_VERSION, the first release that reads a repo's AGENTS.md as
+# its project instructions. otto-workbench writes AGENTS.md and requires that
+# release; an older one silently loads no project instructions at all. Warns
+# rather than updating: `claude update` is the operator's to run.
+step_claude_version() {
+  local have
+  have="$(claude --version 2>/dev/null | sed -n '1s/^\([0-9][0-9.]*\).*/\1/p')" || have=""
+  [[ -n "$have" ]] || return 0
+  if version_at_least "$have" "$CLAUDE_CODE_MIN_VERSION"; then
+    return 0
+  fi
+  warn "Claude Code $have is older than $CLAUDE_CODE_MIN_VERSION, which otto-workbench requires — it reads AGENTS.md natively from there. Run: claude update"
+}
+
 # sync_claude — runs all Claude sync steps non-interactively.
 # Called automatically by otto-workbench sync via the sync_<tool> convention.
 # Skips silently if claude is not installed on this machine.
@@ -661,6 +676,7 @@ sync_claude() {
   fi
 
   command -v claude >/dev/null 2>&1 || { warn "claude not found in PATH — skipping"; return; }
+  step_claude_version
 
   sync_header "claude scripts → $LOCAL_BIN_DIR/"
   sync_component_bin "$CLAUDE_SRC_DIR"

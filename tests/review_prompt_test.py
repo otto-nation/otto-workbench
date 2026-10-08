@@ -111,7 +111,7 @@ class TestBuildPromptRefusesAnOversizedPrompt:
         from review.prompt import PromptTooLarge
         from review.registry import build_prompt
 
-        job = self._job(tmp_path, claude_md=self.UNBUDGETABLE)
+        job = self._job(tmp_path, instructions_md=self.UNBUDGETABLE)
         with pytest.raises(PromptTooLarge) as exc:
             build_prompt(Phase.SCOUT, job, max_turns=10)
         assert exc.value.prompt_bytes > self.CEILING
@@ -121,7 +121,7 @@ class TestBuildPromptRefusesAnOversizedPrompt:
         from review.prompt import PromptTooLarge
         from review.registry import build_prompt
 
-        job = self._job(tmp_path, claude_md=self.UNBUDGETABLE)
+        job = self._job(tmp_path, instructions_md=self.UNBUDGETABLE)
         with pytest.raises(PromptTooLarge):
             build_prompt(Phase.SCOUT, job, max_turns=10)
         stats = json.loads((tmp_path / "prompt-stats.json").read_text())

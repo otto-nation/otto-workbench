@@ -9,11 +9,11 @@ bash, zsh, python (the `ai/` subsystem — `ai/lib/`, `ai/bin/` and `ai/claude/b
 ## Commands
 
 ```bash
-bin/local/run-tests            # run both suites in parallel (what the Taskfile, pre-push, and CI call)
-bin/local/run-tests --bats     # run only the bats suite
-bin/local/run-tests --pytest   # run only the pytest suite
-bats tests/<file>.bats         # run one bats suite
-pytest tests/<file>.py         # run one Python suite
+bats tests/<file>.bats         # run one bats suite — the way to test locally
+pytest tests/<file>.py         # run one Python suite — the way to test locally
+bin/local/run-tests            # both whole suites: CI and the pre-push hook only, never by hand
+bin/local/run-tests --bats     # the whole bats suite: CI and the pre-push hook only
+bin/local/run-tests --pytest   # the whole pytest suite: CI and the pre-push hook only
 shellcheck <file>.sh           # lint a script
 bin/local/validate-all               # run every validator
 bin/validate-* / bin/local/validate-*  # the individual validators validate-all discovers
@@ -27,11 +27,18 @@ npm --prefix site test         # run the site's remark plugin tests
 npm --prefix site run build    # static-export the site to site/out (what CI's Site job runs)
 ```
 
-**Do not run a whole suite by hand before pushing.** The pre-push hook already runs
-`bin/local/validate-all` and both suites, selecting the bats files your diff affects, so a
-manual whole-suite run beforehand buys nothing and costs twice. Push and read what the hook
-reports. Run a *single* file (`bats tests/one.bats`, `pytest tests/one.py`) while iterating
-on it — that is the loop this rule leaves alone.
+**Never run a whole suite locally — CI runs everything.** Run only the test files the change
+needs: the suite for each file you touched, and any suite whose subject you changed
+(`bats tests/one.bats tests/two.bats`, `pytest tests/one_test.py`). That covers checking a
+change, a revert check, and confirming a fix — none of them is a reason to run every file.
+Not `bin/local/run-tests` with no `--files`, not `bats tests/`, not a bare `pytest`, and not
+in a background job either. Push and let CI answer for the rest; the pre-push hook already
+runs `bin/local/validate-all` and the suites your diff selects, so a whole-suite run before
+pushing buys nothing and costs twice.
+
+When CI fails, run the failing file locally, not the suite around it. When you need to know
+which files a change reaches, `bin/local/select-tests` and `bin/local/select-pytest` answer
+from the diff without running anything.
 
 The cost is not merely the wasted minutes. The runner sizes itself from the cores the machine
 is not already using — the sizing described below — so a hand-started suite racing the hook's
@@ -58,9 +65,9 @@ in other worktrees, which is not recoverable for whoever was running them.
 
 Pre-push and CI run three gates independently — `bin/local/validate-all`,
 `bin/local/run-tests --bats`, and `bin/local/run-tests --pytest`. Passing one is not
-passing the gate. The runner owns the parallelism for both suites, so a whole-suite run
-goes through it rather than spelling `--jobs`/`-n` out again; a single file still goes
-straight to `bats`/`pytest`.
+passing the gate. The runner owns the parallelism for those whole-suite runs, so they go
+through it rather than spelling `--jobs`/`-n` out again; a single file — the only thing run
+by hand — goes straight to `bats`/`pytest`.
 
 There is no virtualenv and no Python dependency manager here — `pyproject.toml` only sets
 pytest's `testpaths`, and nothing is installed from it. Run `pytest` and `bats` as bare

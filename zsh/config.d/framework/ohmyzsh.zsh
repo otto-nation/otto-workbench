@@ -18,6 +18,10 @@
 
 export ZSH="$HOME/.oh-my-zsh"
 
+# zsh-completions, when zsh/steps.sh cloned it (no Homebrew): its functions
+# must be on fpath before oh-my-zsh runs compinit below.
+fpath=("${XDG_DATA_HOME:-$HOME/.local/share}"/zsh/plugins/zsh-completions/src(N/) $fpath)
+
 # Empty theme — starship (prompt/starship.zsh) manages the prompt.
 # Setting a theme here would conflict with starship's PROMPT hook.
 ZSH_THEME=""

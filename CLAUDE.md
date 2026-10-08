@@ -12,8 +12,8 @@ bash, zsh, python (the `ai/` subsystem — `ai/lib/`, `ai/bin/` and `ai/claude/b
 bats tests/<file>.bats         # run one bats suite — the way to test locally
 pytest tests/<file>.py         # run one Python suite — the way to test locally
 bin/local/run-tests            # both whole suites: CI and the pre-push hook only, never by hand
-bin/local/run-tests --bats     # the whole bats suite: CI and the pre-push hook only
-bin/local/run-tests --pytest   # the whole pytest suite: CI and the pre-push hook only
+bin/local/run-tests --bats     # the whole bats suite: CI and the pre-push hook only, never by hand
+bin/local/run-tests --pytest   # the whole pytest suite: CI and the pre-push hook only, never by hand
 shellcheck <file>.sh           # lint a script
 bin/local/validate-all               # run every validator
 bin/validate-* / bin/local/validate-*  # the individual validators validate-all discovers
@@ -29,7 +29,7 @@ npm --prefix site run build    # static-export the site to site/out (what CI's S
 
 **Never run a whole suite locally — CI runs everything.** Run only the test files the change
 needs: the suite for each file you touched, and any suite whose subject you changed
-(`bats tests/one.bats tests/two.bats`, `pytest tests/one_test.py`). That covers checking a
+(`bats tests/one.bats tests/two.bats`, `pytest tests/one_test.py tests/two_test.py`). That covers checking a
 change, a revert check, and confirming a fix — none of them is a reason to run every file.
 Not `bin/local/run-tests` with no `--files`, not `bats tests/`, not a bare `pytest`, and not
 in a background job either. Push and let CI answer for the rest; the pre-push hook already
@@ -37,8 +37,11 @@ runs `bin/local/validate-all` and the suites your diff selects, so a whole-suite
 pushing buys nothing and costs twice.
 
 When CI fails, run the failing file locally, not the suite around it. When you need to know
-which files a change reaches, `bin/local/select-tests` and `bin/local/select-pytest` answer
-from the diff without running anything.
+which files a change reaches, `bin/local/select-tests --base <ref>` and
+`bin/local/select-pytest --base <ref>` print the affected absolute paths, one per line, from
+the diff without running anything; feed that output straight to `bats`/`pytest`, e.g.
+`bats $(bin/local/select-tests --base origin/main)` or
+`pytest $(bin/local/select-pytest --base origin/main)`.
 
 The cost is not merely the wasted minutes. The runner sizes itself from the cores the machine
 is not already using — the sizing described below — so a hand-started suite racing the hook's

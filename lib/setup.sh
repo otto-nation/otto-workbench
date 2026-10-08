@@ -189,7 +189,13 @@ _cmd_runnable() {
 # the fallback work on the first run instead of the second.
 _bootstrap_mise() {
   install_via_installer mise "$MISE_INSTALL_URL" mise || return 1
-  ensure_tool_path
+  # Only the directory mise's installer writes to. ensure_tool_path would also
+  # put an off-PATH Homebrew on PATH, switching the caller to brew halfway
+  # through a decision it made because there was none.
+  case ":$PATH:" in
+    *":$LOCAL_BIN_DIR:"*) ;;
+    *) export PATH="$LOCAL_BIN_DIR:$PATH" ;;
+  esac
   if ! command -v mise >/dev/null 2>&1; then
     warn "mise's installer ran but left no mise on PATH (looked in $LOCAL_BIN_DIR) — open a new shell and re-run"
     return 1

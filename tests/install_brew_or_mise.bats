@@ -68,6 +68,7 @@ _run_install() {
   bash -c '
     HOME="$3"
     . "$2/lib/ui.sh"
+    [[ -z "${HOMEBREW_BIN_DIR_LINUX_OVERRIDE:-}" ]] || HOMEBREW_BIN_DIR_LINUX="$HOMEBREW_BIN_DIR_LINUX_OVERRIDE"
     run_remote_installer() {
       [[ -n "${INSTALLER_STUB:-}" ]] || return 1
       echo "$1" >> "$INSTALLER_LOG"
@@ -164,6 +165,27 @@ EOF2
   [ "$(cat "$MISE_LOG")" = "use -g rtk" ]
   [[ "$output" == *"mise installed"* ]]
   [[ "$output" == *"RTK installed"* ]]
+}
+
+@test "the bootstrap does not pull an off-PATH Homebrew in halfway" {
+  # The CI runner's shape: Homebrew installed under its Linux prefix but not on
+  # PATH. A bootstrap that adds every tool dir would find it and switch to a
+  # real brew install mid-decision.
+  export INSTALLER_LOG="$TMPDIR/installer-log"
+  export INSTALLER_STUB="$TMPDIR/fake-mise-installer"
+  cat > "$INSTALLER_STUB" <<EOF2
+#!/usr/bin/env bash
+mkdir -p "$TMPDIR/home/.local/bin"
+ln -sf "$STUBS/mise" "$TMPDIR/home/.local/bin/mise"
+EOF2
+  chmod +x "$INSTALLER_STUB"
+  mkdir -p "$TMPDIR/linuxbrew"
+  printf '#!/bin/sh\necho "BREW $*" >> "%s"\n' "$BREW_LOG" > "$TMPDIR/linuxbrew/brew"
+  chmod +x "$TMPDIR/linuxbrew/brew"
+  HOMEBREW_BIN_DIR_LINUX_OVERRIDE="$TMPDIR/linuxbrew" run _run_install "$(_path_with)"
+  [ "$status" -eq 0 ]
+  [ ! -e "$BREW_LOG" ]
+  [ "$(cat "$MISE_LOG")" = "use -g rtk" ]
 }
 
 @test "the mise component installs from the same URL constant as the bootstrap" {

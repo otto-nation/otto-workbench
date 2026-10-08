@@ -409,7 +409,7 @@ fi
 # ── Pytest ──────────────────────────────────────────────────────────────────
 
 if ! command -v pytest >/dev/null 2>&1; then
-  warn "pytest not found — skipping Python tests (brew install pytest, or: mise use -g pipx:pytest)"
+  warn "pytest not found — skipping Python tests (brew install pytest, or: mise use -g pipx:pytest[uvx_args=--with pytest-xdist])"
 else
   # Change-based selection, the same shape as the bats step above: only the
   # pytest files the diff can reach. Falls back to the whole suite when the

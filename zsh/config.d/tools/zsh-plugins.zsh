@@ -17,7 +17,8 @@ fi
 
 # Without Homebrew, zsh/steps.sh clones the same plugins under the XDG data dir
 # instead (ZSH_PLUGINS_DIR in lib/constants.sh, held to this path by
-# tests/zsh_plugins.bats).
+# tests/zsh_plugins.bats). Same (-.N) qualifier as above: (N) keeps an empty
+# plugins/ from tripping zsh's nomatch error, - follows symlinks.
 for plugin in "${XDG_DATA_HOME:-$HOME/.local/share}"/zsh/plugins/zsh-*/zsh-*.zsh(-.N); do
   source "$plugin"
 done

@@ -589,14 +589,23 @@ step_global_hooks() {
 }
 
 # step_install_hook_tools — installs what the global hooks run: gitleaks for the
-# secret scan in pre-commit and pre-push, and bats and shellcheck for the
-# workbench's own pre-push checks. Homebrew where it exists, mise otherwise — the brew component
-# is macOS-only, so on Linux nothing else installs them. Non-fatal: each hook
-# refuses with its own install hint when its tool is still missing.
+# secret scan in pre-commit and pre-push, and bats, shellcheck and pytest for
+# the workbench's own pre-push checks. Homebrew where it exists, mise otherwise —
+# the brew component is macOS-only, so on Linux nothing else installs them.
+# Non-fatal: each hook refuses with its own install hint when its tool is
+# still missing.
+#
+# pytest comes through mise's pipx backend, with pytest-xdist injected so
+# bin/local/run-tests can parallelise. That backend installs with uv, so uv is
+# installed first — only on the mise path, and only while pytest is missing.
 step_install_hook_tools() {
   install_brew_or_mise gitleaks gitleaks gitleaks gitleaks || true
   install_brew_or_mise bats bats-core bats bats-core || true
   install_brew_or_mise shellcheck shellcheck shellcheck shellcheck || true
+  if ! _cmd_runnable pytest && ! command -v brew >/dev/null 2>&1; then
+    install_brew_or_mise uv uv uv uv || true
+  fi
+  install_brew_or_mise pytest pytest "pipx:pytest[uvx_args=--with pytest-xdist]" pytest || true
 }
 
 # step_local_hooks — installs repo-local hooks into .git/hooks/ for the workbench repo.

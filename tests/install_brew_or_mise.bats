@@ -204,6 +204,7 @@ _run_caller() {
     warn()    { echo "WARN $*"; }
     info()    { echo "INFO $*"; }
     install_brew_or_mise() { echo "HELPER $*"; return "${HELPER_STATUS:-1}"; }
+    _cmd_runnable() { command -v "$1" >/dev/null 2>&1; }
     . "$1"
     PATH="${CALLER_PATH:-/usr/bin:/bin}"
     "$2"
@@ -242,4 +243,18 @@ EOF2
   [[ "$output" == *"HELPER gitleaks gitleaks gitleaks gitleaks"* ]]
   [[ "$output" == *"HELPER bats bats-core bats bats-core"* ]]
   [[ "$output" == *"HELPER shellcheck shellcheck shellcheck shellcheck"* ]]
+}
+
+@test "without Homebrew, the hook-tools step installs uv before pytest with xdist" {
+  run _run_caller "$REPO_ROOT/git/steps.sh" step_install_hook_tools
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"HELPER uv uv uv uv"*"HELPER pytest pytest pipx:pytest[uvx_args=--with pytest-xdist] pytest"* ]]
+}
+
+@test "with Homebrew, the hook-tools step leaves uv alone" {
+  printf '#!/bin/sh\nexit 0\n' > "$STUBS/brew"
+  CALLER_PATH="$STUBS:/usr/bin:/bin" run _run_caller "$REPO_ROOT/git/steps.sh" step_install_hook_tools
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"HELPER uv "* ]]
+  [[ "$output" == *"HELPER pytest pytest "* ]]
 }

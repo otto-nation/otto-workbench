@@ -164,18 +164,26 @@ ensure_tool_path() {
 }
 
 # _cmd_runnable CMD — succeeds when CMD resolves on PATH to something that can
-# run. A mise shim with no active version resolves but only prints an error, so
-# a shim counts only when mise can name the binary behind it.
+# run. A mise shim with no active version resolves but only prints an error
+# unless a non-shim CMD sits later on PATH, which mise then falls back to — so a
+# shim counts when mise can name the binary behind it, or when such a system
+# binary exists.
 #
-# That state is ordinary: a tool one project pins in its own mise config is
-# installed and shimmed, but has no global version, so the shim fails in every
-# other directory.
+# The broken state is ordinary: a tool one project pins in its own mise config
+# is installed and shimmed, but has no global version, so with nothing on PATH
+# to fall back to the shim fails in every other directory. The fallback state
+# is just as ordinary — a distro jq behind a project-pinned one — and works.
 _cmd_runnable() {
-  local cmd="$1" path
+  local cmd="$1" path candidate
   path="$(command -v "$cmd" 2>/dev/null)" || return 1
   [[ "$path" == "$MISE_SHIMS_DIR/"* ]] || return 0
-  command -v mise >/dev/null 2>&1 || return 1
-  mise which "$cmd" >/dev/null 2>&1
+  if command -v mise >/dev/null 2>&1 && mise which "$cmd" >/dev/null 2>&1; then
+    return 0
+  fi
+  while IFS= read -r candidate; do
+    [[ "$candidate" == "$MISE_SHIMS_DIR/"* ]] || return 0
+  done < <(type -ap "$cmd")
+  return 1
 }
 
 # _bootstrap_mise — installs mise with its own installer, for a machine that

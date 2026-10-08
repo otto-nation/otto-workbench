@@ -234,6 +234,11 @@ tools:
     visibility: brief
     description: "Writes tests/weights.tsv from a bats junit report — the measured per-file runtimes the CI shard packer balances on"
 
+  - name: dev-deps
+    permission: false
+    visibility: brief
+    description: "Declares, installs (without root) and checks the workbench's development and test dependencies — run by task dev:setup, checked by the pre-push hook"
+
   - name: select-tests
     permission: false
     visibility: brief

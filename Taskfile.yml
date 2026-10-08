@@ -70,7 +70,7 @@ tasks:
       - wt-cleanup {{.CLI_ARGS}}
 
   dev:setup:
-    desc: "Activate git hooks for workbench development (run once after cloning)"
+    desc: "Activate git hooks and install the development dependencies (run once after cloning)"
     silent: true
     cmds:
       - git config --unset core.hooksPath 2>/dev/null || true
@@ -78,6 +78,7 @@ tasks:
       - 'printf "#!/usr/bin/env bash\nexec \"\$(git rev-parse --show-toplevel)/git/hooks/pre-commit-workbench\" \"\$@\"\n" > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit'
       - 'printf "#!/usr/bin/env bash\nexec \"\$(git rev-parse --show-toplevel)/git/hooks/pre-push-workbench\" \"\$@\"\n" > .git/hooks/pre-push && chmod +x .git/hooks/pre-push'
       - 'echo "✓ Git hooks activated (pre-commit: auto-regenerate, pre-push: lint + test)"'
+      - bin/local/dev-deps
 
   brew:dump:
     desc: "Regenerate brew/Brewfile from current state"

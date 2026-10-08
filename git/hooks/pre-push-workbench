@@ -142,12 +142,17 @@ parse or is untrusted. Check: command -v gitleaks; mise doctor
 $_gitleaks_output"
 fi
 
-# ── Validation ───────────────────────────────────────────────────────────────
+# ── Development dependencies ─────────────────────────────────────────────────
 
-if ! command -v yq >/dev/null 2>&1; then
-  err "yq not found — run: brew install yq"
+# Every tool the steps below run, checked up front against bin/local/dev-deps's
+# one declaration, so a missing one is named with its fix rather than surfacing
+# as a confusing failure halfway through. Installs nothing and runs no sudo.
+if ! "$REPO_ROOT/bin/local/dev-deps" --check; then
+  echo "  Install them with: task dev:setup (bin/local/dev-deps), then push again." >&2
   exit 1
 fi
+
+# ── Validation ───────────────────────────────────────────────────────────────
 
 _run_step "Validating conventions"     "$REPO_ROOT/bin/local/validate-all" --quiet
 
@@ -277,11 +282,6 @@ _pass
 
 # ── ShellCheck ───────────────────────────────────────────────────────────────
 
-if ! command -v shellcheck >/dev/null 2>&1; then
-  err "shellcheck not found — run: brew install shellcheck, or: mise use -g shellcheck"
-  exit 1
-fi
-
 _step "Running ShellCheck"
 if _sc_output=$(list_shell_scripts "$REPO_ROOT" | xargs shellcheck --severity=warning 2>&1); then
   _pass
@@ -338,11 +338,6 @@ else
 fi
 
 # ── Bats tests ───────────────────────────────────────────────────────────────
-
-if ! command -v bats >/dev/null 2>&1; then
-  err "bats not found — run: brew install bats-core, or: mise use -g bats"
-  exit 1
-fi
 
 # Change-based test selection: only run bats tests affected by the diff.
 # Falls back to the full suite when the selector is unavailable or when

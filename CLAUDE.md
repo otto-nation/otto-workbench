@@ -15,6 +15,8 @@ bin/local/run-tests --pytest   # run only the pytest suite
 bats tests/<file>.bats         # run one bats suite
 pytest tests/<file>.py         # run one Python suite
 shellcheck <file>.sh           # lint a script
+task dev:setup                 # hooks + development dependencies (bin/local/dev-deps)
+bin/local/dev-deps --check     # report missing development dependencies, install nothing
 bin/local/validate-all               # run every validator
 bin/validate-* / bin/local/validate-*  # the individual validators validate-all discovers
 bin/local/generate-tool-context      # regenerate tools.generated.md from registries
@@ -61,6 +63,11 @@ Pre-push and CI run three gates independently — `bin/local/validate-all`,
 passing the gate. The runner owns the parallelism for both suites, so a whole-suite run
 goes through it rather than spelling `--jobs`/`-n` out again; a single file still goes
 straight to `bats`/`pytest`.
+
+Every tool or system feature a test or the gate needs is a declared dependency in
+`bin/local/dev-deps` — never an optional one a test skips around. Adding such a need means
+adding it there: installable without root goes in its install list, anything else is checked
+and reported with the exact command, and nothing in the repo runs `sudo`.
 
 There is no virtualenv and no Python dependency manager here — `pyproject.toml` only sets
 pytest's `testpaths`, and nothing is installed from it. Run `pytest` and `bats` as bare

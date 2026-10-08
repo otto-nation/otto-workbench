@@ -595,17 +595,46 @@ step_global_hooks() {
 # Non-fatal: each hook refuses with its own install hint when its tool is
 # still missing.
 #
+# The ShellCheck binary is pinned on the mise path to the version CI installs,
+# read from the CI action rather than copied here: an older build flags
+# warnings CI does not (0.10 does not know bats assigns $stderr), so the gate
+# would refuse pushes CI passes. Homebrew does not pin, as
+# tests/shellcheck_version.bats already accepts.
+#
 # pytest comes through mise's pipx backend, with pytest-xdist injected so
 # bin/local/run-tests can parallelise. That backend installs with uv, so uv is
 # installed first — only on the mise path, and only while pytest is missing.
 step_install_hook_tools() {
   install_brew_or_mise gitleaks gitleaks gitleaks gitleaks || true
   install_brew_or_mise bats bats-core bats bats-core || true
-  install_brew_or_mise shellcheck shellcheck shellcheck shellcheck || true
+  _install_pinned_shellcheck || true
   if ! _cmd_runnable pytest && ! command -v brew >/dev/null 2>&1; then
     install_brew_or_mise uv uv uv uv || true
   fi
   install_brew_or_mise pytest pytest "pipx:pytest[uvx_args=--with pytest-xdist]" pytest || true
+}
+
+# _shellcheck_pin — the version the CI ShellCheck job installs, without its
+# leading `v`, or nothing when the action cannot be read.
+_shellcheck_pin() {
+  sed -n 's/^[[:space:]]*SHELLCHECK_VERSION:[[:space:]]*v//p' \
+    "$WORKBENCH_DIR/.github/actions/install-shellcheck/action.yml" 2>/dev/null
+}
+
+# _install_pinned_shellcheck — installs shellcheck through install_brew_or_mise,
+# at the CI pin on the mise path. A runnable shellcheck at another version is
+# moved to the pin as well, since the helper skips anything that already runs.
+_install_pinned_shellcheck() {
+  local pin have
+  pin="$(_shellcheck_pin)"
+  if [[ -n "$pin" ]] && ! command -v brew >/dev/null 2>&1 && _cmd_runnable shellcheck; then
+    have="$(shellcheck --version 2>/dev/null | sed -n 's/^version: //p')"
+    [[ "$have" == "$pin" ]] && { success "shellcheck $pin already installed"; return 0; }
+    info "Moving shellcheck $have to the CI pin $pin via mise..."
+    mise use -g "shellcheck@$pin" || { warn "mise could not install shellcheck $pin — run: mise use -g shellcheck@$pin"; return 1; }
+    return 0
+  fi
+  install_brew_or_mise shellcheck shellcheck "shellcheck${pin:+@$pin}" shellcheck
 }
 
 # step_local_hooks — installs repo-local hooks into .git/hooks/ for the workbench repo.

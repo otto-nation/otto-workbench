@@ -205,10 +205,11 @@ _run_caller() {
     info()    { echo "INFO $*"; }
     install_brew_or_mise() { echo "HELPER $*"; return "${HELPER_STATUS:-1}"; }
     _cmd_runnable() { command -v "$1" >/dev/null 2>&1; }
+    WORKBENCH_DIR="$3"
     . "$1"
     PATH="${CALLER_PATH:-/usr/bin:/bin}"
     "$2"
-  ' _ "$1" "$2"
+  ' _ "$1" "$2" "$REPO_ROOT"
 }
 
 @test "step_install_rtk installs rtk through the brew-or-mise helper" {
@@ -242,7 +243,38 @@ EOF2
   [ "$status" -eq 0 ]
   [[ "$output" == *"HELPER gitleaks gitleaks gitleaks gitleaks"* ]]
   [[ "$output" == *"HELPER bats bats-core bats bats-core"* ]]
-  [[ "$output" == *"HELPER shellcheck shellcheck shellcheck shellcheck"* ]]
+  [[ "$output" == *"HELPER shellcheck shellcheck shellcheck@$(_sc_pin) shellcheck"* ]]
+}
+
+# _sc_pin — the CI action's shellcheck pin, read the way the step reads it, so
+# the expected value has one owner.
+_sc_pin() {
+  sed -n 's/^[[:space:]]*SHELLCHECK_VERSION:[[:space:]]*v//p' \
+    "$REPO_ROOT/.github/actions/install-shellcheck/action.yml"
+}
+
+# _sc_lab VERSION — a PATH with mise and a shellcheck reporting VERSION, and no
+# brew, so the pinned-shellcheck step takes the mise path.
+_sc_lab() {
+  local dir="$TMPDIR/sc-lab"
+  mkdir -p "$dir"
+  ln -sf "$STUBS/mise" "$dir/mise"
+  printf '#!/bin/sh\necho "ShellCheck"\necho "version: %s"\n' "$1" > "$dir/shellcheck"
+  chmod +x "$dir/shellcheck"
+  echo "$dir:/usr/bin:/bin"
+}
+
+@test "a shellcheck at another version is moved to the CI pin on the mise path" {
+  [ -n "$(_sc_pin)" ]
+  CALLER_PATH="$(_sc_lab 0.0.1)" run _run_caller "$REPO_ROOT/git/steps.sh" _install_pinned_shellcheck
+  [ "$status" -eq 0 ]
+  [ "$(cat "$MISE_LOG")" = "use -g shellcheck@$(_sc_pin)" ]
+}
+
+@test "a shellcheck already at the CI pin is left alone" {
+  CALLER_PATH="$(_sc_lab "$(_sc_pin)")" run _run_caller "$REPO_ROOT/git/steps.sh" _install_pinned_shellcheck
+  [ "$status" -eq 0 ]
+  [ ! -e "$MISE_LOG" ]
 }
 
 @test "without Homebrew, the hook-tools step installs uv before pytest with xdist" {

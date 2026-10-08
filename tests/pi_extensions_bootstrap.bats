@@ -66,7 +66,7 @@ _section() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"subagent tool's own model guidance"* ]]
   [[ "$output" == *'pass `model` explicitly'* ]]
-  [[ "$output" == *'omit it'* ]]
+  [[ "$output" == *'pins subagents to the parent model'* ]]
   [[ "$output" == *'model tiers'* ]]
   [[ "$output" == *'pi-subagents'* ]]
 }

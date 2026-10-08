@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Pre-commit hook: rejects placeholder commit identities, then scans staged
-# changes for secrets before they enter history.
+# Pre-commit hook: rejects placeholder commit identities and signing that would
+# hang on a passphrase prompt nobody can see, then scans staged changes for
+# secrets before they enter history.
 # Installed globally by git/steps.sh → ~/.git-hooks/pre-commit
 #
 # For global protection (all repos), the workbench install configures
@@ -90,6 +91,60 @@ _assert_real_identity() {
 }
 
 _assert_real_identity
+
+# _can_prompt — true when a pinentry could reach a person: a macOS GUI session,
+# an X11 or Wayland display, or a controlling terminal.
+#
+# WORKBENCH_UNAME and WORKBENCH_TTY_DEVICE stand in for `uname -s` and
+# /dev/tty so a test can choose the answer; nothing else sets them.
+_can_prompt() {
+  [[ "${WORKBENCH_UNAME:-$(uname -s)}" == Darwin ]] && return 0
+  [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]] && return 0
+  { : < "${WORKBENCH_TTY_DEVICE:-/dev/tty}"; } 2>/dev/null
+}
+
+# _assert_signing_ready — refuses a commit whose OpenPGP signature would wait on
+# a passphrase prompt nobody can see.
+#
+# With commit.gpgsign on and the key's passphrase not cached, gpg asks pinentry
+# for it. From a shell with no terminal and no display — an agent's, a job
+# runner's — pinentry-curses draws on whatever GPG_TTY names, or nowhere, and
+# `git commit` hangs with no output. A non-interactive signature probe settles
+# whether a prompt is needed; only when gpg fails for want of one, and no prompt
+# could be shown, is the commit refused, with the commands that fix it.
+#
+# The hook cannot see `git commit --no-gpg-sign`, so the refusal names
+# `git -c commit.gpgsign=false commit`, which it can.
+_assert_signing_ready() {
+  [[ "$(git config --type=bool commit.gpgsign 2>/dev/null || true)" == true ]] || return 0
+  [[ "$(git config gpg.format 2>/dev/null || echo openpgp)" == openpgp ]] || return 0
+
+  local gpg key err
+  gpg="$(git config gpg.openpgp.program 2>/dev/null || git config gpg.program 2>/dev/null || echo gpg)"
+  key="$(git config user.signingkey 2>/dev/null || true)"
+  local args=(--batch --no-tty --pinentry-mode error --clearsign)
+  [[ -z "$key" ]] || args+=(--local-user "$key")
+  if err="$(printf 'probe\n' | "$gpg" "${args[@]}" 2>&1 >/dev/null)"; then
+    return 0
+  fi
+  # Only a failure for want of a prompt would hang. An expired, revoked or
+  # missing key fails just as fast when git signs, and gpg's own message there
+  # is the accurate one, so the commit is left to report it.
+  printf '%s' "$err" | grep -qiE 'pinentry|passphrase' || return 0
+  _can_prompt && return 0
+
+  echo "✗ commit signing cannot finish here — gpg needs a passphrase prompt and this"
+  echo "  shell has no terminal or display to show one, so git would wait forever."
+  [[ -z "$err" ]] || printf '%s\n' "$err" | sed 's/^/  gpg: /'
+  echo "  Unlock the key from a real terminal, then retry:"
+  echo "    echo test | $gpg --clearsign ${key:+-u $key }>/dev/null"
+  echo "  For a key used only on this machine, removing its passphrase ends the"
+  echo "  prompt for good: $gpg --passwd${key:+ $key}"
+  echo "  To commit unsigned once: git -c commit.gpgsign=false commit ..."
+  exit 1
+}
+
+_assert_signing_ready
 
 if ! command -v gitleaks >/dev/null 2>&1; then
   echo "✗ gitleaks not found — run: brew install gitleaks"

@@ -35,6 +35,14 @@ EOF
   # shims, which is not on PATH — exactly the state a fresh mise install leaves.
   cat > "$STUBS/mise" <<'EOF'
 #!/usr/bin/env bash
+# `mise which TOOL` names the binary behind a shim; it fails for a shim with no
+# active version, which MISE_WHICH_FAILS models. Not logged: the log records
+# installs.
+if [[ "$1" == which ]]; then
+  [[ -z "${MISE_WHICH_FAILS:-}" ]] || exit 1
+  echo "$MISE_DATA_DIR/installs/$2/bin/$2"
+  exit 0
+fi
 echo "$*" >> "$MISE_LOG"
 [[ -z "${MISE_INSTALL_FAILS:-}" ]] || exit 1
 mkdir -p "$MISE_DATA_DIR/shims"
@@ -154,6 +162,34 @@ EOF2
   [[ "$output" == *"mise use -g rtk"* ]]
 }
 
+# ─── A shim with no active version ───────────────────────────────────────────
+# A tool one project pins in its own mise config is installed and shimmed but has
+# no global version, so its shim resolves on PATH and fails everywhere else.
+
+# _plant_shim — an rtk shim under the mise shims dir, as that state leaves it.
+_plant_shim() {
+  mkdir -p "$MISE_DATA_DIR/shims"
+  printf '#!/bin/sh\nexit 1\n' > "$MISE_DATA_DIR/shims/rtk"
+  chmod +x "$MISE_DATA_DIR/shims/rtk"
+}
+
+@test "a mise shim with no active version is installed globally rather than skipped" {
+  _plant_shim
+  export MISE_WHICH_FAILS=1
+  run _run_install "$MISE_DATA_DIR/shims:$(_path_with mise)"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"RTK already installed"* ]]
+  [ "$(cat "$MISE_LOG")" = "use -g rtk" ]
+}
+
+@test "a mise shim that resolves to an active version is not reinstalled" {
+  _plant_shim
+  run _run_install "$MISE_DATA_DIR/shims:$(_path_with mise)"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"RTK already installed"* ]]
+  [ ! -e "$MISE_LOG" ]
+}
+
 # ─── Callers ─────────────────────────────────────────────────────────────────
 # The callers pass their own formula and mise tool names; a swapped or misspelt
 # name installs nothing on the machines that need the fallback, so the wiring
@@ -168,10 +204,12 @@ _run_caller() {
     warn()    { echo "WARN $*"; }
     info()    { echo "INFO $*"; }
     install_brew_or_mise() { echo "HELPER $*"; return "${HELPER_STATUS:-1}"; }
+    _cmd_runnable() { command -v "$1" >/dev/null 2>&1; }
+    WORKBENCH_DIR="$3"
     . "$1"
     PATH="${CALLER_PATH:-/usr/bin:/bin}"
     "$2"
-  ' _ "$1" "$2"
+  ' _ "$1" "$2" "$REPO_ROOT"
 }
 
 @test "step_install_rtk installs rtk through the brew-or-mise helper" {
@@ -198,4 +236,68 @@ EOF2
   [ "$status" -eq 0 ]
   [[ "$output" == *"Worktrunk Claude plugin already installed"* ]]
   [[ "$output" != *"skipped"* ]]
+}
+
+@test "the git hook-tools step installs gitleaks, bats and shellcheck through the helper" {
+  run _run_caller "$REPO_ROOT/git/steps.sh" step_install_hook_tools
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"HELPER gitleaks gitleaks gitleaks gitleaks"* ]]
+  [[ "$output" == *"HELPER bats bats-core bats bats-core"* ]]
+  [[ "$output" == *"HELPER shellcheck shellcheck shellcheck@$(_sc_pin) shellcheck"* ]]
+}
+
+# _sc_pin — the CI action's shellcheck pin, read the way the step reads it, so
+# the expected value has one owner.
+_sc_pin() {
+  sed -n 's/^[[:space:]]*SHELLCHECK_VERSION:[[:space:]]*v//p' \
+    "$REPO_ROOT/.github/actions/install-shellcheck/action.yml"
+}
+
+# _sc_lab VERSION — a PATH with mise and a shellcheck reporting VERSION, and no
+# brew, so the pinned-shellcheck step takes the mise path.
+_sc_lab() {
+  local dir="$TMPDIR/sc-lab"
+  mkdir -p "$dir"
+  ln -sf "$STUBS/mise" "$dir/mise"
+  printf '#!/bin/sh\necho "ShellCheck"\necho "version: %s"\n' "$1" > "$dir/shellcheck"
+  chmod +x "$dir/shellcheck"
+  echo "$dir:/usr/bin:/bin"
+}
+
+@test "a shellcheck at another version is moved to the CI pin on the mise path" {
+  [ -n "$(_sc_pin)" ]
+  CALLER_PATH="$(_sc_lab 0.0.1)" run _run_caller "$REPO_ROOT/git/steps.sh" _install_pinned_shellcheck
+  [ "$status" -eq 0 ]
+  [ "$(cat "$MISE_LOG")" = "use -g shellcheck@$(_sc_pin)" ]
+}
+
+@test "a distro shellcheck with no mise is left to the helper rather than run through mise" {
+  # The CI runner's shape: an apt shellcheck at another version, no brew, no mise.
+  local dir="$TMPDIR/sc-nomise"
+  mkdir -p "$dir"
+  printf '#!/bin/sh\necho "ShellCheck"\necho "version: 0.0.1"\n' > "$dir/shellcheck"
+  chmod +x "$dir/shellcheck"
+  CALLER_PATH="$dir:/usr/bin:/bin" run _run_caller "$REPO_ROOT/git/steps.sh" _install_pinned_shellcheck
+  [[ "$output" != *"mise: command not found"* ]]
+  [[ "$output" == *"HELPER shellcheck shellcheck shellcheck@$(_sc_pin) shellcheck"* ]]
+}
+
+@test "a shellcheck already at the CI pin is left alone" {
+  CALLER_PATH="$(_sc_lab "$(_sc_pin)")" run _run_caller "$REPO_ROOT/git/steps.sh" _install_pinned_shellcheck
+  [ "$status" -eq 0 ]
+  [ ! -e "$MISE_LOG" ]
+}
+
+@test "without Homebrew, the hook-tools step installs uv before pytest with xdist" {
+  run _run_caller "$REPO_ROOT/git/steps.sh" step_install_hook_tools
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"HELPER uv uv uv uv"*"HELPER pytest pytest pipx:pytest[uvx_args=--with pytest-xdist] pytest"* ]]
+}
+
+@test "with Homebrew, the hook-tools step leaves uv alone" {
+  printf '#!/bin/sh\nexit 0\n' > "$STUBS/brew"
+  CALLER_PATH="$STUBS:/usr/bin:/bin" run _run_caller "$REPO_ROOT/git/steps.sh" step_install_hook_tools
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"HELPER uv "* ]]
+  [[ "$output" == *"HELPER pytest pytest "* ]]
 }

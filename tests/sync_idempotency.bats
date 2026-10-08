@@ -29,6 +29,12 @@ _source_with() {
   source "$REPO_ROOT/lib/ui.sh"
   # shellcheck source=/dev/null
   source "$REPO_ROOT/$steps"
+  # A sync installs missing tools through brew or `mise use -g`, and mise here
+  # reads the developer's real global config. Idempotency of the symlinks and
+  # includes is the subject, never installing software onto the machine.
+  # Stubbed for every steps file, not only git's: any sync step may install
+  # through this helper (rtk's does).
+  install_brew_or_mise() { :; }
 }
 
 # _symlinks DIR [DEPTH] — prints "rel/path -> target" for each symlink under DIR, sorted.

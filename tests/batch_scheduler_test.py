@@ -454,3 +454,11 @@ def test_a_ci_step_runs_against_the_planned_remote_head():
     h.sched.run_until_blocked()
     assert h.spawned == [["ci-check", "--fix", "--no-rebase", "--head-sha", "h",
                           "--repo-dir", "/wt/b1"]]
+
+
+def test_a_failed_step_records_the_log_it_wrote():
+    h = Harness([row(1)], codes={("rebase", "/wt/b1"): 1})
+    h.sched.run_until_blocked()
+    failed = next(d for d in h.run.decisions if d.kind is batch.model.DecisionKind.FAILED)
+    assert failed.payload["reason"] == "error"
+    assert failed.payload["log"].endswith("/logs/o__r-1-rebase-0.log")

@@ -119,7 +119,8 @@ class _Live:
     # Started with --wait: it spends minutes polling GitHub, not fetching.
     waits: bool = False
     peak: int = 0
-    tail: collections.deque = field(default_factory=lambda: collections.deque(maxlen=40))
+    tail: collections.deque = field(
+        default_factory=lambda: collections.deque(maxlen=batch.outcomes.LOG_TAIL_LINES))
 
 
 class Scheduler:
@@ -216,7 +217,7 @@ class Scheduler:
         base = rec.start_head or live.head_before
         result = batch.outcomes.classify(rec.step, code, live.proc.stdout(), item=item,
                                          log_tail=list(live.tail), head_before=base,
-                                         watch=rec.watch)
+                                         watch=rec.watch, log_path=rec.log_path)
         rec.exit_code, rec.ended_at, rec.status = code, batch.store.now_iso(), result.status
         if rec.watch and batch.outcomes.settled_report(live.proc.stdout()):
             item.ci_rechecked = True
@@ -252,7 +253,8 @@ class Scheduler:
         res = self._worktrees(item.repo_dir, item.branch)
         if not res.ok:
             _decide(self.run, item, "worktree", DecisionKind.FAILED,
-                    {"reason": "error", "detail": res.error}, emit=self._emit)
+                    {"reason": batch.outcomes.FailureReason.ERROR.value, "detail": res.error},
+                    emit=self._emit)
             return False
         if res.dirty:
             _decide(self.run, item, "worktree", DecisionKind.DIRTY_WORKTREE, {"path": res.path},
@@ -304,7 +306,8 @@ class Scheduler:
                                          self.run.ref_namespace))
         except batch.plan.PlanError as exc:
             _decide(self.run, item, rec.step.value, DecisionKind.FAILED,
-                    {"reason": "github", "detail": str(exc)}, emit=self._emit)
+                    {"reason": batch.outcomes.FailureReason.GITHUB.value, "detail": str(exc)},
+                    emit=self._emit)
             return None
         if fresh is None:
             item.status = ItemStatus.SKIPPED_CLOSED

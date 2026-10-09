@@ -6,8 +6,11 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 
+import batch.publish
 import git.client
 import pr.ci_report
 import pr.fix
@@ -19,10 +22,111 @@ from batch.model import DecisionKind, EvidenceKind, Item, Step, StepStatus
 from rebase.types import CONFLICTS_EXIT, REFUSAL_EXIT
 from review.types import severity_by_key
 
-# The phrase core.run_lock.report_busy prints; confirmed in Task 0 Step 5.
+# The phrase core.run_lock.LockBusy prints (core/run_lock.py).
 LOCK_BUSY_MARKER = "another pr run already owns this"
 _OWED = (pr.fix.FixOutcome.NEEDS_HUMAN, pr.fix.FixOutcome.DEFERRED)
 _SYNTHETIC_ID = re.compile(r"^(ic|rb)-\d+-\d+$")
+
+# How many trailing log lines a failure keeps: the scheduler's live tail and a
+# failed publish's payload both cut to this.
+LOG_TAIL_LINES = 40
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+# The glyphs core.log leads a line with.
+_GLYPHS = "✗⚠▸✓● "
+_SESSION_LOG = re.compile(r"Session log:\s*(\S+)")
+
+
+class FailureReason(StrEnum):
+    """Why a step or a publish failed, read from what it printed. Persisted in payloads."""
+
+    AI_PROMPT_FAILED = "ai_prompt_failed"
+    REVIEW_ORCHESTRATION_FAILED = "review_orchestration_failed"
+    PRE_PUSH_REJECTED = "pre_push_rejected"
+    LOCK_BUSY = "lock_busy"
+    PUSH_REJECTED = "push_rejected"
+    GITHUB = "github"
+    ERROR = "error"
+
+
+@dataclass(frozen=True)
+class Failure:
+    """A classified failure: the reason, the line that showed it, and any session log named."""
+
+    reason: FailureReason
+    detail: str = ""
+    session_log: str = ""
+
+
+@dataclass(frozen=True)
+class _Marker:
+    reason: FailureReason
+    phrases: tuple[str, ...]
+
+
+# Most specific outcome first, and the first marker with any matching line
+# wins: a hook rejection also prints "push refused", and a push after a review
+# mentions the review. Phrases are lowercase; lines are compared lowercased.
+# Text matching no marker is `error` — never a guess at a nearer reason.
+_MARKERS = (
+    _Marker(FailureReason.LOCK_BUSY, (LOCK_BUSY_MARKER,)),
+    _Marker(FailureReason.PRE_PUSH_REJECTED, (
+        "push refused (hook)", "pre-push checks failed",
+        "left uncommitted changes — not pushing")),
+    _Marker(FailureReason.PUSH_REJECTED, (
+        "push refused", "push dropped", "remote did not move",
+        "remote does not hold the commit")),
+    _Marker(FailureReason.REVIEW_ORCHESTRATION_FAILED, (
+        "produced no review file", "review orchestration failed")),
+    _Marker(FailureReason.AI_PROMPT_FAILED, ("ai prompt failed",)),
+)
+
+FAILURE_WHY: dict[str, str] = {
+    FailureReason.AI_PROMPT_FAILED.value: "an AI prompt the step depends on failed",
+    FailureReason.REVIEW_ORCHESTRATION_FAILED.value:
+        "the self-review's agents exited before writing a review",
+    FailureReason.PRE_PUSH_REJECTED.value:
+        "the pre-push checks rejected the push (a failing hook, or uncommitted work)",
+    FailureReason.LOCK_BUSY.value: "another pr run held this branch's lock",
+    FailureReason.PUSH_REJECTED.value: "git refused the push, or the remote did not keep it",
+    FailureReason.GITHUB.value: "GitHub could not be asked about the PR",
+    FailureReason.ERROR.value: "the step failed for a reason the batch does not recognise",
+    batch.publish.Refusal.REMOTE_MOVED.value: "someone pushed to the PR branch since the batch planned it",
+    batch.publish.Refusal.NOT_COMPARABLE.value: "the local and remote branches could not be compared",
+    batch.publish.Refusal.NOT_INCORPORATED.value:
+        "the rebase started from a tip that does not contain the PR's remote head",
+    batch.publish.Refusal.NOT_INCORPORATED_REMOTE.value:
+        "the remote has commits a push of the local branch would drop",
+    batch.publish.Refusal.FETCH_FAILED.value: "the PR branch could not be fetched",
+}
+# Written by runs before `lock_busy` existed; state files still carry it.
+FAILURE_WHY["busy"] = FAILURE_WHY[FailureReason.LOCK_BUSY]
+
+
+def why(reason: str) -> str:
+    """The sentence for a failed decision's `reason`; unknown reasons read as `error`."""
+    return FAILURE_WHY.get(reason, FAILURE_WHY[FailureReason.ERROR.value])
+
+
+def _clean(line: str) -> str:
+    return _ANSI.sub("", line).strip().lstrip(_GLYPHS).strip()
+
+
+def classify_failure(lines: Sequence[str]) -> Failure:
+    """Why a failed step or publish failed, from the lines it printed.
+
+    The detail is the first line that matched, with colour codes and core.log's
+    glyph stripped; unrecognised text is `error` with no detail. A `Session log:`
+    line names the review session the failure left, if any.
+    """
+    cleaned = [_clean(line) for line in lines]
+    session = next((m.group(1) for line in reversed(cleaned)
+                    if (m := _SESSION_LOG.search(line))), "")
+    for marker in _MARKERS:
+        hit = next((line for line in cleaned
+                    if any(p in line.lower() for p in marker.phrases)), "")
+        if hit:
+            return Failure(marker.reason, hit, session)
+    return Failure(FailureReason.ERROR, "", session)
 
 
 @dataclass(frozen=True)
@@ -168,12 +272,18 @@ def open_findings(item: Item) -> list[dict]:
              "declined": f.declined} for f in doc.open_findings]
 
 
-def _failed(exit_code: int, log_tail: list[str]) -> StepResult:
+def _failed(exit_code: int, log_tail: list[str], log_path: str) -> StepResult:
     # The lock-busy message is the child's final stderr line and log_tail keeps
-    # the last 40 lines, so it is always inside the tail.
-    reason = "busy" if any(LOCK_BUSY_MARKER in line for line in log_tail) else "error"
-    return StepResult(StepStatus.FAILED, [DecisionDraft(DecisionKind.FAILED, {
-        "reason": reason, "exit_code": exit_code, "log_tail": log_tail})])
+    # the last LOG_TAIL_LINES lines, so it is always inside the tail.
+    found = classify_failure(log_tail)
+    payload: dict = {"reason": found.reason.value, "exit_code": exit_code, "log_tail": log_tail}
+    if found.detail:
+        payload["detail"] = found.detail
+    if log_path:
+        payload["log"] = log_path
+    if found.session_log:
+        payload["session_log"] = found.session_log
+    return StepResult(StepStatus.FAILED, [DecisionDraft(DecisionKind.FAILED, payload)])
 
 
 def settled_report(stdout: str) -> dict | None:
@@ -203,7 +313,8 @@ def _needs(kind: DecisionKind, payloads: list[dict]) -> StepResult:
 
 
 def classify(step: Step, exit_code: int, stdout: str, *, item: Item,
-             log_tail: list[str], head_before: str = "", watch: bool = False) -> StepResult:
+             log_tail: list[str], head_before: str = "", watch: bool = False,
+             log_path: str = "") -> StepResult:
     """The status and decisions a finished step leaves, read from its stdout and the tree.
 
     A clean exit yields at most one `step_review` decision, carrying every
@@ -211,6 +322,7 @@ def classify(step: Step, exit_code: int, stdout: str, *, item: Item,
     *head_before* is the HEAD the step's first attempt started from; the
     `Fix-Checks:` trailers are read from every commit after it. A *watch* run
     is read before its exit code, which says nothing a final report does not.
+    *log_path* is the step's log, recorded on a failed decision.
     """
     if watch:
         return _watched(stdout)
@@ -219,7 +331,7 @@ def classify(step: Step, exit_code: int, stdout: str, *, item: Item,
     if step is Step.REBASE and exit_code == REFUSAL_EXIT:
         return _needs(DecisionKind.REBASE_REFUSED, [_rebase_payload(stdout, log_tail)])
     if exit_code != 0:
-        return _failed(exit_code, log_tail)
+        return _failed(exit_code, log_tail, log_path)
     drafts: list[DecisionDraft] = []
     if step is Step.COMMENTS:
         drafts.extend(DecisionDraft(DecisionKind.COMMENT_ITEM, p) for p in comment_items(item))

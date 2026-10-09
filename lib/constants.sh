@@ -306,9 +306,10 @@ SHELL_BREWFILE="$WORKBENCH_DIR/brew/shell/shell.Brewfile"
 # CLAUDE.md); bash asks it rather than keeping the candidate order itself.
 PROJECT_CONTEXT_PY="$WORKBENCH_DIR/ai/lib/core/project_context.py"
 # The first Claude Code release that reads AGENTS.md as project instructions on
-# its own. otto-workbench requires it; `ai sync` warns below it. Python carries
-# the same value in core/project_context.py; tests/project_context_test.py
-# holds the two together.
+# its own. otto-workbench's AGENTS.md support assumes it; `ai sync` warns below
+# it rather than failing. Python carries the same value in
+# core/project_context.py; tests/project_context_test.py holds the two
+# together.
 CLAUDE_CODE_MIN_VERSION="2.1.277"
 ZSH_LOADER_SRC="$ZSH_CONFIG_SRC_DIR/loader.zsh"
 ZSH_LOADER_DST="$ZSH_CONFIG_DIR/loader.zsh"

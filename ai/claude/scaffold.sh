@@ -135,8 +135,9 @@ Project conventions load from \`.claude/rules/\` automatically in Claude Code.
 Add personal rules as \`.claude/rules/<topic>.local.md\` (gitignored).
 
 This file lives at the repository root as AGENTS.md so every agent harness
-reads it — Claude Code and Pi both resolve it there, and neither looks inside
-\`.claude/\` for it.
+reads it — Claude Code (from version ${CLAUDE_CODE_MIN_VERSION}) and Pi both
+resolve it there, and neither looks inside \`.claude/\` for it. An older
+Claude Code needs \`claude update\` first; \`ai sync\` warns when it's behind.
 EOF
   success "AGENTS.md"
   if [[ -n "$existing" && "$existing" != "$target" ]]; then

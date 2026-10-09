@@ -640,7 +640,7 @@ _export_claude_config() {
 
 # step_claude_version — warns when the installed Claude Code predates
 # CLAUDE_CODE_MIN_VERSION, the first release that reads a repo's AGENTS.md as
-# its project instructions. otto-workbench writes AGENTS.md and requires that
+# its project instructions. otto-workbench writes AGENTS.md and expects that
 # release; an older one silently loads no project instructions at all. Warns
 # rather than updating: `claude update` is the operator's to run.
 step_claude_version() {
@@ -650,7 +650,7 @@ step_claude_version() {
   if version_at_least "$have" "$CLAUDE_CODE_MIN_VERSION"; then
     return 0
   fi
-  warn "Claude Code $have is older than $CLAUDE_CODE_MIN_VERSION, which otto-workbench requires — it reads AGENTS.md natively from there. Run: claude update"
+  warn "Claude Code $have is older than $CLAUDE_CODE_MIN_VERSION, which otto-workbench's AGENTS.md support assumes — it reads AGENTS.md natively from there. Run: claude update"
 }
 
 # sync_claude — runs all Claude sync steps non-interactively.

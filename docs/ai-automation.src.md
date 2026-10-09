@@ -533,4 +533,4 @@ otto-workbench ai init          # scaffold .claude/ in the current repo
 otto-workbench ai init --force  # re-scaffold an existing project
 ```
 
-This creates a `.claude/` directory with stack-detected rules and a project anatomy file (file index with token estimates), plus a root `AGENTS.md` — the file every harness reads (Claude Code natively from 2.1.277, which otto-workbench requires; `ai sync` warns on an older one). A repo still on `CLAUDE.md` keeps working: `ai init` leaves it alone and suggests `git mv CLAUDE.md AGENTS.md`, and the SessionStart hook and `ai sync` repeat the suggestion. Nothing renames it for you.
+This creates a `.claude/` directory with stack-detected rules and a project anatomy file (file index with token estimates), plus a root `AGENTS.md` — the file every harness reads (Claude Code natively from 2.1.277, which otto-workbench's AGENTS.md support assumes; `ai sync` warns on an older one). A repo still on `CLAUDE.md` keeps working: `ai init` leaves it alone and suggests `git mv CLAUDE.md AGENTS.md`, and the SessionStart hook and `ai sync` repeat the suggestion. Nothing renames it for you.

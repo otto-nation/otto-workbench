@@ -303,7 +303,10 @@ cmd_project_add() {
 
   local root file
   root="$(_find_repo_root)"
-  file="$(_instructions_file "$root")"
+  file="$(_instructions_file "$root")" || {
+    err "Could not determine the instructions file for $root — is python3 on PATH?"
+    exit 1
+  }
 
   if [[ -z "$file" ]]; then
     err "No AGENTS.md found at $root"
@@ -322,7 +325,10 @@ cmd_project_add() {
 cmd_project_show() {
   local root file
   root="$(_find_repo_root)"
-  file="$(_instructions_file "$root")"
+  file="$(_instructions_file "$root")" || {
+    err "Could not determine the instructions file for $root — is python3 on PATH?"
+    exit 1
+  }
 
   if [[ -z "$file" ]]; then
     echo -e "  ${DIM}No AGENTS.md at $root${NC}"

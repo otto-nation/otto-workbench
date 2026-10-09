@@ -264,6 +264,23 @@ EOF
   [[ "$output" == *"No AGENTS.md"* ]]
 }
 
+@test "project add: reports a python3 failure distinctly from no file" {
+  local repo="$TMPDIR/myrepo"
+  _make_repo "$repo"
+  cd "$repo"
+  local fakebin="$TMPDIR/fakebin"
+  mkdir -p "$fakebin"
+  cat > "$fakebin/python3" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+  chmod +x "$fakebin/python3"
+  PATH="$fakebin:$PATH" _run_rules project add "some rule"
+  [ "$status" -ne 0 ]
+  [[ "$output" != *"No AGENTS.md"* ]]
+  [[ "$output" == *"Could not determine the instructions file"* ]]
+}
+
 @test "project add: fails outside git repo" {
   cd "$TMPDIR"
   _run_rules project add "some rule"

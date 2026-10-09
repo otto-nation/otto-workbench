@@ -182,8 +182,6 @@ ai_adopt_legacy_model_vars() {
   return 0
 }
 
-# sync_ai — dispatches to each installed AI sub-tool's sync function.
-# Called automatically by otto-workbench sync via the sync_<component> convention.
 # step_instructions_report — lists the registered repos whose agent
 # instructions are still in CLAUDE.md, with the rename for each. Read-only:
 # the file is tracked in a repo the workbench does not own, so it suggests and
@@ -202,6 +200,8 @@ step_instructions_report() {
   printf '  %s\n' "${hints[@]}"
 }
 
+# sync_ai — dispatches to each installed AI sub-tool's sync function.
+# Called automatically by otto-workbench sync via the sync_<component> convention.
 sync_ai() {
   local _tool
   local -a _tools=()

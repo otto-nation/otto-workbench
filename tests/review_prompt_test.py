@@ -84,7 +84,7 @@ class TestSharedPromptBodies:
 
 
 class TestBuildPromptRefusesAnOversizedPrompt:
-    # CLAUDE.md is fixed overhead — no lever reaches it — so one over the whole
+    # instructions_md is fixed overhead — no lever reaches it — so one over the whole
     # budget puts the prompt past it whatever the ladder cuts. Sized and
     # asserted against the refusal ceiling rather than the ladder's target:
     # those differ by the render-markup reserve, and a prompt between them is

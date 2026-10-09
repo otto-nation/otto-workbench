@@ -85,6 +85,9 @@ _run_in() {
   [ -f "$container/main/AGENTS.md" ]
   [ ! -e "$container/main/CLAUDE.md" ]
   [ ! -e "$container/main/.claude/CLAUDE.md" ]
+  # The file is the repo's, shared with people who may not use the workbench.
+  run grep -E "ai sync|otto-workbench|claude update" "$container/main/AGENTS.md"
+  [ "$status" -ne 0 ]
 }
 
 @test "ai init --force overwrites a hand-authored root AGENTS.md" {

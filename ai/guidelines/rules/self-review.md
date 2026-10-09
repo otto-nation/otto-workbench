@@ -141,8 +141,8 @@ reached the merge unreviewed, however green the review file looks.
    changes the code the review was written against, so the fixes are themselves unreviewed.
    Re-run with `--fix` before creating the PR
 3. If the branch already has an open PR and you have pushed to it, re-run the review with
-   `--fix --push` (see Before PR Creation above). A push you made by hand needs a PR comment
-   saying what changed; the review's own push does not. See `git-operations.md` § A Branch
+   `--fix --push` (see Before PR Creation above). A push from the review carries no summary
+   comment, so say on the PR what changed. See `git-operations.md` § A Branch
    With an Open PR Is Shared
 
 Re-running is cheap and finds real defects: a second pass over a branch whose first pass was

@@ -185,7 +185,7 @@ If you do have to push again before the PR merges:
 | HEAD moved since the review | Re-run `pr review --self --fix` before the PR |
 | Ready to ship | `pr create --draft` |
 | Human partner named a next step | Do that directly |
-| PR open, more work needed | Follow-up PR by default; if pushing, comment first |
+| PR open, more work needed | Follow-up PR by default; if pushing by hand, comment first |
 | PR merged | `wt remove` — never `git worktree remove` |
 
 ## Common Rationalizations
@@ -198,6 +198,6 @@ If you do have to push again before the PR merges:
 | "`gh pr create` is right here" | `pr create` applies the template, issue linking, and assignee rules. |
 | "The review passed earlier" | It covered one SHA. If HEAD moved — including for the fix pass's own commit — re-run. |
 | "I'll review first and fix what it finds myself" | That is the churn `--fix` exists to remove. Run it with the flag. |
-| "I'll push the last fix quietly" | A branch with an open PR is shared. Say what changed. |
+| "I'll push the last fix quietly by hand" | A branch with an open PR is shared. Say what changed. |
 | "They said drop it, so I'll delete the branch" | Show what would be lost and get the word `discard` back. It exists nowhere else. |
 | "The worktree is done, I'll clean it up" | `wt remove`, after the merge — and never the default branch's worktree. |

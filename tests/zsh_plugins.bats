@@ -5,7 +5,7 @@
 setup() {
   load 'test_helper'
   common_setup
-  command -v zsh >/dev/null 2>&1 || skip "zsh not available"
+  require_zsh
   PLUGINS="$REPO_ROOT/zsh/config.d/tools/zsh-plugins.zsh"
 }
 

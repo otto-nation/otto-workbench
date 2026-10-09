@@ -33,6 +33,16 @@ _assert_not_real_repo() {
 # that runs git.
 # Prevents tests from accidentally targeting the real repo via inherited env,
 # and detaches every git command a test runs from the machine's own config.
+# require_zsh — fails the calling test, naming the fix, when zsh is missing.
+# zsh is a declared development dependency (bin/local/dev-deps), so its
+# absence is a failure to fix, never a skip. Call as `require_zsh || return 1`
+# inside a test, or plainly in setup().
+require_zsh() {
+  command -v zsh >/dev/null 2>&1 && return 0
+  echo "zsh is not installed — a declared dependency; run: bin/local/dev-deps (or: task dev:setup)" >&2
+  return 1
+}
+
 common_setup() {
   # Clear git env vars inherited from hooks (pre-push sets GIT_DIR which
   # causes git commands in tests to target the real repo instead of temp repos)

@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# dev-deps — declare, install and check what developing otto-workbench needs.
+#
+# The one list of the workbench's development and test dependencies: what the
+# pre-push gate and the suites run. Without it each tool surfaced on its own,
+# as a confusing test failure on whichever machine lacked it.
+#
+# Usage:
+#   dev-deps            install what can be installed without root, then check
+#   dev-deps --check    report only; install nothing
+#
+# Installs go through install_brew_or_mise (Homebrew, else mise, bootstrapping
+# mise when neither exists), so nothing here needs root. A dependency that does
+# need root — a distro package, a generated locale — is checked, never
+# installed: this script runs no sudo. A missing one is reported with the exact
+# command to run, and the run exits 1.
+#
+# Called by `task dev:setup` (install) and the workbench pre-push hook (check).
+#
+# Exit codes: 0 when every dependency is present, 1 when any is missing.
+
+set -euo pipefail
+
+_SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+# shellcheck source=/dev/null
+. "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/ui.sh"
+
+# CMD FORMULA MISE_TOOL LABEL — installable without root. install_brew_or_mise's
+# arguments, one dependency per line.
+DEV_DEPS_INSTALLABLE=(
+  "bats bats-core bats bats-core"
+  "jq jq jq jq"
+  "yq yq yq yq"
+  "node node node@lts node"
+)
+
+# CMD LABEL HINT — needs root, so checked only. HINT is the command to run.
+# On Darwin both are a plain `brew install` — no root needed there — so the
+# hint is platform-gated the same way DEV_LOCALE_HINT is below.
+if [[ "$(uname -s)" == Darwin ]]; then
+  DEV_DEPS_ROOT=(
+    "zsh|zsh|brew install zsh"
+    "parallel|GNU parallel (parallel bats runs)|brew install parallel"
+  )
+else
+  DEV_DEPS_ROOT=(
+    "zsh|zsh|sudo apt install zsh"
+    "parallel|GNU parallel (parallel bats runs)|sudo apt install parallel"
+  )
+fi
+
+# The locale tests/generate_doc_reference.bats pins collation against. macOS
+# ships it; a minimal Linux image does not.
+DEV_LOCALE="en_US.UTF-8"
+DEV_LOCALE_HINT="sudo locale-gen $DEV_LOCALE"
+
+# _shellcheck_pin — the version the CI ShellCheck job installs, without its
+# leading `v`, or nothing when the action cannot be read.
+_shellcheck_pin() {
+  sed -n 's/^[[:space:]]*SHELLCHECK_VERSION:[[:space:]]*v//p' \
+    "$WORKBENCH_DIR/.github/actions/install-shellcheck/action.yml" 2>/dev/null
+}
+
+# _install_pinned_shellcheck — installs shellcheck through install_brew_or_mise,
+# at the CI pin on the mise path. A runnable shellcheck at any other version —
+# newer ones included, so this can downgrade; the CI pin is the reference — is
+# moved to the pin as well, since the helper skips anything that already runs.
+# Only where mise exists to do the moving: a distro shellcheck on a machine with
+# neither installer is left as it is, as install_brew_or_mise would leave it.
+# Homebrew does not pin, as tests/shellcheck_version.bats already accepts.
+_install_pinned_shellcheck() {
+  local pin have
+  pin="$(_shellcheck_pin)"
+  if [[ -n "$pin" ]] && ! command -v brew >/dev/null 2>&1 \
+    && command -v mise >/dev/null 2>&1 && _cmd_runnable shellcheck; then
+    have="$(shellcheck --version 2>/dev/null | sed -n 's/^version: //p')"
+    [[ "$have" == "$pin" ]] && { success "shellcheck $pin already installed"; return 0; }
+    info "Moving shellcheck $have to the CI pin $pin via mise..."
+    mise use -g "shellcheck@$pin" || { warn "mise could not install shellcheck $pin — run: mise use -g shellcheck@$pin"; return 1; }
+    return 0
+  fi
+  install_brew_or_mise shellcheck shellcheck "shellcheck${pin:+@$pin}" shellcheck
+}
+
+# _install_pytest — pytest with pytest-xdist, so bin/local/run-tests can
+# parallelise. Through mise's pipx backend, which installs with uv, so uv is
+# installed first — only on the mise path, and only while pytest is missing.
+_install_pytest() {
+  if ! _cmd_runnable pytest && ! command -v brew >/dev/null 2>&1; then
+    install_brew_or_mise uv uv uv uv || true
+  fi
+  install_brew_or_mise pytest pytest "pipx:pytest[uvx_args=--with pytest-xdist]" pytest
+}
+
+# _has_locale NAME — whether NAME is generated. `locale -a` spells UTF-8 as
+# `utf8` on glibc, so both spellings count.
+_has_locale() {
+  local want="$1" lower alt
+  lower="$(printf '%s' "$want" | tr '[:upper:]' '[:lower:]')"
+  alt="${lower/utf-8/utf8}"
+  # Captured, not piped into grep -q: under pipefail an early-exiting grep
+  # fails the pipeline even when it matched.
+  local have
+  have="$(locale -a 2>/dev/null | tr '[:upper:]' '[:lower:]')" || return 1
+  [[ $'\n'"$have"$'\n' == *$'\n'"$lower"$'\n'* || $'\n'"$have"$'\n' == *$'\n'"$alt"$'\n'* ]]
+}
+
+# dev_deps_install — installs every dependency that needs no root. Failures are
+# left for dev_deps_check to report, so one bad install does not hide the rest.
+dev_deps_install() {
+  local entry
+  for entry in "${DEV_DEPS_INSTALLABLE[@]}"; do
+    # shellcheck disable=SC2086  # the entry is the helper's four words
+    install_brew_or_mise $entry || true
+  done
+  _install_pinned_shellcheck || true
+  _install_pytest || true
+}
+
+# dev_deps_check — reports every missing dependency with the command that fixes
+# it, and returns 1 when any is missing.
+dev_deps_check() {
+  local -a missing=()
+  local entry cmd label hint
+  # The shellcheck/pytest entries below are check-only placeholders: only
+  # their cmd and label fields are read here, so they need not (and do not)
+  # match the real install_brew_or_mise tuples in _install_pinned_shellcheck
+  # and _install_pytest (e.g. shellcheck's real mise tool is version-pinned).
+  for entry in "${DEV_DEPS_INSTALLABLE[@]}" "shellcheck shellcheck shellcheck shellcheck" \
+               "pytest pytest pipx:pytest pytest"; do
+    read -r cmd _ _ label <<< "$entry"
+    _cmd_runnable "$cmd" || missing+=("$label — run: bin/local/dev-deps (or: task dev:setup)")
+  done
+  for entry in "${DEV_DEPS_ROOT[@]}"; do
+    IFS='|' read -r cmd label hint <<< "$entry"
+    command -v "$cmd" >/dev/null 2>&1 || missing+=("$label — run: $hint")
+  done
+  if [[ "$(uname -s)" != Darwin ]] && ! _has_locale "$DEV_LOCALE"; then
+    missing+=("locale $DEV_LOCALE — run: $DEV_LOCALE_HINT")
+  fi
+
+  if [[ ${#missing[@]} -eq 0 ]]; then
+    success "development dependencies present"
+    return 0
+  fi
+  err "Missing development dependencies:"
+  printf '  %s\n' "${missing[@]}" >&2
+  return 1
+}
+
+main() {
+  case "${1:-}" in
+    --check) dev_deps_check ;;
+    "") dev_deps_install; dev_deps_check ;;
+    -h|--help) sed -n '2,20p' "$_SELF" | sed 's/^# \{0,1\}//'; return 0 ;;
+    *) err "unknown argument: $1"; return 2 ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

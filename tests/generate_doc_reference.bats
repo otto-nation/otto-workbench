@@ -311,6 +311,12 @@ EOF
   [ "$output" = "$(printf '### output.sh\n\nOutput helpers.\n\n### portable.sh\n\nPortability shims.')" ]
 }
 
+# _has_locale NAME — dev-deps's own answer, so the test and the declaration
+# cannot disagree about whether the locale is present.
+_has_locale() {
+  bash -c '. "$1/bin/local/dev-deps"; _has_locale "$2"' _ "$REPO_ROOT" "$1"
+}
+
 @test "module order does not follow the caller's collation" {
   # `.` sorts before `_` in byte order and after it under en_US.UTF-8, so a
   # contributor whose shell disagrees with CI's would otherwise regenerate a doc
@@ -319,10 +325,12 @@ EOF
   # sourcing it into the test shell is not how compose-docs reaches it.
   # Not a pipe into grep: sourcing the generator brought its `set -o pipefail`
   # into this shell, and grep -q closing the pipe early would fail the guard.
-  local locales
-  locales="$(locale -a)"
-  if [[ "$locales" != *"en_US.UTF-8"* ]]; then
-    skip "en_US.UTF-8 not generated on this machine"
+  # en_US.UTF-8 is a declared development dependency (bin/local/dev-deps), not
+  # an optional one: a machine without it fails here, naming the fix, rather
+  # than skipping the one case that exercises a non-byte collation.
+  if ! _has_locale en_US.UTF-8; then
+    echo "en_US.UTF-8 is not generated — run: sudo locale-gen en_US.UTF-8 (see bin/local/dev-deps --check)"
+    return 1
   fi
   printf '#!/usr/bin/env bash\n# The backend.\n' > "$LIB_DIR/backend.sh"
   printf '#!/usr/bin/env bash\n# The Pi backend.\n' > "$LIB_DIR/backend_pi.sh"

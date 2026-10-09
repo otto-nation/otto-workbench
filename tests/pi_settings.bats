@@ -40,11 +40,33 @@ _write_live_packages() {
 # collect_model_env_vars. Both tests here reach the {} return before that,
 # since ENV_LOCAL_FILE defaults to /dev/null — the symlink is so a reordering
 # fails on its merits rather than on a PATH accident.
+# _real_bin CMD — the binary CMD actually runs: the first non-shim on PATH, else
+# what mise names behind its shim. Linking a mise shim instead would break once
+# PATH is narrowed, since a shim with no global version only works by falling
+# back to a system binary later on PATH.
+_real_bin() {
+  local candidate
+  while IFS= read -r candidate; do
+    [[ "$candidate" == */mise/shims/* ]] || { printf '%s\n' "$candidate"; return 0; }
+  done < <(type -ap "$1")
+  mise which "$1"
+}
+
 _hide_gh() {
-  ln -sf "$(command -v jq)" "$BIN/jq"
-  ln -sf "$(command -v yq)" "$BIN/yq"
+  ln -sf "$(_real_bin jq)" "$BIN/jq"
+  ln -sf "$(_real_bin yq)" "$BIN/yq"
   ln -sf "$BASH" "$BIN/bash"
-  PATH="$BIN:/usr/bin:/bin"
+  # The base system minus gh. gh is commonly installed in /usr/bin itself, so
+  # putting /usr/bin on PATH would leave it found and the case would test a
+  # logged-in gh instead of a missing one. One ln over both directories (a
+  # per-file loop costs tens of seconds), where a name /bin repeats from
+  # /usr/bin on a merged-usr system is refused and the first link kept; then gh
+  # goes. $BIN stays first, so its links win over the system ones.
+  local sysbin="$TMPDIR/sysbin"
+  mkdir -p "$sysbin"
+  ln -s /usr/bin/* /bin/* "$sysbin"/ 2>/dev/null || true
+  rm -f "$sysbin/gh"
+  PATH="$BIN:$sysbin"
 }
 
 # _live FILTER — the filter's answer against the merged settings file.

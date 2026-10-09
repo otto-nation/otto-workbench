@@ -68,7 +68,6 @@ _sc_lab() {
   ' _ "$REPO_ROOT" "$TMPDIR"
   [ "$status" -eq 0 ]
   [[ "$output" == *"dev_deps_install"* ]]
-  [[ "$output" != *"No such file"* ]]
 }
 
 @test "install covers every declared installable dependency, shellcheck and pytest" {

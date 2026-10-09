@@ -354,7 +354,7 @@ Print the worktree a bare-repo container stands in for — the checkout of its
 default branch.
 
 A bare repo has no working tree, so anything rooted at the container sees none
-of the repo's tracked files — no `CLAUDE.md`, no `.claude/`, no source. This
+of the repo's tracked files — no `AGENTS.md`, no `.claude/`, no source. This
 prints the worktree checked out on the repo's default branch: the tree such a
 tool should read and write instead.
 
@@ -1268,8 +1268,8 @@ workbench-rules <command> [<args>]
 | `list` | List all local rule files with line counts |
 | `status` | Show local rules not tracked in workbench |
 | `open [domain]` | Open a local rule file in `$EDITOR` |
-| `project add "rule"` | Append a convention to the current repo's `CLAUDE.md` |
-| `project show` | Display the current repo's `CLAUDE.md` |
+| `project add "rule"` | Append a convention to the current repo's `AGENTS.md` (or its legacy `CLAUDE.md`) |
+| `project show` | Display the current repo's `AGENTS.md` (or its legacy `CLAUDE.md`) |
 | `-V`, `--version` | Show version |
 | `-h`, `--help` | Show help |
 

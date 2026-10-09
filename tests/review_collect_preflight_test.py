@@ -269,6 +269,32 @@ class TestCollectPreflightData:
         assert len(data.commit_log) > 0
         assert data.omitted_files == []
 
+    def test_agents_md_is_read_over_a_legacy_claude_md_and_named_in_the_prompt(self, tmp_path):
+        # The order belongs to core.project_context; what this pins is that the
+        # preflight reads through it, and that the prompt names the file the
+        # repo actually uses rather than always saying CLAUDE.md.
+        repo = tmp_path / "repo"
+        init_repo(repo)
+        (repo / "main.go").write_text("package main\n")
+        (repo / "AGENTS.md").write_text("# From AGENTS\n")
+        (repo / "CLAUDE.md").write_text("# From CLAUDE\n")
+        commit_all(repo, "init")
+        add_self_origin(repo)
+        git_out(repo, "checkout", "-b", "feat", "-q")
+        (repo / "main.go").write_text("package main\nfunc hello() {}\n")
+        commit_all(repo, "add hello")
+
+        job = _job(
+            tmp_path, [{"path": "main.go", "additions": 1, "deletions": 0}],
+            wt_path=str(repo),
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = review.collect.collect_preflight_data(job)
+        assert data is not None
+        assert data.instructions_md == "# From AGENTS\n"
+        assert data.instructions_path == "AGENTS.md"
+        assert "#### AGENTS.md" in review.collect.build_project_context(data)
+
     def test_handles_deleted_files_in_pr(self, tmp_path):
         repo = init_repo(tmp_path / "repo")
         (repo / "removed.txt").write_text("old content\n")

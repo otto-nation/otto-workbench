@@ -74,29 +74,52 @@ _run_in() {
   [ ! -e "$container/.claude" ]
 }
 
-@test "ai init writes the context file at the worktree root, not inside .claude/" {
-  # Pi's ancestor walk reads one context file per directory root and never looks
-  # inside .claude/ — a file there is invisible to it while Claude Code reads it,
-  # which is exactly the gap that stays silent.
+@test "ai init writes AGENTS.md at the worktree root, not inside .claude/" {
+  # Both harnesses resolve the instructions file at the root; Pi never looks
+  # inside .claude/, and Claude Code reads AGENTS.md there natively.
   local container="$TMPDIR/c"
   make_worktree_container "$container" "$SEED"
 
   run _run_in "$container" ai init
   [ "$status" -eq 0 ]
-  [ -f "$container/main/CLAUDE.md" ]
+  [ -f "$container/main/AGENTS.md" ]
+  [ ! -e "$container/main/CLAUDE.md" ]
   [ ! -e "$container/main/.claude/CLAUDE.md" ]
 }
 
-@test "ai init --force overwrites a hand-authored root CLAUDE.md" {
-  # --force now targets the file every harness reads first, not a nested
-  # .claude/CLAUDE.md — confirm it still overwrites deliberately rather than
-  # silently skipping or landing somewhere else.
+@test "ai init --force overwrites a hand-authored root AGENTS.md" {
   local container="$TMPDIR/c"
   make_worktree_container "$container" "$SEED"
-  printf 'HAND-AUTHORED CONTENT\n' > "$container/main/CLAUDE.md"
+  printf 'HAND-AUTHORED CONTENT\n' > "$container/main/AGENTS.md"
 
   run _run_in "$container" ai init --force
   [ "$status" -eq 0 ]
-  [ -f "$container/main/CLAUDE.md" ]
-  [ "$(cat "$container/main/CLAUDE.md")" != "HAND-AUTHORED CONTENT" ]
+  [ -f "$container/main/AGENTS.md" ]
+  [ "$(cat "$container/main/AGENTS.md")" != "HAND-AUTHORED CONTENT" ]
+}
+
+@test "ai init leaves a repo still on CLAUDE.md alone and suggests the rename" {
+  # A fresh AGENTS.md beside it would split the harnesses: Claude Code would
+  # read only CLAUDE.md and Pi only AGENTS.md.
+  local container="$TMPDIR/c"
+  make_worktree_container "$container" "$SEED"
+  printf 'LEGACY RULES\n' > "$container/main/CLAUDE.md"
+
+  run _run_in "$container" ai init
+  [ "$status" -eq 0 ]
+  [ ! -e "$container/main/AGENTS.md" ]
+  [ "$(cat "$container/main/CLAUDE.md")" = "LEGACY RULES" ]
+  [[ "$output" == *"git mv CLAUDE.md AGENTS.md"* ]]
+}
+
+@test "ai init --force on a repo still on CLAUDE.md writes AGENTS.md and names the leftover" {
+  local container="$TMPDIR/c"
+  make_worktree_container "$container" "$SEED"
+  printf 'LEGACY RULES\n' > "$container/main/CLAUDE.md"
+
+  run _run_in "$container" ai init --force
+  [ "$status" -eq 0 ]
+  [ -f "$container/main/AGENTS.md" ]
+  [ "$(cat "$container/main/CLAUDE.md")" = "LEGACY RULES" ]
+  [[ "$output" == *"CLAUDE.md is still here"* ]]
 }

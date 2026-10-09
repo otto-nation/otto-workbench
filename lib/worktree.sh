@@ -2,7 +2,7 @@
 # Where a project artifact goes.
 #
 # A file that lives inside a repository — `.claude/anatomy.md`, `.mcp.json`, a
-# `CLAUDE.md` — belongs in a working tree. A bare-repo container has none: it
+# `AGENTS.md` — belongs in a working tree. A bare-repo container has none: it
 # holds the bare `.git` plus each checkout as a peer, so a file written at the
 # container root is tracked by nothing, covered by no `.gitignore` rule, and
 # reached by no review or CI check. The only way one is ever found is by hand.

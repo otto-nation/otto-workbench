@@ -90,12 +90,25 @@ _scaffold_file() {
   success "$label"
 }
 
-# _generate_claude_md TARGET — writes a lean project CLAUDE.md.
-_generate_claude_md() {
-  local target="$1" force="${2:-false}" project_name
+# _generate_agents_md [FORCE] — writes a lean project AGENTS.md at the root.
+#
+# AGENTS.md is what both harnesses read (Claude Code natively from
+# CLAUDE_CODE_MIN_VERSION, Pi first in its per-directory order). A repo that
+# already has an instructions file — AGENTS.md or a legacy CLAUDE.md — is left
+# alone without FORCE, and a legacy one gets the rename suggestion: writing a
+# fresh AGENTS.md beside it would split the harnesses, Claude Code reading only
+# CLAUDE.md and Pi only AGENTS.md. With FORCE the scaffold is rewritten; a
+# legacy CLAUDE.md is never deleted, only named.
+_generate_agents_md() {
+  local force="${1:-false}" target="AGENTS.md" project_name record existing hint
   project_name="$(basename "$(pwd)")"
-  if [[ -f "$target" ]] && [[ "$force" == false ]]; then
-    skip "CLAUDE.md (exists)"; return
+  record="$(python3 "$PROJECT_CONTEXT_PY" --root .)" || record=""
+  existing="${record%%$'\n'*}"
+  if [[ -n "$existing" ]] && [[ "$force" == false ]]; then
+    skip "$existing (exists)"
+    hint="$(python3 "$PROJECT_CONTEXT_PY" --root . --hint 2>/dev/null)" || hint=""
+    [[ -z "$hint" ]] || info "$hint"
+    return
   fi
 
   local workflow=""
@@ -121,15 +134,19 @@ ${workflow}
 Project conventions load from \`.claude/rules/\` automatically in Claude Code.
 Add personal rules as \`.claude/rules/<topic>.local.md\` (gitignored).
 
-This file lives at the repository root so every agent harness reads it — Pi
-resolves a context file per directory and never looks inside \`.claude/\`.
+This file lives at the repository root as AGENTS.md so every agent harness
+reads it — Claude Code and Pi both resolve it there, and neither looks inside
+\`.claude/\` for it.
 EOF
-  success "CLAUDE.md"
+  success "AGENTS.md"
+  if [[ -n "$existing" && "$existing" != "$target" ]]; then
+    warn "$existing is still here — fold anything it holds into AGENTS.md and delete it, or Claude Code keeps reading it instead"
+  fi
 }
 
 # Everything a project's .claude/ holds that belongs to one machine rather than
 # the repo: regenerated context and Claude Code's own per-machine grants. The
-# rest of the directory — CLAUDE.md, rules/, settings.json — is committed, so
+# rest of the directory — rules/, settings.json — is committed, so
 # these are excluded by name. This repo's own .claude/.gitignore is held to the
 # same list by tests/claude_settings_template.bats.
 CLAUDE_LOCAL_ARTIFACTS=(anatomy.md ceiling-debt.md settings.local.json)
@@ -156,7 +173,7 @@ _scaffold_gitignore() {
   done
 }
 
-# scaffold_project_claude [--force] — scaffolds .claude/ and the root CLAUDE.md
+# scaffold_project_claude [--force] — scaffolds .claude/ and the root AGENTS.md
 # in the current directory.
 # Called by `otto-workbench ai init` for project-level setup.
 scaffold_project_claude() {
@@ -174,8 +191,8 @@ scaffold_project_claude() {
   fi
   echo
 
-  info "Scaffolding CLAUDE.md"
-  _generate_claude_md "CLAUDE.md" "$force"
+  info "Scaffolding AGENTS.md"
+  _generate_agents_md "$force"
 
   echo
   mkdir -p .claude/rules .claude/review

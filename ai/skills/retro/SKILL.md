@@ -15,7 +15,7 @@ lifecycle_scope: global
 Analyzes PR review comments (human and bot) to identify gaps, weaknesses, and
 false negatives in coding rules. Proposes rule changes at the right level: global
 rules in `ai/guidelines/rules/` for cross-project patterns, project rules in each
-repo's `CLAUDE.md` for repo-specific conventions.
+repo's `AGENTS.md` (or legacy `CLAUDE.md`) for repo-specific conventions.
 
 Run manually with `/retro`. Auto-triggers via the Stop hook managed
 by `otto-workbench sync`, once 72 hours and 5 sessions have both passed since
@@ -137,7 +137,7 @@ tree for each finding — stop at the first match:
 
 1. **References project-internal packages, APIs, or infrastructure?** (e.g.,
    `lib-go/pkg/pagination`, Temporal activities, specific DB schemas, internal
-   service names) → **Project rule** for that repo's `CLAUDE.md`
+   service names) → **Project rule** for that repo's `AGENTS.md`
 2. **Language-general pattern observed only in one project's domain?** (e.g.,
    "verify covering index exists for query access patterns") → **Project rule**
    unless evidence spans 2+ repos, in which case promote to global
@@ -147,8 +147,8 @@ tree for each finding — stop at the first match:
 4. **Machine-specific tooling concern?** → **Machine-local rule** via
    `workbench-rules add`
 
-Project rules go in the target repo's `CLAUDE.md` under `## Conventions`. If the
-repo has no `CLAUDE.md`, flag it in the report — retro does not create files, but
+Project rules go in the target repo's `AGENTS.md` (its `CLAUDE.md` while it has not moved)
+under `## Conventions`. If the repo has neither, flag it in the report — retro does not create files, but
 should note when one is needed.
 
 ### For `rule-gap` (global):
@@ -157,10 +157,10 @@ should note when one is needed.
 - Specify where in the file it should be added (after which existing bullet)
 
 ### For `rule-gap` (project):
-- Name the target repo and confirm placement is `CLAUDE.md` § Conventions
+- Name the target repo and confirm placement is `AGENTS.md` § Conventions (or the legacy `CLAUDE.md`)
 - Draft the rule text, stripping project-internal references that are obvious in
   context (e.g., don't repeat the package path if the repo only has one pagination helper)
-- If the repo has no `CLAUDE.md`, note that one should be created first
+- If the repo has no `AGENTS.md` or `CLAUDE.md`, note that one should be created first
 
 ### For `rule-refinement` / `false-negative`:
 
@@ -178,7 +178,7 @@ For `false-negative`:
 
 ### For `project-rule`:
 - Name the target repo
-- Draft the rule text as a `CLAUDE.md` bullet under `## Conventions`
+- Draft the rule text as an `AGENTS.md` bullet under `## Conventions`
 - If the finding also has a weaker global analog (e.g., "check for indexes" is
   global, but "use keyset pagination via X" is project-specific), propose both
 
@@ -233,7 +233,7 @@ environment variable, or default to `~/git/personal/otto-nation/otto-workbench/m
 
 ## Project Proposals
 
-### <repo-name> (CLAUDE.md)
+### <repo-name> (AGENTS.md)
 
 #### N. <short description>
 - **Evidence:** PR #N (@reviewer): "<comment text>"
@@ -242,7 +242,7 @@ environment variable, or default to `~/git/personal/otto-nation/otto-workbench/m
   ```
   - <rule text>
   ```
-- **Note:** <repo> has no CLAUDE.md — create one before applying (if applicable)
+- **Note:** <repo> has no AGENTS.md — create one before applying (if applicable)
 
 ## Skipped (one-off / noise)
 - PR #N: "<comment>" — <reason>

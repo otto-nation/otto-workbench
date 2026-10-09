@@ -39,7 +39,7 @@ A script that never touches `ai/lib` (ceiling-scan, workbench-reference) is a
 standalone program and out of scope by construction, not by allowlist.
 
 What `cli/<name>.py` itself may hold — parsing, output, exit codes and one
-orchestrating `main` — is a reviewed convention (CLAUDE.md), not this check:
+orchestrating `main` — is a reviewed convention (AGENTS.md), not this check:
 "computes, reads or writes state" is not something an AST can see.
 
 Exit code: 0 if every entry point is a shim, 1 otherwise.

@@ -84,8 +84,8 @@ _claude_reports() {
 # named directories as one repo each. The registry is read into a variable
 # first: a positional inside the stub's body would be the stub's own argument.
 _report() {
-  local lines="" dir
-  for dir in "$@"; do lines+="id-${dir##*/}"$'\t'"$dir"$'\n'; done
+  local registry_lines="" dir
+  for dir in "$@"; do registry_lines+="id-${dir##*/}"$'\t'"$dir"$'\n'; done
   bash -c '
     registry="$3"
     . "$1"
@@ -93,7 +93,7 @@ _report() {
     info() { echo "INFO $*"; }
     project_repo_leaders() { printf "%s" "$registry"; }
     step_instructions_report
-  ' _ "$UI" "$AI_STEPS" "$lines"
+  ' _ "$UI" "$AI_STEPS" "$registry_lines"
 }
 
 @test "sync lists registered repos still on CLAUDE.md and leaves them as they are" {

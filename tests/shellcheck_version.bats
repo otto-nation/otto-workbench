@@ -49,14 +49,19 @@ _pinned() {
   # against it there fails a job over a binary it does not use, which is what
   # the first push of this branch did.
   #
-  # Skipped rather than failed where the tool is absent: the pre-push gate
-  # already refuses to proceed without it, and this suite should not be the
-  # thing that reports a missing dependency.
+  # Failed rather than skipped where the tool is absent: it is a declared
+  # development dependency (bin/local/dev-deps), and a skip would let a
+  # machine without it report this suite green.
   #
   # (A comment line starting with the tool's own name parses as a directive,
   # which is SC1072 — hence the rewording.)
-  command -v shellcheck >/dev/null 2>&1 || skip "shellcheck not installed"
   [[ -z "${CI:-}" ]] || skip "CI installs the pin in the lint job; shards do not lint"
+  # A declared dependency (bin/local/dev-deps) wherever the gate lints, so its
+  # absence is a failure naming the fix, not a skip.
+  command -v shellcheck >/dev/null 2>&1 || {
+    echo "shellcheck is not installed — run: bin/local/dev-deps (or: task dev:setup)"
+    return 1
+  }
 
   local pinned installed
   pinned="$(_pinned)"

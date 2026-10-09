@@ -66,7 +66,7 @@ teardown() {
 @test "COLIMA_ARCH is detected from uname when unset" {
   local aliases="$REPO_ROOT/docker/colima/aliases.zsh"
   [[ -f "$aliases" ]] || skip "docker/colima/aliases.zsh not found"
-  command -v zsh >/dev/null 2>&1 || skip "zsh not available"
+  command -v zsh >/dev/null 2>&1 || { echo "zsh is not installed — a declared dependency; run: bin/local/dev-deps (or: task dev:setup)"; return 1; }
 
   local machine expected
   machine=$(uname -m)
@@ -83,7 +83,7 @@ teardown() {
 @test "COLIMA_ARCH set in the environment survives sourcing" {
   local aliases="$REPO_ROOT/docker/colima/aliases.zsh"
   [[ -f "$aliases" ]] || skip "docker/colima/aliases.zsh not found"
-  command -v zsh >/dev/null 2>&1 || skip "zsh not available"
+  command -v zsh >/dev/null 2>&1 || { echo "zsh is not installed — a declared dependency; run: bin/local/dev-deps (or: task dev:setup)"; return 1; }
 
   run zsh -c "export COLIMA_ARCH=riscv64; source '$aliases'; print -r -- \$COLIMA_ARCH"
   [ "$status" -eq 0 ]

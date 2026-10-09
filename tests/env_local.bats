@@ -470,7 +470,7 @@ EOF
 # ── ~/.local/bin precedes the layers ──────────────────────────────────────────
 
 @test "loader makes a tool in ~/.local/bin visible to a tools snippet" {
-  command -v zsh >/dev/null || skip "zsh not installed"
+  command -v zsh >/dev/null || { echo "zsh is not installed — a declared dependency; run: bin/local/dev-deps (or: task dev:setup)"; return 1; }
   local home="$BATS_TEST_TMPDIR/home"
   mkdir -p "$home/.local/bin" "$home/.config/zsh/config.d/tools"
   cp "$REPO_ROOT/zsh/config.d/loader.zsh" "$home/.config/zsh/config.d/"
@@ -490,7 +490,7 @@ EOF
 # The prepend must be a no-op when ~/.local/bin is already on PATH, so
 # re-sourcing the loader does not stack duplicate entries.
 @test "loader does not prepend ~/.local/bin twice" {
-  command -v zsh >/dev/null || skip "zsh not installed"
+  command -v zsh >/dev/null || { echo "zsh is not installed — a declared dependency; run: bin/local/dev-deps (or: task dev:setup)"; return 1; }
   local home="$BATS_TEST_TMPDIR/home"
   mkdir -p "$home/.config/zsh/config.d"
   cp "$REPO_ROOT/zsh/config.d/loader.zsh" "$home/.config/zsh/config.d/"

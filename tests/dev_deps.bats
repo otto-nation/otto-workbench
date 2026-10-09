@@ -58,6 +58,21 @@ _sc_lab() {
   echo "$dir:/usr/bin:/bin"
 }
 
+@test "loads its libraries under an exported GIT_DIR, as the pre-push hook runs it" {
+  # Any GIT_DIR makes git skip discovery, so a root found with `git rev-parse
+  # --show-toplevel` answers the cwd instead. A scratch repo stands in for the
+  # hook's, so nothing here can touch the real one.
+  git init -q "$TMPDIR/hook-repo"
+  run env GIT_DIR="$TMPDIR/hook-repo/.git" bash -c '
+    cd "$2" && . "$1/bin/local/dev-deps" && declare -F dev_deps_install
+  ' _ "$REPO_ROOT" "$TMPDIR"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dev_deps_install"* ]]
+  # The load failure is not fatal to the caller, so the error text is the only
+  # thing that tells a broken load from a working one.
+  [[ "$output" != *"No such file"* ]]
+}
+
 @test "install covers every declared installable dependency, shellcheck and pytest" {
   run _run dev_deps_install
   [ "$status" -eq 0 ]

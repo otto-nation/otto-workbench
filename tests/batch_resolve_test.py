@@ -10,6 +10,7 @@ if str(LIB_DIR) not in sys.path:
 
 import batch.model  # noqa: E402
 import batch.resolve  # noqa: E402
+import cli.pr_batch  # noqa: E402
 from batch.publish import TreeState  # noqa: E402
 from rebase.types import RefDivergence  # noqa: E402
 
@@ -369,3 +370,48 @@ def test_default_runner_writes_a_logged_commands_output_to_the_log(tmp_path, cap
     text = log.read_text()
     assert "out line" in text and "err line" in text
     assert capfd.readouterr().out == ""
+
+
+def test_available_actions_drop_a_reply_the_item_cannot_take_and_open_chat():
+    run = _run(_d(batch.model.DecisionKind.COMMENT_ITEM, "comments",
+                  {"id": "ic-1-0", "replyable": False}))
+    assert batch.resolve.available_actions(run.decision("d1"), run.items[0]) == [
+        "settle-addressed", "settle-dismissed", "settle-fixed", "track"]
+
+
+def test_force_publish_is_offered_only_for_a_remote_commit_refusal():
+    run = _run(_d(batch.model.DecisionKind.FAILED, "publish", {"reason": "remote_moved"}),
+               _d(batch.model.DecisionKind.FAILED, "publish",
+                  {"reason": "not_incorporated_remote"}, id="d2"))
+    item = run.items[0]
+    assert batch.resolve.available_actions(run.decision("d1"), item) == [
+        "drop-pr", "retry", "skip-step"]
+    assert "force-publish" in batch.resolve.available_actions(run.decision("d2"), item)
+
+
+def test_undo_is_offered_only_with_a_recorded_pre_rebase_head():
+    run = _run(_d(batch.model.DecisionKind.STEP_REVIEW, "rebase"))
+    assert "undo" not in batch.resolve.available_actions(run.decision("d1"), run.items[0])
+    run.items[0].pre_rebase_head = "abc"
+    assert "undo" in batch.resolve.available_actions(run.decision("d1"), run.items[0])
+
+
+def test_resolve_command_spells_each_actions_inputs():
+    cmd = batch.resolve.resolve_command
+    assert cmd("r1", "d1", "settle-dismissed") == \
+        "pr batch resolve r1 d1 --action settle-dismissed --reason <text>"
+    assert cmd("r1", "d1", "reply") == "pr batch resolve r1 d1 --action reply --body-file <path>"
+    assert cmd("r1", "d1", "settle-fixed") == \
+        "pr batch resolve r1 d1 --action settle-fixed [--commit <sha>]"
+    assert cmd("r1", "d1", "accept") == "pr batch resolve r1 d1 --action accept"
+
+
+def test_every_rendered_command_parses_with_the_batch_parser():
+    parser = cli.pr_batch.build_parser()
+    actions = set().union(*batch.resolve.ACTIONS.values()) - {"open-chat"}
+    for action in sorted(actions):
+        words = batch.resolve.resolve_command("r1", "d1", action).replace("[", "").replace(
+            "]", "").split()
+        args = parser.parse_args(["VALUE" if w.startswith("<") else w for w in words[2:]])
+        assert (args.command, args.run_id, args.decision_id, args.action) == (
+            "resolve", "r1", "d1", action)

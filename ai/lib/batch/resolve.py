@@ -16,6 +16,9 @@
 | `publish` | `publish` | see `batch.publish`; success → item `done`, or reopened once for `--watch-ci`; a refusal or failed command → `failed` on step `publish`, `reason` set; every command's output goes to logs/<slug>-<pr>-publish-<n>.log, which a failure names |
 | | `discard` | item → `done`; local commits stay and nothing is pushed |
 
+`ACTION_INPUTS` names the flags an action needs; `available_actions` and
+`resolve_command` are what `pr batch status` offers.
+
 `open-chat` is offered where listed and refused by the CLI, leaving the
 decision open.
 """
@@ -57,6 +60,25 @@ ACTIONS: dict[DecisionKind, frozenset[str]] = {
 _SETTLE_AS = {"settle-fixed": "fixed", "settle-addressed": "already_addressed",
               "settle-dismissed": "dismissed"}
 GIT_PUSH = batch.publish.GIT_PUSH
+
+
+@dataclass(frozen=True)
+class ActionInput:
+    """One flag an action reads off its request; `attr` is the `Request` field it fills."""
+
+    flag: str
+    attr: str
+    metavar: str
+    required: bool = True
+
+
+# The single statement of what each action needs beyond `--action`: _validate
+# enforces it and resolve_command spells it, so the two cannot disagree.
+ACTION_INPUTS: dict[str, tuple[ActionInput, ...]] = {
+    "settle-dismissed": (ActionInput("--reason", "reason", "<text>"),),
+    "reply": (ActionInput("--body-file", "body_file", "<path>"),),
+    "settle-fixed": (ActionInput("--commit", "commit", "<sha>", required=False),),
+}
 
 
 class ResolveError(ValueError):
@@ -102,28 +124,51 @@ def default_runner(argv: list[str], log_path: Path | None = None) -> int:
                               timeout=core.timeouts.UNBOUNDED).returncode
 
 
+def _unavailable(decision: Decision, action: str, item: Item) -> str:
+    """Why *action* cannot answer *decision* whatever inputs come with it, or ""."""
+    kinds = ACTIONS[decision.kind]
+    if action not in kinds:
+        return (f"{action} is not an action for {decision.kind.value}; use one of: "
+                + ", ".join(sorted(kinds)))
+    if action == "open-chat":
+        return "open-chat is handled by the UI; the CLI leaves the decision open"
+    if action == "reply" and not decision.payload.get("replyable"):
+        return "this item cannot take a reply; settle or track it instead"
+    if action == "force" and not decision.payload.get("override"):
+        return "this refusal names no override; force is not available"
+    if action == "force-publish" and decision.payload.get("reason") != \
+            batch.publish.Refusal.NOT_INCORPORATED_REMOTE.value:
+        return "force-publish only answers a not_incorporated_remote refusal"
+    if action == "undo" and (decision.step != Step.REBASE.value or not item.pre_rebase_head):
+        return "undo needs a rebase step_review with a recorded pre-rebase head"
+    return ""
+
+
 def _validate(decision: Decision, request: Request, item: Item) -> None:
-    a = request.action
     if not decision.open:
         raise ResolveError(f"{decision.id} is already resolved ({decision.resolution})")
-    if a not in ACTIONS[decision.kind]:
-        raise ResolveError(f"{a} is not an action for {decision.kind.value}; use one of: "
-                           + ", ".join(sorted(ACTIONS[decision.kind])))
-    if a == "open-chat":
-        raise ResolveError("open-chat is handled by the UI; the CLI leaves the decision open")
-    if a == "settle-dismissed" and not request.reason:
-        raise ResolveError("settle-dismissed needs --reason")
-    if a == "reply" and not decision.payload.get("replyable"):
-        raise ResolveError("this item cannot take a reply; settle or track it instead")
-    if a == "reply" and not request.body_file:
-        raise ResolveError("reply needs --body-file")
-    if a == "force" and not decision.payload.get("override"):
-        raise ResolveError("this refusal names no override; force is not available")
-    if a == "force-publish" and decision.payload.get("reason") != \
-            batch.publish.Refusal.NOT_INCORPORATED_REMOTE.value:
-        raise ResolveError("force-publish only answers a not_incorporated_remote refusal")
-    if a == "undo" and (decision.step != Step.REBASE.value or not item.pre_rebase_head):
-        raise ResolveError("undo needs a rebase step_review with a recorded pre-rebase head")
+    if refusal := _unavailable(decision, request.action, item):
+        raise ResolveError(refusal)
+    for need in ACTION_INPUTS.get(request.action, ()):
+        if need.required and not getattr(request, need.attr):
+            raise ResolveError(f"{request.action} needs {need.flag}")
+
+
+def available_actions(decision: Decision, item: Item) -> list[str]:
+    """The actions `pr batch resolve` would accept for *decision*, given their inputs."""
+    return sorted(a for a in ACTIONS[decision.kind] if not _unavailable(decision, a, item))
+
+
+def resolve_command(run_id: str, decision_id: str, action: str) -> str:
+    """`pr batch resolve` for one action, in the parser's order, its inputs as placeholders.
+
+    A required input is `--flag <metavar>`; an optional one is bracketed.
+    """
+    parts = ["pr", "batch", "resolve", run_id, decision_id, "--action", action]
+    for need in ACTION_INPUTS.get(action, ()):
+        spelled = f"{need.flag} {need.metavar}"
+        parts.append(spelled if need.required else f"[{spelled}]")
+    return " ".join(parts)
 
 
 def command_for(decision: Decision, item: Item, request: Request,
@@ -174,13 +219,14 @@ def _publish_failed(run: Run, item: Item, log: Path) -> Decision:
                         "log_tail": lines[-batch.outcomes.LOG_TAIL_LINES:]})
 
 
-def _step_of(decision: Decision) -> Step | None:
+def step_of(decision: Decision) -> Step | None:
+    """The Step a decision belongs to, or None for "worktree" / "publish"."""
     return Step(decision.step) if decision.step in {s.value for s in Step} else None
 
 
 def _effect(run: Run, item: Item, decision: Decision, action: str, ok: bool) -> list[Decision]:
     created: list[Decision] = []
-    step = _step_of(decision)
+    step = step_of(decision)
     if action == "drop-pr":
         item.status = ItemStatus.DROPPED
     elif action == "discard":

@@ -3453,6 +3453,9 @@ Apply an operator's answer to one decision, then move the item on.
 | `publish` | `publish` | see `batch.publish`; success → item `done`, or reopened once for `--watch-ci`; a refusal or failed command → `failed` on step `publish`, `reason` set; every command's output goes to logs/<slug>-<pr>-publish-<n>.log, which a failure names |
 | | `discard` | item → `done`; local commits stay and nothing is pushed |
 
+`ACTION_INPUTS` names the flags an action needs; `available_actions` and
+`resolve_command` are what `pr batch status` offers.
+
 `open-chat` is offered where listed and refused by the CLI, leaving the
 decision open.
 

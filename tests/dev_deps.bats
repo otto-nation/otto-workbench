@@ -68,6 +68,9 @@ _sc_lab() {
   ' _ "$REPO_ROOT" "$TMPDIR"
   [ "$status" -eq 0 ]
   [[ "$output" == *"dev_deps_install"* ]]
+  # The load failure is not fatal to the caller, so the error text is the only
+  # thing that tells a broken load from a working one.
+  [[ "$output" != *"No such file"* ]]
 }
 
 @test "install covers every declared installable dependency, shellcheck and pytest" {

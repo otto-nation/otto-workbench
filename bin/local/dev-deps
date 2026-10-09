@@ -22,8 +22,11 @@
 set -euo pipefail
 
 _SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
-# shellcheck source=/dev/null
-. "$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)/lib/ui.sh"
+# Path arithmetic rather than `git rev-parse --show-toplevel`: the pre-push hook
+# runs this with GIT_DIR exported, and with one set git skips discovery and
+# answers the caller's cwd instead of the repo root. See lib/ui.sh's header.
+# shellcheck source=../../lib/ui.sh
+. "$(cd "$(dirname "$_SELF")/../.." && pwd)/lib/ui.sh"
 
 # CMD FORMULA MISE_TOOL LABEL — installable without root. install_brew_or_mise's
 # arguments, one dependency per line.

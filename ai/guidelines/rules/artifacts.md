@@ -7,8 +7,8 @@ on a schedule and read at session start; none is authored by hand.
 that started at a container is told so — a `Session root:` line under Claude Code, a
 `container_context` section under Pi — and that message names the worktree. Read every
 project artifact, and run every git and repo command, there. The repo's own
-`CLAUDE.md` is part of what such a session is missing under Claude Code: read it from
-that worktree before acting on the repo.
+`AGENTS.md` (or its legacy `CLAUDE.md`) is among what such a session is missing
+under Claude Code — read it from that worktree before acting on the repo.
 
 ## Machine Profile
 

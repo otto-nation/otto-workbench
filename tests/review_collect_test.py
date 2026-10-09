@@ -202,7 +202,7 @@ class TestFormatPreflightData:
             commit_log="abc123 fix bug",
             file_contents={"foo.go": "package main\n", "bar.go": "package bar\n"},
             file_permissions={"foo.go": "0o644", "bar.go": "0o755"},
-            claude_md="# My Project",
+            instructions_md="# My Project",
             architecture_md="## Known Constraints",
             review_checklists={"security.md": "# Security checks"},
         )
@@ -222,7 +222,7 @@ class TestFormatPreflightData:
             commit_log="log",
             file_contents={"foo.go": "package main", "bar.go": "package bar"},
             file_permissions={"foo.go": "0o644", "bar.go": "0o755"},
-            claude_md="",
+            instructions_md="",
             architecture_md="",
         )
         result = review.collect.format_preflight_data(data, file_filter=["foo.go"]).text
@@ -250,7 +250,7 @@ class TestFormatPreflightData:
             commit_log="log",
             file_contents={"foo.go": "package main", "bar.go": "package bar"},
             file_permissions={"foo.go": "0o644", "bar.go": "0o755"},
-            claude_md="",
+            instructions_md="",
             architecture_md="",
         )
         result = review.collect.format_preflight_data(data, file_filter=["foo.go"]).text
@@ -263,7 +263,7 @@ class TestFormatPreflightData:
             commit_log="",
             file_contents={"f.go": "code"},
             file_permissions={"f.go": "0o644"},
-            claude_md="",
+            instructions_md="",
             architecture_md="",
         )
         assert "Commit history" not in review.collect.format_preflight_data(data).text
@@ -274,7 +274,7 @@ class TestFormatPreflightData:
             commit_log="log",
             file_contents={"a.go": "code"},
             file_permissions={"a.go": "0o644"},
-            claude_md="",
+            instructions_md="",
             architecture_md="",
             omitted_files=["big.go", "huge.go"],
         )
@@ -290,7 +290,7 @@ class TestFormatPreflightData:
             commit_log="log",
             file_contents={"a.go": "code"},
             file_permissions={"a.go": "0o644"},
-            claude_md="",
+            instructions_md="",
             architecture_md="",
             omitted_files=["big.go"],
             file_sizes={"big.go": 30_699},
@@ -306,7 +306,7 @@ class TestFormatPreflightData:
             commit_log="log",
             file_contents={"a.go": "code"},
             file_permissions={"a.go": "0o644"},
-            claude_md="",
+            instructions_md="",
             architecture_md="",
             omitted_files=["tiny.go"],
             file_sizes={"tiny.go": 500},
@@ -324,7 +324,7 @@ class TestFormatPreflightData:
             commit_log="log",
             file_contents={"a.go": "code"},
             file_permissions={"a.go": "0o644"},
-            claude_md="",
+            instructions_md="",
             architecture_md="",
             omitted_files=["big.go"],
         )
@@ -338,7 +338,7 @@ class TestFormatPreflightData:
             commit_log="log",
             file_contents={},
             file_permissions={},
-            claude_md="",
+            instructions_md="",
             architecture_md="",
             omitted_files=["big.go"],
         )
@@ -351,7 +351,7 @@ class TestFormatPreflightData:
             commit_log="log",
             file_contents={"a.go": "code"},
             file_permissions={"a.go": "0o644"},
-            claude_md="",
+            instructions_md="",
             architecture_md="",
         )
         assert "Files not pre-collected" not in review.collect.format_preflight_data(data).text
@@ -369,7 +369,7 @@ class TestFormatPreflightData:
             commit_log="abc123 fix bug",
             file_contents={"foo.go": "package main"},
             file_permissions={"foo.go": "0o644"},
-            claude_md="# Project",
+            instructions_md="# Project",
             architecture_md="",
             omitted_files=["bar.go"],
         )
@@ -394,7 +394,7 @@ class TestFormatPreflightData:
             commit_log="",
             file_contents={},
             file_permissions={},
-            claude_md="",
+            instructions_md="",
             architecture_md="",
         )
         result = review.collect.format_preflight_data(data, max_diff_bytes=500).text
@@ -422,7 +422,7 @@ class TestTheBlockReportsWhatItsDiffCost:
             commit_log="",
             file_contents={},
             file_permissions={},
-            claude_md="",
+            instructions_md="",
             architecture_md="",
         )
 

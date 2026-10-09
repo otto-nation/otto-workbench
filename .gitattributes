@@ -1,5 +1,5 @@
 # Generated files — edit the source and regenerate, never the artifact.
-# See CLAUDE.md § Conventions. Marking them linguist-generated collapses them
+# See AGENTS.md § Conventions. Marking them linguist-generated collapses them
 # in GitHub diffs and drops them from the repo language stats; they stay
 # diffable locally so a regeneration is still reviewable.
 #

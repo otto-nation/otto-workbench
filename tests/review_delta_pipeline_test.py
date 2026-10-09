@@ -101,7 +101,7 @@ def _job(tmp_path, *, prior_review="", **pr_overrides) -> ReviewJob:
 def _preflight(**overrides) -> PreflightData:
     fields = {
         "diff": "", "commit_log": "", "file_contents": {}, "file_permissions": {},
-        "claude_md": "", "architecture_md": "",
+        "instructions_md": "", "architecture_md": "",
     }
     fields.update(overrides)
     return PreflightData(**fields)

@@ -64,14 +64,14 @@ component configures it and `wt-init` runs it.
 
 ### `/analyze-project`
 
-Analyze a project's codebase and populate scaffolded CLAUDE.md and .claude/rules/ files with project-specific conventions. TRIGGER when: user runs otto-workbench ai init, re-scaffolds with --force, or has empty CLAUDE.md or .claude/rules/ sections.
+Analyze a project's codebase and populate scaffolded AGENTS.md and .claude/rules/ files with project-specific conventions. TRIGGER when: user runs otto-workbench ai init, re-scaffolds with --force, or has empty AGENTS.md or .claude/rules/ sections.
 
 ```
 /analyze-project
 ```
 
-**Output:** `CLAUDE.md, .claude/rules/`
-**Trigger:** Run after otto-workbench ai init scaffolds a project, after --force re-scaffolds, or when CLAUDE.md or .claude/rules/ files have empty sections.
+**Output:** `AGENTS.md, .claude/rules/`
+**Trigger:** Run after otto-workbench ai init scaffolds a project, after --force re-scaffolds, or when AGENTS.md or .claude/rules/ files have empty sections.
 
 ### `/anatomy`
 
@@ -779,4 +779,4 @@ otto-workbench ai init          # scaffold .claude/ in the current repo
 otto-workbench ai init --force  # re-scaffold an existing project
 ```
 
-This creates a `.claude/` directory with stack-detected rules and a project anatomy file (file index with token estimates), plus a root `CLAUDE.md` — the file every harness reads.
+This creates a `.claude/` directory with stack-detected rules and a project anatomy file (file index with token estimates), plus a root `AGENTS.md` — the file every harness reads (Claude Code natively from 2.1.277, which otto-workbench's AGENTS.md support assumes; `ai sync` warns on an older one). A repo still on `CLAUDE.md` keeps working: `ai init` leaves it alone and suggests `git mv CLAUDE.md AGENTS.md`, and the SessionStart hook and `ai sync` repeat the suggestion. Nothing renames it for you.

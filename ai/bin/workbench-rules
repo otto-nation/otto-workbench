@@ -16,8 +16,8 @@
 # | `list` | List all local rule files with line counts |
 # | `status` | Show local rules not tracked in workbench |
 # | `open [domain]` | Open a local rule file in `$EDITOR` |
-# | `project add "rule"` | Append a convention to the current repo's `CLAUDE.md` |
-# | `project show` | Display the current repo's `CLAUDE.md` |
+# | `project add "rule"` | Append a convention to the current repo's `AGENTS.md` (or its legacy `CLAUDE.md`) |
+# | `project show` | Display the current repo's `AGENTS.md` (or its legacy `CLAUDE.md`) |
 # | `-V`, `--version` | Show version |
 # | `-h`, `--help` | Show help |
 #
@@ -41,13 +41,13 @@ COMMANDS=(
   "list"               "List all local rule files with line counts"
   "status"             "Show local rules not tracked in workbench"
   "open [domain]"      "Open a local rule file in \$EDITOR"
-  "project <subcmd>"   "Manage current repo's CLAUDE.md (add, show)"
+  "project <subcmd>"   "Manage current repo's AGENTS.md (add, show)"
 )
 
 # shellcheck disable=SC2034  # used by commands_usage() via nameref
 COMMANDS_PROJECT=(
-  "add \"rule\""  "Append a convention to the current repo's CLAUDE.md"
-  "show"          "Display the current repo's CLAUDE.md"
+  "add \"rule\""  "Append a convention to the current repo's AGENTS.md"
+  "show"          "Display the current repo's AGENTS.md"
 )
 
 # ─── Frontmatter ──────────────────────────────────────────────────────────────
@@ -259,13 +259,13 @@ cmd_open() {
 
 # ─── Project commands ────────────────────────────────────────────────────────
 
-# _find_repo_root — the working tree whose CLAUDE.md these commands read and
+# _find_repo_root — the working tree whose AGENTS.md these commands read and
 # append to, or exit 1 with the reason.
 #
 # project_root rather than a walk up from cwd looking for a .git directory: in
 # the bare-repo layout only the container has one, because every checkout under
 # it holds a .git *file*. Such a walk therefore skips the worktree it started in
-# and answers the container — where a CLAUDE.md is tracked by nothing and read
+# and answers the container — where an AGENTS.md is tracked by nothing and read
 # by no session.
 _find_repo_root() {
   local root rc=0
@@ -276,11 +276,22 @@ _find_repo_root() {
     exit 1
   fi
   if [[ "$rc" -ne 0 ]]; then
-    err "No worktree resolved for $PWD — its CLAUDE.md is not reachable from here"
+    err "No worktree resolved for $PWD — its AGENTS.md is not reachable from here"
     exit 1
   fi
 
   printf '%s\n' "$root"
+}
+
+# _instructions_file ROOT — the repo's instructions file under ROOT (AGENTS.md,
+# else a legacy CLAUDE.md), or nothing when it has none. The order belongs to
+# ai/lib/core/project_context.py; this asks it rather than keeping a copy.
+_instructions_file() {
+  local root="$1" record rel
+  record="$(python3 "$PROJECT_CONTEXT_PY" --root "$root")" || return 1
+  rel="${record%%$'\n'*}"
+  [[ -n "$rel" ]] && printf '%s\n' "$root/$rel"
+  return 0
 }
 
 cmd_project_add() {
@@ -290,34 +301,40 @@ cmd_project_add() {
     exit 1
   fi
 
-  local root
+  local root file
   root="$(_find_repo_root)"
-  local claude_md="$root/CLAUDE.md"
+  file="$(_instructions_file "$root")" || {
+    err "Could not determine the instructions file for $root — is python3 on PATH?"
+    exit 1
+  }
 
-  if [[ ! -f "$claude_md" ]]; then
-    err "No CLAUDE.md found at $root"
-    echo "  Create one first, then use this command to append rules." >&2
+  if [[ -z "$file" ]]; then
+    err "No AGENTS.md found at $root"
+    echo "  Create one first (otto-workbench ai init), then use this command to append rules." >&2
     exit 1
   fi
 
-  if grep -q '^## Conventions' "$claude_md"; then
-    printf -- '- %s\n' "$rule" >> "$claude_md"
+  if grep -q '^## Conventions' "$file"; then
+    printf -- '- %s\n' "$rule" >> "$file"
   else
-    printf '\n## Conventions\n\n- %s\n' "$rule" >> "$claude_md"
+    printf '\n## Conventions\n\n- %s\n' "$rule" >> "$file"
   fi
-  success "Added to $claude_md"
+  success "Added to $file"
 }
 
 cmd_project_show() {
-  local root
+  local root file
   root="$(_find_repo_root)"
-  local claude_md="$root/CLAUDE.md"
+  file="$(_instructions_file "$root")" || {
+    err "Could not determine the instructions file for $root — is python3 on PATH?"
+    exit 1
+  }
 
-  if [[ ! -f "$claude_md" ]]; then
-    echo -e "  ${DIM}No CLAUDE.md at $root${NC}"
+  if [[ -z "$file" ]]; then
+    echo -e "  ${DIM}No AGENTS.md at $root${NC}"
     return
   fi
-  cat "$claude_md"
+  cat "$file"
 }
 
 cmd_project() {

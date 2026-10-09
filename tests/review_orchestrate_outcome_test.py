@@ -65,7 +65,7 @@ class TestDocument:
         job = self._job(ro, tmp_path, prior_review=prior_review)
         job.preflight = ro.PreflightData(
             diff="", commit_log="", file_contents={}, file_permissions={},
-            claude_md="", architecture_md="",
+            instructions_md="", architecture_md="",
             delta_files=["a.py"], prior_head_sha="def456",
         )
         return job
@@ -393,7 +393,7 @@ class TestWriteReviewSidecar:
         job = self._make_job(ro, tmp_path)
         job.preflight = ro.PreflightData(
             diff="", commit_log="", file_contents={}, file_permissions={},
-            claude_md="", architecture_md="",
+            instructions_md="", architecture_md="",
             delta_files=["a.py", "b.py"], prior_head_sha="dead00",
         )
         ro._write_review_sidecar(job)

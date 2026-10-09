@@ -1,5 +1,6 @@
 ---
 paths:
+  - "**/AGENTS.md"
   - "**/CLAUDE.md"
   - "**/rules/**"
   - "**/guidelines/**"
@@ -14,7 +15,7 @@ paths:
 | `ai/claude/CLAUDE.md` | Claude Code's own instructions — agent protocols. Not read by other harnesses |
 | `ai/guidelines/rules/*.md` | Language and domain rules — path-scoped via frontmatter |
 | `workbench-rules add <domain> "rule"` | Machine-specific local rules (not tracked) |
-| `workbench-rules project add "rule"` | Append a rule to the current repo's CLAUDE.md |
+| `workbench-rules project add "rule"` | Append a rule to the current repo's AGENTS.md (or its legacy CLAUDE.md) |
 
 ## When to add a rule
 

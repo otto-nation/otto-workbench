@@ -4028,7 +4028,8 @@ mechanics (``config.workbench_config_write``), the session-start context
 
 ### config/session_start.py
 
-SessionStart hook: reuse level, container root, ceiling nudge, issue tracker, PR template.
+SessionStart hook: reuse level, container root, ceiling nudge, issue tracker, PR template,
+instructions file.
 
 Six responsibilities, in the order run() handles them:
 1. Emit the active reuse level as session context
@@ -4531,6 +4532,33 @@ standard library, and a module called `cmd` there would shadow the stdlib
 Stdlib only, deliberately. This is the module everything else in `ai/lib`
 should be free to depend on, and pulling in `log`, `agent.usage`, or
 `workbench_paths` from here would make that impossible.
+
+### core/project_context.py
+
+Which file holds a repo's agent instructions — resolved in one place.
+
+``AGENTS.md`` is the project instructions file: Pi prefers it over ``CLAUDE.md``
+(first match per directory) and Claude Code reads it natively from
+``CLAUDE_CODE_MIN_VERSION``. ``CLAUDE.md`` is still honoured, as a fallback for
+repos that have not moved, and the legacy ``.claude/CLAUDE.md`` after it.
+
+Every caller that reads or appends to the file — review preflight,
+``workbench-rules project``, the SessionStart hook, ``ai sync``'s migration
+nudge — asks here rather than carrying its own candidate list, so the order is
+spelled once. Bash reads through the CLI below, the way it asks
+``pr_template.py`` for a template.
+
+A repo with both ``AGENTS.md`` and ``CLAUDE.md`` is reported as split: by
+default Claude Code then reads ``CLAUDE.md`` only while Pi reads ``AGENTS.md``,
+so the two harnesses follow different instructions. The resolver answers
+``AGENTS.md`` (what the workbench writes to) and says the other is there.
+
+The CLI prints one record:
+
+    <relative path or empty><newline><state>
+
+where state is ``agents``, ``legacy``, ``split`` or ``none`` (``ContextState``).
+Exit 0 for every repo state; non-zero only for a root that is not a directory.
 
 ### core/quota_throttle.py
 

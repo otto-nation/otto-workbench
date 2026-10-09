@@ -23,7 +23,7 @@ MAX_PROMPT_BYTES = model_budget_bytes()
 def _make_preflight(**overrides):
     defaults = dict(
         diff="", commit_log="", file_contents={"a.py": "x", "b.py": "y"},
-        file_permissions={}, claude_md="", architecture_md="",
+        file_permissions={}, instructions_md="", architecture_md="",
         omitted_files=[],
         prior_head_sha="abc1234def",
         delta_files=["a.py", "b.py"],

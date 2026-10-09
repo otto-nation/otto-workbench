@@ -12,7 +12,7 @@ Add to repository `.github/copilot-instructions.md`
 
 ### Claude Code
 Global rules: save to `~/.claude/CLAUDE.md`
-Project-level rules: save to `CLAUDE.md` in the repository root
+Project-level rules: save to `AGENTS.md` in the repository root
 
 ### Other AI Tools
 Include in your project documentation or AI context

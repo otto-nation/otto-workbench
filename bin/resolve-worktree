@@ -3,7 +3,7 @@
 # default branch.
 #
 # A bare repo has no working tree, so anything rooted at the container sees none
-# of the repo's tracked files — no `CLAUDE.md`, no `.claude/`, no source. This
+# of the repo's tracked files — no `AGENTS.md`, no `.claude/`, no source. This
 # prints the worktree checked out on the repo's default branch: the tree such a
 # tool should read and write instead.
 #

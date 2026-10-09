@@ -3,7 +3,7 @@
 # An agent harness roots a project at the directory the session starts in. In
 # the bare-repo layout `wt-init` produces, that directory is often the
 # container: it holds the bare .git and the worktrees as peers, but no working
-# tree of its own. Claude Code started there sees no CLAUDE.md and no .claude/
+# tree of its own. Claude Code started there sees no AGENTS.md and no .claude/
 # rules. Pi started there loads context files only from the container and its
 # parents — never from the worktrees below it — and none of the repo's .pi/
 # settings, extensions, skills or prompts. Either way every tool call runs

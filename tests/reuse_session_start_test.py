@@ -57,6 +57,35 @@ def test_says_so_when_no_tracker_is_configured(rss, tmp_path, capsys):
     assert config.workbench_config.ISSUE_PROVIDER_KEY in out
 
 
+def test_a_repo_still_on_claude_md_is_told_to_rename_it(rss, tmp_path, capsys):
+    """A suggestion, not a rename: the file stays where it is."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "CLAUDE.md").write_text("# rules\n")
+    _run(rss, repo)
+    out = capsys.readouterr().out
+    assert "Instructions file: CLAUDE.md" in out
+    assert "git mv CLAUDE.md AGENTS.md" in out
+    assert (repo / "CLAUDE.md").is_file() and not (repo / "AGENTS.md").exists()
+
+
+def test_a_repo_with_both_files_is_told_the_harnesses_disagree(rss, tmp_path, capsys):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "AGENTS.md").write_text("# a\n")
+    (repo / "CLAUDE.md").write_text("# c\n")
+    _run(rss, repo)
+    assert "Claude Code reads only CLAUDE.md" in capsys.readouterr().out
+
+
+def test_a_repo_on_agents_md_gets_no_instructions_line(rss, tmp_path, capsys):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "AGENTS.md").write_text("# a\n")
+    _run(rss, repo)
+    assert "Instructions file" not in capsys.readouterr().out
+
+
 def test_the_rule_quotes_both_lines_the_hook_emits(rss, tmp_path):
     """The rule tells the agent to read a line this hook owns the wording of.
 
@@ -225,7 +254,7 @@ class TestWhereTheSessionStarted:
     ):
         """The backstop. Past the wrapper, nothing else says it.
 
-        A session started at a container never loaded the repo's CLAUDE.md, and
+        A session started at a container never loaded the repo's AGENTS.md, and
         looks exactly like one that did. The line names the worktree that
         speaks for it, which is `resolve-worktree`'s answer.
         """

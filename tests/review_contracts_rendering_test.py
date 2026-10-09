@@ -75,7 +75,7 @@ def _make_review_job(**overrides) -> ReviewJob:
         commit_log="abc1234 feat: stuff",
         file_contents={"a.py": "print(1)\n"},
         file_permissions={"a.py": "100644"},
-        claude_md="# Project",
+        instructions_md="# Project",
         architecture_md="# Architecture",
         omitted_files=["vendor/x.go"],
         delta_diff="diff --git a/a.py b/a.py\n@@ -1 +1 @@\n-old\n+new\n",

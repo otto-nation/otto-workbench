@@ -302,6 +302,15 @@ STARSHIP_SRC_FILE="$WORKBENCH_DIR/zsh/starship.toml"
 # The shell Brewfile names the zsh plugins; a machine without Homebrew clones
 # the same list, so the Brewfile stays the one place a plugin is added.
 SHELL_BREWFILE="$WORKBENCH_DIR/brew/shell/shell.Brewfile"
+# Resolves a repo's agent instructions file (AGENTS.md, else a legacy
+# CLAUDE.md); bash asks it rather than keeping the candidate order itself.
+PROJECT_CONTEXT_PY="$WORKBENCH_DIR/ai/lib/core/project_context.py"
+# The first Claude Code release that reads AGENTS.md as project instructions on
+# its own. otto-workbench's AGENTS.md support assumes it; `ai sync` warns below
+# it rather than failing. Python carries the same value in
+# core/project_context.py; tests/project_context_test.py holds the two
+# together.
+CLAUDE_CODE_MIN_VERSION="2.1.277"
 ZSH_LOADER_SRC="$ZSH_CONFIG_SRC_DIR/loader.zsh"
 ZSH_LOADER_DST="$ZSH_CONFIG_DIR/loader.zsh"
 ZSH_SNIPPET_GLOB="*.zsh"

@@ -252,7 +252,7 @@ class TestAnIncrementalReviewSaysSo:
     def incremental(self, job):
         job.preflight = PreflightData(
             diff="", commit_log="", file_contents={}, file_permissions={},
-            claude_md="", architecture_md="",
+            instructions_md="", architecture_md="",
             prior_head_sha="0ldc0de", delta_files=["a/one.py"],
         )
         job.prior_review = (

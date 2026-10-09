@@ -210,40 +210,75 @@ EOF
 
 # ── CLI: project ─────────────────────────────────────────────────────────────
 
-@test "project add: appends rule to CLAUDE.md" {
+@test "project add: appends rule to AGENTS.md" {
   local repo="$TMPDIR/myrepo"
   _make_repo "$repo"
-  cat > "$repo/CLAUDE.md" <<'EOF'
-# My Project
-
-## Conventions
-
-- existing rule
-EOF
+  printf '# My Project\n\n## Conventions\n\n- existing rule\n' > "$repo/AGENTS.md"
   cd "$repo"
   _run_rules project add "new rule"
   [ "$status" -eq 0 ]
-  grep -q "new rule" "$repo/CLAUDE.md"
+  grep -q "new rule" "$repo/AGENTS.md"
+}
+
+@test "project add: a repo still on CLAUDE.md gets the rule there" {
+  local repo="$TMPDIR/myrepo"
+  _make_repo "$repo"
+  printf '# My Project\n\n## Conventions\n' > "$repo/CLAUDE.md"
+  cd "$repo"
+  _run_rules project add "legacy rule"
+  [ "$status" -eq 0 ]
+  grep -q "legacy rule" "$repo/CLAUDE.md"
+  [ ! -e "$repo/AGENTS.md" ]
+}
+
+@test "project add: with both files, the rule goes to AGENTS.md" {
+  local repo="$TMPDIR/myrepo"
+  _make_repo "$repo"
+  echo "# Agents" > "$repo/AGENTS.md"
+  echo "# Claude" > "$repo/CLAUDE.md"
+  cd "$repo"
+  _run_rules project add "shared rule"
+  [ "$status" -eq 0 ]
+  grep -q "shared rule" "$repo/AGENTS.md"
+  run grep -q "shared rule" "$repo/CLAUDE.md"
+  [ "$status" -ne 0 ]
 }
 
 @test "project add: creates Conventions section if missing" {
   local repo="$TMPDIR/myrepo"
   _make_repo "$repo"
-  echo "# My Project" > "$repo/CLAUDE.md"
+  echo "# My Project" > "$repo/AGENTS.md"
   cd "$repo"
   _run_rules project add "first convention"
   [ "$status" -eq 0 ]
-  grep -q "## Conventions" "$repo/CLAUDE.md"
-  grep -q "first convention" "$repo/CLAUDE.md"
+  grep -q "## Conventions" "$repo/AGENTS.md"
+  grep -q "first convention" "$repo/AGENTS.md"
 }
 
-@test "project add: fails without CLAUDE.md" {
+@test "project add: fails without an instructions file" {
   local repo="$TMPDIR/myrepo"
   _make_repo "$repo"
   cd "$repo"
   _run_rules project add "some rule"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"No CLAUDE.md"* ]]
+  [[ "$output" == *"No AGENTS.md"* ]]
+}
+
+@test "project add: reports a python3 failure distinctly from no file" {
+  local repo="$TMPDIR/myrepo"
+  _make_repo "$repo"
+  cd "$repo"
+  local fakebin="$TMPDIR/fakebin"
+  mkdir -p "$fakebin"
+  cat > "$fakebin/python3" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+  chmod +x "$fakebin/python3"
+  PATH="$fakebin:$PATH" _run_rules project add "some rule"
+  [ "$status" -ne 0 ]
+  [[ "$output" != *"No AGENTS.md"* ]]
+  [[ "$output" == *"Could not determine the instructions file"* ]]
 }
 
 @test "project add: fails outside git repo" {
@@ -253,38 +288,38 @@ EOF
   [[ "$output" == *"Not inside a git"* ]]
 }
 
-@test "project show: displays CLAUDE.md content" {
+@test "project show: displays AGENTS.md content" {
   local repo="$TMPDIR/myrepo"
   _make_repo "$repo"
-  echo "# Test Content" > "$repo/CLAUDE.md"
+  echo "# Test Content" > "$repo/AGENTS.md"
   cd "$repo"
   _run_rules project show
   [ "$status" -eq 0 ]
   [[ "$output" == *"Test Content"* ]]
 }
 
-@test "project add: writes the worktree's CLAUDE.md from a bare container" {
+@test "project add: writes the worktree's AGENTS.md from a bare container" {
   local seed="$TMPDIR/seed" container="$TMPDIR/container"
   mkdir -p "$seed"
-  printf '# Seed\n\n## Conventions\n\n- existing rule\n' > "$seed/CLAUDE.md"
+  printf '# Seed\n\n## Conventions\n\n- existing rule\n' > "$seed/AGENTS.md"
   make_container_seed "$seed"
   make_worktree_container "$container" "$seed"
 
   # A container holds the bare .git and the checkouts as peers, so the only
   # .git *directory* above the worktree is the container's own. Walking up for
-  # one lands there, where a CLAUDE.md is tracked by nothing and read by no
+  # one lands there, where an AGENTS.md is tracked by nothing and read by no
   # session.
   cd "$container"
   _run_rules project add "new rule"
   [ "$status" -eq 0 ]
-  grep -q "new rule" "$container/main/CLAUDE.md"
-  [ ! -e "$container/CLAUDE.md" ]
+  grep -q "new rule" "$container/main/AGENTS.md"
+  [ ! -e "$container/AGENTS.md" ]
 }
 
 @test "project add: fails rather than write into a container with no worktree" {
   local seed="$TMPDIR/seed" container="$TMPDIR/container"
   mkdir -p "$seed"
-  printf '# Seed\n\n## Conventions\n\n- existing rule\n' > "$seed/CLAUDE.md"
+  printf '# Seed\n\n## Conventions\n\n- existing rule\n' > "$seed/AGENTS.md"
   make_container_seed "$seed"
   make_empty_container "$container" "$seed"
 
@@ -292,7 +327,7 @@ EOF
   _run_rules project add "new rule"
   [ "$status" -ne 0 ]
   [[ "$output" == *"No worktree resolved"* ]]
-  [ ! -e "$container/CLAUDE.md" ]
+  [ ! -e "$container/AGENTS.md" ]
 }
 
 # ── CLI: sync ────────────────────────────────────────────────────────────────

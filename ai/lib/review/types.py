@@ -632,9 +632,12 @@ class PreflightData:
     commit_log: str
     file_contents: dict[str, str]
     file_permissions: dict[str, str]
-    claude_md: str
+    instructions_md: str
     architecture_md: str
     review_checklists: dict[str, str] = field(default_factory=dict)
+    # Repo-relative path of the file instructions_md was read from (AGENTS.md
+    # or a legacy CLAUDE.md), so the prompt names the file the repo uses.
+    instructions_path: str = ""
     review_profiles: list = field(default_factory=list)
     omitted_files: list[str] = field(default_factory=list)
     # Every collected file's byte size, kept or dropped. The contents of a

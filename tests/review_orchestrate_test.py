@@ -319,7 +319,7 @@ class TestCleanupScope:
             ro, "collect_preflight_data",
             lambda job: ro.PreflightData(
                 diff="", commit_log="", file_contents={}, file_permissions={},
-                claude_md="", architecture_md="",
+                instructions_md="", architecture_md="",
             ),
         )
         monkeypatch.setattr(ro, "run_single_agent", pipeline or _pipeline)

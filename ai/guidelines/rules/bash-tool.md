@@ -92,7 +92,7 @@ Patterns that trigger unsuppressible permission prompts in Claude Code's static 
 ## Avoid Shell Variable Expansion
 
 - Never use `echo "$VAR"` or `$VAR` in Bash tool commands — Claude Code's static analyzer flags shell variable references as "simple_expansion", triggering a permission prompt. Use `printenv VAR` instead, which reads the variable without shell expansion:
-  - If the value is already in CLAUDE.md or conversation context, don't run a command at all
+  - If the value is already in an instructions file (AGENTS.md, CLAUDE.md) or conversation context, don't run a command at all
 - A `for f in ...; do ... "$f" ...; done` loop over a list you already know is the most common way this fires. `Bash(for:*)` is allowed — it is the `$f` that prompts. Name the values directly instead:
   - `tail -n +1 file1.sql file2.sql file3.sql` to dump several files, each under its own `==> file <==` header — this is the direct replacement for a `for` loop wrapping `cat`/`rtk read` plus an `echo` banner
   - `grep -n "pattern" file1 file2 file3` and most other tools take a file list, so the loop is not needed at all

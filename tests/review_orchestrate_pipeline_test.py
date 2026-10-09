@@ -182,13 +182,13 @@ class TestGroupMergeCap:
         self._patch(monkeypatch, 300_000)
         pf = PreflightData(
             diff="", commit_log="x" * 40_000, file_contents={},
-            file_permissions={}, claude_md="c" * 10_000,
+            file_permissions={}, instructions_md="c" * 10_000,
             architecture_md="a" * 5_000,
         )
         cap = review.pipeline._group_merge_cap(self._job(pf))
         # The commit log is a lever, so it is not charged against the cap.
         fixed = fixed_preflight_bytes(
-            pf.claude_md, pf.architecture_md, pf.review_checklists,
+            pf.instructions_md, pf.architecture_md, pf.review_checklists,
             pf.review_profiles,
         )
         assert fixed >= 15_000  # the context files are charged at least whole
@@ -198,6 +198,6 @@ class TestGroupMergeCap:
         self._patch(monkeypatch, 30_000)
         pf = PreflightData(
             diff="", commit_log="", file_contents={}, file_permissions={},
-            claude_md="c" * 50_000, architecture_md="",
+            instructions_md="c" * 50_000, architecture_md="",
         )
         assert review.pipeline._group_merge_cap(self._job(pf)) == MIN_DIFF_BYTES

@@ -1,15 +1,15 @@
 ---
 name: analyze-project
-description: "Analyze a project's codebase and populate scaffolded CLAUDE.md and .claude/rules/ files with project-specific conventions. TRIGGER when: user runs otto-workbench ai init, re-scaffolds with --force, or has empty CLAUDE.md or .claude/rules/ sections."
+description: "Analyze a project's codebase and populate scaffolded AGENTS.md and .claude/rules/ files with project-specific conventions. TRIGGER when: user runs otto-workbench ai init, re-scaffolds with --force, or has empty AGENTS.md or .claude/rules/ sections."
 source: otto-workbench/ai/skills/analyze-project/SKILL.md
 invocation: "/analyze-project"
-trigger: "Run after otto-workbench ai init scaffolds a project, after --force re-scaffolds, or when CLAUDE.md or .claude/rules/ files have empty sections."
-output: "CLAUDE.md, .claude/rules/"
+trigger: "Run after otto-workbench ai init scaffolds a project, after --force re-scaffolds, or when AGENTS.md or .claude/rules/ files have empty sections."
+output: "AGENTS.md, .claude/rules/"
 ---
 
 # Analyze Project
 
-Reads the codebase and proposes content for scaffolded `CLAUDE.md` and `.claude/rules/` files.
+Reads the codebase and proposes content for scaffolded `AGENTS.md` and `.claude/rules/` files.
 Run with `/analyze-project` after `otto-workbench ai init` scaffolds a new project.
 
 ---
@@ -43,7 +43,7 @@ container, which has no working tree of its own.
 `resolve-worktree` exiting 2 means this is not a container either — with no repo root
 printed above it, there is no project here to analyze. Any other non-zero exit means
 the container names no worktree to write into: say so and stop. Never fall back to
-the current directory. A container holds no work tree, so a `CLAUDE.md`
+the current directory. A container holds no work tree, so a `AGENTS.md`
 written there is tracked by nothing and read by no session.
 
 `cd` to the resolved path and run every phase below from there. Invoked through
@@ -52,7 +52,7 @@ written there is tracked by nothing and read by no session.
 ### 1b. Read existing scaffold
 
 ```bash
-cat CLAUDE.md
+cat AGENTS.md 2>/dev/null || cat CLAUDE.md   # a repo not yet moved still has CLAUDE.md
 ls .claude/rules/
 ```
 
@@ -92,7 +92,7 @@ Use Glob and Grep to understand:
 ### Output
 
 A structured list of findings organized by target file:
-- What belongs in CLAUDE.md (description, workflow commands, key paths, notes)
+- What belongs in AGENTS.md (description, workflow commands, key paths, notes)
 - What belongs in each rule file (conventions, testing patterns, language-specific rules)
 
 ---
@@ -104,7 +104,7 @@ A structured list of findings organized by target file:
 For each file that needs content, present a proposal:
 
 ```
-## CLAUDE.md
+## AGENTS.md
 
 ### Description (proposed)
 > <1-2 sentence project description>
@@ -171,9 +171,9 @@ After all writes:
 
 - After `otto-workbench ai init` scaffolds a new project
 - After `otto-workbench ai init --force` re-scaffolds an existing project
-- When `CLAUDE.md` or `.claude/rules/` files have empty sections
+- When `AGENTS.md` or `.claude/rules/` files have empty sections
 
 ## Output location
 
-- `CLAUDE.md` — project description, workflow, key paths, notes
+- `AGENTS.md` — project description, workflow, key paths, notes
 - `.claude/rules/*.md` — project-specific conventions

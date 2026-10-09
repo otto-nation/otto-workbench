@@ -143,6 +143,23 @@ install_via_installer() {
   success "$label installed"
 }
 
+# version_at_least HAVE WANT — succeeds when dotted version HAVE is WANT or
+# newer, comparing numeric fields left to right; a missing field counts as 0.
+# Pure bash: `sort -V` is GNU-only, and BSD sort has no version ordering.
+version_at_least() {
+  local -a have want
+  local i h w
+  IFS=. read -r -a have <<< "$1"
+  IFS=. read -r -a want <<< "$2"
+  for (( i = 0; i < ${#want[@]} || i < ${#have[@]}; i++ )); do
+    h="${have[i]:-0}"; w="${want[i]:-0}"
+    h="${h%%[!0-9]*}"; w="${w%%[!0-9]*}"
+    (( 10#${h:-0} > 10#${w:-0} )) && return 0
+    (( 10#${h:-0} < 10#${w:-0} )) && return 1
+  done
+  return 0
+}
+
 # ensure_tool_path — appends the directories user-installed tools live in to
 # PATH, each only if it exists and is not already there.
 #

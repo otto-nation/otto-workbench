@@ -39,7 +39,7 @@ def _fit_budget(job, known_sections, **kw):
 
 class TestFitBudget:
     def test_returns_remaining_when_within_budget(self):
-        pf = _make_preflight(claude_md="", architecture_md="")
+        pf = _make_preflight(instructions_md="", architecture_md="")
         job = _make_job(pf)
         plan = _fit_budget(job, {"header": "small"})
         assert plan.diff_allowance_bytes > MIN_DIFF_BYTES
@@ -48,7 +48,7 @@ class TestFitBudget:
 
     def test_clamps_to_min_diff_by_default(self):
         huge = "x" * (MAX_PROMPT_BYTES + 1000)
-        job = _make_job(_make_preflight(claude_md=huge))
+        job = _make_job(_make_preflight(instructions_md=huge))
         plan = _fit_budget(job, {"header": "small"})
         assert plan.diff_allowance_bytes == MIN_DIFF_BYTES
         floored = [c for c in plan.cuts if c.lever is BudgetLever.DIFF_FLOOR]
@@ -57,7 +57,7 @@ class TestFitBudget:
 
     def test_min_diff_zero_allows_zero_budget(self):
         huge = "x" * (MAX_PROMPT_BYTES + 1000)
-        job = _make_job(_make_preflight(claude_md=huge))
+        job = _make_job(_make_preflight(instructions_md=huge))
         plan = _fit_budget(job, {"header": "small"}, min_diff=0)
         assert plan.diff_allowance_bytes == 0
         # No floor to hold the diff at, so the cut is the whole of it.
@@ -121,7 +121,7 @@ class TestFitBudget:
         newest = "commit zzz\n" + ("n" * 200) + "\n\n"
         log = oldest + newest
         pf = _make_preflight(
-            commit_log=log, file_contents={}, claude_md="",
+            commit_log=log, file_contents={}, instructions_md="",
             delta_diff="", delta_files=[], prior_head_sha="",
         )
         # Room for the newest commit and nothing else, so the lever has to fire.
@@ -218,7 +218,7 @@ class TestProfilesAreCountedByTheBudget:
         would be poorer by exactly the rendered context for no reason.
         """
         pf = _make_preflight(
-            claude_md="c" * 10_000, review_profiles=[self._profile(40_000)],
+            instructions_md="c" * 10_000, review_profiles=[self._profile(40_000)],
         )
         job = _make_job(pf)
         ctx = build_project_context(pf)
@@ -233,7 +233,7 @@ class TestProfilesAreCountedByTheBudget:
         # the reserve never counted, so the group pays a little more — tens of
         # bytes against the ~50KB it was previously charged twice for.
         wrapper = len(ctx.encode()) - fixed_preflight_bytes(
-            pf.claude_md, pf.architecture_md, pf.review_checklists,
+            pf.instructions_md, pf.architecture_md, pf.review_checklists,
             pf.review_profiles,
         )
         assert 0 < wrapper < 1024
@@ -243,7 +243,7 @@ class TestProfilesAreCountedByTheBudget:
         # Pins the size of the bug being fixed, so a regression is legible as
         # "the group phase lost the context back" rather than a stray number.
         pf = _make_preflight(
-            claude_md="c" * 10_000, review_profiles=[self._profile(40_000)],
+            instructions_md="c" * 10_000, review_profiles=[self._profile(40_000)],
         )
         job = _make_job(pf)
         ctx = build_project_context(pf)
@@ -255,7 +255,7 @@ class TestProfilesAreCountedByTheBudget:
             skip_file_contents=True, skip_project_context=True,
         )
         reserve = fixed_preflight_bytes(
-            pf.claude_md, pf.architecture_md,
+            pf.instructions_md, pf.architecture_md,
             pf.review_checklists, pf.review_profiles,
         )
         assert reserve > 50_000
@@ -278,7 +278,7 @@ class TestThePlanIsCheckedAgainstTheRender:
         assert plan.measured_bytes > 0
 
     def test_the_plan_counts_every_section_it_measured(self):
-        pf = _make_preflight(claude_md="c" * 5_000, commit_log="l" * 3_000)
+        pf = _make_preflight(instructions_md="c" * 5_000, commit_log="l" * 3_000)
         plan = _fit_budget(_make_job(pf), {"header": "h" * 2_000})
         # Known sections, unshrinkable preflight, the file contents and the
         # delta — every section that renders at the size it was measured at.
@@ -319,7 +319,7 @@ class TestThePlanIsCheckedAgainstTheRender:
         """
         pf = _make_preflight(
             diff="diff --git a/a.py b/a.py\n-old\n+new\n",
-            claude_md="c" * MAX_PROMPT_BYTES,
+            instructions_md="c" * MAX_PROMPT_BYTES,
         )
         plan = _fit_budget(_make_job(pf), {"header": "small"}, min_diff=0)
         assert plan.diff_allowance_bytes == 0
@@ -448,7 +448,7 @@ class TestTheLadderDoesNotReserveTwice:
     """
 
     def test_measured_sections_are_charged_once(self):
-        pf = _make_preflight(claude_md="", architecture_md="")
+        pf = _make_preflight(instructions_md="", architecture_md="")
         grew_by = 50_000
         small = _fit_budget(_make_job(pf), {"header": ""})
         large = _fit_budget(_make_job(pf), {"header": "h" * grew_by})

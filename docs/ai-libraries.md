@@ -3433,6 +3433,26 @@ answers it with `force-publish` (push past exactly those commits; one that
 appeared since is refused again) or drops the PR. The lease advances as soon as
 the push lands, so a failure in the replies after it never strands the item.
 
+### batch/report.py
+
+The compact document `pr batch status`, `pr batch next` and a run's last line print.
+
+One builder, three projections: `build` is the whole report, `next_view` its
+actionable part (also the `run_summary` line), and `decision_detail` one
+decision with its full payload and log tail.
+
+| Section | Content |
+|---|---|
+| `run` | `id`, `status`, `active` (the scheduler lock is held), `exit_hint` (10 means waiting), `hint` |
+| `counts` | items by status, open decisions |
+| `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses |
+| `next` | one entry per open decision: `decision`, `pr`, `kind`, `why`, `prep`, `worktree`, `actions`, `commands`, a small `payload`, `log`, `session_log` |
+
+`next` is empty while a scheduler holds the run — it is still moving items,
+so the reader waits for its `run_summary` — and once the run is `done` or
+`cancelled`. Otherwise it offers `prep` and `pr batch resolve` commands, never
+a `pr` subcommand against a batch item.
+
 ### batch/resolve.py
 
 Apply an operator's answer to one decision, then move the item on.

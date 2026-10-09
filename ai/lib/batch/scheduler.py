@@ -22,7 +22,7 @@ import batch.store
 import git.client
 import rebase.inspect
 from batch.model import (STEP_ORDER, Decision, DecisionKind, EvidenceKind, Item, ItemStatus, Run,
-                         RunStatus, Step, StepRecord, StepStatus)
+                         RunStatus, Step, StepRecord, StepStatus, stacked_on_items)
 from batch.plan import PlanRow
 from batch.steps import StepProcess, WorktreeResult, ensure_worktree, step_argv
 from config.workbench_config import BatchConfig
@@ -398,8 +398,7 @@ class Scheduler:
         for d in self.run.open_decisions():
             if d.kind is not DecisionKind.STEP_REVIEW:
                 continue
-            bases = [e.get("item") for e in d.payload.get("evidence", [])
-                     if e.get("kind") == EvidenceKind.STACKED_ON.value]
+            bases = stacked_on_items(d)
             if bases and all(self.run.item(k).terminal for k in bases):
                 self._apply_one({"decision": d.id, "action": "retry"})
 

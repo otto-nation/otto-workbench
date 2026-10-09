@@ -27,6 +27,7 @@ from pathlib import Path
 import batch.admission
 import batch.events
 import batch.plan
+import batch.report
 import batch.resolve
 import batch.scheduler
 import batch.store
@@ -37,10 +38,7 @@ import core.serde
 from batch.model import STEP_ORDER, RunStatus, Step
 from core.trail import TRAIL_ROOT_ENV, Trail
 
-EXIT_OK = 0
-EXIT_WAITING = 10
-_STATUS_EXIT = {RunStatus.DONE: EXIT_OK, RunStatus.CANCELLED: EXIT_OK,
-                RunStatus.WAITING: EXIT_WAITING}
+EXIT_OK = batch.report.EXIT_OK
 
 
 def _steps(text: str) -> list[Step]:
@@ -191,7 +189,7 @@ def _held_drive(run, bin_dir: Path, cfg) -> int:
     if errors:
         _report_apply_errors(errors)
         return 1
-    return _STATUS_EXIT.get(status, 1)
+    return batch.report.exit_code(status)
 
 
 def _drive(run, *, bin_dir: Path, cfg) -> int:

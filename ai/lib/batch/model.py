@@ -122,6 +122,12 @@ class Decision:
         return not self.resolution
 
 
+def stacked_on_items(decision: Decision) -> list[str]:
+    """Item keys a decision's `stacked_on` evidence names."""
+    return [e.get("item", "") for e in decision.payload.get("evidence", [])
+            if e.get("kind") == EvidenceKind.STACKED_ON.value]
+
+
 @dataclass
 class Item:
     key: str

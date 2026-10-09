@@ -43,7 +43,7 @@ which files a change reaches, `bin/local/select-tests --base origin/main` and
 `bin/local/select-pytest --base origin/main` print the affected paths, one per line, without
 running anything. Read that list and run the files that matter; don't pipe the output
 straight into a command without reading it first. The selection is the hook's, so it can be
-wide (a `CLAUDE.md` edit reaches dozens of bats files that read it) — read it rather than
+wide (an `AGENTS.md` edit reaches dozens of bats files that read it) — read it rather than
 trust a specific shape.
 
 The cost is not merely the wasted minutes. The runner sizes itself from the cores the machine

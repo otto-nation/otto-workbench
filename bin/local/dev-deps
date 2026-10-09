@@ -40,7 +40,7 @@ DEV_DEPS_INSTALLABLE=(
 
 # CMD LABEL HINT — needs root, so checked only. HINT is the command to run.
 # On Darwin both are a plain `brew install` — no root needed there — so the
-# hint is platform-gated the same way DEV_LOCALE_HINT is below.
+# hint is platform-gated, as the locale check below is.
 if [[ "$(uname -s)" == Darwin ]]; then
   DEV_DEPS_ROOT=(
     "zsh|zsh|brew install zsh"
@@ -56,7 +56,16 @@ fi
 # The locale tests/generate_doc_reference.bats pins collation against. macOS
 # ships it; a minimal Linux image does not.
 DEV_LOCALE="en_US.UTF-8"
-DEV_LOCALE_HINT="sudo locale-gen $DEV_LOCALE"
+# locale-gen comes from the `locales` package, which a minimal Debian/Ubuntu
+# image does not have: hinting locale-gen alone names a command that is not
+# there. The hint is decided when the check runs, so it matches the machine.
+_locale_hint() {
+  if command -v locale-gen >/dev/null 2>&1; then
+    printf 'sudo locale-gen %s' "$DEV_LOCALE"
+  else
+    printf 'sudo apt install locales && sudo locale-gen %s' "$DEV_LOCALE"
+  fi
+}
 
 # _shellcheck_pin — the version the CI ShellCheck job installs, without its
 # leading `v`, or nothing when the action cannot be read.
@@ -140,7 +149,7 @@ dev_deps_check() {
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$label — run: $hint")
   done
   if [[ "$(uname -s)" != Darwin ]] && ! _has_locale "$DEV_LOCALE"; then
-    missing+=("locale $DEV_LOCALE — run: $DEV_LOCALE_HINT")
+    missing+=("locale $DEV_LOCALE — run: $(_locale_hint)")
   fi
 
   if [[ ${#missing[@]} -eq 0 ]]; then

@@ -3450,7 +3450,7 @@ Apply an operator's answer to one decision, then move the item on.
 | `dirty_worktree` | `retry` / `drop-pr` | re-checked when the item is next admitted (the payload names a stash command) / item → `dropped` |
 | `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped`; item → `dropped` |
 | `failed` | `force-publish` | only `reason: not_incorporated_remote`; same as `publish` past exactly the commits listed in the refusal (a newly appeared remote commit refuses again) |
-| `publish` | `publish` | see `batch.publish`; success → item `done`, or reopened once for `--watch-ci`; a refusal or failed command → `failed` on step `publish`, `reason` set |
+| `publish` | `publish` | see `batch.publish`; success → item `done`, or reopened once for `--watch-ci`; a refusal or failed command → `failed` on step `publish`, `reason` set; every command's output goes to logs/<slug>-<pr>-publish-<n>.log, which a failure names |
 | | `discard` | item → `done`; local commits stay and nothing is pushed |
 
 `open-chat` is offered where listed and refused by the CLI, leaving the
@@ -3477,6 +3477,7 @@ Where a `pr batch` run lives on disk; the only module that touches it.
     <state_dir>/batch/<run-id>/requests/*.json  decisions waiting to be applied
     <state_dir>/batch/<run-id>/cancel           {"kill": bool} once cancel is asked
     <state_dir>/batch/<run-id>/logs/*.log       stderr of each step attempt
+    <run-id>/logs/*-publish-*.log   output of each publish attempt
 
 ## AI backends
 

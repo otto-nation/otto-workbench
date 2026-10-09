@@ -13,7 +13,7 @@
 | `dirty_worktree` | `retry` / `drop-pr` | re-checked when the item is next admitted (the payload names a stash command) / item → `dropped` |
 | `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped`; item → `dropped` |
 | `failed` | `force-publish` | only `reason: not_incorporated_remote`; same as `publish` past exactly the commits listed in the refusal (a newly appeared remote commit refuses again) |
-| `publish` | `publish` | see `batch.publish`; success → item `done`, or reopened once for `--watch-ci`; a refusal or failed command → `failed` on step `publish`, `reason` set |
+| `publish` | `publish` | see `batch.publish`; success → item `done`, or reopened once for `--watch-ci`; a refusal or failed command → `failed` on step `publish`, `reason` set; every command's output goes to logs/<slug>-<pr>-publish-<n>.log, which a failure names |
 | | `discard` | item → `done`; local commits stay and nothing is pushed |
 
 `open-chat` is offered where listed and refused by the CLI, leaving the
@@ -24,15 +24,19 @@ decision open.
 
 from __future__ import annotations
 
+import contextlib
 import secrets
+import shlex
 import subprocess
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 import batch.outcomes
 import batch.publish
+import batch.store
 import core.timeouts
 import git.push
 from batch.model import Decision, DecisionKind, Item, ItemStatus, Run, Step, StepStatus
@@ -73,11 +77,29 @@ class Request:
                    body_file=d.get("body_file", ""), commit=d.get("commit", ""))
 
 
-def default_runner(argv: list[str]) -> int:
+def default_runner(argv: list[str], log_path: Path | None = None) -> int:
+    """Run one resolve command; with *log_path*, everything it prints is appended there.
+
+    The in-process fast-forward push reports through `git.push.report`, which
+    writes to stderr, so its report is redirected into the same log a child's
+    output goes to — one place for the classifier to read either way.
+    """
     if argv[0] == GIT_PUSH:
-        return 0 if git.push.push(argv[1], gated=False).ok else 1
-    return subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=sys.stderr,
-                          start_new_session=True, timeout=core.timeouts.UNBOUNDED).returncode
+        if log_path is None:
+            return 0 if git.push.push(argv[1], gated=False).ok else 1
+        with log_path.open("a") as log, contextlib.redirect_stderr(log):
+            result = git.push.push(argv[1], gated=False)
+            git.push.report(result, argv[1])
+        return 0 if result.ok else 1
+    if log_path is None:
+        return subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=sys.stderr,
+                              start_new_session=True, timeout=core.timeouts.UNBOUNDED).returncode
+    with log_path.open("a") as log:
+        log.write(f"$ {shlex.join(argv)}\n")
+        log.flush()
+        return subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=log,
+                              stderr=subprocess.STDOUT, start_new_session=True,
+                              timeout=core.timeouts.UNBOUNDED).returncode
 
 
 def _validate(decision: Decision, request: Request, item: Item) -> None:
@@ -129,7 +151,8 @@ def command_for(decision: Decision, item: Item, request: Request,
     return []
 
 
-def _fail(run: Run, item: Item, step: str, *, reason: str = "error",
+def _fail(run: Run, item: Item, step: str, *,
+          reason: str = batch.outcomes.FailureReason.ERROR.value,
           detail: str = "", extra: dict | None = None) -> Decision:
     payload = {"reason": reason, "exit_code": 1, "log_tail": []}
     if detail:
@@ -140,6 +163,15 @@ def _fail(run: Run, item: Item, step: str, *, reason: str = "error",
     run.decisions.append(d)
     item.status = ItemStatus.AWAITING_DECISION
     return d
+
+
+def _publish_failed(run: Run, item: Item, log: Path) -> Decision:
+    """A failed publish command as a decision: its classified reason, headline and log."""
+    lines = log.read_text(errors="replace").splitlines() if log.is_file() else []
+    found = batch.outcomes.classify_failure(lines)
+    return _fail(run, item, "publish", reason=found.reason.value, detail=found.detail,
+                 extra={"log": str(log),
+                        "log_tail": lines[-batch.outcomes.LOG_TAIL_LINES:]})
 
 
 def _step_of(decision: Decision) -> Step | None:
@@ -213,21 +245,28 @@ def _reopen_for_ci(run: Run, item: Item) -> None:
     item.status = ItemStatus.QUEUED
 
 
-def _publish(run: Run, item: Item, pr_bin: str, run_cmd: Callable[[list[str]], int],
+def _publish(run: Run, item: Item, pr_bin: str, run_cmd: Callable[..., int],
              read: Callable[[Item], batch.publish.TreeState], *,
              confirmed: Sequence[str] = ()) -> list[Decision]:
-    """Push what the tree says to push; a refusal or a failed command is a decision."""
+    """Push what the tree says to push; a refusal or a failed command is a decision.
+
+    Every command of one publish attempt appends to one log,
+    `logs/<slug>-<pr>-publish-<n>.log`, which a failure's decision names.
+    """
     tree = read(item)
     plan = batch.publish.plan(item, pr_bin, tree, confirmed=confirmed)
     if not plan.ok:
         extra = {"commits": plan.commits} if plan.commits else None
         return [_fail(run, item, "publish", reason=plan.refusal.value, detail=plan.detail,
                       extra=extra)]
+    log = batch.store.attempt_log_path(run.id, item.repo, item.pr, "publish")
+    if plan.commands:
+        log.touch()
     rest = plan.commands
     if plan.pushes:
         push, *rest = plan.commands
-        if run_cmd(push) != 0:
-            return [_fail(run, item, "publish")]
+        if run_cmd(push, log_path=log) != 0:
+            return [_publish_failed(run, item, log)]
         # The lease moves as soon as the push lands, before anything after it
         # can fail: a retry must see our own push as the planned head, not as
         # somebody else's. Leased on what the branch holds after the push, not
@@ -238,8 +277,8 @@ def _publish(run: Run, item: Item, pr_bin: str, run_cmd: Callable[[list[str]], i
         # re-check of an earlier push found.
         item.ci_rechecked = False
     for argv in rest:
-        if run_cmd(argv) != 0:
-            return [_fail(run, item, "publish")]
+        if run_cmd(argv, log_path=log) != 0:
+            return [_publish_failed(run, item, log)]
     item.status = ItemStatus.DONE
     if plan.pushes:
         _reopen_for_ci(run, item)
@@ -247,7 +286,7 @@ def _publish(run: Run, item: Item, pr_bin: str, run_cmd: Callable[[list[str]], i
 
 
 def apply(run: Run, request: Request, *, pr_bin: str,
-          runner: Callable[[list[str]], int] | None = None,
+          runner: Callable[..., int] | None = None,
           tree: Callable[[Item], batch.publish.TreeState] | None = None) -> list[Decision]:
     decision = run.decision(request.decision)
     item = run.item(decision.item)
@@ -265,7 +304,7 @@ def apply(run: Run, request: Request, *, pr_bin: str,
 
 
 def _run_commands(decision: Decision, item: Item, request: Request, pr_bin: str,
-                   run_cmd: Callable[[list[str]], int]) -> bool:
+                   run_cmd: Callable[..., int]) -> bool:
     for argv in command_for(decision, item, request, pr_bin):
         if run_cmd(argv) == 0:
             continue

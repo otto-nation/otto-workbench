@@ -84,7 +84,7 @@ class Harness:
         self.sched = self._make()
         return self.sched
 
-    def _publish(self, argv):
+    def _publish(self, argv, log_path=None):
         self.published.append(argv)
         return self.publish_code
 

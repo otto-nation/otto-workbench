@@ -134,7 +134,7 @@ class Scheduler:
                  estimates: batch.admission.Estimates | None = None,
                  emit: Callable[..., None] = batch.events.emit,
                  sleep: Callable[[float], None] = time.sleep, tick: float = 0.5,
-                 runner: Callable[[list[str]], int] | None = None,
+                 runner: Callable[..., int] | None = None,
                  tree: Callable[[Item], batch.publish.TreeState] | None = None,
                  contains: Callable[[str, str], bool] = _contains_commit,
                  dirty: Callable[[str], bool] = git.client.is_dirty,
@@ -432,10 +432,7 @@ class Scheduler:
             self._start(item, rec, fresh)
 
     def _start(self, item: Item, rec: StepRecord, fresh: PlanRow) -> None:
-        slug = item.repo.replace("/", "__")
-        attempt = sum(1 for _ in batch.store.logs_dir(self.run.id).glob(
-            f"{slug}-{item.pr}-{rec.step.value}-*"))
-        log = batch.store.logs_dir(self.run.id) / f"{slug}-{item.pr}-{rec.step.value}-{attempt}.log"
+        log = batch.store.attempt_log_path(self.run.id, item.repo, item.pr, rec.step.value)
         wait = rec.step is Step.CI and fresh.ci_state in batch.plan.CI_RUNNING
         argv = step_argv(rec.step, self.pr_bin, item.worktree, remote_sha=item.remote_sha,
                          wait=wait, watch=rec.watch)

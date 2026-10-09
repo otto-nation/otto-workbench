@@ -5,6 +5,7 @@
     <state_dir>/batch/<run-id>/requests/*.json  decisions waiting to be applied
     <state_dir>/batch/<run-id>/cancel           {"kill": bool} once cancel is asked
     <state_dir>/batch/<run-id>/logs/*.log       stderr of each step attempt
+    <run-id>/logs/*-publish-*.log   output of each publish attempt
 """
 
 # doc-group: batch
@@ -56,6 +57,18 @@ def logs_dir(run_id: str) -> Path:
     path = run_dir(run_id) / "logs"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def attempt_log_path(run_id: str, repo: str, pr: int, step: str) -> Path:
+    """The log for the next attempt at *step* on PR *pr* of *repo*: `<slug>-<pr>-<step>-<n>.log`.
+
+    *step* is a Step value or "publish". `n` counts the attempts already logged,
+    so a caller must create the file before the next call sees it.
+    """
+    slug = repo.replace("/", "__")
+    logs = logs_dir(run_id)
+    attempt = sum(1 for _ in logs.glob(f"{slug}-{pr}-{step}-*"))
+    return logs / f"{slug}-{pr}-{step}-{attempt}.log"
 
 
 def save(run: Run) -> None:

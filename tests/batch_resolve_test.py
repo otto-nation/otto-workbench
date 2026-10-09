@@ -41,7 +41,7 @@ class Recorder:
     def __init__(self, code=0):
         self.calls, self.code = [], code
 
-    def __call__(self, argv):
+    def __call__(self, argv, log_path=None):
         self.calls.append(argv)
         return self.code
 
@@ -225,7 +225,7 @@ def test_a_landed_push_moves_the_lease_even_when_the_replies_fail():
                          divergence=RefDivergence(ahead=int(origin["tip"] != "new"), behind=0,
                                                   comparable=True))
 
-    def runner(argv):
+    def runner(argv, log_path=None):
         if argv[0] == batch.resolve.GIT_PUSH:
             origin["tip"] = "new"
             return 0
@@ -339,3 +339,33 @@ def test_a_forced_rebase_records_the_tip_it_started_from(monkeypatch):
     run = _run(_d(batch.model.DecisionKind.REBASE_REFUSED, "rebase", {"override": "--force"}))
     batch.resolve.apply(run, batch.resolve.Request("d1", "force"), pr_bin="pr", runner=Recorder())
     assert run.items[0].pre_rebase_head == "p9"
+
+
+def test_a_failed_publish_records_its_reason_detail_and_log():
+    run = _run(_d(batch.model.DecisionKind.PUBLISH, "publish"))
+    run.items[0].step(batch.model.Step.REVIEW).drafted = True
+
+    def refused(argv, log_path=None):
+        log_path.write_text("▸ Force-pushing...\n"
+                            "✗ push refused (hook) — nothing reached the remote\n"
+                            "  PRE-PUSH CHECKS FAILED\n")
+        return 1
+
+    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr",
+                        runner=refused, tree=_ff)
+    failed = run.open_decisions()[-1]
+    assert failed.payload["reason"] == "pre_push_rejected"
+    assert failed.payload["detail"] == "push refused (hook) — nothing reached the remote"
+    assert failed.payload["log"].endswith("/logs/o__r-1-publish-0.log")
+    assert failed.payload["log_tail"][-1] == "  PRE-PUSH CHECKS FAILED"
+
+
+def test_default_runner_writes_a_logged_commands_output_to_the_log(tmp_path, capfd):
+    script = tmp_path / "talk.py"
+    script.write_text("import sys\nprint('out line')\nprint('err line', file=sys.stderr)\n"
+                      "sys.exit(3)\n")
+    log = tmp_path / "publish.log"
+    assert batch.resolve.default_runner([sys.executable, str(script)], log_path=log) == 3
+    text = log.read_text()
+    assert "out line" in text and "err line" in text
+    assert capfd.readouterr().out == ""

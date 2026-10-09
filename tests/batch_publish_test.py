@@ -17,6 +17,7 @@ import batch.model  # noqa: E402
 import batch.publish  # noqa: E402
 import batch.resolve  # noqa: E402
 import batch.scheduler  # noqa: E402
+import batch.store  # noqa: E402
 from batch.plan import PlanRow, StepNeed  # noqa: E402
 from batch.publish import GIT_PUSH, Refusal, TreeState  # noqa: E402
 from rebase.types import RefDivergence  # noqa: E402
@@ -166,7 +167,7 @@ def test_a_publish_that_commits_before_pushing_leases_on_what_it_pushed(tmp_path
     (pair.work / "fix.txt").write_text("fix\n")
     commit_all(pair.work, "fix: x")
 
-    def regenerating_push(argv):
+    def regenerating_push(argv, log_path=None):
         (pair.work / "regen.txt").write_text("regen\n")
         commit_all(pair.work, "chore: regenerate")
         git_in(pair.work, "push", "-q", "origin", "feat")
@@ -176,3 +177,32 @@ def test_a_publish_that_commits_before_pushing_leases_on_what_it_pushed(tmp_path
                         runner=regenerating_push)
     assert run.items[0].remote_sha == remote_tip(pair.origin, "feat")
     assert run.items[0].published_sha == run.items[0].remote_sha
+
+
+def test_a_fast_forward_publish_logs_what_the_push_said(tmp_path):
+    pair = remote_and_clone(tmp_path)
+    run = _publish_run(pair)
+    (pair.work / "fix.txt").write_text("fix\n")
+    commit_all(pair.work, "fix: x")
+    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr")
+    logs = sorted(batch.store.logs_dir("r1").glob("o__r-1-publish-*.log"))
+    assert [p.name for p in logs] == ["o__r-1-publish-0.log"]
+    assert "Pushed" in logs[0].read_text()
+
+
+def test_a_fast_forward_a_hook_refuses_records_pre_push_rejected(tmp_path, live_git_hooks):
+    pair = remote_and_clone(tmp_path)
+    run = _publish_run(pair)
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    hook = hooks / "pre-push"
+    hook.write_text("#!/bin/sh\necho 'lint failed' >&2\nexit 1\n")
+    hook.chmod(0o755)
+    git_in(pair.work, "config", "core.hooksPath", str(hooks))
+    (pair.work / "fix.txt").write_text("fix\n")
+    commit_all(pair.work, "fix: x")
+    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr")
+    failed = run.open_decisions()[-1]
+    assert failed.payload["reason"] == "pre_push_rejected"
+    assert failed.payload["detail"].startswith("push refused (hook)")
+    assert "lint failed" in Path(failed.payload["log"]).read_text()

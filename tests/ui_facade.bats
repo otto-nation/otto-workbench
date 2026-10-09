@@ -226,14 +226,14 @@ EOF
 # ─── Zsh compatibility ─────────────────────────────────────────────────────
 
 @test "output.sh works when sourced from zsh" {
-  command -v zsh &>/dev/null || { echo "zsh is not installed — a declared dependency; run: bin/local/dev-deps (or: task dev:setup)"; return 1; }
+  require_zsh || return 1
   run zsh -c ". '$REPO_ROOT/lib/output.sh' && info 'hello from zsh'"
   [ "$status" -eq 0 ]
   [[ "$output" == *"hello from zsh"* ]]
 }
 
 @test "ui.sh facade works when sourced from zsh (output only)" {
-  command -v zsh &>/dev/null || { echo "zsh is not installed — a declared dependency; run: bin/local/dev-deps (or: task dev:setup)"; return 1; }
+  require_zsh || return 1
   run zsh -c ". '$REPO_ROOT/lib/ui.sh' && info 'hello from zsh'"
   [ "$status" -eq 0 ]
   [[ "$output" == *"hello from zsh"* ]]

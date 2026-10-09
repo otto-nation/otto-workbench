@@ -5,10 +5,7 @@
 setup() {
   load 'test_helper'
   common_setup
-  if ! command -v zsh >/dev/null 2>&1; then
-    echo "zsh is not installed — run: bin/local/dev-deps (or: task dev:setup)" >&2
-    return 1
-  fi
+  require_zsh
   PLUGINS="$REPO_ROOT/zsh/config.d/tools/zsh-plugins.zsh"
 }
 

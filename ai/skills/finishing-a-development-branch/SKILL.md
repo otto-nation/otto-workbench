@@ -159,10 +159,11 @@ repository's workspace at the container (`resolve-workspace`), which `wt remove`
 does not touch.
 
 If you do have to push again before the PR merges:
-- Say so on the PR, in a comment naming what changed and why. A silent push
-  wastes the review already done
-- Never push to a PR marked ready without commenting first — ready is the author
-  declaring the branch finished, and a later push retracts that
+- A push you make by hand needs a PR comment naming what changed and why. A
+  push the `pr` tooling makes does not — its own summary and replies are the
+  announcement, and a free-form comment on top only restates them
+- Never hand-push to a PR marked ready without commenting first — ready is the
+  author declaring the branch finished, and a later push retracts that
 - Re-run `pr review --self --fix --push`; the earlier review said nothing about
   the new commit, and on an open PR the fix commit has to reach the branch being
   read

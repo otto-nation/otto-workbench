@@ -101,7 +101,11 @@ class Request:
 
 
 def default_runner(argv: list[str], log_path: Path | None = None) -> int:
-    """Run one resolve command as a child; with *log_path*, a `$ <argv>` header and everything it prints are appended there."""
+    """Run one resolve command as a child.
+
+    With *log_path*, a `$ <argv>` header and everything it prints are appended
+    there.
+    """
     if log_path is None:
         return subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=sys.stderr,
                               start_new_session=True, timeout=core.timeouts.UNBOUNDED).returncode

@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest import mock
 
 from batch_git_support import advance, remote_and_clone, remote_tip
-from conftest import commit_all, git_out
+from conftest import commit_all, git_in, git_out
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -111,7 +111,43 @@ def test_pr_push_refuses_a_moved_remote_with_exit_1(tmp_path):
 
 
 @pytest.mark.parametrize("argv", [[], ["--expect", ""]])
-def test_pr_push_needs_a_sha_to_lease_on(argv, capsys):
+def test_pr_push_needs_a_sha_to_lease_on(argv, tmp_path, capsys):
     with pytest.raises(SystemExit) as exc:
-        cli.pr_push.main(argv)
+        cli.pr_push.main(["--repo-dir", str(tmp_path), *argv])
     assert exc.value.code == 2
+    if argv:
+        assert "--expect needs the SHA" in capsys.readouterr().err
+
+
+_REGENERATING_HOOK = """#!/bin/sh
+if [ -f .git/regenerated ]; then exit 0; fi
+: > .git/regenerated
+echo 'regenerated' > gen.txt
+echo 'docs are stale — regenerated them' >&2
+exit 1
+"""
+
+
+def test_a_regenerating_hook_is_committed_with_the_plain_push_subject(
+        tmp_path, live_git_hooks):
+    pair = remote_and_clone(tmp_path)
+    (pair.work / "gen.txt").write_text("stale\n")
+    commit_all(pair.work, "chore: add generated file")
+    git_in(pair.work, "push", "-q", "origin", "feat")
+
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    hook = hooks / "pre-push"
+    hook.write_text(_REGENERATING_HOOK)
+    hook.chmod(0o755)
+    git_in(pair.work, "config", "core.hooksPath", str(hooks))
+
+    tip = remote_tip(pair.origin, "feat")
+    _commit(pair.work)
+    assert _push(pair.work, tip) == 0
+    assert git_out(pair.work, "log", "-1", "--pretty=%s").strip() == (
+        "chore: regenerate generated files"
+    )
+    assert remote_tip(pair.origin, "feat") == git_out(
+        pair.work, "rev-parse", "HEAD",
+    ).strip()

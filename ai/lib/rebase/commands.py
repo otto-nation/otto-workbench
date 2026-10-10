@@ -83,7 +83,8 @@ def _mid_rebase(cwd: str, trail: Trail | None) -> bool:
 
 
 def push_head(cwd: str, branch: str, *, expect: str, verify: bool = True,
-              trail: Trail | None = None) -> bool:
+              trail: Trail | None = None,
+              regen: str = rebase.land.REGEN_MESSAGE) -> bool:
     """Push HEAD to origin's *branch* with a lease on *expect*; True when it landed.
 
     The one push `pr rebase`'s force-push (`cmd_push`) and `pr push`
@@ -92,7 +93,9 @@ def push_head(cwd: str, branch: str, *, expect: str, verify: bool = True,
     the publishing gate's answer: the entry point opens it.
     """
     lease = rebase.lease.PushLease(branch=branch, expect=expect)
-    landed = rebase.land.land_rebased(cwd, args=lease.args, verify=verify, trail=trail)
+    landed = rebase.land.land_rebased(
+        cwd, args=lease.args, verify=verify, trail=trail, regen=regen,
+    )
     if not landed.ok:
         core.trail.terr(trail, "push", "push failed",
                         data={"status": str(landed.status), "resume": landed.resume})
@@ -180,7 +183,8 @@ def cmd_push_head(
     if _mid_rebase(cwd, trail):
         return 1
     core.log.info(f"Pushing {ctx.branch} (lease on {git.client.abbrev(expect)})...")
-    if not push_head(cwd, ctx.branch, expect=expect, verify=verify, trail=trail):
+    if not push_head(cwd, ctx.branch, expect=expect, verify=verify, trail=trail,
+                     regen=rebase.types.PUSH_REGEN_MESSAGE):
         return 1
     state = rebase.types.load_or_init(ctx)
     pr.state.apply(state, pr.domains.PushDomain.observed(

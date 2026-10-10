@@ -217,9 +217,10 @@ def test_a_delegate_reports_its_own_output_contract(command):
     """`pr ci` answers with CIDomain, which `pr --tool-schema` cannot carry.
 
     The union schema declares no `output_schema` at all: one subcommand
-    prints a document and nine print prose, so one declaration for all ten
-    made the MCP server reject the nine. This is the per-command answer, and
-    it is what lets a skill cite `pr ci` rather than `ai/bin/ci-check`.
+    prints a document and the rest print prose, so one declaration for every
+    invocation made the MCP server reject the rest. This is the per-command
+    answer, and it is what lets a skill cite `pr ci` rather than
+    `ai/bin/ci-check`.
     """
     doc = cli.schema.subcommand_schema(command)
 

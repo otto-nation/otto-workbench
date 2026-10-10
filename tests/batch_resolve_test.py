@@ -528,7 +528,7 @@ def test_a_failed_finish_still_adopts_the_head_it_pushed():
     assert item.status is batch.model.ItemStatus.AWAITING_DECISION
 
 
-def test_a_fast_forward_publish_is_a_logged_pr_push(tmp_path):
+def test_a_fast_forward_publish_is_a_logged_pr_push():
     run = _run(_d(batch.model.DecisionKind.PUBLISH, "publish"))
     item = run.items[0]
     item.remote_sha = "s"

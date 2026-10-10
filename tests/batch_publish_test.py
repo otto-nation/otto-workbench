@@ -223,7 +223,10 @@ def test_owed_closeout_follows_a_push_once():
     item = _item()
     item.step(batch.model.Step.COMMENTS).drafted = True
     got = batch.publish.plan(item, "pr", _tree(1, 0), closeout=CloseoutDebt(replies=True))
-    assert got.commands == [["pr", "push", "--expect", "r0", *WT], ["pr", "comments", "--finish", "--post", *WT]]
+    assert got.commands == [
+        ["pr", "push", "--expect", "r0", *WT],
+        ["pr", "comments", "--finish", "--post", *WT],
+    ]
 
 
 def test_an_owed_tracking_issue_closes_out_with_track_all_in_place_of_ids():

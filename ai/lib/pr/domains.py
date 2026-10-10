@@ -24,8 +24,8 @@ I/O, and imports this module — never the other way round. So does
 that pass owes, over the same record every domain here carries.
 
 ``PushDomain`` is how far the local branch is ahead of ``origin/<branch>``.
-``pr status`` refreshes it live and does not persist it; ``pr push`` persists
-what it observed once its push lands. ``ahead`` is None for a
+``pr push`` saves what it observed when its push lands; ``pr status`` observes
+it live and saves nothing. ``ahead`` is None for a
 branch with no remote ref and a count otherwise, so "never pushed" and "pushed
 and up to date" are different answers. The dashboard line and the merge-readiness
 blocker are the same three states: branch not pushed, N commit(s) not pushed,
@@ -718,11 +718,10 @@ class PushDomain(Domain):
     "never pushed" and "pushed and up to date" are different answers rather than
     both reading as zero.
 
-    ``pr status`` refreshes this live and does not persist it — the answer is a
-    local git question and costs one command. It is a domain rather than a
-    dashboard line computed on the side because merge readiness has to fold it
-    in alongside the rest, and because ``pr push`` writes it at the moment it
-    learns the answer.
+    ``pr push`` saves what it observed when its push lands; ``pr status``
+    observes it live and saves nothing — the answer is a local git question and
+    costs one command. It is a domain rather than a dashboard line computed on
+    the side because merge readiness has to fold it in alongside the rest.
     """
 
     ahead: int | None = None

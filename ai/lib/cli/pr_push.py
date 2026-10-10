@@ -1,10 +1,11 @@
 """Push HEAD to origin with a lease on the remote head the caller expects.
 
-The plain push `pr rebase --push-only` was being used for: a fast-forward, or
-any HEAD, published only if origin still holds `--expect`. It records where
-the branch stands (`PushDomain`) and records no rebase, so `pr status` does not
-describe a push as a rewrite. The push itself is `rebase.commands.push_head`,
-the same one `pr rebase` force-pushes with.
+Both `pr push` and `pr rebase --push-only` are lease-guarded pushes of HEAD
+through `rebase.commands.push_head` — a rewrite satisfies the lease the same
+way a fast-forward does, so `pr push` is not "not a force push". Use
+`pr rebase --push-only` after a rebase; use `pr push` for anything else. It
+records where the branch stands (`PushDomain`) and records no rebase, so
+`pr status` does not describe a push as a rewrite.
 
 Exit codes:
   0  Pushed, and the remote holds HEAD
@@ -33,7 +34,7 @@ import pr.context
 import pr.state
 import rebase.commands
 
-SCRIPT = "pr-push"
+SCRIPT = "pr push"
 
 
 def build_parser() -> ToolParser:

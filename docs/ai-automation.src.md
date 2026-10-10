@@ -392,6 +392,15 @@ of their subparsers — the same function `pr` classifies with — and fails the
 day one declares an option that consumes a value, naming the two ways out: declare the
 command as taking no target, or give it a delegate to read.
 
+### `pr push`: a plain push with a lease
+
+`pr push --expect <sha>` pushes HEAD to origin only if origin's branch is still
+at `<sha>`, and fails without touching the remote otherwise. It runs the
+pre-push hook (`--no-verify` skips it), commits any files the hook regenerated
+and pushes once more, and records where the branch stands for `pr status`. It
+records no rebase. `pr rebase --push-only` force-pushes through the same code;
+use it after a rebase, and `pr push` for anything else.
+
 ### pr batch
 
 `pr batch` rebases, CI-fixes, addresses comments on and self-reviews your open

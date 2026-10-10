@@ -6545,6 +6545,26 @@ Usage:
   pr-describe --title "feat: x" --body-file body.md --post
   pr-describe --repo-dir <path>       # specify worktree directory
 
+### cli/pr_push.py
+
+Push HEAD to origin with a lease on the remote head the caller expects.
+
+The plain push `pr rebase --push-only` was being used for: a fast-forward, or
+any HEAD, published only if origin still holds `--expect`. It records where
+the branch stands (`PushDomain`) and records no rebase, so `pr status` does not
+describe a push as a rewrite. The push itself is `rebase.commands.push_head`,
+the same one `pr rebase` force-pushes with.
+
+Exit codes:
+  0  Pushed, and the remote holds HEAD
+  1  Refused, lost, unverified, or a rebase is still in progress
+  2  Usage error
+
+Usage:
+  pr push --expect <sha>               # push HEAD if origin still holds <sha>
+  pr push --expect <sha> --no-verify   # skip the pre-push hook
+  pr push --expect <sha> --repo-dir <path>
+
 ### cli/pr_rebase.py
 
 Rebase current branch onto its base with conflict detection and AI resolution.

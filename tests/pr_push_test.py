@@ -12,6 +12,10 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import pytest  # noqa: E402
+
+import cli.pr  # noqa: E402
+import cli.pr_push  # noqa: E402
 import core.publishing  # noqa: E402
 import pr.context  # noqa: E402
 import pr.state  # noqa: E402
@@ -85,3 +89,29 @@ def test_a_rebase_in_progress_is_refused_before_anything_is_pushed(tmp_path):
     with mock.patch.object(rebase.inspect, "rebase_in_progress", return_value=True):
         assert _push(pair.work, tip) == 1
     assert remote_tip(pair.origin, "feat") == tip
+
+
+def test_pr_push_lands_through_the_pr_entry_point(tmp_path):
+    pair = remote_and_clone(tmp_path)
+    tip = remote_tip(pair.origin, "feat")
+    head = _commit(pair.work)
+    code = cli.pr.main(["--repo-dir", str(pair.work), "push", "--expect", tip],
+                       bin_dir=REPO_ROOT / "ai" / "bin")
+    assert code == 0
+    assert remote_tip(pair.origin, "feat") == head
+
+
+def test_pr_push_refuses_a_moved_remote_with_exit_1(tmp_path):
+    pair = remote_and_clone(tmp_path)
+    planned = remote_tip(pair.origin, "feat")
+    theirs = advance(pair.seed, "feat", "theirs.txt")
+    _commit(pair.work)
+    assert cli.pr_push.main(["--repo-dir", str(pair.work), "--expect", planned]) == 1
+    assert remote_tip(pair.origin, "feat") == theirs
+
+
+@pytest.mark.parametrize("argv", [[], ["--expect", ""]])
+def test_pr_push_needs_a_sha_to_lease_on(argv, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.pr_push.main(argv)
+    assert exc.value.code == 2

@@ -28,6 +28,7 @@ from batch.model import (STEP_ORDER, Decision, DecisionKind, DirtyReason, Eviden
 from batch.plan import PlanRow
 from batch.steps import StepProcess, WorktreeResult, ensure_worktree, step_argv
 from config.workbench_config import BatchConfig
+from pr.comments_fix import CloseoutDebt
 
 # Steps that fetch into the repo's shared `.git`. Two at once contend for its
 # locks, which today degrades to a "potentially stale" warning mid-rebase. A
@@ -54,7 +55,13 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
     for r in rows:
         chosen = selected.get(r.key, []) if selected is not None else \
             [s for s in steps if r.needs.get(s) and r.needs[s].needed]
-        if not chosen:
+        # A row whose only work is the closeout pr recorded as owed is kept with
+        # every step skipped: _admit closes it straight away and publish pays the
+        # debt. Only when comments is a step of this run, and never past an
+        # explicit selection that left the row out.
+        closeout_only = (not chosen and not explicit and bool(r.closeout)
+                         and Step.COMMENTS in steps)
+        if not chosen and not closeout_only:
             continue
         recs = [StepRecord(s, StepStatus.PENDING if s in chosen else StepStatus.SKIPPED,
                            explicit=explicit and s in chosen)
@@ -142,13 +149,15 @@ class Scheduler:
                  contains: Callable[[str, str], bool] = _contains_commit,
                  dirty: Callable[[str], bool] = git.client.is_dirty,
                  rebasing: Callable[[str], bool] = rebase.inspect.rebase_in_progress,
-                 verbose: bool = False):
+                 verbose: bool = False,
+                 closeout: Callable[[str, str], CloseoutDebt] | None = None):
         self.run, self.pr_bin, self.cfg = run, pr_bin, cfg
         self._verbose = verbose
         # Looked up at construction, not bound as a default, so a patched
         # batch.plan.replan_row is the one used.
         self._host, self._spawn = host, spawn
         self._replan = replan or batch.plan.replan_row
+        self._closeout = closeout or batch.plan.closeout_debt
         self._worktrees, self._head, self._rss = worktrees, head, rss
         self._estimates = estimates or batch.admission.Estimates.load()
         self._emit, self._sleep, self._tick = emit, sleep, tick
@@ -170,7 +179,8 @@ class Scheduler:
             item = self.run.item(self.run.decision(req.decision).item)
             was_terminal = item.terminal
             created = batch.resolve.apply(self.run, req, pr_bin=self.pr_bin,
-                                          runner=self._runner, tree=self._tree)
+                                          runner=self._runner, tree=self._tree,
+                                          closeout=self._closeout)
             self._emit("decision_resolved", run=self.run.id, decision=req.decision,
                        action=req.action)
             for d in created:
@@ -277,23 +287,36 @@ class Scheduler:
 
     def _close(self, item: Item) -> None:
         drafted = [r.step for r in item.steps if r.drafted]
-        if not drafted:
+        debt = self._closeout(item.repo_dir, item.branch)
+        if not drafted and not debt.owed:
             item.status = ItemStatus.DONE
             self._emit("item_finished", run=self.run.id, item=item.key,
                        status=item.status.value)
             return
-        d = _decide(self.run, item, "publish", DecisionKind.PUBLISH,
-                    {"drafted": [s.value for s in drafted], "track": list(item.track)},
-                    emit=self._emit)
+        payload = {"drafted": [s.value for s in drafted], "track": list(item.track)}
+        if debt.owed:
+            payload["closeout"] = debt.describe()
+        d = _decide(self.run, item, "publish", DecisionKind.PUBLISH, payload, emit=self._emit)
         item.status = ItemStatus.READY_TO_PUBLISH
         # --auto-publish answers the publish decision itself, and only for an
         # item that closed with nothing open and every drafted step listed and
         # finished DONE — a step the operator skipped or that failed left work
         # nobody vouched for, so its publish stays the operator's to answer.
+        # An owed closeout is comments work, so it needs `comments` listed too.
+        # A comments step this run attempted (started_at set, or an exit_code)
+        # that did not finish DONE — failed, then skip-step — leaves that debt
+        # unvouched: auto-publish does not fire. Debt from an earlier `pr` run,
+        # with comments never attempted here, still auto-publishes under
+        # `--auto-publish comments`.
         # _apply_one emits the outcome — item_finished on DONE, or the refusal's
         # decision — so READY_TO_PUBLISH is not announced first.
         finished = all(r.status is StepStatus.DONE for r in item.steps if r.drafted)
-        if finished and set(drafted) <= set(self.run.auto_publish):
+        comments = next((r for r in item.steps if r.step is Step.COMMENTS), None)
+        attempted = comments is not None and (bool(comments.started_at)
+                                              or comments.exit_code is not None)
+        unvouched = debt.owed and attempted and comments.status is not StepStatus.DONE
+        vouched = set(drafted) | ({Step.COMMENTS} if debt.owed else set())
+        if finished and not unvouched and vouched <= set(self.run.auto_publish):
             self._apply_one({"decision": d.id, "action": "publish"})
             return
         self._emit("item_finished", run=self.run.id, item=item.key, status=item.status.value)

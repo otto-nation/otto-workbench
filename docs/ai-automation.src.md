@@ -412,7 +412,10 @@ pr batch cancel [RUN_ID] [--kill]
 ```
 
 Steps run in the order `rebase`, `ci`, `comments`, `review`, each only where
-needed (`run` plans for itself; `run --help` has recipes). `rebase` is needed
+needed (`run` plans for itself; `run --help` has recipes). A PR that needs no
+step is still planned into the run when its saved `pr` state owes a closeout,
+but only when `comments` is one of the run's steps and there is no `--select`.
+It is queued and gets a worktree like any other item. `rebase` is needed
 when the branch is behind its PR's base, from refs in a private `refs/pr-batch/`
 namespace (GitHub merge state fallback; `UNKNOWN` and `DIRTY` count as needed).
 `ci` runs `ci-check --fix --no-rebase --head-sha <planned remote head>` (not
@@ -422,15 +425,19 @@ heads skip both. A stacked PR waits for its base's publish; `resume` retries
 repo at a time (a waiting CI step excepted). No start in a dirty worktree
 (`dirty_worktree`), except a rebase resuming its own paused replay.
 
-An item that closes with drafted work opens one `publish` decision. Publish
+An item that closes with drafted work, or whose saved `pr` state owes a closeout (`pr status`'s `⚠ closeout owed`), opens one
+`publish` decision. Publish
 fetches the branch and refuses (`failed`) with `fetch_failed`, `remote_moved`,
 `not_comparable`, `not_incorporated`, or `not_incorporated_remote`. Otherwise
 it fast-forwards, or force-pushes with `pr rebase --push-only --expect
-<planned head>`, then posts comment replies only when the comments step
-drafted or items were tracked. `force-publish` answers only
+<planned head>`, then runs `pr comments --finish --post` when the comments
+step drafted, items were tracked, or a closeout is owed — with `--track-all`
+when the owed part is a tracking issue. A commit `--finish` pushes becomes the
+lease. `force-publish` answers only
 `not_incorporated_remote` for the listed commits — a new remote commit refuses
 again. `--auto-publish STEPS` resolves that decision when the item closes with
 no open decision and every drafted step is listed and finished `done`.
+An owed closeout counts as `comments`: `--auto-publish comments` answers a closeout-only publish.
 `--watch-ci` re-checks CI once after a push and reopens on red; `run_finished`
 lists `ci_not_rechecked`.
 
@@ -447,7 +454,7 @@ Actions: `accept`, `retry`, `skip-step`, `undo` (rebase:
 - `run`: `id`, `status`, `active` (a scheduler holds the run's lock), `exit_hint` and a one-line `hint`. `exit_hint` is what `run`/`resume` exit with: 0 once the run is finished (`done` or `cancelled`), 10 while it waits on you, 1 when it stopped without settling (resume it), and null while a scheduler holds the run.
 - `counts`: items by status, and open decisions.
 - `items`: non-terminal items only — worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, and step statuses.
-- `next`: one entry per open decision.
+- `next`: one entry per open decision — or, once the run is finished, one `closeout_owed` entry per PR that `pr` still owes a closeout, whose `commands` is the `pr comments --finish --post …` that pays it.
 
 `pr batch next` prints the same report without `items`.
 
@@ -456,14 +463,11 @@ Each `next` entry carries:
 - `why`: a classified sentence.
 - `prep`: any work outside `pr` it needs first — the conflicted files to resolve, the review file and its must/should/nit counts (declined findings are left out of those and counted apart as `declined`), the remote commits to check, or a thread excerpt.
 - `worktree`.
-- `actions`, and `commands`: one copy-paste `pr batch resolve` per action. A required input is shown as a placeholder, an optional one in brackets.
+- `actions`, and `commands`: decision entries carry one copy-paste `pr batch resolve` per action; a finished run's `closeout_owed` entries carry the `pr comments --finish --post …` command with no actions. A required input is shown as a placeholder, an optional one in brackets.
 - `payload`: a small kind-specific part of the decision's payload.
 - `log` and `session_log` paths.
 
-Log tails appear only under `--decision`. `next` is empty in two cases:
-
-- while a scheduler holds the run — wait for its `run_summary`;
-- once the run is `done` or `cancelled`.
+Log tails appear only under `--decision`. `next` is empty while a scheduler holds the run (wait for its `run_summary`), and in a finished run that owes nothing.
 
 A `failed` decision's `reason` is one of the classified reasons listed in
 [`batch/outcomes.py`](ai-libraries.md#batchoutcomespy).

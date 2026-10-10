@@ -9,7 +9,7 @@ decision with its full payload and log tail.
 | `run` | `id`, `status`, `active` (the scheduler lock is held), `exit_hint`, `hint` |
 | `counts` | items by status, open decisions |
 | `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses |
-| `next` | one entry per open decision: `decision`, `pr`, `kind`, `why`, `prep`, `worktree`, `actions`, `commands`, a small `payload`, `log`, `session_log` |
+| `next` | one entry per open decision, or per owed closeout once finished: `decision`, `pr`, `kind`, `why`, `prep`, `worktree`, `actions`, `commands`, a small `payload`, `log`, `session_log` |
 
 `exit_hint` is what `run`/`resume` exit with for the run as it stands: 0 once
 it is `done` or `cancelled`, 10 while it waits on a person, 1 when it stopped
@@ -17,24 +17,32 @@ without settling (interrupted — `pr batch resume` it), and null while a
 scheduler holds the run. A review decision's finding counts leave declined
 findings out of must/should/nit and count them apart as `declined`.
 
-`next` is empty while a scheduler holds the run — it is still moving items,
-so the reader waits for its `run_summary` — and once the run is `done` or
-`cancelled`. Otherwise it offers `prep` and `pr batch resolve` commands, never
-a `pr` subcommand against a batch item.
+`next` is empty while a scheduler holds the run — it is still moving items, so
+the reader waits for its `run_summary`. While the run waits, `next` offers
+`prep` and `pr batch resolve` commands, never a `pr` subcommand against a batch
+item. Once the run is `done` or `cancelled`, `next` lists one `closeout_owed`
+entry per PR whose saved `pr` state still owes a closeout. Each entry carries
+the `pr` command (`CloseoutDebt.command` plus `--repo-dir`), `decision: null`
+and no actions. A closed PR is left out.
 """
 
 # doc-group: batch
 
 from __future__ import annotations
 
+import shlex
 from collections import Counter
+from collections.abc import Callable
+from pathlib import Path
 
 import batch.outcomes
+import batch.plan
 import batch.publish
 import batch.resolve
 import review.paths
-from batch.model import (Decision, DecisionKind, DirtyReason, EvidenceKind, Item, Run, RunStatus,
-                         Step, stacked_on_items)
+from batch.model import (Decision, DecisionKind, DirtyReason, EvidenceKind, Item, ItemStatus, Run,
+                         RunStatus, Step, stacked_on_items)
+from pr.comments_fix import CloseoutDebt
 from review.types import SEVERITY_MUST, SEVERITY_NIT, SEVERITY_SHOULD, severity_by_key
 
 SCHEMA_VERSION = 1
@@ -52,7 +60,7 @@ _PAYLOAD_KEYS: dict[DecisionKind, tuple[str, ...]] = {
     DecisionKind.REBASE_CONFLICT: ("files", "remaining_commits"),
     DecisionKind.REBASE_REFUSED: ("status", "override", "remedy", "detail"),
     DecisionKind.COMMENT_ITEM: ("id", "outcome", "file", "line", "replyable"),
-    DecisionKind.PUBLISH: ("drafted", "track"),
+    DecisionKind.PUBLISH: ("drafted", "track", "closeout"),
     DecisionKind.DIRTY_WORKTREE: ("path", "reason"),
 }
 
@@ -107,7 +115,12 @@ def why(decision: Decision) -> str:
     if kind is DecisionKind.INTERRUPTED:
         return f"the {decision.step} step was interrupted before it finished"
     if kind is DecisionKind.PUBLISH:
-        return f"drafted work is ready to publish: {', '.join(p.get('drafted', []))}"
+        parts = []
+        if p.get("drafted"):
+            parts.append(f"drafted work is ready to publish: {', '.join(p['drafted'])}")
+        if p.get("closeout"):
+            parts.append(f"pr comments owes this PR a closeout: {p['closeout']}")
+        return "; ".join(parts) or "drafted work is ready to publish"
     # Every kind today is named above; a kind added later still gets a true sentence.
     return f"the {decision.step} step needs a person ({kind.value})"
 
@@ -188,11 +201,37 @@ def _entry(run: Run, decision: Decision, *, full: bool = False) -> dict:
             "log": _log(decision, item), "session_log": _session_log(decision, item)}
 
 
-def _hint(run: Run, active: bool) -> str:
+def _owed_entries(run: Run, closeout: Callable[[str, str], CloseoutDebt]) -> list[dict]:
+    """One entry per item whose saved `pr` state still owes a closeout, for a finished run.
+
+    The run no longer owns these PRs, so the entry is the `pr` command that
+    pays the debt, not a `pr batch resolve`. A closed PR is left out.
+    """
+    entries = []
+    for item in run.items:
+        if item.status is ItemStatus.SKIPPED_CLOSED:
+            continue
+        debt = closeout(item.repo_dir, item.branch)
+        if not debt.owed:
+            continue
+        where = (["--repo-dir", item.worktree]
+                 if item.worktree and Path(item.worktree).is_dir()
+                 else ["--repo-dir", item.repo_dir, "--branch", item.branch])
+        entries.append({"decision": None, "pr": item.key, "kind": "closeout_owed",
+                        "why": f"closeout owed: {debt.describe()}", "prep": None,
+                        "worktree": item.worktree, "actions": [],
+                        "commands": [shlex.join([*shlex.split(debt.command), *where])],
+                        "payload": {}, "log": None, "session_log": None})
+    return entries
+
+
+def _hint(run: Run, active: bool, owed: bool = False) -> str:
     if active:
         return "a scheduler is driving this run; wait for its run_summary line"
     if run.status in _FINISHED:
-        return f"the run is {run.status.value}; nothing is left to answer"
+        return (f"the run is {run.status.value}; `next` lists what pr still owes these PRs — "
+                "run each entry's command" if owed
+                else f"the run is {run.status.value}; nothing is left to answer")
     if run.open_decisions():
         return f"answer each `next` entry, then continue with `pr batch resume {run.id}`"
     return f"nothing is waiting on you; continue with `pr batch resume {run.id}`"
@@ -206,18 +245,29 @@ def _item_view(item: Item) -> dict:
             "steps": {r.step.value: r.status.value for r in item.steps}}
 
 
-def build(run: Run, *, active: bool) -> dict:
-    """The whole report; *active* is whether a scheduler holds the run's lock."""
+def build(run: Run, *, active: bool,
+          closeout: Callable[[str, str], CloseoutDebt] | None = None) -> dict:
+    """The whole report; *active* is whether a scheduler holds the run's lock.
+
+    *closeout* reads what `pr` still owes a PR; None reads saved state
+    (`batch.plan.closeout_debt`), and only for a finished run.
+    """
     owned = not active and run.status not in _FINISHED
+    if owned:
+        entries = [_entry(run, d) for d in run.open_decisions()]
+    elif not active:
+        entries = _owed_entries(run, closeout or batch.plan.closeout_debt)
+    else:
+        entries = []
     return {
         "schema_version": SCHEMA_VERSION,
         "run": {"id": run.id, "status": run.status.value, "active": active,
                 "exit_hint": None if active else exit_code(run.status),
-                "hint": _hint(run, active)},
+                "hint": _hint(run, active, bool(entries) and not owned)},
         "counts": {"items": dict(Counter(i.status.value for i in run.items)),
                    "open_decisions": len(run.open_decisions())},
         "items": [_item_view(i) for i in run.items if not i.terminal],
-        "next": [_entry(run, d) for d in run.open_decisions()] if owned else [],
+        "next": entries,
     }
 
 

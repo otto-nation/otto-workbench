@@ -30,7 +30,7 @@ def _node(branch="feat", base="main", merge_state="BLOCKED"):
 
 
 def _quiet(monkeypatch):
-    monkeypatch.setattr(batch.plan, "settled_ids", lambda repo_dir, branch: set())
+    monkeypatch.setattr(batch.plan, "_pr_state", lambda repo_dir, branch: None)
     monkeypatch.setattr(batch.plan, "_review_file", lambda repo, branch: Path("/nonexistent"))
 
 

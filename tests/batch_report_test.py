@@ -1,3 +1,4 @@
+import shlex
 import sys
 from pathlib import Path
 
@@ -9,10 +10,12 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.outcomes  # noqa: E402
+import batch.plan  # noqa: E402
 import batch.report  # noqa: E402
 import review.paths  # noqa: E402
 from batch.model import (STEP_ORDER, Decision, DecisionKind, Item, ItemStatus, Run,  # noqa: E402
                          RunStatus, Step, StepRecord)
+from pr.comments_fix import CloseoutDebt  # noqa: E402
 
 
 def _item(n=1, status=ItemStatus.AWAITING_DECISION, **kw):
@@ -33,6 +36,11 @@ def _d(kind, step, payload=None, id="d1", item="o/r#1"):
 def _only_next(run):
     [entry] = batch.report.build(run, active=False)["next"]
     return entry
+
+
+@pytest.fixture(autouse=True)
+def _no_debt(monkeypatch):
+    monkeypatch.setattr(batch.plan, "closeout_debt", lambda d, b: CloseoutDebt())
 
 
 def test_terminal_items_are_counted_but_not_listed():
@@ -78,6 +86,55 @@ def test_a_finished_run_offers_no_resolve_commands(status):
                [_d(DecisionKind.FAILED, "review", {"reason": "error"})], status=status)
     doc = batch.report.build(run, active=False)
     assert doc["next"] == [] and doc["run"]["exit_hint"] == 0
+
+
+def _owed(d, b):
+    return CloseoutDebt(summary=True) if b == "b1" else CloseoutDebt()
+
+
+def test_a_finished_run_lists_the_pr_command_for_debt_still_owed(tmp_path):
+    item = _item(1, status=ItemStatus.DONE)
+    item.worktree = str(tmp_path)
+    run = _run([item, _item(2, status=ItemStatus.DONE)], status=RunStatus.DONE)
+    doc = batch.report.build(run, active=False, closeout=_owed)
+    [entry] = doc["next"]
+    assert entry["kind"] == "closeout_owed" and entry["pr"] == "o/r#1"
+    assert entry["why"] == "closeout owed: summary"
+    assert entry["commands"] == [
+        shlex.join(["pr", "comments", "--finish", "--post", "--repo-dir", str(tmp_path)])]
+    assert (entry["decision"], entry["actions"]) == (None, [])
+    assert doc["run"]["exit_hint"] == 0
+    assert "pr still owes" in doc["run"]["hint"]
+    running = _run([item, _item(2, status=ItemStatus.DONE)], status=RunStatus.RUNNING)
+    assert batch.report.build(running, active=True, closeout=_owed)["next"] == []
+
+
+def test_an_owed_command_names_the_repo_when_the_worktree_is_gone():
+    run = _run([_item(1, status=ItemStatus.DONE)], status=RunStatus.DONE)
+    doc = batch.report.build(run, active=False, closeout=_owed)
+    assert doc["next"][0]["commands"] == [
+        "pr comments --finish --post --repo-dir /r --branch b1"]
+
+
+def test_an_owed_tracking_issue_quotes_track_all_and_an_unadmitted_item_names_its_branch():
+    item = _item(1, status=ItemStatus.DROPPED)
+    item.worktree = ""
+    run = _run([item], status=RunStatus.CANCELLED)
+    doc = batch.report.build(run, active=False,
+                             closeout=lambda d, b: CloseoutDebt(deferred_issue=True))
+    assert doc["next"][0]["commands"] == [
+        "pr comments --finish --post --track-all --repo-dir /r --branch b1"]
+
+
+def test_a_closed_pr_is_not_listed_as_owing_anything():
+    run = _run([_item(1, status=ItemStatus.SKIPPED_CLOSED)], status=RunStatus.DONE)
+    assert batch.report.build(run, active=False, closeout=_owed)["next"] == []
+
+
+def test_a_waiting_run_does_not_list_owed_commands_beside_its_decisions():
+    run = _run([_item(1)], [_d(DecisionKind.FAILED, "review", {"reason": "error"})])
+    kinds = [e["kind"] for e in batch.report.build(run, active=False, closeout=_owed)["next"]]
+    assert kinds == ["failed"]
 
 
 def test_a_waiting_run_hints_exit_10_and_resume():
@@ -210,3 +267,19 @@ def test_why_says_exactly_why_each_kind_waits(kind, step, payload, sentence):
 def test_a_review_decision_without_a_session_file_has_no_session_log(reviews_dir):
     run = _run([_item(1)], [_d(DecisionKind.FAILED, "review", {"reason": "error"})])
     assert _only_next(run)["session_log"] is None
+
+
+def test_a_closeout_publish_says_what_pr_still_owes():
+    run = _run([_item(1, status=ItemStatus.READY_TO_PUBLISH)], [_d(
+        DecisionKind.PUBLISH, "publish", {"drafted": [], "track": [], "closeout": "summary"})])
+    entry = _only_next(run)
+    assert entry["why"] == "pr comments owes this PR a closeout: summary"
+    assert entry["payload"] == {"drafted": [], "track": [], "closeout": "summary"}
+
+
+def test_a_drafted_publish_that_also_owes_a_closeout_names_both():
+    run = _run([_item(1, status=ItemStatus.READY_TO_PUBLISH)], [_d(
+        DecisionKind.PUBLISH, "publish",
+        {"drafted": ["rebase"], "track": [], "closeout": "3 replies"})])
+    assert _only_next(run)["why"] == ("drafted work is ready to publish: rebase; "
+                                      "pr comments owes this PR a closeout: 3 replies")

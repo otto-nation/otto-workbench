@@ -20,6 +20,7 @@ import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
 from batch.plan import PlanRow, StepNeed  # noqa: E402
 from batch.publish import GIT_PUSH, Refusal, TreeState  # noqa: E402
+from pr.comments_fix import CloseoutDebt  # noqa: E402
 from rebase.types import RefDivergence  # noqa: E402
 
 
@@ -206,3 +207,33 @@ def test_a_fast_forward_a_hook_refuses_records_pre_push_rejected(tmp_path, live_
     assert failed.payload["reason"] == "pre_push_rejected"
     assert failed.payload["detail"].startswith("push refused (hook)")
     assert "lint failed" in Path(failed.payload["log"]).read_text()
+
+
+def test_owed_closeout_alone_publishes_only_the_replies():
+    got = batch.publish.plan(_item(), "pr", _tree(0, 0),
+                             closeout=CloseoutDebt(summary=True))
+    assert got.commands == [["pr", "comments", "--finish", "--post", *WT]]
+    assert got.pushes is False and got.ok
+
+
+def test_owed_closeout_follows_a_push_once():
+    item = _item()
+    item.step(batch.model.Step.COMMENTS).drafted = True
+    got = batch.publish.plan(item, "pr", _tree(1, 0), closeout=CloseoutDebt(replies=True))
+    assert got.commands == [[GIT_PUSH, "/wt"], ["pr", "comments", "--finish", "--post", *WT]]
+
+
+def test_an_owed_tracking_issue_closes_out_with_track_all_in_place_of_ids():
+    got = batch.publish.plan(_item(track=["T1"]), "pr", _tree(0, 0),
+                             closeout=CloseoutDebt(deferred_issue=True))
+    assert got.commands == [["pr", "comments", "--finish", "--post", "--track-all", *WT]]
+
+
+def test_owed_closeout_is_still_refused_when_somebody_pushed():
+    got = batch.publish.plan(_item(), "pr", _tree(0, 0, remote="other"),
+                             closeout=CloseoutDebt(summary=True))
+    assert (got.commands, got.refusal) == ([], Refusal.REMOTE_MOVED)
+
+
+def test_no_debt_and_nothing_drafted_plans_nothing():
+    assert batch.publish.plan(_item(), "pr", _tree(0, 0), closeout=CloseoutDebt()).commands == []

@@ -9,7 +9,10 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.plan  # noqa: E402
+import pr.state  # noqa: E402
+import pr.target  # noqa: E402
 from batch.model import Step  # noqa: E402
+from pr.comments_fix import CloseoutDebt, FixSummary  # noqa: E402
 
 
 @pytest.mark.parametrize("state,needed", [
@@ -58,7 +61,7 @@ def test_search_query_scopes_to_me_open_and_each_repo():
 
 
 def test_rows_from_search_maps_nodes_and_drops_unknown_repos(monkeypatch):
-    monkeypatch.setattr(batch.plan, "settled_ids", lambda repo_dir, branch: set())
+    monkeypatch.setattr(batch.plan, "_pr_state", lambda repo_dir, branch: None)
     monkeypatch.setattr(batch.plan, "_review_file", lambda repo, branch: Path("/nonexistent"))
     data = {"viewer": {"login": "me"}, "search": {"nodes": [
         {"number": 7, "title": "t", "isDraft": True, "headRefName": "b", "headRefOid": "sha",
@@ -102,7 +105,7 @@ def test_replan_returns_none_for_a_closed_pr(monkeypatch):
 
 def test_rows_from_search_matches_repos_case_insensitively(monkeypatch):
     seen = []
-    monkeypatch.setattr(batch.plan, "settled_ids", lambda repo_dir, branch: set())
+    monkeypatch.setattr(batch.plan, "_pr_state", lambda repo_dir, branch: None)
     monkeypatch.setattr(
         batch.plan, "_review_file",
         lambda repo, branch: seen.append(repo) or Path("/nonexistent"),
@@ -168,7 +171,7 @@ def _node(branch="b", head="remote1"):
 
 def test_rows_from_search_judges_review_against_the_branch_worktree_head(monkeypatch, tmp_path):
     review = _review_at(tmp_path, "remote1")
-    monkeypatch.setattr(batch.plan, "settled_ids", lambda repo_dir, branch: set())
+    monkeypatch.setattr(batch.plan, "_pr_state", lambda repo_dir, branch: None)
     monkeypatch.setattr(batch.plan, "_review_file", lambda repo, branch: review)
     monkeypatch.setattr(batch.plan, "_local_heads", lambda repo_dir: {"b": "local22"})
     rows = batch.plan.rows_from_search({"search": {"nodes": [_node()]}}, {"o/a": "/repos/a"})
@@ -187,7 +190,7 @@ def test_local_heads_maps_each_checked_out_branch_to_its_head(monkeypatch):
 
 def test_replan_judges_review_against_the_rows_local_head(monkeypatch, tmp_path):
     review = _review_at(tmp_path, "remote1")
-    monkeypatch.setattr(batch.plan, "settled_ids", lambda repo_dir, branch: set())
+    monkeypatch.setattr(batch.plan, "_pr_state", lambda repo_dir, branch: None)
     monkeypatch.setattr(batch.plan, "_review_file", lambda repo, branch: review)
     node = dict(_node(), state="OPEN")
     monkeypatch.setattr(batch.plan, "_graphql", lambda q, v: {"repository": {"pullRequest": node}})
@@ -213,10 +216,53 @@ def test_rollup_state_reads_the_last_commit():
 
 
 def test_a_fork_row_skips_rebase_and_ci(monkeypatch):
-    monkeypatch.setattr(batch.plan, "settled_ids", lambda repo_dir, branch: set())
+    monkeypatch.setattr(batch.plan, "_pr_state", lambda repo_dir, branch: None)
     monkeypatch.setattr(batch.plan, "_review_file", lambda repo, branch: Path("/nonexistent"))
     node = dict(_node(), mergeStateStatus="BEHIND", isCrossRepository=True,
                 commits={"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]})
     row = batch.plan._row(node, "/repos/a", "o/a")
     assert row.needs[Step.REBASE] == batch.plan.FORK_NEED
     assert row.needs[Step.CI] == batch.plan.FORK_NEED
+
+
+def _saved_fix(monkeypatch, tmp_path, fix):
+    """Save *fix* as the pr state for o/a branch b, reachable from tmp_path as the checkout."""
+    monkeypatch.setattr(batch.plan.pr.target, "repo_key_from_origin", lambda d: "o/a")
+    state = pr.state.new_state("o/a", "b", None, "h", str(tmp_path))
+    state.fix = fix
+    pr.state.save_state(pr.target.target_dir("o/a", "b"), state)
+    return str(tmp_path)
+
+
+def test_closeout_debt_reads_what_the_fix_pass_left_undelivered(monkeypatch, tmp_path):
+    checkout = _saved_fix(monkeypatch, tmp_path,
+                          FixSummary(summary_deferred=True, replies_pending=True))
+    debt = batch.plan.closeout_debt(checkout, "b")
+    assert (debt.owed, debt.summary, debt.replies) == (True, True, True)
+
+
+def test_closeout_debt_is_nothing_without_saved_state(monkeypatch, tmp_path):
+    monkeypatch.setattr(batch.plan.pr.target, "repo_key_from_origin", lambda d: "o/a")
+    assert batch.plan.closeout_debt(str(tmp_path), "b") == CloseoutDebt()
+
+
+def test_a_checkout_that_is_gone_has_no_debt_and_no_settled_ids(tmp_path):
+    gone = str(tmp_path / "removed")
+    assert batch.plan.closeout_debt(gone, "b") == CloseoutDebt()
+    assert batch.plan.settled_ids(gone, "b") == set()
+
+
+def test_a_row_carries_the_closeout_pr_says_is_owed(monkeypatch):
+    loads = []
+    monkeypatch.setattr(batch.plan, "_pr_state", lambda repo_dir, branch: loads.append(1))
+    monkeypatch.setattr(batch.plan, "_review_file", lambda repo, branch: Path("/nonexistent"))
+    monkeypatch.setattr(batch.plan, "_closeout_from",
+                        lambda state: CloseoutDebt(replies=True, reply_count=2))
+    data = {"viewer": {"login": "me"}, "search": {"nodes": [
+        {"number": 7, "title": "t", "isDraft": False, "headRefName": "b", "headRefOid": "sha",
+         "mergeStateStatus": "CLEAN", "repository": {"nameWithOwner": "o/a"},
+         "reviewThreads": {"nodes": []}}]}}
+    [r] = batch.plan.rows_from_search(data, {"o/a": "/repos/a"})
+    assert r.closeout == "2 replies"
+    # One state load (one git call) per row.
+    assert len(loads) == 1

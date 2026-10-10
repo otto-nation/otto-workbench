@@ -3438,8 +3438,11 @@ still the head the batch planned from (`Item.remote_sha`):
 | diverged, a remote commit has no patch-equivalent locally | refuse: `not_incorporated_remote` |
 | diverged | `pr rebase --push-only --expect <remote_sha>` |
 
-`pr comments --finish --post` follows when the comments step drafted or an item
-is tracked. A refusal is a `failed` decision on step `publish` carrying `reason`;
+`pr comments --finish --post` follows when the comments step drafted, an item is
+tracked, or the PR's saved `pr` state says a closeout is owed
+(`batch.plan.closeout_debt`). The last case applies even when there is nothing
+to push. The command is `CloseoutDebt.command`, so an owed tracking issue adds
+`--track-all`. A refusal is a `failed` decision on step `publish` carrying `reason`;
 a `not_incorporated_remote` one also lists the remote commits, and the operator
 answers it with `force-publish` (push past exactly those commits; one that
 appeared since is refused again) or drops the PR. The lease advances as soon as
@@ -3458,7 +3461,7 @@ decision with its full payload and log tail.
 | `run` | `id`, `status`, `active` (the scheduler lock is held), `exit_hint`, `hint` |
 | `counts` | items by status, open decisions |
 | `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses |
-| `next` | one entry per open decision: `decision`, `pr`, `kind`, `why`, `prep`, `worktree`, `actions`, `commands`, a small `payload`, `log`, `session_log` |
+| `next` | one entry per open decision, or per owed closeout once finished: `decision`, `pr`, `kind`, `why`, `prep`, `worktree`, `actions`, `commands`, a small `payload`, `log`, `session_log` |
 
 `exit_hint` is what `run`/`resume` exit with for the run as it stands: 0 once
 it is `done` or `cancelled`, 10 while it waits on a person, 1 when it stopped
@@ -3466,10 +3469,13 @@ without settling (interrupted — `pr batch resume` it), and null while a
 scheduler holds the run. A review decision's finding counts leave declined
 findings out of must/should/nit and count them apart as `declined`.
 
-`next` is empty while a scheduler holds the run — it is still moving items,
-so the reader waits for its `run_summary` — and once the run is `done` or
-`cancelled`. Otherwise it offers `prep` and `pr batch resolve` commands, never
-a `pr` subcommand against a batch item.
+`next` is empty while a scheduler holds the run — it is still moving items, so
+the reader waits for its `run_summary`. While the run waits, `next` offers
+`prep` and `pr batch resolve` commands, never a `pr` subcommand against a batch
+item. Once the run is `done` or `cancelled`, `next` lists one `closeout_owed`
+entry per PR whose saved `pr` state still owes a closeout. Each entry carries
+the `pr` command (`CloseoutDebt.command` plus `--repo-dir`), `decision: null`
+and no actions. A closed PR is left out.
 
 ### batch/resolve.py
 

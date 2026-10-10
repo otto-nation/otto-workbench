@@ -15,8 +15,11 @@ still the head the batch planned from (`Item.remote_sha`):
 | diverged, a remote commit has no patch-equivalent locally | refuse: `not_incorporated_remote` |
 | diverged | `pr rebase --push-only --expect <remote_sha>` |
 
-`pr comments --finish --post` follows when the comments step drafted or an item
-is tracked. A refusal is a `failed` decision on step `publish` carrying `reason`;
+`pr comments --finish --post` follows when the comments step drafted, an item is
+tracked, or the PR's saved `pr` state says a closeout is owed
+(`batch.plan.closeout_debt`). The last case applies even when there is nothing
+to push. The command is `CloseoutDebt.command`, so an owed tracking issue adds
+`--track-all`. A refusal is a `failed` decision on step `publish` carrying `reason`;
 a `not_incorporated_remote` one also lists the remote commits, and the operator
 answers it with `force-publish` (push past exactly those commits; one that
 appeared since is refused again) or drops the PR. The lease advances as soon as
@@ -27,6 +30,7 @@ the push lands, so a failure in the replies after it never strands the item.
 
 from __future__ import annotations
 
+import shlex
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -34,6 +38,7 @@ from enum import StrEnum
 import git.client
 import rebase.target
 from batch.model import Item, Step
+from pr.comments_fix import CloseoutDebt
 from rebase.types import RefDivergence
 
 GIT_PUSH = "git-push"
@@ -122,13 +127,28 @@ def _refuse(refusal: Refusal, detail: str, commits: list[str] | None = None) -> 
     return PublishPlan(refusal=refusal, detail=detail, commits=list(commits or []))
 
 
+def _comments_command(item: Item, pr_bin: str, closeout: CloseoutDebt) -> list[str]:
+    """`pr comments --finish --post` as `pr` itself spells the closeout, plus the tracked ids.
+
+    `CloseoutDebt.command` is the one statement of the flags; it adds
+    `--track-all` when a tracking issue is owed, and that overrides any
+    `--track` ids, so they are left off rather than passed and ignored.
+    """
+    _, *flags = shlex.split(closeout.command)
+    if "--track-all" not in flags:
+        flags += [arg for t in item.track for arg in ("--track", t)]
+    return [pr_bin, *flags]
+
+
 def plan(item: Item, pr_bin: str, tree: TreeState, *,
-         confirmed: Sequence[str] = ()) -> PublishPlan:
+         confirmed: Sequence[str] = (), closeout: CloseoutDebt = CloseoutDebt()) -> PublishPlan:
     """The commands that publish *item* given *tree*, or the refusal that stops it.
 
     *confirmed* is the operator's ``force-publish``: the remote commits listed
     in the refusal they answered. It pushes past those and past nothing else —
     a remote commit that appeared since is refused again, with the full list.
+    *closeout* is what `pr` recorded as owed to the PR; when it is owed the
+    comments command runs even with nothing drafted or to push.
     """
     wt = ["--repo-dir", item.worktree]
     if not tree.fetched:
@@ -154,7 +174,7 @@ def plan(item: Item, pr_bin: str, tree: TreeState, *,
     elif div.ahead:
         commands.append([GIT_PUSH, item.worktree])
     pushes = bool(commands)
-    if (item.has(Step.COMMENTS) and item.step(Step.COMMENTS).drafted) or item.track:
-        track = [arg for t in item.track for arg in ("--track", t)]
-        commands.append([pr_bin, "comments", "--finish", "--post", *track] + wt)
+    drafted = item.has(Step.COMMENTS) and item.step(Step.COMMENTS).drafted
+    if drafted or item.track or closeout.owed:
+        commands.append(_comments_command(item, pr_bin, closeout) + wt)
     return PublishPlan(commands=commands, pushes=pushes)

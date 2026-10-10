@@ -6,10 +6,16 @@ decision with its full payload and log tail.
 
 | Section | Content |
 |---|---|
-| `run` | `id`, `status`, `active` (the scheduler lock is held), `exit_hint` (10 means waiting), `hint` |
+| `run` | `id`, `status`, `active` (the scheduler lock is held), `exit_hint`, `hint` |
 | `counts` | items by status, open decisions |
 | `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses |
 | `next` | one entry per open decision: `decision`, `pr`, `kind`, `why`, `prep`, `worktree`, `actions`, `commands`, a small `payload`, `log`, `session_log` |
+
+`exit_hint` is what `run`/`resume` exit with for the run as it stands: 0 once
+it is `done` or `cancelled`, 10 while it waits on a person, 1 when it stopped
+without settling (interrupted — `pr batch resume` it), and null while a
+scheduler holds the run. A review decision's finding counts leave declined
+findings out of must/should/nit and count them apart as `declined`.
 
 `next` is empty while a scheduler holds the run — it is still moving items,
 so the reader waits for its `run_summary` — and once the run is `done` or
@@ -27,8 +33,8 @@ import batch.outcomes
 import batch.publish
 import batch.resolve
 import review.paths
-from batch.model import (Decision, DecisionKind, EvidenceKind, Item, Run, RunStatus, Step,
-                         stacked_on_items)
+from batch.model import (Decision, DecisionKind, DirtyReason, EvidenceKind, Item, Run, RunStatus,
+                         Step, stacked_on_items)
 from review.types import SEVERITY_MUST, SEVERITY_NIT, SEVERITY_SHOULD, severity_by_key
 
 SCHEMA_VERSION = 1
@@ -65,13 +71,17 @@ def _evidence_kinds(decision: Decision) -> list[str]:
 
 
 def _finding_counts(decision: Decision) -> dict | None:
-    labels = [f.get("severity") for e in _evidence(decision, EvidenceKind.OPEN_FINDINGS)
-              for f in e.get("findings", [])]
-    if not labels:
+    """Open findings by severity, declined ones left out of those and counted apart."""
+    findings = [f for e in _evidence(decision, EvidenceKind.OPEN_FINDINGS)
+                for f in e.get("findings", [])]
+    if not findings:
         return None
-    return {name: labels.count(severity_by_key(key).label)
-            for name, key in (("must", SEVERITY_MUST), ("should", SEVERITY_SHOULD),
-                              ("nit", SEVERITY_NIT))}
+    labels = [f.get("severity") for f in findings if not f.get("declined")]
+    counts = {name: labels.count(severity_by_key(key).label)
+              for name, key in (("must", SEVERITY_MUST), ("should", SEVERITY_SHOULD),
+                                ("nit", SEVERITY_NIT))}
+    counts["declined"] = len(findings) - len(labels)
+    return counts
 
 
 def why(decision: Decision) -> str:
@@ -91,11 +101,15 @@ def why(decision: Decision) -> str:
     if kind is DecisionKind.COMMENT_ITEM:
         return f"a review comment needs a person ({p.get('outcome', 'deferred')})"
     if kind is DecisionKind.DIRTY_WORKTREE:
-        return ("a rebase is paused in the worktree" if p.get("reason") == "rebase_in_progress"
+        return ("a rebase is paused in the worktree"
+                if p.get("reason") == DirtyReason.REBASE_IN_PROGRESS
                 else "the worktree has uncommitted changes")
     if kind is DecisionKind.INTERRUPTED:
         return f"the {decision.step} step was interrupted before it finished"
-    return f"drafted work is ready to publish: {', '.join(p.get('drafted', []))}"
+    if kind is DecisionKind.PUBLISH:
+        return f"drafted work is ready to publish: {', '.join(p.get('drafted', []))}"
+    # Every kind today is named above; a kind added later still gets a true sentence.
+    return f"the {decision.step} step needs a person ({kind.value})"
 
 
 def prep(decision: Decision, item: Item) -> str | None:
@@ -108,7 +122,8 @@ def prep(decision: Decision, item: Item) -> str | None:
     if counts is not None:
         path = review.paths.self_review_file_path(item.repo, item.branch)
         return (f"read {path}; finding counts "
-                f"{counts['must']}/{counts['should']}/{counts['nit']} (must/should/nit)")
+                f"{counts['must']}/{counts['should']}/{counts['nit']} (must/should/nit), "
+                f"{counts['declined']} declined")
     if kind is DecisionKind.STEP_REVIEW and (bases := stacked_on_items(decision)):
         return f"wait for {', '.join(bases)} to finish; `pr batch resume` retries this step"
     if kind is DecisionKind.FAILED and \
@@ -137,6 +152,7 @@ def _small_payload(decision: Decision) -> dict:
 
 def _log(decision: Decision, item: Item) -> str | None:
     p = decision.payload
+    # Both are stable persisted keys: failed payloads carry `log`, interrupted ones `log_path`.
     if p.get("log") or p.get("log_path"):
         return p.get("log") or p.get("log_path")
     step = batch.resolve.step_of(decision)
@@ -154,19 +170,20 @@ def _session_log(decision: Decision, item: Item) -> str | None:
     return str(path) if path.is_file() else None
 
 
-def _commands(run: Run, decision: Decision, item: Item) -> list[str]:
-    if not decision.open:
-        return []
-    return [batch.resolve.resolve_command(run.id, decision.id, a)
-            for a in batch.resolve.available_actions(decision, item)]
+def _actions(decision: Decision, item: Item) -> list[str]:
+    return batch.resolve.available_actions(decision, item) if decision.open else []
+
+
+def _commands(run: Run, decision: Decision, actions: list[str]) -> list[str]:
+    return [batch.resolve.resolve_command(run.id, decision.id, a) for a in actions]
 
 
 def _entry(run: Run, decision: Decision, *, full: bool = False) -> dict:
     item = run.item(decision.item)
-    actions = batch.resolve.available_actions(decision, item) if decision.open else []
+    actions = _actions(decision, item)
     return {"decision": decision.id, "pr": item.key, "kind": decision.kind.value,
             "why": why(decision), "prep": prep(decision, item), "worktree": item.worktree,
-            "actions": actions, "commands": _commands(run, decision, item),
+            "actions": actions, "commands": _commands(run, decision, actions),
             "payload": dict(decision.payload) if full else _small_payload(decision),
             "log": _log(decision, item), "session_log": _session_log(decision, item)}
 
@@ -221,4 +238,5 @@ def decision_event(run: Run, decision: Decision) -> dict:
     """The fields a `decision_created` event carries: what an agent acts on, nothing more."""
     item = run.item(decision.item)
     return {"item": item.key, "decision": decision.id, "decision_kind": decision.kind.value,
-            "why": why(decision), "commands": _commands(run, decision, item)}
+            "why": why(decision),
+            "commands": _commands(run, decision, _actions(decision, item))}

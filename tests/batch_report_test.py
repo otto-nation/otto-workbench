@@ -69,7 +69,7 @@ def test_an_active_run_lists_nothing_and_says_to_wait():
     doc = batch.report.build(run, active=True)
     assert doc["next"] == []
     assert doc["run"]["active"] is True and doc["run"]["exit_hint"] is None
-    assert "wait" in doc["run"]["hint"]
+    assert doc["run"]["hint"] == "a scheduler is driving this run; wait for its run_summary line"
 
 
 @pytest.mark.parametrize("status", [RunStatus.DONE, RunStatus.CANCELLED])
@@ -112,9 +112,9 @@ def test_a_review_decision_points_at_the_review_and_counts_findings():
         "evidence": [{"kind": "open_findings", "findings": findings}]})])
     entry = _only_next(run)
     path = review.paths.self_review_file_path("o/r", "b1")
-    assert entry["prep"] == f"read {path}; finding counts 1/2/0 (must/should/nit)"
+    assert entry["prep"] == f"read {path}; finding counts 1/1/0 (must/should/nit), 1 declined"
     assert entry["payload"] == {"evidence": ["open_findings"],
-                                "findings": {"must": 1, "should": 2, "nit": 0}}
+                                "findings": {"must": 1, "should": 1, "nit": 0, "declined": 1}}
 
 
 def test_a_remote_commit_refusal_names_the_commits_to_check():
@@ -162,3 +162,51 @@ def test_decision_event_carries_only_what_an_agent_acts_on():
         "commands": ["pr batch resolve r1 d1 --action drop-pr",
                      "pr batch resolve r1 d1 --action retry",
                      "pr batch resolve r1 d1 --action skip-step"]}
+
+
+def test_a_stacked_review_says_which_item_to_wait_for():
+    run = _run([_item(1), _item(2)], [_d(DecisionKind.STEP_REVIEW, "review", {
+        "evidence": [{"kind": "stacked_on", "item": "o/r#2"}]})])
+    entry = _only_next(run)
+    assert entry["prep"] == "wait for o/r#2 to finish; `pr batch resume` retries this step"
+    assert entry["payload"]["stacked_on"] == ["o/r#2"]
+
+
+def test_a_run_still_marked_running_exits_failed():
+    assert batch.report.exit_code(RunStatus.RUNNING) == 1
+
+
+_WHY_CASES = [
+    (DecisionKind.FAILED, "comments", {"reason": "ai_prompt_failed"},
+     "an AI prompt the step depends on failed"),
+    (DecisionKind.REBASE_CONFLICT, "rebase", {"files": ["a.py"]},
+     "the rebase stopped on conflicts in 1 file(s)"),
+    (DecisionKind.REBASE_REFUSED, "rebase", {"detail": "diverged"},
+     "pr rebase refused: diverged"),
+    (DecisionKind.OPEN_FINDINGS, "review", {}, "the review step needs a person: open_findings"),
+    (DecisionKind.STEP_REVIEW, "ci", {"evidence": [{"kind": "ci_unfixed"}]},
+     "the ci step needs a person: ci_unfixed"),
+    (DecisionKind.DIRTY_WORKTREE, "ci", {"reason": "rebase_in_progress"},
+     "a rebase is paused in the worktree"),
+    (DecisionKind.COMMENT_ITEM, "comments", {"outcome": "needs_human"},
+     "a review comment needs a person (needs_human)"),
+    (DecisionKind.INTERRUPTED, "review", {},
+     "the review step was interrupted before it finished"),
+    (DecisionKind.PUBLISH, "publish", {"drafted": ["review"]},
+     "drafted work is ready to publish: review"),
+]
+
+
+def test_every_decision_kind_has_a_why_case():
+    assert {case[0] for case in _WHY_CASES} == set(DecisionKind)
+
+
+@pytest.mark.parametrize(("kind", "step", "payload", "sentence"), _WHY_CASES,
+                         ids=[case[0].value for case in _WHY_CASES])
+def test_why_says_exactly_why_each_kind_waits(kind, step, payload, sentence):
+    assert batch.report.why(_d(kind, step, payload)) == sentence
+
+
+def test_a_review_decision_without_a_session_file_has_no_session_log(reviews_dir):
+    run = _run([_item(1)], [_d(DecisionKind.FAILED, "review", {"reason": "error"})])
+    assert _only_next(run)["session_log"] is None

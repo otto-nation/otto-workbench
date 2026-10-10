@@ -66,6 +66,13 @@ class DecisionKind(StrEnum):
     PUBLISH = "publish"
 
 
+class DirtyReason(StrEnum):
+    """Why a `dirty_worktree` decision's worktree may not take a step: its payload `reason`."""
+
+    REBASE_IN_PROGRESS = "rebase_in_progress"
+    DIRTY = "dirty"
+
+
 class EvidenceKind(StrEnum):
     """What a `step_review` decision's evidence entries are, and where each is read.
 

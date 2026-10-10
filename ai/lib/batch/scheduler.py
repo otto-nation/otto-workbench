@@ -22,8 +22,9 @@ import batch.resolve
 import batch.store
 import git.client
 import rebase.inspect
-from batch.model import (STEP_ORDER, Decision, DecisionKind, EvidenceKind, Item, ItemStatus, Run,
-                         RunStatus, Step, StepRecord, StepStatus, stacked_on_items)
+from batch.model import (STEP_ORDER, Decision, DecisionKind, DirtyReason, EvidenceKind, Item,
+                         ItemStatus, Run, RunStatus, Step, StepRecord, StepStatus,
+                         stacked_on_items)
 from batch.plan import PlanRow
 from batch.steps import StepProcess, WorktreeResult, ensure_worktree, step_argv
 from config.workbench_config import BatchConfig
@@ -193,14 +194,20 @@ class Scheduler:
 
     # ── reaping ──────────────────────────────────────────────────────────
 
+    def _drain(self, key: str, live: _Live) -> None:
+        """Keep a step's new stderr lines in its tail; stream them only under --verbose."""
+        lines = live.proc.drain_lines()
+        live.tail.extend(lines)
+        # Always in the step's log file; on the event stream only when asked.
+        if not self._verbose:
+            return
+        for line in lines:
+            self._emit("step_log", run=self.run.id, item=key, step=live.rec.step.value,
+                       line=line)
+
     def _reap(self, kill: bool = False) -> None:
         for key, live in list(self._live.items()):
-            for line in live.proc.drain_lines():
-                live.tail.append(line)
-                # Always in the step's log file; on the event stream only when asked.
-                if self._verbose:
-                    self._emit("step_log", run=self.run.id, item=key,
-                               step=live.rec.step.value, line=line)
+            self._drain(key, live)
             live.peak = max(live.peak, self._rss(live.proc.pid))
             code = live.proc.poll()
             if code is None:
@@ -357,9 +364,9 @@ class Scheduler:
         if self._rebasing(item.worktree):
             if rec.step is Step.REBASE:
                 return False
-            reason = "rebase_in_progress"
+            reason = DirtyReason.REBASE_IN_PROGRESS
         elif self._dirty(item.worktree):
-            reason = "dirty"
+            reason = DirtyReason.DIRTY
         else:
             return False
         stash = f"git -C {shlex.quote(item.worktree)} stash push --include-untracked"

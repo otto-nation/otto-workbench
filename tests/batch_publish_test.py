@@ -9,6 +9,7 @@ from batch_git_support import advance, remote_and_clone, remote_tip
 from conftest import commit_all, git_in, git_out
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+PR_BIN = str(REPO_ROOT / "ai" / "bin" / "pr")
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
@@ -157,7 +158,7 @@ def test_publishing_a_fast_forward_moves_the_remote_and_the_lease(tmp_path):
     commit_all(pair.work, "fix: x")
     local = git_out(pair.work, "rev-parse", "HEAD").strip()
     batch.resolve.apply(run, batch.resolve.Request("d1", "publish"),
-                        pr_bin=str(REPO_ROOT / "ai" / "bin" / "pr"))
+                        pr_bin=PR_BIN)
     assert remote_tip(pair.origin, "feat") == local
     assert run.items[0].remote_sha == local == run.items[0].published_sha
     assert run.items[0].status is batch.model.ItemStatus.DONE
@@ -187,7 +188,7 @@ def test_a_fast_forward_publish_logs_what_the_push_said(tmp_path):
     (pair.work / "fix.txt").write_text("fix\n")
     commit_all(pair.work, "fix: x")
     batch.resolve.apply(run, batch.resolve.Request("d1", "publish"),
-                        pr_bin=str(REPO_ROOT / "ai" / "bin" / "pr"))
+                        pr_bin=PR_BIN)
     logs = sorted(batch.store.logs_dir("r1").glob("o__r-1-publish-*.log"))
     assert [p.name for p in logs] == ["o__r-1-publish-0.log"]
     assert "Pushed" in logs[0].read_text()
@@ -205,7 +206,7 @@ def test_a_fast_forward_a_hook_refuses_records_pre_push_rejected(tmp_path, live_
     (pair.work / "fix.txt").write_text("fix\n")
     commit_all(pair.work, "fix: x")
     batch.resolve.apply(run, batch.resolve.Request("d1", "publish"),
-                        pr_bin=str(REPO_ROOT / "ai" / "bin" / "pr"))
+                        pr_bin=PR_BIN)
     failed = run.open_decisions()[-1]
     assert failed.payload["reason"] == "pre_push_rejected"
     assert failed.payload["detail"].startswith("push refused (hook)")

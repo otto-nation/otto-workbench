@@ -11,6 +11,7 @@ from batch_git_support import remote_and_clone, remote_tip
 from conftest import commit_all, git_out
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+PR_BIN = str(REPO_ROOT / "ai" / "bin" / "pr")
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
@@ -59,7 +60,7 @@ def _drive(pair, monkeypatch, findings, *, code=0):
     run = batch.scheduler.new_run([planned], steps=[Step.REVIEW], selected=None, pool=1,
                                   auto_publish=[Step.REVIEW])
     sched = batch.scheduler.Scheduler(
-        run, pr_bin=str(REPO_ROOT / "ai" / "bin" / "pr"), cfg=BatchConfig(pool_max=1),
+        run, pr_bin=PR_BIN, cfg=BatchConfig(pool_max=1),
         host=lambda: batch.admission.HostSample(None, None, None), spawn=spawn,
         replan=lambda r: planned,
         worktrees=lambda d, b: WorktreeResult(str(pair.work), False, ""),

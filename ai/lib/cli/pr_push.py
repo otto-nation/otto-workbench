@@ -59,6 +59,7 @@ def build_parser() -> ToolParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    # required=True only rejects a missing flag; `--expect ""` still parses.
     if not args.expect:
         parser.error("--expect needs the SHA origin must still hold")
 

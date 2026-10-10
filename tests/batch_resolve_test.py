@@ -10,6 +10,7 @@ if str(LIB_DIR) not in sys.path:
 
 import batch.model  # noqa: E402
 import batch.resolve  # noqa: E402
+import cli.pr_batch  # noqa: E402
 from batch.publish import TreeState  # noqa: E402
 from rebase.types import RefDivergence  # noqa: E402
 
@@ -41,7 +42,7 @@ class Recorder:
     def __init__(self, code=0):
         self.calls, self.code = [], code
 
-    def __call__(self, argv):
+    def __call__(self, argv, log_path=None):
         self.calls.append(argv)
         return self.code
 
@@ -119,7 +120,7 @@ def test_force_runs_a_forced_draft_rebase_and_marks_it_drafted(monkeypatch):
 
 
 def test_retry_resets_the_step():
-    run = _run(_d(batch.model.DecisionKind.FAILED, "review", {"reason": "busy"}))
+    run = _run(_d(batch.model.DecisionKind.FAILED, "review", {"reason": "lock_busy"}))
     run.items[0].step(batch.model.Step.REVIEW).status = batch.model.StepStatus.FAILED
     batch.resolve.apply(run, batch.resolve.Request("d1", "retry"), pr_bin="pr", runner=Recorder())
     assert run.items[0].step(batch.model.Step.REVIEW).status is batch.model.StepStatus.PENDING
@@ -225,7 +226,7 @@ def test_a_landed_push_moves_the_lease_even_when_the_replies_fail():
                          divergence=RefDivergence(ahead=int(origin["tip"] != "new"), behind=0,
                                                   comparable=True))
 
-    def runner(argv):
+    def runner(argv, log_path=None):
         if argv[0] == batch.resolve.GIT_PUSH:
             origin["tip"] = "new"
             return 0
@@ -339,3 +340,107 @@ def test_a_forced_rebase_records_the_tip_it_started_from(monkeypatch):
     run = _run(_d(batch.model.DecisionKind.REBASE_REFUSED, "rebase", {"override": "--force"}))
     batch.resolve.apply(run, batch.resolve.Request("d1", "force"), pr_bin="pr", runner=Recorder())
     assert run.items[0].pre_rebase_head == "p9"
+
+
+def test_a_failed_publish_records_its_reason_detail_and_log():
+    run = _run(_d(batch.model.DecisionKind.PUBLISH, "publish"))
+    run.items[0].step(batch.model.Step.REVIEW).drafted = True
+
+    def refused(argv, log_path=None):
+        log_path.write_text("▸ Force-pushing...\n"
+                            "✗ push refused (hook) — nothing reached the remote\n"
+                            "  PRE-PUSH CHECKS FAILED\n")
+        return 1
+
+    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr",
+                        runner=refused, tree=_ff)
+    failed = run.open_decisions()[-1]
+    assert failed.payload["reason"] == "pre_push_rejected"
+    assert failed.payload["detail"] == "push refused (hook) — nothing reached the remote"
+    assert failed.payload["log"].endswith("/logs/o__r-1-publish-0.log")
+    assert failed.payload["log_tail"][-1] == "  PRE-PUSH CHECKS FAILED"
+
+
+def test_default_runner_writes_a_logged_commands_output_to_the_log(tmp_path, capfd):
+    script = tmp_path / "talk.py"
+    script.write_text("import sys\nprint('out line')\nprint('err line', file=sys.stderr)\n"
+                      "sys.exit(3)\n")
+    log = tmp_path / "publish.log"
+    assert batch.resolve.default_runner([sys.executable, str(script)], log_path=log) == 3
+    text = log.read_text()
+    assert "out line" in text and "err line" in text
+    assert capfd.readouterr().out == ""
+
+
+def test_available_actions_drop_a_reply_the_item_cannot_take_and_open_chat():
+    run = _run(_d(batch.model.DecisionKind.COMMENT_ITEM, "comments",
+                  {"id": "ic-1-0", "replyable": False}))
+    assert batch.resolve.available_actions(run.decision("d1"), run.items[0]) == [
+        "settle-addressed", "settle-dismissed", "settle-fixed", "track"]
+
+
+def test_force_publish_is_offered_only_for_a_remote_commit_refusal():
+    run = _run(_d(batch.model.DecisionKind.FAILED, "publish", {"reason": "remote_moved"}),
+               _d(batch.model.DecisionKind.FAILED, "publish",
+                  {"reason": "not_incorporated_remote"}, id="d2"))
+    item = run.items[0]
+    assert batch.resolve.available_actions(run.decision("d1"), item) == [
+        "drop-pr", "retry", "skip-step"]
+    assert "force-publish" in batch.resolve.available_actions(run.decision("d2"), item)
+
+
+def test_undo_is_offered_only_with_a_recorded_pre_rebase_head():
+    run = _run(_d(batch.model.DecisionKind.STEP_REVIEW, "rebase"))
+    assert "undo" not in batch.resolve.available_actions(run.decision("d1"), run.items[0])
+    run.items[0].pre_rebase_head = "abc"
+    assert "undo" in batch.resolve.available_actions(run.decision("d1"), run.items[0])
+
+
+def test_resolve_command_spells_each_actions_inputs():
+    cmd = batch.resolve.resolve_command
+    assert cmd("r1", "d1", "settle-dismissed") == \
+        "pr batch resolve r1 d1 --action settle-dismissed --reason <text>"
+    assert cmd("r1", "d1", "reply") == "pr batch resolve r1 d1 --action reply --body-file <path>"
+    assert cmd("r1", "d1", "settle-fixed") == \
+        "pr batch resolve r1 d1 --action settle-fixed [--commit <sha>]"
+    assert cmd("r1", "d1", "accept") == "pr batch resolve r1 d1 --action accept"
+
+
+def test_every_rendered_command_parses_with_the_batch_parser():
+    parser = cli.pr_batch.build_parser()
+    actions = set().union(*batch.resolve.ACTIONS.values()) - {"open-chat"}
+    for action in sorted(actions):
+        words = batch.resolve.resolve_command("r1", "d1", action).replace("[", "").replace(
+            "]", "").split()
+        args = parser.parse_args(["VALUE" if w.startswith("<") else w for w in words[2:]])
+        assert (args.command, args.run_id, args.decision_id, args.action) == (
+            "resolve", "r1", "d1", action)
+
+
+def _failing_publish(text):
+    run = _run(_d(batch.model.DecisionKind.PUBLISH, "publish"))
+    run.items[0].step(batch.model.Step.REVIEW).drafted = True
+
+    def runner(argv, log_path=None):
+        log_path.write_text(text)
+        return 1
+
+    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr",
+                        runner=runner, tree=_ff)
+    return run.open_decisions()[-1]
+
+
+def test_a_failed_publish_keeps_the_last_forty_lines_of_its_log():
+    failed = _failing_publish("".join(f"line {n}\n" for n in range(50)))
+    assert len(failed.payload["log_tail"]) == 40
+    assert failed.payload["log_tail"][-1] == "line 49"
+
+
+def test_a_failed_publish_reads_its_reason_from_the_failing_command_only():
+    failed = _failing_publish("$ pr comments --post\n"
+                              "✓ push refused (hook) was the subject of a reply\n"
+                              "$ pr comments --settle ic-1\n"
+                              "✗ could not settle the thread\n")
+    assert failed.payload["reason"] == "error"
+    assert "detail" not in failed.payload
+    assert failed.payload["log_tail"][0] == "$ pr comments --post"

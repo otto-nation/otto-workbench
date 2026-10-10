@@ -17,12 +17,14 @@ import batch.events
 import batch.outcomes
 import batch.plan
 import batch.publish
+import batch.report
 import batch.resolve
 import batch.store
 import git.client
 import rebase.inspect
-from batch.model import (STEP_ORDER, Decision, DecisionKind, EvidenceKind, Item, ItemStatus, Run,
-                         RunStatus, Step, StepRecord, StepStatus)
+from batch.model import (STEP_ORDER, Decision, DecisionKind, DirtyReason, EvidenceKind, Item,
+                         ItemStatus, Run, RunStatus, Step, StepRecord, StepStatus,
+                         stacked_on_items)
 from batch.plan import PlanRow
 from batch.steps import StepProcess, WorktreeResult, ensure_worktree, step_argv
 from config.workbench_config import BatchConfig
@@ -86,8 +88,9 @@ def _decide(run: Run, item: Item, step: str, kind: DecisionKind, payload: dict, 
                  created_at=batch.store.now_iso())
     run.decisions.append(d)
     item.status = ItemStatus.AWAITING_DECISION
-    emit("decision_created", run=run.id, item=item.key, decision=d.id,
-         step=d.step, payload=d.payload, decision_kind=d.kind.value)
+    # The payload stays in state.json (`pr batch status --decision`); the event
+    # carries only what an agent acts on.
+    emit("decision_created", run=run.id, **batch.report.decision_event(run, d))
     return d
 
 
@@ -119,7 +122,8 @@ class _Live:
     # Started with --wait: it spends minutes polling GitHub, not fetching.
     waits: bool = False
     peak: int = 0
-    tail: collections.deque = field(default_factory=lambda: collections.deque(maxlen=40))
+    tail: collections.deque = field(
+        default_factory=lambda: collections.deque(maxlen=batch.outcomes.LOG_TAIL_LINES))
 
 
 class Scheduler:
@@ -133,12 +137,14 @@ class Scheduler:
                  estimates: batch.admission.Estimates | None = None,
                  emit: Callable[..., None] = batch.events.emit,
                  sleep: Callable[[float], None] = time.sleep, tick: float = 0.5,
-                 runner: Callable[[list[str]], int] | None = None,
+                 runner: Callable[..., int] | None = None,
                  tree: Callable[[Item], batch.publish.TreeState] | None = None,
                  contains: Callable[[str, str], bool] = _contains_commit,
                  dirty: Callable[[str], bool] = git.client.is_dirty,
-                 rebasing: Callable[[str], bool] = rebase.inspect.rebase_in_progress):
+                 rebasing: Callable[[str], bool] = rebase.inspect.rebase_in_progress,
+                 verbose: bool = False):
         self.run, self.pr_bin, self.cfg = run, pr_bin, cfg
+        self._verbose = verbose
         # Looked up at construction, not bound as a default, so a patched
         # batch.plan.replan_row is the one used.
         self._host, self._spawn = host, spawn
@@ -168,9 +174,8 @@ class Scheduler:
             self._emit("decision_resolved", run=self.run.id, decision=req.decision,
                        action=req.action)
             for d in created:
-                self._emit("decision_created", run=self.run.id, item=d.item,
-                           decision=d.id, step=d.step, payload=d.payload,
-                           decision_kind=d.kind.value)
+                self._emit("decision_created", run=self.run.id,
+                           **batch.report.decision_event(self.run, d))
             if item.terminal and not was_terminal:
                 self._emit("item_finished", run=self.run.id, item=item.key,
                            status=item.status.value)
@@ -189,12 +194,20 @@ class Scheduler:
 
     # ── reaping ──────────────────────────────────────────────────────────
 
+    def _drain(self, key: str, live: _Live) -> None:
+        """Keep a step's new stderr lines in its tail; stream them only under --verbose."""
+        lines = live.proc.drain_lines()
+        live.tail.extend(lines)
+        # Always in the step's log file; on the event stream only when asked.
+        if not self._verbose:
+            return
+        for line in lines:
+            self._emit("step_log", run=self.run.id, item=key, step=live.rec.step.value,
+                       line=line)
+
     def _reap(self, kill: bool = False) -> None:
         for key, live in list(self._live.items()):
-            for line in live.proc.drain_lines():
-                live.tail.append(line)
-                self._emit("step_log", run=self.run.id, item=key, step=live.rec.step.value,
-                           line=line)
+            self._drain(key, live)
             live.peak = max(live.peak, self._rss(live.proc.pid))
             code = live.proc.poll()
             if code is None:
@@ -216,7 +229,7 @@ class Scheduler:
         base = rec.start_head or live.head_before
         result = batch.outcomes.classify(rec.step, code, live.proc.stdout(), item=item,
                                          log_tail=list(live.tail), head_before=base,
-                                         watch=rec.watch)
+                                         watch=rec.watch, log_path=rec.log_path)
         rec.exit_code, rec.ended_at, rec.status = code, batch.store.now_iso(), result.status
         if rec.watch and batch.outcomes.settled_report(live.proc.stdout()):
             item.ci_rechecked = True
@@ -252,7 +265,8 @@ class Scheduler:
         res = self._worktrees(item.repo_dir, item.branch)
         if not res.ok:
             _decide(self.run, item, "worktree", DecisionKind.FAILED,
-                    {"reason": "error", "detail": res.error}, emit=self._emit)
+                    {"reason": batch.outcomes.FailureReason.ERROR.value, "detail": res.error},
+                    emit=self._emit)
             return False
         if res.dirty:
             _decide(self.run, item, "worktree", DecisionKind.DIRTY_WORKTREE, {"path": res.path},
@@ -304,7 +318,8 @@ class Scheduler:
                                          self.run.ref_namespace))
         except batch.plan.PlanError as exc:
             _decide(self.run, item, rec.step.value, DecisionKind.FAILED,
-                    {"reason": "github", "detail": str(exc)}, emit=self._emit)
+                    {"reason": batch.outcomes.FailureReason.GITHUB.value, "detail": str(exc)},
+                    emit=self._emit)
             return None
         if fresh is None:
             item.status = ItemStatus.SKIPPED_CLOSED
@@ -349,9 +364,9 @@ class Scheduler:
         if self._rebasing(item.worktree):
             if rec.step is Step.REBASE:
                 return False
-            reason = "rebase_in_progress"
+            reason = DirtyReason.REBASE_IN_PROGRESS
         elif self._dirty(item.worktree):
-            reason = "dirty"
+            reason = DirtyReason.DIRTY
         else:
             return False
         stash = f"git -C {shlex.quote(item.worktree)} stash push --include-untracked"
@@ -395,8 +410,7 @@ class Scheduler:
         for d in self.run.open_decisions():
             if d.kind is not DecisionKind.STEP_REVIEW:
                 continue
-            bases = [e.get("item") for e in d.payload.get("evidence", [])
-                     if e.get("kind") == EvidenceKind.STACKED_ON.value]
+            bases = stacked_on_items(d)
             if bases and all(self.run.item(k).terminal for k in bases):
                 self._apply_one({"decision": d.id, "action": "retry"})
 
@@ -429,10 +443,7 @@ class Scheduler:
             self._start(item, rec, fresh)
 
     def _start(self, item: Item, rec: StepRecord, fresh: PlanRow) -> None:
-        slug = item.repo.replace("/", "__")
-        attempt = sum(1 for _ in batch.store.logs_dir(self.run.id).glob(
-            f"{slug}-{item.pr}-{rec.step.value}-*"))
-        log = batch.store.logs_dir(self.run.id) / f"{slug}-{item.pr}-{rec.step.value}-{attempt}.log"
+        log = batch.store.attempt_log_path(self.run.id, item.repo, item.pr, rec.step.value)
         wait = rec.step is Step.CI and fresh.ci_state in batch.plan.CI_RUNNING
         argv = step_argv(rec.step, self.pr_bin, item.worktree, remote_sha=item.remote_sha,
                          wait=wait, watch=rec.watch)

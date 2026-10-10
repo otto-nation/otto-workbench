@@ -5,11 +5,12 @@
     pr batch resume [RUN_ID]                   continue a waiting or interrupted run
     pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
     pr batch cancel [RUN_ID] [--kill]
-    pr batch status [RUN_ID]
+    pr batch status [RUN_ID] [--full | --decision ID]   the run report (JSON)
+    pr batch next   [RUN_ID]                   only what needs action (JSON)
 
 Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish.
 
-Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions.
+Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed.
 """
 
 # doc-group: cli
@@ -27,6 +28,7 @@ from pathlib import Path
 import batch.admission
 import batch.events
 import batch.plan
+import batch.report
 import batch.resolve
 import batch.scheduler
 import batch.store
@@ -37,10 +39,7 @@ import core.serde
 from batch.model import STEP_ORDER, RunStatus, Step
 from core.trail import TRAIL_ROOT_ENV, Trail
 
-EXIT_OK = 0
-EXIT_WAITING = 10
-_STATUS_EXIT = {RunStatus.DONE: EXIT_OK, RunStatus.CANCELLED: EXIT_OK,
-                RunStatus.WAITING: EXIT_WAITING}
+EXIT_OK = batch.report.EXIT_OK
 
 
 def _steps(text: str) -> list[Step]:
@@ -69,13 +68,17 @@ recipes:
   pr batch run --checkout DIR                     every step, where needed
 
 `run` plans for itself — no `pr batch plan` first. It is long-running and
-streams NDJSON events; start it as a background job.
+streams NDJSON events; start it as a background job. Step output stays in the
+run's logs/ (--verbose streams it as step_log too), and the last line of a
+run that settles is `run_summary`: the run, its counts, and what needs action
+next.
 
 Nothing is pushed until a publish decision is answered. Exit 10 means the
-run is waiting: `pr batch status` prints the run and its decisions (JSON),
-`pr batch resolve RUN_ID DECISION_ID --action publish` (or discard, accept,
-retry, …) answers one, and `pr batch resume` continues. --auto-publish STEPS
-answers clean publishes without asking.
+run is waiting on you, not that it failed: each `next` entry (also printed
+by `pr batch next`) says why, names any prep, and lists the
+`pr batch resolve RUN_ID DECISION_ID --action …` commands that answer it;
+`pr batch resume` continues. --auto-publish STEPS answers clean publishes
+without asking.
 """
 
 
@@ -107,9 +110,14 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--watch-ci", action="store_true",
                    help="After a publish pushes, re-check CI once (ci-check --wait, up to "
                         "its 900s --wait-timeout per item) and reopen the item on red")
+    r.add_argument("--verbose", action="store_true",
+                   help="Also stream each step's stderr as step_log events "
+                        "(it is always in the run's logs/)")
 
-    sub.add_parser("resume", help="Continue a run").add_argument(
-        "run_id", nargs="?", help="Run to continue (default: the latest)")
+    m = sub.add_parser("resume", help="Continue a run")
+    m.add_argument("run_id", nargs="?", help="Run to continue (default: the latest)")
+    m.add_argument("--verbose", action="store_true",
+                   help="Also stream each step's stderr as step_log events")
 
     v = sub.add_parser("resolve", help="Answer one decision")
     v.add_argument("run_id", help="Run the decision belongs to")
@@ -124,8 +132,16 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("run_id", nargs="?", help="Run to cancel (default: the latest)")
     c.add_argument("--kill", action="store_true", help="Also terminate running steps")
 
-    sub.add_parser("status", help="Print a run's state").add_argument(
-        "run_id", nargs="?", help="Run to show (default: the latest)")
+    s = sub.add_parser("status", help="Print a run's report: what needs action, and why (JSON)")
+    s.add_argument("run_id", nargs="?", help="Run to show (default: the latest)")
+    view = s.add_mutually_exclusive_group()
+    view.add_argument("--full", action="store_true",
+                      help="Print the raw run state instead of the report")
+    view.add_argument("--decision", default="", metavar="ID",
+                      help="Print one decision with its full payload and log tail")
+
+    sub.add_parser("next", help="Print only what needs action: run, counts and next (JSON)"
+                   ).add_argument("run_id", nargs="?", help="Run to show (default: the latest)")
     return parser
 
 
@@ -181,9 +197,9 @@ def _report_apply_errors(errors: list[str]) -> None:
         print(f"pr batch: {message}", file=sys.stderr)
 
 
-def _held_drive(run, bin_dir: Path, cfg) -> int:
+def _held_drive(run, bin_dir: Path, cfg, verbose: bool) -> int:
     status = batch.scheduler.Scheduler(
-        run, pr_bin=str(bin_dir / "pr"), cfg=cfg).run_until_blocked()
+        run, pr_bin=str(bin_dir / "pr"), cfg=cfg, verbose=verbose).run_until_blocked()
     errors = _apply_loaded(run, bin_dir)
     _save(run)
     if run.status is RunStatus.DONE:
@@ -191,17 +207,33 @@ def _held_drive(run, bin_dir: Path, cfg) -> int:
     if errors:
         _report_apply_errors(errors)
         return 1
-    return _STATUS_EXIT.get(status, 1)
+    return batch.report.exit_code(status)
 
 
-def _drive(run, *, bin_dir: Path, cfg) -> int:
+def _emit_summary(run, code: int) -> None:
+    """The last line of a settled run: `next`'s document as a `run_summary` event.
+
+    Its `exit_hint` is *code*, the process's real exit status — apply errors
+    make it 1 whatever the run's status alone would say.
+    """
+    view = batch.report.next_view(batch.report.build(
+        run, active=core.run_lock.is_held(batch.store.run_dir(run.id))))
+    view["run"]["exit_hint"] = code
+    batch.events.emit("run_summary", run=view["run"], counts=view["counts"], next=view["next"])
+
+
+def _drive(run, *, bin_dir: Path, cfg, verbose: bool = False) -> int:
     started = batch.store.now_iso()
     try:
         with core.run_lock.acquire(batch.store.run_dir(run.id), "batch", started):
-            return _held_drive(run, bin_dir, cfg)
+            code = _held_drive(run, bin_dir, cfg, verbose)
     except core.run_lock.LockBusy as exc:
         core.run_lock.report_busy(exc)
         return 1
+    # After the lock is released, so the summary reports the run as the
+    # reader's to act on and lists what it is waiting for.
+    _emit_summary(run, code)
+    return code
 
 
 def _cmd_run(args, bin_dir: Path) -> int:
@@ -236,7 +268,7 @@ def _cmd_run(args, bin_dir: Path) -> int:
         batch.events.emit("item_queued", run=run.id, item=item.key,
                     steps=[s.step.value for s in item.steps])
     try:
-        return _drive(run, bin_dir=bin_dir, cfg=cfg)
+        return _drive(run, bin_dir=bin_dir, cfg=cfg, verbose=args.verbose)
     finally:
         trail.finish()
 
@@ -256,7 +288,8 @@ def _cmd_resume(args, bin_dir: Path) -> int:
     batch.store.clear_cancel(run_id)
     batch.scheduler.mark_interrupted(run, emit=batch.events.emit)
     os.environ.setdefault(TRAIL_ROOT_ENV, run.trail_root)
-    return _drive(run, bin_dir=bin_dir, cfg=_cfg([i.repo_dir for i in run.items]))
+    return _drive(run, bin_dir=bin_dir, cfg=_cfg([i.repo_dir for i in run.items]),
+                  verbose=args.verbose)
 
 
 def _apply_pending(run_id: str, bin_dir: Path, decision_id: str) -> int:
@@ -324,6 +357,7 @@ def _cmd_cancel(args) -> int:
 
 
 def _cmd_status(args) -> int:
+    """`status` and `next`: the report, a projection of it, or what it summarises."""
     run_id = _run_id(args.run_id)
     if not run_id:
         return _err("no batch runs yet")
@@ -331,9 +365,21 @@ def _cmd_status(args) -> int:
         run = batch.store.load(run_id)
     except batch.store.RunNotFound:
         return _err(f"no run {run_id}")
-    core.report.emit_json({"schema_version": run.schema_version,
-                           "active": core.run_lock.is_held(batch.store.run_dir(run_id)),
-                           "run": core.serde.to_dict(run)})
+    active = core.run_lock.is_held(batch.store.run_dir(run_id))
+    if args.command == "next":
+        core.report.emit_json(batch.report.next_view(batch.report.build(run, active=active)))
+        return EXIT_OK
+    if args.full:
+        core.report.emit_json({"schema_version": run.schema_version, "active": active,
+                               "run": core.serde.to_dict(run)})
+        return EXIT_OK
+    if args.decision:
+        try:
+            core.report.emit_json(batch.report.decision_detail(run, args.decision))
+        except KeyError:
+            return _err(f"run {run_id} has no decision {args.decision}")
+        return EXIT_OK
+    core.report.emit_json(batch.report.build(run, active=active))
     return EXIT_OK
 
 
@@ -363,6 +409,7 @@ def cmd_batch(argv: list[str], ctx, *, bin_dir: Path, schema_version: str | None
             return _cmd_resolve(args, bin_dir)
         if args.command == "cancel":
             return _cmd_cancel(args)
+        # status and next
         return _cmd_status(args)
     except batch.plan.PlanError as exc:
         return _err(str(exc))

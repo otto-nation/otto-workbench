@@ -1,15 +1,20 @@
 import json
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from conftest import commit_all, git_out, init_repo  # noqa: E402
 import batch.model  # noqa: E402
 import batch.outcomes  # noqa: E402
+import batch.publish  # noqa: E402
 import pr.fix  # noqa: E402
 
 ITEM = batch.model.Item(key="o/r#1", repo="o/r", repo_dir="/r", pr=1, branch="b", head_sha="s",
@@ -86,11 +91,11 @@ def test_review_open_findings_become_one_step_review(monkeypatch):
         {"evidence": [{"kind": "open_findings", "findings": [finding]}]})]
 
 
-def test_lock_busy_is_a_failed_decision_with_reason_busy():
+def test_lock_busy_is_a_failed_decision_with_reason_lock_busy():
     r = batch.outcomes.classify(batch.model.Step.COMMENTS, 1, "", item=ITEM,
                      log_tail=[f"pr: {batch.outcomes.LOCK_BUSY_MARKER} by pid 4"])
     assert r.status is batch.model.StepStatus.FAILED
-    assert r.decisions[0].payload["reason"] == "busy"
+    assert r.decisions[0].payload["reason"] == "lock_busy"
 
 
 def test_other_failures_carry_exit_code_and_log_tail():
@@ -119,11 +124,6 @@ def test_open_findings_reads_unchecked_findings(tmp_path, monkeypatch):
         {"severity": "should-fix", "title": OPEN_TITLE, "declined": False},
         {"severity": "should-fix", "title": DECLINED_TITLE, "declined": True},
     ]
-
-
-import pytest  # noqa: E402
-
-from conftest import commit_all, git_out, init_repo  # noqa: E402
 
 
 def _tally_stdout(**tally):
@@ -223,3 +223,66 @@ def test_ci_unfixed_and_a_red_trailer_are_one_step_review():
     assert [d.kind for d in r.decisions] == [batch.model.DecisionKind.STEP_REVIEW]
     assert [e["kind"] for e in r.decisions[0].payload["evidence"]] == [
         "ci_unfixed", "checks_unverified"]
+
+
+REVIEW_TAIL = [
+    "✗ review agent exited with code 1 and produced no review file (agent error: pi exited "
+    "before the prompt could be sent — its stdin was already closed)",
+    "  Session log: /state/reviews/maximum-self-b/session.jsonl",
+    "✗ Review orchestration failed",
+    "  Session log: /state/reviews/maximum-self-b/session.jsonl",
+]
+COMMENTS_TAIL = ["", "Blocking merge: no approvals yet", "", "✗ ai prompt failed"]
+HOOK_TAIL = [
+    "▸ Force-pushing...",
+    "✗ push refused (hook) — nothing reached the remote",
+    "  Uncommitted changes in generation after regeneration",
+    "  PRE-PUSH CHECKS FAILED",
+    "  Resume: git -C '/wt' push --force-with-lease=refs/heads/b:abc",
+]
+AUTH_TAIL = ["✗ push refused — the remote would not accept your credentials"]
+LOCK_TAIL = ["✗ another pr run already owns this target: pr comments --fix (pid 4, started t)"]
+COLOURED_TAIL = ["\x1b[1;31m✗\x1b[0m ai prompt failed for a.py (exit 1)"]
+STASHED_TAIL = ["▸ Stashing uncommitted changes...", "✗ something nobody anticipated"]
+
+
+@pytest.mark.parametrize("tail, reason, detail", [
+    (REVIEW_TAIL, "review_orchestration_failed", REVIEW_TAIL[0].removeprefix("✗ ")),
+    (COMMENTS_TAIL, "ai_prompt_failed", "ai prompt failed"),
+    (HOOK_TAIL, "pre_push_rejected", "push refused (hook) — nothing reached the remote"),
+    (AUTH_TAIL, "push_rejected", "push refused — the remote would not accept your credentials"),
+    (LOCK_TAIL, "lock_busy", LOCK_TAIL[0].removeprefix("✗ ")),
+    (COLOURED_TAIL, "ai_prompt_failed", "ai prompt failed for a.py (exit 1)"),
+    (STASHED_TAIL, "error", ""),
+], ids=["review", "comments", "hook", "auth", "lock", "coloured", "unrecognised"])
+def test_a_failure_reason_is_read_from_what_the_step_printed(tail, reason, detail):
+    found = batch.outcomes.classify_failure(tail)
+    assert (found.reason, found.detail) == (reason, detail)
+
+
+def test_a_review_failure_keeps_its_session_log():
+    assert batch.outcomes.classify_failure(REVIEW_TAIL).session_log == \
+        "/state/reviews/maximum-self-b/session.jsonl"
+
+
+def test_a_failed_step_records_reason_detail_log_and_session_log():
+    r = batch.outcomes.classify(batch.model.Step.REVIEW, 1, "", item=ITEM, log_tail=REVIEW_TAIL,
+                                log_path="/logs/o__r-1-review-0.log")
+    assert r.decisions[0].payload == {
+        "reason": "review_orchestration_failed", "exit_code": 1, "log_tail": REVIEW_TAIL,
+        "detail": REVIEW_TAIL[0].removeprefix("✗ "), "log": "/logs/o__r-1-review-0.log",
+        "session_log": "/state/reviews/maximum-self-b/session.jsonl"}
+
+
+def test_every_recorded_reason_has_a_sentence():
+    recorded = ({r.value for r in batch.outcomes.FailureReason}
+                | {r.value for r in batch.publish.Refusal})
+    assert recorded <= set(batch.outcomes.FAILURE_WHY)
+    assert batch.outcomes.why("busy") == batch.outcomes.why("lock_busy")
+    assert batch.outcomes.why("no-such-reason") == batch.outcomes.why("error")
+
+
+def test_the_module_docstring_names_every_failure_reason():
+    """The published reason list and the enum cannot drift apart."""
+    listed = set(re.findall(r"^- `([a-z_]+)`:", batch.outcomes.__doc__, re.M))
+    assert listed == {r.value for r in batch.outcomes.FailureReason}

@@ -3,7 +3,7 @@ title: AI Automation
 description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 ---
 
-<!-- doc-budget: 548 -->
+<!-- doc-budget: 576 -->
 
 # AI Automation
 
@@ -400,12 +400,15 @@ closed, and every step runs drafted — the batch is the only thing that pushes.
 
 ```bash
 pr batch plan --checkout DIR …           # which PRs need which steps (JSON)
-pr batch run --checkout DIR … [opts]     # start; NDJSON events on stdout
+pr batch run --checkout DIR … [opts]     # start; NDJSON events, last line run_summary
 pr batch run --plan FILE …               # start from a saved plan
 pr batch resume [RUN_ID]                 # continue waiting or interrupted
+pr batch next [RUN_ID]                   # only what needs action (JSON)
+pr batch status [RUN_ID]                 # the run report (JSON)
+pr batch status [RUN_ID] --full          # the raw run state
+pr batch status [RUN_ID] --decision ID   # one decision: full payload and log tail
 pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
 pr batch cancel [RUN_ID] [--kill]
-pr batch status [RUN_ID]
 ```
 
 Steps run in the order `rebase`, `ci`, `comments`, `review`, each only where
@@ -439,8 +442,39 @@ Actions: `accept`, `retry`, `skip-step`, `undo` (rebase:
 `git reset --hard` to the pre-rebase head). Kinds and actions are tabled in
 [`batch/resolve.py`](ai-libraries.md#batchresolvepy).
 
-A run with open decisions exits **10**; `resume` continues it and clears a
-pending cancel. `open-chat` is UI-only. Admission starts a step when free memory
+`pr batch status` prints one compact report:
+
+- `run`: `id`, `status`, `active` (a scheduler holds the run's lock), `exit_hint` and a one-line `hint`. `exit_hint` is what `run`/`resume` exit with: 0 once the run is finished (`done` or `cancelled`), 10 while it waits on you, 1 when it stopped without settling (resume it), and null while a scheduler holds the run.
+- `counts`: items by status, and open decisions.
+- `items`: non-terminal items only — worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, and step statuses.
+- `next`: one entry per open decision.
+
+`pr batch next` prints the same report without `items`.
+
+Each `next` entry carries:
+
+- `why`: a classified sentence.
+- `prep`: any work outside `pr` it needs first — the conflicted files to resolve, the review file and its must/should/nit counts (declined findings are left out of those and counted apart as `declined`), the remote commits to check, or a thread excerpt.
+- `worktree`.
+- `actions`, and `commands`: one copy-paste `pr batch resolve` per action. A required input is shown as a placeholder, an optional one in brackets.
+- `payload`: a small kind-specific part of the decision's payload.
+- `log` and `session_log` paths.
+
+Log tails appear only under `--decision`. `next` is empty in two cases:
+
+- while a scheduler holds the run — wait for its `run_summary`;
+- once the run is `done` or `cancelled`.
+
+A `failed` decision's `reason` is one of the classified reasons listed in
+[`batch/outcomes.py`](ai-libraries.md#batchoutcomespy).
+
+A failed step names its `log`, plus `session_log` when a review left one. A failed publish command names its `logs/<owner>__<repo>-<pr>-publish-<n>.log` and keeps the line that showed the reason as `detail` (absent for `error`). A publish refusal runs no command, so it has no log; its `detail` says why.
+
+Step stderr stays in the run's `logs/`; `run --verbose` and `resume --verbose` also stream it as `step_log` events. `decision_created` carries only `run`, `item`, `decision`, `decision_kind`, `why` and `commands`. `item` is the same value as `next[].pr`; the kind is `decision_kind` because the event wrapper's own `kind` is the event type. The last line of every `run` or `resume` that settles is `run_summary`, holding the same `run`, `counts` and `next` as `pr batch next`.
+
+A run with open decisions exits **10**. That means it is waiting on you, not that it failed: a job runner reports it as a failure, so read the `run_summary` line rather than the exit status. `resume` continues the run and clears a pending cancel. `open-chat` is UI-only.
+
+Admission starts a step when free memory
 minus `batch.mem_reserve` covers its observed peak and CPU/memory pressure stay
 under `batch.cpu_pressure_max` / `batch.mem_pressure_max`, always admitting
 one. `--pool` and `batch.pool_max` (default 2) cap concurrency; hosts with no

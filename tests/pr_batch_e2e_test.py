@@ -57,6 +57,7 @@ def test_run_resolve_status_round_trip(tmp_path, monkeypatch, capsys):
     lines = [json.loads(l) for l in capsys.readouterr().out.splitlines()]
     kinds = [l["kind"] for l in lines]
     assert kinds[0] == "run_started" and "run_waiting" in kinds
+    assert kinds[-1] == "run_summary" and "step_log" not in kinds
     assert all(l["schema_version"] == 1 for l in lines)
 
     calls = log.read_text().splitlines()
@@ -75,4 +76,6 @@ def test_run_resolve_status_round_trip(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     assert _main(["batch", "status", run_id], bin_dir) == 0
     status = json.loads(capsys.readouterr().out)
-    assert status["run"]["items"][0]["status"] == "done"
+    assert status["counts"]["items"] == {"done": 1} and status["items"] == []
+    assert _main(["batch", "status", run_id, "--full"], bin_dir) == 0
+    assert json.loads(capsys.readouterr().out)["run"]["items"][0]["status"] == "done"

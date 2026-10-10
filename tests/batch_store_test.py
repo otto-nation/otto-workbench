@@ -131,3 +131,11 @@ def test_a_run_saved_before_remote_sha_existed_leases_on_its_head():
     del raw["items"][0]["remote_sha"]
     path.write_text(json.dumps(raw))
     assert batch.store.load(run.id).items[0].remote_sha == "h1"
+
+
+def test_attempt_log_path_numbers_each_attempt_of_a_step():
+    first = batch.store.attempt_log_path(RID, "o/r", 1, "publish")
+    first.touch()
+    assert first == batch.store.logs_dir(RID) / "o__r-1-publish-0.log"
+    assert batch.store.attempt_log_path(RID, "o/r", 1, "publish").name == "o__r-1-publish-1.log"
+    assert batch.store.attempt_log_path(RID, "o/r", 12, "publish").name == "o__r-12-publish-0.log"

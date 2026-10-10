@@ -891,12 +891,14 @@ Takes no flags.
 | `--prs` `<prs>` | Comma-separated repo#number keys to include. |
 | `--select` `<key=steps>` | Run exactly these steps for one PR. Repeatable. |
 | `--watch-ci` | After a publish pushes, re-check CI once (ci-check --wait, up to its 900s --wait-timeout per item) and reopen the item on red. |
+| `--verbose` | Also stream each step's stderr as step_log events (it is always in the run's logs/). |
 
 **`pr batch resume`** — Continue a run
 
 | Flag | Description |
 |------|-------------|
 | `[<run-id>]` | Run to continue (default: the latest). |
+| `--verbose` | Also stream each step's stderr as step_log events. |
 
 **`pr batch resolve`** — Answer one decision
 
@@ -916,7 +918,15 @@ Takes no flags.
 | `[<run-id>]` | Run to cancel (default: the latest). |
 | `--kill` | Also terminate running steps. |
 
-**`pr batch status`** — Print a run's state
+**`pr batch status`** — Print a run's report: what needs action, and why (JSON)
+
+| Flag | Description |
+|------|-------------|
+| `[<run-id>]` | Run to show (default: the latest). |
+| `--full` | Print the raw run state instead of the report. Not with `--decision`. |
+| `--decision` `<id>` | Print one decision with its full payload and log tail. Not with `--full`. |
+
+**`pr batch next`** — Print only what needs action: run, counts and next (JSON)
 
 | Flag | Description |
 |------|-------------|

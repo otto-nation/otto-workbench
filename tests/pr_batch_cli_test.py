@@ -10,6 +10,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.model  # noqa: E402
+import batch.outcomes  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
 import cli.pr  # noqa: E402
@@ -138,11 +139,59 @@ def test_resolve_rejects_a_bad_action(capsys):
     assert "accept" in capsys.readouterr().err
 
 
-def test_status_prints_the_run_and_whether_it_is_active(capsys):
+def test_status_full_prints_the_raw_run_and_whether_it_is_active(capsys):
     run = _saved_run_with_decision()
-    assert _main(["batch", "status", run.id]) == 0
+    assert _main(["batch", "status", run.id, "--full"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["run"]["id"] == run.id and out["active"] is False
+    assert out["run"]["decisions"][0]["id"] == "d1"
+
+
+def test_status_prints_the_compact_report_by_default(capsys):
+    run = _saved_run_with_decisions(1, kind=batch.model.DecisionKind.FAILED)
+    assert _main(["batch", "status", run.id]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert set(out) == {"schema_version", "run", "counts", "items", "next"}
+    assert (out["run"]["id"], out["run"]["active"], out["run"]["exit_hint"]) == (run.id, False, 10)
+    assert [n["decision"] for n in out["next"]] == ["d1"]
+    assert out["next"][0]["commands"][0].startswith(f"pr batch resolve {run.id} d1 --action ")
+
+
+def test_status_decision_prints_one_decision_in_full(capsys):
+    run = _saved_run_with_decisions(1, kind=batch.model.DecisionKind.FAILED)
+    saved = batch.store.load(run.id)
+    saved.decision("d1").payload = {"reason": "error", "exit_code": 1, "log_tail": ["a", "b"]}
+    batch.store.save(saved)
+    assert _main(["batch", "status", run.id, "--decision", "d1"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["decision"] == "d1" and out["payload"]["log_tail"] == ["a", "b"]
+
+
+def test_status_decision_unknown_exits_1(capsys):
+    run = _saved_run_with_decision()
+    assert _main(["batch", "status", run.id, "--decision", "nope"]) == 1
+    assert "nope" in capsys.readouterr().err
+
+
+def test_status_full_and_decision_are_exclusive():
+    run = _saved_run_with_decision()
+    assert _main(["batch", "status", run.id, "--full", "--decision", "d1"]) == 2
+
+
+def test_next_prints_only_what_needs_action(capsys):
+    run = _saved_run_with_decisions(1, kind=batch.model.DecisionKind.FAILED)
+    assert _main(["batch", "next", run.id]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert set(out) == {"schema_version", "run", "counts", "next"}
+    assert [n["decision"] for n in out["next"]] == ["d1"]
+
+
+def test_next_lists_nothing_while_a_scheduler_holds_the_run(monkeypatch, capsys):
+    run = _saved_run_with_decisions(1, kind=batch.model.DecisionKind.FAILED)
+    monkeypatch.setattr(core.run_lock, "is_held", lambda _path: True)
+    assert _main(["batch", "next", run.id]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["next"] == [] and out["run"]["active"] is True
 
 
 def test_status_defaults_to_the_latest_run(capsys):
@@ -371,3 +420,77 @@ def test_watch_ci_reaches_the_run(monkeypatch):
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
     assert _main(["batch", "run", "--checkout", "/r", "--watch-ci"]) == 0
     assert seen["watch_ci"] is True
+
+
+def test_run_ends_with_a_run_summary_naming_what_needs_action(monkeypatch, capsys):
+    row = PlanRow("o/r", "/r", 1, "t", "b", "h", False,
+                  {batch.model.Step.REVIEW: StepNeed(True, "x")})
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", [row]))
+
+    def fake_run(self):
+        item = self.run.items[0]
+        item.worktree = "/wt"
+        self.run.decisions.append(batch.model.Decision(
+            id="d1", item=item.key, step="comments", kind=batch.model.DecisionKind.FAILED,
+            payload={"reason": "ai_prompt_failed", "exit_code": 1, "log_tail": ["x"]}))
+        item.status = batch.model.ItemStatus.AWAITING_DECISION
+        self.run.status = batch.model.RunStatus.WAITING
+        return batch.model.RunStatus.WAITING
+
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    assert _main(["batch", "run", "--checkout", "/r", "--steps", "review"]) == 10
+    last = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert last["kind"] == "run_summary"
+    assert (last["run"]["exit_hint"], last["run"]["active"]) == (10, False)
+    assert [n["decision"] for n in last["next"]] == ["d1"]
+    assert last["next"][0]["why"] == batch.outcomes.why("ai_prompt_failed")
+    assert "items" not in last
+
+
+def test_verbose_reaches_the_scheduler(monkeypatch):
+    rows = [PlanRow("o/r", "/r", 1, "t", "b1", "h", False,
+                    {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})]
+    seen = {}
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", rows))
+
+    def fake_run(self):
+        seen["verbose"] = self._verbose
+        return batch.model.RunStatus.DONE
+
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    assert _main(["batch", "run", "--checkout", "/r", "--verbose"]) == 0
+    assert seen["verbose"] is True
+
+
+def test_resume_verbose_reaches_the_scheduler(monkeypatch):
+    run = _saved_run_with_decision()
+    seen = {}
+
+    def fake_run(self):
+        seen["verbose"] = self._verbose
+        return batch.model.RunStatus.WAITING
+
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    assert _main(["batch", "resume", run.id, "--verbose"]) == 10
+    assert seen["verbose"] is True
+
+
+def test_resume_ends_with_a_run_summary(monkeypatch, capsys):
+    run = _saved_run_with_decision()
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
+                        lambda self: batch.model.RunStatus.WAITING)
+    assert _main(["batch", "resume", run.id]) == 10
+    last = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert last["kind"] == "run_summary"
+    assert last["run"]["exit_hint"] == 10
+
+
+def test_a_run_summary_after_apply_errors_hints_the_real_exit_code(monkeypatch, capsys):
+    run = _saved_run_with_decision()
+    batch.store.write_request(run.id, {"decision": "nope", "action": "accept"})
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
+                        lambda self: batch.model.RunStatus.WAITING)
+    assert _main(["batch", "resume", run.id]) == 1
+    last = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert last["kind"] == "run_summary"
+    assert last["run"]["exit_hint"] == 1

@@ -18,7 +18,7 @@ tools:
     permission: true
     visibility: full
     description: "Unified PR lifecycle CLI — creation, CI failures, code review, and review comments"
-    when_to_use: "Managing PR lifecycle: opening a PR, checking CI status, running reviews, addressing comments, or viewing unified PR status. Across many open PRs at once (rebase, fix CI, comments, self-review): `pr batch run --checkout DIR`; see `pr batch run --help`"
+    when_to_use: "Managing PR lifecycle: opening a PR, checking CI status, running reviews, addressing comments, or viewing unified PR status. Across many open PRs at once (rebase, fix CI, comments, self-review): `pr batch run --checkout DIR`; `pr batch next` says what a waiting run needs; see `pr batch run --help`"
 
   - name: review
     parser: cli.review_entry:build_parser

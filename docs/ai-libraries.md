@@ -3386,6 +3386,7 @@ Running steps are never paused or killed; admission only gates the next start.
 NDJSON progress events for live consumers of `pr batch run`.
 
 The state file is authoritative; events only save a consumer from polling it.
+`step_log` is emitted only under `--verbose`; `run_summary` is the last line of every `run`/`resume` that settles.
 
 ### batch/model.py
 
@@ -3398,6 +3399,17 @@ bumps `Run.schema_version`.
 ### batch/outcomes.py
 
 Turn what a finished step left behind into a step status and decisions.
+
+A `failed` decision's `reason` is one of these, or a publish refusal from
+`batch.publish.Refusal`. Each maps to one sentence, which status prints as `why`.
+
+- `ai_prompt_failed`: the step's AI prompt failed
+- `review_orchestration_failed`: the review produced no review file
+- `pre_push_rejected`: the pre-push hook refused, or uncommitted changes blocked the push
+- `lock_busy`: another `pr` run already owns the target
+- `push_rejected`: the remote refused the push
+- `github`: GitHub could not be read
+- `error`: anything the batch does not recognise
 
 ### batch/plan.py
 
@@ -3433,6 +3445,32 @@ answers it with `force-publish` (push past exactly those commits; one that
 appeared since is refused again) or drops the PR. The lease advances as soon as
 the push lands, so a failure in the replies after it never strands the item.
 
+### batch/report.py
+
+The compact document `pr batch status`, `pr batch next` and a run's last line print.
+
+One builder, three projections: `build` is the whole report, `next_view` its
+actionable part (also the `run_summary` line), and `decision_detail` one
+decision with its full payload and log tail.
+
+| Section | Content |
+|---|---|
+| `run` | `id`, `status`, `active` (the scheduler lock is held), `exit_hint`, `hint` |
+| `counts` | items by status, open decisions |
+| `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses |
+| `next` | one entry per open decision: `decision`, `pr`, `kind`, `why`, `prep`, `worktree`, `actions`, `commands`, a small `payload`, `log`, `session_log` |
+
+`exit_hint` is what `run`/`resume` exit with for the run as it stands: 0 once
+it is `done` or `cancelled`, 10 while it waits on a person, 1 when it stopped
+without settling (interrupted — `pr batch resume` it), and null while a
+scheduler holds the run. A review decision's finding counts leave declined
+findings out of must/should/nit and count them apart as `declined`.
+
+`next` is empty while a scheduler holds the run — it is still moving items,
+so the reader waits for its `run_summary` — and once the run is `done` or
+`cancelled`. Otherwise it offers `prep` and `pr batch resolve` commands, never
+a `pr` subcommand against a batch item.
+
 ### batch/resolve.py
 
 Apply an operator's answer to one decision, then move the item on.
@@ -3450,8 +3488,11 @@ Apply an operator's answer to one decision, then move the item on.
 | `dirty_worktree` | `retry` / `drop-pr` | re-checked when the item is next admitted (the payload names a stash command) / item → `dropped` |
 | `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped`; item → `dropped` |
 | `failed` | `force-publish` | only `reason: not_incorporated_remote`; same as `publish` past exactly the commits listed in the refusal (a newly appeared remote commit refuses again) |
-| `publish` | `publish` | see `batch.publish`; success → item `done`, or reopened once for `--watch-ci`; a refusal or failed command → `failed` on step `publish`, `reason` set |
+| `publish` | `publish` | see `batch.publish`; success → item `done`, or reopened once for `--watch-ci`; a refusal or failed command → `failed` on step `publish`, `reason` set; every command's output goes to `logs/<slug>-<pr>-publish-<n>.log`, which a failure names |
 | | `discard` | item → `done`; local commits stay and nothing is pushed |
+
+`ACTION_INPUTS` names the flags an action needs; `available_actions` and
+`resolve_command` are what `pr batch status` offers.
 
 `open-chat` is offered where listed and refused by the CLI, leaving the
 decision open.
@@ -3476,7 +3517,8 @@ Where a `pr batch` run lives on disk; the only module that touches it.
     <state_dir>/batch/<run-id>/run.lock         held by the live scheduler
     <state_dir>/batch/<run-id>/requests/*.json  decisions waiting to be applied
     <state_dir>/batch/<run-id>/cancel           {"kill": bool} once cancel is asked
-    <state_dir>/batch/<run-id>/logs/*.log       stderr of each step attempt
+    <state_dir>/batch/<run-id>/logs/<slug>-<pr>-<step>-<n>.log     stderr of each step attempt
+    <state_dir>/batch/<run-id>/logs/<slug>-<pr>-publish-<n>.log    output of each publish attempt
 
 ## AI backends
 
@@ -6387,11 +6429,12 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
     pr batch resume [RUN_ID]                   continue a waiting or interrupted run
     pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
     pr batch cancel [RUN_ID] [--kill]
-    pr batch status [RUN_ID]
+    pr batch status [RUN_ID] [--full | --decision ID]   the run report (JSON)
+    pr batch next   [RUN_ID]                   only what needs action (JSON)
 
 Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish.
 
-Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions.
+Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed.
 
 ### cli/pr_commands.py
 

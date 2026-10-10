@@ -95,6 +95,7 @@ def run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
     else:
         head_sha = head_sha or review_sha or "dry-run"
 
+    # review_sha may be None; covers() cannot take it, so guard first.
     sha_drifted = bool(review_sha) and not covers(review_sha, head_sha)
     if sha_drifted:
         core.log.warn(

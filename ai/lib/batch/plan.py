@@ -63,6 +63,7 @@ _REBASE_NEEDED = {"BEHIND": "behind its base", "DIRTY": "has merge conflicts"}
 # become the tip the rebase remembers.
 NAMESPACE_ROOT = "refs/pr-batch"
 
+
 class PlanError(RuntimeError):
     pass
 

@@ -46,6 +46,12 @@ def test_read_review_sha_without_comment_is_empty(tmp_path):
     assert review.recover.read_review_sha(review_path) == ""
 
 
+def test_read_review_sha_malformed_value_is_empty(tmp_path):
+    review_path = tmp_path / "review.md"
+    review_path.write_text("<!-- head_sha: YYYY -->\n# Review\n")
+    assert review.recover.read_review_sha(review_path) == ""
+
+
 # ── get_pr_head_sha ───────────────────────────────────────────────────────────
 
 

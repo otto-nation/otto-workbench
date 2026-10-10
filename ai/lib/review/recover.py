@@ -18,6 +18,7 @@ and nothing else in the worktree lifecycle has that contract.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -37,7 +38,8 @@ def read_review_sha(review_file: Path) -> str:
         text = review_file.read_text()
     except OSError:
         return ""
-    return review.document.ReviewHeader.parse(text).head_sha
+    sha = review.document.ReviewHeader.parse(text).head_sha
+    return sha if re.fullmatch(r"[a-f0-9]+", sha) else ""
 
 
 def get_pr_head_sha(repo: str, pr_number: str) -> str:

@@ -280,7 +280,8 @@ def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
     ci_state = rollup_state(node)
     threads = (node.get("reviewThreads") or {}).get("nodes") or []
     merge_state = node.get("mergeStateStatus") or "UNKNOWN"
-    state = _pr_state(repo_dir, branch)  # one git call per row, shared below
+    # One state load (one git call) per row, shared by the comments need and the closeout.
+    state = _pr_state(repo_dir, branch)
     return PlanRow(
         repo=repo, repo_dir=repo_dir, pr=int(node["number"]), title=node.get("title", ""),
         branch=branch, head_sha=head, is_draft=bool(node.get("isDraft")),

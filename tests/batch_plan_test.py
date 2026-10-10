@@ -61,7 +61,7 @@ def test_search_query_scopes_to_me_open_and_each_repo():
 
 
 def test_rows_from_search_maps_nodes_and_drops_unknown_repos(monkeypatch):
-    monkeypatch.setattr(batch.plan, "settled_ids", lambda repo_dir, branch: set())
+    monkeypatch.setattr(batch.plan, "_pr_state", lambda repo_dir, branch: None)
     monkeypatch.setattr(batch.plan, "_review_file", lambda repo, branch: Path("/nonexistent"))
     data = {"viewer": {"login": "me"}, "search": {"nodes": [
         {"number": 7, "title": "t", "isDraft": True, "headRefName": "b", "headRefOid": "sha",
@@ -105,7 +105,7 @@ def test_replan_returns_none_for_a_closed_pr(monkeypatch):
 
 def test_rows_from_search_matches_repos_case_insensitively(monkeypatch):
     seen = []
-    monkeypatch.setattr(batch.plan, "settled_ids", lambda repo_dir, branch: set())
+    monkeypatch.setattr(batch.plan, "_pr_state", lambda repo_dir, branch: None)
     monkeypatch.setattr(
         batch.plan, "_review_file",
         lambda repo, branch: seen.append(repo) or Path("/nonexistent"),
@@ -171,7 +171,7 @@ def _node(branch="b", head="remote1"):
 
 def test_rows_from_search_judges_review_against_the_branch_worktree_head(monkeypatch, tmp_path):
     review = _review_at(tmp_path, "remote1")
-    monkeypatch.setattr(batch.plan, "settled_ids", lambda repo_dir, branch: set())
+    monkeypatch.setattr(batch.plan, "_pr_state", lambda repo_dir, branch: None)
     monkeypatch.setattr(batch.plan, "_review_file", lambda repo, branch: review)
     monkeypatch.setattr(batch.plan, "_local_heads", lambda repo_dir: {"b": "local22"})
     rows = batch.plan.rows_from_search({"search": {"nodes": [_node()]}}, {"o/a": "/repos/a"})
@@ -190,7 +190,7 @@ def test_local_heads_maps_each_checked_out_branch_to_its_head(monkeypatch):
 
 def test_replan_judges_review_against_the_rows_local_head(monkeypatch, tmp_path):
     review = _review_at(tmp_path, "remote1")
-    monkeypatch.setattr(batch.plan, "settled_ids", lambda repo_dir, branch: set())
+    monkeypatch.setattr(batch.plan, "_pr_state", lambda repo_dir, branch: None)
     monkeypatch.setattr(batch.plan, "_review_file", lambda repo, branch: review)
     node = dict(_node(), state="OPEN")
     monkeypatch.setattr(batch.plan, "_graphql", lambda q, v: {"repository": {"pullRequest": node}})
@@ -216,7 +216,7 @@ def test_rollup_state_reads_the_last_commit():
 
 
 def test_a_fork_row_skips_rebase_and_ci(monkeypatch):
-    monkeypatch.setattr(batch.plan, "settled_ids", lambda repo_dir, branch: set())
+    monkeypatch.setattr(batch.plan, "_pr_state", lambda repo_dir, branch: None)
     monkeypatch.setattr(batch.plan, "_review_file", lambda repo, branch: Path("/nonexistent"))
     node = dict(_node(), mergeStateStatus="BEHIND", isCrossRepository=True,
                 commits={"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]})
@@ -264,4 +264,5 @@ def test_a_row_carries_the_closeout_pr_says_is_owed(monkeypatch):
          "reviewThreads": {"nodes": []}}]}}
     [r] = batch.plan.rows_from_search(data, {"o/a": "/repos/a"})
     assert r.closeout == "2 replies"
-    assert len(loads) == 1  # one state load (one git call) per row
+    # One state load (one git call) per row.
+    assert len(loads) == 1

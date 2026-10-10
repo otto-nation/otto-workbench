@@ -3386,6 +3386,7 @@ Running steps are never paused or killed; admission only gates the next start.
 NDJSON progress events for live consumers of `pr batch run`.
 
 The state file is authoritative; events only save a consumer from polling it.
+`step_log` is emitted only under `--verbose`; `run_summary` is the last line of every `run`/`resume` that settles.
 
 ### batch/model.py
 

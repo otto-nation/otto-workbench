@@ -1,6 +1,7 @@
 """NDJSON progress events for live consumers of `pr batch run`.
 
 The state file is authoritative; events only save a consumer from polling it.
+`step_log` is emitted only under `--verbose`; `run_summary` is the last line of every `run`/`resume` that settles.
 """
 
 # doc-group: batch
@@ -16,7 +17,7 @@ SCHEMA_VERSION = 1
 EVENT_KINDS = frozenset({
     "run_started", "item_queued", "admission_wait", "step_started", "step_log",
     "step_finished", "decision_created", "decision_resolved", "item_finished",
-    "run_waiting", "run_finished",
+    "run_waiting", "run_finished", "run_summary",
 })
 
 

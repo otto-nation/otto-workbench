@@ -58,7 +58,7 @@ class Harness:
     def __init__(self, rows, *, codes=None, auto_publish=(), pool=2, host=HEALTHY,
                  replan=None, worktrees=None, heads=None, selected=None, cfg=None,
                  runner=None, tree=None, moves=(), stdouts=None, contains=None,
-                 dirty=None, rebasing=None, watch_ci=False):
+                 dirty=None, rebasing=None, watch_ci=False, verbose=False):
         self.codes = codes or {}
         self.moves, self.stdouts = set(moves), stdouts or {}
         self.spawned, self.events, self.live, self.max_live = [], [], 0, 0
@@ -76,7 +76,8 @@ class Harness:
             estimates=batch.admission.Estimates({}),
             runner=runner or self._publish, tree=tree or ff_tree,
             contains=contains or (lambda wt, sha: True),
-            dirty=dirty or (lambda wt: False), rebasing=rebasing or (lambda wt: False))
+            dirty=dirty or (lambda wt: False), rebasing=rebasing or (lambda wt: False),
+            verbose=verbose)
         self.sched = self._make()
 
     def resume(self):

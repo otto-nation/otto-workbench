@@ -282,13 +282,41 @@ def test_malformed_request_is_reported_and_the_rest_apply():
     assert errors
 
 
-def test_decision_created_carries_decision_kind():
+def test_decision_created_carries_only_what_an_agent_acts_on():
     h = Harness([row(1)], codes={("rebase", "/wt/b1"): 3})
     h.sched.run_until_blocked()
-    created = [f for k, f in h.events if k == "decision_created"]
-    assert created
-    f = created[0]
-    assert f["decision_kind"] and f["decision"] and f["item"] and f["step"] and "payload" in f
+    f = next(f for k, f in h.events if k == "decision_created")
+    assert set(f) == {"run", "item", "decision", "decision_kind", "why", "commands"}
+    assert f["decision_kind"] == "rebase_conflict"
+    assert f["commands"] == [f"pr batch resolve {h.run.id} {f['decision']} --action abort",
+                             f"pr batch resolve {h.run.id} {f['decision']} --action retry"]
+
+
+def _chatty(h):
+    """Make every spawned step print one stderr line."""
+    inner = h.sched._spawn
+
+    def spawn(argv, **kw):
+        proc = inner(argv, **kw)
+        lines = ["working"]
+        proc.drain_lines = lambda: [lines.pop()] if lines else []
+        return proc
+
+    h.sched._spawn = spawn
+
+
+def test_step_log_lines_stay_off_the_event_stream_unless_verbose():
+    quiet = Harness([row(1, {batch.model.Step.REBASE: NEED})], codes={("rebase", "/wt/b1"): 1})
+    _chatty(quiet)
+    quiet.sched.run_until_blocked()
+    assert "step_log" not in quiet.kinds()
+    failed = next(d for d in quiet.run.decisions if d.kind is batch.model.DecisionKind.FAILED)
+    assert failed.payload["log_tail"] == ["working"]
+
+    loud = Harness([row(1, {batch.model.Step.REBASE: NEED})], verbose=True)
+    _chatty(loud)
+    loud.sched.run_until_blocked()
+    assert [f["line"] for k, f in loud.events if k == "step_log"] == ["working"]
 
 
 def test_publish_and_dirty_worktree_emit_decision_created():
@@ -312,7 +340,8 @@ def test_failed_publish_via_request_emits_decision_created():
     h.publish_code = 1
     h.sched.run_until_blocked()
     created = [f for k, f in h.events if k == "decision_created"]
-    assert any(f["decision_kind"] == "failed" and f["step"] == "publish" for f in created)
+    failed = next(f for f in created if f["decision_kind"] == "failed")
+    assert h.run.decision(failed["decision"]).step == "publish"
 
 
 def test_cancel_kill_force_kills_what_the_tracked_step_already_outlived():

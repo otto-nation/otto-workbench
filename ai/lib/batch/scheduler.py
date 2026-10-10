@@ -17,6 +17,7 @@ import batch.events
 import batch.outcomes
 import batch.plan
 import batch.publish
+import batch.report
 import batch.resolve
 import batch.store
 import git.client
@@ -86,8 +87,9 @@ def _decide(run: Run, item: Item, step: str, kind: DecisionKind, payload: dict, 
                  created_at=batch.store.now_iso())
     run.decisions.append(d)
     item.status = ItemStatus.AWAITING_DECISION
-    emit("decision_created", run=run.id, item=item.key, decision=d.id,
-         step=d.step, payload=d.payload, decision_kind=d.kind.value)
+    # The payload stays in state.json (`pr batch status --decision`); the event
+    # carries only what an agent acts on.
+    emit("decision_created", run=run.id, **batch.report.decision_event(run, d))
     return d
 
 
@@ -138,8 +140,10 @@ class Scheduler:
                  tree: Callable[[Item], batch.publish.TreeState] | None = None,
                  contains: Callable[[str, str], bool] = _contains_commit,
                  dirty: Callable[[str], bool] = git.client.is_dirty,
-                 rebasing: Callable[[str], bool] = rebase.inspect.rebase_in_progress):
+                 rebasing: Callable[[str], bool] = rebase.inspect.rebase_in_progress,
+                 verbose: bool = False):
         self.run, self.pr_bin, self.cfg = run, pr_bin, cfg
+        self._verbose = verbose
         # Looked up at construction, not bound as a default, so a patched
         # batch.plan.replan_row is the one used.
         self._host, self._spawn = host, spawn
@@ -169,9 +173,8 @@ class Scheduler:
             self._emit("decision_resolved", run=self.run.id, decision=req.decision,
                        action=req.action)
             for d in created:
-                self._emit("decision_created", run=self.run.id, item=d.item,
-                           decision=d.id, step=d.step, payload=d.payload,
-                           decision_kind=d.kind.value)
+                self._emit("decision_created", run=self.run.id,
+                           **batch.report.decision_event(self.run, d))
             if item.terminal and not was_terminal:
                 self._emit("item_finished", run=self.run.id, item=item.key,
                            status=item.status.value)
@@ -194,8 +197,10 @@ class Scheduler:
         for key, live in list(self._live.items()):
             for line in live.proc.drain_lines():
                 live.tail.append(line)
-                self._emit("step_log", run=self.run.id, item=key, step=live.rec.step.value,
-                           line=line)
+                # Always in the step's log file; on the event stream only when asked.
+                if self._verbose:
+                    self._emit("step_log", run=self.run.id, item=key,
+                               step=live.rec.step.value, line=line)
             live.peak = max(live.peak, self._rss(live.proc.pid))
             code = live.proc.poll()
             if code is None:

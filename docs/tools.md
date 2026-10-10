@@ -891,12 +891,14 @@ Takes no flags.
 | `--prs` `<prs>` | Comma-separated repo#number keys to include. |
 | `--select` `<key=steps>` | Run exactly these steps for one PR. Repeatable. |
 | `--watch-ci` | After a publish pushes, re-check CI once (ci-check --wait, up to its 900s --wait-timeout per item) and reopen the item on red. |
+| `--verbose` | Also stream each step's stderr as step_log events (it is always in the run's logs/). |
 
 **`pr batch resume`** — Continue a run
 
 | Flag | Description |
 |------|-------------|
 | `[<run-id>]` | Run to continue (default: the latest). |
+| `--verbose` | Also stream each step's stderr as step_log events. |
 
 **`pr batch resolve`** — Answer one decision
 

@@ -10,6 +10,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.model  # noqa: E402
+import batch.outcomes  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
 import cli.pr  # noqa: E402
@@ -419,3 +420,43 @@ def test_watch_ci_reaches_the_run(monkeypatch):
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
     assert _main(["batch", "run", "--checkout", "/r", "--watch-ci"]) == 0
     assert seen["watch_ci"] is True
+
+
+def test_run_ends_with_a_run_summary_naming_what_needs_action(monkeypatch, capsys):
+    row = PlanRow("o/r", "/r", 1, "t", "b", "h", False,
+                  {batch.model.Step.REVIEW: StepNeed(True, "x")})
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", [row]))
+
+    def fake_run(self):
+        item = self.run.items[0]
+        item.worktree = "/wt"
+        self.run.decisions.append(batch.model.Decision(
+            id="d1", item=item.key, step="comments", kind=batch.model.DecisionKind.FAILED,
+            payload={"reason": "ai_prompt_failed", "exit_code": 1, "log_tail": ["x"]}))
+        item.status = batch.model.ItemStatus.AWAITING_DECISION
+        self.run.status = batch.model.RunStatus.WAITING
+        return batch.model.RunStatus.WAITING
+
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    assert _main(["batch", "run", "--checkout", "/r", "--steps", "review"]) == 10
+    last = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert last["kind"] == "run_summary"
+    assert (last["run"]["exit_hint"], last["run"]["active"]) == (10, False)
+    assert [n["decision"] for n in last["next"]] == ["d1"]
+    assert last["next"][0]["why"] == batch.outcomes.why("ai_prompt_failed")
+    assert "items" not in last
+
+
+def test_verbose_reaches_the_scheduler(monkeypatch):
+    rows = [PlanRow("o/r", "/r", 1, "t", "b1", "h", False,
+                    {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})]
+    seen = {}
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", rows))
+
+    def fake_run(self):
+        seen["verbose"] = self._verbose
+        return batch.model.RunStatus.DONE
+
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    assert _main(["batch", "run", "--checkout", "/r", "--verbose"]) == 0
+    assert seen["verbose"] is True

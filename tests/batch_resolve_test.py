@@ -120,7 +120,7 @@ def test_force_runs_a_forced_draft_rebase_and_marks_it_drafted(monkeypatch):
 
 
 def test_retry_resets_the_step():
-    run = _run(_d(batch.model.DecisionKind.FAILED, "review", {"reason": "busy"}))
+    run = _run(_d(batch.model.DecisionKind.FAILED, "review", {"reason": "lock_busy"}))
     run.items[0].step(batch.model.Step.REVIEW).status = batch.model.StepStatus.FAILED
     batch.resolve.apply(run, batch.resolve.Request("d1", "retry"), pr_bin="pr", runner=Recorder())
     assert run.items[0].step(batch.model.Step.REVIEW).status is batch.model.StepStatus.PENDING

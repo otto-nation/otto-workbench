@@ -69,8 +69,8 @@ recipes:
 
 `run` plans for itself — no `pr batch plan` first. It is long-running and
 streams NDJSON events; start it as a background job. Step output stays in the
-run's logs/ (--verbose streams it as step_log too), and the last line is
-always `run_summary`: the run, its counts, and what needs action next.
+run's logs/ (--verbose streams it as step_log too), and
+the last line of a run that settles is `run_summary`: the run, its counts, and what needs action next.
 
 Nothing is pushed until a publish decision is answered. Exit 10 means the
 run is waiting on you, not that it failed: each `next` entry (also printed

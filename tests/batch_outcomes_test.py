@@ -279,3 +279,9 @@ def test_every_recorded_reason_has_a_sentence():
     assert recorded <= set(batch.outcomes.FAILURE_WHY)
     assert batch.outcomes.why("busy") == batch.outcomes.why("lock_busy")
     assert batch.outcomes.why("no-such-reason") == batch.outcomes.why("error")
+
+
+def test_the_module_docstring_names_every_failure_reason():
+    """The published reason list and the enum cannot drift apart."""
+    listed = set(re.findall(r"^- `([a-z_]+)`:", batch.outcomes.__doc__, re.M))
+    assert listed == {r.value for r in batch.outcomes.FailureReason}

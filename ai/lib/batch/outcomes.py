@@ -1,7 +1,15 @@
 """Turn what a finished step left behind into a step status and decisions.
 
-A `failed` decision's `reason` is a `FailureReason` or a publish refusal value.
-Each maps to one sentence, which status prints as `why`.
+A `failed` decision's `reason` is one of these, or a publish refusal from
+`batch.publish.Refusal`. Each maps to one sentence, which status prints as `why`.
+
+- `ai_prompt_failed`: the step's AI prompt failed
+- `review_orchestration_failed`: the review produced no review file
+- `pre_push_rejected`: the pre-push hook refused, or uncommitted changes blocked the push
+- `lock_busy`: another `pr` run already owns the target
+- `push_rejected`: the remote refused the push
+- `github`: GitHub could not be read
+- `error`: anything the batch does not recognise
 """
 
 # doc-group: batch

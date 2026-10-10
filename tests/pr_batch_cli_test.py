@@ -460,3 +460,37 @@ def test_verbose_reaches_the_scheduler(monkeypatch):
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
     assert _main(["batch", "run", "--checkout", "/r", "--verbose"]) == 0
     assert seen["verbose"] is True
+
+
+def test_resume_verbose_reaches_the_scheduler(monkeypatch):
+    run = _saved_run_with_decision()
+    seen = {}
+
+    def fake_run(self):
+        seen["verbose"] = self._verbose
+        return batch.model.RunStatus.WAITING
+
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    assert _main(["batch", "resume", run.id, "--verbose"]) == 10
+    assert seen["verbose"] is True
+
+
+def test_resume_ends_with_a_run_summary(monkeypatch, capsys):
+    run = _saved_run_with_decision()
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
+                        lambda self: batch.model.RunStatus.WAITING)
+    assert _main(["batch", "resume", run.id]) == 10
+    last = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert last["kind"] == "run_summary"
+    assert last["run"]["exit_hint"] == 10
+
+
+def test_a_run_summary_after_apply_errors_hints_the_real_exit_code(monkeypatch, capsys):
+    run = _saved_run_with_decision()
+    batch.store.write_request(run.id, {"decision": "nope", "action": "accept"})
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
+                        lambda self: batch.model.RunStatus.WAITING)
+    assert _main(["batch", "resume", run.id]) == 1
+    last = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert last["kind"] == "run_summary"
+    assert last["run"]["exit_hint"] == 1

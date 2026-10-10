@@ -209,10 +209,15 @@ def _held_drive(run, bin_dir: Path, cfg, verbose: bool) -> int:
     return batch.report.exit_code(status)
 
 
-def _emit_summary(run) -> None:
-    """The last line of a settled run: `next`'s document as a `run_summary` event."""
+def _emit_summary(run, code: int) -> None:
+    """The last line of a settled run: `next`'s document as a `run_summary` event.
+
+    Its `exit_hint` is *code*, the process's real exit status — apply errors
+    make it 1 whatever the run's status alone would say.
+    """
     view = batch.report.next_view(batch.report.build(
         run, active=core.run_lock.is_held(batch.store.run_dir(run.id))))
+    view["run"]["exit_hint"] = code
     batch.events.emit("run_summary", run=view["run"], counts=view["counts"], next=view["next"])
 
 
@@ -226,7 +231,7 @@ def _drive(run, *, bin_dir: Path, cfg, verbose: bool = False) -> int:
         return 1
     # After the lock is released, so the summary reports the run as the
     # reader's to act on and lists what it is waiting for.
-    _emit_summary(run)
+    _emit_summary(run, code)
     return code
 
 
@@ -282,7 +287,8 @@ def _cmd_resume(args, bin_dir: Path) -> int:
     batch.store.clear_cancel(run_id)
     batch.scheduler.mark_interrupted(run, emit=batch.events.emit)
     os.environ.setdefault(TRAIL_ROOT_ENV, run.trail_root)
-    return _drive(run, bin_dir=bin_dir, cfg=_cfg([i.repo_dir for i in run.items]), verbose=args.verbose)
+    return _drive(run, bin_dir=bin_dir, cfg=_cfg([i.repo_dir for i in run.items]),
+                  verbose=args.verbose)
 
 
 def _apply_pending(run_id: str, bin_dir: Path, decision_id: str) -> int:

@@ -1017,7 +1017,7 @@ repo; each of these fires before the first agent call.
 
 - ``refuse_if_superseded`` stops a run whose branch may already be gone from
   the default branch — findings about deleted code read as ordinary comments.
-- ``check_stale_review`` asks before re-reviewing the same HEAD, or auto-recovers
+- ``check_stale_review`` asks before re-reviewing a HEAD the last review covers (`review.document.covers`), or auto-recovers
   when the prior run failed.
 - ``check_pending_review`` finds an unsubmitted GitHub review and offers to
   delete it so a new post does not collide.

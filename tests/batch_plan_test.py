@@ -266,3 +266,10 @@ def test_a_row_carries_the_closeout_pr_says_is_owed(monkeypatch):
     assert r.closeout == "2 replies"
     # One state load (one git call) per row.
     assert len(loads) == 1
+
+
+def test_review_short_prefix_is_not_current(tmp_path):
+    """A header shorter than MIN_SHA_PREFIX is not evidence of the same commit."""
+    f = tmp_path / "review.md"
+    f.write_text("<!-- head_sha: abc -->\n# Review\n")
+    assert batch.plan.review_need(f, "abcdef0123456").needed is True

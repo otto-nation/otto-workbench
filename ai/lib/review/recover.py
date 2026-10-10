@@ -29,6 +29,7 @@ import pr.context
 import pr.domains
 from review.paths import FILENAME_PIPELINE_STATE
 from review.state import read_pipeline_status
+import review.document
 import review.worktree
 
 
@@ -115,7 +116,7 @@ def should_auto_recover(repo: str, pr_number: str, review_file: Path) -> None:
     if not review_sha:
         return
     pr_head_sha = get_pr_head_sha(repo, pr_number)
-    if not pr_head_sha or review_sha != pr_head_sha:
+    if not review.document.covers(review_sha, pr_head_sha):
         return
     pipeline_status = read_pipeline_status(review_file.parent)
     if pipeline_status in (pr.domains.ReviewStatus.PARTIAL.value, pr.domains.ReviewStatus.ERROR.value):

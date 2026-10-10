@@ -215,7 +215,7 @@ def review_need(review_file: Path, head_sha: str, *, local_head: str = "") -> St
         return StepNeed(True, "no self-review yet")
     subject = local_head or head_sha
     reviewed = review.document.ReviewHeader.parse(review_file.read_text()).head_sha
-    if reviewed and subject.startswith(reviewed):
+    if review.document.covers(reviewed, subject):
         return StepNeed(False, "self-review is current")
     of = f"self-review is of {git.client.abbrev(reviewed) or 'an unknown head'}"
     if local_head and local_head != head_sha:

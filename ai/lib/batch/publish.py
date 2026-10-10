@@ -147,7 +147,8 @@ def plan(item: Item, pr_bin: str, tree: TreeState, *,
     *confirmed* is the operator's ``force-publish``: the remote commits listed
     in the refusal they answered. It pushes past those and past nothing else —
     a remote commit that appeared since is refused again, with the full list.
-    *closeout* is what `pr` recorded as owed to the PR; when it is owed the comments command runs even with nothing drafted or to push.
+    *closeout* is what `pr` recorded as owed to the PR; when it is owed the
+    comments command runs even with nothing drafted or to push.
     """
     wt = ["--repo-dir", item.worktree]
     if not tree.fetched:

@@ -412,7 +412,10 @@ pr batch cancel [RUN_ID] [--kill]
 ```
 
 Steps run in the order `rebase`, `ci`, `comments`, `review`, each only where
-needed (`run` plans for itself; `run --help` has recipes). `rebase` is needed
+needed (`run` plans for itself; `run --help` has recipes). A PR that needs no
+step is still planned into the run when its saved `pr` state owes a closeout,
+but only when `comments` is one of the run's steps and there is no `--select`.
+It is queued and gets a worktree like any other item. `rebase` is needed
 when the branch is behind its PR's base, from refs in a private `refs/pr-batch/`
 namespace (GitHub merge state fallback; `UNKNOWN` and `DIRTY` count as needed).
 `ci` runs `ci-check --fix --no-rebase --head-sha <planned remote head>` (not
@@ -456,7 +459,7 @@ Each `next` entry carries:
 - `why`: a classified sentence.
 - `prep`: any work outside `pr` it needs first — the conflicted files to resolve, the review file and its must/should/nit counts (declined findings are left out of those and counted apart as `declined`), the remote commits to check, or a thread excerpt.
 - `worktree`.
-- `actions`, and `commands`: one copy-paste `pr batch resolve` per action. A required input is shown as a placeholder, an optional one in brackets.
+- `actions`, and `commands`: decision entries carry one copy-paste `pr batch resolve` per action; a finished run's `closeout_owed` entries carry the `pr comments --finish --post …` command with no actions. A required input is shown as a placeholder, an optional one in brackets.
 - `payload`: a small kind-specific part of the decision's payload.
 - `log` and `session_log` paths.
 

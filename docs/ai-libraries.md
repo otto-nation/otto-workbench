@@ -3469,7 +3469,13 @@ without settling (interrupted — `pr batch resume` it), and null while a
 scheduler holds the run. A review decision's finding counts leave declined
 findings out of must/should/nit and count them apart as `declined`.
 
-`next` is empty while a scheduler holds the run — it is still moving items, so the reader waits for its `run_summary`. While the run waits, `next` offers `prep` and `pr batch resolve` commands, never a `pr` subcommand against a batch item. Once the run is `done` or `cancelled`, `next` lists one `closeout_owed` entry per PR whose saved `pr` state still owes a closeout. Each entry carries the `pr` command (`CloseoutDebt.command` plus `--repo-dir`), `decision: null` and no actions. A closed PR is left out.
+`next` is empty while a scheduler holds the run — it is still moving items, so
+the reader waits for its `run_summary`. While the run waits, `next` offers
+`prep` and `pr batch resolve` commands, never a `pr` subcommand against a batch
+item. Once the run is `done` or `cancelled`, `next` lists one `closeout_owed`
+entry per PR whose saved `pr` state still owes a closeout. Each entry carries
+the `pr` command (`CloseoutDebt.command` plus `--repo-dir`), `decision: null`
+and no actions. A closed PR is left out.
 
 ### batch/resolve.py
 

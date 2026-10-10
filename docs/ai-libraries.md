@@ -3438,8 +3438,11 @@ still the head the batch planned from (`Item.remote_sha`):
 | diverged, a remote commit has no patch-equivalent locally | refuse: `not_incorporated_remote` |
 | diverged | `pr rebase --push-only --expect <remote_sha>` |
 
-`pr comments --finish --post` follows when the comments step drafted or an item
-is tracked. A refusal is a `failed` decision on step `publish` carrying `reason`;
+`pr comments --finish --post` follows when the comments step drafted, an item is
+tracked, or the PR's saved `pr` state says a closeout is owed
+(`batch.plan.closeout_debt`). The last case applies even when there is nothing
+to push. The command is `CloseoutDebt.command`, so an owed tracking issue adds
+`--track-all`. A refusal is a `failed` decision on step `publish` carrying `reason`;
 a `not_incorporated_remote` one also lists the remote commits, and the operator
 answers it with `force-publish` (push past exactly those commits; one that
 appeared since is refused again) or drops the PR. The lease advances as soon as

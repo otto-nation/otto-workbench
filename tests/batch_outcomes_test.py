@@ -10,6 +10,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from conftest import commit_all, git_out, init_repo  # noqa: E402
 import batch.model  # noqa: E402
 import batch.outcomes  # noqa: E402
 import batch.publish  # noqa: E402
@@ -122,9 +123,6 @@ def test_open_findings_reads_unchecked_findings(tmp_path, monkeypatch):
         {"severity": "should-fix", "title": OPEN_TITLE, "declined": False},
         {"severity": "should-fix", "title": DECLINED_TITLE, "declined": True},
     ]
-
-
-from conftest import commit_all, git_out, init_repo  # noqa: E402
 
 
 def _tally_stdout(**tally):

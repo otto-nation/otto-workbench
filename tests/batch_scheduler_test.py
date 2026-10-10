@@ -15,12 +15,10 @@ import batch.model  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
 from batch.plan import PlanError  # noqa: E402
-from batch.publish import TreeState  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
 from batch_scheduler_support import (ALL, GiB, HEALTHY, NEED, NO, Harness,  # noqa: F401,E402
-                                     _quiet_outcomes, row)
+                                     _even, _quiet_outcomes, row)
 from pr.comments_fix import CloseoutDebt  # noqa: E402
-from rebase.types import RefDivergence  # noqa: E402
 
 
 def test_draft_run_ends_waiting_with_one_publish_decision_per_pr():
@@ -515,14 +513,15 @@ def test_new_run_leaves_out_a_closeout_when_comments_is_not_a_chosen_step():
     assert run.items == []
 
 
+def test_new_run_leaves_out_a_closeout_when_selection_is_explicit():
+    run = batch.scheduler.new_run([row(1, NONE_NEEDED, closeout="summary")],
+                                  steps=list(batch.model.STEP_ORDER), selected={}, pool=1,
+                                  auto_publish=[])
+    assert run.items == []
+
+
 def _owed(d, b):
     return CloseoutDebt(summary=True)
-
-
-def _even(item):
-    """Nothing to push: the local branch is the planned remote head."""
-    return TreeState(local=item.remote_sha, remote=item.remote_sha,
-                     divergence=RefDivergence(ahead=0, behind=0, comparable=True))
 
 
 def _closeout_row():
@@ -555,4 +554,18 @@ def test_auto_publish_without_comments_leaves_a_closeout_to_the_operator():
     h = Harness([_closeout_row()], closeout=_owed, tree=_even,
                 auto_publish=[batch.model.Step.REVIEW])
     assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
+    assert h.published == []
+
+
+def test_a_skipped_failed_comments_step_does_not_auto_publish_owed_closeout():
+    needs = {batch.model.Step.REBASE: NO, batch.model.Step.COMMENTS: NEED,
+             batch.model.Step.REVIEW: NO}
+    h = Harness([row(1, needs)], codes={("comments", "/wt/b1"): 1},
+                closeout=_owed, tree=_even, auto_publish=[batch.model.Step.COMMENTS])
+    assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
+    failed = next(d for d in h.run.decisions if d.kind is batch.model.DecisionKind.FAILED)
+    h.sched._apply_one({"decision": failed.id, "action": "skip-step"})
+    assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
+    pubs = [d for d in h.run.open_decisions() if d.kind is batch.model.DecisionKind.PUBLISH]
+    assert len(pubs) == 1
     assert h.published == []

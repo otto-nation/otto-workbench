@@ -47,6 +47,12 @@ def ff_tree(item):
                      divergence=RefDivergence(ahead=1, behind=0, comparable=True))
 
 
+def _even(item):
+    """Nothing to push: the local branch is the planned remote head."""
+    return TreeState(local=item.remote_sha, remote=item.remote_sha,
+                     divergence=RefDivergence(ahead=0, behind=0, comparable=True))
+
+
 @pytest.fixture(autouse=True)
 def _quiet_outcomes(monkeypatch):
     monkeypatch.setattr(batch.outcomes, "comment_items", lambda item: [])

@@ -303,11 +303,20 @@ class Scheduler:
         # finished DONE — a step the operator skipped or that failed left work
         # nobody vouched for, so its publish stays the operator's to answer.
         # An owed closeout is comments work, so it needs `comments` listed too.
+        # A comments step this run attempted (started_at set, or an exit_code)
+        # that did not finish DONE — failed, then skip-step — leaves that debt
+        # unvouched: auto-publish does not fire. Debt from an earlier `pr` run,
+        # with comments never attempted here, still auto-publishes under
+        # `--auto-publish comments`.
         # _apply_one emits the outcome — item_finished on DONE, or the refusal's
         # decision — so READY_TO_PUBLISH is not announced first.
         finished = all(r.status is StepStatus.DONE for r in item.steps if r.drafted)
+        comments = next((r for r in item.steps if r.step is Step.COMMENTS), None)
+        attempted = comments is not None and (bool(comments.started_at)
+                                              or comments.exit_code is not None)
+        unvouched = debt.owed and attempted and comments.status is not StepStatus.DONE
         vouched = set(drafted) | ({Step.COMMENTS} if debt.owed else set())
-        if finished and vouched <= set(self.run.auto_publish):
+        if finished and not unvouched and vouched <= set(self.run.auto_publish):
             self._apply_one({"decision": d.id, "action": "publish"})
             return
         self._emit("item_finished", run=self.run.id, item=item.key, status=item.status.value)

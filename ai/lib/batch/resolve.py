@@ -343,6 +343,9 @@ def _publish(run: Run, item: Item, pr_bin: str, run_cmd: Callable[..., int],
         item.ci_rechecked = False
     for argv in rest:
         if run_cmd(argv, log_path=log) != 0:
+            # `--finish` may have pushed before the replies failed; lease that
+            # head so a retry does not treat our own commit as someone else's.
+            _adopt_own_push(item, read(item))
             return [_publish_failed(run, item, log)]
     # `pr comments --finish` pushes a commit the fix pass held back before it
     # replies, so the remote may have moved under our own hand.

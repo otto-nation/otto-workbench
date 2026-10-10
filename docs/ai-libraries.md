@@ -3400,9 +3400,7 @@ bumps `Run.schema_version`.
 
 Turn what a finished step left behind into a step status and decisions.
 
-A `failed` decision's `reason` is one of `ai_prompt_failed`,
-`review_orchestration_failed`, `pre_push_rejected`, `lock_busy`, `push_rejected`,
-`github`, a publish refusal, or `error` for text the batch does not recognise.
+A `failed` decision's `reason` is a `FailureReason` or a publish refusal value.
 Each maps to one sentence, which status prints as `why`.
 
 ### batch/plan.py

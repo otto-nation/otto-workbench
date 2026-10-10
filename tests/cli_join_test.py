@@ -5,10 +5,11 @@
 dispatch into `CommandSpec` is not enough; only a test can see across the
 three modules. This is that test.
 
-It pins the *measured* partition, not a 1:1 ideal. Five of nine subcommands
-delegate and those five are the five `PhaseDomain` members; the other four
-have no phase domain. `COMMENTS` owns three state fields. `push` and
-`supersession` have state and no subcommand.
+It pins the *measured* partition, not a 1:1 ideal. Five of eleven subcommands
+delegate and those five are the five `PhaseDomain` members; the other six
+have no phase domain. `COMMENTS` owns three state fields. `follow_ups` and
+`supersession` have state and no subcommand. `push` is a state field owned
+by a command that has no PhaseDomain.
 
 One clause of the join is deliberately absent: *every handler path imports*.
 It is asserted beside the field itself, in `tests/cli_registry_test.py`, which
@@ -54,24 +55,30 @@ DELEGATES = {
     "describe": "pr-describe",
 }
 
-# status / fix / gc / create have no PhaseDomain. They run inside `pr` and
-# do not own a phase inventory. `fix` the command is not `fix` the state
-# field: the command runs ci + review + comments, the field is comments-fix.
-COMMANDS_WITHOUT_PHASE_DOMAIN = frozenset({"create", "status", "fix", "gc", "batch"})
+# create / status / fix / gc / batch / push have no PhaseDomain. They run
+# inside `pr` and do not own a phase inventory. `fix` the command is not
+# `fix` the state field: the command runs ci + review + comments, the field
+# is comments-fix. `push` owns a state field without owning a phase.
+COMMANDS_WITHOUT_PHASE_DOMAIN = frozenset({
+    "create", "status", "fix", "gc", "batch", "push",
+})
 
 ALL_COMMANDS = frozenset({
     "create", "status", "ci", "review", "comments",
-    "fix", "rebase", "describe", "batch", "gc",
+    "fix", "rebase", "push", "describe", "batch", "gc",
 })
 
-# Ten PRState domain fields. COMMENTS owns three of them; push, follow_ups and
-# supersession have state and no subcommand.
+# Ten PRState domain fields. COMMENTS owns three of them; follow_ups and
+# supersession have state and no subcommand. `push` is a state field owned
+# by a command that has no PhaseDomain.
 PRSTATE_DOMAINS = frozenset({
     "ci", "review", "comments", "triage", "fix",
     "rebase", "push", "follow_ups", "describe", "supersession",
 })
 COMMENTS_EXTRA_FIELDS = frozenset({"triage", "fix"})
-STATE_WITHOUT_COMMAND = frozenset({"push", "follow_ups", "supersession"})
+STATE_WITHOUT_COMMAND = frozenset({"follow_ups", "supersession"})
+# A state field owned by a command that has no PhaseDomain.
+STATE_OWNED_WITHOUT_PHASE_DOMAIN = frozenset({"push"})
 
 
 # ── 1. every CommandSpec.script names a real executable ───────────────────
@@ -90,11 +97,10 @@ def test_every_delegated_script_exists_and_is_executable_under_ai_bin():
         assert os.access(path, os.X_OK), f"{script} is not executable"
 
 
-# passes-at-base: pins the join this change does not alter; the three declarations already agree at base
 def test_a_command_with_no_phase_domain_names_no_script():
-    """The four in-process commands are the four with no PhaseDomain.
+    """The six in-process commands are the six with no PhaseDomain.
 
-    Measured, not idealised: a fifth in-process command would still need
+    Measured, not idealised: a seventh in-process command would still need
     accounting on the PhaseDomain side, and a delegate without a domain
     would be a script nobody in the phase inventory can claim.
     """
@@ -118,11 +124,10 @@ def test_every_phase_domain_is_reachable_from_a_command():
     assert PHASE_DOMAINS <= set(COMMANDS)
 
 
-# passes-at-base: pins the join this change does not alter; the three declarations already agree at base
 def test_commands_with_no_phase_domain_are_explicitly_accounted_for():
-    """create, status, fix, gc are not missing domains; they are the set
-    that does not own one. An unlisted ninth command would be the missing
-    case this used to be unable to see.
+    """create, status, fix, gc, batch, push are not missing domains; they
+    are the set that does not own one. An unlisted twelfth command would
+    be the missing case this used to be unable to see.
     """
     assert set(COMMANDS) == ALL_COMMANDS
     assert set(COMMANDS) - {d.value for d in PhaseDomain} \
@@ -158,28 +163,37 @@ def test_every_phase_domain_has_at_least_one_phase():
 def test_prstate_fields_cover_every_phase_domain_and_the_measured_rest():
     """Five PhaseDomain members, ten PRState fields. The gap is not drift.
 
-    COMMENTS owns three fields (`comments`, `triage`, `fix`). `push`,
-    `follow_ups` and `supersession` have state and no subcommand — the ledger
-    is written by whichever pass files a follow-up rather than by one of its
-    own. The remaining four domains are 1:1 with a field of the same name.
-    Adding an eleventh field without updating this partition is the failure
+    COMMENTS owns three fields (`comments`, `triage`, `fix`). `follow_ups`
+    and `supersession` have state and no subcommand — the ledger is written
+    by whichever pass files a follow-up rather than by one of its own.
+    `push` is owned by the `push` command, which has no PhaseDomain. The
+    remaining four domains are 1:1 with a field of the same name. Adding an
+    eleventh field without updating this partition is the failure
     `_validate_needs` never covered.
     """
     assert set(_domains()) == PRSTATE_DOMAINS
     assert set(_domains()) - {d.value for d in PhaseDomain} \
-        == COMMENTS_EXTRA_FIELDS | STATE_WITHOUT_COMMAND
+        == COMMENTS_EXTRA_FIELDS | STATE_WITHOUT_COMMAND \
+        | STATE_OWNED_WITHOUT_PHASE_DOMAIN
 
 
 # passes-at-base: pins the join this change does not alter; the three declarations already agree at base
-def test_push_and_supersession_have_state_and_no_subcommand():
+def test_follow_ups_and_supersession_have_state_and_no_subcommand():
     """They are refreshed or cached by whoever runs first, not dispatched
-    as `pr push` / `pr supersession`. A command added under either name
+    as `pr follow_ups` / `pr supersession`. A command added under either name
     would own a field that is today written as a side effect, and this
     is the line that would notice.
     """
     for name in STATE_WITHOUT_COMMAND:
         assert name in _domains()
         assert name not in COMMANDS
+
+
+def test_the_push_field_is_owned_by_the_push_command():
+    """PushDomain is written by `pr push`, not as a side effect of another pass."""
+    assert "push" in _domains()
+    assert "push" in COMMANDS
+    assert COMMANDS["push"].handler == "cli.pr_push:main"
 
 
 # passes-at-base: pins the join this change does not alter; the three declarations already agree at base

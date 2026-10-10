@@ -861,6 +861,13 @@ Takes no flags.
 | `--force` | Rebase even when the branch's work already landed on the target ref. |
 | `--abort` | Abort in-progress rebase. |
 
+**`pr push`** — Push HEAD with a lease on the remote head you expect
+
+| Flag | Description |
+|------|-------------|
+| `--expect` `<sha>` | Push only if origin's branch is still at SHA. Required. |
+| `--no-verify` | Skip the pre-push hook. For a hook failure already understood — a flake, or one the branch did not cause. |
+
 **`pr describe`** — Revise the PR description
 
 | Flag | Description |

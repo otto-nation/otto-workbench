@@ -229,7 +229,7 @@ def test_a_landed_push_moves_the_lease_even_when_the_replies_fail():
                                                   comparable=True))
 
     def runner(argv, log_path=None):
-        if argv[0] == batch.resolve.GIT_PUSH:
+        if argv[1:2] == ["push"]:
             origin["tip"] = "new"
             return 0
         return 1
@@ -526,3 +526,22 @@ def test_a_failed_finish_still_adopts_the_head_it_pushed():
     failed = run.open_decisions()[-1]
     assert failed.kind is batch.model.DecisionKind.FAILED
     assert item.status is batch.model.ItemStatus.AWAITING_DECISION
+
+
+def test_a_fast_forward_publish_is_a_logged_pr_push():
+    run = _run(_d(batch.model.DecisionKind.PUBLISH, "publish"))
+    item = run.items[0]
+    item.remote_sha = "s"
+    seen = []
+
+    def runner(argv, log_path=None):
+        seen.append((argv, log_path))
+        return 0
+
+    tree = lambda it: TreeState(local="new", remote="s",
+                                divergence=RefDivergence(ahead=1, behind=0, comparable=True))
+    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr",
+                        runner=runner, tree=tree, closeout=lambda d, b: CloseoutDebt())
+    [(argv, log)] = seen
+    assert argv == ["pr", "push", "--expect", "s", "--repo-dir", "/wt"]
+    assert log is not None

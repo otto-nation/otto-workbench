@@ -369,6 +369,7 @@ CONFLICT_RESOLUTION_BUDGET = 2 * CONFLICT_FILE_BUDGET
 
 MAX_REBASE_STEPS = 500
 REGEN_MESSAGE = "chore: regenerate after rebase"
+PUSH_REGEN_MESSAGE = "chore: regenerate generated files"
 UNPUSHED_SUBJECT_LIMIT = 10
 
 # How many *substantive* context lines a resolution may repeat before it is read

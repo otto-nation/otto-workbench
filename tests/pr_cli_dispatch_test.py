@@ -286,7 +286,7 @@ def test_main_reports_contention_and_exits_1(mock_resolve, worktree, capsys):
 # test_review_declares_a_need_per_invocation above.
 _RESOLVES_LOCALLY = {
     "create": False, "status": True, "ci": False, "review": False,
-    "comments": False, "fix": False, "rebase": False, "describe": False,
+    "comments": False, "fix": False, "rebase": False, "push": True, "describe": False,
     "batch": False, "gc": False,
 }
 
@@ -295,7 +295,7 @@ _RESOLVES_LOCALLY = {
 # touch no remote state.
 _FETCHES = {
     "create": False, "status": False, "ci": True, "review": True,
-    "comments": True, "fix": True, "rebase": False, "describe": True,
+    "comments": True, "fix": True, "rebase": False, "push": False, "describe": True,
     "batch": False, "gc": False,
 }
 
@@ -303,7 +303,7 @@ _FETCHES = {
 # in here because deleting the state directory is the opposite of read-only.
 _LOCKS = {
     "create": True, "status": False, "ci": True, "review": True,
-    "comments": True, "fix": True, "rebase": True, "describe": True,
+    "comments": True, "fix": True, "rebase": True, "push": True, "describe": True,
     "batch": False, "gc": True,
 }
 

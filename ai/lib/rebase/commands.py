@@ -1,9 +1,11 @@
-"""The rebase commands behind `pr rebase`: start, abort, push, and the run that picks one.
+"""The commands behind `pr rebase` and `pr push`: start, abort, push, and the run that picks one.
 
 Each command resolves the branch's target, takes the lease the rebase needs,
 and records the outcome in the PR's state file. `cli.pr_rebase` is the command
 over these — the parser, the run lock, the trail. The rebase mechanics are the
 rest of this package (`rebase.lifecycle`, `rebase.land`, `rebase.lease`, …).
+`push_head` is the one leased push. `cmd_push` (the rebase's force-push) records
+the rebase after it; `cmd_push_head` (`pr push`) records `PushDomain` and no rebase.
 """
 
 # doc-group: platform
@@ -11,6 +13,7 @@ rest of this package (`rebase.lifecycle`, `rebase.land`, `rebase.lease`, …).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import core.log
 import core.publishing
@@ -18,6 +21,7 @@ import core.trail
 from core.trail import Trail
 import git.client
 import pr.context
+import pr.domains
 import pr.state
 from pr.domains import RebaseStatus
 import rebase.inspect
@@ -65,6 +69,39 @@ def cmd_abort(
     return r.returncode
 
 
+def _mid_rebase(cwd: str, trail: Trail | None) -> bool:
+    """Whether a rebase is still replaying in *cwd*, said out loud when it is.
+
+    HEAD is a half-replayed commit then, and pushing it would publish a branch
+    nobody has seen whole.
+    """
+    if not rebase.inspect.rebase_in_progress(cwd):
+        return False
+    core.trail.terr(trail, "push", "rebase still in progress")
+    core.log.error("Cannot push — rebase still in progress.")
+    return True
+
+
+def push_head(cwd: str, branch: str, *, expect: str, verify: bool = True,
+              trail: Trail | None = None,
+              regen: str = rebase.land.REGEN_MESSAGE) -> bool:
+    """Push HEAD to origin's *branch* with a lease on *expect*; True when it landed.
+
+    The one push `pr rebase`'s force-push (`cmd_push`) and `pr push`
+    (`cmd_push_head`) both make. A fast-forward satisfies the lease as well as
+    a rewrite does, so one path serves both. Whether it reaches the remote is
+    the publishing gate's answer: the entry point opens it.
+    """
+    lease = rebase.lease.PushLease(branch=branch, expect=expect)
+    landed = rebase.land.land_rebased(
+        cwd, args=lease.args, verify=verify, trail=trail, regen=regen,
+    )
+    if not landed.ok:
+        core.trail.terr(trail, "push", "push failed",
+                        data={"status": str(landed.status), "resume": landed.resume})
+    return landed.ok
+
+
 def cmd_push(
     cwd: str, ctx: pr.context.ResolvedContext, *, target_ref: str,
     verify: bool = True,
@@ -78,9 +115,7 @@ def cmd_push(
     instead of the one a `--no-push` run recorded, and a missing record is then
     no error. `pr batch` passes it, which also covers a branch rebased by hand.
     """
-    if rebase.inspect.rebase_in_progress(cwd):
-        core.trail.terr(trail, "push", "rebase still in progress")
-        core.log.error("Cannot push — rebase still in progress.")
+    if _mid_rebase(cwd, trail):
         return 1
 
     state = rebase.types.load_or_init(ctx)
@@ -118,14 +153,7 @@ def cmd_push(
 
     rebase.pr_snapshot.name_the_open_pr(snapshot, trail=trail)
     core.log.info("Force-pushing...")
-    landed = rebase.land.land_rebased(
-        cwd, args=lease.args, verify=verify, trail=trail,
-    )
-    if not landed.ok:
-        core.trail.terr(
-            trail, "push", "force-push failed",
-            data={"status": str(landed.status), "resume": landed.resume},
-        )
+    if not push_head(cwd, ctx.branch, expect=lease.expect, verify=verify, trail=trail):
         return 1
 
     rebase.types.RebaseOutcome(
@@ -139,6 +167,30 @@ def cmd_push(
         target_base=target_ref,
     ).save(ctx)
     core.log.ok("Force-pushed successfully.")
+    return 0
+
+
+def cmd_push_head(
+    cwd: str, ctx: pr.context.ResolvedContext, *, expect: str,
+    verify: bool = True, trail: Trail | None = None,
+) -> int:
+    """`pr push`: HEAD to origin with a lease on *expect*, then where the branch stands.
+
+    Records `PushDomain` once the push lands and records no rebase: a plain
+    push that `pr status` described as a rebase would be the lie `pr rebase
+    --push-only` told for a fast-forward.
+    """
+    if _mid_rebase(cwd, trail):
+        return 1
+    core.log.info(f"Pushing {ctx.branch} (lease on {git.client.abbrev(expect)})...")
+    if not push_head(cwd, ctx.branch, expect=expect, verify=verify, trail=trail,
+                     regen=rebase.types.PUSH_REGEN_MESSAGE):
+        return 1
+    state = rebase.types.load_or_init(ctx)
+    pr.state.apply(state, pr.domains.PushDomain.observed(
+        Path(cwd), ctx.branch, updated_at=pr.state.now_iso()))
+    pr.state.save_state(ctx.target_dir, state)
+    core.log.ok("Pushed.")
     return 0
 
 

@@ -2,8 +2,8 @@
 
 `status`, `fix` and `gc` ran inside `ai/bin/pr`, which is not an importable
 module, so `CommandSpec.handler` could not name them. They live here so the
-field means one thing across the ten: a `"<module>:<attr>"` string that
-importlib can resolve, or None.
+field means one thing across every subcommand: a `"<module>:<attr>"` string
+that importlib can resolve, or None.
 
 `cmd_fix`'s three passes are in-process calls through `cli.dispatch`.
 `create` has since moved to `cli.pr_create`, which owns its parser as well.

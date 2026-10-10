@@ -10,10 +10,14 @@ still the head the batch planned from (`Item.remote_sha`):
 | origin is not `remote_sha` (somebody pushed) | refuse: `remote_moved` |
 | refs not comparable | refuse: `not_comparable` |
 | local == origin, or only behind | nothing to push |
-| local is a fast-forward of origin | `git-push` |
+| local is a fast-forward of origin | `pr push --expect <remote_sha>` |
 | diverged, from a batch rebase that started without `remote_sha` | refuse: `not_incorporated` |
 | diverged, a remote commit has no patch-equivalent locally | refuse: `not_incorporated_remote` |
 | diverged | `pr rebase --push-only --expect <remote_sha>` |
+
+Both pushes are `pr` commands leasing on `remote_sha`, so each writes its own
+report into the publish log and a remote that moved after the fetch is still
+refused.
 
 `pr comments --finish --post` follows when the comments step drafted, an item is
 tracked, or the PR's saved `pr` state says a closeout is owed
@@ -40,8 +44,6 @@ import rebase.target
 from batch.model import Item, Step
 from pr.comments_fix import CloseoutDebt
 from rebase.types import RefDivergence
-
-GIT_PUSH = "git-push"
 
 
 class Refusal(StrEnum):
@@ -172,7 +174,7 @@ def plan(item: Item, pr_bin: str, tree: TreeState, *,
                            f"in {item.branch}", list(tree.unincorporated))
         commands.append([pr_bin, "rebase", "--push-only", "--expect", item.remote_sha] + wt)
     elif div.ahead:
-        commands.append([GIT_PUSH, item.worktree])
+        commands.append([pr_bin, "push", "--expect", item.remote_sha] + wt)
     pushes = bool(commands)
     drafted = item.has(Step.COMMENTS) and item.step(Step.COMMENTS).drafted
     if drafted or item.track or closeout.owed:

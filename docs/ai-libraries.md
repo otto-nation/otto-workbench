@@ -6411,11 +6411,12 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
     pr batch resume [RUN_ID]                   continue a waiting or interrupted run
     pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
     pr batch cancel [RUN_ID] [--kill]
-    pr batch status [RUN_ID]
+    pr batch status [RUN_ID] [--full | --decision ID]   the run report (JSON)
+    pr batch next   [RUN_ID]                   only what needs action (JSON)
 
 Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish.
 
-Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions.
+Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed.
 
 ### cli/pr_commands.py
 

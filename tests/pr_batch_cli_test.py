@@ -138,11 +138,59 @@ def test_resolve_rejects_a_bad_action(capsys):
     assert "accept" in capsys.readouterr().err
 
 
-def test_status_prints_the_run_and_whether_it_is_active(capsys):
+def test_status_full_prints_the_raw_run_and_whether_it_is_active(capsys):
     run = _saved_run_with_decision()
-    assert _main(["batch", "status", run.id]) == 0
+    assert _main(["batch", "status", run.id, "--full"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["run"]["id"] == run.id and out["active"] is False
+    assert out["run"]["decisions"][0]["id"] == "d1"
+
+
+def test_status_prints_the_compact_report_by_default(capsys):
+    run = _saved_run_with_decisions(1, kind=batch.model.DecisionKind.FAILED)
+    assert _main(["batch", "status", run.id]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert set(out) == {"schema_version", "run", "counts", "items", "next"}
+    assert (out["run"]["id"], out["run"]["active"], out["run"]["exit_hint"]) == (run.id, False, 10)
+    assert [n["decision"] for n in out["next"]] == ["d1"]
+    assert out["next"][0]["commands"][0].startswith(f"pr batch resolve {run.id} d1 --action ")
+
+
+def test_status_decision_prints_one_decision_in_full(capsys):
+    run = _saved_run_with_decisions(1, kind=batch.model.DecisionKind.FAILED)
+    saved = batch.store.load(run.id)
+    saved.decision("d1").payload = {"reason": "error", "exit_code": 1, "log_tail": ["a", "b"]}
+    batch.store.save(saved)
+    assert _main(["batch", "status", run.id, "--decision", "d1"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["decision"] == "d1" and out["payload"]["log_tail"] == ["a", "b"]
+
+
+def test_status_decision_unknown_exits_1(capsys):
+    run = _saved_run_with_decision()
+    assert _main(["batch", "status", run.id, "--decision", "nope"]) == 1
+    assert "nope" in capsys.readouterr().err
+
+
+def test_status_full_and_decision_are_exclusive():
+    run = _saved_run_with_decision()
+    assert _main(["batch", "status", run.id, "--full", "--decision", "d1"]) == 2
+
+
+def test_next_prints_only_what_needs_action(capsys):
+    run = _saved_run_with_decisions(1, kind=batch.model.DecisionKind.FAILED)
+    assert _main(["batch", "next", run.id]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert set(out) == {"schema_version", "run", "counts", "next"}
+    assert [n["decision"] for n in out["next"]] == ["d1"]
+
+
+def test_next_lists_nothing_while_a_scheduler_holds_the_run(monkeypatch, capsys):
+    run = _saved_run_with_decisions(1, kind=batch.model.DecisionKind.FAILED)
+    monkeypatch.setattr(core.run_lock, "is_held", lambda _path: True)
+    assert _main(["batch", "next", run.id]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["next"] == [] and out["run"]["active"] is True
 
 
 def test_status_defaults_to_the_latest_run(capsys):

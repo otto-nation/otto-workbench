@@ -5,11 +5,12 @@
     pr batch resume [RUN_ID]                   continue a waiting or interrupted run
     pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
     pr batch cancel [RUN_ID] [--kill]
-    pr batch status [RUN_ID]
+    pr batch status [RUN_ID] [--full | --decision ID]   the run report (JSON)
+    pr batch next   [RUN_ID]                   only what needs action (JSON)
 
 Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish.
 
-Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions.
+Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed.
 """
 
 # doc-group: cli
@@ -122,8 +123,16 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("run_id", nargs="?", help="Run to cancel (default: the latest)")
     c.add_argument("--kill", action="store_true", help="Also terminate running steps")
 
-    sub.add_parser("status", help="Print a run's state").add_argument(
-        "run_id", nargs="?", help="Run to show (default: the latest)")
+    s = sub.add_parser("status", help="Print a run's report: what needs action, and why (JSON)")
+    s.add_argument("run_id", nargs="?", help="Run to show (default: the latest)")
+    view = s.add_mutually_exclusive_group()
+    view.add_argument("--full", action="store_true",
+                      help="Print the raw run state instead of the report")
+    view.add_argument("--decision", default="", metavar="ID",
+                      help="Print one decision with its full payload and log tail")
+
+    sub.add_parser("next", help="Print only what needs action: run, counts and next (JSON)"
+                   ).add_argument("run_id", nargs="?", help="Run to show (default: the latest)")
     return parser
 
 
@@ -322,6 +331,7 @@ def _cmd_cancel(args) -> int:
 
 
 def _cmd_status(args) -> int:
+    """`status` and `next`: the report, a projection of it, or what it summarises."""
     run_id = _run_id(args.run_id)
     if not run_id:
         return _err("no batch runs yet")
@@ -329,9 +339,21 @@ def _cmd_status(args) -> int:
         run = batch.store.load(run_id)
     except batch.store.RunNotFound:
         return _err(f"no run {run_id}")
-    core.report.emit_json({"schema_version": run.schema_version,
-                           "active": core.run_lock.is_held(batch.store.run_dir(run_id)),
-                           "run": core.serde.to_dict(run)})
+    active = core.run_lock.is_held(batch.store.run_dir(run_id))
+    if args.command == "next":
+        core.report.emit_json(batch.report.next_view(batch.report.build(run, active=active)))
+        return EXIT_OK
+    if args.full:
+        core.report.emit_json({"schema_version": run.schema_version, "active": active,
+                               "run": core.serde.to_dict(run)})
+        return EXIT_OK
+    if args.decision:
+        try:
+            core.report.emit_json(batch.report.decision_detail(run, args.decision))
+        except KeyError:
+            return _err(f"run {run_id} has no decision {args.decision}")
+        return EXIT_OK
+    core.report.emit_json(batch.report.build(run, active=active))
     return EXIT_OK
 
 
@@ -361,6 +383,7 @@ def cmd_batch(argv: list[str], ctx, *, bin_dir: Path, schema_version: str | None
             return _cmd_resolve(args, bin_dir)
         if args.command == "cancel":
             return _cmd_cancel(args)
+        # status and next
         return _cmd_status(args)
     except batch.plan.PlanError as exc:
         return _err(str(exc))

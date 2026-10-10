@@ -75,4 +75,6 @@ def test_run_resolve_status_round_trip(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     assert _main(["batch", "status", run_id], bin_dir) == 0
     status = json.loads(capsys.readouterr().out)
-    assert status["run"]["items"][0]["status"] == "done"
+    assert status["counts"]["items"] == {"done": 1} and status["items"] == []
+    assert _main(["batch", "status", run_id, "--full"], bin_dir) == 0
+    assert json.loads(capsys.readouterr().out)["run"]["items"][0]["status"] == "done"

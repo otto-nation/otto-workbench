@@ -916,7 +916,15 @@ Takes no flags.
 | `[<run-id>]` | Run to cancel (default: the latest). |
 | `--kill` | Also terminate running steps. |
 
-**`pr batch status`** — Print a run's state
+**`pr batch status`** — Print a run's report: what needs action, and why (JSON)
+
+| Flag | Description |
+|------|-------------|
+| `[<run-id>]` | Run to show (default: the latest). |
+| `--full` | Print the raw run state instead of the report. Not with `--decision`. |
+| `--decision` `<id>` | Print one decision with its full payload and log tail. Not with `--full`. |
+
+**`pr batch next`** — Print only what needs action: run, counts and next (JSON)
 
 | Flag | Description |
 |------|-------------|

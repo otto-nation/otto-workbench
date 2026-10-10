@@ -3461,7 +3461,7 @@ decision with its full payload and log tail.
 | `run` | `id`, `status`, `active` (the scheduler lock is held), `exit_hint`, `hint` |
 | `counts` | items by status, open decisions |
 | `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses |
-| `next` | one entry per open decision: `decision`, `pr`, `kind`, `why`, `prep`, `worktree`, `actions`, `commands`, a small `payload`, `log`, `session_log` |
+| `next` | one entry per open decision, or per owed closeout once finished: `decision`, `pr`, `kind`, `why`, `prep`, `worktree`, `actions`, `commands`, a small `payload`, `log`, `session_log` |
 
 `exit_hint` is what `run`/`resume` exit with for the run as it stands: 0 once
 it is `done` or `cancelled`, 10 while it waits on a person, 1 when it stopped
@@ -3469,10 +3469,7 @@ without settling (interrupted — `pr batch resume` it), and null while a
 scheduler holds the run. A review decision's finding counts leave declined
 findings out of must/should/nit and count them apart as `declined`.
 
-`next` is empty while a scheduler holds the run — it is still moving items,
-so the reader waits for its `run_summary` — and once the run is `done` or
-`cancelled`. Otherwise it offers `prep` and `pr batch resolve` commands, never
-a `pr` subcommand against a batch item.
+`next` is empty while a scheduler holds the run — it is still moving items, so the reader waits for its `run_summary`. While the run waits, `next` offers `prep` and `pr batch resolve` commands, never a `pr` subcommand against a batch item. Once the run is `done` or `cancelled`, `next` lists one `closeout_owed` entry per PR whose saved `pr` state still owes a closeout. Each entry carries the `pr` command (`CloseoutDebt.command` plus `--repo-dir`), `decision: null` and no actions. A closed PR is left out.
 
 ### batch/resolve.py
 

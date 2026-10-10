@@ -9,10 +9,12 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.outcomes  # noqa: E402
+import batch.plan  # noqa: E402
 import batch.report  # noqa: E402
 import review.paths  # noqa: E402
 from batch.model import (STEP_ORDER, Decision, DecisionKind, Item, ItemStatus, Run,  # noqa: E402
                          RunStatus, Step, StepRecord)
+from pr.comments_fix import CloseoutDebt  # noqa: E402
 
 
 def _item(n=1, status=ItemStatus.AWAITING_DECISION, **kw):
@@ -33,6 +35,11 @@ def _d(kind, step, payload=None, id="d1", item="o/r#1"):
 def _only_next(run):
     [entry] = batch.report.build(run, active=False)["next"]
     return entry
+
+
+@pytest.fixture(autouse=True)
+def _no_debt(monkeypatch):
+    monkeypatch.setattr(batch.plan, "closeout_debt", lambda d, b: CloseoutDebt())
 
 
 def test_terminal_items_are_counted_but_not_listed():
@@ -78,6 +85,47 @@ def test_a_finished_run_offers_no_resolve_commands(status):
                [_d(DecisionKind.FAILED, "review", {"reason": "error"})], status=status)
     doc = batch.report.build(run, active=False)
     assert doc["next"] == [] and doc["run"]["exit_hint"] == 0
+
+
+def _owed(d, b):
+    return CloseoutDebt(summary=True) if b == "b1" else CloseoutDebt()
+
+
+def test_a_finished_run_lists_the_pr_command_for_debt_still_owed():
+    run = _run([_item(1, status=ItemStatus.DONE), _item(2, status=ItemStatus.DONE)],
+               status=RunStatus.DONE)
+    doc = batch.report.build(run, active=False, closeout=_owed)
+    [entry] = doc["next"]
+    assert entry["kind"] == "closeout_owed" and entry["pr"] == "o/r#1"
+    assert entry["why"] == "closeout owed: summary"
+    assert entry["commands"] == ["pr comments --finish --post --repo-dir /wt/b1"]
+    assert (entry["decision"], entry["actions"]) == (None, [])
+    assert doc["run"]["exit_hint"] == 0
+    assert "pr still owes" in doc["run"]["hint"]
+    running = _run([_item(1, status=ItemStatus.DONE), _item(2, status=ItemStatus.DONE)],
+                   status=RunStatus.RUNNING)
+    assert batch.report.build(running, active=True, closeout=_owed)["next"] == []
+
+
+def test_an_owed_tracking_issue_quotes_track_all_and_an_unadmitted_item_names_its_branch():
+    item = _item(1, status=ItemStatus.DROPPED)
+    item.worktree = ""
+    run = _run([item], status=RunStatus.CANCELLED)
+    doc = batch.report.build(run, active=False,
+                             closeout=lambda d, b: CloseoutDebt(deferred_issue=True))
+    assert doc["next"][0]["commands"] == [
+        "pr comments --finish --post --track-all --repo-dir /r --branch b1"]
+
+
+def test_a_closed_pr_is_not_listed_as_owing_anything():
+    run = _run([_item(1, status=ItemStatus.SKIPPED_CLOSED)], status=RunStatus.DONE)
+    assert batch.report.build(run, active=False, closeout=_owed)["next"] == []
+
+
+def test_a_waiting_run_does_not_list_owed_commands_beside_its_decisions():
+    run = _run([_item(1)], [_d(DecisionKind.FAILED, "review", {"reason": "error"})])
+    kinds = [e["kind"] for e in batch.report.build(run, active=False, closeout=_owed)["next"]]
+    assert kinds == ["failed"]
 
 
 def test_a_waiting_run_hints_exit_10_and_resume():

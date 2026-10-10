@@ -447,7 +447,7 @@ Actions: `accept`, `retry`, `skip-step`, `undo` (rebase:
 - `run`: `id`, `status`, `active` (a scheduler holds the run's lock), `exit_hint` and a one-line `hint`. `exit_hint` is what `run`/`resume` exit with: 0 once the run is finished (`done` or `cancelled`), 10 while it waits on you, 1 when it stopped without settling (resume it), and null while a scheduler holds the run.
 - `counts`: items by status, and open decisions.
 - `items`: non-terminal items only — worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, and step statuses.
-- `next`: one entry per open decision.
+- `next`: one entry per open decision — or, once the run is finished, one `closeout_owed` entry per PR that `pr` still owes a closeout, whose `commands` is the `pr comments --finish --post …` that pays it.
 
 `pr batch next` prints the same report without `items`.
 
@@ -460,10 +460,7 @@ Each `next` entry carries:
 - `payload`: a small kind-specific part of the decision's payload.
 - `log` and `session_log` paths.
 
-Log tails appear only under `--decision`. `next` is empty in two cases:
-
-- while a scheduler holds the run — wait for its `run_summary`;
-- once the run is `done` or `cancelled`.
+Log tails appear only under `--decision`. `next` is empty while a scheduler holds the run (wait for its `run_summary`), and in a finished run that owes nothing.
 
 A `failed` decision's `reason` is one of the classified reasons listed in
 [`batch/outcomes.py`](ai-libraries.md#batchoutcomespy).

@@ -3,7 +3,7 @@ title: AI Automation
 description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 ---
 
-<!-- doc-budget: 548 -->
+<!-- doc-budget: 576 -->
 
 # AI Automation
 
@@ -400,12 +400,15 @@ closed, and every step runs drafted — the batch is the only thing that pushes.
 
 ```bash
 pr batch plan --checkout DIR …           # which PRs need which steps (JSON)
-pr batch run --checkout DIR … [opts]     # start; NDJSON events on stdout
+pr batch run --checkout DIR … [opts]     # start; NDJSON events, last line run_summary
 pr batch run --plan FILE …               # start from a saved plan
 pr batch resume [RUN_ID]                 # continue waiting or interrupted
+pr batch next [RUN_ID]                   # only what needs action (JSON)
+pr batch status [RUN_ID]                 # the run report (JSON)
+pr batch status [RUN_ID] --full          # the raw run state
+pr batch status [RUN_ID] --decision ID   # one decision: full payload and log tail
 pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
 pr batch cancel [RUN_ID] [--kill]
-pr batch status [RUN_ID]
 ```
 
 Steps run in the order `rebase`, `ci`, `comments`, `review`, each only where
@@ -439,8 +442,45 @@ Actions: `accept`, `retry`, `skip-step`, `undo` (rebase:
 `git reset --hard` to the pre-rebase head). Kinds and actions are tabled in
 [`batch/resolve.py`](ai-libraries.md#batchresolvepy).
 
-A run with open decisions exits **10**; `resume` continues it and clears a
-pending cancel. `open-chat` is UI-only. Admission starts a step when free memory
+`pr batch status` prints one compact report:
+
+- `run`: `id`, `status`, `active` (a scheduler holds the run's lock), `exit_hint` and a one-line `hint`.
+- `counts`: items by status, and open decisions.
+- `items`: non-terminal items only — worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, and step statuses.
+- `next`: one entry per open decision.
+
+`pr batch next` prints the same report without `items`.
+
+Each `next` entry carries:
+
+- `why`: a classified sentence.
+- `prep`: any work outside `pr` it needs first — the conflicted files to resolve, the review file and its must/should/nit counts, the remote commits to check, or a thread excerpt.
+- `worktree`.
+- `actions`, with a copy-paste `pr batch resolve` command for each. A required input is shown as a placeholder, an optional one in brackets.
+- `payload`: a small kind-specific part of the decision's payload.
+- `log` and `session_log` paths.
+
+Log tails appear only under `--decision`. `next` is empty in two cases:
+
+- while a scheduler holds the run — wait for its `run_summary`;
+- once the run is `done` or `cancelled`.
+
+A `failed` decision's `reason` is one of:
+
+- `ai_prompt_failed`
+- `review_orchestration_failed`
+- `pre_push_rejected`
+- `lock_busy`
+- `push_rejected`
+- `github`
+- a publish refusal
+- `error`, for text the batch does not recognise
+
+Every `failed` decision names its `log`. Every publish command writes to `logs/<owner>__<repo>-<pr>-publish-<n>.log`. A failed publish records the classified reason, the push's own headline as `detail`, and that log.
+
+Step stderr stays in the run's `logs/`; `run --verbose` and `resume --verbose` also stream it as `step_log` events. `decision_created` carries only the decision, its kind, `why` and `commands`. The last line of every `run` or `resume` is `run_summary`, holding the same `run`, `counts` and `next` as `pr batch next`.
+
+A run with open decisions exits **10**. That means it is waiting on you, not that it failed: a job runner reports it as a failure, so read the `run_summary` line rather than the exit status. `resume` continues the run and clears a pending cancel. `open-chat` is UI-only. Admission starts a step when free memory
 minus `batch.mem_reserve` covers its observed peak and CPU/memory pressure stay
 under `batch.cpu_pressure_max` / `batch.mem_pressure_max`, always admitting
 one. `--pool` and `batch.pool_max` (default 2) cap concurrency; hosts with no

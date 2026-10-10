@@ -415,3 +415,32 @@ def test_every_rendered_command_parses_with_the_batch_parser():
         args = parser.parse_args(["VALUE" if w.startswith("<") else w for w in words[2:]])
         assert (args.command, args.run_id, args.decision_id, args.action) == (
             "resolve", "r1", "d1", action)
+
+
+def _failing_publish(text):
+    run = _run(_d(batch.model.DecisionKind.PUBLISH, "publish"))
+    run.items[0].step(batch.model.Step.REVIEW).drafted = True
+
+    def runner(argv, log_path=None):
+        log_path.write_text(text)
+        return 1
+
+    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr",
+                        runner=runner, tree=_ff)
+    return run.open_decisions()[-1]
+
+
+def test_a_failed_publish_keeps_the_last_forty_lines_of_its_log():
+    failed = _failing_publish("".join(f"line {n}\n" for n in range(50)))
+    assert len(failed.payload["log_tail"]) == 40
+    assert failed.payload["log_tail"][-1] == "line 49"
+
+
+def test_a_failed_publish_reads_its_reason_from_the_failing_command_only():
+    failed = _failing_publish("$ pr comments --post\n"
+                              "✓ push refused (hook) was the subject of a reply\n"
+                              "$ pr comments --settle ic-1\n"
+                              "✗ could not settle the thread\n")
+    assert failed.payload["reason"] == "error"
+    assert "detail" not in failed.payload
+    assert failed.payload["log_tail"][0] == "$ pr comments --post"

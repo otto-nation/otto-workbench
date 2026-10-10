@@ -60,6 +60,8 @@ ACTIONS: dict[DecisionKind, frozenset[str]] = {
 _SETTLE_AS = {"settle-fixed": "fixed", "settle-addressed": "already_addressed",
               "settle-dismissed": "dismissed"}
 GIT_PUSH = batch.publish.GIT_PUSH
+# What default_runner writes before each child command's output in a publish log.
+_COMMAND_HEADER = "$ "
 
 
 @dataclass(frozen=True)
@@ -117,7 +119,7 @@ def default_runner(argv: list[str], log_path: Path | None = None) -> int:
         return subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=sys.stderr,
                               start_new_session=True, timeout=core.timeouts.UNBOUNDED).returncode
     with log_path.open("a") as log:
-        log.write(f"$ {shlex.join(argv)}\n")
+        log.write(f"{_COMMAND_HEADER}{shlex.join(argv)}\n")
         log.flush()
         return subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=log,
                               stderr=subprocess.STDOUT, start_new_session=True,
@@ -210,10 +212,21 @@ def _fail(run: Run, item: Item, step: str, *,
     return d
 
 
+def _last_command(lines: list[str]) -> list[str]:
+    """The lines the failing command printed: those after the last `$ ` header.
+
+    `default_runner` writes a `$ <argv>` header before each child command, so
+    an earlier command that succeeded cannot lend the failure its reason. A
+    log with no header (the in-process push writes none) is read whole.
+    """
+    starts = [i for i, line in enumerate(lines) if line.startswith(_COMMAND_HEADER)]
+    return lines[starts[-1] + 1:] if starts else lines
+
+
 def _publish_failed(run: Run, item: Item, log: Path) -> Decision:
     """A failed publish command as a decision: its classified reason, headline and log."""
     lines = log.read_text(errors="replace").splitlines() if log.is_file() else []
-    found = batch.outcomes.classify_failure(lines)
+    found = batch.outcomes.classify_failure(_last_command(lines))
     return _fail(run, item, "publish", reason=found.reason.value, detail=found.detail,
                  extra={"log": str(log),
                         "log_tail": lines[-batch.outcomes.LOG_TAIL_LINES:]})

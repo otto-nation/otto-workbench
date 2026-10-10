@@ -18,6 +18,7 @@ import core.log
 import gh.client
 import git.client
 import git.topology
+import pr.ci_need
 import pr.context
 import pr.settlement
 import pr.state
@@ -61,11 +62,6 @@ _REBASE_NEEDED = {"BEHIND": "behind its base", "DIRTY": "has merge conflicts"}
 # its own fetch, and a plan-time fetch there would let a colleague's push
 # become the tip the rebase remembers.
 NAMESPACE_ROOT = "refs/pr-batch"
-
-# Rollup states a CI step waits on rather than fixes straight away.
-CI_RUNNING = frozenset({"PENDING", "EXPECTED"})
-_CI_FAILED = frozenset({"FAILURE", "ERROR"})
-
 
 class PlanError(RuntimeError):
     pass
@@ -153,15 +149,10 @@ def rollup_state(node: dict) -> str:
     return ((commit or {}).get("statusCheckRollup") or {}).get("state") or ""
 
 
-def ci_need(state: str) -> StepNeed:
-    if state in _CI_FAILED:
-        return StepNeed(True, f"checks {state.lower()}")
-    if state in CI_RUNNING:
-        return StepNeed(True, "checks running")
-    if state == "SUCCESS":
-        return StepNeed(False, "checks green")
-    # Not "green": a workflow waiting on approval reports no rollup at all.
-    return StepNeed(False, "no checks reported")
+def ci_step_need(state: str) -> StepNeed:
+    """The CI step's need, from `pr.ci_need` — the one place the rollup is judged."""
+    found = pr.ci_need.need(state)
+    return StepNeed(found.needed, found.reason)
 
 
 def new_namespace() -> str:
@@ -288,7 +279,7 @@ def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
         needs={
             Step.REBASE: FORK_NEED if fork else tree_rebase_need(
                 repo_dir, branch, base, ref_namespace, merge_state),
-            Step.CI: FORK_NEED if fork else ci_need(ci_state),
+            Step.CI: FORK_NEED if fork else ci_step_need(ci_state),
             Step.COMMENTS: comments_need(threads, _settled_from(state)),
             Step.REVIEW: review_need(_review_file(repo, branch), head, local_head=local_head),
         },

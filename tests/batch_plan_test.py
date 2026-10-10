@@ -200,13 +200,9 @@ def test_replan_judges_review_against_the_rows_local_head(monkeypatch, tmp_path)
     assert fresh.needs[Step.REVIEW].needed is True
 
 
-@pytest.mark.parametrize("state,needed,reason", [
-    ("FAILURE", True, "checks failure"), ("ERROR", True, "checks error"),
-    ("PENDING", True, "checks running"), ("EXPECTED", True, "checks running"),
-    ("SUCCESS", False, "checks green"), ("", False, "no checks reported"),
-])
-def test_ci_need_follows_the_rollup(state, needed, reason):
-    assert batch.plan.ci_need(state) == batch.plan.StepNeed(needed, reason)
+def test_ci_step_need_carries_pr_ci_need_answer():
+    assert batch.plan.ci_step_need("FAILURE") == batch.plan.StepNeed(True, "checks failure")
+    assert batch.plan.ci_step_need("") == batch.plan.StepNeed(False, "no checks reported")
 
 
 def test_rollup_state_reads_the_last_commit():

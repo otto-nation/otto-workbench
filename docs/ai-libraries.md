@@ -2712,6 +2712,22 @@ Handles failure classification and progression tracking for the ci-failures
 skill. State persistence is delegated to pr.domains.CIDomain, and how a run is
 reported to a person or a machine is `pr.ci_report`'s.
 
+### pr/ci_need.py
+
+Whether a PR's check rollup needs CI attention, read from the rollup state alone.
+
+`need` takes the head commit's `statusCheckRollup.state` (`SUCCESS`, `FAILURE`,
+`ERROR`, `PENDING`, `EXPECTED`, or "" when GitHub reports no rollup) and says
+whether a CI pass has work to do. Batch's plan asks it for every PR, and the
+scheduler's `RUNNING` check uses it to decide when a CI step should wait
+before fixing anything. Reading the rollup out of a GraphQL node stays with
+the query that fetched it (`batch.plan.rollup_state`).
+
+An empty rollup is "nothing needed", not green: a workflow waiting on
+approval reports none. `ci-check` on such a commit finds no checks and exits
+non-zero, which is a different answer to a different question.
+`tests/pr_ci_need_test.py` pins the two side by side.
+
 ### pr/comments_fix.py
 
 The comment fix pass's domain, and the closeout it owes the PR.

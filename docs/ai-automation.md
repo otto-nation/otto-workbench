@@ -676,6 +676,7 @@ it fast-forwards, or force-pushes with `pr rebase --push-only --expect
 `not_incorporated_remote` for the listed commits — a new remote commit refuses
 again. `--auto-publish STEPS` resolves that decision when the item closes with
 no open decision and every drafted step is listed and finished `done`.
+An owed closeout counts as `comments`: `--auto-publish comments` answers a closeout-only publish.
 `--watch-ci` re-checks CI once after a push and reopens on red; `run_finished`
 lists `ci_not_rechecked`.
 

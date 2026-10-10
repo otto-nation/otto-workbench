@@ -52,7 +52,7 @@ _PAYLOAD_KEYS: dict[DecisionKind, tuple[str, ...]] = {
     DecisionKind.REBASE_CONFLICT: ("files", "remaining_commits"),
     DecisionKind.REBASE_REFUSED: ("status", "override", "remedy", "detail"),
     DecisionKind.COMMENT_ITEM: ("id", "outcome", "file", "line", "replyable"),
-    DecisionKind.PUBLISH: ("drafted", "track"),
+    DecisionKind.PUBLISH: ("drafted", "track", "closeout"),
     DecisionKind.DIRTY_WORKTREE: ("path", "reason"),
 }
 
@@ -107,7 +107,12 @@ def why(decision: Decision) -> str:
     if kind is DecisionKind.INTERRUPTED:
         return f"the {decision.step} step was interrupted before it finished"
     if kind is DecisionKind.PUBLISH:
-        return f"drafted work is ready to publish: {', '.join(p.get('drafted', []))}"
+        parts = []
+        if p.get("drafted"):
+            parts.append(f"drafted work is ready to publish: {', '.join(p['drafted'])}")
+        if p.get("closeout"):
+            parts.append(f"pr comments owes this PR a closeout: {p['closeout']}")
+        return "; ".join(parts) or "drafted work is ready to publish"
     # Every kind today is named above; a kind added later still gets a true sentence.
     return f"the {decision.step} step needs a person ({kind.value})"
 

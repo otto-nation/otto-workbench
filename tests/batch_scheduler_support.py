@@ -22,6 +22,7 @@ from batch.plan import PlanRow, StepNeed  # noqa: E402
 from batch.publish import TreeState  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
 from config.workbench_config import BatchConfig  # noqa: E402
+from pr.comments_fix import CloseoutDebt  # noqa: E402
 from rebase.types import RefDivergence  # noqa: E402
 
 GiB = 1024 ** 3
@@ -57,8 +58,9 @@ def _quiet_outcomes(monkeypatch):
 class Harness:
     def __init__(self, rows, *, codes=None, auto_publish=(), pool=2, host=HEALTHY,
                  replan=None, worktrees=None, heads=None, selected=None, cfg=None,
-                 runner=None, tree=None, moves=(), stdouts=None, contains=None,
-                 dirty=None, rebasing=None, watch_ci=False, verbose=False):
+                 runner=None, tree=None, closeout=None, moves=(), stdouts=None,
+                 contains=None, dirty=None, rebasing=None, watch_ci=False,
+                 verbose=False):
         self.codes = codes or {}
         self.moves, self.stdouts = set(moves), stdouts or {}
         self.spawned, self.events, self.live, self.max_live = [], [], 0, 0
@@ -75,6 +77,7 @@ class Harness:
             emit=lambda kind, **f: self.events.append((kind, f)), sleep=lambda s: None,
             estimates=batch.admission.Estimates({}),
             runner=runner or self._publish, tree=tree or ff_tree,
+            closeout=closeout or (lambda d, b: CloseoutDebt()),
             contains=contains or (lambda wt, sha: True),
             dirty=dirty or (lambda wt: False), rebasing=rebasing or (lambda wt: False),
             verbose=verbose)

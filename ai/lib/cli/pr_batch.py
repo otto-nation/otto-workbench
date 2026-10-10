@@ -102,8 +102,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--pool", type=int, default=None, help="Concurrency ceiling")
     r.add_argument("--auto-publish", type=_steps, default=[], metavar="STEPS",
                    help="Publish an item without asking when it closes with no open decision "
-                        "and every drafted step is in STEPS and finished done. Steps never "
-                        "push while they run")
+                        "and every drafted step is in STEPS and finished done. An owed closeout "
+                        "counts as comments work. Steps never push while they run")
     r.add_argument("--prs", default="", help="Comma-separated repo#number keys to include")
     r.add_argument("--select", type=_selection, action="append", default=[],
                    metavar="KEY=STEPS", help="Run exactly these steps for one PR")

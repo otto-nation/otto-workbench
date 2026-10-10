@@ -210,3 +210,19 @@ def test_why_says_exactly_why_each_kind_waits(kind, step, payload, sentence):
 def test_a_review_decision_without_a_session_file_has_no_session_log(reviews_dir):
     run = _run([_item(1)], [_d(DecisionKind.FAILED, "review", {"reason": "error"})])
     assert _only_next(run)["session_log"] is None
+
+
+def test_a_closeout_publish_says_what_pr_still_owes():
+    run = _run([_item(1, status=ItemStatus.READY_TO_PUBLISH)], [_d(
+        DecisionKind.PUBLISH, "publish", {"drafted": [], "track": [], "closeout": "summary"})])
+    entry = _only_next(run)
+    assert entry["why"] == "pr comments owes this PR a closeout: summary"
+    assert entry["payload"] == {"drafted": [], "track": [], "closeout": "summary"}
+
+
+def test_a_drafted_publish_that_also_owes_a_closeout_names_both():
+    run = _run([_item(1, status=ItemStatus.READY_TO_PUBLISH)], [_d(
+        DecisionKind.PUBLISH, "publish",
+        {"drafted": ["rebase"], "track": [], "closeout": "3 replies"})])
+    assert _only_next(run)["why"] == ("drafted work is ready to publish: rebase; "
+                                      "pr comments owes this PR a closeout: 3 replies")

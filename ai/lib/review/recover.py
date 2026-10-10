@@ -18,7 +18,6 @@ and nothing else in the worktree lifecycle has that contract.
 from __future__ import annotations
 
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -27,13 +26,10 @@ import git.client
 import core.log
 import pr.context
 import pr.domains
-from review.paths import FILENAME_PIPELINE_STATE
-from review.state import read_pipeline_status
 import review.document
 import review.worktree
-
-
-_HEAD_SHA_RE = re.compile(r"<!-- head_sha: ([a-f0-9]+) -->")
+from review.paths import FILENAME_PIPELINE_STATE
+from review.state import read_pipeline_status
 
 
 def read_review_sha(review_file: Path) -> str:
@@ -41,8 +37,7 @@ def read_review_sha(review_file: Path) -> str:
         text = review_file.read_text()
     except OSError:
         return ""
-    m = _HEAD_SHA_RE.search(text)
-    return m.group(1) if m else ""
+    return review.document.ReviewHeader.parse(text).head_sha
 
 
 def get_pr_head_sha(repo: str, pr_number: str) -> str:

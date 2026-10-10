@@ -724,8 +724,9 @@ class TestRead:
 class TestCovers:
     """Whether a review whose header states one SHA covers another.
 
-    One predicate for batch's plan and the review preflight, which used to
-    answer this with `startswith` and `==` respectively.
+    Every caller that asks whether a review is current — batch's plan, the
+    review preflight and auto-recover, and the delta collector — asks it here,
+    so none can disagree.
     """
 
     FULL = "abcdef0123456789abcdef0123456789abcdef01"

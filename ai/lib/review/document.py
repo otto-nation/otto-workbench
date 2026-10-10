@@ -308,9 +308,9 @@ def covers(reviewed_sha: str, sha: str) -> bool:
 
     True on an exact match, or when *reviewed_sha* is an abbreviation of *sha*
     at least `MIN_SHA_PREFIX` long. An empty *reviewed_sha* covers nothing.
-    This is the only answer to the question. Batch's plan and the review
-    preflight both ask it, so they cannot disagree about whether a review is
-    current.
+    Every caller that asks whether a review is current — batch's plan, the
+    review preflight and auto-recover, and the delta collector — asks it here,
+    so none can disagree.
     """
     if not reviewed_sha:
         return False

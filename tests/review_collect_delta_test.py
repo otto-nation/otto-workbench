@@ -67,6 +67,12 @@ class TestCollectDeltaSameSha:
         job = _delta_job(head_sha=sha, prior_review=prior_review)
         assert review.collect._collect_delta(job) == review.collect.DeltaScope()
 
+    def test_abbreviated_prior_header_on_current_head_returns_empty(self):
+        sha = "abc1234def5678901234567890abcdef12345678"
+        prior_review = f"<!-- head_sha: {sha[:7]} -->\nsome review content"
+        job = _delta_job(head_sha=sha, prior_review=prior_review)
+        assert review.collect._collect_delta(job) == review.collect.DeltaScope()
+
     def test_no_prior_review_returns_empty(self):
         job = _delta_job(head_sha="abc123", prior_review="")
         assert review.collect._collect_delta(job) == review.collect.DeltaScope()

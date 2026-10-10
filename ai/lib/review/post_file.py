@@ -19,7 +19,7 @@ from __future__ import annotations
 import git.client
 import core.log
 from review.dedup import dedup_against_posted
-from review.document import ReviewDocument
+from review.document import ReviewDocument, covers
 from core.text import plural
 from review.types import ReviewMeta
 from review.format import (
@@ -95,7 +95,7 @@ def run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
     else:
         head_sha = head_sha or review_sha or "dry-run"
 
-    sha_drifted = bool(review_sha and review_sha != head_sha)
+    sha_drifted = bool(review_sha) and not covers(review_sha, head_sha)
     if sha_drifted:
         core.log.warn(
             f"Review was written against {git.client.abbrev(review_sha)}, "

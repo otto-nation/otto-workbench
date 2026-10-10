@@ -61,7 +61,7 @@ from review.budget import (
     TEMPLATE_OVERHEAD_BYTES, collection_budget_bytes, fit_files,
     fixed_preflight_bytes,
 )
-from review.document import ReviewHeader
+from review.document import ReviewHeader, covers
 from review.grouping import (
     classify_tier, format_profiles_section, load_profiles, match_profiles,
 )
@@ -667,7 +667,7 @@ def _prior_sha_for_delta(job: ReviewJob) -> str:
     if not prior_sha:
         core.log.info("Prior review has no SHA marker — running full review")
         return ""
-    if prior_sha == job.pr.head_sha:
+    if covers(prior_sha, job.pr.head_sha):
         core.log.info("Prior review is on current HEAD — running full review")
         return ""
     if git.client.out("cat-file", "-t", prior_sha, cwd=job.wt_path) != "commit":

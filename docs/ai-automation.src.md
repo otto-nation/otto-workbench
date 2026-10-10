@@ -444,7 +444,7 @@ Actions: `accept`, `retry`, `skip-step`, `undo` (rebase:
 
 `pr batch status` prints one compact report:
 
-- `run`: `id`, `status`, `active` (a scheduler holds the run's lock), `exit_hint` and a one-line `hint`.
+- `run`: `id`, `status`, `active` (a scheduler holds the run's lock), `exit_hint` and a one-line `hint`. `exit_hint` is what `run`/`resume` exit with: 0 once the run is finished (`done` or `cancelled`), 10 while it waits on you, 1 when it stopped without settling (resume it), and null while a scheduler holds the run.
 - `counts`: items by status, and open decisions.
 - `items`: non-terminal items only — worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, and step statuses.
 - `next`: one entry per open decision.
@@ -454,9 +454,9 @@ Actions: `accept`, `retry`, `skip-step`, `undo` (rebase:
 Each `next` entry carries:
 
 - `why`: a classified sentence.
-- `prep`: any work outside `pr` it needs first — the conflicted files to resolve, the review file and its must/should/nit counts, the remote commits to check, or a thread excerpt.
+- `prep`: any work outside `pr` it needs first — the conflicted files to resolve, the review file and its must/should/nit counts (declined findings are left out of those and counted apart as `declined`), the remote commits to check, or a thread excerpt.
 - `worktree`.
-- `actions`, with a copy-paste `pr batch resolve` command for each. A required input is shown as a placeholder, an optional one in brackets.
+- `actions`, and `commands`: one copy-paste `pr batch resolve` per action. A required input is shown as a placeholder, an optional one in brackets.
 - `payload`: a small kind-specific part of the decision's payload.
 - `log` and `session_log` paths.
 
@@ -476,9 +476,9 @@ A `failed` decision's `reason` is one of:
 - a publish refusal
 - `error`, for text the batch does not recognise
 
-Every `failed` decision names its `log`. Every publish command writes to `logs/<owner>__<repo>-<pr>-publish-<n>.log`. A failed publish records the classified reason, the push's own headline as `detail`, and that log.
+A failed step names its `log`, plus `session_log` when a review left one. A failed publish command names its `logs/<owner>__<repo>-<pr>-publish-<n>.log` and keeps the line that showed the reason as `detail` (absent for `error`). A publish refusal runs no command, so it has no log; its `detail` says why.
 
-Step stderr stays in the run's `logs/`; `run --verbose` and `resume --verbose` also stream it as `step_log` events. `decision_created` carries only the decision, its kind, `why` and `commands`. The last line of every `run` or `resume` is `run_summary`, holding the same `run`, `counts` and `next` as `pr batch next`.
+Step stderr stays in the run's `logs/`; `run --verbose` and `resume --verbose` also stream it as `step_log` events. `decision_created` carries only `run`, `item`, `decision`, `decision_kind`, `why` and `commands`. `item` is the same value as `next[].pr`; the kind is `decision_kind` because the event wrapper's own `kind` is the event type. The last line of every `run` or `resume` is `run_summary`, holding the same `run`, `counts` and `next` as `pr batch next`.
 
 A run with open decisions exits **10**. That means it is waiting on you, not that it failed: a job runner reports it as a failure, so read the `run_summary` line rather than the exit status. `resume` continues the run and clears a pending cancel. `open-chat` is UI-only. Admission starts a step when free memory
 minus `batch.mem_reserve` covers its observed peak and CPU/memory pressure stay

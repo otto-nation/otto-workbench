@@ -4,8 +4,8 @@
     <state_dir>/batch/<run-id>/run.lock         held by the live scheduler
     <state_dir>/batch/<run-id>/requests/*.json  decisions waiting to be applied
     <state_dir>/batch/<run-id>/cancel           {"kill": bool} once cancel is asked
-    <state_dir>/batch/<run-id>/logs/*.log       stderr of each step attempt
-    <run-id>/logs/*-publish-*.log   output of each publish attempt
+    <state_dir>/batch/<run-id>/logs/<slug>-<pr>-<step>-<n>.log     stderr of each step attempt
+    <state_dir>/batch/<run-id>/logs/<slug>-<pr>-publish-<n>.log    output of each publish attempt
 """
 
 # doc-group: batch

@@ -59,7 +59,7 @@ def _drive(pair, monkeypatch, findings, *, code=0):
     run = batch.scheduler.new_run([planned], steps=[Step.REVIEW], selected=None, pool=1,
                                   auto_publish=[Step.REVIEW])
     sched = batch.scheduler.Scheduler(
-        run, pr_bin="pr", cfg=BatchConfig(pool_max=1),
+        run, pr_bin=str(REPO_ROOT / "ai" / "bin" / "pr"), cfg=BatchConfig(pool_max=1),
         host=lambda: batch.admission.HostSample(None, None, None), spawn=spawn,
         replan=lambda r: planned,
         worktrees=lambda d, b: WorktreeResult(str(pair.work), False, ""),

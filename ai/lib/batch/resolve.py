@@ -27,7 +27,6 @@ decision open.
 
 from __future__ import annotations
 
-import contextlib
 import secrets
 import shlex
 import subprocess
@@ -42,7 +41,6 @@ import batch.plan
 import batch.publish
 import batch.store
 import core.timeouts
-import git.push
 from batch.model import Decision, DecisionKind, Item, ItemStatus, Run, Step, StepStatus
 from batch.store import now_iso
 from pr.comments_fix import CloseoutDebt
@@ -61,7 +59,6 @@ ACTIONS: dict[DecisionKind, frozenset[str]] = {
 }
 _SETTLE_AS = {"settle-fixed": "fixed", "settle-addressed": "already_addressed",
               "settle-dismissed": "dismissed"}
-GIT_PUSH = batch.publish.GIT_PUSH
 # What default_runner writes before each child command's output in a publish log.
 _COMMAND_HEADER = "$ "
 
@@ -104,19 +101,7 @@ class Request:
 
 
 def default_runner(argv: list[str], log_path: Path | None = None) -> int:
-    """Run one resolve command; with *log_path*, everything it prints is appended there.
-
-    The in-process fast-forward push reports through `git.push.report`, which
-    writes to stderr, so its report is redirected into the same log a child's
-    output goes to — one place for the classifier to read either way.
-    """
-    if argv[0] == GIT_PUSH:
-        if log_path is None:
-            return 0 if git.push.push(argv[1], gated=False).ok else 1
-        with log_path.open("a") as log, contextlib.redirect_stderr(log):
-            result = git.push.push(argv[1], gated=False)
-            git.push.report(result, argv[1])
-        return 0 if result.ok else 1
+    """Run one resolve command as a child; with *log_path*, a `$ <argv>` header and everything it prints are appended there."""
     if log_path is None:
         return subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=sys.stderr,
                               start_new_session=True, timeout=core.timeouts.UNBOUNDED).returncode
@@ -219,7 +204,7 @@ def _last_command(lines: list[str]) -> list[str]:
 
     `default_runner` writes a `$ <argv>` header before each child command, so
     an earlier command that succeeded cannot lend the failure its reason. A
-    log with no header (the in-process push writes none) is read whole.
+    log with no header is read whole.
     """
     starts = [i for i, line in enumerate(lines) if line.startswith(_COMMAND_HEADER)]
     return lines[starts[-1] + 1:] if starts else lines

@@ -434,21 +434,14 @@ heads skip both. A stacked PR waits for its base's publish; `resume` retries
 repo at a time (a waiting CI step excepted). No start in a dirty worktree
 (`dirty_worktree`), except a rebase resuming its own paused replay.
 
-An item that closes with drafted work, or whose saved `pr` state owes a closeout (`pr status`'s `⚠ closeout owed`), opens one
-`publish` decision. Publish
-fetches the branch and refuses (`failed`) with `fetch_failed`, `remote_moved`,
-`not_comparable`, `not_incorporated`, or `not_incorporated_remote`. Otherwise
-it fast-forwards, or force-pushes with `pr rebase --push-only --expect
-<planned head>`, then runs `pr comments --finish --post` when the comments
-step drafted, items were tracked, or a closeout is owed — with `--track-all`
-when the owed part is a tracking issue. A commit `--finish` pushes becomes the
-lease. `force-publish` answers only
-`not_incorporated_remote` for the listed commits — a new remote commit refuses
-again. `--auto-publish STEPS` resolves that decision when the item closes with
-no open decision and every drafted step is listed and finished `done`.
-An owed closeout counts as `comments`: `--auto-publish comments` answers a closeout-only publish.
-`--watch-ci` re-checks CI once after a push and reopens on red; `run_finished`
-lists `ci_not_rechecked`.
+An item that closes with drafted work, or whose saved `pr` state owes a closeout (`pr status`'s `⚠ closeout owed`), opens one `publish` decision.
+Publish fetches the branch and refuses (`failed`) with `fetch_failed`, `remote_moved`, `not_comparable`, `not_incorporated`, or
+`not_incorporated_remote`. Otherwise it fast-forwards with `pr push --expect <planned head>`, or force-pushes with `pr rebase --push-only --expect
+<planned head>`, then runs `pr comments --finish --post` when the comments step drafted, items were tracked, or a closeout is owed — with
+`--track-all` when the owed part is a tracking issue. A commit `--finish` pushes becomes the lease. `force-publish` answers only
+`not_incorporated_remote` for the listed commits — a new remote commit refuses again. `--auto-publish STEPS` resolves that decision when the item
+closes with no open decision and every drafted step is listed and finished `done`. An owed closeout counts as `comments`: `--auto-publish comments`
+answers a closeout-only publish. `--watch-ci` re-checks CI once after a push and reopens on red; `run_finished` lists `ci_not_rechecked`.
 
 A step that needs a person opens one `step_review` whose `evidence` is
 `open_findings`, `checks_unverified` (`Fix-Checks:` `red`/`timed_out`/`error`/`partial`,

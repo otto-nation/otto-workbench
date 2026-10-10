@@ -19,7 +19,7 @@ import batch.resolve  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
 from batch.plan import PlanRow, StepNeed  # noqa: E402
-from batch.publish import GIT_PUSH, Refusal, TreeState  # noqa: E402
+from batch.publish import Refusal, TreeState  # noqa: E402
 from pr.comments_fix import CloseoutDebt  # noqa: E402
 from rebase.types import RefDivergence  # noqa: E402
 
@@ -41,7 +41,7 @@ WT = ["--repo-dir", "/wt"]
 
 @pytest.mark.parametrize("tree,commands,refusal", [
     (_tree(0, 0), [], None),
-    (_tree(2, 0), [[GIT_PUSH, "/wt"]], None),
+    (_tree(2, 0), [["pr", "push", "--expect", "r0", *WT]], None),
     (_tree(2, 3), [["pr", "rebase", "--push-only", "--expect", "r0", *WT]], None),
     (_tree(2, 0, remote="other"), [], Refusal.REMOTE_MOVED),
     (_tree(0, 0, comparable=False), [], Refusal.NOT_COMPARABLE),
@@ -77,7 +77,7 @@ def test_comment_replies_follow_a_drafted_comments_step_and_tracking():
     item = _item(track=["T1"])
     item.step(batch.model.Step.COMMENTS).drafted = True
     got = batch.publish.plan(item, "pr", _tree(1, 0))
-    assert got.commands == [[GIT_PUSH, "/wt"],
+    assert got.commands == [["pr", "push", "--expect", "r0", *WT],
                             ["pr", "comments", "--finish", "--post", "--track", "T1", *WT]]
 
 
@@ -95,7 +95,7 @@ def test_a_local_branch_ahead_reads_as_a_fast_forward(tmp_path):
     (pair.work / "fix.txt").write_text("fix\n")
     commit_all(pair.work, "fix: x")
     assert batch.publish.plan(item, "pr", batch.publish.read_tree(item)).commands == [
-        [GIT_PUSH, str(pair.work)]]
+        ["pr", "push", "--expect", item.remote_sha, "--repo-dir", str(pair.work)]]
 
 
 def test_a_hand_rebased_branch_publishes_with_expect(tmp_path):
@@ -156,7 +156,8 @@ def test_publishing_a_fast_forward_moves_the_remote_and_the_lease(tmp_path):
     (pair.work / "fix.txt").write_text("fix\n")
     commit_all(pair.work, "fix: x")
     local = git_out(pair.work, "rev-parse", "HEAD").strip()
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr")
+    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"),
+                        pr_bin=str(REPO_ROOT / "ai" / "bin" / "pr"))
     assert remote_tip(pair.origin, "feat") == local
     assert run.items[0].remote_sha == local == run.items[0].published_sha
     assert run.items[0].status is batch.model.ItemStatus.DONE
@@ -185,7 +186,8 @@ def test_a_fast_forward_publish_logs_what_the_push_said(tmp_path):
     run = _publish_run(pair)
     (pair.work / "fix.txt").write_text("fix\n")
     commit_all(pair.work, "fix: x")
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr")
+    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"),
+                        pr_bin=str(REPO_ROOT / "ai" / "bin" / "pr"))
     logs = sorted(batch.store.logs_dir("r1").glob("o__r-1-publish-*.log"))
     assert [p.name for p in logs] == ["o__r-1-publish-0.log"]
     assert "Pushed" in logs[0].read_text()
@@ -202,7 +204,8 @@ def test_a_fast_forward_a_hook_refuses_records_pre_push_rejected(tmp_path, live_
     git_in(pair.work, "config", "core.hooksPath", str(hooks))
     (pair.work / "fix.txt").write_text("fix\n")
     commit_all(pair.work, "fix: x")
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr")
+    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"),
+                        pr_bin=str(REPO_ROOT / "ai" / "bin" / "pr"))
     failed = run.open_decisions()[-1]
     assert failed.payload["reason"] == "pre_push_rejected"
     assert failed.payload["detail"].startswith("push refused (hook)")
@@ -220,7 +223,7 @@ def test_owed_closeout_follows_a_push_once():
     item = _item()
     item.step(batch.model.Step.COMMENTS).drafted = True
     got = batch.publish.plan(item, "pr", _tree(1, 0), closeout=CloseoutDebt(replies=True))
-    assert got.commands == [[GIT_PUSH, "/wt"], ["pr", "comments", "--finish", "--post", *WT]]
+    assert got.commands == [["pr", "push", "--expect", "r0", *WT], ["pr", "comments", "--finish", "--post", *WT]]
 
 
 def test_an_owed_tracking_issue_closes_out_with_track_all_in_place_of_ids():

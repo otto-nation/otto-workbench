@@ -236,7 +236,10 @@ def _pr_state(repo_dir: str, branch: str) -> pr.state.PRState | None:
 
 
 def settled_ids(repo_dir: str, branch: str) -> set[str]:
-    state = _pr_state(repo_dir, branch)
+    return _settled_from(_pr_state(repo_dir, branch))
+
+
+def _settled_from(state: pr.state.PRState | None) -> set[str]:
     if state is None:
         return set()
     return {i.id for i in state.fix.fix.items if i.outcome in pr.settlement.SETTLE_OUTCOMES}
@@ -248,7 +251,10 @@ def closeout_debt(repo_dir: str, branch: str) -> CloseoutDebt:
     Read from saved state only, like `settled_ids`: no fetch. Publish pays it
     with `CloseoutDebt.command`; a finished run's report prints that command.
     """
-    state = _pr_state(repo_dir, branch)
+    return _closeout_from(_pr_state(repo_dir, branch))
+
+
+def _closeout_from(state: pr.state.PRState | None) -> CloseoutDebt:
     return state.fix.closeout_debt() if state is not None else CloseoutDebt()
 
 
@@ -274,6 +280,7 @@ def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
     ci_state = rollup_state(node)
     threads = (node.get("reviewThreads") or {}).get("nodes") or []
     merge_state = node.get("mergeStateStatus") or "UNKNOWN"
+    state = _pr_state(repo_dir, branch)  # one git call per row, shared below
     return PlanRow(
         repo=repo, repo_dir=repo_dir, pr=int(node["number"]), title=node.get("title", ""),
         branch=branch, head_sha=head, is_draft=bool(node.get("isDraft")),
@@ -281,12 +288,12 @@ def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
             Step.REBASE: FORK_NEED if fork else tree_rebase_need(
                 repo_dir, branch, base, ref_namespace, merge_state),
             Step.CI: FORK_NEED if fork else ci_need(ci_state),
-            Step.COMMENTS: comments_need(threads, settled_ids(repo_dir, branch)),
+            Step.COMMENTS: comments_need(threads, _settled_from(state)),
             Step.REVIEW: review_need(_review_file(repo, branch), head, local_head=local_head),
         },
         local_head=local_head, base_ref=base, is_fork=fork, ci_state=ci_state,
         ref_namespace=ref_namespace,
-        closeout=closeout_debt(repo_dir, branch).describe(),
+        closeout=_closeout_from(state).describe(),
     )
 
 

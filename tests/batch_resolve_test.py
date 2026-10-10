@@ -11,6 +11,7 @@ if str(LIB_DIR) not in sys.path:
 import batch.model  # noqa: E402
 import batch.resolve  # noqa: E402
 import cli.pr_batch  # noqa: E402
+from batch_scheduler_support import _even  # noqa: E402
 from batch.publish import TreeState  # noqa: E402
 from pr.comments_fix import CloseoutDebt  # noqa: E402
 from rebase.types import RefDivergence  # noqa: E402
@@ -449,11 +450,6 @@ def test_a_failed_publish_reads_its_reason_from_the_failing_command_only():
 
 def _publish_decision():
     return _d(batch.model.DecisionKind.PUBLISH, "publish", {"drafted": [], "track": []})
-
-
-def _even(item):
-    return TreeState(local=item.remote_sha, remote=item.remote_sha,
-                     divergence=RefDivergence(ahead=0, behind=0, comparable=True))
 
 
 def test_publish_pays_a_closeout_pr_recorded_with_nothing_to_push():

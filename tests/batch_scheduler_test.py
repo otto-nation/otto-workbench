@@ -520,7 +520,7 @@ def test_new_run_leaves_out_a_closeout_when_selection_is_explicit():
     assert run.items == []
 
 
-def _owed(d, b):
+def _owes_summary(d, b):
     return CloseoutDebt(summary=True)
 
 
@@ -529,7 +529,7 @@ def _closeout_row():
 
 
 def test_a_closeout_alone_opens_a_publish_decision():
-    h = Harness([_closeout_row()], closeout=_owed, tree=_even)
+    h = Harness([_closeout_row()], closeout=_owes_summary, tree=_even)
     assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
     [d] = h.run.decisions
     assert d.kind is batch.model.DecisionKind.PUBLISH
@@ -544,14 +544,14 @@ def test_no_drafted_work_and_no_debt_finishes_done_without_asking():
 
 
 def test_auto_publish_comments_answers_a_closeout_alone():
-    h = Harness([_closeout_row()], closeout=_owed, tree=_even,
+    h = Harness([_closeout_row()], closeout=_owes_summary, tree=_even,
                 auto_publish=[batch.model.Step.COMMENTS])
     assert h.sched.run_until_blocked() is batch.model.RunStatus.DONE
     assert h.published == [["pr", "comments", "--finish", "--post", "--repo-dir", "/wt/b1"]]
 
 
 def test_auto_publish_without_comments_leaves_a_closeout_to_the_operator():
-    h = Harness([_closeout_row()], closeout=_owed, tree=_even,
+    h = Harness([_closeout_row()], closeout=_owes_summary, tree=_even,
                 auto_publish=[batch.model.Step.REVIEW])
     assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
     assert h.published == []
@@ -561,7 +561,7 @@ def test_a_skipped_failed_comments_step_does_not_auto_publish_owed_closeout():
     needs = {batch.model.Step.REBASE: NO, batch.model.Step.COMMENTS: NEED,
              batch.model.Step.REVIEW: NO}
     h = Harness([row(1, needs)], codes={("comments", "/wt/b1"): 1},
-                closeout=_owed, tree=_even, auto_publish=[batch.model.Step.COMMENTS])
+                closeout=_owes_summary, tree=_even, auto_publish=[batch.model.Step.COMMENTS])
     assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
     failed = next(d for d in h.run.decisions if d.kind is batch.model.DecisionKind.FAILED)
     h.sched._apply_one({"decision": failed.id, "action": "skip-step"})

@@ -100,6 +100,8 @@ class PlanRow:
     is_fork: bool = False
     ci_state: str = ""
     ref_namespace: str = ""
+    # What pr's saved state says is owed (CloseoutDebt.describe()), "" when nothing is.
+    closeout: str = ""
 
     @property
     def key(self) -> str:
@@ -284,6 +286,7 @@ def _row(node: dict, repo_dir: str, repo: str, local_head: str = "",
         },
         local_head=local_head, base_ref=base, is_fork=fork, ci_state=ci_state,
         ref_namespace=ref_namespace,
+        closeout=closeout_debt(repo_dir, branch).describe(),
     )
 
 

@@ -491,3 +491,22 @@ def test_a_failed_step_records_the_log_it_wrote():
     failed = next(d for d in h.run.decisions if d.kind is batch.model.DecisionKind.FAILED)
     assert failed.payload["reason"] == "error"
     assert failed.payload["log"].endswith("/logs/o__r-1-rebase-0.log")
+
+
+NONE_NEEDED = {batch.model.Step.REBASE: NO, batch.model.Step.COMMENTS: NO,
+               batch.model.Step.REVIEW: NO}
+
+
+def test_new_run_keeps_a_row_whose_only_work_is_an_owed_closeout():
+    run = batch.scheduler.new_run([row(1, NONE_NEEDED, closeout="summary"), row(2, NONE_NEEDED)],
+                                  steps=list(batch.model.STEP_ORDER), selected=None, pool=1,
+                                  auto_publish=[])
+    assert [i.key for i in run.items] == ["o/r#1"]
+    assert all(r.status is batch.model.StepStatus.SKIPPED for r in run.items[0].steps)
+
+
+def test_new_run_leaves_out_a_closeout_when_comments_is_not_a_chosen_step():
+    run = batch.scheduler.new_run([row(1, NONE_NEEDED, closeout="summary")],
+                                  steps=[batch.model.Step.REBASE], selected=None, pool=1,
+                                  auto_publish=[])
+    assert run.items == []

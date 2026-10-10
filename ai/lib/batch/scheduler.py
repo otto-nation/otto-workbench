@@ -54,7 +54,13 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
     for r in rows:
         chosen = selected.get(r.key, []) if selected is not None else \
             [s for s in steps if r.needs.get(s) and r.needs[s].needed]
-        if not chosen:
+        # A row whose only work is the closeout pr recorded as owed is kept with
+        # every step skipped: _admit closes it straight away and publish pays the
+        # debt. Only when comments is a step of this run, and never past an
+        # explicit selection that left the row out.
+        closeout_only = (not chosen and not explicit and bool(r.closeout)
+                         and Step.COMMENTS in steps)
+        if not chosen and not closeout_only:
             continue
         recs = [StepRecord(s, StepStatus.PENDING if s in chosen else StepStatus.SKIPPED,
                            explicit=explicit and s in chosen)

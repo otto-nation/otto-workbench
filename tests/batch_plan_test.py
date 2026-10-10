@@ -250,3 +250,16 @@ def test_a_checkout_that_is_gone_has_no_debt_and_no_settled_ids(tmp_path):
     gone = str(tmp_path / "removed")
     assert batch.plan.closeout_debt(gone, "b") == CloseoutDebt()
     assert batch.plan.settled_ids(gone, "b") == set()
+
+
+def test_a_row_carries_the_closeout_pr_says_is_owed(monkeypatch):
+    monkeypatch.setattr(batch.plan, "settled_ids", lambda repo_dir, branch: set())
+    monkeypatch.setattr(batch.plan, "_review_file", lambda repo, branch: Path("/nonexistent"))
+    monkeypatch.setattr(batch.plan, "closeout_debt",
+                        lambda repo_dir, branch: CloseoutDebt(replies=True, reply_count=2))
+    data = {"viewer": {"login": "me"}, "search": {"nodes": [
+        {"number": 7, "title": "t", "isDraft": False, "headRefName": "b", "headRefOid": "sha",
+         "mergeStateStatus": "CLEAN", "repository": {"nameWithOwner": "o/a"},
+         "reviewThreads": {"nodes": []}}]}}
+    [r] = batch.plan.rows_from_search(data, {"o/a": "/repos/a"})
+    assert r.closeout == "2 replies"

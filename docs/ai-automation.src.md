@@ -465,16 +465,8 @@ Log tails appear only under `--decision`. `next` is empty in two cases:
 - while a scheduler holds the run — wait for its `run_summary`;
 - once the run is `done` or `cancelled`.
 
-A `failed` decision's `reason` is one of:
-
-- `ai_prompt_failed`
-- `review_orchestration_failed`
-- `pre_push_rejected`
-- `lock_busy`
-- `push_rejected`
-- `github`
-- a publish refusal
-- `error`, for text the batch does not recognise
+A `failed` decision's `reason` is one of the classified reasons listed in
+[`batch/outcomes.py`](ai-libraries.md#batchoutcomespy).
 
 A failed step names its `log`, plus `session_log` when a review left one. A failed publish command names its `logs/<owner>__<repo>-<pr>-publish-<n>.log` and keeps the line that showed the reason as `detail` (absent for `error`). A publish refusal runs no command, so it has no log; its `detail` says why.
 

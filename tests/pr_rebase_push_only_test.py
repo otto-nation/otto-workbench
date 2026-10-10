@@ -78,3 +78,21 @@ def test_expect_without_push_only_is_a_usage_error(capsys):
         cli.pr_rebase.main(["--expect", "deadbee"])
     assert exc.value.code == 2
     assert "--expect only applies with --push-only" in capsys.readouterr().err
+
+
+def test_the_rebase_force_push_goes_through_the_one_push_path():
+    ctx = mock.MagicMock()
+    ctx.branch = "isaac/feat/x"
+    seen = {}
+
+    def push_head(cwd, branch, **kw):
+        seen.update(kw, cwd=cwd, branch=branch)
+        return True
+
+    with mock.patch.object(rebase.inspect, "rebase_in_progress", return_value=False), \
+         mock.patch.object(rebase.types, "load_or_init", return_value=_no_record()), \
+         mock.patch.object(rebase.types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(git.client, "commits_ahead", return_value=2), \
+         mock.patch.object(rebase.commands, "push_head", push_head):
+        assert rebase.commands.cmd_push("/fake", ctx, target_ref=_TARGET, expect="deadbee") == 0
+    assert (seen["cwd"], seen["branch"], seen["expect"]) == ("/fake", "isaac/feat/x", "deadbee")

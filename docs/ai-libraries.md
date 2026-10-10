@@ -2913,7 +2913,8 @@ I/O, and imports this module — never the other way round. So does
 that pass owes, over the same record every domain here carries.
 
 ``PushDomain`` is how far the local branch is ahead of ``origin/<branch>``.
-``pr status`` refreshes it live and does not persist it. ``ahead`` is None for a
+``pr status`` refreshes it live and does not persist it; ``pr push`` persists
+what it observed once its push lands. ``ahead`` is None for a
 branch with no remote ref and a count otherwise, so "never pushed" and "pushed
 and up to date" are different answers. The dashboard line and the merge-readiness
 blocker are the same three states: branch not pushed, N commit(s) not pushed,
@@ -5847,12 +5848,14 @@ branch up to its target first when it is behind, through `rebase.commands`.
 
 ### rebase/commands.py
 
-The rebase commands behind `pr rebase`: start, abort, push, and the run that picks one.
+The commands behind `pr rebase` and `pr push`: start, abort, push, and the run that picks one.
 
 Each command resolves the branch's target, takes the lease the rebase needs,
 and records the outcome in the PR's state file. `cli.pr_rebase` is the command
 over these — the parser, the run lock, the trail. The rebase mechanics are the
 rest of this package (`rebase.lifecycle`, `rebase.land`, `rebase.lease`, …).
+`push_head` is the one leased push. `cmd_push` (the rebase's force-push) records
+the rebase after it; `cmd_push_head` (`pr push`) records `PushDomain` and no rebase.
 
 ### rebase/conflicts.py
 

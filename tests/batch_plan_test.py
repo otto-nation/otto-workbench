@@ -9,7 +9,10 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.plan  # noqa: E402
+import pr.state  # noqa: E402
+import pr.target  # noqa: E402
 from batch.model import Step  # noqa: E402
+from pr.comments_fix import CloseoutDebt, FixSummary  # noqa: E402
 
 
 @pytest.mark.parametrize("state,needed", [
@@ -220,3 +223,30 @@ def test_a_fork_row_skips_rebase_and_ci(monkeypatch):
     row = batch.plan._row(node, "/repos/a", "o/a")
     assert row.needs[Step.REBASE] == batch.plan.FORK_NEED
     assert row.needs[Step.CI] == batch.plan.FORK_NEED
+
+
+def _saved_fix(monkeypatch, tmp_path, fix):
+    """Save *fix* as the pr state for o/a branch b, reachable from tmp_path as the checkout."""
+    monkeypatch.setattr(batch.plan.pr.target, "repo_key_from_origin", lambda d: "o/a")
+    state = pr.state.new_state("o/a", "b", None, "h", str(tmp_path))
+    state.fix = fix
+    pr.state.save_state(pr.target.target_dir("o/a", "b"), state)
+    return str(tmp_path)
+
+
+def test_closeout_debt_reads_what_the_fix_pass_left_undelivered(monkeypatch, tmp_path):
+    checkout = _saved_fix(monkeypatch, tmp_path,
+                          FixSummary(summary_deferred=True, replies_pending=True))
+    debt = batch.plan.closeout_debt(checkout, "b")
+    assert (debt.owed, debt.summary, debt.replies) == (True, True, True)
+
+
+def test_closeout_debt_is_nothing_without_saved_state(monkeypatch, tmp_path):
+    monkeypatch.setattr(batch.plan.pr.target, "repo_key_from_origin", lambda d: "o/a")
+    assert batch.plan.closeout_debt(str(tmp_path), "b") == CloseoutDebt()
+
+
+def test_a_checkout_that_is_gone_has_no_debt_and_no_settled_ids(tmp_path):
+    gone = str(tmp_path / "removed")
+    assert batch.plan.closeout_debt(gone, "b") == CloseoutDebt()
+    assert batch.plan.settled_ids(gone, "b") == set()

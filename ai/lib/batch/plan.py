@@ -27,6 +27,7 @@ import rebase.need
 import review.document
 import review.paths
 from batch.model import Step
+from pr.comments_fix import CloseoutDebt
 
 PLAN_SCHEMA_VERSION = 1
 
@@ -221,12 +222,32 @@ def review_need(review_file: Path, head_sha: str, *, local_head: str = "") -> St
     return StepNeed(True, of)
 
 
-def settled_ids(repo_dir: str, branch: str) -> set[str]:
+def _pr_state(repo_dir: str, branch: str) -> pr.state.PRState | None:
+    """The `pr` state saved for *branch* of *repo_dir*'s repo, or None when there is none."""
+    # A checkout that is gone has no state rather than an error: a finished
+    # run's report reads every item, including ones whose checkout was removed,
+    # and git cannot be run in a directory that does not exist.
+    if not Path(repo_dir).is_dir():
+        return None
     key = pr.target.repo_key_from_origin(repo_dir)
-    state = pr.state.load_state(pr.target.target_dir(key, branch)) if key else None
+    return pr.state.load_state(pr.target.target_dir(key, branch)) if key else None
+
+
+def settled_ids(repo_dir: str, branch: str) -> set[str]:
+    state = _pr_state(repo_dir, branch)
     if state is None:
         return set()
     return {i.id for i in state.fix.fix.items if i.outcome in pr.settlement.SETTLE_OUTCOMES}
+
+
+def closeout_debt(repo_dir: str, branch: str) -> CloseoutDebt:
+    """What `pr comments` recorded as owed to *branch*'s PR and never delivered.
+
+    Read from saved state only, like `settled_ids`: no fetch. Publish pays it
+    with `CloseoutDebt.command`; a finished run's report prints that command.
+    """
+    state = _pr_state(repo_dir, branch)
+    return state.fix.closeout_debt() if state is not None else CloseoutDebt()
 
 
 def _review_file(repo: str, branch: str) -> Path:

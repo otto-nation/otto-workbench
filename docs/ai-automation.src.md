@@ -422,12 +422,11 @@ heads skip both. A stacked PR waits for its base's publish; `resume` retries
 repo at a time (a waiting CI step excepted). No start in a dirty worktree
 (`dirty_worktree`), except a rebase resuming its own paused replay.
 
-An item that closes with drafted work opens one `publish` decision. Publish
+An item that closes with drafted work, or whose saved `pr` state owes a closeout (`pr status`'s `⚠ closeout owed`), opens one `publish` decision. Publish
 fetches the branch and refuses (`failed`) with `fetch_failed`, `remote_moved`,
 `not_comparable`, `not_incorporated`, or `not_incorporated_remote`. Otherwise
 it fast-forwards, or force-pushes with `pr rebase --push-only --expect
-<planned head>`, then posts comment replies only when the comments step
-drafted or items were tracked. `force-publish` answers only
+<planned head>`, then runs `pr comments --finish --post` when the comments step drafted, items were tracked, or a closeout is owed — with `--track-all` when the owed part is a tracking issue. A commit `--finish` pushes becomes the lease. `force-publish` answers only
 `not_incorporated_remote` for the listed commits — a new remote commit refuses
 again. `--auto-publish STEPS` resolves that decision when the item closes with
 no open decision and every drafted step is listed and finished `done`.

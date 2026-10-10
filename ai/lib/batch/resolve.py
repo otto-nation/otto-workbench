@@ -38,12 +38,14 @@ from pathlib import Path
 from typing import Callable
 
 import batch.outcomes
+import batch.plan
 import batch.publish
 import batch.store
 import core.timeouts
 import git.push
 from batch.model import Decision, DecisionKind, Item, ItemStatus, Run, Step, StepStatus
 from batch.store import now_iso
+from pr.comments_fix import CloseoutDebt
 
 ACTIONS: dict[DecisionKind, frozenset[str]] = {
     DecisionKind.COMMENT_ITEM: frozenset({"settle-fixed", "settle-addressed",
@@ -306,14 +308,18 @@ def _reopen_for_ci(run: Run, item: Item) -> None:
 
 def _publish(run: Run, item: Item, pr_bin: str, run_cmd: Callable[..., int],
              read: Callable[[Item], batch.publish.TreeState], *,
-             confirmed: Sequence[str] = ()) -> list[Decision]:
+             confirmed: Sequence[str] = (),
+             closeout: Callable[[str, str], CloseoutDebt]) -> list[Decision]:
     """Push what the tree says to push; a refusal or a failed command is a decision.
 
     Every command of one publish attempt appends to one log,
     `logs/<slug>-<pr>-publish-<n>.log`, which a failure's decision names.
+    The comments command closes out what the PR's saved `pr` state says is owed,
+    when anything is. A head that `--finish` pushed becomes the lease.
     """
     tree = read(item)
-    plan = batch.publish.plan(item, pr_bin, tree, confirmed=confirmed)
+    debt = closeout(item.repo_dir, item.branch)
+    plan = batch.publish.plan(item, pr_bin, tree, confirmed=confirmed, closeout=debt)
     if not plan.ok:
         extra = {"commits": plan.commits} if plan.commits else None
         return [_fail(run, item, "publish", reason=plan.refusal.value, detail=plan.detail,
@@ -338,15 +344,35 @@ def _publish(run: Run, item: Item, pr_bin: str, run_cmd: Callable[..., int],
     for argv in rest:
         if run_cmd(argv, log_path=log) != 0:
             return [_publish_failed(run, item, log)]
+    # `pr comments --finish` pushes a commit the fix pass held back before it
+    # replies, so the remote may have moved under our own hand.
+    adopted = bool(rest) and _adopt_own_push(item, read(item))
     item.status = ItemStatus.DONE
-    if plan.pushes:
+    if plan.pushes or adopted:
         _reopen_for_ci(run, item)
     return []
 
 
+def _adopt_own_push(item: Item, after: batch.publish.TreeState) -> bool:
+    """Lease on the head `--finish` pushed; leave a head somebody else pushed alone.
+
+    Ours is a remote that moved to exactly what the local branch holds. Any
+    other move keeps the old lease, so the next publish refuses `remote_moved`
+    instead of force-pushing over a colleague's commit.
+    """
+    if not after.fetched or not after.remote or after.remote == item.remote_sha:
+        return False
+    if after.remote != after.local:
+        return False
+    item.remote_sha = item.published_sha = after.remote
+    item.ci_rechecked = False
+    return True
+
+
 def apply(run: Run, request: Request, *, pr_bin: str,
           runner: Callable[..., int] | None = None,
-          tree: Callable[[Item], batch.publish.TreeState] | None = None) -> list[Decision]:
+          tree: Callable[[Item], batch.publish.TreeState] | None = None,
+          closeout: Callable[[str, str], CloseoutDebt] | None = None) -> list[Decision]:
     decision = run.decision(request.decision)
     item = run.item(decision.item)
     _validate(decision, request, item)
@@ -354,7 +380,8 @@ def apply(run: Run, request: Request, *, pr_bin: str,
     if request.action in ("publish", "force-publish"):
         created = _publish(run, item, pr_bin, run_cmd, tree or batch.publish.read_tree,
                            confirmed=decision.payload.get("commits", [])
-                           if request.action == "force-publish" else ())
+                           if request.action == "force-publish" else (),
+                           closeout=closeout or batch.plan.closeout_debt)
         decision.resolution, decision.resolved_at = request.action, now_iso()
         return created
     ok = _run_commands(decision, item, request, pr_bin, run_cmd)

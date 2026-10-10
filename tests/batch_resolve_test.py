@@ -12,6 +12,7 @@ import batch.model  # noqa: E402
 import batch.resolve  # noqa: E402
 import cli.pr_batch  # noqa: E402
 from batch.publish import TreeState  # noqa: E402
+from pr.comments_fix import CloseoutDebt  # noqa: E402
 from rebase.types import RefDivergence  # noqa: E402
 
 
@@ -444,3 +445,56 @@ def test_a_failed_publish_reads_its_reason_from_the_failing_command_only():
     assert failed.payload["reason"] == "error"
     assert "detail" not in failed.payload
     assert failed.payload["log_tail"][0] == "$ pr comments --post"
+
+
+def _publish_decision():
+    return _d(batch.model.DecisionKind.PUBLISH, "publish", {"drafted": [], "track": []})
+
+
+def _even(item):
+    return TreeState(local=item.remote_sha, remote=item.remote_sha,
+                     divergence=RefDivergence(ahead=0, behind=0, comparable=True))
+
+
+def test_publish_pays_a_closeout_pr_recorded_with_nothing_to_push():
+    run, rec = _run(_publish_decision()), Recorder()
+    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr", runner=rec,
+                        tree=_even, closeout=lambda d, b: CloseoutDebt(summary=True))
+    assert rec.calls == [["pr", "comments", "--finish", "--post", "--repo-dir", "/wt"]]
+    assert run.items[0].status is batch.model.ItemStatus.DONE
+
+
+def test_the_closeout_seam_is_asked_about_the_items_checkout_and_branch():
+    asked = []
+    run = _run(_publish_decision())
+    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr",
+                        runner=Recorder(), tree=_even,
+                        closeout=lambda d, b: asked.append((d, b)) or CloseoutDebt())
+    assert asked == [("/r", "b")]
+
+
+def test_a_push_finish_made_becomes_the_lease():
+    run = _run(_publish_decision())
+    item = run.items[0]
+    planned = item.remote_sha
+    reads = iter([_even(item),
+                  TreeState(local="held", remote="held",
+                            divergence=RefDivergence(ahead=0, behind=0, comparable=True))])
+    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr",
+                        runner=Recorder(), tree=lambda i: next(reads),
+                        closeout=lambda d, b: CloseoutDebt(summary=True))
+    assert planned != "held"
+    assert (item.remote_sha, item.published_sha) == ("held", "held")
+
+
+def test_a_remote_somebody_else_moved_during_finish_is_not_adopted():
+    run = _run(_publish_decision())
+    item = run.items[0]
+    planned = item.remote_sha
+    reads = iter([_even(item),
+                  TreeState(local=planned, remote="theirs",
+                            divergence=RefDivergence(ahead=0, behind=1, comparable=True))])
+    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr",
+                        runner=Recorder(), tree=lambda i: next(reads),
+                        closeout=lambda d, b: CloseoutDebt(summary=True))
+    assert (item.remote_sha, item.published_sha) == (planned, "")

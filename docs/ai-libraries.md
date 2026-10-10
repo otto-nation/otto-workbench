@@ -2913,7 +2913,8 @@ I/O, and imports this module — never the other way round. So does
 that pass owes, over the same record every domain here carries.
 
 ``PushDomain`` is how far the local branch is ahead of ``origin/<branch>``.
-``pr status`` refreshes it live and does not persist it. ``ahead`` is None for a
+``pr push`` saves what it observed when its push lands; ``pr status`` observes
+it live and saves nothing. ``ahead`` is None for a
 branch with no remote ref and a count otherwise, so "never pushed" and "pushed
 and up to date" are different answers. The dashboard line and the merge-readiness
 blocker are the same three states: branch not pushed, N commit(s) not pushed,
@@ -3433,10 +3434,14 @@ still the head the batch planned from (`Item.remote_sha`):
 | origin is not `remote_sha` (somebody pushed) | refuse: `remote_moved` |
 | refs not comparable | refuse: `not_comparable` |
 | local == origin, or only behind | nothing to push |
-| local is a fast-forward of origin | `git-push` |
+| local is a fast-forward of origin | `pr push --expect <remote_sha>` |
 | diverged, from a batch rebase that started without `remote_sha` | refuse: `not_incorporated` |
 | diverged, a remote commit has no patch-equivalent locally | refuse: `not_incorporated_remote` |
 | diverged | `pr rebase --push-only --expect <remote_sha>` |
+
+Both pushes are `pr` commands leasing on `remote_sha`, so each writes its own
+report into the publish log and a remote that moved after the fetch is still
+refused.
 
 `pr comments --finish --post` follows when the comments step drafted, an item is
 tracked, or the PR's saved `pr` state says a closeout is owed
@@ -5847,12 +5852,14 @@ branch up to its target first when it is behind, through `rebase.commands`.
 
 ### rebase/commands.py
 
-The rebase commands behind `pr rebase`: start, abort, push, and the run that picks one.
+The commands behind `pr rebase` and `pr push`: start, abort, push, and the run that picks one.
 
 Each command resolves the branch's target, takes the lease the rebase needs,
 and records the outcome in the PR's state file. `cli.pr_rebase` is the command
 over these — the parser, the run lock, the trail. The rebase mechanics are the
 rest of this package (`rebase.lifecycle`, `rebase.land`, `rebase.lease`, …).
+`push_head` is the one leased push. `cmd_push` (the rebase's force-push) records
+the rebase after it; `cmd_push_head` (`pr push`) records `PushDomain` and no rebase.
 
 ### rebase/conflicts.py
 
@@ -6448,8 +6455,8 @@ The three `pr` subcommands that used to be defined inside the binary.
 
 `status`, `fix` and `gc` ran inside `ai/bin/pr`, which is not an importable
 module, so `CommandSpec.handler` could not name them. They live here so the
-field means one thing across the ten: a `"<module>:<attr>"` string that
-importlib can resolve, or None.
+field means one thing across every subcommand: a `"<module>:<attr>"` string
+that importlib can resolve, or None.
 
 `cmd_fix`'s three passes are in-process calls through `cli.dispatch`.
 `create` has since moved to `cli.pr_create`, which owns its parser as well.
@@ -6542,6 +6549,27 @@ Usage:
   pr-describe --title "feat: x" --body-file body.md --post
   pr-describe --repo-dir <path>       # specify worktree directory
 
+### cli/pr_push.py
+
+Push HEAD to origin with a lease on the remote head the caller expects.
+
+Both `pr push` and `pr rebase --push-only` are lease-guarded pushes of HEAD
+through `rebase.commands.push_head` — a rewrite satisfies the lease the same
+way a fast-forward does, so `pr push` is not "not a force push". Use
+`pr rebase --push-only` after a rebase; use `pr push` for anything else. It
+records where the branch stands (`PushDomain`) and records no rebase, so
+`pr status` does not describe a push as a rewrite.
+
+Exit codes:
+  0  Pushed, and the remote holds HEAD
+  1  Refused, lost, unverified, or a rebase is still in progress
+  2  Usage error
+
+Usage:
+  pr push --expect <sha>               # push HEAD if origin still holds <sha>
+  pr push --expect <sha> --no-verify   # skip the pre-push hook
+  pr push --expect <sha> --repo-dir <path>
+
 ### cli/pr_rebase.py
 
 Rebase current branch onto its base with conflict detection and AI resolution.
@@ -6611,7 +6639,7 @@ it is a user-visible change, not a cosmetic one.
 
 `handler` is a `"<module>:<attr>"` string resolved by importlib at dispatch,
 not a callable: an eager import would pull every delegate into `pr --help`.
-All ten name an importable function, resolved and called through
+Every spec names an importable function, resolved and called through
 `core.publishing.call_entry_point` — by `cli.dispatch` for most of them, and
 directly by `ai/bin/pr`'s `cmd_review`/`cmd_comments` and by
 `cli.review_modes`'s `post`/`repair` for the rest.
@@ -6847,11 +6875,11 @@ Three related documents, all of them derived rather than written down twice:
   for itself.
 
 That last one is the part D2 specified and nothing built. `pr --tool-schema`
-answers for the whole command and has no `output_schema`, because one of the
-ten subcommands prints a `PRState` document and the other nine print prose
-— declaring one schema for all ten made the MCP server reject the nine. So
-the honest per-command contract is the delegate's, and `subcommand_schema`
-is how a consumer asks for it.
+answers for the whole command and has no `output_schema`, because one
+subcommand prints a `PRState` document and the rest print prose — declaring
+one schema for every invocation made the MCP server reject the ones that
+print no JSON object. So the honest per-command contract is the delegate's,
+and `subcommand_schema` is how a consumer asks for it.
 
 A consumer that wants the union asks `pr --tool-schema`; one that wants to
 know what `pr ci` returns asks for that subcommand by name. Neither is a

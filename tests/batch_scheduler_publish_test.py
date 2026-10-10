@@ -14,8 +14,6 @@ import batch.model  # noqa: E402
 import batch.outcomes  # noqa: E402
 import batch.store  # noqa: E402
 from batch.model import STEP_ORDER, DecisionKind, ItemStatus, RunStatus, Step  # noqa: E402
-from batch.publish import GIT_PUSH  # noqa: E402
-
 from batch_scheduler_support import ALL, NEED, NO, Harness, _quiet_outcomes, row  # noqa: F401
 
 ONLY_REVIEW = {Step.REBASE: NO, Step.COMMENTS: NO, Step.REVIEW: NEED}
@@ -48,7 +46,7 @@ def test_auto_publish_publishes_when_every_drafted_step_is_listed():
     h = Harness([row(1, ONLY_REVIEW)], moves={("review", "/wt/b1")},
                 auto_publish=[Step.REVIEW])
     assert h.sched.run_until_blocked() is RunStatus.DONE
-    assert h.published == [[GIT_PUSH, "/wt/b1"]]
+    assert h.published == [["pr", "push", "--expect", "h", "--repo-dir", "/wt/b1"]]
     assert h.run.items[0].status is ItemStatus.DONE
 
 

@@ -16,13 +16,15 @@ call it reaches in review_document_verdict_test.py.
 import sys
 from pathlib import Path
 
+import pytest
+
 LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 from core.phases import Mode
 from pr.domains import ReviewStatus
 from review.document import (
-    MetaKey, ReviewDocument, ReviewHeader,
+    MetaKey, ReviewDocument, ReviewHeader, covers,
     review_title, section_span, set_meta, set_section, set_status,
     set_title, stamp_header, strip_sections,
 )
@@ -717,3 +719,29 @@ class TestRead:
     def test_a_path_given_as_a_string_reads_the_same(self, tmp_path):
         review = _write(tmp_path, "## Summary\nx\n")
         assert ReviewDocument.read(str(review)) == ReviewDocument.read(review)
+
+
+class TestCovers:
+    """Whether a review whose header states one SHA covers another.
+
+    Every caller that asks whether a review is current — batch's plan, the
+    review preflight and auto-recover, and the delta collector — asks it here,
+    so none can disagree.
+    """
+
+    FULL = "abcdef0123456789abcdef0123456789abcdef01"
+
+    @pytest.mark.parametrize("reviewed,sha,expected", [
+        (FULL, FULL, True),
+        ("abcdef0", FULL, True),
+        ("abc123", "abc123", True),
+        ("abcdef", FULL, False),
+        ("a", FULL, False),
+        ("", FULL, False),
+        ("", "", False),
+        (FULL, "", False),
+        ("1111111", FULL, False),
+        (FULL, "abcdef0", False),
+    ])
+    def test_table(self, reviewed, sha, expected):
+        assert covers(reviewed, sha) is expected

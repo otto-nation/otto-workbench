@@ -171,6 +171,19 @@ def test_check_stale_review_incremental_does_not_prompt(tmp_path, monkeypatch, c
     assert "Incremental review" in capsys.readouterr().err
 
 
+def test_check_stale_review_reads_an_abbreviated_header_as_the_same_head(tmp_path, monkeypatch):
+    """The header agents write may be abbreviated. Batch calls that review current,
+    so the preflight must too, and ask before re-reviewing rather than announce an
+    incremental review of nothing."""
+    review_file = _write_review(tmp_path, sha="abcdef0")
+    monkeypatch.setattr(review.recover, "get_pr_head_sha",
+                        lambda *a, **kw: "abcdef0123456789")
+    monkeypatch.setattr(core.prompt, "confirm", lambda msg: False)
+    with pytest.raises(SystemExit) as exc:
+        review.preflight.check_stale_review("owner/repo", "1", review_file, force=False)
+    assert exc.value.code == 0
+
+
 # ── supersession_override / refuse_if_superseded ──────────────────────────────
 
 

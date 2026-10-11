@@ -27,12 +27,10 @@ import git.client
 import core.log
 import pr.context
 import pr.domains
+import review.document
+import review.worktree
 from review.paths import FILENAME_PIPELINE_STATE
 from review.state import read_pipeline_status
-import review.worktree
-
-
-_HEAD_SHA_RE = re.compile(r"<!-- head_sha: ([a-f0-9]+) -->")
 
 
 def read_review_sha(review_file: Path) -> str:
@@ -40,8 +38,8 @@ def read_review_sha(review_file: Path) -> str:
         text = review_file.read_text()
     except OSError:
         return ""
-    m = _HEAD_SHA_RE.search(text)
-    return m.group(1) if m else ""
+    sha = review.document.ReviewHeader.parse(text).head_sha
+    return sha if re.fullmatch(r"[a-f0-9]+", sha) else ""
 
 
 def get_pr_head_sha(repo: str, pr_number: str) -> str:
@@ -115,7 +113,7 @@ def should_auto_recover(repo: str, pr_number: str, review_file: Path) -> None:
     if not review_sha:
         return
     pr_head_sha = get_pr_head_sha(repo, pr_number)
-    if not pr_head_sha or review_sha != pr_head_sha:
+    if not review.document.covers(review_sha, pr_head_sha):
         return
     pipeline_status = read_pipeline_status(review_file.parent)
     if pipeline_status in (pr.domains.ReviewStatus.PARTIAL.value, pr.domains.ReviewStatus.ERROR.value):

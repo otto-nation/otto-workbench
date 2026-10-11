@@ -46,6 +46,12 @@ def test_read_review_sha_without_comment_is_empty(tmp_path):
     assert review.recover.read_review_sha(review_path) == ""
 
 
+def test_read_review_sha_malformed_value_is_empty(tmp_path):
+    review_path = tmp_path / "review.md"
+    review_path.write_text("<!-- head_sha: YYYY -->\n# Review\n")
+    assert review.recover.read_review_sha(review_path) == ""
+
+
 # ── get_pr_head_sha ───────────────────────────────────────────────────────────
 
 
@@ -208,3 +214,16 @@ def test_should_auto_recover_silent_when_head_moved(tmp_path, monkeypatch, capsy
     review.recover.should_auto_recover("owner/repo", "1", review_path)
 
     assert capsys.readouterr().err == ""
+
+
+def test_should_auto_recover_reads_an_abbreviated_header_as_the_same_head(
+        tmp_path, monkeypatch, capsys):
+    review_path = tmp_path / "review.md"
+    review_path.write_text("<!-- head_sha: abc1234 -->\n")
+    _write_partial_pipeline(tmp_path)
+    monkeypatch.setattr(gh.client, "pr_view",
+                        lambda *a, **kw: {"headRefOid": "abc1234deadbeef"})
+
+    review.recover.should_auto_recover("owner/repo", "1", review_path)
+
+    assert "Recovering failed review agents" in capsys.readouterr().err

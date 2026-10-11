@@ -21,6 +21,7 @@ import batch.report
 import batch.resolve
 import batch.store
 import git.client
+import pr.ci_need
 import rebase.inspect
 from batch.model import (STEP_ORDER, Decision, DecisionKind, DirtyReason, EvidenceKind, Item,
                          ItemStatus, Run, RunStatus, Step, StepRecord, StepStatus,
@@ -467,7 +468,7 @@ class Scheduler:
 
     def _start(self, item: Item, rec: StepRecord, fresh: PlanRow) -> None:
         log = batch.store.attempt_log_path(self.run.id, item.repo, item.pr, rec.step.value)
-        wait = rec.step is Step.CI and fresh.ci_state in batch.plan.CI_RUNNING
+        wait = rec.step is Step.CI and fresh.ci_state in pr.ci_need.RUNNING
         argv = step_argv(rec.step, self.pr_bin, item.worktree, remote_sha=item.remote_sha,
                          wait=wait, watch=rec.watch)
         # Sample HEAD before spawn: the harness mutates it inside `_spawn`.

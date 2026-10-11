@@ -295,6 +295,30 @@ class ReviewHeader:
         )
 
 
+# The shortest header SHA read as an abbreviation of the subject rather than a
+# coincidence. Seven is git's own floor in a small repository. A header the
+# pipeline wrote holds the full SHA and matches exactly. A header an agent
+# wrote from a template may hold an abbreviation, and a prefix shorter than
+# this proves nothing: one hex character prefixes a sixteenth of all commits.
+MIN_SHA_PREFIX = 7
+
+
+def covers(reviewed_sha: str, sha: str) -> bool:
+    """Whether a review whose header states *reviewed_sha* covers commit *sha*.
+
+    True on an exact match, or when *reviewed_sha* is an abbreviation of *sha*
+    at least `MIN_SHA_PREFIX` long. An empty *reviewed_sha* covers nothing.
+    Every caller that asks whether a review is current — batch's plan, the
+    review preflight and auto-recover, and the delta collector — asks it here,
+    so none can disagree.
+    """
+    if not reviewed_sha:
+        return False
+    if reviewed_sha == sha:
+        return True
+    return len(reviewed_sha) >= MIN_SHA_PREFIX and sha.startswith(reviewed_sha)
+
+
 # What ends the header block and starts the body: the first section heading.
 # An inserted marker goes above it rather than at the end of the document,
 # because `ReviewHeader.parse` reads the first occurrence of a key and a

@@ -6,8 +6,9 @@ repo; each of these fires before the first agent call.
 
 - ``refuse_if_superseded`` stops a run whose branch may already be gone from
   the default branch — findings about deleted code read as ordinary comments.
-- ``check_stale_review`` asks before re-reviewing the same HEAD, or auto-recovers
-  when the prior run failed.
+- ``check_stale_review`` asks before re-reviewing a HEAD the last review
+  covers (``review.document.covers``), or auto-recovers when the prior run
+  failed.
 - ``check_pending_review`` finds an unsubmitted GitHub review and offers to
   delete it so a new post does not collide.
 
@@ -40,6 +41,7 @@ import core.prompt
 from core.trail import Trail
 import pr.domains
 import pr.supersession
+import review.document
 import review.recover
 from review.collect import base_ref, fetch_base
 from review.state import read_pipeline_status
@@ -92,7 +94,7 @@ def check_stale_review(repo: str, pr_number: str, review_file: Path, force: bool
     if not pr_head_sha:
         return
 
-    if review_sha == pr_head_sha:
+    if review.document.covers(review_sha, pr_head_sha):
         review_dir = review_file.parent
         pipeline_status = read_pipeline_status(review_dir)
         if pipeline_status in (pr.domains.ReviewStatus.PARTIAL.value, pr.domains.ReviewStatus.ERROR.value):

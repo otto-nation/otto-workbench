@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -84,7 +85,8 @@ def load(run_id: str) -> Run:
     return core.serde.from_dict(Run, json.loads(path.read_text()))
 
 
-def _run_ids() -> list[str]:
+def run_ids() -> list[str]:
+    """Every saved run, oldest first; a directory with no state file is not a run."""
     root = batch_root()
     if not root.is_dir():
         return []
@@ -92,15 +94,28 @@ def _run_ids() -> list[str]:
 
 
 def latest_run_id() -> str | None:
-    ids = _run_ids()
+    ids = run_ids()
     return ids[-1] if ids else None
 
 
 def active_run_id() -> str | None:
-    for run_id in reversed(_run_ids()):
+    for run_id in reversed(run_ids()):
         if core.run_lock.is_held(run_dir(run_id)):
             return run_id
     return None
+
+
+def state_mtime(run_id: str) -> float:
+    """When *run_id*'s state was last saved, as a timestamp: its terminal transition once finished."""
+    return (run_dir(run_id) / STATE_FILE).stat().st_mtime
+
+
+def remove(run_id: str) -> None:
+    """Delete *run_id*'s directory: state, logs, requests and lock record.
+
+    Raises OSError when any of it cannot be removed; the caller reports it.
+    """
+    shutil.rmtree(run_dir(run_id))
 
 
 def write_request(run_id: str, request: dict) -> Path:

@@ -201,7 +201,7 @@ messages on stderr.
 | `pr comments --fix` | `review-threads --fix` | script (updates state directly) |
 | `pr comments --finish` | `review-threads --finish` | script (updates state directly) |
 | `pr rebase` | `pr-rebase` | script (updates state directly) |
-| `pr gc` | none (local via `review_gc`) | none |
+| `pr gc` | none (local via `review.gc`, `batch.gc`) | none |
 | `pr fix` | `review` (--fix), `ci-check` (--fix) | none |
 | `pr status` | none (reads cached state) | none |
 

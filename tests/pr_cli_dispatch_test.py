@@ -191,6 +191,22 @@ def test_gc_skips_own_target_when_pruning(
     assert mock_prune_targets.call_args.kwargs["skip"] == target
 
 
+@patch("batch.gc.gc_runs", return_value=2)
+@patch("review.gc.prune_merged_targets", return_value=review.gc.PruneOutcome())
+@patch("review.gc.prune_merged_reviews", return_value=review.gc.PruneOutcome())
+@patch("review.gc.gc_reviews", return_value=1)
+@patch("pr.context.resolve")
+def test_gc_counts_the_batch_runs_it_removed(
+        mock_resolve, _gc, _prune, _prune_targets, mock_gc_runs, worktree, capsys):
+    """`pr gc` is what removes finished batch runs; nothing else ever does."""
+    target = worktree / "target"
+    mock_resolve.return_value = make_ctx(worktree_root=worktree, target_dir=target)
+    _run_main("--repo-dir", str(worktree), "gc")
+    mock_gc_runs.assert_called_once_with()
+    captured = capsys.readouterr()
+    assert "cleaned 3 item(s) total" in captured.out + captured.err
+
+
 def test_the_maintenance_script_branches_on_the_exit_code_pr_actually_uses():
     """`pr` and the maintenance script spell EX_TEMPFAIL in different languages.
 

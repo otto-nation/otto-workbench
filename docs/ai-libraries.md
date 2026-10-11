@@ -3406,6 +3406,17 @@ NDJSON progress events for live consumers of `pr batch run`.
 The state file is authoritative; events only save a consumer from polling it.
 `step_log` is emitted only under `--verbose`; `run_summary` is the last line of every `run`/`resume` that settles.
 
+### batch/gc.py
+
+Remove finished `pr batch` runs once they are old enough; `pr gc` calls it.
+
+Only `done` and `cancelled` runs are candidates. `running` and `waiting` runs
+are live, and an `interrupted` run is one `pr batch resume` can still pick up.
+A run is kept for `review.gc.GC_STALE_DAYS` after its last save, or for
+`review.gc.GC_FAILED_STALE_DAYS` when it kept work a person may come back for —
+see `retention_days`. Its lock is taken, non-blocking, around the removal, so a
+run some process holds is skipped rather than deleted under it.
+
 ### batch/model.py
 
 The persisted shape of a `pr batch` run.

@@ -485,11 +485,7 @@ minus `batch.mem_reserve` covers its observed peak and CPU/memory pressure stay
 under `batch.cpu_pressure_max` / `batch.mem_pressure_max`, always admitting
 one. `--pool` and `batch.pool_max` (default 2) cap concurrency; hosts with no
 pressure metrics (macOS) use `batch.pool_default` (1). State lives under
-`~/.local/state/workbench/batch/<run-id>/` (`state.json` is authoritative).
-`pr gc` removes a finished run (`done` or `cancelled`) once its state is 7 days
-old — 30 when an item failed, was dropped, or left drafted work unpublished —
-dropping its `refs/pr-batch/` refs first; it never removes a `running`,
-`waiting` or `interrupted` run, nor one whose lock is held.
+`~/.local/state/workbench/batch/<run-id>/` (`state.json` is authoritative); `pr gc` removes finished runs ([`batch/gc.py`](ai-libraries.md#batchgcpy)).
 
 ### The Pi package the sync declares, and who gets it
 

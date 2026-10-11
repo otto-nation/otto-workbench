@@ -119,6 +119,20 @@ def test_a_held_lock_keeps_the_run(dropped_refs):
     dropped_refs.assert_not_called()
 
 
+def test_a_run_that_changes_before_the_lock_is_kept(dropped_refs):
+    _save("racy", age_days=365)
+    real = core.run_lock.acquire
+
+    def revive(*args, **kwargs):
+        _save("racy", status=RunStatus.RUNNING, age_days=365)
+        return real(*args, **kwargs)
+
+    with mock.patch("core.run_lock.acquire", side_effect=revive):
+        assert batch.gc.gc_runs(now=NOW) == 0
+    assert _remaining() == ["racy"]
+    dropped_refs.assert_not_called()
+
+
 def test_refs_are_dropped_before_the_run_is_removed(dropped_refs):
     seen = []
     dropped_refs.side_effect = lambda dirs, ns: seen.append(

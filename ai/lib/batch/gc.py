@@ -69,10 +69,18 @@ def _expired(run_id: str, now: float) -> Run | None:
     return run
 
 
-def _remove(run: Run) -> bool:
-    """Drop *run*'s refs and delete it under its lock; False when it was kept."""
+def _remove(run: Run, now: float) -> bool:
+    """Drop *run*'s refs and delete it under its lock; False when it was kept.
+
+    The run is re-read once the lock is held: it may have changed since the
+    unlocked check, and only the locked state is safe to delete on.
+    """
     try:
         with core.run_lock.acquire(batch.store.run_dir(run.id), "gc", batch.store.now_iso()):
+            fresh = _expired(run.id, now)
+            if fresh is None:
+                return False
+            run = fresh
             batch.plan.drop_refs(run.ref_dirs, run.ref_namespace)
             batch.store.remove(run.id)
     except core.run_lock.LockBusy:
@@ -94,6 +102,6 @@ def gc_runs(*, now: float | None = None) -> int:
     removed = 0
     for run_id in batch.store.run_ids():
         run = _expired(run_id, instant)
-        if run is not None and _remove(run):
+        if run is not None and _remove(run, instant):
             removed += 1
     return removed

@@ -69,6 +69,16 @@ def _expired(run_id: str, now: float) -> Run | None:
     return run
 
 
+def _remove_locked(run: Run, now: float) -> Run | None:
+    """Re-read *run* under its held lock and delete it; None when it was kept."""
+    fresh = _expired(run.id, now)
+    if fresh is None:
+        return None
+    batch.plan.drop_refs(fresh.ref_dirs, fresh.ref_namespace)
+    batch.store.remove(fresh.id)
+    return fresh
+
+
 def _remove(run: Run, now: float) -> bool:
     """Drop *run*'s refs and delete it under its lock; False when it was kept.
 
@@ -77,18 +87,15 @@ def _remove(run: Run, now: float) -> bool:
     """
     try:
         with core.run_lock.acquire(batch.store.run_dir(run.id), "gc", batch.store.now_iso()):
-            fresh = _expired(run.id, now)
-            if fresh is None:
-                return False
-            run = fresh
-            batch.plan.drop_refs(run.ref_dirs, run.ref_namespace)
-            batch.store.remove(run.id)
+            removed = _remove_locked(run, now)
     except core.run_lock.LockBusy:
         return False
     except OSError as exc:
         core.log.warn(f"GC: could not remove batch run {run.id} ({exc})")
         return False
-    core.log.info(f"Pruned batch run {run.id} ({run.status.value})")
+    if removed is None:
+        return False
+    core.log.info(f"Pruned batch run {removed.id} ({removed.status.value})")
     return True
 
 

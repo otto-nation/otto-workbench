@@ -80,6 +80,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from pathlib import Path
+from typing import TextIO
 
 import core.log
 import core.proc
@@ -220,7 +221,7 @@ def run(
     cwd: str | Path | None = None,
     config: dict[str, str] | None = None,
     env: dict[str, str] | None = None,
-    relay=None,
+    relay: TextIO | None = None,
 ) -> CmdResult:
     """Run git with *args* in *cwd*, capturing both streams.
 

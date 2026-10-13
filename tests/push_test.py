@@ -571,6 +571,21 @@ def test_a_refusing_hook_is_captured_and_relayed(pushable, monkeypatch):
     assert result.refusal is git.push.Refusal.HOOK
     assert _HOOK_FAIL in result.output
     assert _HOOK_FAIL in watch.text
+    assert result.relayed
+
+
+def test_a_refusing_hook_is_reported_as_a_labelled_replay(pushable, monkeypatch, capsys):
+    """Shown live, then reprinted under a header saying it was shown already."""
+    wt, _ = pushable
+    _install_pre_push(wt, f"cat >/dev/null\necho {_HOOK_FAIL} >&2\nexit 1\n")
+    _commit(wt, "work")
+
+    result = git.push.push(wt, gated=False)
+    git.push.report(result, wt)
+
+    printed = capsys.readouterr().err
+    label = printed.index("(already shown above):")
+    assert printed.index(_HOOK_FAIL) < label < printed.rindex(_HOOK_FAIL)
 
 
 def test_a_push_is_a_timed_trail_span(pushable):

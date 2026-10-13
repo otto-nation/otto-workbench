@@ -126,7 +126,7 @@ _sc_lab() {
   [[ "$output" == *"bats-core — run: bin/local/dev-deps"* ]]
   [[ "$output" == *"GNU parallel (parallel bats runs) — run: sudo apt install parallel"* ]]
   if [[ "$(uname -s)" != Darwin ]]; then
-    [[ "$output" == *"locale en_US.UTF-8 — run: sudo locale-gen en_US.UTF-8"* ]]
+    [[ "$output" == *"locale en_US.UTF-8 — run: sudo apt install locales && sudo locale-gen en_US.UTF-8"* ]]
   fi
 }
 
@@ -154,4 +154,18 @@ _sc_lab() {
   chmod +x "$STUBS/locale"
   run bash -c '. "$1/bin/local/dev-deps"; PATH="$2:/usr/bin:/bin"; _has_locale en_US.UTF-8' _ "$REPO_ROOT" "$STUBS"
   [ "$status" -eq 1 ]
+}
+
+@test "the locale hint installs the locales package when locale-gen is missing" {
+  run bash -c '. "$1"; PATH="$2"; _locale_hint' _ "$REPO_ROOT/bin/local/dev-deps" "$STUBS"
+  [ "$status" -eq 0 ]
+  [ "$output" = "sudo apt install locales && sudo locale-gen en_US.UTF-8" ]
+}
+
+@test "the locale hint is locale-gen alone when it is present" {
+  printf '#!/bin/sh\nexit 0\n' > "$STUBS/locale-gen"
+  chmod +x "$STUBS/locale-gen"
+  run bash -c '. "$1"; PATH="$2"; _locale_hint' _ "$REPO_ROOT/bin/local/dev-deps" "$STUBS"
+  [ "$status" -eq 0 ]
+  [ "$output" = "sudo locale-gen en_US.UTF-8" ]
 }

@@ -220,3 +220,15 @@ def test_a_fork_branch_named_like_a_base_does_not_stack_that_pr():
     run = batch.scheduler.new_run(rows, steps=list(STEP_ORDER), selected=None, pool=1,
                                   auto_publish=[])
     assert [i.stacked_on for i in run.items] == ["", ""]
+
+
+def test_a_repo_whose_refs_would_not_delete_does_not_skip_the_rest(monkeypatch):
+    seen = []
+
+    def drop(repo_dir, namespace):
+        seen.append(repo_dir)
+        return repo_dir != "/a"
+
+    monkeypatch.setattr(batch.plan, "_drop_repo_refs", drop)
+    assert batch.plan.drop_refs(["/b", "/a"], "refs/pr-batch/abcd") is False
+    assert seen == ["/a", "/b"]

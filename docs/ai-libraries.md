@@ -3416,7 +3416,9 @@ A run is kept for `review.gc.GC_STALE_DAYS` after its last save, or for
 `review.gc.GC_FAILED_STALE_DAYS` when it kept work a person may come back for —
 see `retention_days`. Its lock is taken, non-blocking, around the removal, so a
 run some process holds is skipped rather than deleted under it, and a run whose
-refs would not all delete is kept for the next sweep.
+refs would not all delete is kept for the next sweep. That retry is unbounded: a
+ref that can never delete (a permissions problem, say) keeps the run, and warns,
+on every sweep.
 
 ### batch/model.py
 

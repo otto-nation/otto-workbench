@@ -129,8 +129,9 @@ class TestShaDriftReverify:
 
         assert len(diff_calls) == 1, "Should fetch fresh diff, not use sidecar"
 
-    def _run_with_finding(self, rp, tmp_path, trail, head_sha, header_sha=None):
+    def _run_with_finding(self, rp, tmp_path, head_sha, header_sha=None, trail=None):
         """Run run_post with one inline finding; return the post tracking it saved."""
+        trail = trail or MagicMock()
         args, review_file = self._make_args(tmp_path)
         if header_sha:
             review_file.write_text(self.REVIEW_TEXT.replace("aaa1111bbb2222", header_sha))
@@ -161,7 +162,7 @@ class TestShaDriftReverify:
 
     def test_drift_records_sha_in_tracking(self, rp, tmp_path):
         new_head = "ccc3333ddd4444"
-        tracking = self._run_with_finding(rp, tmp_path, MagicMock(), new_head)
+        tracking = self._run_with_finding(rp, tmp_path, new_head)
         assert tracking.review_sha == "aaa1111bbb2222"
         assert tracking.head_sha_at_post == new_head
         assert tracking.sha_drifted is True
@@ -176,7 +177,7 @@ class TestShaDriftReverify:
         """
         trail = MagicMock()
         tracking = self._run_with_finding(
-            rp, tmp_path, trail, "aaa1111bbb2222", header_sha="aaa1111")
+            rp, tmp_path, "aaa1111bbb2222", header_sha="aaa1111", trail=trail)
         assert tracking.review_sha == "aaa1111"
         assert tracking.sha_drifted is False
         assert not [c for c in trail.info.call_args_list if c.args[0] == "sha_drift"]

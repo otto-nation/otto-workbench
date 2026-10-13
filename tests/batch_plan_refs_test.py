@@ -105,7 +105,7 @@ def test_drop_refs_removes_the_namespace_and_nothing_else(tmp_path):
     pair = remote_and_clone(tmp_path)
     ns = batch.plan.new_namespace()
     batch.plan.fetch_namespace(str(pair.work), ns)
-    batch.plan.drop_refs([str(pair.work)], ns)
+    assert batch.plan.drop_refs([str(pair.work)], ns) is True
     assert git_out(pair.work, "for-each-ref", ns) == ""
     assert git_out(pair.work, "for-each-ref", "refs/remotes/origin") != ""
 
@@ -157,7 +157,7 @@ def test_a_run_is_saved_done_before_its_refs_are_dropped(monkeypatch):
     assert batch.store.load(run.id).status is RunStatus.DONE
 
 
-def test_a_ref_that_will_not_delete_is_warned_about(tmp_path, monkeypatch, capsys):
+def test_a_ref_that_will_not_delete_is_warned_about_and_reported(tmp_path, monkeypatch, capsys):
     pair = remote_and_clone(tmp_path)
     ns = batch.plan.new_namespace()
     batch.plan.fetch_namespace(str(pair.work), ns)
@@ -169,7 +169,7 @@ def test_a_ref_that_will_not_delete_is_warned_about(tmp_path, monkeypatch, capsy
         return real(*args, **kw)
 
     monkeypatch.setattr(git.client, "run", run)
-    batch.plan.drop_refs([str(pair.work)], ns)
+    assert batch.plan.drop_refs([str(pair.work)], ns) is False
     err = capsys.readouterr().err
     assert f"could not delete {ns}/feat in {pair.work}: ref is locked" in err
 
@@ -220,3 +220,15 @@ def test_a_fork_branch_named_like_a_base_does_not_stack_that_pr():
     run = batch.scheduler.new_run(rows, steps=list(STEP_ORDER), selected=None, pool=1,
                                   auto_publish=[])
     assert [i.stacked_on for i in run.items] == ["", ""]
+
+
+def test_a_repo_whose_refs_would_not_delete_does_not_skip_the_rest(monkeypatch):
+    seen = []
+
+    def drop(repo_dir, namespace):
+        seen.append(repo_dir)
+        return repo_dir != "/a"
+
+    monkeypatch.setattr(batch.plan, "_drop_repo_refs", drop)
+    assert batch.plan.drop_refs(["/b", "/a"], "refs/pr-batch/abcd") is False
+    assert seen == ["/a", "/b"]

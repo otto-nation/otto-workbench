@@ -39,10 +39,10 @@ def _item(status=ItemStatus.DONE, step_status=StepStatus.DONE, drafted=False):
 
 
 def _save(run_id, status=RunStatus.DONE, item=None, decisions=(), age_days=10.0,
-          namespace="refs/pr-batch/abcd"):
+          namespace="refs/pr-batch/abcd", ref_dirs=("/r",)):
     run = Run(id=run_id, started_at="t", steps=[Step.REBASE], pool=1, auto_publish=[],
               status=status, items=[item or _item()], decisions=list(decisions),
-              ref_namespace=namespace, ref_dirs=["/r"])
+              ref_namespace=namespace, ref_dirs=list(ref_dirs))
     batch.store.save(run)
     stamp = NOW - age_days * DAY
     os.utime(batch.store.run_dir(run_id) / batch.store.STATE_FILE, (stamp, stamp))
@@ -135,11 +135,30 @@ def test_a_run_that_changes_before_the_lock_is_kept(dropped_refs):
 
 def test_refs_are_dropped_before_the_run_is_removed(dropped_refs):
     seen = []
-    dropped_refs.side_effect = lambda dirs, ns: seen.append(
-        (dirs, ns, (batch.store.run_dir("r1") / batch.store.STATE_FILE).is_file()))
+    def record(dirs, ns):
+        seen.append((dirs, ns, (batch.store.run_dir("r1") / batch.store.STATE_FILE).is_file()))
+        return True
+
+    dropped_refs.side_effect = record
     _save("r1", age_days=365)
     batch.gc.gc_runs(now=NOW)
     assert seen == [(["/r"], "refs/pr-batch/abcd", True)]
+    assert _remaining() == []
+
+
+def test_a_run_whose_refs_would_not_delete_is_kept(dropped_refs):
+    dropped_refs.return_value = False
+    _save("r1", age_days=365)
+    assert batch.gc.gc_runs(now=NOW) == 0
+    assert _remaining() == ["r1"]
+
+
+def test_a_run_with_no_refs_to_drop_is_removed(tmp_path):
+    """Nothing to drop is not a failure: a run with no namespace, or whose
+    checkout is gone, is still collected. Uses the real `drop_refs`."""
+    _save("no-ns", age_days=365, namespace="")
+    _save("gone", age_days=365, ref_dirs=[str(tmp_path / "gone")])
+    assert batch.gc.gc_runs(now=NOW) == 2
     assert _remaining() == []
 
 

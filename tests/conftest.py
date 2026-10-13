@@ -486,24 +486,22 @@ def _clear_lock_env():
     Autouse for the same reason as _clear_agent_env: this is the floor, so
     the next module that takes a lock does not have to remember.
 
-    Both markers, not just the target's: a test that claims a checkout leaves
-    TREE_LOCK_ENV behind exactly the way it leaves LOCK_ENV behind.
+    All three markers, not just the target's: a test that claims a checkout or a global lock leaves its marker behind exactly the way it leaves LOCK_ENV behind.
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
     import core.run_lock
 
-    saved = os.environ.pop(core.run_lock.LOCK_ENV, None)
-    saved_tree = os.environ.pop(core.run_lock.TREE_LOCK_ENV, None)
+    markers = (core.run_lock.LOCK_ENV, core.run_lock.TREE_LOCK_ENV,
+               core.run_lock.GLOBAL_LOCK_ENV)
+    saved = {var: os.environ.pop(var, None) for var in markers}
     yield
     core.run_lock._release_all()
     core.run_lock._INHERITED.clear()
-    os.environ.pop(core.run_lock.LOCK_ENV, None)
-    os.environ.pop(core.run_lock.TREE_LOCK_ENV, None)
-    if saved is not None:
-        os.environ[core.run_lock.LOCK_ENV] = saved
-    if saved_tree is not None:
-        os.environ[core.run_lock.TREE_LOCK_ENV] = saved_tree
+    for var in markers:
+        os.environ.pop(var, None)
+        if saved[var] is not None:
+            os.environ[var] = saved[var]
 
 
 @pytest.fixture

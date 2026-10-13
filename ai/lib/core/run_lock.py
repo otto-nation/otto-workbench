@@ -28,6 +28,12 @@ cannot deadlock against another pair.
 A caller that writes to no checkout, or whose worktree git cannot resolve, takes
 the target lock alone.
 
+A third scope is keyed on nothing a run resolves. ``Global(name)`` is a
+machine-wide lock on ``<state_dir>/locks/<name>.lock``, for a command that must
+be the only one of its kind running. Every holder takes its scopes through
+``hold``, in one order — globals by name, then the target, then the checkout —
+so with every take non-blocking no two ``pr`` processes can deadlock.
+
 Uses ``fcntl.flock`` on ``<target_dir>/run.lock`` and on
 ``<git-dir>/workbench-run-tree.lock``. The kernel drops both when the holder
 exits for any reason, including SIGKILL, so there is no stale-lock state to
@@ -95,17 +101,20 @@ from __future__ import annotations
 import atexit
 import contextlib
 import dataclasses
+import enum
 import fcntl
 import json
 import os
 import subprocess
 import sys
 from collections import OrderedDict
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 
 import core.log
 import core.timeouts
+import core.workbench_paths
 
 LOCK_FILE = "run.lock"
 LOCK_ENV = "WORKBENCH_RUN_LOCK"
@@ -117,6 +126,48 @@ LOCK_ENV = "WORKBENCH_RUN_LOCK"
 # implies the other.
 TREE_LOCK_FILE = "workbench-run-tree.lock"
 TREE_LOCK_ENV = "WORKBENCH_RUN_LOCK_TREE"
+
+# Machine-wide locks, keyed on a fixed name rather than on anything a run
+# resolves, and their marker.
+GLOBAL_LOCK_ENV = "WORKBENCH_RUN_LOCK_GLOBAL"
+GLOBAL_LOCKS_DIR = "locks"
+
+
+@dataclasses.dataclass(frozen=True)
+class Global:
+    """A machine-wide lock, keyed on a fixed name rather than on what a run targets.
+
+    For a command that names no target of its own but must still be the only
+    one of its kind running — `pr batch run` and `resume`, which plan across
+    every open PR and would otherwise both pass "is a run active?" in the
+    seconds before either has started one.
+    """
+
+    name: str
+
+    def __post_init__(self) -> None:
+        if not self.name or "/" in self.name or self.name.startswith("."):
+            raise ValueError(
+                f"a global lock is named by one plain path component, not {self.name!r}")
+
+
+class Scope(enum.Enum):
+    """The scopes keyed on what a run resolved: its target, and the checkout it writes to."""
+
+    TARGET = "target"
+    CHECKOUT = "checkout"
+
+
+TARGET = Scope.TARGET
+CHECKOUT = Scope.CHECKOUT
+
+# What a command declares it holds: any mix of the three. A union rather than
+# a base class because the kinds carry different data — a Global its name, the
+# Scope members nothing until a run resolves what they key on.
+LockScope = Global | Scope
+
+# The explicit spelling of "takes nothing", so a declaration reads as a decision.
+NO_LOCK: frozenset[LockScope] = frozenset()
 
 @dataclasses.dataclass
 class _Held:
@@ -165,12 +216,19 @@ class LockBusy(RuntimeError):
         self.holder = holder
         self.path = path
         self.subject = subject
+        # The scope's kind — "global", "target" or "checkout" — without the
+        # name or label a subject may carry after it.
+        self.kind = subject.split(" ", 1)[0]
         pid = holder.get("pid", "?")
         command = holder.get("command", "unknown command")
         started = holder.get("started", "unknown time")
+        # A holder that learned its run id after taking the lock records it
+        # (`note_holder`), and a contender is told which run to wait for.
+        run = holder.get("run")
+        tail = f", run {run}" if run else ""
         super().__init__(
             f"another pr run already owns this {subject}: "
-            f"{command} (pid {pid}, started {started})"
+            f"{command} (pid {pid}, started {started}{tail})"
         )
 
 
@@ -254,10 +312,15 @@ class _LockSpec:
     subject: str
 
 
-def _target_spec(target_dir: Path) -> _LockSpec:
-    """Name the target's lock. Resolution only — nothing is opened here."""
+def _target_spec(target_dir: Path, label: str = "") -> _LockSpec:
+    """Name the target's lock. Resolution only — nothing is opened here.
+
+    ``label`` (``repo@branch``) is what a refusal calls the target; without one
+    it says "target" alone.
+    """
     root = Path(target_dir)
-    return _LockSpec(str(root), root / LOCK_FILE, LOCK_ENV, "target")
+    subject = f"target {label}" if label else "target"
+    return _LockSpec(str(root), root / LOCK_FILE, LOCK_ENV, subject)
 
 
 def _sync_marker(var: str) -> None:
@@ -452,6 +515,93 @@ def acquire(target_dir: Path, command: str, started: str, *,
             yield
 
 
+def global_lock_path(name: str) -> Path:
+    """Where the global lock *name* lives: ``<state_dir>/locks/<name>.lock``.
+
+    Resolved per call, like every state-root path, so ``WORKBENCH_STATE_DIR``
+    reaches it.
+    """
+    return core.workbench_paths.state_dir() / GLOBAL_LOCKS_DIR / f"{name}.lock"
+
+
+def _global_spec(scope: Global) -> _LockSpec:
+    path = global_lock_path(scope.name)
+    return _LockSpec(str(path), path, GLOBAL_LOCK_ENV, f"global {scope.name}")
+
+
+def _rank(scope: LockScope) -> tuple[int, str]:
+    """Sort key for the one acquisition order."""
+    if isinstance(scope, Global):
+        return (0, scope.name)
+    return (1, "") if scope is TARGET else (2, "")
+
+
+def ordered(scopes: Iterable[LockScope]) -> list[LockScope]:
+    """*scopes* in the order every holder takes them: globals by name, target, checkout.
+
+    Every take is non-blocking, and every `pr` process takes its scopes in this
+    one order, so no two of them can deadlock however their sets overlap.
+    """
+    return sorted(set(scopes), key=_rank)
+
+
+def globals_in(scopes: Iterable[LockScope]) -> frozenset[Global]:
+    """The global scopes among *scopes*."""
+    return frozenset(s for s in scopes if isinstance(s, Global))
+
+
+def _scope_spec(scope: LockScope, *, target_dir: Path | None, worktree: Path | None,
+                target_label: str) -> _LockSpec | None:
+    """Name one scope's lock, or None for a checkout git cannot name."""
+    if isinstance(scope, Global):
+        return _global_spec(scope)
+    if scope is CHECKOUT:
+        return _tree_spec(worktree)
+    return _target_spec(target_dir, target_label)
+
+
+@contextlib.contextmanager
+def hold(scopes: Iterable[LockScope], *, command: str, started: str,
+         target_dir: Path | None = None, worktree: Path | None = None,
+         target_label: str = ""):
+    """Hold every scope in *scopes* for the block, taken in `ordered` order.
+
+    ``target_dir`` keys ``TARGET`` and is required when it is asked for;
+    ``worktree`` keys ``CHECKOUT``, which is skipped when it is None or git
+    cannot name its git dir. ``target_label`` is what a refusal calls the
+    target. Raises LockBusy when any scope is held elsewhere, having released
+    the ones before it.
+    """
+    scopes = frozenset(scopes)
+    if TARGET in scopes and target_dir is None:
+        raise ValueError("a TARGET lock needs the target_dir it is keyed on")
+    with contextlib.ExitStack() as stack:
+        for scope in ordered(scopes):
+            spec = _scope_spec(scope, target_dir=target_dir, worktree=worktree,
+                               target_label=target_label)
+            stack.enter_context(_holding(spec, command, started))
+        yield
+
+
+def note_holder(scope: Global, **fields: str) -> None:
+    """Add *fields* to the holder record of a global lock this process holds.
+
+    For a holder that learns something worth telling a contender only after it
+    took the lock: `pr batch run` mints its run id after planning, under the
+    batch lock it took first, and a refused second batch is then told the run.
+
+    A no-op when this process does not hold *scope*. The record is diagnostic,
+    and a caller reached without the lock — a test driving a handler directly —
+    loses nothing but that detail in someone else's message.
+    """
+    held = _HELD.get(str(global_lock_path(scope.name)))
+    if held is None:
+        return
+    record = _read_holder(held.path)
+    record.update(fields)
+    _write_record(held.handle, record)
+
+
 def claim_for_process(target_dir: Path, command: str, started: str, *,
                       worktree: Path | None = None) -> None:
     """Take the locks for the rest of this process's life, or exit 1.
@@ -501,7 +651,16 @@ def is_held(target_dir: Path) -> bool:
     ``flock`` conflicts across open file descriptions, so probing from a second
     descriptor already reports our own lock as held.
     """
-    path = Path(target_dir) / LOCK_FILE
+    return _probe(Path(target_dir) / LOCK_FILE)
+
+
+def is_global_held(scope: Global) -> bool:
+    """Whether anyone holds the global lock *scope* — asked of the kernel, like `is_held`."""
+    return _probe(global_lock_path(scope.name))
+
+
+def _probe(path: Path) -> bool:
+    """Whether *path*'s flock is held, by trying to take it from a fresh descriptor."""
     if not path.exists():
         return False
     try:
@@ -522,7 +681,7 @@ def is_held(target_dir: Path) -> bool:
 def report_busy(exc: LockBusy) -> None:
     """Print a contention error with the remediation hint."""
     core.log.error(str(exc))
-    if exc.subject == "checkout":
+    if exc.kind == "checkout":
         # Not the same work twice: another target is being written to in this
         # tree, so waiting is one answer and running elsewhere is the other.
         core.log.info("that run is writing to this working tree — wait for it, run "

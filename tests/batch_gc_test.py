@@ -1,0 +1,160 @@
+import fcntl
+import os
+import sys
+import time
+from pathlib import Path
+from unittest import mock
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+LIB_DIR = REPO_ROOT / "ai" / "lib"
+if str(LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(LIB_DIR))
+
+import batch.gc  # noqa: E402
+import batch.store  # noqa: E402
+import core.run_lock  # noqa: E402
+import review.gc  # noqa: E402
+from batch.model import (  # noqa: E402
+    Decision,
+    DecisionKind,
+    Item,
+    ItemStatus,
+    Run,
+    RunStatus,
+    Step,
+    StepRecord,
+    StepStatus,
+)
+
+DAY = 86400
+NOW = 2_000_000_000.0
+
+
+def _item(status=ItemStatus.DONE, step_status=StepStatus.DONE, drafted=False):
+    return Item(key="o/r#1", repo="o/r", repo_dir="/r", pr=1, branch="b", head_sha="aaa",
+                status=status, steps=[StepRecord(Step.REBASE, status=step_status,
+                                                 drafted=drafted)])
+
+
+def _save(run_id, status=RunStatus.DONE, item=None, decisions=(), age_days=10.0,
+          namespace="refs/pr-batch/abcd"):
+    run = Run(id=run_id, started_at="t", steps=[Step.REBASE], pool=1, auto_publish=[],
+              status=status, items=[item or _item()], decisions=list(decisions),
+              ref_namespace=namespace, ref_dirs=["/r"])
+    batch.store.save(run)
+    stamp = NOW - age_days * DAY
+    os.utime(batch.store.run_dir(run_id) / batch.store.STATE_FILE, (stamp, stamp))
+    return run
+
+
+@pytest.fixture
+def dropped_refs():
+    with mock.patch("batch.plan.drop_refs") as drop:
+        yield drop
+
+
+def _remaining():
+    return batch.store.run_ids()
+
+
+@pytest.mark.parametrize("status,removed", [
+    (RunStatus.DONE, True),
+    (RunStatus.CANCELLED, True),
+    (RunStatus.RUNNING, False),
+    (RunStatus.WAITING, False),
+    (RunStatus.INTERRUPTED, False),
+])
+def test_only_finished_runs_are_removed(status, removed, dropped_refs):
+    _save("r1", status=status, age_days=365)
+    assert batch.gc.gc_runs(now=NOW) == int(removed)
+    assert _remaining() == ([] if removed else ["r1"])
+
+
+def test_a_clean_run_is_kept_until_the_stale_window(dropped_refs):
+    _save("young", age_days=review.gc.GC_STALE_DAYS - 0.5)
+    _save("old", age_days=review.gc.GC_STALE_DAYS + 0.5)
+    assert batch.gc.gc_runs(now=NOW) == 1
+    assert _remaining() == ["young"]
+
+
+@pytest.mark.parametrize("item,decisions", [
+    (_item(step_status=StepStatus.FAILED), []),
+    (_item(status=ItemStatus.DROPPED), []),
+    (_item(status=ItemStatus.READY_TO_PUBLISH, drafted=True), []),
+    (_item(drafted=True), [Decision(id="d1", item="o/r#1", step="publish",
+                                    kind=DecisionKind.PUBLISH, resolution="discard")]),
+    (_item(), [Decision(id="d1", item="o/r#1", step="publish", kind=DecisionKind.FAILED)]),
+], ids=["failed-step", "dropped", "drafted-unpublished", "drafted-discarded",
+        "open-failed-decision"])
+def test_a_run_that_kept_work_gets_the_failed_window(item, decisions, dropped_refs):
+    _save("kept", item=item, decisions=decisions, age_days=review.gc.GC_STALE_DAYS + 1)
+    assert batch.gc.gc_runs(now=NOW) == 0
+    _save("kept", item=item, decisions=decisions,
+          age_days=review.gc.GC_FAILED_STALE_DAYS + 1)
+    assert batch.gc.gc_runs(now=NOW) == 1
+
+
+def test_published_drafts_and_settled_failures_count_as_clean(dropped_refs):
+    decisions = [
+        Decision(id="d1", item="o/r#1", step="rebase", kind=DecisionKind.FAILED,
+                 resolution="retry"),
+        Decision(id="d2", item="o/r#1", step="publish", kind=DecisionKind.PUBLISH,
+                 resolution="publish"),
+    ]
+    _save("clean", item=_item(drafted=True), decisions=decisions,
+          age_days=review.gc.GC_STALE_DAYS + 1)
+    assert batch.gc.gc_runs(now=NOW) == 1
+
+
+def test_a_held_lock_keeps_the_run(dropped_refs):
+    _save("held", age_days=365)
+    # A second open file description conflicts with gc's own, as another
+    # process's scheduler would.
+    with open(batch.store.run_dir("held") / core.run_lock.LOCK_FILE, "a+") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        assert batch.gc.gc_runs(now=NOW) == 0
+    assert _remaining() == ["held"]
+    dropped_refs.assert_not_called()
+
+
+def test_a_run_that_changes_before_the_lock_is_kept(dropped_refs):
+    _save("racy", age_days=365)
+    real = core.run_lock.acquire
+
+    def revive(*args, **kwargs):
+        _save("racy", status=RunStatus.RUNNING, age_days=365)
+        return real(*args, **kwargs)
+
+    with mock.patch("core.run_lock.acquire", side_effect=revive):
+        assert batch.gc.gc_runs(now=NOW) == 0
+    assert _remaining() == ["racy"]
+    dropped_refs.assert_not_called()
+
+
+def test_refs_are_dropped_before_the_run_is_removed(dropped_refs):
+    seen = []
+    dropped_refs.side_effect = lambda dirs, ns: seen.append(
+        (dirs, ns, (batch.store.run_dir("r1") / batch.store.STATE_FILE).is_file()))
+    _save("r1", age_days=365)
+    batch.gc.gc_runs(now=NOW)
+    assert seen == [(["/r"], "refs/pr-batch/abcd", True)]
+    assert _remaining() == []
+
+
+def test_an_unreadable_state_file_is_kept(dropped_refs):
+    _save("bad", age_days=365)
+    (batch.store.run_dir("bad") / batch.store.STATE_FILE).write_text("{not json")
+    assert batch.gc.gc_runs(now=NOW) == 0
+    assert _remaining() == ["bad"]
+
+
+def test_a_run_that_cannot_be_removed_is_reported_not_counted(dropped_refs):
+    _save("r1", age_days=365)
+    with mock.patch("batch.store.remove", side_effect=OSError("busy")):
+        assert batch.gc.gc_runs(now=NOW) == 0
+
+
+def test_no_batch_directory_is_nothing_to_clean():
+    assert batch.gc.gc_runs(now=time.time()) == 0

@@ -36,6 +36,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import batch.gc
 import cli.dispatch
 from cli.registry import COMMANDS
 import core.log
@@ -307,7 +308,7 @@ def cmd_gc(argv: list[str], ctx: pr.context.ResolvedContext, *, trail: Trail, **
     """
     # All user-scoped, so this works from a bare repo. Our own target is
     # skipped: we are holding its lock right now.
-    local = review.gc.gc_reviews()
+    local = review.gc.gc_reviews() + batch.gc.gc_runs()
     outcome = (
         review.gc.prune_merged_reviews()
         + review.gc.prune_merged_targets(skip=ctx.target_dir, trail=trail)

@@ -178,6 +178,7 @@ def drop_refs(repo_dirs: list[str], namespace: str) -> bool:
     """
     if not namespace.startswith(f"{NAMESPACE_ROOT}/"):
         return True
+    # A list, not a generator: all() would short-circuit and skip the remaining repos after one failure.
     results = [_drop_repo_refs(d, namespace) for d in sorted(set(repo_dirs))]
     return all(results)
 

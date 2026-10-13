@@ -266,7 +266,7 @@ LIB_SRC_DIR="$WORKBENCH_DIR/lib"
 INSTALL_COMPONENTS_FILE="$WORKBENCH_DIR/install.components"
 
 # ─── Workbench source — packages ────────────────────────────────────────────
-PACKAGES_DIR="$WORKBENCH_DIR/packages"
+PACKAGES_DIR="${PACKAGES_DIR:-$WORKBENCH_DIR/packages}"
 CORE_MANIFEST="$WORKBENCH_DIR/packages/Brewfile"
 
 # ─── Workbench source — maintenance ──────────────────────────────────────────

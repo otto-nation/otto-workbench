@@ -12,38 +12,38 @@ tap "otto-nation/tap"
 # ---------------------------------------------------------------------------
 # Shell & terminal
 # ---------------------------------------------------------------------------
-brew "bash"
-brew "jq"
-brew "tree"
-brew "yq"
+brew "bash"  # linux: system
+brew "jq"  # mise: jq
+brew "tree"  # linux: system
+brew "yq"  # mise: yq
 
 # ---------------------------------------------------------------------------
 # AI tooling
 # ---------------------------------------------------------------------------
-brew "pipx"
-brew "uv"
+brew "pipx"  # mise: pipx
+brew "uv"  # mise: uv
 
 # ---------------------------------------------------------------------------
 # Containers
 # ---------------------------------------------------------------------------
-brew "docker"
+brew "docker"  # linux: system
 
 # ---------------------------------------------------------------------------
 # Dev workflow
 # ---------------------------------------------------------------------------
-brew "bats-core"
-brew "delta"
-brew "parallel"
-brew "gh"
-brew "go-task/tap/go-task"
-brew "worktrunk"
-brew "otto-nation/tap/otto-stack"
-brew "shellcheck"
+brew "bats-core"  # mise: bats; cmd: bats
+brew "delta"  # mise: delta
+brew "parallel"  # linux: system
+brew "gh"  # mise: gh
+brew "go-task/tap/go-task"  # mise: task; cmd: task
+brew "worktrunk"  # mise: worktrunk; cmd: wt
+brew "otto-nation/tap/otto-stack"  # mise: github:otto-nation/otto-stack
+brew "shellcheck"  # mise: shellcheck
 
 # ---------------------------------------------------------------------------
 # Security
 # ---------------------------------------------------------------------------
-brew "gitleaks"
+brew "gitleaks"  # mise: gitleaks
 
 # ---------------------------------------------------------------------------
 # Casks

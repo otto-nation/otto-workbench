@@ -615,6 +615,25 @@ Sourced by `bin/otto-workbench`. Reads path constants (`USER_*`, `CLAUDE_*`,
 `SKILLS_*`, `GUIDELINES_*`) and colour vars from `lib/ui.sh`; nothing from
 CLI-local state.
 
+### packages.sh
+
+Package manifests — the Brewfiles under packages/ and the install identity
+their trailing annotations declare. One line owns each package: its formula,
+how it installs without Homebrew, and the binary it provides.
+
+Annotation grammar, after `#` on a brew line, `;`-separated:
+  mise: SPEC | linux: system | macos-only | git: URL   (exactly one disposition)
+  cmd: BIN                                             (optional)
+Cask lines are implicitly macos-only.
+
+| Function | Purpose |
+|----------|---------|
+| `package_manifests OUT` | fills array OUT with every *.Brewfile under $PACKAGES_DIR, recursively, sorted. |
+| `package_lookup NAME OUT` | fills assoc OUT with the manifest entry for NAME (full formula or its short name) plus OUT[manifest]. Returns 1 when NAME is in no manifest under $PACKAGES_DIR. |
+| `package_entries FILE OUT` | fills array OUT with FILE's short names in order. |
+
+Loaded via `ui.sh`.
+
 ### portable.sh
 
 Machine readers that work on both userlands.

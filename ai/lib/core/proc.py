@@ -127,9 +127,13 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import IO, TextIO
 
 import core.children
 import core.timeouts
+
+# Bound on waiting for relay pumps after a kill; see `_finish_pumps`.
+_PUMP_JOIN_TIMEOUT = core.timeouts.QUICK
 
 # gh reports a transport failure as "HTTP 503: ..." on stderr, whether it came
 # from REST or GraphQL, and git over https reports one as "HTTP 502" too.
@@ -525,6 +529,16 @@ def _reap(process: subprocess.Popen) -> str:
     return ""
 
 
+def _close_quietly(pipe: IO | None) -> None:
+    """Close *pipe* if there is one, tolerating one the child already broke."""
+    if pipe is None:
+        return
+    try:
+        pipe.close()
+    except (BrokenPipeError, OSError, ValueError):
+        pass
+
+
 def _close_pipes(process: subprocess.Popen) -> None:
     """Close the three pipes, tolerating one the child already broke.
 
@@ -535,12 +549,7 @@ def _close_pipes(process: subprocess.Popen) -> None:
     alone — one exit discipline is easier to keep right than three.
     """
     for pipe in (process.stdout, process.stderr, process.stdin):
-        if pipe is None:
-            continue
-        try:
-            pipe.close()
-        except (BrokenPipeError, OSError, ValueError):
-            pass
+        _close_quietly(pipe)
 
 
 def _timed_out(cmd: list[str], timeout: float | None, exc: subprocess.TimeoutExpired,
@@ -598,28 +607,26 @@ def _run_in_own_group(cmd: list[str], timeout: float | None, input_text: str | N
     return CmdResult(returncode=process.returncode, stdout=stdout or "", stderr=stderr or "")
 
 
-def _relay_write(relay, line: str) -> None:
-    """One line onto *relay*; a closed dest must not kill the capture."""
+def _relay_write(relay: TextIO, line: str, lock: threading.Lock) -> None:
+    """One chunk onto *relay* under *lock*; a closed dest must not kill the capture."""
     try:
-        relay.write(line)
-        relay.flush()
+        with lock:
+            relay.write(line)
+            relay.flush()
     except (BrokenPipeError, OSError, ValueError):
         pass
 
 
-def _close_quietly(pipe) -> None:
-    try:
-        pipe.close()
-    except (BrokenPipeError, OSError, ValueError):
-        pass
+def _pump(pipe: TextIO, parts: list[str], relay: TextIO, lock: threading.Lock) -> None:
+    """Copy *pipe* into *parts* and *relay*, line by line, until EOF.
 
-
-def _pump(pipe, parts: list[str], relay) -> None:
-    """Copy *pipe* into *parts* and *relay*, line by line, until EOF."""
+    Line-buffered: a `\\r`-only progress update shows once the next newline
+    arrives, not as it is drawn.
+    """
     try:
         for line in pipe:
             parts.append(line)
-            _relay_write(relay, line)
+            _relay_write(relay, line, lock)
     except (BrokenPipeError, OSError, ValueError):
         pass
     finally:
@@ -634,8 +641,24 @@ def _stop(process: subprocess.Popen, kill_process_group: bool) -> str:
     return _reap(process)
 
 
+def _finish_pumps(process: subprocess.Popen, pumps: list[threading.Thread]) -> None:
+    """Join the pumps for a bounded time, then close what is safe to close.
+
+    A grandchild that inherited the pipe write ends keeps them open after the
+    child is killed, so an unbounded join would outlive the timeout. A pump
+    still blocked in a read owns its pipe (it closes it on exit, and closing
+    under its read would block), so only stdin is closed in that case.
+    """
+    for pump in pumps:
+        pump.join(timeout=_PUMP_JOIN_TIMEOUT)
+    if any(pump.is_alive() for pump in pumps):
+        _close_quietly(process.stdin)
+    else:
+        _close_pipes(process)
+
+
 def _run_relayed(cmd: list[str], timeout: float | None, input_text: str | None,
-                 spawn: dict, relay, *, kill_process_group: bool) -> CmdResult:
+                 spawn: dict, relay: TextIO, *, kill_process_group: bool) -> CmdResult:
     """Run *cmd*, teeing both streams to *relay* while still capturing them.
 
     `subprocess.run` only yields the pipes after the child exits, which is why a
@@ -644,52 +667,40 @@ def _run_relayed(cmd: list[str], timeout: float | None, input_text: str | None,
     """
     stdin = subprocess.PIPE if input_text is not None else subprocess.DEVNULL
     process = subprocess.Popen(
-        cmd,
-        stdin=stdin,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        errors="replace",
-        bufsize=1,
-        cwd=spawn.get("cwd"),
-        env=spawn.get("env"),
-        start_new_session=kill_process_group,
+        cmd, stdin=stdin, start_new_session=kill_process_group, bufsize=1, **spawn,
     )
     stdout_parts: list[str] = []
     stderr_parts: list[str] = []
+    lock = threading.Lock()
     pumps = [
-        threading.Thread(target=_pump, args=(process.stdout, stdout_parts, relay)),
-        threading.Thread(target=_pump, args=(process.stderr, stderr_parts, relay)),
+        threading.Thread(target=_pump, args=(process.stdout, stdout_parts, relay, lock),
+                         daemon=True),
+        threading.Thread(target=_pump, args=(process.stderr, stderr_parts, relay, lock),
+                         daemon=True),
     ]
     for pump in pumps:
         pump.start()
     try:
         if input_text is not None and process.stdin is not None:
-            process.stdin.write(input_text)
-            process.stdin.close()
+            # A child that exited early closes its end; that is its answer, not ours.
+            with contextlib.suppress(BrokenPipeError):
+                process.stdin.write(input_text)
+                process.stdin.close()
         process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         survivors = _stop(process, kill_process_group)
-        for pump in pumps:
-            pump.join()
-        _close_pipes(process)
+        _finish_pumps(process, pumps)
         _record_kill(cmd, f"timed out after {timeout:g}s")
-        detail = f"timed out after {timeout:g}s: {' '.join(cmd)}{survivors}"
-        captured = "".join(stderr_parts)
-        return CmdResult(
-            returncode=TIMEOUT_RETURNCODE,
-            stdout="".join(stdout_parts),
-            stderr=f"{detail}\n{captured}" if captured else detail,
+        exc = subprocess.TimeoutExpired(
+            cmd, timeout or 0,
+            output="".join(stdout_parts), stderr="".join(stderr_parts),
         )
+        return _timed_out(cmd, timeout, exc, survivors)
     except BaseException:
         _stop(process, kill_process_group)
-        for pump in pumps:
-            pump.join()
-        _close_pipes(process)
+        _finish_pumps(process, pumps)
         raise
-    for pump in pumps:
-        pump.join()
-    _close_pipes(process)
+    _finish_pumps(process, pumps)
     if externally_killed(process.returncode):
         _record_kill(cmd, f"killed by {signal_description(process.returncode)}")
     return CmdResult(
@@ -707,7 +718,7 @@ def run(
     input_text: str | None = None,
     env: dict[str, str] | None = None,
     kill_process_group: bool = False,
-    relay=None,
+    relay: TextIO | None = None,
 ) -> CmdResult:
     """Run *cmd*, capturing both streams, and return what it said.
 

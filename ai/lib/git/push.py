@@ -435,7 +435,8 @@ def _retry_block(wt_path: str | Path, sha: str) -> Retry | None:
 
 
 def _hooks_skipped(args: Sequence[str]) -> bool:
-    return "--no-verify" in args
+    """The push args ask git to skip hooks (`--no-verify` or its short form `-n`)."""
+    return "--no-verify" in args or "-n" in args
 
 
 def _run_push(

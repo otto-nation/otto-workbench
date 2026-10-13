@@ -260,6 +260,24 @@ class TestRunRelay:
         assert seen_at, "marker never reached the relay"
         assert done - seen_at[0] >= pause / 2
 
+    def test_timeout_returns_though_a_grandchild_holds_the_pipe(self, monkeypatch):
+        monkeypatch.setattr(core.proc, "_PUMP_JOIN_TIMEOUT", 0.5)
+        start = time.monotonic()
+        result = core.proc.run(
+            ["sh", "-c", "sleep 5 & sleep 5"],
+            timeout=0.3,
+            relay=_ListDest(),
+        )
+        assert result.returncode == core.proc.TIMEOUT_RETURNCODE
+        assert time.monotonic() - start < 4
+
+    def test_early_exit_child_does_not_break_input(self):
+        result = core.proc.run(
+            ["true"], timeout=core.timeouts.QUICK, relay=_ListDest(),
+            input_text="x" * 1_000_000,
+        )
+        assert result.ok
+
     def test_a_failure_is_still_captured(self):
         dest = _ListDest()
         result = core.proc.run(

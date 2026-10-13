@@ -486,7 +486,9 @@ def _clear_lock_env():
     Autouse for the same reason as _clear_agent_env: this is the floor, so
     the next module that takes a lock does not have to remember.
 
-    All three markers, not just the target's: a test that claims a checkout or a global lock leaves its marker behind exactly the way it leaves LOCK_ENV behind.
+    All three markers, not just the target's: a test that claims a checkout
+    or a global lock leaves its marker behind exactly the way it leaves
+    LOCK_ENV behind.
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)

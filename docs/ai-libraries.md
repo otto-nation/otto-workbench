@@ -4731,6 +4731,12 @@ cannot deadlock against another pair.
 A caller that writes to no checkout, or whose worktree git cannot resolve, takes
 the target lock alone.
 
+A third scope is keyed on nothing a run resolves. ``Global(name)`` is a
+machine-wide lock on ``<state_dir>/locks/<name>.lock``, for a command that must
+be the only one of its kind running. Every holder takes its scopes through
+``hold``, in one order — globals by name, then the target, then the checkout —
+so with every take non-blocking no two ``pr`` processes can deadlock.
+
 Uses ``fcntl.flock`` on ``<target_dir>/run.lock`` and on
 ``<git-dir>/workbench-run-tree.lock``. The kernel drops both when the holder
 exits for any reason, including SIGKILL, so there is no stale-lock state to

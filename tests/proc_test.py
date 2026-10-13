@@ -261,7 +261,7 @@ class TestRunRelay:
         assert done - seen_at[0] >= pause / 2
 
     def test_timeout_returns_though_a_grandchild_holds_the_pipe(self, monkeypatch):
-        monkeypatch.setattr(core.proc, "_PUMP_JOIN_TIMEOUT", 0.5)
+        monkeypatch.setattr(core.timeouts, "QUICK", 0.5)
         start = time.monotonic()
         result = core.proc.run(
             ["sh", "-c", "sleep 5 & sleep 5"],
@@ -277,6 +277,15 @@ class TestRunRelay:
             input_text="x" * 1_000_000,
         )
         assert result.ok
+
+    def test_timeout_applies_when_child_never_reads_input(self):
+        start = time.monotonic()
+        result = core.proc.run(
+            ["sleep", "30"], timeout=0.5, relay=_ListDest(),
+            input_text="x" * 1_000_000,
+        )
+        assert result.returncode == core.proc.TIMEOUT_RETURNCODE
+        assert time.monotonic() - start < 10
 
     def test_a_failure_is_still_captured(self):
         dest = _ListDest()
@@ -788,7 +797,7 @@ def test_proc_imports_nothing_from_ai_lib_but_stdlib_only_core(module, allowed):
         for node in ast.walk(tree) if isinstance(node, ast.Import)
         for alias in node.names
     }) - {"__future__", "atexit", "collections", "contextlib", "dataclasses",
-          "pathlib", "typing", "os", "re", "signal", "subprocess", "sys", "threading"}
+          "pathlib", "typing", "os", "re", "signal", "subprocess", "sys", "threading", "time"}
     assert reached == {"core"}, reached
 
     workbench = {

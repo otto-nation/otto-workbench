@@ -605,3 +605,7 @@ def test_a_no_verify_push_records_that_hooks_were_skipped(pushable):
              and (e.get("data") or {}).get("no_verify") is True]
     assert hooks, events
     assert "--no-verify" in hooks[0]["detail"]
+
+
+def test_a_dry_run_push_is_not_recorded_as_skipping_hooks():
+    assert git.push._hooks_skipped(("-n",)) is False

@@ -123,6 +123,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -131,9 +132,6 @@ from typing import IO, TextIO
 
 import core.children
 import core.timeouts
-
-# Bound on waiting for relay pumps after a kill; see `_finish_pumps`.
-_PUMP_JOIN_TIMEOUT = core.timeouts.QUICK
 
 # gh reports a transport failure as "HTTP 503: ..." on stderr, whether it came
 # from REST or GraphQL, and git over https reports one as "HTTP 502" too.
@@ -648,13 +646,27 @@ def _finish_pumps(process: subprocess.Popen, pumps: list[threading.Thread]) -> N
     child is killed, so an unbounded join would outlive the timeout. A pump
     still blocked in a read owns its pipe (it closes it on exit, and closing
     under its read would block), so only stdin is closed in that case.
+
+    The bound is `core.timeouts.QUICK`, read at call time, shared by all pumps.
+    A pump that outlives it keeps appending to the captured parts and writing to
+    the relay after `run` returns; the result is a snapshot, so late relay output
+    can appear after the caller has moved on.
     """
+    deadline = time.monotonic() + core.timeouts.QUICK
     for pump in pumps:
-        pump.join(timeout=_PUMP_JOIN_TIMEOUT)
+        pump.join(timeout=max(0.0, deadline - time.monotonic()))
     if any(pump.is_alive() for pump in pumps):
         _close_quietly(process.stdin)
     else:
         _close_pipes(process)
+
+
+def _feed_stdin(process: subprocess.Popen, input_text: str) -> None:
+    """Write *input_text* to the child and close its stdin (runs on a thread)."""
+    # A child that exited early closes its end; that is its answer, not ours.
+    with contextlib.suppress(BrokenPipeError, ValueError, OSError):
+        process.stdin.write(input_text)
+        process.stdin.close()
 
 
 def _run_relayed(cmd: list[str], timeout: float | None, input_text: str | None,
@@ -678,14 +690,13 @@ def _run_relayed(cmd: list[str], timeout: float | None, input_text: str | None,
         threading.Thread(target=_pump, args=(process.stderr, stderr_parts, relay, lock),
                          daemon=True),
     ]
+    if input_text is not None and process.stdin is not None:
+        # On a thread so a child that never reads cannot block past the timeout.
+        pumps.append(threading.Thread(target=_feed_stdin, args=(process, input_text),
+                                      daemon=True))
     for pump in pumps:
         pump.start()
     try:
-        if input_text is not None and process.stdin is not None:
-            # A child that exited early closes its end; that is its answer, not ours.
-            with contextlib.suppress(BrokenPipeError):
-                process.stdin.write(input_text)
-                process.stdin.close()
         process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         survivors = _stop(process, kill_process_group)

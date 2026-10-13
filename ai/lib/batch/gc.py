@@ -5,7 +5,8 @@ are live, and an `interrupted` run is one `pr batch resume` can still pick up.
 A run is kept for `review.gc.GC_STALE_DAYS` after its last save, or for
 `review.gc.GC_FAILED_STALE_DAYS` when it kept work a person may come back for —
 see `retention_days`. Its lock is taken, non-blocking, around the removal, so a
-run some process holds is skipped rather than deleted under it.
+run some process holds is skipped rather than deleted under it, and a run whose
+refs would not all delete is kept for the next sweep.
 """
 
 # doc-group: batch
@@ -70,11 +71,17 @@ def _expired(run_id: str, now: float) -> Run | None:
 
 
 def _remove_locked(run: Run, now: float) -> Run | None:
-    """Re-read *run* under its held lock and delete it; None when it was kept."""
+    """Re-read *run* under its held lock and delete it; None when it was kept.
+
+    A run whose refs did not all delete is kept: its state is the only record
+    of the namespace, so the next sweep can try again.
+    """
     fresh = _expired(run.id, now)
     if fresh is None:
         return None
-    batch.plan.drop_refs(fresh.ref_dirs, fresh.ref_namespace)
+    if not batch.plan.drop_refs(fresh.ref_dirs, fresh.ref_namespace):
+        core.log.warn(f"GC: kept batch run {fresh.id} — some of its refs would not delete")
+        return None
     batch.store.remove(fresh.id)
     return fresh
 

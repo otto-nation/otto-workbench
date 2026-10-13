@@ -170,24 +170,31 @@ def fetch_namespace(repo_dir: str, namespace: str) -> bool:
     return r.ok
 
 
-def drop_refs(repo_dirs: list[str], namespace: str) -> None:
-    """Delete *namespace*'s refs in each repo; a no-op for anything outside NAMESPACE_ROOT."""
+def drop_refs(repo_dirs: list[str], namespace: str) -> bool:
+    """Delete *namespace*'s refs in each repo; a no-op for anything outside NAMESPACE_ROOT.
+
+    Returns False when any ref would not delete (each is warned about), True
+    otherwise — including when there was nothing to drop.
+    """
     if not namespace.startswith(f"{NAMESPACE_ROOT}/"):
-        return
-    for repo_dir in sorted(set(repo_dirs)):
-        _drop_repo_refs(repo_dir, namespace)
+        return True
+    results = [_drop_repo_refs(d, namespace) for d in sorted(set(repo_dirs))]
+    return all(results)
 
 
-def _drop_repo_refs(repo_dir: str, namespace: str) -> None:
+def _drop_repo_refs(repo_dir: str, namespace: str) -> bool:
     # A checkout removed since the plan has no refs left to drop, and git
     # cannot even start with it as the working directory.
     if not Path(repo_dir).is_dir():
-        return
+        return True
+    dropped = True
     for ref in git.client.lines("for-each-ref", "--format=%(refname)", namespace,
                                 cwd=repo_dir):
         r = git.client.run("update-ref", "-d", ref, cwd=repo_dir)
         if not r.ok:
             core.log.warn(f"could not delete {ref} in {repo_dir}: {r.stderr.strip()}")
+            dropped = False
+    return dropped
 
 
 def comments_need(threads: list[dict], settled: set[str]) -> StepNeed:

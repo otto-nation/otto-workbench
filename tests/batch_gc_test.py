@@ -39,10 +39,10 @@ def _item(status=ItemStatus.DONE, step_status=StepStatus.DONE, drafted=False):
 
 
 def _save(run_id, status=RunStatus.DONE, item=None, decisions=(), age_days=10.0,
-          namespace="refs/pr-batch/abcd"):
+          namespace="refs/pr-batch/abcd", ref_dirs=("/r",)):
     run = Run(id=run_id, started_at="t", steps=[Step.REBASE], pool=1, auto_publish=[],
               status=status, items=[item or _item()], decisions=list(decisions),
-              ref_namespace=namespace, ref_dirs=["/r"])
+              ref_namespace=namespace, ref_dirs=list(ref_dirs))
     batch.store.save(run)
     stamp = NOW - age_days * DAY
     os.utime(batch.store.run_dir(run_id) / batch.store.STATE_FILE, (stamp, stamp))
@@ -157,7 +157,7 @@ def test_a_run_with_no_refs_to_drop_is_removed(tmp_path):
     """Nothing to drop is not a failure: a run with no namespace, or whose
     checkout is gone, is still collected. Uses the real `drop_refs`."""
     _save("no-ns", age_days=365, namespace="")
-    _save("gone", age_days=365)
+    _save("gone", age_days=365, ref_dirs=[str(tmp_path / "gone")])
     assert batch.gc.gc_runs(now=NOW) == 2
     assert _remaining() == []
 

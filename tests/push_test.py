@@ -12,8 +12,10 @@ remote ends up holding what it held before. That is the failure the verification
 step exists to catch, reproduced rather than simulated.
 """
 
+import json
 import signal
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -31,8 +33,13 @@ from core.trail import Trail  # noqa: E402
 
 from conftest import _last_event, git_in  # noqa: E402
 
+import core.workbench_paths  # noqa: E402
+
 # `pushable` is a fixture: imported so pytest finds it here, never called by name.
-from push_support import _never_runs, _commit, pushable, _lose_pushes, _HOOK_DUMP, _RESET_DUMP_FULL
+from push_support import (  # noqa: E402
+    _never_runs, _commit, pushable, _lose_pushes, _HOOK_DUMP, _RESET_DUMP_FULL,
+    _install_pre_push,
+)
 
 
 # ── the timeout tier ────────────────────────────────────────────────────────
@@ -492,3 +499,109 @@ def test_retry_blocked_when_tree_dirty(pushable, monkeypatch):
 
     assert result.status is git.push.PushStatus.LOST
     assert result.retry is git.push.Retry.DIRTY
+
+
+# ── live hook output and the trail span ─────────────────────────────────────
+
+
+_HOOK_MARKER = "PRE_PUSH_HOOK_MARKER"
+_HOOK_FAIL = "PRE_PUSH_HOOK_FAILED"
+# Long enough that dump-after-exit cannot look like a live relay: if the marker
+# only appears when git returns, `done - seen_at` is ~0; if it was relayed as
+# the hook printed it, the sleep is still running.
+_HOOK_PAUSE = 0.6
+
+
+def _trail_events() -> list[dict]:
+    root = core.workbench_paths.trail_dir()
+    return [json.loads(line) for path in sorted(root.glob("*.jsonl"))
+            for line in path.read_text().splitlines() if line.strip()]
+
+
+class _StderrWatch:
+    """Capture writes to stderr and note when a marker first arrived."""
+
+    def __init__(self, inner):
+        self.inner = inner
+        self.chunks: list[str] = []
+        self.seen_at: list[float] = []
+
+    def write(self, text):
+        self.chunks.append(text)
+        if _HOOK_MARKER in text or _HOOK_FAIL in text:
+            self.seen_at.append(time.monotonic())
+        return self.inner.write(text)
+
+    def flush(self):
+        return self.inner.flush()
+
+    @property
+    def text(self) -> str:
+        return "".join(self.chunks)
+
+
+def test_pre_push_hook_output_is_relayed_before_the_push_returns(pushable, monkeypatch):
+    """A hook that prints then sleeps must be visible while it is still running."""
+    wt, _ = pushable
+    _install_pre_push(wt, f"cat >/dev/null\necho {_HOOK_MARKER}\nsleep {_HOOK_PAUSE}\n")
+    _commit(wt, "work")
+    watch = _StderrWatch(sys.stderr)
+    monkeypatch.setattr(sys, "stderr", watch)
+
+    result = git.push.push(wt, gated=False)
+    done = time.monotonic()
+
+    assert result.status is git.push.PushStatus.PUSHED
+    assert watch.seen_at, f"hook marker never reached stderr: {watch.text!r}"
+    assert done - watch.seen_at[0] >= _HOOK_PAUSE / 2
+    assert _HOOK_MARKER in watch.text
+
+
+def test_a_refusing_hook_is_captured_and_relayed(pushable, monkeypatch):
+    """Failure output is still in the result, not only on the live stream."""
+    wt, _ = pushable
+    _install_pre_push(wt, f"cat >/dev/null\necho {_HOOK_FAIL} >&2\nexit 1\n")
+    _commit(wt, "work")
+    watch = _StderrWatch(sys.stderr)
+    monkeypatch.setattr(sys, "stderr", watch)
+
+    result = git.push.push(wt, gated=False)
+
+    assert result.status is git.push.PushStatus.REFUSED
+    assert result.refusal is git.push.Refusal.HOOK
+    assert _HOOK_FAIL in result.output
+    assert _HOOK_FAIL in watch.text
+
+
+def test_a_push_is_a_timed_trail_span(pushable):
+    wt, _ = pushable
+    _commit(wt, "work")
+    trail = Trail.start(script="test", context={})
+
+    git.push.push(wt, gated=False, trail=trail)
+
+    events = _trail_events()
+    ends = [e for e in events
+            if e.get("event_type") == "span_end" and e.get("span") == "push"]
+    assert len(ends) == 1
+    assert ends[0]["duration_ms"] >= 0
+    hooks = [e for e in events
+             if e.get("action") == "push" and e.get("event_type") == "action"
+             and (e.get("data") or {}).get("no_verify") is False]
+    assert hooks, events
+    assert "hooks ran" in hooks[0]["detail"]
+
+
+def test_a_no_verify_push_records_that_hooks_were_skipped(pushable):
+    wt, _ = pushable
+    _commit(wt, "work")
+    trail = Trail.start(script="test", context={})
+
+    git.push.push(wt, gated=False, args=("--no-verify",), trail=trail)
+
+    events = _trail_events()
+    hooks = [e for e in events
+             if e.get("action") == "push" and e.get("event_type") == "action"
+             and (e.get("data") or {}).get("no_verify") is True]
+    assert hooks, events
+    assert "--no-verify" in hooks[0]["detail"]

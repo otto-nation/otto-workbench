@@ -50,6 +50,12 @@ a dropped connection answers no: the gates passed before git reached the
 transfer, so there is nothing in the tree for a regeneration commit or an AI fix
 pass to act on.
 
+The `git push` subprocess is relayed to stderr as it runs — a pre-push hook that
+prints for minutes is visible, not captured into silence until git exits — and
+the same bytes are kept for classification and the failure artifact. A trail
+records it as a `push` span (the wait) plus whether `--no-verify` skipped the
+hooks. There is no timeout that would kill a legitimate long hook.
+
 This module pushes, verifies, retries, and reports. It does not commit, and it
 does not perform the hook-regenerated-files recovery `land` owns — that sits
 above it, which is what keeps this module's answer to "did it land" independent
@@ -87,6 +93,7 @@ no, so the push has very likely landed and simply cannot be confirmed.
 from __future__ import annotations
 
 import dataclasses
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -97,7 +104,7 @@ import core.log
 import core.proc
 import core.publishing
 import core.timeouts
-from core.trail import Trail
+from core.trail import Trail, tspan
 
 
 class PushStatus(StrEnum):
@@ -427,6 +434,31 @@ def _retry_block(wt_path: str | Path, sha: str) -> Retry | None:
     return None
 
 
+def _hooks_skipped(args: Sequence[str]) -> bool:
+    return "--no-verify" in args
+
+
+def _run_push(
+    wt_path: str | Path,
+    args: Sequence[str],
+    trail: Trail | None,
+) -> core.proc.CmdResult:
+    """`git push` with hook output on stderr live, and a timed trail span."""
+    argv = tuple(args)
+    skipped = _hooks_skipped(argv)
+    with tspan(trail, "push"):
+        result = git.client.run(
+            "push", *argv, cwd=wt_path, relay=sys.stderr,
+        )
+        if trail:
+            trail.info(
+                "push",
+                "hooks skipped (--no-verify)" if skipped else "hooks ran",
+                data={"no_verify": skipped},
+            )
+        return result
+
+
 def _retry_lost(
     wt_path: str | Path,
     lost: PushResult,
@@ -449,7 +481,7 @@ def _retry_lost(
                    data={"sha": lost.sha, "branch": lost.branch})
     core.log.warn("push did not land — retrying once without the gates")
 
-    r = git.client.run("push", "--no-verify", *args, cwd=wt_path)
+    r = _run_push(wt_path, ("--no-verify", *args), trail)
     output = _push_output(r)
     if not r.ok and not _dropped(r):
         artifact = trail.failure(
@@ -500,7 +532,7 @@ def push(
     sha = sha or git.client.head_sha(cwd=wt_path)
     branch = branch or git.client.current_branch(cwd=wt_path)
 
-    r = git.client.run("push", *argv, cwd=wt_path)
+    r = _run_push(wt_path, argv, trail)
     output = _push_output(r)
     if not r.ok and not _dropped(r):
         artifact = trail.failure(

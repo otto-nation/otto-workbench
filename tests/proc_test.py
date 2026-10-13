@@ -216,6 +216,62 @@ class TestRun:
         assert core.proc.run(["true"], timeout=core.timeouts.UNBOUNDED).ok
 
 
+class _ListDest:
+    """A relay that keeps every write, for assertions after the command exits."""
+
+    def __init__(self):
+        self.chunks: list[str] = []
+
+    def write(self, text):
+        self.chunks.append(text)
+
+    def flush(self):
+        return None
+
+    @property
+    def text(self) -> str:
+        return "".join(self.chunks)
+
+
+class TestRunRelay:
+    """Live tee: the caller sees output as it is produced, and still gets it back."""
+
+    def test_output_reaches_the_relay_before_the_command_exits(self):
+        marker = "RELAY_MARKER"
+        seen_at: list[float] = []
+
+        class Dest:
+            def write(self, text):
+                if marker in text:
+                    seen_at.append(time.monotonic())
+
+            def flush(self):
+                return None
+
+        pause = 0.6
+        result = core.proc.run(
+            ["sh", "-c", f"echo {marker}; sleep {pause}"],
+            timeout=core.timeouts.QUICK,
+            relay=Dest(),
+        )
+        done = time.monotonic()
+        assert result.ok
+        assert marker in result.stdout
+        assert seen_at, "marker never reached the relay"
+        assert done - seen_at[0] >= pause / 2
+
+    def test_a_failure_is_still_captured(self):
+        dest = _ListDest()
+        result = core.proc.run(
+            ["sh", "-c", "echo boom >&2; exit 7"],
+            timeout=core.timeouts.QUICK,
+            relay=dest,
+        )
+        assert result.returncode == 7
+        assert "boom" in result.stderr
+        assert "boom" in dest.text
+
+
 class TestRunUndecodableOutput:
     """Bytes that are not UTF-8 are output, not an exception.
 

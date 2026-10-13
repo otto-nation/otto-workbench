@@ -31,6 +31,15 @@ def _never_runs(*cmd, **kwargs):
     raise AssertionError(f"git ran when it should not have: {cmd}")
 
 
+def _install_pre_push(wt: Path, body: str) -> Path:
+    """A repo-local pre-push hook. *body* is the script after the shebang."""
+    hook = wt / ".git" / "hooks" / "pre-push"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text("#!/usr/bin/env bash\n" + body)
+    hook.chmod(0o755)
+    return hook
+
+
 def _commit(wt: Path, message: str) -> str:
     """An empty commit in *wt*, returning its SHA."""
     result = git.client.run(

@@ -122,6 +122,7 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -597,6 +598,107 @@ def _run_in_own_group(cmd: list[str], timeout: float | None, input_text: str | N
     return CmdResult(returncode=process.returncode, stdout=stdout or "", stderr=stderr or "")
 
 
+def _relay_write(relay, line: str) -> None:
+    """One line onto *relay*; a closed dest must not kill the capture."""
+    try:
+        relay.write(line)
+        relay.flush()
+    except (BrokenPipeError, OSError, ValueError):
+        pass
+
+
+def _close_quietly(pipe) -> None:
+    try:
+        pipe.close()
+    except (BrokenPipeError, OSError, ValueError):
+        pass
+
+
+def _pump(pipe, parts: list[str], relay) -> None:
+    """Copy *pipe* into *parts* and *relay*, line by line, until EOF."""
+    try:
+        for line in pipe:
+            parts.append(line)
+            _relay_write(relay, line)
+    except (BrokenPipeError, OSError, ValueError):
+        pass
+    finally:
+        _close_quietly(pipe)
+
+
+def _stop(process: subprocess.Popen, kill_process_group: bool) -> str:
+    """SIGKILL the child or its group, then reap. See `_run_relayed`."""
+    if kill_process_group:
+        return _kill_group(process) + _reap(process)
+    process.kill()
+    return _reap(process)
+
+
+def _run_relayed(cmd: list[str], timeout: float | None, input_text: str | None,
+                 spawn: dict, relay, *, kill_process_group: bool) -> CmdResult:
+    """Run *cmd*, teeing both streams to *relay* while still capturing them.
+
+    `subprocess.run` only yields the pipes after the child exits, which is why a
+    captured `git push` hid a twenty-minute pre-push hook. This path reads as
+    the child writes.
+    """
+    stdin = subprocess.PIPE if input_text is not None else subprocess.DEVNULL
+    process = subprocess.Popen(
+        cmd,
+        stdin=stdin,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        errors="replace",
+        bufsize=1,
+        cwd=spawn.get("cwd"),
+        env=spawn.get("env"),
+        start_new_session=kill_process_group,
+    )
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+    pumps = [
+        threading.Thread(target=_pump, args=(process.stdout, stdout_parts, relay)),
+        threading.Thread(target=_pump, args=(process.stderr, stderr_parts, relay)),
+    ]
+    for pump in pumps:
+        pump.start()
+    try:
+        if input_text is not None and process.stdin is not None:
+            process.stdin.write(input_text)
+            process.stdin.close()
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        survivors = _stop(process, kill_process_group)
+        for pump in pumps:
+            pump.join()
+        _close_pipes(process)
+        _record_kill(cmd, f"timed out after {timeout:g}s")
+        detail = f"timed out after {timeout:g}s: {' '.join(cmd)}{survivors}"
+        captured = "".join(stderr_parts)
+        return CmdResult(
+            returncode=TIMEOUT_RETURNCODE,
+            stdout="".join(stdout_parts),
+            stderr=f"{detail}\n{captured}" if captured else detail,
+        )
+    except BaseException:
+        _stop(process, kill_process_group)
+        for pump in pumps:
+            pump.join()
+        _close_pipes(process)
+        raise
+    for pump in pumps:
+        pump.join()
+    _close_pipes(process)
+    if externally_killed(process.returncode):
+        _record_kill(cmd, f"killed by {signal_description(process.returncode)}")
+    return CmdResult(
+        returncode=process.returncode,
+        stdout="".join(stdout_parts),
+        stderr="".join(stderr_parts),
+    )
+
+
 def run(
     cmd: list[str],
     *,
@@ -605,6 +707,7 @@ def run(
     input_text: str | None = None,
     env: dict[str, str] | None = None,
     kill_process_group: bool = False,
+    relay=None,
 ) -> CmdResult:
     """Run *cmd*, capturing both streams, and return what it said.
 
@@ -674,6 +777,13 @@ def run(
     them. SIGKILL with no grace window either way — the budget has already
     expired, and a TERM-then-KILL ladder doubles the worst case on a call that
     is already late.
+
+    `relay` is a live tee: each line the child writes is copied to it (typically
+    `sys.stderr`) as it arrives, and still collected on the result. Without it
+    both streams stay in the pipe until the child exits, which is how a captured
+    `git push` hid a pre-push hook for the length of the hook. The default path
+    stays silent: most callers want the result, not a second copy on the
+    terminal.
     """
     spawn = {
         "stdout": subprocess.PIPE,
@@ -683,6 +793,11 @@ def run(
         "cwd": cwd,
         "env": env,
     }
+    if relay is not None:
+        return _run_relayed(
+            cmd, timeout, input_text, spawn, relay,
+            kill_process_group=kill_process_group,
+        )
     if kill_process_group:
         return _run_in_own_group(cmd, timeout, input_text, spawn)
     # `input` and `stdin` are mutually exclusive to `subprocess.run` — it opens

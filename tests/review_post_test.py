@@ -129,13 +129,12 @@ class TestShaDriftReverify:
 
         assert len(diff_calls) == 1, "Should fetch fresh diff, not use sidecar"
 
-    def _run_with_finding(self, rp, tmp_path, head_sha, header_sha=None):
-        """Run run_post with one inline finding; return (tracking, trail)."""
+    def _run_with_finding(self, rp, tmp_path, trail, head_sha, header_sha=None):
+        """Run run_post with one inline finding; return the post tracking it saved."""
         args, review_file = self._make_args(tmp_path)
         if header_sha:
             review_file.write_text(self.REVIEW_TEXT.replace("aaa1111bbb2222", header_sha))
         sidecar = rp.ReviewMeta(repo="org/repo")
-        trail = MagicMock()
         pr_data = rp.PRData(
             viewer_login="bot",
             head_sha=head_sha, head_ref="feat", base_ref="main",
@@ -158,11 +157,11 @@ class TestShaDriftReverify:
             rp.run_post(trail, args, "org/repo", sidecar, review_file)
         post_file = review_file.parent / "post.jsonl"
         tracking = serde_from_dict(PostTracking, json.loads(post_file.read_text()))
-        return tracking, trail
+        return tracking
 
     def test_drift_records_sha_in_tracking(self, rp, tmp_path):
         new_head = "ccc3333ddd4444"
-        tracking, _ = self._run_with_finding(rp, tmp_path, new_head)
+        tracking = self._run_with_finding(rp, tmp_path, MagicMock(), new_head)
         assert tracking.review_sha == "aaa1111bbb2222"
         assert tracking.head_sha_at_post == new_head
         assert tracking.sha_drifted is True
@@ -175,8 +174,9 @@ class TestShaDriftReverify:
         `MIN_SHA_PREFIX` long; a plain `!=` would flag this review as written
         against another commit and re-verify every position for nothing.
         """
-        tracking, trail = self._run_with_finding(
-            rp, tmp_path, "aaa1111bbb2222", header_sha="aaa1111")
+        trail = MagicMock()
+        tracking = self._run_with_finding(
+            rp, tmp_path, trail, "aaa1111bbb2222", header_sha="aaa1111")
         assert tracking.review_sha == "aaa1111"
         assert tracking.sha_drifted is False
         assert not [c for c in trail.info.call_args_list if c.args[0] == "sha_drift"]

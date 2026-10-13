@@ -55,7 +55,7 @@ _run_step() {
 
 # _brewfile_plugins — the zsh-* formulae the shell Brewfile lists.
 _brewfile_plugins() {
-  sed -n 's/^brew "\(zsh-[A-Za-z0-9_-]*\)".*/\1/p' "$REPO_ROOT/brew/shell/shell.Brewfile"
+  sed -n 's/^brew "\(zsh-[A-Za-z0-9_-]*\)".*/\1/p' "$REPO_ROOT/packages/shell/shell.Brewfile"
 }
 
 @test "without Homebrew, starship goes through the brew-or-mise helper" {

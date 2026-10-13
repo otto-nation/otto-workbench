@@ -966,7 +966,7 @@ state_file_exists           # returns 0 if state file exists
 | `state_prune_orphans` | removes YAML entries that have no matching steps.sh. Requires lib/components.sh to be sourced (provides discover_step_files). |
 | `state_detect_installed` | detects currently installed components and records them. Uses heuristics (config files, symlinks, directories) to determine what is present. Called by the initial-state migration and by `otto-workbench discover regenerate`. |
 | `state_set KEY VALUE` | sets an arbitrary YAML path under components. Example: state_set "docker.runtime" "orbstack" |
-| `state_append_list KEY VALUE` | appends VALUE to a YAML list (idempotent). Example: state_append_list "brew.stacks" "infra/kubernetes" |
+| `state_append_list KEY VALUE` | appends VALUE to a YAML list (idempotent). Example: state_append_list "packages.stacks" "infra/kubernetes" |
 | `state_get KEY` | reads a YAML value. Returns empty string for missing/null keys. |
 | `state_set_list KEY [VALUE...]` | replaces a YAML list with exactly VALUE..., or empties it when no values are given. Values must not contain newlines, the same assumption `state_get_list` makes by printing one per line. |
 | `state_get_list KEY` | reads a YAML list, one item per line. |
@@ -1011,7 +1011,7 @@ The schema these functions read — the meta block, the tool entry fields, the
 vocabulary it checks a `role` value against.
 
 Sourced directly by its consumers — `bin/local/generate-tool-context`,
-`bin/local/validate-registries`, `brew/summary.sh`, `summary.sh`, and
+`bin/local/validate-registries`, `packages/summary.sh`, `summary.sh`, and
 `ai/claude/steps.sh`. Not in the `ui.sh` facade. It loads `roots.sh` itself when
 the caller has not already sourced `constants.sh`, since an
 `install_check_symlink` value may name a workbench root.
@@ -1030,14 +1030,14 @@ the caller has not already sourced `constants.sh`, since an
 | `reg_len FILE PATH_SEGMENT...` | the length of a sequence, or 0 when it holds nothing. |
 | `reg_len_into VAR FILE PATH_SEGMENT...` | `reg_len` without the fork. |
 | `collect_component_registries ARRAY_REF SCAN_DIR` | the component `registry.yml` files under a root. ARRAY_REF names the caller's array, which is replaced with the paths found one and two directories below SCAN_DIR, in glob order. SCAN_DIR is the root those globs are anchored at; a root holding none of them leaves the array empty rather than filling it with unexpanded patterns. |
-| `collect_registries ARRAY_REF SCAN_DIR [BREW_DIR]` | Populates the caller's array (via nameref) with deduplicated registry paths. |
+| `collect_registries ARRAY_REF SCAN_DIR [PACKAGES_DIR]` | Populates the caller's array (via nameref) with deduplicated registry paths. |
 | `registry_passes_install_check FILE` | returns 0 if the registry should be rendered. Checks meta.install_check and meta.install_check_command. |
 | `iter_registry_env FILE CALLBACK` | Calls CALLBACK var comment default_val setup_url prefix for each env[] entry. |
 | `iter_registry_auth FILE CALLBACK` | Calls CALLBACK name env_var setup_url prefix for each tool with an auth block. |
 | `reg_scan_hold CMD [ARG...]` | run CMD with one registry scan shared by every collector it calls. |
-| `collect_registry_permissions ARRAY_REF SCAN_DIR [BREW_DIR]` | Populates the caller's array (via nameref) with Claude Code Bash permission patterns derived from tools' permission field, one of the tool entry fields described in this module's header comment above. |
-| `collect_claude_env_vars SOURCES_REF TARGETS_REF SCAN_DIR [BREW_DIR]` | Populates two caller arrays (via nameref) with the env vars declared by every registry whose meta block sets `claude_env: true`: sources — the canonical names in ~/.env.local (e.g. AI_MODEL) targets — the names written into ~/.claude/settings.json (e.g. ANTHROPIC_MODEL) When a registry entry has no `target:` field, the target defaults to the source name (backward compatible with registries that predate the mapping). An entry carrying `claude_env: false` is skipped, so a flagged registry can hold one variable back without being split in two. |
-| `collect_model_env_vars VARS_REF ROLES_REF SCAN_DIR [BREW_DIR]` | Populates two caller arrays (via nameref) with the env vars every registry declares as carrying a model id, in declaration order, and the `role` each one was declared with. |
+| `collect_registry_permissions ARRAY_REF SCAN_DIR [PACKAGES_DIR]` | Populates the caller's array (via nameref) with Claude Code Bash permission patterns derived from tools' permission field, one of the tool entry fields described in this module's header comment above. |
+| `collect_claude_env_vars SOURCES_REF TARGETS_REF SCAN_DIR [PACKAGES_DIR]` | Populates two caller arrays (via nameref) with the env vars declared by every registry whose meta block sets `claude_env: true`: sources — the canonical names in ~/.env.local (e.g. AI_MODEL) targets — the names written into ~/.claude/settings.json (e.g. ANTHROPIC_MODEL) When a registry entry has no `target:` field, the target defaults to the source name (backward compatible with registries that predate the mapping). An entry carrying `claude_env: false` is skipped, so a flagged registry can hold one variable back without being split in two. |
+| `collect_model_env_vars VARS_REF ROLES_REF SCAN_DIR [PACKAGES_DIR]` | Populates two caller arrays (via nameref) with the env vars every registry declares as carrying a model id, in declaration order, and the `role` each one was declared with. |
 
 ### summary.sh
 

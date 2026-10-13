@@ -16,7 +16,7 @@
 #
 # Registry discovery:
 #   Uses collect_registries() to auto-discover all */registry.yml and /*/*/registry.yml
-#   files, plus brew stacks (brew/*/*.registry.yml) and consumer env files (*.env.yml).
+#   files, plus package stacks (packages/*/*.registry.yml) and consumer env files (*.env.yml).
 #   Adding a new registry requires only creating the file — no edits here.
 #
 # Each registry file must contain a `meta` block:
@@ -25,7 +25,7 @@
 #     scope:         go                # optional: routes into tools.generated.<scope>.md
 #     install_check: false             # if true, omit tools not found in PATH
 #     validation:    brewfile          # brewfile | bindir | zsh-comments | none
-#     source:        brew/Brewfile     # relative path used by validate-registries
+#     source:        packages/Brewfile     # relative path used by validate-registries
 #
 # Each tool entry has a `visibility` field controlling AI rendering:
 #   visibility: full   — full entry (heading, description, when_to_use, usage)
@@ -41,7 +41,7 @@
 #
 # Environment overrides (for tests):
 #   REGISTRY_SCAN_DIR    root directory for registry discovery (default: REPO_ROOT)
-#   BREW_STACKS_DIR      brew/ directory (scanned for *.registry.yml stacks)
+#   PACKAGES_STACKS_DIR      packages/ directory (scanned for *.registry.yml stacks)
 #   TOOL_CONTEXT_OUTPUT  tools.generated.md path
 #   AI_DIR               ai/ directory
 
@@ -320,7 +320,7 @@ _emit_scripts_table() {
   printf '| Script | Description |\n'
   printf '|--------|-------------|\n'
   local -a _script_registries=()
-  collect_registries _script_registries "${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$BREW_STACKS_DIR"
+  collect_registries _script_registries "${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$PACKAGES_STACKS_DIR"
   (( ${#_script_registries[@]} > 0 )) && { reg_load "${_script_registries[@]}" || return 1; }
   for _reg in "${_script_registries[@]}"; do
     local _val
@@ -545,11 +545,11 @@ _render_readme_registry() {
 
 _emit_tools_table() {
   # Same registry order as tools.generated.md, but skip bin and zsh (they have their own sections)
-  _render_readme_registry "$BREW_REGISTRY"
+  _render_readme_registry "$PACKAGES_REGISTRY"
   _render_readme_registry "$MISE_REGISTRY"
   while IFS= read -r -d '' registry; do
     _render_readme_registry "$registry"
-  done < <(find "$BREW_STACKS_DIR" -mindepth 2 -maxdepth 2 -name '*.registry.yml' -print0 | sort -z)
+  done < <(find "$PACKAGES_STACKS_DIR" -mindepth 2 -maxdepth 2 -name '*.registry.yml' -print0 | sort -z)
 }
 
 # _emit_after_install — numbered post-install steps from setup.conf post_install fields.
@@ -683,8 +683,8 @@ EOF
 
 # _init_paths — the source locations every block and the rule files read from.
 _init_paths() {
-  BREW_STACKS_DIR="${BREW_STACKS_DIR:-"$REPO_ROOT/brew"}"
-  BREW_REGISTRY="${BREW_REGISTRY:-"$REPO_ROOT/brew/registry.yml"}"
+  PACKAGES_STACKS_DIR="${PACKAGES_STACKS_DIR:-"$REPO_ROOT/packages"}"
+  PACKAGES_REGISTRY="${PACKAGES_REGISTRY:-"$REPO_ROOT/packages/registry.yml"}"
   MISE_REGISTRY="${MISE_REGISTRY:-"$REPO_ROOT/mise/registry.yml"}"
   BIN_REGISTRY="${BIN_REGISTRY:-"$REPO_ROOT/bin/registry.yml"}"
   OUTPUT="${TOOL_CONTEXT_OUTPUT:-"$REPO_ROOT/$TOOLS_GENERATED_RELPATH"}"
@@ -725,7 +725,7 @@ main() {
   _gen_success() { $QUIET || success "$*"; }
 
   _tool_registries=()
-  collect_registries _tool_registries "${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$BREW_STACKS_DIR"
+  collect_registries _tool_registries "${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$PACKAGES_STACKS_DIR"
 
   # Group registries by meta.scope (empty/core → core group, others → named scope)
   declare -a _core_registries=()

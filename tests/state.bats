@@ -339,65 +339,65 @@ teardown() {
 # ─── state_append_list / state_get_list ──────────────────────────────────────
 
 @test "state_append_list adds items to a YAML list" {
-  state_append_list "brew.stacks" "infra/kubernetes"
-  state_append_list "brew.stacks" "lang/go"
+  state_append_list "packages.stacks" "infra/kubernetes"
+  state_append_list "packages.stacks" "lang/go"
 
   local count
-  count=$(yq '.components.brew.stacks | length' "$INSTALL_YML_FILE")
+  count=$(yq '.components.packages.stacks | length' "$INSTALL_YML_FILE")
   [[ "$count" == "2" ]]
 }
 
 @test "state_append_list is idempotent" {
-  state_append_list "brew.stacks" "infra/kubernetes"
-  state_append_list "brew.stacks" "infra/kubernetes"
+  state_append_list "packages.stacks" "infra/kubernetes"
+  state_append_list "packages.stacks" "infra/kubernetes"
 
   local count
-  count=$(yq '.components.brew.stacks | length' "$INSTALL_YML_FILE")
+  count=$(yq '.components.packages.stacks | length' "$INSTALL_YML_FILE")
   [[ "$count" == "1" ]]
 }
 
 @test "state_get_list reads a YAML list" {
-  state_append_list "brew.stacks" "infra/kubernetes"
-  state_append_list "brew.stacks" "lang/go"
+  state_append_list "packages.stacks" "infra/kubernetes"
+  state_append_list "packages.stacks" "lang/go"
 
-  run state_get_list "brew.stacks"
+  run state_get_list "packages.stacks"
   [[ "$output" == *"infra/kubernetes"* ]]
   [[ "$output" == *"lang/go"* ]]
 }
 
 @test "state_get_list returns empty for missing key" {
   echo "components: {}" > "$INSTALL_YML_FILE"
-  run state_get_list "brew.stacks"
+  run state_get_list "packages.stacks"
   [[ -z "$output" ]]
 }
 
 # ─── state_set_list ────────────────────────────────────────────────────────
 
 @test "state_set_list writes exactly the values it is given" {
-  state_set_list "brew.stacks" "infra/kubernetes" "lang/go"
+  state_set_list "packages.stacks" "infra/kubernetes" "lang/go"
 
-  run state_get_list "brew.stacks"
+  run state_get_list "packages.stacks"
   [[ "${lines[0]}" == "infra/kubernetes" ]]
   [[ "${lines[1]}" == "lang/go" ]]
   [[ ${#lines[@]} -eq 2 ]]
 }
 
 @test "state_set_list replaces rather than merges" {
-  state_append_list "brew.stacks" "infra/kubernetes"
-  state_set_list "brew.stacks" "lang/go"
+  state_append_list "packages.stacks" "infra/kubernetes"
+  state_set_list "packages.stacks" "lang/go"
 
-  run state_get_list "brew.stacks"
+  run state_get_list "packages.stacks"
   [[ "$output" == "lang/go" ]]
 }
 
 @test "state_set_list with no values empties the list" {
-  state_append_list "brew.stacks" "infra/kubernetes"
-  state_set_list "brew.stacks"
+  state_append_list "packages.stacks" "infra/kubernetes"
+  state_set_list "packages.stacks"
 
-  run state_get_list "brew.stacks"
+  run state_get_list "packages.stacks"
   [[ -z "$output" ]]
   # An empty list, not a null — state_get_list has to keep reading it as a list.
-  run yq '.components.brew.stacks | tag' "$INSTALL_YML_FILE"
+  run yq '.components.packages.stacks | tag' "$INSTALL_YML_FILE"
   [[ "$output" == "!!seq" ]]
 }
 

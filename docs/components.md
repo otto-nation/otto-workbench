@@ -108,7 +108,7 @@ mytool/
   summary.sh    <- print_mytool_summary() for post-install output
 ```
 
-**Existing optional components:** `brew` (has sync), `docker` (has sync), `terminals` (has sync), `editors` (has sync), `ai` (has sync), `mise` (has sync)
+**Existing optional components:** `packages` (has sync), `docker` (has sync), `terminals` (has sync), `editors` (has sync), `ai` (has sync), `mise` (has sync)
 
 ---
 

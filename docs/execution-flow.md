@@ -16,7 +16,7 @@ What happens when you run `install.sh` or `otto-workbench sync`, step by step.
 2. Core components   bin, git, zsh — selectable menu (Enter = all)
 3. Path setup        adds ~/.local/bin to shell rc if needed
 4. Migrations        runs any pending migration scripts
-5. Optional components  brew, docker, terminals, editors, ai, mise — selectable menu (Enter = all)
+5. Optional components  packages, docker, terminals, editors, ai, mise — selectable menu (Enter = all)
 6. Summary           prints file inventory, warnings, next steps
 ```
 
@@ -24,7 +24,7 @@ What happens when you run `install.sh` or `otto-workbench sync`, step by step.
 
 **Dependency expansion:** optional components can declare `depends` in their `setup.conf`. Dependencies are auto-included and re-sorted to run in order.
 
-**Flags:** `--all` skips menus. Named arguments (`install.sh brew docker`) run only those components.
+**Flags:** `--all` skips menus. Named arguments (`install.sh packages docker`) run only those components.
 
 ## Sync Flow
 

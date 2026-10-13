@@ -28,16 +28,16 @@ _make_workbench() {
   printf '#!/usr/bin/env bash\n# description: Configure git\nsync_git() { echo "sync_git"; }\n' > "$dir/git/steps.sh"
 
   # Preflight components
-  mkdir -p "$dir/brew"
-  printf '#!/usr/bin/env bash\nstep_brew_install() { true; }\n' > "$dir/brew/steps.sh"
+  mkdir -p "$dir/packages"
+  printf '#!/usr/bin/env bash\nstep_packages_brew_install() { true; }\n' > "$dir/packages/steps.sh"
 
   # Synthetic extra core (no setup.conf) so the discovery loop has more than bin/git
   mkdir -p "$dir/demo"
   printf '#!/usr/bin/env bash\n# description: Demo component\nstep_demo_install() { true; }\nsync_demo() { echo "sync_demo"; }\ninstall_demo() { step_demo_install; sync_demo; }\n' > "$dir/demo/steps.sh"
 
   # Optional components (setup.conf + setup.sh)
-  printf 'label = Homebrew packages\ndescription = Install formulae and casks\n' > "$dir/brew/setup.conf"
-  printf '#!/usr/bin/env bash\necho "brew setup"\n' > "$dir/brew/setup.sh"
+  printf 'label = Homebrew packages\ndescription = Install formulae and casks\n' > "$dir/packages/setup.conf"
+  printf '#!/usr/bin/env bash\necho "packages setup"\n' > "$dir/packages/setup.sh"
 
   mkdir -p "$dir/docker"
   printf 'label = Docker\ndescription = Configure Docker runtime\n' > "$dir/docker/setup.conf"
@@ -48,7 +48,7 @@ _make_workbench() {
   printf 'label = Mise\ndescription = Install mise version manager\n' > "$dir/mise/setup.conf"
   printf '#!/usr/bin/env bash\necho "mise setup"\n' > "$dir/mise/setup.sh"
 
-  printf 'brew\ndocker\nmise\n' > "$dir/install.components"
+  printf 'packages\ndocker\nmise\n' > "$dir/install.components"
 }
 
 # ─── _is_targeted ────────────────────────────────────────────────────────────
@@ -64,7 +64,7 @@ _is_targeted() {
 @test "core components exclude preflight and optional (setup.conf) dirs" {
   _make_workbench "$TMPDIR/wb"
   local WORKBENCH_DIR="$TMPDIR/wb"
-  local PREFLIGHT_COMPONENTS=(brew)
+  local PREFLIGHT_COMPONENTS=(packages)
   local KNOWN_CORE=()
 
   for _f in "$WORKBENCH_DIR"/*/steps.sh; do
@@ -81,7 +81,7 @@ _is_targeted() {
   [[ " ${KNOWN_CORE[*]} " == *" git "* ]]
   [[ " ${KNOWN_CORE[*]} " == *" demo "* ]]
   [[ " ${KNOWN_CORE[*]} " != *" mise "* ]]
-  [[ " ${KNOWN_CORE[*]} " != *" brew "* ]]
+  [[ " ${KNOWN_CORE[*]} " != *" packages "* ]]
 }
 
 @test "optional components come from install.components" {
@@ -93,7 +93,7 @@ _is_targeted() {
     KNOWN_OPTIONAL+=("$_c")
   done < "$TMPDIR/wb/install.components"
 
-  [[ " ${KNOWN_OPTIONAL[*]} " == *" brew "* ]]
+  [[ " ${KNOWN_OPTIONAL[*]} " == *" packages "* ]]
   [[ " ${KNOWN_OPTIONAL[*]} " == *" docker "* ]]
   [[ " ${KNOWN_OPTIONAL[*]} " == *" mise "* ]]
   [[ ${#KNOWN_OPTIONAL[@]} -eq 3 ]]
@@ -103,7 +103,7 @@ _is_targeted() {
 
 @test "validate_targets rejects unknown component names" {
   local KNOWN_CORE_COMPONENTS=(bin git)
-  local KNOWN_OPTIONAL_COMPONENTS=(brew docker)
+  local KNOWN_OPTIONAL_COMPONENTS=(packages docker)
   local INSTALL_TARGETS=(nosuchcomponent)
 
   local errors=0 target found
@@ -120,8 +120,8 @@ _is_targeted() {
 
 @test "validate_targets accepts valid core and optional names" {
   local KNOWN_CORE_COMPONENTS=(bin git)
-  local KNOWN_OPTIONAL_COMPONENTS=(brew docker)
-  local INSTALL_TARGETS=(bin brew docker)
+  local KNOWN_OPTIONAL_COMPONENTS=(packages docker)
+  local INSTALL_TARGETS=(bin packages docker)
 
   local errors=0 target found
   for target in "${INSTALL_TARGETS[@]}"; do
@@ -138,13 +138,13 @@ _is_targeted() {
 # ─── Targeted install: _is_targeted ──────────────────────────────────────────
 
 @test "_is_targeted matches components in INSTALL_TARGETS" {
-  INSTALL_TARGETS=(brew docker)
-  _is_targeted brew
+  INSTALL_TARGETS=(packages docker)
+  _is_targeted packages
   _is_targeted docker
 }
 
 @test "_is_targeted rejects components not in INSTALL_TARGETS" {
-  INSTALL_TARGETS=(brew)
+  INSTALL_TARGETS=(packages)
   run ! _is_targeted docker
   run ! _is_targeted git
 }
@@ -165,8 +165,8 @@ _is_targeted() {
 }
 
 @test "targeted mode selects only named optional components" {
-  local eligible_dirs=(brew docker terminals editors ai)
-  INSTALL_TARGETS=(brew docker)
+  local eligible_dirs=(packages docker terminals editors ai)
+  INSTALL_TARGETS=(packages docker)
 
   local selected=()
   for _d in "${eligible_dirs[@]}"; do
@@ -174,7 +174,7 @@ _is_targeted() {
   done
 
   [[ ${#selected[@]} -eq 2 ]]
-  [[ " ${selected[*]} " == *" brew "* ]]
+  [[ " ${selected[*]} " == *" packages "* ]]
   [[ " ${selected[*]} " == *" docker "* ]]
 }
 
@@ -226,13 +226,13 @@ _is_targeted() {
     set -e
     . '$REPO_ROOT/lib/ui.sh'
     . '$REPO_ROOT/lib/install.sh'
-    parse_install_flags brew git
+    parse_install_flags packages git
     echo \"targeted=\$INSTALL_TARGETED all=\$INSTALL_ALL targets=\${INSTALL_TARGETS[*]}\"
   "
   [ "$status" -eq 0 ]
   [[ "$output" == *"targeted=true"* ]]
   [[ "$output" == *"all=false"* ]]
-  [[ "$output" == *"targets=brew git"* ]]
+  [[ "$output" == *"targets=packages git"* ]]
 }
 
 @test "parse_install_flags sets INSTALL_ALL=true with --all and INSTALL_TARGETED=false" {

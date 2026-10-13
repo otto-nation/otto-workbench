@@ -4,7 +4,7 @@ setup_file() {
   load 'test_helper'
   export BATS_NO_PARALLELIZE_WITHIN_FILE=true
   SHARED_DIR="$BATS_FILE_TMPDIR/validate"
-  mkdir -p "$SHARED_DIR/bin" "$SHARED_DIR/brew/work" "$SHARED_DIR/zsh/config.d" "$SHARED_DIR/lib"
+  mkdir -p "$SHARED_DIR/bin" "$SHARED_DIR/packages/work" "$SHARED_DIR/zsh/config.d" "$SHARED_DIR/lib"
 
   # Copy every lib module rather than an enumerated subset — a new sub-module
   # sourced by lib/ui.sh would otherwise break this fixture on arrival.
@@ -29,11 +29,11 @@ setup() {
   TMPDIR="$SHARED_DIR"
 
   # Clean mutable state from previous test
-  rm -f "$TMPDIR/brew/registry.yml" "$TMPDIR/brew/Brewfile"
+  rm -f "$TMPDIR/packages/registry.yml" "$TMPDIR/packages/Brewfile"
   rm -f "$TMPDIR/bin/registry.yml"
   rm -f "$TMPDIR/zsh/registry.yml"
   rm -f "$TMPDIR/zsh/config.d/"*
-  rm -f "$TMPDIR/brew/work/"*.registry.yml "$TMPDIR/brew/work/"*.Brewfile
+  rm -f "$TMPDIR/packages/work/"*.registry.yml "$TMPDIR/packages/work/"*.Brewfile
   for f in "$TMPDIR/bin/"*; do
     [[ -e "$f" ]] || continue
     case "${f##*/}" in mytool|othertool) ;; *) rm -f "$f" ;; esac
@@ -48,7 +48,7 @@ teardown() {
 # ── Env field validation ─────────────────────────────────────────────────────
 
 @test "passes with valid env entries" {
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Tools"
   validation: none
@@ -66,7 +66,7 @@ EOF
 }
 
 @test "fails when env entry is missing var" {
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Tools"
   validation: none
@@ -83,7 +83,7 @@ EOF
 }
 
 @test "fails when env var name is invalid" {
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Tools"
   validation: none
@@ -100,7 +100,7 @@ EOF
 }
 
 @test "fails on duplicate env var within same registry" {
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Tools"
   validation: none
@@ -121,7 +121,7 @@ EOF
   # The gap this closes: env[] had no unknown-field check, so a misspelled
   # `target` was accepted and the variable never appeared under the name its
   # consumer read.
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Tools"
   validation: none
@@ -140,7 +140,7 @@ EOF
 }
 
 @test "accepts every field KNOWN_ENV_FIELDS names" {
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Tools"
   validation: none
@@ -167,7 +167,7 @@ EOF
   # collect_claude_env_vars excludes on an exact `false` and includes on
   # anything else, so an unrejected typo publishes a variable to a
   # world-readable settings.json rather than withholding one.
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Tools"
   validation: none
@@ -188,7 +188,7 @@ EOF
 @test "fails on claude_env in an entry when the registry is not flagged" {
   # The field narrows a registry that has opted in; it cannot opt one in. Here
   # it decides nothing while reading as though it does.
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Tools"
   validation: none
@@ -209,7 +209,7 @@ EOF
   # Checked strictly, unlike claude_env's lenient read: a role that excluded
   # would silently drop a tier from every harness, surfacing only as a model
   # quietly missing from a menu.
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Tools"
   validation: none
@@ -229,7 +229,7 @@ EOF
 @test "fails when two registries both claim model-default" {
   # The winner would otherwise depend on registry iteration order, so the
   # machine gets a default nobody chose and each file looks correct alone.
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Tools"
   validation: none
@@ -258,7 +258,7 @@ EOF
 }
 
 @test "fails on duplicate env var across registries" {
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Brew Tools"
   validation: none
@@ -287,7 +287,7 @@ EOF
 @test "three registries claiming one env var are named in one error" {
   # Pairwise chaining reported "a and b" then "b and c": two errors for one
   # name, neither naming all three files.
-  for d in brew bin zsh; do
+  for d in packages bin zsh; do
     cat > "$TMPDIR/$d/registry.yml" << EOF
 meta:
   section: "$d"
@@ -304,17 +304,17 @@ EOF
   [ "$status" -ne 0 ]
   [ "$(grep -c "defined in multiple registries" <<< "$output")" -eq 1 ]
   # Pins all three sources on the one line, in collect_registries' path
-  # order (bin, brew, zsh) — not just present somewhere in the output, which
+  # order (bin, packages, zsh) — not just present somewhere in the output, which
   # a regression splitting the accumulated sources across two lines would
   # still satisfy.
-  [[ "$output" == *"env var 'SHARED_VAR' defined in multiple registries: bin/registry.yml brew/registry.yml zsh/registry.yml"* ]]
+  [[ "$output" == *"env var 'SHARED_VAR' defined in multiple registries: bin/registry.yml packages/registry.yml zsh/registry.yml"* ]]
 }
 
 @test "fails on one tool name registered in two bindir registries" {
   # The MCP server cannot refuse this: it discovers in the thread that also
   # serves re-discovery, so it keeps the first entry and logs the rest —
   # which leaves registry order deciding which tool a client reaches.
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "A"
   validation: bindir
@@ -355,7 +355,7 @@ EOF
 @test "three registries claiming one tool name name the kept file first" {
   # Which file wins is the actionable half: discovery keeps the first in
   # registry order, so the error lists it ahead of the ones it shadows.
-  for d in bin brew zsh; do
+  for d in bin packages zsh; do
     cat > "$TMPDIR/$d/registry.yml" << EOF
 meta:
   section: "$d"
@@ -381,7 +381,7 @@ EOF
   # — pairwise chaining would have emitted four.
   [ "$(grep -c "registered in multiple registries" <<< "$output")" -eq 2 ]
   # collect_registries walks in path order, so bin/ is the claimant kept.
-  [[ "$output" == *"tool 'mytool' registered in multiple registries: bin/registry.yml brew/registry.yml zsh/registry.yml"* ]]
+  [[ "$output" == *"tool 'mytool' registered in multiple registries: bin/registry.yml packages/registry.yml zsh/registry.yml"* ]]
 }
 
 # passes-at-base: the base has no cross-file check at all, so its scope is
@@ -391,7 +391,7 @@ EOF
   # `linear` is a brew formula and an auth alias on the live tree. Neither is
   # a script the server can offer, so comparing across those namespaces would
   # report a collision that cannot happen.
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "A"
   validation: none
@@ -424,7 +424,7 @@ EOF
 }
 
 @test "fails when install_check true with empty tools and no install_check_command" {
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Tools"
   install_check: true
@@ -442,7 +442,7 @@ EOF
 }
 
 @test "passes when install_check true with empty tools and install_check_command set" {
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Tools"
   install_check: true

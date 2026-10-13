@@ -229,7 +229,7 @@ run_components() {
 
 # ─── Core component helpers ─────────────────────────────────────────────────
 
-PREFLIGHT_COMPONENTS=(brew)
+PREFLIGHT_COMPONENTS=(packages)
 
 # resolve_known_components — builds lookup sets of all known core and optional
 # component names. Populates KNOWN_CORE_COMPONENTS and KNOWN_OPTIONAL_COMPONENTS.
@@ -385,7 +385,7 @@ print_install_summary() {
   echo -e "${BOLD}${GREEN}━━━ All done ━━━${NC}"
   print_workbench_summary
 
-  # Run per-component summaries for selected components (brew, docker, ai, etc.)
+  # Run per-component summaries for selected components (packages, docker, ai, etc.)
   run_component_summaries "${SELECTED_COMPONENTS[@]}"
 
   print_warnings_summary

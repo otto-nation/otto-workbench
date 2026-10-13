@@ -27,7 +27,7 @@ The installer runs in three stages:
 2. **Core components** — presents a menu of always-synced components (`bin`, `git`, `zsh`). Press Enter to install all.
 3. **Optional components** — presents a menu of opt-in components (Homebrew packages, Docker, Terminals, Editors, AI tools, Mise). Press Enter to install all.
 
-You can also skip menus: `./install.sh --all` installs everything, `./install.sh brew docker` installs only named components.
+You can also skip menus: `./install.sh --all` installs everything, `./install.sh packages docker` installs only named components.
 
 Re-running is safe — existing symlinks are updated silently; real files prompt before overwrite.
 

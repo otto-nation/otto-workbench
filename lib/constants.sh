@@ -255,7 +255,7 @@ PI_INSTALL_URL="https://pi.dev/install.sh"
 
 # Herdr's own installer writes a single binary to $HOME/.local/bin/herdr and
 # leaves `herdr update` enabled; a Homebrew install disables self-update and
-# sync_brew never upgrades, so the vendor installer is the path that keeps
+# sync_packages never upgrades, so the vendor installer is the path that keeps
 # herdr current on sync.
 HERDR_INSTALL_URL="https://herdr.dev/install.sh"
 
@@ -265,9 +265,9 @@ BIN_REGISTRY_FILE="$WORKBENCH_DIR/bin/registry.yml"
 LIB_SRC_DIR="$WORKBENCH_DIR/lib"
 INSTALL_COMPONENTS_FILE="$WORKBENCH_DIR/install.components"
 
-# ─── Workbench source — brew ─────────────────────────────────────────────────
-BREW_SRC_DIR="$WORKBENCH_DIR/brew"
-BREWFILE="$WORKBENCH_DIR/brew/Brewfile"
+# ─── Workbench source — packages ────────────────────────────────────────────
+PACKAGES_DIR="$WORKBENCH_DIR/packages"
+CORE_MANIFEST="$WORKBENCH_DIR/packages/Brewfile"
 
 # ─── Workbench source — maintenance ──────────────────────────────────────────
 MAINTENANCE_SRC_DIR="$WORKBENCH_DIR/maintenance"
@@ -301,7 +301,7 @@ ENV_LOCAL_TEMPLATE="${ENV_LOCAL_TEMPLATE:-$WORKBENCH_DIR/zsh/.env.local.template
 STARSHIP_SRC_FILE="$WORKBENCH_DIR/zsh/starship.toml"
 # The shell Brewfile names the zsh plugins; a machine without Homebrew clones
 # the same list, so the Brewfile stays the one place a plugin is added.
-SHELL_BREWFILE="$WORKBENCH_DIR/brew/shell/shell.Brewfile"
+SHELL_MANIFEST="$WORKBENCH_DIR/packages/shell/shell.Brewfile"
 # Resolves a repo's agent instructions file (AGENTS.md, else a legacy
 # CLAUDE.md); bash asks it rather than keeping the candidate order itself.
 PROJECT_CONTEXT_PY="$WORKBENCH_DIR/ai/lib/core/project_context.py"

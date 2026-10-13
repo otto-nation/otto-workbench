@@ -81,11 +81,11 @@ tasks:
       - bin/local/dev-deps
 
   brew:dump:
-    desc: "Regenerate brew/Brewfile from current state"
+    desc: "Regenerate packages/Brewfile from current state"
     silent: true
     cmds:
       - |
-        TARGET="{{.TASKFILE_DIR}}/brew/Brewfile"
+        TARGET="{{.TASKFILE_DIR}}/packages/Brewfile"
         echo "→ Updating Brewfile from current state..."
         brew bundle dump --force --describe --file="$TARGET"
         echo "✓ Saved to $TARGET"

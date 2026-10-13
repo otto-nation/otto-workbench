@@ -522,7 +522,7 @@ env:
 EOF
 )
   local -a sources=() targets=()
-  collect_claude_env_vars sources targets "$dir" "$dir/brew"
+  collect_claude_env_vars sources targets "$dir" "$dir/packages"
   [ "${sources[0]}" = "FIRST_VAR" ]
 
   cat > "$dir/component/registry.yml" <<'EOF'
@@ -531,7 +531,7 @@ meta:
 env:
   - var: SECOND_VAR
 EOF
-  collect_claude_env_vars sources targets "$dir" "$dir/brew"
+  collect_claude_env_vars sources targets "$dir" "$dir/packages"
   [ "${sources[0]}" = "SECOND_VAR" ]
 }
 
@@ -558,14 +558,14 @@ EOF
 )
   local -a perms=() sources=() targets=()
   _both() {
-    collect_registry_permissions perms "$dir" "$dir/brew"
+    collect_registry_permissions perms "$dir" "$dir/packages"
     cat > "$dir/component/registry.yml" <<'EOF'
 meta:
   claude_env: true
 env:
   - var: REWRITTEN_MID_HOLD
 EOF
-    collect_claude_env_vars sources targets "$dir" "$dir/brew"
+    collect_claude_env_vars sources targets "$dir" "$dir/packages"
   }
   reg_scan_hold _both
 
@@ -587,7 +587,7 @@ env:
 EOF
 )
   local -a sources=() targets=()
-  _once() { collect_claude_env_vars sources targets "$dir" "$dir/brew"; }
+  _once() { collect_claude_env_vars sources targets "$dir" "$dir/packages"; }
   reg_scan_hold _once
   [ "${sources[0]}" = "BEFORE_VAR" ]
 
@@ -598,7 +598,7 @@ env:
   - var: AFTER_VAR
 EOF
   # Outside the hold now, so this must re-scan.
-  collect_claude_env_vars sources targets "$dir" "$dir/brew"
+  collect_claude_env_vars sources targets "$dir" "$dir/packages"
   [ "${sources[0]}" = "AFTER_VAR" ]
 }
 
@@ -626,7 +626,7 @@ env:
 EOF
   # shellcheck disable=SC2034  # filled by nameref in collect_claude_env_vars
   local -a sources=() targets=()
-  collect_claude_env_vars sources targets "$dir" "$dir/brew"
+  collect_claude_env_vars sources targets "$dir" "$dir/packages"
   [ "${sources[0]}" = "REWRITTEN_VAR" ]
 
   # A second read, because one does not distinguish a released hold from a
@@ -640,7 +640,7 @@ meta:
 env:
   - var: REWRITTEN_TWICE
 EOF
-  collect_claude_env_vars sources targets "$dir" "$dir/brew"
+  collect_claude_env_vars sources targets "$dir" "$dir/packages"
   [ "${sources[0]}" = "REWRITTEN_TWICE" ]
 }
 

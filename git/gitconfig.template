@@ -13,7 +13,7 @@
 # ─── GPG KEY SETUP (first time on a new machine) ─────────────────────────────
 #
 # GPG, pinentry-mac, and GPG_TTY are installed and configured automatically
-# by the workbench (brew/security/signing.Brewfile + zsh/config.d/tools/gpg.zsh).
+# by the workbench (packages/security/signing.Brewfile + zsh/config.d/tools/gpg.zsh).
 #
 # 1a. Generate a NEW key (skip if importing an existing one):
 #      gpg --full-generate-key

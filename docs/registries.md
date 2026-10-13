@@ -29,7 +29,7 @@ Each tooling directory owns a `registry.yml` describing the tools it provides. R
 meta:
   section: "Brew Tools"              # H2 heading in generated output (required for tools)
   validation: brewfile               # cross-validation mode (see below)
-  source: brew/Brewfile              # relative path for cross-validation
+  source: packages/Brewfile              # relative path for cross-validation
   loading: scoped                    # "always" or "scoped" (default: scoped)
   install_check: true                # gate entire registry on install state (optional)
   install_check_command: colima      # check if command exists in PATH
@@ -145,7 +145,7 @@ Set `meta.validation` to enable cross-checking between the registry and its sour
 
 | Mode | Checks | Source |
 |------|--------|--------|
-| `brewfile` | Every tool name (or `brew_name`) exists in the Brewfile | `meta.source: brew/Brewfile` |
+| `brewfile` | Every tool name (or `brew_name`) exists in the Brewfile | `meta.source: packages/Brewfile` |
 | `bindir` | Every tool name exists as a file in the directory | `meta.source: bin` |
 | `zsh-comments` | Every tool name has a matching `# keyword` comment | `meta.source: zsh/config.d/...` |
 | `none` | Schema-only validation | N/A |
@@ -176,8 +176,8 @@ Freshness is enforced by the pre-push hook and CI — `validate-all` runs [`vali
 
 ### Adding a brew tool
 
-1. Add the formula or cask to `brew/Brewfile`
-2. Add an entry to the appropriate `brew/*.registry.yml`
+1. Add the formula or cask to `packages/Brewfile`
+2. Add an entry to the appropriate `packages/*.registry.yml`
 3. Run `bin/local/generate-tool-context` to regenerate
 
 ### Adding a bin script

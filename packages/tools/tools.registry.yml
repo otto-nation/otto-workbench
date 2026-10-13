@@ -1,0 +1,24 @@
+# Tools stack registry.
+# Install: brew bundle --file=packages/tools/tools.Brewfile
+# Regenerate: generate-tool-context
+
+meta:
+  section: "Dev Tools"
+  validation: brewfile
+  source: packages/tools/tools.Brewfile
+
+tools:
+  - name: linear
+    permission: true
+    visibility: full
+    brew_name: "schpet/tap/linear"
+    description: "Linear CLI (schpet/linear-cli) — manage Linear issues from the terminal"
+    when_to_use: "Listing, creating, or starting Linear issues; git-aware issue tracking"
+    usage: "linear issue query --search \"term\"  |  linear issue view <ID> --json  |  linear issue create --team <KEY>  |  linear issue relation list <ID>  |  linear issue comment add <ID> --body-file <path>"
+    docs: "https://github.com/schpet/linear-cli"
+
+  - name: mas
+    permission: false
+    visibility: brief
+    description: "Mac App Store CLI — search, install, and update App Store apps from the terminal"
+    docs: "https://github.com/mas-cli/mas"

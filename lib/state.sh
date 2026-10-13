@@ -219,7 +219,7 @@ state_set() {
 }
 
 # state_append_list KEY VALUE — appends VALUE to a YAML list (idempotent).
-# Example: state_append_list "brew.stacks" "infra/kubernetes"
+# Example: state_append_list "packages.stacks" "infra/kubernetes"
 state_append_list() {
   local key="$1" value="$2"
   _state_ensure_yml

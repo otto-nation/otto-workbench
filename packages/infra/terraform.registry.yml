@@ -1,0 +1,22 @@
+# Terraform stack registry.
+# Install: brew bundle --file=packages/infra/terraform.Brewfile
+# Regenerate: generate-tool-context
+
+meta:
+  section: "Terraform Tools"
+  scope: infra
+  validation: brewfile
+  source: packages/infra/terraform.Brewfile
+
+tools:
+  - name: tfenv
+    permission: false
+    visibility: brief
+    description: "Terraform version manager — install and switch between Terraform versions"
+    docs: "https://github.com/tfutils/tfenv"
+
+  - name: terraform-docs
+    permission: false
+    visibility: brief
+    description: "Generate documentation from Terraform module inputs and outputs"
+    docs: "https://terraform-docs.io/"

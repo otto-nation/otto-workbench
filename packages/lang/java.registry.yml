@@ -1,0 +1,25 @@
+# Java stack registry.
+# Install: brew bundle --file=packages/lang/java.Brewfile
+# Regenerate: generate-tool-context
+
+meta:
+  section: "Java Tools"
+  scope: java
+  validation: brewfile
+  source: packages/lang/java.Brewfile
+
+tools:
+  - name: gradle
+    permission:
+      - "Bash(gradle:*)"
+      - "Bash(./gradlew:*)"
+    visibility: brief
+    description: "Gradle build tool — build, test, and publish JVM projects"
+    docs: "https://docs.gradle.org/"
+
+  - name: mvn
+    permission: false
+    visibility: brief
+    brew_name: maven
+    description: "Apache Maven — build and dependency management for Java projects"
+    docs: "https://maven.apache.org/guides/"

@@ -25,7 +25,7 @@ const ITEMS: CardItem[] = [
 
 const TIERS: CardItem[] = [
   { title: 'Core', accent: 'var(--ow-amarillo)', body: 'Always synced, on every machine', meta: 'bin · git · zsh' },
-  { title: 'Optional', accent: 'var(--ow-rosa)', body: 'Opt in from the install menu', meta: 'brew · docker · terminals · editors · ai · mise' },
+  { title: 'Optional', accent: 'var(--ow-rosa)', body: 'Opt in from the install menu', meta: 'packages · docker · terminals · editors · ai · mise' },
 ];
 
 const INSTALL = [

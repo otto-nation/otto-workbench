@@ -56,7 +56,7 @@ Re-applies all workbench config — migrations, symlinks, tool context, AI setti
 The workbench uses a [component framework](docs/architecture.md#component-model) with two tiers:
 
 1. **Core** (`bin`, `git`, `zsh`) — always synced on every machine
-2. **Optional** (`brew`, `docker`, `terminals`, `editors`, `ai`, `mise`) — opt-in via install menu
+2. **Optional** (`packages`, `docker`, `terminals`, `editors`, `ai`, `mise`) — opt-in via install menu
 
 On first run, `install.sh` installs Homebrew (if missing), then presents menus for core and optional components. `otto-workbench sync` re-applies everything non-interactively. Both auto-discover components via glob patterns — adding a new component requires no edits to the installer.
 

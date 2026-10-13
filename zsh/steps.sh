@@ -94,7 +94,7 @@ step_zsh() {
 # _shell_brewfile_zsh_plugins — the zsh-* formulae the shell Brewfile lists,
 # one per line.
 _shell_brewfile_zsh_plugins() {
-  sed -n 's/^brew "\(zsh-[A-Za-z0-9_-]*\)".*/\1/p' "$SHELL_BREWFILE"
+  sed -n 's/^brew "\(zsh-[A-Za-z0-9_-]*\)".*/\1/p' "$SHELL_MANIFEST"
 }
 
 # _zsh_clone DIR URL LABEL — shallow-clones URL into DIR, announcing it as
@@ -139,7 +139,7 @@ step_zsh_shell_tools() {
 
   local plugins name
   plugins="$(_shell_brewfile_zsh_plugins)" || {
-    warn "could not read zsh plugins from $SHELL_BREWFILE"
+    warn "could not read zsh plugins from $SHELL_MANIFEST"
     return 0
   }
   for name in $plugins; do
@@ -301,7 +301,7 @@ _generate_env_section() {
   fi
   local output="" section_output first=true
   local -a unique_registries=()
-  collect_registries unique_registries "${REGISTRY_SCAN_DIR:-$WORKBENCH_DIR}" "$BREW_SRC_DIR"
+  collect_registries unique_registries "${REGISTRY_SCAN_DIR:-$WORKBENCH_DIR}" "$PACKAGES_DIR"
 
   for registry in "${unique_registries[@]}"; do
     section_output=$(_render_registry_env "$registry")

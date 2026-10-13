@@ -261,7 +261,7 @@ than restated here:
 
 `install` runs first-time setup: installs Homebrew (if missing), syncs core
 components (bin, git, zsh), presents a menu of optional components
-(brew packages, docker, terminals, editors, ai, mise), and runs pending
+(packages, docker, terminals, editors, ai, mise), and runs pending
 migrations. Safe to re-run — idempotent. Use `--all` to skip menus, or name
 specific components.
 

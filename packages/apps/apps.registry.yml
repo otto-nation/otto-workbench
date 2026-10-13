@@ -1,0 +1,64 @@
+# Apps stack registry.
+# Install: brew bundle --file=packages/apps/apps.Brewfile
+# Regenerate: generate-tool-context
+
+meta:
+  section: "Mac Apps"
+  install_check: true
+  validation: brewfile
+  source: packages/apps/apps.Brewfile
+
+tools:
+  - name: 1password-cli
+    permission: false
+    visibility: hidden
+    description: "1Password CLI (op) — access secrets, SSH keys, and vaults from the terminal"
+    docs: "https://developer.1password.com/docs/cli/"
+
+  - name: 1password
+    permission: false
+    visibility: hidden
+    description: "1Password — password manager and secure vault for credentials, keys, and secrets"
+    docs: "https://1password.com/"
+
+  - name: bruno
+    permission: false
+    visibility: hidden
+    description: "Open-source API client — test and document REST, GraphQL, and gRPC APIs"
+    docs: "https://www.usebruno.com/"
+
+  - name: ghostty
+    permission: false
+    visibility: hidden
+    description: "Ghostty — fast, native terminal emulator with GPU rendering"
+    docs: "https://ghostty.org/"
+
+  - name: gitkraken
+    permission: false
+    visibility: hidden
+    description: "GitKraken — visual Git client for branch management, history, and merge conflict resolution"
+    docs: "https://www.gitkraken.com/"
+
+  - name: readdle-spark
+    permission: false
+    visibility: hidden
+    description: "Spark — email client by Readdle with smart inbox, snooze, and team collaboration"
+    docs: "https://sparkmailapp.com/"
+
+  - name: spotify
+    permission: false
+    visibility: hidden
+    description: "Spotify — music and podcast streaming client"
+    docs: "https://www.spotify.com/"
+
+  - name: tailscale
+    permission: false
+    visibility: hidden
+    description: "Tailscale — zero-config mesh VPN built on WireGuard for secure private networking"
+    docs: "https://tailscale.com/kb/"
+
+  - name: zed
+    permission: false
+    visibility: hidden
+    description: "Zed — high-performance, multiplayer code editor built in Rust"
+    docs: "https://zed.dev/"

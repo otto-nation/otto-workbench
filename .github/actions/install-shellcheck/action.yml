@@ -18,7 +18,7 @@ runs:
     - name: Install ShellCheck
       shell: bash
       env:
-        # Keep in step with what brew/Brewfile installs locally. There is no
+        # Keep in step with what packages/Brewfile installs locally. There is no
         # machine-readable link between the two, so the check that they agree
         # is tests/shellcheck_version.bats.
         SHELLCHECK_VERSION: v0.11.0

@@ -114,7 +114,7 @@ setup() {
 @test "brew:dump writes this checkout's Brewfile" {
   run yq -r '.tasks["brew:dump"].cmds[0]' "$TASKFILE"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'{{.TASKFILE_DIR}}/brew/Brewfile'* ]]
+  [[ "$output" == *'{{.TASKFILE_DIR}}/packages/Brewfile'* ]]
   [[ "$output" == *'brew bundle dump --force --describe'* ]]
 }
 

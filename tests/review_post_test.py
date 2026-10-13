@@ -129,28 +129,26 @@ class TestShaDriftReverify:
 
         assert len(diff_calls) == 1, "Should fetch fresh diff, not use sidecar"
 
-    def test_drift_records_sha_in_tracking(self, rp, tmp_path):
+    def _run_with_finding(self, rp, tmp_path, head_sha, header_sha=None, trail=None):
+        """Run run_post with one inline finding; return the post tracking it saved."""
+        trail = trail or MagicMock()
         args, review_file = self._make_args(tmp_path)
+        if header_sha:
+            review_file.write_text(self.REVIEW_TEXT.replace("aaa1111bbb2222", header_sha))
         sidecar = rp.ReviewMeta(repo="org/repo")
-        trail = MagicMock()
-
-        new_head = "ccc3333ddd4444"
         pr_data = rp.PRData(
             viewer_login="bot",
-            head_sha=new_head, head_ref="feat", base_ref="main",
+            head_sha=head_sha, head_ref="feat", base_ref="main",
             reviews=[],
         )
-
+        finding = rp.Finding(id="M1", severity="M", seq=1, path="file.go",
+                             line=5, end_line=None, body="Fix",
+                             posted_id="M1", classification="inline",
+                             full_path="file.go")
         with (
             patch.object(rp, "fetch_pr_data", return_value=pr_data),
             patch.object(rp, "_get_diff", return_value=self.DIFF),
-            patch.object(rp, "dedup_against_posted", return_value=(
-                [rp.Finding(id="M1", severity="M", seq=1, path="file.go",
-                            line=5, end_line=None, body="Fix",
-                            posted_id="M1", classification="inline",
-                            full_path="file.go")],
-                [],
-            )),
+            patch.object(rp, "dedup_against_posted", return_value=([finding], [])),
             patch.object(rp, "fetch_bot_reviews", return_value=review.dedup.BotReviews()),
             patch.object(rp, "check_review_already_posted", return_value=set()),
             patch.object(rp, "_check_existing_pending", return_value=rp.PendingReview()),
@@ -158,13 +156,31 @@ class TestShaDriftReverify:
             patch.object(rp, "resolve_permalinks"),
         ):
             rp.run_post(trail, args, "org/repo", sidecar, review_file)
-
         post_file = review_file.parent / "post.jsonl"
         tracking = serde_from_dict(PostTracking, json.loads(post_file.read_text()))
+        return tracking
+
+    def test_drift_records_sha_in_tracking(self, rp, tmp_path):
+        new_head = "ccc3333ddd4444"
+        tracking = self._run_with_finding(rp, tmp_path, new_head)
         assert tracking.review_sha == "aaa1111bbb2222"
         assert tracking.head_sha_at_post == new_head
         assert tracking.sha_drifted is True
         assert tracking.posted_as == PostedAs.REVIEW.value
+
+    def test_an_abbreviated_header_naming_the_head_is_not_drift(self, rp, tmp_path):
+        """A header stating the PR head abbreviated is the same commit, not drift.
+
+        Drift is decided by `covers`, which accepts an abbreviation at least
+        `MIN_SHA_PREFIX` long; a plain `!=` would flag this review as written
+        against another commit and re-verify every position for nothing.
+        """
+        trail = MagicMock()
+        tracking = self._run_with_finding(
+            rp, tmp_path, "aaa1111bbb2222", header_sha="aaa1111", trail=trail)
+        assert tracking.review_sha == "aaa1111"
+        assert tracking.sha_drifted is False
+        assert not [c for c in trail.info.call_args_list if c.args[0] == "sha_drift"]
 
 
 class TestDryRunIntegration:

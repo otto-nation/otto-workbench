@@ -15,7 +15,7 @@ setup() {
 
   export PACKAGES_DIR="$TMPDIR/packages"
   mkdir -p "$PACKAGES_DIR"
-  printf 'brew "rtk"  # mise: rtk\nbrew "tree"  # linux: system\nbrew "mas"  # macos-only\nbrew "pinned"  # mise: pinned@9\nbrew "zsh-foo"  # git: https://example.com/zsh-foo\n' > "$PACKAGES_DIR/Brewfile"
+  printf 'brew "rtk"  # mise: rtk\nbrew "otto-test-syspkg"  # linux: system\nbrew "mas"  # macos-only\nbrew "pinned"  # mise: pinned@9\nbrew "zsh-foo"  # git: https://example.com/zsh-foo\n' > "$PACKAGES_DIR/Brewfile"
 
   # Exported, because the stubs read them from the environment.
   export BREW_LOG="$TMPDIR/brew-args"
@@ -273,7 +273,7 @@ EOF2
 }
 
 @test "a system package on the mise path is reported, not installed" {
-  run _run_install "$(_path_with mise)" tree
+  run _run_install "$(_path_with mise)" otto-test-syspkg
   [ "$status" -eq 1 ]
   [[ "$output" == *"package manager"* ]]
   [ ! -s "$MISE_LOG" ]
@@ -284,7 +284,7 @@ EOF2
   export INSTALLER_STUB="$TMPDIR/fake-mise-installer"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$INSTALLER_STUB"
   chmod +x "$INSTALLER_STUB"
-  run _run_install "$(_path_with)" tree
+  run _run_install "$(_path_with)" otto-test-syspkg
   [ "$status" -eq 1 ]
   [[ "$output" == *"package manager"* ]]
   [ ! -e "$INSTALLER_LOG" ]

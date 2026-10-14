@@ -130,9 +130,10 @@ def find_worktree_for_branch(
     A detached worktree mid-rebase of *branch* counts as on it. Then falls
     back to a worktree whose directory name matches the sanitized branch
     (slashes to dashes) so detached-HEAD worktrees are still found — but only
-    when git reports no branch for it. A worktree named ``main/`` with someone
-    else's branch checked out is not the main worktree, and callers that reset
-    or check out what they get back would clobber that branch.
+    when git reports no branch for it, and not when it is mid-rebase of some
+    other branch. A worktree named ``main/`` with someone else's branch
+    checked out is not the main worktree, and callers that reset or check out
+    what they get back would clobber that branch.
 
     Use find_worktree_dir_named when you only need a working directory.
     """
@@ -145,7 +146,11 @@ def find_worktree_for_branch(
             return entry.path
     sanitized = branch.replace("/", "-")
     for entry in entries:
-        if entry.branch is None and entry.path.name == sanitized:
+        if (
+            entry.branch is None
+            and entry.path.name == sanitized
+            and rebasing_branch(str(entry.path)) is None
+        ):
             return entry.path
     return None
 
@@ -335,7 +340,7 @@ def stack_parent(cwd: str | None = None, default: str = "", ref: str = "HEAD") -
     # query as a malformed object name rather than ignoring the exclusion — so
     # the empty listing below is also the answer for a repo with no trunk to
     # measure against, which is the right one: without the exclusion every
-    # ancestor of HEAD is a candidate and the nearest local branch would win.
+    # ancestor of the ref tip is a candidate and the nearest local branch would win.
     trunk = f"{REMOTE_REF_PREFIX}{default}"
 
     listing = _git_out(
@@ -538,7 +543,7 @@ def rebasing_branch(cwd: str | None) -> str | None:
             ["git", "rev-parse", "--git-dir"],
             capture_output=True, text=True, cwd=cwd, timeout=core.timeouts.LOCAL,
         )
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return None
     if r.returncode != 0 or not r.stdout.strip():
         return None

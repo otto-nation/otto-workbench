@@ -2863,7 +2863,7 @@ routinely disagree:
 | **depth** | `ContextDepth.NONE` resolves nothing at all; `LOCAL` resolves from git alone; `REMOTE` adds the `gh` calls that name the repo and the PR |
 | **fetch** | whether the worktree is fetched and fast-forwarded first |
 | **locks** | which run locks — `core.run_lock` scopes — are held for the whole run |
-| **worktree** | `WorktreeNeed.FIND` looks up an existing checkout; `CREATE` will make one from any checkout |
+| **worktree** | `WorktreeNeed.FIND` finds an existing checkout or gives none; commands that need one then refuse via `require_worktree`. `CREATE` will make one from any checkout |
 
 | Command | Depth | Fetch | Locks | Worktree |
 |---|---|---|---|---|

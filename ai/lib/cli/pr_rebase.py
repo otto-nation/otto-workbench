@@ -135,13 +135,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     cwd = str(ctx.require_worktree())
 
-    given = list(argv if argv is not None else sys.argv[1:])
     # What `rebase` declares in cli.registry: target and checkout, since the
     # replay rewrites this checkout's history in place. A no-op under `pr
     # rebase`, which already holds both; taken here so running this script
     # directly is guarded too. Before Trail.start so contention costs no trail
     # artifacts.
-    cli.locks.claim_declared("rebase", given, ctx, command=" ".join([SCRIPT, *given]))
+    cli.locks.claim_declared("rebase", argv, ctx, command=" ".join([SCRIPT, *argv]))
 
     trail = Trail.start(
         script=SCRIPT,

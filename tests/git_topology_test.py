@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import git.topology  # noqa: E402
 
 from conftest import commit_all, git_in, init_repo  # noqa: E402
+from git_topology_support import _paused_rebase  # noqa: E402
 
 
 def _porcelain(*entries: tuple[str, str | None], bare: str | None = None) -> str:
@@ -134,42 +135,6 @@ def test_current_branch_detached_head_exits(mock_sub):
         git.topology.current_branch("/repo")
 
 
-def _paused_rebase(
-    tmp_path, *rebase_args: str, branch: str | None = "feat", worktree: bool = False,
-) -> Path:
-    """A repo stopped mid-rebase on a conflict, HEAD detached.
-
-    *branch* None starts the rebase from a detached HEAD instead of a branch.
-    *worktree* runs the rebase in a linked worktree at ``tmp_path/feat-wt`` and
-    returns that path; the main checkout stays at ``tmp_path/repo`` on main.
-    *worktree* implies a branch: it cannot be combined with ``branch=None``.
-    """
-    assert branch or not worktree, "worktree=True needs a branch; branch=None is unsupported"
-    repo = init_repo(tmp_path / "repo")
-    (repo / "f").write_text("base\n")
-    commit_all(repo, "base")
-    git_in(repo, "checkout", "-qb", "feat")
-    (repo / "f").write_text("feat\n")
-    commit_all(repo, "feat")
-    git_in(repo, "checkout", "-q", "main")
-    (repo / "f").write_text("main\n")
-    commit_all(repo, "main")
-    where = repo
-    if worktree:
-        where = tmp_path / "feat-wt"
-        git_in(repo, "worktree", "add", "-q", str(where), "feat")
-    else:
-        git_in(repo, "checkout", "-q", "feat" if branch else "--detach")
-        if branch is None:
-            git_in(repo, "reset", "-q", "--hard", "feat")
-    result = subprocess.run(
-        ["git", "rebase", *rebase_args, "main"],
-        cwd=where, capture_output=True, text=True,
-    )
-    assert result.returncode != 0, "fixture expected the rebase to stop on a conflict"
-    return where
-
-
 @pytest.mark.parametrize("backend", ["--merge", "--apply"])
 def test_current_branch_names_the_branch_a_paused_rebase_is_on(tmp_path, backend):
     """A rebase stopped on a conflict detaches HEAD; the branch is still the one being rebased."""
@@ -208,6 +173,17 @@ def test_find_worktree_for_branch_finds_a_worktree_mid_rebase(tmp_path):
     found = git.topology.find_worktree_for_branch("feat", str(repo))
     assert found is not None
     assert found.resolve() == wt.resolve()
+
+
+def test_find_worktree_for_branch_skips_a_renamed_worktree_mid_rebase_of_another_branch(
+    tmp_path,
+):
+    """A directory named for B that is mid-rebase of A is not B's checkout."""
+    wt = _paused_rebase(tmp_path, worktree=True)
+    repo = tmp_path / "repo"
+    moved = tmp_path / "other-branch"
+    git_in(repo, "worktree", "move", str(wt), str(moved))
+    assert git.topology.find_worktree_for_branch("other-branch", str(repo)) is None
 
 
 # ── Branch resolution ──────────────────────────────────────────────────────

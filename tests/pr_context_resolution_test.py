@@ -19,7 +19,7 @@ import pr.context
 import pr.target
 from pr.context import PRHead
 
-from git_topology_test import _paused_rebase
+from git_topology_support import _paused_rebase
 from cli.registry import COMMANDS, need_for
 
 

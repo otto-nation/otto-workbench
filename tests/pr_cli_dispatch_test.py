@@ -75,6 +75,28 @@ def test_cmd_status_without_a_worktree_renders_cached_state(
     assert json.loads(captured.out)["identity"]["head_sha"] == "A"
 
 
+@patch("pr.state.load_state")
+@patch("pr.domains.PushDomain.observed")
+@patch("cli.pr_commands._worktree_head")
+def test_cmd_status_without_a_worktree_renders_cached_push(
+    mock_head, observed, mock_load, capsys,
+):
+    """A recorded push with a stamp is shown from state, not observed."""
+    state = pr.state.new_state("acme/w", "feat", pr_number=1, head_sha="A",
+                               worktree_root="/wt")
+    pr.state.apply(state, pr.domains.PushDomain(
+        ahead=3, updated_at=pr.state.now_iso()))
+    mock_load.return_value = state
+
+    ctx = make_ctx(worktree_root=None, branch="feat")
+    assert cli.pr.cmd_status([], ctx) == 0
+
+    observed.assert_not_called()
+    mock_head.assert_not_called()
+    captured = capsys.readouterr()
+    assert "**Push**: 3 commit(s) not pushed" in captured.err
+
+
 def test_delegate_argv_forwards_original_repo_dir_when_there_is_no_tree():
     ctx = make_ctx(worktree_root=None)
     entry = command_spec(script="ci-check")

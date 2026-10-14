@@ -2,7 +2,7 @@
 
 import sys
 from pathlib import Path
-from unittest.mock import call, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -12,6 +12,9 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import git.topology
+import gh.run_reads
+import pr.ci_check
+import pr.ci_runs
 import pr.context
 import pr.target
 from pr.context import PRHead
@@ -97,14 +100,38 @@ def test_bare_repo_no_worktree_no_args_exits(mock_resolve_wt, mock_bare, mock_to
 @patch.object(pr.context, "detect_repo", return_value="owner/repo")
 @patch.object(git.topology, "resolve_branch", return_value="feat/thing")
 @patch.object(pr.context, "_pr_from_branch",
-              return_value=pr.context.BranchPR(number=42))
+              return_value=pr.context.BranchPR(number=42, head_sha="pr-head"))
 def test_bare_repo_with_branch_continues(mock_pr, mock_resolve, mock_repo,
                                          mock_resolve_wt, mock_bare, mock_top,
                                          mock_repo_name):
     ctx = pr.context.resolve(branch="thing")
     assert ctx.worktree_root is None
     assert ctx.branch == "feat/thing"
-    assert ctx.head_sha == ""
+    assert ctx.head_sha == mock_pr.return_value.head_sha
+
+
+@patch.object(pr.target, "repo_identity_from_origin",
+              return_value=pr.target.RepoIdentity(label="owner/repo", key="repo"))
+@patch.object(pr.context, "_git_toplevel", return_value=None)
+@patch.object(git.topology, "is_bare_repo", return_value=True)
+@patch.object(git.topology, "resolve_bare_repo_worktree", return_value=None)
+@patch.object(pr.context, "detect_repo", return_value="owner/repo")
+@patch.object(git.topology, "resolve_branch", return_value="feat")
+@patch.object(pr.context, "_pr_from_branch",
+              return_value=pr.context.BranchPR(number=42, head_sha="pr-head"))
+def test_ci_dashboard_on_a_bare_repo_asks_runs_at_the_pr_head(
+        mock_pr, mock_resolve, mock_repo, mock_resolve_wt, mock_bare, mock_top,
+        mock_repo_name, tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
+    ctx = pr.context.resolve(branch="feat")
+    args = MagicMock(run=None, head_sha="")
+
+    with patch("gh.run_reads.fetch_latest_runs",
+               return_value=gh.run_reads.RunDiscovery()) as fetch:
+        with pytest.raises(pr.ci_runs.RunUnavailable):
+            pr.ci_check.run_ci(MagicMock(), args, ctx)
+
+    assert fetch.call_args.args == (ctx.repo, ctx.branch, "pr-head")
 
 
 @patch.object(pr.target, "repo_identity_from_origin",

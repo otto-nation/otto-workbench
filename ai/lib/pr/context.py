@@ -108,6 +108,7 @@ import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from collections.abc import Sequence
 from typing import NoReturn
 
 import gh.client
@@ -145,8 +146,8 @@ def classify_target(target: str) -> tuple[str | None, str | None]:
 class BranchPR:
     """The open PR for a branch, as far as ``gh`` would say.
 
-    Both fields come from one call. They are returned together rather than as a
-    number alone because every caller that wants to know a branch's PR also
+    All three fields come from one call. They are returned together rather than
+    as a number alone because every caller that wants to know a branch's PR also
     wants to know what it targets, and asking twice is a second round trip for
     a field the first response already carried.
 
@@ -157,6 +158,10 @@ class BranchPR:
 
     number: int | None = None
     base: str = ""
+    # The PR head's SHA, or "" when the list did not carry one. A treeless
+    # context uses this as the commit GitHub will have, instead of the
+    # caller's HEAD.
+    head_sha: str = ""
 
 
 @dataclass(frozen=True)
@@ -378,7 +383,16 @@ def resolve(
         pr_number, base = found.number, found.base
 
     if not pr_ref:
-        head_sha = _head_sha(cwd) if worktree_root else ""
+        if worktree_root:
+            head_sha = _head_sha(cwd)
+        else:
+            # No checkout HEAD to read. Prefer the PR's head, then the refs
+            # GitHub would have, so CI lookup and state stamping name this
+            # branch rather than coming back empty.
+            head_sha = found.head_sha or _branch_ref_sha(cwd, (
+                f"refs/remotes/origin/{branch_name}",
+                f"refs/heads/{branch_name}",
+            ))
 
     current = git.topology.current_branch_quiet(cwd) if worktree_root else None
 
@@ -440,7 +454,13 @@ def resolve_local(
         pr_number=None,
         branch=branch_name,
         worktree_root=worktree_root,
-        head_sha=_head_sha(cwd) if worktree_root else "",
+        head_sha=(
+            _head_sha(cwd) if worktree_root
+            else _branch_ref_sha(cwd, (
+                f"refs/heads/{branch_name}",
+                f"refs/remotes/origin/{branch_name}",
+            ))
+        ),
         current_branch=git.topology.current_branch_quiet(cwd) if worktree_root else None,
         host=identity.host,
         target_dir=pr.target.target_dir(identity.key, branch_name),
@@ -743,6 +763,21 @@ def _head_sha(cwd: str | None = None) -> str:
     return r.stdout.strip()
 
 
+def _branch_ref_sha(cwd: str | None, refs: Sequence[str]) -> str:
+    """The first of *refs* that names a commit, or ""."""
+    if cwd is not None and not Path(cwd).is_dir():
+        return ""
+    for ref in refs:
+        r = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+            capture_output=True, text=True, cwd=cwd, timeout=core.timeouts.LOCAL,
+        )
+        sha = r.stdout.strip()
+        if r.returncode == 0 and sha:
+            return sha
+    return ""
+
+
 def _parse_pr_input(pr_input: str) -> int:
     """Extract PR number from URL or raw number."""
     m = _PR_URL_RE.search(pr_input)
@@ -776,7 +811,7 @@ def _pr_from_current(cwd: str | None = None) -> BranchPR:
 
 
 def _pr_from_branch(repo: str, branch: str) -> BranchPR:
-    """The open PR for *branch*, both fields off one call.
+    """The open PR for *branch*, number, base and head SHA off one call.
 
     The list is read as JSON rather than flattened by a `--jq` interpolation:
     `.[0] | "\\(.number) \\(.baseRefName)"` against an empty list prints the
@@ -787,7 +822,7 @@ def _pr_from_branch(repo: str, branch: str) -> BranchPR:
     """
     found = gh.client.json_out(
         "pr", "list", "--repo", repo, "--head", branch,
-        "--json", "number,baseRefName", default=[],
+        "--json", "number,baseRefName,headRefOid", default=[],
     )
     if not isinstance(found, list) or not found:
         return BranchPR()
@@ -800,6 +835,7 @@ def _pr_from_branch(repo: str, branch: str) -> BranchPR:
     return BranchPR(
         number=_as_pr_number(str(first.get("number", ""))),
         base=first.get("baseRefName") or "",
+        head_sha=first.get("headRefOid") or "",
     )
 
 

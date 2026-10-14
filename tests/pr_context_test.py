@@ -18,7 +18,7 @@ import pr.context
 import pr.target
 from pr.context import _parse_pr_input, PRHead, ResolvedContext
 
-from conftest import git_in, make_ctx, run_checked  # noqa: E402
+from conftest import git_in, git_out, make_ctx, run_checked  # noqa: E402
 import gh.client
 
 
@@ -245,6 +245,28 @@ def _git_repo(path: Path, origin="git@github.com:acme/widget.git",
     return path
 
 
+def _bare_feat(tmp_path: Path) -> Path:
+    """A bare repo with no checkout; heads/feat and origin/feat differ.
+
+    Identity is passed per-commit so the repo-config guard stays quiet.
+    """
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    git_in(seed, "init", "-q", "-b", "main")
+    git_in(seed, "-c", "user.name=t", "-c", "user.email=t@t",
+           "commit", "-q", "--allow-empty", "-m", "local")
+    local_sha = git_out(seed, "rev-parse", "HEAD").strip()
+    git_in(seed, "-c", "user.name=t", "-c", "user.email=t@t",
+           "commit", "-q", "--allow-empty", "-m", "origin")
+    origin_sha = git_out(seed, "rev-parse", "HEAD").strip()
+    bare = tmp_path / "bare.git"
+    git_in(tmp_path, "clone", "-q", "--bare", str(seed), str(bare))
+    git_in(bare, "update-ref", "refs/heads/feat", local_sha)
+    git_in(bare, "update-ref", "refs/remotes/origin/feat", origin_sha)
+    git_in(bare, "remote", "set-url", "origin", "git@github.com:acme/widget.git")
+    return bare
+
+
 def _recorded_runs(monkeypatch) -> list[list[str]]:
     """Every command the code under test shells out to, in order."""
     real = subprocess.run
@@ -346,6 +368,48 @@ def test_resolve_local_does_not_create_a_worktree_in_a_bare_repo(monkeypatch):
 
     assert ctx.worktree_root is None
     assert ctx.branch == "feat/login"
+
+
+def test_treeless_resolve_takes_origin_feat_when_there_is_no_pr(monkeypatch, tmp_path):
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+    bare = _bare_feat(tmp_path)
+    monkeypatch.setattr(git.topology, "resolve_bare_repo_worktree", lambda *a, **k: None)
+    monkeypatch.setattr(git.topology, "resolve_branch", lambda hint, cwd=None: "feat")
+    monkeypatch.setattr(pr.context, "_pr_from_branch", lambda repo, branch: pr.context.BranchPR())
+
+    ctx = pr.context.resolve(branch="feat", repo_dir=str(bare))
+
+    origin = git_out(bare, "rev-parse", "origin/feat").strip()
+    heads = git_out(bare, "rev-parse", "refs/heads/feat").strip()
+    assert origin != heads
+    assert ctx.worktree_root is None
+    assert ctx.head_sha == origin
+
+
+def test_resolve_local_in_a_bare_repo_takes_the_local_ref(monkeypatch, tmp_path):
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+    bare = _bare_feat(tmp_path)
+    monkeypatch.setattr(git.topology, "resolve_branch", lambda hint, cwd=None: "feat")
+    monkeypatch.setattr(
+        gh.client, "run",
+        lambda *a, **k: pytest.fail("gh must not be called"),
+    )
+    monkeypatch.setattr(
+        gh.client, "json_out",
+        lambda *a, **k: pytest.fail("gh must not be called"),
+    )
+    monkeypatch.setattr(
+        gh.client, "pr_view",
+        lambda *a, **k: pytest.fail("gh must not be called"),
+    )
+
+    ctx = pr.context.resolve_local(branch="feat", repo_dir=str(bare))
+
+    heads = git_out(bare, "rev-parse", "refs/heads/feat").strip()
+    origin = git_out(bare, "rev-parse", "origin/feat").strip()
+    assert heads != origin
+    assert ctx.worktree_root is None
+    assert ctx.head_sha == heads
 
 
 def test_resolve_at_local_takes_the_local_rung(monkeypatch):
@@ -775,6 +839,22 @@ def test_a_branch_lookup_reads_both_fields_off_the_json(monkeypatch):
     found = pr.context._pr_from_branch("acme/widget", "feat/child")
 
     assert found == pr.context.BranchPR(number=7, base="feat/parent")
+
+
+def test_a_branch_lookup_reads_the_head_sha_off_the_json(monkeypatch):
+    seen: list[tuple] = []
+
+    def fake_json_out(*a, **kw):
+        seen.append(a)
+        return [{"number": 7, "baseRefName": "feat/parent", "headRefOid": "abc1234"}]
+
+    monkeypatch.setattr(gh.client, "json_out", fake_json_out)
+
+    found = pr.context._pr_from_branch("acme/widget", "feat/child")
+
+    assert found.head_sha == "abc1234"
+    json_fields = seen[0][seen[0].index("--json") + 1].split(",")
+    assert "headRefOid" in json_fields
 
 
 def test_a_pr_reporting_no_base_is_not_given_one(monkeypatch):

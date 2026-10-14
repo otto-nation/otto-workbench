@@ -330,8 +330,10 @@ def _empty_pi_catalogue(monkeypatch):
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
+    import agent.pi_models
     import review.budget
     monkeypatch.setattr(review.budget, "_run_pi_list_models", lambda: "")
+    monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda: "")
     review.budget._pi_catalogue_windows.cache_clear()
     yield
     review.budget._pi_catalogue_windows.cache_clear()
@@ -1137,6 +1139,18 @@ def _isolate_cache_root(tmp_path, monkeypatch):
     subprocess inherits it.
     """
     monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path / "cache"))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_pi_settings(tmp_path, monkeypatch):
+    """Point ``agent.pi_models.default_provider`` at a settings file that does not exist.
+
+    Every current test passes an explicit provider, so nothing exercises this
+    fallback today — but without the override a future caller that does fall
+    through reads the real ``~/.pi/agent/settings.json`` during a test run, the
+    same leak the other root-isolation fixtures in this file exist to prevent.
+    """
+    monkeypatch.setenv("WORKBENCH_PI_SETTINGS", str(tmp_path / "pi-settings.json"))
 
 
 @pytest.fixture(autouse=True)

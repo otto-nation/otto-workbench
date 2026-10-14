@@ -50,18 +50,16 @@ import math
 import os
 import subprocess
 import sys
-import threading
 import time
-from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 import agent.usage
-import core.children
 import core.log
 import core.timeouts
 from agent.backend import AgentInvocation, agent_env
+from agent.pi_models import ModelNotServed, not_served_message, require_listed_model
 from agent.rule_prefix import (
     TEMP_PREFIX,
     materialize as materialize_rule_prefix,
@@ -70,6 +68,15 @@ from agent.rule_prefix import (
 from agent.backend_events import (
     _log_stderr_on_failure, parse_pi_cost, parse_pi_event, pi_prompt_result,
     pi_tool_signature, pi_wrote_output,
+)
+from agent.backend_pi_rpc import (
+    _PROMPT_UNDELIVERED,
+    _RPC_ERROR_EXIT_CODE,
+    _get_stats_after_agent_end,
+    _rpc_process,
+    _rpc_response_error,
+    _send,
+    _wait_for_exit,
 )
 from agent.stall import StallWatch
 from core.log import ANSI_DIM, ANSI_RESET, _print_lock
@@ -316,225 +323,6 @@ def _build_fix_cmd(inv: AgentInvocation, extension: str | None = None) -> list[s
     return cmd
 
 
-# ── RPC protocol helpers ─────────────────────────────────────────────────────
-
-
-# Serialises writes to the child's stdin. The stall watchdog sends its abort
-# from its own thread while the stream loop may be sending a steer, and two
-# unsynchronised write/flush pairs can interleave into one malformed JSONL
-# line — which Pi answers with a parse error and drops, losing whichever
-# command mattered. One lock around the whole line is enough because every
-# command here is a single short write.
-_STDIN_LOCK = threading.Lock()
-
-
-def _send(proc: subprocess.Popen, command: dict) -> bool:
-    """Write a JSONL command to the RPC process's stdin. True when it landed.
-
-    Writing to a child that has already exited raises rather than failing
-    quietly, and every caller here is capable of reaching a dead Pi: the very
-    first `prompt` when Pi rejected its own flags and exited, and the mid-run
-    `abort`/`steer` that follow a turn_end Pi emitted on its way out. An
-    unguarded traceback from those is the same class of fault this module was
-    fixed for — an early failure surfacing as something other than the error
-    it is — so the failure is reported to the caller, which knows whether the
-    command mattered.
-    """
-    try:
-        with _STDIN_LOCK:
-            proc.stdin.write(json.dumps(command) + "\n")
-            proc.stdin.flush()
-        return True
-    except (BrokenPipeError, ValueError):
-        return False
-
-
-def _read_rpc_response(proc: subprocess.Popen, command_type: str) -> dict:
-    """Read lines until we get a response for the given command type.
-
-    Skips any interleaved events (shouldn't occur after agent_end,
-    but handles gracefully).
-    """
-    for line in proc.stdout:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            data = json.loads(line)
-        except (json.JSONDecodeError, ValueError):
-            continue
-        if data.get("type") == "response" and data.get("command") == command_type:
-            return data
-    return {}
-
-
-# Pi wraps every RPC reply in {type, command, success, data}. Only these two
-# commands make a failure fatal to the run. Per Pi's RPC protocol a `prompt`
-# reply with success:false means the prompt was rejected before acceptance, so
-# no agent_start, no turn_end and no agent_end will ever follow, and a reader
-# waiting for them waits out the whole timeout. `parse` is the same fault one
-# step earlier: Pi could not read the command line at all. A failed `steer`,
-# `follow_up` or `abort` is not fatal — _check_limits sends those mid-run, the
-# agent that rejected one is still streaming, and the run still ends in
-# agent_end. Ending the run there would discard the work of a healthy agent
-# over a steering message it no longer needed.
-_FATAL_RPC_COMMANDS = frozenset({"prompt", "parse"})
-
-# Enough of a provider or auth error to act on. The text is a message meant for
-# a human, not a payload, and a runaway one would otherwise land whole in the
-# session log and in every ledger row that quotes it.
-_RPC_ERROR_MAX_CHARS = 2000
-
-# Pi was gone before its prompt could be written. Reported in the same shape as
-# a refusal, because it is the same failure from the caller's side: the run
-# never started and nothing downstream should wait for it.
-_PROMPT_UNDELIVERED = (
-    "pi exited before the prompt could be sent — its stdin was already closed"
-)
-
-# What a run Pi refused exits with when Pi's own status does not say so. A
-# clean RPC shutdown after a rejected prompt is exit 0, and a caller reading
-# only the status would take that for a successful run.
-_RPC_ERROR_EXIT_CODE = 1
-
-
-def _rpc_response_error(data: dict) -> str | None:
-    """The error text of an RPC response that ends the run, or None.
-
-    A non-fatal failure is warned about rather than returned: the run is still
-    streaming and its work is worth more than the command Pi declined. Nothing
-    is dropped in silence either way — the unconditional skip that preceded
-    this is what let an auth failure consume a whole timeout with no output.
-
-    ``success`` is compared against False by identity: a response that carries
-    no ``success`` key is not a failure, and a truthiness test would read an
-    absent key, a 0 or an empty string as one.
-    """
-    if data.get("success") is not False:
-        return None
-    command = data.get("command", "")
-    detail = str(data.get("error") or f"pi rejected {command or 'a command'}")
-    detail = detail[:_RPC_ERROR_MAX_CHARS]
-    if command in _FATAL_RPC_COMMANDS:
-        return detail
-    core.log.warn(f"pi rpc {command or 'command'} failed: {detail}")
-    return None
-
-
-def _wait_for_exit(proc: subprocess.Popen, *, abandoned: bool) -> bool:
-    """Wait for Pi to exit after its stdin was closed. True when it is gone.
-
-    Bounded only for a run this module abandoned. Breaking out of the event
-    loop on a fatal response leaves a child that is still alive with an unread
-    stdout pipe, and waiting on that forever is the same silent hang the break
-    exists to end, one line further down.
-
-    A run that reached agent_end is waited for as long as it takes, which is
-    what the code did before there was an error path at all. Pi's shutdown does
-    real work — flushing its log, tearing down extensions — and this machine's
-    own test runner documents subprocesses losing the scheduler for seconds
-    under load. A bound here would kill a healthy run that had already written
-    its output and report the whole thing as a failure, which is a worse
-    outcome than the wait it would be shortening.
-
-    The stop is `core.children.terminate`: SIGTERM to the group Pi leads, a
-    grace period, then SIGKILL. TERM first because Pi stops the tool processes
-    it started detached only on its own SIGTERM, and those lead groups of their
-    own that no kill aimed at Pi's group reaches. A group that will not reap
-    even after SIGKILL is reported and then left: raising would replace a
-    failure the caller can act on with a traceback none of them handles, and
-    there is no further signal to try.
-
-    False is that last case, and it is the whole reason this returns anything.
-    A caller that reads the child's stderr afterwards blocks until the child
-    closes it, which a process that would not die for SIGKILL never does — so
-    "reported and left" becomes a silent hang two lines later unless the caller
-    is told to skip it.
-    """
-    if not abandoned:
-        proc.wait(timeout=core.timeouts.UNBOUNDED)
-        return True
-    # The LOCAL wait precedes `terminate` here, unlike the exception path
-    # (`_rpc_process`), which terminates at once: this run was abandoned on a
-    # fatal response with stdin already closed, so Pi may be exiting on its own
-    # and gets a short chance to do so cleanly. An exception leaving the block
-    # is a stop or a failure that wants the child gone now.
-    try:
-        proc.wait(timeout=core.timeouts.LOCAL)
-    except subprocess.TimeoutExpired:
-        if not core.children.terminate(proc):
-            core.log.warn(f"pi process group {proc.pid} did not reap after SIGKILL")
-            return False
-    return True
-
-
-def _close_pipes(proc: subprocess.Popen) -> None:
-    """Close the three pipes, tolerating one the child already broke.
-
-    Popen.__exit__ does this, but it also reaps unbounded; this is the half
-    worth having on a path that cannot afford to block.
-    """
-    for pipe in (proc.stdout, proc.stderr, proc.stdin):
-        if pipe is None:
-            continue
-        try:
-            pipe.close()
-        except (BrokenPipeError, OSError, ValueError):
-            pass
-
-
-@contextmanager
-def _rpc_process(cmd: list[str], **spawn) -> Iterator[subprocess.Popen]:
-    """Start Pi in its own process session, stopping the group on the way out.
-
-    ``start_new_session`` is what makes the child a group leader, so that a
-    stop can reach the tools it spawned rather than only Pi itself. It also
-    takes the child out of the terminal's foreground group and out of any
-    supervisor's kill aimed at this process's group, so nothing but this
-    process can stop it. Two things do: the `except` below, for an exception
-    on the thread that owns the child, and `core.children.stop_all`, which the
-    entry point's stop handler calls for a signal — which lands on the main
-    thread, never on this one. `core.children.spawn` is what records the child
-    for the second, and refuses to start one once a stop is under way.
-
-    The pipes are closed and the child reaped by hand rather than by entering
-    Popen. Its __exit__ reaps with an unbounded `self.wait()` for anything but
-    a KeyboardInterrupt, so a group that survived SIGKILL would hang the
-    unwinding of an ordinary exception — the same silent hang this module
-    exists to avoid, on the one path with an exception already in flight. The
-    success path does not come through here at all: `_wait_for_exit` has
-    already waited, on the terms that path needs.
-    """
-    proc = core.children.spawn(cmd, start_new_session=True, **spawn)
-    try:
-        yield proc
-    except BaseException:
-        if not core.children.terminate(proc):
-            core.log.warn(f"pi process group {proc.pid} did not reap after SIGKILL")
-        _close_pipes(proc)
-        raise
-    finally:
-        core.children.forget(proc)
-
-
-def _get_stats_after_agent_end(proc: subprocess.Popen) -> dict:
-    """Query get_session_stats after the agent has finished.
-
-    Safe to call only after agent_end — no event interleaving.
-
-    Returns the response's ``data``, not the response. Pi wraps every RPC reply
-    in ``{type, command, success, data}``, and the caller wants the stats. The
-    unwrap is here rather than at the read site because this function's name
-    promises stats: reading ``tokens`` off the envelope silently yields an empty
-    dict, which reaches the ledger as a run that cost money and spent no tokens.
-    """
-    if not _send(proc, {"type": "get_session_stats"}):
-        return {}
-    resp = _read_rpc_response(proc, "get_session_stats")
-    data = resp.get("data")
-    return data if data is not None else resp
-
-
 # ── Stream progress (Pi RPC JSONL) ───────────────────────────────────────────
 
 
@@ -775,19 +563,46 @@ class StreamResult:
     error: str | None = None
 
 
-def _undelivered_prompt(log_file) -> StreamResult:
+def _exited_stderr(proc: subprocess.Popen | None) -> str:
+    """stderr of a child that has already left, else empty.
+
+    Reading a live child's stderr pipe blocks until it closes the fd, so a
+    process still running is skipped. A stub without ``poll`` is treated as
+    already gone — the tests' dead-stdin Pi has already refused the write.
+    """
+    if proc is None or proc.stderr is None:
+        return ""
+    poll = getattr(proc, "poll", None)
+    if callable(poll) and poll() is None:
+        return ""
+    try:
+        return proc.stderr.read() or ""
+    except (OSError, ValueError):
+        return ""
+
+
+def _undelivered_prompt(
+    log_file, proc: subprocess.Popen | None = None, model: str = "",
+    provider: str | None = None,
+) -> StreamResult:
     """The result of a run whose prompt never reached Pi.
 
     Logged into the session file in Pi's own response shape, so the record that
-    explains the failure is where every other refusal leaves one.
+    explains the failure is where every other refusal leaves one. When Pi's
+    stderr names a missing model, that is the error — not the closed-stdin
+    symptom of the same exit.
     """
-    core.log.error(f"pi refused the run: {_PROMPT_UNDELIVERED}")
+    stderr = _exited_stderr(proc)
+    error = not_served_message(model, stderr, provider) or _PROMPT_UNDELIVERED
+    core.log.error(f"pi refused the run: {error}")
     log_file.write(json.dumps({
         "type": "response", "command": "prompt", "success": False,
-        "error": _PROMPT_UNDELIVERED,
+        "error": error,
     }) + "\n")
+    if stderr:
+        log_file.write(f"\n--- stderr ---\n{stderr}\n")
     log_file.flush()
-    return StreamResult(0, 0.0, "error", None, _PROMPT_UNDELIVERED)
+    return StreamResult(0, 0.0, "error", None, error)
 
 
 def _consume_stream(
@@ -1065,6 +880,27 @@ def _prompt_with_dirs(inv: AgentInvocation) -> str:
     return f"\nAccessible directories:\n{dir_lines}\n\n{inv.prompt}"
 
 
+def _unlisted_model_exit(err: ModelNotServed, session_log: str) -> int:
+    """Record an unlisted-model refusal the way every other refusal is recorded.
+
+    Raised before a spawn, this had no session log entry at all and nothing
+    downstream — ``agent.session.diagnose_missing_output``, the retry guard,
+    the per-phase accounting — could see it. Logging it here and returning the
+    same exit code an RPC refusal returns lets this failure take the one path
+    every other model/auth failure already takes.
+    """
+    error = str(err)
+    core.log.error(f"pi refused the run: {error}")
+    if session_log:
+        with open(session_log, "w") as log_file:
+            log_file.write(json.dumps({
+                "type": "response", "command": "prompt", "success": False,
+                "error": error,
+            }) + "\n")
+        _write_result_record(session_log, "error", 0, 0.0, 0, {}, err.model, error=error)
+    return _RPC_ERROR_EXIT_CODE
+
+
 def _exit_code(proc: subprocess.Popen, stream: StreamResult) -> int:
     """The status a caller should see for this run.
 
@@ -1104,10 +940,20 @@ def prompt(
     ``--thinking`` and ``--provider`` are global flags here, so a prompt honours
     both exactly as the agent modes do.
     """
+    try:
+        require_listed_model(model, provider)
+    except ModelNotServed as err:
+        core.log.error(f"pi refused the run: {err}")
+        return "", _RPC_ERROR_EXIT_CODE, None
     cmd = _build_prompt_cmd(model=model, provider=provider, thinking=thinking)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd,
                             timeout=core.timeouts.UNBOUNDED)
     reply, usage = pi_prompt_result(result.stdout)
+    if result.returncode:
+        msg = not_served_message(model or "", result.stderr or "", provider)
+        if msg:
+            core.log.error(msg)
+            reply = msg
     return reply, result.returncode, usage
 
 
@@ -1120,6 +966,10 @@ def invoke_agent(inv: AgentInvocation) -> int:
     - max_budget is enforced by accumulating message_end costs and sending abort
     - A Claude-compatible result record is written at the end for cost tracking
     """
+    try:
+        require_listed_model(inv.model, inv.provider)
+    except ModelNotServed as err:
+        return _unlisted_model_exit(err, inv.session_log)
     ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
     cmd = _build_agent_cmd(inv, extension=ext)
     try:
@@ -1153,7 +1003,7 @@ def _drive_agent(inv: AgentInvocation, proc: subprocess.Popen) -> int:
                 output_path=inv.output_path,
             )
         else:
-            stream = _undelivered_prompt(log_fh)
+            stream = _undelivered_prompt(log_fh, proc, inv.model, inv.provider)
 
     duration_ms = int((time.monotonic() - start_time) * 1000)
 
@@ -1193,6 +1043,10 @@ def invoke_fix(inv: AgentInvocation) -> int:
     Uses RPC mode for budget tracking and turn limits, same as invoke_agent.
     If session_log is empty, events are consumed but not persisted.
     """
+    try:
+        require_listed_model(inv.model, inv.provider)
+    except ModelNotServed as err:
+        return _unlisted_model_exit(err, inv.session_log)
     ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
     cmd = _build_fix_cmd(inv, extension=ext)
     try:
@@ -1223,7 +1077,7 @@ def _drive_fix(inv: AgentInvocation, proc: subprocess.Popen) -> int:
                 output_path=inv.output_path,
             )
         else:
-            stream = _undelivered_prompt(log_file)
+            stream = _undelivered_prompt(log_file, proc, inv.model, inv.provider)
 
     duration_ms = int((time.monotonic() - start_time) * 1000)
 

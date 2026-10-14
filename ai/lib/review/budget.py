@@ -38,6 +38,7 @@ from pathlib import Path
 import core.proc
 import core.timeouts
 from agent.phases import ModelAlias, collect_phase_models
+from agent.pi_models import listing_rows
 from core.phases import Backend
 from review.grouping import classify_tier, format_profiles_section
 
@@ -232,14 +233,12 @@ def _parse_pi_list_models(text: str) -> dict[str, int]:
     changes.
     """
     windows: dict[str, int] = {}
-    for line in text.splitlines():
-        parts = line.split()
-        if len(parts) < 3:
+    for _provider, model, rest in listing_rows(text):
+        if not rest:
             continue
-        tokens = _parse_context_tokens(parts[2])
+        tokens = _parse_context_tokens(rest[0])
         if tokens is None:
             continue
-        model = parts[1]
         previous = windows.get(model)
         if previous is None or tokens < previous:
             windows[model] = tokens

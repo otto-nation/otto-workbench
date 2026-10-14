@@ -3661,6 +3661,33 @@ Gaps vs Claude Code CLI:
   --add-dir        Not available; directories passed in prompt text
   --agent          Not available; use --append-system-prompt with agent file contents
 
+### agent/backend_pi_rpc.py
+
+Pi RPC process plumbing for the Pi backend.
+
+Owns the JSONL stdin/stdout protocol around a ``pi --mode rpc`` child:
+sending commands, reading replies, classifying a fatal response, and
+starting/stopping the process group. The event loop that consumes the
+stream lives in ``agent.backend_pi``.
+
+### agent/pi_models.py
+
+Refuse a model id ``pi --list-models`` does not serve.
+
+``AI_*_MODEL`` is the operator's id, often the Anthropic / Claude Code spelling
+(``claude-sonnet-5-5``). Pi's ``google-vertex-claude`` provider lists Vertex
+publisher ids (``claude-sonnet-5``). Those are different models. Passing the
+env value through unchanged is how a review dies with ``Model "claude-sonnet-5-5"
+not found`` and the RPC path used to report that as stdin already closed.
+Rewriting the id onto a listed parent would spawn a different model than the
+one configured, so this module does not.
+
+A readable catalogue that lacks the id is a configuration error: the message
+names the id, where it came from when that is knowable, the provider, the
+closest listed ids, and how to override. An empty catalogue is not that error
+— pi absent, hung, or unreadable must not block a spawn pi itself might still
+accept; Pi's stderr is the remaining signal on that path.
+
 ### agent/rule_prefix.py
 
 Assemble a Pi system-prompt prefix from a seeded ``rules_home``.

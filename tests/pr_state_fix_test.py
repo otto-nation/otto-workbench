@@ -602,3 +602,43 @@ def test_a_pre_fold_state_file_survives_a_round_trip(worktree):
     reloaded = load_state(worktree).fix
     assert reloaded.render_status() == _loaded_pre_fold().render_status()
     assert reloaded.closeout_debt() == _loaded_pre_fold().closeout_debt()
+
+
+# ── replies to review bodies ───────────────────────────────────────────────
+
+
+def test_a_review_body_reply_survives_a_save(worktree):
+    """`pr comments --reply rb-…` writes here, and `--finish` reads it back."""
+    state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc",
+                      worktree_root=str(worktree))
+    state.fix.source_replies["rb-88"] = "Done — see the new guard."
+    save_state(worktree, state)
+    assert load_state(worktree).fix.source_replies == {"rb-88": "Done — see the new guard."}
+
+
+def test_a_state_file_written_before_review_body_replies_reads_none(worktree):
+    state = new_state("owner/repo", "feat", pr_number=5, head_sha="abc",
+                      worktree_root=str(worktree))
+    save_state(worktree, state)
+    path = worktree / "state.json"
+    raw = json.loads(path.read_text())
+    raw["fix"].pop("source_replies", None)
+    path.write_text(json.dumps(raw))
+    assert load_state(worktree).fix.source_replies == {}
+
+
+def test_a_fix_round_keeps_the_review_body_replies_it_said_nothing_about():
+    """Cycle-scoped like the reviewers: a `--fix` round builds its summary empty."""
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    apply(state, _fix(source_replies={"rb-1": "first", "rb-2": "second"},
+                      updated_at="t1"))
+    apply(state, _fix(ItemOutcome(id="t2", outcome=FixOutcome.FIXED), updated_at="t2"))
+    assert state.fix.source_replies == {"rb-1": "first", "rb-2": "second"}
+
+
+def test_a_later_reply_to_the_same_review_replaces_the_earlier_one():
+    state = new_state("repo", "branch", pr_number=None, head_sha="", worktree_root="/wt")
+    apply(state, _fix(source_replies={"rb-1": "first", "rb-2": "second"},
+                      updated_at="t1"))
+    apply(state, _fix(source_replies={"rb-1": "revised"}, updated_at="t2"))
+    assert state.fix.source_replies == {"rb-1": "revised", "rb-2": "second"}

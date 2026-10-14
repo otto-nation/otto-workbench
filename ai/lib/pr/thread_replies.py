@@ -48,12 +48,12 @@ from __future__ import annotations
 
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 
 import core.log
 import core.publishing
-from gh.pr_data import fetch_pr_data
+from gh.pr_data import PRData, fetch_pr_data
 import git.client
 import pr.attribution
 import pr.comments
@@ -61,7 +61,7 @@ import pr.context
 import pr.permalinks
 import pr.published_record
 from pr.fix import UNVERIFIED_NOTE, FixOutcome
-from pr.thread_models import THREAD_ANCHOR, CommentItem, ReportThread
+from pr.thread_models import THREAD_ANCHOR, CommentItem, CommentSourceKind, ReportThread
 
 
 APPLIED_REPLY_PREFIX = "Applied"
@@ -659,6 +659,66 @@ def find_reply_target(
     return None
 
 
+# `rb-<reviewId>` or `rb-<reviewId>-<n>`: a review body's source key, or the id
+# of one item triage cut out of it. The prefix is the source kind's own.
+_REVIEW_SOURCE_RE = re.compile(
+    re.escape(CommentSourceKind.REVIEW_BODY.id_prefix) + r"-(\d+)(?:-\d+)?")
+
+
+def reply_source(
+    target: str, review_body_ids: Iterable[str], triaged_item_ids: Iterable[str] = (),
+) -> str | None:
+    """The review body a `--reply` target names, as its source key, or None.
+
+    `<reviewId>`, `rb-<reviewId>` and `rb-<reviewId>-<n>` all name the same
+    review's one reply, but only a review the PR is known to have: one
+    ``review_body_ids`` lists (the fetched review bodies), or, for an `rb-`
+    form, one an item in ``triaged_item_ids`` (the fix snapshot's item ids)
+    was cut from — a review outside the fetched window that triage reached.
+    A reply once stored is published and nothing retracts it, so a mistyped
+    id is refused rather than taken at its word. A bare number counts only
+    against ``review_body_ids``, because a comment id from a thread on a page
+    the fetch could not read is a bare number too.
+    """
+    wanted = target.strip()
+    fetched = {str(i) for i in review_body_ids}
+    match = _REVIEW_SOURCE_RE.fullmatch(wanted)
+    if match:
+        triaged = {m.group(1) for m in map(_REVIEW_SOURCE_RE.fullmatch, triaged_item_ids) if m}
+        known = match.group(1) in fetched | triaged
+        return pr.permalinks.review_source_key(match.group(1)) if known else None
+    if wanted.isdigit() and wanted in fetched:
+        return pr.permalinks.review_source_key(wanted)
+    return None
+
+
+def load_reply_body(body_file: str | None) -> str | None:
+    """The `--body-file` text, or None once the reason it is unusable is logged.
+
+    The `--reply` CLI reads the body through this once, before it fetches the
+    PR, so a missing or empty file (and stdin `-`) costs no fetch. Both reply
+    paths then take the text, not the path — a second stdin read would be empty.
+    """
+    body = read_reply_body(body_file)
+    if body is None:
+        missing = f"--body-file not found: {body_file}" if body_file else "--reply needs --body-file"
+        core.log.error(missing)
+        return None
+    if not body:
+        core.log.error(f"--body-file is empty: {body_file}")
+        return None
+    return body
+
+
+def warn_if_uncited(body: str) -> None:
+    """Warn when a hand-written reply links no line of code."""
+    if "/blob/" not in body:
+        core.log.warn(
+            "reply cites no permalink — a claim about the code needs a link to "
+            "the line that settles it"
+        )
+
+
 def read_reply_body(body_file: str | None) -> str | None:
     """Read a reply body from a file, or from stdin when given '-'.
 
@@ -675,27 +735,28 @@ def read_reply_body(body_file: str | None) -> str | None:
     return path.read_text(encoding="utf-8").strip()
 
 
-def run_reply(ctx: pr.context.ResolvedContext, target: str, body_file: str | None) -> int:
+def run_reply(
+    ctx: pr.context.ResolvedContext, target: str, body: str,
+    *, pr_data: PRData | None = None, review_body_ids: Sequence[str] = (),
+) -> int:
     """Post one hand-written reply through the same upsert the fix pass uses.
 
     Manual replies used to go straight to the REST replies endpoint, with no
     dedup on that path at all — which is how a thread ends up carrying three of
     our comments that contradict each other. Routing them here holds a manual
     reply to the same one-per-thread rule as a generated one.
-    """
-    body = read_reply_body(body_file)
-    if body is None:
-        missing = f"--body-file not found: {body_file}" if body_file else "--reply needs --body-file"
-        core.log.error(missing)
-        return 1
-    if not body:
-        core.log.error(f"--body-file is empty: {body_file}")
-        return 1
 
+    ``body`` is the already-read `--body-file` text — the CLI loads it once so
+    stdin `-` is not drained twice. ``pr_data`` is the PR as the caller already
+    read it, so routing the target does not cost a second fetch; absent, it is
+    fetched here. A target matching no thread names ``review_body_ids`` as well
+    — the review bodies `--reply` also answers, which is what an operator
+    pasting a review id meant.
+    """
     repo = ctx.repo
     pr_number = ctx.pr_number
     owner, repo_name = repo.split("/", 1)
-    pr_data = fetch_pr_data(repo, str(pr_number))
+    pr_data = pr_data or fetch_pr_data(repo, str(pr_number))
     fetched = pr.comments.fetch_threads(owner, repo_name, pr_number, pr_data)
 
     thread = find_reply_target(fetched.threads, target, pr_data.viewer_login)
@@ -707,15 +768,14 @@ def run_reply(ctx: pr.context.ResolvedContext, target: str, body_file: str | Non
             core.log.error(
                 f"no review thread on PR #{pr_number} matches {target!r} among the "
                 f"{len(fetched.threads)} we could read — the thread set is incomplete")
-            return 1
-        core.log.error(f"no review thread on PR #{pr_number} matches {target!r}")
+        else:
+            core.log.error(f"no review thread on PR #{pr_number} matches {target!r}")
+        if review_body_ids:
+            keys = ", ".join(pr.permalinks.review_source_key(i) for i in review_body_ids)
+            core.log.error(f"review bodies on PR #{pr_number}: {keys}")
         return 1
 
-    if "/blob/" not in body:
-        core.log.warn(
-            "reply cites no permalink — a claim about the code needs a link to "
-            "the line that settles it"
-        )
+    warn_if_uncited(body)
 
     existing_id = our_last_reply_id(thread)
     wrote = upsert_thread_reply(thread, repo, pr_number, body, existing_id)

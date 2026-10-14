@@ -287,6 +287,17 @@ class CommentItem:
         """Whether this item cites a location a permalink can point at."""
         return bool(self.evidence_file) and self.evidence_line > 0
 
+    @property
+    def justification(self) -> str:
+        """The argument behind this entry's verdict: `reason`, else `reasoning`.
+
+        The one precedence for it. An operator's `--settle --reason` lands in
+        `reason`; triage writes its own justification to `reasoning` and leaves
+        `reason` empty. `to_outcome` persists this, so a surface reading it off
+        a live entry says what a replay of the record will say.
+        """
+        return self.reason or self.reasoning
+
     def to_outcome(
         self, outcome: FixOutcome | None = None, reason: str = "",
     ) -> ItemOutcome:
@@ -316,7 +327,7 @@ class CommentItem:
             summary=self.summary,
             outcome=outcome or self.outcome or FixOutcome.DEFERRED,
             settled_by=self.settled_by,
-            reason=reason or self.reason or self.reasoning,
+            reason=reason or self.justification,
             commit_sha=self.commit_sha,
             read_sha=self.read_sha,
             evidence_file=self.evidence_file,

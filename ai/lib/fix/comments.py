@@ -231,10 +231,19 @@ class CommentFixAdapter(fix.engine.FixAdapter):
             fixed_bucket, self.threads_by_id, self.repo,
             self.report.pr_number, cp, self.workdir, self.ctx.host,
         ))
+        by_outcome = self.round.by_outcome(tracking)
+        stored = pr.state.load_state(self.ctx.target_dir)
+        stored_fix = stored.fix if stored else pr.comments_fix.FixSummary()
         content = pr.summary_model.RoundContent(
-            by_outcome=self.round.by_outcome(tracking),
+            by_outcome=by_outcome,
             issue_comments=self.report.issue_comments,
             review_body_comments=self.report.review_body_comments,
+            # Read from disk because this round's own `FixSummary` is built
+            # with none: replies are written by `--reply` between rounds, and
+            # earlier rounds' items live only in the persisted record.
+            source_replies=dict(stored_fix.source_replies),
+            record_items=pr.summary_model.record_entries(
+                stored_fix.fix.items, stored_fix.reviewers, by_outcome),
         )
         summary = pr.summary_publish.publish(
             content, cp, self.repo, self.report.pr_number, self.threads_by_id,

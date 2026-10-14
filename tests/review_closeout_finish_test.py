@@ -18,6 +18,7 @@ from conftest import make_ctx
 import pr.state
 from pr.comments_state import ThreadState
 import core.log
+import core.publishing
 import git.client
 from git.land import CommitStatus
 import pr.comments
@@ -148,6 +149,54 @@ class TestFinishDeferredWork:
                 patch.object(pr.summary_publish, "render_deferred_summary"):
             with pytest.raises(RuntimeError):
                 review.closeout.finish_deferred_work(self._ctx(worktree), PRReport())
+
+    def test_a_draft_run_lists_each_snapshot_item_before_the_summary(self, worktree):
+        """Publishing is off: the operator has to name items without a posted table."""
+        self._save(worktree, items=[
+            ItemOutcome(
+                id="rb-4100200300-3",
+                outcome=FixOutcome.NEEDS_HUMAN,
+                summary="Merge order with the sibling PR before landing",
+                commit_sha="abc1234",
+            ),
+        ])
+        order = []
+
+        def note_summary(*_a, **_k):
+            order.append("summary")
+
+        with patch.object(core.log, "info", side_effect=order.append), \
+                patch.object(review.closeout, "post_pending_fix_replies"), \
+                patch.object(review.deferred_issue, "finalize_deferred",
+                             return_value=True), \
+                patch.object(pr.summary_publish, "render_deferred_summary",
+                             side_effect=note_summary):
+            review.closeout.finish_deferred_work(self._ctx(worktree), PRReport())
+        line = (
+            'rb-4100200300-3  needs_human  '
+            '"Merge order with the sibling PR before landing"  abc1234'
+        )
+        assert line in order
+        assert order.index(line) < order.index("summary")
+
+    # passes-at-base: negative case, pins that the draft-only listing stays off a publishing run
+    def test_a_publishing_run_lists_no_snapshot_item(self, worktree):
+        """`--finish --post` posts the table; the listing would only restate it."""
+        self._save(worktree, items=[ItemOutcome(
+            id="rb-4100200300-3", outcome=FixOutcome.NEEDS_HUMAN,
+            summary="Merge order with the sibling PR before landing",
+        )])
+        with core.publishing.run(post=True), \
+                patch.object(core.log, "info") as info, \
+                patch.object(review.closeout, "post_pending_fix_replies"), \
+                patch.object(review.deferred_issue, "finalize_deferred",
+                             return_value=True), \
+                patch.object(pr.summary_publish, "render_deferred_summary"):
+            review.closeout.finish_deferred_work(self._ctx(worktree), PRReport())
+        # The unfiled-deferral notice names the id too; the listing's line is
+        # the item's own `format_item_line`, with its outcome beside the id.
+        assert not any("rb-4100200300-3  needs_human" in str(c[0][0])
+                       for c in info.call_args_list)
 
 
 class TestReconcileRunsBeforeTheWrites:

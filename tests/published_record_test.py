@@ -231,3 +231,44 @@ def test_a_body_too_large_even_scoped_to_its_round_is_not_posted():
         assert pr.summary_publish.publish_summary(
             "o/r", 1, lambda **kw: _body(_marked().line)) is None
     post.assert_not_called()
+
+
+# --- review-body reply blocks ----------------------------------------------------
+
+
+_REVIEW_REPLY = "**@kgn** · [review](https://github.com/o/r/pull/1#pullrequestreview-88)\n\nDone."
+
+
+def test_a_reply_block_reads_back_as_written():
+    block = pr.published_record.mark_reply_block("88", _REVIEW_REPLY)
+    [read] = pr.published_record.published_reply_blocks(f"intro\n\n{block}\n\nfooter")
+    assert read.key == "88"
+    assert read.digest == pr.published_record.fingerprint(_REVIEW_REPLY)
+    assert read.block == block
+    assert read.intact
+
+
+def test_a_reply_block_saved_back_through_the_browser_is_still_ours():
+    """The editor saves CRLF; a block nobody changed must not read as edited."""
+    body = pr.published_record.mark_reply_block("88", _REVIEW_REPLY).replace("\n", "\r\n")
+    [read] = pr.published_record.published_reply_blocks(body)
+    assert read.key == "88"
+    assert read.intact
+
+
+def test_a_hand_edited_reply_block_is_not_intact():
+    block = pr.published_record.mark_reply_block("88", _REVIEW_REPLY)
+    [read] = pr.published_record.published_reply_blocks(block.replace("Done.", "Done, mostly."))
+    assert read.key == "88"
+    assert not read.intact
+
+
+def test_a_thread_reply_stamp_is_not_a_reply_block():
+    """The thread-reply marker is a different record and must not be read as one."""
+    assert pr.published_record.published_reply_blocks(
+        pr.published_record.stamp_reply("Applied: x")) == []
+
+
+def test_stripping_reply_blocks_leaves_the_rest_of_the_body():
+    block = pr.published_record.mark_reply_block("88", "| not | a | row |")
+    assert pr.published_record.strip_reply_blocks(f"before\n{block}\nafter") == "before\n\nafter"

@@ -214,6 +214,23 @@ class CommentSource:
         return f"{base}#{self.type.anchor}-{self.id}"
 
 
+def review_source_key(review_id: str) -> str:
+    """The source key a review body's reply is stored under: `rb-<reviewId>`.
+
+    Spelled with the same prefix `triage.assign_item_ids` opens a review-body
+    item's id with, so the key and the items cut from that review name it alike.
+    """
+    return f"{CommentSourceKind.REVIEW_BODY.id_prefix}-{review_id}"
+
+
+def review_id_of(source_key: str) -> str:
+    """The review id a `review_source_key` names, or "" for any other key."""
+    head, sep, rest = source_key.partition("-")
+    if not sep or CommentSourceKind.from_id_prefix(head) is not CommentSourceKind.REVIEW_BODY:
+        return ""
+    return rest if rest.isdigit() else ""
+
+
 def comment_item_source(entry: CommentItem | ItemOutcome) -> CommentSource:
     """The comment a decomposed item came from, empty when it is not one.
 

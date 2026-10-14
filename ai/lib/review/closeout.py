@@ -46,7 +46,7 @@ import pr.state
 import pr.summary_publish
 import pr.thread_replies
 from pr.comments_state import ThreadState
-from pr.fix import FixOutcome
+from pr.fix import FixOutcome, ItemOutcome
 from pr.thread_models import CommentItem, PRReport, ReportThread
 import review.deferred_issue
 
@@ -129,11 +129,25 @@ def finish_deferred_work(
         pr.state.save_state(ctx.target_dir, state)
         return False
     review.deferred_issue.report_unfiled_deferrals(state, track)
+    _log_draft_snapshot_items(state.fix.fix.items)
     pr.summary_publish.render_deferred_summary(
         state, report, ctx.repo, ctx.pr_number, threads_by_id, ctx.host,
     )
     pr.state.save_state(ctx.target_dir, state)
     return True
+
+
+def _log_draft_snapshot_items(items: list[ItemOutcome]) -> None:
+    """Name each snapshot item on a draft `--finish`, before the summary renders.
+
+    Self-contained so the Phase 3 factor of `finish_deferred_work` can move it
+    with the setup it sits in. Publishing is the posted table; without it the
+    operator has only this list.
+    """
+    if core.publishing.enabled():
+        return
+    for item in items:
+        core.log.info(pr.settlement.format_item_line(item))
 
 
 def push_held_commit(

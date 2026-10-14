@@ -23,7 +23,7 @@ import core.log
 import core.publishing
 import core.run_lock
 import fix.comments
-from gh.pr_data import fetch_pr_data
+from gh.pr_data import PRData, fetch_pr_data
 import pr.comments
 import pr.comments_fix
 import pr.comments_state
@@ -98,6 +98,67 @@ def seen_record(comments: list[dict]) -> dict[int, str]:
     return {c["id"]: edit_stamp(c) for c in comments if c.get("id") is not None}
 
 
+def build_report(
+    repo: str, pr_number: int, pr_data: PRData,
+    threads_raw: list[dict], threads: dict[str, ThreadRecord],
+) -> PRReport:
+    """The PR as one report, read off `pr_data` and the synced thread records.
+
+    No side effects: nothing is fetched beyond `pr_data`, written, or printed.
+    `run_threads` builds its report here, and so does a `--reply` answering a
+    review body, which has to render the same summary without running the sync
+    behind it. Every comment comes back unseen; `mark_report_seen` is the step
+    that reads the last round's record into it.
+    """
+    my_login = pr_data.viewer_login
+    report_threads = []
+    for thread_data in threads_raw:
+        t = threads.get(thread_data["id"]) or ThreadRecord()
+        report_threads.append(ReportThread.from_node(
+            thread_data, my_login,
+            state=t.state,
+            classification=t.classification,
+            reviewer=t.reviewer,
+        ))
+    return PRReport(
+        repo=repo,
+        pr_number=pr_number,
+        my_login=my_login,
+        threads=report_threads,
+        issue_comments=pr.comments.fetch_issue_comments(repo, pr_number, my_login, pr_data),
+        review_body_comments=pr.comments.fetch_review_body_comments(
+            repo, pr_number, my_login, pr_data,
+        ),
+        verdicts=pr.comments.fetch_reviewer_verdicts(repo, pr_number, pr_data),
+    )
+
+
+def mark_report_seen(report: PRReport, comments: pr.domains.CommentsSummary) -> None:
+    """Flag the report's top-level comments the last round already read, in place."""
+    mark_seen(report.issue_comments, comments.seen_issue_comments)
+    mark_seen(report.review_body_comments, comments.seen_review_body_comments)
+
+
+def read_report(ctx, pr_data: PRData) -> PRReport:
+    """The report `run_threads` would build, with nothing written on the way.
+
+    The thread records are synced in memory from the state file and the seen
+    flags read from the PR state, neither saved: a `--reply` publishing one
+    answer must not advance the record a later `--triage` reads, or a review
+    body nobody has triaged would read as seen.
+    """
+    owner, repo_name = ctx.repo.split("/", 1)
+    fetched = pr.comments.fetch_threads(owner, repo_name, ctx.pr_number, pr_data)
+    prior = pr.comments_state.load_state(pr.comments.threads_state_path(ctx.target_dir))
+    threads = pr.comments.sync_threads(
+        fetched, prior.threads if prior else {}, pr_data.viewer_login)
+    report = build_report(ctx.repo, ctx.pr_number, pr_data, fetched.threads, threads)
+    state = pr.state.load_state(ctx.target_dir)
+    if state is not None:
+        mark_report_seen(report, state.comments)
+    return report
+
+
 def run_threads(trail, args, ctx) -> int:
     repo = ctx.repo
     pr_number = ctx.pr_number
@@ -119,11 +180,6 @@ def run_threads(trail, args, ctx) -> int:
     # Fetch from GitHub (served from pr_data, no extra API calls)
     fetched = pr.comments.fetch_threads(owner, repo_name, pr_number, pr_data)
     threads_raw = fetched.threads
-    verdicts = pr.comments.fetch_reviewer_verdicts(repo, pr_number, pr_data)
-    issue_comments = pr.comments.fetch_issue_comments(repo, pr_number, my_login, pr_data)
-    review_body_comments = pr.comments.fetch_review_body_comments(
-        repo, pr_number, my_login, pr_data,
-    )
     trail.info("fetch_threads", f"fetched {len(threads_raw)} threads",
                data={"count": len(threads_raw), "complete": fetched.complete})
     if not fetched.complete:
@@ -153,33 +209,16 @@ def run_threads(trail, args, ctx) -> int:
         repo=repo, pr_number=pr_number, my_login=my_login, threads=threads,
     ))
 
-    # Dashboard to stderr
+    report = build_report(repo, pr_number, pr_data, threads_raw, threads)
+    issue_comments = report.issue_comments
+    review_body_comments = report.review_body_comments
+
+    # Dashboard to stderr. Before `mark_report_seen`, as it always was.
     dashboard = pr.comments.render_dashboard(
-        pr_number, threads, verdicts, issue_comments,
+        pr_number, threads, report.verdicts, issue_comments,
         review_body_comments=review_body_comments,
     )
     print(dashboard, file=sys.stderr)
-
-    # Build report
-    report_threads = []
-    for thread_data in threads_raw:
-        tid = thread_data["id"]
-        t = threads.get(tid) or ThreadRecord()
-        report_threads.append(ReportThread.from_node(
-            thread_data, my_login,
-            state=t.state,
-            classification=t.classification,
-            reviewer=t.reviewer,
-        ))
-    report = PRReport(
-        repo=repo,
-        pr_number=pr_number,
-        my_login=my_login,
-        threads=report_threads,
-        issue_comments=issue_comments,
-        review_body_comments=review_body_comments,
-        verdicts=verdicts,
-    )
 
     # Update unified PR state (best-effort)
     ctx_args = dict(
@@ -199,8 +238,7 @@ def run_threads(trail, args, ctx) -> int:
             v.get("state") == "APPROVED" for v in report.verdicts
         )
         st = pr.state.load_or_init(**ctx_args)
-        mark_seen(issue_comments, st.comments.seen_issue_comments)
-        mark_seen(review_body_comments, st.comments.seen_review_body_comments)
+        mark_report_seen(report, st.comments)
         pr.state.apply(st, pr.domains.CommentsSummary(
             total_threads=len(report.threads),
             by_state=thread_states,

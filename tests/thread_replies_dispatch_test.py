@@ -284,6 +284,34 @@ class TestFindReplyTarget:
         assert pr.thread_replies.our_last_reply_id(thread) == 222
 
 
+class TestReplySource:
+    """Every spelling of a review body maps to the one reply that review gets."""
+
+    @pytest.mark.parametrize("target", ["88", "rb-88", "rb-88-0", "rb-88-3", " rb-88 "])
+    def test_each_spelling_names_the_same_review(self, target):
+        assert pr.thread_replies.reply_source(target, ["88", "90"]) == "rb-88"
+
+    def test_a_bare_number_counts_only_when_it_is_a_review_on_the_pr(self):
+        """A bare comment id from a thread on another page must not be taken for one."""
+        assert pr.thread_replies.reply_source("404", ["88"]) is None
+
+    def test_a_review_the_snapshot_triaged_counts_outside_the_fetch(self):
+        """A review outside the fetched window still has an `rb-` id an operator can paste."""
+        assert pr.thread_replies.reply_source("rb-404-1", ["88"], ["rb-404-2"]) == "rb-404"
+
+    @pytest.mark.parametrize("target", ["rb-404", "rb-404-1"])
+    def test_an_rb_id_for_a_review_the_pr_does_not_have_is_refused(self, target):
+        """A typo would store a reply nothing can retract."""
+        assert pr.thread_replies.reply_source(target, ["88"], ["rb-90-1", "PRRT_x"]) is None
+
+    def test_a_bare_number_does_not_count_on_the_snapshot_alone(self):
+        assert pr.thread_replies.reply_source("404", ["88"], ["rb-404-1"]) is None
+
+    @pytest.mark.parametrize("target", ["ic-88-0", "rb-", "rb-x", "PRRT_abc", ""])
+    def test_anything_else_is_not_a_review_body(self, target):
+        assert pr.thread_replies.reply_source(target, ["88"]) is None
+
+
 class TestRunReply:
 
     def _ctx(self, tmp_path):
@@ -297,78 +325,102 @@ class TestRunReply:
             patch.object(pr.comments, "fetch_threads", return_value=ThreadSet(raw)),
         )
 
-    def test_posts_the_body_from_the_file(self, tmp_path):
-        body = tmp_path / "reply.md"
-        body.write_text("See https://github.com/owner/repo/blob/abc/src/app.py#L4.")
+    CITED = "See https://github.com/owner/repo/blob/abc/src/app.py#L4."
+
+    def test_posts_the_handed_body(self, tmp_path):
         fetch_pr, fetch_threads = self._patches([_raw_thread("PRRT_abc", [111])])
         with fetch_pr, fetch_threads, \
              patch("pr.comments.post_thread_reply", return_value=True) as post:
-            code = pr.thread_replies.run_reply(self._ctx(tmp_path), "PRRT_abc", str(body))
+            code = pr.thread_replies.run_reply(self._ctx(tmp_path), "PRRT_abc", self.CITED)
         assert code == 0
         assert post.call_args[0][2] == 111
 
     def test_edits_rather_than_stacking(self, tmp_path):
-        body = tmp_path / "reply.md"
-        body.write_text("Revised. https://github.com/owner/repo/blob/abc/src/app.py#L4")
         raw = [_raw_thread("PRRT_abc", [111, 222], login="me")]
         fetch_pr, fetch_threads = self._patches(raw, login="me")
         with fetch_pr, fetch_threads, \
              patch("pr.comments.post_thread_reply") as post, \
              patch("pr.comments.patch_thread_reply", return_value=True) as edit:
-            code = pr.thread_replies.run_reply(self._ctx(tmp_path), "discussion_r222", str(body))
+            code = pr.thread_replies.run_reply(
+                self._ctx(tmp_path), "discussion_r222",
+                "Revised. https://github.com/owner/repo/blob/abc/src/app.py#L4",
+            )
         assert code == 0
         post.assert_not_called()
         assert edit.call_args[0][1] == 222
 
     def test_warns_when_the_body_cites_no_permalink(self, tmp_path):
-        body = tmp_path / "reply.md"
-        body.write_text("Trust me, the code already does this.")
         fetch_pr, fetch_threads = self._patches([_raw_thread("PRRT_abc", [111])])
         with fetch_pr, fetch_threads, \
              patch("pr.comments.post_thread_reply", return_value=True), \
              patch.object(core.log, "warn") as warn:
-            assert pr.thread_replies.run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
+            assert pr.thread_replies.run_reply(
+                self._ctx(tmp_path), "PRRT_abc", "Trust me, the code already does this.",
+            ) == 0
         warn.assert_called_once()
 
     def test_errors_on_an_unknown_thread(self, tmp_path):
-        body = tmp_path / "reply.md"
-        body.write_text("something")
         fetch_pr, fetch_threads = self._patches([_raw_thread("PRRT_abc", [111])])
         with fetch_pr, fetch_threads, \
              patch("pr.comments.post_thread_reply") as post:
-            assert pr.thread_replies.run_reply(self._ctx(tmp_path), "discussion_r404", str(body)) == 1
+            assert pr.thread_replies.run_reply(
+                self._ctx(tmp_path), "discussion_r404", "something",
+            ) == 1
         post.assert_not_called()
 
+    def test_an_unknown_target_names_the_review_bodies_it_could_have_meant(self, tmp_path):
+        fetch_pr, fetch_threads = self._patches([_raw_thread("PRRT_abc", [111])])
+        with fetch_pr, fetch_threads, \
+             patch.object(core.log, "error") as err:
+            assert pr.thread_replies.run_reply(
+                self._ctx(tmp_path), "404", "something", review_body_ids=("88", "90"),
+            ) == 1
+        messages = [c[0][0] for c in err.call_args_list]
+        assert "no review thread on PR #42 matches '404'" in messages[0]
+        assert "review bodies on PR #42: rb-88, rb-90" in messages[1]
+
+    def test_a_handed_in_fetch_is_not_repeated(self, tmp_path):
+        """The CLI already read the PR to route the target."""
+        with patch.object(pr.thread_replies, "fetch_pr_data") as fetch_pr, \
+             patch.object(pr.comments, "fetch_threads",
+                          return_value=ThreadSet([_raw_thread("PRRT_abc", [111])])), \
+             patch("pr.comments.post_thread_reply", return_value=True):
+            assert pr.thread_replies.run_reply(
+                self._ctx(tmp_path), "PRRT_abc", self.CITED,
+                pr_data=SimpleNamespace(viewer_login="reviewer"),
+            ) == 0
+        fetch_pr.assert_not_called()
+
     def test_errors_when_the_reply_call_fails(self, tmp_path, publishing_on):
-        body = tmp_path / "reply.md"
-        body.write_text("See https://github.com/owner/repo/blob/abc/src/app.py#L4.")
         fetch_pr, fetch_threads = self._patches([_raw_thread("PRRT_abc", [111])])
         with fetch_pr, fetch_threads, \
              patch("pr.comments.post_thread_reply", return_value=False), \
              patch.object(core.log, "error") as err:
-            assert pr.thread_replies.run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 1
+            assert pr.thread_replies.run_reply(
+                self._ctx(tmp_path), "PRRT_abc", self.CITED,
+            ) == 1
         err.assert_called_once()
 
     def test_a_drafted_reply_is_not_a_failure(self, tmp_path):
         """_gh_post reports failure whenever the publishing gate is closed."""
-        body = tmp_path / "reply.md"
-        body.write_text("See https://github.com/owner/repo/blob/abc/src/app.py#L4.")
         fetch_pr, fetch_threads = self._patches([_raw_thread("PRRT_abc", [111])])
         with fetch_pr, fetch_threads, \
              patch("pr.comments.post_thread_reply", return_value=False), \
              patch.object(core.log, "error") as err:
-            assert pr.thread_replies.run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
+            assert pr.thread_replies.run_reply(
+                self._ctx(tmp_path), "PRRT_abc", self.CITED,
+            ) == 0
         err.assert_not_called()
 
     def test_a_drafted_reply_says_draft_and_sends_nothing(self, tmp_path):
         """The closing line must not claim a post no draft run ever made."""
-        body = tmp_path / "reply.md"
-        body.write_text("See https://github.com/owner/repo/blob/abc/src/app.py#L4.")
         fetch_pr, fetch_threads = self._patches([_raw_thread("PRRT_abc", [111])])
         with fetch_pr, fetch_threads, \
              patch("core.proc.subprocess.run") as run, \
              patch.object(core.log, "info") as info:
-            assert pr.thread_replies.run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
+            assert pr.thread_replies.run_reply(
+                self._ctx(tmp_path), "PRRT_abc", self.CITED,
+            ) == 0
         run.assert_not_called()
         lines = [c[0][0] for c in info.call_args_list]
         assert any("DRAFT (not published)" in line for line in lines)
@@ -381,43 +433,47 @@ class TestRunReply:
     def test_a_published_reply_reports_what_it_did(
         self, tmp_path, publishing_on, raw, call, verb,
     ):
-        body = tmp_path / "reply.md"
-        body.write_text("See https://github.com/owner/repo/blob/abc/src/app.py#L4.")
         fetch_pr, fetch_threads = self._patches(raw, login="me")
         with fetch_pr, fetch_threads, \
              patch(f"pr.comments.{call}", return_value=True), \
              patch.object(core.log, "info") as info:
-            assert pr.thread_replies.run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
+            assert pr.thread_replies.run_reply(
+                self._ctx(tmp_path), "PRRT_abc", self.CITED,
+            ) == 0
         assert f"{verb} reply on PRRT_abc" in [c[0][0] for c in info.call_args_list]
 
     def test_edits_the_standing_reply_on_a_resolved_thread(
         self, tmp_path, publishing_on,
     ):
         """End to end: --finish --post resolves the threads it answers."""
-        body = tmp_path / "reply.md"
-        body.write_text("Revised. https://github.com/owner/repo/blob/abc/src/app.py#L4")
         fetch_pr, fetch_threads = self._patches(
             [_raw_answered_thread(resolved=True)], login="me",
         )
         with fetch_pr, fetch_threads, \
              patch("pr.comments.post_thread_reply") as post, \
              patch("pr.comments.patch_thread_reply", return_value=True) as edit:
-            assert pr.thread_replies.run_reply(self._ctx(tmp_path), "PRRT_abc", str(body)) == 0
+            assert pr.thread_replies.run_reply(
+                self._ctx(tmp_path), "PRRT_abc",
+                "Revised. https://github.com/owner/repo/blob/abc/src/app.py#L4",
+            ) == 0
         post.assert_not_called()
         assert edit.call_args[0][1] == 222
+
+
+class TestLoadReplyBody:
+    """The CLI loads the file once; these are the refusals it surfaces."""
 
     def test_distinguishes_a_missing_body_file_from_an_empty_one(self, tmp_path):
         empty = tmp_path / "empty.md"
         empty.write_text("   ")
-        with patch.object(pr.thread_replies, "fetch_pr_data") as fetch_pr, \
-             patch.object(core.log, "error") as err:
-            assert pr.thread_replies.run_reply(self._ctx(tmp_path), "PRRT_abc", None) == 1
-            assert pr.thread_replies.run_reply(self._ctx(tmp_path), "PRRT_abc", "/nope.md") == 1
-            assert pr.thread_replies.run_reply(self._ctx(tmp_path), "PRRT_abc", str(empty)) == 1
-        fetch_pr.assert_not_called()
+        with patch.object(core.log, "error") as err:
+            assert pr.thread_replies.load_reply_body(None) is None
+            assert pr.thread_replies.load_reply_body("/nope.md") is None
+            assert pr.thread_replies.load_reply_body(str(empty)) is None
         messages = [c[0][0] for c in err.call_args_list]
-        assert "not found" in messages[1]
-        assert "empty" in messages[2]
+        assert messages[0] == "--reply needs --body-file"
+        assert "--body-file not found: /nope.md" in messages[1]
+        assert f"--body-file is empty: {empty}" in messages[2]
 
 
 # ── _post_deferred_replies ────────────────────────────────────────────────

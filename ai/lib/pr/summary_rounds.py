@@ -25,6 +25,7 @@ from dataclasses import dataclass
 
 import pr.comments
 import pr.permalinks
+import pr.published_record
 import pr.summary_model
 import pr.summary_scope
 from pr.fix import FixOutcome, SettledBy
@@ -91,6 +92,10 @@ class RoundScope:
     summary already holding it — restating the whole edited history each round,
     which is what this scoping exists to stop.
 
+    The ``*_reply_*`` fields are the same record for the review-body reply
+    blocks under the table — see `covers_reply` — with the newest digest each
+    declares in place of an outcome.
+
     A default-constructed scope covers everything: no keys are published, so no
     row can be left out. That is the reading a run with no summary comment to
     read wants, and the one `summary_render.build_summary_body` falls back to.
@@ -102,6 +107,28 @@ class RoundScope:
     elsewhere_keys: frozenset[str] = frozenset()
     published_outcomes: Mapping[str, FixOutcome] = dataclasses.field(
         default_factory=dict)
+    published_reply_keys: frozenset[str] = frozenset()
+    target_reply_keys: frozenset[str] = frozenset()
+    elsewhere_reply_keys: frozenset[str] = frozenset()
+    published_reply_digests: Mapping[str, str] = dataclasses.field(
+        default_factory=dict)
+
+    def covers_reply(self, key: str, digest: str) -> bool:
+        """Whether this round's summary writes the reply block for review `key`.
+
+        The same three questions `covers` asks of a row, read off the reply
+        markers instead of the row markers. A block no summary holds is
+        written; so is one only the comment being edited holds, because the
+        edit would otherwise delete it. A block published elsewhere is left
+        there unless the reply was revised since: `digest` is the digest of
+        the block this round would write, compared with the newest one any
+        summary declares, the reply's equivalent of an outcome that changed.
+        No activity test applies — the reply is ours, so nothing a reviewer
+        says changes what it says.
+        """
+        if key not in self.published_reply_keys or key in self.target_reply_keys:
+            return True
+        return self.published_reply_digests.get(key) != digest
 
     def covers(
         self, key: str, activity_at: str, outcome: FixOutcome | None = None,
@@ -254,6 +281,18 @@ def round_scope(marked: pr.comments.MarkerHistory, answered: bool) -> RoundScope
         for row in pr.summary_scope.published_rows(body)
         if row.key
     }
+    reply_elsewhere = frozenset(
+        block.key
+        for comment in marked.comments[:-1]
+        for block in pr.published_record.published_reply_blocks(comment.body)
+    )
+    reply_target = frozenset(
+        block.key for block in pr.published_record.published_reply_blocks(target.body))
+    reply_digests = {
+        block.key: block.digest
+        for body in marked.bodies
+        for block in pr.published_record.published_reply_blocks(body)
+    }
     return RoundScope(
         since=target.updated_at or target.created_at,
         published_keys=target_own | elsewhere,
@@ -262,4 +301,8 @@ def round_scope(marked: pr.comments.MarkerHistory, answered: bool) -> RoundScope
         published_outcomes={
             key: outcome for key, outcome in outcomes.items() if outcome is not None
         },
+        published_reply_keys=reply_target | reply_elsewhere,
+        target_reply_keys=frozenset() if answered else reply_target - reply_elsewhere,
+        elsewhere_reply_keys=reply_elsewhere,
+        published_reply_digests=reply_digests,
     )

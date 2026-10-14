@@ -29,6 +29,7 @@ Usage:
   review-threads --fix
   review-threads --settle THREAD_ID [--as fixed|dismissed|already_addressed]
   review-threads --finish
+  review-threads --reply THREAD_COMMENT_OR_REVIEW_ID --body-file PATH [--post]
 """
 
 # doc-group: cli
@@ -49,6 +50,7 @@ import pr.thread_replies
 from pr.fix import FixOutcome
 import review.closeout
 import review.comment_threads
+import review.review_body_reply
 
 # A literal, not `Path(__file__).name`: this module is `review_threads.py` while
 # the command is `review-threads`, and the trail records the command.
@@ -94,11 +96,14 @@ def build_parser() -> argparse.ArgumentParser:
                              "(default: print drafts to stderr and post nothing)")
     parser.add_argument("--repo-dir", "--worktree", metavar="PATH",
                         help="Git worktree directory (skips git toplevel detection)")
-    parser.add_argument("--reply", metavar="THREAD_OR_COMMENT_ID",
+    parser.add_argument("--reply", metavar="THREAD_COMMENT_OR_REVIEW_ID",
                         help="Reply to one thread, editing our standing reply if it "
                              "is still the last comment. Accepts a thread node ID, a "
-                             "comment ID, or a #discussion_r... URL. A write like any "
-                             "other: needs --post to leave the machine")
+                             "comment ID, or a #discussion_r... URL. Also answers a "
+                             "review body — a review ID, rb-REVIEW_ID or "
+                             "rb-REVIEW_ID-N — in the summary comment, since "
+                             "GitHub cannot reply to one. A write like any other: "
+                             "needs --post to leave the machine")
     parser.add_argument("--body-file", metavar="PATH",
                         help="File holding the --reply body ('-' for stdin)")
     parser.add_argument("--settle", action="append", default=[], metavar="THREAD_ID",
@@ -122,13 +127,26 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _github_only(ctx: pr.context.ResolvedContext, args: argparse.Namespace) -> int:
-    """Run the `--reply` or `--settle` write, which touches GitHub and no checkout."""
+def _github_only(
+    ctx: pr.context.ResolvedContext, args: argparse.Namespace, route, body: str | None,
+) -> int:
+    """Run a thread `--reply` or a `--settle` write, which touches GitHub and no checkout."""
     if args.reply:
-        return pr.thread_replies.run_reply(ctx, args.reply, args.body_file)
+        return pr.thread_replies.run_reply(
+            ctx, args.reply, body or "", pr_data=route.pr_data,
+            review_body_ids=route.review_body_ids,
+        )
     return pr.settlement.run_settle(
         ctx, args.settle, args.settle_as, args.reason or "", args.commit or "",
     )
+
+
+def _run_locked(trail, args, ctx, route, body: str | None = None) -> int:
+    """The work that runs under the lock: a review-body reply, or the phases."""
+    if route is not None:
+        return review.review_body_reply.run_review_body_reply(
+            ctx, route, body or "", trail=trail)
+    return review.comment_threads.run_threads(trail, args, ctx)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -155,8 +173,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # The reciprocal of the guard above, and for the same reason: --reply is
     # dispatched on its own and returns before any phase runs, so a phase named
-    # beside it would be dropped. --post is not in the list — it is the gate
-    # that lets the reply leave the machine, not a second phase.
+    # beside it would be dropped — whether it names a thread or a review body.
+    # --post is not in the list — it is the gate that lets the reply leave the
+    # machine, not a second phase.
     if args.reply:
         conflicting = [
             name for name, on in (
@@ -166,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
         ]
         if conflicting:
             core.log.error(
-                f"--reply writes one thread and nothing else, so it cannot run "
+                f"--reply writes one reply and nothing else, so it cannot run "
                 f"with {', '.join(conflicting)}. Post the reply, then run the "
                 f"phase as its own command"
             )
@@ -187,13 +206,23 @@ def main(argv: list[str] | None = None) -> int:
             core.log.error("No PR found for current branch")
             return 1
 
+        # Before the PR read, so a missing or empty body file costs no fetch.
+        # Read once: `--body-file -` is stdin, and a second read would be empty.
+        body = pr.thread_replies.load_reply_body(args.body_file) if args.reply else None
+        if args.reply and body is None:
+            return 1
         given = list(argv if argv is not None else sys.argv[1:])
         command = " ".join([SCRIPT, *given])
-        if args.reply or args.settle:
+        # Both reply paths take the loaded body. A thread target goes to
+        # run_reply here; a review body is answered in the summary comment,
+        # which writes the state file, so it falls through to the worktree
+        # check, the lock and the trail below.
+        route = review.review_body_reply.route_reply(ctx, args.reply) if args.reply else None
+        if args.settle or (route is not None and not route.source):
             # GitHub-only writes: `comments` declares the target alone for
             # them. Taken before the early return, which used to skip it.
             cli.locks.claim_declared("comments", given, ctx, command=command)
-            return _github_only(ctx, args)
+            return _github_only(ctx, args, route, body)
         branch = ctx.branch
         # Called for its raise: a bare-repo run must fail here, before the lock
         # and the trail.
@@ -211,7 +240,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
         try:
-            return review.comment_threads.run_threads(trail, args, ctx)
+            return _run_locked(trail, args, ctx, route, body)
         except Exception as exc:
             trail.error("unexpected_error", str(exc))
             raise

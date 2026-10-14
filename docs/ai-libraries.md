@@ -2123,9 +2123,16 @@ marker rather than re-derived from cells a renderer is free to change, and
 authorship is a digest comparison: any edit to the text a person can see,
 anywhere in it, is a mismatch.
 
-Every value a marker holds is hex, a `FixOutcome` value, or empty, so a marker
-can contain neither the `|` that would split its cell nor the `-->` that would
-close it early.
+Every value a marker holds is hex, a `FixOutcome` value, a decimal review id,
+or empty, so a marker can contain neither the `|` that would split its cell nor
+the `-->` that would close it early.
+
+A reply to a review body is the third record. GitHub has no reply API for a
+review body, so the summary comment carries the answer as a block delimited by
+an opening marker — the review's id and the digest of the block's text — and a
+closing one. It is deliberately not the `pr-comments:generated` stamp a thread
+reply carries: the two are read by different code and must never be mistaken
+for each other.
 
 What is not here: what a row's identity *is* (`summary_model.row_key_from_cells`)
 and the reading of a comment written before markers existed
@@ -2241,6 +2248,29 @@ identity is (`summary_model.row_key_from_cells`), which rows this round may omit
 
 The counts vocabulary is `pr.comments_fix`'s — `count_line` prints the same line
 on the state dashboard, and a reword in one surface must not change the other.
+
+### pr/summary_replies.py
+
+Replies to review bodies, as the blocks the summary comment publishes.
+
+GitHub has no reply API for a review body, and the summary comment is already
+the surface reporting what became of the items cut out of one, so the answer
+an operator gives with `pr comments --reply rb-<reviewId>` is published there:
+one marked block per review, in a `### Replies to review comments` section
+under the table. The marker format is `pr.published_record`'s. A review whose
+cut items were dismissed with a reason gets a block too, one
+`Dismissed: <finding> — <reason>` line per item under the reply (or alone), so
+the argument against a finding reaches the reviewer who raised it.
+
+Which blocks a round writes is decided the way rows are — from the markers on
+the published comments, through `summary_rounds.RoundScope.covers_reply` — and
+never from a local "published in" record, because local state cannot know what
+a reader has seen. A block on the comment being edited that this round must not
+write is kept verbatim: a person edited it, or another checkout wrote it.
+
+What is not here: the marker itself (`pr.published_record`), the scope
+arithmetic (`pr.summary_rounds`), and where the section sits in the body
+(`pr.summary_render`).
 
 ### pr/summary_rounds.py
 
@@ -2643,6 +2673,24 @@ Posting returns a `PostResult` rather than printing. The four endings differ in
 exactly one thing the summary needs: whether a post session log exists to
 aggregate cost from. Returning that instead of printing in each branch is what
 lets both flows share a single `print_summary` call.
+
+### review/review_body_reply.py
+
+Answering a review body from `pr comments --reply`.
+
+A review thread takes a reply where it stands; a review body cannot, because
+GitHub has no reply API for one. The answer is stored per review in
+`FixSummary.source_replies` and published as a marked block in the summary
+comment — see `pr.summary_replies` — by the same re-render `--finish` uses,
+`summary_publish.render_deferred_summary`.
+
+`route_reply` decides which kind a `--reply` target is, so the command can send
+a thread to `pr.thread_replies.run_reply` unchanged and only a review body here.
+A thread wins: the same number can be a comment id inside a thread, and that
+reading is the one `--reply` always had.
+
+Layer 6 because the report the summary is rendered from is built in
+`review.comment_threads`, which a `pr/` module cannot import.
 
 ## PR state
 
@@ -7004,6 +7052,7 @@ Usage:
   review-threads --fix
   review-threads --settle THREAD_ID [--as fixed|dismissed|already_addressed]
   review-threads --finish
+  review-threads --reply THREAD_COMMENT_OR_REVIEW_ID --body-file PATH [--post]
 
 ### cli/rules_canary.py
 

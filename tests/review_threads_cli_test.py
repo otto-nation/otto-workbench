@@ -1,5 +1,6 @@
 """cli.review_threads: flags, phases, resolution and fetching."""
 
+import io
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -15,6 +16,7 @@ if str(LIB_DIR) not in sys.path:
 # never referenced by name.
 from review_threads_support import _no_published_summary  # noqa: E402
 from conftest import assert_no_worktree_exit, make_ctx, triaged_thread_record
+from gh.pr_data import PRData
 import pr.state
 import pr.comments_state
 from pr.comments_state import ThreadRecord, ThreadState
@@ -24,9 +26,12 @@ import pr.thread_replies
 import pr.settlement
 from pr.fix import FixOutcome
 from pr.thread_models import PRReport
+import cli.locks
 import cli.review_threads
 import review.comment_threads
 import review.closeout
+import review.review_body_reply
+import core.run_lock
 
 
 class TestTrackFlagParsing:
@@ -149,12 +154,110 @@ class TestReplyIsNotAPhase:
         assert "--fix" in err
         assert "--triage" not in err
 
-    def test_post_is_the_gate_the_reply_needs_not_a_conflict(self):
+    def test_post_is_the_gate_the_reply_needs_not_a_conflict(self, tmp_path):
         """A reply that publishes is the ordinary use, and must still run."""
+        route = review.review_body_reply.ReplyRoute(pr_data=MagicMock(), thread=True)
+        body = tmp_path / "f"
+        body.write_text("Done.")
         with patch.object(pr.context, "resolve", return_value=make_ctx()), \
+             patch.object(review.review_body_reply, "route_reply", return_value=route), \
              patch.object(pr.thread_replies, "run_reply", return_value=0) as run_reply:
-            assert cli.review_threads.main(["--reply", "t1", "--post"]) == 0
+            assert cli.review_threads.main(
+                ["--reply", "t1", "--body-file", str(body), "--post"]) == 0
         assert run_reply.call_args[0][1] == "t1"
+        assert run_reply.call_args.kwargs["pr_data"] is route.pr_data
+
+
+class TestReplyRouting:
+    """A thread receives the loaded body; a review body takes the locked path."""
+
+    def _main(self, route, tmp_path):
+        ctx = make_ctx(worktree_root=tmp_path, target_dir=tmp_path / "target")
+        (tmp_path / "f").write_text("Done.")
+        with patch.object(pr.context, "resolve", return_value=ctx), \
+             patch.object(review.review_body_reply, "route_reply", return_value=route), \
+             patch.object(pr.thread_replies, "run_reply", return_value=0) as thread, \
+             patch.object(review.review_body_reply, "run_review_body_reply",
+                          return_value=0) as body, \
+             patch.object(cli.locks, "claim_declared") as lock, \
+             patch.object(cli.review_threads.Trail, "start") as trail:
+            code = cli.review_threads.main(
+                ["--reply", "88", "--body-file", str(tmp_path / "f")])
+        return code, thread, body, lock, trail
+
+    def test_a_review_body_is_answered_under_the_lock(self, tmp_path):
+        """It writes the state file, so it runs where every state writer runs."""
+        route = review.review_body_reply.ReplyRoute(pr_data=MagicMock(), source="rb-88")
+        code, thread, body, lock, trail = self._main(route, tmp_path)
+        assert code == 0
+        thread.assert_not_called()
+        lock.assert_called_once()
+        trail.assert_called_once()
+        assert body.call_args[0][1] is route
+        assert body.call_args[0][2] == "Done."
+
+    def test_a_missing_body_file_is_refused_before_the_pr_is_read(self, tmp_path, capsys):
+        """The error costs no fetch, and reads as it always has."""
+        with patch.object(pr.context, "resolve", return_value=make_ctx()), \
+             patch.object(review.review_body_reply, "route_reply") as route:
+            code = cli.review_threads.main(
+                ["--reply", "88", "--body-file", str(tmp_path / "nope.md")])
+        assert code == 1
+        route.assert_not_called()
+        assert f"--body-file not found: {tmp_path / 'nope.md'}" in capsys.readouterr().err
+
+    def test_empty_stdin_is_refused_before_the_pr_is_read(self, capsys):
+        with patch.object(pr.context, "resolve", return_value=make_ctx()), \
+             patch.object(review.review_body_reply, "route_reply") as route, \
+             patch.object(sys, "stdin", io.StringIO("  \n")):
+            code = cli.review_threads.main(["--reply", "88", "--body-file", "-"])
+        assert code == 1
+        route.assert_not_called()
+        assert "--body-file is empty: -" in capsys.readouterr().err
+
+    def test_a_target_naming_nothing_reports_through_the_thread_path(self, tmp_path):
+        """Which keeps its error, and gains the review ids it could have meant."""
+        route = review.review_body_reply.ReplyRoute(
+            pr_data=MagicMock(), review_body_ids=("88",))
+        code, thread, body, lock, trail = self._main(route, tmp_path)
+        assert code == 0
+        body.assert_not_called()
+        # The target lock `comments --reply` declares, and none of the trail
+        # the review-body path opens.
+        lock.assert_called_once()
+        assert lock.call_args[0][:2] == ("comments", ["--reply", "88", "--body-file",
+                                                      str(tmp_path / "f")])
+        trail.assert_not_called()
+        assert thread.call_args.kwargs["review_body_ids"] == ("88",)
+
+    def _stdin_reply(self, tmp_path, route, text):
+        ctx = make_ctx(worktree_root=tmp_path, target_dir=tmp_path / "target")
+        stdin = io.StringIO(text)
+        with patch.object(pr.context, "resolve", return_value=ctx), \
+             patch.object(review.review_body_reply, "route_reply", return_value=route), \
+             patch.object(pr.thread_replies, "run_reply", return_value=0) as thread, \
+             patch.object(review.review_body_reply, "run_review_body_reply",
+                          return_value=0) as body, \
+             patch.object(core.run_lock, "claim_for_process"), \
+             patch.object(sys, "stdin", stdin):
+            code = cli.review_threads.main(["--reply", "88", "--body-file", "-"])
+        return code, thread, body
+
+    def test_stdin_body_file_is_read_once_on_the_thread_path(self, tmp_path):
+        """`-` is drained before the PR fetch; the thread path gets the text."""
+        route = review.review_body_reply.ReplyRoute(pr_data=MagicMock(), thread=True)
+        code, thread, body = self._stdin_reply(tmp_path, route, "See the line.\n")
+        assert code == 0
+        body.assert_not_called()
+        assert thread.call_args[0][2] == "See the line."
+
+    def test_stdin_body_file_is_read_once_on_the_review_body_path(self, tmp_path):
+        """A second read of `-` would be empty; the review-body path gets the text."""
+        route = review.review_body_reply.ReplyRoute(pr_data=MagicMock(), source="rb-88")
+        code, thread, body = self._stdin_reply(tmp_path, route, "Tightened.\n")
+        assert code == 0
+        thread.assert_not_called()
+        assert body.call_args[0][2] == "Tightened."
 
 
 # ── _resolve_verified_threads ─────────────────────────────────────────────
@@ -331,7 +434,6 @@ class TestTruncatedThreadFetch:
                         target_dir=tmp_path / "target")
 
     def _pr_data(self, threads, *, complete):
-        from gh.pr_data import PRData
         return PRData(
             viewer_login="isaacg", head_sha="abc1234", head_ref="isaac/feat/x",
             base_ref="main", review_threads=threads, threads_complete=complete,
@@ -574,3 +676,30 @@ class TestSeenTracking:
         assert loaded.comments.seen_issue_comments == {
             111: "", 222: "2026-02-01T00:00:00Z",
         }
+
+
+class TestReadReport:
+    """The report a `--reply` renders from, built without writing anything."""
+
+    def _pr_data(self):
+        return PRData(
+            viewer_login="me", head_sha="abc1234", head_ref="b", base_ref="main",
+            reviews=[{"databaseId": 88, "author": {"login": "kgn"}, "state": "COMMENTED",
+                      "body": "tighten it", "submittedAt": "2026-01-02T00:00:00Z"}],
+        )
+
+    def test_a_review_body_the_last_round_read_stays_seen(self, tmp_path):
+        """Read as unseen, it would be restated under the table by every reply."""
+        ctx = make_ctx(worktree_root=tmp_path, target_dir=tmp_path / "target")
+        st = pr.state.new_state("owner/repo", "b", pr_number=42, head_sha="abc1234",
+                                worktree_root=str(tmp_path))
+        st.comments.seen_review_body_comments = {88: ""}
+        pr.state.save_state(ctx.target_dir, st)
+        report = review.comment_threads.read_report(ctx, self._pr_data())
+        assert [c.get("seen", False) for c in report.review_body_comments] == [True]
+
+    def test_with_no_state_every_comment_is_unseen(self, tmp_path):
+        ctx = make_ctx(worktree_root=tmp_path, target_dir=tmp_path / "target")
+        report = review.comment_threads.read_report(ctx, self._pr_data())
+        assert [c.get("seen", False) for c in report.review_body_comments] == [False]
+        assert not (tmp_path / "target").exists()

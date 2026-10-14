@@ -57,6 +57,7 @@ import pr.published_record
 import pr.state
 import pr.summary_model
 import pr.summary_render
+import pr.summary_replies
 import pr.summary_rounds
 import pr.summary_row
 import pr.summary_scope
@@ -223,6 +224,9 @@ def publish_summary(
     repo: str, pr_number: int, build_body: Callable[..., str],
     activity_at: str = "", folded: frozenset[str] = frozenset(),
     folded_texts: frozenset[str] = frozenset(),
+    reply_keys: frozenset[str] = frozenset(),
+    force_reply_keys: frozenset[str] = frozenset(),
+    known_reply_keys: frozenset[str] = frozenset(),
 ) -> str | None:
     """Publish the round without shrinking the record the PR already holds.
 
@@ -258,11 +262,25 @@ def publish_summary(
     target holds stay where they were published, and this round links back to
     them. Only a body too large even scoped to its own round is refused, loudly,
     since GitHub would refuse it anyway.
+
+    The review-body reply blocks under the table get the same protection.
+    ``reply_keys`` is the set this round has a reply for
+    (`summary_replies.reply_block_keys`); an edit keeps a block on its target
+    that a person rewrote, or that answers a review outside that set, verbatim.
+    ``force_reply_keys`` names the reviews an explicit `--reply` just answered,
+    whose hand-edited block that answer replaces. ``known_reply_keys``
+    (`summary_replies.known_reviews`) names the reviews this round holds items
+    for, whose dismissal-only block outside ``reply_keys`` was withdrawn rather
+    than written elsewhere, and is dropped instead of carried.
     """
     marked = pr.comments.find_marker_comments(repo, pr_number, SUMMARY_MARKER)
     existing = marked.newest
     answered = _answered_since(existing, activity_at)
-    reconciled = _reconcile(marked, answered, build_body, folded, folded_texts)
+    reconcile = functools.partial(
+        _reconcile, marked, build_body=build_body, folded=folded,
+        folded_texts=folded_texts, reply_keys=reply_keys, force_reply_keys=force_reply_keys,
+        known_reply_keys=known_reply_keys)
+    reconciled = reconcile(answered)
     overflowed = not answered and len(reconciled.body) > GITHUB_COMMENT_LIMIT
     if overflowed:
         core.log.warn(
@@ -271,7 +289,7 @@ def publish_summary(
             "— posting a fresh one scoped to this round instead"
         )
         answered = True
-        reconciled = _reconcile(marked, answered, build_body, folded, folded_texts)
+        reconciled = reconcile(answered)
     if len(reconciled.body) > GITHUB_COMMENT_LIMIT:
         core.log.error(
             f"This round's summary is {len(reconciled.body)} characters, over "
@@ -288,6 +306,22 @@ def publish_summary(
         core.log.warn(
             f"Published summary has {reconciled.carried} row(s) this run cannot account "
             "for — carrying them forward rather than dropping them"
+        )
+    for block in reconciled.replies.held:
+        core.log.warn(
+            f"Keeping the hand-edited reply to {pr.summary_replies.block_label(block)} — "
+            "answer it again with `pr comments --reply` to replace it"
+        )
+    if reconciled.replies.carried:
+        core.log.warn(
+            f"Published summary has {len(reconciled.replies.carried)} review reply "
+            "block(s) this round does not render — carrying them forward rather "
+            "than dropping them"
+        )
+    for block in reconciled.replies.withdrawn:
+        core.log.info(
+            f"Dropping the dismissal block for {pr.summary_replies.block_label(block)} — "
+            "its dismissals were withdrawn"
         )
     if answered:
         if not overflowed:
@@ -313,24 +347,35 @@ class _Reconciled:
     body: str
     held: list[pr.summary_model.HeldRow]
     carried: int
+    replies: pr.summary_replies.KeptReplies = pr.summary_replies.KeptReplies()
 
 
 def _reconcile(
-    marked: pr.comments.MarkerHistory, answered: bool, build_body: Callable[..., str],
+    marked: pr.comments.MarkerHistory, answered: bool, *, build_body: Callable[..., str],
     folded: frozenset[str], folded_texts: frozenset[str],
+    reply_keys: frozenset[str], force_reply_keys: frozenset[str],
+    known_reply_keys: frozenset[str],
 ) -> _Reconciled:
     """Render the round, then re-render around the rows it must not write.
 
     Held rows are resolved before carried ones, and the carry-forward set is
     then computed against the body that already holds them, so a hand-edited
     row is kept once rather than emitted twice.
+
+    The reply blocks to keep are known before the first render — they depend
+    only on the target and the reply set — so every render carries them.
+    `kept_replies` is only passed when there are some, as `hand_held` is.
     """
     existing = marked.newest
     scope = pr.summary_rounds.round_scope(marked, answered)
+    replies = pr.summary_replies.kept_replies(
+        existing.body, answered, reply_keys, scope.elsewhere_reply_keys, force_reply_keys,
+        known_reply_keys)
     render = functools.partial(
         build_body,
         scope=scope,
         chain=_earlier_rounds(marked, None if answered else existing.comment_id),
+        **({"kept_replies": replies.blocks} if replies.blocks else {}),
     )
     body = render(carried_over=[])
     hand_held = pr.summary_scope.hand_written_rows(marked.bodies, body)
@@ -344,7 +389,7 @@ def _reconcile(
         folded_texts)
     if carried:
         body = render(carried_over=carried, hand_held=hand_held)
-    return _Reconciled(body, hand_held, len(carried))
+    return _Reconciled(body, hand_held, len(carried), replies)
 
 
 def _row_label(row: str) -> str:
@@ -387,7 +432,15 @@ def post_fix_summary(
         host=host,
     ), activity_at=activity_at,
         folded=pr.summary_model.folded_locations(content, threads_by_id),
-        folded_texts=pr.summary_model.folded_restatements(content, threads_by_id))
+        folded_texts=pr.summary_model.folded_restatements(content, threads_by_id),
+        # ceiling: no `known_reply_keys` here — `known_reviews` reads
+        # `by_outcome`, which on a live pass holds only what it touched, so a
+        # withdrawn dismissal stays carried until a `--finish` re-renders from
+        # the whole record. The blocks themselves already render from it
+        # (`record_items`). Upgrade trigger: once a stale dismissal block
+        # surviving a live edit is reported, read `known_reviews` off
+        # `record_items` and pass it here.
+        reply_keys=pr.summary_replies.reply_block_keys(content))
     if url:
         core.log.info(f"Posted fix summary: {url}")
     elif core.publishing.enabled():
@@ -540,29 +593,49 @@ def publish(
     return SummaryOutcome(url, owed)
 
 
+def push_still_pending(state: pr.state.PRState) -> bool:
+    """Whether the fix commit is unpushed and the remote does not yet hold it.
+
+    The condition `render_deferred_summary` refuses to render under: a summary
+    linking a commit nobody can fetch is worse than one that waits.
+    """
+    record = state.fix.fix
+    if not (pr.attribution.commit_unpushed(record.commit_status) and record.commit_sha):
+        return False
+    wt_path = Path(state.identity.worktree_root) if state.identity.worktree_root else None
+    return not wt_path or not git.push.holds(wt_path, record.commit_sha)
+
+
 def render_deferred_summary(
     state: pr.state.PRState, report: PRReport, repo: str, pr_number: int,
     threads_by_id: dict[str, ReportThread], host: str = "",
-) -> None:
-    """Re-render fix summary from state and post it.
+    force_reply_keys: frozenset[str] = frozenset(),
+) -> str | None:
+    """Re-render fix summary from state and post it. Returns the url, or None.
 
     Called during --finish after the deferred tracking issue has been created
     and stored in state.fix.  Rebuilds the summary body from the recorded
     outcomes so the issue link renders inline — no string patching.
     Updates state.fix.summary_url and summary_deferred on success.
+
+    Also how `pr comments --reply` publishes a review-body reply: it stores the
+    reply, re-arms the summary, and calls this with the review in
+    ``force_reply_keys`` — see `publish_summary`. None covers a summary nothing
+    owes, a push still pending, a draft, and a post GitHub refused; the caller
+    tells them apart by whether `summary_deferred` is still set.
     """
     fix = state.fix
     record = fix.fix
     if not fix.summary_deferred:
-        return
+        return None
 
     wt_path = Path(state.identity.worktree_root) if state.identity.worktree_root else None
 
     status = record.commit_status
     if pr.attribution.commit_unpushed(record.commit_status) and record.commit_sha:
-        if not wt_path or not git.push.holds(wt_path, record.commit_sha):
+        if push_still_pending(state):
             core.log.info("Push still pending — keeping summary deferred")
-            return
+            return None
         status = CommitStatus.PUSHED
         # Same reason as the deferred-reply queue: only a run that actually
         # publishes may retire an unpushed status, or the queue is lost silently.
@@ -592,6 +665,8 @@ def render_deferred_summary(
         by_outcome=by_outcome,
         issue_comments=report.issue_comments,
         review_body_comments=report.review_body_comments,
+        source_replies=fix.source_replies,
+        record_items=pr.summary_model.record_entries(record.items, fix.reviewers),
     )
 
     cp = pr.history_rewrite.reconciled_commit(record, status, wt_path)
@@ -608,9 +683,13 @@ def render_deferred_summary(
         host=host,
     ), activity_at=newest_reviewer_activity(report),
         folded=pr.summary_model.folded_locations(content, threads_by_id),
-        folded_texts=pr.summary_model.folded_restatements(content, threads_by_id))
+        folded_texts=pr.summary_model.folded_restatements(content, threads_by_id),
+        reply_keys=pr.summary_replies.reply_block_keys(content),
+        force_reply_keys=force_reply_keys,
+        known_reply_keys=pr.summary_replies.known_reviews(content))
     if url:
         core.log.info(f"Posted deferred fix summary: {url}")
         fix.summary_posted(url)
     elif core.publishing.enabled():
         core.log.error("failed to post deferred fix summary")
+    return url

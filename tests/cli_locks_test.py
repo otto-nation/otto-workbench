@@ -18,6 +18,7 @@ import cli.review_threads  # noqa: E402
 import core.run_lock  # noqa: E402
 import pr.context  # noqa: E402
 import pr.thread_replies  # noqa: E402
+import review.review_body_reply  # noqa: E402
 from run_lock_support import flocked, git_dir, held_elsewhere  # noqa: E402
 
 
@@ -99,17 +100,50 @@ def test_every_direct_entry_point_takes_its_declared_locks(name):
                for c in calls)
 
 
-def test_a_direct_reply_holds_the_target_and_leaves_the_checkout_free(worktree, monkeypatch):
+def _reply_argv(tmp_path):
+    body_file = tmp_path / "reply.md"
+    body_file.write_text("Done.")
+    return ["--reply", "123", "--body-file", str(body_file)]
+
+
+def test_a_direct_reply_holds_the_target_and_leaves_the_checkout_free(
+    worktree, tmp_path, monkeypatch,
+):
     """`--reply` returns before the threads flow, and used to skip the lock with it."""
     ctx = _ctx(worktree)
     monkeypatch.setattr(pr.context, "resolve", lambda **kw: ctx)
+    monkeypatch.setattr(review.review_body_reply, "route_reply",
+                        lambda c, reply: review.review_body_reply.ReplyRoute(
+                            pr_data=None, thread=True))
     seen = {}
 
-    def run_reply(c, reply, body_file):
+    def run_reply(c, reply, body, **kw):
         seen["target"] = core.run_lock.is_held(ctx.target_dir)
         seen["checkout"] = flocked(git_dir(worktree) / core.run_lock.TREE_LOCK_FILE)
         return 0
 
     monkeypatch.setattr(pr.thread_replies, "run_reply", run_reply)
-    assert cli.review_threads.main(["--reply", "123"]) == 0
+    assert cli.review_threads.main(_reply_argv(tmp_path)) == 0
+    assert seen == {"target": True, "checkout": False}
+
+
+def test_a_review_body_reply_holds_the_target_and_leaves_the_checkout_free(
+    worktree, tmp_path, monkeypatch,
+):
+    """It falls through to the locked path, where `--reply` still declares the target only."""
+    ctx = _ctx(worktree)
+    monkeypatch.setattr(pr.context, "resolve", lambda **kw: ctx)
+    monkeypatch.setattr(review.review_body_reply, "route_reply",
+                        lambda c, reply: review.review_body_reply.ReplyRoute(
+                            pr_data=None, source="rb-123"))
+    seen = {}
+
+    def run_review_body_reply(c, route, body, trail=None):
+        seen["target"] = core.run_lock.is_held(ctx.target_dir)
+        seen["checkout"] = flocked(git_dir(worktree) / core.run_lock.TREE_LOCK_FILE)
+        return 0
+
+    monkeypatch.setattr(review.review_body_reply, "run_review_body_reply",
+                        run_review_body_reply)
+    assert cli.review_threads.main(_reply_argv(tmp_path)) == 0
     assert seen == {"target": True, "checkout": False}

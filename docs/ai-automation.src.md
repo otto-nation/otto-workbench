@@ -3,7 +3,7 @@ title: AI Automation
 description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 ---
 
-<!-- doc-budget: 576 -->
+<!-- doc-budget: 587 -->
 
 # AI Automation
 
@@ -346,6 +346,17 @@ summary went up. A thread nobody can date is written rather than skipped, since
 under the table, and the round's own footer links every earlier summary comment
 in order, so a reader landing on the newest one can walk the chain back through
 the rounds it does not restate.
+
+**A review body is answered in the summary.** GitHub has no reply API for one,
+so `pr comments --reply <reviewId | rb-<reviewId> | rb-<reviewId>-<n>>
+--body-file F --post` publishes one marked block per review under
+`### Replies to review comments`. Without `--post` nothing is stored and the
+draft is printed (no body if a push is still pending). A block is written when
+no summary holds the review's block, re-rendered on an in-place edit, and
+restated on a fresh comment only when the block changed; unlike a row, there
+is no activity test. A hand-edited block is kept with a warning unless `--reply`
+for that review replaces it. A dismissal reason (operator, fix pass or triage)
+adds `Dismissed: <finding> — <reason>`, making a block even with no reply.
 
 ### Running from a different directory
 

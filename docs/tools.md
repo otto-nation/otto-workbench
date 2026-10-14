@@ -834,7 +834,7 @@ Takes no flags.
 | `--track` `<thread-id>` | File this deferred thread on the tracking issue (repeatable). Deferral is a per-thread decision, so --finish files nothing unless told which threads. |
 | `--track-all` | File every deferred thread. Only for a set the user has actually reviewed. |
 | `--post` | Gate, not a phase: publish whatever the chosen phase produced — replies, summaries, resolutions (default: print drafts to stderr and post nothing). |
-| `--reply` `<thread-or-comment-id>` | Reply to one thread, editing our standing reply if it is still the last comment. Accepts a thread node ID, a comment ID, or a #discussion_r... URL. A write like any other: needs --post to leave the machine. |
+| `--reply` `<thread-comment-or-review-id>` | Reply to one thread, editing our standing reply if it is still the last comment. Accepts a thread node ID, a comment ID, or a #discussion_r... URL. Also answers a review body — a review ID, rb-REVIEW_ID or rb-REVIEW_ID-N — in the summary comment, since GitHub cannot reply to one. A write like any other: needs --post to leave the machine. |
 | `--body-file` `<path>` | File holding the --reply body ('-' for stdin). |
 | `--settle` `<thread-id>` | Phase: record that you settled this thread by hand (repeatable). Writes local state and nothing else; --finish then replies, resolves and reports it like any other settled thread. |
 | `--as` `<fixed\|dismissed\|already_addressed>` | What --settle records (default: fixed). |

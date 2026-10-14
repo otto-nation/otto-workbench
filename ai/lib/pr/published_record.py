@@ -13,9 +13,16 @@ marker rather than re-derived from cells a renderer is free to change, and
 authorship is a digest comparison: any edit to the text a person can see,
 anywhere in it, is a mismatch.
 
-Every value a marker holds is hex, a `FixOutcome` value, or empty, so a marker
-can contain neither the `|` that would split its cell nor the `-->` that would
-close it early.
+Every value a marker holds is hex, a `FixOutcome` value, a decimal review id,
+or empty, so a marker can contain neither the `|` that would split its cell nor
+the `-->` that would close it early.
+
+A reply to a review body is the third record. GitHub has no reply API for a
+review body, so the summary comment carries the answer as a block delimited by
+an opening marker — the review's id and the digest of the block's text — and a
+closing one. It is deliberately not the `pr-comments:generated` stamp a thread
+reply carries: the two are read by different code and must never be mistaken
+for each other.
 
 What is not here: what a row's identity *is* (`summary_model.row_key_from_cells`)
 and the reading of a comment written before markers existed
@@ -44,6 +51,15 @@ _ROW_MARKER_RE = re.compile(re.escape(_ROW_MARKER_LEAD) + r"([^>]*?) --> ?")
 _FIELD_RE = re.compile(r"(\w+)=(\S*)")
 
 _REPLY_MARKER_RE = re.compile(r"<!-- pr-comments:generated sha=([0-9a-f]*) -->")
+
+_REPLY_BLOCK_CLOSE = "<!-- /pr-comments:review-reply -->"
+# Matched against a normalised body, so the line breaks around the text are
+# plain newlines whatever the browser saved.
+_REPLY_BLOCK_RE = re.compile(
+    r"<!-- pr-comments:review-reply k=(\d*) d=([0-9a-f]*) -->\n(.*?)\n"
+    + re.escape(_REPLY_BLOCK_CLOSE),
+    re.DOTALL,
+)
 
 # Sixteen hex digits is 64 bits — collision-free for any number of rows a PR
 # carries, and short enough that a marker per row costs about a hundred bytes
@@ -149,6 +165,51 @@ def read_row_marker(line: str) -> RowRecord | None:
 def row_is_intact(line: str, record: RowRecord) -> bool:
     """Whether the row still reads exactly as we wrote it."""
     return bool(record.digest) and record.digest == fingerprint(unmarked(line))
+
+
+@dataclass(frozen=True)
+class PublishedReply:
+    """One review-body reply block as a summary comment holds it.
+
+    ``key`` is the review id the block answers and ``digest`` the digest its
+    marker declares. ``block`` is the whole block, markers included, as it is
+    re-emitted verbatim. ``intact`` is whether the text still matches the
+    digest — False once a person has edited it.
+    """
+
+    key: str
+    digest: str
+    block: str
+    intact: bool
+
+
+def mark_reply_block(key: str, text: str) -> str:
+    """`text` as a reply block for the review `key`, with its digest declared."""
+    inner = normalise(text)
+    return (f"<!-- pr-comments:review-reply k={key} d={fingerprint(inner)} -->\n"
+            f"{inner}\n{_REPLY_BLOCK_CLOSE}")
+
+
+def published_reply_blocks(body: str) -> list[PublishedReply]:
+    """Every reply block in `body`, in order. CRLF reads as it was written."""
+    return [
+        PublishedReply(
+            key=match.group(1),
+            digest=match.group(2),
+            block=match.group(0),
+            intact=bool(match.group(2)) and match.group(2) == fingerprint(match.group(3)),
+        )
+        for match in _REPLY_BLOCK_RE.finditer(normalise(body))
+    ]
+
+
+def strip_reply_blocks(body: str) -> str:
+    """`body`, normalised, with every reply block taken out.
+
+    A reply is the operator's prose, and a line of it opening with `|` is not a
+    row of the table above it.
+    """
+    return _REPLY_BLOCK_RE.sub("", normalise(body))
 
 
 def stamp_reply(body: str) -> str:

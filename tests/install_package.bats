@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for install_brew_or_mise in lib/setup.sh — the install used by
+# Tests for install_package in lib/packages.sh — the install used by
 # ai/rtk/steps.sh and ai/claude/steps.sh for CLI tools that ship as a Homebrew
 # formula and as a mise registry tool.
 #
@@ -14,6 +14,10 @@ setup() {
   common_setup
   STUBS="$TMPDIR/stubs"
   mkdir -p "$STUBS"
+
+  export PACKAGES_DIR="$TMPDIR/packages"
+  mkdir -p "$PACKAGES_DIR"
+  printf 'brew "rtk"  # mise: rtk\nbrew "tree"  # linux: system\nbrew "mas"  # macos-only\n' > "$PACKAGES_DIR/Brewfile"
 
   # Exported, because the stubs read them from the environment.
   export BREW_LOG="$TMPDIR/brew-args"
@@ -56,15 +60,24 @@ teardown() {
   common_teardown
 }
 
-# Runs install_brew_or_mise against a PATH of only the chosen stubs and the base
+# Runs install_package against a PATH of only the chosen stubs and the base
 # system, then reports where rtk resolves in the same shell — the property the
 # shim PATH update exists for. PATH is narrowed after lib/ui.sh loads, since
 # output.sh needs a modern bash to source at all.
+# Extra arguments after PATH are passed to install_package (default: rtk).
 #
 # HOME is the test's own, so LOCAL_BIN_DIR (where mise's installer lands) is
 # too. run_remote_installer is always replaced: by INSTALLER_STUB when a test
 # sets one, and otherwise by a refusal, so no case can download mise for real.
 _run_install() {
+  local path="$1"
+  shift
+  local -a pkg_args=()
+  if [[ $# -gt 0 ]]; then
+    pkg_args=("$@")
+  else
+    pkg_args=(rtk)
+  fi
   bash -c '
     HOME="$3"
     . "$2/lib/ui.sh"
@@ -75,11 +88,12 @@ _run_install() {
       "$INSTALLER_STUB"
     }
     PATH="$1"
-    install_brew_or_mise rtk rtk rtk RTK
+    shift 3
+    install_package "$@"
     status=$?
     echo "RESOLVED=$(command -v rtk || true)"
     exit "$status"
-  ' _ "$1" "$REPO_ROOT" "$TMPDIR/home"
+  ' _ "$path" "$REPO_ROOT" "$TMPDIR/home" "${pkg_args[@]}"
 }
 
 # _path_with STUB... — a PATH holding only the named stubs and the base system.
@@ -98,7 +112,7 @@ _path_with() {
 
   run _run_install "$STUBS:/usr/bin:/bin"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"RTK already installed"* ]]
+  [[ "$output" == *"rtk already installed"* ]]
   [ ! -e "$BREW_LOG" ]
   [ ! -e "$MISE_LOG" ]
 }
@@ -114,7 +128,7 @@ _path_with() {
   run _run_install "$(_path_with mise)"
   [ "$status" -eq 0 ]
   [[ "$(cat "$MISE_LOG")" == "use -g rtk" ]]
-  [[ "$output" == *"RTK installed"* ]]
+  [[ "$output" == *"rtk installed"* ]]
 }
 
 @test "a mise install resolves in the same shell through the shims dir" {
@@ -137,7 +151,7 @@ EOF2
   run _run_install "$(_path_with mise)"
   [ "$status" -eq 1 ]
   [[ "$output" == *"is not on PATH"* ]]
-  [[ "$output" != *"RTK installed"* ]]
+  [[ "$output" != *"rtk installed"* ]]
 }
 
 @test "a brew install that leaves no binary on PATH warns and fails" {
@@ -145,7 +159,7 @@ EOF2
   run _run_install "$(_path_with brew)"
   [ "$status" -eq 1 ]
   [[ "$output" == *"is not on PATH"* ]]
-  [[ "$output" != *"RTK installed"* ]]
+  [[ "$output" != *"rtk installed"* ]]
 }
 
 @test "with neither installer, mise is bootstrapped and then installs the tool" {
@@ -164,7 +178,7 @@ EOF2
   [ "$(cat "$INSTALLER_LOG")" = "https://mise.run" ]
   [ "$(cat "$MISE_LOG")" = "use -g rtk" ]
   [[ "$output" == *"mise installed"* ]]
-  [[ "$output" == *"RTK installed"* ]]
+  [[ "$output" == *"rtk installed"* ]]
 }
 
 @test "the bootstrap does not pull an off-PATH Homebrew in halfway" {
@@ -209,7 +223,7 @@ EOF2
   run _run_install "$(_path_with)"
   [ "$status" -eq 1 ]
   [[ "$output" == *"mise's installer ran but left no mise on PATH"* ]]
-  [[ "$output" != *"RTK installed"* ]]
+  [[ "$output" != *"rtk installed"* ]]
 }
 
 @test "brew present means mise is never bootstrapped" {
@@ -224,7 +238,7 @@ EOF2
   export BREW_INSTALL_FAILS=1
   run _run_install "$(_path_with brew)"
   [ "$status" -eq 1 ]
-  [[ "$output" != *"RTK installed"* ]]
+  [[ "$output" != *"rtk installed"* ]]
   [[ "$output" == *"brew install rtk"* ]]
 }
 
@@ -232,8 +246,42 @@ EOF2
   export MISE_INSTALL_FAILS=1
   run _run_install "$(_path_with mise)"
   [ "$status" -eq 1 ]
-  [[ "$output" != *"RTK installed"* ]]
+  [[ "$output" != *"rtk installed"* ]]
   [[ "$output" == *"mise use -g rtk"* ]]
+}
+
+@test "a name in no manifest fails and names the manifests searched" {
+  run _run_install "$(_path_with brew)" nope
+  [ "$status" -eq 1 ]
+  [[ "$output" == *nope* && "$output" == *"$PACKAGES_DIR"* ]]
+}
+
+@test "--version pins the mise spec" {
+  run -- _run_install "$(_path_with mise)" rtk --version 1.2.3
+  grep -qx 'use -g rtk@1.2.3' "$MISE_LOG"
+}
+
+@test "a system package on the mise path is reported, not installed" {
+  run _run_install "$(_path_with mise)" tree
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"package manager"* ]]
+  [ ! -s "$MISE_LOG" ]
+}
+
+@test "a system package with neither installer is reported without bootstrapping mise" {
+  export INSTALLER_LOG="$TMPDIR/installer-log"
+  export INSTALLER_STUB="$TMPDIR/fake-mise-installer"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$INSTALLER_STUB"
+  chmod +x "$INSTALLER_STUB"
+  run _run_install "$(_path_with)" tree
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"package manager"* ]]
+  [ ! -e "$INSTALLER_LOG" ]
+}
+
+@test "--version without a value is a usage error" {
+  run -- _run_install "$(_path_with)" rtk --version
+  [ "$status" -eq 2 ]
 }
 
 # ─── A shim with no active version ───────────────────────────────────────────
@@ -252,7 +300,7 @@ _plant_shim() {
   export MISE_WHICH_FAILS=1
   run _run_install "$MISE_DATA_DIR/shims:$(_path_with mise)"
   [ "$status" -eq 0 ]
-  [[ "$output" != *"RTK already installed"* ]]
+  [[ "$output" != *"rtk already installed"* ]]
   [ "$(cat "$MISE_LOG")" = "use -g rtk" ]
 }
 
@@ -266,7 +314,7 @@ _plant_shim() {
   chmod +x "$TMPDIR/sysbin/rtk"
   run _run_install "$MISE_DATA_DIR/shims:$TMPDIR/sysbin:$(_path_with mise)"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"RTK already installed"* ]]
+  [[ "$output" == *"rtk already installed"* ]]
   [ ! -e "$MISE_LOG" ]
 }
 
@@ -274,7 +322,7 @@ _plant_shim() {
   _plant_shim
   run _run_install "$MISE_DATA_DIR/shims:$(_path_with mise)"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"RTK already installed"* ]]
+  [[ "$output" == *"rtk already installed"* ]]
   [ ! -e "$MISE_LOG" ]
 }
 
@@ -284,14 +332,14 @@ _plant_shim() {
 # is pinned here with the helper stubbed to record its arguments.
 
 # _run_caller STEPS_FILE FN — runs FN from STEPS_FILE with the ui helpers and
-# install_brew_or_mise stubbed. `wt` and `rtk` are absent from PATH so each step
+# install_package stubbed. `wt` and `rtk` are absent from PATH so each step
 # reaches its install.
 _run_caller() {
   bash -c '
     success() { echo "OK $*"; }
     warn()    { echo "WARN $*"; }
     info()    { echo "INFO $*"; }
-    install_brew_or_mise() { echo "HELPER $*"; return "${HELPER_STATUS:-1}"; }
+    install_package() { echo "HELPER $*"; return "${HELPER_STATUS:-1}"; }
     _cmd_runnable() { command -v "$1" >/dev/null 2>&1; }
     WORKBENCH_DIR="$3"
     . "$1"
@@ -300,16 +348,16 @@ _run_caller() {
   ' _ "$1" "$2" "$REPO_ROOT"
 }
 
-@test "step_install_rtk installs rtk through the brew-or-mise helper" {
+@test "step_install_rtk installs rtk through install_package" {
   run _run_caller "$REPO_ROOT/ai/rtk/steps.sh" step_install_rtk
   [ "$status" -eq 0 ]
-  [[ "$output" == *"HELPER rtk rtk rtk rtk"* ]]
+  [[ "$output" == *"HELPER rtk"* ]]
 }
 
 @test "the worktrunk plugin step installs worktrunk through the helper first" {
   run _run_caller "$REPO_ROOT/ai/claude/steps.sh" step_claude_worktrunk_plugin
   [ "$status" -eq 0 ]
-  [[ "$output" == *"HELPER wt worktrunk worktrunk worktrunk"* ]]
+  [[ "$output" == *"HELPER worktrunk"* ]]
 }
 
 @test "the worktrunk plugin step goes on to the plugin list once worktrunk installs" {
@@ -329,7 +377,7 @@ EOF2
 @test "the git hook-tools step installs gitleaks, and nothing a workbench developer alone needs" {
   run _run_caller "$REPO_ROOT/git/steps.sh" step_install_hook_tools
   [ "$status" -eq 0 ]
-  [[ "$output" == *"HELPER gitleaks gitleaks gitleaks gitleaks"* ]]
+  [[ "$output" == *"HELPER gitleaks"* ]]
   [[ "$output" != *"HELPER bats"* ]]
   [[ "$output" != *"HELPER shellcheck"* ]]
   [[ "$output" != *"HELPER pytest"* ]]
@@ -338,7 +386,7 @@ EOF2
 @test "the git component installs worktrunk through the helper" {
   run _run_caller "$REPO_ROOT/git/steps.sh" step_install_worktrunk
   [ "$status" -eq 0 ]
-  [[ "$output" == *"HELPER wt worktrunk worktrunk worktrunk"* ]]
+  [[ "$output" == *"HELPER worktrunk"* ]]
 }
 
 @test "install_git and sync_git install worktrunk before configuring it" {

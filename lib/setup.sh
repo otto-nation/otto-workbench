@@ -227,22 +227,29 @@ _bootstrap_mise() {
   fi
 }
 
-# install_brew_or_mise CMD FORMULA MISE_TOOL LABEL — installs LABEL with
-# `brew install FORMULA` where Homebrew is available, and otherwise with
-# `mise use -g MISE_TOOL`, installing mise itself first when neither installer
-# is present. Skipped when CMD is already runnable from PATH — a mise shim with
-# no active version does not count. Returns non-zero
-# with both install commands named when neither installer is present or the
-# install fails.
+# _warn_no_linux_install LABEL DISPOSITION — why a manifest entry cannot be
+# installed on this machine without Homebrew.
+_warn_no_linux_install() {
+  local label="$1" disposition="$2"
+  if [[ "$disposition" == system ]]; then
+    warn "$label is a system package — install it with your distro's package manager"
+    return 0
+  fi
+  warn "$label has no Linux install ($disposition)"
+}
+
+# _install_brew_or_mise CMD FORMULA MISE_SPEC LABEL [DISPOSITION] — private
+# worker for install_package. The public contract lives there.
 #
 # The mise path exists for machines without Homebrew — an unprivileged user on
 # a Linux host has no writable brew prefix, but mise installs into $HOME. After
 # a mise install the tool lives behind a shim that is not on PATH until the next
 # login, so the shims dir is prepended for the rest of this run: the steps that
 # follow look the tool up with command -v.
-install_brew_or_mise() {
-  local cmd="$1" formula="$2" mise_tool="$3" label="$4"
-  local manual="brew install $formula, or: mise use -g $mise_tool"
+_install_brew_or_mise() {
+  local cmd="$1" formula="$2" mise_tool="$3" label="$4" disposition="${5:-}"
+  local manual="brew install $formula"
+  [[ -n "$mise_tool" ]] && manual="brew install $formula, or: mise use -g $mise_tool"
   local looked="PATH" doctor
   if _cmd_runnable "$cmd"; then
     success "$label already installed"
@@ -250,10 +257,17 @@ install_brew_or_mise() {
   fi
   # Unlike the _cmd_runnable check above, a bare `command -v` is what we want
   # here: a mise shim with no active version still means an installer is
-  # present, so bootstrapping mise again would be pointless.
-  if ! command -v brew >/dev/null 2>&1 && ! command -v mise >/dev/null 2>&1; then
+  # present, so bootstrapping mise again would be pointless. An empty spec has
+  # no mise install to run, so bootstrapping mise would only delay the warning.
+  if [[ -n "$mise_tool" ]] \
+    && ! command -v brew >/dev/null 2>&1 && ! command -v mise >/dev/null 2>&1; then
     # A failed bootstrap falls through to the neither-installer warning below.
     _bootstrap_mise || true
+  fi
+
+  if [[ -z "$mise_tool" ]] && ! command -v brew >/dev/null 2>&1; then
+    _warn_no_linux_install "$label" "$disposition"
+    return 1
   fi
 
   if command -v brew >/dev/null 2>&1; then

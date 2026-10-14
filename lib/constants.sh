@@ -60,7 +60,7 @@ LOCAL_BIN_DIR="$HOME/.local/bin"
 # ~/.local/share/mise.
 MISE_SHIMS_DIR="${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}/shims"
 # mise's own installer, which puts the binary in ~/.local/bin. Used by the mise
-# component and by install_brew_or_mise when a machine has neither installer.
+# component and by the package installer when a machine has neither installer.
 MISE_INSTALL_URL="https://mise.run"
 # Homebrew's bin dir: Apple Silicon macOS, and Linuxbrew.
 HOMEBREW_BIN_DIR_MACOS="/opt/homebrew/bin"

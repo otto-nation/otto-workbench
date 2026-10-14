@@ -34,7 +34,7 @@ _source_with() {
   # includes is the subject, never installing software onto the machine.
   # Stubbed for every steps file, not only git's: any sync step may install
   # through this helper (rtk's does).
-  install_brew_or_mise() { :; }
+  install_package() { :; }
 }
 
 # _symlinks DIR [DEPTH] — prints "rel/path -> target" for each symlink under DIR, sorted.

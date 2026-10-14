@@ -91,12 +91,6 @@ step_zsh() {
   done
 }
 
-# _shell_brewfile_zsh_plugins — the zsh-* formulae the shell Brewfile lists,
-# one per line.
-_shell_brewfile_zsh_plugins() {
-  sed -n 's/^brew "\(zsh-[A-Za-z0-9_-]*\)".*/\1/p' "$SHELL_MANIFEST"
-}
-
 # _zsh_clone DIR URL LABEL — shallow-clones URL into DIR, announcing it as
 # LABEL. Skipped when DIR already exists; a failed clone leaves no partial DIR
 # behind, so the next sync tries again.
@@ -129,21 +123,24 @@ _zsh_clone() {
 # oh-my-zsh is cloned rather than run through its installer, which would
 # rewrite ~/.zshrc and change the login shell; the framework snippet only
 # needs the checkout.
-#
-# ceiling: assumes every zsh-* formula in the shell Brewfile is a zsh-users
-# repo of the same name; upgrade to a per-plugin URL map once one is not.
 step_zsh_shell_tools() {
   command -v brew >/dev/null 2>&1 && return 0
-  install_brew_or_mise starship starship starship starship || true
+  install_package starship || true
   _zsh_clone "$OH_MY_ZSH_DIR" "https://github.com/ohmyzsh/ohmyzsh.git" oh-my-zsh || true
 
-  local plugins name
-  plugins="$(_shell_brewfile_zsh_plugins)" || {
+  if [[ ! -f "$SHELL_MANIFEST" ]]; then
     warn "could not read zsh plugins from $SHELL_MANIFEST"
     return 0
-  }
-  for name in $plugins; do
-    _zsh_clone "$ZSH_PLUGINS_DIR/$name" "https://github.com/zsh-users/$name.git" "$name" || true
+  fi
+  local -a plugins=()
+  local name
+  local -A p=()
+  package_entries "$SHELL_MANIFEST" plugins
+  for name in "${plugins[@]}"; do
+    p=()
+    package_lookup "$name" p || continue
+    [[ "${p[disposition]}" == git ]] || continue
+    _zsh_clone "$ZSH_PLUGINS_DIR/${p[name]}" "${p[git]}" "$name" || true
   done
 }
 

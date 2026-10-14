@@ -4,7 +4,7 @@
 # provide — starship, oh-my-zsh, and the shell Brewfile's zsh plugins — so the
 # shell is not left with no prompt, no completion and no plugins.
 #
-# git and install_brew_or_mise are stubbed: the subject is which installs the
+# git and install_package are stubbed: the subject is which installs the
 # step asks for and how it treats a failure, not the network. HOME and
 # XDG_DATA_HOME are the test's own, so nothing reaches the real ~/.oh-my-zsh.
 bats_require_minimum_version 1.5.0
@@ -38,7 +38,7 @@ teardown() {
 }
 
 # _run_step [EXTRA_PATH] — runs step_zsh_shell_tools with the ui helpers and
-# install_brew_or_mise stubbed, on a PATH of the stubs, EXTRA_PATH and the base
+# install_package stubbed, on a PATH of the stubs, EXTRA_PATH and the base
 # system. No brew unless EXTRA_PATH supplies one.
 _run_step() {
   bash -c '
@@ -47,7 +47,7 @@ _run_step() {
     success() { echo "OK $*"; }
     warn()    { echo "WARN $*"; }
     info()    { echo "INFO $*"; }
-    install_brew_or_mise() { echo "HELPER $*"; return 0; }
+    install_package() { echo "HELPER $*"; return 0; }
     PATH="$2/stubs${3:+:$3}:/usr/bin:/bin"
     step_zsh_shell_tools
   ' _ "$REPO_ROOT" "$TMPDIR" "${1:-}"
@@ -58,10 +58,10 @@ _brewfile_plugins() {
   sed -n 's/^brew "\(zsh-[A-Za-z0-9_-]*\)".*/\1/p' "$REPO_ROOT/packages/shell/shell.Brewfile"
 }
 
-@test "without Homebrew, starship goes through the brew-or-mise helper" {
+@test "without Homebrew, starship goes through install_package" {
   run _run_step
   [ "$status" -eq 0 ]
-  [[ "$output" == *"HELPER starship starship starship starship"* ]]
+  [[ "$output" == *"HELPER starship"* ]]
 }
 
 @test "without Homebrew, oh-my-zsh is cloned to the path the framework snippet reads" {
@@ -78,7 +78,7 @@ _brewfile_plugins() {
   run _run_step
   [ "$status" -eq 0 ]
   for name in $plugins; do
-    grep -q -- "https://github.com/zsh-users/$name.git $XDG_DATA_HOME/zsh/plugins/$name" "$GIT_LOG"
+    grep -q -- "https://github.com/zsh-users/$name $XDG_DATA_HOME/zsh/plugins/$name" "$GIT_LOG"
   done
   # One clone per plugin plus oh-my-zsh.
   [ "$(wc -l < "$GIT_LOG")" -eq "$(( $(wc -w <<< "$plugins") + 1 ))" ]
@@ -109,7 +109,7 @@ _brewfile_plugins() {
   [[ "$output" == *"WARN could not clone oh-my-zsh"* ]]
   [ ! -e "$HOME/.oh-my-zsh" ]
   # The plugins after it were still attempted.
-  grep -q -- "zsh-users/zsh-syntax-highlighting.git" "$GIT_LOG"
+  grep -q -- "zsh-users/zsh-syntax-highlighting" "$GIT_LOG"
 }
 
 @test "sync_zsh installs the shell tools before it deploys the layers" {

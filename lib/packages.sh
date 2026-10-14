@@ -34,8 +34,8 @@ _package_parse_line() {
   local line="$1"
   local -n __pl=$2
   [[ "$line" =~ ^(brew|cask)[[:space:]]+\"([^\"]+)\"[^#]*(#(.*))?$ ]] || return 1
-  __pl=([type]="${BASH_REMATCH[1]}" [formula]="${BASH_REMATCH[2]}"
-        [name]="${BASH_REMATCH[2]##*/}" [mise]="" [git]="" [cmd]="" [disposition]="")
+  __pl=(["type"]="${BASH_REMATCH[1]}" ["formula"]="${BASH_REMATCH[2]}"
+        ["name"]="${BASH_REMATCH[2]##*/}" ["mise"]="" ["git"]="" ["cmd"]="" ["disposition"]="")
   local ann="${BASH_REMATCH[4]}"
   local part key val
   local -a parts=()
@@ -47,7 +47,7 @@ _package_parse_line() {
       continue
     fi
     if [[ "$part" == macos-only ]]; then
-      __pl[disposition]+="macos-only "
+      __pl["disposition"]+="macos-only "
       continue
     fi
     key="${part%%:*}"
@@ -55,23 +55,23 @@ _package_parse_line() {
     val="${val#"${val%%[![:space:]]*}"}"
     val="${val%"${val##*[![:space:]]}"}"
     if [[ "$key" == mise ]]; then
-      __pl[mise]="$val"
-      __pl[disposition]+="mise "
+      __pl["mise"]="$val"
+      __pl["disposition"]+="mise "
     elif [[ "$key" == linux && "$val" == system ]]; then
-      __pl[disposition]+="system "
+      __pl["disposition"]+="system "
     elif [[ "$key" == git ]]; then
-      __pl[git]="$val"
-      __pl[disposition]+="git "
+      __pl["git"]="$val"
+      __pl["disposition"]+="git "
     elif [[ "$key" == cmd ]]; then
-      __pl[cmd]="$val"
+      __pl["cmd"]="$val"
     fi
   done
   if [[ "${__pl[type]}" == cask ]]; then
-    __pl[disposition]="macos-only "
+    __pl["disposition"]="macos-only "
   fi
-  __pl[disposition]="${__pl[disposition]% }"
+  __pl["disposition"]="${__pl[disposition]% }"
   if [[ -z "${__pl[cmd]}" ]]; then
-    __pl[cmd]="${__pl[name]}"
+    __pl["cmd"]="${__pl[name]}"
   fi
 }
 
@@ -89,7 +89,7 @@ package_lookup() {
     while IFS= read -r line || [[ -n "$line" ]]; do
       _package_parse_line "$line" "$out" || continue
       [[ "${__lk[formula]}" == "$name" || "${__lk[name]}" == "$name" ]] || continue
-      __lk[manifest]="$f"
+      __lk["manifest"]="$f"
       return 0
     done < "$f"
   done
@@ -109,4 +109,27 @@ package_entries() {
     __pe+=("${__ent[name]}")
   done < "$file"
   return 0
+}
+
+# install_package NAME [--version V] — installs the manifest package NAME with
+# Homebrew where it exists and otherwise with mise (`mise use -g SPEC[@V]`),
+# bootstrapping mise first when neither is present. Skipped when the entry's
+# binary already runs. Returns 1 when NAME is in no manifest, has no mise spec
+# on a machine without Homebrew, or the install fails; 2 on a usage error.
+install_package() {
+  local name="${1:-}" version=""
+  [[ -n "$name" ]] || { err "install_package: NAME required"; return 2; }
+  if [[ "${2:-}" == --version ]]; then
+    [[ -n "${3:-}" ]] || { err "install_package: --version requires a value"; return 2; }
+    version="$3"
+  fi
+  local -A __ip=()
+  if ! package_lookup "$name" __ip; then
+    local -a __m; package_manifests __m
+    warn "install_package: $name is in no manifest (searched: ${__m[*]})"
+    return 1
+  fi
+  local spec="${__ip[mise]}"
+  [[ -n "$spec" && -n "$version" ]] && spec="$spec@$version"
+  _install_brew_or_mise "${__ip[cmd]}" "${__ip[formula]}" "$spec" "$name" "${__ip[disposition]}"
 }

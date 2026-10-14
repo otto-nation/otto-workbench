@@ -595,7 +595,7 @@ step_global_hooks() {
 # is still missing. What developing the workbench itself needs (bats, the
 # ShellCheck pin, pytest) is bin/local/dev-deps's, not every machine's.
 step_install_hook_tools() {
-  install_brew_or_mise gitleaks gitleaks gitleaks gitleaks || true
+  install_package gitleaks || true
 }
 
 # step_local_hooks — installs repo-local hooks into .git/hooks/ for the workbench repo.
@@ -688,7 +688,7 @@ step_github_ssh() {
 # component installs it too, but a core-only install left the config with no
 # `wt` to read it. Non-fatal: the config steps below work without the binary.
 step_install_worktrunk() {
-  install_brew_or_mise wt worktrunk worktrunk worktrunk || true
+  install_package worktrunk || true
 }
 
 # step_worktrunk_config — ensures the global worktrunk config has a default

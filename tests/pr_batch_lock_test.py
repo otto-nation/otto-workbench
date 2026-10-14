@@ -116,6 +116,22 @@ def test_a_run_names_itself_on_the_batch_lock(monkeypatch):
     assert seen["record"]["run"] == batch.store.latest_run_id()
 
 
+def test_resume_holds_the_batch_lock_and_names_the_run(monkeypatch):
+    run = _saved_run()
+    seen = {}
+
+    def fake_run(self):
+        seen["held"] = _batch_held()
+        seen["record"] = json.loads(core.run_lock.global_lock_path("batch").read_text())
+        return batch.model.RunStatus.WAITING
+
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    assert _main(["batch", "resume", run.id]) == 10
+    assert seen["held"] is True
+    assert seen["record"]["run"] == run.id
+    assert not _batch_held()
+
+
 # ── two real processes ────────────────────────────────────────────────────────
 
 # One `pr batch run` per process. Role "a" parks inside planning until the test

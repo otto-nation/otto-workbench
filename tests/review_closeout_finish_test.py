@@ -179,6 +179,7 @@ class TestFinishDeferredWork:
         assert line in order
         assert order.index(line) < order.index("summary")
 
+    # passes-at-base: negative case, pins that the draft-only listing stays off a publishing run
     def test_a_publishing_run_lists_no_snapshot_item(self, worktree):
         """`--finish --post` posts the table; the listing would only restate it."""
         self._save(worktree, items=[ItemOutcome(

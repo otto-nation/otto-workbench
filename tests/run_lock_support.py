@@ -55,6 +55,14 @@ def live_pid():
         proc.wait()
 
 
+def stamp_pid(path, pid: int) -> None:
+    """Set the holder record's pid, leaving every other field and the flock."""
+    path = Path(path)
+    record = json.loads(path.read_text())
+    record["pid"] = pid
+    path.write_text(json.dumps(record))
+
+
 def flocked(path) -> bool:
     """Whether anyone holds *path*'s flock, asked from a fresh descriptor."""
     path = Path(path)

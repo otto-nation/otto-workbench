@@ -4835,6 +4835,13 @@ nests: a second ``hold_resource`` on a lock this process already holds raises
 ``LockReentry``, because two holders of one resource in one process is a
 programming error, not contention.
 
+A take that loses the flock to a vacated record — empty, already
+``released``, or a pid that is gone — retries with a short doubling pause
+(``VACATED_PAUSE_S`` doubling to ``VACATED_PAUSE_MAX_S``, total
+``VACATED_BUDGET_S``) rather than refusing a prober. A live holder is still
+fail-fast. ``fcntl.flock`` contention is ``BlockingIOError``; any other
+``OSError`` (``ENOLCK``, ``EBADF``) propagates, matching ``core.tree_lock``.
+
 Uses ``fcntl.flock`` on ``<target_dir>/run.lock`` and on
 ``<git-dir>/workbench-run-tree.lock``. The kernel drops both when the holder
 exits for any reason, including SIGKILL, so there is no stale-lock state to

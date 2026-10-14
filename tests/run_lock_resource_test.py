@@ -1,6 +1,5 @@
 """Tests for the marker-less Resource lock kind."""
 
-import json
 import os
 import subprocess
 import sys

@@ -17,6 +17,7 @@ import core.run_lock
 from core.run_lock import (
     LOCK_ENV, LOCK_FILE, TREE_LOCK_ENV, TREE_LOCK_FILE, LockBusy, acquire,
 )
+from run_lock_support import live_pid, stamp_pid
 
 
 @pytest.fixture(autouse=True)
@@ -121,12 +122,14 @@ def test_lock_is_released_for_the_next_run(worktree):
 def test_concurrent_acquire_raises_lock_busy(worktree):
     """flock conflicts across open file descriptions, so a second acquire
     fails even from this same process once the env marker is cleared."""
-    with acquire(worktree, command="pr review --fix", started="2026-08-12T07:21:19+00:00"):
+    with acquire(worktree, command="pr review --fix", started="2026-08-12T07:21:19+00:00"), \
+         live_pid() as pid:
+        stamp_pid(worktree / LOCK_FILE, pid)
         with pytest.raises(LockBusy) as excinfo:
             _contend(worktree)
-
+        seen = pid
     exc = excinfo.value
-    assert exc.holder["pid"] == os.getpid()
+    assert exc.holder["pid"] == seen
     assert exc.holder["command"] == "pr review --fix"
     assert "pr review --fix" in str(exc)
     assert "2026-08-12T07:21:19+00:00" in str(exc)
@@ -172,8 +175,9 @@ def test_report_busy_names_the_holder(tmp_path, capsys):
     assert "4242" in err
 
 
-def test_lock_busy_tolerates_an_unreadable_holder_record(worktree):
+def test_lock_busy_tolerates_an_unreadable_holder_record(worktree, monkeypatch):
     """The flock enforces exclusion; a garbled record must still report."""
+    monkeypatch.setattr(core.run_lock.time, "sleep", lambda s: None)
     lock_path = worktree / LOCK_FILE
     lock_path.write_text("not json")
     with acquire(worktree, command="pr review", started="t"):
@@ -192,8 +196,10 @@ def test_claim_for_process_holds_without_a_context_manager(worktree):
     assert os.environ[LOCK_ENV] == str(worktree)
     record = json.loads((worktree / LOCK_FILE).read_text())
     assert record["command"] == "ci-check --fix"
-    with pytest.raises(LockBusy):
-        _contend(worktree)
+    with live_pid() as pid:
+        stamp_pid(worktree / LOCK_FILE, pid)
+        with pytest.raises(LockBusy):
+            _contend(worktree)
 
 
 def test_claim_for_process_passes_through_when_pr_already_holds_it(worktree):
@@ -214,8 +220,10 @@ def test_a_rewriting_delegate_is_guarded_on_its_own(worktree):
     core.run_lock.claim_for_process(
         worktree, command="pr-rebase --fix", started="t",
     )
-    with pytest.raises(LockBusy):
-        _contend(worktree)
+    with live_pid() as pid:
+        stamp_pid(worktree / LOCK_FILE, pid)
+        with pytest.raises(LockBusy):
+            _contend(worktree)
 
 
 def test_a_delegate_passes_through_the_lock_its_parent_holds(worktree):
@@ -255,7 +263,8 @@ def test_claim_for_process_stamps_released_at_exit(worktree, monkeypatch):
 
 
 def test_claim_for_process_exits_when_another_run_owns_the_target(worktree, capsys):
-    with acquire(worktree, command="pr review --fix", started="t"):
+    with acquire(worktree, command="pr review --fix", started="t"), live_pid() as pid:
+        stamp_pid(worktree / LOCK_FILE, pid)
         _disown(target=worktree)
         with pytest.raises(SystemExit) as excinfo:
             core.run_lock.claim_for_process(worktree, command="ci-check", started="t")
@@ -465,11 +474,13 @@ def test_a_refused_lock_does_not_stamp_the_holders_record(worktree):
     Stamping on the way out of a refusal writes `released` onto a record whose
     flock is still held — by someone else — so a live holder reads as finished.
     """
-    with acquire(worktree, command="pr review --fix", started="t"):
+    with acquire(worktree, command="pr review --fix", started="t"), live_pid() as pid:
+        stamp_pid(worktree / LOCK_FILE, pid)
         with pytest.raises(LockBusy):
             _contend(worktree)
         record = json.loads((worktree / LOCK_FILE).read_text())
         assert record["released"] is None
+        assert record["pid"] == pid
 
 
 def test_is_held_ignores_the_process_local_registry(tmp_path):
@@ -522,7 +533,11 @@ def test_two_targets_in_one_checkout_now_contend(worktree, tmp_path):
     """
     first, second = tmp_path / "t-one", tmp_path / "t-two"
 
-    with acquire(first, command="pr review 1", started="t", worktree=worktree):
+    tree_lock = _git_dir(worktree) / TREE_LOCK_FILE
+    with acquire(first, command="pr review 1", started="t", worktree=worktree), \
+         live_pid() as pid:
+        stamp_pid(first / LOCK_FILE, pid)
+        stamp_pid(tree_lock, pid)
         _disown(target=first, git_dir=_git_dir(worktree))
         with pytest.raises(LockBusy):
             _enter(second, "pr rebase 2", worktree)
@@ -537,7 +552,9 @@ def test_one_target_from_two_checkouts_still_takes_one_lock(worktree, tmp_path):
     target = tmp_path / "one-target"
 
     with acquire(target, command="pr review 2973", started="t",
-                 worktree=worktree):
+                 worktree=worktree), live_pid() as pid:
+        stamp_pid(target / LOCK_FILE, pid)
+        stamp_pid(_git_dir(worktree) / TREE_LOCK_FILE, pid)
         _disown(target=target, git_dir=_git_dir(worktree))
         with pytest.raises(LockBusy):
             _enter(target, "pr review --self", None)
@@ -630,7 +647,9 @@ def test_a_contended_checkout_says_so_and_suggests_another_worktree(
     the targets differ, and waiting is not the only remedy.
     """
     with acquire(tmp_path / "t-one", command="pr rebase 1", started="t",
-                 worktree=worktree):
+                 worktree=worktree), live_pid() as pid:
+        stamp_pid((tmp_path / "t-one") / LOCK_FILE, pid)
+        stamp_pid(_git_dir(worktree) / TREE_LOCK_FILE, pid)
         _disown(target=tmp_path / "t-one", git_dir=_git_dir(worktree))
         with pytest.raises(SystemExit) as excinfo:
             core.run_lock.claim_for_process(

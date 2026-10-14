@@ -27,7 +27,7 @@ import core.run_lock  # noqa: E402
 import pr.target  # noqa: E402
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
 from conftest import make_ctx  # noqa: E402
-from run_lock_support import held_elsewhere, repo_with_origin  # noqa: E402
+from run_lock_support import held_elsewhere, live_pid, repo_with_origin  # noqa: E402
 
 # Bounds every process a test here starts; generous, because a loaded runner
 # schedules a fresh interpreter slowly and a flake here reads as a lock bug.
@@ -86,15 +86,18 @@ def test_run_is_refused_while_another_run_holds_the_batch_lock(monkeypatch, caps
     planned = []
     monkeypatch.setattr(batch.plan, "build_plan",
                         lambda dirs: planned.append(dirs) or Plan("me", []))
-    record = {"pid": 4242, "command": "pr batch run --checkout /x", "started": "t0",
-              "run": "20261013T000000-abcd"}
-    with held_elsewhere(core.run_lock.global_lock_path("batch"), record):
+    with live_pid() as pid, held_elsewhere(
+            core.run_lock.global_lock_path("batch"),
+            {"pid": pid, "command": "pr batch run --checkout /x", "started": "t0",
+             "run": "20261013T000000-abcd"}):
+        seen = pid
         code = _main(["batch", "run", "--checkout", "/r"])
     assert code == 1
     assert planned == []
     err = capsys.readouterr().err
     assert "owns this global batch" in err
     assert "run 20261013T000000-abcd" in err
+    assert f"pid {seen}" in err
 
 
 def test_resume_is_refused_while_another_run_holds_the_batch_lock(monkeypatch, capsys):
@@ -102,8 +105,8 @@ def test_resume_is_refused_while_another_run_holds_the_batch_lock(monkeypatch, c
     driven = []
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         lambda self: driven.append(1) or batch.model.RunStatus.WAITING)
-    with held_elsewhere(core.run_lock.global_lock_path("batch"),
-                        {"pid": 4242, "command": "pr batch run"}):
+    with live_pid() as pid, held_elsewhere(core.run_lock.global_lock_path("batch"),
+                                           {"pid": pid, "command": "pr batch run"}):
         code = _main(["batch", "resume", run.id])
     assert code == 1
     assert driven == []
@@ -241,15 +244,16 @@ def test_run_is_refused_whole_when_one_item_is_being_worked_on(monkeypatch, tmp_
     driven = []
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         lambda self: driven.append(1) or batch.model.RunStatus.DONE)
-    record = {"pid": 4242, "command": "pr fix", "started": "t0"}
-    with held_elsewhere(_target(repo, "feat/b") / core.run_lock.LOCK_FILE, record):
+    with live_pid() as pid, held_elsewhere(
+            _target(repo, "feat/b") / core.run_lock.LOCK_FILE,
+            {"pid": pid, "command": "pr fix", "started": "t0"}):
+        seen = pid
         code = _main(["batch", "run", "--checkout", str(repo)])
     assert code == 1
     assert driven == []
     assert batch.store.latest_run_id() is None
-    # Taken before the refusal (sorted first), and released with it.
     assert not core.run_lock.is_held(_target(repo, "feat/a"))
-    assert "acme/widget#2 is held by pr fix (pid 4242" in capsys.readouterr().err
+    assert f"acme/widget#2 is held by pr fix (pid {seen}" in capsys.readouterr().err
 
 
 def test_resume_is_refused_when_an_item_is_held(monkeypatch, tmp_path, capsys):
@@ -258,8 +262,9 @@ def test_resume_is_refused_when_an_item_is_held(monkeypatch, tmp_path, capsys):
     driven = []
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         lambda self: driven.append(1) or batch.model.RunStatus.WAITING)
-    record = {"pid": 4242, "command": "pr fix", "started": "t0"}
-    with held_elsewhere(_target(repo, "feat/a") / core.run_lock.LOCK_FILE, record):
+    with live_pid() as pid, held_elsewhere(
+            _target(repo, "feat/a") / core.run_lock.LOCK_FILE,
+            {"pid": pid, "command": "pr fix", "started": "t0"}):
         code = _main(["batch", "resume", run.id])
     assert code == 1
     assert driven == []

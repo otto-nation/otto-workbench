@@ -19,7 +19,7 @@ import core.run_lock  # noqa: E402
 import pr.context  # noqa: E402
 import pr.thread_replies  # noqa: E402
 import review.review_body_reply  # noqa: E402
-from run_lock_support import flocked, git_dir, held_elsewhere  # noqa: E402
+from run_lock_support import flocked, git_dir, held_elsewhere, live_pid  # noqa: E402
 
 
 def _ctx(worktree):
@@ -65,13 +65,16 @@ def test_a_global_lock_is_never_claimed_for_a_process(worktree):
 
 def test_contention_exits_1_naming_the_holder_and_the_target(worktree, capsys):
     ctx = _ctx(worktree)
-    record = {"pid": 4242, "command": "pr batch run R", "started": "t0"}
-    with held_elsewhere(ctx.target_dir / core.run_lock.LOCK_FILE, record), \
-         pytest.raises(SystemExit) as exc:
-        cli.locks.claim_declared("rebase", [], ctx, command="pr-rebase")
+    with live_pid() as pid, \
+         held_elsewhere(ctx.target_dir / core.run_lock.LOCK_FILE, {
+             "pid": pid, "command": "pr batch run R", "started": "t0",
+         }):
+        seen = pid
+        with pytest.raises(SystemExit) as exc:
+            cli.locks.claim_declared("rebase", [], ctx, command="pr-rebase")
     assert exc.value.code == 1
     err = capsys.readouterr().err
-    assert "owns this target owner/repo@feat/test: pr batch run R (pid 4242" in err
+    assert f"owns this target owner/repo@feat/test: pr batch run R (pid {seen}" in err
 
 
 def test_hold_declared_takes_a_global_with_no_context():

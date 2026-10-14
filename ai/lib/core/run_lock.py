@@ -43,6 +43,13 @@ nests: a second ``hold_resource`` on a lock this process already holds raises
 ``LockReentry``, because two holders of one resource in one process is a
 programming error, not contention.
 
+A take that loses the flock to a vacated record — empty, already
+``released``, or a pid that is gone — retries with a short doubling pause
+(``VACATED_PAUSE_S`` doubling to ``VACATED_PAUSE_MAX_S``, total
+``VACATED_BUDGET_S``) rather than refusing a prober. A live holder is still
+fail-fast. ``fcntl.flock`` contention is ``BlockingIOError``; any other
+``OSError`` (``ENOLCK``, ``EBADF``) propagates, matching ``core.tree_lock``.
+
 Uses ``fcntl.flock`` on ``<target_dir>/run.lock`` and on
 ``<git-dir>/workbench-run-tree.lock``. The kernel drops both when the holder
 exits for any reason, including SIGKILL, so there is no stale-lock state to
@@ -125,8 +132,9 @@ import json
 import os
 import subprocess
 import sys
+import time
 from collections import OrderedDict
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -149,6 +157,15 @@ TREE_LOCK_ENV = "WORKBENCH_RUN_LOCK_TREE"
 # resolves, and their marker.
 GLOBAL_LOCK_ENV = "WORKBENCH_RUN_LOCK_GLOBAL"
 GLOBAL_LOCKS_DIR = "locks"
+
+# Bounded wait when the flock is held by a vacated record (a prober, a
+# process exiting, or a holder that has not yet written its record). Real
+# contention — released is null and the pid is alive and not ours — is still
+# fail-fast. core.timeouts is subprocess tiers; the scheduler tick is the
+# wrong scale; these sit beside _claim because they are its schedule.
+VACATED_PAUSE_S = 0.01
+VACATED_PAUSE_MAX_S = 0.2
+VACATED_BUDGET_S = 2.0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -274,6 +291,13 @@ class LockReentry(RuntimeError):
     """
 
 
+class Busy(enum.Enum):
+    """Why a take lost the flock: a live holder, or a vacated record."""
+
+    LIVE = "live"
+    VACATED = "vacated"
+
+
 def _read_holder(path: Path) -> dict:
     """Best-effort read of the holder record written by the lock owner.
 
@@ -287,12 +311,33 @@ def _read_holder(path: Path) -> dict:
         return {}
 
 
-def _claim(handle, path: Path, command: str, started: str, spec: _LockSpec) -> None:
-    """Take the flock and record who owns it, or raise LockBusy."""
+def _on_contention(path: Path, spec: _LockSpec, delays: Iterator[float],
+                   cause: BaseException) -> float:
+    """Pause length for a vacated refusal, or raise LockBusy for a live holder / exhausted budget."""
+    busy = LockBusy(_read_holder(path), path, spec.subject, kind=spec.kind)
+    if classify_busy(busy) is Busy.LIVE:
+        raise busy from cause
     try:
-        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError as exc:
-        raise LockBusy(_read_holder(path), path, spec.subject, kind=spec.kind) from exc
+        return next(delays)
+    except StopIteration:
+        raise busy from cause
+
+
+def _claim(handle, path: Path, command: str, started: str, spec: _LockSpec) -> None:
+    """Take the flock and record who owns it, or raise LockBusy.
+
+    Only ``BlockingIOError`` is contention. Any other ``OSError`` propagates.
+    A vacated contention retries along ``retry_delays``; a live holder is
+    refused immediately. The record is written only after the flock is held,
+    so a refusal never stamps ``released`` onto someone else's file.
+    """
+    delays = retry_delays()
+    while True:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError as exc:
+            time.sleep(_on_contention(path, spec, delays, exc))
     record = {
         "pid": os.getpid(), "command": command, "started": started,
         # Overwritten with a timestamp on release. Present and null while held,
@@ -694,6 +739,54 @@ def holds(lock_file: Path) -> bool:
 def read_holder(lock_file: Path) -> dict:
     """The holder record at *lock_file*, unlocked. ``{}`` on failure."""
     return _read_holder(Path(lock_file))
+
+
+def is_live(record: dict, *, allow_self: bool = False) -> bool:
+    """Whether *record* names a process that still holds the lock.
+
+    True only when ``released`` is ``None``, ``pid`` is an ``int``, that pid
+    is alive (``os.kill(pid, 0)`` succeeds or raises ``PermissionError``),
+    and the pid is not this process unless ``allow_self``.
+    ``ProcessLookupError`` means the pid is gone.
+    """
+    if record.get("released") is not None:
+        return False
+    pid = record.get("pid")
+    if not isinstance(pid, int):
+        return False
+    if pid == os.getpid() and not allow_self:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def classify_busy(exc: LockBusy) -> Busy:
+    """``LIVE`` when ``is_live(exc.holder)``, otherwise ``VACATED``."""
+    if is_live(exc.holder):
+        return Busy.LIVE
+    return Busy.VACATED
+
+
+def retry_delays() -> Iterator[float]:
+    """Pauses for a vacated-holder retry, summing to at most ``VACATED_BUDGET_S``.
+
+    Starts at ``VACATED_PAUSE_S`` and doubles, capped at ``VACATED_PAUSE_MAX_S``.
+    The next pause is omitted when it would push the cumulative sum over the
+    budget.
+    """
+    delay = VACATED_PAUSE_S
+    spent = 0.0
+    while True:
+        if spent + delay > VACATED_BUDGET_S:
+            return
+        yield delay
+        spent += delay
+        delay = min(delay * 2, VACATED_PAUSE_MAX_S)
 
 
 def claim_for_process(target_dir: Path, command: str, started: str, *,

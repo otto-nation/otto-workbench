@@ -202,6 +202,14 @@ def test_current_branch_exits_when_detached_with_no_rebase(tmp_path):
         git.topology.current_branch(str(repo))
 
 
+def test_find_worktree_for_branch_finds_a_worktree_mid_rebase(tmp_path):
+    wt = _paused_rebase(tmp_path, worktree=True)
+    repo = tmp_path / "repo"
+    found = git.topology.find_worktree_for_branch("feat", str(repo))
+    assert found is not None
+    assert found.resolve() == wt.resolve()
+
+
 # ── Branch resolution ──────────────────────────────────────────────────────
 
 

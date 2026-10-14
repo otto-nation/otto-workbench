@@ -637,12 +637,12 @@ def fresh(
 
     if ctx.current_branch != ctx.branch:
         display = ctx.current_branch or "detached HEAD"
-        # Defense in depth: pr.context creates a worktree for a branch that has
-        # none, from a bare repo or from the default branch's own worktree, so
-        # this is reached only when `wt` could not make one. Checking out here
-        # would leave a feature branch sitting in main/, where the next tool
-        # that syncs main/ to origin/<default> hard-resets the branch out from
-        # under it.
+        # Defense in depth: `_resolve_worktree` returns None when no checkout
+        # holds the branch, so a mismatched tree here is only reachable for a
+        # detached worktree named after the branch (the porcelain fallback).
+        # Checking out into the default branch's worktree would still leave a
+        # feature branch sitting in main/, where the next tool that syncs main/
+        # to origin/<default> hard-resets it out from under it.
         if ctx.current_branch == default:
             terr(trail, "preflight", f"refusing to check out {ctx.branch} into the {display} worktree")
             core.log.error(f"Refusing to check out {ctx.branch} into the {display} worktree.")

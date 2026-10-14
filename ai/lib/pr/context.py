@@ -355,20 +355,12 @@ def resolve(
             sys.exit(1)
         branch_name = head.branch
         # Resolved again now that the head branch is known. The first pass
-        # could not name a branch, so it fell back to the caller's checkout:
-        # the default branch's worktree when run from a bare repo, or whatever
-        # checkout the caller started in. A --pr run then refused to check the
-        # head out there, while --branch on the same head went to the right
-        # worktree. This puts --pr in the same worktree --branch would use.
-        #
-        # A second pass that finds nothing (bare repo, head branch not
-        # available locally, ``wt`` missing) must not discard the first pass's
-        # worktree: the run degrades to it rather than losing its worktree.
-        head_root, head_cwd = _resolve_worktree(
+        # could not name a branch, so it answered with the caller's checkout.
+        # Take this result even when it is None: the caller's tree is not the
+        # PR's, and a missing checkout is reported as missing.
+        worktree_root, cwd = _resolve_worktree(
             repo_dir, pr_ref=pr_ref, branch=branch_name,
         )
-        if head_root is not None:
-            worktree_root, cwd = head_root, head_cwd
         # The PR's HEAD, not the caller's: state written for this run belongs to
         # the PR, and the caller may be sitting on an unrelated branch.
         head_sha = head.sha
@@ -583,15 +575,6 @@ def head_sha(cwd: str | None = None) -> str:
     return _head_sha(cwd)
 
 
-def _redirect_to_branch_worktree(
-    branch: str, effective_cwd: str, current: str | None,
-) -> Path | None:
-    """If CWD's branch differs from the target, find the target's worktree."""
-    if current is None or current == branch:
-        return None
-    return git.topology.find_worktree_by_branch(branch, effective_cwd)
-
-
 def _create_worktree_off_default(
     branch: str, effective_cwd: str, current: str | None,
 ) -> Path | None:
@@ -601,9 +584,8 @@ def _create_worktree_off_default(
     out: the next tool that syncs it to ``origin/<default>`` hard-resets the
     branch away, which is why ``pr rebase`` refuses to. So a branch with no
     worktree of its own gets one here, through ``wt switch`` exactly as the
-    bare-repo path does, instead of the run falling back to the default
-    checkout and refusing. Any other current branch keeps the old behaviour:
-    the caller's own feature checkout is theirs to switch.
+    bare-repo path does. Any other current branch is not created from; the
+    caller then gets no checkout rather than this one.
 
     None when the caller is not on the default branch, or ``wt`` could not
     create one; ``create_worktree_for_branch`` names the cause.
@@ -628,7 +610,9 @@ def _resolve_worktree(
     default branch's worktree, hands back only worktrees that already exist.
 
     Defaulted True and left unset by ``resolve`` so that the deep rung keeps
-    creating them.
+    creating them. When nothing holds the requested branch and nothing is
+    created, the worktree is None; ``cwd`` is kept so repo identity can still
+    be read from it.
     """
     toplevel = _git_toplevel(cwd)
     if toplevel is None:
@@ -639,11 +623,14 @@ def _resolve_worktree(
     if branch:
         here = cwd or str(toplevel)
         current = git.topology.current_branch_quiet(here)
-        wt = _redirect_to_branch_worktree(branch, here, current)
+        if current == branch or git.topology.rebasing_branch(here) == branch:
+            return toplevel, cwd
+        wt = git.topology.find_worktree_by_branch(branch, here)
         if not wt and create_missing:
             wt = _create_worktree_off_default(branch, here, current)
         if wt:
             return wt, str(wt)
+        return None, cwd
     return toplevel, cwd
 
 

@@ -126,7 +126,8 @@ def find_worktree_for_branch(
 ) -> Path | None:
     """Find the worktree git reports as checked out on *branch*.
 
-    Falls back to a worktree whose directory name matches the sanitized branch
+    A detached worktree mid-rebase of *branch* counts as on it. Then falls
+    back to a worktree whose directory name matches the sanitized branch
     (slashes to dashes) so detached-HEAD worktrees are still found — but only
     when git reports no branch for it. A worktree named ``main/`` with someone
     else's branch checked out is not the main worktree, and callers that reset
@@ -137,6 +138,9 @@ def find_worktree_for_branch(
     entries = worktree_entries(cwd)
     for entry in entries:
         if entry.branch == branch:
+            return entry.path
+    for entry in entries:
+        if entry.branch is None and rebasing_branch(str(entry.path)) == branch:
             return entry.path
     sanitized = branch.replace("/", "-")
     for entry in entries:
@@ -502,7 +506,7 @@ def current_branch(cwd: str | None = None) -> str:
         # A rebase stopped on a conflict detaches HEAD, but it is still working
         # on one branch and will move that branch when it finishes. Resuming
         # such a rebase has to target that branch, so it counts as current.
-        rebasing = _rebasing_branch(cwd)
+        rebasing = rebasing_branch(cwd)
         if rebasing:
             return rebasing
         core.log.error("Cannot determine current branch — HEAD is detached")
@@ -510,7 +514,7 @@ def current_branch(cwd: str | None = None) -> str:
     return branch
 
 
-def _rebasing_branch(cwd: str | None) -> str | None:
+def rebasing_branch(cwd: str | None) -> str | None:
     """The branch a paused rebase will update, or None when no branch rebase is under way.
 
     Git records it in ``head-name`` under the rebase's state directory, which
@@ -518,12 +522,16 @@ def _rebasing_branch(cwd: str | None) -> str | None:
     ``rebase-apply/``. A rebase started from a detached HEAD records
     ``detached HEAD`` there instead of a ref, and that answers None.
     ``--git-dir`` resolves the directory for a linked worktree, whose rebase
-    state lives in its own git dir rather than the shared one.
+    state lives in its own git dir rather than the shared one. A missing or
+    unreadable *cwd* answers None.
     """
-    r = subprocess.run(
-        ["git", "rev-parse", "--git-dir"],
-        capture_output=True, text=True, cwd=cwd, timeout=core.timeouts.LOCAL,
-    )
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            capture_output=True, text=True, cwd=cwd, timeout=core.timeouts.LOCAL,
+        )
+    except Exception:
+        return None
     if r.returncode != 0 or not r.stdout.strip():
         return None
     git_dir = Path(cwd or ".") / r.stdout.strip()

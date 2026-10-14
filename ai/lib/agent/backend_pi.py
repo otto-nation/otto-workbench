@@ -54,7 +54,7 @@ import threading
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 import agent.usage
@@ -62,7 +62,7 @@ import core.children
 import core.log
 import core.timeouts
 from agent.backend import AgentInvocation, agent_env
-from agent.pi_models import not_served_message, served_model
+from agent.pi_models import not_served_message, require_listed_model
 from agent.rule_prefix import (
     TEMP_PREFIX,
     materialize as materialize_rule_prefix,
@@ -798,6 +798,7 @@ def _exited_stderr(proc: subprocess.Popen | None) -> str:
 
 def _undelivered_prompt(
     log_file, proc: subprocess.Popen | None = None, model: str = "",
+    provider: str | None = None,
 ) -> StreamResult:
     """The result of a run whose prompt never reached Pi.
 
@@ -807,7 +808,7 @@ def _undelivered_prompt(
     symptom of the same exit.
     """
     stderr = _exited_stderr(proc)
-    error = not_served_message(model, stderr) or _PROMPT_UNDELIVERED
+    error = not_served_message(model, stderr, provider) or _PROMPT_UNDELIVERED
     core.log.error(f"pi refused the run: {error}")
     log_file.write(json.dumps({
         "type": "response", "command": "prompt", "success": False,
@@ -1133,12 +1134,12 @@ def prompt(
     ``--thinking`` and ``--provider`` are global flags here, so a prompt honours
     both exactly as the agent modes do.
     """
-    model = served_model(model, provider)
+    require_listed_model(model, provider)
     cmd = _build_prompt_cmd(model=model, provider=provider, thinking=thinking)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd,
                             timeout=core.timeouts.UNBOUNDED)
     if result.returncode:
-        msg = not_served_message(model or "", result.stderr or "")
+        msg = not_served_message(model or "", result.stderr or "", provider)
         if msg:
             core.log.error(msg)
     reply, usage = pi_prompt_result(result.stdout)
@@ -1154,8 +1155,7 @@ def invoke_agent(inv: AgentInvocation) -> int:
     - max_budget is enforced by accumulating message_end costs and sending abort
     - A Claude-compatible result record is written at the end for cost tracking
     """
-    if inv.model:
-        inv = replace(inv, model=served_model(inv.model, inv.provider))
+    require_listed_model(inv.model, inv.provider)
     ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
     cmd = _build_agent_cmd(inv, extension=ext)
     try:
@@ -1189,7 +1189,7 @@ def _drive_agent(inv: AgentInvocation, proc: subprocess.Popen) -> int:
                 output_path=inv.output_path,
             )
         else:
-            stream = _undelivered_prompt(log_fh, proc, inv.model)
+            stream = _undelivered_prompt(log_fh, proc, inv.model, inv.provider)
 
     duration_ms = int((time.monotonic() - start_time) * 1000)
 
@@ -1229,8 +1229,7 @@ def invoke_fix(inv: AgentInvocation) -> int:
     Uses RPC mode for budget tracking and turn limits, same as invoke_agent.
     If session_log is empty, events are consumed but not persisted.
     """
-    if inv.model:
-        inv = replace(inv, model=served_model(inv.model, inv.provider))
+    require_listed_model(inv.model, inv.provider)
     ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
     cmd = _build_fix_cmd(inv, extension=ext)
     try:
@@ -1261,7 +1260,7 @@ def _drive_fix(inv: AgentInvocation, proc: subprocess.Popen) -> int:
                 output_path=inv.output_path,
             )
         else:
-            stream = _undelivered_prompt(log_file, proc, inv.model)
+            stream = _undelivered_prompt(log_file, proc, inv.model, inv.provider)
 
     duration_ms = int((time.monotonic() - start_time) * 1000)
 

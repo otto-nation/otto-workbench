@@ -330,8 +330,10 @@ def _empty_pi_catalogue(monkeypatch):
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
+    import agent.pi_models
     import review.budget
     monkeypatch.setattr(review.budget, "_run_pi_list_models", lambda: "")
+    monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda: "")
     review.budget._pi_catalogue_windows.cache_clear()
     yield
     review.budget._pi_catalogue_windows.cache_clear()

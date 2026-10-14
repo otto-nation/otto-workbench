@@ -113,6 +113,23 @@ def resolve_alias(model: str) -> str:
     return model
 
 
+def origin_of(model: str) -> str | None:
+    """The env key currently holding *model*, if any.
+
+    ``resolve_alias`` maps a tier name onto this value; the key that supplied
+    it is what an unserved-id error should name. A concrete id that matches
+    no env var has no origin here — it came from ``--model``, ``agent.model``,
+    or a built-in default.
+    """
+    if not model:
+        return None
+    for alias in ModelAlias:
+        for key in (alias.env_key, alias.legacy_env_key):
+            if os.environ.get(key) == model:
+                return key
+    return None
+
+
 # ── Environment layers ───────────────────────────────────────────────────────
 
 

@@ -3663,19 +3663,21 @@ Gaps vs Claude Code CLI:
 
 ### agent/pi_models.py
 
-Map a requested model id onto one `pi --list-models` actually serves.
+Refuse a model id ``pi --list-models`` does not serve.
 
 ``AI_*_MODEL`` is the operator's id, often the Anthropic / Claude Code spelling
 (``claude-sonnet-5-5``). Pi's ``google-vertex-claude`` provider lists Vertex
-publisher ids, which drop a generation segment when Google's catalogue does
-(``claude-sonnet-5``). Passing the env value through unchanged is how a review
-dies with ``Model "claude-sonnet-5-5" not found`` and the RPC path reports
-that as stdin already closed.
+publisher ids (``claude-sonnet-5``). Those are different models. Passing the
+env value through unchanged is how a review dies with ``Model "claude-sonnet-5-5"
+not found`` and the RPC path used to report that as stdin already closed.
+Rewriting the id onto a listed parent would spawn a different model than the
+one configured, so this module does not.
 
-The catalogue is the source of truth for what this process can spawn. An exact
-hit is kept. Otherwise one trailing ``-N`` segment is stripped when that parent
-is listed — ``claude-sonnet-5-5`` → ``claude-sonnet-5`` — and nothing else is
-invented. An unreadable catalogue leaves the requested id alone.
+A readable catalogue that lacks the id is a configuration error: the message
+names the id, where it came from when that is knowable, the provider, the
+closest listed ids, and how to override. An empty catalogue is not that error
+— pi absent, hung, or unreadable must not block a spawn pi itself might still
+accept; Pi's stderr is the remaining signal on that path.
 
 ### agent/rule_prefix.py
 

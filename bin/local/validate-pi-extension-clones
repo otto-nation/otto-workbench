@@ -174,6 +174,12 @@ def _parse_pi_version(raw: str | None) -> tuple[int, ...] | None:
     return tuple(int(p) for p in match.groups() if p is not None)
 
 
+def _host_pi_is_managed_and_healthy() -> bool:
+    """Whether HOST_PI is an executable, non-directory path with a parseable version."""
+    return (os.access(HOST_PI, os.X_OK) and not Path(HOST_PI).is_dir()
+            and _parse_pi_version(_run([str(HOST_PI), '--version'])) is not None)
+
+
 def host_pi() -> Path | None:
     """The pi that loads user-scope clones, or None when there is none.
 
@@ -183,8 +189,7 @@ def host_pi() -> Path | None:
     else. Clones under ~/.pi/agent/git were refreshed against the managed
     install, so that is the host they must match.
     """
-    if (os.access(HOST_PI, os.X_OK) and not Path(HOST_PI).is_dir()
-            and _parse_pi_version(_run([str(HOST_PI), '--version'])) is not None):
+    if _host_pi_is_managed_and_healthy():
         return Path(HOST_PI)
     found = shutil.which('pi')
     return Path(found) if found else None
@@ -246,8 +251,7 @@ def path_pi_conflict(host: Path, host_version: tuple[int, ...]) -> str | None:
         return None
     listed = ', '.join(
         f'{path} ({_version_str(ver)})' for path, ver in others)
-    managed = (os.access(HOST_PI, os.X_OK) and not Path(HOST_PI).is_dir()
-               and os.path.realpath(HOST_PI) == host_resolved)
+    managed = _host_pi_is_managed_and_healthy() and os.path.realpath(HOST_PI) == host_resolved
     chosen = ('the install pi update maintains' if managed
               else 'the first pi on PATH')
     return (f'PATH also has pi at {listed}; comparing clones against {host} '

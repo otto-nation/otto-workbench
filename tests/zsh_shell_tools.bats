@@ -53,9 +53,12 @@ _run_step() {
   ' _ "$REPO_ROOT" "$TMPDIR" "${1:-}"
 }
 
-# _brewfile_plugins — the zsh-* formulae the shell Brewfile lists.
-_brewfile_plugins() {
-  sed -n 's/^brew "\(zsh-[A-Za-z0-9_-]*\)".*/\1/p' "$REPO_ROOT/packages/shell/shell.Brewfile"
+# _git_plugins [MANIFEST] — "name url" for each entry the shell Brewfile
+# annotates with `git:`, read straight from the file rather than through the
+# parser under test.
+_git_plugins() {
+  sed -n 's/^brew "\([^"]*\)".*# *git: *\([^ ;]*\).*/\1 \2/p' \
+    "${1:-$REPO_ROOT/packages/shell/shell.Brewfile}"
 }
 
 @test "without Homebrew, starship goes through install_package" {
@@ -71,17 +74,33 @@ _brewfile_plugins() {
   [ -d "$HOME/.oh-my-zsh" ]
 }
 
-@test "every zsh plugin the shell Brewfile lists is cloned, and nothing else" {
-  local plugins name
-  plugins="$(_brewfile_plugins)"
+@test "every git-annotated entry in the shell Brewfile is cloned from its URL, and nothing else" {
+  local plugins name url
+  plugins="$(_git_plugins)"
   [ -n "$plugins" ]
   run _run_step
   [ "$status" -eq 0 ]
-  for name in $plugins; do
-    grep -q -- "https://github.com/zsh-users/$name $XDG_DATA_HOME/zsh/plugins/$name" "$GIT_LOG"
-  done
+  while read -r name url; do
+    grep -q -- "$url $XDG_DATA_HOME/zsh/plugins/$name" "$GIT_LOG"
+  done <<< "$plugins"
   # One clone per plugin plus oh-my-zsh.
-  [ "$(wc -l < "$GIT_LOG")" -eq "$(( $(wc -w <<< "$plugins") + 1 ))" ]
+  [ "$(wc -l < "$GIT_LOG")" -eq "$(( $(wc -l <<< "$plugins") + 1 ))" ]
+}
+
+@test "the clone URL is the annotation, and entries without one are not cloned" {
+  export PACKAGES_DIR="$TMPDIR/packages"
+  mkdir -p "$PACKAGES_DIR/shell"
+  printf '%s\n' \
+    'brew "zsh-elsewhere"  # git: https://example.com/other/zsh-elsewhere-repo' \
+    'brew "fancy-plugin"  # git: https://example.com/fancy' \
+    'brew "zsh-via-mise"  # mise: zsh-via-mise' \
+    > "$PACKAGES_DIR/shell/shell.Brewfile"
+  run _run_step
+  [ "$status" -eq 0 ]
+  grep -q -- "https://example.com/other/zsh-elsewhere-repo $XDG_DATA_HOME/zsh/plugins/zsh-elsewhere" "$GIT_LOG"
+  grep -q -- "https://example.com/fancy $XDG_DATA_HOME/zsh/plugins/fancy-plugin" "$GIT_LOG"
+  [ "$(grep -c zsh-via-mise "$GIT_LOG")" -eq 0 ]
+  [ "$(wc -l < "$GIT_LOG")" -eq 3 ]
 }
 
 @test "with Homebrew the step does nothing; the Brewfile owns those installs" {
@@ -97,7 +116,8 @@ _brewfile_plugins() {
 @test "an install already in place is not cloned again" {
   mkdir -p "$HOME/.oh-my-zsh"
   local name
-  for name in $(_brewfile_plugins); do mkdir -p "$XDG_DATA_HOME/zsh/plugins/$name"; done
+  local url
+  while read -r name url; do mkdir -p "$XDG_DATA_HOME/zsh/plugins/$name"; done <<< "$(_git_plugins)"
   run _run_step
   [ "$status" -eq 0 ]
   [ ! -e "$GIT_LOG" ]

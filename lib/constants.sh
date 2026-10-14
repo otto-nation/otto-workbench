@@ -301,7 +301,7 @@ ENV_LOCAL_TEMPLATE="${ENV_LOCAL_TEMPLATE:-$WORKBENCH_DIR/zsh/.env.local.template
 STARSHIP_SRC_FILE="$WORKBENCH_DIR/zsh/starship.toml"
 # The shell Brewfile names the zsh plugins; a machine without Homebrew clones
 # the same list, so the Brewfile stays the one place a plugin is added.
-SHELL_MANIFEST="$WORKBENCH_DIR/packages/shell/shell.Brewfile"
+SHELL_MANIFEST="$PACKAGES_DIR/shell/shell.Brewfile"
 # Resolves a repo's agent instructions file (AGENTS.md, else a legacy
 # CLAUDE.md); bash asks it rather than keeping the candidate order itself.
 PROJECT_CONTEXT_PY="$WORKBENCH_DIR/ai/lib/core/project_context.py"

@@ -138,7 +138,7 @@ step_zsh_shell_tools() {
   package_entries "$SHELL_MANIFEST" plugins
   for name in "${plugins[@]}"; do
     p=()
-    package_lookup "$name" p || continue
+    package_lookup "$name" p || { warn "zsh plugin $name is in no package manifest under $PACKAGES_DIR"; continue; }
     [[ "${p[disposition]}" == git ]] || continue
     _zsh_clone "$ZSH_PLUGINS_DIR/${p[name]}" "${p[git]}" "$name" || true
   done

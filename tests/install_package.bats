@@ -1,12 +1,10 @@
 #!/usr/bin/env bats
-# Tests for install_package in lib/packages.sh — the install used by
-# ai/rtk/steps.sh and ai/claude/steps.sh for CLI tools that ship as a Homebrew
-# formula and as a mise registry tool.
-#
-# Homebrew is preferred where it exists; mise is the fallback for a machine
-# without it, such as an unprivileged user on a Linux host. rtk stands in for
-# both callers: the helper does nothing with its arguments beyond passing them
-# on, so a second tool would exercise the same branches.
+# Tests for install_package in lib/packages.sh — how every component installs
+# a package named in the manifests: Homebrew where it exists, mise otherwise
+# (an unprivileged user on a Linux host), and a warning for an entry with no
+# mise spec, such as a distro system package. A fixture manifest supplies the
+# entries; rtk stands in for any formula-plus-mise tool, since the branches do
+# not depend on which one it is. The callers' own cases are at the end.
 bats_require_minimum_version 1.5.0
 
 setup() {
@@ -258,7 +256,20 @@ EOF2
 
 @test "--version pins the mise spec" {
   run -- _run_install "$(_path_with mise)" rtk --version 1.2.3
+  [ "$status" -eq 0 ]
   grep -qx 'use -g rtk@1.2.3' "$MISE_LOG"
+}
+
+@test "an unknown or extra argument is a usage error, not an unpinned install" {
+  run -- _run_install "$(_path_with mise)" rtk --verison 1.2.3
+  [ "$status" -eq 2 ]
+  run -- _run_install "$(_path_with mise)" rtk 1.2.3
+  [ "$status" -eq 2 ]
+  run -- _run_install "$(_path_with mise)" rtk --version 1.2.3 extra
+  [ "$status" -eq 2 ]
+  run -- _run_install "$(_path_with mise)" --version 1.2.3 rtk
+  [ "$status" -eq 2 ]
+  [ ! -s "$MISE_LOG" ]
 }
 
 @test "a system package on the mise path is reported, not installed" {

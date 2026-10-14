@@ -631,7 +631,7 @@ Cask lines are implicitly macos-only.
 | `package_manifests OUT` | fills array OUT with every *.Brewfile under $PACKAGES_DIR, recursively, sorted. |
 | `package_lookup NAME OUT` | fills assoc OUT with the manifest entry for NAME (full formula or its short name) plus OUT[manifest]. Returns 1 when NAME is in no manifest under $PACKAGES_DIR. |
 | `package_entries FILE OUT` | fills array OUT with FILE's short names in order. |
-| `install_package NAME [--version V]` | installs the manifest package NAME with Homebrew where it exists and otherwise with mise (`mise use -g SPEC[@V]`), bootstrapping mise first when neither is present. Skipped when the entry's binary already runs. Returns 1 when NAME is in no manifest, has no mise spec on a machine without Homebrew, or the install fails; 2 on a usage error. |
+| `install_package NAME [--version V]` | installs the manifest package NAME with Homebrew where it exists and otherwise with mise (`mise use -g SPEC[@V]`), bootstrapping mise first when neither is present. Skipped when the entry's binary already runs; a mise shim with no active version does not count. Returns 1 when NAME is in no manifest, has no mise spec on a machine without Homebrew, or the install fails; 2 on a usage error. |
 
 Loaded via `ui.sh`.
 

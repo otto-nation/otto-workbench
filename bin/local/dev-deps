@@ -141,7 +141,7 @@ dev_deps_check() {
   for entry in "${DEV_DEPS_INSTALLABLE[@]}" shellcheck pytest; do
     pkg=()
     if ! package_lookup "$entry" pkg; then
-      missing+=("$entry — in no package manifest; fix DEV_DEPS_INSTALLABLE")
+      missing+=("$entry — in no package manifest under $PACKAGES_DIR")
       continue
     fi
     cmd="${pkg[cmd]}"

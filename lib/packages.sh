@@ -114,19 +114,26 @@ package_entries() {
 # install_package NAME [--version V] — installs the manifest package NAME with
 # Homebrew where it exists and otherwise with mise (`mise use -g SPEC[@V]`),
 # bootstrapping mise first when neither is present. Skipped when the entry's
-# binary already runs. Returns 1 when NAME is in no manifest, has no mise spec
-# on a machine without Homebrew, or the install fails; 2 on a usage error.
+# binary already runs; a mise shim with no active version does not count.
+# Returns 1 when NAME is in no manifest, has no mise spec on a machine without
+# Homebrew, or the install fails; 2 on a usage error.
+#
+# V pins the mise path only: Homebrew installs its current formula, and an entry
+# with no mise spec has nothing to pin. V is appended to the manifest spec as
+# given, so it is for entries whose spec carries no version of its own.
 install_package() {
   local name="${1:-}" version=""
-  [[ -n "$name" ]] || { err "install_package: NAME required"; return 2; }
-  if [[ "${2:-}" == --version ]]; then
+  [[ -n "$name" && "$name" != -* ]] || { err "usage: install_package NAME [--version V]"; return 2; }
+  if (( $# > 1 )); then
+    [[ "$2" == --version ]] || { err "install_package: unknown argument: $2"; return 2; }
     [[ -n "${3:-}" ]] || { err "install_package: --version requires a value"; return 2; }
+    (( $# == 3 )) || { err "install_package: unexpected argument: $4"; return 2; }
     version="$3"
   fi
   local -A __ip=()
   if ! package_lookup "$name" __ip; then
     local -a __m; package_manifests __m
-    warn "install_package: $name is in no manifest (searched: ${__m[*]})"
+    warn "install_package: $name is in no manifest (searched: ${__m[*]:-no manifests under $PACKAGES_DIR})"
     return 1
   fi
   local spec="${__ip[mise]}"

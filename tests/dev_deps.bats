@@ -130,6 +130,27 @@ _sc_lab() {
   fi
 }
 
+@test "check looks a dependency up by the manifest's command, not its package name" {
+  # bats-core's manifest entry declares `cmd: bats`; a bats on PATH satisfies it.
+  printf '#!/bin/sh\nexit 0\n' > "$STUBS/bats"
+  chmod +x "$STUBS/bats"
+  printf '#!/bin/sh\necho C\n' > "$STUBS/locale"
+  chmod +x "$STUBS/locale"
+  for tool in sed tr uname cat find sort; do ln -sf "$(command -v "$tool")" "$STUBS/$tool"; done
+  run _run dev_deps_check "$STUBS"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"jq — run: bin/local/dev-deps"* ]]
+  [[ "$output" != *"bats-core"* ]]
+}
+
+@test "check reports a dependency that is in no package manifest" {
+  export PACKAGES_DIR="$TMPDIR/no-manifests"
+  mkdir -p "$PACKAGES_DIR"
+  run _run dev_deps_check
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"bats-core — in no package manifest under $PACKAGES_DIR"* ]]
+}
+
 @test "on Darwin the root deps hint brew install, not sudo apt install" {
   mkdir -p "$STUBS/darwin-uname"
   printf '#!/bin/sh\necho Darwin\n' > "$STUBS/darwin-uname/uname"

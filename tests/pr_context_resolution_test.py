@@ -89,6 +89,26 @@ def test_bare_repo_finds_worktree(mock_pr, mock_branch, mock_quiet, mock_sha, mo
     mock_resolve_wt.assert_called_once_with(None, None)
 
 
+@patch.object(pr.target, "repo_identity_from_origin",
+              return_value=pr.target.RepoIdentity(label="owner/repo", key="repo"))
+@patch.object(pr.context, "_git_toplevel", return_value=None)
+@patch.object(git.topology, "is_bare_repo", return_value=True)
+@patch.object(git.topology, "find_bare_repo_worktree", return_value=Path("/wt/find"))
+@patch.object(git.topology, "resolve_bare_repo_worktree", return_value=Path("/wt/create"))
+@patch.object(pr.context, "detect_repo", return_value="owner/repo")
+@patch.object(pr.context, "_head_sha", return_value="def456")
+@patch.object(git.topology, "current_branch_quiet", return_value="main")
+@patch.object(git.topology, "current_branch", return_value="main")
+@patch.object(pr.context, "_pr_from_current", return_value=pr.context.BranchPR())
+def test_bare_repo_create_calls_resolve_not_find(
+        mock_pr, mock_branch, mock_quiet, mock_sha, mock_repo,
+        mock_resolve_bare, mock_find, mock_bare, mock_top, mock_repo_name):
+    ctx = pr.context.resolve(worktree=pr.context.WorktreeNeed.CREATE)
+    assert ctx.worktree_root == Path("/wt/create")
+    mock_resolve_bare.assert_called_once_with(None, None)
+    mock_find.assert_not_called()
+
+
 @patch.object(pr.context, "_git_toplevel", return_value=None)
 @patch.object(git.topology, "is_bare_repo", return_value=True)
 @patch.object(git.topology, "find_bare_repo_worktree", return_value=None)

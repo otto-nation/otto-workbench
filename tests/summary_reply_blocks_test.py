@@ -123,7 +123,7 @@ class TestTheRepliesSection:
             "### Replies to review comments")
 
     def test_a_kept_block_is_re_emitted_verbatim(self, content):
-        kept = _block(reply="Done, by hand.").replace("d=", "d=0")
+        kept = pr.published_record.mark_reply_block("88", "Hand-written reply.")
         body = _render(content(source_replies={"rb-88": "Done."},
                                review_body_comments=_REVIEWS), kept_replies={"88": kept})
         assert kept in body

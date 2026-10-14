@@ -163,7 +163,7 @@ def render_reply_section(
         str(c.get("id", "")): str(c.get("submitted_at") or "")
         for c in content.review_body_comments
     }
-    ordered = sorted(blocks, key=lambda key: (0, submitted[key]) if submitted.get(key)
+    ordered = sorted(blocks, key=lambda key: (0, submitted.get(key, "")) if submitted.get(key)
                      else (1, ""))
     parts = [REPLIES_HEADING, ""]
     for key in ordered:

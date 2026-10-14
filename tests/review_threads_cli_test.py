@@ -16,6 +16,7 @@ if str(LIB_DIR) not in sys.path:
 # never referenced by name.
 from review_threads_support import _no_published_summary  # noqa: E402
 from conftest import assert_no_worktree_exit, make_ctx, triaged_thread_record
+from gh.pr_data import PRData
 import pr.state
 import pr.comments_state
 from pr.comments_state import ThreadRecord, ThreadState
@@ -433,7 +434,6 @@ class TestTruncatedThreadFetch:
                         target_dir=tmp_path / "target")
 
     def _pr_data(self, threads, *, complete):
-        from gh.pr_data import PRData
         return PRData(
             viewer_login="isaacg", head_sha="abc1234", head_ref="isaac/feat/x",
             base_ref="main", review_threads=threads, threads_complete=complete,
@@ -682,7 +682,6 @@ class TestReadReport:
     """The report a `--reply` renders from, built without writing anything."""
 
     def _pr_data(self):
-        from gh.pr_data import PRData
         return PRData(
             viewer_login="me", head_sha="abc1234", head_ref="b", base_ref="main",
             reviews=[{"databaseId": 88, "author": {"login": "kgn"}, "state": "COMMENTED",

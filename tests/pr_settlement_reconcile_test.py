@@ -289,7 +289,6 @@ class TestAnsweredCommentSources:
                 self._outcomes(), "owner/repo", 42, "me")
         assert answered == {}
 
-
     def test_a_reply_block_in_our_summary_settles_nothing_of_its_review(self, content):
         """The summary cites the review it answers, and opens with its marker.
 

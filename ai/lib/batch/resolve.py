@@ -27,11 +27,12 @@ decision open.
 
 from __future__ import annotations
 
+import functools
 import secrets
 import shlex
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -100,21 +101,39 @@ class Request:
                    body_file=d.get("body_file", ""), commit=d.get("commit", ""))
 
 
-def default_runner(argv: list[str], log_path: Path | None = None) -> int:
+def default_runner(argv: list[str], log_path: Path | None = None, *,
+                   env: Mapping[str, str] | None = None) -> int:
     """Run one resolve command as a child.
 
     With *log_path*, a `$ <argv>` header and everything it prints are appended
-    there.
+    there. *env* is the child's environment, this process's when None.
     """
     if log_path is None:
         return subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=sys.stderr,
-                              start_new_session=True, timeout=core.timeouts.UNBOUNDED).returncode
+                              start_new_session=True, timeout=core.timeouts.UNBOUNDED,
+                              env=env).returncode
     with log_path.open("a") as log:
         log.write(f"{_COMMAND_HEADER}{shlex.join(argv)}\n")
         log.flush()
         return subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=log,
                               stderr=subprocess.STDOUT, start_new_session=True,
-                              timeout=core.timeouts.UNBOUNDED).returncode
+                              timeout=core.timeouts.UNBOUNDED, env=env).returncode
+
+
+def command_runner(item: Item, runner: Callable[..., int] | None,
+                   env_for: Callable[[Item], dict[str, str]] | None) -> Callable[..., int]:
+    """What runs *item*'s resolve commands.
+
+    *runner* when one is given (a test's, or the scheduler's seam); otherwise
+    `default_runner` in the environment *env_for* builds for *item*. A live
+    run passes `batch.targets.child_env`, so the commands it spawns get through
+    the target lock it holds for *item* and no other; with no *env_for* the
+    commands inherit this process's environment and take their own locks.
+    """
+    if runner is not None:
+        return runner
+    env = env_for(item) if env_for is not None else None
+    return functools.partial(default_runner, env=env)
 
 
 def _unavailable(decision: Decision, action: str, item: Item) -> str:
@@ -364,11 +383,12 @@ def _adopt_own_push(item: Item, after: batch.publish.TreeState) -> bool:
 def apply(run: Run, request: Request, *, pr_bin: str,
           runner: Callable[..., int] | None = None,
           tree: Callable[[Item], batch.publish.TreeState] | None = None,
-          closeout: Callable[[str, str], CloseoutDebt] | None = None) -> list[Decision]:
+          closeout: Callable[[str, str], CloseoutDebt] | None = None,
+          env_for: Callable[[Item], dict[str, str]] | None = None) -> list[Decision]:
     decision = run.decision(request.decision)
     item = run.item(decision.item)
     _validate(decision, request, item)
-    run_cmd = default_runner if runner is None else runner
+    run_cmd = command_runner(item, runner, env_for)
     if request.action in ("publish", "force-publish"):
         created = _publish(run, item, pr_bin, run_cmd, tree or batch.publish.read_tree,
                            confirmed=decision.payload.get("commits", [])

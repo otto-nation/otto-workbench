@@ -15,8 +15,10 @@ if str(LIB_DIR) not in sys.path:
 
 import batch.model  # noqa: E402
 import batch.plan  # noqa: E402
+import batch.resolve  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
+import batch.targets  # noqa: E402
 import cli.pr  # noqa: E402
 import core.run_lock  # noqa: E402
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
@@ -184,3 +186,17 @@ def test_two_concurrent_runs_exactly_one_proceeds(tmp_path):
     assert "owns this global batch" in second.stderr
     assert not (tmp_path / "b-planning").exists()
     assert first.returncode == 0, first_err
+
+
+def test_requests_a_live_run_drains_get_item_markers_and_an_idle_resolve_does_not(monkeypatch):
+    run = _saved_run()
+    seen = []
+    monkeypatch.setattr(batch.resolve, "apply",
+                        lambda run, req, **kw: seen.append(kw.get("env_for")) or [])
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
+                        lambda self: batch.model.RunStatus.WAITING)
+    batch.store.write_request(run.id, {"decision": "d1", "action": "accept"})
+    _main(["batch", "resume", run.id])
+    _main(["batch", "resolve", run.id, "d1", "--action", "accept"])
+    assert seen == [batch.targets.child_env, None]
+

@@ -32,6 +32,7 @@ import batch.report
 import batch.resolve
 import batch.scheduler
 import batch.store
+import batch.targets
 import config.workbench_config
 import core.report
 import core.run_lock
@@ -175,7 +176,7 @@ def _save(run) -> None:
         batch.plan.drop_refs(run.ref_dirs, run.ref_namespace)
 
 
-def _apply_loaded(run, bin_dir: Path) -> list[str]:
+def _apply_loaded(run, bin_dir: Path, env_for=None) -> list[str]:
     errors = []
     pr_bin = str(bin_dir / "pr")
     for raw in batch.store.take_requests(run.id):
@@ -183,7 +184,8 @@ def _apply_loaded(run, bin_dir: Path) -> list[str]:
             errors.append(raw["error"])
             continue
         try:
-            batch.resolve.apply(run, batch.resolve.Request.from_dict(raw), pr_bin=pr_bin)
+            batch.resolve.apply(run, batch.resolve.Request.from_dict(raw), pr_bin=pr_bin,
+                                env_for=env_for)
         except (batch.resolve.ResolveError, KeyError, TypeError) as exc:
             errors.append(str(exc))
     if (run.status in (RunStatus.WAITING, RunStatus.RUNNING)
@@ -200,7 +202,7 @@ def _report_apply_errors(errors: list[str]) -> None:
 def _held_drive(run, bin_dir: Path, cfg, verbose: bool) -> int:
     status = batch.scheduler.Scheduler(
         run, pr_bin=str(bin_dir / "pr"), cfg=cfg, verbose=verbose).run_until_blocked()
-    errors = _apply_loaded(run, bin_dir)
+    errors = _apply_loaded(run, bin_dir, env_for=batch.targets.child_env)
     _save(run)
     if run.status is RunStatus.DONE:
         status = RunStatus.DONE

@@ -3578,6 +3578,22 @@ Where a `pr batch` run lives on disk; the only module that touches it.
     <state_dir>/batch/<run-id>/logs/<slug>-<pr>-<step>-<n>.log     stderr of each step attempt
     <state_dir>/batch/<run-id>/logs/<slug>-<pr>-publish-<n>.log    output of each publish attempt
 
+### batch/targets.py
+
+Which `pr` target each batch item is, so a run can hold their locks and hand each child its own.
+
+A batch run holds every item's target lock for as long as it runs, so a manual
+`pr` command on one of its PRs is refused instead of interleaving with the
+batch's own step. Its children must get through those locks, and each only
+through its own: a child is started with `WORKBENCH_RUN_LOCK` naming its item's
+target and nothing else, so a step for one PR cannot ride the batch's hold onto
+another.
+
+The target is computed the way `pr.context` keys a run — the repo key read off
+the checkout's `origin`, and the item's branch — so the lock the batch holds is
+the one its child resolves. An item whose checkout has no `origin` has no
+target: nothing can hold one for it, and its steps fail to resolve on their own.
+
 ## AI backends
 
 The provider plumbing every AI call goes through — backend selection, streamed events, usage accounting, and quota.

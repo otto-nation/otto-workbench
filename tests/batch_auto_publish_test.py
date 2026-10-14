@@ -52,7 +52,7 @@ def _drive(pair, monkeypatch, findings, *, code=0):
     planned = PlanRow("o/r", str(pair.work), 1, "t", "feat", head, False,
                       {Step.REVIEW: StepNeed(True, "x")})
 
-    def spawn(argv, *, log_path, trail_root):
+    def spawn(argv, *, log_path, trail_root, env=None):
         (pair.work / "fix.txt").write_text("fix\n")
         commit_all(pair.work, "fix: review finding")
         return _Exited(code)

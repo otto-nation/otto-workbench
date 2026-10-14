@@ -98,7 +98,7 @@ class Harness:
         self.published.append(argv)
         return self.publish_code
 
-    def _spawn(self, argv, *, log_path, trail_root):
+    def _spawn(self, argv, *, log_path, trail_root, env=None):
         h = self
         # One past the number of processes spawned so far, not a constant: a
         # test asserting on which pid got killed needs spawns to be

@@ -95,6 +95,8 @@ _pkg_install_file() {
   if confirm "  Install $label?"; then
     if pkg_install_file "$file" "$label"; then
       success "$label installed"
+    else
+      warn "$label install failed"
     fi
   fi
 }
@@ -135,7 +137,11 @@ _pkg_select_packages() {
   local sel_count
   sel_count=$(wc -w <<< "$sel")
   if [[ "$sel_count" -eq "${#pkg_full[@]}" ]]; then
-    pkg_install_file "$file" "$label" && success "$label installed"
+    if pkg_install_file "$file" "$label"; then
+      success "$label installed"
+    else
+      warn "$label install failed"
+    fi
     return
   fi
 

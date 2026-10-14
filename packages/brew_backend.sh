@@ -29,9 +29,9 @@ pkg_skip_reason() {
 pkg_is_installed() {
   local type="$1" short_name="${2##*/}"
   if [[ "$type" == "cask" ]]; then
-    echo "$_INSTALLED_CASKS" | grep -qx "$short_name"
+    echo "$_INSTALLED_CASKS" | grep -Fxq -- "$short_name"
   else
-    echo "$_INSTALLED_FORMULAE" | grep -qx "$short_name"
+    echo "$_INSTALLED_FORMULAE" | grep -Fxq -- "$short_name"
   fi
 }
 

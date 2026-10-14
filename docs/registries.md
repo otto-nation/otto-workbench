@@ -29,7 +29,7 @@ Each tooling directory owns a `registry.yml` describing the tools it provides. R
 meta:
   section: "Brew Tools"              # H2 heading in generated output (required for tools)
   validation: brewfile               # cross-validation mode (see below)
-  source: packages/Brewfile              # relative path for cross-validation
+  source: packages/Brewfile          # relative path for cross-validation
   loading: scoped                    # "always" or "scoped" (default: scoped)
   install_check: true                # gate entire registry on install state (optional)
   install_check_command: colima      # check if command exists in PATH

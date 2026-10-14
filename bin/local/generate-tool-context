@@ -41,7 +41,7 @@
 #
 # Environment overrides (for tests):
 #   REGISTRY_SCAN_DIR    root directory for registry discovery (default: REPO_ROOT)
-#   PACKAGES_STACKS_DIR      packages/ directory (scanned for *.registry.yml stacks)
+#   PACKAGES_STACKS_DIR  packages/ directory (scanned for *.registry.yml stacks)
 #   TOOL_CONTEXT_OUTPUT  tools.generated.md path
 #   AI_DIR               ai/ directory
 

@@ -116,10 +116,10 @@ EOF
 # ── Section rendering ─────────────────────────────────────────────────────────
 
 @test "renders section title from meta.section in PACKAGES_REGISTRY" {
-  _write_registry "$PACKAGES_REGISTRY" "Brew Tools"
+  _write_registry "$PACKAGES_REGISTRY" "Package Tools"
 
   main
-  grep -q "## Brew Tools" "$TOOL_CONTEXT_OUTPUT"
+  grep -q "## Package Tools" "$TOOL_CONTEXT_OUTPUT"
 }
 
 @test "renders section title from meta.section in BIN_REGISTRY" {
@@ -224,10 +224,10 @@ EOF
 }
 
 @test "skips section for missing registry file" {
-  _write_registry "$PACKAGES_REGISTRY" "Brew Tools"
+  _write_registry "$PACKAGES_REGISTRY" "Package Tools"
 
   main
-  grep -q "## Brew Tools" "$TOOL_CONTEXT_OUTPUT"
+  grep -q "## Package Tools" "$TOOL_CONTEXT_OUTPUT"
   run grep "## Workbench Scripts" "$TOOL_CONTEXT_OUTPUT"
   [ "$status" -ne 0 ]
 }

@@ -55,22 +55,24 @@ _fail() {
 declare -A SEEN_NAME=()
 declare -A ENTRY=()
 
-# _check_one_entry FILE NAME TYPE DISPOSITION — records one parsed brew/cask line.
+# _check_one_entry FILE NAME TYPE DISPOSITION UNKNOWN EMPTY CASK_ANNOTATION — fails on
+# each problem with one parsed brew/cask line, then records NAME in SEEN_NAME.
 _check_one_entry() {
   local file="$1" name="$2" type="$3" disposition="$4"
+  local unknown="${5:-}" empty="${6:-}" cask_annotation="${7:-}"
   if [[ "$type" == brew && -z "$disposition" ]]; then
     _fail "$name: no disposition in $file"
   fi
   if [[ "$disposition" == *" "* ]]; then
     _fail "$name: more than one disposition in $file"
   fi
-  if [[ -n "${ENTRY[unknown]:-}" ]]; then
-    _fail "$name: unknown annotation token (${ENTRY[unknown]}) in $file"
+  if [[ -n "$unknown" ]]; then
+    _fail "$name: unknown annotation token ($unknown) in $file"
   fi
-  if [[ -n "${ENTRY[empty]:-}" ]]; then
-    _fail "$name: empty annotation value (${ENTRY[empty]}) in $file"
+  if [[ -n "$empty" ]]; then
+    _fail "$name: empty annotation value ($empty) in $file"
   fi
-  if [[ "$type" == cask && -n "${ENTRY[cask_annotation]:-}" ]]; then
+  if [[ "$type" == cask && -n "$cask_annotation" ]]; then
     _fail "$name: cask lines cannot carry annotations in $file"
   fi
   if [[ -n "${SEEN_NAME[$name]:-}" ]]; then
@@ -87,7 +89,8 @@ _check_manifests() {
   for f in "${files[@]}"; do
     while IFS= read -r line || [[ -n "$line" ]]; do
       _package_parse_line "$line" ENTRY || continue
-      _check_one_entry "$f" "${ENTRY[name]}" "${ENTRY[type]}" "${ENTRY[disposition]}"
+      _check_one_entry "$f" "${ENTRY[name]}" "${ENTRY[type]}" "${ENTRY[disposition]}" \
+        "${ENTRY[unknown]}" "${ENTRY[empty]}" "${ENTRY[cask_annotation]}"
     done < "$f"
   done
 }

@@ -84,11 +84,10 @@ TRANSFER = 600.0
 # `git worktree add` materializes every file, `checkout` and `stash` write or
 # restore as much of it as they touch, `git add -A` reads and hashes it, and
 # `git status` stats every file in it, so the honest bound is a function of the
-# repo, not a constant. And work that
-# executes someone else's code —
-# `git commit` and `git push` run hooks in whatever repository is being operated
-# on, which can be a linter, a secret scan, or a full test suite. `git rebase`
-# is both at once, replaying commits with their hooks and rewriting the tree
+# repo, not a constant. And work that executes someone else's code — `git commit`
+# and `git push` run hooks in whatever repository is being operated on, which
+# can be a linter, a secret scan, or a full test suite. `git rebase` is both at
+# once, replaying commits with their hooks and rewriting the tree
 # between them. In every case a timeout cannot distinguish a hang from a large
 # input or a slow hook.
 #

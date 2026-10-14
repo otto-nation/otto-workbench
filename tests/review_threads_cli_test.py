@@ -1,5 +1,6 @@
 """cli.review_threads: flags, phases, resolution and fetching."""
 
+import io
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -189,7 +190,7 @@ class TestReplyRouting:
         thread.assert_not_called()
         lock.assert_called_once()
         assert body.call_args[0][1] is route
-        assert body.call_args[0][2] == str(tmp_path / "f")
+        assert body.call_args[0][2] == "Done."
 
     def test_a_missing_body_file_is_refused_before_the_pr_is_read(self, tmp_path, capsys):
         """The error costs no fetch, and reads as it always has."""
@@ -201,6 +202,15 @@ class TestReplyRouting:
         route.assert_not_called()
         assert f"--body-file not found: {tmp_path / 'nope.md'}" in capsys.readouterr().err
 
+    def test_empty_stdin_is_refused_before_the_pr_is_read(self, capsys):
+        with patch.object(pr.context, "resolve", return_value=make_ctx()), \
+             patch.object(review.review_body_reply, "route_reply") as route, \
+             patch.object(sys, "stdin", io.StringIO("  \n")):
+            code = cli.review_threads.main(["--reply", "88", "--body-file", "-"])
+        assert code == 1
+        route.assert_not_called()
+        assert "--body-file is empty: -" in capsys.readouterr().err
+
     def test_a_target_naming_nothing_reports_through_the_thread_path(self, tmp_path):
         """Which keeps its error, and gains the review ids it could have meant."""
         route = review.review_body_reply.ReplyRoute(
@@ -210,6 +220,35 @@ class TestReplyRouting:
         body.assert_not_called()
         lock.assert_not_called()
         assert thread.call_args.kwargs["review_body_ids"] == ("88",)
+
+    def _stdin_reply(self, tmp_path, route, text):
+        ctx = make_ctx(worktree_root=tmp_path, target_dir=tmp_path / "target")
+        stdin = io.StringIO(text)
+        with patch.object(pr.context, "resolve", return_value=ctx), \
+             patch.object(review.review_body_reply, "route_reply", return_value=route), \
+             patch.object(pr.thread_replies, "run_reply", return_value=0) as thread, \
+             patch.object(review.review_body_reply, "run_review_body_reply",
+                          return_value=0) as body, \
+             patch.object(core.run_lock, "claim_for_process"), \
+             patch.object(sys, "stdin", stdin):
+            code = cli.review_threads.main(["--reply", "88", "--body-file", "-"])
+        return code, thread, body
+
+    def test_stdin_body_file_is_read_once_on_the_thread_path(self, tmp_path):
+        """`-` is drained before the PR fetch; the thread path gets the text."""
+        route = review.review_body_reply.ReplyRoute(pr_data=MagicMock(), thread=True)
+        code, thread, body = self._stdin_reply(tmp_path, route, "See the line.\n")
+        assert code == 0
+        body.assert_not_called()
+        assert thread.call_args[0][2] == "See the line."
+
+    def test_stdin_body_file_is_read_once_on_the_review_body_path(self, tmp_path):
+        """A second read of `-` would be empty; the review-body path gets the text."""
+        route = review.review_body_reply.ReplyRoute(pr_data=MagicMock(), source="rb-88")
+        code, thread, body = self._stdin_reply(tmp_path, route, "Tightened.\n")
+        assert code == 0
+        thread.assert_not_called()
+        assert body.call_args[0][2] == "Tightened."
 
 
 # ── _resolve_verified_threads ─────────────────────────────────────────────

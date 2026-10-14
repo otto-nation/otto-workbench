@@ -68,10 +68,13 @@ def route_reply(ctx: pr.context.ResolvedContext, target: str) -> ReplyRoute:
 
 
 def run_review_body_reply(
-    ctx: pr.context.ResolvedContext, route: ReplyRoute, body_file: str | None,
+    ctx: pr.context.ResolvedContext, route: ReplyRoute, body: str,
     trail: Trail | None = None,
 ) -> int:
     """Store the answer to one review body and publish it in the summary.
+
+    ``body`` is the already-read `--body-file` text — the CLI loads it once so
+    stdin `-` is not drained twice.
 
     With publishing on, the reply is written to the state file and the summary
     re-armed before anything is posted, so a publish that does not happen —
@@ -82,9 +85,6 @@ def run_review_body_reply(
     Without it nothing is stored: the summary body the reply would publish is
     printed through the same draft path every other `pr comments` write uses.
     """
-    body = pr.thread_replies.load_reply_body(body_file)
-    if body is None:
-        return 1
     pr.thread_replies.warn_if_uncited(body)
     review_id = pr.permalinks.review_id_of(route.source)
     report = review.comment_threads.read_report(ctx, route.pr_data)

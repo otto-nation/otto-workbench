@@ -56,10 +56,8 @@ def ctx(tmp_path):
 
 
 @pytest.fixture
-def body_file(tmp_path):
-    path = tmp_path / "reply.md"
-    path.write_text("Tightened — see https://github.com/owner/repo/blob/abc/p.py#L3")
-    return str(path)
+def reply_body():
+    return "Tightened — see https://github.com/owner/repo/blob/abc/p.py#L3"
 
 
 class TestRouting:
@@ -84,10 +82,10 @@ class TestRouting:
         assert route.review_body_ids == ("88",)
 
 
-def _run(ctx, body_file, *, post_url="https://github.com/owner/repo/pull/1#issuecomment-5"):
+def _run(ctx, reply_body, *, post_url="https://github.com/owner/repo/pull/1#issuecomment-5"):
     route = review.review_body_reply.ReplyRoute(pr_data=_pr_data(), source="rb-88")
     with patch.object(pr.comments, "post_issue_comment", return_value=post_url) as post:
-        code = review.review_body_reply.run_review_body_reply(ctx, route, body_file)
+        code = review.review_body_reply.run_review_body_reply(ctx, route, reply_body)
     return code, post
 
 
@@ -106,9 +104,9 @@ def _seed(ctx, **fix):
 
 class TestPublishing:
 
-    def test_the_reply_is_stored_and_published_in_the_summary(self, ctx, body_file):
+    def test_the_reply_is_stored_and_published_in_the_summary(self, ctx, reply_body):
         with core.publishing.run(post=True):
-            code, post = _run(ctx, body_file)
+            code, post = _run(ctx, reply_body)
         assert code == 0
         posted = post.call_args[0][2]
         assert "<!-- pr-comments:review-reply k=88 " in posted
@@ -119,39 +117,32 @@ class TestPublishing:
         assert state.fix.summary_deferred is False
         assert state.fix.summary_url.endswith("#issuecomment-5")
 
-    def test_a_post_that_fails_leaves_the_reply_owed(self, ctx, body_file):
+    def test_a_post_that_fails_leaves_the_reply_owed(self, ctx, reply_body):
         """`--finish --post` then publishes it — the scope still finds it unpublished."""
         with core.publishing.run(post=True):
-            code, _post = _run(ctx, body_file, post_url=None)
+            code, _post = _run(ctx, reply_body, post_url=None)
         assert code == 1
         state = pr.state.load_state(ctx.target_dir)
         assert "rb-88" in state.fix.source_replies
         assert state.fix.summary_deferred is True
 
-    def test_a_draft_stores_nothing_and_prints_the_summary(self, ctx, body_file):
+    def test_a_draft_stores_nothing_and_prints_the_summary(self, ctx, reply_body):
         drafts = []
         route = review.review_body_reply.ReplyRoute(pr_data=_pr_data(), source="rb-88")
         with core.publishing.run(post=False), \
                 patch.object(core.publishing, "draft",
                              side_effect=lambda action, body="": drafts.append(body)), \
                 patch("gh.client.api") as api:
-            code = review.review_body_reply.run_review_body_reply(ctx, route, body_file)
+            code = review.review_body_reply.run_review_body_reply(ctx, route, reply_body)
         assert code == 0
         api.assert_not_called()
         assert any("<!-- pr-comments:review-reply k=88 " in body for body in drafts)
         assert pr.state.load_state(ctx.target_dir) is None
 
-    def test_a_missing_body_file_stores_nothing(self, ctx, tmp_path):
-        with core.publishing.run(post=True):
-            code, post = _run(ctx, str(tmp_path / "nope.md"))
-        assert code == 1
-        post.assert_not_called()
-        assert pr.state.load_state(ctx.target_dir) is None
-
-    def test_reading_the_pr_writes_no_thread_state(self, ctx, body_file):
+    def test_reading_the_pr_writes_no_thread_state(self, ctx, reply_body):
         """The comments ledger is `--triage`'s to advance, not a reply's."""
         with core.publishing.run(post=True):
-            _run(ctx, body_file)
+            _run(ctx, reply_body)
         assert not pr.comments.threads_state_path(ctx.target_dir).exists()
 
 
@@ -160,47 +151,47 @@ class TestOwedSummary:
 
     @pytest.mark.parametrize("owed", [True, False])
     def test_a_published_reply_leaves_the_summary_debt_as_it_found_it(
-            self, ctx, body_file, owed):
+            self, ctx, reply_body, owed):
         """Held back for `--finish`, it stays owed — that re-render writes the issue link."""
         _seed(ctx, summary_deferred=owed)
         with core.publishing.run(post=True):
-            code, post = _run(ctx, body_file)
+            code, post = _run(ctx, reply_body)
         assert code == 0
         post.assert_called_once()
         state = pr.state.load_state(ctx.target_dir)
         assert state.fix.summary_deferred is owed
         assert state.fix.summary_url.endswith("#issuecomment-5")
 
-    def test_storing_a_reply_stamps_the_fix_domain(self, ctx, body_file):
+    def test_storing_a_reply_stamps_the_fix_domain(self, ctx, reply_body):
         _seed(ctx, updated_at="2000-01-01T00:00:00Z")
         with core.publishing.run(post=True):
-            _run(ctx, body_file)
+            _run(ctx, reply_body)
         assert pr.state.load_state(ctx.target_dir).fix.updated_at > "2000-01-01T00:00:00Z"
 
 
 class TestDraftOutput:
     """One headline per draft, and a pending push says why there is no body."""
 
-    def _draft(self, ctx, body_file):
+    def _draft(self, ctx, reply_body):
         drafts, infos = [], []
         route = review.review_body_reply.ReplyRoute(pr_data=_pr_data(), source="rb-88")
         with core.publishing.run(post=False), \
                 patch.object(core.publishing, "draft",
                              side_effect=lambda action, body="": drafts.append(body)), \
                 patch.object(core.log, "info", side_effect=infos.append):
-            code = review.review_body_reply.run_review_body_reply(ctx, route, body_file)
+            code = review.review_body_reply.run_review_body_reply(ctx, route, reply_body)
         assert code == 0
         return drafts, infos
 
-    def test_a_draft_prints_one_headline(self, ctx, body_file):
-        drafts, _infos = self._draft(ctx, body_file)
+    def test_a_draft_prints_one_headline(self, ctx, reply_body):
+        drafts, _infos = self._draft(ctx, reply_body)
         assert len(drafts) == 1
         assert "k=88 " in drafts[0]
 
-    def test_a_pending_push_says_no_body_could_be_rendered(self, ctx, body_file):
+    def test_a_pending_push_says_no_body_could_be_rendered(self, ctx, reply_body):
         _seed(ctx, commit_sha="abc1234", commit_status=CommitStatus.PUSH_HELD)
         with patch("git.push.holds", return_value=False):
-            drafts, infos = self._draft(ctx, body_file)
+            drafts, infos = self._draft(ctx, reply_body)
         assert drafts == []
         assert any("No draft body" in line and "push is still pending" in line
                    for line in infos)

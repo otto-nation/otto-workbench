@@ -127,11 +127,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _github_only(ctx: pr.context.ResolvedContext, args: argparse.Namespace, route) -> int:
+def _github_only(
+    ctx: pr.context.ResolvedContext, args: argparse.Namespace, route, body: str | None,
+) -> int:
     """Run a thread `--reply` or a `--settle` write, which touches GitHub and no checkout."""
     if args.reply:
         return pr.thread_replies.run_reply(
-            ctx, args.reply, args.body_file, pr_data=route.pr_data,
+            ctx, args.reply, body or "", pr_data=route.pr_data,
             review_body_ids=route.review_body_ids,
         )
     return pr.settlement.run_settle(
@@ -139,11 +141,11 @@ def _github_only(ctx: pr.context.ResolvedContext, args: argparse.Namespace, rout
     )
 
 
-def _run_locked(trail, args, ctx, route) -> int:
+def _run_locked(trail, args, ctx, route, body: str | None = None) -> int:
     """The work that runs under the lock: a review-body reply, or the phases."""
     if route is not None:
         return review.review_body_reply.run_review_body_reply(
-            ctx, route, args.body_file, trail=trail)
+            ctx, route, body or "", trail=trail)
     return review.comment_threads.run_threads(trail, args, ctx)
 
 
@@ -205,7 +207,9 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
         # Before the PR read, so a missing or empty body file costs no fetch.
-        if args.reply and pr.thread_replies.load_reply_body(args.body_file) is None:
+        # Read once: `--body-file -` is stdin, and a second read would be empty.
+        body = pr.thread_replies.load_reply_body(args.body_file) if args.reply else None
+        if args.reply and body is None:
             return 1
         given = list(argv if argv is not None else sys.argv[1:])
         command = " ".join([SCRIPT, *given])
@@ -217,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
             # GitHub-only writes: `comments` declares the target alone for
             # them. Taken before the early return, which used to skip it.
             cli.locks.claim_declared("comments", given, ctx, command=command)
-            return _github_only(ctx, args, route)
+            return _github_only(ctx, args, route, body)
         branch = ctx.branch
         # Called for its raise: a bare-repo run must fail here, before the lock
         # and the trail.
@@ -235,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
         try:
-            return _run_locked(trail, args, ctx, route)
+            return _run_locked(trail, args, ctx, route, body)
         except Exception as exc:
             trail.error("unexpected_error", str(exc))
             raise

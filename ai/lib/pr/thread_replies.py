@@ -686,8 +686,9 @@ def reply_source(target: str, review_body_ids: Iterable[str]) -> str | None:
 def load_reply_body(body_file: str | None) -> str | None:
     """The `--body-file` text, or None once the reason it is unusable is logged.
 
-    Both `--reply` paths read the body through this, so a thread reply and a
-    review-body reply refuse a missing or empty file in the same words.
+    The `--reply` CLI reads the body through this once, before it fetches the
+    PR, so a missing or empty file (and stdin `-`) costs no fetch. Both reply
+    paths then take the text, not the path — a second stdin read would be empty.
     """
     body = read_reply_body(body_file)
     if body is None:
@@ -726,7 +727,7 @@ def read_reply_body(body_file: str | None) -> str | None:
 
 
 def run_reply(
-    ctx: pr.context.ResolvedContext, target: str, body_file: str | None,
+    ctx: pr.context.ResolvedContext, target: str, body: str,
     *, pr_data: PRData | None = None, review_body_ids: Sequence[str] = (),
 ) -> int:
     """Post one hand-written reply through the same upsert the fix pass uses.
@@ -736,15 +737,13 @@ def run_reply(
     our comments that contradict each other. Routing them here holds a manual
     reply to the same one-per-thread rule as a generated one.
 
-    ``pr_data`` is the PR as the caller already read it, so routing the target
-    does not cost a second fetch; absent, it is fetched here. A target matching
-    no thread names ``review_body_ids`` as well — the review bodies `--reply`
-    also answers, which is what an operator pasting a review id meant.
+    ``body`` is the already-read `--body-file` text — the CLI loads it once so
+    stdin `-` is not drained twice. ``pr_data`` is the PR as the caller already
+    read it, so routing the target does not cost a second fetch; absent, it is
+    fetched here. A target matching no thread names ``review_body_ids`` as well
+    — the review bodies `--reply` also answers, which is what an operator
+    pasting a review id meant.
     """
-    body = load_reply_body(body_file)
-    if body is None:
-        return 1
-
     repo = ctx.repo
     pr_number = ctx.pr_number
     owner, repo_name = repo.split("/", 1)

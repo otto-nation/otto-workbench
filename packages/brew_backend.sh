@@ -19,6 +19,12 @@ pkg_backend_init() {
   _INSTALLED_CASKS=$(printf '%s' "$info" | jq -r '.casks[].token' 2>/dev/null)
 }
 
+# pkg_skip_reason TYPE FULL_NAME — 0 when this backend will not install it
+# (status display shows – rather than +). Homebrew installs everything it lists.
+pkg_skip_reason() {
+  return 1
+}
+
 # pkg_is_installed TYPE FULL_NAME — checks the cached brew info sets.
 pkg_is_installed() {
   local type="$1" short_name="${2##*/}"
@@ -42,12 +48,13 @@ pkg_install_file() {
 
 # pkg_install_one TYPE FULL_NAME — installs a single formula or cask.
 pkg_install_one() {
-  local type="$1" full="$2"
+  local type="$1" full="$2" short="${2##*/}"
   if [[ "$type" == "cask" ]]; then
-    brew install --cask "$full"
+    brew install --cask "$full" || return 1
   else
-    brew install "$full"
+    brew install "$full" || return 1
   fi
+  success "Installed $short"
 }
 
 # _brew_remove_version_manager NAME HOME_DIR
@@ -68,6 +75,10 @@ _brew_remove_version_manager() {
   fi
 }
 
+# pkg_backend_finish — detects nvm and jenv installed via Homebrew (now replaced
+# by mise) and prompts the user to uninstall them. Also offers to remove leftover
+# home directories and to enable brew autoupdate.
+# Only called during interactive install — not during otto-workbench sync.
 pkg_backend_finish() {
   local found=0
 

@@ -78,6 +78,10 @@ _package_parse_line() {
 # package_lookup NAME OUT — fills assoc OUT with the manifest entry for NAME
 # (full formula or its short name) plus OUT[manifest]. Returns 1 when NAME is
 # in no manifest under $PACKAGES_DIR.
+#
+# ceiling: each lookup re-walks every Brewfile under PACKAGES_DIR. Status,
+# all-installed, and install each call this per entry.
+# Upgrade trigger: once a single packages/setup.sh run is slow enough to notice.
 package_lookup() {
   local name="$1"
   local out="$2"

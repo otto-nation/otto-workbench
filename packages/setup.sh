@@ -9,8 +9,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKBENCH_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 . "$WORKBENCH_DIR/lib/ui.sh"
 
-PACKAGES_DIR="${PACKAGES_DIR:-$SCRIPT_DIR}"
-
 _PACKAGES_STATE_KEY="packages.stacks"
 
 if command -v brew >/dev/null 2>&1; then
@@ -20,7 +18,7 @@ elif command -v mise >/dev/null 2>&1 || _bootstrap_mise; then
   # shellcheck source=packages/mise_backend.sh
   . "$SCRIPT_DIR/mise_backend.sh"
 else
-  warn "Neither Homebrew nor mise found — skipping package install"
+  warn "Neither Homebrew nor mise is available, and mise could not be installed"
   exit 0
 fi
 pkg_backend_init || exit 1
@@ -49,18 +47,20 @@ _pkg_show_packages() {
     [[ "$line" =~ ^(brew|cask)[[:space:]]+\"([^\"]+)\" ]] || continue
     local type="${BASH_REMATCH[1]}" full_name="${BASH_REMATCH[2]}"
     local short_name="${full_name##*/}"
-    local prefix="" url mark
+    local prefix="" url mark extra
     url=$(_pkg_url "$type" "$full_name")
     [[ "$numbered" == true ]] && prefix="$(printf '[%d] ' "$index")"
     if pkg_is_installed "$type" "$full_name"; then
       echo -e "  ${DIM}✓ ${prefix}$(printf '%-28s' "$short_name") $url${NC}"
-    else
-      mark="${GREEN}+${NC}"
-      if declare -F pkg_skip_reason >/dev/null && pkg_skip_reason "$type" "$full_name"; then
-        mark="${DIM}–${NC}"
-      fi
-      echo -e "  ${mark} ${prefix}$(printf '%-28s' "$short_name") ${DIM}$url${NC}"
+      index=$(( index + 1 ))
+      continue
     fi
+    mark="${GREEN}+${NC}"
+    extra=""
+    if extra=$(pkg_skip_reason "$type" "$full_name"); then
+      mark="${DIM}–${NC}"
+    fi
+    echo -e "  ${mark} ${prefix}$(printf '%-28s' "$short_name") ${DIM}$url${extra:+ $extra}${NC}"
     index=$(( index + 1 ))
   done < "$file"
 }
@@ -116,6 +116,7 @@ _pkg_select_packages() {
   select_menu sel "${#pkg_full[@]}" --default all
   [[ -z "$sel" ]] && return
 
+  # All indices selected — use pkg_install_file for the stack
   local sel_count
   sel_count=$(wc -w <<< "$sel")
   if [[ "$sel_count" -eq "${#pkg_full[@]}" ]]; then
@@ -123,14 +124,18 @@ _pkg_select_packages() {
     return
   fi
 
+  # Subset — install individually. The backend reports a successful one-package
+  # install (brew prints here via pkg_install_one; mise already did inside the
+  # installer helper). Keep going after a failure so the rest of the subset still
+  # runs.
   local num
   for num in $sel; do
     local idx=$(( num - 1 ))
     local type="${pkg_types[$idx]}" full="${pkg_full[$idx]}" short="${pkg_short[$idx]}"
     if pkg_is_installed "$type" "$full"; then
       echo -e "  ${DIM}✓ $short already installed${NC}"
-    elif pkg_install_one "$type" "$full"; then
-      success "Installed $short"
+    else
+      pkg_install_one "$type" "$full" || true
     fi
   done
 }
@@ -150,12 +155,14 @@ _pkg_select_category() {
 
   [[ ${#stack_files[@]} -eq 0 ]] && return
 
+  # Single stack — skip intermediate menu, go straight to package selection
   if [[ ${#stack_files[@]} -eq 1 ]]; then
     _SELECTED_FILES+=("${stack_files[0]}")
     _SELECTED_LABELS+=("$label")
     return
   fi
 
+  # Multiple stacks — let user pick which ones
   echo
   info "$label:"
   local i
@@ -204,8 +211,10 @@ _pkg_select_optional() {
     local brewfiles=("${category_dirs[$i]}"*.Brewfile)
     local description
     if [[ ${#brewfiles[@]} -eq 1 ]] && [[ -f "${brewfiles[0]}" ]]; then
+      # Single stack — show package names so the user knows what they're getting
       description=$(_pkg_pkgs "${brewfiles[0]}")
     else
+      # Multiple stacks — show stack names; packages are shown when drilling in
       description=$(for f in "${category_dirs[$i]}"*.Brewfile; do
         [[ -f "$f" ]] && basename "$f" .Brewfile
       done | paste -sd ',' - | sed 's/,/, /g')
@@ -224,6 +233,9 @@ _pkg_select_optional() {
     _pkg_select_category "${category_dirs[$((num - 1))]}" "${category_labels[$((num - 1))]}"
   done
 
+  # Record selected stacks in install.yml — one write replacing the saved list,
+  # so a declined menu above leaves the previous stacks recorded rather than
+  # having emptied them on the way in.
   local _stacks=()
   for i in "${!_SELECTED_FILES[@]}"; do
     _rel="${_SELECTED_FILES[$i]#"$brew_dir/"}"
@@ -250,8 +262,9 @@ _pkg_replay_saved() {
   done <<< "$stacks"
 }
 
-_pkg_install_file "$PACKAGES_DIR/Brewfile" "core packages"
+_pkg_install_file "$CORE_MANIFEST" "core packages"
 
+# Replay saved stacks or run interactive selection
 _saved_stacks=$(state_get_list "$_PACKAGES_STATE_KEY")
 if [[ -n "$_saved_stacks" ]] && [[ "${WORKBENCH_INTERACTIVE:-}" != "1" ]]; then
   _pkg_replay_saved "$PACKAGES_DIR" "$_saved_stacks"

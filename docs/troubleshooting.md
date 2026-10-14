@@ -234,7 +234,9 @@ Two runs against one PR corrupt each other — they both read-modify-write that 
 
 The lock is an advisory `flock` on the target's `run.lock`, so the kernel releases it whenever the holder exits — including `kill -9`. There is no stale lock to clear by hand; if the message names a pid that is gone, the next run will take the lock regardless.
 
-Both files live outside every checkout, in the target's own directory: `~/.config/workbench/pr/<repo-key>-<branch-slug>/` (rooted at `WORKBENCH_STATE_DIR` when you set it). The two components come from `git remote get-url origin` and the branch, so every worktree of one PR resolves the same directory — that is what lets the lock reach across checkouts. Nothing is written into the working tree, so there is no `.gitignore` entry to maintain, and `wt remove` leaves the target's state alone; `pr gc` prunes it once the PR is merged or closed.
+A `pr batch run` or `pr batch resume` refused with `owns this global batch` met another batch that is still live. Only one batch runs on a machine at a time: the lock is `~/.local/state/workbench/locks/batch.lock`, taken before the run looks for an active run and held until it settles, so two sessions starting a batch together cannot both get past planning. Once the live run has an id the message names it (`run <id>`); `pr batch status RUN_ID` shows it and `pr batch cancel RUN_ID` stops it.
+
+Both files live outside every checkout, in the target's own directory: `~/.local/state/workbench/pr/<repo-key>-<branch-slug>/` (rooted at `WORKBENCH_STATE_DIR` when you set it). The two components come from `git remote get-url origin` and the branch, so every worktree of one PR resolves the same directory — that is what lets the lock reach across checkouts. Nothing is written into the working tree, so there is no `.gitignore` entry to maintain, and `wt remove` leaves the target's state alone; `pr gc` prunes it once the PR is merged or closed.
 
 ## A tree is declared under validation
 

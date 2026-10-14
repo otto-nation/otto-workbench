@@ -253,6 +253,9 @@ def _cmd_run(args, bin_dir: Path) -> int:
                                       now=datetime.now(timezone.utc),
                                       ref_namespace=plan.ref_namespace, ref_dirs=plan.ref_dirs,
                                       watch_ci=args.watch_ci)
+        # The id exists only now. From here a batch refused the lock is told
+        # which run to wait for or cancel, not only a pid.
+        core.run_lock.note_holder(batch.store.BATCH_LOCK, run=run.id)
         trail = Trail.start(script="pr-batch", context={"run": run.id}, record=True)
         run.trail_root = os.environ.get(TRAIL_ROOT_ENV, "")
         batch.store.save(run)
@@ -285,11 +288,30 @@ def _cmd_resume(args, bin_dir: Path) -> int:
         return _err(f"no run {run_id}")
     if run.status in (RunStatus.DONE, RunStatus.CANCELLED):
         return _err(f"run {run_id} is {run.status.value}")
+    core.run_lock.note_holder(batch.store.BATCH_LOCK, run=run_id)
     batch.store.clear_cancel(run_id)
     batch.scheduler.mark_interrupted(run, emit=batch.events.emit)
     os.environ.setdefault(TRAIL_ROOT_ENV, run.trail_root)
     return _drive(run, bin_dir=bin_dir, cfg=_cfg([i.repo_dir for i in run.items]),
                   verbose=args.verbose)
+
+
+def _exclusive(args, argv: list[str], bin_dir: Path) -> int:
+    """`run` or `resume`, holding the batch lock from the first check to the last step.
+
+    Taken before `_cmd_run` asks whether a run is active, because that question
+    and the run it guards are seconds of planning apart: two sessions that both
+    asked first were both told no, and both started.
+    """
+    handler = _cmd_run if args.command == "run" else _cmd_resume
+    try:
+        with core.run_lock.hold({batch.store.BATCH_LOCK},
+                                command=" ".join(["pr", "batch", *argv]),
+                                started=batch.store.now_iso()):
+            return handler(args, bin_dir)
+    except core.run_lock.LockBusy as exc:
+        core.run_lock.report_busy(exc)
+        return 1
 
 
 def _apply_pending(run_id: str, bin_dir: Path, decision_id: str) -> int:
@@ -401,10 +423,8 @@ def cmd_batch(argv: list[str], ctx, *, bin_dir: Path, schema_version: str | None
     try:
         if args.command == "plan":
             return _cmd_plan(args)
-        if args.command == "run":
-            return _cmd_run(args, bin_dir)
-        if args.command == "resume":
-            return _cmd_resume(args, bin_dir)
+        if args.command in ("run", "resume"):
+            return _exclusive(args, argv, bin_dir)
         if args.command == "resolve":
             return _cmd_resolve(args, bin_dir)
         if args.command == "cancel":

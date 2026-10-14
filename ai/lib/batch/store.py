@@ -2,6 +2,7 @@
 
     <state_dir>/batch/<run-id>/state.json       authoritative run state
     <state_dir>/batch/<run-id>/run.lock         held by the live scheduler
+    <state_dir>/locks/batch.lock                held by whichever `pr batch run`/`resume` is live
     <state_dir>/batch/<run-id>/requests/*.json  decisions waiting to be applied
     <state_dir>/batch/<run-id>/cancel           {"kill": bool} once cancel is asked
     <state_dir>/batch/<run-id>/logs/<slug>-<pr>-<step>-<n>.log     stderr of each step attempt
@@ -26,6 +27,12 @@ from batch.model import Run
 
 STATE_FILE = "state.json"
 CANCEL_FILE = "cancel"
+
+# The machine-wide lock every `pr batch run` and `resume` holds from before it
+# asks whether a run is active until it finishes, so two batches cannot both
+# pass that question while planning. Outside run_dir: it guards the choice of
+# run, not one run's files.
+BATCH_LOCK = core.run_lock.Global("batch")
 
 
 class RunNotFound(LookupError):

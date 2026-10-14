@@ -333,7 +333,7 @@ def test_a_refusal_that_survives_the_ignore_is_returned_not_looped(stub_gh, tmp_
     assert len(calls.read_text().splitlines()) == 2
 
 
-# guard: an ordinary failure must keep costing exactly one call
+# passes-at-base: an ordinary failure must keep costing exactly one call
 def test_an_ordinary_failure_is_not_retried_as_a_mise_refusal(stub_gh):
     calls = stub_gh("echo 'no pull requests found for branch \"feat/x\"' >&2; exit 1")
     assert not gh.client.run("pr", "view", "feat/x").ok

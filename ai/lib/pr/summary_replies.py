@@ -65,16 +65,20 @@ def _item_index(entry: CommentItem) -> int:
 def _dismissals(content: pr.summary_model.RoundContent) -> dict[str, list[CommentItem]]:
     """Each review's dismissed items that carry a reason, in item order.
 
-    Read off the round's `DISMISSED` bucket, so an operator's `--settle --as
-    dismissed --reason` and the fix pass's own justification both count: either
-    is an argument the reviewer may answer. The reason is the entry's
+    Read off `record_items` — the whole record, not this round's buckets — so a
+    dismissal an earlier round made keeps its line when a live round re-renders
+    the block, and an operator's `--settle --as dismissed --reason` and the fix
+    pass's own justification both count: either is an argument the reviewer
+    may answer. The reason is the entry's
     `justification` — what the record persists — so a triage dismissal, whose
     argument is in `reasoning`, renders live exactly as its replay will. A
     dismissal with no reason has nothing to say beyond the table's Action cell,
     and adds no line.
     """
     found: dict[str, list[CommentItem]] = {}
-    for entry in content.of(FixOutcome.DISMISSED):
+    for entry in content.record_items:
+        if entry.outcome is not FixOutcome.DISMISSED:
+            continue
         source = pr.permalinks.comment_item_source(entry)
         if (source.type is CommentSourceKind.REVIEW_BODY and source.id.isdigit()
                 and entry.justification.strip()):
@@ -92,14 +96,13 @@ def _reviewer(content: pr.summary_model.RoundContent, review_id: str) -> str:
     """Who wrote review `review_id`, or "" when this round cannot say.
 
     The review listing answers for a review the fetch reached. One outside its
-    window is answered by an item triage cut from it, which carries the login
-    `FixSummary.reviewers` recorded.
+    window is answered by an item triage cut from it, in any round of the
+    record, which carries the login `FixSummary.reviewers` recorded.
     """
     for comment in content.review_body_comments:
         if str(comment.get("id", "")) == review_id and comment.get("user"):
             return str(comment["user"])
-    entries = (e for bucket in content.by_outcome.values() for e in bucket)
-    for entry in entries:
+    for entry in content.record_items:
         source = pr.permalinks.comment_item_source(entry)
         if (source.type is CommentSourceKind.REVIEW_BODY and source.id == review_id
                 and entry.reviewer):
@@ -174,10 +177,14 @@ class KeptReplies:
 
     ``held`` were edited by a person; ``carried`` answer a review this
     checkout holds no reply for. Both are lost if an in-place edit drops them.
+    ``withdrawn`` are not kept: dismissal-only blocks for a review this
+    checkout knows, whose dismissal was re-settled away — named so the drop is
+    reported rather than silent.
     """
 
     held: tuple[pr.published_record.PublishedReply, ...] = ()
     carried: tuple[pr.published_record.PublishedReply, ...] = ()
+    withdrawn: tuple[pr.published_record.PublishedReply, ...] = ()
 
     @property
     def blocks(self) -> dict[str, str]:
@@ -188,15 +195,27 @@ class KeptReplies:
 def known_reviews(content: pr.summary_model.RoundContent) -> frozenset[str]:
     """The review ids any item in ``content`` was cut from.
 
-    A review this checkout holds items for is one whose state it has, so a block
-    for it that `reply_block_keys` no longer names was withdrawn — a dismissal
-    re-settled away — not written by another checkout. Meaningful only for a
-    content holding the whole record (`render_deferred_summary`'s).
+    A review this checkout holds items for is one whose state it has, so a
+    dismissal-only block for it that `reply_block_keys` no longer names was
+    withdrawn — a dismissal re-settled away — not written by another checkout.
+    A block carrying reply text is never read this way: `source_replies` never
+    shrinks, so reply text this checkout lacks is another checkout's. Meaningful
+    only for a content holding the whole record (`render_deferred_summary`'s).
     """
     entries = (e for bucket in content.by_outcome.values() for e in bucket)
     sources = map(pr.permalinks.comment_item_source, entries)
     return frozenset(source.id for source in sources
                      if source.type is CommentSourceKind.REVIEW_BODY and source.id.isdigit())
+
+
+def _dismissal_only(block: pr.published_record.PublishedReply) -> bool:
+    """Whether `block` holds nothing under its header but `Dismissed:` lines.
+
+    The shape `reply_block_text` gives a review with dismissals and no reply.
+    The first line inside the markers is the header; the last is the close.
+    """
+    inner = block.block.split("\n")[1:-1]
+    return all(line.startswith("Dismissed: ") for line in inner[1:] if line.strip())
 
 
 def kept_replies(
@@ -213,19 +232,20 @@ def kept_replies(
     reply. A block for a review outside ``reply_keys`` (`reply_block_keys`) was
     written by a checkout whose state this one lacks and is carried, unless
     another summary comment also holds it (``elsewhere``): the footer chain
-    reaches it there, or this checkout holds items from that review
-    (``known``, `known_reviews`): its block was withdrawn, and is dropped.
+    reaches it there. A dismissal-only block for a review this checkout holds
+    items from (``known``, `known_reviews`) was withdrawn, and is dropped and
+    named in ``withdrawn``; one carrying reply text is carried all the same.
     """
     if answered:
         return KeptReplies()
     blocks = {b.key: b for b in pr.published_record.published_reply_blocks(target_body)}
     held = tuple(b for b in blocks.values() if not b.intact and b.key not in force)
     held_keys = {b.key for b in held}
-    carried = tuple(
-        b for b in blocks.values()
-        if b.key not in held_keys and b.key not in reply_keys | elsewhere | known
-    )
-    return KeptReplies(held, carried)
+    loose = [b for b in blocks.values()
+             if b.key not in held_keys and b.key not in reply_keys | elsewhere]
+    withdrawn = tuple(b for b in loose if b.key in known and _dismissal_only(b))
+    carried = tuple(b for b in loose if b not in withdrawn)
+    return KeptReplies(held, carried, withdrawn)
 
 
 def block_label(block: pr.published_record.PublishedReply) -> str:

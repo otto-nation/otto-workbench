@@ -109,11 +109,11 @@ def _round_content(**buckets):
         for k in ("issue_comments", "review_body_comments")
     }
     comments["source_replies"] = dict(buckets.pop("source_replies", {}))
+    recorded = buckets.pop("recorded", ())
+    by_outcome = {FixOutcome(name): list(entries) for name, entries in buckets.items()}
     return pr.summary_model.RoundContent(
-        by_outcome={
-            FixOutcome(name): list(entries) for name, entries in buckets.items()
-        },
-        **comments,
+        by_outcome=by_outcome, **comments,
+        record_items=pr.summary_model.record_entries(recorded, {}, by_outcome),
     )
 
 

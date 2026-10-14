@@ -186,7 +186,7 @@ class TestTheSummaryRowReadsTheSameAnswer:
         content = pr.summary_model.RoundContent(
             by_outcome={FixOutcome.ALREADY_ADDRESSED: entries},
             issue_comments=comments,
-            review_body_comments=[], source_replies={},
+            review_body_comments=[], source_replies={}, record_items=[],
         )
         cp = pr.attribution.CommitPushResult("abc1234", "pushed", "")
         return pr.summary_render.build_summary_body(

@@ -242,6 +242,20 @@ class TestDismissalReasons:
         assert body.count("pr-comments:review-reply k=88 ") == 1
         assert alone in body
 
+    def test_a_live_edit_writes_an_earlier_rounds_block_rather_than_carrying_it(
+        self, content,
+    ):
+        """The record, not this round's buckets, holds the dismissal: still ours."""
+        round_content = content(review_body_comments=_REVIEWS, recorded=[ItemOutcome(
+            id="rb-88-1", summary="Drop the cache", outcome=FixOutcome.DISMISSED,
+            reason="The cache is the fix")])
+        alone = _block(reply="Dismissed: Drop the cache — The cache is the fix")
+        with patch.object(core.log, "warn") as warn:
+            body = _publish(round_content, _marker(_published_summary() + "\n" + alone))
+        assert body.count("pr-comments:review-reply k=88 ") == 1
+        assert alone in body
+        assert not any("carrying them forward" in c[0][0] for c in warn.call_args_list)
+
     def test_a_new_dismissal_is_restated_on_a_fresh_comment(self, content):
         round_content = content(source_replies={"rb-88": "Done."},
                                 review_body_comments=_REVIEWS, dismissed=[
@@ -281,10 +295,19 @@ class TestAWithdrawnDismissal:
                 _make_state(fix), PRReport(review_body_comments=_REVIEWS), _REPO, 1, {})
         return post.call_args[0][2]
 
-    def test_an_in_place_finish_edit_drops_the_withdrawn_block(self):
+    def test_an_in_place_finish_edit_drops_the_withdrawn_block_and_says_so(self):
         stale = _block(reply="Dismissed: Drop the cache — The cache is the fix")
-        body = self._replay(_marker(_published_summary() + "\n" + stale))
+        with patch.object(core.log, "info") as info:
+            body = self._replay(_marker(_published_summary() + "\n" + stale))
         assert "pr-comments:review-reply k=88 " not in body
+        assert any("withdrawn" in c[0][0] and "@kgn's review" in c[0][0]
+                   for c in info.call_args_list)
+
+    def test_a_reply_another_checkout_wrote_to_a_known_review_is_carried(self):
+        """`source_replies` never shrinks, so reply text this one lacks is not ours."""
+        theirs = _block(reply="Answered from the other laptop.")
+        body = self._replay(_marker(_published_summary() + "\n" + theirs))
+        assert theirs in body
 
     def test_a_block_for_a_review_this_checkout_does_not_know_is_still_carried(self):
         theirs = _block("90", "amp", "Answered from the other laptop.")

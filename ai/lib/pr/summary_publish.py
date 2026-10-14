@@ -270,8 +270,8 @@ def publish_summary(
     ``force_reply_keys`` names the reviews an explicit `--reply` just answered,
     whose hand-edited block that answer replaces. ``known_reply_keys``
     (`summary_replies.known_reviews`) names the reviews this round holds items
-    for, whose block outside ``reply_keys`` was withdrawn rather than written
-    elsewhere, and is dropped instead of carried.
+    for, whose dismissal-only block outside ``reply_keys`` was withdrawn rather
+    than written elsewhere, and is dropped instead of carried.
     """
     marked = pr.comments.find_marker_comments(repo, pr_number, SUMMARY_MARKER)
     existing = marked.newest
@@ -314,8 +314,14 @@ def publish_summary(
         )
     if reconciled.replies.carried:
         core.log.warn(
-            f"Published summary has {len(reconciled.replies.carried)} review reply(ies) "
-            "this run has no record of — carrying them forward rather than dropping them"
+            f"Published summary has {len(reconciled.replies.carried)} review reply "
+            "block(s) this round does not render — carrying them forward rather "
+            "than dropping them"
+        )
+    for block in reconciled.replies.withdrawn:
+        core.log.info(
+            f"Dropping the dismissal block for {pr.summary_replies.block_label(block)} — "
+            "its dismissals were withdrawn"
         )
     if answered:
         if not overflowed:
@@ -427,11 +433,13 @@ def post_fix_summary(
     ), activity_at=activity_at,
         folded=pr.summary_model.folded_locations(content, threads_by_id),
         folded_texts=pr.summary_model.folded_restatements(content, threads_by_id),
-        # ceiling: no `known_reply_keys` here — this pass's content holds only
-        # what it touched, so a review it lacks items for may still own a valid
-        # earlier block, and a withdrawn dismissal stays carried until a
-        # `--finish` re-renders from the whole record. Upgrade trigger: once
-        # the live round renders from the full record, pass `known_reviews`.
+        # ceiling: no `known_reply_keys` here — `known_reviews` reads
+        # `by_outcome`, which on a live pass holds only what it touched, so a
+        # withdrawn dismissal stays carried until a `--finish` re-renders from
+        # the whole record. The blocks themselves already render from it
+        # (`record_items`). Upgrade trigger: once a stale dismissal block
+        # surviving a live edit is reported, read `known_reviews` off
+        # `record_items` and pass it here.
         reply_keys=pr.summary_replies.reply_block_keys(content))
     if url:
         core.log.info(f"Posted fix summary: {url}")
@@ -658,6 +666,7 @@ def render_deferred_summary(
         issue_comments=report.issue_comments,
         review_body_comments=report.review_body_comments,
         source_replies=fix.source_replies,
+        record_items=pr.summary_model.record_entries(record.items, fix.reviewers),
     )
 
     cp = pr.history_rewrite.reconciled_commit(record, status, wt_path)

@@ -25,13 +25,13 @@ the table is rendered (`pr.summary_render`), how a published body is read back
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from enum import Enum, StrEnum
 
 import core.markdown
 import pr.permalinks
-from pr.fix import FixOutcome
+from pr.fix import FixOutcome, ItemOutcome
 from pr.thread_models import (
     THREAD_ANCHOR, CommentItem, CommentSourceKind, ReportThread, finding_location,
 )
@@ -81,8 +81,12 @@ class RoundContent:
     carries the whole set, and `pr.summary_rounds.RoundScope.covers_reply`
     decides which of them the round writes. It does not count towards
     `has_content`: a reply is published by the `--reply` that wrote it, or by
-    the next summary a round has a reason to post. Every field is
-    required: the round that printed a table and recorded that it owed nothing
+    the next summary a round has a reason to post. `record_items` is the
+    whole fix record as entries (`record_entries`), each carrying its outcome:
+    the review-body blocks read their dismissal lines and an unlisted
+    reviewer off it, so a live round, whose buckets hold only what it touched,
+    renders a block exactly as a `--finish` replay of the record does. Every
+    field is required: the round that printed a table and recorded that it owed nothing
     was one caller passing a bucket another caller did not, and a default here
     would leave that available to the next construction site.
     """
@@ -91,6 +95,7 @@ class RoundContent:
     issue_comments: list[dict]
     review_body_comments: list[dict]
     source_replies: Mapping[str, str]
+    record_items: Sequence[CommentItem]
 
     def of(self, *outcomes: FixOutcome) -> list[CommentItem]:
         """The entries under these outcomes, in the order the outcomes are given.
@@ -137,6 +142,27 @@ class RoundContent:
         table to render when one arrived unread.
         """
         return bool(any(self.by_outcome.values()) or self.unseen)
+
+
+def record_entries(
+    recorded: Iterable[ItemOutcome], reviewers: Mapping[str, str],
+    this_round: Mapping[FixOutcome, list[CommentItem]] | None = None,
+) -> list[CommentItem]:
+    """The fix record as entries: ``recorded`` with ``this_round`` folded over it.
+
+    Keyed by item id, as `FixRecord.merge_into` folds a round into the state
+    file, so this round's verdict on an item wins over an earlier round's. Each
+    entry carries the outcome it settled to — a recorded one its own, a live
+    one the bucket it sits in — and a recorded one its login from
+    ``reviewers`` (`FixSummary.reviewers`). An id-less entry cannot be folded
+    and is left out; a review-body item, the only reader's subject, always has
+    an id. The replay passes no ``this_round``: its record is already whole.
+    """
+    merged = {o.id: CommentItem.from_outcome(o, reviewers.get(o.id, ""))
+              for o in recorded if o.id}
+    for outcome, bucket in (this_round or {}).items():
+        merged.update({e.id: replace(e, outcome=outcome) for e in bucket if e.id})
+    return list(merged.values())
 
 
 def thread_covered_locations(

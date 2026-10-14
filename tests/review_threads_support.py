@@ -66,6 +66,9 @@ def content():
     absent from the mapping rather than present and empty — matching how the
     round reaches the renderers in production. A helper that wrote every key
     in, mentioned or not, would hide that distinction from these tests.
+
+    ``recorded`` names `ItemOutcome`s earlier rounds left in the record; the
+    round's own buckets fold over them into `record_items` as production's do.
     """
     def _make(**buckets):
         comments = {
@@ -73,12 +76,16 @@ def content():
             for k in ("issue_comments", "review_body_comments")
         }
         comments["source_replies"] = dict(buckets.pop("source_replies", {}))
+        recorded = buckets.pop("recorded", ())
+        by_outcome = {FixOutcome(name): list(entries) for name, entries in buckets.items()}
         return pr.summary_model.RoundContent(
-            by_outcome={
-                FixOutcome(name): list(entries)
-                for name, entries in buckets.items()
-            },
-            **comments,
+            by_outcome=by_outcome, **comments,
+            # Some suites fill a bucket with bare strings to count it; only an
+            # entry has an outcome to record.
+            record_items=pr.summary_model.record_entries(recorded, {}, {
+                outcome: [e for e in entries if isinstance(e, CommentItem)]
+                for outcome, entries in by_outcome.items()
+            }),
         )
     return _make
 

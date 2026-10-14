@@ -32,7 +32,9 @@ import pr.thread_context
 import pr.fix_state
 import pr.state
 import pr.summary_model
+import pr.published_record
 import pr.summary_publish
+import pr.summary_replies
 from pr.fix import FixOutcome, ItemOutcome
 from pr.thread_models import (
     CommentItem, PRReport, ReplyOutcome, ReportThread, TrackingResult, TriageResult,
@@ -67,7 +69,7 @@ class TestWhatTheRoundPersistsAndReports:
         adapter = self._adapter(tmp_path, **round_kw)
         content = pr.summary_model.RoundContent(
             by_outcome=adapter.round.by_outcome(tracking or TrackingResult()),
-            issue_comments=[], review_body_comments=[], source_replies={},
+            issue_comments=[], review_body_comments=[], source_replies={}, record_items=[],
         )
         cp = pr.attribution.CommitPushResult("abc1234", CommitStatus.PUSHED, "")
         return adapter._state_for(
@@ -152,7 +154,7 @@ class TestWhatTheRoundPersistsAndReports:
         """
         content = pr.summary_model.RoundContent(
             by_outcome={}, issue_comments=[], review_body_comments=[],
-            source_replies={})
+            source_replies={}, record_items=[])
         run = fix.engine.FixRun(batches=3, max_turns=17, max_budget=2.5)
         result = fix.comments._result_for(
             content, pr.attribution.CommitPushResult(None, CommitStatus.NO_CHANGES, ""),
@@ -174,7 +176,7 @@ class TestWhatTheRoundPersistsAndReports:
                 FixOutcome.DISMISSED: [self._entry("t5")],
                 FixOutcome.ALREADY_ADDRESSED: [self._entry("t6")],
             },
-            issue_comments=[], review_body_comments=[], source_replies={},
+            issue_comments=[], review_body_comments=[], source_replies={}, record_items=[],
         )
         result = fix.comments._result_for(
             content, pr.attribution.CommitPushResult("abc1234", CommitStatus.PUSHED, ""),
@@ -399,6 +401,37 @@ class TestFixPassHoldsWhenContested:
                           wraps=pr.summary_publish.publish) as publish:
             self._run(tmp_path, contested=False, publishing_on_=True)
         assert publish.call_args[0][0].source_replies == {"rb-88": "Done."}
+
+    def test_an_earlier_rounds_dismissal_keeps_its_line_beside_the_reply(
+        self, tmp_path, publishing_on,
+    ):
+        """This round's buckets hold none of `rb-88`; the record still does.
+
+        The live block must say what a `--finish` replay of the same record
+        says, digest included — a block that differs is rewritten, dropping the
+        Dismissed line on an in-place edit or restating it as revised.
+        """
+        st = pr.state.new_state("owner/repo", "b", pr_number=1, head_sha="aaa1111",
+                                worktree_root=str(tmp_path))
+        st.fix.source_replies["rb-88"] = "Done."
+        st.fix.fix.items.append(ItemOutcome(
+            id="rb-88-1", summary="Drop the cache", outcome=FixOutcome.DISMISSED,
+            reason="The cache is the fix"))
+        st.fix.reviewers["rb-88-1"] = "kgn"
+        pr.state.save_state(tmp_path, st)
+        with patch.object(pr.summary_publish, "publish",
+                          wraps=pr.summary_publish.publish) as publish:
+            self._run(tmp_path, contested=False, publishing_on_=True)
+        live = pr.summary_replies.reply_block_text(
+            publish.call_args[0][0], "88", "owner/repo", 1)
+        assert "Done.\n\nDismissed: Drop the cache — The cache is the fix" in live
+
+        st.fix.summary_deferred = True
+        with patch("pr.comments.post_issue_comment", return_value="u") as post:
+            pr.summary_publish.render_deferred_summary(
+                st, PRReport(), "owner/repo", 1, {})
+        [replayed] = pr.published_record.published_reply_blocks(post.call_args[0][2])
+        assert replayed.digest == pr.published_record.fingerprint(live)
 
     def test_an_uncontested_pass_still_replies(self, tmp_path, publishing_on):
         """Pairs with the held case: proves that assertion is not vacuous."""

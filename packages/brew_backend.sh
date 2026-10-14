@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Package backend for machines with Homebrew — brew bundle for whole stacks,
+# Package backend for macOS with Homebrew — brew bundle for whole stacks,
 # brew install for a subset, then version-manager migration and autoupdate.
 # Sourced by packages/setup.sh.
 

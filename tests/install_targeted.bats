@@ -36,7 +36,7 @@ _make_workbench() {
   printf '#!/usr/bin/env bash\n# description: Demo component\nstep_demo_install() { true; }\nsync_demo() { echo "sync_demo"; }\ninstall_demo() { step_demo_install; sync_demo; }\n' > "$dir/demo/steps.sh"
 
   # Optional components (setup.conf + setup.sh)
-  printf 'label = Homebrew packages\ndescription = Install formulae and casks\n' > "$dir/packages/setup.conf"
+  printf 'label = Packages\ndescription = Install formulae and casks\n' > "$dir/packages/setup.conf"
   printf '#!/usr/bin/env bash\necho "packages setup"\n' > "$dir/packages/setup.sh"
 
   mkdir -p "$dir/docker"

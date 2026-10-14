@@ -34,7 +34,7 @@ from config.workbench_config import ConfigError, read_yaml
 
 logger = logging.getLogger(__name__)
 
-# The component registries, at the two depths lib/registries.sh globs. Brew
+# The component registries, at the two depths lib/registries.sh globs. Package
 # stacks and `*.env.yml` files are not scanned: neither describes a directory
 # of scripts, so neither can name one the server would probe.
 REGISTRY_GLOBS = ("*/registry.yml", "*/*/registry.yml")

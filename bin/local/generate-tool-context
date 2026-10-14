@@ -25,7 +25,7 @@
 #     scope:         go                # optional: routes into tools.generated.<scope>.md
 #     install_check: false             # if true, omit tools not found in PATH
 #     validation:    brewfile          # brewfile | bindir | zsh-comments | none
-#     source:        packages/Brewfile     # relative path used by validate-registries
+#     source:        packages/Brewfile # relative path used by validate-registries
 #
 # Each tool entry has a `visibility` field controlling AI rendering:
 #   visibility: full   — full entry (heading, description, when_to_use, usage)

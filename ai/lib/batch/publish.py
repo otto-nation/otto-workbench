@@ -63,9 +63,9 @@ class TreeState:
     commit, so force-pushing its result would drop remote commits the replay
     never saw. A start tip an earlier, unpushed rebase rewrote holds the remote's
     commits as equivalents rather than ancestors, and counts as incorporated.
-    ``unincorporated`` names the
-    remote commits (``"<sha> <subject>"``) with no patch-equivalent in the local
-    branch — what a force-push of a diverged branch would throw away.
+    ``unincorporated`` names the remote commits (``"<sha> <subject>"``) with no
+    patch-equivalent in the local branch — what a force-push of a diverged
+    branch would throw away.
     """
 
     local: str
@@ -180,7 +180,7 @@ def plan(item: Item, pr_bin: str, tree: TreeState, *,
         if not tree.incorporated:
             return _refuse(Refusal.NOT_INCORPORATED,
                            f"the rebase started from {git.client.abbrev(item.pre_rebase_head)}, "
-                           f"which does not contain {git.client.abbrev(item.remote_sha)}")
+                           f"which lacks {git.client.abbrev(item.remote_sha)}")
         if set(tree.unincorporated) - set(confirmed):
             return _refuse(Refusal.NOT_INCORPORATED_REMOTE,
                            f"{len(tree.unincorporated)} remote commit(s) have no equivalent "

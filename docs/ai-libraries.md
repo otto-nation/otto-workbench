@@ -6447,6 +6447,41 @@ Usage:
   eval-models --entry unchecked-error-go --runs 3
   eval-models --dry-run
 
+### cli/locks.py
+
+Taking the run locks a `pr` command declares.
+
+Every `pr` command declares the locks it holds on its `Need`, in
+`cli.registry`, as a set of `core.run_lock` scopes; no handler chooses its own.
+This module is the one place they are taken for a command:
+
+* `hold_declared` — `pr`'s dispatcher, for the whole dispatch. Globals before
+  the context is resolved; target and checkout once it is, before the worktree
+  is fetched and before the handler runs.
+* `claim_declared` — the entry points that can be run without `pr` (`review`,
+  `ci-check`, `review-threads`, `pr-rebase`, `pr-describe`), for the rest of
+  the process. Under `pr` the lock is already held and this passes through;
+  run directly, it is the lock.
+
+| Command / mode | Holds |
+|---|---|
+| `batch run`, `batch resume` | global `batch` |
+| `batch resolve` | its run's own lock, in the handler — never the global, so it reaches a live run |
+| `batch cancel`, `status`, `next`, `plan` | nothing |
+| `rebase`, `push`, `describe`, `fix` | target + checkout |
+| `comments` | target + checkout; `--reply` / `--settle` the target only |
+| `create` | target + checkout; `--dry-run` nothing |
+| `ci` | target; `--fix` adds the checkout |
+| `review --self` (and a bare `review` on a branch with no PR) | target + checkout |
+| `review` of a PR, `--branch` | target; the checkout once the run knows its tree (`core.run_lock.lock_checkout`) |
+| `review --post`, `--repair`, `--summary`, `--recover` | target (`--self --recover` adds the checkout) |
+| `review --list`, `status` | nothing |
+| `gc` | target, plus each pruned target's own lock |
+
+The table is pinned against the registry by `tests/pr_cli_dispatch_test.py`,
+and `bin/local/validate-run-locks` refuses a lock taken anywhere this module
+and its short allowlist do not account for.
+
 ### cli/needs.py
 
 What a `pr` subcommand needs of dispatch before its handler runs.
@@ -6485,7 +6520,7 @@ answers no question anyone asks of it.
 The entry point, and only the entry point. Every subcommand's work lives
 below this layer: three in `cli.pr_commands`, seven behind a `CommandSpec`
 handler the registry names. What is here is the two-pass global parse, the
-usage text, the ordering of resolve/register/fetch/lock, and the routing.
+usage text, the ordering of lock/resolve/register/lock/fetch, and the routing.
 
 `cmd_review` and `cmd_comments` are here rather than in `cli.pr_commands`
 because neither is a command in its own right: both shape argv ahead of a

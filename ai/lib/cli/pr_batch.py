@@ -296,24 +296,6 @@ def _cmd_resume(args, bin_dir: Path) -> int:
                   verbose=args.verbose)
 
 
-def _exclusive(args, argv: list[str], bin_dir: Path) -> int:
-    """`run` or `resume`, holding the batch lock from the first check to the last step.
-
-    Taken before `_cmd_run` asks whether a run is active, because that question
-    and the run it guards are seconds of planning apart: two sessions that both
-    asked first were both told no, and both started.
-    """
-    handler = _cmd_run if args.command == "run" else _cmd_resume
-    try:
-        with core.run_lock.hold({batch.store.BATCH_LOCK},
-                                command=" ".join(["pr", "batch", *argv]),
-                                started=batch.store.now_iso()):
-            return handler(args, bin_dir)
-    except core.run_lock.LockBusy as exc:
-        core.run_lock.report_busy(exc)
-        return 1
-
-
 def _apply_pending(run_id: str, bin_dir: Path, decision_id: str) -> int:
     try:
         with core.run_lock.acquire(batch.store.run_dir(run_id), "batch-resolve",
@@ -423,8 +405,10 @@ def cmd_batch(argv: list[str], ctx, *, bin_dir: Path, schema_version: str | None
     try:
         if args.command == "plan":
             return _cmd_plan(args)
-        if args.command in ("run", "resume"):
-            return _exclusive(args, argv, bin_dir)
+        if args.command == "run":
+            return _cmd_run(args, bin_dir)
+        if args.command == "resume":
+            return _cmd_resume(args, bin_dir)
         if args.command == "resolve":
             return _cmd_resolve(args, bin_dir)
         if args.command == "cancel":

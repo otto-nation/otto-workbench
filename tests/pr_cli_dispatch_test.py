@@ -30,6 +30,13 @@ import core.run_lock  # noqa: E402
 import pr.domains  # noqa: E402
 import pr.state  # noqa: E402
 import review.gc  # noqa: E402
+import batch.store  # noqa: E402
+import cli.pr_batch  # noqa: E402
+import cli.review_modes  # noqa: E402
+import core.tool_parser  # noqa: E402
+import pr.context  # noqa: E402
+from core.run_lock import CHECKOUT, TARGET  # noqa: E402
+from run_lock_support import flocked, git_dir  # noqa: E402
 
 from pr_cli_support import _cmd_fix, _TEST_PR, _run_main, _lock_file, _dispatch_stage
 
@@ -278,7 +285,7 @@ def test_main_reports_contention_and_exits_1(mock_resolve, worktree, capsys):
     busy = core.run_lock.LockBusy(
         {"pid": 15461, "command": "pr review --self --fix", "started": "t"}, target)
 
-    with patch("core.run_lock.acquire", side_effect=busy):
+    with patch("core.run_lock.hold", side_effect=busy):
         code = _run_main("--repo-dir", str(worktree), "comments")
     assert code == 1
     err = capsys.readouterr().err
@@ -315,19 +322,10 @@ _FETCHES = {
     "batch": False, "gc": False,
 }
 
-# Which commands hold the run lock. The old _NO_LOCK_COMMANDS, inverted: gc is
-# in here because deleting the state directory is the opposite of read-only.
-_LOCKS = {
-    "create": True, "status": False, "ci": True, "review": True,
-    "comments": True, "fix": True, "rebase": True, "push": True, "describe": True,
-    "batch": False, "gc": True,
-}
-
-
 def test_axis_tables_cover_every_command():
-    """A new command has to answer all three axes, here as well as in the
-    registry — otherwise it ships untested on the axis nobody thought about."""
-    for table in (_RESOLVES_LOCALLY, _FETCHES, _LOCKS):
+    """A new command has to answer both axes here as well as in the registry —
+    otherwise it ships untested on the axis nobody thought about."""
+    for table in (_RESOLVES_LOCALLY, _FETCHES):
         assert set(table) == set(cli.registry.COMMANDS)
 
 
@@ -352,11 +350,121 @@ def test_command_fetches_only_if_it_always_did(command, tmp_path):
     assert stage.update.called is _FETCHES[command]
 
 
-@pytest.mark.parametrize("command", sorted(_LOCKS))
-def test_command_locks_only_if_it_always_did(command, tmp_path):
-    target = tmp_path / "target"
-    _dispatch_stage(command, ctx=make_ctx(target_dir=target))
-    assert _lock_file(target).is_file() is _LOCKS[command]
+# ── declared locks ──────────────────────────────────────────────────────────
+#
+# Which run locks each invocation holds, spelled out rather than read off the
+# registry: a table derived from the declaration it checks would pass whatever
+# it said. Keyed on (command, argv) because flags change the answer.
+
+_NO = frozenset()
+_T = frozenset({TARGET})
+_TC = frozenset({TARGET, CHECKOUT})
+_BATCH = frozenset({batch.store.BATCH_LOCK})
+
+_DECLARED_LOCKS = {
+    ("create", ()): _TC,
+    ("create", ("--dry-run",)): _NO,
+    ("status", ()): _NO,
+    ("ci", ()): _T,
+    ("ci", ("--fix",)): _TC,
+    ("review", ()): _T,
+    ("review", ("--self",)): _TC,
+    ("review", ("--self", "--fix")): _TC,
+    ("review", ("--fix", "--post")): _T,
+    ("review", ("--post",)): _T,
+    ("review", ("--repair",)): _T,
+    ("review", ("--summary",)): _T,
+    ("review", ("--recover",)): _T,
+    ("review", ("--self", "--recover")): _TC,
+    ("review", ("--list",)): _NO,
+    ("comments", ()): _TC,
+    ("comments", ("--fix",)): _TC,
+    ("comments", ("--reply", "123")): _T,
+    ("comments", ("--settle", "PRRT_x", "--as", "fixed")): _T,
+    ("fix", ()): _TC,
+    ("rebase", ()): _TC,
+    ("push", ("--expect", "abc")): _TC,
+    ("describe", ()): _TC,
+    ("batch", ()): _NO,
+    ("batch", ("run", "--checkout", "/r")): _BATCH,
+    ("batch", ("resume",)): _BATCH,
+    ("batch", ("resolve", "r", "d", "--action", "accept")): _NO,
+    ("batch", ("cancel",)): _NO,
+    ("batch", ("status",)): _NO,
+    ("batch", ("next",)): _NO,
+    ("batch", ("plan", "--checkout", "/r")): _NO,
+    ("gc", ()): _T,
+}
+
+
+def test_the_lock_table_covers_every_command_mode_and_batch_subcommand():
+    assert {name for name, _ in _DECLARED_LOCKS} == set(cli.registry.COMMANDS)
+    review_flags = {a for name, argv in _DECLARED_LOCKS if name == "review" for a in argv}
+    assert set(cli.review_modes.MODES) <= review_flags
+    batch_subs = {argv[0] for name, argv in _DECLARED_LOCKS if name == "batch" and argv}
+    assert batch_subs == set(core.tool_parser.subparsers(cli.pr_batch.build_parser()))
+
+
+@pytest.mark.parametrize("command,argv", sorted(_DECLARED_LOCKS))
+def test_each_invocation_declares_its_locks(command, argv):
+    need = cli.registry.need_for(cli.registry.COMMANDS[command], list(argv))
+    assert need.locks == _DECLARED_LOCKS[(command, argv)]
+
+
+@pytest.mark.parametrize("command,argv",
+                         sorted(k for k in _DECLARED_LOCKS if k[0] != "batch"))
+def test_dispatch_takes_exactly_the_declared_target_and_checkout(command, argv, worktree):
+    target = worktree / "target"
+    _dispatch_stage(command, *argv, ctx=make_ctx(worktree_root=worktree, target_dir=target))
+    declared = _DECLARED_LOCKS[(command, argv)]
+    assert _lock_file(target).is_file() is (TARGET in declared)
+    tree_lock = git_dir(worktree) / core.run_lock.TREE_LOCK_FILE
+    assert tree_lock.is_file() is (CHECKOUT in declared)
+    assert not core.run_lock.global_lock_path("batch").exists()
+
+
+@pytest.mark.parametrize("sub", ["run", "resume"])
+def test_dispatch_holds_the_batch_lock_before_it_resolves_anything(sub):
+    seen = {}
+    real = pr.context.resolve_at
+
+    def spy(*args, **kwargs):
+        seen["held"] = core.run_lock.is_global_held(batch.store.BATCH_LOCK)
+        return real(*args, **kwargs)
+
+    with patch("pr.context.resolve_at", side_effect=spy), \
+         patch("cli.pr._dispatch", return_value=0):
+        _run_main("batch", sub)
+    assert seen["held"] is True
+    assert not core.run_lock.is_global_held(batch.store.BATCH_LOCK)
+
+
+def test_dispatch_holds_target_and_checkout_before_it_fetches(worktree):
+    """`update_to_remote` fast-forwards the worktree, which is a write to the checkout."""
+    target = worktree / "target"
+    ctx = make_ctx(worktree_root=worktree, target_dir=target)
+    tree_lock = git_dir(worktree) / core.run_lock.TREE_LOCK_FILE
+    seen = {}
+
+    def update(c):
+        seen["target"] = core.run_lock.is_held(target)
+        seen["checkout"] = flocked(tree_lock)
+        return c
+
+    with patch("pr.context.resolve", return_value=ctx), \
+         patch("pr.sync.update_to_remote", side_effect=update), \
+         patch("cli.pr._dispatch", return_value=0):
+        _run_main("comments")
+    assert seen == {"target": True, "checkout": True}
+
+
+def test_a_bare_review_with_no_pr_locks_the_tree_it_will_self_review(worktree):
+    """Whether a bare `pr review` is a self-review is only known once resolution
+    says there is no PR; it must still hold the checkout before the fetch."""
+    target = worktree / "target"
+    _dispatch_stage("review", ctx=make_ctx(worktree_root=worktree, target_dir=target,
+                                           pr_number=None))
+    assert (git_dir(worktree) / core.run_lock.TREE_LOCK_FILE).is_file()
 
 
 def test_an_explicit_pr_escalates_the_depth_and_nothing_else(tmp_path):

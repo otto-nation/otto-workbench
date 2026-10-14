@@ -15,6 +15,7 @@ import batch.report  # noqa: E402
 import review.paths  # noqa: E402
 from batch.model import (STEP_ORDER, Decision, DecisionKind, Item, ItemStatus, Run,  # noqa: E402
                          RunStatus, Step, StepRecord)
+from batch.store import FailedRequest  # noqa: E402
 from pr.comments_fix import CloseoutDebt  # noqa: E402
 
 
@@ -208,6 +209,19 @@ def test_decision_detail_carries_the_full_payload():
 def test_next_view_drops_only_the_items():
     doc = batch.report.build(_run([_item(1)]), active=False)
     assert set(batch.report.next_view(doc)) == {"schema_version", "run", "counts", "next"}
+
+
+def test_the_run_section_reports_what_the_inbox_holds_and_what_it_rejected():
+    doc = batch.report.build(_run([_item(1)]), active=False, pending_requests=2,
+                             failed_requests=[FailedRequest("a.json", "no decision d9")])
+    assert doc["run"]["pending_requests"] == 2
+    assert doc["run"]["failed_requests"] == [{"name": "a.json", "error": "no decision d9"}]
+    assert batch.report.next_view(doc)["run"]["failed_requests"] == doc["run"]["failed_requests"]
+
+
+def test_a_report_built_without_inbox_counts_says_nothing_is_waiting():
+    run_view = batch.report.build(_run([_item(1)]), active=False)["run"]
+    assert (run_view["pending_requests"], run_view["failed_requests"]) == (0, [])
 
 
 def test_decision_event_carries_only_what_an_agent_acts_on():

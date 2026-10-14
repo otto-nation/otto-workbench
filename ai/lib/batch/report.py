@@ -6,7 +6,7 @@ decision with its full payload and log tail.
 
 | Section | Content |
 |---|---|
-| `run` | `id`, `status`, `active` (the scheduler lock is held), `exit_hint`, `hint` |
+| `run` | `id`, `status`, `active` (a scheduler is driving it), `exit_hint`, `hint`, `pending_requests` (requests waiting in its inbox), `failed_requests` (`name` and `error` of each request a drain rejected) |
 | `counts` | items by status, open decisions |
 | `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses |
 | `next` | one entry per open decision, or per owed closeout once finished: `decision`, `pr`, `kind`, `why`, `prep`, `worktree`, `actions`, `commands`, a small `payload`, `log`, `session_log` |
@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import shlex
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import batch.outcomes
@@ -40,9 +40,10 @@ import batch.plan
 import batch.publish
 import batch.resolve
 import review.paths
-from batch.model import (Decision, DecisionKind, DirtyReason, EvidenceKind, Item, ItemStatus, Run,
-                         RunStatus, Step, stacked_on_items)
+from batch.model import (FINISHED_RUN, Decision, DecisionKind, DirtyReason, EvidenceKind, Item,
+                         ItemStatus, Run, RunStatus, Step, stacked_on_items)
 from pr.comments_fix import CloseoutDebt
+from batch.store import FailedRequest
 from review.types import SEVERITY_MUST, SEVERITY_NIT, SEVERITY_SHOULD, severity_by_key
 
 SCHEMA_VERSION = 1
@@ -51,7 +52,6 @@ EXIT_WAITING = 10
 EXIT_FAILED = 1
 _STATUS_EXIT = {RunStatus.DONE: EXIT_OK, RunStatus.CANCELLED: EXIT_OK,
                 RunStatus.WAITING: EXIT_WAITING}
-_FINISHED = frozenset({RunStatus.DONE, RunStatus.CANCELLED})
 _EXCERPT = 200
 _NEXT_KEYS = ("schema_version", "run", "counts", "next")
 # What a `next` entry keeps of each kind's payload; the rest is behind --decision.
@@ -228,7 +228,7 @@ def _owed_entries(run: Run, closeout: Callable[[str, str], CloseoutDebt]) -> lis
 def _hint(run: Run, active: bool, owed: bool = False) -> str:
     if active:
         return "a scheduler is driving this run; wait for its run_summary line"
-    if run.status in _FINISHED:
+    if run.status in FINISHED_RUN:
         return (f"the run is {run.status.value}; `next` lists what pr still owes these PRs — "
                 "run each entry's command" if owed
                 else f"the run is {run.status.value}; nothing is left to answer")
@@ -246,13 +246,18 @@ def _item_view(item: Item) -> dict:
 
 
 def build(run: Run, *, active: bool,
-          closeout: Callable[[str, str], CloseoutDebt] | None = None) -> dict:
-    """The whole report; *active* is whether a scheduler holds the run's lock.
+          closeout: Callable[[str, str], CloseoutDebt] | None = None,
+          pending_requests: int = 0,
+          failed_requests: Sequence[FailedRequest] = ()) -> dict:
+    """The whole report. *active* is whether a scheduler is driving the run.
 
-    *closeout* reads what `pr` still owes a PR; None reads saved state
+    *closeout* reads what `pr` still owes a PR. None reads saved state
     (`batch.plan.closeout_debt`), and only for a finished run.
+    *pending_requests* is how many requests wait in the run's inbox, and
+    *failed_requests* lists the ones a drain rejected. Both are reported under
+    `run`.
     """
-    owned = not active and run.status not in _FINISHED
+    owned = not active and run.status not in FINISHED_RUN
     if owned:
         entries = [_entry(run, d) for d in run.open_decisions()]
     elif not active:
@@ -263,7 +268,10 @@ def build(run: Run, *, active: bool,
         "schema_version": SCHEMA_VERSION,
         "run": {"id": run.id, "status": run.status.value, "active": active,
                 "exit_hint": None if active else exit_code(run.status),
-                "hint": _hint(run, active, bool(entries) and not owned)},
+                "hint": _hint(run, active, bool(entries) and not owned),
+                "pending_requests": pending_requests,
+                "failed_requests": [{"name": f.name, "error": f.error}
+                                    for f in failed_requests]},
         "counts": {"items": dict(Counter(i.status.value for i in run.items)),
                    "open_decisions": len(run.open_decisions())},
         "items": [_item_view(i) for i in run.items if not i.terminal],

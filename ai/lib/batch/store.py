@@ -44,7 +44,6 @@ STATE_FILE = "state.json"
 # The cancel sidecar older `pr batch cancel` wrote. `session()` folds it into
 # `run.cancel`; see `_fold_legacy_cancel`.
 LEGACY_CANCEL_FILE = "cancel"
-CANCEL_FILE = LEGACY_CANCEL_FILE
 REQUESTS_DIR = "requests"
 REJECTED_DIR = "rejected"
 
@@ -57,12 +56,6 @@ BATCH_LOCK = core.run_lock.Global("batch")
 
 class RunNotFound(LookupError):
     pass
-
-
-@dataclass(frozen=True)
-class CancelRequest:
-    requested: bool
-    kill: bool
 
 
 class Role(enum.Enum):
@@ -183,12 +176,6 @@ def attempt_log_path(run_id: str, repo: str, pr: int, step: str) -> Path:
     return logs / f"{slug}-{pr}-{step}-{attempt}.log"
 
 
-def save(run: Run) -> None:
-    path = run_dir(run.id) / STATE_FILE
-    path.parent.mkdir(parents=True, exist_ok=True)
-    core.serde.write_json(path, core.serde.to_dict(run))
-
-
 def load(run_id: str) -> Run:
     path = run_dir(run_id) / STATE_FILE
     if not path.is_file():
@@ -214,13 +201,6 @@ def run_ids() -> list[str]:
 def latest_run_id() -> str | None:
     ids = run_ids()
     return ids[-1] if ids else None
-
-
-def active_run_id() -> str | None:
-    for run_id in reversed(run_ids()):
-        if core.run_lock.is_held(run_dir(run_id)):
-            return run_id
-    return None
 
 
 def state_mtime(run_id: str) -> float:
@@ -253,11 +233,6 @@ def write_request(run_id: str, request: Decide | Cancel) -> str:
     except FileNotFoundError as exc:
         raise RunNotFound(run_id) from exc
     return path.name
-
-
-def has_requests(run_id: str) -> bool:
-    reqs = run_dir(run_id) / "requests"
-    return reqs.is_dir() and any(reqs.glob("*.json"))
 
 
 def _read_request(path: Path) -> Request:
@@ -337,48 +312,6 @@ def _retire(run_id: str, name: str, outcome: Outcome) -> None:
     record = {"request": _raw_body(path), "error": outcome.error}
     core.serde.write_json(path.parent / REJECTED_DIR / name, record)
     path.unlink(missing_ok=True)
-
-
-def _reject_request(path: Path) -> None:
-    dest_dir = path.parent / "rejected"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    path.replace(dest_dir / path.name)
-
-
-def take_requests(run_id: str) -> list[dict]:
-    reqs = run_dir(run_id) / "requests"
-    if not reqs.is_dir():
-        return []
-    taken = []
-    for path in sorted(reqs.glob("*.json")):
-        try:
-            raw = json.loads(path.read_text())
-        except json.JSONDecodeError as exc:
-            _reject_request(path)
-            taken.append({"error": f"malformed request {path.name}: {exc}"})
-            continue
-        if not isinstance(raw, dict):
-            _reject_request(path)
-            taken.append({"error": f"malformed request {path.name}: not an object"})
-            continue
-        taken.append(raw)
-        path.unlink()
-    return taken
-
-
-def request_cancel(run_id: str, *, kill: bool) -> None:
-    core.serde.write_json(run_dir(run_id) / CANCEL_FILE, {"kill": kill})
-
-
-def cancel_requested(run_id: str) -> CancelRequest:
-    path = run_dir(run_id) / CANCEL_FILE
-    if not path.is_file():
-        return CancelRequest(False, False)
-    return CancelRequest(True, bool(json.loads(path.read_text()).get("kill")))
-
-
-def clear_cancel(run_id: str) -> None:
-    (run_dir(run_id) / CANCEL_FILE).unlink(missing_ok=True)
 
 
 def run_lock(run_id: str) -> core.run_lock.Resource:

@@ -1,5 +1,7 @@
-"""apply_one, settle_idle, and Inbox.report."""
+"""apply_one, settle_idle, Inbox, and deliver."""
 
+import contextlib
+import os
 import sys
 from pathlib import Path
 
@@ -20,6 +22,10 @@ from batch.model import (  # noqa: E402
     StepStatus,
 )
 from batch.requests import Cancel, Decide, Envelope, Malformed, Outcome  # noqa: E402
+import core.run_lock  # noqa: E402
+from batch.store import Role  # noqa: E402
+from batch_session_support import seed  # noqa: E402
+from run_lock_support import held_elsewhere  # noqa: E402
 from batch.publish import TreeState  # noqa: E402
 from pr.comments_fix import CloseoutDebt  # noqa: E402
 from rebase.types import RefDivergence  # noqa: E402
@@ -228,3 +234,83 @@ def test_inbox_report_delegates_to_context_with_the_run():
 def test_inbox_apply_turns_a_malformed_request_into_its_error():
     out = Inbox(ApplyContext(pr_bin="pr")).apply(_run(), Envelope("m.json", Malformed("bad")))
     assert out == Outcome(name="m.json", request=Malformed("bad"), error="bad")
+
+
+# ── deliver ───────────────────────────────────────────────────────────────────
+
+def _ctx():
+    return ApplyContext(pr_bin="pr", runner=Recorder())
+
+
+def _holding(run_id, role):
+    """Hold *run_id*'s lock on a descriptor of our own, as a live *role* in another process."""
+    record = {"pid": os.getppid(), "command": "pr batch x", "started": "t0",
+              "role": role.value, "run": run_id}
+    return held_elsewhere(batch.store.run_lock(run_id).path, record)
+
+
+def test_deliver_applies_its_own_request_and_returns_the_earlier_ones_apart():
+    run = seed(_run(_d(DecisionKind.DIRTY_WORKTREE, "worktree")))
+    earlier = batch.store.write_request(run.id, Decide("nope", "retry"))
+    delivery = batch.inbox.deliver(run.id, Decide("d1", "drop-pr"), _ctx(),
+                                   command="pr batch resolve")
+    assert delivery.queued is False and delivery.holder is None
+    assert delivery.own.name == delivery.name and delivery.own.ok
+    assert [o.name for o in delivery.others] == [earlier]
+    assert "nope" in delivery.others[0].error
+    assert batch.store.load(run.id).items[0].status is ItemStatus.DROPPED
+
+
+def test_deliver_queues_for_a_live_holder_that_drains():
+    run = seed(_run(_d(DecisionKind.DIRTY_WORKTREE, "worktree")))
+    with _holding(run.id, Role.DRIVER):
+        delivery = batch.inbox.deliver(run.id, Decide("d1", "drop-pr"), _ctx(),
+                                       command="pr batch resolve")
+    assert delivery.queued is True and delivery.own is None and delivery.others == ()
+    assert delivery.holder.role is Role.DRIVER
+    assert [e.name for e in batch.store.peek_requests(run.id)] == [delivery.name]
+    assert batch.store.load(run.id).decision("d1").open
+
+
+def test_deliver_waits_out_a_gc_holder_and_then_applies(monkeypatch):
+    run = seed(_run(_d(DecisionKind.DIRTY_WORKTREE, "worktree")))
+    monkeypatch.setattr(core.run_lock, "retry_delays", lambda: iter([0.0, 0.0, 0.0]))
+    paused = []
+    with contextlib.ExitStack() as gc:
+        gc.enter_context(_holding(run.id, Role.GC))
+
+        def pause(seconds):
+            paused.append(seconds)
+            gc.close()
+
+        monkeypatch.setattr(batch.inbox.time, "sleep", pause)
+        delivery = batch.inbox.deliver(run.id, Decide("d1", "drop-pr"), _ctx(),
+                                       command="pr batch resolve")
+    assert paused == [0.0]
+    assert delivery.queued is False and delivery.own.ok
+
+
+def test_deliver_gives_up_on_a_gc_holder_that_stays(monkeypatch):
+    run = seed(_run(_d(DecisionKind.DIRTY_WORKTREE, "worktree")))
+    monkeypatch.setattr(core.run_lock, "retry_delays", lambda: iter([0.0, 0.0]))
+    paused = []
+    monkeypatch.setattr(batch.inbox.time, "sleep", paused.append)
+    with _holding(run.id, Role.GC), pytest.raises(batch.store.RunUnreachable):
+        batch.inbox.deliver(run.id, Cancel(), _ctx(), command="pr batch cancel")
+    assert paused == [0.0, 0.0]
+    assert batch.store.pending_requests(run.id) == 1
+
+
+def test_deliver_reports_a_cancel_that_reached_a_finished_run_as_its_error():
+    run = seed(_run(status=RunStatus.DONE))
+    delivery = batch.inbox.deliver(run.id, Cancel(), _ctx(), command="pr batch cancel")
+    assert delivery.own.error == f"run {run.id} is done"
+    assert [f.name for f in batch.store.failed_requests(run.id)] == [delivery.name]
+    assert batch.store.load(run.id).status is RunStatus.DONE
+
+
+def test_deliver_to_a_removed_run_is_not_found_and_recreates_nothing():
+    missing = "20990101T000000-dead"
+    with pytest.raises(batch.store.RunNotFound):
+        batch.inbox.deliver(missing, Cancel(), _ctx(), command="pr batch cancel")
+    assert not batch.store.run_dir(missing).exists()

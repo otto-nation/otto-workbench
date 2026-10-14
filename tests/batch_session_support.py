@@ -21,6 +21,7 @@ if str(LIB_DIR) not in sys.path:
 import batch.inbox  # noqa: E402
 import batch.store  # noqa: E402
 import core.serde  # noqa: E402
+from batch.model import RunStatus  # noqa: E402
 from batch.store import Role  # noqa: E402
 
 
@@ -77,3 +78,18 @@ def open_session(run_id, role=Role.DRIVER, inbox=None):
     policy = inbox if inbox is not None else NullInbox()
     with batch.store.session(run_id, role, inbox=policy, command="test session") as session:
         yield session
+
+
+def stops_at(status: RunStatus):
+    """A `Scheduler.run_until_blocked` stand-in that settles the run at *status* without driving it.
+
+    It sets `run.status` as the real loop's settle does. `pr batch run` and
+    `resume` read their exit code from the committed run, so a stand-in that
+    only returned a status would leave the run RUNNING and exit 1.
+    """
+
+    def run_until_blocked(self):
+        self.run.status = status
+        return status
+
+    return run_until_blocked

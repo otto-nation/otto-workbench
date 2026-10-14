@@ -3507,6 +3507,15 @@ is set the first time only. A cancel against ``DONE`` is an error; against
 into ``CANCELLED``, or every item terminal into ``DONE``, and never promotes
 ``CANCELLED``. ``Inbox`` is what a caller holds: apply, settle, report.
 
+``deliver`` is how ``pr batch resolve`` and ``cancel`` hand a request to a run.
+It writes the request into the inbox, then opens the run as an applier, whose
+entry drain applies it together with everything queued before it. When a live
+holder that drains already has the run, the request is reported queued for
+that holder, which applies it before it lets go. A ``gc`` holder is waited out
+on ``core.run_lock.retry_delays()``. A run that stays out of reach is an
+error, never ``queued``, and the request is left in the inbox for the next
+session to open the run.
+
 ### batch/model.py
 
 The persisted shape of a `pr batch` run.
@@ -3581,7 +3590,7 @@ decision with its full payload and log tail.
 
 | Section | Content |
 |---|---|
-| `run` | `id`, `status`, `active` (the scheduler lock is held), `exit_hint`, `hint` |
+| `run` | `id`, `status`, `active` (a scheduler is driving it), `exit_hint`, `hint`, `pending_requests` (requests waiting in its inbox), `failed_requests` (`name` and `error` of each request a drain rejected) |
 | `counts` | items by status, open decisions |
 | `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses |
 | `next` | one entry per open decision, or per owed closeout once finished: `decision`, `pr`, `kind`, `why`, `prep`, `worktree`, `actions`, `commands`, a small `payload`, `log`, `session_log` |

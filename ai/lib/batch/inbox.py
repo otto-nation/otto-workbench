@@ -7,20 +7,32 @@ is set the first time only. A cancel against ``DONE`` is an error; against
 ``CANCELLED`` it is a no-op success. ``settle_idle`` turns a recorded cancel
 into ``CANCELLED``, or every item terminal into ``DONE``, and never promotes
 ``CANCELLED``. ``Inbox`` is what a caller holds: apply, settle, report.
+
+``deliver`` is how ``pr batch resolve`` and ``cancel`` hand a request to a run.
+It writes the request into the inbox, then opens the run as an applier, whose
+entry drain applies it together with everything queued before it. When a live
+holder that drains already has the run, the request is reported queued for
+that holder, which applies it before it lets go. A ``gc`` holder is waited out
+on ``core.run_lock.retry_delays()``. A run that stays out of reach is an
+error, never ``queued``, and the request is left in the inbox for the next
+session to open the run.
 """
 
 # doc-group: batch
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import batch.publish
 import batch.resolve
 import batch.store
+import core.run_lock
 from batch.model import FINISHED_RUN, CancelState, Item, Run, RunStatus
 from batch.requests import Cancel, Decide, Envelope, Malformed, Outcome
+from batch.store import Holder, Role
 from pr.comments_fix import CloseoutDebt
 
 
@@ -120,3 +132,77 @@ class Inbox:
 
     def report(self, run: Run, outcome: Outcome) -> None:
         self._ctx.report(run, outcome)
+
+
+@dataclass(frozen=True)
+class Delivery:
+    """What became of one request handed to `deliver`.
+
+    `queued` means a live holder that drains had the run, and will apply the
+    request before it lets go; `holder` names it. Otherwise this process
+    opened the run, and its entry drain applied the request. Then `own` is the
+    request's outcome, or None when another session had already applied it,
+    and `others` are the requests queued before it that the same drain applied.
+    """
+
+    name: str
+    queued: bool
+    own: Outcome | None
+    others: tuple[Outcome, ...]
+    holder: Holder | None
+
+
+def _collector(seen: dict[str, Outcome],
+               forward: Callable[[Run, Outcome], None]) -> Callable[[Run, Outcome], None]:
+    """A report callback that records each outcome in *seen* by request name, then forwards it."""
+
+    def report(run: Run, outcome: Outcome) -> None:
+        seen[outcome.name] = outcome
+        forward(run, outcome)
+
+    return report
+
+
+def _attempt(run_id: str, name: str, ctx: ApplyContext, command: str) -> Delivery | None:
+    """Open *run_id* as an applier and say what its drains did; None while a GC holder has it.
+
+    A refusal by a live holder that drains means *name* is queued for that holder.
+    """
+    seen: dict[str, Outcome] = {}
+    inbox = Inbox(replace(ctx, report=_collector(seen, ctx.report)))
+    try:
+        with batch.store.session(run_id, Role.APPLIER, inbox=inbox, command=command):
+            # The entry drain has applied the request; the normal exit finishes.
+            pass
+    except batch.store.RunBusy as exc:
+        if exc.holder is None or not exc.holder.drains:
+            return None
+        return Delivery(name=name, queued=True, own=None, others=(), holder=exc.holder)
+    own = seen.pop(name, None)
+    return Delivery(name=name, queued=False, own=own, others=tuple(seen.values()),
+                    holder=None)
+
+
+def deliver(run_id: str, request: Decide | Cancel, ctx: ApplyContext, *,
+            command: str) -> Delivery:
+    """Queue *request* in *run_id*'s inbox, then apply it here or leave it to a holder that will.
+
+    *ctx* is the context the entry drain applies with, and *command* is what
+    this process's holder record names. Every outcome the drain produces also
+    goes to `ctx.report`.
+
+    Raises RunNotFound when the run directory is gone. Raises RunUnreachable
+    in two cases: `session()` gave up on a vacated holder record, or a GC
+    holder kept the run past `core.run_lock.retry_delays()`. Either way the
+    request is still in the inbox, and it is never reported queued.
+    """
+    name = batch.store.write_request(run_id, request)
+    delivery = _attempt(run_id, name, ctx, command)
+    delays = core.run_lock.retry_delays()
+    while delivery is None:
+        delay = next(delays, None)
+        if delay is None:
+            raise batch.store.RunUnreachable(run_id)
+        time.sleep(delay)
+        delivery = _attempt(run_id, name, ctx, command)
+    return delivery

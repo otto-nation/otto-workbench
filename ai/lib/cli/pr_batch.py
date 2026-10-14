@@ -31,8 +31,6 @@ import batch.events
 import batch.inbox
 import batch.plan
 import batch.report
-import batch.resolve
-import batch.requests
 import batch.scheduler
 import batch.store
 import batch.targets
@@ -40,8 +38,9 @@ import config.workbench_config
 import core.report
 import core.run_lock
 import core.serde
-from batch.model import STEP_ORDER, Run, RunStatus, Step
-from batch.requests import Decide
+from batch.model import FINISHED_RUN, STEP_ORDER, Run, RunStatus, Step
+from batch.requests import Cancel, Decide, Outcome
+from batch.store import Role
 from core.trail import TRAIL_ROOT_ENV, Trail
 
 EXIT_OK = batch.report.EXIT_OK
@@ -172,114 +171,105 @@ def _plan(args) -> batch.plan.Plan:
     return batch.plan.build_plan(args.checkout)
 
 
-def _save(run) -> None:
-    """Persist *run*, then drop its refs if it has ended.
+class _Reporter:
+    """Where a `run`/`resume` session's drains report: NDJSON events, and a failure count.
 
-    Saving first means a cleanup that fails can never leave the stored run
-    short of the terminal status it reached.
+    Called with `(run, outcome)` for every request the session applies, so it
+    emits at once with no buffering. `counting` is off while the scheduler
+    loop runs: a request the loop applies is reported as an event, as it
+    always was, but only the entry drain and `finish` decide the exit code.
     """
-    batch.store.save(run)
-    if run.status in (RunStatus.DONE, RunStatus.CANCELLED):
-        batch.plan.drop_refs(run.ref_dirs, run.ref_namespace)
+
+    def __init__(self) -> None:
+        self.failed = 0
+        self.counting = True
+
+    def __call__(self, run: Run, outcome: Outcome) -> None:
+        if self.counting and not outcome.ok:
+            self.failed += 1
+            print(f"pr batch: {outcome.error}", file=sys.stderr)
+        batch.scheduler.emit_outcome(run, outcome, emit=batch.events.emit)
 
 
-def _apply_loaded(run: Run, bin_dir: Path) -> list[str]:
-    errors = []
-    pr_bin = str(bin_dir / "pr")
-    for raw in batch.store.take_requests(run.id):
-        if isinstance(raw, dict) and raw.get("error") and "decision" not in raw:
-            errors.append(raw["error"])
-            continue
-        req = batch.requests.parse(raw)
-        if isinstance(req, batch.requests.Malformed):
-            errors.append(req.reason)
-            continue
-        if not isinstance(req, batch.requests.Decide):
-            errors.append("not a decide request")
-            continue
-        try:
-            batch.resolve.apply(run, req, pr_bin=pr_bin)
-        except (batch.resolve.ResolveError, KeyError, TypeError) as exc:
-            errors.append(str(exc))
-    if (run.status in (RunStatus.WAITING, RunStatus.RUNNING)
-            and run.items and all(item.terminal for item in run.items)):
-        run.status = RunStatus.DONE
-    return errors
+def _driver_inbox(bin_dir: Path, reporter: _Reporter) -> batch.inbox.Inbox:
+    """The inbox a `run`/`resume` session drains with: resolve's real seams, outcomes to *reporter*."""
+    return batch.inbox.Inbox(batch.inbox.ApplyContext(pr_bin=str(bin_dir / "pr"),
+                                                      report=reporter))
 
 
-def _report_apply_errors(errors: list[str]) -> None:
-    for message in errors:
-        print(f"pr batch: {message}", file=sys.stderr)
+def _active(run_id: str) -> bool:
+    """Whether a scheduler is driving *run_id*: the live holder of its lock is a driver.
+
+    An applier's brief hold is not a scheduler. A record with no role reads as
+    a driver, which is what a held run lock meant before roles existed.
+    """
+    found = batch.store.holder(run_id)
+    return found is not None and found.role in (Role.DRIVER, None)
 
 
-def _held_drive(session, bin_dir: Path, cfg, verbose: bool, entry_errors: list[str]) -> int:
-    # Snapshot before the loop: only the entry drain's failures decide the exit
-    # code, as `_apply_loaded`'s did when resume applied the inbox itself.
-    errors = list(entry_errors)
-    status = batch.scheduler.Scheduler(
-        session, pr_bin=str(bin_dir / "pr"), cfg=cfg, verbose=verbose).run_until_blocked()
-    errors += _apply_loaded(session.run, bin_dir)
-    session.commit()
-    if session.run.status is RunStatus.DONE:
-        status = RunStatus.DONE
-    if errors:
-        _report_apply_errors(errors)
-        return 1
-    return batch.report.exit_code(status)
+def _report(run: Run, active: bool) -> dict:
+    """The whole report for *run*, with what its inbox still holds and what it rejected."""
+    return batch.report.build(run, active=active,
+                              pending_requests=batch.store.pending_requests(run.id),
+                              failed_requests=batch.store.failed_requests(run.id))
 
 
-def _emit_summary(run, code: int) -> None:
+def _emit_summary(run: Run, code: int) -> None:
     """The last line of a settled run: `next`'s document as a `run_summary` event.
 
-    Its `exit_hint` is *code*, the process's real exit status — apply errors
-    make it 1 whatever the run's status alone would say.
+    Its `exit_hint` is *code*, the process's real exit status. Apply errors
+    make it 1, whatever the run's status alone would say.
     """
-    view = batch.report.next_view(batch.report.build(
-        run, active=core.run_lock.is_held(batch.store.run_dir(run.id))))
+    view = batch.report.next_view(_report(run, _active(run.id)))
     view["run"]["exit_hint"] = code
     batch.events.emit("run_summary", run=view["run"], counts=view["counts"], next=view["next"])
 
 
-def _emit_outcome(run, outcome) -> None:
-    """Report one applied request as NDJSON events; `batch.events.emit` is looked up per call."""
-    batch.scheduler.emit_outcome(run, outcome, emit=batch.events.emit)
+def _drive(session: batch.store.Session, reporter: _Reporter, *, bin_dir: Path, cfg,
+           verbose: bool) -> RunStatus:
+    """Drive *session*'s run until it blocks, then finish the session.
+
+    The caller still holds every item's target, so publishes that the final
+    drain applies stay narrowed to their items. Returns the status the
+    scheduler stopped at.
+    """
+    scheduler = batch.scheduler.Scheduler(session, pr_bin=str(bin_dir / "pr"), cfg=cfg,
+                                          verbose=verbose)
+    reporter.counting = False
+    stopped = scheduler.run_until_blocked()
+    reporter.counting = True
+    session.finish()
+    return stopped
 
 
-def _drive(run, *, bin_dir: Path, cfg, verbose: bool = False,
-           command: str = "pr batch") -> int:
-    entry_errors: list[str] = []
+def _conclude(run_id: str, stopped: RunStatus, reporter: _Reporter) -> int:
+    """The exit code and `run_summary`, from the run as last committed, after the session exited.
 
-    def report(run, outcome) -> None:
-        _emit_outcome(run, outcome)
-        if not outcome.ok:
-            entry_errors.append(outcome.error)
-
-    inbox = batch.inbox.Inbox(batch.inbox.ApplyContext(pr_bin=str(bin_dir / "pr"),
-                                                      report=report))
-    try:
-        with batch.store.session(run.id, batch.store.Role.DRIVER, inbox=inbox,
-                                 command=command) as session:
-            code = _held_drive(session, bin_dir, cfg, verbose, entry_errors)
-            driven = session.run
-    except batch.store.RunBusy as exc:
-        return _err(str(exc))
-    except batch.store.RunUnreachable as exc:
-        return _err(str(exc))
-    # After the session released, so the summary reports the run as the
-    # reader's to act on and lists what it is waiting for.
-    _emit_summary(driven, code)
+    `finish` or the hand-off can move the run past where the scheduler
+    stopped: a cancel queued during the last tick turns WAITING into
+    CANCELLED. The driver then emits `run_finished` for the new status before
+    the summary. A request that failed in the session's own drains makes the
+    code 1.
+    """
+    run = batch.store.load(run_id)
+    if run.status is not stopped:
+        batch.events.emit("run_finished", run=run.id, status=run.status.value,
+                          open_decisions=len(run.open_decisions()),
+                          ci_not_rechecked=batch.scheduler.ci_not_rechecked(run))
+    code = 1 if reporter.failed else batch.report.exit_code(run.status)
+    _emit_summary(run, code)
     return code
 
 
 class _Refused(Exception):
-    """A run or resume that may not start, and why — printed as its refusal."""
+    """A run or resume that may not start, and why. Printed as its refusal."""
 
 
 @dataclass(frozen=True)
 class _Started:
-    """A run that has been planned, locked and saved, ready to drive."""
+    """A run that has been planned, opened, item-locked and first committed, ready to drive."""
 
-    run: Run
+    session: batch.store.Session
     cfg: config.workbench_config.BatchConfig
     trail: Trail
 
@@ -295,10 +285,10 @@ def _busy_item(run, item, verb: str, exc: core.run_lock.LockBusy) -> str:
 def _hold_items(held: contextlib.ExitStack, run, verb: str) -> None:
     """Hold every item's target on *held*, sorted by path; raise _Refused if one is busy.
 
-    All or nothing: one PR another process is working on refuses the whole
-    batch rather than silently dropping it, and the targets taken before it
-    are released as the stack unwinds. An item with no `origin` has no target
-    to hold; it is named on stderr and its steps take their own locks.
+    All or nothing: one PR that another process is working on refuses the
+    whole batch rather than silently dropping it, and the targets taken before
+    it are released as the stack unwinds. An item with no `origin` has no
+    target to hold. It is named on stderr, and its steps take their own locks.
     """
     targets = {}
     for item in run.items:
@@ -319,11 +309,14 @@ def _hold_items(held: contextlib.ExitStack, run, verb: str) -> None:
             raise _Refused(_busy_item(run, item, verb, exc)) from exc
 
 
-def _start_run(held: contextlib.ExitStack, args, plan) -> _Started:
-    """Mint the run from *plan*, hold every item's target on *held*, and save it.
+def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox) -> _Started:
+    """Mint the run from *plan*, open it with `batch.store.create` on *held*, hold its items, commit.
 
-    Raises _Refused when an item is held elsewhere. Any failure before the save
-    drops the plan's refs, since nothing else would record them to drop later.
+    The run reaches disk only at that first commit, after every item's target
+    is held. If the start is refused or fails before then, `create` leaves no
+    directory behind. Raises _Refused when an item is held elsewhere. Any
+    failure before the commit drops the plan's refs, since nothing else would
+    record them to drop later.
     """
     try:
         keys = {k for k in args.prs.split(",") if k}
@@ -337,113 +330,146 @@ def _start_run(held: contextlib.ExitStack, args, plan) -> _Started:
                                       now=datetime.now(timezone.utc),
                                       ref_namespace=plan.ref_namespace, ref_dirs=plan.ref_dirs,
                                       watch_ci=args.watch_ci, no_verify=args.no_verify)
+        session = held.enter_context(batch.store.create(run, inbox=inbox,
+                                                        command=f"pr batch run {run.id}"))
         # The id exists only now. From here a batch refused the lock is told
         # which run to wait for or cancel, not only a pid.
         core.run_lock.note_holder(batch.store.BATCH_LOCK, run=run.id)
         _hold_items(held, run, "run")
         trail = Trail.start(script="pr-batch", context={"run": run.id}, record=True)
         run.trail_root = os.environ.get(TRAIL_ROOT_ENV, "")
-        batch.store.save(run)
+        session.commit()
     except BaseException:
         batch.plan.drop_refs(plan.ref_dirs, plan.ref_namespace)
         raise
-    return _Started(run, cfg, trail)
+    return _Started(session, cfg, trail)
+
+
+def _emit_started(run: Run) -> None:
+    batch.events.emit("run_started", run=run.id, pool=run.pool, trail_root=run.trail_root,
+                      steps=[s.value for s in run.steps],
+                      auto_publish=[s.value for s in run.auto_publish])
+    for item in run.items:
+        batch.events.emit("item_queued", run=run.id, item=item.key,
+                          steps=[s.step.value for s in item.steps])
 
 
 def _cmd_run(args, bin_dir: Path) -> int:
-    active = batch.store.active_run_id()
-    if active:
-        return _err(f"run {active} is still active; resolve its decisions or cancel it first")
     plan = _plan(args)
-    # Every item's target is held from here until _drive returns: a manual `pr`
-    # command on one of these PRs is refused while the batch works on it.
+    reporter = _Reporter()
+    # The run's own lock goes on `held` first, so it is released last. Every
+    # item's target is released before the session's exit (release, then
+    # hand-off), and a manual `pr` on one of these PRs is refused until then.
     with contextlib.ExitStack() as held:
         try:
-            started = _start_run(held, args, plan)
+            started = _start_run(held, args, plan, _driver_inbox(bin_dir, reporter))
         except _Refused as exc:
             return _err(str(exc))
-        run = started.run
-        batch.events.emit("run_started", run=run.id, pool=run.pool, trail_root=run.trail_root,
-                          steps=[s.value for s in run.steps],
-                          auto_publish=[s.value for s in run.auto_publish])
-        for item in run.items:
-            batch.events.emit("item_queued", run=run.id, item=item.key,
-                              steps=[s.step.value for s in item.steps])
+        _emit_started(started.session.run)
         try:
-            return _drive(run, bin_dir=bin_dir, cfg=started.cfg, verbose=args.verbose,
-                          command="pr batch run")
+            stopped = _drive(started.session, reporter, bin_dir=bin_dir, cfg=started.cfg,
+                             verbose=args.verbose)
         finally:
             started.trail.finish()
+    return _conclude(started.session.run.id, stopped, reporter)
+
+
+def _resume(run_id: str, reporter: _Reporter, bin_dir: Path, verbose: bool) -> RunStatus:
+    """Open *run_id* as its driver and drive it: the body of `pr batch resume`.
+
+    The session's entry drain applies whatever is queued, cancels first,
+    before anything here looks at the run. So a queued cancel has already
+    made the run CANCELLED, and the resume is refused. Nothing is emitted
+    before the run is open. A refusal (finished, or an item held elsewhere)
+    leaves the run as the entry drain committed it.
+    """
+    with contextlib.ExitStack() as held:
+        session = held.enter_context(batch.store.session(
+            run_id, Role.DRIVER, inbox=_driver_inbox(bin_dir, reporter),
+            command=f"pr batch resume {run_id}"))
+        run = session.run
+        if run.status in FINISHED_RUN:
+            raise _Refused(f"run {run_id} is {run.status.value}")
+        core.run_lock.note_holder(batch.store.BATCH_LOCK, run=run_id)
+        _hold_items(held, run, "resume")
+        batch.scheduler.mark_interrupted(run, emit=batch.events.emit)
+        os.environ.setdefault(TRAIL_ROOT_ENV, run.trail_root)
+        return _drive(session, reporter, bin_dir=bin_dir,
+                      cfg=_cfg([i.repo_dir for i in run.items]), verbose=verbose)
 
 
 def _cmd_resume(args, bin_dir: Path) -> int:
     run_id = _run_id(args.run_id)
     if not run_id:
         return _err("no batch run to resume")
-    if core.run_lock.is_held(batch.store.run_dir(run_id)):
-        return _err(f"run {run_id} is already running")
+    reporter = _Reporter()
     try:
-        run = batch.store.load(run_id)
+        stopped = _resume(run_id, reporter, bin_dir, args.verbose)
     except batch.store.RunNotFound:
         return _err(f"no run {run_id}")
-    if run.status in (RunStatus.DONE, RunStatus.CANCELLED):
-        return _err(f"run {run_id} is {run.status.value}")
-    # As for a run: every item's target is held until _drive returns.
-    with contextlib.ExitStack() as held:
-        try:
-            _hold_items(held, run, "resume")
-        except _Refused as exc:
-            return _err(str(exc))
-        core.run_lock.note_holder(batch.store.BATCH_LOCK, run=run_id)
-        batch.store.clear_cancel(run_id)
-        batch.scheduler.mark_interrupted(run, emit=batch.events.emit)
-        os.environ.setdefault(TRAIL_ROOT_ENV, run.trail_root)
-        return _drive(run, bin_dir=bin_dir, cfg=_cfg([i.repo_dir for i in run.items]),
-                      verbose=args.verbose, command="pr batch resume")
-
-
-def _apply_pending(run_id: str, bin_dir: Path, decision_id: str) -> int:
-    try:
-        with core.run_lock.acquire(batch.store.run_dir(run_id), "batch-resolve",
-                                   batch.store.now_iso()):
-            run = batch.store.load(run_id)
-            errors = _apply_loaded(run, bin_dir)
-            _save(run)
-    except batch.store.RunNotFound as exc:
+    except (batch.store.RunBusy, batch.store.RunUnreachable, _Refused) as exc:
         return _err(str(exc))
-    except core.run_lock.LockBusy:
-        core.report.emit_json({"queued": True, "decision": decision_id})
-        return EXIT_OK
-    result = {"applied": not errors, "decision": decision_id,
-              "open_decisions": len(run.open_decisions())}
-    if errors:
-        result["errors"] = errors
-        _report_apply_errors(errors)
-        core.report.emit_json(result)
-        return 1
-    core.report.emit_json(result)
-    return EXIT_OK
+    return _conclude(run_id, stopped, reporter)
+
+
+def _unreachable(run_id: str) -> str:
+    return (f"run {run_id} is unreachable; the request is in run {run_id}'s inbox and "
+            f"will be applied by the next session to open it")
+
+
+def _deliver(run_id: str, request: Decide | Cancel, bin_dir: Path,
+             verb: str) -> batch.inbox.Delivery:
+    """`batch.inbox.deliver`, naming on stderr each earlier request the same drain failed."""
+    delivery = batch.inbox.deliver(run_id, request,
+                                   batch.inbox.ApplyContext(pr_bin=str(bin_dir / "pr")),
+                                   command=f"pr batch {verb} {run_id}")
+    for other in delivery.others:
+        if not other.ok:
+            print(f"pr batch: request {other.name}: {other.error}", file=sys.stderr)
+    return delivery
+
+
+def _own_error(run_id: str, delivery: batch.inbox.Delivery) -> str:
+    """This request's error, or "" if it applied.
+
+    When another session applied it, the error is read from `rejected/`.
+    """
+    if delivery.own is not None:
+        return delivery.own.error
+    for failed in batch.store.failed_requests(run_id):
+        if failed.name == delivery.name:
+            return failed.error
+    return ""
 
 
 def _cmd_resolve(args, bin_dir: Path) -> int:
+    run_id = args.run_id
     try:
-        batch.store.load(args.run_id)
+        batch.store.load(run_id)
     except batch.store.RunNotFound:
-        return _err(f"no run {args.run_id}")
+        return _err(f"no run {run_id}")
     request = Decide(decision=args.decision_id, action=args.action, reason=args.reason,
                      body_file=args.body_file, commit=args.commit)
-    batch.store.write_request(args.run_id, request)
-    held = batch.store.run_dir(args.run_id)
-    # A request queued while a scheduler holds the lock is applied by that
-    # scheduler or drained by its _drive after the loop, or by the next
-    # resolve/resume.
-    if core.run_lock.is_held(held):
+    try:
+        delivery = _deliver(run_id, request, bin_dir, "resolve")
+    except batch.store.RunNotFound:
+        return _err(f"no run {run_id}")
+    except batch.store.RunUnreachable:
+        return _err(_unreachable(run_id))
+    if delivery.queued:
         core.report.emit_json({"queued": True, "decision": args.decision_id})
         return EXIT_OK
-    return _apply_pending(args.run_id, bin_dir, args.decision_id)
+    error = _own_error(run_id, delivery)
+    result = {"applied": not error, "decision": args.decision_id,
+              "open_decisions": len(batch.store.load(run_id).open_decisions())}
+    if error:
+        result["errors"] = [error]
+        print(f"pr batch: {error}", file=sys.stderr)
+    core.report.emit_json(result)
+    return 1 if error else EXIT_OK
 
 
-def _cmd_cancel(args) -> int:
+def _cmd_cancel(args, bin_dir: Path) -> int:
     run_id = _run_id(args.run_id)
     if not run_id:
         return _err("no batch run to cancel")
@@ -451,19 +477,22 @@ def _cmd_cancel(args) -> int:
         run = batch.store.load(run_id)
     except batch.store.RunNotFound:
         return _err(f"no run {run_id}")
-    if run.status in (RunStatus.DONE, RunStatus.CANCELLED):
+    if run.status in FINISHED_RUN:
         return _err(f"run {run_id} is {run.status.value}")
-    batch.store.request_cancel(run_id, kill=args.kill)
-    if not core.run_lock.is_held(batch.store.run_dir(run_id)):
-        # Reload: the scheduler may have finished and saved its own outcome in
-        # the window since `run` was loaded above. Stamping that stale copy
-        # CANCELLED here would clobber a completed run's real result.
-        run = batch.store.load(run_id)
-        if run.status not in (RunStatus.DONE, RunStatus.CANCELLED):
-            run.status = RunStatus.CANCELLED
-            _save(run)
-    core.report.emit_json({"cancelled": True, "run": run_id})
-    return EXIT_OK
+    try:
+        delivery = _deliver(run_id, Cancel(kill=args.kill), bin_dir, "cancel")
+    except batch.store.RunNotFound:
+        return _err(f"no run {run_id}")
+    except batch.store.RunUnreachable:
+        return _err(_unreachable(run_id))
+    error = "" if delivery.queued else _own_error(run_id, delivery)
+    result = {"cancelled": not error, "run": run_id, "queued": delivery.queued}
+    if error:
+        # The run finished before the cancel reached it; say what it ended as.
+        result["status"] = batch.store.load(run_id).status.value
+        print(f"pr batch: {error}", file=sys.stderr)
+    core.report.emit_json(result)
+    return 1 if error else EXIT_OK
 
 
 def _cmd_status(args) -> int:
@@ -475,9 +504,9 @@ def _cmd_status(args) -> int:
         run = batch.store.load(run_id)
     except batch.store.RunNotFound:
         return _err(f"no run {run_id}")
-    active = core.run_lock.is_held(batch.store.run_dir(run_id))
+    active = _active(run_id)
     if args.command == "next":
-        core.report.emit_json(batch.report.next_view(batch.report.build(run, active=active)))
+        core.report.emit_json(batch.report.next_view(_report(run, active)))
         return EXIT_OK
     if args.full:
         core.report.emit_json({"schema_version": run.schema_version, "active": active,
@@ -489,7 +518,7 @@ def _cmd_status(args) -> int:
         except KeyError:
             return _err(f"run {run_id} has no decision {args.decision}")
         return EXIT_OK
-    core.report.emit_json(batch.report.build(run, active=active))
+    core.report.emit_json(_report(run, active))
     return EXIT_OK
 
 
@@ -518,8 +547,10 @@ def cmd_batch(argv: list[str], ctx, *, bin_dir: Path, schema_version: str | None
         if args.command == "resolve":
             return _cmd_resolve(args, bin_dir)
         if args.command == "cancel":
-            return _cmd_cancel(args)
+            return _cmd_cancel(args, bin_dir)
         # status and next
         return _cmd_status(args)
     except batch.plan.PlanError as exc:
         return _err(str(exc))
+
+

@@ -69,3 +69,12 @@ def test_batch_gc_may_not_take_a_lock():
     reasons = _reasons(source, "ai/lib/batch/gc.py")
     assert len(reasons) == 1
     assert "core.run_lock.acquire" in reasons[0]
+
+
+def test_pr_batch_holds_item_targets_but_takes_no_run_lock_of_its_own():
+    source = ("import core.run_lock\n"
+              "core.run_lock.hold(s, command='x', started='t')\n"
+              "core.run_lock.acquire(t, 'x', 't')\n")
+    reasons = _reasons(source, "ai/lib/cli/pr_batch.py")
+    assert len(reasons) == 1
+    assert "core.run_lock.acquire" in reasons[0]

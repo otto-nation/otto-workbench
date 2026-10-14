@@ -1,4 +1,4 @@
-"""`pr batch run` and `resume` hold the machine-wide batch lock from before they look for an active run,
+"""`pr batch run` and `resume` hold the machine-wide batch lock for their whole life,
 and every item's target for as long as the run lasts."""
 
 import json
@@ -18,15 +18,13 @@ if str(LIB_DIR) not in sys.path:
 
 import batch.model  # noqa: E402
 import batch.plan  # noqa: E402
-import batch.resolve  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
-import batch.targets  # noqa: E402
-from batch.requests import Decide  # noqa: E402
 import cli.pr  # noqa: E402
 import core.run_lock  # noqa: E402
 import pr.target  # noqa: E402
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
+from batch_session_support import seed, stops_at  # noqa: E402
 from conftest import make_ctx  # noqa: E402
 from run_lock_support import held_elsewhere, live_pid, repo_with_origin  # noqa: E402
 
@@ -53,21 +51,7 @@ def _saved_run(rows=None):
     run = batch.scheduler.new_run(rows, steps=[batch.model.Step.REVIEW], selected=None,
                                   pool=1, auto_publish=[])
     run.status = batch.model.RunStatus.WAITING
-    batch.store.save(run)
-    return run
-
-
-def test_run_asks_for_an_active_run_only_under_the_batch_lock(monkeypatch):
-    """The reported race: the question and the run it guards were seconds apart."""
-    seen = {}
-
-    def active():
-        seen["held"] = _batch_held()
-        return "20261001T000000-aaaa"
-
-    monkeypatch.setattr(batch.store, "active_run_id", active)
-    assert _main(["batch", "run", "--checkout", "/r"]) == 1
-    assert seen["held"] is True
+    return seed(run)
 
 
 def test_run_plans_under_the_batch_lock_and_releases_it(monkeypatch):
@@ -217,6 +201,7 @@ def test_run_holds_every_items_target_until_it_settles(monkeypatch, tmp_path):
 
     def fake_run(self):
         seen["held"] = [core.run_lock.is_held(_target(repo, b)) for b in ("feat/a", "feat/b")]
+        self.run.status = batch.model.RunStatus.DONE
         return batch.model.RunStatus.DONE
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
@@ -264,7 +249,7 @@ def test_an_item_with_no_origin_is_left_to_lock_itself(monkeypatch, capsys):
                   {batch.model.Step.REVIEW: StepNeed(True, "x")})
     monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", [row]))
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
-                        lambda self: batch.model.RunStatus.DONE)
+                        stops_at(batch.model.RunStatus.DONE))
     assert _main(["batch", "run", "--checkout", "/r"]) == 0
     assert "cannot name the pr target of o/r#1" in capsys.readouterr().err
 
@@ -287,6 +272,7 @@ _HOLDING_HARNESS = textwrap.dedent("""\
         deadline = time.monotonic() + 30
         while not (signals / "release").exists() and time.monotonic() < deadline:
             time.sleep(0.05)
+        self.run.status = batch.model.RunStatus.DONE
         return batch.model.RunStatus.DONE
 
     batch.scheduler.Scheduler.run_until_blocked = run_until_blocked

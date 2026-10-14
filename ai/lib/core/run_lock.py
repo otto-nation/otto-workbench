@@ -52,16 +52,22 @@ record carries a ``released`` timestamp, written under the flock just before
 it is dropped; a held one has ``released: null``. To ask the kernel rather
 than read the file, call ``is_held``.
 
-``review`` (both its PR and its ``--self`` paths), ``ci-check``,
-``review-threads``, ``pr-rebase`` and ``pr-describe`` take the lock themselves,
-so invoking any of them directly is guarded too. When ``pr`` dispatches to one
-it resolves the same target, computes the same key, finds it in
-``WORKBENCH_RUN_LOCK`` and passes through as a no-op instead of deadlocking
-against the lock its own caller holds. That holds whether the delegate is a
-child process or an in-process call — the marker is process environment, and
-re-claiming a lock this process already holds is a no-op by construction.
+Which locks a run takes is not decided here. Every ``pr`` command declares its
+scopes on its ``Need`` in ``cli.registry``, and ``cli.locks`` takes them:
+``pr``'s dispatcher before it fetches or dispatches, and ``claim_declared`` in
+the five entry points that can be run without ``pr`` — ``review``,
+``ci-check``, ``review-threads``, ``pr-rebase`` and ``pr-describe`` — so
+bypassing ``pr`` does not bypass the lock. Under ``pr`` a delegate's claim
+finds the lock already in this process's registry, or in ``WORKBENCH_RUN_LOCK``
+when it is a child, and passes through. ``bin/local/validate-run-locks``
+refuses a lock taken anywhere else.
 
-That list is exhaustive, not an example. ``review-post`` and ``review-rebuild``
+The one late acquisition is ``lock_checkout``, for a review that learns which
+tree it writes only after setting it up or switching to it. It refuses unless
+the target is already held — here or, by its marker, by the parent — which
+keeps the late checkout after its target in the one order every holder uses.
+
+The five are the whole list. ``review-post`` and ``review-rebuild``
 are the remaining delegates and take no lock of their own, for a reason that is
 not laziness: neither resolves a repo context. Both work from a review
 directory and the ``meta.json`` beside it, whose ``repo`` is a ``owner/repo``

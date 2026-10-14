@@ -220,17 +220,19 @@ Messages that report the *repository's shape* rather than a command's exit — `
 
 ## "another pr run already owns this target"
 
-A second `pr` run refused to start because one is already in flight against the same target — the same `(origin repo, branch)`, regardless of which directory either run was launched from. The message names the holder:
+A second `pr` run refused to start because one is already in flight against the same target — the same `(origin repo, branch)`, regardless of which directory either run was launched from. The message names the scope that was refused: `global batch`, `target <repo>@<branch>`, or `checkout <path>`. The message names the holder:
 
 ```
-✗ another pr run already owns this target: pr review --self --fix (pid 15461, started 2026-08-12T07:21:19+00:00)
+✗ another pr run already owns this target acme/widget@feat/x: pr review --self --fix (pid 15461, started 2026-08-12T07:21:19+00:00)
 ```
 
 Two runs against one PR corrupt each other — they both read-modify-write that target's `state.json`, and with `--fix` they both commit to the same branch, whether from one checkout or two. The lock is keyed on what a run targets, not where it was launched: reviews of two different PRs from one directory run concurrently, and two runs against the same PR exclude each other from anywhere. Wait for the holder to finish, or stop it with the printed `kill <pid>`.
 
 `pr status` is read-only and never contends — it takes no lock, makes no network call, and creates nothing, so it answers while a review holds the target, and it answers with `gh` logged out. See [what each `pr` command needs before it runs](ai-libraries.md#prcontextpy). `pr gc` prunes target state for merged and closed PRs, skips its own target, and takes each target's lock before touching it — so it will not delete state out from under a running review, and it is safe to run at any time. It also removes finished `pr batch` runs (`done` or `cancelled`) once their retention window has passed ([`batch/gc.py`](ai-libraries.md#batchgcpy)); it takes each run's lock first, and never touches a `running`, `waiting` or `interrupted` run.
 
-`review`, `ci-check`, `review-threads`, `pr-rebase`, and `pr-describe` take the same lock when you invoke them directly, so `review --self --fix` and a bare `pr-describe` are guarded too. Launched by `pr` they inherit `WORKBENCH_RUN_LOCK` from it and pass through rather than deadlocking on their own parent's lock.
+Which locks a command holds is declared once, on its entry in `ai/lib/cli/registry.py` — the table is in [`cli/locks.py`](ai-libraries.md#clilockspy) — and `pr` takes them before it fetches or runs anything. `review`, `ci-check`, `review-threads`, `pr-rebase`, and `pr-describe` read the same declaration when you invoke them directly, so `review --self --fix` and a bare `pr-describe` are guarded too. Launched by `pr` they find the lock already held — in-process, or through `WORKBENCH_RUN_LOCK` when they are a child — and pass through rather than deadlocking on their own parent's lock.
+
+A refusal naming a `checkout` means two different targets met in one working tree. Wait for the holder, or run the second one from its branch's own worktree.
 
 The lock is an advisory `flock` on the target's `run.lock`, so the kernel releases it whenever the holder exits — including `kill -9`. There is no stale lock to clear by hand; if the message names a pid that is gone, the next run will take the lock regardless.
 

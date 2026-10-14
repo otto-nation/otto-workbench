@@ -5,33 +5,39 @@ per invocation. Replaces the duplicated discovery logic ci-check,
 review-threads, and the review pipeline each carried a copy of.
 
 How much of that a command wants is one of three axes every `pr` subcommand
-declares in its `_COMMANDS` entry in `ai/bin/pr`. They are separate
-because they routinely disagree:
+declares on its `CommandSpec` in `cli.registry`. They are separate because they
+routinely disagree:
 
 | Axis | What it decides |
 |---|---|
 | **depth** | `ContextDepth.NONE` resolves nothing at all; `LOCAL` resolves from git alone; `REMOTE` adds the `gh` calls that name the repo and the PR |
 | **fetch** | whether the worktree is fetched and fast-forwarded first |
-| **lock** | whether the target's `run.lock` is held for the whole run |
+| **locks** | which run locks — `core.run_lock` scopes — are held for the whole run |
 
-| Command | Depth | Fetch | Lock |
+| Command | Depth | Fetch | Locks |
 |---|---|---|---|
-| `create` | remote | no | yes |
-| `status` | local | no | **no** |
-| `ci` | remote | yes | yes |
-| `review` | remote | yes | yes |
-| `pr review --summary` / `--post` / `--repair` / `--recover` | remote | **no** | yes |
-| `pr review --list` | **none** | no | **no** |
-| `comments` | remote | yes | yes |
-| `fix` | remote | yes | yes |
-| `rebase` | remote | no | yes |
-| `describe` | remote | yes | yes |
-| `gc` | remote | no | yes |
+| `create` | remote | no | target + checkout (`--dry-run`: **none**) |
+| `status` | local | no | **none** |
+| `ci` | remote | yes | target (`--fix`: + checkout) |
+| `review` | remote | yes | target; its own tree once known |
+| `review --self` | local | yes | target + checkout |
+| `pr review --summary` / `--post` / `--repair` / `--recover` | remote | **no** | target |
+| `pr review --list` | **none** | no | **none** |
+| `comments` | remote | yes | target + checkout (`--reply`/`--settle`: target) |
+| `fix` | remote | yes | target + checkout |
+| `rebase` | remote | no | target + checkout |
+| `push` | local | no | target + checkout |
+| `describe` | remote | yes | target + checkout |
+| `batch run` / `resume` | **none** | no | global `batch` |
+| `batch` (other) | **none** | no | **none** |
+| `gc` | remote | no | target |
 
-`review` is the one command whose need its arguments decide, which is why its
-`_COMMANDS` entry holds a resolver rather than a `Need`. The fetch is the line
-between its two halves: a bare `pr review` is about to review the branch, so it
-wants the branch current, while every mode flag acts on a review that already
+`cli.locks` takes the locks and documents why each command holds what it holds.
+
+`review` is the one command whose depth and fetch its arguments decide, which
+is why its `CommandSpec` holds a resolver rather than a `Need`. The fetch is the
+line between its two halves: a bare `pr review` is about to review the branch, so
+it wants the branch current, while every mode flag acts on a review that already
 exists at the commit that review describes. Fast-forwarding under one of those
 would leave `--summary` and `--post` reporting a review of a commit the
 worktree no longer sits on, and would push `--recover` off the SHA it then has
@@ -42,8 +48,8 @@ does its own fetch, so a single "is this command remote?" flag would either
 strand it or reset the worktree under it.
 
 A command that declares nothing fails at import rather than silently picking up
-a default — `_validate_needs` is the check, and it is what makes adding a
-command a one-line edit in one place.
+a default — `cli.registry.validate_needs` is the check, and it is what makes
+adding a command a one-line edit in one place.
 
 `status` is the only local one. It reads `state.json` and the worktree's push
 state, and needs neither `gh repo view` nor `gh pr view` to do it: with no

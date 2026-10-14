@@ -2803,33 +2803,39 @@ per invocation. Replaces the duplicated discovery logic ci-check,
 review-threads, and the review pipeline each carried a copy of.
 
 How much of that a command wants is one of three axes every `pr` subcommand
-declares in its `_COMMANDS` entry in `ai/bin/pr`. They are separate
-because they routinely disagree:
+declares on its `CommandSpec` in `cli.registry`. They are separate because they
+routinely disagree:
 
 | Axis | What it decides |
 |---|---|
 | **depth** | `ContextDepth.NONE` resolves nothing at all; `LOCAL` resolves from git alone; `REMOTE` adds the `gh` calls that name the repo and the PR |
 | **fetch** | whether the worktree is fetched and fast-forwarded first |
-| **lock** | whether the target's `run.lock` is held for the whole run |
+| **locks** | which run locks — `core.run_lock` scopes — are held for the whole run |
 
-| Command | Depth | Fetch | Lock |
+| Command | Depth | Fetch | Locks |
 |---|---|---|---|
-| `create` | remote | no | yes |
-| `status` | local | no | **no** |
-| `ci` | remote | yes | yes |
-| `review` | remote | yes | yes |
-| `pr review --summary` / `--post` / `--repair` / `--recover` | remote | **no** | yes |
-| `pr review --list` | **none** | no | **no** |
-| `comments` | remote | yes | yes |
-| `fix` | remote | yes | yes |
-| `rebase` | remote | no | yes |
-| `describe` | remote | yes | yes |
-| `gc` | remote | no | yes |
+| `create` | remote | no | target + checkout (`--dry-run`: **none**) |
+| `status` | local | no | **none** |
+| `ci` | remote | yes | target (`--fix`: + checkout) |
+| `review` | remote | yes | target; its own tree once known |
+| `review --self` | local | yes | target + checkout |
+| `pr review --summary` / `--post` / `--repair` / `--recover` | remote | **no** | target |
+| `pr review --list` | **none** | no | **none** |
+| `comments` | remote | yes | target + checkout (`--reply`/`--settle`: target) |
+| `fix` | remote | yes | target + checkout |
+| `rebase` | remote | no | target + checkout |
+| `push` | local | no | target + checkout |
+| `describe` | remote | yes | target + checkout |
+| `batch run` / `resume` | **none** | no | global `batch` |
+| `batch` (other) | **none** | no | **none** |
+| `gc` | remote | no | target |
 
-`review` is the one command whose need its arguments decide, which is why its
-`_COMMANDS` entry holds a resolver rather than a `Need`. The fetch is the line
-between its two halves: a bare `pr review` is about to review the branch, so it
-wants the branch current, while every mode flag acts on a review that already
+`cli.locks` takes the locks and documents why each command holds what it holds.
+
+`review` is the one command whose depth and fetch its arguments decide, which
+is why its `CommandSpec` holds a resolver rather than a `Need`. The fetch is the
+line between its two halves: a bare `pr review` is about to review the branch, so
+it wants the branch current, while every mode flag acts on a review that already
 exists at the commit that review describes. Fast-forwarding under one of those
 would leave `--summary` and `--post` reporting a review of a commit the
 worktree no longer sits on, and would push `--recover` off the SHA it then has
@@ -2840,8 +2846,8 @@ does its own fetch, so a single "is this command remote?" flag would either
 strand it or reset the worktree under it.
 
 A command that declares nothing fails at import rather than silently picking up
-a default — `_validate_needs` is the check, and it is what makes adding a
-command a one-line edit in one place.
+a default — `cli.registry.validate_needs` is the check, and it is what makes
+adding a command a one-line edit in one place.
 
 `status` is the only local one. It reads `state.json` and the worktree's push
 state, and needs neither `gh repo view` nor `gh pr view` to do it: with no
@@ -4756,16 +4762,22 @@ record carries a ``released`` timestamp, written under the flock just before
 it is dropped; a held one has ``released: null``. To ask the kernel rather
 than read the file, call ``is_held``.
 
-``review`` (both its PR and its ``--self`` paths), ``ci-check``,
-``review-threads``, ``pr-rebase`` and ``pr-describe`` take the lock themselves,
-so invoking any of them directly is guarded too. When ``pr`` dispatches to one
-it resolves the same target, computes the same key, finds it in
-``WORKBENCH_RUN_LOCK`` and passes through as a no-op instead of deadlocking
-against the lock its own caller holds. That holds whether the delegate is a
-child process or an in-process call — the marker is process environment, and
-re-claiming a lock this process already holds is a no-op by construction.
+Which locks a run takes is not decided here. Every ``pr`` command declares its
+scopes on its ``Need`` in ``cli.registry``, and ``cli.locks`` takes them:
+``pr``'s dispatcher before it fetches or dispatches, and ``claim_declared`` in
+the five entry points that can be run without ``pr`` — ``review``,
+``ci-check``, ``review-threads``, ``pr-rebase`` and ``pr-describe`` — so
+bypassing ``pr`` does not bypass the lock. Under ``pr`` a delegate's claim
+finds the lock already in this process's registry, or in ``WORKBENCH_RUN_LOCK``
+when it is a child, and passes through. ``bin/local/validate-run-locks``
+refuses a lock taken anywhere else.
 
-That list is exhaustive, not an example. ``review-post`` and ``review-rebuild``
+The one late acquisition is ``lock_checkout``, for a review that learns which
+tree it writes only after setting it up or switching to it. It refuses unless
+the target is already held — here or, by its marker, by the parent — which
+keeps the late checkout after its target in the one order every holder uses.
+
+The five are the whole list. ``review-post`` and ``review-rebuild``
 are the remaining delegates and take no lock of their own, for a reason that is
 not laziness: neither resolves a repo context. Both work from a review
 directory and the ``meta.json`` beside it, whose ``repo`` is a ``owner/repo``
@@ -6477,6 +6489,9 @@ This module is the one place they are taken for a command:
 | `review --post`, `--repair`, `--summary`, `--recover` | target (`--self --recover` adds the checkout) |
 | `review --list`, `status` | nothing |
 | `gc` | target, plus each pruned target's own lock |
+
+A direct `review --self --post` (no `--fix`) declares TARGET only — `--post`
+is a handler mode, so it does not lock the checkout.
 
 The table is pinned against the registry by `tests/pr_cli_dispatch_test.py`,
 and `bin/local/validate-run-locks` refuses a lock taken anywhere this module

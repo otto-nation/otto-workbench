@@ -27,6 +27,9 @@ This module is the one place they are taken for a command:
 | `review --list`, `status` | nothing |
 | `gc` | target, plus each pruned target's own lock |
 
+A direct `review --self --post` (no `--fix`) declares TARGET only — `--post`
+is a handler mode, so it does not lock the checkout.
+
 The table is pinned against the registry by `tests/pr_cli_dispatch_test.py`,
 and `bin/local/validate-run-locks` refuses a lock taken anywhere this module
 and its short allowlist do not account for.

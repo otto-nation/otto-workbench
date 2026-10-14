@@ -213,9 +213,10 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         given = list(argv if argv is not None else sys.argv[1:])
         command = " ".join([SCRIPT, *given])
-        # A thread target keeps the path --reply always had. A review body is
-        # answered in the summary comment, which writes the state file, so it
-        # falls through to the worktree check, the lock and the trail below.
+        # Both reply paths take the loaded body. A thread target goes to
+        # run_reply here; a review body is answered in the summary comment,
+        # which writes the state file, so it falls through to the worktree
+        # check, the lock and the trail below.
         route = review.review_body_reply.route_reply(ctx, args.reply) if args.reply else None
         if args.settle or (route is not None and not route.source):
             # GitHub-only writes: `comments` declares the target alone for

@@ -4,7 +4,7 @@ description: Claude Code integration for coding guidelines, intelligent skills, 
 ---
 <!-- Generated from docs/ai-automation.src.md by bin/local/compose-docs — do not edit. -->
 
-<!-- doc-budget: 576 -->
+<!-- doc-budget: 585 -->
 
 # AI Automation
 
@@ -592,6 +592,15 @@ summary went up. A thread nobody can date is written rather than skipped, since
 under the table, and the round's own footer links every earlier summary comment
 in order, so a reader landing on the newest one can walk the chain back through
 the rounds it does not restate.
+
+**A review body is answered in the summary.** GitHub has no reply API for one,
+so `pr comments --reply <reviewId | rb-<reviewId> | rb-<reviewId>-<n>>
+--body-file F --post` publishes one marked block per review under
+`### Replies to review comments`. Without `--post` nothing is stored and the
+draft is printed (no body if a push is still pending). The blocks follow the
+same round rules as rows; a hand-edited block is kept unless `--reply` for
+that review replaces it. A dismissal with a reason adds
+`Dismissed: <finding> — <reason>` to the block, creating one even with no reply.
 
 ### Running from a different directory
 

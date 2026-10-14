@@ -167,7 +167,7 @@ class TestReplyIsNotAPhase:
 
 
 class TestReplyRouting:
-    """A thread keeps the path --reply always had; a review body takes the new one."""
+    """A thread receives the loaded body; a review body takes the locked path."""
 
     def _main(self, route, tmp_path):
         ctx = make_ctx(worktree_root=tmp_path, target_dir=tmp_path / "target")

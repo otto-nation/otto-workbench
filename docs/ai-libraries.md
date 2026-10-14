@@ -3683,8 +3683,9 @@ the run again as an APPLIER whose own entry drain and finish apply them.
 
 - A live holder that drains ends the loop. It held the lock when the request
   was written, so its own post-release check sees the request.
-- A GC holder or a vacated record is retried along
-  ``core.run_lock.retry_delays``. Once that is spent, the run and its
+- A GC holder is retried along ``core.run_lock.retry_delays``. A vacated
+  record that already exhausted that budget inside the take is not: the
+  hand-off warns at once. Once the outer delays are spent, the run and its
   pending count are named on stderr.
 
 A submitter reports ``queued`` only when a live drainer refused it. So a

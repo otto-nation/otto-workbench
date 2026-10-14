@@ -166,16 +166,27 @@ def test_an_exceptional_exit_hands_nothing_off(monkeypatch):
     seed(_run())
     calls = []
     monkeypatch.setattr(batch.store, "_hand_off", lambda *args: calls.append(args))
-    with pytest.raises(_Stop):
-        with open_session(RID):
-            batch.store.write_request(RID, Decide("d1", "drop-pr"))
-            raise _Stop()
+    with pytest.raises(_Stop), open_session(RID):
+        batch.store.write_request(RID, Decide("d1", "drop-pr"))
+        raise _Stop()
     assert calls == []
     assert batch.store.pending_requests(RID) == 1
     assert batch.store.load(RID).decision("d1").open
     with open_session(RID):
         pass
     assert [args[0] for args in calls] == [RID]
+
+
+def test_an_exceptional_exit_of_create_hands_nothing_off(monkeypatch):
+    calls = []
+    monkeypatch.setattr(batch.store, "_hand_off", lambda *args: calls.append(args))
+    with pytest.raises(_Stop), batch.store.create(_run(), inbox=NullInbox(),
+                                                 command="pr batch run") as opened:
+        opened.commit()
+        batch.store.write_request(RID, Decide("d1", "drop-pr"))
+        raise _Stop()
+    assert calls == []
+    assert batch.store.pending_requests(RID) == 1
 
 
 def test_a_live_draining_holder_carries_the_duty(other_pid, monkeypatch, capsys):
@@ -211,14 +222,36 @@ def test_a_hand_off_that_cannot_get_in_warns_and_leaves_the_request(holder, othe
                                                                       monkeypatch, capsys):
     seed(_run())
     batch.store.write_request(RID, Decide("d1", "drop-pr"))
-    monkeypatch.setattr(core.run_lock, "retry_delays", lambda: iter([0.0, 0.0]))
+    # `_hand_off` looks up retry_delays() first; core looks it up inside a pass.
+    # Tracking next() on that first iterator pins that a vacated record does not
+    # spend a second budget in `_hand_off` itself.
+    hand_off_pauses = []
+    started = []
+
+    def retry_delays():
+        source = iter([0.0, 0.0])
+        first = not started
+        started.append(True)
+        if not first:
+            return source
+
+        def tracked():
+            for delay in source:
+                hand_off_pauses.append(delay)
+                yield delay
+        return tracked()
+
+    monkeypatch.setattr(core.run_lock, "retry_delays", retry_delays)
     slept = []
     monkeypatch.setattr(batch.store.time, "sleep", slept.append)
     record = _holder_record(other_pid, "gc") if holder == "gc" else _VACATED
     with held_elsewhere(_lock_file(), record):
         batch.store._hand_off(RID, NullInbox(), "pr batch resolve")
     assert _STRANDED.format(rid=RID, n=1) in capsys.readouterr().err
-    assert len(slept) >= 2
+    if holder == "vacated":
+        assert hand_off_pauses == []
+    else:
+        assert len(slept) >= 2
     assert batch.store.pending_requests(RID) == 1
     assert batch.store.load(RID).decision("d1").open
 

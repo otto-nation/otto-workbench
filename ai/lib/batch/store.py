@@ -23,8 +23,9 @@ the run again as an APPLIER whose own entry drain and finish apply them.
 
 - A live holder that drains ends the loop. It held the lock when the request
   was written, so its own post-release check sees the request.
-- A GC holder or a vacated record is retried along
-  ``core.run_lock.retry_delays``. Once that is spent, the run and its
+- A GC holder is retried along ``core.run_lock.retry_delays``. A vacated
+  record that already exhausted that budget inside the take is not: the
+  hand-off warns at once. Once the outer delays are spent, the run and its
   pending count are named on stderr.
 
 A submitter reports ``queued`` only when a live drainer refused it. So a
@@ -556,18 +557,26 @@ class _Pass(enum.Enum):
     # A live holder that drains has the run. It held the lock when the request
     # was written, so its own post-release check carries the duty on.
     CARRIED = "carried"
-    # A GC holder, a vacated record core could not wait out, or a run
-    # directory renamed away mid-reap: worth another try after a pause.
+    # A GC holder, a RunBusy whose holder is None, or a run directory renamed
+    # away mid-reap: worth another try after a pause.
     BLOCKED = "blocked"
+    # Core already spent the vacated retry budget inside `_enter_lock`; another
+    # pause would spend it again.
+    EXHAUSTED = "exhausted"
 
 
 def _hand_off_pass(run_id: str, inbox: InboxPolicy, command: str) -> _Pass:
-    """Open *run_id* once as an APPLIER that does not itself hand off, and say what it found."""
+    """Open *run_id* once as an APPLIER that does not itself hand off, and say what it found.
+
+    `RunBusy` with `holder is None` counts as blocked: no record shows it drains.
+    """
     try:
         with _open(run_id, Role.APPLIER, inbox=inbox, command=f"{command} (hand-off)"):
             pass
-    except (RunNotFound, RunUnreachable):
+    except RunNotFound:
         return _Pass.BLOCKED
+    except RunUnreachable:
+        return _Pass.EXHAUSTED
     except RunBusy as exc:
         drains = exc.holder is not None and exc.holder.drains
         return _Pass.CARRIED if drains else _Pass.BLOCKED
@@ -588,9 +597,11 @@ def _hand_off(run_id: str, inbox: InboxPolicy, command: str) -> None:
     finish apply them. It stops on any of these:
     - the inbox is empty;
     - a live draining holder refuses it, and that holder carries the duty;
-    - the pauses in `core.run_lock.retry_delays()` run out against GC
-      holders or vacated records, in which case the run and its pending
-      count are named on stderr.
+    - `RunUnreachable`: core already spent the vacated budget inside
+      `_enter_lock`, so this loop does not pause again;
+    - the pauses in `core.run_lock.retry_delays()` run out against GC holders
+      (`RunBusy` whose holder does not drain, including holder None) or
+      `RunNotFound`. Exhaustion names the run and its pending count on stderr.
 
     It always ends. Every pass that gets in applies or rejects every request
     it peeked, so the inbox shrinks unless new requests keep arriving, and
@@ -602,9 +613,10 @@ def _hand_off(run_id: str, inbox: InboxPolicy, command: str) -> None:
     committed.
     """
     # ceiling: one retry budget covers the whole hand-off, not each blocked
-    # stretch between successful passes. Upgrade to a fresh budget after each
-    # APPLIED pass if a hand-off that applied requests is ever reported
-    # stranding later ones.
+    # stretch between successful passes. RunUnreachable already spent core's
+    # vacated budget inside `_enter_lock`, so it is not retried here.
+    # Upgrade to a fresh budget after each APPLIED pass if a hand-off that
+    # applied requests is ever reported stranding later ones.
     delays = core.run_lock.retry_delays()
     while pending_requests(run_id) > 0:
         found = _hand_off_pass(run_id, inbox, command)
@@ -612,6 +624,9 @@ def _hand_off(run_id: str, inbox: InboxPolicy, command: str) -> None:
             return
         if found is _Pass.APPLIED:
             continue
+        if found is _Pass.EXHAUSTED:
+            _warn_stranded(run_id)
+            return
         pause = next(delays, None)
         if pause is None:
             _warn_stranded(run_id)

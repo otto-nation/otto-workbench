@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import git.topology  # noqa: E402
 
 from conftest import commit_all, git_in, init_repo  # noqa: E402
-from git_topology_support import _commit, _paused_rebase, _stack_repo  # noqa: E402
+from git_topology_support import _commit, paused_rebase, _stack_repo  # noqa: E402
 
 
 def _porcelain(*entries: tuple[str, str | None], bare: str | None = None) -> str:
@@ -151,14 +151,14 @@ def test_current_branch_detached_head_exits(mock_sub):
 @pytest.mark.parametrize("backend", ["--merge", "--apply"])
 def test_current_branch_names_the_branch_a_paused_rebase_is_on(tmp_path, backend):
     """A rebase stopped on a conflict detaches HEAD; the branch is still the one being rebased."""
-    repo = _paused_rebase(tmp_path, backend)
+    repo = paused_rebase(tmp_path, backend)
     assert git.topology.current_branch_quiet(str(repo)) is None
     assert git.topology.current_branch(str(repo)) == "feat"
 
 
 def test_current_branch_names_the_rebasing_branch_in_a_linked_worktree(tmp_path):
     """A linked worktree keeps its rebase state in its own git dir, not the shared one."""
-    wt = _paused_rebase(tmp_path, worktree=True)
+    wt = paused_rebase(tmp_path, worktree=True)
     repo = tmp_path / "repo"
     assert git.topology.current_branch(str(wt)) == "feat"
     assert git.topology.current_branch(str(repo)) == "main"
@@ -166,7 +166,7 @@ def test_current_branch_names_the_rebasing_branch_in_a_linked_worktree(tmp_path)
 
 def test_current_branch_exits_for_a_rebase_started_from_detached_head(tmp_path):
     """No branch is being rebased, so there is still nothing to name."""
-    repo = _paused_rebase(tmp_path, "--merge", branch=None)
+    repo = paused_rebase(tmp_path, "--merge", branch=None)
     with pytest.raises(SystemExit):
         git.topology.current_branch(str(repo))
 
@@ -181,7 +181,7 @@ def test_current_branch_exits_when_detached_with_no_rebase(tmp_path):
 
 
 def test_find_worktree_for_branch_finds_a_worktree_mid_rebase(tmp_path):
-    wt = _paused_rebase(tmp_path, worktree=True)
+    wt = paused_rebase(tmp_path, worktree=True)
     repo = tmp_path / "repo"
     found = git.topology.find_worktree_for_branch("feat", str(repo))
     assert found is not None
@@ -192,7 +192,7 @@ def test_find_worktree_for_branch_skips_a_renamed_worktree_mid_rebase_of_another
     tmp_path,
 ):
     """A directory named for B that is mid-rebase of A is not B's checkout."""
-    wt = _paused_rebase(tmp_path, worktree=True)
+    wt = paused_rebase(tmp_path, worktree=True)
     repo = tmp_path / "repo"
     moved = tmp_path / "other-branch"
     git_in(repo, "worktree", "move", str(wt), str(moved))

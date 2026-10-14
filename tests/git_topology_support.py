@@ -8,7 +8,7 @@ from pathlib import Path
 from conftest import commit_all, git_in, init_repo
 
 
-def _paused_rebase(
+def paused_rebase(
     tmp_path, *rebase_args: str, branch: str | None = "feat", worktree: bool = False,
 ) -> Path:
     """A repo stopped mid-rebase on a conflict, HEAD detached.

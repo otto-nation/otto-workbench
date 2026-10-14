@@ -19,7 +19,7 @@ import pr.context
 import pr.target
 from pr.context import PRHead
 
-from git_topology_support import _paused_rebase
+from git_topology_support import paused_rebase
 from cli.registry import COMMANDS, need_for
 
 
@@ -474,7 +474,7 @@ def test_pr_with_no_head_worktree_from_a_non_bare_checkout_returns_none(
 def test_branch_resolves_to_the_worktree_mid_rebase_of_that_branch(
         tmp_path, monkeypatch):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
-    wt = _paused_rebase(tmp_path, worktree=True)
+    wt = paused_rebase(tmp_path, worktree=True)
     monkeypatch.setattr(
         pr.target, "repo_identity_from_origin",
         lambda cwd=None: pr.target.RepoIdentity(label="owner/repo", key="repo"),

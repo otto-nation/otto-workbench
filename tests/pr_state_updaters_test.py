@@ -13,7 +13,7 @@ if str(LIB_DIR) not in sys.path:
 
 import pytest
 from conftest import git_in, init_repo
-from git_topology_support import _paused_rebase
+from git_topology_support import paused_rebase
 
 from pr.comments_fix import CLOSEOUT_COMMAND, FixSummary
 from pr.domains import (
@@ -94,7 +94,7 @@ def test_update_identity_keeps_a_worktree_on_the_branch(tmp_path):
 
 def test_update_identity_keeps_a_worktree_mid_rebase_of_the_branch(tmp_path):
     """Detached HEAD mid-rebase of identity.branch is still this branch's tree."""
-    wt = _paused_rebase(tmp_path, worktree=True)
+    wt = paused_rebase(tmp_path, worktree=True)
     root = str(wt)
     state = new_state("repo", "feat", pr_number=1, head_sha="old",
                       worktree_root=root)

@@ -98,7 +98,7 @@ def test_require_worktree_exits_with_actionable_message(capsys):
 def test_resolve_exits_when_a_prs_head_branch_cannot_be_resolved(monkeypatch, capsys):
     """No borrowing the caller's branch — that is the bug this issue is about."""
     monkeypatch.setattr(pr.context, "_resolve_worktree",
-                        lambda cwd, pr_ref, branch: (Path("/wt"), "/wt"))
+                        lambda cwd, pr_ref, branch, **k: (Path("/wt"), "/wt"))
     monkeypatch.setattr(pr.context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr.context, "_head_sha", lambda cwd=None: "deadbeef")
     monkeypatch.setattr(pr.context, "_pr_head", lambda repo, n: PRHead())
@@ -115,7 +115,7 @@ def test_resolve_exits_when_a_prs_head_branch_cannot_be_resolved(monkeypatch, ca
 def test_resolve_exits_when_a_prs_head_sha_cannot_be_resolved(monkeypatch, capsys):
     """A branch with no SHA is a partial result too — never stamp the caller's."""
     monkeypatch.setattr(pr.context, "_resolve_worktree",
-                        lambda cwd, pr_ref, branch: (Path("/wt"), "/wt"))
+                        lambda cwd, pr_ref, branch, **k: (Path("/wt"), "/wt"))
     monkeypatch.setattr(pr.context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr.context, "_head_sha", lambda cwd=None: "caller-sha")
     monkeypatch.setattr(pr.context, "_pr_head", lambda repo, n: PRHead(branch="feat/x"))
@@ -132,7 +132,7 @@ def test_resolve_exits_when_a_prs_head_sha_cannot_be_resolved(monkeypatch, capsy
 def test_resolve_stamps_the_prs_head_sha_not_the_callers(monkeypatch, tmp_path):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(pr.context, "_resolve_worktree",
-                        lambda cwd, pr_ref, branch: (Path("/wt"), "/wt"))
+                        lambda cwd, pr_ref, branch, **k: (Path("/wt"), "/wt"))
     monkeypatch.setattr(pr.context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr.context, "_head_sha", lambda cwd=None: "caller-sha")
     monkeypatch.setattr(git.topology, "current_branch_quiet", lambda cwd=None: "other")
@@ -151,7 +151,7 @@ def test_resolve_targets_the_pr_not_the_invoking_directory(monkeypatch, tmp_path
     """The whole point: two PRs from one CWD get two target dirs."""
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(pr.context, "_resolve_worktree",
-                        lambda cwd, pr_ref, branch: (Path("/repo-root"), "/repo-root"))
+                        lambda cwd, pr_ref, branch, **k: (Path("/repo-root"), "/repo-root"))
     monkeypatch.setattr(pr.context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr.context, "_head_sha", lambda cwd=None: "x")
     monkeypatch.setattr(git.topology, "current_branch_quiet", lambda cwd=None: "main")
@@ -190,12 +190,12 @@ def test_resolve_targets_the_same_pr_from_any_invoking_directory(monkeypatch, tm
                         lambda repo, branch: pr.context.BranchPR(number=2973))
 
     monkeypatch.setattr(pr.context, "_resolve_worktree",
-                        lambda cwd, pr_ref, branch: (Path("/repo-root"), "/repo-root"))
+                        lambda cwd, pr_ref, branch, **k: (Path("/repo-root"), "/repo-root"))
     from_root = pr.context.resolve(branch="feat/login", repo_dir="/repo-root")
 
     monkeypatch.setattr(
         pr.context, "_resolve_worktree",
-        lambda cwd, pr_ref, branch: (
+        lambda cwd, pr_ref, branch, **k: (
             Path("/repo-root/.worktrees/feat-login"), "/repo-root/.worktrees/feat-login",
         ),
     )
@@ -208,7 +208,7 @@ def test_resolve_targets_the_same_pr_from_any_invoking_directory(monkeypatch, tm
 
 def test_resolve_exits_without_an_origin_remote(monkeypatch, capsys):
     monkeypatch.setattr(pr.context, "_resolve_worktree",
-                        lambda cwd, pr_ref, branch: (Path("/wt"), "/wt"))
+                        lambda cwd, pr_ref, branch, **k: (Path("/wt"), "/wt"))
     monkeypatch.setattr(pr.context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr.context, "_head_sha", lambda cwd=None: "x")
     monkeypatch.setattr(git.topology, "current_branch_quiet", lambda cwd=None: "main")
@@ -373,7 +373,7 @@ def test_resolve_local_does_not_create_a_worktree_in_a_bare_repo(monkeypatch):
 def test_treeless_resolve_takes_origin_feat_when_there_is_no_pr(monkeypatch, tmp_path):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
     bare = _bare_feat(tmp_path)
-    monkeypatch.setattr(git.topology, "resolve_bare_repo_worktree", lambda *a, **k: None)
+    monkeypatch.setattr(git.topology, "find_bare_repo_worktree", lambda *a, **k: None)
     monkeypatch.setattr(git.topology, "resolve_branch", lambda hint, cwd=None: "feat")
     monkeypatch.setattr(pr.context, "_pr_from_branch", lambda repo, branch: pr.context.BranchPR())
 
@@ -628,7 +628,7 @@ def test_pr_head_with_a_branch_but_no_sha_is_not_resolved():
 
 def test_resolve_prints_the_reason_gh_could_not_read_the_pr_head(monkeypatch, capsys):
     monkeypatch.setattr(pr.context, "_resolve_worktree",
-                        lambda cwd, pr_ref, branch: (Path("/wt"), "/wt"))
+                        lambda cwd, pr_ref, branch, **k: (Path("/wt"), "/wt"))
     monkeypatch.setattr(pr.context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr.context, "_head_sha", lambda cwd=None: "deadbeef")
     monkeypatch.setattr(pr.context, "_pr_head", lambda repo, n: PRHead(

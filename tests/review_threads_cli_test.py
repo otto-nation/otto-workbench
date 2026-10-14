@@ -703,3 +703,25 @@ class TestReadReport:
         report = review.comment_threads.read_report(ctx, self._pr_data())
         assert [c.get("seen", False) for c in report.review_body_comments] == [False]
         assert not (tmp_path / "target").exists()
+
+
+def _resolve_after_main(argv):
+    ctx = make_ctx()
+    with patch.object(pr.context, "resolve", return_value=ctx) as resolve, \
+         patch("cli.locks.claim_declared"), \
+         patch.object(cli.review_threads, "Trail") as trail_cls, \
+         patch.object(review.comment_threads, "run_threads", return_value=0):
+        trail = MagicMock()
+        trail_cls.start.return_value = trail
+        assert cli.review_threads.main(argv) == 0
+    return resolve
+
+
+def test_main_resolves_with_create_for_fix():
+    resolve = _resolve_after_main(["--fix"])
+    assert resolve.call_args.kwargs["worktree"] is pr.context.WorktreeNeed.CREATE
+
+
+def test_main_resolves_with_find_for_finish():
+    resolve = _resolve_after_main(["--finish"])
+    assert resolve.call_args.kwargs["worktree"] is pr.context.WorktreeNeed.FIND

@@ -522,6 +522,7 @@ def _lock_resolve_and_dispatch(held: contextlib.ExitStack, args, spec, extra: li
         pr_ref=original_pr,
         branch=original_branch,
         repo_dir=getattr(args, "repo_dir", None),
+        worktree=need.worktree,
     )
 
     # The CLI-only half of the project registry: a repo whose whole workbench
@@ -662,7 +663,7 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
             global_args.schema_version, args.command, extra,
         )
 
-    # The command's declaration drives all three axes from here. Read after the
+    # The command's declaration drives all four axes from here. Read after the
     # positional scan above, because that scan is what turns a bare token into
     # the --pr that can escalate the declared depth.
     need = need_for(spec, extra)

@@ -33,6 +33,10 @@ from cli.needs import (  # noqa: E402
 from cli.registry import COMMANDS, CommandSpec, need_for, validate_needs  # noqa: E402
 import core.timeouts  # noqa: E402
 import core.tool_parser  # noqa: E402
+import pr.context  # noqa: E402
+
+FIND = pr.context.WorktreeNeed.FIND
+CREATE = pr.context.WorktreeNeed.CREATE
 
 
 # ── what the registry declares ────────────────────────────────────────────
@@ -408,6 +412,50 @@ def test_a_need_of_the_wrong_shape_is_rejected():
     be readable off the declaration, not guessed from a truthy."""
     with pytest.raises(RuntimeError, match="listing"):
         validate_needs({"listing": command_spec(name="listing", need=True)})
+
+
+def test_validate_needs_rejects_create_at_local():
+    with pytest.raises(RuntimeError, match="CREATE"):
+        validate_needs({
+            "probe": command_spec(
+                name="probe",
+                need=Need(LOCAL, update=False, locks=NO_LOCK, worktree=CREATE),
+            ),
+        })
+
+
+def test_validate_needs_rejects_a_resolver_that_creates_at_none():
+    with pytest.raises(RuntimeError, match="CREATE"):
+        validate_needs({
+            "probe": command_spec(
+                name="probe",
+                need=lambda argv: Need(
+                    NONE, update=False, locks=NO_LOCK, worktree=CREATE,
+                ),
+            ),
+        })
+
+
+def test_ci_creates_a_worktree_only_with_fix():
+    assert need_for(COMMANDS["ci"], []).worktree is FIND
+    assert need_for(COMMANDS["ci"], ["--fix"]).worktree is CREATE
+
+
+def test_comments_creates_a_worktree_only_with_fix():
+    assert need_for(COMMANDS["comments"], []).worktree is FIND
+    assert need_for(COMMANDS["comments"], ["--fix"]).worktree is CREATE
+    assert need_for(COMMANDS["comments"], ["--finish"]).worktree is FIND
+    assert need_for(COMMANDS["comments"], ["--fix", "--finish"]).worktree is FIND
+
+
+def test_rebase_creates_a_worktree_unless_abort_or_push_only():
+    assert need_for(COMMANDS["rebase"], []).worktree is CREATE
+    assert need_for(COMMANDS["rebase"], ["--abort"]).worktree is FIND
+    assert need_for(COMMANDS["rebase"], ["--push-only"]).worktree is FIND
+
+
+def test_fix_always_creates_a_worktree():
+    assert need_for(COMMANDS["fix"], []).worktree is CREATE
 
 
 def test_the_real_registry_passes_its_own_check():

@@ -42,6 +42,7 @@ import sys
 import traceback
 
 import cli.locks
+import cli.needs
 import core.trail
 from core.tool_parser import ToolParser
 from core.trail import Trail, add_trail_args
@@ -127,8 +128,10 @@ def _parse_args(argv: list[str] | None):
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
 
+    argv = list(sys.argv[1:] if argv is None else argv)
     ctx = pr.context.resolve(
         repo_dir=args.repo_dir, branch=args.branch, pr_ref=args.pr,
+        worktree=cli.needs.rebase_need(argv).worktree,
     )
     cwd = str(ctx.require_worktree())
 

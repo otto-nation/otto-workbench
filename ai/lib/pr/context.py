@@ -4,7 +4,7 @@ Resolves repo, branch, PR number, worktree root, and HEAD SHA once
 per invocation. Replaces the duplicated discovery logic ci-check,
 review-threads, and the review pipeline each carried a copy of.
 
-How much of that a command wants is one of three axes every `pr` subcommand
+How much of that a command wants is one of four axes every `pr` subcommand
 declares on its `CommandSpec` in `cli.registry`. They are separate because they
 routinely disagree:
 
@@ -13,25 +13,29 @@ routinely disagree:
 | **depth** | `ContextDepth.NONE` resolves nothing at all; `LOCAL` resolves from git alone; `REMOTE` adds the `gh` calls that name the repo and the PR |
 | **fetch** | whether the worktree is fetched and fast-forwarded first |
 | **locks** | which run locks — `core.run_lock` scopes — are held for the whole run |
+| **worktree** | `WorktreeNeed.FIND` looks up an existing checkout; `CREATE` will make one from any checkout |
 
-| Command | Depth | Fetch | Locks |
-|---|---|---|---|
-| `create` | remote | no | target + checkout (`--dry-run`: **none**) |
-| `status` | local | no | **none** |
-| `ci` | remote | yes | target (`--fix`: + checkout) |
-| `review` | remote | yes | target; its own tree once known |
-| `review --self` / `--self --fix` | local | yes | target + checkout |
-| `pr review --summary` / `--post` / `--repair` | remote | **no** | target (also with `--self`) |
-| `pr review --recover` | remote | **no** | target (`--self --recover` adds checkout) |
-| `pr review --list` | **none** | no | **none** |
-| `comments` | remote | yes | target + checkout (`--reply`/`--settle`: target) |
-| `fix` | remote | yes | target + checkout |
-| `rebase` | remote | no | target + checkout |
-| `push` | local | no | target + checkout |
-| `describe` | remote | yes | target + checkout |
-| `batch run` / `resume` | **none** | no | global `batch`; every item's target, held by the handler |
-| `batch` (other) | **none** | no | **none** |
-| `gc` | remote | no | target |
+| Command | Depth | Fetch | Locks | Worktree |
+|---|---|---|---|---|
+| `create` | remote | no | target + checkout (`--dry-run`: **none**) | find |
+| `status` | local | no | **none** | find |
+| `ci` | remote | yes | target | find |
+| `ci --fix` | remote | yes | target + checkout | **create** |
+| `review` | remote | yes | target; its own tree once known | find |
+| `review --self` / `--self --fix` | local | yes | target + checkout | find |
+| `pr review --summary` / `--post` / `--repair` | remote | **no** | target (also with `--self`) | find |
+| `pr review --recover` | remote | **no** | target (`--self --recover` adds checkout) | find |
+| `pr review --list` | **none** | no | **none** | find |
+| `comments` | remote | yes | target + checkout (`--reply`/`--settle`: target) | find |
+| `comments --fix` (not `--finish`) | remote | yes | target + checkout | **create** |
+| `fix` | remote | yes | target + checkout | **create** |
+| `rebase` | remote | no | target + checkout | **create** |
+| `rebase --abort` / `--push-only` | remote | no | target + checkout | find |
+| `push` | local | no | target + checkout | find |
+| `describe` | remote | yes | target + checkout | find |
+| `batch run` / `resume` | **none** | no | global `batch`; every item's target, held by the handler | find |
+| `batch` (other) | **none** | no | **none** | find |
+| `gc` | remote | no | target | find |
 
 `cli.locks` takes the locks and documents why each command holds what it holds.
 `batch resolve`'s per-run lock and `gc`'s lock on each pruned target are taken
@@ -78,8 +82,7 @@ alone does not count — it names no repo, PR or branch to record against — so
 query rather than of an action, and the listing exists to be polled: the two
 records a dispatch writes cost more than the query itself, and they land in the
 file every `otto-log` query then reads. The exemption is read off these same
-three axes — `Need` carries no trail flag of its own for a command to add
-itself to.
+axes — `Need` carries no trail flag of its own for a command to add itself to.
 
 `base_branch` is the other thing this module resolves once per run: the branch
 every range a review (or rebase, or supersession check) measures against, most
@@ -260,8 +263,9 @@ class ResolvedContext:
         a TypeError, a ``FileNotFoundError: 'None'``, or the string "None"
         reaching ``git -C`` several frames later.
 
-        Consumers that can degrade (ci-check without --fix, pr create, pr gc)
-        read the field directly and are visibly opted out.
+        Consumers that can degrade (ci-check without --fix, pr review, pr gc,
+        comments --reply, pr status) read the field directly and are visibly
+        opted out.
         """
         if self.worktree_root is None:
             core.log.error(
@@ -272,13 +276,26 @@ class ResolvedContext:
         return self.worktree_root
 
 
+class WorktreeNeed(Enum):
+    """Whether a command may create a worktree for the requested branch.
+
+    FIND looks up an existing checkout and never creates one. CREATE will make
+    one from any checkout when none holds the branch. The default on ``Need``
+    is FIND, so an undeclared command gets a ``require_worktree`` refusal
+    rather than a stray worktree.
+    """
+
+    FIND = "find"
+    CREATE = "create"
+
+
 class ContextDepth(Enum):
     """How far a caller needs context resolved — which rung of the ladder runs.
 
     The values name the deepest source consulted: NONE consults nothing, LOCAL
     is git alone, REMOTE adds ``gh``. Independent of whether the caller then
     fetches (``update_to_remote``) or takes the run lock — a command declares
-    all three separately.
+    all four separately.
 
     NONE is not "resolve less"; it is "there is nothing to resolve". A command
     at this depth answers from the user's own state root, so it has no repo, no
@@ -297,6 +314,7 @@ def resolve_at(
     pr_ref: str | None = None,
     branch: str | None = None,
     repo_dir: str | None = None,
+    worktree: WorktreeNeed = WorktreeNeed.FIND,
 ) -> ResolvedContext:
     """Resolve at *depth*, escalating to REMOTE when a ``--pr`` demands it.
 
@@ -309,12 +327,17 @@ def resolve_at(
     depth, so honouring one would spend a ``gh`` call on a value the handler
     never reads — and a command declared read-only would make a network call
     because of a flag the caller passed by habit.
+
+    *worktree* is honoured on the REMOTE rung. LOCAL never creates a checkout,
+    so ``resolve_local`` is always FIND.
     """
     if depth is ContextDepth.NONE:
         return ResolvedContext.unresolved()
     if depth is ContextDepth.LOCAL and pr_ref is None:
         return resolve_local(branch=branch, repo_dir=repo_dir)
-    return resolve(pr_ref=pr_ref, branch=branch, repo_dir=repo_dir)
+    return resolve(
+        pr_ref=pr_ref, branch=branch, repo_dir=repo_dir, worktree=worktree,
+    )
 
 
 def resolve(
@@ -322,6 +345,7 @@ def resolve(
     pr_ref: str | None = None,
     branch: str | None = None,
     repo_dir: str | None = None,
+    worktree: WorktreeNeed = WorktreeNeed.FIND,
 ) -> ResolvedContext:
     """Resolve PR context from arguments and git state.
 
@@ -331,13 +355,18 @@ def resolve(
     3. Neither: detect everything from current git state.
 
     Raises ValueError if both pr and branch are given.
+
+    *worktree* is FIND (default) or CREATE. FIND never makes a checkout;
+    CREATE will, from any checkout, when none holds the requested branch.
     """
     if pr_ref is not None and branch is not None:
         raise ValueError("--pr and --branch are mutually exclusive")
 
     cwd = repo_dir
 
-    worktree_root, cwd = _resolve_worktree(cwd, pr_ref=pr_ref, branch=branch)
+    worktree_root, cwd = _resolve_worktree(
+        cwd, pr_ref=pr_ref, branch=branch, worktree=worktree,
+    )
 
     repo = detect_repo(cwd)
 
@@ -359,7 +388,7 @@ def resolve(
         # Take this result even when it is None: the caller's tree is not the
         # PR's, and a missing checkout is reported as missing.
         worktree_root, cwd = _resolve_worktree(
-            repo_dir, pr_ref=pr_ref, branch=branch_name,
+            repo_dir, pr_ref=pr_ref, branch=branch_name, worktree=worktree,
         )
         # The PR's HEAD, not the caller's: state written for this run belongs to
         # the PR, and the caller may be sitting on an unrelated branch.
@@ -431,7 +460,7 @@ def resolve_local(
     cwd = repo_dir
 
     worktree_root, cwd = _resolve_worktree(
-        cwd, pr_ref=None, branch=branch, create_missing=False,
+        cwd, pr_ref=None, branch=branch, worktree=WorktreeNeed.FIND,
     )
 
     branch_name = (
@@ -575,25 +604,13 @@ def head_sha(cwd: str | None = None) -> str:
     return _head_sha(cwd)
 
 
-def _create_worktree_off_default(
-    branch: str, effective_cwd: str, current: str | None,
-) -> Path | None:
-    """A new worktree for *branch* when the caller stands in the default branch's.
+def _create_worktree(branch: str, effective_cwd: str) -> Path | None:
+    """A new worktree for *branch*, created from the caller's checkout.
 
-    The default branch's worktree is never a place to check a feature branch
-    out: the next tool that syncs it to ``origin/<default>`` hard-resets the
-    branch away, which is why ``pr rebase`` refuses to. So a branch with no
-    worktree of its own gets one here, through ``wt switch`` exactly as the
-    bare-repo path does. Any other current branch is not created from; the
-    caller then gets no checkout rather than this one.
-
-    None when the caller is not on the default branch, or ``wt`` could not
-    create one; ``create_worktree_for_branch`` names the cause.
+    CREATE is allowed from any checkout, not only the default branch's. None
+    when ``wt`` could not create one; ``create_worktree_for_branch`` names the
+    cause.
     """
-    if current is None or current == branch:
-        return None
-    if current != git.topology.default_branch(effective_cwd):
-        return None
     return git.topology.create_worktree_for_branch(branch, effective_cwd)
 
 
@@ -602,22 +619,22 @@ def _resolve_worktree(
     *,
     pr_ref: str | None,
     branch: str | None,
-    create_missing: bool = True,
+    worktree: WorktreeNeed = WorktreeNeed.FIND,
 ) -> tuple[Path | None, str | None]:
     """Resolve worktree root, handling bare repos transparently.
 
-    ``create_missing`` is the escape hatch: with it False a bare repo, or the
-    default branch's worktree, hands back only worktrees that already exist.
+    FIND never creates: a bare repo, or a checkout that does not hold the
+    branch, hands back only worktrees that already exist. CREATE will make one
+    from this checkout when none holds the branch.
 
-    Defaulted True and left unset by ``resolve`` so that the deep rung keeps
-    creating them. When nothing holds the requested branch and nothing is
-    created, the worktree is None; ``cwd`` is kept so repo identity can still
-    be read from it.
+    Defaulted FIND so an unset caller cannot leave a stray tree. When nothing
+    holds the requested branch and nothing is created, the worktree is None;
+    ``cwd`` is kept so repo identity can still be read from it.
     """
     toplevel = _git_toplevel(cwd)
     if toplevel is None:
         return _resolve_non_worktree(
-            cwd, pr_ref=pr_ref, branch=branch, create_missing=create_missing,
+            cwd, pr_ref=pr_ref, branch=branch, worktree=worktree,
         )
 
     if branch:
@@ -626,8 +643,8 @@ def _resolve_worktree(
         if current == branch or git.topology.rebasing_branch(here) == branch:
             return toplevel, cwd
         wt = git.topology.find_worktree_by_branch(branch, here)
-        if not wt and create_missing:
-            wt = _create_worktree_off_default(branch, here, current)
+        if not wt and worktree is WorktreeNeed.CREATE:
+            wt = _create_worktree(branch, here)
         if wt:
             return wt, str(wt)
         return None, cwd
@@ -639,12 +656,12 @@ def _resolve_non_worktree(
     *,
     pr_ref: str | None,
     branch: str | None,
-    create_missing: bool = True,
+    worktree: WorktreeNeed = WorktreeNeed.FIND,
 ) -> tuple[Path | None, str | None]:
     """Handle bare repos and non-git directories."""
     if git.topology.is_bare_repo(cwd):
         return _resolve_bare(
-            cwd, pr_ref=pr_ref, branch=branch, create_missing=create_missing,
+            cwd, pr_ref=pr_ref, branch=branch, worktree=worktree,
         )
 
     if not pr_ref and not branch:
@@ -658,10 +675,11 @@ def _resolve_bare(
     *,
     pr_ref: str | None,
     branch: str | None,
-    create_missing: bool = True,
+    worktree: WorktreeNeed = WorktreeNeed.FIND,
 ) -> tuple[Path | None, str | None]:
     """Resolve worktree from a bare repo."""
-    wt = (git.topology.resolve_bare_repo_worktree(cwd, branch) if create_missing
+    wt = (git.topology.resolve_bare_repo_worktree(cwd, branch)
+          if worktree is WorktreeNeed.CREATE
           else git.topology.find_bare_repo_worktree(cwd, branch))
     if wt:
         return wt, str(wt)

@@ -42,6 +42,7 @@ injection — pass arguments through directly:
 - **Run ID** (large integer): `pr ci --run <run_id> 2>&1`
 - **No argument**: `pr ci 2>&1`
 
+`pr ci` creates no worktree. `pr ci --fix` creates one when the branch has none.
 Only pass `--repo-dir <path>` when CWD is outside the target worktree (e.g., in a bare repo).
 
 The script outputs:

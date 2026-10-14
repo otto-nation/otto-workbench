@@ -40,6 +40,7 @@ import argparse
 import sys
 
 import cli.locks
+import cli.needs
 import core.log
 import core.publishing
 from core.trail import Trail, add_trail_args
@@ -151,6 +152,7 @@ def _run_locked(trail, args, ctx, route, body: str | None = None) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
+    argv = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(argv)
 
     # Before --fix widens itself into --triage, so the conflict named is the one
@@ -199,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
 
         ctx = pr.context.resolve(
             pr_ref=args.pr, branch=args.branch, repo_dir=args.repo_dir,
+            worktree=cli.needs.comments_need(argv).worktree,
         )
         repo = ctx.repo
         pr_number = ctx.pr_number

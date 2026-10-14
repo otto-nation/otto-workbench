@@ -28,7 +28,7 @@ REMOTE = pr.context.ContextDepth.REMOTE
 class Need:
     """What one command needs of dispatch before its handler runs.
 
-    Three independent axes, declared rather than opted out of. Independent
+    Four independent axes, declared rather than opted out of. Independent
     because they routinely disagree: `rebase` needs `gh` to name its PR but
     must not fetch (it does its own), and `gc` writes nothing to the remote yet
     still locks, because it deletes the directory other runs key on.
@@ -46,11 +46,15 @@ class Need:
       on the machine). ``NO_LOCK`` only for a command that neither writes
       ``state.json`` nor touches the worktree, so it is safe alongside another
       run. `cli.locks` takes them, and its docstring tables every command's.
+    * ``worktree`` — whether dispatch may create a checkout of the requested
+      branch. FIND never creates; CREATE will, from any checkout. Defaults to
+      FIND so an undeclared command refuses rather than leaving a stray tree.
     """
 
     depth: pr.context.ContextDepth
     update: bool
     locks: frozenset[core.run_lock.LockScope]
+    worktree: pr.context.WorktreeNeed = pr.context.WorktreeNeed.FIND
 
     def __post_init__(self) -> None:
         # Frozen, so equality and hashing hold whatever set literal a caller wrote.
@@ -182,6 +186,58 @@ def has_flag(argv: Sequence[str], flag: str) -> bool:
         if len(name) > 2 and name.startswith("--") and flag.startswith(name):
             return True
     return False
+
+
+def ci_need(argv: Sequence[str]) -> Need:
+    """`ci`'s need: only `--fix` rebases and commits in the checkout.
+
+    So only `--fix` holds the checkout lock, and only `--fix` may create a
+    worktree; a read of CI status finds an existing checkout or runs treeless.
+    """
+    fix = has_flag(argv, "--fix")
+    return Need(
+        REMOTE, update=True,
+        locks=TARGET_AND_CHECKOUT if fix else TARGET_ONLY,
+        worktree=(
+            pr.context.WorktreeNeed.CREATE if fix
+            else pr.context.WorktreeNeed.FIND
+        ),
+    )
+
+
+def comments_need(argv: Sequence[str]) -> Need:
+    """`comments`' need: `--reply` and `--settle` write to GitHub alone and leave the tree free.
+
+    CREATE only for `--fix` that is not also `--finish`: the fix pass commits
+    to the branch, while `--finish` publishes what an earlier pass recorded.
+    """
+    github_only = has_flag(argv, "--reply") or has_flag(argv, "--settle")
+    create = has_flag(argv, "--fix") and not has_flag(argv, "--finish")
+    return Need(
+        REMOTE, update=True,
+        locks=TARGET_ONLY if github_only else TARGET_AND_CHECKOUT,
+        worktree=(
+            pr.context.WorktreeNeed.CREATE if create
+            else pr.context.WorktreeNeed.FIND
+        ),
+    )
+
+
+def rebase_need(argv: Sequence[str]) -> Need:
+    """`rebase`'s need: target and checkout always; FIND for `--abort` and `--push-only`.
+
+    Every rebase mode writes the checkout or its refs, so the lock scope does
+    not vary. Only the worktree axis does: aborting or pushing acts on a
+    rebase that already has a tree, so neither may create one.
+    """
+    find = has_flag(argv, "--abort") or has_flag(argv, "--push-only")
+    return Need(
+        REMOTE, update=False, locks=TARGET_AND_CHECKOUT,
+        worktree=(
+            pr.context.WorktreeNeed.FIND if find
+            else pr.context.WorktreeNeed.CREATE
+        ),
+    )
 
 
 def review_need(argv: Sequence[str], modes: Mapping[str, ReviewMode]) -> Need:

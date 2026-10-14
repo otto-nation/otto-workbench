@@ -349,6 +349,26 @@ def test_main_takes_no_checkout_lock_without_fix():
     assert claim.call_args.kwargs["worktree"] is None
 
 
+def test_main_resolves_with_find_without_fix():
+    with patch.object(sys, "argv", ["ci-check"]), \
+         patch.object(pr.context, "resolve", return_value=make_ctx()) as resolve, \
+         patch.object(core.run_lock, "claim_for_process"), \
+         patch.object(cli.ci_check.Trail, "start", return_value=MagicMock()), \
+         patch("gh.run_reads.fetch_latest_runs", return_value=gh.run_reads.RunDiscovery()):
+        cli.ci_check.main([])
+    assert resolve.call_args.kwargs["worktree"] is pr.context.WorktreeNeed.FIND
+
+
+def test_main_resolves_with_create_with_fix():
+    with patch.object(sys, "argv", ["ci-check", "--fix"]), \
+         patch.object(pr.context, "resolve", return_value=make_ctx()) as resolve, \
+         patch.object(core.run_lock, "claim_for_process"), \
+         patch.object(cli.ci_check.Trail, "start", return_value=MagicMock()), \
+         patch("gh.run_reads.fetch_latest_runs", return_value=gh.run_reads.RunDiscovery()):
+        cli.ci_check.main(["--fix"])
+    assert resolve.call_args.kwargs["worktree"] is pr.context.WorktreeNeed.CREATE
+
+
 def test_main_takes_the_checkout_lock_with_fix():
     """--fix rebases and commits in this checkout, so the tree needs locking too."""
     ctx = make_ctx()

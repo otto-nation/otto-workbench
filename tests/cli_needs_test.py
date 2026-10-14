@@ -19,8 +19,13 @@ import cli.review_modes  # noqa: E402
 import core.run_lock  # noqa: E402
 from cli.needs import (  # noqa: E402
     LOCAL, NO_LOCK, NONE, REMOTE, REVIEW_DEFAULT_NEED, REVIEW_MODE_NEED, REVIEW_SELF_NEED,
-    TARGET_AND_CHECKOUT, TARGET_ONLY, Need, ReviewMode, has_flag, review_modes, review_need,
+    TARGET_AND_CHECKOUT, TARGET_ONLY, Need, ReviewMode, ci_need, comments_need, has_flag,
+    rebase_need, review_modes, review_need,
 )
+import pr.context  # noqa: E402
+
+FIND = pr.context.WorktreeNeed.FIND
+CREATE = pr.context.WorktreeNeed.CREATE
 
 
 def _handled(*_a, **_kw):
@@ -169,6 +174,42 @@ def test_a_bare_review_is_unaffected():
 
 
 # ── the table `pr` actually declares ─────────────────────────────────────
+
+
+def test_ci_need_creates_only_with_fix():
+    assert ci_need([]).worktree is FIND
+    assert ci_need(["--branch", "X"]).worktree is FIND
+    assert ci_need(["--fix"]).worktree is CREATE
+    assert ci_need(["--fix"]).update is True
+    assert ci_need(["--fix"]).locks == TARGET_AND_CHECKOUT
+    assert ci_need([]).locks == TARGET_ONLY
+    assert ci_need(["--fix"]).depth is REMOTE
+
+
+def test_comments_need_creates_for_fix_but_not_finish():
+    assert comments_need([]).worktree is FIND
+    assert comments_need(["--triage"]).worktree is FIND
+    assert comments_need(["--reply", "t1"]).worktree is FIND
+    assert comments_need(["--finish"]).worktree is FIND
+    assert comments_need(["--fix"]).worktree is CREATE
+    assert comments_need(["--fix", "--finish"]).worktree is FIND
+
+
+def test_comments_need_reads_fix_and_finish_the_way_argparse_would():
+    """An abbreviation argparse accepts is the flag, as has_flag reads it for the locks."""
+    assert comments_need(["--fix", "--fini"]).worktree is FIND
+    assert ci_need(["--fi"]).worktree is CREATE
+
+
+def test_rebase_need_creates_unless_abort_or_push_only():
+    assert rebase_need([]).worktree is CREATE
+    assert rebase_need(["--abort"]).worktree is FIND
+    assert rebase_need(["--push-only"]).worktree is FIND
+    assert rebase_need([]).update is False
+    assert rebase_need([]).locks == TARGET_AND_CHECKOUT
+    assert rebase_need(["--abort"]).locks == TARGET_AND_CHECKOUT
+    assert rebase_need(["--push-only"]).locks == TARGET_AND_CHECKOUT
+    assert rebase_need([]).depth is REMOTE
 
 
 def test_every_pr_review_mode_declares_a_need():

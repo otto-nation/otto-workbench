@@ -14,6 +14,7 @@ if str(LIB_DIR) not in sys.path:
 import cli.pr  # noqa: E402
 
 import core.run_lock  # noqa: E402
+import pr.context  # noqa: E402
 
 
 def _cmd_fix(argv, ctx, *, worktree_head=None, **kw):
@@ -81,6 +82,9 @@ def _dispatch_stage(*argv, ctx):
     with patch("pr.context.resolve", return_value=ctx) as remote, \
          patch("pr.context.resolve_local", return_value=ctx) as local, \
          patch("pr.sync.update_to_remote", return_value=ctx) as update, \
-         patch("cli.pr._dispatch", return_value=0):
+         patch("cli.pr._dispatch", return_value=0), \
+         patch("pr.context.resolve_at", wraps=pr.context.resolve_at) as resolve_at:
         _run_main(*argv)
-    return SimpleNamespace(remote=remote, local=local, update=update)
+    return SimpleNamespace(
+        remote=remote, local=local, update=update, resolve_at=resolve_at,
+    )

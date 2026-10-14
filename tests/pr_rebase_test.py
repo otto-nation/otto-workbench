@@ -366,6 +366,38 @@ def test_fix_with_no_push_does_not_reach_the_remote():
 # ── worktree_root guard ─────────────────────────────────────────────────────
 
 
+def test_main_resolves_with_find_for_abort():
+    fake_ctx = mock.MagicMock()
+    fake_ctx.worktree_root = Path("/fake")
+    fake_ctx.require_worktree.return_value = Path("/fake")
+    with mock.patch.object(pr.context, "resolve", return_value=fake_ctx) as resolve, \
+         mock.patch.object(core.run_lock, "claim_for_process"), \
+         mock.patch.object(cli.pr_rebase, "Trail") as trail_cls, \
+         mock.patch.object(rebase.commands, "_run", return_value=0):
+        trail = mock.MagicMock()
+        trail.__enter__ = mock.Mock(return_value=trail)
+        trail.__exit__ = mock.Mock(return_value=False)
+        trail_cls.start.return_value = trail
+        assert cli.pr_rebase.main(["--abort"]) == 0
+    assert resolve.call_args.kwargs["worktree"] is pr.context.WorktreeNeed.FIND
+
+
+def test_main_resolves_with_find_for_push_only():
+    fake_ctx = mock.MagicMock()
+    fake_ctx.worktree_root = Path("/fake")
+    fake_ctx.require_worktree.return_value = Path("/fake")
+    with mock.patch.object(pr.context, "resolve", return_value=fake_ctx) as resolve, \
+         mock.patch.object(core.run_lock, "claim_for_process"), \
+         mock.patch.object(cli.pr_rebase, "Trail") as trail_cls, \
+         mock.patch.object(rebase.commands, "_run", return_value=0):
+        trail = mock.MagicMock()
+        trail.__enter__ = mock.Mock(return_value=trail)
+        trail.__exit__ = mock.Mock(return_value=False)
+        trail_cls.start.return_value = trail
+        cli.pr_rebase.main(["--push-only"])
+    assert resolve.call_args.kwargs["worktree"] is pr.context.WorktreeNeed.FIND
+
+
 def test_main_without_a_worktree_exits_with_guidance(capsys):
     """The old code coerced None to "None" and handed it to git -C."""
     ctx = make_ctx(branch="isaac/feat/x", worktree_root=None, head_sha="abc1234")

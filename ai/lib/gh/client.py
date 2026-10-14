@@ -77,7 +77,7 @@ _TRANSFER_ENDPOINT_SUFFIX = "/logs"
 # exit like any other, so every best-effort read would collapse it to "GitHub
 # had nothing to say" — and a rebase that reads no PR base replays a stacked
 # branch onto the trunk.
-_MISE_UNTRUSTED = re.compile(r"Config files? in (\S+) (?:is|are) not trusted")
+_MISE_UNTRUSTED = re.compile(r"Config files? in (.+?) (?:is|are) not trusted")
 _MISE_IGNORED_ENV = "MISE_IGNORED_CONFIG_PATHS"
 
 # mise refuses one file per attempt, so a cwd nested under several untrusted
@@ -251,7 +251,7 @@ def _untrusted_mise_config(r: CmdResult) -> str:
     """The config file mise refused to read for *r*, or "" when it refused none."""
     if r.ok:
         return ""
-    m = _MISE_UNTRUSTED.search(r.stderr)
+    m = _MISE_UNTRUSTED.search(r.combined_output)
     return os.path.expanduser(m.group(1)) if m else ""
 
 
@@ -268,6 +268,11 @@ def _spawn(args: tuple[str, ...], *, cwd: str | Path | None, input_text: str | N
     still refuses once ignored is returned as the failure rather than retried,
     so a mise that does not honour the variable costs one extra call, not a
     loop.
+
+    Retrying is safe even for a non-idempotent write (`api` with POST): mise
+    refuses before gh starts, so a refused attempt never reached GitHub. Only
+    refusals loop, and they are fast; a timeout is not a refusal and is not
+    retried, so retries do not stretch the caller's time budget.
     """
     def once(env: dict[str, str] | None) -> CmdResult:
         return core.proc.run(

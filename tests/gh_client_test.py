@@ -310,6 +310,13 @@ def test_nested_untrusted_configs_are_each_ignored(stub_gh, monkeypatch, tmp_pat
     assert len(calls.read_text().splitlines()) == 3
 
 
+def test_a_config_path_with_spaces_is_ignored_whole(stub_gh, monkeypatch, tmp_path):
+    monkeypatch.delenv("MISE_IGNORED_CONFIG_PATHS", raising=False)
+    cfg = tmp_path / "Application Support" / ".mise.toml"
+    stub_gh(_MISE_SHIM.format(configs=f"'{cfg}'"))
+    assert gh.client.out("api", "user") == f"ignored={cfg}"
+
+
 def test_an_exported_ignore_list_is_kept(stub_gh, monkeypatch, tmp_path):
     monkeypatch.setenv("MISE_IGNORED_CONFIG_PATHS", "/already/ignored.toml")
     cfg = tmp_path / ".mise.toml"
@@ -326,8 +333,8 @@ def test_a_refusal_that_survives_the_ignore_is_returned_not_looped(stub_gh, tmp_
     assert len(calls.read_text().splitlines()) == 2
 
 
-# passes-at-base: an ordinary failure must keep costing exactly one call
-def test_an_ordinary_failure_is_not_retried_as_a_mise_refusal(stub_gh, no_sleep):
+# guard: an ordinary failure must keep costing exactly one call
+def test_an_ordinary_failure_is_not_retried_as_a_mise_refusal(stub_gh):
     calls = stub_gh("echo 'no pull requests found for branch \"feat/x\"' >&2; exit 1")
     assert not gh.client.run("pr", "view", "feat/x").ok
     assert len(calls.read_text().splitlines()) == 1

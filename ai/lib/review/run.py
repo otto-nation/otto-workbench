@@ -173,35 +173,46 @@ def run_pr_review(
     # a checkout.
     trail.info("setup_worktree", "setting up PR worktree",
                data={"repo_root": repo_root, "pr_head": pr_head})
-    wt_result = review.worktree.setup_pr_worktree(repo, pr_number, repo_root, pr_head)
+    wt_result = review.worktree.setup_pr_worktree(repo, pr_number, repo_root)
 
-    # pin_recover_worktree can exit, so it runs under the same finally as the
-    # review itself — otherwise a fallback PR worktree would be left on disk.
+    # Everything from here runs under the same finally as the review itself:
+    # the checkout lock and pin_recover_worktree can both exit, and a fallback
+    # PR worktree must not be left on disk when they do.
     pinned_wt = None
     try:
-        wt_path, pinned_wt = review.recover.pin_recover_worktree(
-            recover_sha, wt_result.path, repo_root, f"recover-pr-{pr_number}",
-        )
-
         # The checkout lock, taken here rather than beside the target lock in
         # `review`: this is the first point at which the tree this run
         # actually writes to is known. The one claimed at entry is where the
-        # operator stood, and the two are routinely different — `setup_pr_worktree`
-        # switches to the PR's own worktree and hard-resets it, which is a write
-        # to a tree no lock covered until now.
+        # operator stood, and the two are routinely different —
+        # `setup_pr_worktree` switches to the PR's own worktree. Taken before
+        # the reset below, which is the first write to that tree: a second run
+        # reaching the same tree under another target must be refused before
+        # it moves HEAD, not after.
         #
         # The target lock already stops a second review of this PR. What this
         # adds is the case where the same tree is reached by two runs that do
         # not share a target.
-        # Same command string as the target-lock claim in `review`'s
-        # `main()`, so the two locks report one holder rather than a different
+        # Same command string as `review`'s entry claim, and through
+        # `lock_checkout`, which refuses unless that claim already holds the
+        # target — so the two locks report one holder rather than a different
         # command depending on which of the two a contender trips.
-        core.run_lock.claim_for_process(
-            ctx.target_dir,
-            command=flags.command or f"review {pr_number}",
-            started=pr.state.now_iso(),
-            worktree=Path(wt_path),
+        lock_command = flags.command or f"review {pr_number}"
+        core.run_lock.lock_checkout(
+            ctx.target_dir, Path(wt_result.path),
+            command=lock_command, started=pr.state.now_iso(),
         )
+        review.worktree.reset_pr_worktree(wt_result, pr_head)
+
+        wt_path, pinned_wt = review.recover.pin_recover_worktree(
+            recover_sha, wt_result.path, repo_root, f"recover-pr-{pr_number}",
+        )
+        # A pinned tree is the one the review then writes to, so it is locked
+        # too; re-claiming the tree above would be a no-op.
+        if pinned_wt:
+            core.run_lock.lock_checkout(
+                ctx.target_dir, Path(wt_path),
+                command=lock_command, started=pr.state.now_iso(),
+            )
 
         # Resolved against the PR's own checkout rather than the operator's:
         # the ladder's derivation rung reads HEAD's ancestry, and the tree the

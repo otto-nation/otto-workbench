@@ -3,7 +3,7 @@
 The entry point, and only the entry point. Every subcommand's work lives
 below this layer: three in `cli.pr_commands`, seven behind a `CommandSpec`
 handler the registry names. What is here is the two-pass global parse, the
-usage text, the ordering of resolve/register/fetch/lock, and the routing.
+usage text, the ordering of lock/resolve/register/lock/fetch, and the routing.
 
 `cmd_review` and `cmd_comments` are here rather than in `cli.pr_commands`
 because neither is a command in its own right: both shape argv ahead of a
@@ -29,12 +29,15 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
 
 import argparse
 import contextlib
+import io
 import json
 import os
 import sys
 from pathlib import Path
 
 import cli.dispatch
+import cli.locks
+import cli.needs
 import cli.review_modes
 from cli.needs import Need
 from cli.pr_batch import cmd_batch
@@ -56,7 +59,6 @@ from cli.schema import (
     tool_schema,
 )
 import pr.context
-import pr.state
 import pr.sync
 import pr.push_intent
 import core.cli_reference
@@ -98,6 +100,35 @@ def _is_pr_target(target: str | None) -> bool:
 # `cmd_review` and `cmd_comments` stay here; see `cli.pr_commands`'s module
 # docstring for why (and for which three subcommands moved there instead).
 
+def _review_argv(argv: list[str], ctx: pr.context.ResolvedContext,
+                 original_pr: str | None) -> list[str]:
+    """`pr review`'s argv as its delegate receives it: `--self` added when nothing names a PR.
+
+    A bare `pr review` on a branch with no PR is a self-review of the working
+    tree. That is decided by the resolved context — `ctx.pr_number` — so it is
+    the one argv shaping that cannot happen before resolution. `cmd_review`,
+    which forwards it, and the dispatcher, which reads the locks it declares,
+    both ask here, so the locks held are the ones the run needs.
+
+    A mode `pr` answers itself (`--post`, `--repair`, `--summary`, `--list`) is
+    left alone: it never reaches the delegate, and `--post` forwards its argv.
+    """
+    given = cli.review_modes.flags_given(argv)
+    if any(cli.review_modes.MODES[flag].handler for flag in given):
+        return list(argv)
+    if cli.needs.has_flag(argv, "--self"):
+        return list(argv)
+    positionals, _ = cli.dispatch.split_argv(argv)
+    has_pr_target = (
+        any(_is_pr_target(p) for p in positionals)
+        or _is_pr_target(original_pr)
+        or ctx.pr_number is not None
+    )
+    if has_pr_target or positionals:
+        return list(argv)
+    return ["--self"] + list(argv)
+
+
 def cmd_review(argv: list[str], ctx: pr.context.ResolvedContext, *,
                bin_dir: Path,
                original_pr: str | None = None,
@@ -117,19 +148,11 @@ def cmd_review(argv: list[str], ctx: pr.context.ResolvedContext, *,
             return handler([a for a in argv if a != flag], ctx,
                            bin_dir=bin_dir, schema_version=schema_version)
 
-    has_self = "--self" in argv
-    positionals, _ = cli.dispatch.split_argv(argv)
-    has_pr_target = (
-        any(_is_pr_target(p) for p in positionals)
-        or _is_pr_target(original_pr)
-        or ctx.pr_number is not None
-    )
-    inject = ["--self"] if not has_self and not has_pr_target and not positionals else []
     return core.publishing.call_entry_point(
         "cli.review_entry:main",
-        cli.dispatch.delegate_argv(COMMANDS["review"], inject + list(argv), ctx,
-                               original_pr=original_pr,
-                               original_branch=original_branch),
+        cli.dispatch.delegate_argv(COMMANDS["review"], _review_argv(argv, ctx, original_pr),
+                                   ctx, original_pr=original_pr,
+                                   original_branch=original_branch),
         # `pr` installed the identical handler at its own entry point, and
         # `signal.signal` neither chains nor restores — a second install
         # would replace the one that reports the interrupt for the whole
@@ -434,6 +457,84 @@ def _dispatch(args, ctx: pr.context.ResolvedContext, extra: list[str], global_ar
         trail.finish()
 
 
+def _held_scopes(spec, extra: list[str], ctx: pr.context.ResolvedContext,
+                 original_pr: str | None) -> frozenset:
+    """The target and checkout scopes this invocation holds, read once the context is known."""
+    argv = _review_argv(extra, ctx, original_pr) if spec.name == "review" else extra
+    locks = need_for(spec, argv).locks
+    return locks - core.run_lock.globals_in(locks)
+
+
+def _own_parser_printed_help(spec, extra: list[str]) -> bool:
+    """Whether the command's own argparse printed help for *extra*.
+
+    Token presence is not help: `--prs --help` leaves `--help` in extra while
+    the parser consumes it as a value, or errors. Only SystemExit(0) from the
+    declared parser skips locks. A parse that succeeds or exits 2 does not.
+    """
+    if spec.parser is None or not ({"-h", "--help"} & set(extra)):
+        return False
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            cli.dispatch.resolve(spec.parser)().parse_args(extra)
+    except SystemExit as exc:
+        if exc.code != 0:
+            return False
+        sys.stdout.write(buf.getvalue())
+        return True
+    return False
+
+
+def _lock_resolve_and_dispatch(held: contextlib.ExitStack, args, spec, extra: list[str],
+                               global_args, need: Need, *, command: str, bin_dir: Path,
+                               original_pr: str | None,
+                               original_branch: str | None) -> int:
+    """Lock, resolve, lock, fetch and dispatch — in that order, every lock held on *held*.
+
+    The order is the guarantee. A global lock is taken before the context is
+    resolved, so a command whose subject is machine-wide (`pr batch run`)
+    holds it before it reads any state. Target and checkout need the resolved
+    context to name them, and are taken before `update_to_remote` fetches and
+    fast-forwards the worktree — a write to the checkout — and before the
+    handler runs. Global → target → checkout is the one order every `pr`
+    process takes them in, so no two can deadlock.
+
+    Real help is the command's own parser exiting 0, not a `--help` token in
+    extra: a live `pr batch run` must still print `pr batch run --help`.
+    """
+    if _own_parser_printed_help(spec, extra):
+        return 0
+
+    held.enter_context(cli.locks.hold_declared(
+        core.run_lock.globals_in(need.locks), None, command=command))
+
+    ctx = pr.context.resolve_at(
+        need.depth,
+        pr_ref=original_pr,
+        branch=original_branch,
+        repo_dir=getattr(args, "repo_dir", None),
+    )
+
+    # The CLI-only half of the project registry: a repo whose whole workbench
+    # use is `pr` never opens a Claude session, so the SessionStart hook never
+    # sees it. The root is already resolved, so this costs no subprocess.
+    if ctx.worktree_root:
+        config.workbench_projects.register(ctx.worktree_root)
+
+    held.enter_context(cli.locks.hold_declared(
+        _held_scopes(spec, extra, ctx, original_pr), ctx, command=command))
+
+    if need.update:
+        ctx = pr.sync.update_to_remote(ctx)
+
+    return _dispatch(args, ctx, extra, global_args,
+                     need=need,
+                     bin_dir=bin_dir,
+                     original_pr=original_pr,
+                     original_branch=original_branch)
+
+
 def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     """Run the invocation *argv* describes, and return its exit code.
 
@@ -559,47 +660,17 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
         args.command, extra, need, original_pr, original_branch,
     )
 
-    ctx = pr.context.resolve_at(
-        need.depth,
-        pr_ref=original_pr,
-        branch=original_branch,
-        repo_dir=getattr(args, "repo_dir", None),
-    )
-
-    # The CLI-only half of the project registry: a repo whose whole workbench
-    # use is `pr` never opens a Claude session, so the SessionStart hook never
-    # sees it. The root is already resolved, so this costs no subprocess.
-    if ctx.worktree_root:
-        config.workbench_projects.register(ctx.worktree_root)
-
-    if need.update:
-        ctx = pr.sync.update_to_remote(ctx)
-
-    # The lock is acquired before _dispatch so contention costs no trail
-    # artifacts.
-    #
-    # The target's lock only. Which checkout a run writes to is the handler's
-    # question, not this one's: `pr review 2973` resolves a worktree here and
-    # then reviews in one of its own, so a checkout lock taken at this level
-    # would name a tree the run never touches and refuse a concurrent review of
-    # a different PR launched from the same directory. Every handler that does
-    # write to the resolved checkout takes it — pr-rebase, pr-describe,
-    # ci-check, review-threads, and claude-review's plain --self.
+    # Every lock is held before anything reads or writes state, and before the
+    # trail starts, so contention costs no trail artifacts.
     try:
-        lock = (
-            core.run_lock.acquire(
-                ctx.target_dir,
+        with contextlib.ExitStack() as held:
+            return _lock_resolve_and_dispatch(
+                held, args, spec, extra, global_args, need,
                 command=" ".join([SCRIPT] + argv),
-                started=pr.state.now_iso(),
+                bin_dir=bin_dir,
+                original_pr=original_pr,
+                original_branch=original_branch,
             )
-            if need.lock else contextlib.nullcontext()
-        )
-        with lock:
-            return _dispatch(args, ctx, extra, global_args,
-                             need=need,
-                             bin_dir=bin_dir,
-                             original_pr=original_pr,
-                             original_branch=original_branch)
     except core.run_lock.LockBusy as exc:
         core.run_lock.report_busy(exc)
         return 1

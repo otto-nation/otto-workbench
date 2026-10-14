@@ -95,8 +95,11 @@ class StepProcess:
             t.start()
 
     @classmethod
-    def start(cls, argv: list[str], *, log_path: Path, trail_root: str) -> StepProcess:
-        env = dict(os.environ)
+    def start(cls, argv: list[str], *, log_path: Path, trail_root: str,
+              env: dict[str, str] | None = None) -> StepProcess:
+        """Spawn *argv* as a step. *env* is its environment — this process's when None —
+        and the trail root is set on it either way."""
+        env = dict(os.environ if env is None else env)
         env[core.trail.TRAIL_ROOT_ENV] = trail_root
         popen = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, text=True, env=env,

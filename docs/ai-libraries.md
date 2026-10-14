@@ -1286,10 +1286,14 @@ a judgement — a review file parses the same way whatever this module decides.
 
 Worktree lifecycle for a review run: obtain one, pin one, release one.
 
-The primitives (`setup_pr_worktree`, `detached_worktree_at`, `switch_to_branch`,
-`cleanup_worktree`) create and destroy checkouts. The resolvers below compose
-those primitives rather than duplicating them: they answer *which directory*
-a review should run in, given a slug, a branch name, or a `--repo-dir`.
+The primitives (`setup_pr_worktree`, `reset_pr_worktree`, `detached_worktree_at`,
+`switch_to_branch`, `cleanup_worktree`) create, update and destroy checkouts.
+Setting up a PR's tree and resetting it are separate steps so a caller can lock
+the tree between them: the reset is the first write to it.
+
+The resolvers below compose those primitives rather than duplicating them: they
+answer *which directory* a review should run in, given a slug, a branch name, or
+a `--repo-dir`.
 
 That is a different question from `git.topology`, which starts from a git cwd
 and asks which of *its* worktrees holds a branch. Topology has no GitHub-slug
@@ -2803,33 +2807,42 @@ per invocation. Replaces the duplicated discovery logic ci-check,
 review-threads, and the review pipeline each carried a copy of.
 
 How much of that a command wants is one of three axes every `pr` subcommand
-declares in its `_COMMANDS` entry in `ai/bin/pr`. They are separate
-because they routinely disagree:
+declares on its `CommandSpec` in `cli.registry`. They are separate because they
+routinely disagree:
 
 | Axis | What it decides |
 |---|---|
 | **depth** | `ContextDepth.NONE` resolves nothing at all; `LOCAL` resolves from git alone; `REMOTE` adds the `gh` calls that name the repo and the PR |
 | **fetch** | whether the worktree is fetched and fast-forwarded first |
-| **lock** | whether the target's `run.lock` is held for the whole run |
+| **locks** | which run locks — `core.run_lock` scopes — are held for the whole run |
 
-| Command | Depth | Fetch | Lock |
+| Command | Depth | Fetch | Locks |
 |---|---|---|---|
-| `create` | remote | no | yes |
-| `status` | local | no | **no** |
-| `ci` | remote | yes | yes |
-| `review` | remote | yes | yes |
-| `pr review --summary` / `--post` / `--repair` / `--recover` | remote | **no** | yes |
-| `pr review --list` | **none** | no | **no** |
-| `comments` | remote | yes | yes |
-| `fix` | remote | yes | yes |
-| `rebase` | remote | no | yes |
-| `describe` | remote | yes | yes |
-| `gc` | remote | no | yes |
+| `create` | remote | no | target + checkout (`--dry-run`: **none**) |
+| `status` | local | no | **none** |
+| `ci` | remote | yes | target (`--fix`: + checkout) |
+| `review` | remote | yes | target; its own tree once known |
+| `review --self` / `--self --fix` | local | yes | target + checkout |
+| `pr review --summary` / `--post` / `--repair` | remote | **no** | target (also with `--self`) |
+| `pr review --recover` | remote | **no** | target (`--self --recover` adds checkout) |
+| `pr review --list` | **none** | no | **none** |
+| `comments` | remote | yes | target + checkout (`--reply`/`--settle`: target) |
+| `fix` | remote | yes | target + checkout |
+| `rebase` | remote | no | target + checkout |
+| `push` | local | no | target + checkout |
+| `describe` | remote | yes | target + checkout |
+| `batch run` / `resume` | **none** | no | global `batch`; every item's target, held by the handler |
+| `batch` (other) | **none** | no | **none** |
+| `gc` | remote | no | target |
 
-`review` is the one command whose need its arguments decide, which is why its
-`_COMMANDS` entry holds a resolver rather than a `Need`. The fetch is the line
-between its two halves: a bare `pr review` is about to review the branch, so it
-wants the branch current, while every mode flag acts on a review that already
+`cli.locks` takes the locks and documents why each command holds what it holds.
+`batch resolve`'s per-run lock and `gc`'s lock on each pruned target are taken
+in the handler, not declared on the Need — they are in that table.
+
+`review` is the one command whose depth and fetch its arguments decide, which
+is why its `CommandSpec` holds a resolver rather than a `Need`. The fetch is the
+line between its two halves: a bare `pr review` is about to review the branch, so
+it wants the branch current, while every mode flag acts on a review that already
 exists at the commit that review describes. Fast-forwarding under one of those
 would leave `--summary` and `--post` reporting a review of a commit the
 worktree no longer sits on, and would push `--recover` off the SHA it then has
@@ -2840,29 +2853,35 @@ does its own fetch, so a single "is this command remote?" flag would either
 strand it or reset the worktree under it.
 
 A command that declares nothing fails at import rather than silently picking up
-a default — `_validate_needs` is the check, and it is what makes adding a
-command a one-line edit in one place.
+a default — `cli.registry.validate_needs` is the check, and it is what makes
+adding a command a one-line edit in one place.
 
-`status` is the only local one. It reads `state.json` and the worktree's push
+`status` is the only read-only local one. `review --self` and `push` are local
+too, but they hold locks. `status` reads `state.json` and the worktree's push
 state, and needs neither `gh repo view` nor `gh pr view` to do it: with no
 `state.json` yet, the header names the repo from the origin-derived label
 behind the repo key (`acme/widget`) rather than from `gh`. An explicit
 `--pr <n>` escalates it to remote anyway — a PR number names a branch only `gh`
 can report, and the branch is half the target key.
 
-`pr review --list` is the only `NONE` one, and that is not "resolve less" — it is
-"there is nothing to resolve". The listing answers from the user's own state
+`pr review --list` is `NONE` because there is nothing to resolve, not because it
+is the only such command — every `batch` subcommand is `NONE` too, as it names
+no target of its own. The listing answers from the user's own state
 root, so it has no repo, no branch, and no target, and unlike `LOCAL` it works
 from a directory that is not a git repository at all. `--pr` does not escalate
 it: there is no target for a PR number to name at that depth, so honouring one
 would spend a `gh` call on a value the handler never reads.
 
-`pr review --list` is also the one invocation that writes no trail at all.
-Resolving nothing and holding no lock is the shape of a query rather than of an
-action, and the listing exists to be polled: the two records a dispatch writes
-cost more than the query itself, and they land in the file every `otto-log`
-query then reads. The exemption is read off these same three axes — `Need`
-carries no trail flag of its own for a command to add itself to.
+Every `NONE` need that holds no target lock writes no dispatch trail
+(`Need.records_a_trail`): `--list`, and every `batch` subcommand. A global lock
+alone does not count — it names no repo, PR or branch to record against — so
+`batch run` / `resume` skip the dispatch trail too and keep one of their own
+(`pr-batch`). Resolving nothing and holding no target lock is the shape of a
+query rather than of an action, and the listing exists to be polled: the two
+records a dispatch writes cost more than the query itself, and they land in the
+file every `otto-log` query then reads. The exemption is read off these same
+three axes — `Need` carries no trail flag of its own for a command to add
+itself to.
 
 `base_branch` is the other thing this module resolves once per run: the branch
 every range a review (or rebase, or supersession check) measures against, most
@@ -3557,10 +3576,27 @@ Where a `pr batch` run lives on disk; the only module that touches it.
 
     <state_dir>/batch/<run-id>/state.json       authoritative run state
     <state_dir>/batch/<run-id>/run.lock         held by the live scheduler
+    <state_dir>/locks/batch.lock                held by whichever `pr batch run`/`resume` is live
     <state_dir>/batch/<run-id>/requests/*.json  decisions waiting to be applied
     <state_dir>/batch/<run-id>/cancel           {"kill": bool} once cancel is asked
     <state_dir>/batch/<run-id>/logs/<slug>-<pr>-<step>-<n>.log     stderr of each step attempt
     <state_dir>/batch/<run-id>/logs/<slug>-<pr>-publish-<n>.log    output of each publish attempt
+
+### batch/targets.py
+
+Which `pr` target each batch item is, so a run can hold their locks and hand each child its own.
+
+A batch run holds every item's target lock for as long as it runs, so a manual
+`pr` command on one of its PRs is refused instead of interleaving with the
+batch's own step. Its children must get through those locks, and each only
+through its own: a child is started with `WORKBENCH_RUN_LOCK` naming its item's
+target and nothing else, so a step for one PR cannot ride the batch's hold onto
+another.
+
+The target is computed the way `pr.context` keys a run — the repo key read off
+the checkout's `origin`, and the item's branch — so the lock the batch holds is
+the one its child resolves. An item whose checkout has no `origin` has no
+target: nothing can hold one for it, and its steps fail to resolve on their own.
 
 ## AI backends
 
@@ -4731,6 +4767,12 @@ cannot deadlock against another pair.
 A caller that writes to no checkout, or whose worktree git cannot resolve, takes
 the target lock alone.
 
+A third scope is keyed on nothing a run resolves. ``Global(name)`` is a
+machine-wide lock on ``<state_dir>/locks/<name>.lock``, for a command that must
+be the only one of its kind running. Every holder takes its scopes through
+``hold``, in one order — globals by name, then the target, then the checkout —
+so with every take non-blocking no two ``pr`` processes can deadlock.
+
 Uses ``fcntl.flock`` on ``<target_dir>/run.lock`` and on
 ``<git-dir>/workbench-run-tree.lock``. The kernel drops both when the holder
 exits for any reason, including SIGKILL, so there is no stale-lock state to
@@ -4749,16 +4791,23 @@ record carries a ``released`` timestamp, written under the flock just before
 it is dropped; a held one has ``released: null``. To ask the kernel rather
 than read the file, call ``is_held``.
 
-``review`` (both its PR and its ``--self`` paths), ``ci-check``,
-``review-threads``, ``pr-rebase`` and ``pr-describe`` take the lock themselves,
-so invoking any of them directly is guarded too. When ``pr`` dispatches to one
-it resolves the same target, computes the same key, finds it in
-``WORKBENCH_RUN_LOCK`` and passes through as a no-op instead of deadlocking
-against the lock its own caller holds. That holds whether the delegate is a
-child process or an in-process call — the marker is process environment, and
-re-claiming a lock this process already holds is a no-op by construction.
+Which locks a run takes is not decided here. Every ``pr`` command declares its
+scopes on its ``Need`` in ``cli.registry``, and ``cli.locks`` takes them:
+``pr``'s dispatcher before it fetches or dispatches, and ``claim_declared`` in
+the five entry points that can be run without ``pr`` — ``review``,
+``ci-check``, ``review-threads``, ``pr-rebase`` and ``pr-describe`` — so
+bypassing ``pr`` does not bypass the lock. Under ``pr`` a delegate's claim
+finds the lock already in this process's registry, or in
+``WORKBENCH_RUN_LOCK``, ``WORKBENCH_RUN_LOCK_TREE`` or
+``WORKBENCH_RUN_LOCK_GLOBAL`` when it is a child, and passes through.
+``bin/local/validate-run-locks`` refuses a lock taken anywhere else.
 
-That list is exhaustive, not an example. ``review-post`` and ``review-rebuild``
+The one late acquisition is ``lock_checkout``, for a review that learns which
+tree it writes only after setting it up or switching to it. It refuses unless
+the target is already held — here or, by its marker, by the parent — which
+keeps the late checkout after its target in the one order every holder uses.
+
+The five are the whole list. ``review-post`` and ``review-rebuild``
 are the remaining delegates and take no lock of their own, for a reason that is
 not laziness: neither resolves a repo context. Both work from a review
 directory and the ``meta.json`` beside it, whose ``repo`` is a ``owner/repo``
@@ -4773,22 +4822,24 @@ Ownership is asked twice, in order, and the two questions differ in what they
 can prove. First a process-local registry of the flocks this process itself
 took: that one *is* proof — we opened the descriptor and took the flock here,
 so a hit is a lock we hold and re-taking it is a no-op rather than a refusal.
-Only on a miss is the env marker consulted, and it remains an exact string
-match that does not prove the flock is ours. A value exported into a shell by
+Only on a miss is the env marker consulted, and it remains membership in a
+list, which does not prove the flock is ours. A value exported into a shell by
 hand, or left behind by a run killed before its ``finally``, therefore still
 reads as ownership. Proving it would mean re-probing a lock another process in
 our tree holds, which fails precisely because it is held; the marker is the
 only thing that can answer for that case, so it is trusted there — and only
 there.
 
-That registry is what lets one process hold locks on several targets at once.
-``flock`` is not re-entrant across file descriptors, and the marker is a single
-value, so a process taking a second lock would otherwise lose the name of the
-first and refuse its own lock on re-entry. The marker is still written, because
-it is the only channel a subprocess delegate can read, but it is derived from
-the registry rather than saved and restored per call: a ``claim_for_process``
-take outlives the block that was holding the value it displaced, so restoring
-that value would clear a marker whose flock is still held.
+That registry is what lets one process hold locks on several targets at once,
+since ``flock`` is not re-entrant across file descriptors. The marker carries
+all of them: an ``os.pathsep``-separated list of every value this process holds
+for that var, after whatever its parent exported, so a subprocess passes
+through any lock its ancestors hold rather than only the innermost. It is
+derived from the registry rather than saved and restored per call, because a
+``claim_for_process`` take outlives the block that displaced a value. A caller
+that wants a child to reach only some of what it holds hands the child an
+environment of its own — ``batch.targets.child_env`` names one item's target,
+so a batch step cannot ride the batch's hold onto another PR.
 
 ### core/schema_gen.py
 
@@ -6440,6 +6491,53 @@ Usage:
   eval-models --entry unchecked-error-go --runs 3
   eval-models --dry-run
 
+### cli/locks.py
+
+Taking the run locks a `pr` command declares.
+
+Every `pr` command declares the locks it holds on its `Need`, in
+`cli.registry`, as a set of `core.run_lock` scopes; no handler chooses its own.
+This module is the one place they are taken for a command:
+
+* `hold_declared` — `pr`'s dispatcher, for the whole dispatch. Globals before
+  the context is resolved; target and checkout once it is, before the worktree
+  is fetched and before the handler runs.
+* `claim_declared` — the entry points that can be run without `pr` (`review`,
+  `ci-check`, `review-threads`, `pr-rebase`, `pr-describe`), for the rest of
+  the process. Under `pr` the lock is already held and this passes through;
+  run directly, it is the lock.
+
+| Command / mode | Holds |
+|---|---|
+| `batch run`, `batch resume` | global `batch`; the handler then holds every item's target until the run settles |
+| `batch resolve` | its run's own lock, in the handler — never the global, so it reaches a live run |
+| `batch cancel`, `status`, `next`, `plan` | nothing |
+| `rebase`, `push`, `describe`, `fix` | target + checkout |
+| `comments` | target + checkout; `--reply` / `--settle` the target only |
+| `create` | target + checkout; `--dry-run` nothing |
+| `ci` | target; `--fix` adds the checkout |
+| `review --self` / `--self --fix` | target + checkout |
+| `review` of a PR, `--branch` | target; the checkout once the run knows its tree (`core.run_lock.lock_checkout`) |
+| `review --post`, `--repair`, `--summary` | target (also with `--self`) |
+| `review --recover` | target (`--self --recover` adds the checkout) |
+| `review --list`, `status` | nothing |
+| `gc` | target, plus each pruned target's own lock |
+
+A bare `review` on a branch with no PR is not declared as `--self`: the
+dispatcher injects `--self` through `_review_argv` once the context is known,
+and `_held_scopes` then reads the `--self` need, so it holds target+checkout.
+`review <pr>` stays TARGET and takes the checkout later through `lock_checkout`.
+
+`--self --post` / `--summary` / `--repair` (no `--fix`) stay REVIEW_MODE_NEED —
+REMOTE, no fetch, TARGET only. Under `pr` those flags are handler modes that
+publish a review already on disk. On the `review` binary `--post` means publish;
+without `--fix` there is no tree write, and a run that later switches trees
+takes the checkout then through `lock_checkout`.
+
+The table is pinned against the registry by `tests/pr_cli_dispatch_test.py`,
+and `bin/local/validate-run-locks` refuses a lock taken anywhere this module
+and its short allowlist do not account for.
+
 ### cli/needs.py
 
 What a `pr` subcommand needs of dispatch before its handler runs.
@@ -6478,7 +6576,7 @@ answers no question anyone asks of it.
 The entry point, and only the entry point. Every subcommand's work lives
 below this layer: three in `cli.pr_commands`, seven behind a `CommandSpec`
 handler the registry names. What is here is the two-pass global parse, the
-usage text, the ordering of resolve/register/fetch/lock, and the routing.
+usage text, the ordering of lock/resolve/register/lock/fetch, and the routing.
 
 `cmd_review` and `cmd_comments` are here rather than in `cli.pr_commands`
 because neither is a command in its own right: both shape argv ahead of a

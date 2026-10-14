@@ -56,14 +56,13 @@ Usage:
 import argparse
 import sys
 
+import cli.locks
 import core.log
 import core.publishing
-import core.run_lock
 import pr.close_refs
 import pr.context
 import pr.describe
 import pr.gh_token
-import pr.state
 from pr.domains import DescribeSummary
 from core.tool_parser import EXIT_USAGE, ToolParser, read_file_arg
 from core.trail import Trail, add_trail_args
@@ -137,28 +136,18 @@ def main(argv: list[str] | None = None) -> int:
         repo_dir=args.repo_dir, branch=args.branch, pr_ref=args.pr,
     )
 
-    # A no-op when `pr describe` launched us — same target, same key, already
-    # in WORKBENCH_RUN_LOCK. Taken so a direct invocation is guarded too: this
-    # rewrites the PR body and the target's state file, both of which a
-    # concurrent run reads and writes.
-    # Acquired before Trail.start so contention costs no trail artifacts.
-    #
-    # The checkout is read to describe it and no worktree switch happens, so
-    # the resolved tree is the one in play. Tested rather than required:
-    # run_describe degrades without one, and a lock is not the place to start
-    # refusing runs that already work.
-    #
-    # Spelled as an explicit test, not `or None`: the two are identical to
-    # Python, but validate-worktree-guards reads the AST and only an `if` is
-    # visible to it as the deliberate opt-out this is.
-    worktree = ctx.worktree_root if ctx.worktree_root else None
+    given = list(argv if argv is not None else sys.argv[1:])
+    # What `describe` declares in cli.registry: target and checkout. A no-op
+    # under `pr describe`; taken so a direct invocation is guarded too — this
+    # rewrites the PR body and the target's state file. Before Trail.start so
+    # contention costs no trail artifacts.
+    cli.locks.claim_declared("describe", given, ctx,
+                             command=" ".join([pr.describe.SCRIPT, *given]))
 
-    core.run_lock.claim_for_process(
-        ctx.target_dir,
-        command=" ".join([pr.describe.SCRIPT] + (argv if argv is not None else sys.argv[1:])),
-        started=pr.state.now_iso(),
-        worktree=worktree,
-    )
+    # Tested rather than required: run_describe degrades without a worktree.
+    # Spelled as an explicit test, not `or None`: validate-worktree-guards reads
+    # the AST and only an `if` is visible to it as the deliberate opt-out.
+    worktree = ctx.worktree_root if ctx.worktree_root else None
 
     # After the lock and before the work, matching every other gated command.
     # `--dry-run` is a narrower request than a draft — it prints the revision

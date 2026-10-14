@@ -33,7 +33,7 @@ from pathlib import Path
 
 import cli.needs
 from cli.needs import NONE as _NONE
-from cli.needs import Need, ReviewMode
+from cli.needs import NO_LOCK, Need, ReviewMode
 import core.log
 import core.publishing
 import pr.context
@@ -165,7 +165,7 @@ MODES: dict[str, ReviewMode] = {
     "--recover": ReviewMode(
         help="Finish a review whose agents failed, at the commit it started from"),
     "--list":    ReviewMode(listing,
-                            need=Need(_NONE, update=False, lock=False),
+                            need=Need(_NONE, update=False, locks=NO_LOCK),
                             schema_versions=review.listing.SCHEMA_VERSIONS,
                             help="List every review in the user's state root"),
 }

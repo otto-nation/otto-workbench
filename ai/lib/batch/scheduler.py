@@ -20,6 +20,7 @@ import batch.publish
 import batch.report
 import batch.resolve
 import batch.store
+import batch.targets
 import git.client
 import pr.ci_need
 import rebase.inspect
@@ -181,7 +182,8 @@ class Scheduler:
             was_terminal = item.terminal
             created = batch.resolve.apply(self.run, req, pr_bin=self.pr_bin,
                                           runner=self._runner, tree=self._tree,
-                                          closeout=self._closeout)
+                                          closeout=self._closeout,
+                                          env_for=batch.targets.child_env)
             self._emit("decision_resolved", run=self.run.id, decision=req.decision,
                        action=req.action)
             for d in created:
@@ -474,7 +476,8 @@ class Scheduler:
         # Sample HEAD before spawn: the harness mutates it inside `_spawn`.
         head_before = self._head(item.worktree)
         rec.start_head = rec.start_head or head_before
-        proc = self._spawn(argv, log_path=log, trail_root=self.run.trail_root)
+        proc = self._spawn(argv, log_path=log, trail_root=self.run.trail_root,
+                           env=batch.targets.child_env(item))
         rec.status, rec.started_at, rec.log_path = StepStatus.RUNNING, batch.store.now_iso(), str(log)
         item.status, item.wait_reason = ItemStatus.RUNNING, ""
         self._live[item.key] = _Live(item, rec, proc, head_before, waits=wait or rec.watch)

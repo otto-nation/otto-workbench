@@ -70,11 +70,14 @@ def _stub_pr_flow(monkeypatch, tmp_path):
                         lambda *a, **kw: SimpleNamespace(path=str(tmp_path), is_fallback=False))
     monkeypatch.setattr(review.recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), None))
+    # The real reset fetches from an `origin` tmp_path does not have.
+    monkeypatch.setattr(review.worktree, "reset_pr_worktree", lambda *a, **kw: None)
     monkeypatch.setattr(review.worktree, "cleanup_worktree", lambda *a, **kw: None)
     # The real one would flock a tmp_path that is not a git repo; what it is
     # handed is asserted directly in the test below.
     monkeypatch.setattr(core.run_lock, "claim_for_process",
                         lambda *a, **kw: None)
+    monkeypatch.setattr(core.run_lock, "lock_checkout", lambda *a, **kw: None)
     monkeypatch.setattr(review.invoke, "run", lambda request: 0)
     monkeypatch.setattr(review.completion, "_display", lambda *a, **kw: None)
     monkeypatch.setattr(review.completion, "summarise", lambda *a, **kw: None)

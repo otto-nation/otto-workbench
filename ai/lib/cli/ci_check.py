@@ -26,17 +26,16 @@ from __future__ import annotations
 
 import sys
 
+import cli.locks
 import core.log
 import core.proc
 import core.publishing
-import core.run_lock
 from core.tool_parser import ToolParser
 from core.trail import Trail, add_trail_args
 import pr.ci_check
 import pr.ci_runs
 import pr.context
 import pr.domains
-import pr.state
 import rebase.ci_fix
 
 
@@ -105,21 +104,11 @@ def main(argv: list[str] | None = None, *,
             pr_ref=args.pr, branch=args.branch, repo_dir=args.repo_dir,
         )
 
-        # --fix rebases and commits in this checkout, in this process, so the tree
-        # is locked alongside the target. Not required here: the dashboard path
-        # reads GitHub and needs no worktree at all, and a bare-repo run of it is
-        # legitimate. None means the target lock alone, which is what it had.
-        worktree = ctx.worktree_root if args.fix and ctx.worktree_root else None
-
-        # A no-op when pr launched us — we resolve the same target and find its key
-        # already in WORKBENCH_RUN_LOCK.
-        # Acquired before Trail.start so contention costs no trail artifacts.
-        core.run_lock.claim_for_process(
-            ctx.target_dir,
-            command=" ".join([pr.ci_check.SCRIPT] + argv),
-            started=pr.state.now_iso(),
-            worktree=worktree,
-        )
+        # What `ci` declares in cli.registry: the target, and with --fix the
+        # checkout it rebases and commits in. A no-op when `pr` launched us.
+        # Before Trail.start so contention costs no trail artifacts.
+        cli.locks.claim_declared("ci", argv, ctx,
+                                 command=" ".join([pr.ci_check.SCRIPT] + argv))
 
         trail = Trail.start(
             script=pr.ci_check.SCRIPT,

@@ -27,7 +27,9 @@ if str(LIB_DIR) not in sys.path:
 import cli.pr  # noqa: E402
 import cli.registry  # noqa: E402
 import cli.schema  # noqa: E402
-from cli.needs import LOCAL, NONE, REMOTE, Need  # noqa: E402
+from cli.needs import (  # noqa: E402
+    LOCAL, NO_LOCK, NONE, REMOTE, TARGET_AND_CHECKOUT, TARGET_ONLY, Need,
+)
 from cli.registry import COMMANDS, CommandSpec, need_for, validate_needs  # noqa: E402
 import core.timeouts  # noqa: E402
 import core.tool_parser  # noqa: E402
@@ -331,21 +333,23 @@ def test_review_declares_a_need_per_invocation():
     assert callable(spec.need)
 
     plain = need_for(spec, [])
-    assert plain == Need(REMOTE, update=True, lock=True)
+    assert plain == Need(REMOTE, update=True, locks=TARGET_ONLY)
 
     self_need = need_for(spec, ["--self"])
-    assert self_need == Need(LOCAL, update=True, lock=True)
-    assert (self_need.update, self_need.lock) == (plain.update, plain.lock)
+    assert self_need == Need(LOCAL, update=True, locks=TARGET_AND_CHECKOUT)
+    assert self_need.update == plain.update
 
 
 def test_create_takes_the_run_lock_only_when_it_may_publish():
     """`--dry-run` pushes nothing and creates nothing, so it holds no lock: a
     preview must not contend with a real run on the same branch."""
     spec = COMMANDS["create"]
-    assert need_for(spec, []) == Need(REMOTE, update=False, lock=True)
-    assert need_for(spec, ["--title", "t", "--draft"]) == Need(REMOTE, update=False, lock=True)
-    assert need_for(spec, ["--dry-run"]) == Need(REMOTE, update=False, lock=False)
-    assert need_for(spec, ["--title", "x", "--dry-run"]) == Need(REMOTE, update=False, lock=False)
+    assert need_for(spec, []) == Need(REMOTE, update=False, locks=TARGET_AND_CHECKOUT)
+    assert need_for(spec, ["--title", "t", "--draft"]) == Need(
+        REMOTE, update=False, locks=TARGET_AND_CHECKOUT)
+    assert need_for(spec, ["--dry-run"]) == Need(REMOTE, update=False, locks=NO_LOCK)
+    assert need_for(spec, ["--title", "x", "--dry-run"]) == Need(
+        REMOTE, update=False, locks=NO_LOCK)
 
 
 @pytest.mark.parametrize("mode", ["--post", "--repair", "--summary", "--recover"])
@@ -355,20 +359,27 @@ def test_a_mode_acting_on_an_existing_review_does_not_fetch(mode):
     reporting a review of a commit the worktree no longer sits on, and pushes
     `--recover` off the SHA it then has to pin a worktree back to. The PR still
     has to be resolved and the lock still has to be held."""
-    assert need_for(COMMANDS["review"], [mode]) == Need(REMOTE, update=False, lock=True)
+    assert need_for(COMMANDS["review"], [mode]) == Need(REMOTE, update=False, locks=TARGET_ONLY)
 
 
 def test_a_fix_run_that_may_publish_still_fetches():
     """It is about to review and push, so it wants the branch current — the
     no-fetch rule is for a mode reading a review already on disk."""
     assert need_for(COMMANDS["review"], ["--fix", "--post"]) \
-        == Need(REMOTE, update=True, lock=True)
+        == Need(REMOTE, update=True, locks=TARGET_ONLY)
 
 
 def test_review_list_resolves_nothing_and_takes_no_lock():
     """The listing answers from the reviews root, so it owes no target."""
     assert need_for(COMMANDS["review"], ["--list"]) \
-        == Need(NONE, update=False, lock=False)
+        == Need(NONE, update=False, locks=NO_LOCK)
+
+
+def test_an_abbreviated_or_inline_flag_still_decides_the_locks():
+    """argparse accepts `--fi` and `--reply=ID`; a declaration that missed them would under-lock."""
+    assert need_for(COMMANDS["ci"], ["--fi"]).locks == TARGET_AND_CHECKOUT
+    assert need_for(COMMANDS["comments"], ["--reply=12"]).locks == TARGET_ONLY
+    assert need_for(COMMANDS["create"], ["--dry"]).locks == NO_LOCK
 
 
 # ── the registry checks itself ────────────────────────────────────────────
@@ -464,14 +475,15 @@ def test_pr_help_imports_no_delegate():
     loaded = {m for m in out.stdout.strip().split(",") if m}
     assert loaded, "the probe loaded no cli module at all — it did not run `pr`"
     # `cli.pr` is the entry point the shim imports; `cli.pr_commands` is the
-    # four internal handlers, `cli.dispatch` the seam that calls one, and
-    # `cli.schema` the document `--tool-schema` serves. None is a delegate.
-    # A delegate showing up here (`cli.ci_check`, `cli.review_entry`, …) is
-    # the regression: those are what `handler` keeps as a string so that
-    # dispatch, not import, pays for them.
+    # four internal handlers, `cli.dispatch` the seam that calls one,
+    # `cli.locks` the dispatcher's declared-lock helper, and `cli.schema` the
+    # document `--tool-schema` serves. None is a delegate. A delegate showing
+    # up here (`cli.ci_check`, `cli.review_entry`, …) is the regression: those
+    # are what `handler` keeps as a string so that dispatch, not import, pays
+    # for them.
     assert loaded <= {"cli.pr", "cli.needs", "cli.registry", "cli.review_modes",
                       "cli.pr_commands", "cli.pr_batch", "cli.dispatch",
-                      "cli.schema"}, loaded
+                      "cli.locks", "cli.schema"}, loaded
 
 
 # ── process-level state belongs to the process ────────────────────────────
@@ -503,4 +515,7 @@ def test_no_cli_module_installs_a_signal_handler():
 
 
 def test_only_batch_parses_its_own_argv():
-    assert {n for n, s in COMMANDS.items() if s.parses_own_argv} == {"batch"}
+    own = {n: s for n, s in COMMANDS.items() if s.parses_own_argv}
+    assert set(own) == {"batch"}
+    assert own["batch"].parser == "cli.pr_batch:build_parser"
+    assert all(s.parser is None for s in COMMANDS.values() if not s.parses_own_argv)

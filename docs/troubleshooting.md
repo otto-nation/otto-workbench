@@ -220,21 +220,33 @@ Messages that report the *repository's shape* rather than a command's exit — `
 
 ## "another pr run already owns this target"
 
-A second `pr` run refused to start because one is already in flight against the same target — the same `(origin repo, branch)`, regardless of which directory either run was launched from. The message names the holder:
+A second `pr` run refused to start because one is already in flight against the same target — the same `(origin repo, branch)`, regardless of which directory either run was launched from. The message names the scope that was refused (`global batch`, `target <repo>@<branch>`, or `checkout <path>`) and the holder:
 
 ```
-✗ another pr run already owns this target: pr review --self --fix (pid 15461, started 2026-08-12T07:21:19+00:00)
+✗ another pr run already owns this target acme/widget@feat/x: pr review --self --fix (pid 15461, started 2026-08-12T07:21:19+00:00)
 ```
 
 Two runs against one PR corrupt each other — they both read-modify-write that target's `state.json`, and with `--fix` they both commit to the same branch, whether from one checkout or two. The lock is keyed on what a run targets, not where it was launched: reviews of two different PRs from one directory run concurrently, and two runs against the same PR exclude each other from anywhere. Wait for the holder to finish, or stop it with the printed `kill <pid>`.
 
 `pr status` is read-only and never contends — it takes no lock, makes no network call, and creates nothing, so it answers while a review holds the target, and it answers with `gh` logged out. See [what each `pr` command needs before it runs](ai-libraries.md#prcontextpy). `pr gc` prunes target state for merged and closed PRs, skips its own target, and takes each target's lock before touching it — so it will not delete state out from under a running review, and it is safe to run at any time. It also removes finished `pr batch` runs (`done` or `cancelled`) once their retention window has passed ([`batch/gc.py`](ai-libraries.md#batchgcpy)); it takes each run's lock first, and never touches a `running`, `waiting` or `interrupted` run.
 
-`review`, `ci-check`, `review-threads`, `pr-rebase`, and `pr-describe` take the same lock when you invoke them directly, so `review --self --fix` and a bare `pr-describe` are guarded too. Launched by `pr` they inherit `WORKBENCH_RUN_LOCK` from it and pass through rather than deadlocking on their own parent's lock.
+Which locks a command holds is declared once, on its entry in `ai/lib/cli/registry.py` — the table is in [`cli/locks.py`](ai-libraries.md#clilockspy) — and `pr` takes them before it fetches or runs anything. `review`, `ci-check`, `review-threads`, `pr-rebase`, and `pr-describe` read the same declaration when you invoke them directly, so `review --self --fix` and a bare `pr-describe` are guarded too. Launched by `pr` they find the lock already held — in-process, or through `WORKBENCH_RUN_LOCK`, `WORKBENCH_RUN_LOCK_TREE`, or `WORKBENCH_RUN_LOCK_GLOBAL` when they are a child — and pass through rather than deadlocking on their own parent's lock.
 
-The lock is an advisory `flock` on the target's `run.lock`, so the kernel releases it whenever the holder exits — including `kill -9`. There is no stale lock to clear by hand; if the message names a pid that is gone, the next run will take the lock regardless.
+A refusal naming a `checkout` means two different targets met in one working tree. Wait for the holder, or run the second one from its branch's own worktree.
 
-Both files live outside every checkout, in the target's own directory: `~/.config/workbench/pr/<repo-key>-<branch-slug>/` (rooted at `WORKBENCH_STATE_DIR` when you set it). The two components come from `git remote get-url origin` and the branch, so every worktree of one PR resolves the same directory — that is what lets the lock reach across checkouts. Nothing is written into the working tree, so there is no `.gitignore` entry to maintain, and `wt remove` leaves the target's state alone; `pr gc` prunes it once the PR is merged or closed.
+The lock is an advisory `flock`, so the kernel releases it whenever the holder exits — including `kill -9`. There is no stale lock to clear by hand; if the message names a pid that is gone, the next run will take the lock regardless.
+
+Three scopes, three paths — target and global locks are rooted at `WORKBENCH_STATE_DIR` (default `~/.local/state/workbench`), while the checkout lock `<git-dir>/workbench-run-tree.lock` lives in the worktree's git dir:
+
+- **target** — `~/.local/state/workbench/pr/<repo-key>-<branch-slug>/run.lock`, beside that target's `state.json`. The two path components come from `git remote get-url origin` and the branch, so every worktree of one PR resolves the same directory — that is what lets the target lock reach across checkouts. `wt remove` leaves the target's state alone; `pr gc` prunes it once the PR is merged or closed.
+- **checkout** — `<git-dir>/workbench-run-tree.lock`, keyed on the checkout's `--absolute-git-dir`.
+- **global** — `~/.local/state/workbench/locks/<name>.lock` (the live batch is `batch.lock`).
+
+None of these is a file in the working tree, so there is no `.gitignore` entry to maintain.
+
+A `pr batch run` or `pr batch resume` refused with `owns this global batch` met another batch that is still live. Only one batch runs on a machine at a time: the lock is `~/.local/state/workbench/locks/batch.lock`, taken before the run looks for an active run and held until it settles, so two sessions starting a batch together cannot both get past planning. Once the live run has an id the message names it (`run <id>`); `pr batch status RUN_ID` shows it and `pr batch cancel RUN_ID` stops it.
+
+While a batch run or resume is live it also holds every item's target, so `pr fix`, `pr rebase`, or any other locking `pr` command on one of its PRs is refused, naming `pr batch run|resume RUN_ID` as the holder. The batch's own steps get through because each child is handed only its own item's target in `WORKBENCH_RUN_LOCK`. A batch that would start while one of its PRs is already being worked on is refused whole, naming that PR; leave it out with `pr batch run --prs`, or wait for the holder.
 
 ## A tree is declared under validation
 

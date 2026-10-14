@@ -18,9 +18,11 @@ Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — w
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,11 +34,12 @@ import batch.report
 import batch.resolve
 import batch.scheduler
 import batch.store
+import batch.targets
 import config.workbench_config
 import core.report
 import core.run_lock
 import core.serde
-from batch.model import STEP_ORDER, RunStatus, Step
+from batch.model import STEP_ORDER, Item, Run, RunStatus, Step
 from core.trail import TRAIL_ROOT_ENV, Trail
 
 EXIT_OK = batch.report.EXIT_OK
@@ -175,7 +178,8 @@ def _save(run) -> None:
         batch.plan.drop_refs(run.ref_dirs, run.ref_namespace)
 
 
-def _apply_loaded(run, bin_dir: Path) -> list[str]:
+def _apply_loaded(run: Run, bin_dir: Path,
+                  env_for: Callable[[Item], dict[str, str]] | None = None) -> list[str]:
     errors = []
     pr_bin = str(bin_dir / "pr")
     for raw in batch.store.take_requests(run.id):
@@ -183,7 +187,8 @@ def _apply_loaded(run, bin_dir: Path) -> list[str]:
             errors.append(raw["error"])
             continue
         try:
-            batch.resolve.apply(run, batch.resolve.Request.from_dict(raw), pr_bin=pr_bin)
+            batch.resolve.apply(run, batch.resolve.Request.from_dict(raw), pr_bin=pr_bin,
+                                env_for=env_for)
         except (batch.resolve.ResolveError, KeyError, TypeError) as exc:
             errors.append(str(exc))
     if (run.status in (RunStatus.WAITING, RunStatus.RUNNING)
@@ -200,7 +205,7 @@ def _report_apply_errors(errors: list[str]) -> None:
 def _held_drive(run, bin_dir: Path, cfg, verbose: bool) -> int:
     status = batch.scheduler.Scheduler(
         run, pr_bin=str(bin_dir / "pr"), cfg=cfg, verbose=verbose).run_until_blocked()
-    errors = _apply_loaded(run, bin_dir)
+    errors = _apply_loaded(run, bin_dir, env_for=batch.targets.child_env)
     _save(run)
     if run.status is RunStatus.DONE:
         status = RunStatus.DONE
@@ -236,11 +241,60 @@ def _drive(run, *, bin_dir: Path, cfg, verbose: bool = False) -> int:
     return code
 
 
-def _cmd_run(args, bin_dir: Path) -> int:
-    active = batch.store.active_run_id()
-    if active:
-        return _err(f"run {active} is still active; resolve its decisions or cancel it first")
-    plan = _plan(args)
+class _Refused(Exception):
+    """A run or resume that may not start, and why — printed as its refusal."""
+
+
+@dataclass(frozen=True)
+class _Started:
+    """A run that has been planned, locked and saved, ready to drive."""
+
+    run: Run
+    cfg: config.workbench_config.BatchConfig
+    trail: Trail
+
+
+def _busy_item(run, item, verb: str, exc: core.run_lock.LockBusy) -> str:
+    """The refusal for *item*, whose target *exc* says another process holds."""
+    action = "started" if verb == "run" else "resumed"
+    hint = (" — wait for it, or leave the PR out with --prs" if verb == "run"
+            else " — wait for it to finish")
+    return f"run {run.id} not {action}: {item.key} is held by {exc.holder_text}{hint}"
+
+
+def _hold_items(held: contextlib.ExitStack, run, verb: str) -> None:
+    """Hold every item's target on *held*, sorted by path; raise _Refused if one is busy.
+
+    All or nothing: one PR another process is working on refuses the whole
+    batch rather than silently dropping it, and the targets taken before it
+    are released as the stack unwinds. An item with no `origin` has no target
+    to hold; it is named on stderr and its steps take their own locks.
+    """
+    targets = {}
+    for item in run.items:
+        target = batch.targets.item_target_dir(item)
+        if target is None:
+            print(f"pr batch: cannot name the pr target of {item.key} (no origin remote in "
+                  f"{item.repo_dir}) — its steps lock it themselves", file=sys.stderr)
+            continue
+        targets[target] = item
+    started = batch.store.now_iso()
+    for target in sorted(targets):
+        item = targets[target]
+        try:
+            held.enter_context(core.run_lock.hold(
+                {core.run_lock.TARGET}, target_dir=target, target_label=item.key,
+                command=f"pr batch {verb} {run.id}", started=started))
+        except core.run_lock.LockBusy as exc:
+            raise _Refused(_busy_item(run, item, verb, exc)) from exc
+
+
+def _start_run(held: contextlib.ExitStack, args, plan) -> _Started:
+    """Mint the run from *plan*, hold every item's target on *held*, and save it.
+
+    Raises _Refused when an item is held elsewhere. Any failure before the save
+    drops the plan's refs, since nothing else would record them to drop later.
+    """
     try:
         keys = {k for k in args.prs.split(",") if k}
         rows = [r for r in plan.rows if not keys or r.key in keys]
@@ -253,24 +307,42 @@ def _cmd_run(args, bin_dir: Path) -> int:
                                       now=datetime.now(timezone.utc),
                                       ref_namespace=plan.ref_namespace, ref_dirs=plan.ref_dirs,
                                       watch_ci=args.watch_ci)
+        # The id exists only now. From here a batch refused the lock is told
+        # which run to wait for or cancel, not only a pid.
+        core.run_lock.note_holder(batch.store.BATCH_LOCK, run=run.id)
+        _hold_items(held, run, "run")
         trail = Trail.start(script="pr-batch", context={"run": run.id}, record=True)
         run.trail_root = os.environ.get(TRAIL_ROOT_ENV, "")
         batch.store.save(run)
     except BaseException:
-        # Until the run is saved nothing records the plan's refs, so nothing
-        # would ever drop them.
         batch.plan.drop_refs(plan.ref_dirs, plan.ref_namespace)
         raise
-    batch.events.emit("run_started", run=run.id, pool=run.pool, trail_root=run.trail_root,
-                steps=[s.value for s in run.steps],
-                auto_publish=[s.value for s in run.auto_publish])
-    for item in run.items:
-        batch.events.emit("item_queued", run=run.id, item=item.key,
-                    steps=[s.step.value for s in item.steps])
-    try:
-        return _drive(run, bin_dir=bin_dir, cfg=cfg, verbose=args.verbose)
-    finally:
-        trail.finish()
+    return _Started(run, cfg, trail)
+
+
+def _cmd_run(args, bin_dir: Path) -> int:
+    active = batch.store.active_run_id()
+    if active:
+        return _err(f"run {active} is still active; resolve its decisions or cancel it first")
+    plan = _plan(args)
+    # Every item's target is held from here until _drive returns: a manual `pr`
+    # command on one of these PRs is refused while the batch works on it.
+    with contextlib.ExitStack() as held:
+        try:
+            started = _start_run(held, args, plan)
+        except _Refused as exc:
+            return _err(str(exc))
+        run = started.run
+        batch.events.emit("run_started", run=run.id, pool=run.pool, trail_root=run.trail_root,
+                          steps=[s.value for s in run.steps],
+                          auto_publish=[s.value for s in run.auto_publish])
+        for item in run.items:
+            batch.events.emit("item_queued", run=run.id, item=item.key,
+                              steps=[s.step.value for s in item.steps])
+        try:
+            return _drive(run, bin_dir=bin_dir, cfg=started.cfg, verbose=args.verbose)
+        finally:
+            started.trail.finish()
 
 
 def _cmd_resume(args, bin_dir: Path) -> int:
@@ -285,11 +357,18 @@ def _cmd_resume(args, bin_dir: Path) -> int:
         return _err(f"no run {run_id}")
     if run.status in (RunStatus.DONE, RunStatus.CANCELLED):
         return _err(f"run {run_id} is {run.status.value}")
-    batch.store.clear_cancel(run_id)
-    batch.scheduler.mark_interrupted(run, emit=batch.events.emit)
-    os.environ.setdefault(TRAIL_ROOT_ENV, run.trail_root)
-    return _drive(run, bin_dir=bin_dir, cfg=_cfg([i.repo_dir for i in run.items]),
-                  verbose=args.verbose)
+    # As for a run: every item's target is held until _drive returns.
+    with contextlib.ExitStack() as held:
+        try:
+            _hold_items(held, run, "resume")
+        except _Refused as exc:
+            return _err(str(exc))
+        core.run_lock.note_holder(batch.store.BATCH_LOCK, run=run_id)
+        batch.store.clear_cancel(run_id)
+        batch.scheduler.mark_interrupted(run, emit=batch.events.emit)
+        os.environ.setdefault(TRAIL_ROOT_ENV, run.trail_root)
+        return _drive(run, bin_dir=bin_dir, cfg=_cfg([i.repo_dir for i in run.items]),
+                      verbose=args.verbose)
 
 
 def _apply_pending(run_id: str, bin_dir: Path, decision_id: str) -> int:

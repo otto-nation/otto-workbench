@@ -76,6 +76,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `validate-frozen-roots` | Validates that no module freezes a workbench root into an import-time constant |
 | `validate-ai-layers` | Validates that every ai/lib package imports only what the layer declaration in its __init__.py permits |
 | `validate-entry-points` | Fails when a script under ai/bin or ai/claude/bin that carries the ai/lib pin or imports an ai/lib package is anything but a shim — one cli import and the call into it |
+| `validate-run-locks` | Fails when code under ai/ takes a run lock itself instead of declaring it on the command's Need in ai/lib/cli/registry.py |
 | `validate-prose-refs` | Fails when agent, skill, rule or doc prose names a slash command no skill or hook answers, or a CLI command or flag the tool's own parser does not accept |
 | `validate-import-form` | Validates that every ai/lib module is imported as `import pkg.mod` and named through its package |
 | `validate-stat-portability` | Validates that stat format flags are confined to the lib/portable.sh helpers |

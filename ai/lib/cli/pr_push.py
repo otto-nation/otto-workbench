@@ -22,16 +22,12 @@ Usage:
 
 from __future__ import annotations
 
-import sys
 import traceback
-from pathlib import Path
 
 import core.publishing
-import core.run_lock
 from core.tool_parser import ToolParser
 from core.trail import Trail, add_trail_args
 import pr.context
-import pr.state
 import rebase.commands
 
 SCRIPT = "pr push"
@@ -66,12 +62,8 @@ def main(argv: list[str] | None = None) -> int:
     ctx = pr.context.resolve_at(pr.context.ContextDepth.LOCAL, repo_dir=args.repo_dir,
                                 branch=args.branch, pr_ref=args.pr)
     cwd = str(ctx.require_worktree())
-    # A no-op under `pr push`, which already holds this target's lock; taken
-    # here too so a direct call cannot interleave with another run on the tree.
-    core.run_lock.claim_for_process(
-        ctx.target_dir,
-        command=" ".join([SCRIPT] + (argv if argv is not None else sys.argv[1:])),
-        started=pr.state.now_iso(), worktree=Path(cwd))
+    # No lock taken here: there is no direct entry point, and `pr`'s dispatcher
+    # holds the target and checkout `push` declares in cli.registry.
 
     trail = Trail.start(script=SCRIPT,
                         context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},

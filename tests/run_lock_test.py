@@ -288,34 +288,27 @@ def test_two_targets_and_a_re_claim_of_the_first_all_hold(tmp_path):
         assert json.loads((first / LOCK_FILE).read_text())["command"] == "pr fix"
         assert json.loads((second / LOCK_FILE).read_text())["command"] == "ci-check"
 
-        # The marker has to follow the re-claim, not stay on B. A subprocess
-        # spawned for A now reads this value to decide whether A is already
-        # held — and a stale B sends it to flock a path its own ancestor holds.
-        assert os.environ[LOCK_ENV] == str(first)
+        # Both are in the marker. A subprocess spawned for either reads it to
+        # decide whether its target is already held, and one missing would send
+        # it to flock a path its own ancestor holds.
+        assert set(os.environ[LOCK_ENV].split(os.pathsep)) == {str(first), str(second)}
 
 
-def test_the_marker_follows_a_re_claim_rather_than_the_order_taken(tmp_path):
-    """The innermost lock is the most recently used, not the first acquired.
+def test_the_marker_names_every_lock_however_they_were_taken(tmp_path):
+    """Claims and re-claims leave every held target in the marker.
 
-    Insertion order and recency agree until a lock is re-claimed, and only then
-    do they diverge: the re-claim touches no ordering, so a marker derived from
-    insertion order keeps naming whichever lock was taken last. The on-disk
-    records cannot catch this — a pass-through leaves them untouched either
-    way, which is what the sibling tests assert — so the marker is the only
-    observable that distinguishes the two.
+    A single-valued marker had to pick one — the most recently used — and a
+    subprocess spawned for any other target then refused its own ancestor's
+    lock. It now carries them all, so the order they were taken in no longer
+    decides what a child can pass through.
     """
     first, second = tmp_path / "t-a", tmp_path / "t-b"
 
     core.run_lock.claim_for_process(first, command="review", started="t")
     core.run_lock.claim_for_process(second, command="ci-check", started="t")
-    assert os.environ[LOCK_ENV] == str(second)
-
     core.run_lock.claim_for_process(first, command="pr-describe", started="t")
-    assert os.environ[LOCK_ENV] == str(first)
 
-    # And back again: recency tracks every take, not just the first re-claim.
-    core.run_lock.claim_for_process(second, command="pr-describe", started="t")
-    assert os.environ[LOCK_ENV] == str(second)
+    assert set(os.environ[LOCK_ENV].split(os.pathsep)) == {str(first), str(second)}
 
 
 def test_a_claim_passes_through_a_lock_this_process_holds_with_no_marker(worktree):
@@ -358,10 +351,10 @@ def test_a_second_checkout_does_not_displace_the_first(worktree, tmp_path):
         assert record["command"] == "pr fix"
         assert (_git_dir(second) / TREE_LOCK_FILE).exists()
 
-        # And the tree marker names the checkout we came back to, not the one
-        # claimed in between — the same recency question as the target marker,
-        # which `pr fix` reaches by switching worktrees mid-run.
-        assert os.environ[TREE_LOCK_ENV] == str(_git_dir(worktree))
+        # And the tree marker names both checkouts, so a child resolving either
+        # passes through rather than refusing its own ancestor's lock.
+        assert set(os.environ[TREE_LOCK_ENV].split(os.pathsep)) == {
+            str(_git_dir(worktree)), str(_git_dir(second))}
 
 
 def test_a_claim_inside_an_acquire_survives_the_block(worktree):
@@ -377,7 +370,7 @@ def test_a_claim_inside_an_acquire_survives_the_block(worktree):
     assert os.environ[LOCK_ENV] == str(worktree)
 
 
-def test_the_marker_names_the_innermost_lock_this_process_still_holds(tmp_path):
+def test_the_marker_names_every_lock_this_process_still_holds(tmp_path):
     """The marker is derived from what is held, not restored to what it was.
 
     Restoring per call would clear it here: the claim on B displaced A's value,
@@ -387,7 +380,7 @@ def test_the_marker_names_the_innermost_lock_this_process_still_holds(tmp_path):
 
     with acquire(first, command="pr fix", started="t"):
         core.run_lock.claim_for_process(second, command="ci-check", started="t")
-        assert os.environ[LOCK_ENV] == str(second)
+        assert set(os.environ[LOCK_ENV].split(os.pathsep)) == {str(first), str(second)}
 
     # B is still held, so the marker must still name it — a subprocess spawned
     # now would otherwise deadlock on a lock its parent holds.

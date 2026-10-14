@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+"""Validate that run locks are taken only where the command registry puts them.
+
+Usage: bin/local/validate-run-locks [--quiet] [file...]
+
+Which run locks a `pr` command holds is declared once, as `core.run_lock`
+scopes on its `Need` in `ai/lib/cli/registry.py`, and taken by `cli.locks`:
+by `pr`'s dispatcher for every `pr <command>`, and by `claim_declared` in the
+entry points that can be run without `pr`. A handler that calls
+`core.run_lock` itself has chosen its own locks — the opt-in shape that let
+`pr batch` start twice, because nothing noticed a command that opted out.
+
+So a call to one of `core.run_lock`'s lock-taking functions (`TAKING`) is
+refused under `ai/lib`, `ai/bin` and `ai/claude/bin` unless `ALLOWED` lists
+that function for that file. Importing one by name is refused everywhere: a
+bare `acquire(...)` would slip past the attribute check, and the module form
+is what `validate-import-form` asks for anyway.
+
+Asking about a lock — `is_held`, `report_busy`, `LockBusy`, the scope
+vocabulary — is not taking one, and passes.
+
+The allowlist is the whole of the exceptions, each for a reason the registry
+cannot express:
+
+  core/run_lock.py      the primitives themselves
+  cli/locks.py          the acquisition function the dispatcher and entry points call
+  cli/pr_batch.py       each run's own lock, which `batch resolve` must be able to
+                        take while no batch is live; and every item's target, which
+                        only planning can name
+  batch/gc.py,          the per-run and per-target locks a sweep takes before it
+  review/gc.py          deletes what they guard
+  cli/review_entry.py,  `lock_checkout`, for a review that learns its checkout
+  review/run.py         only after switching to it
+
+Exit code: 0 if every file passes, 1 otherwise.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+_WORKBENCH_DIR = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_WORKBENCH_DIR / "lib"))
+from ansi import GREEN, NC, RED  # noqa: E402
+
+LIB_DIR = "ai/lib"
+BIN_DIRS = ("ai/bin", "ai/claude/bin")
+MODULE = "core.run_lock"
+# How a call names the module: the import form every file is held to, and the
+# bare name `from core import run_lock` would bind.
+RECEIVERS = frozenset({"core.run_lock", "run_lock"})
+TAKING = frozenset({"acquire", "claim_for_process", "hold", "lock_checkout"})
+
+ALLOWED: dict[str, frozenset[str]] = {
+    "ai/lib/core/run_lock.py": TAKING,
+    "ai/lib/cli/locks.py": frozenset({"hold", "claim_for_process"}),
+    "ai/lib/cli/pr_batch.py": frozenset({"acquire", "hold"}),
+    "ai/lib/batch/gc.py": frozenset({"acquire"}),
+    "ai/lib/review/gc.py": frozenset({"acquire"}),
+    "ai/lib/cli/review_entry.py": frozenset({"lock_checkout"}),
+    "ai/lib/review/run.py": frozenset({"lock_checkout"}),
+}
+
+
+@dataclass(frozen=True)
+class Violation:
+    line: int
+    reason: str
+
+
+def _is_python(path: Path) -> bool:
+    try:
+        first = path.read_text(encoding="utf-8").split("\n", 1)[0]
+    except (OSError, UnicodeDecodeError):
+        return False
+    return first.startswith("#!") and "python" in first
+
+
+def discover(root: Path) -> list[Path]:
+    """Every module under ai/lib and every extensionless Python script in the bin dirs, sorted."""
+    lib = root / LIB_DIR
+    found = sorted(lib.rglob("*.py")) if lib.is_dir() else []
+    for rel in BIN_DIRS:
+        base = root / rel
+        if base.is_dir():
+            found += sorted(p for p in base.iterdir()
+                            if p.is_file() and not p.suffix and _is_python(p))
+    return found
+
+
+def _call_violations(node: ast.Call, allowed: frozenset[str]) -> list[Violation]:
+    func = node.func
+    if not isinstance(func, ast.Attribute) or func.attr not in TAKING or func.attr in allowed:
+        return []
+    if ast.unparse(func.value) not in RECEIVERS:
+        return []
+    return [Violation(node.lineno, f"calls core.run_lock.{func.attr} — declare the lock on "
+                                   f"the command's Need in ai/lib/cli/registry.py, which "
+                                   f"cli.locks takes")]
+
+
+def _import_violations(node: ast.ImportFrom) -> list[Violation]:
+    if node.module != MODULE:
+        return []
+    return [Violation(node.lineno, f"imports {alias.name} from core.run_lock by name — call "
+                                   f"it as core.run_lock.{alias.name} so this check sees it")
+            for alias in node.names if alias.name in TAKING]
+
+
+def check_source(source: str, relpath: str) -> list[Violation]:
+    """Every lock-taking call or by-name import in *source* that *relpath* may not make.
+
+    *relpath* is the file's path from the repo root with forward slashes — the
+    key `ALLOWED` is looked up by. Raises SyntaxError when *source* does not parse.
+    """
+    allowed = ALLOWED.get(relpath, frozenset())
+    found: list[Violation] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Call):
+            found += _call_violations(node, allowed)
+        elif isinstance(node, ast.ImportFrom):
+            found += _import_violations(node)
+    return sorted(found, key=lambda v: v.line)
+
+
+def _problems(path: Path, rel: str) -> list[Violation]:
+    try:
+        return check_source(path.read_text(encoding="utf-8"), rel)
+    except (OSError, UnicodeDecodeError, SyntaxError) as exc:
+        return [Violation(1, f"cannot read: {exc}")]
+
+
+def _report(rel: str, problems: list[Violation]) -> None:
+    print(f"  {RED}✗{NC} {rel}", file=sys.stderr)
+    for v in problems:
+        print(f"      line {v.line}: {v.reason}", file=sys.stderr)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Validate that run locks are taken only where the command registry puts them.")
+    parser.add_argument("--quiet", action="store_true", help="Only show failures")
+    parser.add_argument("files", nargs="*", help="Files to check (default: discover)")
+    args = parser.parse_args(argv)
+
+    root = _WORKBENCH_DIR
+    paths = [Path(f).resolve() for f in args.files] if args.files else discover(root)
+    failed = 0
+    for path in paths:
+        rel = path.relative_to(root).as_posix() if path.is_relative_to(root) else str(path)
+        problems = _problems(path, rel)
+        if problems:
+            failed += 1
+            _report(rel, problems)
+    if failed:
+        print(f"\n{RED}✗{NC} {failed} of {len(paths)} files take a run lock the registry "
+              f"does not declare", file=sys.stderr)
+        return 1
+    if not args.quiet:
+        print(f"{GREEN}✓{NC} {len(paths)} files checked, every run lock taken where the "
+              f"registry puts it")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

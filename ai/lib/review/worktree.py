@@ -1,9 +1,13 @@
 """Worktree lifecycle for a review run: obtain one, pin one, release one.
 
-The primitives (`setup_pr_worktree`, `detached_worktree_at`, `switch_to_branch`,
-`cleanup_worktree`) create and destroy checkouts. The resolvers below compose
-those primitives rather than duplicating them: they answer *which directory*
-a review should run in, given a slug, a branch name, or a `--repo-dir`.
+The primitives (`setup_pr_worktree`, `reset_pr_worktree`, `detached_worktree_at`,
+`switch_to_branch`, `cleanup_worktree`) create, update and destroy checkouts.
+Setting up a PR's tree and resetting it are separate steps so a caller can lock
+the tree between them: the reset is the first write to it.
+
+The resolvers below compose those primitives rather than duplicating them: they
+answer *which directory* a review should run in, given a slug, a branch name, or
+a `--repo-dir`.
 
 That is a different question from `git.topology`, which starts from a git cwd
 and asks which of *its* worktrees holds a branch. Topology has no GitHub-slug
@@ -38,7 +42,7 @@ class WorktreeResult:
     is_fallback: bool
 
 
-def setup_pr_worktree(repo: str, pr_number: int | str, repo_dir: str, pr_head: str = "") -> WorktreeResult:
+def setup_pr_worktree(repo: str, pr_number: int | str, repo_dir: str) -> WorktreeResult:
     if _is_shallow(repo_dir):
         core.log.info("Unshallowing repository...")
         git.client.run("fetch", "--unshallow", cwd=repo_dir)
@@ -47,8 +51,6 @@ def setup_pr_worktree(repo: str, pr_number: int | str, repo_dir: str, pr_head: s
 
     wt_path = git.topology.wt_switch(f"pr:{pr_number}", repo_dir)
     if wt_path:
-        if pr_head:
-            pr.sync.fetch_and_reset(wt_path, pr_head)
         return WorktreeResult(path=wt_path, cleanup_ref=f"pr:{pr_number}", is_fallback=False)
 
     core.log.info("Branch deleted, fetching via PR ref...")
@@ -67,6 +69,18 @@ def setup_pr_worktree(repo: str, pr_number: int | str, repo_dir: str, pr_head: s
             f"Failed to create worktree for PR #{pr_number}", r))
 
     return WorktreeResult(path=fallback_path, cleanup_ref=fallback_path, is_fallback=True)
+
+
+def reset_pr_worktree(result: WorktreeResult, pr_head: str) -> None:
+    """Bring the PR's own worktree up to *pr_head* on the remote.
+
+    A no-op for a fallback tree, which was just created at the PR's head, and
+    when *pr_head* is empty. Separate from `setup_pr_worktree` so the caller
+    can lock the tree before this first write to it.
+    """
+    if result.is_fallback or not pr_head:
+        return
+    pr.sync.fetch_and_reset(result.path, pr_head)
 
 
 def detached_worktree_at(sha: str, repo_dir: str, label: str) -> WorktreeResult | None:

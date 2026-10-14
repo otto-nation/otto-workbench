@@ -370,7 +370,7 @@ def test_a_claim_inside_an_acquire_survives_the_block(worktree):
     assert os.environ[LOCK_ENV] == str(worktree)
 
 
-def test_the_marker_names_the_innermost_lock_this_process_still_holds(tmp_path):
+def test_the_marker_names_every_lock_this_process_still_holds(tmp_path):
     """The marker is derived from what is held, not restored to what it was.
 
     Restoring per call would clear it here: the claim on B displaced A's value,

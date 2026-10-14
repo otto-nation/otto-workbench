@@ -34,8 +34,10 @@ and `_held_scopes` then reads the `--self` need, so it holds target+checkout.
 `review <pr>` stays TARGET and takes the checkout later through `lock_checkout`.
 
 `--self --post` / `--summary` / `--repair` (no `--fix`) stay REVIEW_MODE_NEED —
-REMOTE, no fetch, TARGET only. Those flags are handler modes, so they do not
-lock the checkout.
+REMOTE, no fetch, TARGET only. Under `pr` those flags are handler modes that
+publish a review already on disk. On the `review` binary `--post` means publish;
+without `--fix` there is no tree write, and a run that later switches trees
+takes the checkout then through `lock_checkout`.
 
 The table is pinned against the registry by `tests/pr_cli_dispatch_test.py`,
 and `bin/local/validate-run-locks` refuses a lock taken anywhere this module

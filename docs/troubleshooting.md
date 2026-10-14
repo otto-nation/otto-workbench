@@ -246,7 +246,7 @@ None of these is a file in the working tree, so there is no `.gitignore` entry t
 
 A `pr batch run` or `pr batch resume` refused with `owns this global batch` met another batch that is still live. Only one batch runs on a machine at a time: the lock is `~/.local/state/workbench/locks/batch.lock`, taken before the run looks for an active run and held until it settles, so two sessions starting a batch together cannot both get past planning. Once the live run has an id the message names it (`run <id>`); `pr batch status RUN_ID` shows it and `pr batch cancel RUN_ID` stops it.
 
-While a batch run or resume is live it also holds every item's target, so `pr fix`, `pr rebase`, or any other locking `pr` command on one of its PRs is refused, naming `pr batch run RUN_ID` as the holder. The batch's own steps get through because each child is handed only its own item's target in `WORKBENCH_RUN_LOCK`. A batch that would start while one of its PRs is already being worked on is refused whole, naming that PR; leave it out with `pr batch run --prs`, or wait for the holder.
+While a batch run or resume is live it also holds every item's target, so `pr fix`, `pr rebase`, or any other locking `pr` command on one of its PRs is refused, naming `pr batch run|resume RUN_ID` as the holder. The batch's own steps get through because each child is handed only its own item's target in `WORKBENCH_RUN_LOCK`. A batch that would start while one of its PRs is already being worked on is refused whole, naming that PR; leave it out with `pr batch run --prs`, or wait for the holder.
 
 ## A tree is declared under validation
 

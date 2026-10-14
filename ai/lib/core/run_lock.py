@@ -60,8 +60,8 @@ the five entry points that can be run without ``pr`` — ``review``,
 bypassing ``pr`` does not bypass the lock. Under ``pr`` a delegate's claim
 finds the lock already in this process's registry, or in
 ``WORKBENCH_RUN_LOCK``, ``WORKBENCH_RUN_LOCK_TREE`` or
-``WORKBENCH_RUN_LOCK_GLOBAL`` when it is a child, and passes through. ``bin/local/validate-run-locks``
-refuses a lock taken anywhere else.
+``WORKBENCH_RUN_LOCK_GLOBAL`` when it is a child, and passes through.
+``bin/local/validate-run-locks`` refuses a lock taken anywhere else.
 
 The one late acquisition is ``lock_checkout``, for a review that learns which
 tree it writes only after setting it up or switching to it. It refuses unless
@@ -213,7 +213,7 @@ _ATEXIT_REGISTERED = False
 
 
 class LockBusy(RuntimeError):
-    """Raised when another process already holds one of the two locks.
+    """Raised when another process already holds one of the three scopes.
 
     ``subject`` names which, because the remedies differ: a contended target is
     the same work twice and the answer is to wait, while a contended checkout is

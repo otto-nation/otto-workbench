@@ -150,6 +150,13 @@ def test_self_with_fix_and_post_resolves_locally():
     assert review_need(["--self", "--fix", "--post"], MODES) == REVIEW_SELF_NEED
 
 
+def test_an_abbreviated_fix_beside_self_and_post_still_locks_the_checkout():
+    """argparse takes `--fi` for `--fix`, so `--self --fi --post` is still a
+    self-review with a modifier, not the publish mode."""
+    assert review_need(["--self", "--fi", "--post"], MODES) == REVIEW_SELF_NEED
+    assert REVIEW_SELF_NEED.locks == TARGET_AND_CHECKOUT
+
+
 def test_a_mode_flag_outranks_self():
     """`--summary --self` acts on a review already on disk, and that review
     names a PR — so the mode's need decides, not the target selector's."""

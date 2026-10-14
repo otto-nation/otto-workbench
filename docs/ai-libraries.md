@@ -2857,7 +2857,7 @@ a default — `cli.registry.validate_needs` is the check, and it is what makes
 adding a command a one-line edit in one place.
 
 `status` is the only read-only local one. `review --self` and `push` are local
-too, but they hold locks. It reads `state.json` and the worktree's push
+too, but they hold locks. `status` reads `state.json` and the worktree's push
 state, and needs neither `gh repo view` nor `gh pr view` to do it: with no
 `state.json` yet, the header names the repo from the origin-derived label
 behind the repo key (`acme/widget`) rather than from `gh`. An explicit
@@ -4799,8 +4799,8 @@ the five entry points that can be run without ``pr`` — ``review``,
 bypassing ``pr`` does not bypass the lock. Under ``pr`` a delegate's claim
 finds the lock already in this process's registry, or in
 ``WORKBENCH_RUN_LOCK``, ``WORKBENCH_RUN_LOCK_TREE`` or
-``WORKBENCH_RUN_LOCK_GLOBAL`` when it is a child, and passes through. ``bin/local/validate-run-locks``
-refuses a lock taken anywhere else.
+``WORKBENCH_RUN_LOCK_GLOBAL`` when it is a child, and passes through.
+``bin/local/validate-run-locks`` refuses a lock taken anywhere else.
 
 The one late acquisition is ``lock_checkout``, for a review that learns which
 tree it writes only after setting it up or switching to it. It refuses unless
@@ -6529,8 +6529,10 @@ and `_held_scopes` then reads the `--self` need, so it holds target+checkout.
 `review <pr>` stays TARGET and takes the checkout later through `lock_checkout`.
 
 `--self --post` / `--summary` / `--repair` (no `--fix`) stay REVIEW_MODE_NEED —
-REMOTE, no fetch, TARGET only. Those flags are handler modes, so they do not
-lock the checkout.
+REMOTE, no fetch, TARGET only. Under `pr` those flags are handler modes that
+publish a review already on disk. On the `review` binary `--post` means publish;
+without `--fix` there is no tree write, and a run that later switches trees
+takes the checkout then through `lock_checkout`.
 
 The table is pinned against the registry by `tests/pr_cli_dispatch_test.py`,
 and `bin/local/validate-run-locks` refuses a lock taken anywhere this module

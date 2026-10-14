@@ -161,7 +161,7 @@ def review_modes(argv: Sequence[str], modes: Mapping[str, ReviewMode]) -> list[s
     """
     given = set(argv)
     found = [flag for flag in modes if flag in given]
-    if "--fix" in given:
+    if has_flag(argv, "--fix"):
         return [flag for flag in found if flag != "--post"]
     return found
 

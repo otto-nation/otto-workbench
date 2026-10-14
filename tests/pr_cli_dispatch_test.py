@@ -501,6 +501,17 @@ def test_end_of_options_help_does_not_skip_the_batch_lock(capsys):
     run.assert_not_called()
 
 
+def test_end_of_options_help_does_not_skip_the_batch_lock_on_resume(capsys):
+    """`pr batch resume -- --help` is not the parser answering help."""
+    record = {"pid": 7, "command": "pr batch run --checkout /x", "started": "t0"}
+    with held_elsewhere(core.run_lock.global_lock_path("batch"), record), \
+         patch("cli.pr_batch._cmd_resume") as resume:
+        code = _run_main("batch", "resume", "--", "--help")
+    assert code == 1
+    assert "owns this global batch" in capsys.readouterr().err
+    resume.assert_not_called()
+
+
 def test_dispatch_holds_target_and_checkout_before_it_fetches(worktree):
     """`update_to_remote` fast-forwards the worktree, which is a write to the checkout."""
     target = worktree / "target"

@@ -206,7 +206,6 @@ def test_requests_a_live_run_drains_get_item_markers_and_an_idle_resolve_does_no
     assert seen == [batch.targets.child_env, None]
 
 
-
 # ── every item's target, for the life of the run ─────────────────────────────
 
 

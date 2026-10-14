@@ -55,7 +55,7 @@ a default — `cli.registry.validate_needs` is the check, and it is what makes
 adding a command a one-line edit in one place.
 
 `status` is the only read-only local one. `review --self` and `push` are local
-too, but they hold locks. It reads `state.json` and the worktree's push
+too, but they hold locks. `status` reads `state.json` and the worktree's push
 state, and needs neither `gh repo view` nor `gh pr view` to do it: with no
 `state.json` yet, the header names the repo from the origin-derived label
 behind the repo key (`acme/widget`) rather than from `gh`. An explicit

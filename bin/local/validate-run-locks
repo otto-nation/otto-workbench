@@ -27,8 +27,10 @@ cannot express:
   cli/pr_batch.py       each run's own lock, which `batch resolve` must be able to
                         take while no batch is live; and every item's target, which
                         only planning can name
-  batch/gc.py,          the per-run and per-target locks a sweep takes before it
-  review/gc.py          deletes what they guard
+  batch/store.py        the run resource (`hold_resource`), which session, create
+                        and reap take; gc never takes a lock of its own
+  review/gc.py          the per-target locks a sweep takes before it deletes
+                        what they guard
   cli/review_entry.py,  `lock_checkout`, for a review that learns its checkout
   review/run.py         only after switching to it
 
@@ -60,7 +62,6 @@ ALLOWED: dict[str, frozenset[str]] = {
     "ai/lib/cli/locks.py": frozenset({"hold", "claim_for_process"}),
     "ai/lib/cli/pr_batch.py": frozenset({"acquire", "hold"}),
     "ai/lib/batch/store.py": frozenset({"hold_resource"}),
-    "ai/lib/batch/gc.py": frozenset({"acquire"}),
     "ai/lib/review/gc.py": frozenset({"acquire"}),
     "ai/lib/cli/review_entry.py": frozenset({"lock_checkout"}),
     "ai/lib/review/run.py": frozenset({"lock_checkout"}),

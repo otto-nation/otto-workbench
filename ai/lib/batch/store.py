@@ -1,12 +1,19 @@
 """Where a `pr batch` run lives on disk; the only module that touches it.
 
     <state_dir>/batch/<run-id>/state.json       authoritative run state
-    <state_dir>/batch/<run-id>/run.lock         held by the live scheduler
+    <state_dir>/batch/<run-id>/run.lock         the run's resource lock (holder record carries role)
     <state_dir>/locks/batch.lock                held by whichever `pr batch run`/`resume` is live
     <state_dir>/batch/<run-id>/requests/*.json  decisions waiting to be applied
+    <state_dir>/batch/<run-id>.reaping          tombstone during reap; run_ids() ignores it
     <state_dir>/batch/<run-id>/cancel           {"kill": bool} once cancel is asked
     <state_dir>/batch/<run-id>/logs/<slug>-<pr>-<step>-<n>.log     stderr of each step attempt
     <state_dir>/batch/<run-id>/logs/<slug>-<pr>-publish-<n>.log    output of each publish attempt
+
+``reap`` renames the run directory to the tombstone while still holding the
+flock. ``os.replace`` moves ``run.lock`` with the directory; the flock stays
+on the same inode, so the hold remains valid across the rename. ``run_ids()``
+skips names ending in ``.reaping`` because a tombstone still contains
+``state.json``.
 """
 
 # doc-group: batch
@@ -16,9 +23,10 @@ from __future__ import annotations
 import contextlib
 import enum
 import json
+import os
 import secrets
 import shutil
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -189,11 +197,18 @@ def load(run_id: str) -> Run:
 
 
 def run_ids() -> list[str]:
-    """Every saved run, oldest first; a directory with no state file is not a run."""
+    """Every saved run, oldest first; a directory with no state file is not a run.
+
+    Tombstones (``<id>.reaping``) are ignored even though they contain
+    ``state.json``: they are a run directory mid-deletion, not a run.
+    """
     root = batch_root()
     if not root.is_dir():
         return []
-    return sorted(p.name for p in root.iterdir() if (p / STATE_FILE).is_file())
+    return sorted(
+        p.name for p in root.iterdir()
+        if (p / STATE_FILE).is_file() and not p.name.endswith(".reaping")
+    )
 
 
 def latest_run_id() -> str | None:
@@ -211,14 +226,6 @@ def active_run_id() -> str | None:
 def state_mtime(run_id: str) -> float:
     """When *run_id*'s state was last saved, as a timestamp: its terminal transition once finished."""
     return (run_dir(run_id) / STATE_FILE).stat().st_mtime
-
-
-def remove(run_id: str) -> None:
-    """Delete *run_id*'s directory: state, logs, requests and lock record.
-
-    Raises OSError when any of it cannot be removed; the caller reports it.
-    """
-    shutil.rmtree(run_dir(run_id))
 
 
 def _requests_dir(run_id: str) -> Path:
@@ -629,3 +636,80 @@ def create(run: Run, *, inbox: InboxPolicy, command: str) -> Iterator[Session]:
             return
         if not opened._finished:
             opened.finish()
+
+
+class ReapResult(enum.Enum):
+    """What ``reap`` did with a run directory."""
+
+    REMOVED = "removed"
+    BUSY = "busy"
+    PENDING = "pending"
+    FRESH = "fresh"
+    REFS_KEPT = "refs_kept"
+    MISSING = "missing"
+
+
+def reap(run_id: str, *, expired: Callable[[Run], bool], command: str) -> ReapResult:
+    """Take the run as ``Role.GC`` and delete it when *expired* says so.
+
+    Does not drain and does not commit: a maintenance sweep must never push.
+    ``LockBusy`` of any classification is ``BUSY`` — gc does not wait. Missing
+    run dir or state is ``MISSING``. A request that lands in the tombstone
+    window, or refs that would not delete, restore the original path and keep
+    the run. ``OSError`` from ``os.replace`` / ``shutil.rmtree`` (after the
+    tombstone is moved back when it still exists) propagates for gc to log.
+    A ``write_request`` racing the rename cannot recreate the run directory
+    (it writes with ``create_parents=False``), so the tombstone check sees
+    every request that will ever belong to this run.
+    """
+    lock = run_lock(run_id)
+    try:
+        with core.run_lock.hold_resource(
+            lock, command=command, started=now_iso(),
+            fields={"role": Role.GC.value, "run": run_id}, create=False,
+        ):
+            return _reap_held(run_id, expired=expired)
+    except core.run_lock.LockBusy:
+        return ReapResult.BUSY
+    except FileNotFoundError:
+        return ReapResult.MISSING
+
+
+def _reap_held(run_id: str, *, expired: Callable[[Run], bool]) -> ReapResult:
+    """Body of ``reap`` once the resource is held. Split to keep nesting at 1."""
+    try:
+        run = load(run_id)
+    except RunNotFound:
+        return ReapResult.MISSING
+    if pending_requests(run_id) > 0:
+        return ReapResult.PENDING
+    if not expired(run):
+        return ReapResult.FRESH
+    live = run_dir(run_id)
+    tombstone = batch_root() / f"{run_id}.reaping"
+    os.replace(live, tombstone)
+    if _tombstone_has_requests(tombstone):
+        os.replace(tombstone, live)
+        return ReapResult.PENDING
+    if not batch.plan.drop_refs(run.ref_dirs, run.ref_namespace):
+        os.replace(tombstone, live)
+        return ReapResult.REFS_KEPT
+    try:
+        shutil.rmtree(tombstone)
+    except OSError:
+        if tombstone.exists():
+            os.replace(tombstone, live)
+        raise
+    return ReapResult.REMOVED
+
+
+def _tombstone_has_requests(tombstone: Path) -> bool:
+    """Whether the renamed run dir still holds an inbox file.
+
+    Must glob the tombstone path, not ``pending_requests(run_id)``: after
+    ``os.replace`` the original ``run_dir`` is gone, so a lookup there would
+    miss every racing write.
+    """
+    reqs = tombstone / REQUESTS_DIR
+    return reqs.is_dir() and any(reqs.glob("*.json"))
+

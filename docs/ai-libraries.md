@@ -3486,11 +3486,14 @@ Only `done` and `cancelled` runs are candidates. `running` and `waiting` runs
 are live, and an `interrupted` run is one `pr batch resume` can still pick up.
 A run is kept for `review.gc.GC_STALE_DAYS` after its last save, or for
 `review.gc.GC_FAILED_STALE_DAYS` when it kept work a person may come back for —
-see `retention_days`. Its lock is taken, non-blocking, around the removal, so a
-run some process holds is skipped rather than deleted under it, and a run whose
-refs would not all delete is kept for the next sweep. That retry is unbounded: a
-ref that can never delete (a permissions problem, say) keeps the run, and warns,
-on every sweep.
+see `retention_days`. Removal goes through `batch.store.reap`, which takes the
+run's resource as `GC` so a run some process holds is skipped rather than
+deleted under it, and a run whose refs would not all delete is kept for the
+next sweep. That retry is unbounded: a ref that can never delete (a
+permissions problem, say) keeps the run, and warns, on every sweep. A leftover
+`<id>.reaping` tombstone from a crash mid-reap is warned about and left in
+place: deleting it from outside the lock would race a live reap that still
+holds the flock on that directory's inode.
 
 ### batch/inbox.py
 
@@ -3649,12 +3652,19 @@ reach a terminal, whether the batch runs under a server or in a shell.
 Where a `pr batch` run lives on disk; the only module that touches it.
 
     <state_dir>/batch/<run-id>/state.json       authoritative run state
-    <state_dir>/batch/<run-id>/run.lock         held by the live scheduler
+    <state_dir>/batch/<run-id>/run.lock         the run's resource lock (holder record carries role)
     <state_dir>/locks/batch.lock                held by whichever `pr batch run`/`resume` is live
     <state_dir>/batch/<run-id>/requests/*.json  decisions waiting to be applied
+    <state_dir>/batch/<run-id>.reaping          tombstone during reap; run_ids() ignores it
     <state_dir>/batch/<run-id>/cancel           {"kill": bool} once cancel is asked
     <state_dir>/batch/<run-id>/logs/<slug>-<pr>-<step>-<n>.log     stderr of each step attempt
     <state_dir>/batch/<run-id>/logs/<slug>-<pr>-publish-<n>.log    output of each publish attempt
+
+``reap`` renames the run directory to the tombstone while still holding the
+flock. ``os.replace`` moves ``run.lock`` with the directory; the flock stays
+on the same inode, so the hold remains valid across the rename. ``run_ids()``
+skips names ending in ``.reaping`` because a tombstone still contains
+``state.json``.
 
 ### batch/targets.py
 

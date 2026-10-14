@@ -399,8 +399,10 @@ disagree.
 
 `--reply` also answers a review body — a review ID, `rb-REVIEW_ID` or
 `rb-REVIEW_ID-N` — in the summary comment, since GitHub cannot reply to one.
-All three name the same review, which gets one answer. A thread match wins when
-the same number is also a comment id in a thread.
+All three name the same review, which gets one answer, and only a review the PR
+lists or one the fix snapshot holds items from — any other id is refused, since
+a stored answer cannot be retracted. A thread match wins when the same number
+is also a comment id in a thread.
 
 ```bash
 pr comments --reply <reviewId | rb-<reviewId> | rb-<reviewId>-<n>> --body-file <PATH> --post [--repo-dir <PATH>]
@@ -412,11 +414,13 @@ to review comments`. If that publish cannot happen (a push still pending, or a p
 GitHub refused), the run says so and the next `--finish --post` publishes it.
 Without `--post` nothing is stored and the draft is printed — unless a push
 is still pending, in which case there is no draft body. Answering again
-replaces the block, including one someone edited by hand. Blocks are scoped like
-table rows: written when on no summary; re-rendered on an in-place edit;
-restated on a fresh comment only when revised; a hand-edited block is kept with
-a warning unless `--reply` for that review replaces it; another checkout's block
-is carried forward.
+replaces the block, including one someone edited by hand. A block is written
+when on no summary, re-rendered on an in-place edit, and restated on a fresh
+comment only when revised; unlike a row, there is no activity test. A
+hand-edited block is kept with a warning unless `--reply` for that review
+replaces it. A block carrying reply text this checkout lacks is another
+checkout's and is carried forward; on `--finish`, a dismissal-only block for a
+review this checkout holds items from is dropped, with a log line, as withdrawn.
 
 A reply that has been rewritten by hand is never replaced by a later pass. The
 fix queue re-drains every fixed thread on each round, and the templated body

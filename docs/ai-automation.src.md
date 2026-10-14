@@ -354,9 +354,9 @@ so `pr comments --reply <reviewId | rb-<reviewId> | rb-<reviewId>-<n>>
 draft is printed (no body if a push is still pending). A block is written when
 no summary holds the review's block, re-rendered on an in-place edit, and
 restated on a fresh comment only when the block changed; unlike a row, there
-is no activity test. A hand-edited block is kept with a warning unless
-`--reply` for that review replaces it. A dismissal with a reason adds
-`Dismissed: <finding> — <reason>` to the block, creating one even with no reply.
+is no activity test. A hand-edited block is kept with a warning unless `--reply`
+for that review replaces it. A dismissal reason (operator, fix pass or triage)
+adds `Dismissed: <finding> — <reason>`, making a block even with no reply.
 
 ### Running from a different directory
 

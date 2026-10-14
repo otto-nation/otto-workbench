@@ -180,14 +180,17 @@ def test_status_lines_cannot_read_a_worktree_with_a_broken_index(tmp_path):
     assert rebase.inspect.status_lines(str(tmp_path)) is None
 
 
-def test_status_lines_folds_a_timeout_into_the_same_answer():
-    """`subprocess.run(timeout=)` raises rather than returning non-zero.
-
-    Uncaught, the exception aborts the command from inside a read whose whole
-    job is to decide whether the rebase is safe to start.
+def test_status_lines_reads_the_tree_without_a_bound():
+    """`status` stats every file, so a cold cache on a large tree outlasts any
+    flat bound — and a timeout here reads as "cannot tell", refusing a rebase
+    of a tree that was clean.
     """
+    seen = {}
+
     def fake_run(cmd, **kwargs):
-        raise subprocess.TimeoutExpired(cmd, core.timeouts.LOCAL)
+        seen["timeout"] = kwargs.get("timeout", "missing")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
 
     with mock.patch("subprocess.run", side_effect=fake_run):
-        assert rebase.inspect.status_lines("/fake") is None
+        assert rebase.inspect.status_lines("/fake") == []
+    assert seen["timeout"] is core.timeouts.UNBOUNDED

@@ -80,6 +80,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from pathlib import Path
+from typing import TextIO
 
 import core.log
 import core.proc
@@ -220,6 +221,7 @@ def run(
     cwd: str | Path | None = None,
     config: dict[str, str] | None = None,
     env: dict[str, str] | None = None,
+    relay: TextIO | None = None,
 ) -> CmdResult:
     """Run git with *args* in *cwd*, capturing both streams.
 
@@ -239,9 +241,13 @@ def run(
     add rather than replace, or `unattended_env()` for that editor case — which
     pins rather than unsets, because an unset `GIT_EDITOR` leaves git to fall
     through its own precedence table to `vi`.
+
+    `relay` is forwarded to `proc.run`: a live tee of both streams, used by
+    `git.push` so a pre-push hook is visible while it runs.
     """
     return core.proc.run(
         _argv(args, config), cwd=cwd, timeout=_timeout_for(args), env=env,
+        relay=relay,
     )
 
 

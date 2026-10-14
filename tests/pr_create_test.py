@@ -530,14 +530,17 @@ exit 1
 
 
 def test_a_refused_pushs_output_is_printed_exactly_once(h, capsys):
-    """FAILED with a push: `git.push.report` prints the output; run_create must not as well."""
+    """FAILED with a push: the output is relayed live and `git.push.report` replays
+    its tail under a header; run_create must not print it a third time."""
     h.repo()
     hook = h.tmp / "remote.git" / "hooks" / "pre-receive"
     hook.write_text(_REJECT_HOOK)
     hook.chmod(0o755)
     assert run_create(h.ctx(), CreateOptions()) == 1
     err = capsys.readouterr().err
-    assert err.count("HOOK-REJECT-MARKER") == 1, err
+    live, replay = err.split("(already shown above):")
+    assert live.count("HOOK-REJECT-MARKER") == 1, err
+    assert replay.count("HOOK-REJECT-MARKER") == 1, err
     assert h.events == ["token", "nesting", "push"]
 
 

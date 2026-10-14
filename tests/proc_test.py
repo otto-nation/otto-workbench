@@ -714,7 +714,7 @@ def test_proc_imports_nothing_from_ai_lib_but_stdlib_only_core(module, allowed):
         for node in ast.walk(tree) if isinstance(node, ast.Import)
         for alias in node.names
     }) - {"__future__", "atexit", "collections", "contextlib", "dataclasses",
-          "pathlib", "typing", "os", "re", "signal", "subprocess", "sys", "threading"}
+          "pathlib", "typing", "os", "re", "signal", "subprocess", "sys", "threading", "time"}
     assert reached == {"core"}, reached
 
     workbench = {

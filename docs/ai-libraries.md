@@ -5642,6 +5642,14 @@ a dropped connection answers no: the gates passed before git reached the
 transfer, so there is nothing in the tree for a regeneration commit or an AI fix
 pass to act on.
 
+The `git push` subprocess is relayed to stderr as it runs — a pre-push hook that
+prints for minutes is visible, not captured into silence until git exits — and
+the same bytes are kept for classification and the failure artifact. A trail
+records it as a `push` span (the wait) plus whether `--no-verify` skipped the
+hooks. There is no timeout that would kill a legitimate long hook. Because the
+output has already been on screen once, `report` labels its excerpt of it as a
+replay rather than printing the hook's failure a second time unannounced.
+
 This module pushes, verifies, retries, and reports. It does not commit, and it
 does not perform the hook-regenerated-files recovery `land` owns — that sits
 above it, which is what keeps this module's answer to "did it land" independent

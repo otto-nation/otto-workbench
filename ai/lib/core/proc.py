@@ -122,10 +122,13 @@ import re
 import signal
 import subprocess
 import sys
+import threading
+import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import IO, TextIO
 
 import core.children
 import core.timeouts
@@ -524,6 +527,16 @@ def _reap(process: subprocess.Popen) -> str:
     return ""
 
 
+def _close_quietly(pipe: IO | None) -> None:
+    """Close *pipe* if there is one, tolerating one the child already broke."""
+    if pipe is None:
+        return
+    try:
+        pipe.close()
+    except (BrokenPipeError, OSError, ValueError):
+        pass
+
+
 def _close_pipes(process: subprocess.Popen) -> None:
     """Close the three pipes, tolerating one the child already broke.
 
@@ -534,12 +547,7 @@ def _close_pipes(process: subprocess.Popen) -> None:
     alone — one exit discipline is easier to keep right than three.
     """
     for pipe in (process.stdout, process.stderr, process.stdin):
-        if pipe is None:
-            continue
-        try:
-            pipe.close()
-        except (BrokenPipeError, OSError, ValueError):
-            pass
+        _close_quietly(pipe)
 
 
 def _timed_out(cmd: list[str], timeout: float | None, exc: subprocess.TimeoutExpired,
@@ -597,6 +605,190 @@ def _run_in_own_group(cmd: list[str], timeout: float | None, input_text: str | N
     return CmdResult(returncode=process.returncode, stdout=stdout or "", stderr=stderr or "")
 
 
+# What the relayed path appends to stderr when a pump was still reading at the
+# join deadline. Kept clear of every `git.push` refusal marker — a push result's
+# output is classified by substring, and this line must not change the verdict.
+_LATE_OUTPUT_NOTE = ("output was still arriving {bound:g}s after the command "
+                     "ended — something it started holds the pipe; the "
+                     "captured output stops here")
+
+_RELAY_ERRORS = (BrokenPipeError, OSError, ValueError)
+
+
+class _Tee:
+    """Where the relayed path's pumps copy each line, until it is detached.
+
+    One lock serialises the two pumps' writes so a stdout line and a stderr line
+    cannot interleave mid-line on the relay. `detach` is the end of the call:
+    from then on a pump still draining a pipe something else holds open keeps
+    reading — a writer that blocks on a full pipe is not ours to wedge — but
+    neither keeps the line nor shows it, so `run` returning is where the
+    caller's terminal stops receiving this command's output.
+
+    `detach` does not take the lock. A relay write can block (a stopped
+    terminal, a full pipe to a parent that is not reading), and teardown waiting
+    on it would be the unbounded wait the join deadline exists to prevent. The
+    price is that one write already past the check when `detach` runs may still
+    land after `run` returns; nothing after it can.
+    """
+
+    def __init__(self, relay: TextIO) -> None:
+        self._relay = relay
+        self._lock = threading.Lock()
+        self._detached = threading.Event()
+
+    def detach(self) -> None:
+        """Stop keeping and relaying lines; see the class docstring."""
+        self._detached.set()
+
+    def copy(self, line: str, parts: list[str]) -> None:
+        """Keep *line* in *parts* and show it on the relay, unless detached."""
+        if self._detached.is_set():
+            return
+        parts.append(line)
+        # A relay that is closed or broken must not cost the capture.
+        with contextlib.suppress(*_RELAY_ERRORS), self._lock:
+            if self._detached.is_set():
+                return
+            self._relay.write(line)
+            self._relay.flush()
+
+
+def _pump(pipe: TextIO, parts: list[str], tee: _Tee) -> None:
+    """Copy *pipe* into *parts* and onto the relay, line by line, until EOF.
+
+    Text mode translates a bare `\\r` to `\\n`, so a progress line redrawn in
+    place arrives as a line of its own — on the relay and in the result alike,
+    which is what `communicate` on the unrelayed path does to it too.
+
+    The pump owns its pipe and closes it on the way out. Nothing else may: a
+    close from another thread waits on the buffer lock a blocked read holds.
+    """
+    try:
+        for line in pipe:
+            tee.copy(line, parts)
+    except _RELAY_ERRORS:
+        pass
+    finally:
+        _close_quietly(pipe)
+
+
+def _feed_stdin(stdin: TextIO, input_text: str) -> None:
+    """Write *input_text* to the child and close its stdin (runs on a thread).
+
+    It owns stdin for the same reason a pump owns its pipe: a write blocked on a
+    child that never reads holds the buffer lock, and a close from the main
+    thread would wait on it for as long as anything holds the read end open.
+    """
+    try:
+        # A child that exited early closes its end; that is its answer, not ours.
+        with contextlib.suppress(*_RELAY_ERRORS):
+            stdin.write(input_text)
+    finally:
+        _close_quietly(stdin)
+
+
+def _stop(process: subprocess.Popen, kill_process_group: bool) -> str:
+    """SIGKILL the child or its group, then reap. See `_run_relayed`."""
+    if kill_process_group:
+        return _kill_group(process) + _reap(process)
+    process.kill()
+    return _reap(process)
+
+
+def _finish_pumps(process: subprocess.Popen, pumps: list[threading.Thread],
+                  tee: _Tee) -> str:
+    """Join the pumps under one deadline, detach the tee, and say what is late.
+
+    The deadline is `core.timeouts.QUICK`, read at call time and shared by every
+    thread, so the whole teardown is bounded by one tier rather than one per
+    pipe. A process the child started can inherit the pipe ends and hold them
+    after the child is gone — a hook's background job, a killed child's
+    grandchild — and an unbounded join would wait for it.
+
+    A thread still running at the deadline owns its pipe, so nothing is closed
+    under it (see `_pump`); the daemon closes it when the holder lets go. The
+    tee is detached either way, which is what makes the result an account
+    of everything relayed before `run` returned, and stops late output
+    reaching the caller's terminal after it. Returns a note for stderr when a
+    thread was late — the captured output is then known to be short — and the
+    empty string otherwise.
+    """
+    bound = core.timeouts.QUICK
+    deadline = time.monotonic() + bound
+    for pump in pumps:
+        # Not started (a failed `start`) or already done; either way no wait.
+        if pump.is_alive():
+            pump.join(max(0.0, deadline - time.monotonic()))
+    tee.detach()
+    # Only the two output pumps (listed first) say whether output is short; a
+    # stdin feeder still held by a child that never reads loses nothing.
+    if any(pump.is_alive() for pump in pumps[:2]):
+        return "\n" + _LATE_OUTPUT_NOTE.format(bound=bound)
+    if not any(pump.is_alive() for pump in pumps):
+        _close_pipes(process)
+    return ""
+
+
+def _run_relayed(cmd: list[str], timeout: float | None, input_text: str | None,
+                 spawn: dict, relay: TextIO, *, kill_process_group: bool) -> CmdResult:
+    """Run *cmd*, teeing both streams to *relay* while still capturing them.
+
+    `subprocess.run` only yields the pipes after the child exits, which is why a
+    captured `git push` hid a twenty-minute pre-push hook. This path reads as
+    the child writes, on one thread per pipe, and feeds stdin on a third so a
+    child that never reads cannot hold the wait past its bound.
+
+    Every way out goes through `_finish_pumps`, so every way out is bounded and
+    leaves nothing relaying afterwards. The threads are started inside the
+    guarded block: a `start` that fails, or an interrupt landing between two of
+    them, kills the child like any other exception rather than leaving it
+    writing into pipes nobody reads.
+
+    The result has the unrelayed path's shape: the same decoding (both share
+    `spawn`), the same `TIMEOUT_RETURNCODE` result through `_timed_out`, and
+    `MACHINE_KILLS` recorded on the same two occasions.
+    """
+    stdin = subprocess.PIPE if input_text is not None else subprocess.DEVNULL
+    process = subprocess.Popen(
+        cmd, stdin=stdin, start_new_session=kill_process_group, bufsize=1, **spawn,
+    )
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+    tee = _Tee(relay)
+    pumps = [
+        threading.Thread(target=_pump, args=(process.stdout, stdout_parts, tee), daemon=True),
+        threading.Thread(target=_pump, args=(process.stderr, stderr_parts, tee), daemon=True),
+    ]
+    if process.stdin is not None:
+        pumps.append(threading.Thread(target=_feed_stdin, args=(process.stdin, input_text),
+                                      daemon=True))
+    try:
+        for pump in pumps:
+            pump.start()
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        survivors = _stop(process, kill_process_group)
+        survivors += _finish_pumps(process, pumps, tee)
+        _record_kill(cmd, f"timed out after {timeout:g}s")
+        exc = subprocess.TimeoutExpired(
+            cmd, timeout, output="".join(stdout_parts), stderr="".join(stderr_parts),
+        )
+        return _timed_out(cmd, timeout, exc, survivors)
+    except BaseException:
+        _stop(process, kill_process_group)
+        _finish_pumps(process, pumps, tee)
+        raise
+    late = _finish_pumps(process, pumps, tee)
+    if externally_killed(process.returncode):
+        _record_kill(cmd, f"killed by {signal_description(process.returncode)}")
+    return CmdResult(
+        returncode=process.returncode,
+        stdout="".join(stdout_parts),
+        stderr="".join(stderr_parts) + late,
+    )
+
+
 def run(
     cmd: list[str],
     *,
@@ -605,6 +797,7 @@ def run(
     input_text: str | None = None,
     env: dict[str, str] | None = None,
     kill_process_group: bool = False,
+    relay: TextIO | None = None,
 ) -> CmdResult:
     """Run *cmd*, capturing both streams, and return what it said.
 
@@ -674,6 +867,13 @@ def run(
     them. SIGKILL with no grace window either way — the budget has already
     expired, and a TERM-then-KILL ladder doubles the worst case on a call that
     is already late.
+
+    `relay` is a live tee: each line the child writes is copied to it (typically
+    `sys.stderr`) as it arrives, and still collected on the result. Without it
+    both streams stay in the pipe until the child exits, which is how a captured
+    `git push` hid a pre-push hook for the length of the hook. The default path
+    stays silent: most callers want the result, not a second copy on the
+    terminal.
     """
     spawn = {
         "stdout": subprocess.PIPE,
@@ -683,6 +883,11 @@ def run(
         "cwd": cwd,
         "env": env,
     }
+    if relay is not None:
+        return _run_relayed(
+            cmd, timeout, input_text, spawn, relay,
+            kill_process_group=kill_process_group,
+        )
     if kill_process_group:
         return _run_in_own_group(cmd, timeout, input_text, spawn)
     # `input` and `stdin` are mutually exclusive to `subprocess.run` — it opens

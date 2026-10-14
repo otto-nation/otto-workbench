@@ -50,6 +50,14 @@ a dropped connection answers no: the gates passed before git reached the
 transfer, so there is nothing in the tree for a regeneration commit or an AI fix
 pass to act on.
 
+The `git push` subprocess is relayed to stderr as it runs — a pre-push hook that
+prints for minutes is visible, not captured into silence until git exits — and
+the same bytes are kept for classification and the failure artifact. A trail
+records it as a `push` span (the wait) plus whether `--no-verify` skipped the
+hooks. There is no timeout that would kill a legitimate long hook. Because the
+output has already been on screen once, `report` labels its excerpt of it as a
+replay rather than printing the hook's failure a second time unannounced.
+
 This module pushes, verifies, retries, and reports. It does not commit, and it
 does not perform the hook-regenerated-files recovery `land` owns — that sits
 above it, which is what keeps this module's answer to "did it land" independent
@@ -87,6 +95,7 @@ no, so the push has very likely landed and simply cannot be confirmed.
 from __future__ import annotations
 
 import dataclasses
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -97,7 +106,7 @@ import core.log
 import core.proc
 import core.publishing
 import core.timeouts
-from core.trail import Trail
+from core.trail import Trail, tspan
 
 
 class PushStatus(StrEnum):
@@ -161,6 +170,13 @@ class PushResult:
     `log` is the artifact holding everything the push and its hooks printed,
     when there was a trail to write one. The result carries the excerpt's own
     source rather than making `report` go looking for it.
+
+    `relayed` says `output` already reached the terminal live, as the push ran.
+    `report` still reprints its tail — the verdict line is the last one, and a
+    long hook has scrolled it away — but labels it as a replay, so the reader
+    does not take one failure printed twice for two. False for a result whose
+    output nobody has seen: a held push, a record `push_intent` rebuilt, and
+    the signal account `_push_output` writes when git itself said nothing.
     """
 
     status: PushStatus
@@ -173,6 +189,7 @@ class PushResult:
     remote: str = "origin"
     args: tuple[str, ...] = ()
     log: Path | None = None
+    relayed: bool = False
 
     @property
     def ok(self) -> bool:
@@ -411,6 +428,16 @@ def _verify(
                       output=output, remote=remote)
 
 
+def _relayed(r: core.proc.CmdResult) -> bool:
+    """Whether the output a result will carry is what `_run_push` relayed.
+
+    Everything git wrote was relayed as it arrived, so this is true whenever it
+    wrote anything. When it wrote nothing `_push_output` may stand in a sentence
+    of its own, which the terminal has never shown.
+    """
+    return bool(r.combined_output.strip())
+
+
 def _retry_block(wt_path: str | Path, sha: str) -> Retry | None:
     """Why a retry would be unsafe, or None when it is safe.
 
@@ -425,6 +452,35 @@ def _retry_block(wt_path: str | Path, sha: str) -> Retry | None:
     if git.client.is_dirty(cwd=wt_path):
         return Retry.DIRTY
     return None
+
+
+def _hooks_skipped(args: Sequence[str]) -> bool:
+    """The push args ask git to skip hooks, which is spelled `--no-verify`.
+
+    It has no short form — `-n` is `--dry-run`, not a hook skip.
+    """
+    return "--no-verify" in args
+
+
+def _run_push(
+    wt_path: str | Path,
+    args: Sequence[str],
+    trail: Trail | None,
+) -> core.proc.CmdResult:
+    """`git push` with hook output on stderr live, and a timed trail span."""
+    argv = tuple(args)
+    skipped = _hooks_skipped(argv)
+    with tspan(trail, "push"):
+        result = git.client.run(
+            "push", *argv, cwd=wt_path, relay=sys.stderr,
+        )
+        if trail:
+            trail.info(
+                "push",
+                "hooks skipped (--no-verify)" if skipped else "hooks ran",
+                data={"no_verify": skipped},
+            )
+        return result
 
 
 def _retry_lost(
@@ -449,7 +505,7 @@ def _retry_lost(
                    data={"sha": lost.sha, "branch": lost.branch})
     core.log.warn("push did not land — retrying once without the gates")
 
-    r = git.client.run("push", "--no-verify", *args, cwd=wt_path)
+    r = _run_push(wt_path, ("--no-verify", *args), trail)
     output = _push_output(r)
     if not r.ok and not _dropped(r):
         artifact = trail.failure(
@@ -457,7 +513,7 @@ def _retry_lost(
             data={"sha": lost.sha, "branch": lost.branch}) if trail else None
         return dataclasses.replace(
             lost, status=PushStatus.REFUSED, refusal=classify(output),
-            output=output, retry=Retry.ATTEMPTED, log=artifact,
+            output=output, retry=Retry.ATTEMPTED, log=artifact, relayed=_relayed(r),
         )
 
     # A retry the connection dropped is verified for the same reason the first
@@ -466,7 +522,7 @@ def _retry_lost(
     verified = _verify(wt_path, lost.sha, lost.branch, remote, output)
     return dataclasses.replace(
         verified, retry=Retry.ATTEMPTED, args=lost.args,
-        refusal=None if r.ok else Refusal.DROPPED)
+        refusal=None if r.ok else Refusal.DROPPED, relayed=_relayed(r))
 
 
 def push(
@@ -500,14 +556,15 @@ def push(
     sha = sha or git.client.head_sha(cwd=wt_path)
     branch = branch or git.client.current_branch(cwd=wt_path)
 
-    r = git.client.run("push", *argv, cwd=wt_path)
+    r = _run_push(wt_path, argv, trail)
     output = _push_output(r)
     if not r.ok and not _dropped(r):
         artifact = trail.failure(
             "push", "git refused the push", output=output,
             data={"sha": sha, "branch": branch}) if trail else None
         return PushResult(PushStatus.REFUSED, sha, branch, refusal=classify(output),
-                          output=output, remote=remote, args=argv, log=artifact)
+                          output=output, remote=remote, args=argv, log=artifact,
+                          relayed=_relayed(r))
 
     # A drop is not yet a failure: the packfile may have arrived whole and only
     # the acknowledgement been lost, which `_verify` settles in one round trip.
@@ -517,7 +574,8 @@ def push(
 
     verified = _verify(wt_path, sha, branch, remote, output)
     result = dataclasses.replace(
-        verified, args=argv, refusal=None if r.ok else Refusal.DROPPED)
+        verified, args=argv, refusal=None if r.ok else Refusal.DROPPED,
+        relayed=_relayed(r))
     if result.status is not PushStatus.LOST:
         return result
     return _retry_lost(wt_path, result, remote, argv, trail)
@@ -790,6 +848,23 @@ def _lost_headline(result: PushResult) -> str:
     return "push reported success but the remote did not move"
 
 
+def _print_output_tail(result: PushResult) -> None:
+    """The last lines of what the push said, labelled when they are a replay.
+
+    A relayed push has already printed every line once, live; the reprint is
+    there for the verdict a long hook scrolled away, and the header says so. A
+    result nobody watched is printed as it always was, with no header to claim
+    otherwise.
+    """
+    lines = core.proc.tail(result.output).splitlines()
+    if result.relayed and lines:
+        noun = "line" if len(lines) == 1 else "lines"
+        core.log.dim(f"Last {len(lines)} {noun} of the git push output "
+                     f"(already shown above):")
+    for line in lines:
+        core.log.dim(line)
+
+
 def report(result: PushResult, wt_path: str | Path) -> None:
     """Say what happened, in the terms the reader has to act on."""
     if result.status is PushStatus.PUSHED:
@@ -819,8 +894,7 @@ def report(result: PushResult, wt_path: str | Path) -> None:
 
     if result.status is PushStatus.REFUSED:
         core.log.error(_refused_headline(result))
-        for line in core.proc.tail(result.output).splitlines():
-            core.log.dim(line)
+        _print_output_tail(result)
         # After git's own words, not instead of them: the probe is a second
         # opinion about output the reader can still see for themselves.
         for line in _auth_hint(result, wt_path):
@@ -834,8 +908,7 @@ def report(result: PushResult, wt_path: str | Path) -> None:
     # A lost push's output is a clean push's chatter and worth nothing to the
     # reader. A dropped one's is the only account of what killed it.
     if result.refusal is Refusal.DROPPED:
-        for line in core.proc.tail(result.output).splitlines():
-            core.log.dim(line)
+        _print_output_tail(result)
     # Named rather than left to the resume line below, because the reader is not
     # always standing in the repository this happened in: `push_intent` reports a
     # push made in another terminal, and a review fix pass pushes from a worktree

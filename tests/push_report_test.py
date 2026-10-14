@@ -264,3 +264,79 @@ def test_every_retry_state_has_a_report_line():
     """A LOST report claiming a retry that never ran is the wrong-reporting
     failure this module exists to remove."""
     assert set(git.push._RETRY_NOTE) == set(git.push.Retry)
+
+
+# ── replaying output the terminal already showed ───────────────────────────
+
+_REPLAY_LABEL = "already shown above"
+
+
+def _refused(output: str, *, relayed: bool) -> git.push.PushResult:
+    return git.push.PushResult(
+        git.push.PushStatus.REFUSED, sha="1a2b3c4d", branch="feat/x",
+        refusal=git.push.Refusal.HOOK, output=output, relayed=relayed,
+    )
+
+
+def test_a_relayed_refusal_labels_its_excerpt_as_a_replay(capsys):
+    """The hook already printed live; unlabelled, the reprint reads as a second failure."""
+    output = "\n".join(f"line {n}" for n in range(200))
+    git.push.report(_refused(output, relayed=True), "/tmp/wt")
+
+    printed = capsys.readouterr().err
+    assert f"Last {core.proc.TAIL_LINES} lines of the git push output ({_REPLAY_LABEL}):" in printed
+    assert "line 199" in printed
+    assert printed.index(_REPLAY_LABEL) < printed.index("line 199")
+
+
+def test_an_unrelayed_refusal_prints_its_excerpt_unlabelled(capsys):
+    """Nobody has seen this output, so nothing may claim it was shown above."""
+    git.push.report(_refused("hook said no\nfailed to push some refs", relayed=False),
+                    "/tmp/wt")
+
+    printed = capsys.readouterr().err
+    assert "hook said no" in printed
+    assert _REPLAY_LABEL not in printed
+
+
+def test_a_relayed_refusal_with_no_output_prints_no_label(capsys):
+    """A header over nothing announces a replay that is not there."""
+    git.push.report(_refused("", relayed=True), "/tmp/wt")
+
+    assert _REPLAY_LABEL not in capsys.readouterr().err
+
+
+def test_a_relayed_dropped_push_labels_its_excerpt_too(capsys):
+    result = git.push.PushResult(
+        git.push.PushStatus.LOST, sha="1a2b3c4d", branch="feat/x",
+        refusal=git.push.Refusal.DROPPED, output="Connection reset by peer", relayed=True,
+    )
+    git.push.report(result, "/tmp/wt")
+
+    printed = capsys.readouterr().err
+    assert f"Last 1 line of the git push output ({_REPLAY_LABEL}):" in printed
+    assert "Connection reset by peer" in printed
+
+
+def test_a_refused_push_records_that_its_output_was_relayed(monkeypatch):
+    monkeypatch.setattr(git.client, "run",
+                        lambda *a, **k: core.proc.CmdResult(1, "", "failed to push some refs"))
+    result = git.push.push("/tmp/wt", gated=False, sha="1a2b3c4d", branch="feat/x")
+    assert result.status is git.push.PushStatus.REFUSED
+    assert result.relayed
+
+
+def test_the_signal_account_git_never_printed_is_not_a_replay():
+    """`_push_output` writes that sentence itself; the relay never carried it."""
+    killed = core.proc.CmdResult(-13, "", "")
+    assert git.push._push_output(killed).startswith("git was killed")
+    assert not git.push._relayed(killed)
+    assert git.push._relayed(core.proc.CmdResult(1, "", "failed to push some refs"))
+
+
+def test_a_held_push_was_never_relayed(monkeypatch):
+    monkeypatch.setattr(git.push.core.publishing, "enabled", lambda: False)
+    monkeypatch.setattr(git.push.core.publishing, "draft", lambda *a, **k: None)
+    result = git.push.push("/tmp/wt", gated=True, sha="1a2b3c4d", branch="feat/x")
+    assert result.status is git.push.PushStatus.HELD
+    assert not result.relayed

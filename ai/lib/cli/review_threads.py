@@ -204,6 +204,9 @@ def main(argv: list[str] | None = None) -> int:
             core.log.error("No PR found for current branch")
             return 1
 
+        # Before the PR read, so a missing or empty body file costs no fetch.
+        if args.reply and pr.thread_replies.load_reply_body(args.body_file) is None:
+            return 1
         given = list(argv if argv is not None else sys.argv[1:])
         command = " ".join([SCRIPT, *given])
         # A thread target keeps the path --reply always had. A review body is

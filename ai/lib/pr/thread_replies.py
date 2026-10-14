@@ -61,7 +61,7 @@ import pr.context
 import pr.permalinks
 import pr.published_record
 from pr.fix import UNVERIFIED_NOTE, FixOutcome
-from pr.thread_models import THREAD_ANCHOR, CommentItem, ReportThread
+from pr.thread_models import THREAD_ANCHOR, CommentItem, CommentSourceKind, ReportThread
 
 
 APPLIED_REPLY_PREFIX = "Applied"
@@ -660,8 +660,9 @@ def find_reply_target(
 
 
 # `rb-<reviewId>` or `rb-<reviewId>-<n>`: a review body's source key, or the id
-# of one item triage cut out of it.
-_REVIEW_SOURCE_RE = re.compile(r"rb-(\d+)(?:-\d+)?")
+# of one item triage cut out of it. The prefix is the source kind's own.
+_REVIEW_SOURCE_RE = re.compile(
+    re.escape(CommentSourceKind.REVIEW_BODY.id_prefix) + r"-(\d+)(?:-\d+)?")
 
 
 def reply_source(target: str, review_body_ids: Iterable[str]) -> str | None:

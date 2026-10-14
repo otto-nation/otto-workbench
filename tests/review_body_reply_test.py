@@ -21,11 +21,13 @@ if str(LIB_DIR) not in sys.path:
 # never referenced by name.
 from review_threads_support import _no_published_summary  # noqa: E402
 from conftest import make_ctx
+import core.log
 import core.publishing
 import pr.comments
 import pr.state
 import review.review_body_reply
 from gh.pr_data import PRData
+from git.land import CommitStatus
 
 _REVIEW = {
     "databaseId": 88, "author": {"login": "kgn"}, "state": "COMMENTED",
@@ -89,6 +91,19 @@ def _run(ctx, body_file, *, post_url="https://github.com/owner/repo/pull/1#issue
     return code, post
 
 
+def _seed(ctx, **fix):
+    """A state file as an earlier round left it, with `fix` fields set on it."""
+    state = pr.state.load_or_init(
+        target_dir=ctx.target_dir, repo=ctx.repo, branch=ctx.branch,
+        pr_number=ctx.pr_number, head_sha=ctx.head_sha,
+        worktree_root=str(ctx.require_worktree()),
+    )
+    for name, value in fix.items():
+        target = state.fix.fix if name.startswith("commit_") else state.fix
+        setattr(target, name, value)
+    pr.state.save_state(ctx.target_dir, state)
+
+
 class TestPublishing:
 
     def test_the_reply_is_stored_and_published_in_the_summary(self, ctx, body_file):
@@ -138,3 +153,54 @@ class TestPublishing:
         with core.publishing.run(post=True):
             _run(ctx, body_file)
         assert not pr.comments.threads_state_path(ctx.target_dir).exists()
+
+
+class TestOwedSummary:
+    """The post retires the debt the reply created, never debt `--finish` holds."""
+
+    @pytest.mark.parametrize("owed", [True, False])
+    def test_a_published_reply_leaves_the_summary_debt_as_it_found_it(
+            self, ctx, body_file, owed):
+        """Held back for `--finish`, it stays owed — that re-render writes the issue link."""
+        _seed(ctx, summary_deferred=owed)
+        with core.publishing.run(post=True):
+            code, post = _run(ctx, body_file)
+        assert code == 0
+        post.assert_called_once()
+        state = pr.state.load_state(ctx.target_dir)
+        assert state.fix.summary_deferred is owed
+        assert state.fix.summary_url.endswith("#issuecomment-5")
+
+    def test_storing_a_reply_stamps_the_fix_domain(self, ctx, body_file):
+        _seed(ctx, updated_at="2000-01-01T00:00:00Z")
+        with core.publishing.run(post=True):
+            _run(ctx, body_file)
+        assert pr.state.load_state(ctx.target_dir).fix.updated_at > "2000-01-01T00:00:00Z"
+
+
+class TestDraftOutput:
+    """One headline per draft, and a pending push says why there is no body."""
+
+    def _draft(self, ctx, body_file):
+        drafts, infos = [], []
+        route = review.review_body_reply.ReplyRoute(pr_data=_pr_data(), source="rb-88")
+        with core.publishing.run(post=False), \
+                patch.object(core.publishing, "draft",
+                             side_effect=lambda action, body="": drafts.append(body)), \
+                patch.object(core.log, "info", side_effect=infos.append):
+            code = review.review_body_reply.run_review_body_reply(ctx, route, body_file)
+        assert code == 0
+        return drafts, infos
+
+    def test_a_draft_prints_one_headline(self, ctx, body_file):
+        drafts, _infos = self._draft(ctx, body_file)
+        assert len(drafts) == 1
+        assert "k=88 " in drafts[0]
+
+    def test_a_pending_push_says_no_body_could_be_rendered(self, ctx, body_file):
+        _seed(ctx, commit_sha="abc1234", commit_status=CommitStatus.PUSH_HELD)
+        with patch("git.push.holds", return_value=False):
+            drafts, infos = self._draft(ctx, body_file)
+        assert drafts == []
+        assert any("No draft body" in line and "push is still pending" in line
+                   for line in infos)

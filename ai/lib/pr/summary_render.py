@@ -233,9 +233,7 @@ def build_summary_body(
     held_count = len(held)
     carried_count = len(carried_over)
 
-    parts = [
-        SUMMARY_MARKER, pr.published_record.FORMAT_MARKER, "## Review Comments Addressed", "",
-    ]
+    table = ["## Review Comments Addressed", ""]
     # The verdict wordings and their separator belong to `pr.comments_fix`,
     # which prints the same line on the state dashboard. Two of the counts
     # below name no verdict — a row a human rewrote and a row carried over
@@ -246,7 +244,7 @@ def build_summary_body(
         extras.append(f"{held_count} hand-written")
     if carried_count:
         extras.append(f"{carried_count} carried over")
-    parts.append(pr.comments_fix.count_line({
+    table.append(pr.comments_fix.count_line({
         FixOutcome.FIXED: fixed_count,
         FixOutcome.ALREADY_ADDRESSED: addressed_count,
         FixOutcome.DISMISSED: dismissed_count,
@@ -254,33 +252,42 @@ def build_summary_body(
         FixOutcome.DEFERRED: deferred_count,
         FixOutcome.NEEDS_HUMAN: human_count,
     }, extras))
-    parts.append("")
+    table.append("")
 
     if rows:
-        parts.append(pr.summary_model.TABLE_HEADER)
-        parts.append(pr.summary_model.TABLE_DIVIDER)
-        parts.extend(rows)
-        parts.append("")
+        table.append(pr.summary_model.TABLE_HEADER)
+        table.append(pr.summary_model.TABLE_DIVIDER)
+        table.extend(rows)
+        table.append("")
 
-    parts.extend(_table_note(
+    table.extend(_table_note(
         held_count, "row", "kept as published — the Action cell was written by "
         "hand, so this round did not re-render it."))
-    parts.extend(_table_note(
+    table.extend(_table_note(
         carried_count, "row", "carried over from an earlier round that this "
         "checkout's state file does not cover."))
-    parts.extend(_table_note(
+    table.extend(_table_note(
         len(open_earlier), "thread", "still open and awaiting an answer — raised "
         "in an earlier round and quiet since, left as published there rather than "
         "restated here."))
-    parts.extend(_table_note(
+    table.extend(_table_note(
         len(settled_earlier), "thread", "settled in an earlier round and quiet "
         "since — left as published there rather than restated here."))
+
+    replies = pr.summary_replies.render_reply_section(
+        content, scope, kept_replies or {}, repo, pr_number, host)
+    parts = [SUMMARY_MARKER, pr.published_record.FORMAT_MARKER]
+    # A replies-only publish — `pr comments --reply` before any fix pass ran —
+    # has no row and no note to put under the heading, and an empty heading
+    # over an empty count line reads as a table lost. A round with no replies
+    # keeps it: that is the "nothing to say" summary every round has posted.
+    if rows or open_earlier or settled_earlier or not replies:
+        parts.extend(table)
 
     if not has_comment_items:
         parts.extend(_render_raw_comment_sections(review_body_comments, issue_comments))
 
-    parts.extend(pr.summary_replies.render_reply_section(
-        content, scope, kept_replies or {}, repo, pr_number, host))
+    parts.extend(replies)
 
     parts.extend(_render_round_chain(chain))
 

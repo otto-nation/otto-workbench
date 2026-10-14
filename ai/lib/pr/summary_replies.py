@@ -75,7 +75,10 @@ def reply_block_text(
     """The text inside review `review_id`'s block: who and where, then the reply.
 
     The digest the marker declares, and the one `covers_reply` compares, is of
-    exactly this text.
+    exactly this text — the generated header included, by design. So a change
+    in how the reviewer resolves (a login found or lost) or in the forge host
+    the permalink is built on reads as a revised block, and re-states a reply
+    whose text did not change.
     """
     source = pr.permalinks.CommentSource(CommentSourceKind.REVIEW_BODY, review_id)
     reviewer = _reviewer(content, review_id)

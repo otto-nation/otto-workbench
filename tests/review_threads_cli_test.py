@@ -151,13 +151,16 @@ class TestReplyIsNotAPhase:
         assert "--fix" in err
         assert "--triage" not in err
 
-    def test_post_is_the_gate_the_reply_needs_not_a_conflict(self):
+    def test_post_is_the_gate_the_reply_needs_not_a_conflict(self, tmp_path):
         """A reply that publishes is the ordinary use, and must still run."""
         route = review.review_body_reply.ReplyRoute(pr_data=MagicMock(), thread=True)
+        body = tmp_path / "f"
+        body.write_text("Done.")
         with patch.object(pr.context, "resolve", return_value=make_ctx()), \
              patch.object(review.review_body_reply, "route_reply", return_value=route), \
              patch.object(pr.thread_replies, "run_reply", return_value=0) as run_reply:
-            assert cli.review_threads.main(["--reply", "t1", "--post"]) == 0
+            assert cli.review_threads.main(
+                ["--reply", "t1", "--body-file", str(body), "--post"]) == 0
         assert run_reply.call_args[0][1] == "t1"
         assert run_reply.call_args.kwargs["pr_data"] is route.pr_data
 
@@ -167,13 +170,15 @@ class TestReplyRouting:
 
     def _main(self, route, tmp_path):
         ctx = make_ctx(worktree_root=tmp_path, target_dir=tmp_path / "target")
+        (tmp_path / "f").write_text("Done.")
         with patch.object(pr.context, "resolve", return_value=ctx), \
              patch.object(review.review_body_reply, "route_reply", return_value=route), \
              patch.object(pr.thread_replies, "run_reply", return_value=0) as thread, \
              patch.object(review.review_body_reply, "run_review_body_reply",
                           return_value=0) as body, \
              patch.object(core.run_lock, "claim_for_process") as lock:
-            code = cli.review_threads.main(["--reply", "88", "--body-file", "f"])
+            code = cli.review_threads.main(
+                ["--reply", "88", "--body-file", str(tmp_path / "f")])
         return code, thread, body, lock
 
     def test_a_review_body_is_answered_under_the_lock(self, tmp_path):
@@ -184,7 +189,17 @@ class TestReplyRouting:
         thread.assert_not_called()
         lock.assert_called_once()
         assert body.call_args[0][1] is route
-        assert body.call_args[0][2] == "f"
+        assert body.call_args[0][2] == str(tmp_path / "f")
+
+    def test_a_missing_body_file_is_refused_before_the_pr_is_read(self, tmp_path, capsys):
+        """The error costs no fetch, and reads as it always has."""
+        with patch.object(pr.context, "resolve", return_value=make_ctx()), \
+             patch.object(review.review_body_reply, "route_reply") as route:
+            code = cli.review_threads.main(
+                ["--reply", "88", "--body-file", str(tmp_path / "nope.md")])
+        assert code == 1
+        route.assert_not_called()
+        assert f"--body-file not found: {tmp_path / 'nope.md'}" in capsys.readouterr().err
 
     def test_a_target_naming_nothing_reports_through_the_thread_path(self, tmp_path):
         """Which keeps its error, and gains the review ids it could have meant."""

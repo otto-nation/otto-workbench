@@ -108,6 +108,19 @@ class TestTheRepliesSection:
         assert _block("77", "") in body
         assert "**@" not in body
 
+    def test_a_replies_only_summary_carries_no_empty_table_heading(self, content):
+        """`--reply` before any fix pass: no row, so no heading over nothing."""
+        body = _render(content(source_replies={"rb-88": "Done."}))
+        assert "## Review Comments Addressed" not in body
+        assert body.startswith(
+            f"{pr.summary_render.SUMMARY_MARKER}\n{pr.published_record.FORMAT_MARKER}\n")
+
+    def test_a_round_with_rows_keeps_its_heading_beside_the_replies(self, content):
+        item = CommentItem(id="rb-88-1", summary="x", reviewer="kgn")
+        body = _render(content(source_replies={"rb-88": "Done."}, dismissed=[item]))
+        assert body.index("## Review Comments Addressed") < body.index(
+            "### Replies to review comments")
+
     def test_a_kept_block_is_re_emitted_verbatim(self, content):
         kept = _block(reply="Done, by hand.").replace("d=", "d=0")
         body = _render(content(source_replies={"rb-88": "Done."},

@@ -95,6 +95,11 @@ def run_review_body_reply(
         worktree_root=str(ctx.require_worktree()),
     )
     state.fix.source_replies[route.source] = pr.published_record.normalise(body)
+    state.fix.updated_at = pr.state.now_iso()
+    # Read before re-arming: a summary already held back for `--finish` must stay
+    # owed after this publish, or `--finish` skips the re-render that writes the
+    # tracking-issue link into its deferred rows.
+    was_owed = state.fix.summary_deferred
     # The summary alone, not `rearm_closeout`: that also owes the thread reply
     # queue, and a review-body answer adds nothing to it. Before the publish,
     # so a publish that does not happen leaves the debt for `--finish`.
@@ -107,8 +112,11 @@ def run_review_body_reply(
         force_reply_keys=frozenset({review_id}),
     )
     if not publishing:
-        core.publishing.draft(f"reply to review {review_id} in the summary comment")
+        _explain_draft(state, review_id)
         return 0
+    if url:
+        # Only the debt this reply created is retired by the post.
+        state.fix.summary_deferred = was_owed
     pr.state.save_state(ctx.target_dir, state)
     if url:
         core.log.info(f"Replied to review {review_id} in the summary: {url}")
@@ -124,3 +132,19 @@ def run_review_body_reply(
         f"Stored the reply to review {review_id}, but the summary was not published — "
         f"`{pr.comments_fix.CLOSEOUT_COMMAND}` publishes it once the cause above is cleared")
     return 1
+
+
+def _explain_draft(state: pr.state.PRState, review_id: str) -> None:
+    """Say what a draft `--reply` did, beside the one headline the post path printed.
+
+    A push still pending renders no summary at all, so there is no draft body
+    to show — that case says so, and why, rather than leaving the operator a
+    headline with nothing under it.
+    """
+    if pr.summary_publish.push_still_pending(state):
+        core.log.info(
+            f"No draft body for the reply to review {review_id}: the fix commit's push "
+            f"is still pending, and the summary is rendered only once it has landed — "
+            f"`{pr.comments_fix.CLOSEOUT_COMMAND}` publishes it after the push")
+        return
+    core.log.info(f"Nothing stored — rerun with --post to publish the reply to review {review_id}")

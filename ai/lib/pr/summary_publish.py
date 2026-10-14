@@ -573,6 +573,19 @@ def publish(
     return SummaryOutcome(url, owed)
 
 
+def push_still_pending(state: pr.state.PRState) -> bool:
+    """Whether the fix commit is unpushed and the remote does not yet hold it.
+
+    The condition `render_deferred_summary` refuses to render under: a summary
+    linking a commit nobody can fetch is worse than one that waits.
+    """
+    record = state.fix.fix
+    if not (pr.attribution.commit_unpushed(record.commit_status) and record.commit_sha):
+        return False
+    wt_path = Path(state.identity.worktree_root) if state.identity.worktree_root else None
+    return not wt_path or not git.push.holds(wt_path, record.commit_sha)
+
+
 def render_deferred_summary(
     state: pr.state.PRState, report: PRReport, repo: str, pr_number: int,
     threads_by_id: dict[str, ReportThread], host: str = "",
@@ -600,7 +613,7 @@ def render_deferred_summary(
 
     status = record.commit_status
     if pr.attribution.commit_unpushed(record.commit_status) and record.commit_sha:
-        if not wt_path or not git.push.holds(wt_path, record.commit_sha):
+        if push_still_pending(state):
             core.log.info("Push still pending — keeping summary deferred")
             return None
         status = CommitStatus.PUSHED

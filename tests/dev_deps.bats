@@ -25,11 +25,13 @@ teardown() {
   common_teardown
 }
 
-# _run FN [PATH] — runs FN from dev-deps with the ui helpers and the installer
-# stubbed, on PATH (default: the base system only, so no brew and no mise).
+# _run FN [PATH] [SOURCE_PREFIX] — runs FN from dev-deps with the ui helpers and
+# the installer stubbed, on PATH (default: the base system only, so no brew and
+# no mise). SOURCE_PREFIX is put in front of PATH while dev-deps is sourced, so a
+# stub `uname` there pins the platform its source-time tables are built for.
 _run() {
   bash -c '
-    . "$1/bin/local/dev-deps"
+    PATH="$4${4:+:}$PATH" . "$1/bin/local/dev-deps"
     success() { echo "OK $*"; }
     warn()    { echo "WARN $*"; }
     info()    { echo "INFO $*"; }
@@ -38,7 +40,7 @@ _run() {
     _cmd_runnable() { command -v "$1" >/dev/null 2>&1; }
     PATH="$3"
     "$2"
-  ' _ "$REPO_ROOT" "$1" "${2:-/usr/bin:/bin}"
+  ' _ "$REPO_ROOT" "$1" "${2:-/usr/bin:/bin}" "${3:-}"
 }
 
 # _sc_pin — the CI action's shellcheck pin, read the way the script reads it.
@@ -120,14 +122,16 @@ _sc_lab() {
   # A PATH with none of the dependencies: only a locale stub, reporting none.
   printf '#!/bin/sh\necho C\necho POSIX\n' > "$STUBS/locale"
   chmod +x "$STUBS/locale"
-  for tool in sed tr uname cat find sort; do ln -sf "$(command -v "$tool")" "$STUBS/$tool"; done
-  run _run dev_deps_check "$STUBS"
+  for tool in sed tr cat find sort; do ln -sf "$(command -v "$tool")" "$STUBS/$tool"; done
+  # Linux, whatever the host: the root hints are chosen when dev-deps is sourced
+  # and the locale check asks again when it runs, so both see this uname.
+  printf '#!/bin/sh\necho Linux\n' > "$STUBS/uname"
+  chmod +x "$STUBS/uname"
+  run _run dev_deps_check "$STUBS" "$STUBS"
   [ "$status" -eq 1 ]
   [[ "$output" == *"bats-core — run: bin/local/dev-deps"* ]]
   [[ "$output" == *"GNU parallel (parallel bats runs) — run: sudo apt install parallel"* ]]
-  if [[ "$(uname -s)" != Darwin ]]; then
-    [[ "$output" == *"locale en_US.UTF-8 — run: sudo apt install locales && sudo locale-gen en_US.UTF-8"* ]]
-  fi
+  [[ "$output" == *"locale en_US.UTF-8 — run: sudo apt install locales && sudo locale-gen en_US.UTF-8"* ]]
 }
 
 @test "check looks a dependency up by the manifest's command, not its package name" {

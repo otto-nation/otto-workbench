@@ -2827,7 +2827,7 @@ routinely disagree:
 | `rebase` | remote | no | target + checkout |
 | `push` | local | no | target + checkout |
 | `describe` | remote | yes | target + checkout |
-| `batch run` / `resume` | **none** | no | global `batch` |
+| `batch run` / `resume` | **none** | no | global `batch`; every item's target, held by the handler |
 | `batch` (other) | **none** | no | **none** |
 | `gc` | remote | no | target |
 
@@ -6505,7 +6505,7 @@ This module is the one place they are taken for a command:
 
 | Command / mode | Holds |
 |---|---|
-| `batch run`, `batch resume` | global `batch` |
+| `batch run`, `batch resume` | global `batch`; the handler then holds every item's target until the run settles |
 | `batch resolve` | its run's own lock, in the handler — never the global, so it reaches a live run |
 | `batch cancel`, `status`, `next`, `plan` | nothing |
 | `rebase`, `push`, `describe`, `fix` | target + checkout |

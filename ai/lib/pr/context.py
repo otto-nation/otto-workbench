@@ -29,7 +29,7 @@ routinely disagree:
 | `rebase` | remote | no | target + checkout |
 | `push` | local | no | target + checkout |
 | `describe` | remote | yes | target + checkout |
-| `batch run` / `resume` | **none** | no | global `batch` |
+| `batch run` / `resume` | **none** | no | global `batch`; every item's target, held by the handler |
 | `batch` (other) | **none** | no | **none** |
 | `gc` | remote | no | target |
 

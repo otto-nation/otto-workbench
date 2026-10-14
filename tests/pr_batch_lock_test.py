@@ -1,4 +1,5 @@
-"""`pr batch run` and `resume` hold the machine-wide batch lock from before they look for an active run."""
+"""`pr batch run` and `resume` hold the machine-wide batch lock from before they look for an active run,
+and every item's target for as long as the run lasts."""
 
 import json
 import subprocess
@@ -6,6 +7,8 @@ import sys
 import textwrap
 import time
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -21,8 +24,10 @@ import batch.store  # noqa: E402
 import batch.targets  # noqa: E402
 import cli.pr  # noqa: E402
 import core.run_lock  # noqa: E402
+import pr.target  # noqa: E402
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
-from run_lock_support import held_elsewhere  # noqa: E402
+from conftest import make_ctx  # noqa: E402
+from run_lock_support import held_elsewhere, repo_with_origin  # noqa: E402
 
 # Bounds every process a test here starts; generous, because a loaded runner
 # schedules a fresh interpreter slowly and a flake here reads as a lock bug.
@@ -200,3 +205,126 @@ def test_requests_a_live_run_drains_get_item_markers_and_an_idle_resolve_does_no
     _main(["batch", "resolve", run.id, "d1", "--action", "accept"])
     assert seen == [batch.targets.child_env, None]
 
+
+
+# ── every item's target, for the life of the run ─────────────────────────────
+
+
+def _row(repo, n, branch):
+    return PlanRow("acme/widget", str(repo), n, "t", branch, "h", False,
+                   {batch.model.Step.REVIEW: StepNeed(True, "x")})
+
+
+def _target(repo, branch):
+    return pr.target.target_dir(pr.target.repo_key_from_origin(str(repo)), branch)
+
+
+def test_run_holds_every_items_target_until_it_settles(monkeypatch, tmp_path):
+    repo = repo_with_origin(tmp_path / "repo")
+    monkeypatch.setattr(batch.plan, "build_plan",
+                        lambda dirs: Plan("me", [_row(repo, 1, "feat/a"), _row(repo, 2, "feat/b")]))
+    seen = {}
+
+    def fake_run(self):
+        seen["held"] = [core.run_lock.is_held(_target(repo, b)) for b in ("feat/a", "feat/b")]
+        return batch.model.RunStatus.DONE
+
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    assert _main(["batch", "run", "--checkout", str(repo)]) == 0
+    assert seen["held"] == [True, True]
+    assert not core.run_lock.is_held(_target(repo, "feat/a"))
+
+
+def test_run_is_refused_whole_when_one_item_is_being_worked_on(monkeypatch, tmp_path, capsys):
+    repo = repo_with_origin(tmp_path / "repo")
+    monkeypatch.setattr(batch.plan, "build_plan",
+                        lambda dirs: Plan("me", [_row(repo, 1, "feat/a"), _row(repo, 2, "feat/b")]))
+    driven = []
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
+                        lambda self: driven.append(1) or batch.model.RunStatus.DONE)
+    record = {"pid": 4242, "command": "pr fix", "started": "t0"}
+    with held_elsewhere(_target(repo, "feat/b") / core.run_lock.LOCK_FILE, record):
+        code = _main(["batch", "run", "--checkout", str(repo)])
+    assert code == 1
+    assert driven == []
+    assert batch.store.latest_run_id() is None
+    # Taken before the refusal (sorted first), and released with it.
+    assert not core.run_lock.is_held(_target(repo, "feat/a"))
+    assert "acme/widget#2 is held by pr fix (pid 4242" in capsys.readouterr().err
+
+
+def test_resume_is_refused_when_an_item_is_held(monkeypatch, tmp_path, capsys):
+    repo = repo_with_origin(tmp_path / "repo")
+    run = _saved_run([_row(repo, 1, "feat/a")])
+    driven = []
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
+                        lambda self: driven.append(1) or batch.model.RunStatus.WAITING)
+    record = {"pid": 4242, "command": "pr fix", "started": "t0"}
+    with held_elsewhere(_target(repo, "feat/a") / core.run_lock.LOCK_FILE, record):
+        code = _main(["batch", "resume", run.id])
+    assert code == 1
+    assert driven == []
+    assert f"run {run.id} not resumed: acme/widget#1 is held by pr fix" in capsys.readouterr().err
+
+
+def test_an_item_with_no_origin_is_left_to_lock_itself(monkeypatch, capsys):
+    row = PlanRow("o/r", "/r", 1, "t", "b", "h", False,
+                  {batch.model.Step.REVIEW: StepNeed(True, "x")})
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", [row]))
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
+                        lambda self: batch.model.RunStatus.DONE)
+    assert _main(["batch", "run", "--checkout", "/r"]) == 0
+    assert "cannot name the pr target of o/r#1" in capsys.readouterr().err
+
+
+# A `pr batch run` over one real PR whose scheduler parks until `release`, so
+# the batch holds that PR's target while the test acts as a second session.
+_HOLDING_HARNESS = textwrap.dedent("""\
+    import pathlib, sys, time
+    lib, signals, repo, bin_dir = sys.argv[1:5]
+    sys.path.insert(0, lib)
+    import batch.model, batch.plan, batch.scheduler
+    import cli.pr
+    signals = pathlib.Path(signals)
+    row = batch.plan.PlanRow("acme/widget", repo, 1, "t", "feat/x", "h", False,
+                             {batch.model.Step.REVIEW: batch.plan.StepNeed(True, "x")})
+    batch.plan.build_plan = lambda dirs: batch.plan.Plan("me", [row])
+
+    def run_until_blocked(self):
+        (signals / "holding").touch()
+        deadline = time.monotonic() + 30
+        while not (signals / "release").exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        return batch.model.RunStatus.DONE
+
+    batch.scheduler.Scheduler.run_until_blocked = run_until_blocked
+    sys.exit(cli.pr.main(["batch", "run", "--checkout", repo], bin_dir=pathlib.Path(bin_dir)))
+""")
+
+
+def _manual_fix(target):
+    """`pr fix` on *target* in this process, stopped short of any real work."""
+    ctx = make_ctx(target_dir=target, worktree_root=None)
+    with patch("pr.context.resolve", return_value=ctx), \
+         patch("pr.sync.update_to_remote", return_value=ctx) as update, \
+         patch("cli.pr._dispatch", return_value=0) as dispatch:
+        code = _main(["fix"])
+    return SimpleNamespace(code=code, fetched=update.called, dispatched=dispatch.called)
+
+
+def test_a_manual_pr_fix_on_a_live_batchs_pr_is_refused_naming_the_batch(tmp_path, capsys):
+    repo = repo_with_origin(tmp_path / "repo")
+    argv = [sys.executable, "-c", _HOLDING_HARNESS, str(LIB_DIR), str(tmp_path), str(repo),
+            str(BIN_DIR)]
+    live = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        _wait_for(tmp_path / "holding", live)
+        run_id = batch.store.latest_run_id()
+        fix = _manual_fix(_target(repo, "feat/x"))
+    finally:
+        (tmp_path / "release").touch()
+        _, live_err = live.communicate(timeout=_PROC_TIMEOUT)
+    assert fix.code == 1
+    assert not fix.fetched and not fix.dispatched
+    assert f"pr batch run {run_id}" in capsys.readouterr().err
+    assert live.returncode == 0, live_err

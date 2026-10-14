@@ -228,17 +228,19 @@ class LockBusy(RuntimeError):
         # The scope's kind — "global", "target" or "checkout" — without the
         # name or label a subject may carry after it.
         self.kind = subject.split(" ", 1)[0]
-        pid = holder.get("pid", "?")
-        command = holder.get("command", "unknown command")
-        started = holder.get("started", "unknown time")
+        super().__init__(f"another pr run already owns this {subject}: {self.holder_text}")
+
+    @property
+    def holder_text(self) -> str:
+        """Who holds the lock: its command, pid, start time and any run id."""
+        pid = self.holder.get("pid", "?")
+        command = self.holder.get("command", "unknown command")
+        started = self.holder.get("started", "unknown time")
         # A holder that learned its run id after taking the lock records it
         # (`note_holder`), and a contender is told which run to wait for.
-        run = holder.get("run")
+        run = self.holder.get("run")
         tail = f", run {run}" if run else ""
-        super().__init__(
-            f"another pr run already owns this {subject}: "
-            f"{command} (pid {pid}, started {started}{tail})"
-        )
+        return f"{command} (pid {pid}, started {started}{tail})"
 
 
 def _read_holder(path: Path) -> dict:

@@ -352,13 +352,17 @@ _pi_setup() {
 _pi_sync() {
   local stubs
   stubs="$(declare -f install_package _pi_repo_reachable)"
-  bash -c '
-    set -e
+  local out rc=0
+  out="$(bash -e -c '
     . "$1/lib/ui.sh"
     . "$1/ai/pi/steps.sh"
     eval "$2"
     sync_pi
-  ' _ "$REPO_ROOT" "$stubs" >/dev/null 2>&1
+  ' _ "$REPO_ROOT" "$stubs" 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    printf 'sync_pi failed (exit %s):\n%s\n' "$rc" "$out" >&2
+    return "$rc"
+  fi
 }
 
 @test "sync_pi: second run produces identical settings and context file" {

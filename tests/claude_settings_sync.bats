@@ -189,13 +189,14 @@ _run_sync() {
 # state root at source time: a second run needs a fresh process, not a second
 # call. _fresh_bash, not a subshell, for speed — see claude_settings_helper.bash.
 _sync_run() {
-  HOME="$1" WORKBENCH_CONFIG_DIR="$1/.config/workbench" WORKBENCH_STATE_DIR="$2" \
+  env HOME="$1" WORKBENCH_CONFIG_DIR="$1/.config/workbench" WORKBENCH_STATE_DIR="$2" \
     WORKBENCH_CACHE_DIR="$1/.cache/workbench" WORKBENCH_DIR="$REPO_ROOT" \
-    WORKBENCH_STABLE_DIR="$REPO_ROOT" NO_COLOR=1 _fresh_bash '
+    WORKBENCH_STABLE_DIR="$REPO_ROOT" NO_COLOR=1 \
+    bash -e -c '
       mkdir -p "$HOME"
       . "$WORKBENCH_DIR/lib/ui.sh"
       . "$WORKBENCH_DIR/ai/claude/steps.sh"
-      step_claude_settings >/dev/null'
+      step_claude_settings >/dev/null' _
 }
 
 @test "shell: the file-level sync keeps its manifest inside the sandbox" {

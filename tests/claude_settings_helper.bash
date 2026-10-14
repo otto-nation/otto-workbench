@@ -26,7 +26,7 @@ _claude_settings_setup_file() {
 # ~3s in its own process. Exported variables reach it; functions do not.
 _fresh_bash() {
   local script="$1"; shift
-  bash -c "set -e; $script" _ "$@"
+  bash -e -c "$script" _ "$@"
 }
 
 # _sync_settings_into FAKE_HOME REPO_ROOT — runs step_claude_settings against a

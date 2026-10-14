@@ -133,6 +133,7 @@ teardown() {
   run env PATH="$STUBS:$SYSBIN" "$REPO_ROOT/packages/setup.sh" <<< "yy"
   [ "$status" -eq 0 ]
   [[ "$output" != *"core packages installed"* ]]
+  [[ "$output" == *"core packages install failed"* ]]
 }
 
 @test "no brew, no mise, failed bootstrap skips install" {

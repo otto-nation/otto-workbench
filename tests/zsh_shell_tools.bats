@@ -99,7 +99,8 @@ _git_plugins() {
   [ "$status" -eq 0 ]
   grep -q -- "https://example.com/other/zsh-elsewhere-repo $XDG_DATA_HOME/zsh/plugins/zsh-elsewhere" "$GIT_LOG"
   grep -q -- "https://example.com/fancy $XDG_DATA_HOME/zsh/plugins/fancy-plugin" "$GIT_LOG"
-  ! grep -q zsh-via-mise "$GIT_LOG"
+  via_mise=$(grep -c zsh-via-mise "$GIT_LOG" || true)
+  [ "$via_mise" -eq 0 ]
   [ "$(wc -l < "$GIT_LOG")" -eq 3 ]
 }
 

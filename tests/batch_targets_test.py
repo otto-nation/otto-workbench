@@ -19,6 +19,7 @@ import core.run_lock  # noqa: E402
 import pr.target  # noqa: E402
 from batch.model import Decision, DecisionKind, Item, Step  # noqa: E402
 from batch.plan import PlanRow  # noqa: E402
+# `_quiet_outcomes` is an autouse fixture; imported only so pytest registers it here.
 from batch_scheduler_support import (  # noqa: E402,F401
     NEED, Harness, _quiet_outcomes, ff_tree, row,
 )

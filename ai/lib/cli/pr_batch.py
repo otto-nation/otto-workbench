@@ -22,6 +22,7 @@ import contextlib
 import json
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,7 +39,7 @@ import config.workbench_config
 import core.report
 import core.run_lock
 import core.serde
-from batch.model import STEP_ORDER, RunStatus, Step
+from batch.model import STEP_ORDER, Item, Run, RunStatus, Step
 from core.trail import TRAIL_ROOT_ENV, Trail
 
 EXIT_OK = batch.report.EXIT_OK
@@ -177,7 +178,8 @@ def _save(run) -> None:
         batch.plan.drop_refs(run.ref_dirs, run.ref_namespace)
 
 
-def _apply_loaded(run, bin_dir: Path, env_for=None) -> list[str]:
+def _apply_loaded(run: Run, bin_dir: Path,
+                  env_for: Callable[[Item], dict[str, str]] | None = None) -> list[str]:
     errors = []
     pr_bin = str(bin_dir / "pr")
     for raw in batch.store.take_requests(run.id):
@@ -247,8 +249,8 @@ class _Refused(Exception):
 class _Started:
     """A run that has been planned, locked and saved, ready to drive."""
 
-    run: object
-    cfg: object
+    run: Run
+    cfg: config.workbench_config.BatchConfig
     trail: Trail
 
 

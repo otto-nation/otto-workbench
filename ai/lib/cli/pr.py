@@ -477,9 +477,15 @@ def _lock_resolve_and_dispatch(held: contextlib.ExitStack, args, spec, extra: li
     fast-forwards the worktree — a write to the checkout — and before the
     handler runs. Global → target → checkout is the one order every `pr`
     process takes them in, so no two can deadlock.
+
+    `-h` / `--help` among the command's own tokens skip every lock: the
+    parser answers help, and a live `pr batch run` must not refuse `pr batch
+    run --help`.
     """
-    held.enter_context(cli.locks.hold_declared(
-        core.run_lock.globals_in(need.locks), None, command=command))
+    skip_locks = bool({"-h", "--help"} & set(extra))
+    if not skip_locks:
+        held.enter_context(cli.locks.hold_declared(
+            core.run_lock.globals_in(need.locks), None, command=command))
 
     ctx = pr.context.resolve_at(
         need.depth,
@@ -494,8 +500,9 @@ def _lock_resolve_and_dispatch(held: contextlib.ExitStack, args, spec, extra: li
     if ctx.worktree_root:
         config.workbench_projects.register(ctx.worktree_root)
 
-    held.enter_context(cli.locks.hold_declared(
-        _held_scopes(spec, extra, ctx, original_pr), ctx, command=command))
+    if not skip_locks:
+        held.enter_context(cli.locks.hold_declared(
+            _held_scopes(spec, extra, ctx, original_pr), ctx, command=command))
 
     if need.update:
         ctx = pr.sync.update_to_remote(ctx)

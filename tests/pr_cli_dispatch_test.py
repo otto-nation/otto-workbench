@@ -36,7 +36,7 @@ import cli.review_modes  # noqa: E402
 import core.tool_parser  # noqa: E402
 import pr.context  # noqa: E402
 from core.run_lock import CHECKOUT, TARGET  # noqa: E402
-from run_lock_support import flocked, git_dir  # noqa: E402
+from run_lock_support import flocked, git_dir, held_elsewhere  # noqa: E402
 
 from pr_cli_support import _cmd_fix, _TEST_PR, _run_main, _lock_file, _dispatch_stage
 
@@ -411,16 +411,47 @@ def test_each_invocation_declares_its_locks(command, argv):
     assert need.locks == _DECLARED_LOCKS[(command, argv)]
 
 
+def _held_during_dispatch(worktree, *argv, ctx):
+    """Locks actually held when `_dispatch` runs, not files left after it returns."""
+    target = ctx.target_dir
+    tree_lock = git_dir(worktree) / core.run_lock.TREE_LOCK_FILE
+    seen = {}
+
+    def spy(*_a, **_k):
+        seen["target"] = core.run_lock.is_held(target)
+        seen["checkout"] = flocked(tree_lock)
+        return 0
+
+    with patch("pr.context.resolve", return_value=ctx), \
+         patch("pr.context.resolve_local", return_value=ctx), \
+         patch("pr.sync.update_to_remote", return_value=ctx), \
+         patch("cli.pr._dispatch", side_effect=spy):
+        _run_main(*argv)
+    return seen
+
+
 @pytest.mark.parametrize("command,argv",
                          sorted(k for k in _DECLARED_LOCKS if k[0] != "batch"))
 def test_dispatch_takes_exactly_the_declared_target_and_checkout(command, argv, worktree):
-    target = worktree / "target"
-    _dispatch_stage(command, *argv, ctx=make_ctx(worktree_root=worktree, target_dir=target))
+    ctx = make_ctx(worktree_root=worktree, target_dir=worktree / "target")
+    seen = _held_during_dispatch(worktree, command, *argv, ctx=ctx)
     declared = _DECLARED_LOCKS[(command, argv)]
-    assert _lock_file(target).is_file() is (TARGET in declared)
-    tree_lock = git_dir(worktree) / core.run_lock.TREE_LOCK_FILE
-    assert tree_lock.is_file() is (CHECKOUT in declared)
+    assert seen["target"] is (TARGET in declared)
+    assert seen["checkout"] is (CHECKOUT in declared)
     assert not core.run_lock.global_lock_path("batch").exists()
+
+
+@pytest.mark.parametrize("argv,pr_number,checkout", [
+    (("review", "123"), 42, False),
+    (("--branch", "feat/x", "review"), 42, False),
+    (("--branch", "feat/x", "review"), None, True),
+])
+def test_review_target_shape_locks_at_dispatch(argv, pr_number, checkout, worktree):
+    """Spec §1: `review <pr>` / `--branch` hold TARGET; no PR is the self-review path."""
+    ctx = make_ctx(worktree_root=worktree, target_dir=worktree / "target",
+                   pr_number=pr_number)
+    seen = _held_during_dispatch(worktree, *argv, ctx=ctx)
+    assert seen == {"target": True, "checkout": checkout}
 
 
 @pytest.mark.parametrize("sub", ["run", "resume"])
@@ -437,6 +468,15 @@ def test_dispatch_holds_the_batch_lock_before_it_resolves_anything(sub):
         _run_main("batch", sub)
     assert seen["held"] is True
     assert not core.run_lock.is_global_held(batch.store.BATCH_LOCK)
+
+
+def test_help_skips_locks_so_a_live_batch_still_prints_it(capsys):
+    """`pr batch run --help` must not contend for the global a live run holds."""
+    record = {"pid": 7, "command": "pr batch run --checkout /x", "started": "t0"}
+    with held_elsewhere(core.run_lock.global_lock_path("batch"), record):
+        code = _run_main("batch", "run", "--help")
+    assert code == 0
+    assert "--checkout" in capsys.readouterr().out
 
 
 def test_dispatch_holds_target_and_checkout_before_it_fetches(worktree):

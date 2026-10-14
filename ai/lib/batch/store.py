@@ -14,6 +14,24 @@ flock. ``os.replace`` moves ``run.lock`` with the directory; the flock stays
 on the same inode, so the hold remains valid across the rename. ``run_ids()``
 skips names ending in ``.reaping`` because a tombstone still contains
 ``state.json``.
+
+Hand-off. A request can land after a holder's last drain and before it
+releases. The submitter's take is refused, so it reports ``queued``. To
+close that window, ``session()`` and ``create()`` check the inbox once the
+lock is released, after a normal exit only. While requests wait, they open
+the run again as an APPLIER whose own entry drain and finish apply them.
+
+- A live holder that drains ends the loop. It held the lock when the request
+  was written, so its own post-release check sees the request.
+- A GC holder or a vacated record is retried along
+  ``core.run_lock.retry_delays``. Once that is spent, the run and its
+  pending count are named on stderr.
+
+A submitter reports ``queued`` only when a live drainer refused it. So a
+request reported queued is applied by that holder or a successor, unless the
+holder dies. A dead holder leaves the request in the inbox for the next
+session's entry drain. Each pass applies or rejects every request it saw, so
+the loop ends.
 """
 
 # doc-group: batch
@@ -26,6 +44,8 @@ import json
 import os
 import secrets
 import shutil
+import sys
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -509,6 +529,97 @@ def _fold_legacy_cancel(opened: Session) -> None:
 
 
 @contextlib.contextmanager
+def _open(run_id: str, role: Role, *, inbox: InboxPolicy, command: str) -> Iterator[Session]:
+    """`session()` without the hand-off: lock, load, fold, drain, yield, finish, release.
+
+    The hand-off opens its own passes through this, so a pass never starts a
+    hand-off of its own and `_hand_off` stays one loop, never a recursion.
+    """
+    if not (run_dir(run_id) / STATE_FILE).is_file():
+        raise RunNotFound(run_id)
+    with contextlib.ExitStack() as stack:
+        _enter_lock(stack, run_id, role, command=command, create=False)
+        opened = Session(load(run_id), role, inbox)
+        _fold_legacy_cancel(opened)
+        opened.drain(settle=True)
+        yield opened
+        if not opened._finished:
+            opened.finish()
+
+
+class _Pass(enum.Enum):
+    """What one hand-off attempt to open the run found."""
+
+    # It took the lock; its entry drain and finish applied or rejected every
+    # request they saw.
+    APPLIED = "applied"
+    # A live holder that drains has the run. It held the lock when the request
+    # was written, so its own post-release check carries the duty on.
+    CARRIED = "carried"
+    # A GC holder, a vacated record core could not wait out, or a run
+    # directory renamed away mid-reap: worth another try after a pause.
+    BLOCKED = "blocked"
+
+
+def _hand_off_pass(run_id: str, inbox: InboxPolicy, command: str) -> _Pass:
+    """Open *run_id* once as an APPLIER that does not itself hand off, and say what it found."""
+    try:
+        with _open(run_id, Role.APPLIER, inbox=inbox, command=f"{command} (hand-off)"):
+            pass
+    except (RunNotFound, RunUnreachable):
+        return _Pass.BLOCKED
+    except RunBusy as exc:
+        drains = exc.holder is not None and exc.holder.drains
+        return _Pass.CARRIED if drains else _Pass.BLOCKED
+    return _Pass.APPLIED
+
+
+def _warn_stranded(run_id: str) -> None:
+    """Name on stderr a run whose queued requests the hand-off could not apply."""
+    count = pending_requests(run_id)
+    print(f"pr batch: run {run_id} still has {count} queued request(s) nobody could apply; "
+          f"`pr batch resume {run_id}` or another resolve will apply them", file=sys.stderr)
+
+
+def _hand_off(run_id: str, inbox: InboxPolicy, command: str) -> None:
+    """Apply what reached *run_id*'s inbox after its holder's last drain. Runs after release.
+
+    While requests wait, it opens the run as an APPLIER whose entry drain and
+    finish apply them. It stops on any of these:
+    - the inbox is empty;
+    - a live draining holder refuses it, and that holder carries the duty;
+    - the pauses in `core.run_lock.retry_delays()` run out against GC
+      holders or vacated records, in which case the run and its pending
+      count are named on stderr.
+
+    It always ends. Every pass that gets in applies or rejects every request
+    it peeked, so the inbox shrinks unless new requests keep arriving, and
+    each of those is real work. A run directory that is truly gone takes its
+    inbox with it, which ends the loop.
+
+    An error from inside a pass is not caught. It propagates from the exit
+    of the block that ran the hand-off, after that block's own work was
+    committed.
+    """
+    # ceiling: one retry budget covers the whole hand-off, not each blocked
+    # stretch between successful passes. Upgrade to a fresh budget after each
+    # APPLIED pass if a hand-off that applied requests is ever reported
+    # stranding later ones.
+    delays = core.run_lock.retry_delays()
+    while pending_requests(run_id) > 0:
+        found = _hand_off_pass(run_id, inbox, command)
+        if found is _Pass.CARRIED:
+            return
+        if found is _Pass.APPLIED:
+            continue
+        pause = next(delays, None)
+        if pause is None:
+            _warn_stranded(run_id)
+            return
+        time.sleep(pause)
+
+
+@contextlib.contextmanager
 def session(run_id: str, role: Role, *, inbox: InboxPolicy, command: str) -> Iterator[Session]:
     """Open *run_id* as *role*: take its lock, load, fold the legacy sidecar, drain, yield.
 
@@ -521,20 +632,15 @@ def session(run_id: str, role: Role, *, inbox: InboxPolicy, command: str) -> Ite
       sessions on one run in one process is a programming error, not contention.
 
     The entry drain settles, so a pending cancel is CANCELLED before the block
-    sees the run. A normal exit calls `finish()` unless the block already did.
-    An exceptional exit only releases, so nothing half-applied is committed
-    and anything unapplied stays in the inbox.
+    sees the run. A normal exit calls `finish()` unless the block already did,
+    releases, then hands off. The hand-off applies whatever a submitter queued
+    after the last drain, whose own take this session refused. An exceptional
+    exit only releases, so nothing half-applied is committed, nothing is handed
+    off, and anything unapplied stays in the inbox for the next session.
     """
-    if not (run_dir(run_id) / STATE_FILE).is_file():
-        raise RunNotFound(run_id)
-    with contextlib.ExitStack() as stack:
-        _enter_lock(stack, run_id, role, command=command, create=False)
-        opened = Session(load(run_id), role, inbox)
-        _fold_legacy_cancel(opened)
-        opened.drain(settle=True)
+    with _open(run_id, role, inbox=inbox, command=command) as opened:
         yield opened
-        if not opened._finished:
-            opened.finish()
+    _hand_off(run_id, inbox, command)
 
 
 def _discard_uncommitted(opened: Session) -> None:
@@ -551,8 +657,8 @@ def create(run: Run, *, inbox: InboxPolicy, command: str) -> Iterator[Session]:
     ends, normally or not, with no commit made, the directory (which holds
     only its lock file) is removed while the lock is still held. A refused or
     failed start therefore leaves no orphan run. After a commit, a normal exit
-    calls `finish()` as `session()` does. A new run has no inbox, so there is
-    no entry drain.
+    calls `finish()`, releases, then hands off as `session()` does. A new run
+    has no inbox, so there is no entry drain.
     """
     directory = run_dir(run.id)
     directory.mkdir(parents=True, exist_ok=False)
@@ -569,6 +675,7 @@ def create(run: Run, *, inbox: InboxPolicy, command: str) -> Iterator[Session]:
             return
         if not opened._finished:
             opened.finish()
+    _hand_off(run.id, inbox, command)
 
 
 class ReapResult(enum.Enum):

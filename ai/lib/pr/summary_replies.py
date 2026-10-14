@@ -67,14 +67,17 @@ def _dismissals(content: pr.summary_model.RoundContent) -> dict[str, list[Commen
 
     Read off the round's `DISMISSED` bucket, so an operator's `--settle --as
     dismissed --reason` and the fix pass's own justification both count: either
-    is an argument the reviewer may answer. A dismissal with no reason has
-    nothing to say beyond the table's Action cell, and adds no line.
+    is an argument the reviewer may answer. The reason is the entry's
+    `justification` — what the record persists — so a triage dismissal, whose
+    argument is in `reasoning`, renders live exactly as its replay will. A
+    dismissal with no reason has nothing to say beyond the table's Action cell,
+    and adds no line.
     """
     found: dict[str, list[CommentItem]] = {}
     for entry in content.of(FixOutcome.DISMISSED):
         source = pr.permalinks.comment_item_source(entry)
         if (source.type is CommentSourceKind.REVIEW_BODY and source.id.isdigit()
-                and entry.reason.strip()):
+                and entry.justification.strip()):
             found.setdefault(source.id, []).append(entry)
     return {key: sorted(items, key=_item_index) for key, items in found.items()}
 
@@ -82,7 +85,7 @@ def _dismissals(content: pr.summary_model.RoundContent) -> dict[str, list[Commen
 def _dismissal_line(entry: CommentItem) -> str:
     """`Dismissed: <finding> — <reason>`, the reason folded onto the one line."""
     finding = pr.settlement.finding_line(entry.summary) or entry.id
-    return f"Dismissed: {finding} — {' '.join(entry.reason.split())}"
+    return f"Dismissed: {finding} — {' '.join(entry.justification.split())}"
 
 
 def _reviewer(content: pr.summary_model.RoundContent, review_id: str) -> str:
@@ -182,9 +185,24 @@ class KeptReplies:
         return {block.key: block.block for block in (*self.held, *self.carried)}
 
 
+def known_reviews(content: pr.summary_model.RoundContent) -> frozenset[str]:
+    """The review ids any item in ``content`` was cut from.
+
+    A review this checkout holds items for is one whose state it has, so a block
+    for it that `reply_block_keys` no longer names was withdrawn — a dismissal
+    re-settled away — not written by another checkout. Meaningful only for a
+    content holding the whole record (`render_deferred_summary`'s).
+    """
+    entries = (e for bucket in content.by_outcome.values() for e in bucket)
+    sources = map(pr.permalinks.comment_item_source, entries)
+    return frozenset(source.id for source in sources
+                     if source.type is CommentSourceKind.REVIEW_BODY and source.id.isdigit())
+
+
 def kept_replies(
     target_body: str, answered: bool, reply_keys: frozenset[str],
     elsewhere: frozenset[str], force: frozenset[str] = frozenset(),
+    known: frozenset[str] = frozenset(),
 ) -> KeptReplies:
     """Which of the target's reply blocks an in-place edit must keep as published.
 
@@ -195,7 +213,8 @@ def kept_replies(
     reply. A block for a review outside ``reply_keys`` (`reply_block_keys`) was
     written by a checkout whose state this one lacks and is carried, unless
     another summary comment also holds it (``elsewhere``): the footer chain
-    reaches it there.
+    reaches it there, or this checkout holds items from that review
+    (``known``, `known_reviews`): its block was withdrawn, and is dropped.
     """
     if answered:
         return KeptReplies()
@@ -204,7 +223,7 @@ def kept_replies(
     held_keys = {b.key for b in held}
     carried = tuple(
         b for b in blocks.values()
-        if b.key not in held_keys and b.key not in reply_keys and b.key not in elsewhere
+        if b.key not in held_keys and b.key not in reply_keys | elsewhere | known
     )
     return KeptReplies(held, carried)
 

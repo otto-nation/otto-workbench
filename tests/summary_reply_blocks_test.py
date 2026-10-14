@@ -20,7 +20,7 @@ if str(LIB_DIR) not in sys.path:
 # `_no_published_summary` is autouse: imported so pytest applies it here,
 # never referenced by name.
 from review_threads_support import (  # noqa: E402
-    _lookup_returns, _no_published_summary, _published_summary, content,
+    _fix, _lookup_returns, _make_state, _no_published_summary, _published_summary, content,
 )
 import core.log
 from git.land import CommitStatus
@@ -31,7 +31,8 @@ import pr.summary_publish
 import pr.summary_render
 import pr.summary_replies
 import pr.summary_rounds
-from pr.thread_models import CommentItem
+from pr.fix import FixOutcome, ItemOutcome
+from pr.thread_models import CommentItem, PRReport
 
 _REPO = "owner/repo"
 _LINK = "https://github.com/owner/repo/pull/1#pullrequestreview-"
@@ -230,6 +231,10 @@ class TestDismissalReasons:
         assert alone in _render(round_content)
 
     def test_an_in_place_edit_does_not_carry_a_dismissal_block_twice(self, content):
+        """Guards duplication only: the block is written once, not also carried.
+
+        Rendering itself is `test_a_dismissal_alone_renders_a_block_with_no_reply`'s.
+        """
         round_content = content(review_body_comments=_REVIEWS, dismissed=[
             _dismissed("rb-88-1", "Drop the cache", "The cache is the fix")])
         alone = _block(reply="Dismissed: Drop the cache — The cache is the fix")
@@ -245,3 +250,43 @@ class TestDismissalReasons:
                            newest_other_at="2026-01-04T00:00:00Z")
         restated = _block(reply="Done.\n\nDismissed: Drop the cache — Needed")
         assert restated in _publish(round_content, answered)
+
+    def test_a_triage_dismissal_renders_its_reasoning_live_and_on_replay(self, content):
+        """Triage writes its justification to `reasoning`; `reason` stays empty.
+
+        The record persists it as the reason (`to_outcome`), so the live round
+        and a replay of it must render the same block, not one each.
+        """
+        live = CommentItem(id="rb-88-1", summary="Drop the cache", reviewer="kgn",
+                           reasoning="The cache is the fix")
+        replayed = CommentItem.from_outcome(live.to_outcome(FixOutcome.DISMISSED), "kgn")
+        texts = [pr.summary_replies.reply_block_text(
+            content(review_body_comments=_REVIEWS, dismissed=[entry]), "88", _REPO, 1)
+            for entry in (live, replayed)]
+        assert texts[0] == texts[1]
+        alone = _block(reply="Dismissed: Drop the cache — The cache is the fix")
+        assert alone in _render(content(review_body_comments=_REVIEWS, dismissed=[live]))
+
+
+class TestAWithdrawnDismissal:
+    """A dismissal re-settled away is dropped from the comment that published it."""
+
+    def _replay(self, *markers):
+        fix = _fix(items=[ItemOutcome(id="rb-88-1", summary="Drop the cache",
+                                      outcome=FixOutcome.FIXED)],
+                   commit_status="no_changes", summary_deferred=True)
+        with _lookup_returns(*markers), \
+                patch.object(pr.comments, "post_issue_comment", return_value="url") as post:
+            pr.summary_publish.render_deferred_summary(
+                _make_state(fix), PRReport(review_body_comments=_REVIEWS), _REPO, 1, {})
+        return post.call_args[0][2]
+
+    def test_an_in_place_finish_edit_drops_the_withdrawn_block(self):
+        stale = _block(reply="Dismissed: Drop the cache — The cache is the fix")
+        body = self._replay(_marker(_published_summary() + "\n" + stale))
+        assert "pr-comments:review-reply k=88 " not in body
+
+    def test_a_block_for_a_review_this_checkout_does_not_know_is_still_carried(self):
+        theirs = _block("90", "amp", "Answered from the other laptop.")
+        body = self._replay(_marker(_published_summary() + "\n" + theirs))
+        assert theirs in body

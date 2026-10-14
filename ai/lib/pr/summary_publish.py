@@ -226,6 +226,7 @@ def publish_summary(
     folded_texts: frozenset[str] = frozenset(),
     reply_keys: frozenset[str] = frozenset(),
     force_reply_keys: frozenset[str] = frozenset(),
+    known_reply_keys: frozenset[str] = frozenset(),
 ) -> str | None:
     """Publish the round without shrinking the record the PR already holds.
 
@@ -267,14 +268,18 @@ def publish_summary(
     (`summary_replies.reply_block_keys`); an edit keeps a block on its target
     that a person rewrote, or that answers a review outside that set, verbatim.
     ``force_reply_keys`` names the reviews an explicit `--reply` just answered,
-    whose hand-edited block that answer replaces.
+    whose hand-edited block that answer replaces. ``known_reply_keys``
+    (`summary_replies.known_reviews`) names the reviews this round holds items
+    for, whose block outside ``reply_keys`` was withdrawn rather than written
+    elsewhere, and is dropped instead of carried.
     """
     marked = pr.comments.find_marker_comments(repo, pr_number, SUMMARY_MARKER)
     existing = marked.newest
     answered = _answered_since(existing, activity_at)
     reconcile = functools.partial(
         _reconcile, marked, build_body=build_body, folded=folded,
-        folded_texts=folded_texts, reply_keys=reply_keys, force_reply_keys=force_reply_keys)
+        folded_texts=folded_texts, reply_keys=reply_keys, force_reply_keys=force_reply_keys,
+        known_reply_keys=known_reply_keys)
     reconciled = reconcile(answered)
     overflowed = not answered and len(reconciled.body) > GITHUB_COMMENT_LIMIT
     if overflowed:
@@ -343,6 +348,7 @@ def _reconcile(
     marked: pr.comments.MarkerHistory, answered: bool, *, build_body: Callable[..., str],
     folded: frozenset[str], folded_texts: frozenset[str],
     reply_keys: frozenset[str], force_reply_keys: frozenset[str],
+    known_reply_keys: frozenset[str],
 ) -> _Reconciled:
     """Render the round, then re-render around the rows it must not write.
 
@@ -357,7 +363,8 @@ def _reconcile(
     existing = marked.newest
     scope = pr.summary_rounds.round_scope(marked, answered)
     replies = pr.summary_replies.kept_replies(
-        existing.body, answered, reply_keys, scope.elsewhere_reply_keys, force_reply_keys)
+        existing.body, answered, reply_keys, scope.elsewhere_reply_keys, force_reply_keys,
+        known_reply_keys)
     render = functools.partial(
         build_body,
         scope=scope,
@@ -420,6 +427,11 @@ def post_fix_summary(
     ), activity_at=activity_at,
         folded=pr.summary_model.folded_locations(content, threads_by_id),
         folded_texts=pr.summary_model.folded_restatements(content, threads_by_id),
+        # ceiling: no `known_reply_keys` here — this pass's content holds only
+        # what it touched, so a review it lacks items for may still own a valid
+        # earlier block, and a withdrawn dismissal stays carried until a
+        # `--finish` re-renders from the whole record. Upgrade trigger: once
+        # the live round renders from the full record, pass `known_reviews`.
         reply_keys=pr.summary_replies.reply_block_keys(content))
     if url:
         core.log.info(f"Posted fix summary: {url}")
@@ -664,7 +676,8 @@ def render_deferred_summary(
         folded=pr.summary_model.folded_locations(content, threads_by_id),
         folded_texts=pr.summary_model.folded_restatements(content, threads_by_id),
         reply_keys=pr.summary_replies.reply_block_keys(content),
-        force_reply_keys=force_reply_keys)
+        force_reply_keys=force_reply_keys,
+        known_reply_keys=pr.summary_replies.known_reviews(content))
     if url:
         core.log.info(f"Posted deferred fix summary: {url}")
         fix.summary_posted(url)

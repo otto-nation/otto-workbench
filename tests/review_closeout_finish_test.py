@@ -18,6 +18,7 @@ from conftest import make_ctx
 import pr.state
 from pr.comments_state import ThreadState
 import core.log
+import core.publishing
 import git.client
 from git.land import CommitStatus
 import pr.comments
@@ -177,6 +178,24 @@ class TestFinishDeferredWork:
         )
         assert line in order
         assert order.index(line) < order.index("summary")
+
+    def test_a_publishing_run_lists_no_snapshot_item(self, worktree):
+        """`--finish --post` posts the table; the listing would only restate it."""
+        self._save(worktree, items=[ItemOutcome(
+            id="rb-4100200300-3", outcome=FixOutcome.NEEDS_HUMAN,
+            summary="Merge order with the sibling PR before landing",
+        )])
+        with core.publishing.run(post=True), \
+                patch.object(core.log, "info") as info, \
+                patch.object(review.closeout, "post_pending_fix_replies"), \
+                patch.object(review.deferred_issue, "finalize_deferred",
+                             return_value=True), \
+                patch.object(pr.summary_publish, "render_deferred_summary"):
+            review.closeout.finish_deferred_work(self._ctx(worktree), PRReport())
+        # The unfiled-deferral notice names the id too; the listing's line is
+        # the item's own `format_item_line`, with its outcome beside the id.
+        assert not any("rb-4100200300-3  needs_human" in str(c[0][0])
+                       for c in info.call_args_list)
 
 
 class TestReconcileRunsBeforeTheWrites:

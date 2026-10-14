@@ -311,6 +311,7 @@ _loads_helper() {
   name="${changed#tests/}"
   name="${name%.bash}"
   [[ "$name" != */* ]] || return 1
+  name="$(printf '%s' "$name" | sed 's/[][\.*+?^$(){}|/]/\\&/g')"
   grep -qE "^[[:space:]]*load[[:space:]]+['\"]?${name}['\"]?[[:space:]]*(\$|#)" "$test_file" 2>/dev/null
 }
 

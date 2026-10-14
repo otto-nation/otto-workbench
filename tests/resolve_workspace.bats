@@ -113,6 +113,7 @@ _pi_guard() {
 @test "resolve-workspace refusal says how to fix it" {
   run --separate-stderr "$REPO_ROOT/bin/resolve-workspace" "$SEED"
 
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" == *"wt-init"* ]]
 }
 

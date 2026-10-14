@@ -121,10 +121,12 @@ _commit() {
 
   run --separate-stderr claude
   [ "$status" -eq 1 ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" == *"reached the real claude CLI"* ]]
 
   run --separate-stderr pi
   [ "$status" -eq 1 ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" == *"reached the real pi CLI"* ]]
 }
 
@@ -205,6 +207,7 @@ _shim_fixture() {
   export MISE_WHICH_ANSWER=""
   run --separate-stderr narrow_path_to "$tool"
   [ "$status" -eq 0 ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" == *"no runnable $tool on PATH"* ]]
   [ ! -e "$BATS_TEST_TMPDIR/narrow-bin/$tool" ]
 }

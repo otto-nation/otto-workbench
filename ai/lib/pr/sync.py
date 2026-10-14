@@ -17,6 +17,7 @@ from __future__ import annotations
 import subprocess
 from dataclasses import replace as dataclass_replace
 
+import git.client
 import git.topology
 import core.log
 import pr.context
@@ -24,9 +25,7 @@ import core.timeouts
 from core.proc import failure_message
 
 
-def _reset_guard_read(
-    cwd: str, *args: str, timeout: float | None = core.timeouts.LOCAL,
-) -> subprocess.CompletedProcess:
+def _reset_guard_read(cwd: str, *args: str) -> subprocess.CompletedProcess:
     """A local git read in *cwd*, with a failure to run reported as a non-zero exit.
 
     The two reads below guard a `git reset --hard`, and both have to treat "did
@@ -35,13 +34,14 @@ def _reset_guard_read(
     inside a safety check. `proc.run` folds the same exception into a result
     for the callers that go through the git client.
 
-    *timeout* takes the tier `git.client` gives the same subcommand, which for
-    `status` is `UNBOUNDED`: its cost is the tree's, not the operation's.
+    The bound is the one `git.client` gives the same subcommand, so `status`
+    runs unbounded — its cost is the tree's — without this call site choosing.
     """
     argv = ["git", "-C", cwd, *args]
     try:
         return subprocess.run(
-            argv, capture_output=True, text=True, timeout=timeout,
+            argv, capture_output=True, text=True,
+            timeout=git.client.timeout_for(args),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return subprocess.CompletedProcess(argv, 1, "", f"{type(exc).__name__}: {exc}")
@@ -55,9 +55,7 @@ def _worktree_is_dirty(cwd: str) -> bool:
     `git reset --hard` would destroy work. See the module docstring for why
     failing towards blocked is the safe direction here.
     """
-    r = _reset_guard_read(
-        cwd, "status", "--porcelain", timeout=core.timeouts.UNBOUNDED,
-    )
+    r = _reset_guard_read(cwd, "status", "--porcelain")
     if r.returncode != 0:
         core.log.warn(failure_message(
             f"Could not read the state of {cwd} — treating it as dirty", r,

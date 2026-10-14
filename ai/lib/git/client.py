@@ -190,11 +190,15 @@ _LOCAL_FORMS = frozenset({
 _TRANSFER = frozenset({"fetch", "ls-remote"})
 
 
-def _timeout_for(args: tuple[str, ...]) -> float | None:
+def timeout_for(args: tuple[str, ...]) -> float | None:
     """The bound for this subcommand — see `timeouts` for the tiers.
 
     Two words where one subcommand spans both cost classes — `_LOCAL_FORMS` —
     and the subcommand alone everywhere else.
+
+    Public for the few callers that must run git through `subprocess` rather
+    than `run`, so their bound still follows the subcommand instead of being
+    picked at the call site.
 
     ceiling: the two-word read is a fixed exception list rather than a general
     rule, so `remote get-url` (local) and a `remote update` (network) still
@@ -253,7 +257,7 @@ def run(
     `git.push` so a pre-push hook is visible while it runs.
     """
     return core.proc.run(
-        _argv(args, config), cwd=cwd, timeout=_timeout_for(args), env=env,
+        _argv(args, config), cwd=cwd, timeout=timeout_for(args), env=env,
         relay=relay,
     )
 

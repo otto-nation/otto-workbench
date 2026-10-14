@@ -24,7 +24,9 @@ import core.timeouts
 from core.proc import failure_message
 
 
-def _reset_guard_read(cwd: str, *args: str) -> subprocess.CompletedProcess:
+def _reset_guard_read(
+    cwd: str, *args: str, timeout: float | None = core.timeouts.LOCAL,
+) -> subprocess.CompletedProcess:
     """A local git read in *cwd*, with a failure to run reported as a non-zero exit.
 
     The two reads below guard a `git reset --hard`, and both have to treat "did
@@ -32,11 +34,14 @@ def _reset_guard_read(cwd: str, *args: str) -> subprocess.CompletedProcess:
     raised out of `subprocess.run` would otherwise abort the command from
     inside a safety check. `proc.run` folds the same exception into a result
     for the callers that go through the git client.
+
+    *timeout* takes the tier `git.client` gives the same subcommand, which for
+    `status` is `UNBOUNDED`: its cost is the tree's, not the operation's.
     """
     argv = ["git", "-C", cwd, *args]
     try:
         return subprocess.run(
-            argv, capture_output=True, text=True, timeout=core.timeouts.LOCAL,
+            argv, capture_output=True, text=True, timeout=timeout,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return subprocess.CompletedProcess(argv, 1, "", f"{type(exc).__name__}: {exc}")
@@ -50,7 +55,9 @@ def _worktree_is_dirty(cwd: str) -> bool:
     `git reset --hard` would destroy work. See the module docstring for why
     failing towards blocked is the safe direction here.
     """
-    r = _reset_guard_read(cwd, "status", "--porcelain")
+    r = _reset_guard_read(
+        cwd, "status", "--porcelain", timeout=core.timeouts.UNBOUNDED,
+    )
     if r.returncode != 0:
         core.log.warn(failure_message(
             f"Could not read the state of {cwd} — treating it as dirty", r,

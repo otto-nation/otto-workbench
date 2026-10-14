@@ -84,6 +84,7 @@ def test_a_fetch_takes_the_transfer_tier():
 
 @pytest.mark.parametrize("subcommand", [
     "worktree", "commit", "push", "rebase", "checkout", "stash", "add",
+    "status",
 ])
 def test_input_and_hook_bound_subcommands_run_unbounded(subcommand):
     """A fixed bound here reports a large repo, or a slow hook, as a breakage."""

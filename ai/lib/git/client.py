@@ -155,8 +155,15 @@ _PATH_LISTING = frozenset({"diff", "ls-files", "status"})
 # whole tree — `add -A` after a fix pass, `add -u` after a lockfile
 # regeneration. Nothing about the argv says how much that is, so the bound would
 # be a guess at the repository rather than at the operation.
+#
+# `status` stats every tracked file and walks the tree for untracked ones. On a
+# warm cache that is fast enough to pass for a metadata read, which is how it
+# came to sit at `LOCAL`; on a cold one it is disk-bound, and a 26,000-file
+# worktree measured 31s against a 10s bound — refusing a rebase because its
+# dirty-tree check could not finish, on a tree that was clean.
 _UNBOUNDED = frozenset({
     "worktree", "commit", "push", "rebase", "checkout", "stash", "add",
+    "status",
 })
 
 # The forms of an `_UNBOUNDED` subcommand whose cost is not the tree's after

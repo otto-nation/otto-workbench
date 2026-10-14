@@ -25,6 +25,7 @@ import pr.thread_replies
 import pr.settlement
 from pr.fix import FixOutcome
 from pr.thread_models import PRReport
+import cli.locks
 import cli.review_threads
 import review.comment_threads
 import review.closeout
@@ -177,18 +178,20 @@ class TestReplyRouting:
              patch.object(pr.thread_replies, "run_reply", return_value=0) as thread, \
              patch.object(review.review_body_reply, "run_review_body_reply",
                           return_value=0) as body, \
-             patch.object(core.run_lock, "claim_for_process") as lock:
+             patch.object(cli.locks, "claim_declared") as lock, \
+             patch.object(cli.review_threads.Trail, "start") as trail:
             code = cli.review_threads.main(
                 ["--reply", "88", "--body-file", str(tmp_path / "f")])
-        return code, thread, body, lock
+        return code, thread, body, lock, trail
 
     def test_a_review_body_is_answered_under_the_lock(self, tmp_path):
         """It writes the state file, so it runs where every state writer runs."""
         route = review.review_body_reply.ReplyRoute(pr_data=MagicMock(), source="rb-88")
-        code, thread, body, lock = self._main(route, tmp_path)
+        code, thread, body, lock, trail = self._main(route, tmp_path)
         assert code == 0
         thread.assert_not_called()
         lock.assert_called_once()
+        trail.assert_called_once()
         assert body.call_args[0][1] is route
         assert body.call_args[0][2] == "Done."
 
@@ -215,10 +218,15 @@ class TestReplyRouting:
         """Which keeps its error, and gains the review ids it could have meant."""
         route = review.review_body_reply.ReplyRoute(
             pr_data=MagicMock(), review_body_ids=("88",))
-        code, thread, body, lock = self._main(route, tmp_path)
+        code, thread, body, lock, trail = self._main(route, tmp_path)
         assert code == 0
         body.assert_not_called()
-        lock.assert_not_called()
+        # The target lock `comments --reply` declares, and none of the trail
+        # the review-body path opens.
+        lock.assert_called_once()
+        assert lock.call_args[0][:2] == ("comments", ["--reply", "88", "--body-file",
+                                                      str(tmp_path / "f")])
+        trail.assert_not_called()
         assert thread.call_args.kwargs["review_body_ids"] == ("88",)
 
     def _stdin_reply(self, tmp_path, route, text):

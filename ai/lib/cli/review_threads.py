@@ -40,6 +40,7 @@ import argparse
 import sys
 
 import cli.locks
+import cli.needs
 import core.log
 import core.publishing
 from core.trail import Trail, add_trail_args
@@ -151,6 +152,7 @@ def _run_locked(trail, args, ctx, route, body: str | None = None) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
+    argv = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(argv)
 
     # Before --fix widens itself into --triage, so the conflict named is the one
@@ -199,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
 
         ctx = pr.context.resolve(
             pr_ref=args.pr, branch=args.branch, repo_dir=args.repo_dir,
+            worktree=cli.needs.comments_need(argv).worktree,
         )
         repo = ctx.repo
         pr_number = ctx.pr_number
@@ -211,8 +214,7 @@ def main(argv: list[str] | None = None) -> int:
         body = pr.thread_replies.load_reply_body(args.body_file) if args.reply else None
         if args.reply and body is None:
             return 1
-        given = list(argv if argv is not None else sys.argv[1:])
-        command = " ".join([SCRIPT, *given])
+        command = " ".join([SCRIPT, *argv])
         # Both reply paths take the loaded body. A thread target goes to
         # run_reply here; a review body is answered in the summary comment,
         # which writes the state file, so it falls through to the worktree
@@ -221,17 +223,19 @@ def main(argv: list[str] | None = None) -> int:
         if args.settle or (route is not None and not route.source):
             # GitHub-only writes: `comments` declares the target alone for
             # them. Taken before the early return, which used to skip it.
-            cli.locks.claim_declared("comments", given, ctx, command=command)
+            cli.locks.claim_declared("comments", argv, ctx, command=command)
             return _github_only(ctx, args, route, body)
         branch = ctx.branch
         # Called for its raise: a bare-repo run must fail here, before the lock
-        # and the trail.
+        # and the trail. A review-body reply lands here too — it writes the state
+        # file, so with no checkout of the branch it refuses rather than creating
+        # one, though its lock is the target alone.
         ctx.require_worktree()
 
         # Target and checkout — this run's --fix pass commits in that checkout.
         # A no-op when pr launched us. Before Trail.start so contention costs
         # no trail artifacts.
-        cli.locks.claim_declared("comments", given, ctx, command=command)
+        cli.locks.claim_declared("comments", argv, ctx, command=command)
 
         trail = Trail.start(
             script=SCRIPT,

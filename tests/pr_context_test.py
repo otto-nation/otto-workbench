@@ -18,7 +18,8 @@ import pr.context
 import pr.target
 from pr.context import _parse_pr_input, PRHead, ResolvedContext
 
-from conftest import git_in, make_ctx, run_checked  # noqa: E402
+from conftest import git_in, git_out, make_ctx, run_checked  # noqa: E402
+from git_topology_support import _stack_repo  # noqa: E402
 import gh.client
 
 
@@ -98,7 +99,7 @@ def test_require_worktree_exits_with_actionable_message(capsys):
 def test_resolve_exits_when_a_prs_head_branch_cannot_be_resolved(monkeypatch, capsys):
     """No borrowing the caller's branch — that is the bug this issue is about."""
     monkeypatch.setattr(pr.context, "_resolve_worktree",
-                        lambda cwd, pr_ref, branch: (Path("/wt"), "/wt"))
+                        lambda cwd, pr_ref, branch, **k: (Path("/wt"), "/wt"))
     monkeypatch.setattr(pr.context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr.context, "_head_sha", lambda cwd=None: "deadbeef")
     monkeypatch.setattr(pr.context, "_pr_head", lambda repo, n: PRHead())
@@ -115,7 +116,7 @@ def test_resolve_exits_when_a_prs_head_branch_cannot_be_resolved(monkeypatch, ca
 def test_resolve_exits_when_a_prs_head_sha_cannot_be_resolved(monkeypatch, capsys):
     """A branch with no SHA is a partial result too — never stamp the caller's."""
     monkeypatch.setattr(pr.context, "_resolve_worktree",
-                        lambda cwd, pr_ref, branch: (Path("/wt"), "/wt"))
+                        lambda cwd, pr_ref, branch, **k: (Path("/wt"), "/wt"))
     monkeypatch.setattr(pr.context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr.context, "_head_sha", lambda cwd=None: "caller-sha")
     monkeypatch.setattr(pr.context, "_pr_head", lambda repo, n: PRHead(branch="feat/x"))
@@ -132,7 +133,7 @@ def test_resolve_exits_when_a_prs_head_sha_cannot_be_resolved(monkeypatch, capsy
 def test_resolve_stamps_the_prs_head_sha_not_the_callers(monkeypatch, tmp_path):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(pr.context, "_resolve_worktree",
-                        lambda cwd, pr_ref, branch: (Path("/wt"), "/wt"))
+                        lambda cwd, pr_ref, branch, **k: (Path("/wt"), "/wt"))
     monkeypatch.setattr(pr.context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr.context, "_head_sha", lambda cwd=None: "caller-sha")
     monkeypatch.setattr(git.topology, "current_branch_quiet", lambda cwd=None: "other")
@@ -151,7 +152,7 @@ def test_resolve_targets_the_pr_not_the_invoking_directory(monkeypatch, tmp_path
     """The whole point: two PRs from one CWD get two target dirs."""
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(pr.context, "_resolve_worktree",
-                        lambda cwd, pr_ref, branch: (Path("/repo-root"), "/repo-root"))
+                        lambda cwd, pr_ref, branch, **k: (Path("/repo-root"), "/repo-root"))
     monkeypatch.setattr(pr.context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr.context, "_head_sha", lambda cwd=None: "x")
     monkeypatch.setattr(git.topology, "current_branch_quiet", lambda cwd=None: "main")
@@ -190,12 +191,12 @@ def test_resolve_targets_the_same_pr_from_any_invoking_directory(monkeypatch, tm
                         lambda repo, branch: pr.context.BranchPR(number=2973))
 
     monkeypatch.setattr(pr.context, "_resolve_worktree",
-                        lambda cwd, pr_ref, branch: (Path("/repo-root"), "/repo-root"))
+                        lambda cwd, pr_ref, branch, **k: (Path("/repo-root"), "/repo-root"))
     from_root = pr.context.resolve(branch="feat/login", repo_dir="/repo-root")
 
     monkeypatch.setattr(
         pr.context, "_resolve_worktree",
-        lambda cwd, pr_ref, branch: (
+        lambda cwd, pr_ref, branch, **k: (
             Path("/repo-root/.worktrees/feat-login"), "/repo-root/.worktrees/feat-login",
         ),
     )
@@ -208,7 +209,7 @@ def test_resolve_targets_the_same_pr_from_any_invoking_directory(monkeypatch, tm
 
 def test_resolve_exits_without_an_origin_remote(monkeypatch, capsys):
     monkeypatch.setattr(pr.context, "_resolve_worktree",
-                        lambda cwd, pr_ref, branch: (Path("/wt"), "/wt"))
+                        lambda cwd, pr_ref, branch, **k: (Path("/wt"), "/wt"))
     monkeypatch.setattr(pr.context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr.context, "_head_sha", lambda cwd=None: "x")
     monkeypatch.setattr(git.topology, "current_branch_quiet", lambda cwd=None: "main")
@@ -243,6 +244,28 @@ def _git_repo(path: Path, origin="git@github.com:acme/widget.git",
              "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"},
     )
     return path
+
+
+def _bare_feat(tmp_path: Path) -> Path:
+    """A bare repo with no checkout; heads/feat and origin/feat differ.
+
+    Identity is passed per-commit so the repo-config guard stays quiet.
+    """
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    git_in(seed, "init", "-q", "-b", "main")
+    git_in(seed, "-c", "user.name=t", "-c", "user.email=t@t",
+           "commit", "-q", "--allow-empty", "-m", "local")
+    local_sha = git_out(seed, "rev-parse", "HEAD").strip()
+    git_in(seed, "-c", "user.name=t", "-c", "user.email=t@t",
+           "commit", "-q", "--allow-empty", "-m", "origin")
+    origin_sha = git_out(seed, "rev-parse", "HEAD").strip()
+    bare = tmp_path / "bare.git"
+    git_in(tmp_path, "clone", "-q", "--bare", str(seed), str(bare))
+    git_in(bare, "update-ref", "refs/heads/feat", local_sha)
+    git_in(bare, "update-ref", "refs/remotes/origin/feat", origin_sha)
+    git_in(bare, "remote", "set-url", "origin", "git@github.com:acme/widget.git")
+    return bare
 
 
 def _recorded_runs(monkeypatch) -> list[list[str]]:
@@ -346,6 +369,48 @@ def test_resolve_local_does_not_create_a_worktree_in_a_bare_repo(monkeypatch):
 
     assert ctx.worktree_root is None
     assert ctx.branch == "feat/login"
+
+
+def test_treeless_resolve_takes_origin_feat_when_there_is_no_pr(monkeypatch, tmp_path):
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+    bare = _bare_feat(tmp_path)
+    monkeypatch.setattr(git.topology, "find_bare_repo_worktree", lambda *a, **k: None)
+    monkeypatch.setattr(git.topology, "resolve_branch", lambda hint, cwd=None: "feat")
+    monkeypatch.setattr(pr.context, "_pr_from_branch", lambda repo, branch: pr.context.BranchPR())
+
+    ctx = pr.context.resolve(branch="feat", repo_dir=str(bare))
+
+    origin = git_out(bare, "rev-parse", "origin/feat").strip()
+    heads = git_out(bare, "rev-parse", "refs/heads/feat").strip()
+    assert origin != heads
+    assert ctx.worktree_root is None
+    assert ctx.head_sha == origin
+
+
+def test_resolve_local_in_a_bare_repo_takes_the_local_ref(monkeypatch, tmp_path):
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+    bare = _bare_feat(tmp_path)
+    monkeypatch.setattr(git.topology, "resolve_branch", lambda hint, cwd=None: "feat")
+    monkeypatch.setattr(
+        gh.client, "run",
+        lambda *a, **k: pytest.fail("gh must not be called"),
+    )
+    monkeypatch.setattr(
+        gh.client, "json_out",
+        lambda *a, **k: pytest.fail("gh must not be called"),
+    )
+    monkeypatch.setattr(
+        gh.client, "pr_view",
+        lambda *a, **k: pytest.fail("gh must not be called"),
+    )
+
+    ctx = pr.context.resolve_local(branch="feat", repo_dir=str(bare))
+
+    heads = git_out(bare, "rev-parse", "refs/heads/feat").strip()
+    origin = git_out(bare, "rev-parse", "origin/feat").strip()
+    assert heads != origin
+    assert ctx.worktree_root is None
+    assert ctx.head_sha == heads
 
 
 def test_resolve_at_local_takes_the_local_rung(monkeypatch):
@@ -564,7 +629,7 @@ def test_pr_head_with_a_branch_but_no_sha_is_not_resolved():
 
 def test_resolve_prints_the_reason_gh_could_not_read_the_pr_head(monkeypatch, capsys):
     monkeypatch.setattr(pr.context, "_resolve_worktree",
-                        lambda cwd, pr_ref, branch: (Path("/wt"), "/wt"))
+                        lambda cwd, pr_ref, branch, **k: (Path("/wt"), "/wt"))
     monkeypatch.setattr(pr.context, "detect_repo", lambda cwd=None: "acme/widget")
     monkeypatch.setattr(pr.context, "_head_sha", lambda cwd=None: "deadbeef")
     monkeypatch.setattr(pr.context, "_pr_head", lambda repo, n: PRHead(
@@ -777,6 +842,22 @@ def test_a_branch_lookup_reads_both_fields_off_the_json(monkeypatch):
     assert found == pr.context.BranchPR(number=7, base="feat/parent")
 
 
+def test_a_branch_lookup_reads_the_head_sha_off_the_json(monkeypatch):
+    seen: list[tuple] = []
+
+    def fake_json_out(*a, **kw):
+        seen.append(a)
+        return [{"number": 7, "baseRefName": "feat/parent", "headRefOid": "abc1234"}]
+
+    monkeypatch.setattr(gh.client, "json_out", fake_json_out)
+
+    found = pr.context._pr_from_branch("acme/widget", "feat/child")
+
+    assert found.head_sha == "abc1234"
+    json_fields = seen[0][seen[0].index("--json") + 1].split(",")
+    assert "headRefOid" in json_fields
+
+
 def test_a_pr_reporting_no_base_is_not_given_one(monkeypatch):
     """An absent base falls through the ladder; a placeholder would stop it."""
     monkeypatch.setattr(
@@ -852,3 +933,14 @@ def test_base_branch_derives_against_the_worktree_when_given_no_cwd(monkeypatch)
     pr.context.base_branch(make_ctx(base="", worktree_root=Path("/checkout")))
 
     assert seen["cwd"] == "/checkout"
+
+
+def test_base_branch_without_a_worktree_uses_the_branch_ref_not_head(
+        tmp_path, monkeypatch):
+    """No checkout means HEAD belongs to some other branch — measure this one."""
+    repo = _stack_repo(tmp_path / "repo")
+    git_in(repo, "checkout", "-q", "main")
+    monkeypatch.chdir(repo)
+    ctx = make_ctx(base="", worktree_root=None, branch="child")
+
+    assert pr.context.base_branch(ctx) == "parent"

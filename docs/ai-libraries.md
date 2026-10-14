@@ -2854,7 +2854,7 @@ Resolves repo, branch, PR number, worktree root, and HEAD SHA once
 per invocation. Replaces the duplicated discovery logic ci-check,
 review-threads, and the review pipeline each carried a copy of.
 
-How much of that a command wants is one of three axes every `pr` subcommand
+How much of that a command wants is one of four axes every `pr` subcommand
 declares on its `CommandSpec` in `cli.registry`. They are separate because they
 routinely disagree:
 
@@ -2863,34 +2863,39 @@ routinely disagree:
 | **depth** | `ContextDepth.NONE` resolves nothing at all; `LOCAL` resolves from git alone; `REMOTE` adds the `gh` calls that name the repo and the PR |
 | **fetch** | whether the worktree is fetched and fast-forwarded first |
 | **locks** | which run locks — `core.run_lock` scopes — are held for the whole run |
+| **worktree** | `WorktreeNeed.FIND` finds an existing checkout or gives none; commands that need one then refuse via `require_worktree`. `CREATE` will make one from any checkout |
 
-| Command | Depth | Fetch | Locks |
-|---|---|---|---|
-| `create` | remote | no | target + checkout (`--dry-run`: **none**) |
-| `status` | local | no | **none** |
-| `ci` | remote | yes | target (`--fix`: + checkout) |
-| `review` | remote | yes | target; its own tree once known |
-| `review --self` / `--self --fix` | local | yes | target + checkout |
-| `pr review --summary` / `--post` / `--repair` | remote | **no** | target (also with `--self`) |
-| `pr review --recover` | remote | **no** | target (`--self --recover` adds checkout) |
-| `pr review --list` | **none** | no | **none** |
-| `comments` | remote | yes | target + checkout (`--reply`/`--settle`: target) |
-| `fix` | remote | yes | target + checkout |
-| `rebase` | remote | no | target + checkout |
-| `push` | local | no | target + checkout |
-| `describe` | remote | yes | target + checkout |
-| `batch run` / `resume` | **none** | no | global `batch`; every item's target, held by the handler |
-| `batch` (other) | **none** | no | **none** |
-| `gc` | remote | no | target |
+| Command | Depth | Fetch | Locks | Worktree |
+|---|---|---|---|---|
+| `create` | remote | no | target + checkout (`--dry-run`: **none**) | find |
+| `status` | local | no | **none** | find |
+| `ci` | remote | yes | target | find |
+| `ci --fix` | remote | yes | target + checkout | **create** |
+| `review` | remote | yes | target; its own tree once known | find |
+| `review --self` / `--self --fix` | local | yes | target + checkout | find |
+| `pr review --summary` / `--post` / `--repair` | remote | **no** | target (also with `--self`) | find |
+| `pr review --recover` | remote | **no** | target (`--self --recover` adds checkout) | find |
+| `pr review --list` | **none** | no | **none** | find |
+| `comments` | remote | yes | target + checkout (`--reply`/`--settle`: target) | find |
+| `comments --fix` (not `--finish`) | remote | yes | target + checkout | **create** |
+| `fix` | remote | yes | target + checkout | **create** |
+| `rebase` | remote | no | target + checkout | **create** |
+| `rebase --abort` / `--push-only` | remote | no | target + checkout | find |
+| `push` | local | no | target + checkout | find |
+| `describe` | remote | yes | target + checkout | find |
+| `batch run` / `resume` | **none** | no | global `batch`; every item's target, held by the handler | find |
+| `batch` (other) | **none** | no | **none** | find |
+| `gc` | remote | no | target | find |
 
 `cli.locks` takes the locks and documents why each command holds what it holds.
 `batch resolve`'s per-run lock and `gc`'s lock on each pruned target are taken
 in the handler, not declared on the Need — they are in that table.
 
-`review` is the one command whose depth and fetch its arguments decide, which
-is why its `CommandSpec` holds a resolver rather than a `Need`. The fetch is the
-line between its two halves: a bare `pr review` is about to review the branch, so
-it wants the branch current, while every mode flag acts on a review that already
+`review`, `create`, `ci`, `comments`, `rebase` and `batch` are the commands
+whose need their arguments decide, which is why those `CommandSpec`s hold a
+resolver rather than a `Need`. For `review`, the fetch is the line between its
+two halves: a bare `pr review` is about to review the branch, so it
+wants the branch current, while every mode flag acts on a review that already
 exists at the commit that review describes. Fast-forwarding under one of those
 would leave `--summary` and `--post` reporting a review of a commit the
 worktree no longer sits on, and would push `--recover` off the SHA it then has
@@ -2928,13 +2933,12 @@ alone does not count — it names no repo, PR or branch to record against — so
 query rather than of an action, and the listing exists to be polled: the two
 records a dispatch writes cost more than the query itself, and they land in the
 file every `otto-log` query then reads. The exemption is read off these same
-three axes — `Need` carries no trail flag of its own for a command to add
-itself to.
+axes — `Need` carries no trail flag of its own for a command to add itself to.
 
 `base_branch` is the other thing this module resolves once per run: the branch
 every range a review (or rebase, or supersession check) measures against, most
 authoritative source first — operator `--base`/`--onto`, the PR's `baseRefName`,
-`git.topology.stack_parent` (nearest local ancestor of HEAD that is not the
+`git.topology.stack_parent` (nearest local ancestor of the tip that is not the
 trunk), then the repo's default branch. It returns a *name*; callers spell
 `origin/<name>` themselves, so a local ref sitting at a stale position can
 nominate a base without being the commit anything is measured against. The run
@@ -5898,8 +5902,9 @@ one unbounded call is `wt switch`, which creates a checkout. The one network cal
 the fetch ahead of `wt switch`, goes through `git.client` for its `TRANSFER` bound.
 
 `stack_parent` is the name a stacked branch should be measured against. It asks
-git for the branches that are ancestors of HEAD but not of the trunk, and takes
-the nearest. An ordinary branch off trunk has none. The answer is a *name*;
+git for the branches that are ancestors of the measured tip (`ref`, defaulting
+to HEAD) but not of the trunk, and takes the nearest. An ordinary branch off
+trunk has none. The answer is a *name*;
 callers resolve it as `origin/<name>`, so a local ref sitting at a stale
 position can nominate a base without being the commit anything is measured
 against. A stale neighbour — a `wip`, a backup, a bisect leftover — that is

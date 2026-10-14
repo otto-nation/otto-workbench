@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import git.topology  # noqa: E402
 
 from conftest import commit_all, git_in, init_repo  # noqa: E402
+from git_topology_support import _commit, paused_rebase, _stack_repo  # noqa: E402
 
 
 def _porcelain(*entries: tuple[str, str | None], bare: str | None = None) -> str:
@@ -101,6 +102,19 @@ def test_find_worktree_for_branch_detached_head_fallback(mock_sub):
     assert result == Path("/home/user/repo/isaac-feat-auth")
 
 
+@patch.object(git.topology, "rebasing_branch", return_value=None)
+@patch.object(git.topology, "subprocess")
+def test_find_worktree_for_branch_reads_each_detached_rebase_state_once(mock_sub, mock_rebasing):
+    """The rebasing pass and the name pass share one lookup per detached worktree."""
+    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
+        ("/home/user/repo/isaac-feat-auth", None),
+        ("/home/user/repo/main", "main"),
+    ))
+    result = git.topology.find_worktree_for_branch("isaac/feat/auth")
+    assert result == Path("/home/user/repo/isaac-feat-auth")
+    assert mock_rebasing.call_count == 1
+
+
 @patch.object(git.topology, "subprocess")
 def test_find_worktree_for_branch_prefers_branch_over_dir_name(mock_sub):
     """When git reports the branch, prefer it over the directory-name fallback."""
@@ -134,53 +148,17 @@ def test_current_branch_detached_head_exits(mock_sub):
         git.topology.current_branch("/repo")
 
 
-def _paused_rebase(
-    tmp_path, *rebase_args: str, branch: str | None = "feat", worktree: bool = False,
-) -> Path:
-    """A repo stopped mid-rebase on a conflict, HEAD detached.
-
-    *branch* None starts the rebase from a detached HEAD instead of a branch.
-    *worktree* runs the rebase in a linked worktree at ``tmp_path/feat-wt`` and
-    returns that path; the main checkout stays at ``tmp_path/repo`` on main.
-    *worktree* implies a branch: it cannot be combined with ``branch=None``.
-    """
-    assert branch or not worktree, "worktree=True needs a branch; branch=None is unsupported"
-    repo = init_repo(tmp_path / "repo")
-    (repo / "f").write_text("base\n")
-    commit_all(repo, "base")
-    git_in(repo, "checkout", "-qb", "feat")
-    (repo / "f").write_text("feat\n")
-    commit_all(repo, "feat")
-    git_in(repo, "checkout", "-q", "main")
-    (repo / "f").write_text("main\n")
-    commit_all(repo, "main")
-    where = repo
-    if worktree:
-        where = tmp_path / "feat-wt"
-        git_in(repo, "worktree", "add", "-q", str(where), "feat")
-    else:
-        git_in(repo, "checkout", "-q", "feat" if branch else "--detach")
-        if branch is None:
-            git_in(repo, "reset", "-q", "--hard", "feat")
-    result = subprocess.run(
-        ["git", "rebase", *rebase_args, "main"],
-        cwd=where, capture_output=True, text=True,
-    )
-    assert result.returncode != 0, "fixture expected the rebase to stop on a conflict"
-    return where
-
-
 @pytest.mark.parametrize("backend", ["--merge", "--apply"])
 def test_current_branch_names_the_branch_a_paused_rebase_is_on(tmp_path, backend):
     """A rebase stopped on a conflict detaches HEAD; the branch is still the one being rebased."""
-    repo = _paused_rebase(tmp_path, backend)
+    repo = paused_rebase(tmp_path, backend)
     assert git.topology.current_branch_quiet(str(repo)) is None
     assert git.topology.current_branch(str(repo)) == "feat"
 
 
 def test_current_branch_names_the_rebasing_branch_in_a_linked_worktree(tmp_path):
     """A linked worktree keeps its rebase state in its own git dir, not the shared one."""
-    wt = _paused_rebase(tmp_path, worktree=True)
+    wt = paused_rebase(tmp_path, worktree=True)
     repo = tmp_path / "repo"
     assert git.topology.current_branch(str(wt)) == "feat"
     assert git.topology.current_branch(str(repo)) == "main"
@@ -188,7 +166,7 @@ def test_current_branch_names_the_rebasing_branch_in_a_linked_worktree(tmp_path)
 
 def test_current_branch_exits_for_a_rebase_started_from_detached_head(tmp_path):
     """No branch is being rebased, so there is still nothing to name."""
-    repo = _paused_rebase(tmp_path, "--merge", branch=None)
+    repo = paused_rebase(tmp_path, "--merge", branch=None)
     with pytest.raises(SystemExit):
         git.topology.current_branch(str(repo))
 
@@ -200,6 +178,25 @@ def test_current_branch_exits_when_detached_with_no_rebase(tmp_path):
     git_in(repo, "checkout", "-q", "--detach")
     with pytest.raises(SystemExit):
         git.topology.current_branch(str(repo))
+
+
+def test_find_worktree_for_branch_finds_a_worktree_mid_rebase(tmp_path):
+    wt = paused_rebase(tmp_path, worktree=True)
+    repo = tmp_path / "repo"
+    found = git.topology.find_worktree_for_branch("feat", str(repo))
+    assert found is not None
+    assert found.resolve() == wt.resolve()
+
+
+def test_find_worktree_for_branch_skips_a_renamed_worktree_mid_rebase_of_another_branch(
+    tmp_path,
+):
+    """A directory named for B that is mid-rebase of A is not B's checkout."""
+    wt = paused_rebase(tmp_path, worktree=True)
+    repo = tmp_path / "repo"
+    moved = tmp_path / "other-branch"
+    git_in(repo, "worktree", "move", str(wt), str(moved))
+    assert git.topology.find_worktree_for_branch("other-branch", str(repo)) is None
 
 
 # ── Branch resolution ──────────────────────────────────────────────────────
@@ -738,34 +735,6 @@ def test_wt_switch_leaves_a_pr_ref_to_worktrunk(monkeypatch):
 # a hand-written ref listing would be asserting this test's idea of git.
 
 
-def _stack_repo(path) -> Path:
-    """`main -> parent -> child`, with origin refs for main and parent.
-
-    The trunk is deliberately *ahead* of the fork point, which is the ordinary
-    state of a stack that has sat for a day and the one where a naive "nearest
-    branch" walk goes wrong.
-    """
-    repo = init_repo(path)
-    _commit(repo, "m1")
-    git_in(repo, "checkout", "-qb", "parent")
-    _commit(repo, "p1")
-    _commit(repo, "p2")
-    git_in(repo, "checkout", "-qb", "child")
-    _commit(repo, "c1")
-    git_in(repo, "checkout", "-q", "main")
-    _commit(repo, "m2")
-    git_in(repo, "update-ref", "refs/remotes/origin/main", "refs/heads/main")
-    git_in(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
-    git_in(repo, "update-ref", "refs/remotes/origin/parent", "refs/heads/parent")
-    git_in(repo, "checkout", "-q", "child")
-    return repo
-
-
-def _commit(repo, name: str) -> None:
-    (Path(repo) / f"{name}.txt").write_text(name)
-    commit_all(repo, name)
-
-
 def test_stack_parent_names_the_branch_this_one_is_stacked_on(tmp_path):
     repo = _stack_repo(tmp_path / "repo")
 
@@ -840,3 +809,15 @@ def test_stack_parent_reports_a_bare_branch_name_for_a_remote_only_parent(tmp_pa
     git_in(repo, "branch", "-q", "-D", "parent")
 
     assert git.topology.stack_parent(str(repo)) == "parent"
+
+
+def test_stack_parent_measures_a_named_ref_not_head(tmp_path):
+    """A caller that names a branch must not inherit the process HEAD.
+
+    HEAD sits on main, which is not stacked: a walk of HEAD returns "" and
+    the caller would keep the trunk. Measuring child must still name parent.
+    """
+    repo = _stack_repo(tmp_path / "repo")
+    git_in(repo, "checkout", "-q", "main")
+
+    assert git.topology.stack_parent(str(repo), ref="refs/heads/child") == "parent"

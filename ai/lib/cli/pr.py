@@ -133,6 +133,7 @@ def cmd_review(argv: list[str], ctx: pr.context.ResolvedContext, *,
                bin_dir: Path,
                original_pr: str | None = None,
                original_branch: str | None = None,
+               original_repo_dir: str | None = None,
                schema_version: int | None = None,
                **_kw) -> int:
     """Run a review, or handle one of the mode flags in `review_modes.MODES`."""
@@ -152,7 +153,8 @@ def cmd_review(argv: list[str], ctx: pr.context.ResolvedContext, *,
         "cli.review_entry:main",
         cli.dispatch.delegate_argv(COMMANDS["review"], _review_argv(argv, ctx, original_pr),
                                    ctx, original_pr=original_pr,
-                                   original_branch=original_branch),
+                                   original_branch=original_branch,
+                                   original_repo_dir=original_repo_dir),
         # `pr` installed the identical handler at its own entry point, and
         # `signal.signal` neither chains nor restores — a second install
         # would replace the one that reports the interrupt for the whole
@@ -175,13 +177,15 @@ def _invocation(command: str, argv: list[str]) -> str:
 def cmd_comments(argv: list[str], ctx: pr.context.ResolvedContext, *,
                  original_pr: str | None = None,
                  original_branch: str | None = None,
+                 original_repo_dir: str | None = None,
                  **_kw) -> int:
     """Delegate to review-threads, routing --triage, --fix, --settle and --finish flags."""
     return core.publishing.call_entry_point(
         "cli.review_threads:main",
         cli.dispatch.delegate_argv(COMMANDS["comments"], list(argv), ctx,
                                original_pr=original_pr,
-                               original_branch=original_branch),
+                               original_branch=original_branch,
+                               original_repo_dir=original_repo_dir),
     )
 
 
@@ -410,7 +414,8 @@ def _dispatch(args, ctx: pr.context.ResolvedContext, extra: list[str], global_ar
               need: Need,
               bin_dir: Path,
               original_pr: str | None,
-              original_branch: str | None) -> int:
+              original_branch: str | None,
+              original_repo_dir: str | None) -> int:
     """Start the trail and route to the command's handler or backing script."""
     trail = Trail.start(
         script=SCRIPT,
@@ -433,6 +438,7 @@ def _dispatch(args, ctx: pr.context.ResolvedContext, extra: list[str], global_ar
                          bin_dir=bin_dir,
                          original_pr=original_pr,
                          original_branch=original_branch,
+                         original_repo_dir=original_repo_dir,
                          schema_version=global_args.schema_version)
         spec = COMMANDS[args.command]
         assert spec.handler, \
@@ -442,7 +448,8 @@ def _dispatch(args, ctx: pr.context.ResolvedContext, extra: list[str], global_ar
             spec.handler,
             cli.dispatch.delegate_argv(spec, extra, ctx,
                                    original_pr=original_pr,
-                                   original_branch=original_branch),
+                                   original_branch=original_branch,
+                                   original_repo_dir=original_repo_dir),
             # `pr` installed the identical handler at its own entry point, and
             # `signal.signal` neither chains nor restores — a second install
             # would replace the one that reports the interrupt for the whole
@@ -489,7 +496,8 @@ def _own_parser_printed_help(spec, extra: list[str]) -> bool:
 def _lock_resolve_and_dispatch(held: contextlib.ExitStack, args, spec, extra: list[str],
                                global_args, need: Need, *, command: str, bin_dir: Path,
                                original_pr: str | None,
-                               original_branch: str | None) -> int:
+                               original_branch: str | None,
+                               original_repo_dir: str | None) -> int:
     """Lock, resolve, lock, fetch and dispatch — in that order, every lock held on *held*.
 
     The order is the guarantee. A global lock is taken before the context is
@@ -514,6 +522,7 @@ def _lock_resolve_and_dispatch(held: contextlib.ExitStack, args, spec, extra: li
         pr_ref=original_pr,
         branch=original_branch,
         repo_dir=getattr(args, "repo_dir", None),
+        worktree=need.worktree,
     )
 
     # The CLI-only half of the project registry: a repo whose whole workbench
@@ -532,7 +541,8 @@ def _lock_resolve_and_dispatch(held: contextlib.ExitStack, args, spec, extra: li
                      need=need,
                      bin_dir=bin_dir,
                      original_pr=original_pr,
-                     original_branch=original_branch)
+                     original_branch=original_branch,
+                     original_repo_dir=original_repo_dir)
 
 
 def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
@@ -633,6 +643,7 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
 
     original_pr = getattr(args, "pr", None)
     original_branch = getattr(args, "branch", None)
+    original_repo_dir = getattr(args, "repo_dir", None)
 
     # Classify the first positional (if any) as PR or branch when no explicit
     # --pr/--branch flag was given and the command takes a target at all. The
@@ -652,7 +663,7 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
             global_args.schema_version, args.command, extra,
         )
 
-    # The command's declaration drives all three axes from here. Read after the
+    # The command's declaration drives all four axes from here. Read after the
     # positional scan above, because that scan is what turns a bare token into
     # the --pr that can escalate the declared depth.
     need = need_for(spec, extra)
@@ -670,6 +681,7 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
                 bin_dir=bin_dir,
                 original_pr=original_pr,
                 original_branch=original_branch,
+                original_repo_dir=original_repo_dir,
             )
     except core.run_lock.LockBusy as exc:
         core.run_lock.report_busy(exc)

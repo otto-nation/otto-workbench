@@ -13,7 +13,7 @@ import pytest
 
 # `reviews_dir` is not imported — pytest discovers conftest fixtures itself,
 # and importing one shadows the fixture with a plain function.
-from conftest import assert_no_worktree_exit, make_ctx
+from conftest import assert_no_worktree_exit, command_spec, make_ctx
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "bin"
@@ -23,6 +23,7 @@ if str(LIB_DIR) not in sys.path:
 
 import cli.pr  # noqa: E402
 
+import cli.dispatch  # noqa: E402
 import cli.pr_commands  # noqa: E402
 import cli.registry  # noqa: E402
 import core.proc  # noqa: E402
@@ -40,13 +41,69 @@ from run_lock_support import flocked, git_dir, held_elsewhere  # noqa: E402
 
 from pr_cli_support import _cmd_fix, _TEST_PR, _run_main, _lock_file, _dispatch_stage
 
+FIND = pr.context.WorktreeNeed.FIND
+CREATE = pr.context.WorktreeNeed.CREATE
+
 
 # ── worktree_root guards ───────────────────────────────────────────────────
 
 
-def test_cmd_status_without_a_worktree_exits_with_guidance(capsys):
-    assert_no_worktree_exit(capsys, "feat/test", cli.pr.cmd_status,
-                            [], make_ctx(worktree_root=None))
+@patch("pr.state.load_state")
+@patch("pr.domains.PushDomain.observed")
+@patch("cli.pr_commands._worktree_head")
+def test_cmd_status_without_a_worktree_renders_cached_state(
+    mock_head, observed, mock_load, capsys,
+):
+    """No checkout is a cached read, not a refusal."""
+    state = pr.state.new_state("acme/w", "feat", pr_number=1, head_sha="A",
+                               worktree_root="/wt")
+    pr.state.apply(state, pr.domains.CIDomain(conclusion="success",
+                                              updated_at=pr.state.now_iso()))
+    mock_load.return_value = state
+    observed.return_value = pr.domains.PushDomain(
+        ahead=9, updated_at=pr.state.now_iso())
+
+    ctx = make_ctx(worktree_root=None, branch="feat")
+    assert cli.pr.cmd_status([], ctx) == 0
+
+    observed.assert_not_called()
+    mock_head.assert_not_called()
+    captured = capsys.readouterr()
+    assert "no checkout of feat here — showing the last recorded state" in captured.err
+    assert "**CI**" in captured.err
+    assert "**Push**" not in captured.err
+    assert json.loads(captured.out)["identity"]["head_sha"] == "A"
+
+
+@patch("pr.state.load_state")
+@patch("pr.domains.PushDomain.observed")
+@patch("cli.pr_commands._worktree_head")
+def test_cmd_status_without_a_worktree_renders_cached_push(
+    mock_head, observed, mock_load, capsys,
+):
+    """A recorded push with a stamp is shown from state, not observed."""
+    state = pr.state.new_state("acme/w", "feat", pr_number=1, head_sha="A",
+                               worktree_root="/wt")
+    pr.state.apply(state, pr.domains.PushDomain(
+        ahead=3, updated_at=pr.state.now_iso()))
+    mock_load.return_value = state
+
+    ctx = make_ctx(worktree_root=None, branch="feat")
+    assert cli.pr.cmd_status([], ctx) == 0
+
+    observed.assert_not_called()
+    mock_head.assert_not_called()
+    captured = capsys.readouterr()
+    assert "**Push**: 3 commit(s) not pushed" in captured.err
+
+
+def test_delegate_argv_forwards_original_repo_dir_when_there_is_no_tree():
+    ctx = make_ctx(worktree_root=None)
+    entry = command_spec(script="ci-check")
+    cmd = cli.dispatch.delegate_argv(
+        entry, [], ctx, original_repo_dir="/x")
+    assert "--repo-dir" in cmd
+    assert cmd[cmd.index("--repo-dir") + 1] == "/x"
 
 
 def test_status_header_names_the_repo_from_the_context_without_state(worktree, capsys):
@@ -322,10 +379,20 @@ _FETCHES = {
     "batch": False, "gc": False,
 }
 
+# Which bare invocations may create a worktree. Flag variants that flip this
+# (ci --fix, rebase --abort) are covered below; a table keyed on the command
+# alone cannot name them. Locks are pinned per invocation in _DECLARED_LOCKS.
+_CREATES_WORKTREE = {
+    "create": False, "status": False, "ci": False, "review": False,
+    "comments": False, "fix": True, "rebase": True, "push": False, "describe": False,
+    "batch": False, "gc": False,
+}
+
+
 def test_axis_tables_cover_every_command():
-    """A new command has to answer both axes here as well as in the registry —
+    """A new command has to answer every axis here as well as in the registry —
     otherwise it ships untested on the axis nobody thought about."""
-    for table in (_RESOLVES_LOCALLY, _FETCHES):
+    for table in (_RESOLVES_LOCALLY, _FETCHES, _CREATES_WORKTREE):
         assert set(table) == set(cli.registry.COMMANDS)
 
 
@@ -383,6 +450,8 @@ _DECLARED_LOCKS = {
     ("comments", ("--settle", "PRRT_x", "--as", "fixed")): _T,
     ("fix", ()): _TC,
     ("rebase", ()): _TC,
+    ("rebase", ("--abort",)): _TC,
+    ("rebase", ("--push-only",)): _TC,
     ("push", ("--expect", "abc")): _TC,
     ("describe", ()): _TC,
     ("batch", ()): _NO,
@@ -538,6 +607,41 @@ def test_a_bare_review_with_no_pr_locks_the_tree_it_will_self_review(worktree):
                    pr_number=None)
     seen = _held_during_dispatch(worktree, "review", ctx=ctx)
     assert seen["checkout"] is True
+
+
+@pytest.mark.parametrize("command", sorted(_CREATES_WORKTREE))
+def test_command_creates_a_worktree_only_if_declared(command, tmp_path):
+    stage = _dispatch_stage(command, ctx=make_ctx(target_dir=tmp_path / "target"))
+    expected = CREATE if _CREATES_WORKTREE[command] else FIND
+    assert stage.resolve_at.call_args.kwargs["worktree"] is expected
+
+
+@pytest.mark.parametrize("argv, expected", [
+    (["ci"], FIND),
+    (["ci", "--fix"], CREATE),
+    (["comments"], FIND),
+    (["comments", "--fix"], CREATE),
+    (["comments", "--finish"], FIND),
+    (["comments", "--triage"], FIND),
+    (["comments", "--reply", "t1"], FIND),
+    (["rebase"], CREATE),
+    (["rebase", "--abort"], FIND),
+    (["rebase", "--push-only"], FIND),
+    (["create"], FIND),
+    (["create", "--dry-run"], FIND),
+    (["fix"], CREATE),
+    (["review"], FIND),
+    (["review", "--self"], FIND),
+    (["review", "--post"], FIND),
+    (["review", "--recover"], FIND),
+    (["status"], FIND),
+    (["push"], FIND),
+    (["describe"], FIND),
+    (["gc"], FIND),
+])
+def test_flag_variants_pass_their_worktree_need(argv, expected, tmp_path):
+    stage = _dispatch_stage(*argv, ctx=make_ctx(target_dir=tmp_path / "target"))
+    assert stage.resolve_at.call_args.kwargs["worktree"] is expected
 
 
 def test_an_explicit_pr_escalates_the_depth_and_nothing_else(tmp_path):

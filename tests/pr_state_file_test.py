@@ -10,6 +10,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import pytest
+from conftest import git_in, init_repo
 
 from pr.domains import CIDomain, TriageSummary
 from pr.state import load_state, save_state, new_state, apply, load_or_init
@@ -66,14 +67,18 @@ def test_load_or_init_repoints_the_worktree_a_later_run_ran_from(tmp_path):
 
 
 def test_load_or_init_keeps_a_known_worktree_when_a_bare_run_has_none(tmp_path):
-    """A run with nothing to say must not erase what an earlier run knew."""
+    """A run with nothing to say must not erase a checkout of this branch."""
+    wt = init_repo(tmp_path / "wt")
+    git_in(wt, "commit", "-q", "--allow-empty", "--no-verify", "-m", "init")
+    git_in(wt, "checkout", "-q", "-b", "feat/a")
+    root = str(wt)
     save_state(tmp_path, load_or_init(
         target_dir=tmp_path, repo="acme/widget", branch="feat/a",
-        pr_number=1, head_sha="sha", worktree_root="/checkouts/feat-a"))
+        pr_number=1, head_sha="sha", worktree_root=root))
 
     state = load_or_init(target_dir=tmp_path, repo="acme/widget", branch="feat/a",
                          pr_number=1, head_sha="sha2", worktree_root="")
-    assert state.identity.worktree_root == "/checkouts/feat-a"
+    assert state.identity.worktree_root == root
 
 
 def test_load_or_init_keeps_a_known_head_sha_when_a_bare_run_has_none(tmp_path):

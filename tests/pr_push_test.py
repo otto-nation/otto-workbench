@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest import mock
 
 from batch_git_support import advance, remote_and_clone, remote_tip
-from conftest import commit_all, git_in, git_out
+from conftest import assert_no_worktree_exit, commit_all, git_in, git_out
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -99,6 +99,26 @@ def test_pr_push_lands_through_the_pr_entry_point(tmp_path):
                        bin_dir=REPO_ROOT / "ai" / "bin")
     assert code == 0
     assert remote_tip(pair.origin, "feat") == head
+
+
+def test_pr_push_branch_from_another_checkout_does_not_touch_the_remote(
+        tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+    pair = remote_and_clone(tmp_path)
+    tip = remote_tip(pair.origin, "feat")
+    git_in(pair.work, "checkout", "-q", "-b", "other")
+    (pair.work / "other.txt").write_text("other\n")
+    commit_all(pair.work, "other")
+    before = git_out(pair.work, "ls-remote", "origin")
+
+    assert_no_worktree_exit(
+        capsys, "feat", cli.pr_push.main,
+        ["--repo-dir", str(pair.work), "--branch", "feat", "--expect", tip],
+    )
+
+    after = git_out(pair.work, "ls-remote", "origin")
+    assert after == before
+    assert "refs/heads/other" not in after
 
 
 def test_pr_push_refuses_a_moved_remote_with_exit_1(tmp_path):

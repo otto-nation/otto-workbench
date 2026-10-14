@@ -27,6 +27,7 @@ from __future__ import annotations
 import sys
 
 import cli.locks
+import cli.needs
 import core.log
 import core.proc
 import core.publishing
@@ -102,6 +103,7 @@ def main(argv: list[str] | None = None, *,
     with core.publishing.run(post=args.post):
         ctx = pr.context.resolve(
             pr_ref=args.pr, branch=args.branch, repo_dir=args.repo_dir,
+            worktree=cli.needs.ci_need(argv).worktree,
         )
 
         # What `ci` declares in cli.registry: the target, and with --fix the

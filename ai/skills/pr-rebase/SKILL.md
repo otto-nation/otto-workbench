@@ -34,8 +34,10 @@ Run with `/pr-rebase` or `/pr-rebase <branch>`.
 
 - `branch` (optional): Target branch to rebase. Passed as `--branch` to
   `pr rebase`, which resolves the worktree automatically — and creates one with
-  `wt switch` when the branch has none, so there is no need to make it first.
-  When omitted, the current branch is used.
+  `wt switch` from any checkout when the branch has none, so there is no need
+  to make it first. `--abort` and `--push-only` never create a worktree: they
+  continue work that must already be in a checkout. When omitted, the current
+  branch is used.
 - `--no-fix` (optional): Report conflicts without resolving them. By default,
   conflicts are resolved with AI and force-pushed automatically.
 - `--no-push` (optional): Do everything except push. Composes with `--no-fix`

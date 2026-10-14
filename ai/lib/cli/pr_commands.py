@@ -68,6 +68,7 @@ EXIT_BUDGET_EXHAUSTED = 75
 def _run_pass(command: str, argv: list[str], ctx: pr.context.ResolvedContext, *,
               original_pr: str | None = None,
               original_branch: str | None = None,
+              original_repo_dir: str | None = None,
               **kwargs) -> int:
     """Run one of `pr fix`'s passes in this process, and return its code."""
     spec = COMMANDS[command]
@@ -75,7 +76,8 @@ def _run_pass(command: str, argv: list[str], ctx: pr.context.ResolvedContext, *,
         spec.handler,
         cli.dispatch.delegate_argv(spec, argv, ctx,
                                original_pr=original_pr,
-                               original_branch=original_branch),
+                               original_branch=original_branch,
+                               original_repo_dir=original_repo_dir),
         **kwargs,
     )
 
@@ -89,32 +91,43 @@ def cmd_status(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
     is refreshed rather than read — it is a local git question, so `pr status`
     answers it now instead of reporting whatever the last write happened to see.
 
+    Without a checkout there is nowhere to ask that question, so the cached
+    push and the last-written head SHA stand, and a dim note says so.
+
     The identity's head SHA is refreshed on the same grounds, and it reaches
     stdout the same way `push` does: both are written onto the loaded object
     before `state_to_dict` dumps it, so the JSON agrees with the dashboard
-    rendered from it. A consumer reading `identity.head_sha` out of that dump
-    gets the commit the checkout is on now, which is the one the staleness
-    markers above were computed against.
+    rendered from it. With a checkout, a consumer reading `identity.head_sha`
+    out of that dump gets the commit the checkout is on now, which is the one
+    the staleness markers above were computed against. Without one it is the
+    last recorded commit, matching the cached push.
     """
-    wt = ctx.require_worktree()
     state = pr.state.load_state(ctx.target_dir)
 
     branch = state.identity.branch if state else ctx.branch
     repo = state.identity.repo if state else ctx.repo
-    push = pr.domains.PushDomain.observed(wt, branch, updated_at=pr.state.now_iso())
-
-    # Refreshed for the same reason push is, and it is the same kind of
-    # question: `identity.head_sha` is from whenever state was last *written*,
-    # so a commit made since leaves it naming the commit the domains were
-    # measured against. Comparing them to it then always matches, and a verdict
-    # about the previous commit renders as current — the supersession check
-    # would be asking a stale value about itself. Held in memory: the dashboard
-    # is a read, and persisting this would date the file by looking at it.
-    if state:
-        state.identity.head_sha = _worktree_head(wt, state.identity.head_sha)
+    if ctx.worktree_root is None:
+        push = state.push if state else pr.domains.PushDomain()
+    else:
+        wt = ctx.worktree_root
+        push = pr.domains.PushDomain.observed(
+            wt, branch, updated_at=pr.state.now_iso())
+        # Refreshed for the same reason push is, and it is the same kind of
+        # question: `identity.head_sha` is from whenever state was last
+        # *written*, so a commit made since leaves it naming the commit the
+        # domains were measured against. Comparing them to it then always
+        # matches, and a verdict about the previous commit renders as current —
+        # the supersession check would be asking a stale value about itself.
+        # Held in memory: the dashboard is a read, and persisting this would
+        # date the file by looking at it.
+        if state:
+            state.identity.head_sha = _worktree_head(wt, state.identity.head_sha)
 
     lines = pr.state.render_dashboard(state, push, repo=repo, branch=branch)
     print("\n".join(lines), file=sys.stderr)
+    if ctx.worktree_root is None:
+        core.log.dim(
+            f"no checkout of {branch} here — showing the last recorded state")
     if state:
         json.dump(pr.state.state_to_dict(state), sys.stdout, indent=2)
         print()
@@ -221,6 +234,7 @@ def cmd_fix(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
             "review", ["--self", "--fix", "--repo-dir", str(wt)] + list(argv), ctx,
             original_pr=_kw.get("original_pr"),
             original_branch=_kw.get("original_branch"),
+            original_repo_dir=_kw.get("original_repo_dir"),
             # This process already has the handler `pr` installed; see
             # `cli.review_entry.main`.
             install_signal_handler=False,
@@ -258,6 +272,7 @@ def cmd_fix(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
             "ci", ["--fix"] + list(argv), ctx,
             original_pr=_kw.get("original_pr"),
             original_branch=_kw.get("original_branch"),
+            original_repo_dir=_kw.get("original_repo_dir"),
             # This process already has the handler `pr` installed; see
             # `cli.ci_check.main`.
             install_signal_handler=False,
@@ -290,7 +305,8 @@ def cmd_fix(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
     describe_argv = ["--post"] if "--post" in argv else []
     if _run_pass("describe", describe_argv, ctx,
                  original_pr=_kw.get("original_pr"),
-                 original_branch=_kw.get("original_branch")) != 0:
+                 original_branch=_kw.get("original_branch"),
+                 original_repo_dir=_kw.get("original_repo_dir")) != 0:
         exit_code = 1
 
     return exit_code

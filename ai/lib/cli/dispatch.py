@@ -165,7 +165,8 @@ def resolve(handler: str):
 def delegate_argv(spec: CommandSpec, argv: list[str],
                   ctx: pr.context.ResolvedContext, *,
                   original_pr: str | None = None,
-                  original_branch: str | None = None) -> list[str]:
+                  original_branch: str | None = None,
+                  original_repo_dir: str | None = None) -> list[str]:
     """The argv a delegate is called with, context flags injected.
 
     Exactly one of --pr or --branch (never both), so the delegate's own
@@ -174,6 +175,11 @@ def delegate_argv(spec: CommandSpec, argv: list[str],
     auto-detected branch. The PR number is preferred because it is a stable
     identifier, and because it prevents a mismatched --repo-dir/--branch pair
     when the worktree is on a different branch than the target.
+
+    `--repo-dir` comes from the resolved checkout when there is one, else from
+    the flag the user passed. Dropping the user's flag when the context has no
+    tree would leave the delegate resolving against cwd instead of the path
+    they named.
 
     The delegate still resolves its own context from these flags rather than
     being handed `ctx`. That is what the subprocess did, and a handler that
@@ -184,6 +190,8 @@ def delegate_argv(spec: CommandSpec, argv: list[str],
     injected: list[str] = []
     if ctx.worktree_root:
         injected += ["--repo-dir", str(ctx.worktree_root)]
+    elif original_repo_dir:
+        injected += ["--repo-dir", str(original_repo_dir)]
     injected += target_flags(ctx, original_pr=original_pr,
                              original_branch=original_branch)
     return injected + list(argv)

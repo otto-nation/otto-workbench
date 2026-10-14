@@ -4,7 +4,7 @@ Resolves repo, branch, PR number, worktree root, and HEAD SHA once
 per invocation. Replaces the duplicated discovery logic ci-check,
 review-threads, and the review pipeline each carried a copy of.
 
-How much of that a command wants is one of three axes every `pr` subcommand
+How much of that a command wants is one of four axes every `pr` subcommand
 declares on its `CommandSpec` in `cli.registry`. They are separate because they
 routinely disagree:
 
@@ -13,34 +13,39 @@ routinely disagree:
 | **depth** | `ContextDepth.NONE` resolves nothing at all; `LOCAL` resolves from git alone; `REMOTE` adds the `gh` calls that name the repo and the PR |
 | **fetch** | whether the worktree is fetched and fast-forwarded first |
 | **locks** | which run locks — `core.run_lock` scopes — are held for the whole run |
+| **worktree** | `WorktreeNeed.FIND` finds an existing checkout or gives none; commands that need one then refuse via `require_worktree`. `CREATE` will make one from any checkout |
 
-| Command | Depth | Fetch | Locks |
-|---|---|---|---|
-| `create` | remote | no | target + checkout (`--dry-run`: **none**) |
-| `status` | local | no | **none** |
-| `ci` | remote | yes | target (`--fix`: + checkout) |
-| `review` | remote | yes | target; its own tree once known |
-| `review --self` / `--self --fix` | local | yes | target + checkout |
-| `pr review --summary` / `--post` / `--repair` | remote | **no** | target (also with `--self`) |
-| `pr review --recover` | remote | **no** | target (`--self --recover` adds checkout) |
-| `pr review --list` | **none** | no | **none** |
-| `comments` | remote | yes | target + checkout (`--reply`/`--settle`: target) |
-| `fix` | remote | yes | target + checkout |
-| `rebase` | remote | no | target + checkout |
-| `push` | local | no | target + checkout |
-| `describe` | remote | yes | target + checkout |
-| `batch run` / `resume` | **none** | no | global `batch`; every item's target, held by the handler |
-| `batch` (other) | **none** | no | **none** |
-| `gc` | remote | no | target |
+| Command | Depth | Fetch | Locks | Worktree |
+|---|---|---|---|---|
+| `create` | remote | no | target + checkout (`--dry-run`: **none**) | find |
+| `status` | local | no | **none** | find |
+| `ci` | remote | yes | target | find |
+| `ci --fix` | remote | yes | target + checkout | **create** |
+| `review` | remote | yes | target; its own tree once known | find |
+| `review --self` / `--self --fix` | local | yes | target + checkout | find |
+| `pr review --summary` / `--post` / `--repair` | remote | **no** | target (also with `--self`) | find |
+| `pr review --recover` | remote | **no** | target (`--self --recover` adds checkout) | find |
+| `pr review --list` | **none** | no | **none** | find |
+| `comments` | remote | yes | target + checkout (`--reply`/`--settle`: target) | find |
+| `comments --fix` (not `--finish`) | remote | yes | target + checkout | **create** |
+| `fix` | remote | yes | target + checkout | **create** |
+| `rebase` | remote | no | target + checkout | **create** |
+| `rebase --abort` / `--push-only` | remote | no | target + checkout | find |
+| `push` | local | no | target + checkout | find |
+| `describe` | remote | yes | target + checkout | find |
+| `batch run` / `resume` | **none** | no | global `batch`; every item's target, held by the handler | find |
+| `batch` (other) | **none** | no | **none** | find |
+| `gc` | remote | no | target | find |
 
 `cli.locks` takes the locks and documents why each command holds what it holds.
 `batch resolve`'s per-run lock and `gc`'s lock on each pruned target are taken
 in the handler, not declared on the Need — they are in that table.
 
-`review` is the one command whose depth and fetch its arguments decide, which
-is why its `CommandSpec` holds a resolver rather than a `Need`. The fetch is the
-line between its two halves: a bare `pr review` is about to review the branch, so
-it wants the branch current, while every mode flag acts on a review that already
+`review`, `create`, `ci`, `comments`, `rebase` and `batch` are the commands
+whose need their arguments decide, which is why those `CommandSpec`s hold a
+resolver rather than a `Need`. For `review`, the fetch is the line between its
+two halves: a bare `pr review` is about to review the branch, so it
+wants the branch current, while every mode flag acts on a review that already
 exists at the commit that review describes. Fast-forwarding under one of those
 would leave `--summary` and `--post` reporting a review of a commit the
 worktree no longer sits on, and would push `--recover` off the SHA it then has
@@ -78,13 +83,12 @@ alone does not count — it names no repo, PR or branch to record against — so
 query rather than of an action, and the listing exists to be polled: the two
 records a dispatch writes cost more than the query itself, and they land in the
 file every `otto-log` query then reads. The exemption is read off these same
-three axes — `Need` carries no trail flag of its own for a command to add
-itself to.
+axes — `Need` carries no trail flag of its own for a command to add itself to.
 
 `base_branch` is the other thing this module resolves once per run: the branch
 every range a review (or rebase, or supersession check) measures against, most
 authoritative source first — operator `--base`/`--onto`, the PR's `baseRefName`,
-`git.topology.stack_parent` (nearest local ancestor of HEAD that is not the
+`git.topology.stack_parent` (nearest local ancestor of the tip that is not the
 trunk), then the repo's default branch. It returns a *name*; callers spell
 `origin/<name>` themselves, so a local ref sitting at a stale position can
 nominate a base without being the commit anything is measured against. The run
@@ -105,6 +109,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -145,8 +150,8 @@ def classify_target(target: str) -> tuple[str | None, str | None]:
 class BranchPR:
     """The open PR for a branch, as far as ``gh`` would say.
 
-    Both fields come from one call. They are returned together rather than as a
-    number alone because every caller that wants to know a branch's PR also
+    All three fields come from one call. They are returned together rather than
+    as a number alone because every caller that wants to know a branch's PR also
     wants to know what it targets, and asking twice is a second round trip for
     a field the first response already carried.
 
@@ -157,6 +162,10 @@ class BranchPR:
 
     number: int | None = None
     base: str = ""
+    # The PR head's SHA, or "" when the list did not carry one. A treeless
+    # context uses this as the commit GitHub will have, instead of the
+    # caller's HEAD.
+    head_sha: str = ""
 
 
 @dataclass(frozen=True)
@@ -255,8 +264,11 @@ class ResolvedContext:
         a TypeError, a ``FileNotFoundError: 'None'``, or the string "None"
         reaching ``git -C`` several frames later.
 
-        Consumers that can degrade (ci-check without --fix, pr create, pr gc)
-        read the field directly and are visibly opted out.
+        Consumers that can degrade (ci-check without --fix, pr review, pr gc,
+        a thread `comments --reply`, pr status) read the field directly and are
+        visibly opted out. A review-body `comments --reply` is not one of them:
+        it records the answer in the state file and publishes the summary, so it
+        refuses here like any state writer.
         """
         if self.worktree_root is None:
             core.log.error(
@@ -267,13 +279,26 @@ class ResolvedContext:
         return self.worktree_root
 
 
+class WorktreeNeed(Enum):
+    """Whether a command may create a worktree for the requested branch.
+
+    FIND looks up an existing checkout and never creates one. CREATE will make
+    one from any checkout when none holds the branch. The default on ``Need``
+    is FIND, so an undeclared command gets a ``require_worktree`` refusal
+    rather than a stray worktree.
+    """
+
+    FIND = "find"
+    CREATE = "create"
+
+
 class ContextDepth(Enum):
     """How far a caller needs context resolved — which rung of the ladder runs.
 
     The values name the deepest source consulted: NONE consults nothing, LOCAL
     is git alone, REMOTE adds ``gh``. Independent of whether the caller then
     fetches (``update_to_remote``) or takes the run lock — a command declares
-    all three separately.
+    all four separately.
 
     NONE is not "resolve less"; it is "there is nothing to resolve". A command
     at this depth answers from the user's own state root, so it has no repo, no
@@ -292,6 +317,7 @@ def resolve_at(
     pr_ref: str | None = None,
     branch: str | None = None,
     repo_dir: str | None = None,
+    worktree: WorktreeNeed = WorktreeNeed.FIND,
 ) -> ResolvedContext:
     """Resolve at *depth*, escalating to REMOTE when a ``--pr`` demands it.
 
@@ -304,12 +330,17 @@ def resolve_at(
     depth, so honouring one would spend a ``gh`` call on a value the handler
     never reads — and a command declared read-only would make a network call
     because of a flag the caller passed by habit.
+
+    *worktree* is honoured on the REMOTE rung. LOCAL never creates a checkout,
+    so ``resolve_local`` is always FIND.
     """
     if depth is ContextDepth.NONE:
         return ResolvedContext.unresolved()
     if depth is ContextDepth.LOCAL and pr_ref is None:
         return resolve_local(branch=branch, repo_dir=repo_dir)
-    return resolve(pr_ref=pr_ref, branch=branch, repo_dir=repo_dir)
+    return resolve(
+        pr_ref=pr_ref, branch=branch, repo_dir=repo_dir, worktree=worktree,
+    )
 
 
 def resolve(
@@ -317,6 +348,7 @@ def resolve(
     pr_ref: str | None = None,
     branch: str | None = None,
     repo_dir: str | None = None,
+    worktree: WorktreeNeed = WorktreeNeed.FIND,
 ) -> ResolvedContext:
     """Resolve PR context from arguments and git state.
 
@@ -326,13 +358,18 @@ def resolve(
     3. Neither: detect everything from current git state.
 
     Raises ValueError if both pr and branch are given.
+
+    *worktree* is FIND (default) or CREATE. FIND never makes a checkout;
+    CREATE will, from any checkout, when none holds the requested branch.
     """
     if pr_ref is not None and branch is not None:
         raise ValueError("--pr and --branch are mutually exclusive")
 
     cwd = repo_dir
 
-    worktree_root, cwd = _resolve_worktree(cwd, pr_ref=pr_ref, branch=branch)
+    worktree_root, cwd = _resolve_worktree(
+        cwd, pr_ref=pr_ref, branch=branch, worktree=worktree,
+    )
 
     repo = detect_repo(cwd)
 
@@ -350,20 +387,12 @@ def resolve(
             sys.exit(1)
         branch_name = head.branch
         # Resolved again now that the head branch is known. The first pass
-        # could not name a branch, so it fell back to the caller's checkout:
-        # the default branch's worktree when run from a bare repo, or whatever
-        # checkout the caller started in. A --pr run then refused to check the
-        # head out there, while --branch on the same head went to the right
-        # worktree. This puts --pr in the same worktree --branch would use.
-        #
-        # A second pass that finds nothing (bare repo, head branch not
-        # available locally, ``wt`` missing) must not discard the first pass's
-        # worktree: the run degrades to it rather than losing its worktree.
-        head_root, head_cwd = _resolve_worktree(
-            repo_dir, pr_ref=pr_ref, branch=branch_name,
+        # could not name a branch, so it answered with the caller's checkout.
+        # Take this result even when it is None: the caller's tree is not the
+        # PR's, and a missing checkout is reported as missing.
+        worktree_root, cwd = _resolve_worktree(
+            repo_dir, pr_ref=pr_ref, branch=branch_name, worktree=worktree,
         )
-        if head_root is not None:
-            worktree_root, cwd = head_root, head_cwd
         # The PR's HEAD, not the caller's: state written for this run belongs to
         # the PR, and the caller may be sitting on an unrelated branch.
         head_sha = head.sha
@@ -378,7 +407,18 @@ def resolve(
         pr_number, base = found.number, found.base
 
     if not pr_ref:
-        head_sha = _head_sha(cwd) if worktree_root else ""
+        if worktree_root:
+            head_sha = _head_sha(cwd)
+        else:
+            # No checkout HEAD to read. Prefer the PR's head, then the refs
+            # GitHub would have (remote first: an unpushed local commit is
+            # one it does not), so CI lookup and state stamping name this
+            # branch rather than coming back empty. `resolve_local` and
+            # `_stack_tip_ref` prefer the local ref, and say why.
+            head_sha = found.head_sha or _branch_ref_sha(cwd, (
+                f"refs/remotes/origin/{branch_name}",
+                f"refs/heads/{branch_name}",
+            ))
 
     current = git.topology.current_branch_quiet(cwd) if worktree_root else None
 
@@ -425,7 +465,7 @@ def resolve_local(
     cwd = repo_dir
 
     worktree_root, cwd = _resolve_worktree(
-        cwd, pr_ref=None, branch=branch, create_missing=False,
+        cwd, pr_ref=None, branch=branch, worktree=WorktreeNeed.FIND,
     )
 
     branch_name = (
@@ -440,7 +480,17 @@ def resolve_local(
         pr_number=None,
         branch=branch_name,
         worktree_root=worktree_root,
-        head_sha=_head_sha(cwd) if worktree_root else "",
+        # Local ref first, unlike `resolve`: this path never asks GitHub, and a
+        # self-review's subject is the local branch, often unpushed, where
+        # `origin/<b>` is absent or stale and the local tip is the commit under
+        # review. Same order as `_stack_tip_ref`, which walks that local history.
+        head_sha=(
+            _head_sha(cwd) if worktree_root
+            else _branch_ref_sha(cwd, (
+                f"refs/heads/{branch_name}",
+                f"refs/remotes/origin/{branch_name}",
+            ))
+        ),
         current_branch=git.topology.current_branch_quiet(cwd) if worktree_root else None,
         host=identity.host,
         target_dir=pr.target.target_dir(identity.key, branch_name),
@@ -495,9 +545,18 @@ def base_branch(
 
     where = cwd or (str(ctx.worktree_root) if ctx.worktree_root else None)
     default = git.topology.default_branch(where)
-    parent = git.topology.stack_parent(where, default=default)
+    stack_kw: dict[str, str] = {}
+    if ctx.worktree_root is None:
+        tip = _stack_tip_ref(where, ctx.branch)
+        if not tip:
+            return decide(
+                default,
+                "no stack parent and no PR base — the repo's default branch",
+            )
+        stack_kw["ref"] = tip
+    parent = git.topology.stack_parent(where, default=default, **stack_kw)
     if parent:
-        return decide(parent, "nearest local ancestor of HEAD — this branch is stacked")
+        return decide(parent, "nearest local ancestor of the tip — this branch is stacked")
     return decide(default, "no stack parent and no PR base — the repo's default branch")
 
 
@@ -563,35 +622,13 @@ def head_sha(cwd: str | None = None) -> str:
     return _head_sha(cwd)
 
 
-def _redirect_to_branch_worktree(
-    branch: str, effective_cwd: str, current: str | None,
-) -> Path | None:
-    """If CWD's branch differs from the target, find the target's worktree."""
-    if current is None or current == branch:
-        return None
-    return git.topology.find_worktree_by_branch(branch, effective_cwd)
+def _create_worktree(branch: str, effective_cwd: str) -> Path | None:
+    """A new worktree for *branch*, created from the caller's checkout.
 
-
-def _create_worktree_off_default(
-    branch: str, effective_cwd: str, current: str | None,
-) -> Path | None:
-    """A new worktree for *branch* when the caller stands in the default branch's.
-
-    The default branch's worktree is never a place to check a feature branch
-    out: the next tool that syncs it to ``origin/<default>`` hard-resets the
-    branch away, which is why ``pr rebase`` refuses to. So a branch with no
-    worktree of its own gets one here, through ``wt switch`` exactly as the
-    bare-repo path does, instead of the run falling back to the default
-    checkout and refusing. Any other current branch keeps the old behaviour:
-    the caller's own feature checkout is theirs to switch.
-
-    None when the caller is not on the default branch, or ``wt`` could not
-    create one; ``create_worktree_for_branch`` names the cause.
+    CREATE is allowed from any checkout, not only the default branch's. None
+    when ``wt`` could not create one; ``create_worktree_for_branch`` names the
+    cause.
     """
-    if current is None or current == branch:
-        return None
-    if current != git.topology.default_branch(effective_cwd):
-        return None
     return git.topology.create_worktree_for_branch(branch, effective_cwd)
 
 
@@ -600,30 +637,35 @@ def _resolve_worktree(
     *,
     pr_ref: str | None,
     branch: str | None,
-    create_missing: bool = True,
+    worktree: WorktreeNeed = WorktreeNeed.FIND,
 ) -> tuple[Path | None, str | None]:
     """Resolve worktree root, handling bare repos transparently.
 
-    ``create_missing`` is the escape hatch: with it False a bare repo, or the
-    default branch's worktree, hands back only worktrees that already exist.
+    FIND never creates: a bare repo, or a checkout that does not hold the
+    branch, hands back only worktrees that already exist. CREATE will make one
+    from this checkout when none holds the branch.
 
-    Defaulted True and left unset by ``resolve`` so that the deep rung keeps
-    creating them.
+    Defaulted FIND so an unset caller cannot leave a stray tree. When nothing
+    holds the requested branch and nothing is created, the worktree is None;
+    ``cwd`` is kept so repo identity can still be read from it.
     """
     toplevel = _git_toplevel(cwd)
     if toplevel is None:
         return _resolve_non_worktree(
-            cwd, pr_ref=pr_ref, branch=branch, create_missing=create_missing,
+            cwd, pr_ref=pr_ref, branch=branch, worktree=worktree,
         )
 
     if branch:
         here = cwd or str(toplevel)
         current = git.topology.current_branch_quiet(here)
-        wt = _redirect_to_branch_worktree(branch, here, current)
-        if not wt and create_missing:
-            wt = _create_worktree_off_default(branch, here, current)
+        if current == branch or git.topology.rebasing_branch(here) == branch:
+            return toplevel, cwd
+        wt = git.topology.find_worktree_by_branch(branch, here)
+        if not wt and worktree is WorktreeNeed.CREATE:
+            wt = _create_worktree(branch, here)
         if wt:
             return wt, str(wt)
+        return None, cwd
     return toplevel, cwd
 
 
@@ -632,12 +674,12 @@ def _resolve_non_worktree(
     *,
     pr_ref: str | None,
     branch: str | None,
-    create_missing: bool = True,
+    worktree: WorktreeNeed = WorktreeNeed.FIND,
 ) -> tuple[Path | None, str | None]:
     """Handle bare repos and non-git directories."""
     if git.topology.is_bare_repo(cwd):
         return _resolve_bare(
-            cwd, pr_ref=pr_ref, branch=branch, create_missing=create_missing,
+            cwd, pr_ref=pr_ref, branch=branch, worktree=worktree,
         )
 
     if not pr_ref and not branch:
@@ -651,10 +693,11 @@ def _resolve_bare(
     *,
     pr_ref: str | None,
     branch: str | None,
-    create_missing: bool = True,
+    worktree: WorktreeNeed = WorktreeNeed.FIND,
 ) -> tuple[Path | None, str | None]:
     """Resolve worktree from a bare repo."""
-    wt = (git.topology.resolve_bare_repo_worktree(cwd, branch) if create_missing
+    wt = (git.topology.resolve_bare_repo_worktree(cwd, branch)
+          if worktree is WorktreeNeed.CREATE
           else git.topology.find_bare_repo_worktree(cwd, branch))
     if wt:
         return wt, str(wt)
@@ -743,6 +786,35 @@ def _head_sha(cwd: str | None = None) -> str:
     return r.stdout.strip()
 
 
+def _stack_tip_ref(cwd: str | None, branch: str) -> str:
+    """Local or origin ref for *branch* that names a commit, or "".
+
+    Reuses :func:`_branch_ref_sha` so a treeless stack walk and a treeless
+    head SHA agree on which spelling of the branch exists. Local first, as in
+    `resolve_local`: the stack is measured along the history the user has, and
+    an unpushed branch has no `origin/<b>` to measure.
+    """
+    for ref in (f"refs/heads/{branch}", f"refs/remotes/origin/{branch}"):
+        if _branch_ref_sha(cwd, (ref,)):
+            return ref
+    return ""
+
+
+def _branch_ref_sha(cwd: str | None, refs: Sequence[str]) -> str:
+    """The first of *refs* that names a commit, or ""."""
+    if cwd is not None and not Path(cwd).is_dir():
+        return ""
+    for ref in refs:
+        r = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+            capture_output=True, text=True, cwd=cwd, timeout=core.timeouts.LOCAL,
+        )
+        sha = r.stdout.strip()
+        if r.returncode == 0 and sha:
+            return sha
+    return ""
+
+
 def _parse_pr_input(pr_input: str) -> int:
     """Extract PR number from URL or raw number."""
     m = _PR_URL_RE.search(pr_input)
@@ -776,7 +848,7 @@ def _pr_from_current(cwd: str | None = None) -> BranchPR:
 
 
 def _pr_from_branch(repo: str, branch: str) -> BranchPR:
-    """The open PR for *branch*, both fields off one call.
+    """The open PR for *branch*, number, base and head SHA off one call.
 
     The list is read as JSON rather than flattened by a `--jq` interpolation:
     `.[0] | "\\(.number) \\(.baseRefName)"` against an empty list prints the
@@ -787,7 +859,7 @@ def _pr_from_branch(repo: str, branch: str) -> BranchPR:
     """
     found = gh.client.json_out(
         "pr", "list", "--repo", repo, "--head", branch,
-        "--json", "number,baseRefName", default=[],
+        "--json", "number,baseRefName,headRefOid", default=[],
     )
     if not isinstance(found, list) or not found:
         return BranchPR()
@@ -800,6 +872,7 @@ def _pr_from_branch(repo: str, branch: str) -> BranchPR:
     return BranchPR(
         number=_as_pr_number(str(first.get("number", ""))),
         base=first.get("baseRefName") or "",
+        head_sha=first.get("headRefOid") or "",
     )
 
 

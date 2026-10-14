@@ -196,6 +196,36 @@ class TestReplyRouting:
         assert body.call_args[0][1] is route
         assert body.call_args[0][2] == "Done."
 
+    def test_a_review_body_with_no_worktree_refuses_before_the_lock(self, tmp_path, capsys):
+        """It writes state, so unlike a thread reply it needs the branch's checkout."""
+        route = review.review_body_reply.ReplyRoute(pr_data=MagicMock(), source="rb-88")
+        ctx = make_ctx(branch="isaac/feat/x", worktree_root=None)
+        (tmp_path / "f").write_text("Done.")
+        with patch.object(pr.context, "resolve", return_value=ctx), \
+             patch.object(review.review_body_reply, "route_reply", return_value=route), \
+             patch.object(review.review_body_reply, "run_review_body_reply") as body, \
+             patch.object(cli.locks, "claim_declared") as lock, \
+             pytest.raises(SystemExit) as exit_:
+            cli.review_threads.main(["--reply", "88", "--body-file", str(tmp_path / "f")])
+        assert exit_.value.code == 1
+        body.assert_not_called()
+        lock.assert_not_called()
+        assert "No worktree for 'isaac/feat/x'" in capsys.readouterr().err
+
+    def test_a_thread_reply_with_no_worktree_still_runs(self, tmp_path):
+        """A thread reply is GitHub-only and degrades, as `require_worktree` documents."""
+        route = review.review_body_reply.ReplyRoute(pr_data=MagicMock(), thread=True)
+        ctx = make_ctx(worktree_root=None)
+        (tmp_path / "f").write_text("Done.")
+        with patch.object(pr.context, "resolve", return_value=ctx), \
+             patch.object(review.review_body_reply, "route_reply", return_value=route), \
+             patch.object(pr.thread_replies, "run_reply", return_value=0) as thread, \
+             patch.object(cli.locks, "claim_declared"):
+            code = cli.review_threads.main(
+                ["--reply", "88", "--body-file", str(tmp_path / "f")])
+        assert code == 0
+        thread.assert_called_once()
+
     def test_a_missing_body_file_is_refused_before_the_pr_is_read(self, tmp_path, capsys):
         """The error costs no fetch, and reads as it always has."""
         with patch.object(pr.context, "resolve", return_value=make_ctx()), \
@@ -703,3 +733,33 @@ class TestReadReport:
         report = review.comment_threads.read_report(ctx, self._pr_data())
         assert [c.get("seen", False) for c in report.review_body_comments] == [False]
         assert not (tmp_path / "target").exists()
+
+
+# ── the worktree `main` asks `resolve` for ──────────────────────────────────
+
+
+def _resolve_after_main(argv):
+    ctx = make_ctx()
+    with patch.object(pr.context, "resolve", return_value=ctx) as resolve, \
+         patch("cli.locks.claim_declared"), \
+         patch.object(cli.review_threads, "Trail") as trail_cls, \
+         patch.object(review.comment_threads, "run_threads", return_value=0):
+        trail_cls.start.return_value = MagicMock()
+        assert cli.review_threads.main(argv) == 0
+    return resolve
+
+
+def test_main_resolves_with_create_for_fix():
+    resolve = _resolve_after_main(["--fix"])
+    assert resolve.call_args.kwargs["worktree"] is pr.context.WorktreeNeed.CREATE
+
+
+def test_main_resolves_with_find_for_finish():
+    resolve = _resolve_after_main(["--finish"])
+    assert resolve.call_args.kwargs["worktree"] is pr.context.WorktreeNeed.FIND
+
+
+def test_main_resolves_with_find_for_fix_finish():
+    """`--fix --finish` publishes what an earlier pass recorded; it commits nothing."""
+    resolve = _resolve_after_main(["--fix", "--finish"])
+    assert resolve.call_args.kwargs["worktree"] is pr.context.WorktreeNeed.FIND

@@ -29,6 +29,7 @@ import git.topology
 import core.log
 import core.timeouts
 import pr.sync
+import pr.target
 import core.proc
 
 
@@ -233,7 +234,8 @@ def find_repo_root(repo: str, explicit_dir: str = "") -> str:
 
     Order: ``explicit_dir`` if it is a directory; else the current git toplevel
     when its basename (or its parent's — the bare-container heuristic) matches
-    the slug's repo name; else a depth-2 walk of ``~/git`` for that name.
+    the slug's repo name; else the current git toplevel when its origin's
+    identity matches the slug; else a depth-2 walk of ``~/git`` for that name.
     Returns "" when nothing matches.
 
     The match is case-insensitive: ``repo`` can be the canonical, case-folded
@@ -273,6 +275,17 @@ def find_repo_root(repo: str, explicit_dir: str = "") -> str:
     # GraphQL, once per call.
     if not repo_name:
         return ""
+
+    if git_toplevel:
+        try:
+            identity = pr.target.repo_identity_from_origin(git_toplevel)
+        except OSError:
+            identity = None
+        if (
+            identity is not None
+            and identity.label == pr.target.fold_case(repo)
+        ):
+            return git_toplevel
 
     home_git = os.path.expanduser("~/git")
     try:

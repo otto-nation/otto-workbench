@@ -11,8 +11,9 @@ one unbounded call is `wt switch`, which creates a checkout. The one network cal
 the fetch ahead of `wt switch`, goes through `git.client` for its `TRANSFER` bound.
 
 `stack_parent` is the name a stacked branch should be measured against. It asks
-git for the branches that are ancestors of HEAD but not of the trunk, and takes
-the nearest. An ordinary branch off trunk has none. The answer is a *name*;
+git for the branches that are ancestors of the measured tip (`ref`, defaulting
+to HEAD) but not of the trunk, and takes the nearest. An ordinary branch off
+trunk has none. The answer is a *name*;
 callers resolve it as `origin/<name>`, so a local ref sitting at a stale
 position can nominate a base without being the commit anything is measured
 against. A stale neighbour — a `wip`, a backup, a bisect leftover — that is
@@ -126,11 +127,13 @@ def find_worktree_for_branch(
 ) -> Path | None:
     """Find the worktree git reports as checked out on *branch*.
 
-    Falls back to a worktree whose directory name matches the sanitized branch
+    A detached worktree mid-rebase of *branch* counts as on it. Then falls
+    back to a worktree whose directory name matches the sanitized branch
     (slashes to dashes) so detached-HEAD worktrees are still found — but only
-    when git reports no branch for it. A worktree named ``main/`` with someone
-    else's branch checked out is not the main worktree, and callers that reset
-    or check out what they get back would clobber that branch.
+    when git reports no branch for it, and not when it is mid-rebase of some
+    other branch. A worktree named ``main/`` with someone else's branch
+    checked out is not the main worktree, and callers that reset or check out
+    what they get back would clobber that branch.
 
     Use find_worktree_dir_named when you only need a working directory.
     """
@@ -138,10 +141,19 @@ def find_worktree_for_branch(
     for entry in entries:
         if entry.branch == branch:
             return entry.path
+    # One `rev-parse --git-dir` per detached entry, kept for the name pass below.
+    rebasing = {
+        entry.path: rebasing_branch(str(entry.path))
+        for entry in entries
+        if entry.branch is None
+    }
+    for path, rebasing_onto in rebasing.items():
+        if rebasing_onto == branch:
+            return path
     sanitized = branch.replace("/", "-")
-    for entry in entries:
-        if entry.branch is None and entry.path.name == sanitized:
-            return entry.path
+    for path, rebasing_onto in rebasing.items():
+        if path.name == sanitized and rebasing_onto is None:
+            return path
     return None
 
 
@@ -271,8 +283,9 @@ def default_branch(cwd: str | Path | None = None) -> str:
 def _rank_ancestor(ref: str, head: str, cwd: str | None) -> tuple[int, int, str] | None:
     """Sort key for one stack-parent candidate, or None when it cannot be one.
 
-    The first element is the distance from the fork point to HEAD, so the
-    nearest ancestor sorts first. The other two break a tie that the distance
+    The first element is the distance from the fork point to *head* (the
+    measured tip — HEAD, or the SHA of a named ``ref``), so the nearest
+    ancestor sorts first. The other two break a tie that the distance
     cannot: two refs at the same commit describe the same diff, so which one is
     named is cosmetic — but it has to be the *same* cosmetic answer on every
     machine, and ``for-each-ref`` order is not that. A remote-tracking ref wins
@@ -281,24 +294,30 @@ def _rank_ancestor(ref: str, head: str, cwd: str | None) -> tuple[int, int, str]
 
     *head* is passed in rather than read here: it is the same commit for every
     candidate, and resolving it per ref spends a subprocess per branch to learn
-    one answer.
+    one answer. Git commands take that SHA rather than the literal ``HEAD`` so
+    a caller measuring a named ref does not inherit the process checkout.
     """
-    merge_base = _git_out(["merge-base", ref, "HEAD"], cwd)
+    merge_base = _git_out(["merge-base", ref, head], cwd)
     if not merge_base:
         return None
-    # A candidate containing HEAD is a descendant, not a parent: the branch
+    # A candidate containing the tip is a descendant, not a parent: the branch
     # stacked on *this* one, or this one's own ref under another name. Diffing
     # against it yields nothing, which reads as a review with no changes.
     if merge_base == head:
         return None
-    distance = _git_out(["rev-list", "--count", f"{merge_base}..HEAD"], cwd)
+    distance = _git_out(["rev-list", "--count", f"{merge_base}..{head}"], cwd)
     if not distance:
         return None
     return (int(distance), 0 if ref.startswith(REMOTE_REF_PREFIX) else 1, ref)
 
 
-def stack_parent(cwd: str | None = None, default: str = "") -> str:
-    """The branch HEAD is stacked on, or "" when it is stacked on the trunk.
+def stack_parent(cwd: str | None = None, default: str = "", ref: str = "HEAD") -> str:
+    """The branch *ref* is stacked on, or "" when it is stacked on the trunk.
+
+    *ref* defaults to ``HEAD``, which is the process checkout. A caller that
+    already knows the branch it is measuring — a treeless context naming
+    ``refs/heads/<branch>`` — passes that instead of inheriting some other
+    checkout's HEAD.
 
     For a branch whose parent is another feature branch, which the trunk-shaped
     default is wrong about: a review, a rebase or a diff measured against the
@@ -323,11 +342,11 @@ def stack_parent(cwd: str | None = None, default: str = "") -> str:
     # query as a malformed object name rather than ignoring the exclusion — so
     # the empty listing below is also the answer for a repo with no trunk to
     # measure against, which is the right one: without the exclusion every
-    # ancestor of HEAD is a candidate and the nearest local branch would win.
+    # ancestor of the ref tip is a candidate and the nearest local branch would win.
     trunk = f"{REMOTE_REF_PREFIX}{default}"
 
     listing = _git_out(
-        ["for-each-ref", "--merged", "HEAD", "--no-merged", trunk,
+        ["for-each-ref", "--merged", ref, "--no-merged", trunk,
          "--format=%(refname)", "refs/heads", REMOTE_REF_PREFIX.rstrip("/")],
         cwd,
     )
@@ -346,17 +365,17 @@ def stack_parent(cwd: str | None = None, default: str = "") -> str:
     # attached HEAD has, minus the one guard that usually hides it. `--base` is
     # the remedy in both cases; a distance floor here would reject the
     # one-commit parent a real stack legitimately has.
-    current = current_branch_quiet(cwd)
-    head = _git_out(["rev-parse", "HEAD"], cwd)
+    current = current_branch_quiet(cwd) if ref == "HEAD" else _short_ref(ref)
+    head = _git_out(["rev-parse", ref], cwd)
     if not head:
         return ""
 
     ranked = []
-    for ref in listing.splitlines():
-        short = _short_ref(ref)
+    for candidate in listing.splitlines():
+        short = _short_ref(candidate)
         if not short or short == current:
             continue
-        rank = _rank_ancestor(ref, head, cwd)
+        rank = _rank_ancestor(candidate, head, cwd)
         if rank:
             ranked.append((rank, short))
     if not ranked:
@@ -502,7 +521,7 @@ def current_branch(cwd: str | None = None) -> str:
         # A rebase stopped on a conflict detaches HEAD, but it is still working
         # on one branch and will move that branch when it finishes. Resuming
         # such a rebase has to target that branch, so it counts as current.
-        rebasing = _rebasing_branch(cwd)
+        rebasing = rebasing_branch(cwd)
         if rebasing:
             return rebasing
         core.log.error("Cannot determine current branch — HEAD is detached")
@@ -510,7 +529,7 @@ def current_branch(cwd: str | None = None) -> str:
     return branch
 
 
-def _rebasing_branch(cwd: str | None) -> str | None:
+def rebasing_branch(cwd: str | None) -> str | None:
     """The branch a paused rebase will update, or None when no branch rebase is under way.
 
     Git records it in ``head-name`` under the rebase's state directory, which
@@ -518,12 +537,16 @@ def _rebasing_branch(cwd: str | None) -> str | None:
     ``rebase-apply/``. A rebase started from a detached HEAD records
     ``detached HEAD`` there instead of a ref, and that answers None.
     ``--git-dir`` resolves the directory for a linked worktree, whose rebase
-    state lives in its own git dir rather than the shared one.
+    state lives in its own git dir rather than the shared one. A missing or
+    unreadable *cwd* answers None.
     """
-    r = subprocess.run(
-        ["git", "rev-parse", "--git-dir"],
-        capture_output=True, text=True, cwd=cwd, timeout=core.timeouts.LOCAL,
-    )
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            capture_output=True, text=True, cwd=cwd, timeout=core.timeouts.LOCAL,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
     if r.returncode != 0 or not r.stdout.strip():
         return None
     git_dir = Path(cwd or ".") / r.stdout.strip()

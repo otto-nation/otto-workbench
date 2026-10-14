@@ -34,8 +34,10 @@ from dataclasses import dataclass
 
 import batch.store
 import cli.review_modes
+import pr.context
 from cli.needs import (
-    LOCAL, NO_LOCK, NONE, REMOTE, TARGET_AND_CHECKOUT, TARGET_ONLY, Need, has_flag,
+    LOCAL, NO_LOCK, NONE, REMOTE, TARGET_AND_CHECKOUT, TARGET_ONLY, Need,
+    ci_need, comments_need, has_flag, rebase_need,
 )
 
 
@@ -49,8 +51,9 @@ class CommandSpec:
       runs. A command whose axes vary by flag declares a callable over its argv
       instead of a constant; `need_for` reads both shapes, so nothing
       downstream has to know which kind a spec carries. No default: a command
-      silent about the three axes is exactly what `validate_needs` refuses, and
-      a default would answer for it before the check ever ran.
+      silent about the four axes is exactly what `validate_needs` refuses, and
+      a default would answer for it before the check ever ran. (`Need` itself
+      refuses CREATE at LOCAL and NONE, so no declaration can carry it.)
     * ``handler`` — ``"<module>:<attr>"`` naming the in-process callable, or
       None when the wrapper is still binary-local. A string, not a callable:
       dispatch imports it at call time so `pr --help` does not. Defaulted to
@@ -100,23 +103,13 @@ class CommandSpec:
     parser: str | None = None
 
 
+# `ci_need`, `comments_need` and `rebase_need` live in `cli.needs` because the
+# delegates import them to pass `worktree=` to `pr.context.resolve`. These two
+# are read only by this table, so they stay beside it.
 def _create_need(argv: Sequence[str]) -> Need:
     """`create`'s need: a `--dry-run` pushes and creates nothing, so it takes no lock."""
     locks = NO_LOCK if has_flag(argv, "--dry-run") else TARGET_AND_CHECKOUT
     return Need(REMOTE, update=False, locks=locks)
-
-
-def _ci_need(argv: Sequence[str]) -> Need:
-    """`ci`'s need: only `--fix` rebases and commits in the checkout."""
-    locks = TARGET_AND_CHECKOUT if has_flag(argv, "--fix") else TARGET_ONLY
-    return Need(REMOTE, update=True, locks=locks)
-
-
-def _comments_need(argv: Sequence[str]) -> Need:
-    """`comments`' need: `--reply` and `--settle` write to GitHub alone and leave the tree free."""
-    github_only = has_flag(argv, "--reply") or has_flag(argv, "--settle")
-    return Need(REMOTE, update=True,
-                locks=TARGET_ONLY if github_only else TARGET_AND_CHECKOUT)
 
 
 # The batch subcommands that start or continue a run, and so must be alone.
@@ -148,7 +141,7 @@ _SPECS: tuple[CommandSpec, ...] = (
                 Need(LOCAL,  update=False, locks=NO_LOCK),
                 handler="cli.pr_commands:cmd_status"),
     CommandSpec("ci",       "Check CI failures",
-                _ci_need,  script="ci-check",
+                ci_need,  script="ci-check",
                 handler="cli.ci_check:main"),
     # Like create, a spec whose declaration its own argv resolves. `cli.review_modes`
     # owns the table the resolver reads, so this is an ordinary import rather
@@ -162,13 +155,14 @@ _SPECS: tuple[CommandSpec, ...] = (
                 cli.review_modes.need_for,              script="review",
                 handler="cli.review_entry:main"),
     CommandSpec("comments", "Fetch and manage PR review threads",
-                _comments_need,  script="review-threads",
+                comments_need,  script="review-threads",
                 handler="cli.review_threads:main"),
     CommandSpec("fix",      "Fix CI + review + comments",
-                Need(REMOTE, update=True,  locks=TARGET_AND_CHECKOUT),
+                Need(REMOTE, update=True,  locks=TARGET_AND_CHECKOUT,
+                     worktree=pr.context.WorktreeNeed.CREATE),
                 handler="cli.pr_commands:cmd_fix"),
     CommandSpec("rebase",   "Rebase onto the branch's base",
-                Need(REMOTE, update=False, locks=TARGET_AND_CHECKOUT),  script="pr-rebase",
+                rebase_need,  script="pr-rebase",
                 handler="cli.pr_rebase:main"),
     # A plain leased push of HEAD. Git alone answers it, so LOCAL; an explicit
     # --pr still escalates through resolve_at. No backing script: the handler
@@ -216,16 +210,19 @@ def validate_needs(commands: dict[str, CommandSpec]) -> None:
 
     A callable declaration is resolved over an empty argv and its answer
     checked, so a resolver that returns something other than a Need for the
-    plain invocation fails here too rather than at the first dispatch.
+    plain invocation fails here too rather than at the first dispatch. That
+    resolves one argv only, so it checks the shape and nothing flag-specific:
+    the CREATE-needs-REMOTE invariant is `Need.__post_init__`'s, which holds
+    for every flag a resolver is ever called with.
 
     Run at this module's import rather than at the entry point's, so a consumer
     that imports COMMANDS and never runs `pr` — the MCP server, once its
     discovery reads the registry — cannot be handed a registry nothing checked.
     """
-    undeclared = sorted(
+    undeclared = [
         name for name, spec in commands.items()
         if not isinstance(need_for(spec, []), Need)
-    )
+    ]
     if undeclared:
         raise RuntimeError(
             "pr: commands declare no dispatch need: " + ", ".join(undeclared)

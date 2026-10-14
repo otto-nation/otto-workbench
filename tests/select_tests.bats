@@ -217,9 +217,55 @@ teardown() {
 
 # ── Full-suite triggers ─────────────────────────────────────────────────────
 
-@test "workflow changes trigger full suite" {
+@test "a workflow change does not trigger the full suite; CI runs it" {
   run _is_full_suite_trigger ".github/workflows/ci.yml"
+  [ "$status" -ne 0 ]
+}
+
+@test "run-tests and select-tests do not trigger the full suite" {
+  run _is_full_suite_trigger "bin/local/run-tests"
+  [ "$status" -ne 0 ]
+  run _is_full_suite_trigger "bin/local/select-tests"
+  [ "$status" -ne 0 ]
+}
+
+@test "the per-area suites for run-tests and select-tests are selected by their refs" {
+  run _test_matches_changes "$REPO_ROOT/tests/run_tests.bats" "bin/local/run-tests"
   [ "$status" -eq 0 ]
+  run _test_matches_changes "$REPO_ROOT/tests/select_tests.bats" "bin/local/select-tests"
+  [ "$status" -eq 0 ]
+}
+
+@test "a per-area helper is not a full-suite trigger" {
+  run _is_full_suite_trigger "tests/claude_settings_helper.bash"
+  [ "$status" -ne 0 ]
+}
+
+@test "loads_helper: quoted and bare load lines both count" {
+  local f="$BATS_TEST_TMPDIR/t.bats"
+  printf "setup() {\n  load 'area_helper'\n}\n" > "$f"
+  run _loads_helper "$f" "tests/area_helper.bash"
+  [ "$status" -eq 0 ]
+  printf 'setup() {\n  load area_helper\n}\n' > "$f"
+  run _loads_helper "$f" "tests/area_helper.bash"
+  [ "$status" -eq 0 ]
+}
+
+@test "loads_helper: a helper the file does not load, or loads only in a comment, does not count" {
+  local f="$BATS_TEST_TMPDIR/t.bats"
+  printf "setup() {\n  # load 'area_helper'\n  load 'test_helper'\n}\n" > "$f"
+  run _loads_helper "$f" "tests/area_helper.bash"
+  [ "$status" -ne 0 ]
+  printf "setup() {\n  load 'area_helper_two'\n}\n" > "$f"
+  run _loads_helper "$f" "tests/area_helper.bash"
+  [ "$status" -ne 0 ]
+}
+
+@test "a changed per-area helper selects the suites that load it and no others" {
+  run _test_matches_changes "$REPO_ROOT/tests/claude_settings_sync.bats" "tests/claude_settings_helper.bash"
+  [ "$status" -eq 0 ]
+  run _test_matches_changes "$REPO_ROOT/tests/output.bats" "tests/claude_settings_helper.bash"
+  [ "$status" -ne 0 ]
 }
 
 @test "test_helper.bash triggers full suite" {

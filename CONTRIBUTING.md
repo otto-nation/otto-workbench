@@ -70,10 +70,11 @@ where there is a status to check.
 
 `task test` runs only what your branch can reach, through `bin/local/select-tests` and
 `bin/local/select-pytest`. On this repo's recent history that is a median of 45 of 154
-bats files and 28 of 187 pytest files. A change to shared infrastructure — `conftest.py`,
-`test_helper.bash`, `run-tests` itself — selects everything, and so does a selector that
-fails or cannot narrow: failing towards the whole suite is the only safe direction, since
-a selection that silently narrowed to nothing would report green having run no tests.
+bats files and 28 of 187 pytest files. A per-area bats helper selects the suites that
+`load` it. A change to the fixtures every suite shares — `test_helper.bash` for bats,
+`conftest.py` for pytest — selects everything, and so does a selector that fails or cannot
+narrow: failing towards the whole suite is the only safe direction, since a selection that
+silently narrowed to nothing would report green having run no tests.
 Reach for `task test:all` when you suspect the map rather than the code.
 
 Every test target goes through `bin/local/run-tests`, which owns the parallelism settings

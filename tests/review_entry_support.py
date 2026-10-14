@@ -75,6 +75,7 @@ def _stub_pr_flow(monkeypatch, tmp_path):
     # handed is asserted directly in the test below.
     monkeypatch.setattr(core.run_lock, "claim_for_process",
                         lambda *a, **kw: None)
+    monkeypatch.setattr(core.run_lock, "lock_checkout", lambda *a, **kw: None)
     monkeypatch.setattr(review.invoke, "run", lambda request: 0)
     monkeypatch.setattr(review.completion, "_display", lambda *a, **kw: None)
     monkeypatch.setattr(review.completion, "summarise", lambda *a, **kw: None)

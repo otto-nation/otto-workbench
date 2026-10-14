@@ -38,14 +38,13 @@ from __future__ import annotations
 import argparse
 import sys
 
+import cli.locks
 import core.log
 import core.publishing
-import core.run_lock
 from core.trail import Trail, add_trail_args
 import pr.comments_fix
 import pr.context
 import pr.settlement
-import pr.state
 import pr.thread_replies
 from pr.fix import FixOutcome
 import review.closeout
@@ -123,6 +122,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _github_only(ctx: pr.context.ResolvedContext, args: argparse.Namespace) -> int:
+    """Run the `--reply` or `--settle` write, which touches GitHub and no checkout."""
+    if args.reply:
+        return pr.thread_replies.run_reply(ctx, args.reply, args.body_file)
+    return pr.settlement.run_settle(
+        ctx, args.settle, args.settle_as, args.reason or "", args.commit or "",
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -179,29 +187,22 @@ def main(argv: list[str] | None = None) -> int:
             core.log.error("No PR found for current branch")
             return 1
 
-        if args.reply:
-            return pr.thread_replies.run_reply(ctx, args.reply, args.body_file)
-        if args.settle:
-            return pr.settlement.run_settle(
-                ctx, args.settle, args.settle_as, args.reason or "", args.commit or "",
-            )
+        given = list(argv if argv is not None else sys.argv[1:])
+        command = " ".join([SCRIPT, *given])
+        if args.reply or args.settle:
+            # GitHub-only writes: `comments` declares the target alone for
+            # them. Taken before the early return, which used to skip it.
+            cli.locks.claim_declared("comments", given, ctx, command=command)
+            return _github_only(ctx, args)
         branch = ctx.branch
-        # Called for its raise as much as its value: a bare-repo run must fail here,
-        # before the lock and the trail.
-        worktree = ctx.require_worktree()
-        head_sha = ctx.head_sha
+        # Called for its raise: a bare-repo run must fail here, before the lock
+        # and the trail.
+        ctx.require_worktree()
 
-        # A no-op when pr launched us — we resolve the same target and find its key
-        # already in WORKBENCH_RUN_LOCK.
-        # Acquired before Trail.start so contention costs no trail artifacts.
-        core.run_lock.claim_for_process(
-            ctx.target_dir,
-            command=" ".join([SCRIPT, *(argv if argv is not None else sys.argv[1:])]),
-            started=pr.state.now_iso(),
-            # This run's --fix pass commits in that checkout; no worktree switch
-            # happens on this path, so it is the tree that gets written to.
-            worktree=worktree,
-        )
+        # Target and checkout — this run's --fix pass commits in that checkout.
+        # A no-op when pr launched us. Before Trail.start so contention costs
+        # no trail artifacts.
+        cli.locks.claim_declared("comments", given, ctx, command=command)
 
         trail = Trail.start(
             script=SCRIPT,

@@ -40,14 +40,12 @@ from __future__ import annotations
 import argparse
 import sys
 import traceback
-from pathlib import Path
 
-import core.run_lock
+import cli.locks
 import core.trail
 from core.tool_parser import ToolParser
 from core.trail import Trail, add_trail_args
 import pr.context
-import pr.state
 from pr.domains import RebaseSummary
 import rebase.commands
 import rebase.types
@@ -134,21 +132,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     cwd = str(ctx.require_worktree())
 
-    # A no-op when `pr rebase` launched us — it resolves the same target and we
-    # find its key already in WORKBENCH_RUN_LOCK. Taken here so that invoking
-    # this script directly is guarded too: it rewrites a branch's history and
-    # force-pushes the result, which is the last thing that should interleave
-    # with another run against the same target.
-    # Acquired before Trail.start so contention costs no trail artifacts.
-    core.run_lock.claim_for_process(
-        ctx.target_dir,
-        command=" ".join([SCRIPT] + (argv if argv is not None else sys.argv[1:])),
-        started=pr.state.now_iso(),
-        # The replay rewrites this checkout's history in place — the strongest
-        # reason in the codebase for a tree to have one writer at a time.
-        # `cwd` above is require_worktree()'s answer, so it is never None here.
-        worktree=Path(cwd),
-    )
+    given = list(argv if argv is not None else sys.argv[1:])
+    # What `rebase` declares in cli.registry: target and checkout, since the
+    # replay rewrites this checkout's history in place. A no-op under `pr
+    # rebase`, which already holds both; taken here so running this script
+    # directly is guarded too. Before Trail.start so contention costs no trail
+    # artifacts.
+    cli.locks.claim_declared("rebase", given, ctx, command=" ".join([SCRIPT, *given]))
 
     trail = Trail.start(
         script=SCRIPT,

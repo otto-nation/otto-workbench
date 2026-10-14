@@ -30,6 +30,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 from agent.registry import add_phase_skip_flags, phase_skips
+import cli.locks
 import core.log
 import core.proc
 import core.run_lock
@@ -271,26 +272,16 @@ def _run_self_review(args, argv: list[str],
     pr_number = str(found.number) if found.number else ""
 
     # Before the checkout is switched or a --fix pass edits it: two `--self`
-    # runs on one branch are two processes committing to it. A no-op when `pr`
-    # launched us — we resolve the same target and find its key already in
-    # WORKBENCH_RUN_LOCK.
+    # runs on one branch are two processes committing to it. What `review`
+    # declares for this argv in cli.registry — `--self` holds the target and
+    # the resolved checkout. A no-op when `pr` launched us.
     #
-    # Locked only when this run reviews the tree it was launched in. Given a PR
-    # or a branch, the body switches to another worktree and that one is what
-    # gets written to, so locking the launch tree here would name the wrong
-    # checkout — and hold a lock over a tree this run never touches. None when
-    # there is no worktree at all, which the target lock already covers. Two
-    # runs on one branch still contend on the target either way.
-    reviewed_tree = None
-    if ctx.worktree_root and not (is_pr or is_branch):
-        reviewed_tree = ctx.worktree_root
-
-    core.run_lock.claim_for_process(
-        ctx.target_dir,
-        command=" ".join([SCRIPT] + argv),
-        started=pr.state.now_iso(),
-        worktree=reviewed_tree,
-    )
+    # Given a PR or a branch, the body may switch to another tree below; that
+    # one is locked once it is known. The resolved checkout is held from here
+    # regardless, even where the switch then writes elsewhere: an accepted
+    # over-lock, which can refuse an unrelated run in that tree but never lets
+    # two runs write one checkout, and keeps the declaration the one source.
+    cli.locks.claim_declared("review", argv, ctx, command=" ".join([SCRIPT] + argv))
 
     return _run_self_review_body(
         ctx, pr_number, args, argv, generator_version, repo, is_pr, is_branch,
@@ -319,10 +310,10 @@ def _run_self_review_body(
             wt_path = wt_cleanup.path
 
     # The switch above is the first point at which the tree this run writes to
-    # is known: the claim at entry deliberately named no checkout for these two
-    # paths, because the launch tree is not the one written. Claim it now, so
-    # the switched-to tree is covered for the rest of the run. Same target, so
-    # this extends the existing claim rather than contending with it.
+    # is known: the claim at entry held the resolved checkout, which for these
+    # two paths need not be the one written. Lock it now, through the one late
+    # acquisition, which requires the target already held — the claim at entry
+    # holds it.
     #
     # Gated on `is_pr or is_branch`, not on `wt_cleanup` truthiness:
     # `switch_to_pr_branch`/`switch_to_branch` return None when the checkout is
@@ -331,11 +322,9 @@ def _run_self_review_body(
     # branch that already has the PR checked out). `wt_path` names the right
     # tree whether or not an actual switch happened.
     if is_pr or is_branch:
-        core.run_lock.claim_for_process(
-            ctx.target_dir,
-            command=" ".join([SCRIPT] + argv),
-            started=pr.state.now_iso(),
-            worktree=Path(wt_path),
+        core.run_lock.lock_checkout(
+            ctx.target_dir, Path(wt_path),
+            command=" ".join([SCRIPT] + argv), started=pr.state.now_iso(),
         )
 
     # Read HEAD after the switch — checking out a PR hard-resets the worktree to
@@ -488,18 +477,10 @@ def _main_body(parsed, argv: list[str], json_stdout_fd: int | None) -> int:
 
     pr_arg, branch_arg = pr.context.classify_target(command)
     ctx = pr.context.resolve(pr_ref=pr_arg, branch=branch_arg, repo_dir=parsed.repo_dir)
-    # A no-op when pr launched us — we resolve the same target and find its key
-    # already in WORKBENCH_RUN_LOCK.
-    #
-    # No checkout lock here: this path sets up a worktree of its own for the PR
-    # and resets it, so the tree it writes to is not the one resolved here. The
-    # checkout is claimed further in, by `review.run`, once that tree exists —
-    # same target, so it passes through this claim rather than contending.
-    core.run_lock.claim_for_process(
-        ctx.target_dir,
-        command=" ".join([SCRIPT] + argv),
-        started=pr.state.now_iso(),
-    )
+    # A no-op when pr launched us. The target only: this path sets up a
+    # worktree of its own for the PR and resets it, so the tree it writes to is
+    # not the one resolved here. `review.run` locks that one once it exists.
+    cli.locks.claim_declared("review", argv, ctx, command=" ".join([SCRIPT] + argv))
     outcome = _run_review(parsed, argv, ctx, generator_version)
     _emit_json_summary(json_stdout_fd, outcome)
     return 0

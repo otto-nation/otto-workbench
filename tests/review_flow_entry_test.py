@@ -178,7 +178,9 @@ def _stub_pr_edges(cr, monkeypatch, tmp_path, tape, review_file, *, returncode=0
     monkeypatch.setattr(review.recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), None))
     monkeypatch.setattr(review.worktree, "cleanup_worktree", lambda *a, **kw: None)
-    monkeypatch.setattr(review.invoke, "run", _orchestrate)
+    # No `pr` holds the target here, and `lock_checkout` refuses a checkout
+    # whose target is not held; the lock is not what these tests pin.
+    monkeypatch.setattr(core.run_lock, "lock_checkout", lambda *a, **kw: None)
     monkeypatch.setattr(review.invoke, "run", _orchestrate)
     monkeypatch.setattr(review.completion, "_display", lambda *a, **kw: None)
     monkeypatch.setattr(review.completion, "summarise",

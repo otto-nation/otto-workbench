@@ -35,7 +35,17 @@ import review.recover  # noqa: E402
 import review.run  # noqa: E402
 import review.worktree  # noqa: E402
 import core.prompt
+import core.run_lock  # noqa: E402
 import gh.client
+
+
+@pytest.fixture(autouse=True)
+def _no_late_checkout_lock(monkeypatch):
+    """These drive `run_pr_review` directly, with no `pr` holding the target, and
+    `lock_checkout` refuses a checkout whose target is not held. What they pin
+    is the flow's order of effects, not the lock, which `review_entry_preflight_test`
+    covers."""
+    monkeypatch.setattr(core.run_lock, "lock_checkout", lambda *a, **kw: None)
 
 
 def _flags(**overrides):

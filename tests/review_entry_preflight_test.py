@@ -134,10 +134,10 @@ def test_self_review_on_a_branch_locks_the_worktree_it_switches_to(
 ):
     """`review --self <branch>` writes to a different tree than launched from.
 
-    `_run_self_review` leaves the checkout unlocked at entry for this case —
-    the switch below hasn't happened yet, so the launch tree isn't the one
-    that ends up written to. Once `switch_to_branch` lands on the real tree,
-    that has to be the one the checkout lock covers.
+    The entry claim takes what `review --self` declares — target and the
+    resolved checkout — before the switch, so the launch tree is held too (an
+    accepted over-lock). Once `switch_to_branch` lands on the real tree, that
+    tree is locked through `lock_checkout` on the same target.
     """
     target = tmp_path / "pr" / "target"
     switched = tmp_path / "switched-wt"
@@ -162,6 +162,8 @@ def test_self_review_on_a_branch_locks_the_worktree_it_switches_to(
 
     claim = MagicMock()
     monkeypatch.setattr(core.run_lock, "claim_for_process", claim)
+    late = MagicMock()
+    monkeypatch.setattr(core.run_lock, "lock_checkout", late)
 
     cr._run_self_review(SimpleNamespace(
         positional=["feat/x"], issue=None, max_parallel=1, skip_user_verification=True,
@@ -169,12 +171,13 @@ def test_self_review_on_a_branch_locks_the_worktree_it_switches_to(
         model=None, repo_dir="", fix=False, effort="medium", max_groups=None,
         generated=False, recover=False, debug=False, base="",
         post=False, push=False, no_post=False, submit=False,
-    ), [], "test 1.0")
+    ), ["--self", "feat/x"], "test 1.0")
 
-    # First claim is at entry with no checkout named (the launch tree is not
-    # what gets written to). Second is after the switch, on the real one.
-    assert claim.call_args_list[0].kwargs["worktree"] is None
-    assert claim.call_args_list[1].kwargs["worktree"] == switched
+    # The entry claim holds what `review --self` declares: the target and the
+    # resolved checkout. The switched-to tree is locked once known, through
+    # the one late acquisition, on the same target.
+    assert claim.call_args.kwargs["worktree"] == ctx.worktree_root
+    assert late.call_args.args == (target, switched)
 
 
 def test_self_review_on_a_branch_already_checked_out_still_locks_it(
@@ -184,7 +187,8 @@ def test_self_review_on_a_branch_already_checked_out_still_locks_it(
     target branch — the re-review flow (`--self --fix --push` run from inside
     a branch that already has its own PR checked out). The checkout lock has
     to fire even though no actual switch happened, because `--fix` still
-    commits into that tree.
+    commits into that tree. The entry claim still holds the resolved launch
+    tree, as `review --self` declares.
     """
     target = tmp_path / "pr" / "target"
     already_checked_out = tmp_path / "already-checked-out"
@@ -208,6 +212,8 @@ def test_self_review_on_a_branch_already_checked_out_still_locks_it(
 
     claim = MagicMock()
     monkeypatch.setattr(core.run_lock, "claim_for_process", claim)
+    late = MagicMock()
+    monkeypatch.setattr(core.run_lock, "lock_checkout", late)
 
     cr._run_self_review(SimpleNamespace(
         positional=["feat/x"], issue=None, max_parallel=1, skip_user_verification=True,
@@ -215,12 +221,12 @@ def test_self_review_on_a_branch_already_checked_out_still_locks_it(
         model=None, repo_dir="", fix=False, effort="medium", max_groups=None,
         generated=False, recover=False, debug=False, base="",
         post=False, push=False, no_post=False, submit=False,
-    ), [], "test 1.0")
+    ), ["--self", "feat/x"], "test 1.0")
 
-    # First claim is at entry with no checkout named. Second still fires after
-    # the no-op switch, naming the tree that is already checked out.
-    assert claim.call_args_list[0].kwargs["worktree"] is None
-    assert claim.call_args_list[1].kwargs["worktree"] == Path(str(already_checked_out))
+    # The late lock still fires after the no-op switch, naming the tree that
+    # is already checked out.
+    assert claim.call_args.kwargs["worktree"] == ctx.worktree_root
+    assert late.call_args.args == (target, Path(str(already_checked_out)))
 
 
 # ── the supersession refusal (ordering in the binary flow) ───────────────────
@@ -391,8 +397,8 @@ def test_a_pr_review_locks_the_worktree_it_actually_writes_to(tmp_path, monkeypa
     monkeypatch.setattr(review.publish, "post", MagicMock())
     monkeypatch.setattr(core.prompt, "ask", lambda *a, **kw: "")
 
-    claim = MagicMock()
-    monkeypatch.setattr(core.run_lock, "claim_for_process", claim)
+    late = MagicMock()
+    monkeypatch.setattr(core.run_lock, "lock_checkout", late)
 
     ctx = make_ctx(target_dir=tmp_path / "t")
     review.run.run_pr_review(
@@ -401,10 +407,9 @@ def test_a_pr_review_locks_the_worktree_it_actually_writes_to(tmp_path, monkeypa
         review_file, trail=MagicMock(),
     )
 
-    assert claim.call_args.kwargs["worktree"] == reviewed
     # Same target as the lock taken at entry, so the two are one claim and the
     # second passes through rather than contending with the first.
-    assert claim.call_args[0][0] == ctx.target_dir
+    assert late.call_args.args == (ctx.target_dir, reviewed)
 
 
 def test_a_pr_review_refuses_a_mistyped_base_too(tmp_path, monkeypatch):
@@ -468,8 +473,8 @@ def test_a_pr_review_checkout_lock_reuses_the_target_locks_command(tmp_path, mon
     monkeypatch.setattr(review.publish, "post", MagicMock())
     monkeypatch.setattr(core.prompt, "ask", lambda *a, **kw: "")
 
-    claim = MagicMock()
-    monkeypatch.setattr(core.run_lock, "claim_for_process", claim)
+    late = MagicMock()
+    monkeypatch.setattr(core.run_lock, "lock_checkout", late)
 
     ctx = make_ctx(target_dir=tmp_path / "t")
     review.run.run_pr_review(
@@ -479,7 +484,7 @@ def test_a_pr_review_checkout_lock_reuses_the_target_locks_command(tmp_path, mon
         review_file, trail=MagicMock(),
     )
 
-    assert claim.call_args.kwargs["command"] == "review 42 --fix --push"
+    assert late.call_args.kwargs["command"] == "review 42 --fix --push"
 
 
 def test_a_stacked_self_review_measures_against_its_parent(tmp_path, monkeypatch):

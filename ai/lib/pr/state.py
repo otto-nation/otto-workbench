@@ -65,6 +65,7 @@ from pr.domains import (
 )
 
 import core.text
+import git.topology
 from core.serde import (
     from_dict as _serde_from_dict,
     load_file as _serde_load_file,
@@ -352,6 +353,15 @@ def new_state(
     )
 
 
+def _stale_worktree_root(root: str, branch: str) -> bool:
+    """Whether a stored checkout is missing, or is not this branch's tree."""
+    if not Path(root).exists():
+        return True
+    current = git.topology.current_branch_quiet(root)
+    rebasing = git.topology.rebasing_branch(root)
+    return current != branch and rebasing != branch
+
+
 def update_identity(
     state: PRState,
     head_sha: str,
@@ -365,11 +375,15 @@ def update_identity(
     can come from different worktrees, and consumers read this field to find the
     checkout a fix was committed in.
 
-    Both it and ``head_sha`` are overwritten only when the incoming value is
-    non-empty. A run from a bare repo has neither a worktree to name nor a
-    checked-out HEAD to read, and a run with nothing to say must not erase what
-    an earlier run knew: the fix summary falls back to ``identity.head_sha`` when
-    it has no commit of its own, and would otherwise post an empty SHA.
+    ``head_sha`` is overwritten only when the incoming value is non-empty. A run
+    from a bare repo has no checked-out HEAD to read, and must not erase what an
+    earlier run knew: the fix summary falls back to ``identity.head_sha`` when it
+    has no commit of its own, and would otherwise post an empty SHA.
+
+    A non-empty ``worktree_root`` still overwrites. An empty one leaves a stored
+    root that is this branch's checkout (or a rebase of it) in place, and clears
+    one that is missing or belongs to another branch — state written before the
+    file was keyed on the target can hold a sibling tree.
     """
     if head_sha:
         state.identity.head_sha = head_sha
@@ -377,6 +391,10 @@ def update_identity(
         state.identity.pr_number = pr_number
     if worktree_root:
         state.identity.worktree_root = worktree_root
+    elif state.identity.worktree_root and _stale_worktree_root(
+        state.identity.worktree_root, state.identity.branch,
+    ):
+        state.identity.worktree_root = ""
 
 
 @cache

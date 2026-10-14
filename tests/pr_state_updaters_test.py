@@ -12,6 +12,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import pytest
+from conftest import git_in, init_repo
 
 from pr.comments_fix import CLOSEOUT_COMMAND, FixSummary
 from pr.domains import (
@@ -58,6 +59,36 @@ def test_update_identity_preserves_pr_when_none():
     state = new_state("repo", "branch", pr_number=7, head_sha="old", worktree_root="/wt")
     update_identity(state, head_sha="new")
     assert state.identity.pr_number == 7
+
+
+def test_update_identity_clears_a_worktree_on_another_branch(tmp_path):
+    other = init_repo(tmp_path / "other")
+    git_in(other, "commit", "-q", "--allow-empty", "--no-verify", "-m", "init")
+    git_in(other, "checkout", "-q", "-b", "other-branch")
+    state = new_state("repo", "feat/a", pr_number=1, head_sha="old",
+                      worktree_root=str(other))
+    update_identity(state, "new", worktree_root="")
+    assert state.identity.worktree_root == ""
+
+
+def test_update_identity_clears_a_missing_worktree(tmp_path):
+    missing = str(tmp_path / "gone")
+    state = new_state("repo", "feat/a", pr_number=1, head_sha="old",
+                      worktree_root=missing)
+    update_identity(state, "new", worktree_root="")
+    assert state.identity.worktree_root == ""
+
+
+# passes-at-base: a stored root that is this branch's checkout is still kept when a later run has none
+def test_update_identity_keeps_a_worktree_on_the_branch(tmp_path):
+    wt = init_repo(tmp_path / "wt")
+    git_in(wt, "commit", "-q", "--allow-empty", "--no-verify", "-m", "init")
+    git_in(wt, "checkout", "-q", "-b", "feat/a")
+    root = str(wt)
+    state = new_state("repo", "feat/a", pr_number=1, head_sha="old",
+                      worktree_root=root)
+    update_identity(state, "new", worktree_root="")
+    assert state.identity.worktree_root == root
 
 
 @pytest.mark.parametrize("name,cls", sorted(_domains().items()))

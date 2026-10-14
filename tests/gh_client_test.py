@@ -264,6 +264,82 @@ def test_run_carries_stderr_so_a_caller_can_name_the_cause(stub_gh):
     assert r.server_error
 
 
+# A stub standing in for the mise shim: it refuses each listed config until
+# that path is in MISE_IGNORED_CONFIG_PATHS, the way mise does, then answers.
+_MISE_SHIM = """
+for cfg in {configs}; do
+  case ":$MISE_IGNORED_CONFIG_PATHS:" in
+    *":$cfg:"*) ;;
+    *) echo "mise ERROR Config files in $cfg are not trusted." >&2; exit 1 ;;
+  esac
+done
+echo "ignored=$MISE_IGNORED_CONFIG_PATHS"
+"""
+
+
+def test_an_untrusted_mise_config_is_ignored_and_the_call_answers(stub_gh, monkeypatch, tmp_path):
+    monkeypatch.delenv("MISE_IGNORED_CONFIG_PATHS", raising=False)
+    cfg = tmp_path / "wt" / ".mise.toml"
+    calls = stub_gh(_MISE_SHIM.format(configs=cfg))
+    r = gh.client.run("pr", "view", "feat/x", "--json", "baseRefName")
+    assert r.ok
+    assert r.stdout.strip() == f"ignored={cfg}"
+    assert len(calls.read_text().splitlines()) == 2
+
+
+def test_a_home_abbreviated_config_path_is_expanded(stub_gh, monkeypatch, tmp_path):
+    """mise names the file as ~/...; ignoring it needs the path it stands for."""
+    monkeypatch.delenv("MISE_IGNORED_CONFIG_PATHS", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    stub_gh(
+        'case ":$MISE_IGNORED_CONFIG_PATHS:" in\n'
+        f'  *":{tmp_path}/wt/.mise.toml:"*) echo answered ;;\n'
+        '  *) echo "mise ERROR Config files in ~/wt/.mise.toml are not trusted." >&2; exit 1 ;;\n'
+        'esac'
+    )
+    assert gh.client.out("api", "user") == "answered"
+
+
+def test_nested_untrusted_configs_are_each_ignored(stub_gh, monkeypatch, tmp_path):
+    monkeypatch.delenv("MISE_IGNORED_CONFIG_PATHS", raising=False)
+    root, pkg = tmp_path / ".mise.toml", tmp_path / "pkg" / ".mise.toml"
+    calls = stub_gh(_MISE_SHIM.format(configs=f"{root} {pkg}"))
+    r = gh.client.run("api", "user")
+    assert r.ok
+    assert r.stdout.strip() == f"ignored={root}:{pkg}"
+    assert len(calls.read_text().splitlines()) == 3
+
+
+def test_a_config_path_with_spaces_is_ignored_whole(stub_gh, monkeypatch, tmp_path):
+    monkeypatch.delenv("MISE_IGNORED_CONFIG_PATHS", raising=False)
+    cfg = tmp_path / "Application Support" / ".mise.toml"
+    stub_gh(_MISE_SHIM.format(configs=f"'{cfg}'"))
+    assert gh.client.out("api", "user") == f"ignored={cfg}"
+
+
+def test_an_exported_ignore_list_is_kept(stub_gh, monkeypatch, tmp_path):
+    monkeypatch.setenv("MISE_IGNORED_CONFIG_PATHS", "/already/ignored.toml")
+    cfg = tmp_path / ".mise.toml"
+    stub_gh(_MISE_SHIM.format(configs=cfg))
+    assert gh.client.out("api", "user") == f"ignored=/already/ignored.toml:{cfg}"
+
+
+def test_a_refusal_that_survives_the_ignore_is_returned_not_looped(stub_gh, tmp_path):
+    """A mise that does not honour the variable costs one retry, then fails."""
+    calls = stub_gh(f"echo 'mise ERROR Config files in {tmp_path}/.mise.toml are not trusted.' >&2; exit 1")
+    r = gh.client.run("api", "user")
+    assert not r.ok
+    assert "not trusted" in r.stderr
+    assert len(calls.read_text().splitlines()) == 2
+
+
+# passes-at-base: an ordinary failure must keep costing exactly one call
+def test_an_ordinary_failure_is_not_retried_as_a_mise_refusal(stub_gh):
+    calls = stub_gh("echo 'no pull requests found for branch \"feat/x\"' >&2; exit 1")
+    assert not gh.client.run("pr", "view", "feat/x").ok
+    assert len(calls.read_text().splitlines()) == 1
+
+
 def test_out_strips_and_returns_stdout(stub_gh):
     stub_gh("echo '  octocat  '")
     assert gh.client.out("api", "user") == "octocat"

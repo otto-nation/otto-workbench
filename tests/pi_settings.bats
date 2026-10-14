@@ -553,6 +553,7 @@ YAML2
     echo "built: $out"
   ' _ "$REPO_ROOT" "$TEMPLATE" "$ENV_LOCAL_FILE"
   [ "$status" -ne 0 ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" == *"parse error"* ]]
   [[ "$output" != *"built:"* ]]
   _teardown_env_local

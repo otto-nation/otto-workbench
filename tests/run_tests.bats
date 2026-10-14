@@ -200,6 +200,7 @@ report_for() {
   test_jobs
   run --separate-stderr report_jobs
   [ -z "$output" ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" == *"8 job(s)"* ]]
 }
 
@@ -657,8 +658,11 @@ EOF
   [ "${lines[0]}" = pytest ]
   [ "${lines[1]}" = 4 ]
   [ "${lines[2]}" = "$dir_b/pytest" ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" == *"skipping $dir_a/pytest"* ]]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" == *"using $dir_b/pytest"* ]]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" != *"pipx inject"* ]]
 }
 
@@ -691,6 +695,7 @@ EOF
   PATH="$dir_a:/usr/bin:/bin" run --separate-stderr run_pytest
   [ "$status" -eq 0 ]
   [ "${lines[2]}" = "$dir_a/pytest" ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" != *"skipping"* ]]
 }
 
@@ -730,6 +735,7 @@ EOF
 
   PATH="$dir_a:/usr/bin:/bin" run --separate-stderr report_missing_xdist
   [ -z "$output" ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" == *"running serially"* ]]
 }
 

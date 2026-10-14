@@ -118,6 +118,9 @@ NO_DEPS_TESTS = {
     # Flock-from-elsewhere helper for the run-lock suites; the suites
     # importing it carry the deps.
     "tests/run_lock_support.py",
+    # A paused-rebase repo builder for the topology, context and state suites:
+    # conftest and git only, and the suites importing it carry the deps.
+    "tests/git_topology_support.py",
     # Spawn-race helper for the signal-relay suite; stdlib only, and the suite
     # importing it carries the deps.
     "tests/signal_relay_support.py",

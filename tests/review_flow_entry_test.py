@@ -175,6 +175,8 @@ def _stub_pr_edges(cr, monkeypatch, tmp_path, tape, review_file, *, returncode=0
     monkeypatch.setattr(review.preflight, "refuse_if_superseded", lambda *a, **kw: None)
     monkeypatch.setattr(review.worktree, "setup_pr_worktree",
                         lambda *a, **kw: SimpleNamespace(path=str(tmp_path), is_fallback=False))
+    # The real reset fetches from an `origin` tmp_path does not have.
+    monkeypatch.setattr(review.worktree, "reset_pr_worktree", lambda *a, **kw: None)
     monkeypatch.setattr(review.recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), None))
     monkeypatch.setattr(review.worktree, "cleanup_worktree", lambda *a, **kw: None)

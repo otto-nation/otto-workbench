@@ -1286,10 +1286,14 @@ a judgement — a review file parses the same way whatever this module decides.
 
 Worktree lifecycle for a review run: obtain one, pin one, release one.
 
-The primitives (`setup_pr_worktree`, `detached_worktree_at`, `switch_to_branch`,
-`cleanup_worktree`) create and destroy checkouts. The resolvers below compose
-those primitives rather than duplicating them: they answer *which directory*
-a review should run in, given a slug, a branch name, or a `--repo-dir`.
+The primitives (`setup_pr_worktree`, `reset_pr_worktree`, `detached_worktree_at`,
+`switch_to_branch`, `cleanup_worktree`) create, update and destroy checkouts.
+Setting up a PR's tree and resetting it are separate steps so a caller can lock
+the tree between them: the reset is the first write to it.
+
+The resolvers below compose those primitives rather than duplicating them: they
+answer *which directory* a review should run in, given a slug, a branch name, or
+a `--repo-dir`.
 
 That is a different question from `git.topology`, which starts from a git cwd
 and asks which of *its* worktrees holds a branch. Topology has no GitHub-slug

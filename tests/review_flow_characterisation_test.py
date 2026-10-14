@@ -241,6 +241,8 @@ def _stub_pr_edges(monkeypatch, tmp_path, tape):
                         lambda *a, **kw: (tape.append("setup_worktree"),
                                           SimpleNamespace(path=str(tmp_path),
                                                           is_fallback=False))[1])
+    # The real reset fetches from an `origin` tmp_path does not have.
+    monkeypatch.setattr(review.worktree, "reset_pr_worktree", lambda *a, **kw: None)
     monkeypatch.setattr(review.recover, "pin_recover_worktree",
                         lambda *a, **kw: (str(tmp_path), None))
     monkeypatch.setattr(review.worktree, "cleanup_worktree",

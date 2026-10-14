@@ -17,6 +17,7 @@ from review.worktree import (
     cleanup_self_review_worktree,
     cleanup_worktree,
     detached_worktree_at,
+    reset_pr_worktree,
     setup_pr_worktree,
     switch_to_branch,
     switch_to_pr_branch,
@@ -143,7 +144,9 @@ def test_setup_pr_worktree_unshallows_if_needed(mock_run):
 
 @patch("pr.sync.fetch_and_reset")
 @patch("core.proc.subprocess.run")
-def test_setup_pr_worktree_fetches_and_resets_on_wt_success(mock_run, mock_far):
+def test_setup_pr_worktree_leaves_the_reset_to_its_caller(mock_run, mock_far):
+    """Setting up the PR's tree does not write to it: the caller locks the tree
+    first and resets it through `reset_pr_worktree` afterwards."""
     def side_effect(cmd, **kwargs):
         m = MagicMock()
         if cmd[0] == "git" and "--is-shallow-repository" in cmd:
@@ -160,9 +163,38 @@ def test_setup_pr_worktree_fetches_and_resets_on_wt_success(mock_run, mock_far):
         return m
 
     mock_run.side_effect = side_effect
-    result = setup_pr_worktree("owner/repo", 10, "/repos/repo", pr_head="feat/thing")
+    result = setup_pr_worktree("owner/repo", 10, "/repos/repo")
+
+    assert result == WorktreeResult("/repos/repo/pr-10", "pr:10", False)
+    mock_far.assert_not_called()
+
+
+# ── reset_pr_worktree ─────────────────────────────────────────────────────────
+
+
+@patch("pr.sync.fetch_and_reset")
+def test_reset_pr_worktree_resets_the_prs_own_tree_to_its_head(mock_far):
+    reset_pr_worktree(WorktreeResult("/repos/repo/pr-10", "pr:10", False), "feat/thing")
 
     mock_far.assert_called_once_with("/repos/repo/pr-10", "feat/thing")
+
+
+@patch("pr.sync.fetch_and_reset")
+def test_reset_pr_worktree_leaves_a_fallback_tree_alone(mock_far):
+    """A fallback tree was just created at the PR's head; there is nothing to reset."""
+    fallback = WorktreeResult("/repos/repo/.worktrees/pr-10-review",
+                              "/repos/repo/.worktrees/pr-10-review", True)
+
+    reset_pr_worktree(fallback, "feat/thing")
+
+    mock_far.assert_not_called()
+
+
+@patch("pr.sync.fetch_and_reset")
+def test_reset_pr_worktree_does_nothing_without_a_head(mock_far):
+    reset_pr_worktree(WorktreeResult("/repos/repo/pr-10", "pr:10", False), "")
+
+    mock_far.assert_not_called()
 
 
 @patch("core.proc.subprocess.run")

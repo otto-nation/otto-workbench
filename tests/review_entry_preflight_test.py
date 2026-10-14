@@ -39,6 +39,7 @@ import pr.supersession
 
 # cr and reviews_dir are pytest fixtures: imported by name so tests here can request them.
 from review_entry_support import cr, reviews_dir, _self_flags, _stub_pr_flow
+from run_lock_support import flocked, git_dir, held_elsewhere
 
 
 # ── the run lock on the --self path ──────────────────────────────────────────
@@ -376,10 +377,10 @@ def test_self_review_proceeds_when_no_pr_can_be_named(cr, tmp_path, reviews_dir,
 def test_a_pr_review_locks_the_worktree_it_actually_writes_to(tmp_path, monkeypatch):
     """The tree reviewed is not the tree the run was launched in.
 
-    `setup_pr_worktree` switches to the PR's own worktree and hard-resets it,
-    so the checkout claimed at entry — where the operator stood — is not the
-    one being written to. The lock has to be taken again once the real tree is
-    known, or the reset happens in a tree no lock covers.
+    `setup_pr_worktree` switches to the PR's own worktree, which the run then
+    hard-resets, so the checkout claimed at entry — where the operator stood —
+    is not the one being written to. The lock has to be taken again once the
+    real tree is known, or the reset happens in a tree no lock covers.
     """
     review_file = tmp_path / "review" / "review.md"
     review_file.parent.mkdir()
@@ -485,6 +486,81 @@ def test_a_pr_review_checkout_lock_reuses_the_target_locks_command(tmp_path, mon
     )
 
     assert late.call_args.kwargs["command"] == "review 42 --fix --push"
+
+
+def _drive_a_pr_review_to_its_tree(tmp_path, monkeypatch, resets, *, record):
+    """Run `run_pr_review` against a real PR tree with the real checkout lock.
+
+    `setup_pr_worktree` hands back a git tree of our own; `reset_pr_worktree` is a
+    spy appending `record(path)` to *resets*. Returns the tree and the context,
+    whose target the caller holds before running.
+    """
+    review_file = tmp_path / "review" / "review.md"
+    review_file.parent.mkdir()
+    review_file.write_text("## Must fix\n- **[M1]** boom\n")
+    worktree = init_repo(tmp_path / "pr-worktree")
+
+    claim = core.run_lock.claim_for_process
+    lock_checkout = core.run_lock.lock_checkout
+    _stub_pr_flow(monkeypatch, tmp_path)
+    monkeypatch.setattr(core.run_lock, "claim_for_process", claim)
+    monkeypatch.setattr(core.run_lock, "lock_checkout", lock_checkout)
+    monkeypatch.setattr(
+        review.worktree, "setup_pr_worktree",
+        lambda *a, **kw: review.worktree.WorktreeResult(str(worktree), "pr:42", False))
+    monkeypatch.setattr(review.worktree, "reset_pr_worktree",
+                        lambda result, head: resets.append(record(result.path)))
+    monkeypatch.setattr(review.recover, "pin_recover_worktree",
+                        lambda *a, **kw: (str(worktree), None))
+    monkeypatch.setattr(core.prompt, "confirm", lambda *a, **kw: False)
+    monkeypatch.setattr(review.publish, "post", MagicMock())
+    monkeypatch.setattr(core.prompt, "ask", lambda *a, **kw: "")
+    return worktree, review_file, make_ctx(target_dir=tmp_path / "t")
+
+
+def test_a_pr_review_never_resets_a_tree_another_run_holds(tmp_path, monkeypatch):
+    """The reset is a write to the PR's tree, so it waits on the tree's lock.
+
+    Another run holding the tree — reached under a different target, which the
+    target lock cannot see — must stop this one before `reset_pr_worktree`
+    moves its HEAD, not after.
+    """
+    resets = []
+    worktree, review_file, ctx = _drive_a_pr_review_to_its_tree(
+        tmp_path, monkeypatch, resets, record=str)
+    other = {"pid": 4242, "command": "pr rebase", "started": "t0"}
+
+    with core.run_lock.hold({core.run_lock.TARGET}, command="review 42", started="t0",
+                            target_dir=ctx.target_dir), \
+         held_elsewhere(git_dir(worktree) / core.run_lock.TREE_LOCK_FILE, other), \
+         pytest.raises(SystemExit) as exc:
+        review.run.run_pr_review(
+            ctx,
+            review.run.ReviewFlags(bin_dir=Path("/bin"), generator_version="test 1.0"),
+            review_file, trail=MagicMock(),
+        )
+
+    assert exc.value.code == 1
+    assert resets == []
+
+
+def test_a_pr_review_holds_the_tree_when_it_resets_it(tmp_path, monkeypatch):
+    """The converse: an uncontended review resets its tree under the tree's lock."""
+    resets = []
+    tree_lock = []
+    worktree, review_file, ctx = _drive_a_pr_review_to_its_tree(
+        tmp_path, monkeypatch, resets, record=lambda path: flocked(tree_lock[0]))
+    tree_lock.append(git_dir(worktree) / core.run_lock.TREE_LOCK_FILE)
+
+    with core.run_lock.hold({core.run_lock.TARGET}, command="review 42", started="t0",
+                            target_dir=ctx.target_dir):
+        review.run.run_pr_review(
+            ctx,
+            review.run.ReviewFlags(bin_dir=Path("/bin"), generator_version="test 1.0"),
+            review_file, trail=MagicMock(),
+        )
+
+    assert resets == [True]
 
 
 def test_a_stacked_self_review_measures_against_its_parent(tmp_path, monkeypatch):

@@ -83,22 +83,24 @@ Ownership is asked twice, in order, and the two questions differ in what they
 can prove. First a process-local registry of the flocks this process itself
 took: that one *is* proof — we opened the descriptor and took the flock here,
 so a hit is a lock we hold and re-taking it is a no-op rather than a refusal.
-Only on a miss is the env marker consulted, and it remains an exact string
-match that does not prove the flock is ours. A value exported into a shell by
+Only on a miss is the env marker consulted, and it remains membership in a
+list, which does not prove the flock is ours. A value exported into a shell by
 hand, or left behind by a run killed before its ``finally``, therefore still
 reads as ownership. Proving it would mean re-probing a lock another process in
 our tree holds, which fails precisely because it is held; the marker is the
 only thing that can answer for that case, so it is trusted there — and only
 there.
 
-That registry is what lets one process hold locks on several targets at once.
-``flock`` is not re-entrant across file descriptors, and the marker is a single
-value, so a process taking a second lock would otherwise lose the name of the
-first and refuse its own lock on re-entry. The marker is still written, because
-it is the only channel a subprocess delegate can read, but it is derived from
-the registry rather than saved and restored per call: a ``claim_for_process``
-take outlives the block that was holding the value it displaced, so restoring
-that value would clear a marker whose flock is still held.
+That registry is what lets one process hold locks on several targets at once,
+since ``flock`` is not re-entrant across file descriptors. The marker carries
+all of them: an ``os.pathsep``-separated list of every value this process holds
+for that var, after whatever its parent exported, so a subprocess passes
+through any lock its ancestors hold rather than only the innermost. It is
+derived from the registry rather than saved and restored per call, because a
+``claim_for_process`` take outlives the block that displaced a value. A caller
+that wants a child to reach only some of what it holds hands the child an
+environment of its own — ``batch.targets.child_env`` names one item's target,
+so a batch step cannot ride the batch's hold onto another PR.
 """
 
 # doc-group: platform
@@ -330,29 +332,38 @@ def _target_spec(target_dir: Path, label: str = "") -> _LockSpec:
     return _LockSpec(str(root), root / LOCK_FILE, LOCK_ENV, subject)
 
 
-def _sync_marker(var: str) -> None:
-    """Point *var* at the innermost lock this process still holds for it.
+def _split_marker(raw: str) -> list[str]:
+    """The lock values in *raw*, in order; empty entries dropped."""
+    return [v for v in raw.split(os.pathsep) if v]
 
-    Derived rather than saved-and-restored per call, because
-    ``claim_for_process`` takes a lock it never gives back: a take can outlive
-    the block that was holding the value it displaced, and restoring that value
-    would clear a marker whose flock is still held. "Innermost" is recency of
-    use, not of first acquisition — ``_HELD`` is kept ordered by that via
-    ``move_to_end`` on every take, so the last matching entry, found by walking
-    from the end, is the one a re-claim most recently touched.
+
+def _marker_values(var: str) -> list[str]:
+    """The lock values *var* names, in order; empty entries dropped."""
+    return _split_marker(os.environ.get(var, ""))
+
+
+def _sync_marker(var: str) -> None:
+    """Point *var* at every lock this process holds for it, after what its parent exported.
+
+    A list rather than the innermost value, so a subprocess passes through any
+    lock its ancestors hold — a batch holding several targets, or a `pr fix`
+    whose phases claim a second checkout. Derived rather than saved and
+    restored per call, because ``claim_for_process`` takes a lock it never
+    gives back: a take can outlive the block that displaced a value. Held
+    values follow ``_HELD``'s recency order; when none remain, the parent's
+    export is handed back untouched.
     """
-    # ceiling: the marker stays a single value, so a subprocess sees only the
-    # single innermost lock this process holds for that var, not every key it
-    # holds. That is safe as long as a lock-taking delegate is only ever
-    # spawned to work on the one target (or checkout) named by that innermost
-    # lock — true today, since the five that lock are spawned only by `pr`'s
-    # dispatch and by `cmd_fix`, which resolve a single target and forward it.
-    # Upgrade to a separated multi-value marker if that stops holding.
-    for held in reversed(_HELD.values()):
-        if held.var == var:
-            os.environ[var] = held.value
-            return
-    _restore_env(_INHERITED.pop(var, None), var)
+    held = [h.value for h in _HELD.values() if h.var == var]
+    if not held:
+        _restore_env(_INHERITED.pop(var, None), var)
+        return
+    # ceiling: values are joined with os.pathsep, so a lock path containing it
+    # would split into two values that never match and a child would refuse its
+    # parent's lock. Upgrade to an encoded marker if a state root or git dir
+    # with os.pathsep in its path is ever reported.
+    values = _split_marker(_INHERITED.get(var) or "")
+    values += [v for v in held if v not in values]
+    os.environ[var] = os.pathsep.join(values)
 
 
 def _register_atexit() -> None:
@@ -382,7 +393,7 @@ def _take(spec: _LockSpec, command: str, started: str) -> bool:
         _HELD.move_to_end(key)
         _sync_marker(spec.var)
         return True
-    if os.environ.get(spec.var) == spec.value:
+    if spec.value in _marker_values(spec.var):
         return False
     spec.path.parent.mkdir(parents=True, exist_ok=True)
     # "a+" rather than "w": opening must not destroy the current holder's
@@ -657,7 +668,7 @@ def _owns(spec: _LockSpec) -> bool:
     The registry answers for this process; the marker for a parent — a batch,
     or the `pr` that spawned this delegate — which no flock of ours can prove.
     """
-    return str(spec.path) in _HELD or os.environ.get(spec.var) == spec.value
+    return str(spec.path) in _HELD or spec.value in _marker_values(spec.var)
 
 
 def lock_checkout(target_dir: Path, worktree: Path, *, command: str, started: str) -> None:

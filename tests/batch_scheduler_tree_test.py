@@ -19,14 +19,13 @@ from batch.model import DecisionKind, RunStatus, Step, StepStatus  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
 from conftest import commit_all, git_in, init_repo  # noqa: E402
 
-from batch_scheduler_support import ALL, NEED, NO, Harness, _quiet_outcomes, row, step_name  # noqa: F401
+from batch_scheduler_support import ALL, NEED, NO, Harness, _close_open_sessions, _quiet_outcomes, row, step_name  # noqa: F401
 
 ONLY_REVIEW = {Step.REBASE: NO, Step.COMMENTS: NO, Step.REVIEW: NEED}
 ONLY_REBASE = {Step.REBASE: NEED, Step.COMMENTS: NO, Step.REVIEW: NO}
 
 
 def _retry(h, decision):
-    batch.store.save(h.run)
     batch.store.write_request(h.run.id, Decide(decision.id, "retry"))
 
 
@@ -133,7 +132,6 @@ def test_a_stacked_pr_waits_for_its_base_and_resumes_when_it_finishes():
     assert waiting[0].payload["evidence"] == [{"kind": "stacked_on", "item": "o/r#1"}]
     assert not any(a[1] == "rebase" for a in h.spawned)
     publish = h.run.open_decisions("o/r#1")[0]
-    batch.store.save(h.run)
     batch.store.write_request(h.run.id, Decide(publish.id, "discard"))
     h.sched.run_until_blocked()
     assert any(a[1] == "rebase" and a[-1] == "/wt/b2" for a in h.spawned)
@@ -191,7 +189,6 @@ def test_watch_ci_rechecks_once_and_reopens_on_red():
     assert "--fix" in fix
     publish = h.run.open_decisions()[0]
     assert publish.kind is DecisionKind.PUBLISH
-    batch.store.save(h.run)
     batch.store.write_request(h.run.id, Decide(publish.id, "publish"))
     assert h.sched.run_until_blocked() is RunStatus.DONE
     assert len(_ci_spawns(h)) == 2

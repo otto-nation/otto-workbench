@@ -21,6 +21,7 @@ import batch.outcomes  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
 from batch.requests import Decide  # noqa: E402
+from batch_scheduler_support import _close_open_sessions, attach_scheduler  # noqa: F401
 from batch.model import DecisionKind, ItemStatus, RunStatus, Step  # noqa: E402
 from batch.plan import PlanRow, StepNeed  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
@@ -60,14 +61,14 @@ def _drive(pair, monkeypatch, findings, *, code=0):
 
     run = batch.scheduler.new_run([planned], steps=[Step.REVIEW], selected=None, pool=1,
                                   auto_publish=[Step.REVIEW])
-    sched = batch.scheduler.Scheduler(
+    sched = attach_scheduler(
         run, pr_bin=PR_BIN, cfg=BatchConfig(pool_max=1),
         host=lambda: batch.admission.HostSample(None, None, None), spawn=spawn,
         replan=lambda r: planned,
         worktrees=lambda d, b: WorktreeResult(str(pair.work), False, ""),
         rss=lambda pid: 0, estimates=batch.admission.Estimates({}),
         emit=lambda *a, **k: None, sleep=lambda s: None)
-    return run, sched.run_until_blocked(), head, sched
+    return sched.run, sched.run_until_blocked(), head, sched
 
 
 # passes-at-base: negative case; the old scheduler never pushed past an open decision either
@@ -97,7 +98,6 @@ def test_a_skipped_step_that_committed_is_left_for_the_operator_to_publish(tmp_p
     assert status is RunStatus.WAITING
     failed = run.open_decisions(run.items[0].key)[0]
     assert failed.kind is DecisionKind.FAILED
-    batch.store.save(run)
     batch.store.write_request(run.id, Decide(failed.id, "skip-step"))
     assert sched.run_until_blocked() is RunStatus.WAITING
     assert [d.kind for d in run.open_decisions(run.items[0].key)] == [DecisionKind.PUBLISH]

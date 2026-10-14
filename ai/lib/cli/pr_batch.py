@@ -28,6 +28,7 @@ from pathlib import Path
 
 import batch.admission
 import batch.events
+import batch.inbox
 import batch.plan
 import batch.report
 import batch.resolve
@@ -211,12 +212,15 @@ def _report_apply_errors(errors: list[str]) -> None:
         print(f"pr batch: {message}", file=sys.stderr)
 
 
-def _held_drive(run, bin_dir: Path, cfg, verbose: bool) -> int:
+def _held_drive(session, bin_dir: Path, cfg, verbose: bool, entry_errors: list[str]) -> int:
+    # Snapshot before the loop: only the entry drain's failures decide the exit
+    # code, as `_apply_loaded`'s did when resume applied the inbox itself.
+    errors = list(entry_errors)
     status = batch.scheduler.Scheduler(
-        run, pr_bin=str(bin_dir / "pr"), cfg=cfg, verbose=verbose).run_until_blocked()
-    errors = _apply_loaded(run, bin_dir)
-    _save(run)
-    if run.status is RunStatus.DONE:
+        session, pr_bin=str(bin_dir / "pr"), cfg=cfg, verbose=verbose).run_until_blocked()
+    errors += _apply_loaded(session.run, bin_dir)
+    session.commit()
+    if session.run.status is RunStatus.DONE:
         status = RunStatus.DONE
     if errors:
         _report_apply_errors(errors)
@@ -236,17 +240,34 @@ def _emit_summary(run, code: int) -> None:
     batch.events.emit("run_summary", run=view["run"], counts=view["counts"], next=view["next"])
 
 
-def _drive(run, *, bin_dir: Path, cfg, verbose: bool = False) -> int:
-    started = batch.store.now_iso()
+def _emit_outcome(run, outcome) -> None:
+    """Report one applied request as NDJSON events; `batch.events.emit` is looked up per call."""
+    batch.scheduler.emit_outcome(run, outcome, emit=batch.events.emit)
+
+
+def _drive(run, *, bin_dir: Path, cfg, verbose: bool = False,
+           command: str = "pr batch") -> int:
+    entry_errors: list[str] = []
+
+    def report(run, outcome) -> None:
+        _emit_outcome(run, outcome)
+        if not outcome.ok:
+            entry_errors.append(outcome.error)
+
+    inbox = batch.inbox.Inbox(batch.inbox.ApplyContext(pr_bin=str(bin_dir / "pr"),
+                                                      report=report))
     try:
-        with core.run_lock.acquire(batch.store.run_dir(run.id), "batch", started):
-            code = _held_drive(run, bin_dir, cfg, verbose)
-    except core.run_lock.LockBusy as exc:
-        core.run_lock.report_busy(exc)
-        return 1
-    # After the lock is released, so the summary reports the run as the
+        with batch.store.session(run.id, batch.store.Role.DRIVER, inbox=inbox,
+                                 command=command) as session:
+            code = _held_drive(session, bin_dir, cfg, verbose, entry_errors)
+            driven = session.run
+    except batch.store.RunBusy as exc:
+        return _err(str(exc))
+    except batch.store.RunUnreachable as exc:
+        return _err(str(exc))
+    # After the session released, so the summary reports the run as the
     # reader's to act on and lists what it is waiting for.
-    _emit_summary(run, code)
+    _emit_summary(driven, code)
     return code
 
 
@@ -349,7 +370,8 @@ def _cmd_run(args, bin_dir: Path) -> int:
             batch.events.emit("item_queued", run=run.id, item=item.key,
                               steps=[s.step.value for s in item.steps])
         try:
-            return _drive(run, bin_dir=bin_dir, cfg=started.cfg, verbose=args.verbose)
+            return _drive(run, bin_dir=bin_dir, cfg=started.cfg, verbose=args.verbose,
+                          command="pr batch run")
         finally:
             started.trail.finish()
 
@@ -377,7 +399,7 @@ def _cmd_resume(args, bin_dir: Path) -> int:
         batch.scheduler.mark_interrupted(run, emit=batch.events.emit)
         os.environ.setdefault(TRAIL_ROOT_ENV, run.trail_root)
         return _drive(run, bin_dir=bin_dir, cfg=_cfg([i.repo_dir for i in run.items]),
-                      verbose=args.verbose)
+                      verbose=args.verbose, command="pr batch resume")
 
 
 def _apply_pending(run_id: str, bin_dir: Path, decision_id: str) -> int:

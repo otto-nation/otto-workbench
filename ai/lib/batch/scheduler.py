@@ -16,19 +16,17 @@ import batch.admission
 import batch.events
 import batch.outcomes
 import batch.plan
-import batch.publish
 import batch.report
-import batch.resolve
-import batch.requests
 import batch.store
 import batch.targets
 import git.client
 import pr.ci_need
 import rebase.inspect
-from batch.model import (STEP_ORDER, Decision, DecisionKind, DirtyReason, EvidenceKind, Item,
-                         ItemStatus, Run, RunStatus, Step, StepRecord, StepStatus,
-                         stacked_on_items)
+from batch.model import (STEP_ORDER, CancelState, Decision, DecisionKind, DirtyReason,
+                         EvidenceKind, Item, ItemStatus, Run, RunStatus, Step, StepRecord,
+                         StepStatus, stacked_on_items)
 from batch.plan import PlanRow
+from batch.requests import Cancel, Decide, Outcome
 from batch.steps import StepProcess, WorktreeResult, ensure_worktree, restore_generated_dirt, step_argv
 from config.workbench_config import BatchConfig
 from pr.comments_fix import CloseoutDebt
@@ -124,6 +122,35 @@ def mark_interrupted(run: Run, *, emit: Callable[..., None]) -> bool:
     return found
 
 
+def ci_not_rechecked(run: Run) -> list[str]:
+    """Items *run* published whose CI on the pushed head was never read."""
+    return [i.key for i in run.items if i.published_sha and not i.ci_rechecked]
+
+
+def emit_outcome(run: Run, outcome: Outcome, *,
+                 emit: Callable[..., None] = batch.events.emit) -> None:
+    """Emit the events one applied request produces, whether drained or synthesized.
+
+    The one mapping from an outcome to events. A `Cancel` emits
+    `cancel_requested`. Any other request emits `decision_resolved` (empty
+    `decision` and `action` for a malformed one), then `decision_created` for
+    each decision it created and `item_finished` for each item it made
+    terminal. A failed outcome carries `error`.
+    """
+    request = outcome.request
+    failed = {"error": outcome.error} if outcome.error else {}
+    if isinstance(request, Cancel):
+        emit("cancel_requested", run=run.id, kill=request.kill, **failed)
+        return
+    decided = isinstance(request, Decide)
+    emit("decision_resolved", run=run.id, decision=request.decision if decided else "",
+         action=request.action if decided else "", **failed)
+    for created in outcome.created:
+        emit("decision_created", run=run.id, **batch.report.decision_event(run, created))
+    for key in outcome.finished:
+        emit("item_finished", run=run.id, item=key, status=run.item(key).status.value)
+
+
 @dataclass
 class _Live:
     item: Item
@@ -138,7 +165,7 @@ class _Live:
 
 
 class Scheduler:
-    def __init__(self, run: Run, *, pr_bin: str, cfg: BatchConfig,
+    def __init__(self, session: batch.store.Session, *, pr_bin: str, cfg: BatchConfig,
                  host: Callable[[], batch.admission.HostSample] = batch.admission.read_host,
                  spawn: Callable[..., object] = StepProcess.start,
                  replan: Callable[[PlanRow], PlanRow | None] | None = None,
@@ -148,71 +175,31 @@ class Scheduler:
                  estimates: batch.admission.Estimates | None = None,
                  emit: Callable[..., None] = batch.events.emit,
                  sleep: Callable[[float], None] = time.sleep, tick: float = 0.5,
-                 runner: Callable[..., int] | None = None,
-                 tree: Callable[[Item], batch.publish.TreeState] | None = None,
                  contains: Callable[[str, str], bool] = _contains_commit,
                  dirty: Callable[[str], bool] = git.client.is_dirty,
                  rebasing: Callable[[str], bool] = rebase.inspect.rebase_in_progress,
                  verbose: bool = False,
                  closeout: Callable[[str, str], CloseoutDebt] | None = None):
-        self.run, self.pr_bin, self.cfg = run, pr_bin, cfg
+        self.session, self.pr_bin, self.cfg = session, pr_bin, cfg
         self._verbose = verbose
         # Looked up at construction, not bound as a default, so a patched
         # batch.plan.replan_row is the one used.
         self._host, self._spawn = host, spawn
         self._replan = replan or batch.plan.replan_row
+        # Read by _close for auto-publish debt only. Requests, drained or
+        # synthesized, are applied by the session's inbox with its own seams.
         self._closeout = closeout or batch.plan.closeout_debt
         self._worktrees, self._head, self._rss = worktrees, head, rss
         self._estimates = estimates or batch.admission.Estimates.load()
         self._emit, self._sleep, self._tick = emit, sleep, tick
         self._live: dict[str, _Live] = {}
-        # The publish seams: None takes resolve's real runner and tree read.
-        self._runner, self._tree = runner, tree
         self._contains = contains
         self._dirty, self._rebasing = dirty, rebasing
 
-    # ── requests and cancel ──────────────────────────────────────────────
-
-    def _apply_one(self, raw) -> None:
-        if isinstance(raw, dict) and raw.get("error") and "decision" not in raw:
-            self._emit("decision_resolved", run=self.run.id, decision="", action="",
-                       error=raw["error"])
-            return
-        req = batch.requests.parse(raw)
-        if isinstance(req, batch.requests.Malformed):
-            self._emit("decision_resolved", run=self.run.id, decision="", action="",
-                       error=req.reason)
-            return
-        if not isinstance(req, batch.requests.Decide):
-            self._emit("decision_resolved", run=self.run.id, decision="", action="",
-                       error="not a decide request")
-            return
-        try:
-            item = self.run.item(self.run.decision(req.decision).item)
-            was_terminal = item.terminal
-            created = batch.resolve.apply(self.run, req, pr_bin=self.pr_bin,
-                                          runner=self._runner, tree=self._tree,
-                                          closeout=self._closeout)
-            self._emit("decision_resolved", run=self.run.id, decision=req.decision,
-                       action=req.action)
-            for d in created:
-                self._emit("decision_created", run=self.run.id,
-                           **batch.report.decision_event(self.run, d))
-            if item.terminal and not was_terminal:
-                self._emit("item_finished", run=self.run.id, item=item.key,
-                           status=item.status.value)
-        except (batch.resolve.ResolveError, KeyError, TypeError) as exc:
-            decision = raw.get("decision", "") if isinstance(raw, dict) else ""
-            action = raw.get("action", "") if isinstance(raw, dict) else ""
-            self._emit("decision_resolved", run=self.run.id,
-                       decision=decision, action=action, error=str(exc))
-
-    def _apply_requests(self) -> None:
-        # ceiling: force and publish run inline, so a tick blocks reaping and events
-        # while they run; upgrade to scheduled step attempts if a live UI needs step
-        # logs during publish or inline runs exceed a minute.
-        for raw in batch.store.take_requests(self.run.id):
-            self._apply_one(raw)
+    @property
+    def run(self) -> Run:
+        """The session's run, loaded under the run lock after it was taken."""
+        return self.session.run
 
     # ── reaping ──────────────────────────────────────────────────────────
 
@@ -335,8 +322,9 @@ class Scheduler:
         # unvouched: auto-publish does not fire. Debt from an earlier `pr` run,
         # with comments never attempted here, still auto-publishes under
         # `--auto-publish comments`.
-        # _apply_one emits the outcome — item_finished on DONE, or the refusal's
-        # decision — so READY_TO_PUBLISH is not announced first.
+        # session.apply reports the outcome through the inbox — item_finished
+        # on DONE, or the refusal's decision — so READY_TO_PUBLISH is not
+        # announced first.
         finished = all(r.status is StepStatus.DONE for r in item.steps if r.drafted)
         comments = next((r for r in item.steps if r.step is Step.COMMENTS), None)
         attempted = comments is not None and (bool(comments.started_at)
@@ -344,7 +332,7 @@ class Scheduler:
         unvouched = debt.owed and attempted and comments.status is not StepStatus.DONE
         vouched = set(drafted) | ({Step.COMMENTS} if debt.owed else set())
         if finished and not unvouched and vouched <= set(self.run.auto_publish):
-            self._apply_one({"decision": d.id, "action": "publish"})
+            self.session.apply(Decide(decision=d.id, action="publish"))
             return
         self._emit("item_finished", run=self.run.id, item=item.key, status=item.status.value)
 
@@ -464,7 +452,7 @@ class Scheduler:
                 continue
             bases = stacked_on_items(d)
             if bases and all(self.run.item(k).terminal for k in bases):
-                self._apply_one({"decision": d.id, "action": "retry"})
+                self.session.apply(Decide(decision=d.id, action="retry"))
 
     def _admit(self) -> None:
         self._release_stacked()
@@ -514,11 +502,11 @@ class Scheduler:
 
     def _settle(self, status: RunStatus) -> RunStatus:
         self.run.status = status
-        # Save before dropping: cleanup that fails must never leave the stored
-        # run claiming it is still RUNNING.
-        batch.store.save(self.run)
-        if status in (RunStatus.DONE, RunStatus.CANCELLED):
-            batch.plan.drop_refs(self.run.ref_dirs, self.run.ref_namespace)
+        # Commit writes first, then drops refs when the status is terminal.
+        # Cleanup that fails must never leave the stored run claiming it is
+        # still RUNNING. The drop lives in commit, not here, so every terminal
+        # write — settle, interrupt-with-cancel, a later finish — uses one path.
+        self.session.commit()
         self._emit("run_waiting" if status is RunStatus.WAITING else "run_finished",
                    run=self.run.id, status=status.value,
                    open_decisions=len(self.run.open_decisions()),
@@ -527,18 +515,18 @@ class Scheduler:
 
     def _ci_not_rechecked(self) -> list[str]:
         """Items this run published whose CI on the pushed head was never read."""
-        return [i.key for i in self.run.items if i.published_sha and not i.ci_rechecked]
+        return ci_not_rechecked(self.run)
 
     def _kill_live(self) -> None:
         for live in self._live.values():
             live.proc.kill()
 
-    def _blocked_status(self, cancel: batch.store.CancelRequest) -> RunStatus | None:
+    def _blocked_status(self, cancel: CancelState | None) -> RunStatus | None:
         if self._live:
             return None
-        if batch.store.has_requests(self.run.id):
+        if batch.store.pending_requests(self.run.id) > 0:
             return None
-        if cancel.requested:
+        if cancel is not None:
             return RunStatus.CANCELLED
         if all(i.terminal for i in self.run.items):
             return RunStatus.DONE
@@ -547,14 +535,20 @@ class Scheduler:
         return None
 
     def _once(self) -> RunStatus | None:
-        self._apply_requests()
-        cancel = batch.store.cancel_requested(self.run.id)
-        if cancel.kill:
+        # ceiling: force and publish run inline, so a tick blocks reaping and events
+        # while they run; upgrade to scheduled step attempts if a live UI needs step
+        # logs during publish or inline runs exceed a minute.
+        # The inbox reports each outcome as it is applied; the returned list is
+        # not emitted again here.
+        self.session.drain(settle=False)
+        cancel = self.run.cancel
+        kill = cancel is not None and cancel.kill
+        if kill:
             self._kill_live()
-        self._reap(cancel.kill)
-        if not cancel.requested:
+        self._reap(kill)
+        if cancel is None:
             self._admit()
-        batch.store.save(self.run)
+        self.session.commit()
         return self._blocked_status(cancel)
 
     def _loop(self) -> RunStatus:
@@ -578,10 +572,12 @@ class Scheduler:
             self._flush(pending)
             return
         mark_interrupted(self.run, emit=lambda kind, **fields: pending.append((kind, fields)))
-        self.run.status = RunStatus.INTERRUPTED
-        batch.store.save(self.run)
+        status = (RunStatus.CANCELLED if self.run.cancel is not None
+                  else RunStatus.INTERRUPTED)
+        self.run.status = status
+        self.session.commit()
         pending.append(("run_finished", {
-            "run": self.run.id, "status": RunStatus.INTERRUPTED.value,
+            "run": self.run.id, "status": status.value,
             "open_decisions": len(self.run.open_decisions()),
             "ci_not_rechecked": self._ci_not_rechecked(),
         }))

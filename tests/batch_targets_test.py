@@ -18,10 +18,11 @@ import batch.targets  # noqa: E402
 import core.run_lock  # noqa: E402
 import pr.target  # noqa: E402
 from batch.model import Decision, DecisionKind, Item, Step  # noqa: E402
+from batch.requests import Decide  # noqa: E402
 from batch.plan import PlanRow  # noqa: E402
 # `_quiet_outcomes` is an autouse fixture; imported only so pytest registers it here.
 from batch_scheduler_support import (  # noqa: E402,F401
-    NEED, Harness, _quiet_outcomes, ff_tree, row,
+    NEED, Harness, _close_open_sessions, _quiet_outcomes, attach_scheduler, ff_tree, row,
 )
 from config.workbench_config import BatchConfig  # noqa: E402
 from conftest import seed_repo  # noqa: E402
@@ -173,11 +174,11 @@ def test_a_live_run_publish_child_gets_only_its_items_marker(repo, monkeypatch):
     run.decisions.append(Decision(id="d1", item=item.key, step="publish",
                                   kind=DecisionKind.PUBLISH))
     target = batch.targets.item_target_dir(item)
-    sched = batch.scheduler.Scheduler(
+    sched = attach_scheduler(
         run, pr_bin="pr", cfg=BatchConfig(pool_max=1),
         emit=lambda *a, **k: None, runner=None, tree=ff_tree)
     with core.run_lock.hold({TARGET}, target_dir=target, command="pr batch run", started="t"):
-        sched._apply_one({"decision": "d1", "action": "publish"})
+        sched.session.apply(Decide("d1", "publish"))
     assert calls
     env = calls[0]
     assert env[LOCK_ENV] == str(target)

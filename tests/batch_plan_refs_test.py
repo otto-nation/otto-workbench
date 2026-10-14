@@ -20,6 +20,7 @@ import core.proc  # noqa: E402
 import git.client  # noqa: E402
 from batch.model import STEP_ORDER, RunStatus, Step  # noqa: E402
 from batch.plan import PlanRow, StepNeed  # noqa: E402
+from batch_scheduler_support import _close_open_sessions, attach_scheduler  # noqa: F401,E402
 from config.workbench_config import BatchConfig  # noqa: E402
 
 
@@ -127,7 +128,7 @@ def test_a_finished_run_drops_its_refs(monkeypatch):
 
 
 def _scheduler(run):
-    return batch.scheduler.Scheduler(
+    return attach_scheduler(
         run, pr_bin="pr", cfg=BatchConfig(pool_max=1),
         host=lambda: batch.admission.HostSample(None, None, None),
         spawn=lambda *a, **k: None, estimates=batch.admission.Estimates({}),
@@ -155,6 +156,8 @@ def test_a_run_is_saved_done_before_its_refs_are_dropped(monkeypatch):
     with pytest.raises(OSError):
         _scheduler(run).run_until_blocked()
     assert batch.store.load(run.id).status is RunStatus.DONE
+    # The DRIVER session is still open; finish() on teardown would drop again.
+    monkeypatch.setattr(batch.plan, "drop_refs", lambda *a, **k: None)
 
 
 def test_a_ref_that_will_not_delete_is_warned_about_and_reported(tmp_path, monkeypatch, capsys):

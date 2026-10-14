@@ -3661,6 +3661,22 @@ Gaps vs Claude Code CLI:
   --add-dir        Not available; directories passed in prompt text
   --agent          Not available; use --append-system-prompt with agent file contents
 
+### agent/pi_models.py
+
+Map a requested model id onto one `pi --list-models` actually serves.
+
+``AI_*_MODEL`` is the operator's id, often the Anthropic / Claude Code spelling
+(``claude-sonnet-5-5``). Pi's ``google-vertex-claude`` provider lists Vertex
+publisher ids, which drop a generation segment when Google's catalogue does
+(``claude-sonnet-5``). Passing the env value through unchanged is how a review
+dies with ``Model "claude-sonnet-5-5" not found`` and the RPC path reports
+that as stdin already closed.
+
+The catalogue is the source of truth for what this process can spawn. An exact
+hit is kept. Otherwise one trailing ``-N`` segment is stripped when that parent
+is listed — ``claude-sonnet-5-5`` → ``claude-sonnet-5`` — and nothing else is
+invented. An unreadable catalogue leaves the requested id alone.
+
 ### agent/rule_prefix.py
 
 Assemble a Pi system-prompt prefix from a seeded ``rules_home``.

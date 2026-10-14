@@ -54,7 +54,7 @@ import threading
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import agent.usage
@@ -62,6 +62,7 @@ import core.children
 import core.log
 import core.timeouts
 from agent.backend import AgentInvocation, agent_env
+from agent.pi_models import not_served_message, served_model
 from agent.rule_prefix import (
     TEMP_PREFIX,
     materialize as materialize_rule_prefix,
@@ -387,7 +388,9 @@ _RPC_ERROR_MAX_CHARS = 2000
 
 # Pi was gone before its prompt could be written. Reported in the same shape as
 # a refusal, because it is the same failure from the caller's side: the run
-# never started and nothing downstream should wait for it.
+# never started and nothing downstream should wait for it. Prefer
+# `not_served_message` when stderr names a missing model — this string is the
+# remainder, not the diagnosis.
 _PROMPT_UNDELIVERED = (
     "pi exited before the prompt could be sent — its stdin was already closed"
 )
@@ -775,19 +778,45 @@ class StreamResult:
     error: str | None = None
 
 
-def _undelivered_prompt(log_file) -> StreamResult:
+def _exited_stderr(proc: subprocess.Popen | None) -> str:
+    """stderr of a child that has already left, else empty.
+
+    Reading a live child's stderr pipe blocks until it closes the fd, so a
+    process still running is skipped. A stub without ``poll`` is treated as
+    already gone — the tests' dead-stdin Pi has already refused the write.
+    """
+    if proc is None or proc.stderr is None:
+        return ""
+    poll = getattr(proc, "poll", None)
+    if callable(poll) and poll() is None:
+        return ""
+    try:
+        return proc.stderr.read() or ""
+    except (OSError, ValueError):
+        return ""
+
+
+def _undelivered_prompt(
+    log_file, proc: subprocess.Popen | None = None, model: str = "",
+) -> StreamResult:
     """The result of a run whose prompt never reached Pi.
 
     Logged into the session file in Pi's own response shape, so the record that
-    explains the failure is where every other refusal leaves one.
+    explains the failure is where every other refusal leaves one. When Pi's
+    stderr names a missing model, that is the error — not the closed-stdin
+    symptom of the same exit.
     """
-    core.log.error(f"pi refused the run: {_PROMPT_UNDELIVERED}")
+    stderr = _exited_stderr(proc)
+    error = not_served_message(model, stderr) or _PROMPT_UNDELIVERED
+    core.log.error(f"pi refused the run: {error}")
     log_file.write(json.dumps({
         "type": "response", "command": "prompt", "success": False,
-        "error": _PROMPT_UNDELIVERED,
+        "error": error,
     }) + "\n")
+    if stderr:
+        log_file.write(f"\n--- stderr ---\n{stderr}\n")
     log_file.flush()
-    return StreamResult(0, 0.0, "error", None, _PROMPT_UNDELIVERED)
+    return StreamResult(0, 0.0, "error", None, error)
 
 
 def _consume_stream(
@@ -1104,9 +1133,14 @@ def prompt(
     ``--thinking`` and ``--provider`` are global flags here, so a prompt honours
     both exactly as the agent modes do.
     """
+    model = served_model(model, provider)
     cmd = _build_prompt_cmd(model=model, provider=provider, thinking=thinking)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd,
                             timeout=core.timeouts.UNBOUNDED)
+    if result.returncode:
+        msg = not_served_message(model or "", result.stderr or "")
+        if msg:
+            core.log.error(msg)
     reply, usage = pi_prompt_result(result.stdout)
     return reply, result.returncode, usage
 
@@ -1120,6 +1154,8 @@ def invoke_agent(inv: AgentInvocation) -> int:
     - max_budget is enforced by accumulating message_end costs and sending abort
     - A Claude-compatible result record is written at the end for cost tracking
     """
+    if inv.model:
+        inv = replace(inv, model=served_model(inv.model, inv.provider))
     ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
     cmd = _build_agent_cmd(inv, extension=ext)
     try:
@@ -1153,7 +1189,7 @@ def _drive_agent(inv: AgentInvocation, proc: subprocess.Popen) -> int:
                 output_path=inv.output_path,
             )
         else:
-            stream = _undelivered_prompt(log_fh)
+            stream = _undelivered_prompt(log_fh, proc, inv.model)
 
     duration_ms = int((time.monotonic() - start_time) * 1000)
 
@@ -1193,6 +1229,8 @@ def invoke_fix(inv: AgentInvocation) -> int:
     Uses RPC mode for budget tracking and turn limits, same as invoke_agent.
     If session_log is empty, events are consumed but not persisted.
     """
+    if inv.model:
+        inv = replace(inv, model=served_model(inv.model, inv.provider))
     ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
     cmd = _build_fix_cmd(inv, extension=ext)
     try:
@@ -1223,7 +1261,7 @@ def _drive_fix(inv: AgentInvocation, proc: subprocess.Popen) -> int:
                 output_path=inv.output_path,
             )
         else:
-            stream = _undelivered_prompt(log_file)
+            stream = _undelivered_prompt(log_file, proc, inv.model)
 
     duration_ms = int((time.monotonic() - start_time) * 1000)
 

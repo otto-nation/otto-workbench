@@ -260,9 +260,9 @@ than restated here:
 | `otto-workbench config get KEY [DIR ...]` | Project | Resolve one key for this repo, or for each named one, with the scope that answered |
 | `otto-workbench config status` | Project | Show every scope, every resolved value, and the file each came from |
 
-`install` runs first-time setup: installs Homebrew (if missing), syncs core
-components (bin, git, zsh), presents a menu of optional components
-(packages, docker, terminals, editors, ai, mise), and runs pending
+`install` runs first-time setup: on macOS, installs Homebrew (if missing);
+syncs core components (bin, git, zsh); presents a menu of optional components
+(packages, docker, terminals, editors, ai, mise); and runs pending
 migrations. Safe to re-run — idempotent. Use `--all` to skip menus, or name
 specific components.
 
@@ -1397,4 +1397,4 @@ Domain aliases: `ts`/`js` → `typescript`, `py` → `python`, `sh`/`shell` → 
 
 ## Adding a Tool
 
-See [Registries](registries.md#adding-an-entry) for the full schema and step-by-step instructions. A script in a `bindir` registry needs a header before it can ship: the reference above is rendered from it, and the build fails when a script in the reference has none.
+See [Registries](registries.md#adding-an-entry) for the full schema and step-by-step instructions, and [Package manifests](registries.md#package-manifests) for Brewfile annotations. A script in a `bindir` registry needs a header before it can ship: the reference above is rendered from it, and the build fails when a script in the reference has none.

@@ -1,6 +1,6 @@
 # otto-workbench
 
-Personal developer environment manager. Manages shell config, git settings, brew packages, editor preferences, and AI coding tools through a component framework that keeps everything reproducible and in sync.
+Personal developer environment manager. Manages shell config, git settings, packages, editor preferences, and AI coding tools through a component framework that keeps everything reproducible and in sync.
 
 Run `install.sh` once on a new machine and your entire dev environment is configured. Pull updates and run `otto-workbench sync` to stay current.
 
@@ -27,7 +27,7 @@ cd ~/otto-workbench
 exec zsh
 ```
 
-The installer installs Homebrew (if missing), symlinks scripts, zsh configs, and git config, then presents an optional component menu. See [Components](docs/components.md) for what is on it.
+The installer on macOS installs Homebrew (if missing), then on every platform symlinks scripts, zsh configs, and git config, and presents an optional component menu. See [Components](docs/components.md) for what is on it.
 
 ## After Install
 
@@ -48,7 +48,7 @@ Re-applies all workbench config — migrations, symlinks, tool context, AI setti
 - **[Scripts](docs/tools.md#scripts)** — workbench utilities for environment management, validation, and code generation
 - **Shell** — ZSH configuration with [modular config layers](docs/architecture.md#shell-zsh), Starship prompt, and lazy-loaded plugin management
 - **Git** — [two-layer gitconfig](docs/architecture.md#git), global hooks (secret scanning, linting, rebase conflict-resolution audit), and conventional commit conventions
-- **[Tools](docs/tools.md#installed-tools)** — CLI tools managed via Homebrew, organized by domain (shell, infra, languages, dev)
+- **[Tools](docs/tools.md#installed-tools)** — CLI tools managed by the [packages component](docs/registries.md#package-manifests), organized by domain (shell, infra, languages, dev)
 - **[AI](docs/ai-automation.md)** — Claude Code integration with skills, agents, guidelines, and the `pr` CLI (`pr create`, `pr describe`, `pr review`) for AI-powered git automation
 
 ## How It Works
@@ -58,7 +58,7 @@ The workbench uses a [component framework](docs/architecture.md#component-model)
 1. **Core** (`bin`, `git`, `zsh`) — always synced on every machine
 2. **Optional** (`packages`, `docker`, `terminals`, `editors`, `ai`, `mise`) — opt-in via install menu
 
-On first run, `install.sh` installs Homebrew (if missing), then presents menus for core and optional components. `otto-workbench sync` re-applies everything non-interactively. Both auto-discover components via glob patterns — adding a new component requires no edits to the installer.
+On first run, `install.sh` on macOS installs Homebrew (if missing), then presents menus for core and optional components. `otto-workbench sync` re-applies everything non-interactively. Both auto-discover components via glob patterns — adding a new component requires no edits to the installer.
 
 See [Architecture](docs/architecture.md) for the full picture: configuration layers, registries, migrations, and generated files.
 

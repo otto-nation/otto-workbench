@@ -12,7 +12,7 @@ Each tooling directory owns a `registry.yml` describing the tools it provides. R
 | Pattern | Purpose | Owns |
 |---------|---------|------|
 | `*/registry.yml` | Component tool registries | Tool docs (`tools[]`) |
-| `**/*.registry.yml` | Brew stack registries (by domain) | Tool docs (`tools[]`) |
+| `**/*.registry.yml` | Package stack registries (by domain) | Tool docs (`tools[]`) |
 | `**/*.env.yml` | Environment variable declarations | Env vars (`env[]`, `auth`) |
 
 **Key separation:** `registry.yml` owns tool documentation. `*.env.yml` owns env var and auth declarations, colocated with the code that reads them. Env vars set programmatically at runtime (e.g., `DOCKER_HOST`) are not declared in registries.
@@ -145,7 +145,7 @@ Set `meta.validation` to enable cross-checking between the registry and its sour
 
 | Mode | Checks | Source |
 |------|--------|--------|
-| `brewfile` | Every tool name (or `brew_name`) exists in the Brewfile | `meta.source: packages/Brewfile` |
+| `brewfile` | Every tool name (or `brew_name`) exists in the named Brewfile | `meta.source: packages/Brewfile` |
 | `bindir` | Every tool name exists as a file in the directory | `meta.source: bin` |
 | `zsh-comments` | Every tool name has a matching `# keyword` comment | `meta.source: zsh/config.d/...` |
 | `none` | Schema-only validation | N/A |
@@ -172,11 +172,44 @@ The composed docs ask for their generated sections with an include directive:
 
 Freshness is enforced by the pre-push hook and CI — `validate-all` runs [`validate-docs-composed`](../bin/local/validate-docs-composed) for the composed docs, and both re-run the generator for the `tools.generated*.md` rule files.
 
+## Package manifests
+
+The Brewfiles under [`packages/`](../packages/) are the install identity for every tool. Components install a named package through `install_package NAME [--version V]` in [`lib/packages.sh`](../lib/packages.sh) — never by calling brew or mise directly. `--version` pins the mise path only.
+
+On macOS with Homebrew, the packages component installs a stack with `brew bundle`. Everywhere else it installs each entry through `install_package` (Linuxbrew if `brew` is on PATH, otherwise mise, bootstrapping mise from `https://mise.run` if needed). macOS-only entries and casks are skipped (status `–`); `linux: system` entries print a distro hint when Homebrew is absent; `git:` entries are cloned by the zsh component (`step_zsh_shell_tools` in [`zsh/steps.sh`](../zsh/steps.sh)). `sync_packages` is a no-op — stacks are not re-installed on `otto-workbench sync`.
+
+The component id is `packages` (formerly `brew`). On the next sync, [`packages/migrations/20261013-rename-brew-component.sh`](../packages/migrations/20261013-rename-brew-component.sh) rewrites `components.brew` in `install.yml` to `components.packages`.
+
+`bin/local/validate-manifests` enforces the grammar: every `brew` line has exactly one disposition, no short name is listed in two manifests, and every `install_package NAME` call names a package that exists.
+
+### Annotation grammar
+
+Trailing `#` annotations on a `brew` line, `;`-separated:
+
+| Token | Meaning |
+|-------|---------|
+| `mise: SPEC` | Install with `mise use -g SPEC` when Homebrew is absent |
+| `linux: system` | Distro package; no mise install |
+| `macos-only` | Skip on the Linux entry backend |
+| `git: URL` | Clone URL; owned by the zsh component, not `install_package` |
+| `cmd: BIN` | Binary to test for “already installed” (defaults to the formula’s short name) |
+
+Exactly one of `mise:`, `linux: system`, `macos-only`, or `git:` is required. `cask` lines are implicitly macos-only and need no annotation.
+
+```
+brew "jq"  # mise: jq
+brew "tree"  # linux: system
+brew "mas"  # macos-only
+brew "gnupg"  # linux: system; cmd: gpg
+brew "zsh-syntax-highlighting"  # git: https://github.com/zsh-users/zsh-syntax-highlighting
+cask "font-fira-code-nerd-font"
+```
+
 ## Adding an Entry
 
-### Adding a brew tool
+### Adding a package
 
-1. Add the formula or cask to `packages/Brewfile`
+1. Add the formula or cask to the right Brewfile under `packages/` with a disposition annotation ([grammar](#annotation-grammar))
 2. Add an entry to the appropriate `packages/*.registry.yml`
 3. Run `bin/local/generate-tool-context` to regenerate
 

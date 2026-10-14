@@ -589,9 +589,8 @@ step_global_hooks() {
 }
 
 # step_install_hook_tools — installs gitleaks, which the global pre-commit and
-# pre-push hooks run on every repo, through Homebrew where it exists and mise
-# otherwise (the brew component is macOS-only, so on Linux nothing else
-# installs it). Non-fatal: each hook refuses with its own install hint when it
+# pre-push hooks run on every repo, through install_package (Homebrew where it
+# exists, else mise). Non-fatal: each hook refuses with its own install hint when it
 # is still missing. What developing the workbench itself needs (bats, the
 # ShellCheck pin, pytest) is bin/local/dev-deps's, not every machine's.
 step_install_hook_tools() {

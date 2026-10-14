@@ -14,8 +14,8 @@
 # Sub-tools only. `brew.stacks` was emptied by the same bug and is not repaired,
 # because a stack leaves no mark of its own on the filesystem — its packages are
 # indistinguishable from ones installed by hand, so there is nothing to detect.
-# An operator whose brew selection was emptied re-picks the stacks on the next
-# interactive `brew/setup.sh`, which is why the message above names what was
+# An operator whose stack selection was emptied re-picks the stacks on the next
+# interactive `packages/setup.sh`, which is why the message above names what was
 # restored rather than claiming the machine is now whole.
 
 # _restored_tools COMPONENT BEFORE — prints the tools COMPONENT gained relative

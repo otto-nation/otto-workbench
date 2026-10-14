@@ -109,6 +109,8 @@ mytool/
 
 <!-- include: bin/local/generate-tool-context --emit optional-components -->
 
+The **packages** component installs every Brewfile under [`packages/`](../packages/). On macOS with Homebrew it runs `brew bundle`; otherwise each entry goes through `install_package`. Manifest annotations and how to add a package are in [Registries — Package manifests](registries.md#package-manifests). `sync_packages` is a no-op — stacks are not reapplied on sync.
+
 ---
 
 ## `sync_<name>()` Contract

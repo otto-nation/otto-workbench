@@ -12,7 +12,7 @@ What happens when you run `install.sh` or `otto-workbench sync`, step by step.
 `install.sh` bootstraps a new machine interactively. It runs in six stages:
 
 ```
-1. Bootstrap         installs Homebrew if missing
+1. Bootstrap         macOS: Homebrew if missing; Linux: git/zsh/curl/jq/yq
 2. Core components   bin, git, zsh — selectable menu (Enter = all)
 3. Path setup        adds ~/.local/bin to shell rc if needed
 4. Migrations        runs any pending migration scripts
@@ -48,7 +48,7 @@ What happens when you run `install.sh` or `otto-workbench sync`, step by step.
 | When to use | First-time setup, adding optional components | After pulling workbench updates |
 | Interactive | Yes — menus, prompts | No — warns and skips conflicts |
 | Scope | Bootstrap + selected components | All installed components |
-| Brew packages | Installs from Brewfile | Skipped |
+| Packages | Installs from manifests (`brew bundle` on macOS with Homebrew; otherwise `install_package`) | Skipped |
 | Docker runtime | Prompts for Colima/OrbStack | Re-symlinks existing socket |
 | Templates | Creates configs from templates | Never overwrites editable configs |
 | Migrations | Runs pending | Runs pending |

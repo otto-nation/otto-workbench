@@ -2,7 +2,7 @@
 
 ## Setup
 
-Requires go-task (`brew install go-task/tap/go-task`, or `otto-workbench install packages`).
+Requires go-task (`brew install go-task/tap/go-task`, `mise use -g task`, or `otto-workbench install packages`).
 
 ```bash
 git clone https://github.com/otto-nation/otto-workbench ~/otto-workbench
@@ -376,7 +376,7 @@ and `otto-ai-tools` (`ai/claude`).
 either is stale.
 
 Repo-internal scripts (`bin/local/*`, anything in a registry with
-`meta.scope: workbench`) and third-party tools installed via brew are not public.
+`meta.scope: workbench`) and third-party tools installed via the packages component are not public.
 
 On-disk state and config layout is breaking **unless the change ships a migration**.
 The migration framework is this repo's compatibility mechanism for on-disk change.

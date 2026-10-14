@@ -1,10 +1,10 @@
 # otto-workbench
 
-Dotfiles and developer environment manager. Installs shell config, brew packages, git settings, Claude AI tooling, and editor config via a component framework.
+Dotfiles and developer environment manager. Installs shell config, packages, git settings, Claude AI tooling, and editor config via a component framework.
 
 ## Stack
 
-bash, zsh, python (the `ai/` subsystem — `ai/lib/`, `ai/bin/` and `ai/claude/bin/`), bats-core + pytest (tests), brew (packages), jq/yq (YAML/JSON), shellcheck (lint)
+bash, zsh, python (the `ai/` subsystem — `ai/lib/`, `ai/bin/` and `ai/claude/bin/`), bats-core + pytest (tests), packages (Homebrew or mise), jq/yq (YAML/JSON), shellcheck (lint)
 
 ## Commands
 
@@ -116,7 +116,7 @@ merely the absence of a marker.
 
 - **Single source of truth** — every piece of data or config has exactly one authoritative owner. Display logic reads from the owner; it does not duplicate or re-derive the data. Runtime choices (e.g. Docker runtime) are recorded in state files (`~/.local/state/workbench/`); checks should read state, not infer from binary presence. When defaults must appear in multiple formats (YAML + shell), add a cross-validation test. Registry `*.registry.yml` files own tool documentation (`tools[]`). Registry `*.env.yml` files own env var declarations (`env[]`, `auth`), colocated with the consumer code that reads them. Env vars set programmatically at runtime (e.g. DOCKER_HOST) are NOT declared in registries.
 - Dynamic discovery over hardcoded config — glob patterns, not individual entries. Test: "does adding a new item require editing this file?" If yes, use a convention-based alternative.
-- Adding a brew tool = add to Brewfile + registry.yml. No other config edits needed. Env vars go in a `.env.yml` next to the consumer, not in the packages registry.
+- Adding a package = Brewfile line with a disposition annotation + registry.yml. See [Package manifests](docs/registries.md#package-manifests). No other config edits needed. Env vars go in a `.env.yml` next to the consumer, not in the packages registry.
 - Adding a migration = create `<component>/migrations/YYYYMMDD-slug.sh` with a `migration_YYYYMMDD_slug()` function. No registry edits needed. Migrations must not source `lib/ui.sh` or assign `WORKBENCH_DIR` — both are provided by the migration framework (`lib/migrations.sh`).
 - A migration returns `0` when it changed something and `MIGRATION_NOOP` when it found the target already in the shape it produces. Both are recorded and never retried; only a change is announced. Returning `0` for a no-op reports work that did not happen — which for a scoped migration is every sync, since each one visits the targets registered since the last (see `docs/execution-flow.md` § Migrations).
 - A migration whose target does not exist *yet* returns `MIGRATION_DEFERRED` instead — nothing is recorded, nothing is printed, and the next sync asks again once the file has been written. `MIGRATION_NOOP` there retires the migration against a file it never saw, which is how the issue-tracker lift missed a `config.yml` a session created half an hour after it ran. `bin/local/validate-migrations` rejects a bare `return 0` under an absent-path guard and accepts `MIGRATION_DEFERRED` only from one, so the status nothing records cannot be reached from a condition that never resolves. A migration that *removes* something stays `MIGRATION_NOOP`: a file arriving later is a fresh install whose contents the operator chose.

@@ -3,18 +3,7 @@
 setup_file() {
   load 'test_helper'
   load 'claude_settings_helper'
-  local repo_root
-  repo_root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
-
-  # shellcheck source=/dev/null
-  source "$repo_root/lib/registries.sh"
-
-  # Collect registry permissions once for all tests
-  local -a perms=()
-  collect_registry_permissions perms "$repo_root"
-  printf '%s\n' "${perms[@]}" > "$BATS_FILE_TMPDIR/registry_perms.list"
-
-  _sync_settings_into "$BATS_FILE_TMPDIR/home" "$repo_root"
+  _claude_settings_setup_file
 }
 
 setup() {
@@ -196,22 +185,17 @@ _run_sync() {
 # pass every test above.
 
 # _sync_run FAKE_HOME STATE_DIR — one step_claude_settings against a sandbox.
-# In a subshell because constants.sh freezes every path from HOME and the state
-# root at source time: a second run needs a fresh process, not a second call.
+# In its own process because constants.sh freezes every path from HOME and the
+# state root at source time: a second run needs a fresh process, not a second
+# call. _fresh_bash, not a subshell, for speed — see claude_settings_helper.bash.
 _sync_run() {
-  ( HOME="$1"
-    export WORKBENCH_CONFIG_DIR="$1/.config/workbench"
-    export WORKBENCH_STATE_DIR="$2"
-    export WORKBENCH_CACHE_DIR="$1/.cache/workbench"
-    export WORKBENCH_DIR="$REPO_ROOT"
-    export WORKBENCH_STABLE_DIR="$REPO_ROOT"
-    export NO_COLOR=1
-    mkdir -p "$HOME"
-    # shellcheck source=/dev/null
-    source "$REPO_ROOT/lib/ui.sh"
-    # shellcheck source=/dev/null
-    source "$REPO_ROOT/ai/claude/steps.sh"
-    step_claude_settings >/dev/null )
+  HOME="$1" WORKBENCH_CONFIG_DIR="$1/.config/workbench" WORKBENCH_STATE_DIR="$2" \
+    WORKBENCH_CACHE_DIR="$1/.cache/workbench" WORKBENCH_DIR="$REPO_ROOT" \
+    WORKBENCH_STABLE_DIR="$REPO_ROOT" NO_COLOR=1 _fresh_bash '
+      mkdir -p "$HOME"
+      . "$WORKBENCH_DIR/lib/ui.sh"
+      . "$WORKBENCH_DIR/ai/claude/steps.sh"
+      step_claude_settings >/dev/null'
 }
 
 @test "shell: the file-level sync keeps its manifest inside the sandbox" {

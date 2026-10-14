@@ -14,7 +14,7 @@ import pytest  # noqa: E402
 import core.run_lock  # noqa: E402
 import core.workbench_paths  # noqa: E402
 from core.run_lock import CHECKOUT, NO_LOCK, TARGET, Global, LockBusy  # noqa: E402
-from run_lock_support import held_elsewhere  # noqa: E402
+from run_lock_support import flocked, git_dir, held_elsewhere  # noqa: E402
 
 BATCH = Global("batch")
 
@@ -111,3 +111,57 @@ def test_a_noted_run_reaches_a_contenders_message():
 def test_noting_a_lock_this_process_does_not_hold_changes_nothing():
     core.run_lock.note_holder(BATCH, run="x")
     assert not core.run_lock.global_lock_path("batch").exists()
+
+
+# ── the late checkout lock ────────────────────────────────────────────────────
+
+
+def test_lock_checkout_refuses_a_checkout_before_its_target(worktree, tmp_path):
+    """Checkout after target is the order every holder keeps; this keeps the late one to it."""
+    with pytest.raises(core.run_lock.LockOrderError):
+        core.run_lock.lock_checkout(tmp_path / "t", worktree, command="review 1", started="t")
+    assert not (git_dir(worktree) / core.run_lock.TREE_LOCK_FILE).exists()
+
+
+def test_lock_checkout_extends_a_target_this_process_holds(worktree, tmp_path):
+    target = tmp_path / "t"
+    tree_lock = git_dir(worktree) / core.run_lock.TREE_LOCK_FILE
+    with core.run_lock.hold({TARGET}, target_dir=target, command="pr review 1", started="t"):
+        core.run_lock.lock_checkout(target, worktree, command="review 1", started="t")
+        assert flocked(tree_lock)
+    # Held for the process, not the block: a review keeps writing after dispatch's block.
+    assert flocked(tree_lock)
+
+
+def test_lock_checkout_accepts_a_target_its_parent_holds(worktree, tmp_path, monkeypatch):
+    """A batch child or a `pr`-spawned delegate knows its target only from the marker."""
+    target = tmp_path / "t"
+    monkeypatch.setenv(core.run_lock.LOCK_ENV, str(target))
+    core.run_lock.lock_checkout(target, worktree, command="review 1", started="t")
+    record = json.loads((git_dir(worktree) / core.run_lock.TREE_LOCK_FILE).read_text())
+    assert record["command"] == "review 1"
+
+
+# ── what a refusal calls the scope ────────────────────────────────────────────
+
+
+def test_a_refused_target_names_the_repo_and_branch(tmp_path):
+    target = tmp_path / "t"
+    with held_elsewhere(target / core.run_lock.LOCK_FILE, {"pid": 7, "command": "pr fix"}), \
+         pytest.raises(LockBusy) as exc:
+        with core.run_lock.hold({TARGET}, target_dir=target, target_label="acme/widget@feat/x",
+                                command="pr rebase", started="t"):
+            pytest.fail("a held target must refuse the block")
+    assert exc.value.kind == "target"
+    assert "owns this target acme/widget@feat/x: pr fix" in str(exc.value)
+
+
+def test_a_refused_checkout_names_the_tree(worktree, tmp_path):
+    tree_lock = git_dir(worktree) / core.run_lock.TREE_LOCK_FILE
+    with held_elsewhere(tree_lock, {"pid": 7, "command": "pr rebase"}), \
+         pytest.raises(LockBusy) as exc:
+        with core.run_lock.hold({TARGET, CHECKOUT}, target_dir=tmp_path / "t",
+                                worktree=worktree, command="pr comments", started="t"):
+            pytest.fail("a held checkout must refuse the block")
+    assert exc.value.kind == "checkout"
+    assert f"owns this checkout {worktree}: pr rebase" in str(exc.value)

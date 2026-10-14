@@ -475,7 +475,7 @@ def _tree_spec(worktree: Path | None) -> _LockSpec | None:
     if git_dir is None:
         return None
     return _LockSpec(
-        str(git_dir), git_dir / TREE_LOCK_FILE, TREE_LOCK_ENV, "checkout",
+        str(git_dir), git_dir / TREE_LOCK_FILE, TREE_LOCK_ENV, f"checkout {worktree}",
     )
 
 
@@ -603,7 +603,7 @@ def note_holder(scope: Global, **fields: str) -> None:
 
 
 def claim_for_process(target_dir: Path, command: str, started: str, *,
-                      worktree: Path | None = None) -> None:
+                      worktree: Path | None = None, target_label: str = "") -> None:
     """Take the locks for the rest of this process's life, or exit 1.
 
     For entry points whose entire body is the critical section. The kernel
@@ -619,8 +619,9 @@ def claim_for_process(target_dir: Path, command: str, started: str, *,
     released at the end of a phase rather than at exit wants ``acquire``.
 
     ``worktree`` is the checkout this run writes to; see ``acquire``.
+    ``target_label`` is what a refusal calls the target, as for ``hold``.
     """
-    for spec in (_target_spec(target_dir), _tree_spec(worktree)):
+    for spec in (_target_spec(target_dir, target_label), _tree_spec(worktree)):
         if spec is None:
             continue
         try:
@@ -632,6 +633,39 @@ def claim_for_process(target_dir: Path, command: str, started: str, *,
         except LockBusy as exc:
             report_busy(exc)
             sys.exit(1)
+
+
+class LockOrderError(RuntimeError):
+    """Raised when a checkout lock is asked for before its target's.
+
+    A programming error, not contention: every holder takes target before
+    checkout, and a late checkout taken without its target would break the
+    order that keeps two runs from deadlocking.
+    """
+
+
+def _owns(spec: _LockSpec) -> bool:
+    """Whether this process, or the process tree it runs in, already holds *spec*.
+
+    The registry answers for this process; the marker for a parent — a batch,
+    or the `pr` that spawned this delegate — which no flock of ours can prove.
+    """
+    return str(spec.path) in _HELD or os.environ.get(spec.var) == spec.value
+
+
+def lock_checkout(target_dir: Path, worktree: Path, *, command: str, started: str) -> None:
+    """Lock *worktree* for the rest of the process, once *target_dir* is held; exit 1 if busy.
+
+    The one late acquisition: a review that learns which tree it writes only
+    after setting up or switching to it (`review.run`, the `--self` switch in
+    `cli.review_entry`). Raises LockOrderError unless this process — or, by its
+    marker, its parent — already holds *target_dir*, which is what keeps the
+    late checkout after its target in the one order every holder uses.
+    """
+    if not _owns(_target_spec(target_dir)):
+        raise LockOrderError(
+            f"checkout {worktree} asked for before target {target_dir} is held")
+    claim_for_process(target_dir, command, started, worktree=worktree)
 
 
 def is_held(target_dir: Path) -> bool:

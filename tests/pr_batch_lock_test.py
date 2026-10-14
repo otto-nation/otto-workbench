@@ -196,17 +196,21 @@ def test_two_concurrent_runs_exactly_one_proceeds(tmp_path):
     assert first.returncode == 0, first_err
 
 
-def test_requests_a_live_run_drains_get_item_markers_and_an_idle_resolve_does_not(monkeypatch):
+def test_resolve_apply_is_no_longer_passed_env_for(monkeypatch):
     run = _saved_run()
     seen = []
-    monkeypatch.setattr(batch.resolve, "apply",
-                        lambda run, req, **kw: seen.append(kw.get("env_for")) or [])
+
+    def spy(run, req, **kw):
+        seen.append("env_for" in kw)
+        return []
+
+    monkeypatch.setattr(batch.resolve, "apply", spy)
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         lambda self: batch.model.RunStatus.WAITING)
     batch.store.write_request(run.id, {"decision": "d1", "action": "accept"})
     _main(["batch", "resume", run.id])
     _main(["batch", "resolve", run.id, "d1", "--action", "accept"])
-    assert seen == [batch.targets.child_env, None]
+    assert seen == [False, False]
 
 
 # ── every item's target, for the life of the run ─────────────────────────────

@@ -22,7 +22,6 @@ import contextlib
 import json
 import os
 import sys
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,7 +39,7 @@ import config.workbench_config
 import core.report
 import core.run_lock
 import core.serde
-from batch.model import STEP_ORDER, Item, Run, RunStatus, Step
+from batch.model import STEP_ORDER, Run, RunStatus, Step
 from core.trail import TRAIL_ROOT_ENV, Trail
 
 EXIT_OK = batch.report.EXIT_OK
@@ -182,8 +181,7 @@ def _save(run) -> None:
         batch.plan.drop_refs(run.ref_dirs, run.ref_namespace)
 
 
-def _apply_loaded(run: Run, bin_dir: Path,
-                  env_for: Callable[[Item], dict[str, str]] | None = None) -> list[str]:
+def _apply_loaded(run: Run, bin_dir: Path) -> list[str]:
     errors = []
     pr_bin = str(bin_dir / "pr")
     for raw in batch.store.take_requests(run.id):
@@ -198,7 +196,7 @@ def _apply_loaded(run: Run, bin_dir: Path,
             errors.append("not a decide request")
             continue
         try:
-            batch.resolve.apply(run, req, pr_bin=pr_bin, env_for=env_for)
+            batch.resolve.apply(run, req, pr_bin=pr_bin)
         except (batch.resolve.ResolveError, KeyError, TypeError) as exc:
             errors.append(str(exc))
     if (run.status in (RunStatus.WAITING, RunStatus.RUNNING)
@@ -215,7 +213,7 @@ def _report_apply_errors(errors: list[str]) -> None:
 def _held_drive(run, bin_dir: Path, cfg, verbose: bool) -> int:
     status = batch.scheduler.Scheduler(
         run, pr_bin=str(bin_dir / "pr"), cfg=cfg, verbose=verbose).run_until_blocked()
-    errors = _apply_loaded(run, bin_dir, env_for=batch.targets.child_env)
+    errors = _apply_loaded(run, bin_dir)
     _save(run)
     if run.status is RunStatus.DONE:
         status = RunStatus.DONE

@@ -192,8 +192,7 @@ class Scheduler:
             was_terminal = item.terminal
             created = batch.resolve.apply(self.run, req, pr_bin=self.pr_bin,
                                           runner=self._runner, tree=self._tree,
-                                          closeout=self._closeout,
-                                          env_for=batch.targets.child_env)
+                                          closeout=self._closeout)
             self._emit("decision_resolved", run=self.run.id, decision=req.decision,
                        action=req.action)
             for d in created:

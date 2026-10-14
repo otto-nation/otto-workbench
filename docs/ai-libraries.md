@@ -3492,6 +3492,18 @@ refs would not all delete is kept for the next sweep. That retry is unbounded: a
 ref that can never delete (a permissions problem, say) keeps the run, and warns,
 on every sweep.
 
+### batch/inbox.py
+
+Apply one inbound request to a loaded run, and settle a run that is idle.
+
+``apply_one`` is the policy: a ``Decide`` goes through ``batch.resolve.apply``
+unless the decision already carries that action (an idempotent replay), and a
+``Cancel`` records ``Run.cancel`` — ``kill`` only upgrades, ``requested_at``
+is set the first time only. A cancel against ``DONE`` is an error; against
+``CANCELLED`` it is a no-op success. ``settle_idle`` turns a recorded cancel
+into ``CANCELLED``, or every item terminal into ``DONE``, and never promotes
+``CANCELLED``. ``Inbox`` is what a caller holds: apply, settle, report.
+
 ### batch/model.py
 
 The persisted shape of a `pr batch` run.

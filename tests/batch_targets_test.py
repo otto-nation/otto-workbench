@@ -69,13 +69,25 @@ def test_a_vanished_checkout_has_no_target():
     assert batch.targets.item_target_dir(_item("/r", "feat/a", 1)) is None
 
 
-def test_child_env_names_only_the_items_target(repo, monkeypatch):
+def test_child_env_names_only_the_items_target_when_this_process_holds_it(repo, monkeypatch):
     monkeypatch.setenv(LOCK_ENV, "/x:/y")
     monkeypatch.setenv(TREE_LOCK_ENV, "/tree")
     monkeypatch.setenv(GLOBAL_LOCK_ENV, "/global")
     item = _item(repo, "feat/a", 1)
-    env = batch.targets.child_env(item)
-    assert env[LOCK_ENV] == str(batch.targets.item_target_dir(item))
+    target = batch.targets.item_target_dir(item)
+    with core.run_lock.hold({TARGET}, target_dir=target, command="pr batch run", started="t"):
+        env = batch.targets.child_env(item)
+    assert env[LOCK_ENV] == str(target)
+    assert TREE_LOCK_ENV not in env
+    assert GLOBAL_LOCK_ENV not in env
+
+
+def test_child_env_strips_markers_when_this_process_does_not_hold_the_target(repo, monkeypatch):
+    monkeypatch.setenv(LOCK_ENV, "/x:/y")
+    monkeypatch.setenv(TREE_LOCK_ENV, "/tree")
+    monkeypatch.setenv(GLOBAL_LOCK_ENV, "/global")
+    env = batch.targets.child_env(_item(repo, "feat/a", 1))
+    assert LOCK_ENV not in env
     assert TREE_LOCK_ENV not in env
     assert GLOBAL_LOCK_ENV not in env
 
@@ -103,6 +115,7 @@ def test_a_child_gets_through_its_own_item_and_is_refused_on_another(repo):
 def test_every_step_is_spawned_with_only_its_items_marker(monkeypatch):
     monkeypatch.setattr(batch.targets, "item_target_dir",
                         lambda item: Path(f"/targets/{item.pr}"))
+    monkeypatch.setattr(core.run_lock, "holds", lambda lock_file: True)
     h = Harness([row(1), row(10)])
     seen = []
     real = h._spawn
@@ -124,23 +137,27 @@ def test_a_resolve_command_runs_with_its_items_marker(repo, monkeypatch):
     monkeypatch.setattr(batch.resolve, "default_runner",
                         lambda argv, log_path=None, *, env=None: calls.append(env) or 0)
     item = _item(repo, "feat/a", 1)
-    run_cmd = batch.resolve.command_runner(item, None, batch.targets.child_env)
-    assert run_cmd(["pr", "push"]) == 0
-    assert calls[0][LOCK_ENV] == str(batch.targets.item_target_dir(item))
+    target = batch.targets.item_target_dir(item)
+    with core.run_lock.hold({TARGET}, target_dir=target, command="pr batch run", started="t"):
+        run_cmd = batch.resolve.command_runner(item, None)
+        assert run_cmd(["pr", "push"]) == 0
+    assert calls[0][LOCK_ENV] == str(target)
 
 
-def test_a_resolve_with_no_env_builder_keeps_this_processes_environment(repo, monkeypatch):
+def test_command_runner_without_a_runner_uses_child_env(repo, monkeypatch):
+    seen = []
+    monkeypatch.setattr(batch.targets, "child_env",
+                        lambda item: seen.append(item) or {"X": "1"})
     calls = []
     monkeypatch.setattr(batch.resolve, "default_runner",
                         lambda argv, log_path=None, *, env=None: calls.append(env) or 0)
-    batch.resolve.command_runner(_item(repo, "feat/a", 1), None, None)(["pr", "push"])
-    assert calls == [None]
+    item = _item(repo, "feat/a", 1)
+    batch.resolve.command_runner(item, None)(["pr", "push"])
+    assert seen == [item]
+    assert calls == [{"X": "1"}]
 
 
 def test_a_live_run_publish_child_gets_only_its_items_marker(repo, monkeypatch):
-    # Harness/auto-publish tests inject runner=, and command_runner returns that
-    # untouched; this is the live _apply_one path (pr push / rebase --push-only
-    # / comments --post) with runner=None so env_for actually reaches the child.
     monkeypatch.setenv(LOCK_ENV, "/x:/y")
     monkeypatch.setenv(TREE_LOCK_ENV, "/tree")
     monkeypatch.setenv(GLOBAL_LOCK_ENV, "/global")
@@ -155,12 +172,14 @@ def test_a_live_run_publish_child_gets_only_its_items_marker(repo, monkeypatch):
     item.worktree = str(repo)
     run.decisions.append(Decision(id="d1", item=item.key, step="publish",
                                   kind=DecisionKind.PUBLISH))
+    target = batch.targets.item_target_dir(item)
     sched = batch.scheduler.Scheduler(
         run, pr_bin="pr", cfg=BatchConfig(pool_max=1),
         emit=lambda *a, **k: None, runner=None, tree=ff_tree)
-    sched._apply_one({"decision": "d1", "action": "publish"})
+    with core.run_lock.hold({TARGET}, target_dir=target, command="pr batch run", started="t"):
+        sched._apply_one({"decision": "d1", "action": "publish"})
     assert calls
     env = calls[0]
-    assert env[LOCK_ENV] == str(batch.targets.item_target_dir(item))
+    assert env[LOCK_ENV] == str(target)
     assert TREE_LOCK_ENV not in env
     assert GLOBAL_LOCK_ENV not in env

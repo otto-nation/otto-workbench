@@ -3661,6 +3661,15 @@ Gaps vs Claude Code CLI:
   --add-dir        Not available; directories passed in prompt text
   --agent          Not available; use --append-system-prompt with agent file contents
 
+### agent/backend_pi_rpc.py
+
+Pi RPC process plumbing for the Pi backend.
+
+Owns the JSONL stdin/stdout protocol around a ``pi --mode rpc`` child:
+sending commands, reading replies, classifying a fatal response, and
+starting/stopping the process group. The event loop that consumes the
+stream lives in ``agent.backend_pi``.
+
 ### agent/pi_models.py
 
 Refuse a model id ``pi --list-models`` does not serve.

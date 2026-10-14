@@ -102,6 +102,23 @@ class TestNotServedMessage:
             UNLISTED, "No API key found for amazon-bedrock.\n", PROVIDER,
         ) is None
 
+    def test_an_unrelated_not_found_is_not_this_failure(self):
+        assert agent.pi_models.not_served_message(
+            UNLISTED, "Error: extension file not found: review.ts\n", PROVIDER,
+        ) is None
+
+
+class TestDefaultProvider:
+    def test_falls_back_when_the_settings_file_is_unreadable(self, monkeypatch):
+        monkeypatch.setenv("WORKBENCH_PI_SETTINGS", "/nonexistent/settings.json")
+        assert agent.pi_models.default_provider() == agent.pi_models.DEFAULT_PROVIDER
+
+    def test_reads_the_overridden_settings_file(self, monkeypatch, tmp_path):
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps({"defaultProvider": "custom-provider"}))
+        monkeypatch.setenv("WORKBENCH_PI_SETTINGS", str(settings))
+        assert agent.pi_models.default_provider() == "custom-provider"
+
 
 class TestInvokeUsesTheConfiguredId:
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
@@ -125,7 +142,7 @@ class TestInvokeUsesTheConfiguredId:
         assert cmd[cmd.index("--model") + 1] == LISTED
 
     @pytest.mark.parametrize("entry_point", ["invoke_agent", "invoke_fix"])
-    def test_an_unlisted_id_raises_before_spawn(
+    def test_an_unlisted_id_fails_without_spawning_and_logs_the_session(
         self, monkeypatch, tmp_path, entry_point,
     ):
         monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda: LISTING)
@@ -135,16 +152,19 @@ class TestInvokeUsesTheConfiguredId:
             raise AssertionError("spawned pi with an unlisted model")
 
         monkeypatch.setattr(subprocess, "Popen", fake_popen)
-        with pytest.raises(agent.pi_models.ModelNotServed) as caught:
-            getattr(agent.backend_pi, entry_point)(agent.backend_pi.AgentInvocation(
-                prompt="p", cwd=str(tmp_path), session_log=str(tmp_path / "s.jsonl"),
+        session_log = str(tmp_path / "s.jsonl")
+        exit_code = getattr(agent.backend_pi, entry_point)(
+            agent.backend_pi.AgentInvocation(
+                prompt="p", cwd=str(tmp_path), session_log=session_log,
                 model=UNLISTED, provider=PROVIDER,
-            ))
-        msg = str(caught.value)
-        assert UNLISTED in msg
-        assert "AI_SONNET_MODEL" in msg
-        assert LISTED in msg
-        assert "--model" in msg
+            )
+        )
+        assert exit_code != 0
+        logged = Path(session_log).read_text()
+        assert UNLISTED in logged
+        assert "AI_SONNET_MODEL" in logged
+        assert LISTED in logged
+        assert '"is_error": true' in logged
 
     def test_prompt_passes_a_listed_id_untouched(self, monkeypatch, tmp_path):
         monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda: LISTING)
@@ -162,7 +182,7 @@ class TestInvokeUsesTheConfiguredId:
         cmd = seen[0]
         assert cmd[cmd.index("--model") + 1] == LISTED
 
-    def test_prompt_raises_on_an_unlisted_id(self, monkeypatch, tmp_path):
+    def test_prompt_fails_without_spawning_on_an_unlisted_id(self, monkeypatch, tmp_path):
         monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda: LISTING)
         monkeypatch.setenv("AI_SONNET_MODEL", UNLISTED)
 
@@ -170,12 +190,32 @@ class TestInvokeUsesTheConfiguredId:
             raise AssertionError("spawned pi with an unlisted model")
 
         monkeypatch.setattr(subprocess, "run", fake_run)
-        with pytest.raises(agent.pi_models.ModelNotServed) as caught:
-            agent.backend_pi.prompt(
-                "hi", cwd=str(tmp_path), model=UNLISTED, provider=PROVIDER,
+        reply, exit_code, usage = agent.backend_pi.prompt(
+            "hi", cwd=str(tmp_path), model=UNLISTED, provider=PROVIDER,
+        )
+        assert exit_code != 0
+        assert usage is None
+
+    def test_prompt_surfaces_the_not_served_message_in_its_reply(
+        self, monkeypatch, tmp_path,
+    ):
+        # catalogue is unreadable, so require_listed_model skips the pre-spawn
+        # check and pi itself refuses the id over stderr.
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda: "")
+
+        def fake_run(cmd, **_kw):
+            return subprocess.CompletedProcess(
+                cmd, returncode=1, stdout="",
+                stderr=f'Error: Model "{UNLISTED}" not found. Use --list-models '
+                "to see available models.\n",
             )
-        assert UNLISTED in str(caught.value)
-        assert "AI_SONNET_MODEL" in str(caught.value)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        reply, exit_code, usage = agent.backend_pi.prompt(
+            "hi", cwd=str(tmp_path), model=UNLISTED, provider=PROVIDER,
+        )
+        assert exit_code != 0
+        assert UNLISTED in reply
 
     def test_an_empty_catalogue_spawns_the_configured_id(
         self, monkeypatch, tmp_path,

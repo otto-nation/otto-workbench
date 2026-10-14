@@ -1142,6 +1142,18 @@ def _isolate_cache_root(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_pi_settings(tmp_path, monkeypatch):
+    """Point ``agent.pi_models.default_provider`` at a settings file that does not exist.
+
+    Every current test passes an explicit provider, so nothing exercises this
+    fallback today — but without the override a future caller that does fall
+    through reads the real ``~/.pi/agent/settings.json`` during a test run, the
+    same leak the other root-isolation fixtures in this file exist to prevent.
+    """
+    monkeypatch.setenv("WORKBENCH_PI_SETTINGS", str(tmp_path / "pi-settings.json"))
+
+
+@pytest.fixture(autouse=True)
 def _isolate_data_root(tmp_path, monkeypatch):
     """Point the data root at a temp dir, where the stakes are highest.
 

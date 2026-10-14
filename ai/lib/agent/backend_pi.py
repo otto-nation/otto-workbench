@@ -62,7 +62,7 @@ import core.children
 import core.log
 import core.timeouts
 from agent.backend import AgentInvocation, agent_env
-from agent.pi_models import not_served_message, require_listed_model
+from agent.pi_models import ModelNotServed, not_served_message, require_listed_model
 from agent.rule_prefix import (
     TEMP_PREFIX,
     materialize as materialize_rule_prefix,
@@ -1095,6 +1095,27 @@ def _prompt_with_dirs(inv: AgentInvocation) -> str:
     return f"\nAccessible directories:\n{dir_lines}\n\n{inv.prompt}"
 
 
+def _unlisted_model_exit(err: ModelNotServed, session_log: str) -> int:
+    """Record an unlisted-model refusal the way every other refusal is recorded.
+
+    Raised before a spawn, this had no session log entry at all and nothing
+    downstream — ``agent.session.diagnose_missing_output``, the retry guard,
+    the per-phase accounting — could see it. Logging it here and returning the
+    same exit code an RPC refusal returns lets this failure take the one path
+    every other model/auth failure already takes.
+    """
+    error = str(err)
+    core.log.error(f"pi refused the run: {error}")
+    if session_log:
+        with open(session_log, "w") as log_file:
+            log_file.write(json.dumps({
+                "type": "response", "command": "prompt", "success": False,
+                "error": error,
+            }) + "\n")
+        _write_result_record(session_log, "error", 0, 0.0, 0, {}, err.model, error=error)
+    return _RPC_ERROR_EXIT_CODE
+
+
 def _exit_code(proc: subprocess.Popen, stream: StreamResult) -> int:
     """The status a caller should see for this run.
 
@@ -1134,15 +1155,20 @@ def prompt(
     ``--thinking`` and ``--provider`` are global flags here, so a prompt honours
     both exactly as the agent modes do.
     """
-    require_listed_model(model, provider)
+    try:
+        require_listed_model(model, provider)
+    except ModelNotServed as err:
+        core.log.error(f"pi refused the run: {err}")
+        return "", _RPC_ERROR_EXIT_CODE, None
     cmd = _build_prompt_cmd(model=model, provider=provider, thinking=thinking)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd,
                             timeout=core.timeouts.UNBOUNDED)
+    reply, usage = pi_prompt_result(result.stdout)
     if result.returncode:
         msg = not_served_message(model or "", result.stderr or "", provider)
         if msg:
             core.log.error(msg)
-    reply, usage = pi_prompt_result(result.stdout)
+            reply = msg
     return reply, result.returncode, usage
 
 
@@ -1155,7 +1181,10 @@ def invoke_agent(inv: AgentInvocation) -> int:
     - max_budget is enforced by accumulating message_end costs and sending abort
     - A Claude-compatible result record is written at the end for cost tracking
     """
-    require_listed_model(inv.model, inv.provider)
+    try:
+        require_listed_model(inv.model, inv.provider)
+    except ModelNotServed as err:
+        return _unlisted_model_exit(err, inv.session_log)
     ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
     cmd = _build_agent_cmd(inv, extension=ext)
     try:
@@ -1229,7 +1258,10 @@ def invoke_fix(inv: AgentInvocation) -> int:
     Uses RPC mode for budget tracking and turn limits, same as invoke_agent.
     If session_log is empty, events are consumed but not persisted.
     """
-    require_listed_model(inv.model, inv.provider)
+    try:
+        require_listed_model(inv.model, inv.provider)
+    except ModelNotServed as err:
+        return _unlisted_model_exit(err, inv.session_log)
     ext = str(REVIEW_EXTENSION) if REVIEW_EXTENSION.is_file() else None
     cmd = _build_fix_cmd(inv, extension=ext)
     try:

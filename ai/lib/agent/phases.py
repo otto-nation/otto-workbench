@@ -123,10 +123,10 @@ def origin_of(model: str) -> str | None:
     """
     if not model:
         return None
-    for alias in ModelAlias:
-        for key in (alias.env_key, alias.legacy_env_key):
-            if os.environ.get(key) == model:
-                return key
+    keys = (key for alias in ModelAlias for key in (alias.env_key, alias.legacy_env_key))
+    for key in keys:
+        if os.environ.get(key) == model:
+            return key
     return None
 
 

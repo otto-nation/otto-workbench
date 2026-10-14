@@ -22,6 +22,7 @@ from __future__ import annotations
 import difflib
 import functools
 import json
+import os
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -32,7 +33,20 @@ from agent.phases import origin_of
 # Matches ai/pi/settings.json and `_pi_default_provider` in ai/pi/steps.sh.
 DEFAULT_PROVIDER = "google-vertex-claude"
 
-_PI_SETTINGS = Path.home() / ".pi" / "agent" / "settings.json"
+def _pi_settings_path() -> Path:
+    """``~/.pi/agent/settings.json``, or ``WORKBENCH_PI_SETTINGS`` when set.
+
+    The override is the seam the other state/cache/data roots have
+    (``WORKBENCH_STATE_DIR``, ``WORKBENCH_CACHE_DIR``, ...), each sandboxed per
+    test in ``tests/conftest.py``. Without it, a caller passing
+    ``provider=None`` falls through ``effective_provider`` to here and reads
+    whatever ``~/.pi/agent/settings.json`` happens to exist on the machine
+    running the test.
+    """
+    override = os.environ.get("WORKBENCH_PI_SETTINGS")
+    if override:
+        return Path(override)
+    return Path.home() / ".pi" / "agent" / "settings.json"
 
 
 class ModelNotServed(RuntimeError):
@@ -118,7 +132,7 @@ def not_served_message(
     if not stderr:
         return None
     lowered = stderr.lower()
-    if "not found" not in lowered and "no models match" not in lowered:
+    if 'model "' not in lowered and "no models match pattern" not in lowered:
         return None
     return unserved_message(model, listed_models(provider), provider)
 
@@ -126,7 +140,7 @@ def not_served_message(
 def default_provider() -> str:
     """Pi's defaultProvider, or the workbench template's fallback."""
     try:
-        data = json.loads(_PI_SETTINGS.read_text())
+        data = json.loads(_pi_settings_path().read_text())
     except (OSError, json.JSONDecodeError):
         return DEFAULT_PROVIDER
     value = data.get("defaultProvider")
@@ -143,7 +157,10 @@ def catalogue_text() -> str:
     """Stdout of ``pi --list-models``, or empty when the catalogue cannot be read.
 
     The empty string is a skip, not an empty provider: a missing or unreadable
-    ``pi`` must not refuse a model this process cannot check. Budget lookups
+    ``pi`` must not refuse a model this process cannot check. The result is
+    cached for the life of the process, so a transient miss (``pi`` briefly not
+    on ``PATH`` at startup) skips validation for every later call here too,
+    even once ``pi`` becomes reachable again. Budget lookups
     use the same listing via ``listing_rows``; they fetch through their own
     wrapper so a test can stub one without the other.
     """

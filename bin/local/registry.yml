@@ -89,6 +89,11 @@ tools:
     visibility: brief
     description: "Fails when a script under ai/bin or ai/claude/bin that carries the ai/lib pin or imports an ai/lib package is anything but a shim — one cli import and the call into it"
 
+  - name: validate-run-locks
+    permission: false
+    visibility: brief
+    description: "Fails when code under ai/ takes a run lock itself instead of declaring it on the command's Need in ai/lib/cli/registry.py"
+
   - name: validate-prose-refs
     permission: false
     visibility: brief

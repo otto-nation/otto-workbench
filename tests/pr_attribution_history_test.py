@@ -445,6 +445,7 @@ class TestAttributionSurvivesARebase:
                 pr.summary_model.RoundContent(
                     by_outcome={FixOutcome.ALREADY_ADDRESSED: [entry]},
                     issue_comments=[], review_body_comments=[],
+                    source_replies={},
                 ),
                 cp, "owner/repo", 42, {entry.id: self._thread("t1")},
                 wt_path=rebased.path,

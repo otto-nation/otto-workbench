@@ -72,6 +72,7 @@ def content():
             k: list(buckets.pop(k, ()))
             for k in ("issue_comments", "review_body_comments")
         }
+        comments["source_replies"] = dict(buckets.pop("source_replies", {}))
         return pr.summary_model.RoundContent(
             by_outcome={
                 FixOutcome(name): list(entries)

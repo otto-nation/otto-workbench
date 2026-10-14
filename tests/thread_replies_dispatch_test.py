@@ -284,6 +284,26 @@ class TestFindReplyTarget:
         assert pr.thread_replies.our_last_reply_id(thread) == 222
 
 
+class TestReplySource:
+    """Every spelling of a review body maps to the one reply that review gets."""
+
+    @pytest.mark.parametrize("target", ["88", "rb-88", "rb-88-0", "rb-88-3", " rb-88 "])
+    def test_each_spelling_names_the_same_review(self, target):
+        assert pr.thread_replies.reply_source(target, ["88", "90"]) == "rb-88"
+
+    def test_a_bare_number_counts_only_when_it_is_a_review_on_the_pr(self):
+        """A bare comment id from a thread on another page must not be taken for one."""
+        assert pr.thread_replies.reply_source("404", ["88"]) is None
+
+    def test_an_explicit_review_id_is_taken_at_its_word(self):
+        """A review outside the fetched window still has an `rb-` id an operator can paste."""
+        assert pr.thread_replies.reply_source("rb-404-1", ["88"]) == "rb-404"
+
+    @pytest.mark.parametrize("target", ["ic-88-0", "rb-", "rb-x", "PRRT_abc", ""])
+    def test_anything_else_is_not_a_review_body(self, target):
+        assert pr.thread_replies.reply_source(target, ["88"]) is None
+
+
 class TestRunReply:
 
     def _ctx(self, tmp_path):
@@ -338,6 +358,33 @@ class TestRunReply:
              patch("pr.comments.post_thread_reply") as post:
             assert pr.thread_replies.run_reply(self._ctx(tmp_path), "discussion_r404", str(body)) == 1
         post.assert_not_called()
+
+    def test_an_unknown_target_names_the_review_bodies_it_could_have_meant(self, tmp_path):
+        body = tmp_path / "reply.md"
+        body.write_text("something")
+        fetch_pr, fetch_threads = self._patches([_raw_thread("PRRT_abc", [111])])
+        with fetch_pr, fetch_threads, \
+             patch.object(core.log, "error") as err:
+            assert pr.thread_replies.run_reply(
+                self._ctx(tmp_path), "404", str(body), review_body_ids=("88", "90"),
+            ) == 1
+        messages = [c[0][0] for c in err.call_args_list]
+        assert "no review thread on PR #42 matches '404'" in messages[0]
+        assert "review bodies on PR #42: rb-88, rb-90" in messages[1]
+
+    def test_a_handed_in_fetch_is_not_repeated(self, tmp_path):
+        """The CLI already read the PR to route the target."""
+        body = tmp_path / "reply.md"
+        body.write_text("See https://github.com/owner/repo/blob/abc/src/app.py#L4.")
+        with patch.object(pr.thread_replies, "fetch_pr_data") as fetch_pr, \
+             patch.object(pr.comments, "fetch_threads",
+                          return_value=ThreadSet([_raw_thread("PRRT_abc", [111])])), \
+             patch("pr.comments.post_thread_reply", return_value=True):
+            assert pr.thread_replies.run_reply(
+                self._ctx(tmp_path), "PRRT_abc", str(body),
+                pr_data=SimpleNamespace(viewer_login="reviewer"),
+            ) == 0
+        fetch_pr.assert_not_called()
 
     def test_errors_when_the_reply_call_fails(self, tmp_path, publishing_on):
         body = tmp_path / "reply.md"

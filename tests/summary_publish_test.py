@@ -31,7 +31,7 @@ from pr.thread_models import CommentItem, PRReport  # noqa: E402
 def _content(**buckets):
     return RoundContent(
         by_outcome={k: v for k, v in buckets.items()},
-        issue_comments=[], review_body_comments=[],
+        issue_comments=[], review_body_comments=[], source_replies={},
     )
 
 

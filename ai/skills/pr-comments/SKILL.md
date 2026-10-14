@@ -386,6 +386,16 @@ stacking under it. Do **not** call `gh api .../replies` directly: that path has
 no dedup, and it is what leaves a thread holding several of our comments that
 disagree.
 
+`--reply` also answers a review body, which GitHub gives no reply API for: pass
+the review's id, `rb-<review_id>`, or any item id cut from it
+(`rb-<review_id>-<n>`). All three name the same review, which gets one answer.
+The answer is stored per review and published with `--post` as a marked block
+under `### Replies to review comments` in the summary comment; answering again
+replaces it, including a block someone edited by hand. A thread match wins when
+the same number is also a comment id in a thread. When the summary cannot be
+published yet (a push still pending), the answer stays stored and
+`--finish --post` publishes it.
+
 A reply that has been rewritten by hand is never replaced by a later pass. The
 fix queue re-drains every fixed thread on each round, and the templated body
 would otherwise overwrite the reasoning someone wrote in its place. The run

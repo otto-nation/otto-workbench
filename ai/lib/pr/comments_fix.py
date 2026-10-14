@@ -190,6 +190,12 @@ class FixSummary(Domain):
     # reviewer, and one it did not name has no key here rather than an empty
     # one, so a lookup misses instead of asserting an anonymous reviewer.
     reviewers: dict[str, str] = field(default_factory=dict)
+    # The operator's answer to each review body, keyed by its source key
+    # (`rb-<reviewId>`) and normalised the way `published_record.normalise`
+    # compares text. One per review rather than per decomposed item: the
+    # reviewer wrote one text and gets one answer. GitHub has no reply API for
+    # a review body, so the summary comment publishes these as marked blocks.
+    source_replies: dict[str, str] = field(default_factory=dict)
     replies_posted: int = 0
     # The fix pass produced per-thread replies but did not deliver them — the
     # push failed, or the run was a draft. --finish drains the queue. Covers
@@ -360,6 +366,12 @@ class FixSummary(Domain):
         an earlier round recorded for it, or the summary republishes that row
         with no reviewer against it.
 
+        The replies to review bodies are cycle-scoped the same way and merge
+        the same way: `--reply` writes them between rounds, and a `--fix` round
+        builds its summary with none, so letting that empty mapping overwrite
+        them would drop every answer the summary is still publishing. A later
+        reply to the same review replaces the earlier one.
+
         Four more things are cycle-scoped rather than per-round, for the same
         reason: a review cycle spans several rounds, and a round that did not
         touch one of them says nothing about it rather than clearing it.
@@ -405,6 +417,7 @@ class FixSummary(Domain):
         return dataclass_replace(
             super().merge_into(prior),
             reviewers={**prior.reviewers, **self.reviewers},
+            source_replies={**prior.source_replies, **self.source_replies},
             deferred_issue_id=self.deferred_issue_id or prior.deferred_issue_id,
             deferred_issue_url=self.deferred_issue_url or prior.deferred_issue_url,
             deferred_issue_pending=(

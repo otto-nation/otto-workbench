@@ -17,6 +17,7 @@ from review_threads_support import (  # noqa: E402
 )
 import core.markdown
 import pr.attribution
+import pr.published_record
 import pr.summary_model
 import pr.summary_publish
 import pr.summary_scope
@@ -55,6 +56,18 @@ class TestSummaryTableRows:
 
     def test_a_body_without_a_table_has_no_rows(self):
         assert pr.summary_scope.table_rows("## Review Comments Addressed\n\nnothing yet\n") == []
+
+
+    def test_a_pipe_line_inside_a_reply_block_is_not_a_row(self):
+        """An operator's reply is prose; a line of it opening with `|` stays prose.
+
+        Read as a row, it would be a key-less row a person wrote, and carried
+        forward into the table on every later round.
+        """
+        reply = pr.published_record.mark_reply_block(
+            "88", "**@kgn** · [review](u)\n\n| quoted | table |\n| --- | --- |\n| a | b |")
+        body = _published_summary(ROUND_ONE_ROW) + "\n### Replies to review comments\n\n" + reply
+        assert pr.summary_scope.table_rows(body) == [ROUND_ONE_ROW]
 
 
 class TestCarriedOverRows:

@@ -79,6 +79,7 @@ GOLDEN_FULL = FIXTURES / "summary_body_full.md"
 GOLDEN_MINIMAL = FIXTURES / "summary_body_minimal.md"
 GOLDEN_RAW = FIXTURES / "summary_body_raw_sections.md"
 GOLDEN_UNCOMMITTED = FIXTURES / "summary_body_uncommitted.md"
+GOLDEN_REPLIES = FIXTURES / "summary_body_replies.md"
 
 _REPO = "owner/repo"
 _PR = 42
@@ -107,6 +108,7 @@ def _round_content(**buckets):
         k: list(buckets.pop(k, ()))
         for k in ("issue_comments", "review_body_comments")
     }
+    comments["source_replies"] = dict(buckets.pop("source_replies", {}))
     return pr.summary_model.RoundContent(
         by_outcome={
             FixOutcome(name): list(entries) for name, entries in buckets.items()
@@ -398,6 +400,51 @@ def _uncommitted_body():
     )
 
 
+def _replies_body():
+    """The review-body replies section, between the raw sections and the footer.
+
+    Three blocks: two reviews the listing dates, rendered in submission order
+    rather than id order, and one block kept verbatim off the published comment
+    for a review this round cannot date, which sorts after them. A fourth
+    reply is published elsewhere and unchanged, so the scope leaves it out.
+    """
+    elsewhere = "**@kgn** · [review](https://github.com/owner/repo/pull/42#pullrequestreview-95)\n\nOld."
+    kept = pr.published_record.mark_reply_block(
+        "70", "**@zed** · [review](https://github.com/owner/repo/pull/42#pullrequestreview-70)"
+        "\n\nAnswered from another checkout.")
+    return pr.summary_render.build_summary_body(
+        _round_content(
+            review_body_comments=[
+                {"id": 91, "user": "kgn", "body": "Tighten the parser",
+                 "state": "COMMENTED", "submitted_at": "2026-06-03T00:00:00Z"},
+                {"id": 93, "user": "amp", "body": "Needs refactor",
+                 "state": "CHANGES_REQUESTED", "submitted_at": "2026-06-02T00:00:00Z"},
+                {"id": 95, "user": "kgn", "body": "One more", "seen": True,
+                 "state": "COMMENTED", "submitted_at": "2026-06-04T00:00:00Z"},
+            ],
+            source_replies={
+                "rb-91": "Done in the parser rewrite.",
+                "rb-93": "Split into two modules.\n\n| before | after |\n| --- | --- |\n| 1 | 2 |",
+                "rb-95": "Old.",
+            },
+        ),
+        pr.attribution.CommitPushResult(sha="", status=CommitStatus.NO_CHANGES, error=""),
+        _REPO,
+        _PR,
+        {},
+        wt_path=None,
+        history=_FrozenHistory({}),
+        scope=pr.summary_rounds.RoundScope(
+            published_reply_keys=frozenset({"95"}),
+            elsewhere_reply_keys=frozenset({"95"}),
+            published_reply_digests={"95": pr.published_record.fingerprint(elsewhere)},
+        ),
+        kept_replies={"70": kept},
+        chain=[pr.summary_rounds.SummaryRound(
+            number=1, url="https://github.com/owner/repo/pull/42#issuecomment-11")],
+    )
+
+
 def _enterprise_body():
     """The full body rendered against a GitHub Enterprise host.
 
@@ -509,6 +556,9 @@ class TestTheRenderedSummaryIsRecorded:
         assert _uncommitted_body() == GOLDEN_UNCOMMITTED.read_text(
             encoding="utf-8")
 
+    def test_replies_to_review_bodies_match_the_golden(self):
+        assert _replies_body() == GOLDEN_REPLIES.read_text(encoding="utf-8")
+
     def test_decomposed_items_suppress_the_raw_sections(self):
         """An unseen comment already split into rows adds no section of its own."""
         assert _suppressed_body() == GOLDEN_MINIMAL.read_text(encoding="utf-8")
@@ -536,3 +586,4 @@ def _write_goldens() -> None:
     GOLDEN_MINIMAL.write_text(_empty_body(), encoding="utf-8")
     GOLDEN_RAW.write_text(_raw_sections_body(), encoding="utf-8")
     GOLDEN_UNCOMMITTED.write_text(_uncommitted_body(), encoding="utf-8")
+    GOLDEN_REPLIES.write_text(_replies_body(), encoding="utf-8")

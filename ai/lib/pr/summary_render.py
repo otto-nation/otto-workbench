@@ -19,6 +19,7 @@ on the state dashboard, and a reword in one surface must not change the other.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 import core.text
@@ -26,6 +27,7 @@ import pr.attribution
 import pr.comments_fix
 import pr.published_record
 import pr.summary_model
+import pr.summary_replies
 import pr.summary_rounds
 import pr.summary_row
 from pr.fix import FixOutcome
@@ -56,6 +58,7 @@ def build_summary_body(
     scope: pr.summary_rounds.RoundScope | None = None,
     chain: list[pr.summary_rounds.SummaryRound] | None = None,
     host: str = "",
+    kept_replies: Mapping[str, str] | None = None,
 ) -> str:
     """Build the markdown body for the fix summary comment.
 
@@ -89,6 +92,12 @@ def build_summary_body(
     comment — see `summary_rounds.RoundScope`, whose default covers everything. ``chain`` is
     the footer that makes leaving them out safe to read: every summary comment
     already on the PR, linked in order.
+
+    ``kept_replies`` is the review-body reply blocks lifted verbatim off the
+    comment being edited, by review id — see `summary_replies.kept_replies`.
+    They render in the `### Replies to review comments` section beside the
+    blocks ``scope`` says this round writes, below every other section and
+    above the footer.
     """
     carried_over = carried_over or []
     scope = scope or pr.summary_rounds.RoundScope()
@@ -269,6 +278,9 @@ def build_summary_body(
 
     if not has_comment_items:
         parts.extend(_render_raw_comment_sections(review_body_comments, issue_comments))
+
+    parts.extend(pr.summary_replies.render_reply_section(
+        content, scope, kept_replies or {}, repo, pr_number, host))
 
     parts.extend(_render_round_chain(chain))
 

@@ -101,6 +101,60 @@ class TestTheEditedCommentIsNotAllowedToShrink:
         assert T1 in scope.elsewhere_keys
 
 
+_REPLY_TEXT = "**@kgn** · [review](https://github.com/o/r/pull/1#pullrequestreview-88)\n\nDone."
+_REPLY_DIGEST = pr.published_record.fingerprint(_REPLY_TEXT)
+
+
+def _reply(text: str = _REPLY_TEXT, key: str = "88") -> str:
+    return pr.published_record.mark_reply_block(key, text)
+
+
+class TestWhichReplyBlocksARoundWrites:
+    """`RoundScope.covers_reply`: a reply block is scoped exactly as a row is."""
+
+    def test_a_reply_no_summary_holds_is_written(self):
+        """Row equivalent: a key absent from `published_keys`."""
+        scope = pr.summary_rounds.round_scope(_history(_comment(_body(_row(A1)))), False)
+        assert scope.covers_reply("88", _REPLY_DIGEST)
+
+    def test_a_reply_only_the_edited_comment_holds_is_re_rendered(self):
+        """Row equivalent: `target_keys` — an in-place edit would delete it."""
+        scope = pr.summary_rounds.round_scope(
+            _history(_comment(_body(_row(A1)) + "\n" + _reply())), False)
+        assert "88" in scope.target_reply_keys
+        assert scope.covers_reply("88", _REPLY_DIGEST)
+
+    def test_a_revised_reply_is_written_whoever_holds_it(self):
+        """Row equivalent: an outcome changed since it was published."""
+        scope = pr.summary_rounds.round_scope(
+            _history(_comment(_body() + "\n" + _reply(), cid=1),
+                     _comment(_body(_row(A1)), cid=2)), False)
+        assert not scope.covers_reply("88", _REPLY_DIGEST)
+        assert scope.covers_reply(
+            "88", pr.published_record.fingerprint(_REPLY_TEXT + " Revised."))
+
+    def test_an_unchanged_reply_published_elsewhere_is_left_there(self):
+        """Row equivalent: `covers()` falling through; the footer links back."""
+        scope = pr.summary_rounds.round_scope(
+            _history(_comment(_body() + "\n" + _reply(), cid=1),
+                     _comment(_body(_row(A1)), cid=2)), False)
+        assert "88" in scope.elsewhere_reply_keys
+        assert not scope.covers_reply("88", _REPLY_DIGEST)
+
+    def test_a_fresh_post_protects_no_reply(self):
+        scope = pr.summary_rounds.round_scope(
+            _history(_comment(_body() + "\n" + _reply())), True)
+        assert scope.target_reply_keys == frozenset()
+        assert not scope.covers_reply("88", _REPLY_DIGEST)
+
+    def test_the_newest_published_digest_is_the_one_compared(self):
+        revised = _REPLY_TEXT + " Revised."
+        scope = pr.summary_rounds.round_scope(
+            _history(_comment(_body() + "\n" + _reply(), cid=1),
+                     _comment(_body() + "\n" + _reply(revised), cid=2)), True)
+        assert scope.published_reply_digests["88"] == pr.published_record.fingerprint(revised)
+
+
 class TestTheNewestWordOnARowWins:
     """Outcomes are read oldest comment first, so the newest overwrites."""
 

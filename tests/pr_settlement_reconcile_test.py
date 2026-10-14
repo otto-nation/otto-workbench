@@ -17,7 +17,9 @@ from review_threads_support import (  # noqa: E402
 )
 from pr.comments_state import ThreadState
 from git.land import CommitStatus
+import pr.attribution
 import pr.summary_publish
+import pr.summary_render
 import pr.settlement
 from pr.fix import FixOutcome, ItemOutcome, SettledBy
 from pr.thread_models import ReportThread
@@ -285,6 +287,23 @@ class TestAnsweredCommentSources:
         with _fetches([_our_reply("#issuecomment-77", prefix="Good catch —")]):
             answered = pr.settlement.answered_comment_sources(
                 self._outcomes(), "owner/repo", 42, "me")
+        assert answered == {}
+
+
+    def test_a_reply_block_in_our_summary_settles_nothing_of_its_review(self, content):
+        """The summary cites the review it answers, and opens with its marker.
+
+        `verdict_kind` reads a comment's opening, so a reply that itself opens
+        with a verdict is no verdict on the review once it sits in the summary.
+        """
+        body = pr.summary_render.build_summary_body(
+            content(source_replies={"rb-88": "Fixed — the guard is in."}),
+            pr.attribution.CommitPushResult("", CommitStatus.NO_CHANGES, ""),
+            "owner/repo", 42, {}, has_comment_items=True, wt_path=None)
+        assert "#pullrequestreview-88" in body
+        with _fetches([{"user": "me", "body": body}]):
+            answered = pr.settlement.answered_comment_sources(
+                self._outcomes(iid="rb-88-1"), "owner/repo", 42, "me")
         assert answered == {}
 
 

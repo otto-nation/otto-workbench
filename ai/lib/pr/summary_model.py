@@ -75,7 +75,13 @@ class RoundContent:
     `folded_item_ids` used to take were a guard against exactly that.
 
     The unseen top-level comments ride along because the questions a round is
-    asked are asked of both halves at once — see `has_content`. Every field is
+    asked are asked of both halves at once — see `has_content`.
+    `source_replies` is the operator's answer to each review body, keyed
+    `rb-<reviewId>` as `FixSummary.source_replies` stores it; every round
+    carries the whole set, and `pr.summary_rounds.RoundScope.covers_reply`
+    decides which of them the round writes. It does not count towards
+    `has_content`: a reply is published by the `--reply` that wrote it, or by
+    the next summary a round has a reason to post. Every field is
     required: the round that printed a table and recorded that it owed nothing
     was one caller passing a bucket another caller did not, and a default here
     would leave that available to the next construction site.
@@ -84,6 +90,7 @@ class RoundContent:
     by_outcome: Mapping[FixOutcome, list[CommentItem]]
     issue_comments: list[dict]
     review_body_comments: list[dict]
+    source_replies: Mapping[str, str]
 
     def of(self, *outcomes: FixOutcome) -> list[CommentItem]:
         """The entries under these outcomes, in the order the outcomes are given.

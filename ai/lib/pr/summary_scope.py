@@ -49,9 +49,13 @@ def row_key(row: str) -> str:
 
 
 def table_rows(body: str) -> list[str]:
-    """The data rows of the summary table in a rendered body, in order."""
+    """The data rows of the summary table in a rendered body, in order.
+
+    Reply blocks are taken out first: they are an operator's prose, and a line
+    of it opening with `|` is not a row of the table.
+    """
     rows = []
-    for raw in body.splitlines():
+    for raw in pr.published_record.strip_reply_blocks(body).splitlines():
         line = raw.strip()
         if not line.startswith("|"):
             continue

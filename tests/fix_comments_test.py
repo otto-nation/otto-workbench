@@ -30,6 +30,7 @@ import pr.comments
 import pr.attribution
 import pr.thread_context
 import pr.fix_state
+import pr.state
 import pr.summary_model
 import pr.summary_publish
 from pr.fix import FixOutcome, ItemOutcome
@@ -66,7 +67,7 @@ class TestWhatTheRoundPersistsAndReports:
         adapter = self._adapter(tmp_path, **round_kw)
         content = pr.summary_model.RoundContent(
             by_outcome=adapter.round.by_outcome(tracking or TrackingResult()),
-            issue_comments=[], review_body_comments=[],
+            issue_comments=[], review_body_comments=[], source_replies={},
         )
         cp = pr.attribution.CommitPushResult("abc1234", CommitStatus.PUSHED, "")
         return adapter._state_for(
@@ -150,7 +151,8 @@ class TestWhatTheRoundPersistsAndReports:
         round.
         """
         content = pr.summary_model.RoundContent(
-            by_outcome={}, issue_comments=[], review_body_comments=[])
+            by_outcome={}, issue_comments=[], review_body_comments=[],
+            source_replies={})
         run = fix.engine.FixRun(batches=3, max_turns=17, max_budget=2.5)
         result = fix.comments._result_for(
             content, pr.attribution.CommitPushResult(None, CommitStatus.NO_CHANGES, ""),
@@ -172,7 +174,7 @@ class TestWhatTheRoundPersistsAndReports:
                 FixOutcome.DISMISSED: [self._entry("t5")],
                 FixOutcome.ALREADY_ADDRESSED: [self._entry("t6")],
             },
-            issue_comments=[], review_body_comments=[],
+            issue_comments=[], review_body_comments=[], source_replies={},
         )
         result = fix.comments._result_for(
             content, pr.attribution.CommitPushResult("abc1234", CommitStatus.PUSHED, ""),
@@ -384,6 +386,19 @@ class TestFixPassHoldsWhenContested:
         assert run.result.commit_status == CommitStatus.PUSHED
         assert run.pushes
         assert run.commits
+
+    def test_a_round_renders_the_review_body_replies_the_state_holds(
+        self, tmp_path, publishing_on,
+    ):
+        """`--reply` stores them between rounds; this round's own summary has none."""
+        st = pr.state.new_state("owner/repo", "b", pr_number=1, head_sha="aaa1111",
+                                worktree_root=str(tmp_path))
+        st.fix.source_replies["rb-88"] = "Done."
+        pr.state.save_state(tmp_path, st)
+        with patch.object(pr.summary_publish, "publish",
+                          wraps=pr.summary_publish.publish) as publish:
+            self._run(tmp_path, contested=False, publishing_on_=True)
+        assert publish.call_args[0][0].source_replies == {"rb-88": "Done."}
 
     def test_an_uncontested_pass_still_replies(self, tmp_path, publishing_on):
         """Pairs with the held case: proves that assertion is not vacuous."""

@@ -11,8 +11,9 @@
 #   2. Copies loader.zsh as a real file (survives repo move/delete)
 #   3. Ensures ~/.zshrc contains the workbench integration block
 #   4. Warns about tool initializations in ~/.zshrc now managed by snippets
-#   5. On a machine without Homebrew, installs what the layers expect Homebrew
-#      to provide: starship, oh-my-zsh, and the shell Brewfile's zsh plugins
+#   5. When brew bundle does not own the shell stack (not macOS-with-Homebrew),
+#      installs what the layers expect: starship, oh-my-zsh, and the shell
+#      Brewfile's zsh plugins — including on Linux with Linuxbrew
 #
 # Adding a new snippet layer:
 #   1. Create zsh/config.d/<layer>/ and add .zsh snippet files
@@ -114,17 +115,20 @@ _zsh_clone() {
   success "$label installed"
 }
 
-# step_zsh_shell_tools — on a machine without Homebrew, installs what the zsh
-# layers expect Homebrew to provide, so the shell is not left bare: starship
-# for prompt/, oh-my-zsh for framework/, and the shell Brewfile's zsh plugins
-# for tools/zsh-plugins.zsh. A no-op where Homebrew exists — the Brewfile owns
-# those installs there. Non-fatal: each layer already skips what is missing.
+# step_zsh_shell_tools — when brew bundle does not own the shell stack, installs
+# what the zsh layers expect Homebrew to provide, so the shell is not left bare:
+# starship for prompt/, oh-my-zsh for framework/, and the shell Brewfile's zsh
+# plugins for tools/zsh-plugins.zsh. A no-op on macOS with Homebrew — the
+# Brewfile owns those installs there. Linuxbrew is not that case: bundle is not
+# used, and git entries would otherwise be skipped as "installed by the zsh
+# component" with nobody cloning them. Non-fatal: each layer already skips what
+# is missing.
 #
 # oh-my-zsh is cloned rather than run through its installer, which would
 # rewrite ~/.zshrc and change the login shell; the framework snippet only
 # needs the checkout.
 step_zsh_shell_tools() {
-  command -v brew >/dev/null 2>&1 && return 0
+  packages_use_bundle && return 0
   install_package starship || true
   _zsh_clone "$OH_MY_ZSH_DIR" "https://github.com/ohmyzsh/ohmyzsh.git" oh-my-zsh || true
 

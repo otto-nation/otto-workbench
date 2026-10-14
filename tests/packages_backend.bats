@@ -103,6 +103,7 @@ teardown() {
   run env PATH="$STUBS:$SYSBIN" "$REPO_ROOT/packages/setup.sh" <<< "yy"
   [ "$status" -eq 0 ]
   [[ "$output" == *tree*"package manager"* ]]
+  grep -E '– tree +https://.*distro package' <<< "$output"
   [[ "$output" == *mas*macOS* ]]
   # Status line (en-dash + URL), not the install-time "– mas: macOS only".
   grep -E '– mas +https://' <<< "$output"
@@ -180,6 +181,27 @@ teardown() {
   [ "$mas_hits" -eq 0 ]
   [ ! -s "$MISE_LOG" ]
   [[ "$output" == *"core packages installed"* ]]
+}
+
+@test "without brew, a missing system package does not keep the core prompt open" {
+  printf '#!/bin/sh\nexit 0\n' > "$STUBS/jq"
+  chmod +x "$STUBS/jq"
+  run env PATH="$STUBS:$SYSBIN" "$REPO_ROOT/packages/setup.sh" <<< "yy"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"All packages already installed"* ]]
+  grep -E '– tree +https://.*distro package' <<< "$output"
+  jq_hits=$(grep -c jq "$MISE_LOG" || true)
+  [ "$jq_hits" -eq 0 ]
+}
+
+@test "an all-macos-only core stack says nothing installable" {
+  rm -rf "$PACKAGES_DIR/tools"
+  printf 'cask "zed"\nbrew "mas"  # macos-only\n' > "$PACKAGES_DIR/Brewfile"
+  printf 'components: {}\n' > "$WORKBENCH_STATE_DIR/install.yml"
+  run env PATH="$STUBS:$SYSBIN" "$REPO_ROOT/packages/setup.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Nothing installable"* ]]
+  [[ "$output" != *"All packages already installed"* ]]
 }
 
 @test "on Linux with brew, the summary does not judge sync by brew bundle check" {

@@ -14,8 +14,8 @@ migration_20261013_rename_brew_component() {
   [[ "$(yq '.components | has("brew")' "$INSTALL_YML_FILE")" == true ]] \
     || return "$MIGRATION_NOOP"
   info "Renaming brew component state to packages in install.yml"
-  # An existing packages entry was written by the renamed component, so it is
-  # the selection in use; the brew copy is what the old name left behind.
-  yq -i '.components.packages = (.components.packages // .components.brew)
+  # Overlay packages onto brew so keys only the old name held are kept, and
+  # colliding keys prefer the renamed component's value.
+  yq -i '.components.packages = ((.components.brew // {}) * (.components.packages // {}))
          | del(.components.brew)' "$INSTALL_YML_FILE"
 }

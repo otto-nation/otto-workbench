@@ -32,7 +32,7 @@ print_packages_summary() {
     else
       summary_info "some packages not installed — run: ${DIM}otto-workbench install packages${NC}"
     fi
-    summary_info "After installing new packages: ${DIM}task brew:dump${NC} (from the workbench checkout)"
+    summary_info "Add a package: ${DIM}docs/registries.md#package-manifests${NC}"
     summary_info "Optional stacks: ${DIM}brew bundle --file=packages/<category>/<stack>.Brewfile${NC}"
     return
   fi

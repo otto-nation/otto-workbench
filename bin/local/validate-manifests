@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Validate package manifests: every brew line has exactly one disposition,
-# no package is listed in two manifests, and every install_package call names
-# a package that exists in a manifest.
+# no unknown or empty annotation tokens, no annotation on a cask, no package
+# is listed in two manifests, and every install_package call names a package
+# that exists in a manifest.
 #
 # Usage: bin/local/validate-manifests [--quiet]
 #
@@ -63,6 +64,15 @@ _check_one_entry() {
   if [[ "$disposition" == *" "* ]]; then
     _fail "$name: more than one disposition in $file"
   fi
+  if [[ -n "${ENTRY[unknown]:-}" ]]; then
+    _fail "$name: unknown annotation token (${ENTRY[unknown]}) in $file"
+  fi
+  if [[ -n "${ENTRY[empty]:-}" ]]; then
+    _fail "$name: empty annotation value (${ENTRY[empty]}) in $file"
+  fi
+  if [[ "$type" == cask && -n "${ENTRY[cask_annotation]:-}" ]]; then
+    _fail "$name: cask lines cannot carry annotations in $file"
+  fi
   if [[ -n "${SEEN_NAME[$name]:-}" ]]; then
     _fail "$name: listed in two manifests (${SEEN_NAME[$name]} and $file)"
   fi
@@ -92,9 +102,11 @@ _scan_file_calls() {
       continue
     fi
     matches+=("$match")
-  done < <(grep -Eoh 'install_package[[:space:]]+[A-Za-z0-9@/._-]+' "$file" || true)
+  done < <(grep -Eoh 'install_package[[:space:]]+\"?[A-Za-z0-9@/._-]+\"?' "$file" || true)
   for match in "${matches[@]}"; do
     arg="${match##*[[:space:]]}"
+    arg="${arg#\"}"
+    arg="${arg%\"}"
     if [[ "$arg" == \$* || "$arg" == \"\$* ]]; then
       continue
     fi
@@ -117,7 +129,8 @@ _check_call_sites() {
     files+=("$f")
   done < <(find "$VALIDATE_ROOT" \
     \( -name tests -o -name .superpowers -o -name node_modules -o -name docs \) -prune -o \
-    -type f \( -name '*.sh' -o -name 'steps.sh' -o \( -path "$VALIDATE_ROOT/bin/*" ! -name '*.*' \) \) -print \
+    -type f \( -name '*.sh' -o -name 'steps.sh' -o \
+      \( \( -path "$VALIDATE_ROOT/bin/*" -o -path "$VALIDATE_ROOT/ai/bin/*" -o -path "$VALIDATE_ROOT/ai/*/bin/*" \) ! -name '*.*' \) \) -print \
     | LC_ALL=C sort)
   for f in "${files[@]}"; do
     # The lookup implementation and this scanner name install_package in prose.
@@ -128,8 +141,43 @@ _check_call_sites() {
   done
 }
 
+# _check_dev_deps_installable — names in DEV_DEPS_INSTALLABLE are install_package
+# arguments the call-site scan cannot see (the loop passes "$entry").
+_check_dev_deps_installable() {
+  local file="$VALIDATE_ROOT/bin/local/dev-deps"
+  [[ -f "$file" ]] || return 0
+  local in_array=0 name line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ DEV_DEPS_INSTALLABLE=\( ]]; then
+      in_array=1
+      continue
+    fi
+    [[ "$in_array" -eq 1 ]] || continue
+    if [[ "$line" == *')'* ]]; then
+      in_array=0
+      continue
+    fi
+    name="${line#"${line%%[![:space:]]*}"}"
+    name="${name%"${name##*[![:space:]]}"}"
+    if [[ -z "$name" || "$name" == \#* ]]; then
+      continue
+    fi
+    name="${name%%#*}"
+    name="${name%"${name##*[![:space:]]}"}"
+    if [[ -z "$name" ]]; then
+      continue
+    fi
+    if package_lookup "$name" ENTRY; then
+      continue
+    fi
+    _fail "DEV_DEPS_INSTALLABLE $name: not in any manifest ($file)"
+  done < "$file"
+  return 0
+}
+
 _check_manifests
 _check_call_sites
+_check_dev_deps_installable
 
 if (( ERRORS > 0 )); then
   err "$ERRORS error(s) in package manifests"

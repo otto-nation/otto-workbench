@@ -180,7 +180,7 @@ On macOS with Homebrew, the packages component installs a stack with `brew bundl
 
 The component id is `packages` (formerly `brew`). On the next sync, [`packages/migrations/20261013-rename-brew-component.sh`](../packages/migrations/20261013-rename-brew-component.sh) rewrites `components.brew` in `install.yml` to `components.packages`.
 
-`bin/local/validate-manifests` enforces the grammar: every `brew` line has exactly one disposition, no short name is listed in two manifests, and every `install_package NAME` call names a package that exists.
+`bin/local/validate-manifests` enforces the grammar: every `brew` line has exactly one disposition, unknown tokens and empty `mise:`/`git:`/`cmd:` values fail, cask lines cannot carry annotations, no short name is listed in two manifests, and every `install_package NAME` call (quoted or not, including `DEV_DEPS_INSTALLABLE` names and extensionless `ai/**/bin` scripts) names a package that exists.
 
 ### Annotation grammar
 
@@ -190,7 +190,7 @@ Trailing `#` annotations on a `brew` line, `;`-separated:
 |-------|---------|
 | `mise: SPEC` | Install with `mise use -g SPEC` when Homebrew is absent |
 | `linux: system` | Distro package; no mise install |
-| `macos-only` | Skip on the Linux entry backend |
+| `macos-only` | Skip on the entry backend (not macOS-with-Homebrew) |
 | `git: URL` | Clone URL; owned by the zsh component, not `install_package` |
 | `cmd: BIN` | Binary to test for “already installed” (defaults to the formula’s short name) |
 

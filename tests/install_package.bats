@@ -15,7 +15,7 @@ setup() {
 
   export PACKAGES_DIR="$TMPDIR/packages"
   mkdir -p "$PACKAGES_DIR"
-  printf 'brew "rtk"  # mise: rtk\nbrew "tree"  # linux: system\nbrew "mas"  # macos-only\n' > "$PACKAGES_DIR/Brewfile"
+  printf 'brew "rtk"  # mise: rtk\nbrew "tree"  # linux: system\nbrew "mas"  # macos-only\nbrew "pinned"  # mise: pinned@9\nbrew "zsh-foo"  # git: https://example.com/zsh-foo\n' > "$PACKAGES_DIR/Brewfile"
 
   # Exported, because the stubs read them from the environment.
   export BREW_LOG="$TMPDIR/brew-args"
@@ -293,6 +293,27 @@ EOF2
 @test "--version without a value is a usage error" {
   run -- _run_install "$(_path_with)" rtk --version
   [ "$status" -eq 2 ]
+}
+
+@test "--version on a spec that already contains @ is a usage error" {
+  run -- _run_install "$(_path_with mise)" pinned --version 1.2.3
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"already pins a version"* ]]
+  [ ! -s "$MISE_LOG" ]
+}
+
+@test "a git-disposition package without Homebrew names the zsh component" {
+  run _run_install "$(_path_with mise)" zsh-foo
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"installed by the zsh component"* ]]
+  [[ "$output" != *"Linux"* ]]
+}
+
+@test "a macos-only package without Homebrew does not say Linux" {
+  run _run_install "$(_path_with mise)" mas
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no install without Homebrew"* ]]
+  [[ "$output" != *"Linux"* ]]
 }
 
 # ─── A shim with no active version ───────────────────────────────────────────

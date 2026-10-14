@@ -33,11 +33,20 @@ teardown() {
   [ "$(yq '.components | has("brew")' "$INSTALL_YML_FILE")" = "false" ]
 }
 
-@test "an existing components.packages wins and brew is still removed" {
+@test "an existing components.packages wins colliding keys and brew is still removed" {
   printf 'components:\n  brew:\n    stacks: [lang/go]\n  packages:\n    stacks: [infra/aws]\n' > "$INSTALL_YML_FILE"
   run migration_20261013_rename_brew_component
   [ "$status" -eq 0 ]
   [ "$(yq '.components.packages.stacks[0]' "$INSTALL_YML_FILE")" = "infra/aws" ]
+  [ "$(yq '.components | has("brew")' "$INSTALL_YML_FILE")" = "false" ]
+}
+
+@test "when both maps exist, keys only brew held are kept" {
+  printf 'components:\n  brew:\n    stacks: [lang/go]\n    extra: kept\n  packages:\n    stacks: [infra/aws]\n' > "$INSTALL_YML_FILE"
+  run migration_20261013_rename_brew_component
+  [ "$status" -eq 0 ]
+  [ "$(yq '.components.packages.stacks[0]' "$INSTALL_YML_FILE")" = "infra/aws" ]
+  [ "$(yq '.components.packages.extra' "$INSTALL_YML_FILE")" = "kept" ]
   [ "$(yq '.components | has("brew")' "$INSTALL_YML_FILE")" = "false" ]
 }
 

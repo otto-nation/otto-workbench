@@ -30,6 +30,12 @@ pkg_skip_reason() {
       echo "installed by the zsh component"
       return 0
       ;;
+    system)
+      if ! command -v brew >/dev/null 2>&1; then
+        echo "distro package"
+        return 0
+      fi
+      ;;
   esac
   return 1
 }
@@ -55,7 +61,7 @@ pkg_install_one() {
       return 0
       ;;
     *)
-      install_package "${__p[formula]}"
+      install_package "${__p[name]}"
       ;;
   esac
 }
@@ -88,6 +94,8 @@ pkg_install_file() {
 
 # pkg_all_installed FILE — 0 when every entry this backend would install is
 # already present. macos-only and git entries are owned elsewhere and skipped.
+# A system entry with no Homebrew is reported at install time but does not
+# count as missing here, so a distro package cannot keep the core prompt open.
 pkg_all_installed() {
   local -a names
   package_entries "$1" names
@@ -97,6 +105,9 @@ pkg_all_installed() {
     __p=()
     package_lookup "$n" __p || return 1
     [[ "${__p[disposition]}" == macos-only || "${__p[disposition]}" == git ]] && continue
+    if [[ "${__p[disposition]}" == system ]] && ! command -v brew >/dev/null 2>&1; then
+      continue
+    fi
     pkg_is_installed "${__p[type]}" "${__p[formula]}" || return 1
   done
   return 0

@@ -1,6 +1,6 @@
 # Core packages — belongs on any personal dev machine.
 # Install: brew bundle --file=packages/Brewfile
-# Update:  task brew:dump  (from the workbench checkout)
+# Add a package: docs/registries.md#package-manifests
 
 # ---------------------------------------------------------------------------
 # Taps

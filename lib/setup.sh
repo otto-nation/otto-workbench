@@ -227,15 +227,20 @@ _bootstrap_mise() {
   fi
 }
 
-# _warn_no_linux_install LABEL DISPOSITION — why a manifest entry cannot be
-# installed on this machine without Homebrew.
-_warn_no_linux_install() {
+# _warn_no_brew_install LABEL DISPOSITION — why a manifest entry cannot be
+# installed on this machine without Homebrew. The entry backend also runs on
+# macOS without brew, so the wording is not Linux-specific.
+_warn_no_brew_install() {
   local label="$1" disposition="$2"
   if [[ "$disposition" == system ]]; then
     warn "$label is a system package — install it with your distro's package manager"
     return 0
   fi
-  warn "$label has no Linux install (${disposition:-no linux annotation in its manifest})"
+  if [[ "$disposition" == git ]]; then
+    warn "$label is installed by the zsh component"
+    return 0
+  fi
+  warn "$label has no install without Homebrew (${disposition:-no install annotation in its manifest})"
 }
 
 # _install_brew_or_mise CMD FORMULA MISE_SPEC LABEL [DISPOSITION] — private
@@ -266,7 +271,7 @@ _install_brew_or_mise() {
   fi
 
   if [[ -z "$mise_tool" ]] && ! command -v brew >/dev/null 2>&1; then
-    _warn_no_linux_install "$label" "$disposition"
+    _warn_no_brew_install "$label" "$disposition"
     return 1
   fi
 

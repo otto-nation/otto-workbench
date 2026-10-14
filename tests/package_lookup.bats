@@ -76,3 +76,39 @@ teardown() {
 @test "name match is whole, not substring" {
   declare -A p=(); run package_lookup ree p; [ "$status" -eq 1 ]
 }
+
+@test "unknown annotation tokens are recorded" {
+  printf 'brew "odd"  # mise: odd; foo: bar\n' > "$PACKAGES_DIR/Brewfile"
+  declare -A p=(); package_lookup odd p
+  [ "${p[unknown]}" = "foo: bar" ]
+  [ "${p[disposition]}" = "mise" ]
+}
+
+@test "odd whitespace still parses" {
+  printf 'brew\t"jq"  #  mise : jq ;  cmd:  jq  \n' > "$PACKAGES_DIR/Brewfile"
+  declare -A p=(); package_lookup jq p
+  [ "${p[mise]}" = "jq" ]
+  [ "${p[cmd]}" = "jq" ]
+  [ "${p[disposition]}" = "mise" ]
+}
+
+@test "package_entries preserves file order" {
+  printf '%s\n' 'brew "tree"  # linux: system' 'brew "worktrunk"  # mise: worktrunk; cmd: wt' 'cask "zed"' \
+    > "$PACKAGES_DIR/Brewfile"
+  local -a names=()
+  package_entries "$PACKAGES_DIR/Brewfile" names
+  [ "${#names[@]}" -eq 3 ]
+  [ "${names[0]}" = "tree" ]
+  [ "${names[1]}" = "worktrunk" ]
+  [ "${names[2]}" = "zed" ]
+}
+
+@test "a cask annotation is dropped from mise and git" {
+  printf 'cask "zed"  # mise: zed; git: https://example.com/zed\n' > "$PACKAGES_DIR/Brewfile"
+  declare -A p=(); package_lookup zed p
+  [ "${p[type]}" = "cask" ]
+  [ "${p[disposition]}" = "macos-only" ]
+  [ -z "${p[mise]}" ]
+  [ -z "${p[git]}" ]
+  [ "${p[cask_annotation]}" = "1" ]
+}

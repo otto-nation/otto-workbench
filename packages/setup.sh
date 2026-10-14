@@ -74,6 +74,20 @@ _pkg_install_file() {
   info "$label:"
   _pkg_show_packages "$file"
   echo
+  local any_installable=0 type full_name
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^(brew|cask)[[:space:]]+\"([^\"]+)\" ]] || continue
+    type="${BASH_REMATCH[1]}" full_name="${BASH_REMATCH[2]}"
+    if pkg_skip_reason "$type" "$full_name" >/dev/null; then
+      continue
+    fi
+    any_installable=1
+    break
+  done < "$file"
+  if [[ "$any_installable" -eq 0 ]]; then
+    echo -e "  ${DIM}Nothing installable — skipping${NC}"
+    return
+  fi
   if pkg_all_installed "$file"; then
     echo -e "  ${DIM}All packages already installed — skipping${NC}"
     return
@@ -185,16 +199,16 @@ _pkg_select_category() {
   done
 }
 
-# _pkg_select_optional BREW_DIR
-# Discovers category subdirs under BREW_DIR, presents them grouped.
+# _pkg_select_optional PACKAGES_DIR
+# Discovers category subdirs under PACKAGES_DIR, presents them grouped.
 # User can select entire categories or drill into individual stacks.
 # Only globs */ so a top-level file such as components.Brewfile is not a stack.
 _pkg_select_optional() {
-  local brew_dir="$1"
+  local packages_dir="$1"
   local category_dirs=() category_labels=()
   local _rel
 
-  for d in "$brew_dir"/*/; do
+  for d in "$packages_dir"/*/; do
     [[ -d "$d" ]] || continue
     local has_brewfile=0
     for f in "$d"*.Brewfile; do [[ -f "$f" ]] && has_brewfile=1 && break; done
@@ -239,7 +253,7 @@ _pkg_select_optional() {
   # having emptied them on the way in.
   local _stacks=()
   for i in "${!_SELECTED_FILES[@]}"; do
-    _rel="${_SELECTED_FILES[$i]#"$brew_dir/"}"
+    _rel="${_SELECTED_FILES[$i]#"$packages_dir/"}"
     _stacks+=("${_rel%.Brewfile}")
   done
   state_set_list "$_PACKAGES_STATE_KEY" "${_stacks[@]}"
@@ -250,11 +264,11 @@ _pkg_select_optional() {
 }
 
 _pkg_replay_saved() {
-  local brew_dir="$1" stacks="$2"
+  local packages_dir="$1" stacks="$2"
   info "Using saved package stacks"
   local _stack _brewfile
   while IFS= read -r _stack; do
-    _brewfile="$brew_dir/${_stack}.Brewfile"
+    _brewfile="$packages_dir/${_stack}.Brewfile"
     if [[ -f "$_brewfile" ]]; then
       _pkg_install_file "$_brewfile" "$_stack"
     else

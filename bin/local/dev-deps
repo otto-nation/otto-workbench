@@ -9,7 +9,7 @@
 #   dev-deps            install what can be installed without root, then check
 #   dev-deps --check    report only; install nothing
 #
-# Installs go through install_brew_or_mise (Homebrew, else mise, bootstrapping
+# Installs go through install_package (Homebrew, else mise, bootstrapping
 # mise when neither exists), so nothing here needs root. A dependency that does
 # need root — a distro package, a generated locale — is checked, never
 # installed: this script runs no sudo. A missing one is reported with the exact
@@ -29,13 +29,12 @@ _SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}"
 WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 . "$WORKBENCH_DIR/lib/ui.sh"
 
-# CMD FORMULA MISE_TOOL LABEL — installable without root. install_brew_or_mise's
-# arguments, one dependency per line.
+# Manifest package names installable without root.
 DEV_DEPS_INSTALLABLE=(
-  "bats bats-core bats bats-core"
-  "jq jq jq jq"
-  "yq yq yq yq"
-  "node node node@lts node"
+  bats-core
+  jq
+  yq
+  node
 )
 
 # CMD LABEL HINT — needs root, so checked only. HINT is the command to run.
@@ -74,12 +73,12 @@ _shellcheck_pin() {
     "$WORKBENCH_DIR/.github/actions/install-shellcheck/action.yml" 2>/dev/null
 }
 
-# _install_pinned_shellcheck — installs shellcheck through install_brew_or_mise,
+# _install_pinned_shellcheck — installs shellcheck through install_package,
 # at the CI pin on the mise path. A runnable shellcheck at any other version —
 # newer ones included, so this can downgrade; the CI pin is the reference — is
 # moved to the pin as well, since the helper skips anything that already runs.
 # Only where mise exists to do the moving: a distro shellcheck on a machine with
-# neither installer is left as it is, as install_brew_or_mise would leave it.
+# neither installer is left as it is, as the installer would leave it.
 # Homebrew does not pin, as tests/shellcheck_version.bats already accepts.
 _install_pinned_shellcheck() {
   local pin have
@@ -92,7 +91,11 @@ _install_pinned_shellcheck() {
     mise use -g "shellcheck@$pin" || { warn "mise could not install shellcheck $pin — run: mise use -g shellcheck@$pin"; return 1; }
     return 0
   fi
-  install_brew_or_mise shellcheck shellcheck "shellcheck${pin:+@$pin}" shellcheck
+  if [[ -n "$pin" ]]; then
+    install_package shellcheck --version "$pin"
+  else
+    install_package shellcheck
+  fi
 }
 
 # _install_pytest — pytest with pytest-xdist, so bin/local/run-tests can
@@ -100,9 +103,9 @@ _install_pinned_shellcheck() {
 # installed first — only on the mise path, and only while pytest is missing.
 _install_pytest() {
   if ! _cmd_runnable pytest && ! command -v brew >/dev/null 2>&1; then
-    install_brew_or_mise uv uv uv uv || true
+    install_package uv || true
   fi
-  install_brew_or_mise pytest pytest "pipx:pytest[uvx_args=--with pytest-xdist]" pytest
+  install_package pytest
 }
 
 # _has_locale NAME — whether NAME is generated. `locale -a` spells UTF-8 as
@@ -123,8 +126,7 @@ _has_locale() {
 dev_deps_install() {
   local entry
   for entry in "${DEV_DEPS_INSTALLABLE[@]}"; do
-    # shellcheck disable=SC2086  # the entry is the helper's four words
-    install_brew_or_mise $entry || true
+    install_package "$entry" || true
   done
   _install_pinned_shellcheck || true
   _install_pytest || true
@@ -135,13 +137,15 @@ dev_deps_install() {
 dev_deps_check() {
   local -a missing=()
   local entry cmd label hint
-  # The shellcheck/pytest entries below are check-only placeholders: only
-  # their cmd and label fields are read here, so they need not (and do not)
-  # match the real install_brew_or_mise tuples in _install_pinned_shellcheck
-  # and _install_pytest (e.g. shellcheck's real mise tool is version-pinned).
-  for entry in "${DEV_DEPS_INSTALLABLE[@]}" "shellcheck shellcheck shellcheck shellcheck" \
-               "pytest pytest pipx:pytest pytest"; do
-    read -r cmd _ _ label <<< "$entry"
+  local -A pkg=()
+  for entry in "${DEV_DEPS_INSTALLABLE[@]}" shellcheck pytest; do
+    pkg=()
+    if ! package_lookup "$entry" pkg; then
+      missing+=("$entry — in no package manifest under $PACKAGES_DIR")
+      continue
+    fi
+    cmd="${pkg[cmd]}"
+    label="$entry"
     _cmd_runnable "$cmd" || missing+=("$label — run: bin/local/dev-deps (or: task dev:setup)")
   done
   for entry in "${DEV_DEPS_ROOT[@]}"; do

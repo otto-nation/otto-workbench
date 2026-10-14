@@ -10,7 +10,7 @@
 # vocabulary it checks a `role` value against.
 #
 # Sourced directly by its consumers — `bin/local/generate-tool-context`,
-# `bin/local/validate-registries`, `brew/summary.sh`, `summary.sh`, and
+# `bin/local/validate-registries`, `packages/summary.sh`, `summary.sh`, and
 # `ai/claude/steps.sh`. Not in the `ui.sh` facade. It loads `roots.sh` itself when
 # the caller has not already sourced `constants.sh`, since an
 # `install_check_symlink` value may name a workbench root.
@@ -472,15 +472,15 @@ collect_component_registries() {
   done
 }
 
-# collect_registries ARRAY_REF SCAN_DIR [BREW_DIR]
+# collect_registries ARRAY_REF SCAN_DIR [PACKAGES_DIR]
 # Populates the caller's array (via nameref) with deduplicated registry paths.
 #
 # SCAN_DIR: root directory to glob for */registry.yml, /*/*/registry.yml, and *.env.yml
-# BREW_DIR: directory to search for *.registry.yml stacks (defaults to SCAN_DIR/brew)
+# PACKAGES_DIR: directory to search for *.registry.yml stacks (defaults to SCAN_DIR/packages)
 collect_registries() {
   local -n _out_arr=$1
   local scan_dir="$2"
-  local brew_dir="${3:-$scan_dir/brew}"
+  local packages_dir="${3:-$scan_dir/packages}"
 
   _out_arr=()
 
@@ -507,10 +507,10 @@ collect_registries() {
   )
 
   # Brew stack registries
-  if [[ -d "$brew_dir" ]]; then
+  if [[ -d "$packages_dir" ]]; then
     while IFS= read -r -d '' f; do
       raw+=("$f")
-    done < <(find "$brew_dir" -mindepth 2 -maxdepth 2 -name '*.registry.yml' -print0 | sort -z)
+    done < <(find "$packages_dir" -mindepth 2 -maxdepth 2 -name '*.registry.yml' -print0 | sort -z)
   fi
 
   # Deduplicate by realpath
@@ -729,7 +729,7 @@ _reg_scan_release() {
   _REG_SCAN_HELD=()
 }
 
-# _reg_collect_scan REGS_REF SCAN_DIR BREW_DIR — the scan every collector opens
+# _reg_collect_scan REGS_REF SCAN_DIR PACKAGES_DIR — the scan every collector opens
 # with: the registry list, loaded and current.
 #
 # Returns 1 when a file cannot be parsed, which is the collector's own failure
@@ -745,16 +745,16 @@ _reg_scan_release() {
 # the same reason.
 _reg_collect_scan() {
   local -n __rg_regs_out=$1
-  local __rg_scan_dir="$2" __rg_brew_dir="$3"
+  local __rg_scan_dir="$2" __rg_packages_dir="$3"
 
   __rg_regs_out=()
-  collect_registries __rg_regs_out "$__rg_scan_dir" "$__rg_brew_dir"
+  collect_registries __rg_regs_out "$__rg_scan_dir" "$__rg_packages_dir"
   (( ${#__rg_regs_out[@]} > 0 )) || return 0
 
   # Invalidated first: this is a directory scan, so it answers for the tree as
   # it is now, not as some earlier call in the same process found it. The one
   # exception is a scan key an open `reg_scan_hold` has already refreshed.
-  local __rg_hold_key="$__rg_scan_dir$_REG_SEP$__rg_brew_dir"
+  local __rg_hold_key="$__rg_scan_dir$_REG_SEP$__rg_packages_dir"
   if [[ -z "${_REG_SCAN_HELD[$__rg_hold_key]:-}" ]]; then
     reg_invalidate "${__rg_regs_out[@]}"
     [[ -z "$_REG_SCAN_HOLD_OPEN" ]] || _REG_SCAN_HELD[$__rg_hold_key]=1
@@ -762,7 +762,7 @@ _reg_collect_scan() {
   reg_load "${__rg_regs_out[@]}" || return 1
 }
 
-# collect_registry_permissions ARRAY_REF SCAN_DIR [BREW_DIR]
+# collect_registry_permissions ARRAY_REF SCAN_DIR [PACKAGES_DIR]
 # Populates the caller's array (via nameref) with Claude Code Bash permission
 # patterns derived from tools' permission field, one of the tool entry fields
 # described in this module's header comment above.
@@ -770,11 +770,11 @@ collect_registry_permissions() {
   local _perms_var=$1
   local -n __perms_out=$1
   local scan_dir="$2"
-  local brew_dir="${3:-$scan_dir/brew}"
+  local packages_dir="${3:-$scan_dir/packages}"
 
   __perms_out=()
   local -a registries=()
-  _reg_collect_scan registries "$scan_dir" "$brew_dir" || return 1
+  _reg_collect_scan registries "$scan_dir" "$packages_dir" || return 1
 
   local file count i
   for file in "${registries[@]}"; do
@@ -788,7 +788,7 @@ collect_registry_permissions() {
   done
 }
 
-# collect_claude_env_vars SOURCES_REF TARGETS_REF SCAN_DIR [BREW_DIR]
+# collect_claude_env_vars SOURCES_REF TARGETS_REF SCAN_DIR [PACKAGES_DIR]
 # Populates two caller arrays (via nameref) with the env vars declared by every
 # registry whose meta block sets `claude_env: true`:
 #   sources — the canonical names in ~/.env.local (e.g. AI_MODEL)
@@ -822,12 +822,12 @@ collect_claude_env_vars() {
   local -n __sources_out=$1
   local -n __targets_out=$2
   local scan_dir="$3"
-  local brew_dir="${4:-$scan_dir/brew}"
+  local packages_dir="${4:-$scan_dir/packages}"
 
   __sources_out=()
   __targets_out=()
   local -a registries=()
-  _reg_collect_scan registries "$scan_dir" "$brew_dir" || return 1
+  _reg_collect_scan registries "$scan_dir" "$packages_dir" || return 1
 
   local file flagged count i var target opted_out
   for file in "${registries[@]}"; do
@@ -851,7 +851,7 @@ collect_claude_env_vars() {
   done
 }
 
-# collect_model_env_vars VARS_REF ROLES_REF SCAN_DIR [BREW_DIR]
+# collect_model_env_vars VARS_REF ROLES_REF SCAN_DIR [PACKAGES_DIR]
 # Populates two caller arrays (via nameref) with the env vars every registry
 # declares as carrying a model id, in declaration order, and the `role` each one
 # was declared with.
@@ -875,12 +875,12 @@ collect_model_env_vars() {
   local -n __vars_out=$1
   local -n __roles_out=$2
   local scan_dir="$3"
-  local brew_dir="${4:-$scan_dir/brew}"
+  local packages_dir="${4:-$scan_dir/packages}"
 
   __vars_out=()
   __roles_out=()
   local -a registries=()
-  _reg_collect_scan registries "$scan_dir" "$brew_dir" || return 1
+  _reg_collect_scan registries "$scan_dir" "$packages_dir" || return 1
 
   local file count i var role
   for file in "${registries[@]}"; do

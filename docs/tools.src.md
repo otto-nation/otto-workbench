@@ -30,4 +30,4 @@ How the AI subsystem behaves behind these entry points — review phases, publis
 
 ## Adding a Tool
 
-See [Registries](registries.md#adding-an-entry) for the full schema and step-by-step instructions. A script in a `bindir` registry needs a header before it can ship: the reference above is rendered from it, and the build fails when a script in the reference has none.
+See [Registries](registries.md#adding-an-entry) for the full schema and step-by-step instructions, and [Package manifests](registries.md#package-manifests) for Brewfile annotations. A script in a `bindir` registry needs a header before it can ship: the reference above is rendered from it, and the build fails when a script in the reference has none.

@@ -44,6 +44,11 @@ tools:
     visibility: brief
     description: "Validates migration file naming, function naming, and shebang conventions"
 
+  - name: validate-manifests
+    permission: false
+    visibility: brief
+    description: "Validates package-manifest annotations and install_package call sites"
+
   - name: validate-errexit
     permission: false
     visibility: brief

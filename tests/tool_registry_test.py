@@ -100,10 +100,10 @@ def test_a_nested_component_registry_is_read(tmp_path):
 
 def test_registries_of_other_kinds_name_no_scripts(tmp_path):
     """A brew stack's meta.source is a Brewfile, so its names are not paths."""
-    _write_registry(tmp_path, "brew/registry.yml", """\
+    _write_registry(tmp_path, "packages/registry.yml", """\
         meta:
           validation: brewfile
-          source: brew/Brewfile
+          source: packages/Brewfile
 
         tools:
           - name: jq

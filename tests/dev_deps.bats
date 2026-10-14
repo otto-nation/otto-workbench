@@ -4,7 +4,7 @@
 # never sudo'd — where not.
 #
 # The script is sourced and its helpers stubbed afterwards: it loads lib/ui.sh,
-# which would replace any stub defined before it. install_brew_or_mise is
+# which would replace any stub defined before it. install_package is
 # stubbed to record its arguments, so no case installs anything.
 bats_require_minimum_version 1.5.0
 
@@ -34,7 +34,7 @@ _run() {
     warn()    { echo "WARN $*"; }
     info()    { echo "INFO $*"; }
     err()     { echo "ERR $*"; }
-    install_brew_or_mise() { echo "HELPER $*"; return 0; }
+    install_package() { echo "HELPER $*"; return 0; }
     _cmd_runnable() { command -v "$1" >/dev/null 2>&1; }
     PATH="$3"
     "$2"
@@ -77,24 +77,24 @@ _sc_lab() {
   run _run dev_deps_install
   [ "$status" -eq 0 ]
   local cmd
-  for cmd in bats jq yq node; do
-    [[ "$output" == *"HELPER $cmd "* ]]
+  for cmd in bats-core jq yq node; do
+    [[ "$output" == *"HELPER $cmd"* ]]
   done
-  [[ "$output" == *"HELPER shellcheck shellcheck shellcheck@$(_sc_pin) shellcheck"* ]]
-  [[ "$output" == *"HELPER pytest pytest pipx:pytest[uvx_args=--with pytest-xdist] pytest"* ]]
+  [[ "$output" == *"HELPER shellcheck --version $(_sc_pin)"* ]]
+  [[ "$output" == *"HELPER pytest"* ]]
 }
 
 @test "without Homebrew, uv is installed before pytest" {
   run _run _install_pytest
   [ "$status" -eq 0 ]
-  [[ "$output" == *"HELPER uv uv uv uv"*"HELPER pytest "* ]]
+  [[ "$output" == *"HELPER uv"*"HELPER pytest"* ]]
 }
 
 @test "with Homebrew, uv is left alone" {
   printf '#!/bin/sh\nexit 0\n' > "$STUBS/brew"
   run _run _install_pytest "$STUBS:/usr/bin:/bin"
   [ "$status" -eq 0 ]
-  [[ "$output" != *"HELPER uv "* ]]
+  [[ "$output" != *"HELPER uv"* ]]
 }
 
 @test "a shellcheck at another version is moved to the CI pin on the mise path" {
@@ -107,7 +107,7 @@ _sc_lab() {
 @test "a distro shellcheck with no mise is left to the helper rather than run through mise" {
   run _run _install_pinned_shellcheck "$(_sc_lab 0.0.1 no)"
   [[ "$output" != *"mise: command not found"* ]]
-  [[ "$output" == *"HELPER shellcheck shellcheck shellcheck@$(_sc_pin) shellcheck"* ]]
+  [[ "$output" == *"HELPER shellcheck --version $(_sc_pin)"* ]]
 }
 
 @test "a shellcheck already at the CI pin is left alone" {
@@ -120,7 +120,7 @@ _sc_lab() {
   # A PATH with none of the dependencies: only a locale stub, reporting none.
   printf '#!/bin/sh\necho C\necho POSIX\n' > "$STUBS/locale"
   chmod +x "$STUBS/locale"
-  for tool in sed tr uname cat; do ln -sf "$(command -v "$tool")" "$STUBS/$tool"; done
+  for tool in sed tr uname cat find sort; do ln -sf "$(command -v "$tool")" "$STUBS/$tool"; done
   run _run dev_deps_check "$STUBS"
   [ "$status" -eq 1 ]
   [[ "$output" == *"bats-core — run: bin/local/dev-deps"* ]]
@@ -128,6 +128,27 @@ _sc_lab() {
   if [[ "$(uname -s)" != Darwin ]]; then
     [[ "$output" == *"locale en_US.UTF-8 — run: sudo apt install locales && sudo locale-gen en_US.UTF-8"* ]]
   fi
+}
+
+@test "check looks a dependency up by the manifest's command, not its package name" {
+  # bats-core's manifest entry declares `cmd: bats`; a bats on PATH satisfies it.
+  printf '#!/bin/sh\nexit 0\n' > "$STUBS/bats"
+  chmod +x "$STUBS/bats"
+  printf '#!/bin/sh\necho C\n' > "$STUBS/locale"
+  chmod +x "$STUBS/locale"
+  for tool in sed tr uname cat find sort; do ln -sf "$(command -v "$tool")" "$STUBS/$tool"; done
+  run _run dev_deps_check "$STUBS"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"jq — run: bin/local/dev-deps"* ]]
+  [[ "$output" != *"bats-core"* ]]
+}
+
+@test "check reports a dependency that is in no package manifest" {
+  export PACKAGES_DIR="$TMPDIR/no-manifests"
+  mkdir -p "$PACKAGES_DIR"
+  run _run dev_deps_check
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"bats-core — in no package manifest under $PACKAGES_DIR"* ]]
 }
 
 @test "on Darwin the root deps hint brew install, not sudo apt install" {

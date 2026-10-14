@@ -1,0 +1,51 @@
+# Core packages — belongs on any personal dev machine.
+# Install: brew bundle --file=packages/Brewfile
+# Add a package: docs/registries.md#package-manifests
+
+# ---------------------------------------------------------------------------
+# Taps
+# ---------------------------------------------------------------------------
+tap "DomT4/autoupdate"
+tap "go-task/tap"
+tap "otto-nation/tap"
+
+# ---------------------------------------------------------------------------
+# Shell & terminal
+# ---------------------------------------------------------------------------
+brew "bash"  # linux: system
+brew "jq"  # mise: jq
+brew "tree"  # linux: system
+brew "yq"  # mise: yq
+
+# ---------------------------------------------------------------------------
+# AI tooling
+# ---------------------------------------------------------------------------
+brew "pipx"  # mise: pipx
+brew "uv"  # mise: uv
+
+# ---------------------------------------------------------------------------
+# Containers
+# ---------------------------------------------------------------------------
+brew "docker"  # linux: system
+
+# ---------------------------------------------------------------------------
+# Dev workflow
+# ---------------------------------------------------------------------------
+brew "bats-core"  # mise: bats; cmd: bats
+brew "delta"  # mise: delta
+brew "parallel"  # linux: system
+brew "gh"  # mise: gh
+brew "go-task/tap/go-task"  # mise: task; cmd: task
+brew "worktrunk"  # mise: worktrunk; cmd: wt
+brew "otto-nation/tap/otto-stack"  # mise: github:otto-nation/otto-stack
+brew "shellcheck"  # mise: shellcheck
+
+# ---------------------------------------------------------------------------
+# Security
+# ---------------------------------------------------------------------------
+brew "gitleaks"  # mise: gitleaks
+
+# ---------------------------------------------------------------------------
+# Casks
+# ---------------------------------------------------------------------------
+cask "git-credential-manager"

@@ -14,9 +14,9 @@
 #
 # <!-- include: bin/local/generate-tool-context --emit workbench-commands -->
 #
-# `install` runs first-time setup: installs Homebrew (if missing), syncs core
-# components (bin, git, zsh), presents a menu of optional components
-# (brew packages, docker, terminals, editors, ai, mise), and runs pending
+# `install` runs first-time setup: on macOS, installs Homebrew (if missing);
+# syncs core components (bin, git, zsh); presents a menu of optional components
+# (packages, docker, terminals, editors, ai, mise); and runs pending
 # migrations. Safe to re-run — idempotent. Use `--all` to skip menus, or name
 # specific components.
 #
@@ -32,8 +32,8 @@
 # and reconciles the Ghostty theme key. Git and tool-context rule files
 # regenerate during `sync_ai`.
 #
-# `sync` does not do one-time setup — that is `otto-workbench install`: Homebrew
-# packages or casks, Docker runtime, iTerm themes, Ghostty config from template.
+# `sync` does not do one-time setup — that is `otto-workbench install`: package
+# stacks (Homebrew or mise), Docker runtime, iTerm themes, Ghostty config from template.
 
 set -e
 
@@ -160,13 +160,13 @@ cmd_install() {
   echo -e "  ${DIM}✓${NC} installed  ${DIM}✓ up to date  ⊘ skipped  ⚠ attention needed${NC}"
   echo
 
-  # Before the bootstrap, so step_brew_install finds an existing Homebrew on a
+  # Before the bootstrap, so step_packages_brew_install finds an existing Homebrew on a
   # bare PATH, and the zsh step sees every installed tool by name.
   ensure_tool_path
 
   # ─── Bootstrap ──────────────────────────────────────────────────────────
   if [[ "$OSTYPE" == "darwin"* ]]; then
-    step_brew_install
+    step_packages_brew_install
   else
     _check_linux_prerequisites
   fi
@@ -281,7 +281,7 @@ cmd_sync() {
   # shellcheck source=/dev/null
   . "$WORKBENCH_DIR/lib/summary.sh"
 
-  # Auto-discover and call per-component summaries (brew, docker, ai, etc.)
+  # Auto-discover and call per-component summaries (packages, docker, ai, etc.)
   # Only warnings/errors surface during sync (summary_ok/summary_info are suppressed).
   run_component_summaries
 

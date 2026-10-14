@@ -8,12 +8,12 @@
 gtc_setup() {
   ORIG_DIR="$PWD"
 
-  mkdir -p "$TMPDIR/brew" "$TMPDIR/bin" "$TMPDIR/zsh" "$TMPDIR/mise"
-  export BREW_REGISTRY="$TMPDIR/brew/registry.yml"
+  mkdir -p "$TMPDIR/packages" "$TMPDIR/bin" "$TMPDIR/zsh" "$TMPDIR/mise"
+  export PACKAGES_REGISTRY="$TMPDIR/packages/registry.yml"
   export MISE_REGISTRY="$TMPDIR/mise/registry.yml"
   export BIN_REGISTRY="$TMPDIR/bin/registry.yml"
   export ZSH_REGISTRY="$TMPDIR/zsh/registry.yml"
-  export BREW_STACKS_DIR="$TMPDIR"
+  export PACKAGES_STACKS_DIR="$TMPDIR"
   export WORK_DIR="$TMPDIR/work"
   export TOOL_CONTEXT_OUTPUT="$TMPDIR/tools.generated.md"
   export AI_DIR="$TMPDIR/ai"
@@ -24,5 +24,5 @@ gtc_setup() {
 
 gtc_teardown() {
   cd "$ORIG_DIR" || return 1
-  unset BREW_REGISTRY MISE_REGISTRY BIN_REGISTRY ZSH_REGISTRY BREW_STACKS_DIR WORK_DIR TOOL_CONTEXT_OUTPUT REGISTRY_SCAN_DIR AI_DIR
+  unset PACKAGES_REGISTRY MISE_REGISTRY BIN_REGISTRY ZSH_REGISTRY PACKAGES_STACKS_DIR WORK_DIR TOOL_CONTEXT_OUTPUT REGISTRY_SCAN_DIR AI_DIR
 }

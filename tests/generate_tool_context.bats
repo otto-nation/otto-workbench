@@ -99,7 +99,7 @@ EOF
 # ── Output file ───────────────────────────────────────────────────────────────
 
 @test "creates the output file" {
-  _write_registry "$BREW_REGISTRY"
+  _write_registry "$PACKAGES_REGISTRY"
 
   run main
   [ "$status" -eq 0 ]
@@ -107,7 +107,7 @@ EOF
 }
 
 @test "output contains auto-generated header comment" {
-  _write_registry "$BREW_REGISTRY"
+  _write_registry "$PACKAGES_REGISTRY"
 
   main
   grep -q "AUTO-GENERATED" "$TOOL_CONTEXT_OUTPUT"
@@ -115,11 +115,11 @@ EOF
 
 # ── Section rendering ─────────────────────────────────────────────────────────
 
-@test "renders section title from meta.section in BREW_REGISTRY" {
-  _write_registry "$BREW_REGISTRY" "Brew Tools"
+@test "renders section title from meta.section in PACKAGES_REGISTRY" {
+  _write_registry "$PACKAGES_REGISTRY" "Package Tools"
 
   main
-  grep -q "## Brew Tools" "$TOOL_CONTEXT_OUTPUT"
+  grep -q "## Package Tools" "$TOOL_CONTEXT_OUTPUT"
 }
 
 @test "renders section title from meta.section in BIN_REGISTRY" {
@@ -155,35 +155,35 @@ EOF
 # ── Tool entry fields ─────────────────────────────────────────────────────────
 
 @test "renders tool name as H3" {
-  _write_registry "$BREW_REGISTRY"
+  _write_registry "$PACKAGES_REGISTRY"
 
   main
   grep -q "### mytool" "$TOOL_CONTEXT_OUTPUT"
 }
 
 @test "renders tool description" {
-  _write_registry "$BREW_REGISTRY"
+  _write_registry "$PACKAGES_REGISTRY"
 
   main
   grep -q "A test tool" "$TOOL_CONTEXT_OUTPUT"
 }
 
 @test "renders when_to_use field" {
-  _write_registry "$BREW_REGISTRY"
+  _write_registry "$PACKAGES_REGISTRY"
 
   main
   grep -q "When testing" "$TOOL_CONTEXT_OUTPUT"
 }
 
 @test "renders usage field when present" {
-  _write_registry "$BREW_REGISTRY"
+  _write_registry "$PACKAGES_REGISTRY"
 
   main
   grep -q "mytool --flag" "$TOOL_CONTEXT_OUTPUT"
 }
 
 @test "omits docs field from output" {
-  _write_registry "$BREW_REGISTRY"
+  _write_registry "$PACKAGES_REGISTRY"
 
   main
   run grep "https://example.com" "$TOOL_CONTEXT_OUTPUT"
@@ -191,7 +191,7 @@ EOF
 }
 
 @test "omits usage line for visibility: brief entry" {
-  cat > "$BREW_REGISTRY" << 'EOF'
+  cat > "$PACKAGES_REGISTRY" << 'EOF'
 meta:
   section: "Tools"
   validation: none
@@ -209,7 +209,7 @@ EOF
 }
 
 @test "omits docs line when docs is absent" {
-  _write_minimal_registry "$BREW_REGISTRY"
+  _write_minimal_registry "$PACKAGES_REGISTRY"
 
   main
   run grep "Docs" "$TOOL_CONTEXT_OUTPUT"
@@ -224,10 +224,10 @@ EOF
 }
 
 @test "skips section for missing registry file" {
-  _write_registry "$BREW_REGISTRY" "Brew Tools"
+  _write_registry "$PACKAGES_REGISTRY" "Package Tools"
 
   main
-  grep -q "## Brew Tools" "$TOOL_CONTEXT_OUTPUT"
+  grep -q "## Package Tools" "$TOOL_CONTEXT_OUTPUT"
   run grep "## Workbench Scripts" "$TOOL_CONTEXT_OUTPUT"
   [ "$status" -ne 0 ]
 }
@@ -235,7 +235,7 @@ EOF
 # ── Multiple entries ──────────────────────────────────────────────────────────
 
 @test "renders multiple tool entries" {
-  cat > "$BREW_REGISTRY" << 'EOF'
+  cat > "$PACKAGES_REGISTRY" << 'EOF'
 meta:
   section: "Tools"
   validation: none
@@ -332,7 +332,7 @@ EOF
 # ── Visibility tiers ─────────────────────────────────────────────────────────
 
 @test "visibility: full renders full entry" {
-  _write_visibility_registry "$BREW_REGISTRY"
+  _write_visibility_registry "$PACKAGES_REGISTRY"
 
   main
   grep -q "### full-tool" "$TOOL_CONTEXT_OUTPUT"
@@ -340,7 +340,7 @@ EOF
 }
 
 @test "visibility: brief renders one-liner" {
-  _write_visibility_registry "$BREW_REGISTRY"
+  _write_visibility_registry "$PACKAGES_REGISTRY"
 
   main
   grep -q '^\- \*\*ref-tool\*\*' "$TOOL_CONTEXT_OUTPUT"
@@ -349,7 +349,7 @@ EOF
 }
 
 @test "visibility: hidden omits tool entirely" {
-  _write_visibility_registry "$BREW_REGISTRY"
+  _write_visibility_registry "$PACKAGES_REGISTRY"
 
   main
   run grep "hidden-tool" "$TOOL_CONTEXT_OUTPUT"
@@ -359,7 +359,7 @@ EOF
 # ── Commands rendering ────────────────────────────────────────────────────────
 
 @test "renders subcommands for tool with commands field" {
-  cat > "$BREW_REGISTRY" << 'EOF'
+  cat > "$PACKAGES_REGISTRY" << 'EOF'
 meta:
   section: "Tools"
   install_check: false
@@ -386,7 +386,7 @@ EOF
 }
 
 @test "omits subcommands section when commands field is absent" {
-  _write_registry "$BREW_REGISTRY"
+  _write_registry "$PACKAGES_REGISTRY"
 
   main
   run grep "Subcommands" "$TOOL_CONTEXT_OUTPUT"
@@ -396,7 +396,7 @@ EOF
 # ── Output format ────────────────────────────────────────────────────────────
 
 @test "output file has no frontmatter" {
-  _write_registry "$BREW_REGISTRY"
+  _write_registry "$PACKAGES_REGISTRY"
 
   main
   run grep "^---" "$TOOL_CONTEXT_OUTPUT"
@@ -433,7 +433,7 @@ EOF
 }
 
 @test "scoped registry does not appear in core output" {
-  _write_registry "$BREW_REGISTRY" "Core Tools"
+  _write_registry "$PACKAGES_REGISTRY" "Core Tools"
   _write_scoped_registry "$WORK_DIR/go.registry.yml" "Go Tools" "go"
 
   main
@@ -482,7 +482,7 @@ EOF
   stale_file="$(dirname "$TOOL_CONTEXT_OUTPUT")/tools.generated.oldscope.md"
   echo "stale" > "$stale_file"
 
-  _write_registry "$BREW_REGISTRY"
+  _write_registry "$PACKAGES_REGISTRY"
   main
   [ ! -f "$stale_file" ]
 }

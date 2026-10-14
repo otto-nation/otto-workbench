@@ -4,7 +4,7 @@ setup_file() {
   load 'test_helper'
   export BATS_NO_PARALLELIZE_WITHIN_FILE=true
   SHARED_DIR="$BATS_FILE_TMPDIR/validate"
-  mkdir -p "$SHARED_DIR/bin" "$SHARED_DIR/brew/work" "$SHARED_DIR/zsh/config.d" "$SHARED_DIR/lib"
+  mkdir -p "$SHARED_DIR/bin" "$SHARED_DIR/packages/work" "$SHARED_DIR/zsh/config.d" "$SHARED_DIR/lib"
 
   # Copy every lib module rather than an enumerated subset — a new sub-module
   # sourced by lib/ui.sh would otherwise break this fixture on arrival.
@@ -29,11 +29,11 @@ setup() {
   TMPDIR="$SHARED_DIR"
 
   # Clean mutable state from previous test
-  rm -f "$TMPDIR/brew/registry.yml" "$TMPDIR/brew/Brewfile"
+  rm -f "$TMPDIR/packages/registry.yml" "$TMPDIR/packages/Brewfile"
   rm -f "$TMPDIR/bin/registry.yml"
   rm -f "$TMPDIR/zsh/registry.yml"
   rm -f "$TMPDIR/zsh/config.d/"*
-  rm -f "$TMPDIR/brew/work/"*.registry.yml "$TMPDIR/brew/work/"*.Brewfile
+  rm -f "$TMPDIR/packages/work/"*.registry.yml "$TMPDIR/packages/work/"*.Brewfile
   for f in "$TMPDIR/bin/"*; do
     [[ -e "$f" ]] || continue
     case "${f##*/}" in mytool|othertool) ;; *) rm -f "$f" ;; esac
@@ -48,7 +48,7 @@ teardown() {
 # ── meta.scope ────────────────────────────────────────────────────────────────
 
 @test "passes with valid meta.scope" {
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Tools"
   scope: go
@@ -60,14 +60,14 @@ tools:
     visibility: brief
     description: "A tool"
 EOF
-  echo "brew \"mytool\"" > "$TMPDIR/brew/Brewfile"
+  echo "brew \"mytool\"" > "$TMPDIR/packages/Brewfile"
 
   run main
   [ "$status" -eq 0 ]
 }
 
 @test "fails with invalid meta.scope characters" {
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Tools"
   scope: "Go Tools"
@@ -79,7 +79,7 @@ tools:
     visibility: brief
     description: "A tool"
 EOF
-  echo "brew \"mytool\"" > "$TMPDIR/brew/Brewfile"
+  echo "brew \"mytool\"" > "$TMPDIR/packages/Brewfile"
 
   run main
   [ "$status" -ne 0 ]
@@ -87,7 +87,7 @@ EOF
 }
 
 @test "passes with hyphenated meta.scope" {
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Tools"
   scope: "cloud-infra"
@@ -99,7 +99,7 @@ tools:
     visibility: brief
     description: "A tool"
 EOF
-  echo "brew \"mytool\"" > "$TMPDIR/brew/Brewfile"
+  echo "brew \"mytool\"" > "$TMPDIR/packages/Brewfile"
 
   run main
   [ "$status" -eq 0 ]

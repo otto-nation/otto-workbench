@@ -116,7 +116,7 @@ Your developer environment is managed at: $WORKBENCH_DIR
 
 What it owns: Claude config (\`ai/claude/\`), coding rules (\`ai/guidelines/rules/\`),
 bin scripts (\`bin/\`), zsh config (\`zsh/\`), git config (\`git/\`),
-Docker setup (\`docker/\`), Brew packages (\`brew/\`).
+Docker setup (\`docker/\`), Packages (\`packages/\`).
 
 When modifying Claude config (MCPs, agents, skills, settings), bin scripts, zsh config,
 git config, or developer tooling — make the change in the workbench repo and re-run

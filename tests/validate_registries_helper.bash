@@ -2,11 +2,11 @@
 # Valid registry fixtures shared by the validate_registries_* suites; each writes into the shared tree setup_file built.
 
 _write_valid_brew() {
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Brew Tools"
   validation: brewfile
-  source: brew/Brewfile
+  source: packages/Brewfile
 
 tools:
   - name: mytool
@@ -16,7 +16,7 @@ tools:
     when_to_use: "When testing"
     usage: "mytool --help"
 EOF
-  printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
+  printf 'brew "mytool"\n' > "$TMPDIR/packages/Brewfile"
 }
 
 _write_valid_bin() {
@@ -62,12 +62,12 @@ EOF
 }
 
 _write_valid_work() {
-  cat > "$TMPDIR/brew/work/mystack.registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/work/mystack.registry.yml" << 'EOF'
 meta:
   section: "My Stack Tools"
   install_check: true
   validation: brewfile
-  source: brew/work/mystack.Brewfile
+  source: packages/work/mystack.Brewfile
 
 tools:
   - name: mytool
@@ -77,5 +77,5 @@ tools:
     when_to_use: "When working"
     usage: "mytool --help"
 EOF
-  printf 'brew "mytool"\n' > "$TMPDIR/brew/work/mystack.Brewfile"
+  printf 'brew "mytool"\n' > "$TMPDIR/packages/work/mystack.Brewfile"
 }

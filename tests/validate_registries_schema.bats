@@ -4,7 +4,7 @@ setup_file() {
   load 'test_helper'
   export BATS_NO_PARALLELIZE_WITHIN_FILE=true
   SHARED_DIR="$BATS_FILE_TMPDIR/validate"
-  mkdir -p "$SHARED_DIR/bin" "$SHARED_DIR/brew/work" "$SHARED_DIR/zsh/config.d" "$SHARED_DIR/lib"
+  mkdir -p "$SHARED_DIR/bin" "$SHARED_DIR/packages/work" "$SHARED_DIR/zsh/config.d" "$SHARED_DIR/lib"
 
   # Copy every lib module rather than an enumerated subset — a new sub-module
   # sourced by lib/ui.sh would otherwise break this fixture on arrival.
@@ -29,11 +29,11 @@ setup() {
   TMPDIR="$SHARED_DIR"
 
   # Clean mutable state from previous test
-  rm -f "$TMPDIR/brew/registry.yml" "$TMPDIR/brew/Brewfile"
+  rm -f "$TMPDIR/packages/registry.yml" "$TMPDIR/packages/Brewfile"
   rm -f "$TMPDIR/bin/registry.yml"
   rm -f "$TMPDIR/zsh/registry.yml"
   rm -f "$TMPDIR/zsh/config.d/"*
-  rm -f "$TMPDIR/brew/work/"*.registry.yml "$TMPDIR/brew/work/"*.Brewfile
+  rm -f "$TMPDIR/packages/work/"*.registry.yml "$TMPDIR/packages/work/"*.Brewfile
   for f in "$TMPDIR/bin/"*; do
     [[ -e "$f" ]] || continue
     case "${f##*/}" in mytool|othertool) ;; *) rm -f "$f" ;; esac
@@ -70,11 +70,11 @@ teardown() {
 }
 
 @test "fails when brew entry is missing description" {
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Brew Tools"
   validation: brewfile
-  source: brew/Brewfile
+  source: packages/Brewfile
 
 tools:
   - name: mytool
@@ -83,7 +83,7 @@ tools:
     when_to_use: "When testing"
     usage: "mytool --help"
 EOF
-  printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
+  printf 'brew "mytool"\n' > "$TMPDIR/packages/Brewfile"
 
   run main
   [ "$status" -ne 0 ]
@@ -91,11 +91,11 @@ EOF
 }
 
 @test "fails when brew entry is missing when_to_use" {
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Brew Tools"
   validation: brewfile
-  source: brew/Brewfile
+  source: packages/Brewfile
 
 tools:
   - name: mytool
@@ -104,7 +104,7 @@ tools:
     description: "A tool"
     usage: "mytool --help"
 EOF
-  printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
+  printf 'brew "mytool"\n' > "$TMPDIR/packages/Brewfile"
 
   run main
   [ "$status" -ne 0 ]
@@ -112,11 +112,11 @@ EOF
 }
 
 @test "fails on duplicate tool names in brew registry" {
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Brew Tools"
   validation: brewfile
-  source: brew/Brewfile
+  source: packages/Brewfile
 
 tools:
   - name: mytool
@@ -132,7 +132,7 @@ tools:
     when_to_use: "Always"
     usage: "mytool --help"
 EOF
-  printf 'brew "mytool"\n' > "$TMPDIR/brew/Brewfile"
+  printf 'brew "mytool"\n' > "$TMPDIR/packages/Brewfile"
 
   run main
   [ "$status" -ne 0 ]
@@ -142,11 +142,11 @@ EOF
 # ── Cross-file validation ─────────────────────────────────────────────────────
 
 @test "fails when brew registry entry not in Brewfile" {
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Brew Tools"
   validation: brewfile
-  source: brew/Brewfile
+  source: packages/Brewfile
 
 tools:
   - name: missing-formula
@@ -156,19 +156,19 @@ tools:
     when_to_use: "Never"
     usage: "missing-formula --help"
 EOF
-  printf 'brew "something-else"\n' > "$TMPDIR/brew/Brewfile"
+  printf 'brew "something-else"\n' > "$TMPDIR/packages/Brewfile"
 
   run main
   [ "$status" -ne 0 ]
-  [[ "$output" == *"not found in brew/Brewfile"* ]]
+  [[ "$output" == *"not found in packages/Brewfile"* ]]
 }
 
 @test "passes when brew entry matches a cask in Brewfile" {
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Brew Tools"
   validation: brewfile
-  source: brew/Brewfile
+  source: packages/Brewfile
 
 tools:
   - name: mycask
@@ -178,18 +178,18 @@ tools:
     when_to_use: "For GUI tools"
     usage: "mycask --help"
 EOF
-  printf 'cask "mycask"\n' > "$TMPDIR/brew/Brewfile"
+  printf 'cask "mycask"\n' > "$TMPDIR/packages/Brewfile"
 
   run main
   [ "$status" -eq 0 ]
 }
 
 @test "passes when brew_name override matches Brewfile entry" {
-  cat > "$TMPDIR/brew/registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:
   section: "Brew Tools"
   validation: brewfile
-  source: brew/Brewfile
+  source: packages/Brewfile
 
 tools:
   - name: mvn
@@ -200,7 +200,7 @@ tools:
     when_to_use: "Building Maven projects"
     usage: "mvn --help"
 EOF
-  printf 'brew "maven"\n' > "$TMPDIR/brew/Brewfile"
+  printf 'brew "maven"\n' > "$TMPDIR/packages/Brewfile"
 
   run main
   [ "$status" -eq 0 ]
@@ -278,12 +278,12 @@ EOF
 }
 
 @test "fails when work registry entry not in its Brewfile" {
-  cat > "$TMPDIR/brew/work/mystack.registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/work/mystack.registry.yml" << 'EOF'
 meta:
   section: "My Stack Tools"
   install_check: true
   validation: brewfile
-  source: brew/work/mystack.Brewfile
+  source: packages/work/mystack.Brewfile
 
 tools:
   - name: missing-work-tool
@@ -293,20 +293,20 @@ tools:
     when_to_use: "Never"
     usage: "missing-work-tool --help"
 EOF
-  printf 'brew "something-else"\n' > "$TMPDIR/brew/work/mystack.Brewfile"
+  printf 'brew "something-else"\n' > "$TMPDIR/packages/work/mystack.Brewfile"
 
   run main
   [ "$status" -ne 0 ]
-  [[ "$output" == *"not found in brew/work/mystack.Brewfile"* ]]
+  [[ "$output" == *"not found in packages/work/mystack.Brewfile"* ]]
 }
 
 @test "passes work registry with brew_name override" {
-  cat > "$TMPDIR/brew/work/mystack.registry.yml" << 'EOF'
+  cat > "$TMPDIR/packages/work/mystack.registry.yml" << 'EOF'
 meta:
   section: "My Stack Tools"
   install_check: true
   validation: brewfile
-  source: brew/work/mystack.Brewfile
+  source: packages/work/mystack.Brewfile
 
 tools:
   - name: kubectl
@@ -317,7 +317,7 @@ tools:
     when_to_use: "Managing clusters"
     usage: "kubectl --help"
 EOF
-  printf 'brew "kubernetes-cli"\n' > "$TMPDIR/brew/work/mystack.Brewfile"
+  printf 'brew "kubernetes-cli"\n' > "$TMPDIR/packages/work/mystack.Brewfile"
 
   run main
   [ "$status" -eq 0 ]

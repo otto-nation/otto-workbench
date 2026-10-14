@@ -19,7 +19,7 @@
 # Registry discovery:
 #   Top-level:       <repo>/*/registry.yml
 #   Nested:          <repo>/*/*/registry.yml  (e.g. ai/claude/registry.yml)
-#   Optional stacks: <repo>/brew/{lang,infra,tools}/*.registry.yml
+#   Optional stacks: <repo>/packages/{lang,infra,tools}/*.registry.yml
 #
 # Usage: bin/local/validate-registries
 # Exit code: 0 if all checks pass, 1 if any fail.
@@ -378,8 +378,8 @@ _validate_schema() {
   _check_no_duplicates "$file" "$validation"
 }
 
-# _validate_against_brewfile REGISTRY BREWFILE
-# Every tool name (or brew_name override) must appear in BREWFILE.
+# _validate_against_brewfile REGISTRY FILE
+# Every tool name (or brew_name override) must appear in FILE.
 _validate_against_brewfile() {
   local file="$1" brewfile="$2"
   [[ -f "$brewfile" ]] || { warn "$(basename "$brewfile") not found — skipping cross-check"; return; }
@@ -741,7 +741,7 @@ main() {
     return 1
   fi
 
-  # Collect all registries: top-level + nested (e.g. ai/claude/) + optional brew stacks
+  # Collect all registries: top-level + nested (e.g. ai/claude/) + optional package stacks
   local -a all_registries=()
   collect_registries all_registries "$REPO_ROOT"
 

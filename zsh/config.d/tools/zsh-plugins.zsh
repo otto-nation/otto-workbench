@@ -2,7 +2,7 @@
 #
 # Auto-discovers and sources all zsh-* plugins from Homebrew's share directory,
 # or from the clones zsh/steps.sh makes on a machine without Homebrew.
-# To add a new plugin, just add it to brew/shell/shell.Brewfile — no config changes needed.
+# To add a new plugin, just add it to packages/shell/shell.Brewfile — no config changes needed.
 #
 # duplicate-check: share/zsh-.*/zsh-.*\.zsh
 

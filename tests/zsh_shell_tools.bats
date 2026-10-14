@@ -4,7 +4,7 @@
 # provide — starship, oh-my-zsh, and the shell Brewfile's zsh plugins — so the
 # shell is not left with no prompt, no completion and no plugins.
 #
-# git and install_brew_or_mise are stubbed: the subject is which installs the
+# git and install_package are stubbed: the subject is which installs the
 # step asks for and how it treats a failure, not the network. HOME and
 # XDG_DATA_HOME are the test's own, so nothing reaches the real ~/.oh-my-zsh.
 bats_require_minimum_version 1.5.0
@@ -38,7 +38,7 @@ teardown() {
 }
 
 # _run_step [EXTRA_PATH] — runs step_zsh_shell_tools with the ui helpers and
-# install_brew_or_mise stubbed, on a PATH of the stubs, EXTRA_PATH and the base
+# install_package stubbed, on a PATH of the stubs, EXTRA_PATH and the base
 # system. No brew unless EXTRA_PATH supplies one.
 _run_step() {
   bash -c '
@@ -47,21 +47,24 @@ _run_step() {
     success() { echo "OK $*"; }
     warn()    { echo "WARN $*"; }
     info()    { echo "INFO $*"; }
-    install_brew_or_mise() { echo "HELPER $*"; return 0; }
+    install_package() { echo "HELPER $*"; return 0; }
     PATH="$2/stubs${3:+:$3}:/usr/bin:/bin"
     step_zsh_shell_tools
   ' _ "$REPO_ROOT" "$TMPDIR" "${1:-}"
 }
 
-# _brewfile_plugins — the zsh-* formulae the shell Brewfile lists.
-_brewfile_plugins() {
-  sed -n 's/^brew "\(zsh-[A-Za-z0-9_-]*\)".*/\1/p' "$REPO_ROOT/brew/shell/shell.Brewfile"
+# _git_plugins [MANIFEST] — "name url" for each entry the shell Brewfile
+# annotates with `git:`, read straight from the file rather than through the
+# parser under test.
+_git_plugins() {
+  sed -n 's/^brew "\([^"]*\)".*# *git: *\([^ ;]*\).*/\1 \2/p' \
+    "${1:-$REPO_ROOT/packages/shell/shell.Brewfile}"
 }
 
-@test "without Homebrew, starship goes through the brew-or-mise helper" {
+@test "without Homebrew, starship goes through install_package" {
   run _run_step
   [ "$status" -eq 0 ]
-  [[ "$output" == *"HELPER starship starship starship starship"* ]]
+  [[ "$output" == *"HELPER starship"* ]]
 }
 
 @test "without Homebrew, oh-my-zsh is cloned to the path the framework snippet reads" {
@@ -71,33 +74,63 @@ _brewfile_plugins() {
   [ -d "$HOME/.oh-my-zsh" ]
 }
 
-@test "every zsh plugin the shell Brewfile lists is cloned, and nothing else" {
-  local plugins name
-  plugins="$(_brewfile_plugins)"
+@test "every git-annotated entry in the shell Brewfile is cloned from its URL, and nothing else" {
+  local plugins name url
+  plugins="$(_git_plugins)"
   [ -n "$plugins" ]
   run _run_step
   [ "$status" -eq 0 ]
-  for name in $plugins; do
-    grep -q -- "https://github.com/zsh-users/$name.git $XDG_DATA_HOME/zsh/plugins/$name" "$GIT_LOG"
-  done
+  while read -r name url; do
+    grep -q -- "$url $XDG_DATA_HOME/zsh/plugins/$name" "$GIT_LOG"
+  done <<< "$plugins"
   # One clone per plugin plus oh-my-zsh.
-  [ "$(wc -l < "$GIT_LOG")" -eq "$(( $(wc -w <<< "$plugins") + 1 ))" ]
+  [ "$(wc -l < "$GIT_LOG")" -eq "$(( $(wc -l <<< "$plugins") + 1 ))" ]
 }
 
-@test "with Homebrew the step does nothing; the Brewfile owns those installs" {
+@test "the clone URL is the annotation, and entries without one are not cloned" {
+  export PACKAGES_DIR="$TMPDIR/packages"
+  mkdir -p "$PACKAGES_DIR/shell"
+  printf '%s\n' \
+    'brew "zsh-elsewhere"  # git: https://example.com/other/zsh-elsewhere-repo' \
+    'brew "fancy-plugin"  # git: https://example.com/fancy' \
+    'brew "zsh-via-mise"  # mise: zsh-via-mise' \
+    > "$PACKAGES_DIR/shell/shell.Brewfile"
+  run _run_step
+  [ "$status" -eq 0 ]
+  grep -q -- "https://example.com/other/zsh-elsewhere-repo $XDG_DATA_HOME/zsh/plugins/zsh-elsewhere" "$GIT_LOG"
+  grep -q -- "https://example.com/fancy $XDG_DATA_HOME/zsh/plugins/fancy-plugin" "$GIT_LOG"
+  via_mise=$(grep -c zsh-via-mise "$GIT_LOG" || true)
+  [ "$via_mise" -eq 0 ]
+  [ "$(wc -l < "$GIT_LOG")" -eq 3 ]
+}
+
+@test "on macOS with Homebrew the step does nothing; the Brewfile owns those installs" {
   mkdir -p "$TMPDIR/brewbin"
   printf '#!/bin/sh\nexit 0\n' > "$TMPDIR/brewbin/brew"
-  chmod +x "$TMPDIR/brewbin/brew"
+  printf '#!/bin/sh\necho Darwin\n' > "$TMPDIR/brewbin/uname"
+  chmod +x "$TMPDIR/brewbin/brew" "$TMPDIR/brewbin/uname"
   run _run_step "$TMPDIR/brewbin"
   [ "$status" -eq 0 ]
   [[ "$output" != *HELPER* ]]
   [ ! -e "$GIT_LOG" ]
 }
 
+@test "on Linux with Homebrew, starship still goes through install_package and plugins are cloned" {
+  mkdir -p "$TMPDIR/brewbin"
+  printf '#!/bin/sh\nexit 0\n' > "$TMPDIR/brewbin/brew"
+  printf '#!/bin/sh\necho Linux\n' > "$TMPDIR/brewbin/uname"
+  chmod +x "$TMPDIR/brewbin/brew" "$TMPDIR/brewbin/uname"
+  run _run_step "$TMPDIR/brewbin"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"HELPER starship"* ]]
+  grep -q -- "clone --quiet --depth 1 https://github.com/ohmyzsh/ohmyzsh.git $HOME/.oh-my-zsh" "$GIT_LOG"
+}
+
 @test "an install already in place is not cloned again" {
   mkdir -p "$HOME/.oh-my-zsh"
   local name
-  for name in $(_brewfile_plugins); do mkdir -p "$XDG_DATA_HOME/zsh/plugins/$name"; done
+  local url
+  while read -r name url; do mkdir -p "$XDG_DATA_HOME/zsh/plugins/$name"; done <<< "$(_git_plugins)"
   run _run_step
   [ "$status" -eq 0 ]
   [ ! -e "$GIT_LOG" ]
@@ -109,7 +142,7 @@ _brewfile_plugins() {
   [[ "$output" == *"WARN could not clone oh-my-zsh"* ]]
   [ ! -e "$HOME/.oh-my-zsh" ]
   # The plugins after it were still attempted.
-  grep -q -- "zsh-users/zsh-syntax-highlighting.git" "$GIT_LOG"
+  grep -q -- "zsh-users/zsh-syntax-highlighting" "$GIT_LOG"
 }
 
 @test "sync_zsh installs the shell tools before it deploys the layers" {

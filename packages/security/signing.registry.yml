@@ -1,0 +1,16 @@
+# Signing stack registry.
+# Install: brew bundle --file=packages/security/signing.Brewfile
+# Regenerate: generate-tool-context
+
+meta:
+  section: "Signing Tools"
+  install_check: true
+  validation: brewfile
+  source: packages/security/signing.Brewfile
+
+tools:
+  - name: gnupg
+    permission: false
+    visibility: hidden
+    description: "GNU Privacy Guard — GPG encryption and signing"
+    docs: "https://gnupg.org/documentation/"

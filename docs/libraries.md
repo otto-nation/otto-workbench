@@ -615,6 +615,27 @@ Sourced by `bin/otto-workbench`. Reads path constants (`USER_*`, `CLAUDE_*`,
 `SKILLS_*`, `GUIDELINES_*`) and colour vars from `lib/ui.sh`; nothing from
 CLI-local state.
 
+### packages.sh
+
+Package manifests — the Brewfiles under packages/ and the install identity
+their trailing annotations declare. One line owns each package: its formula,
+how it installs without Homebrew, and the binary it provides.
+
+Annotation grammar, after `#` on a brew line, `;`-separated:
+  mise: SPEC | linux: system | macos-only | git: URL   (exactly one disposition)
+  cmd: BIN                                             (optional)
+Cask lines are implicitly macos-only.
+
+| Function | Purpose |
+|----------|---------|
+| `package_manifests OUT` | fills array OUT with every *.Brewfile under $PACKAGES_DIR, recursively, sorted. |
+| `package_lookup NAME OUT` | fills assoc OUT with the manifest entry for NAME (full formula or its short name) plus OUT[manifest]. Returns 1 when NAME is in no manifest under $PACKAGES_DIR. |
+| `package_entries FILE OUT` | fills array OUT with FILE's short names in order. |
+| `packages_use_bundle` | 0 when package stacks install with `brew bundle`: macOS with Homebrew on PATH. Everywhere else stacks install entry by entry through install_package, which still prefers Homebrew (Linuxbrew) where it exists but skips the macOS-only entries and casks a Linux brew cannot install. Reads `uname -s` rather than $OSTYPE, which bash sets itself and a caller cannot vary. |
+| `install_package NAME [--version V]` | installs the manifest package NAME with Homebrew where it exists and otherwise with mise (`mise use -g SPEC[@V]`), bootstrapping mise first when neither is present. Skipped when the entry's binary already runs; a mise shim with no active version does not count. Returns 1 when NAME is in no manifest, has no mise spec on a machine without Homebrew, or the install fails; 2 on a usage error, including --version on a spec that already contains '@'. |
+
+Loaded via `ui.sh`.
+
 ### portable.sh
 
 Machine readers that work on both userlands.
@@ -931,7 +952,6 @@ Bash-only. Used primarily by `install.sh` and component setup scripts.
 | `install_via_installer CMD URL LABEL` | installs LABEL by running the vendor's own install script at URL, announcing it as LABEL and returning non-zero with a pointer to URL when curl is missing or the installer fails. The install is skipped when CMD is already in PATH. |
 | `version_at_least HAVE WANT` | succeeds when dotted version HAVE is WANT or newer, comparing numeric fields left to right; a missing field counts as 0. Pure bash: `sort -V` is GNU-only, and BSD sort has no version ordering. |
 | `ensure_tool_path` | appends the directories user-installed tools live in to PATH, each only if it exists and is not already there. |
-| `install_brew_or_mise CMD FORMULA MISE_TOOL LABEL` | installs LABEL with `brew install FORMULA` where Homebrew is available, and otherwise with `mise use -g MISE_TOOL`, installing mise itself first when neither installer is present. Skipped when CMD is already runnable from PATH — a mise shim with no active version does not count. Returns non-zero with both install commands named when neither installer is present or the install fails. |
 | `run_migrations DIR` | DEPRECATED: Use run_component_migrations from lib/migrations.sh instead. This function sources a single migrations.sh file with no state tracking. Kept for backward compatibility until all callers are migrated. |
 
 Loaded via `ui.sh`.
@@ -966,7 +986,7 @@ state_file_exists           # returns 0 if state file exists
 | `state_prune_orphans` | removes YAML entries that have no matching steps.sh. Requires lib/components.sh to be sourced (provides discover_step_files). |
 | `state_detect_installed` | detects currently installed components and records them. Uses heuristics (config files, symlinks, directories) to determine what is present. Called by the initial-state migration and by `otto-workbench discover regenerate`. |
 | `state_set KEY VALUE` | sets an arbitrary YAML path under components. Example: state_set "docker.runtime" "orbstack" |
-| `state_append_list KEY VALUE` | appends VALUE to a YAML list (idempotent). Example: state_append_list "brew.stacks" "infra/kubernetes" |
+| `state_append_list KEY VALUE` | appends VALUE to a YAML list (idempotent). Example: state_append_list "packages.stacks" "infra/kubernetes" |
 | `state_get KEY` | reads a YAML value. Returns empty string for missing/null keys. |
 | `state_set_list KEY [VALUE...]` | replaces a YAML list with exactly VALUE..., or empties it when no values are given. Values must not contain newlines, the same assumption `state_get_list` makes by printing one per line. |
 | `state_get_list KEY` | reads a YAML list, one item per line. |
@@ -1011,7 +1031,7 @@ The schema these functions read — the meta block, the tool entry fields, the
 vocabulary it checks a `role` value against.
 
 Sourced directly by its consumers — `bin/local/generate-tool-context`,
-`bin/local/validate-registries`, `brew/summary.sh`, `summary.sh`, and
+`bin/local/validate-registries`, `packages/summary.sh`, `summary.sh`, and
 `ai/claude/steps.sh`. Not in the `ui.sh` facade. It loads `roots.sh` itself when
 the caller has not already sourced `constants.sh`, since an
 `install_check_symlink` value may name a workbench root.
@@ -1030,14 +1050,14 @@ the caller has not already sourced `constants.sh`, since an
 | `reg_len FILE PATH_SEGMENT...` | the length of a sequence, or 0 when it holds nothing. |
 | `reg_len_into VAR FILE PATH_SEGMENT...` | `reg_len` without the fork. |
 | `collect_component_registries ARRAY_REF SCAN_DIR` | the component `registry.yml` files under a root. ARRAY_REF names the caller's array, which is replaced with the paths found one and two directories below SCAN_DIR, in glob order. SCAN_DIR is the root those globs are anchored at; a root holding none of them leaves the array empty rather than filling it with unexpanded patterns. |
-| `collect_registries ARRAY_REF SCAN_DIR [BREW_DIR]` | Populates the caller's array (via nameref) with deduplicated registry paths. |
+| `collect_registries ARRAY_REF SCAN_DIR [PACKAGES_DIR]` | Populates the caller's array (via nameref) with deduplicated registry paths. |
 | `registry_passes_install_check FILE` | returns 0 if the registry should be rendered. Checks meta.install_check and meta.install_check_command. |
 | `iter_registry_env FILE CALLBACK` | Calls CALLBACK var comment default_val setup_url prefix for each env[] entry. |
 | `iter_registry_auth FILE CALLBACK` | Calls CALLBACK name env_var setup_url prefix for each tool with an auth block. |
 | `reg_scan_hold CMD [ARG...]` | run CMD with one registry scan shared by every collector it calls. |
-| `collect_registry_permissions ARRAY_REF SCAN_DIR [BREW_DIR]` | Populates the caller's array (via nameref) with Claude Code Bash permission patterns derived from tools' permission field, one of the tool entry fields described in this module's header comment above. |
-| `collect_claude_env_vars SOURCES_REF TARGETS_REF SCAN_DIR [BREW_DIR]` | Populates two caller arrays (via nameref) with the env vars declared by every registry whose meta block sets `claude_env: true`: sources — the canonical names in ~/.env.local (e.g. AI_MODEL) targets — the names written into ~/.claude/settings.json (e.g. ANTHROPIC_MODEL) When a registry entry has no `target:` field, the target defaults to the source name (backward compatible with registries that predate the mapping). An entry carrying `claude_env: false` is skipped, so a flagged registry can hold one variable back without being split in two. |
-| `collect_model_env_vars VARS_REF ROLES_REF SCAN_DIR [BREW_DIR]` | Populates two caller arrays (via nameref) with the env vars every registry declares as carrying a model id, in declaration order, and the `role` each one was declared with. |
+| `collect_registry_permissions ARRAY_REF SCAN_DIR [PACKAGES_DIR]` | Populates the caller's array (via nameref) with Claude Code Bash permission patterns derived from tools' permission field, one of the tool entry fields described in this module's header comment above. |
+| `collect_claude_env_vars SOURCES_REF TARGETS_REF SCAN_DIR [PACKAGES_DIR]` | Populates two caller arrays (via nameref) with the env vars declared by every registry whose meta block sets `claude_env: true`: sources — the canonical names in ~/.env.local (e.g. AI_MODEL) targets — the names written into ~/.claude/settings.json (e.g. ANTHROPIC_MODEL) When a registry entry has no `target:` field, the target defaults to the source name (backward compatible with registries that predate the mapping). An entry carrying `claude_env: false` is skipped, so a flagged registry can hold one variable back without being split in two. |
+| `collect_model_env_vars VARS_REF ROLES_REF SCAN_DIR [PACKAGES_DIR]` | Populates two caller arrays (via nameref) with the env vars every registry declares as carrying a model id, in declaration order, and the `role` each one was declared with. |
 
 ### summary.sh
 

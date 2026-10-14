@@ -19,13 +19,13 @@ const ITEMS: CardItem[] = [
   { title: 'Scripts', href: '/docs/tools#scripts', body: 'Workbench utilities for environment management, validation, and code generation' },
   { title: 'Shell', href: '/docs/architecture#shell-zsh', body: 'ZSH with modular config layers, Starship prompt, and lazy-loaded plugins' },
   { title: 'Git', href: '/docs/architecture#git', body: 'Two-layer gitconfig, global hooks, and conventional commit conventions' },
-  { title: 'Tools', href: '/docs/tools#installed-tools', body: 'CLI tools managed via Homebrew, organized by domain' },
+  { title: 'Tools', href: '/docs/tools#installed-tools', body: 'CLI tools managed by the packages component, organized by domain' },
   { title: 'AI', href: '/docs/ai-automation', body: 'Claude Code integration with skills, agents, guidelines, and git automation' },
 ];
 
 const TIERS: CardItem[] = [
   { title: 'Core', accent: 'var(--ow-amarillo)', body: 'Always synced, on every machine', meta: 'bin · git · zsh' },
-  { title: 'Optional', accent: 'var(--ow-rosa)', body: 'Opt in from the install menu', meta: 'brew · docker · terminals · editors · ai · mise' },
+  { title: 'Optional', accent: 'var(--ow-rosa)', body: 'Opt in from the install menu', meta: 'packages · docker · terminals · editors · ai · mise' },
 ];
 
 const INSTALL = [
@@ -55,7 +55,7 @@ export default function Home() {
               Every machine.
             </>
           }
-          lede="Shell config, git settings, brew packages, editor preferences, and AI coding tools — managed through a component framework that keeps everything reproducible and in sync."
+          lede="Shell config, git settings, packages, editor preferences, and AI coding tools — managed through a component framework that keeps everything reproducible and in sync."
           actions={
             <>
               <Button href="/docs/getting-started">Get started</Button>

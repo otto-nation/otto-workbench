@@ -108,7 +108,9 @@ mytool/
   summary.sh    <- print_mytool_summary() for post-install output
 ```
 
-**Existing optional components:** `brew` (has sync), `docker` (has sync), `terminals` (has sync), `editors` (has sync), `ai` (has sync), `mise` (has sync)
+**Existing optional components:** `packages` (has sync), `docker` (has sync), `terminals` (has sync), `editors` (has sync), `ai` (has sync), `mise` (has sync)
+
+The **packages** component installs every Brewfile under [`packages/`](../packages/). On macOS with Homebrew it runs `brew bundle`; otherwise each entry goes through `install_package`. Manifest annotations and how to add a package are in [Registries — Package manifests](registries.md#package-manifests). `sync_packages` is a no-op — stacks are not reapplied on sync.
 
 ---
 

@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+# Validate package manifests: every brew line has exactly one disposition,
+# no unknown or empty annotation tokens, no annotation on a cask, no package
+# is listed in two manifests, and every install_package call names a package
+# that exists in a manifest.
+#
+# Usage: bin/local/validate-manifests [--quiet]
+#
+# Environment:
+#   PACKAGES_DIR    Manifest tree (default: <repo>/packages)
+#   VALIDATE_ROOT   Tree to scan for install_package call sites (default: repo root)
+#
+# Exit code: 0 if all checks pass, 1 if any fail.
+
+set -e
+
+_SELF="${BASH_SOURCE[0]}"
+# Path arithmetic rather than `git rev-parse --show-toplevel`: an inherited
+# GIT_DIR makes git skip discovery and answer the caller's cwd instead of the
+# repo root. See lib/ui.sh's header.
+_SCRIPT_ROOT="$(cd "$(dirname "$_SELF")/../.." && pwd)"
+# shellcheck source=/dev/null
+. "$_SCRIPT_ROOT/lib/ui.sh"
+
+PACKAGES_DIR="${PACKAGES_DIR:-$_SCRIPT_ROOT/packages}"
+VALIDATE_ROOT="${VALIDATE_ROOT:-$_SCRIPT_ROOT}"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--quiet]
+
+Validate package-manifest annotations and install_package call sites.
+
+Options:
+  --quiet     Suppress output on success
+  -h, --help  Show this help
+
+Environment:
+  PACKAGES_DIR    Manifest tree (default: <repo>/packages)
+  VALIDATE_ROOT   Tree to scan for install_package call sites (default: repo root)
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+QUIET=false
+[[ "${1:-}" == "--quiet" ]] && QUIET=true
+
+ERRORS=0
+
+_fail() {
+  ERRORS=$(( ERRORS + 1 ))
+  err "$*"
+}
+
+declare -A SEEN_NAME=()
+declare -A ENTRY=()
+
+# _check_one_entry FILE NAME TYPE DISPOSITION UNKNOWN EMPTY CASK_ANNOTATION — fails on
+# each problem with one parsed brew/cask line, then records NAME in SEEN_NAME.
+_check_one_entry() {
+  local file="$1" name="$2" type="$3" disposition="$4"
+  local unknown="${5:-}" empty="${6:-}" cask_annotation="${7:-}"
+  if [[ "$type" == brew && -z "$disposition" ]]; then
+    _fail "$name: no disposition in $file"
+  fi
+  if [[ "$disposition" == *" "* ]]; then
+    _fail "$name: more than one disposition in $file"
+  fi
+  if [[ -n "$unknown" ]]; then
+    _fail "$name: unknown annotation token ($unknown) in $file"
+  fi
+  if [[ -n "$empty" ]]; then
+    _fail "$name: empty annotation value ($empty) in $file"
+  fi
+  if [[ "$type" == cask && -n "$cask_annotation" ]]; then
+    _fail "$name: cask lines cannot carry annotations in $file"
+  fi
+  if [[ -n "${SEEN_NAME[$name]:-}" ]]; then
+    _fail "$name: listed in two manifests (${SEEN_NAME[$name]} and $file)"
+  fi
+  SEEN_NAME[$name]="$file"
+}
+
+# _check_manifests — every brew line has one disposition; no short name repeats.
+_check_manifests() {
+  local -a files
+  package_manifests files
+  local f line
+  for f in "${files[@]}"; do
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      _package_parse_line "$line" ENTRY || continue
+      _check_one_entry "$f" "${ENTRY[name]}" "${ENTRY[type]}" "${ENTRY[disposition]}" \
+        "${ENTRY[unknown]}" "${ENTRY[empty]}" "${ENTRY[cask_annotation]}"
+    done < "$f"
+  done
+}
+
+# _scan_file_calls FILE — every install_package argument in FILE is a known package.
+_scan_file_calls() {
+  local file="$1"
+  local match arg
+  local -a matches=()
+  while IFS= read -r match || [[ -n "$match" ]]; do
+    if [[ -z "$match" ]]; then
+      continue
+    fi
+    matches+=("$match")
+  done < <(grep -Eoh 'install_package[[:space:]]+\"?[A-Za-z0-9@/._-]+\"?' "$file" || true)
+  for match in "${matches[@]}"; do
+    arg="${match##*[[:space:]]}"
+    arg="${arg#\"}"
+    arg="${arg%\"}"
+    if [[ "$arg" == \$* || "$arg" == \"\$* ]]; then
+      continue
+    fi
+    if package_lookup "$arg" ENTRY; then
+      continue
+    fi
+    _fail "install_package $arg: not in any manifest ($file)"
+  done
+}
+
+# _check_call_sites — scan VALIDATE_ROOT for install_package NAME literals.
+_check_call_sites() {
+  local f
+  local -a files=()
+  [[ -d "$VALIDATE_ROOT" ]] || return 0
+  while IFS= read -r f || [[ -n "$f" ]]; do
+    if [[ -z "$f" ]]; then
+      continue
+    fi
+    files+=("$f")
+  done < <(find "$VALIDATE_ROOT" \
+    \( -name tests -o -name .superpowers -o -name node_modules -o -name docs \) -prune -o \
+    -type f \( -name '*.sh' -o -name 'steps.sh' -o \
+      \( \( -path "$VALIDATE_ROOT/bin/*" -o -path "$VALIDATE_ROOT/ai/bin/*" -o -path "$VALIDATE_ROOT/ai/*/bin/*" \) ! -name '*.*' \) \) -print \
+    | LC_ALL=C sort)
+  for f in "${files[@]}"; do
+    # The lookup implementation and this scanner name install_package in prose.
+    if [[ "$f" == */lib/packages.sh || "$f" == */bin/local/validate-manifests ]]; then
+      continue
+    fi
+    _scan_file_calls "$f"
+  done
+}
+
+# _check_dev_deps_installable — names in DEV_DEPS_INSTALLABLE are install_package
+# arguments the call-site scan cannot see (the loop passes "$entry").
+_check_dev_deps_installable() {
+  local file="$VALIDATE_ROOT/bin/local/dev-deps"
+  [[ -f "$file" ]] || return 0
+  local in_array=0 name line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ DEV_DEPS_INSTALLABLE=\( ]]; then
+      in_array=1
+      continue
+    fi
+    [[ "$in_array" -eq 1 ]] || continue
+    if [[ "$line" == *')'* ]]; then
+      in_array=0
+      continue
+    fi
+    name="${line#"${line%%[![:space:]]*}"}"
+    name="${name%"${name##*[![:space:]]}"}"
+    if [[ -z "$name" || "$name" == \#* ]]; then
+      continue
+    fi
+    name="${name%%#*}"
+    name="${name%"${name##*[![:space:]]}"}"
+    if [[ -z "$name" ]]; then
+      continue
+    fi
+    if package_lookup "$name" ENTRY; then
+      continue
+    fi
+    _fail "DEV_DEPS_INSTALLABLE $name: not in any manifest ($file)"
+  done < "$file"
+  return 0
+}
+
+_check_manifests
+_check_call_sites
+_check_dev_deps_installable
+
+if (( ERRORS > 0 )); then
+  err "$ERRORS error(s) in package manifests"
+  exit 1
+fi
+$QUIET || success "Package manifests are valid"
+exit 0

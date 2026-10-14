@@ -25,7 +25,7 @@ sync_rtk() {
 # without it, when not already in PATH. Non-fatal: the hook step after it skips
 # a missing rtk with its own warning.
 step_install_rtk() {
-  install_brew_or_mise rtk rtk rtk rtk || true
+  install_package rtk || true
 }
 
 # step_rtk_hook — installs the RTK PreToolUse hook into ~/.claude/settings.json.

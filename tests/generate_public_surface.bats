@@ -106,7 +106,7 @@ EOF
   [[ "$output" == *"command:get-secret"* ]]
   [[ "$output" == *"config:reuse.level"* ]]
   [[ "$output" == *"config:reuse.level=ultra"* ]]
-  [[ "$output" == *"component:brew"* ]]
+  [[ "$output" == *"component:packages"* ]]
 }
 
 @test "workbench-scoped tools are not public" {

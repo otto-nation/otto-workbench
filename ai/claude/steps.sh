@@ -544,7 +544,7 @@ step_install_claude() {
 # or mise on a machine without it) when wt is missing. Skips when worktrunk
 # cannot be installed or the plugin is already present.
 step_claude_worktrunk_plugin() {
-  install_brew_or_mise wt worktrunk worktrunk worktrunk || {
+  install_package worktrunk || {
     warn "Worktrunk Claude plugin skipped — re-run after installing worktrunk: otto-workbench sync ai"
     return 0
   }

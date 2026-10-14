@@ -32,7 +32,7 @@ setup() {
   SETTINGS="$REPO_ROOT/ai/claude/settings.json"
   PROJECT_SETTINGS="$REPO_ROOT/.claude/settings.json"
   SYNCED="$BATS_FILE_TMPDIR/home/.claude/settings.json"
-  BREW_REGISTRY="$REPO_ROOT/brew/registry.yml"
+  PACKAGES_REGISTRY="$REPO_ROOT/packages/registry.yml"
 }
 
 teardown() {
@@ -247,42 +247,42 @@ project_granted_dirs() {
 }
 
 @test "gh registry permission includes gh pr operations" {
-  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(. == "Bash(gh pr:*)")' "$BREW_REGISTRY"
+  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(. == "Bash(gh pr:*)")' "$PACKAGES_REGISTRY"
   [ "$status" -eq 0 ]
 }
 
 @test "gh registry permission includes gh issue operations" {
-  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(. == "Bash(gh issue:*)")' "$BREW_REGISTRY"
+  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(. == "Bash(gh issue:*)")' "$PACKAGES_REGISTRY"
   [ "$status" -eq 0 ]
 }
 
 @test "gh registry permission includes gh run operations" {
-  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(. == "Bash(gh run:*)")' "$BREW_REGISTRY"
+  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(. == "Bash(gh run:*)")' "$PACKAGES_REGISTRY"
   [ "$status" -eq 0 ]
 }
 
 @test "gh registry permission includes gh auth status (read-only check)" {
-  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(. == "Bash(gh auth status:*)")' "$BREW_REGISTRY"
+  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(. == "Bash(gh auth status:*)")' "$PACKAGES_REGISTRY"
   [ "$status" -eq 0 ]
 }
 
 @test "gh registry permission includes gh api for review comment workflows" {
-  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(. == "Bash(gh api:*)")' "$BREW_REGISTRY"
+  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(. == "Bash(gh api:*)")' "$PACKAGES_REGISTRY"
   [ "$status" -eq 0 ]
 }
 
 @test "gh registry permission does not permit gh secret management" {
-  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(test("gh secret"))' "$BREW_REGISTRY"
+  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(test("gh secret"))' "$PACKAGES_REGISTRY"
   [ "$status" -ne 0 ]
 }
 
 @test "gh registry permission does not permit gh auth login or token" {
-  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(test("gh auth (login|logout|token|refresh)"))' "$BREW_REGISTRY"
+  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(test("gh auth (login|logout|token|refresh)"))' "$PACKAGES_REGISTRY"
   [ "$status" -ne 0 ]
 }
 
 @test "gh registry permission does not permit destructive gh repo operations" {
-  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(test("gh repo (delete|edit|rename|transfer)"))' "$BREW_REGISTRY"
+  run yq -e '.tools[] | select(.name == "gh") | .permission[] | select(test("gh repo (delete|edit|rename|transfer)"))' "$PACKAGES_REGISTRY"
   [ "$status" -ne 0 ]
 }
 

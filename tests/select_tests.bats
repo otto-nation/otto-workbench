@@ -207,6 +207,14 @@ teardown() {
   [ "$status" -ne 0 ]
 }
 
+@test "extract_refs: a packages/setup.sh path is a source ref" {
+  local f="$BATS_TEST_TMPDIR/t.bats"
+  printf 'run "$REPO_ROOT/packages/setup.sh"\n' > "$f"
+  run _extract_refs "$f"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"packages/setup.sh"* ]]
+}
+
 # ── Full-suite triggers ─────────────────────────────────────────────────────
 
 @test "workflow changes trigger full suite" {

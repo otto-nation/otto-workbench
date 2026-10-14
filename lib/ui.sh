@@ -48,6 +48,8 @@ if [[ -n "${BASH_VERSION:-}" ]]; then
   . "$_ui_lib_dir/files.sh"
   # shellcheck source=setup.sh
   . "$_ui_lib_dir/setup.sh"
+  # shellcheck source=packages.sh
+  . "$_ui_lib_dir/packages.sh"
   # shellcheck source=state.sh
   . "$_ui_lib_dir/state.sh"
   # shellcheck source=projects.sh

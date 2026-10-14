@@ -74,20 +74,21 @@ def test_argv_lets_a_caller_override_the_quote_path_default():
 
 
 def test_a_metadata_read_takes_the_local_tier():
-    assert git.client._timeout_for(("rev-parse", "HEAD")) == core.timeouts.LOCAL
+    assert git.client.timeout_for(("rev-parse", "HEAD")) == core.timeouts.LOCAL
 
 
 def test_a_fetch_takes_the_transfer_tier():
     """--unshallow moves the whole history, so latency is not the bound."""
-    assert git.client._timeout_for(("fetch", "--unshallow")) == core.timeouts.TRANSFER
+    assert git.client.timeout_for(("fetch", "--unshallow")) == core.timeouts.TRANSFER
 
 
 @pytest.mark.parametrize("subcommand", [
     "worktree", "commit", "push", "rebase", "checkout", "stash", "add",
+    "status",
 ])
 def test_input_and_hook_bound_subcommands_run_unbounded(subcommand):
     """A fixed bound here reports a large repo, or a slow hook, as a breakage."""
-    assert git.client._timeout_for((subcommand, "-m", "x")) is core.timeouts.UNBOUNDED
+    assert git.client.timeout_for((subcommand, "-m", "x")) is core.timeouts.UNBOUNDED
 
 
 @pytest.mark.parametrize("args", [
@@ -102,19 +103,19 @@ def test_a_flat_cost_form_is_bounded_despite_its_subcommand(args):
     which is the failure the bounds exist to catch arriving on the calls least
     able to be a large input.
     """
-    assert git.client._timeout_for(args) == core.timeouts.LOCAL
+    assert git.client.timeout_for(args) == core.timeouts.LOCAL
 
 
 def test_the_wider_form_of_the_same_subcommand_stays_unbounded():
     """The exception is the two-word form, not the subcommand it belongs to."""
-    assert git.client._timeout_for(
+    assert git.client.timeout_for(
         ("checkout", "-B", "feat/x", "origin/feat/x"),
     ) is core.timeouts.UNBOUNDED
-    assert git.client._timeout_for(("stash", "pop")) is core.timeouts.UNBOUNDED
+    assert git.client.timeout_for(("stash", "pop")) is core.timeouts.UNBOUNDED
 
 
 def test_an_empty_argv_still_resolves_a_tier():
-    assert git.client._timeout_for(()) == core.timeouts.LOCAL
+    assert git.client.timeout_for(()) == core.timeouts.LOCAL
 
 
 def test_run_takes_no_timeout_from_its_caller():
@@ -131,7 +132,7 @@ def test_an_expired_bound_arrives_as_a_failed_result(repo, monkeypatch):
     the assertion would answer how fast the runner is rather than what an
     expired bound comes back as.
     """
-    monkeypatch.setattr(git.client, "_timeout_for", lambda args: 0.1)
+    monkeypatch.setattr(git.client, "timeout_for", lambda args: 0.1)
     slow = {"alias.slow": "!sleep 5"}
     r = git.client.run("slow", cwd=repo, config=slow)
     assert r.returncode == core.proc.TIMEOUT_RETURNCODE

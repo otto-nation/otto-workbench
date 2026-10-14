@@ -155,8 +155,15 @@ _PATH_LISTING = frozenset({"diff", "ls-files", "status"})
 # whole tree — `add -A` after a fix pass, `add -u` after a lockfile
 # regeneration. Nothing about the argv says how much that is, so the bound would
 # be a guess at the repository rather than at the operation.
+#
+# `status` stats every tracked file and walks the tree for untracked ones. On a
+# warm cache that is fast enough to pass for a metadata read, which is how it
+# came to sit at `LOCAL`; on a cold one it is disk-bound, and a 26,000-file
+# worktree measured 31s against a 10s bound — refusing a rebase because its
+# dirty-tree check could not finish, on a tree that was clean.
 _UNBOUNDED = frozenset({
     "worktree", "commit", "push", "rebase", "checkout", "stash", "add",
+    "status",
 })
 
 # The forms of an `_UNBOUNDED` subcommand whose cost is not the tree's after
@@ -183,11 +190,15 @@ _LOCAL_FORMS = frozenset({
 _TRANSFER = frozenset({"fetch", "ls-remote"})
 
 
-def _timeout_for(args: tuple[str, ...]) -> float | None:
+def timeout_for(args: tuple[str, ...]) -> float | None:
     """The bound for this subcommand — see `timeouts` for the tiers.
 
     Two words where one subcommand spans both cost classes — `_LOCAL_FORMS` —
     and the subcommand alone everywhere else.
+
+    Public for the few callers that must run git through `subprocess` rather
+    than `run`, so their bound still follows the subcommand instead of being
+    picked at the call site.
 
     ceiling: the two-word read is a fixed exception list rather than a general
     rule, so `remote get-url` (local) and a `remote update` (network) still
@@ -246,7 +257,7 @@ def run(
     `git.push` so a pre-push hook is visible while it runs.
     """
     return core.proc.run(
-        _argv(args, config), cwd=cwd, timeout=_timeout_for(args), env=env,
+        _argv(args, config), cwd=cwd, timeout=timeout_for(args), env=env,
         relay=relay,
     )
 

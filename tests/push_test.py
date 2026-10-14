@@ -47,7 +47,7 @@ from push_support import (  # noqa: E402
 
 def test_ls_remote_takes_the_transfer_tier():
     """A network read on the 10s local budget would expire on a slow remote."""
-    assert git.client._timeout_for(("ls-remote",)) == core.timeouts.TRANSFER
+    assert git.client.timeout_for(("ls-remote",)) == core.timeouts.TRANSFER
 
 
 # ── remote_head ─────────────────────────────────────────────────────────────

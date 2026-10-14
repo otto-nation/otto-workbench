@@ -100,6 +100,17 @@ def test_fetch_and_reset_skips_on_detached_head(mock_run, mock_log):
     assert "detached HEAD" in mock_log.warn.call_args.args[0]
 
 
+@patch("pr.sync.subprocess.run")
+def test_fetch_and_reset_reads_status_without_a_bound(mock_run):
+    """A cold `status` on a large tree outlasts any flat bound — and a timeout
+    here reads as dirty, refusing a reset the tree was safe for."""
+    mock_run.side_effect = _safe_reset_runs()
+    fetch_and_reset("/wt", "feat/x")
+    status_call = mock_run.call_args_list[2]
+    assert "status" in status_call.args[0]
+    assert status_call.kwargs["timeout"] is None
+
+
 @patch("pr.sync.subprocess.run", side_effect=Exception("network error"))
 def test_fetch_and_reset_survives_fetch_exception(mock_run):
     fetch_and_reset("/wt", "feat/x")

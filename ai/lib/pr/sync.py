@@ -17,6 +17,7 @@ from __future__ import annotations
 import subprocess
 from dataclasses import replace as dataclass_replace
 
+import git.client
 import git.topology
 import core.log
 import pr.context
@@ -32,11 +33,15 @@ def _reset_guard_read(cwd: str, *args: str) -> subprocess.CompletedProcess:
     raised out of `subprocess.run` would otherwise abort the command from
     inside a safety check. `proc.run` folds the same exception into a result
     for the callers that go through the git client.
+
+    The bound is the one `git.client` gives the same subcommand, so `status`
+    runs unbounded — its cost is the tree's — without this call site choosing.
     """
     argv = ["git", "-C", cwd, *args]
     try:
         return subprocess.run(
-            argv, capture_output=True, text=True, timeout=core.timeouts.LOCAL,
+            argv, capture_output=True, text=True,
+            timeout=git.client.timeout_for(args),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return subprocess.CompletedProcess(argv, 1, "", f"{type(exc).__name__}: {exc}")

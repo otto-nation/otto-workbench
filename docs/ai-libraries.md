@@ -5107,7 +5107,7 @@ actually predicts the right answer is **what bounds the cost**:
 | `LOCAL` | Flat-cost local reads — `rev-parse`, `merge-base`, `log`, `grep`, `diff`, a `yq` parse | Scales with neither history nor tree size in any way that approaches the bound. |
 | `NETWORK` | One round trip — a single `gh api` call, a tracker CLI, an HTTP request | Bounded by latency, not payload, so a breach means the far end stopped answering. |
 | `TRANSFER` | Data-proportional over a socket — `fetch`, `gh api --paginate` | As large as the history or the result set, but a socket can stall in a way waiting will not fix. |
-| `UNBOUNDED` | `worktree add`, `commit`, `push`, `rebase`, `checkout`, `stash`, `add` | A bound would be wrong, not merely large. |
+| `UNBOUNDED` | `worktree add`, `commit`, `push`, `rebase`, `checkout`, `stash`, `add`, `status` | A bound would be wrong, not merely large. |
 
 For the first three tiers the cost is the same whatever the repository holds, so
 a breach means something is genuinely wrong — a hang, a dead socket, a deadlock —

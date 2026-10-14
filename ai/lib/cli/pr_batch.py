@@ -32,6 +32,7 @@ import batch.events
 import batch.plan
 import batch.report
 import batch.resolve
+import batch.requests
 import batch.scheduler
 import batch.store
 import batch.targets
@@ -189,9 +190,15 @@ def _apply_loaded(run: Run, bin_dir: Path,
         if isinstance(raw, dict) and raw.get("error") and "decision" not in raw:
             errors.append(raw["error"])
             continue
+        req = batch.requests.parse(raw)
+        if isinstance(req, batch.requests.Malformed):
+            errors.append(req.reason)
+            continue
+        if not isinstance(req, batch.requests.Decide):
+            errors.append("not a decide request")
+            continue
         try:
-            batch.resolve.apply(run, batch.resolve.Request.from_dict(raw), pr_bin=pr_bin,
-                                env_for=env_for)
+            batch.resolve.apply(run, req, pr_bin=pr_bin, env_for=env_for)
         except (batch.resolve.ResolveError, KeyError, TypeError) as exc:
             errors.append(str(exc))
     if (run.status in (RunStatus.WAITING, RunStatus.RUNNING)

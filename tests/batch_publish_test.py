@@ -17,6 +17,7 @@ if str(LIB_DIR) not in sys.path:
 import batch.model  # noqa: E402
 import batch.publish  # noqa: E402
 import batch.resolve  # noqa: E402
+import batch.requests  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
 from batch.plan import PlanRow, StepNeed  # noqa: E402
@@ -246,7 +247,7 @@ def test_publishing_a_fast_forward_moves_the_remote_and_the_lease(tmp_path):
     (pair.work / "fix.txt").write_text("fix\n")
     commit_all(pair.work, "fix: x")
     local = git_out(pair.work, "rev-parse", "HEAD").strip()
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"),
+    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"),
                         pr_bin=PR_BIN)
     assert remote_tip(pair.origin, "feat") == local
     assert run.items[0].remote_sha == local == run.items[0].published_sha
@@ -265,7 +266,7 @@ def test_a_publish_that_commits_before_pushing_leases_on_what_it_pushed(tmp_path
         git_in(pair.work, "push", "-q", "origin", "feat")
         return 0
 
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr",
+    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"), pr_bin="pr",
                         runner=regenerating_push)
     assert run.items[0].remote_sha == remote_tip(pair.origin, "feat")
     assert run.items[0].published_sha == run.items[0].remote_sha
@@ -276,7 +277,7 @@ def test_a_fast_forward_publish_logs_what_the_push_said(tmp_path):
     run = _publish_run(pair)
     (pair.work / "fix.txt").write_text("fix\n")
     commit_all(pair.work, "fix: x")
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"),
+    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"),
                         pr_bin=PR_BIN)
     logs = sorted(batch.store.logs_dir("r1").glob("o__r-1-publish-*.log"))
     assert [p.name for p in logs] == ["o__r-1-publish-0.log"]
@@ -294,7 +295,7 @@ def test_a_fast_forward_a_hook_refuses_records_pre_push_rejected(tmp_path, live_
     git_in(pair.work, "config", "core.hooksPath", str(hooks))
     (pair.work / "fix.txt").write_text("fix\n")
     commit_all(pair.work, "fix: x")
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"),
+    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"),
                         pr_bin=PR_BIN)
     failed = run.open_decisions()[-1]
     assert failed.payload["reason"] == "pre_push_rejected"

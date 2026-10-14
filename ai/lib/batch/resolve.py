@@ -43,6 +43,7 @@ import batch.publish
 import batch.store
 import core.timeouts
 from batch.model import Decision, DecisionKind, Item, ItemStatus, Run, Step, StepStatus
+from batch.requests import Decide
 from batch.store import now_iso
 from pr.comments_fix import CloseoutDebt
 
@@ -66,7 +67,7 @@ _COMMAND_HEADER = "$ "
 
 @dataclass(frozen=True)
 class ActionInput:
-    """One flag an action reads off its request; `attr` is the `Request` field it fills."""
+    """One flag an action reads off its request; `attr` is the `Decide` field it fills."""
 
     flag: str
     attr: str
@@ -85,20 +86,6 @@ ACTION_INPUTS: dict[str, tuple[ActionInput, ...]] = {
 
 class ResolveError(ValueError):
     pass
-
-
-@dataclass(frozen=True)
-class Request:
-    decision: str
-    action: str
-    reason: str = ""
-    body_file: str = ""
-    commit: str = ""
-
-    @classmethod
-    def from_dict(cls, d: dict) -> Request:
-        return cls(decision=d["decision"], action=d["action"], reason=d.get("reason", ""),
-                   body_file=d.get("body_file", ""), commit=d.get("commit", ""))
 
 
 def default_runner(argv: list[str], log_path: Path | None = None, *,
@@ -156,7 +143,7 @@ def _unavailable(decision: Decision, action: str, item: Item) -> str:
     return ""
 
 
-def _validate(decision: Decision, request: Request, item: Item) -> None:
+def _validate(decision: Decision, request: Decide, item: Item) -> None:
     if not decision.open:
         raise ResolveError(f"{decision.id} is already resolved ({decision.resolution})")
     if refusal := _unavailable(decision, request.action, item):
@@ -183,7 +170,7 @@ def resolve_command(run_id: str, decision_id: str, action: str) -> str:
     return " ".join(parts)
 
 
-def command_for(decision: Decision, item: Item, request: Request,
+def command_for(decision: Decision, item: Item, request: Decide,
                 pr_bin: str) -> list[list[str]]:
     wt = ["--repo-dir", item.worktree]
     a = request.action
@@ -384,7 +371,7 @@ def _adopt_own_push(item: Item, after: batch.publish.TreeState) -> bool:
     return True
 
 
-def apply(run: Run, request: Request, *, pr_bin: str,
+def apply(run: Run, request: Decide, *, pr_bin: str,
           runner: Callable[..., int] | None = None,
           tree: Callable[[Item], batch.publish.TreeState] | None = None,
           closeout: Callable[[str, str], CloseoutDebt] | None = None,
@@ -413,7 +400,7 @@ def apply(run: Run, request: Request, *, pr_bin: str,
     return _effect(run, item, decision, request.action, ok)
 
 
-def _run_commands(decision: Decision, item: Item, request: Request, pr_bin: str,
+def _run_commands(decision: Decision, item: Item, request: Decide, pr_bin: str,
                    run_cmd: Callable[..., int]) -> bool:
     for argv in command_for(decision, item, request, pr_bin):
         if run_cmd(argv) == 0:

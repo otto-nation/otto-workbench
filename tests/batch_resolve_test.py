@@ -10,6 +10,7 @@ if str(LIB_DIR) not in sys.path:
 
 import batch.model  # noqa: E402
 import batch.resolve  # noqa: E402
+import batch.requests  # noqa: E402
 import cli.pr_batch  # noqa: E402
 from batch_scheduler_support import _even  # noqa: E402
 from batch.publish import TreeState  # noqa: E402
@@ -52,14 +53,14 @@ class Recorder:
 def test_settle_dismissed_requires_reason():
     run = _run(_d(batch.model.DecisionKind.COMMENT_ITEM, "comments", {"id": "PRRT_1", "replyable": True}))
     with pytest.raises(batch.resolve.ResolveError, match="reason"):
-        batch.resolve.apply(run, batch.resolve.Request("d1", "settle-dismissed"), pr_bin="pr", runner=Recorder())
+        batch.resolve.apply(run, batch.requests.Decide("d1", "settle-dismissed"), pr_bin="pr", runner=Recorder())
 
 
 def test_settle_dismissed_runs_the_settle_and_closes_the_comments_step():
     run = _run(_d(batch.model.DecisionKind.COMMENT_ITEM, "comments", {"id": "PRRT_1", "replyable": True}))
     run.items[0].step(batch.model.Step.COMMENTS).status = batch.model.StepStatus.NEEDS_DECISION
     rec = Recorder()
-    batch.resolve.apply(run, batch.resolve.Request("d1", "settle-dismissed", reason="n/a"), pr_bin="pr", runner=rec)
+    batch.resolve.apply(run, batch.requests.Decide("d1", "settle-dismissed", reason="n/a"), pr_bin="pr", runner=rec)
     assert rec.calls == [["pr", "comments", "--settle", "PRRT_1", "--as", "dismissed",
                           "--reason", "n/a", "--repo-dir", "/wt"]]
     assert run.decision("d1").resolution == "settle-dismissed"
@@ -71,7 +72,7 @@ def test_comments_step_stays_open_while_other_items_are_owed():
     run = _run(_d(batch.model.DecisionKind.COMMENT_ITEM, "comments", {"id": "A", "replyable": True}, "d1"),
                _d(batch.model.DecisionKind.COMMENT_ITEM, "comments", {"id": "B", "replyable": True}, "d2"))
     run.items[0].step(batch.model.Step.COMMENTS).status = batch.model.StepStatus.NEEDS_DECISION
-    batch.resolve.apply(run, batch.resolve.Request("d1", "track"), pr_bin="pr", runner=Recorder())
+    batch.resolve.apply(run, batch.requests.Decide("d1", "track"), pr_bin="pr", runner=Recorder())
     assert run.items[0].track == ["A"]
     assert run.items[0].step(batch.model.Step.COMMENTS).status is batch.model.StepStatus.NEEDS_DECISION
     assert run.items[0].status is batch.model.ItemStatus.AWAITING_DECISION
@@ -80,42 +81,42 @@ def test_comments_step_stays_open_while_other_items_are_owed():
 def test_failed_settle_keeps_the_decision_open():
     run = _run(_d(batch.model.DecisionKind.COMMENT_ITEM, "comments", {"id": "A", "replyable": True}))
     with pytest.raises(batch.resolve.ResolveError, match="failed"):
-        batch.resolve.apply(run, batch.resolve.Request("d1", "settle-fixed"), pr_bin="pr", runner=Recorder(code=1))
+        batch.resolve.apply(run, batch.requests.Decide("d1", "settle-fixed"), pr_bin="pr", runner=Recorder(code=1))
     assert run.decision("d1").open
 
 
 def test_reply_refused_for_synthetic_ids():
     run = _run(_d(batch.model.DecisionKind.COMMENT_ITEM, "comments", {"id": "ic-1-0", "replyable": False}))
     with pytest.raises(batch.resolve.ResolveError, match="reply"):
-        batch.resolve.apply(run, batch.resolve.Request("d1", "reply", body_file="/tmp/b"), pr_bin="pr",
+        batch.resolve.apply(run, batch.requests.Decide("d1", "reply", body_file="/tmp/b"), pr_bin="pr",
                   runner=Recorder())
 
 
 def test_unknown_action_for_kind_is_refused_and_lists_valid_ones():
     run = _run(_d(batch.model.DecisionKind.OPEN_FINDINGS, "review"))
     with pytest.raises(batch.resolve.ResolveError, match="accept"):
-        batch.resolve.apply(run, batch.resolve.Request("d1", "abort"), pr_bin="pr", runner=Recorder())
+        batch.resolve.apply(run, batch.requests.Decide("d1", "abort"), pr_bin="pr", runner=Recorder())
 
 
 def test_resolved_decision_cannot_be_resolved_twice():
     run = _run(_d(batch.model.DecisionKind.OPEN_FINDINGS, "review"))
-    batch.resolve.apply(run, batch.resolve.Request("d1", "accept"), pr_bin="pr", runner=Recorder())
+    batch.resolve.apply(run, batch.requests.Decide("d1", "accept"), pr_bin="pr", runner=Recorder())
     with pytest.raises(batch.resolve.ResolveError, match="already"):
-        batch.resolve.apply(run, batch.resolve.Request("d1", "accept"), pr_bin="pr", runner=Recorder())
+        batch.resolve.apply(run, batch.requests.Decide("d1", "accept"), pr_bin="pr", runner=Recorder())
 
 
 def test_force_needs_an_override():
     run = _run(_d(batch.model.DecisionKind.REBASE_REFUSED, "rebase", {"status": "unrelated_history",
                                                             "override": ""}))
     with pytest.raises(batch.resolve.ResolveError, match="override"):
-        batch.resolve.apply(run, batch.resolve.Request("d1", "force"), pr_bin="pr", runner=Recorder())
+        batch.resolve.apply(run, batch.requests.Decide("d1", "force"), pr_bin="pr", runner=Recorder())
 
 
 def test_force_runs_a_forced_draft_rebase_and_marks_it_drafted(monkeypatch):
     monkeypatch.setattr(batch.outcomes, "recorded_pre_rebase_head", lambda item: "")
     run = _run(_d(batch.model.DecisionKind.REBASE_REFUSED, "rebase", {"override": "--force"}))
     rec = Recorder()
-    batch.resolve.apply(run, batch.resolve.Request("d1", "force"), pr_bin="pr", runner=rec)
+    batch.resolve.apply(run, batch.requests.Decide("d1", "force"), pr_bin="pr", runner=rec)
     assert rec.calls == [["pr", "rebase", "--fix", "--force", "--no-push", "--repo-dir", "/wt"]]
     rb = run.items[0].step(batch.model.Step.REBASE)
     assert rb.status is batch.model.StepStatus.DONE and rb.drafted
@@ -124,19 +125,19 @@ def test_force_runs_a_forced_draft_rebase_and_marks_it_drafted(monkeypatch):
 def test_retry_resets_the_step():
     run = _run(_d(batch.model.DecisionKind.FAILED, "review", {"reason": "lock_busy"}))
     run.items[0].step(batch.model.Step.REVIEW).status = batch.model.StepStatus.FAILED
-    batch.resolve.apply(run, batch.resolve.Request("d1", "retry"), pr_bin="pr", runner=Recorder())
+    batch.resolve.apply(run, batch.requests.Decide("d1", "retry"), pr_bin="pr", runner=Recorder())
     assert run.items[0].step(batch.model.Step.REVIEW).status is batch.model.StepStatus.PENDING
 
 
 def test_drop_pr_drops_the_item():
     run = _run(_d(batch.model.DecisionKind.DIRTY_WORKTREE, "worktree"))
-    batch.resolve.apply(run, batch.resolve.Request("d1", "drop-pr"), pr_bin="pr", runner=Recorder())
+    batch.resolve.apply(run, batch.requests.Decide("d1", "drop-pr"), pr_bin="pr", runner=Recorder())
     assert run.items[0].status is batch.model.ItemStatus.DROPPED
 
 
 def test_drop_pr_on_rebase_refused_drops_the_item():
     run = _run(_d(batch.model.DecisionKind.REBASE_REFUSED, "rebase", {"override": "--force"}))
-    batch.resolve.apply(run, batch.resolve.Request("d1", "drop-pr"), pr_bin="pr", runner=Recorder())
+    batch.resolve.apply(run, batch.requests.Decide("d1", "drop-pr"), pr_bin="pr", runner=Recorder())
     assert run.items[0].status is batch.model.ItemStatus.DROPPED
 
 
@@ -146,20 +147,20 @@ def test_skip_pr_is_not_an_action():
 
 def test_skip_step_on_a_worktree_failure_drops_the_item():
     run = _run(_d(batch.model.DecisionKind.FAILED, "worktree", {"reason": "error"}))
-    batch.resolve.apply(run, batch.resolve.Request("d1", "skip-step"), pr_bin="pr", runner=Recorder())
+    batch.resolve.apply(run, batch.requests.Decide("d1", "skip-step"), pr_bin="pr", runner=Recorder())
     assert run.items[0].status is batch.model.ItemStatus.DROPPED
 
 
 def test_skip_step_on_a_publish_failure_drops_the_item():
     run = _run(_d(batch.model.DecisionKind.FAILED, "publish", {"reason": "error"}))
-    batch.resolve.apply(run, batch.resolve.Request("d1", "skip-step"), pr_bin="pr", runner=Recorder())
+    batch.resolve.apply(run, batch.requests.Decide("d1", "skip-step"), pr_bin="pr", runner=Recorder())
     assert run.items[0].status is batch.model.ItemStatus.DROPPED
 
 
 def test_failed_publish_leaves_a_failed_decision():
     run = _run(_d(batch.model.DecisionKind.PUBLISH, "publish"))
     run.items[0].step(batch.model.Step.REVIEW).drafted = True
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr", runner=Recorder(code=1),
+    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"), pr_bin="pr", runner=Recorder(code=1),
                         tree=_ff)
     new = run.open_decisions()
     assert run.items[0].status is batch.model.ItemStatus.AWAITING_DECISION
@@ -169,7 +170,7 @@ def test_failed_publish_leaves_a_failed_decision():
 def test_successful_publish_finishes_the_item():
     run = _run(_d(batch.model.DecisionKind.PUBLISH, "publish"))
     run.items[0].step(batch.model.Step.REVIEW).drafted = True
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr", runner=Recorder(),
+    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"), pr_bin="pr", runner=Recorder(),
                         tree=_ff)
     assert run.items[0].status is batch.model.ItemStatus.DONE
     assert run.items[0].remote_sha == "new"
@@ -179,16 +180,16 @@ def test_force_publish_answers_only_a_not_incorporated_remote_refusal():
     run = _run(_d(batch.model.DecisionKind.PUBLISH, "publish"),
                _d(batch.model.DecisionKind.FAILED, "publish", {"reason": "error"}, id="d0"))
     with pytest.raises(batch.resolve.ResolveError, match="not_incorporated_remote"):
-        batch.resolve.apply(run, batch.resolve.Request("d0", "force-publish"), pr_bin="pr",
+        batch.resolve.apply(run, batch.requests.Decide("d0", "force-publish"), pr_bin="pr",
                             runner=Recorder(), tree=_stale)
     rec = Recorder()
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr", runner=rec,
+    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"), pr_bin="pr", runner=rec,
                         tree=_stale)
     refusal = run.open_decisions()[-1]
     assert rec.calls == []
     assert (refusal.kind, refusal.payload["reason"], refusal.payload["commits"]) == (
         batch.model.DecisionKind.FAILED, "not_incorporated_remote", ["c1 elsewhere"])
-    batch.resolve.apply(run, batch.resolve.Request(refusal.id, "force-publish"), pr_bin="pr",
+    batch.resolve.apply(run, batch.requests.Decide(refusal.id, "force-publish"), pr_bin="pr",
                         runner=rec, tree=_stale)
     assert rec.calls == [["pr", "rebase", "--push-only", "--expect", "s", "--repo-dir", "/wt"]]
     assert run.items[0].status is batch.model.ItemStatus.DONE
@@ -197,7 +198,7 @@ def test_force_publish_answers_only_a_not_incorporated_remote_refusal():
 def test_force_publish_refuses_again_when_a_remote_commit_appeared_since():
     run = _run(_d(batch.model.DecisionKind.PUBLISH, "publish"))
     rec = Recorder()
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr", runner=rec,
+    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"), pr_bin="pr", runner=rec,
                         tree=_stale)
     refusal = run.open_decisions()[-1]
 
@@ -206,7 +207,7 @@ def test_force_publish_refuses_again_when_a_remote_commit_appeared_since():
                          divergence=RefDivergence(ahead=1, behind=2, comparable=True),
                          unincorporated=("c1 elsewhere", "c2 later"))
 
-    batch.resolve.apply(run, batch.resolve.Request(refusal.id, "force-publish"), pr_bin="pr",
+    batch.resolve.apply(run, batch.requests.Decide(refusal.id, "force-publish"), pr_bin="pr",
                         runner=rec, tree=grown)
     again = run.open_decisions()[-1]
     assert rec.calls == []
@@ -234,17 +235,17 @@ def test_a_landed_push_moves_the_lease_even_when_the_replies_fail():
             return 0
         return 1
 
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr", runner=runner,
+    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"), pr_bin="pr", runner=runner,
                         tree=tree)
     failed = run.open_decisions()[-1]
     assert (item.remote_sha, item.published_sha) == ("new", "new")
     assert failed.payload["reason"] == "error"
     # A retry re-queues the item; the scheduler then asks for the publish again.
-    batch.resolve.apply(run, batch.resolve.Request(failed.id, "retry"), pr_bin="pr",
+    batch.resolve.apply(run, batch.requests.Decide(failed.id, "retry"), pr_bin="pr",
                         runner=Recorder(), tree=tree)
     run.decisions.append(_d(batch.model.DecisionKind.PUBLISH, "publish", id="d2"))
     rec = Recorder()
-    batch.resolve.apply(run, batch.resolve.Request("d2", "publish"), pr_bin="pr",
+    batch.resolve.apply(run, batch.requests.Decide("d2", "publish"), pr_bin="pr",
                         runner=rec, tree=tree)
     assert rec.calls == [["pr", "comments", "--finish", "--post", "--repo-dir", "/wt"]]
     assert item.status is batch.model.ItemStatus.DONE
@@ -253,7 +254,7 @@ def test_a_landed_push_moves_the_lease_even_when_the_replies_fail():
 def test_open_chat_is_left_to_the_ui():
     run = _run(_d(batch.model.DecisionKind.OPEN_FINDINGS, "review"))
     with pytest.raises(batch.resolve.ResolveError, match="UI"):
-        batch.resolve.apply(run, batch.resolve.Request("d1", "open-chat"), pr_bin="pr", runner=Recorder())
+        batch.resolve.apply(run, batch.requests.Decide("d1", "open-chat"), pr_bin="pr", runner=Recorder())
 
 
 def test_default_runner_keeps_child_stdout_off_the_event_stream(tmp_path, capfd):
@@ -268,7 +269,7 @@ def test_default_runner_keeps_child_stdout_off_the_event_stream(tmp_path, capfd)
 def test_failed_abort_leaves_a_failed_decision_and_does_not_skip_rebase():
     run = _run(_d(batch.model.DecisionKind.REBASE_CONFLICT, "rebase"))
     run.items[0].step(batch.model.Step.REBASE).status = batch.model.StepStatus.NEEDS_DECISION
-    batch.resolve.apply(run, batch.resolve.Request("d1", "abort"), pr_bin="pr", runner=Recorder(code=1))
+    batch.resolve.apply(run, batch.requests.Decide("d1", "abort"), pr_bin="pr", runner=Recorder(code=1))
     new = [d for d in run.open_decisions() if d.id != "d1"]
     assert [(d.kind, d.step) for d in new] == [(batch.model.DecisionKind.FAILED, "rebase")]
     assert run.items[0].step(batch.model.Step.REBASE).status is batch.model.StepStatus.NEEDS_DECISION
@@ -285,7 +286,7 @@ from conftest import commit_all, git_out, init_repo  # noqa: E402
 
 def test_accept_on_a_ci_step_review_finishes_ci_not_review():
     run = _run(_d(batch.model.DecisionKind.STEP_REVIEW, "ci", {"evidence": []}))
-    batch.resolve.apply(run, batch.resolve.Request("d1", "accept"), pr_bin="pr", runner=Recorder())
+    batch.resolve.apply(run, batch.requests.Decide("d1", "accept"), pr_bin="pr", runner=Recorder())
     it = run.items[0]
     assert it.step(batch.model.Step.CI).status is batch.model.StepStatus.DONE
     assert it.step(batch.model.Step.REVIEW).status is batch.model.StepStatus.PENDING
@@ -293,7 +294,7 @@ def test_accept_on_a_ci_step_review_finishes_ci_not_review():
 
 def test_skip_step_on_a_step_review_skips_that_step():
     run = _run(_d(batch.model.DecisionKind.STEP_REVIEW, "comments", {"evidence": []}))
-    batch.resolve.apply(run, batch.resolve.Request("d1", "skip-step"), pr_bin="pr",
+    batch.resolve.apply(run, batch.requests.Decide("d1", "skip-step"), pr_bin="pr",
                         runner=Recorder())
     assert run.items[0].step(batch.model.Step.COMMENTS).status is batch.model.StepStatus.SKIPPED
 
@@ -304,7 +305,7 @@ def test_undo_resets_to_the_pre_rebase_head_and_undrafts_the_rebase():
     it.pre_rebase_head = "p0"
     it.step(batch.model.Step.REBASE).drafted = True
     rec = Recorder()
-    batch.resolve.apply(run, batch.resolve.Request("d1", "undo"), pr_bin="pr", runner=rec)
+    batch.resolve.apply(run, batch.requests.Decide("d1", "undo"), pr_bin="pr", runner=rec)
     assert rec.calls == [["git", "-C", "/wt", "reset", "--hard", "p0"]]
     rb = it.step(batch.model.Step.REBASE)
     assert rb.status is batch.model.StepStatus.SKIPPED and rb.drafted is False
@@ -315,11 +316,11 @@ def test_undo_is_refused_off_a_rebase_or_without_a_recorded_tip():
     run = _run(_d(batch.model.DecisionKind.STEP_REVIEW, "review", {"evidence": []}))
     run.items[0].pre_rebase_head = "p0"
     with pytest.raises(batch.resolve.ResolveError, match="undo"):
-        batch.resolve.apply(run, batch.resolve.Request("d1", "undo"), pr_bin="pr",
+        batch.resolve.apply(run, batch.requests.Decide("d1", "undo"), pr_bin="pr",
                             runner=Recorder())
     bare = _run(_d(batch.model.DecisionKind.STEP_REVIEW, "rebase", {"evidence": []}))
     with pytest.raises(batch.resolve.ResolveError, match="undo"):
-        batch.resolve.apply(bare, batch.resolve.Request("d1", "undo"), pr_bin="pr",
+        batch.resolve.apply(bare, batch.requests.Decide("d1", "undo"), pr_bin="pr",
                             runner=Recorder())
 
 
@@ -332,7 +333,7 @@ def test_undo_really_restores_the_worktree(tmp_path):
     commit_all(repo, "rebased")
     run = _run(_d(batch.model.DecisionKind.STEP_REVIEW, "rebase", {"evidence": []}))
     run.items[0].worktree, run.items[0].pre_rebase_head = str(repo), pre
-    batch.resolve.apply(run, batch.resolve.Request("d1", "undo"), pr_bin="pr")
+    batch.resolve.apply(run, batch.requests.Decide("d1", "undo"), pr_bin="pr")
     assert git_out(repo, "rev-parse", "HEAD").strip() == pre
 
 
@@ -340,7 +341,7 @@ def test_a_forced_rebase_records_the_tip_it_started_from(monkeypatch):
     monkeypatch.setattr(batch.outcomes, "_load_pr_state",
                         lambda item: SimpleNamespace(rebase=SimpleNamespace(pre_rebase_head="p9")))
     run = _run(_d(batch.model.DecisionKind.REBASE_REFUSED, "rebase", {"override": "--force"}))
-    batch.resolve.apply(run, batch.resolve.Request("d1", "force"), pr_bin="pr", runner=Recorder())
+    batch.resolve.apply(run, batch.requests.Decide("d1", "force"), pr_bin="pr", runner=Recorder())
     assert run.items[0].pre_rebase_head == "p9"
 
 
@@ -354,7 +355,7 @@ def test_a_failed_publish_records_its_reason_detail_and_log():
                             "  PRE-PUSH CHECKS FAILED\n")
         return 1
 
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr",
+    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"), pr_bin="pr",
                         runner=refused, tree=_ff)
     failed = run.open_decisions()[-1]
     assert failed.payload["reason"] == "pre_push_rejected"
@@ -427,7 +428,7 @@ def _failing_publish(text):
         log_path.write_text(text)
         return 1
 
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr",
+    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"), pr_bin="pr",
                         runner=runner, tree=_ff)
     return run.open_decisions()[-1]
 
@@ -454,7 +455,7 @@ def _publish_decision():
 
 def test_publish_pays_a_closeout_pr_recorded_with_nothing_to_push():
     run, rec = _run(_publish_decision()), Recorder()
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr", runner=rec,
+    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"), pr_bin="pr", runner=rec,
                         tree=_even, closeout=lambda d, b: CloseoutDebt(summary=True))
     assert rec.calls == [["pr", "comments", "--finish", "--post", "--repo-dir", "/wt"]]
     assert run.items[0].status is batch.model.ItemStatus.DONE
@@ -463,7 +464,7 @@ def test_publish_pays_a_closeout_pr_recorded_with_nothing_to_push():
 def test_the_closeout_seam_is_asked_about_the_items_checkout_and_branch():
     asked = []
     run = _run(_publish_decision())
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr",
+    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"), pr_bin="pr",
                         runner=Recorder(), tree=_even,
                         closeout=lambda d, b: asked.append((d, b)) or CloseoutDebt())
     assert asked == [("/r", "b")]
@@ -476,7 +477,7 @@ def test_a_push_finish_made_becomes_the_lease():
     reads = iter([_even(item),
                   TreeState(local="held", remote="held",
                             divergence=RefDivergence(ahead=0, behind=0, comparable=True))])
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr",
+    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"), pr_bin="pr",
                         runner=Recorder(), tree=lambda i: next(reads),
                         closeout=lambda d, b: CloseoutDebt(summary=True))
     assert planned != "held"
@@ -490,7 +491,7 @@ def test_a_remote_somebody_else_moved_during_finish_is_not_adopted():
     reads = iter([_even(item),
                   TreeState(local=planned, remote="theirs",
                             divergence=RefDivergence(ahead=0, behind=1, comparable=True))])
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr",
+    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"), pr_bin="pr",
                         runner=Recorder(), tree=lambda i: next(reads),
                         closeout=lambda d, b: CloseoutDebt(summary=True))
     assert (item.remote_sha, item.published_sha) == (planned, "")
@@ -503,7 +504,7 @@ def test_adopting_a_finish_push_reopens_ci_under_watch_ci():
     reads = iter([_even(item),
                   TreeState(local="held", remote="held",
                             divergence=RefDivergence(0, 0, True))])
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr",
+    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"), pr_bin="pr",
                         runner=Recorder(), tree=lambda i: next(reads),
                         closeout=lambda d, b: CloseoutDebt(summary=True))
     ci = item.step(batch.model.Step.CI)
@@ -518,7 +519,7 @@ def test_a_failed_finish_still_adopts_the_head_it_pushed():
     reads = iter([_even(item),
                   TreeState(local="held", remote="held",
                             divergence=RefDivergence(ahead=0, behind=0, comparable=True))])
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr",
+    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"), pr_bin="pr",
                         runner=Recorder(code=1), tree=lambda i: next(reads),
                         closeout=lambda d, b: CloseoutDebt(summary=True))
     assert planned != "held"
@@ -540,7 +541,7 @@ def test_a_fast_forward_publish_is_a_logged_pr_push():
 
     tree = lambda it: TreeState(local="new", remote="s",
                                 divergence=RefDivergence(ahead=1, behind=0, comparable=True))
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr",
+    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"), pr_bin="pr",
                         runner=runner, tree=tree, closeout=lambda d, b: CloseoutDebt())
     [(argv, log)] = seen
     assert argv == ["pr", "push", "--expect", "s", "--repo-dir", "/wt"]

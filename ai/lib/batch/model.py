@@ -91,6 +91,17 @@ class EvidenceKind(StrEnum):
 
 TERMINAL_ITEM = frozenset({ItemStatus.DONE, ItemStatus.DROPPED, ItemStatus.SKIPPED_CLOSED})
 
+# The one owner of "a run that has ended": statuses a run never leaves.
+# store (refs drop on commit), inbox (settle_idle), gc (removal candidates),
+# report and the CLI all read this set rather than spelling it out.
+FINISHED_RUN = frozenset({RunStatus.DONE, RunStatus.CANCELLED})
+
+
+@dataclass
+class CancelState:
+    kill: bool = False
+    requested_at: str = ""
+
 
 @dataclass
 class StepRecord:
@@ -208,6 +219,7 @@ class Run:
     # dropped when the run reaches a terminal state.
     ref_namespace: str = ""
     ref_dirs: list[str] = field(default_factory=list)
+    cancel: CancelState | None = None
     schema_version: int = 1
 
     def item(self, key: str) -> Item:

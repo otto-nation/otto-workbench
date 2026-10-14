@@ -19,6 +19,7 @@ import batch.plan
 import batch.publish
 import batch.report
 import batch.resolve
+import batch.requests
 import batch.store
 import batch.targets
 import git.client
@@ -177,8 +178,16 @@ class Scheduler:
             self._emit("decision_resolved", run=self.run.id, decision="", action="",
                        error=raw["error"])
             return
+        req = batch.requests.parse(raw)
+        if isinstance(req, batch.requests.Malformed):
+            self._emit("decision_resolved", run=self.run.id, decision="", action="",
+                       error=req.reason)
+            return
+        if not isinstance(req, batch.requests.Decide):
+            self._emit("decision_resolved", run=self.run.id, decision="", action="",
+                       error="not a decide request")
+            return
         try:
-            req = batch.resolve.Request.from_dict(raw)
             item = self.run.item(self.run.decision(req.decision).item)
             was_terminal = item.terminal
             created = batch.resolve.apply(self.run, req, pr_bin=self.pr_bin,

@@ -3585,6 +3585,15 @@ entry per PR whose saved `pr` state still owes a closeout. Each entry carries
 the `pr` command (`CloseoutDebt.command` plus `--repo-dir`), `decision: null`
 and no actions. A closed PR is left out.
 
+### batch/requests.py
+
+Typed inbound requests for a `pr batch` run: decide, cancel, or malformed.
+
+A request file without ``kind`` parses as a ``Decide``, so files queued by
+older code stay valid. ``to_dict`` always writes the tag. ``drain_order``
+puts every ``Cancel`` ahead of decisions so a cancel never loses to a
+publish queued beside it.
+
 ### batch/resolve.py
 
 Apply an operator's answer to one decision, then move the item on.

@@ -1378,11 +1378,11 @@ def command_spec(**overrides):
     """
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
-    from cli.needs import REMOTE, Need
+    from cli.needs import NO_LOCK, REMOTE, Need
     from cli.registry import CommandSpec
 
     fields = dict(name="probe", help="a probe",
-                  need=Need(REMOTE, update=False, lock=False))
+                  need=Need(REMOTE, update=False, locks=NO_LOCK))
     fields.update(overrides)
     return CommandSpec(**fields)
 

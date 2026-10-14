@@ -20,7 +20,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import cli.review_modes  # noqa: E402
-from cli.needs import NONE, REVIEW_MODE_NEED, Need, ReviewMode  # noqa: E402
+from cli.needs import NONE, NO_LOCK, REVIEW_MODE_NEED, Need, ReviewMode  # noqa: E402
 
 
 # ── the table has one owner ──────────────────────────────────────────────
@@ -69,7 +69,7 @@ def test_every_mode_declares_the_need_it_was_given():
     for flag in ("--post", "--repair", "--summary", "--recover"):
         assert cli.review_modes.MODES[flag].need == REVIEW_MODE_NEED, flag
     listing_need = cli.review_modes.MODES["--list"].need
-    assert listing_need == Need(NONE, update=False, lock=False)
+    assert listing_need == Need(NONE, update=False, locks=NO_LOCK)
     assert not listing_need.records_a_trail
 
 

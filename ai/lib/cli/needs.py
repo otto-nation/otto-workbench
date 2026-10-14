@@ -12,9 +12,11 @@ as an argument is also what lets a test declare a table of its own.
 
 # doc-group: cli
 
+import dataclasses
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
+import core.run_lock
 import pr.context
 
 NONE = pr.context.ContextDepth.NONE
@@ -38,14 +40,21 @@ class Need:
       skip a repo-naming `gh` call also loses PR-number discovery, silently.
     * ``update`` — whether to fetch and fast-forward the worktree
       (``update_to_remote``) before the handler runs.
-    * ``lock`` — whether to hold the target's run lock for the whole dispatch.
-      False only for a command that neither writes ``state.json`` nor touches
-      the worktree, so it is safe alongside another run.
+    * ``locks`` — the run locks held for the whole dispatch, as ``core.run_lock``
+      scopes: ``TARGET`` (this PR is being worked on), ``CHECKOUT`` (this
+      working tree is being written to), a ``Global`` (only one of these may run
+      on the machine). ``NO_LOCK`` only for a command that neither writes
+      ``state.json`` nor touches the worktree, so it is safe alongside another
+      run. `cli.locks` takes them, and its docstring tables every command's.
     """
 
     depth: pr.context.ContextDepth
     update: bool
-    lock: bool
+    locks: frozenset[core.run_lock.LockScope]
+
+    def __post_init__(self) -> None:
+        # Frozen, so equality and hashing hold whatever set literal a caller wrote.
+        object.__setattr__(self, "locks", frozenset(self.locks))
 
     @property
     def records_a_trail(self) -> bool:
@@ -61,16 +70,28 @@ class Need:
         expensive than the query itself, and it lands in the file every
         `otto-log` query then has to read — see `trail.TRAIL_KEEP_MONTHS`,
         which bounds that file for the writers this does not cover.
+
+        A global lock alone does not count. It names no repo, PR or branch to
+        record against, and the command that holds one — `pr batch run` —
+        keeps a trail of its own.
         """
         resolves_nothing = self.depth is pr.context.ContextDepth.NONE
-        return self.lock or not resolves_nothing
+        holds_a_target = any(not isinstance(s, core.run_lock.Global) for s in self.locks)
+        return holds_a_target or not resolves_nothing
 
 
-# What `pr review` needs with no mode flag: a review run, which reads the PR,
-# resets the worktree it is about to review, and holds the lock for the whole
-# thing. The fetch belongs to this one invocation — it is the only one whose
-# subject is the branch's current state.
-REVIEW_DEFAULT_NEED = Need(REMOTE, update=True, lock=True)
+# The lock sets commands declare. Named once so a declaration reads as one of a
+# few shapes rather than as a set literal each time.
+NO_LOCK = core.run_lock.NO_LOCK
+TARGET_ONLY = frozenset({core.run_lock.TARGET})
+TARGET_AND_CHECKOUT = frozenset({core.run_lock.TARGET, core.run_lock.CHECKOUT})
+
+# What `pr review` needs with no mode flag: a review run, which reads the PR
+# and holds its target for the whole thing. The tree it reviews in is the PR's
+# own, set up later and locked by `core.run_lock.lock_checkout` once known. The
+# fetch belongs to this one invocation — it is the only one whose subject is
+# the branch's current state.
+REVIEW_DEFAULT_NEED = Need(REMOTE, update=True, locks=TARGET_ONLY)
 
 # What `pr review --self` needs: the same run against the local branch, which
 # has no PR to name. Its subject is the working tree, so nothing it resolves
@@ -86,7 +107,9 @@ REVIEW_DEFAULT_NEED = Need(REMOTE, update=True, lock=True)
 # reasons that have nothing to do with the branch: an exhausted GraphQL budget,
 # an expired token, a plane. `resolve_at` still escalates to REMOTE if a `--pr`
 # is passed, so `--self --pr` is not silently downgraded.
-REVIEW_SELF_NEED = Need(LOCAL, update=True, lock=True)
+# It holds the checkout too: its subject is the working tree, and a `--fix`
+# pass commits to it.
+REVIEW_SELF_NEED = Need(LOCAL, update=True, locks=TARGET_AND_CHECKOUT)
 
 # What a mode flag needs unless it declares otherwise. Every mode acts on a
 # review that already exists on disk, at the commit that review describes, so
@@ -94,7 +117,7 @@ REVIEW_SELF_NEED = Need(LOCAL, update=True, lock=True)
 # `--post` would report or publish a review of a commit the worktree no longer
 # sits on, and `--recover` would move HEAD off the SHA it is about to pin a
 # throwaway worktree back to. They still resolve the PR and hold the lock.
-REVIEW_MODE_NEED = Need(REMOTE, update=False, lock=True)
+REVIEW_MODE_NEED = Need(REMOTE, update=False, locks=TARGET_ONLY)
 
 
 @dataclass(frozen=True)
@@ -143,6 +166,24 @@ def review_modes(argv: Sequence[str], modes: Mapping[str, ReviewMode]) -> list[s
     return found
 
 
+def has_flag(argv: Sequence[str], flag: str) -> bool:
+    """Whether *argv* passes the long option *flag*, spelled any way argparse accepts.
+
+    argparse takes ``--flag=value`` and any unambiguous prefix (``--dry`` for
+    ``--dry-run``). A token that is a prefix of *flag* and still parses can
+    only be *flag*: a prefix shared with another option is refused as
+    ambiguous before anything runs. Stops at ``--``, after which every token
+    is positional.
+    """
+    for token in argv:
+        if token == "--":
+            return False
+        name = token.split("=", 1)[0]
+        if len(name) > 2 and name.startswith("--") and flag.startswith(name):
+            return True
+    return False
+
+
 def review_need(argv: Sequence[str], modes: Mapping[str, ReviewMode]) -> Need:
     """`review`'s need, which its mode flag decides.
 
@@ -157,10 +198,17 @@ def review_need(argv: Sequence[str], modes: Mapping[str, ReviewMode]) -> Need:
     an existing review, and it composes with `--fix` and `--post`, which a mode
     may not. It still lowers the depth, because a branch with no PR is the one
     subject `gh` cannot name.
+    A mode `review` performs itself (one with no local handler — `--recover`)
+    under `--self` writes the working tree, so it holds the checkout too.
     """
     found = review_modes(argv, modes)
+    self_review = has_flag(argv, "--self")
     if found:
-        return modes[found[0]].need
-    if "--self" in argv:
+        mode = modes[found[0]]
+        if self_review and mode.handler is None and mode.need.locks:
+            return dataclasses.replace(
+                mode.need, locks=mode.need.locks | {core.run_lock.CHECKOUT})
+        return mode.need
+    if self_review:
         return REVIEW_SELF_NEED
     return REVIEW_DEFAULT_NEED

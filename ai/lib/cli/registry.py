@@ -32,8 +32,11 @@ going stale now that no `pr` code path would notice if it did.
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+import batch.store
 import cli.review_modes
-from cli.needs import LOCAL, NONE, REMOTE, Need
+from cli.needs import (
+    LOCAL, NO_LOCK, NONE, REMOTE, TARGET_AND_CHECKOUT, TARGET_ONLY, Need, has_flag,
+)
 
 
 @dataclass(frozen=True)
@@ -93,7 +96,37 @@ class CommandSpec:
 
 def _create_need(argv: Sequence[str]) -> Need:
     """`create`'s need: a `--dry-run` pushes and creates nothing, so it takes no lock."""
-    return Need(REMOTE, update=False, lock="--dry-run" not in argv)
+    locks = NO_LOCK if has_flag(argv, "--dry-run") else TARGET_AND_CHECKOUT
+    return Need(REMOTE, update=False, locks=locks)
+
+
+def _ci_need(argv: Sequence[str]) -> Need:
+    """`ci`'s need: only `--fix` rebases and commits in the checkout."""
+    locks = TARGET_AND_CHECKOUT if has_flag(argv, "--fix") else TARGET_ONLY
+    return Need(REMOTE, update=True, locks=locks)
+
+
+def _comments_need(argv: Sequence[str]) -> Need:
+    """`comments`' need: `--reply` and `--settle` write to GitHub alone and leave the tree free."""
+    github_only = has_flag(argv, "--reply") or has_flag(argv, "--settle")
+    return Need(REMOTE, update=True,
+                locks=TARGET_ONLY if github_only else TARGET_AND_CHECKOUT)
+
+
+# The batch subcommands that start or continue a run, and so must be alone.
+_BATCH_EXCLUSIVE = frozenset({"run", "resume"})
+
+
+def _batch_need(argv: Sequence[str]) -> Need:
+    """`batch`'s need: `run` and `resume` hold the machine-wide batch lock; the rest take nothing.
+
+    `resolve` takes its run's own lock in the handler, never the global, so it
+    can answer a decision while a run is live; `cancel` must reach a live run;
+    `status`, `next` and `plan` only read.
+    """
+    sub = next((a for a in argv if not a.startswith("-")), "")
+    locks = frozenset({batch.store.BATCH_LOCK}) if sub in _BATCH_EXCLUSIVE else NO_LOCK
+    return Need(NONE, update=False, locks=locks)
 
 
 _SPECS: tuple[CommandSpec, ...] = (
@@ -106,10 +139,10 @@ _SPECS: tuple[CommandSpec, ...] = (
                 _create_need, takes_target=False,
                 handler="cli.pr_create:cmd_create"),
     CommandSpec("status",   "Show CI, review, and comment status dashboard",
-                Need(LOCAL,  update=False, lock=False),
+                Need(LOCAL,  update=False, locks=NO_LOCK),
                 handler="cli.pr_commands:cmd_status"),
     CommandSpec("ci",       "Check CI failures",
-                Need(REMOTE, update=True,  lock=True),  script="ci-check",
+                _ci_need,  script="ci-check",
                 handler="cli.ci_check:main"),
     # Like create, a spec whose declaration its own argv resolves. `cli.review_modes`
     # owns the table the resolver reads, so this is an ordinary import rather
@@ -123,31 +156,32 @@ _SPECS: tuple[CommandSpec, ...] = (
                 cli.review_modes.need_for,              script="review",
                 handler="cli.review_entry:main"),
     CommandSpec("comments", "Fetch and manage PR review threads",
-                Need(REMOTE, update=True,  lock=True),  script="review-threads",
+                _comments_need,  script="review-threads",
                 handler="cli.review_threads:main"),
     CommandSpec("fix",      "Fix CI + review + comments",
-                Need(REMOTE, update=True,  lock=True),
+                Need(REMOTE, update=True,  locks=TARGET_AND_CHECKOUT),
                 handler="cli.pr_commands:cmd_fix"),
     CommandSpec("rebase",   "Rebase onto the branch's base",
-                Need(REMOTE, update=False, lock=True),  script="pr-rebase",
+                Need(REMOTE, update=False, locks=TARGET_AND_CHECKOUT),  script="pr-rebase",
                 handler="cli.pr_rebase:main"),
     # A plain leased push of HEAD. Git alone answers it, so LOCAL; an explicit
     # --pr still escalates through resolve_at. No backing script: the handler
     # and its parser are the whole command, as with create.
     CommandSpec("push",     "Push HEAD with a lease on the remote head you expect",
-                Need(LOCAL,  update=False, lock=True),
+                Need(LOCAL,  update=False, locks=TARGET_AND_CHECKOUT),
                 handler="cli.pr_push:main"),
     CommandSpec("describe", "Revise the PR description",
-                Need(REMOTE, update=True,  lock=True),  script="pr-describe",
+                Need(REMOTE, update=True,  locks=TARGET_AND_CHECKOUT),  script="pr-describe",
                 handler="cli.pr_describe:main"),
     # Orchestrates other commands across many PRs, so it resolves no target of
-    # its own and takes no lock: each child `pr` locks its own PR and worktree,
-    # and the run holds a per-run lock under the batch state root.
+    # its own. `run` and `resume` hold the machine-wide batch lock (see
+    # `_batch_need`); each child `pr` locks its own PR and worktree, and the
+    # run holds a per-run lock under the batch state root.
     CommandSpec("batch",    "Run rebase, CI fixes, comments and self-review across my open PRs",
-                Need(NONE,   update=False, lock=False), takes_target=False,
+                _batch_need, takes_target=False,
                 handler="cli.pr_batch:cmd_batch", parses_own_argv=True),
     CommandSpec("gc",       "Clean up stale PR artifacts",
-                Need(REMOTE, update=False, lock=True),
+                Need(REMOTE, update=False, locks=TARGET_ONLY),
                 handler="cli.pr_commands:cmd_gc"),
 )
 
@@ -187,7 +221,7 @@ def validate_needs(commands: dict[str, CommandSpec]) -> None:
     if undeclared:
         raise RuntimeError(
             "pr: commands declare no dispatch need: " + ", ".join(undeclared)
-            + " — add a Need(depth, update=…, lock=…) to each CommandSpec"
+            + " — add a Need(depth, update=…, locks=…) to each CommandSpec"
         )
 
 

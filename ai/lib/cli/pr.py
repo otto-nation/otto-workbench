@@ -592,7 +592,7 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
                 command=" ".join([SCRIPT] + argv),
                 started=pr.state.now_iso(),
             )
-            if need.lock else contextlib.nullcontext()
+            if core.run_lock.TARGET in need.locks else contextlib.nullcontext()
         )
         with lock:
             return _dispatch(args, ctx, extra, global_args,

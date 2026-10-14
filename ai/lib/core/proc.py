@@ -708,8 +708,8 @@ def _finish_pumps(process: subprocess.Popen, pumps: list[threading.Thread],
 
     A thread still running at the deadline owns its pipe, so nothing is closed
     under it (see `_pump`); the daemon closes it when the holder lets go. The
-    tee is detached either way, which is what makes the result a complete
-    account of everything relayed before `run` returned, and stops late output
+    tee is detached either way, which is what makes the result an account
+    of everything relayed before `run` returned, and stops late output
     reaching the caller's terminal after it. Returns a note for stderr when a
     thread was late — the captured output is then known to be short — and the
     empty string otherwise.
@@ -721,9 +721,12 @@ def _finish_pumps(process: subprocess.Popen, pumps: list[threading.Thread],
         if pump.is_alive():
             pump.join(max(0.0, deadline - time.monotonic()))
     tee.detach()
-    if any(pump.is_alive() for pump in pumps):
+    # Only the two output pumps (listed first) say whether output is short; a
+    # stdin feeder still held by a child that never reads loses nothing.
+    if any(pump.is_alive() for pump in pumps[:2]):
         return "\n" + _LATE_OUTPUT_NOTE.format(bound=bound)
-    _close_pipes(process)
+    if not any(pump.is_alive() for pump in pumps):
+        _close_pipes(process)
     return ""
 
 

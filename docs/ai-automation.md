@@ -4,7 +4,7 @@ description: Claude Code integration for coding guidelines, intelligent skills, 
 ---
 <!-- Generated from docs/ai-automation.src.md by bin/local/compose-docs — do not edit. -->
 
-<!-- doc-budget: 585 -->
+<!-- doc-budget: 587 -->
 
 # AI Automation
 
@@ -597,9 +597,11 @@ the rounds it does not restate.
 so `pr comments --reply <reviewId | rb-<reviewId> | rb-<reviewId>-<n>>
 --body-file F --post` publishes one marked block per review under
 `### Replies to review comments`. Without `--post` nothing is stored and the
-draft is printed (no body if a push is still pending). The blocks follow the
-same round rules as rows; a hand-edited block is kept unless `--reply` for
-that review replaces it. A dismissal with a reason adds
+draft is printed (no body if a push is still pending). A block is written when
+no summary holds the review's block, re-rendered on an in-place edit, and
+restated on a fresh comment only when the block changed; unlike a row, there
+is no activity test. A hand-edited block is kept with a warning unless
+`--reply` for that review replaces it. A dismissal with a reason adds
 `Dismissed: <finding> — <reason>` to the block, creating one even with no reply.
 
 ### Running from a different directory

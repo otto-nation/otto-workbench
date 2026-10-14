@@ -288,8 +288,10 @@ pr comments --settle <thread_id> [--settle <thread_id> ...] [--repo-dir <PATH>]
 reason becomes the reply a thread's reviewer reads, so it is required — and
 `--as already_addressed` records that the code already satisfied it. For a
 review-body item the same reason lands as `Dismissed: <finding> — <reason>` in
-that review's summary block, creating the block even with no `--reply`. Only
-these three; a thread still awaiting an answer is not settled and stays as it is.
+that review's summary block, creating the block even with no `--reply`. A
+fix-pass or triage dismissal with a justification (the reason, or the
+reasoning) writes the same `Dismissed:` line. Only these three; a thread still
+awaiting an answer is not settled and stays as it is.
 
 `--as fixed` finds the commit from the branch history of the thread's line and
 cites it only once the remote holds it. Add `--commit <sha>` when the fix landed
@@ -300,8 +302,8 @@ Recording is not publishing: `--settle` writes local state only and refuses
 `--post` and every other phase flag. Read back what it reports — it names the
 outcome and the quoted finding for each thread, and says so when a thread
 already carried it. An unknown id is refused, not skipped: the run lists every
-settleable item as `<id>  <outcome>  "<finding>"` (plus the commit SHA when it
-has one). Then continue to Step 4.
+settleable item as `<id>  <outcome>` plus `"<finding>"` when the item has a
+finding (and the commit SHA when it has one). Then continue to Step 4.
 
 ### Step 4: Present drafts and get approval
 
@@ -334,8 +336,8 @@ pushed), posts the summary, files the tracking issue for the threads named by
 a finished conversation, so don't publish before the discussion is done. A
 drafted run recorded nothing as posted, so the queue is intact — never re-run
 `--fix` to get back to it. `--finish` without `--post` logs every snapshot item
-as `<id>  <outcome>  "<finding>"` (plus the commit SHA when it has one) before
-the draft summary.
+as `<id>  <outcome>` plus `"<finding>"` when the item has a finding (and the
+commit SHA when it has one) before the draft summary.
 
 The finish phase also reconciles what it fetches against the recorded outcomes,
 and grades what it finds. A thread carrying a reply of ours that names a verdict
@@ -395,8 +397,8 @@ stacking under it. Do **not** call `gh api .../replies` directly: that path has
 no dedup, and it is what leaves a thread holding several of our comments that
 disagree.
 
-`--reply` also answers a review body — a review ID, `rb-<reviewId>`, or
-`rb-<reviewId>-<n>` — in the summary comment, since GitHub cannot reply to one.
+`--reply` also answers a review body — a review ID, `rb-REVIEW_ID` or
+`rb-REVIEW_ID-N` — in the summary comment, since GitHub cannot reply to one.
 All three name the same review, which gets one answer. A thread match wins when
 the same number is also a comment id in a thread.
 
@@ -405,8 +407,8 @@ pr comments --reply <reviewId | rb-<reviewId> | rb-<reviewId>-<n>> --body-file <
 ```
 
 With `--post` the answer is stored per review and the summary is re-published
-through the `--finish` path as a marked block under `### Replies to review
-comments`. If that publish cannot happen (a push still pending, or a post
+through the `--finish` path; the answer is a marked block under `### Replies
+to review comments`. If that publish cannot happen (a push still pending, or a post
 GitHub refused), the run says so and the next `--finish --post` publishes it.
 Without `--post` nothing is stored and the draft is printed — unless a push
 is still pending, in which case there is no draft body. Answering again

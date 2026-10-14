@@ -35,6 +35,8 @@ from __future__ import annotations
 
 import functools
 import json
+import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from time import sleep
@@ -67,6 +69,20 @@ _TRANSFER_COMMANDS = frozenset({("run", "download")})
 # `gh api repos/<repo>/actions/jobs/<id>/logs` returns the raw log, which is a
 # transfer rather than a metadata read however short the endpoint looks.
 _TRANSFER_ENDPOINT_SUFFIX = "/logs"
+
+# Where `gh` is a mise shim, mise reads every config between the cwd and the
+# filesystem root before it runs anything, and refuses outright — naming the
+# file, home-abbreviated — when one of them is untrusted. A worktree the repo's
+# own hooks have not trusted yet is the common case. The refusal is a non-zero
+# exit like any other, so every best-effort read would collapse it to "GitHub
+# had nothing to say" — and a rebase that reads no PR base replays a stacked
+# branch onto the trunk.
+_MISE_UNTRUSTED = re.compile(r"Config files? in (\S+) (?:is|are) not trusted")
+_MISE_IGNORED_ENV = "MISE_IGNORED_CONFIG_PATHS"
+
+# mise refuses one file per attempt, so a cwd nested under several untrusted
+# configs (a monorepo's root and a package's own) needs one retry per file.
+_MISE_UNTRUSTED_RETRIES = 4
 
 
 class LineResolutionError(Exception):
@@ -231,6 +247,45 @@ def _timeout_for(args: tuple[str, ...]) -> float | None:
     return core.timeouts.NETWORK
 
 
+def _untrusted_mise_config(r: CmdResult) -> str:
+    """The config file mise refused to read for *r*, or "" when it refused none."""
+    if r.ok:
+        return ""
+    m = _MISE_UNTRUSTED.search(r.stderr)
+    return os.path.expanduser(m.group(1)) if m else ""
+
+
+def _spawn(args: tuple[str, ...], *, cwd: str | Path | None, input_text: str | None) -> CmdResult:
+    """Run gh once, then again past each untrusted mise config it was refused for.
+
+    The refused file is *ignored*, never trusted: ignoring means mise does not
+    read it at all, so nothing in it runs, and the shim resolves gh from the
+    configs that remain — which is what trusting would have risked and this
+    does not. gh talks to GitHub; no repo's toolchain pins change what it
+    answers, so the call is the same one the caller asked for.
+
+    Any `MISE_IGNORED_CONFIG_PATHS` the caller exported is kept. A file mise
+    still refuses once ignored is returned as the failure rather than retried,
+    so a mise that does not honour the variable costs one extra call, not a
+    loop.
+    """
+    def once(env: dict[str, str] | None) -> CmdResult:
+        return core.proc.run(
+            ["gh", *args], cwd=cwd, timeout=_timeout_for(args), input_text=input_text, env=env,
+        )
+
+    r = once(None)
+    ignored: list[str] = []
+    for _ in range(_MISE_UNTRUSTED_RETRIES):
+        refused = _untrusted_mise_config(r)
+        if not refused or refused in ignored:
+            return r
+        ignored.append(refused)
+        prior = os.environ.get(_MISE_IGNORED_ENV, "")
+        r = once(os.environ | {_MISE_IGNORED_ENV: os.pathsep.join(filter(None, [prior, *ignored]))})
+    return r
+
+
 def run(
     *args: str,
     cwd: str | Path | None = None,
@@ -264,9 +319,7 @@ def run(
         if latch is not None:
             return gh.budget.latched_result(latch)
     try:
-        r = core.proc.run(
-            ["gh", *args], cwd=cwd, timeout=_timeout_for(args), input_text=input_text,
-        )
+        r = _spawn(args, cwd=cwd, input_text=input_text)
     except FileNotFoundError:
         return CmdResult(
             returncode=GH_MISSING_RETURNCODE,

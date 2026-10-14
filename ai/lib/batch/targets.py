@@ -31,7 +31,15 @@ _MARKERS = (core.run_lock.LOCK_ENV, core.run_lock.TREE_LOCK_ENV,
 
 
 def item_target_dir(item: Item) -> Path | None:
-    """*item*'s target directory, or None when its checkout has no `origin` to key it on."""
+    """*item*'s target directory, or None when its checkout has no `origin` to
+    key it on, or is vanished or unreadable.
+    """
+    # Keyed on item.repo_dir, not item.worktree: the batch holds item targets
+    # before worktrees exist. A worktree shares origin and branch with that
+    # checkout, so the key matches what the child resolves.
+    # ceiling: a checkout-local .workbench.yml github.host the worktree does
+    # not inherit would hash two keys for one item; upgrade if a batch item
+    # can declare a host on the worktree that its repo_dir does not.
     try:
         key = pr.target.repo_key_from_origin(item.repo_dir)
     except OSError:

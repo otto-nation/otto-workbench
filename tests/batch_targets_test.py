@@ -13,11 +13,16 @@ if str(LIB_DIR) not in sys.path:
 import pytest  # noqa: E402
 
 import batch.resolve  # noqa: E402
+import batch.scheduler  # noqa: E402
 import batch.targets  # noqa: E402
 import core.run_lock  # noqa: E402
 import pr.target  # noqa: E402
-from batch.model import Item  # noqa: E402
-from batch_scheduler_support import Harness, row, _quiet_outcomes  # noqa: E402,F401
+from batch.model import Decision, DecisionKind, Item, Step  # noqa: E402
+from batch.plan import PlanRow  # noqa: E402
+from batch_scheduler_support import (  # noqa: E402,F401
+    NEED, Harness, _quiet_outcomes, ff_tree, row,
+)
+from config.workbench_config import BatchConfig  # noqa: E402
 from conftest import seed_repo  # noqa: E402
 from core.run_lock import GLOBAL_LOCK_ENV, LOCK_ENV, TARGET, TREE_LOCK_ENV  # noqa: E402
 from run_lock_support import repo_with_origin  # noqa: E402
@@ -129,3 +134,32 @@ def test_a_resolve_with_no_env_builder_keeps_this_processes_environment(repo, mo
                         lambda argv, log_path=None, *, env=None: calls.append(env) or 0)
     batch.resolve.command_runner(_item(repo, "feat/a", 1), None, None)(["pr", "push"])
     assert calls == [None]
+
+
+def test_a_live_run_publish_child_gets_only_its_items_marker(repo, monkeypatch):
+    # Harness/auto-publish tests inject runner=, and command_runner returns that
+    # untouched; this is the live _apply_one path (pr push / rebase --push-only
+    # / comments --post) with runner=None so env_for actually reaches the child.
+    monkeypatch.setenv(LOCK_ENV, "/x:/y")
+    monkeypatch.setenv(TREE_LOCK_ENV, "/tree")
+    monkeypatch.setenv(GLOBAL_LOCK_ENV, "/global")
+    calls = []
+    monkeypatch.setattr(batch.resolve, "default_runner",
+                        lambda argv, log_path=None, *, env=None: calls.append(env) or 0)
+    planned = PlanRow("acme/widget", str(repo), 1, "t", "feat/a", "h", False,
+                      {Step.REVIEW: NEED})
+    run = batch.scheduler.new_run([planned], steps=[Step.REVIEW], selected=None, pool=1,
+                                  auto_publish=[])
+    item = run.items[0]
+    item.worktree = str(repo)
+    run.decisions.append(Decision(id="d1", item=item.key, step="publish",
+                                  kind=DecisionKind.PUBLISH))
+    sched = batch.scheduler.Scheduler(
+        run, pr_bin="pr", cfg=BatchConfig(pool_max=1),
+        emit=lambda *a, **k: None, runner=None, tree=ff_tree)
+    sched._apply_one({"decision": "d1", "action": "publish"})
+    assert calls
+    env = calls[0]
+    assert env[LOCK_ENV] == str(batch.targets.item_target_dir(item))
+    assert TREE_LOCK_ENV not in env
+    assert GLOBAL_LOCK_ENV not in env

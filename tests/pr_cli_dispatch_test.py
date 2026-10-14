@@ -13,7 +13,7 @@ import pytest
 
 # `reviews_dir` is not imported — pytest discovers conftest fixtures itself,
 # and importing one shadows the fixture with a plain function.
-from conftest import assert_no_worktree_exit, make_ctx
+from conftest import assert_no_worktree_exit, command_spec, make_ctx
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = REPO_ROOT / "ai" / "bin"
@@ -23,6 +23,7 @@ if str(LIB_DIR) not in sys.path:
 
 import cli.pr  # noqa: E402
 
+import cli.dispatch  # noqa: E402
 import cli.pr_commands  # noqa: E402
 import cli.registry  # noqa: E402
 import core.proc  # noqa: E402
@@ -44,9 +45,40 @@ from pr_cli_support import _cmd_fix, _TEST_PR, _run_main, _lock_file, _dispatch_
 # ── worktree_root guards ───────────────────────────────────────────────────
 
 
-def test_cmd_status_without_a_worktree_exits_with_guidance(capsys):
-    assert_no_worktree_exit(capsys, "feat/test", cli.pr.cmd_status,
-                            [], make_ctx(worktree_root=None))
+@patch("pr.state.load_state")
+@patch("pr.domains.PushDomain.observed")
+@patch("cli.pr_commands._worktree_head")
+def test_cmd_status_without_a_worktree_renders_cached_state(
+    mock_head, observed, mock_load, capsys,
+):
+    """No checkout is a cached read, not a refusal."""
+    state = pr.state.new_state("acme/w", "feat", pr_number=1, head_sha="A",
+                               worktree_root="/wt")
+    pr.state.apply(state, pr.domains.CIDomain(conclusion="success",
+                                              updated_at=pr.state.now_iso()))
+    mock_load.return_value = state
+    observed.return_value = pr.domains.PushDomain(
+        ahead=9, updated_at=pr.state.now_iso())
+
+    ctx = make_ctx(worktree_root=None, branch="feat")
+    assert cli.pr.cmd_status([], ctx) == 0
+
+    observed.assert_not_called()
+    mock_head.assert_not_called()
+    captured = capsys.readouterr()
+    assert "no checkout of feat here — showing the last recorded state" in captured.err
+    assert "**CI**" in captured.err
+    assert "**Push**" not in captured.err
+    assert json.loads(captured.out)["identity"]["head_sha"] == "A"
+
+
+def test_delegate_argv_forwards_original_repo_dir_when_there_is_no_tree():
+    ctx = make_ctx(worktree_root=None)
+    entry = command_spec(script="ci-check")
+    cmd = cli.dispatch.delegate_argv(
+        entry, [], ctx, original_repo_dir="/x")
+    assert "--repo-dir" in cmd
+    assert cmd[cmd.index("--repo-dir") + 1] == "/x"
 
 
 def test_status_header_names_the_repo_from_the_context_without_state(worktree, capsys):

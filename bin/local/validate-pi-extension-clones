@@ -183,7 +183,8 @@ def host_pi() -> Path | None:
     else. Clones under ~/.pi/agent/git were refreshed against the managed
     install, so that is the host they must match.
     """
-    if os.access(HOST_PI, os.X_OK) and not Path(HOST_PI).is_dir():
+    if (os.access(HOST_PI, os.X_OK) and not Path(HOST_PI).is_dir()
+            and _parse_pi_version(_run([str(HOST_PI), '--version'])) is not None):
         return Path(HOST_PI)
     found = shutil.which('pi')
     return Path(found) if found else None
@@ -201,10 +202,7 @@ def path_pi_binaries() -> list[Path]:
         if not directory:
             continue
         candidate = Path(directory) / 'pi'
-        try:
-            if not os.access(candidate, os.X_OK) or candidate.is_dir():
-                continue
-        except OSError:
+        if not _is_runnable(candidate):
             continue
         resolved = os.path.realpath(candidate)
         if resolved in seen:
@@ -212,6 +210,19 @@ def path_pi_binaries() -> list[Path]:
         seen.add(resolved)
         found.append(candidate)
     return found
+
+
+def _is_runnable(candidate: Path) -> bool:
+    """Whether `candidate` is an executable, non-directory path on PATH.
+
+    A broken symlink or a directory mid-rename under `candidate` can raise
+    OSError from os.access/is_dir; either way it is not something PATH
+    resolution can run, so it is treated the same as "not runnable".
+    """
+    try:
+        return os.access(candidate, os.X_OK) and not candidate.is_dir()
+    except OSError:
+        return False
 
 
 def path_pi_conflict(host: Path, host_version: tuple[int, ...]) -> str | None:
@@ -235,8 +246,12 @@ def path_pi_conflict(host: Path, host_version: tuple[int, ...]) -> str | None:
         return None
     listed = ', '.join(
         f'{path} ({_version_str(ver)})' for path, ver in others)
+    managed = (os.access(HOST_PI, os.X_OK) and not Path(HOST_PI).is_dir()
+               and os.path.realpath(HOST_PI) == host_resolved)
+    chosen = ('the install pi update maintains' if managed
+              else 'the first pi on PATH')
     return (f'PATH also has pi at {listed}; comparing clones against {host} '
-            f'({_version_str(host_version)}), the install pi update maintains')
+            f'({_version_str(host_version)}), {chosen}')
 
 
 def installed_pi_version(binary: Path | None = None) -> tuple[int, ...] | None:
@@ -598,7 +613,8 @@ def main() -> None:
 
     if args.json:
         print(json.dumps({'pi_version': _version_str(pi_version),
-                          'clones_checked': len(clones), 'findings': findings}, indent=2))
+                          'clones_checked': len(clones), 'findings': findings,
+                          'path_conflict': conflict}, indent=2))
         sys.exit(1 if findings else 0)
 
     for f in findings:

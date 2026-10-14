@@ -423,6 +423,7 @@ def test_no_pi_installed_is_not_a_violation(validator, monkeypatch):
 
 def test_json_output_when_pi_is_not_installed(validator, monkeypatch, capsys):
     """--json is documented as always emitting JSON, absent pi included."""
+    monkeypatch.setattr(validator, 'host_pi', lambda: None)
     monkeypatch.setattr(validator, 'installed_pi_version', lambda *_: None)
     monkeypatch.setattr(validator.sys, 'argv', ['validate-pi-extension-clones', '--json'])
     validator.main()
@@ -432,6 +433,7 @@ def test_json_output_when_pi_is_not_installed(validator, monkeypatch, capsys):
 
 def test_json_output_when_no_clones_found(validator, monkeypatch, capsys):
     """--json is documented as always emitting JSON, no clones included."""
+    monkeypatch.setattr(validator, 'host_pi', lambda: None)
     monkeypatch.setattr(validator, 'installed_pi_version', lambda *_: (0, 87, 1))
     monkeypatch.setattr(validator, 'discover_clones', lambda: [])
     monkeypatch.setattr(validator.sys, 'argv', ['validate-pi-extension-clones', '--json'])
@@ -520,6 +522,7 @@ def test_a_pinned_host_below_the_floor_is_cured_at_the_pin(validator, tmp_path, 
     """End to end: the finding's remedy names the pin and stops prescribing `pi update`."""
     clone = _clone(tmp_path, provider=False, adapter=False,
                    declares={'devDependencies': {'@earendil-works/pi-ai': '1.0.4'}})
+    monkeypatch.setattr(validator, 'host_pi', lambda: Path('/fake/pi'))
     monkeypatch.setattr(validator, 'installed_pi_version', lambda *_: (0, 87, 1))
     monkeypatch.setattr(validator, 'discover_clones', lambda: [('user', clone)])
     monkeypatch.setattr(validator, 'pi_pin_source', lambda *_: '/repo/.mise.toml')
@@ -536,6 +539,7 @@ def test_a_pinned_host_below_the_floor_is_cured_at_the_pin(validator, tmp_path, 
 def test_an_unpinned_host_below_the_floor_is_still_told_to_update(validator, tmp_path, monkeypatch, capsys):
     clone = _clone(tmp_path, provider=False, adapter=False,
                    declares={'devDependencies': {'@earendil-works/pi-ai': '1.0.4'}})
+    monkeypatch.setattr(validator, 'host_pi', lambda: Path('/fake/pi'))
     monkeypatch.setattr(validator, 'installed_pi_version', lambda *_: (0, 87, 1))
     monkeypatch.setattr(validator, 'discover_clones', lambda: [('user', clone)])
     monkeypatch.setattr(validator, 'pi_pin_source', lambda *_: None)
@@ -617,3 +621,46 @@ def test_a_stale_path_pi_does_not_fail_clones_that_match_the_managed_host(
     assert str(stale) in captured.err
     assert '0.87.1' in captured.err
     assert '1.2.0' in captured.err
+
+
+def test_host_pi_falls_back_to_path_when_managed_launcher_is_broken(validator, tmp_path, monkeypatch):
+    """Executable bit set but the binary does not answer --version: a partial pi update."""
+    broken = _executable(tmp_path / 'agent' / 'bin' / 'pi', '#!/bin/sh\n')
+    on_path = _executable(tmp_path / 'bin' / 'pi', '#!/bin/sh\n')
+    monkeypatch.setattr(validator, 'HOST_PI', broken)
+    monkeypatch.setenv('PATH', f'{on_path.parent}:/usr/bin:/bin')
+    _version_run(monkeypatch, validator, {str(on_path): '0.87.1'})
+    assert validator.host_pi() == on_path
+    assert validator.installed_pi_version() == (0, 87, 1)
+
+
+def test_json_output_includes_the_path_conflict(validator, tmp_path, monkeypatch, capsys):
+    """--json is the documented machine-readable mode; a conflict must be in the payload too."""
+    managed = _executable(tmp_path / 'agent' / 'bin' / 'pi', '#!/bin/sh\n')
+    stale = _executable(tmp_path / 'mise' / 'pi', '#!/bin/sh\n')
+    monkeypatch.setattr(validator, 'HOST_PI', managed)
+    monkeypatch.setenv('PATH', f'{stale.parent}:/usr/bin:/bin')
+    _version_run(monkeypatch, validator, {str(managed): '1.2.0', str(stale): '0.87.1'})
+    clone = _clone(tmp_path, provider=False, adapter=False,
+                   declares={'devDependencies': {'@earendil-works/pi-ai': '1.0.4'}})
+    monkeypatch.setattr(validator, 'discover_clones', lambda: [('user', clone)])
+    monkeypatch.setattr(validator.sys, 'argv', ['validate-pi-extension-clones', '--json'])
+    with pytest.raises(SystemExit):
+        validator.main()
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['path_conflict'] is not None
+    assert str(stale) in payload['path_conflict']
+
+
+def test_path_conflict_does_not_credit_pi_update_for_an_unmanaged_host(
+        validator, tmp_path, monkeypatch):
+    """host_pi() fell back to PATH (no managed install); pi update does not govern that binary."""
+    on_path = _executable(tmp_path / 'bin' / 'pi', '#!/bin/sh\n')
+    other = _executable(tmp_path / 'other' / 'pi', '#!/bin/sh\n')
+    monkeypatch.setattr(validator, 'HOST_PI', tmp_path / 'missing' / 'pi')
+    monkeypatch.setenv('PATH', f'{on_path.parent}:{other.parent}:/usr/bin:/bin')
+    _version_run(monkeypatch, validator, {str(on_path): '1.2.0', str(other): '0.87.1'})
+    notice = validator.path_pi_conflict(on_path, (1, 2, 0))
+    assert notice is not None
+    assert 'pi update maintains' not in notice
+    assert 'first pi on PATH' in notice

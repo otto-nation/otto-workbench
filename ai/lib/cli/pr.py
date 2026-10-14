@@ -29,6 +29,7 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
 
 import argparse
 import contextlib
+import io
 import json
 import os
 import sys
@@ -464,6 +465,27 @@ def _held_scopes(spec, extra: list[str], ctx: pr.context.ResolvedContext,
     return locks - core.run_lock.globals_in(locks)
 
 
+def _own_parser_printed_help(spec, extra: list[str]) -> bool:
+    """Whether the command's own argparse printed help for *extra*.
+
+    Token presence is not help: `--prs --help` leaves `--help` in extra while
+    the parser consumes it as a value, or errors. Only SystemExit(0) from the
+    declared parser skips locks. A parse that succeeds or exits 2 does not.
+    """
+    if spec.parser is None or not ({"-h", "--help"} & set(extra)):
+        return False
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            cli.dispatch.resolve(spec.parser)().parse_args(extra)
+    except SystemExit as exc:
+        if exc.code != 0:
+            return False
+        sys.stdout.write(buf.getvalue())
+        return True
+    return False
+
+
 def _lock_resolve_and_dispatch(held: contextlib.ExitStack, args, spec, extra: list[str],
                                global_args, need: Need, *, command: str, bin_dir: Path,
                                original_pr: str | None,
@@ -478,14 +500,14 @@ def _lock_resolve_and_dispatch(held: contextlib.ExitStack, args, spec, extra: li
     handler runs. Global → target → checkout is the one order every `pr`
     process takes them in, so no two can deadlock.
 
-    `-h` / `--help` among the command's own tokens skip every lock: the
-    parser answers help, and a live `pr batch run` must not refuse `pr batch
-    run --help`.
+    Real help is the command's own parser exiting 0, not a `--help` token in
+    extra: a live `pr batch run` must still print `pr batch run --help`.
     """
-    skip_locks = bool({"-h", "--help"} & set(extra))
-    if not skip_locks:
-        held.enter_context(cli.locks.hold_declared(
-            core.run_lock.globals_in(need.locks), None, command=command))
+    if _own_parser_printed_help(spec, extra):
+        return 0
+
+    held.enter_context(cli.locks.hold_declared(
+        core.run_lock.globals_in(need.locks), None, command=command))
 
     ctx = pr.context.resolve_at(
         need.depth,
@@ -500,9 +522,8 @@ def _lock_resolve_and_dispatch(held: contextlib.ExitStack, args, spec, extra: li
     if ctx.worktree_root:
         config.workbench_projects.register(ctx.worktree_root)
 
-    if not skip_locks:
-        held.enter_context(cli.locks.hold_declared(
-            _held_scopes(spec, extra, ctx, original_pr), ctx, command=command))
+    held.enter_context(cli.locks.hold_declared(
+        _held_scopes(spec, extra, ctx, original_pr), ctx, command=command))
 
     if need.update:
         ctx = pr.sync.update_to_remote(ctx)

@@ -83,6 +83,11 @@ class CommandSpec:
       answering with a usage line naming none of its subcommands. False for
       the commands that ignore their argv: with no `-h` of their own they
       would run on `-h`.
+    * ``parser`` — ``"<module>:<attr>"`` naming the argparse factory for a
+      command that parses its own argv. Dispatch asks this parser whether
+      the command's argv is help before taking locks, so a live batch still
+      prints `pr batch run --help` and a `--help` consumed as a flag value
+      does not skip the lock. None for every other command.
     """
 
     name: str
@@ -92,6 +97,7 @@ class CommandSpec:
     takes_target: bool = True
     handler: str | None = None
     parses_own_argv: bool = False
+    parser: str | None = None
 
 
 def _create_need(argv: Sequence[str]) -> Need:
@@ -179,7 +185,8 @@ _SPECS: tuple[CommandSpec, ...] = (
     # run holds a per-run lock under the batch state root.
     CommandSpec("batch",    "Run rebase, CI fixes, comments and self-review across my open PRs",
                 _batch_need, takes_target=False,
-                handler="cli.pr_batch:cmd_batch", parses_own_argv=True),
+                handler="cli.pr_batch:cmd_batch", parses_own_argv=True,
+                parser="cli.pr_batch:build_parser"),
     CommandSpec("gc",       "Clean up stale PR artifacts",
                 Need(REMOTE, update=False, locks=TARGET_ONLY),
                 handler="cli.pr_commands:cmd_gc"),

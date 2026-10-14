@@ -479,6 +479,28 @@ def test_help_skips_locks_so_a_live_batch_still_prints_it(capsys):
     assert "--checkout" in capsys.readouterr().out
 
 
+def test_help_as_a_flag_value_does_not_skip_the_batch_lock(capsys):
+    """`--prs --help` is not help: argparse consumes it as a value, or errors."""
+    record = {"pid": 7, "command": "pr batch run --checkout /x", "started": "t0"}
+    with held_elsewhere(core.run_lock.global_lock_path("batch"), record), \
+         patch("cli.pr_batch._cmd_run") as run:
+        code = _run_main("batch", "run", "--checkout", "/r", "--prs", "--help")
+    assert code == 1
+    assert "owns this global batch" in capsys.readouterr().err
+    run.assert_not_called()
+
+
+def test_end_of_options_help_does_not_skip_the_batch_lock(capsys):
+    """`pr batch run -- --help` is not the parser answering help."""
+    record = {"pid": 7, "command": "pr batch run --checkout /x", "started": "t0"}
+    with held_elsewhere(core.run_lock.global_lock_path("batch"), record), \
+         patch("cli.pr_batch._cmd_run") as run:
+        code = _run_main("batch", "run", "--", "--help")
+    assert code == 1
+    assert "owns this global batch" in capsys.readouterr().err
+    run.assert_not_called()
+
+
 def test_dispatch_holds_target_and_checkout_before_it_fetches(worktree):
     """`update_to_remote` fast-forwards the worktree, which is a write to the checkout."""
     target = worktree / "target"
@@ -501,10 +523,10 @@ def test_dispatch_holds_target_and_checkout_before_it_fetches(worktree):
 def test_a_bare_review_with_no_pr_locks_the_tree_it_will_self_review(worktree):
     """Whether a bare `pr review` is a self-review is only known once resolution
     says there is no PR; it must still hold the checkout before the fetch."""
-    target = worktree / "target"
-    _dispatch_stage("review", ctx=make_ctx(worktree_root=worktree, target_dir=target,
-                                           pr_number=None))
-    assert (git_dir(worktree) / core.run_lock.TREE_LOCK_FILE).is_file()
+    ctx = make_ctx(worktree_root=worktree, target_dir=worktree / "target",
+                   pr_number=None)
+    seen = _held_during_dispatch(worktree, "review", ctx=ctx)
+    assert seen["checkout"] is True
 
 
 def test_an_explicit_pr_escalates_the_depth_and_nothing_else(tmp_path):

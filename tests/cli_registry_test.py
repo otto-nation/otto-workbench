@@ -475,14 +475,15 @@ def test_pr_help_imports_no_delegate():
     loaded = {m for m in out.stdout.strip().split(",") if m}
     assert loaded, "the probe loaded no cli module at all — it did not run `pr`"
     # `cli.pr` is the entry point the shim imports; `cli.pr_commands` is the
-    # four internal handlers, `cli.dispatch` the seam that calls one, and
-    # `cli.schema` the document `--tool-schema` serves. None is a delegate.
-    # A delegate showing up here (`cli.ci_check`, `cli.review_entry`, …) is
-    # the regression: those are what `handler` keeps as a string so that
-    # dispatch, not import, pays for them.
+    # four internal handlers, `cli.dispatch` the seam that calls one,
+    # `cli.locks` the dispatcher's declared-lock helper, and `cli.schema` the
+    # document `--tool-schema` serves. None is a delegate. A delegate showing
+    # up here (`cli.ci_check`, `cli.review_entry`, …) is the regression: those
+    # are what `handler` keeps as a string so that dispatch, not import, pays
+    # for them.
     assert loaded <= {"cli.pr", "cli.needs", "cli.registry", "cli.review_modes",
                       "cli.pr_commands", "cli.pr_batch", "cli.dispatch",
-                      "cli.schema"}, loaded
+                      "cli.locks", "cli.schema"}, loaded
 
 
 # ── process-level state belongs to the process ────────────────────────────
@@ -514,4 +515,7 @@ def test_no_cli_module_installs_a_signal_handler():
 
 
 def test_only_batch_parses_its_own_argv():
-    assert {n for n, s in COMMANDS.items() if s.parses_own_argv} == {"batch"}
+    own = {n: s for n, s in COMMANDS.items() if s.parses_own_argv}
+    assert set(own) == {"batch"}
+    assert own["batch"].parser == "cli.pr_batch:build_parser"
+    assert all(s.parser is None for s in COMMANDS.values() if not s.parses_own_argv)

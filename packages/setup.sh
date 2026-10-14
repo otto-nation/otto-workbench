@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Interactive package installer.
-# Homebrew when present; mise (bootstrapped if needed) otherwise.
+# brew bundle on macOS with Homebrew; elsewhere each entry installs through
+# install_package — Homebrew where it exists, else mise (bootstrapped if needed).
 # Called by otto-workbench install; can also be run standalone: ./packages/setup.sh
 
 set -e
@@ -11,12 +12,12 @@ WORKBENCH_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 
 _PACKAGES_STATE_KEY="packages.stacks"
 
-if command -v brew >/dev/null 2>&1; then
+if packages_use_bundle; then
   # shellcheck source=packages/brew_backend.sh
   . "$SCRIPT_DIR/brew_backend.sh"
-elif command -v mise >/dev/null 2>&1 || _bootstrap_mise; then
-  # shellcheck source=packages/mise_backend.sh
-  . "$SCRIPT_DIR/mise_backend.sh"
+elif command -v brew >/dev/null 2>&1 || command -v mise >/dev/null 2>&1 || _bootstrap_mise; then
+  # shellcheck source=packages/entry_backend.sh
+  . "$SCRIPT_DIR/entry_backend.sh"
 else
   warn "Neither Homebrew nor mise is available, and mise could not be installed"
   exit 0

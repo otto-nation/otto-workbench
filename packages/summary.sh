@@ -25,7 +25,7 @@ _pkg_summary_mise() {
 # print_packages_summary — prints next steps for day-to-day package usage.
 # Environment setup (env vars from registries) is handled centrally by lib/summary.sh.
 print_packages_summary() {
-  if command -v brew >/dev/null 2>&1; then
+  if packages_use_bundle; then
     summary_section "Homebrew"
     if brew bundle check --file="$CORE_MANIFEST" >/dev/null 2>&1; then
       summary_ok "packages in sync"
@@ -38,6 +38,11 @@ print_packages_summary() {
   fi
 
   summary_section "Packages"
+  if command -v brew >/dev/null 2>&1; then
+    summary_info "installed entry by entry through Homebrew; macOS-only entries skipped"
+    summary_info "Re-run: ${DIM}otto-workbench install packages${NC}"
+    return
+  fi
   if _pkg_summary_mise >/dev/null; then
     summary_info "managed via mise"
     summary_info "Re-run: ${DIM}otto-workbench install packages${NC}"

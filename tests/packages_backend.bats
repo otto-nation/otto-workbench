@@ -1,6 +1,8 @@
 #!/usr/bin/env bats
-# Tests for packages/setup.sh backend dispatch: mise when Homebrew is absent,
-# brew when it is present. A fixture PACKAGES_DIR supplies the manifests.
+# Tests for packages/setup.sh backend dispatch: brew bundle on macOS with
+# Homebrew; entry by entry through install_package everywhere else (Linuxbrew
+# when present, mise otherwise). A fixture PACKAGES_DIR supplies the manifests,
+# and a uname stub stands in for the OS.
 bats_require_minimum_version 1.5.0
 
 setup() {
@@ -69,6 +71,30 @@ EOF
   chmod +x "$STUBS/mise"
 }
 
+# _stub_uname OS — makes `uname -s` answer OS ahead of the real one.
+_stub_uname() {
+  printf '#!/bin/sh\necho %s\n' "$1" > "$STUBS/uname"
+  chmod +x "$STUBS/uname"
+}
+
+# _stub_brew — a brew that logs its arguments; `install F` puts F's short name
+# on PATH, as a real install would.
+_stub_brew() {
+  cat > "$STUBS/brew" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >> "$BREW_LOG"
+[[ "$1 $2" == "info --installed" ]] && echo '{"formulae":[],"casks":[]}'
+[[ "$1 $2" == "bundle check" ]] && exit 1
+if [[ "$1" == install ]]; then
+  bin="$(dirname "$0")/${2##*/}"
+  printf '#!/bin/sh\nexit 0\n' > "$bin"
+  chmod +x "$bin"
+fi
+exit 0
+EOF
+  chmod +x "$STUBS/brew"
+}
+
 teardown() {
   common_teardown
 }
@@ -90,15 +116,9 @@ teardown() {
   [[ "$output" == *"managed via mise"* ]]
 }
 
-@test "with brew present the brew backend is used" {
-  cat > "$STUBS/brew" <<'EOF'
-#!/usr/bin/env bash
-echo "$*" >> "$BREW_LOG"
-[[ "$1 $2" == "info --installed" ]] && echo '{"formulae":[],"casks":[]}'
-[[ "$1 $2" == "bundle check" ]] && exit 1
-exit 0
-EOF
-  chmod +x "$STUBS/brew"
+@test "on macOS with brew present the brew bundle backend is used" {
+  _stub_uname Darwin
+  _stub_brew
   ln -sf "$(_runnable_binary jq)" "$STUBS/jq"
   run env PATH="$STUBS:$SYSBIN" "$REPO_ROOT/packages/setup.sh" <<< "yy"
   [ "$status" -eq 0 ]
@@ -144,4 +164,34 @@ EOF
   [ "$linear_ok" -eq 1 ]
   extra=$(grep -c 'Installed linear' <<< "$output" || true)
   [ "$extra" -eq 0 ]
+}
+
+@test "on Linux with brew present, entries install one by one through Homebrew" {
+  _stub_uname Linux
+  _stub_brew
+  run env PATH="$STUBS:$SYSBIN" "$REPO_ROOT/packages/setup.sh" <<< "yy"
+  [ "$status" -eq 0 ]
+  bundles=$(grep -c bundle "$BREW_LOG" || true)
+  [ "$bundles" -eq 0 ]
+  grep -qx 'install jq' "$BREW_LOG"
+  grep -qx 'install tree' "$BREW_LOG"
+  grep -qx 'install schpet/tap/linear' "$BREW_LOG"
+  mas_hits=$(grep -c mas "$BREW_LOG" || true)
+  [ "$mas_hits" -eq 0 ]
+  [ ! -s "$MISE_LOG" ]
+  [[ "$output" == *"core packages installed"* ]]
+}
+
+@test "on Linux with brew, the summary does not judge sync by brew bundle check" {
+  _stub_uname Linux
+  _stub_brew
+  run env PATH="$STUBS:$SYSBIN" bash -c '
+    . "$1/lib/ui.sh"
+    . "$1/packages/summary.sh"
+    print_packages_summary
+  ' _ "$REPO_ROOT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"installed entry by entry through Homebrew"* ]]
+  checks=$(grep -c 'bundle check' "$BREW_LOG" || true)
+  [ "$checks" -eq 0 ]
 }

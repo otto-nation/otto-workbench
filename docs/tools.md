@@ -279,7 +279,7 @@ and reconciles the Ghostty theme key. Git and tool-context rule files
 regenerate during `sync_ai`.
 
 `sync` does not do one-time setup — that is `otto-workbench install`: package
-stacks (Homebrew, or mise without it), Docker runtime, iTerm themes, Ghostty config from template.
+stacks (Homebrew or mise), Docker runtime, iTerm themes, Ghostty config from template.
 
 ### `resolve-branch`
 

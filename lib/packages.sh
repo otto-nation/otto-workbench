@@ -115,6 +115,16 @@ package_entries() {
   return 0
 }
 
+# packages_use_bundle — 0 when package stacks install with `brew bundle`: macOS
+# with Homebrew on PATH. Everywhere else stacks install entry by entry through
+# install_package, which still prefers Homebrew (Linuxbrew) where it exists but
+# skips the macOS-only entries and casks a Linux brew cannot install. Reads
+# `uname -s` rather than $OSTYPE, which bash sets itself and a caller cannot vary.
+packages_use_bundle() {
+  [[ "$(uname -s)" == Darwin ]] || return 1
+  command -v brew >/dev/null 2>&1
+}
+
 # install_package NAME [--version V] — installs the manifest package NAME with
 # Homebrew where it exists and otherwise with mise (`mise use -g SPEC[@V]`),
 # bootstrapping mise first when neither is present. Skipped when the entry's

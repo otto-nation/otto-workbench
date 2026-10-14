@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Package backend for machines without Homebrew — installs each manifest entry
-# with install_package (mise), reports linux: system entries it cannot install,
-# and lists macos-only entries as unavailable. Sourced by packages/setup.sh.
+# Package backend for every machine but macOS-with-Homebrew — installs each
+# manifest entry with install_package, which uses Homebrew (Linuxbrew) where it
+# exists and mise otherwise. macos-only entries and casks are listed as
+# unavailable; git entries belong to the zsh component. Sourced by
+# packages/setup.sh.
 
 pkg_backend_init() { :; }
 
@@ -14,7 +16,7 @@ pkg_is_installed() {
   _cmd_runnable "${__p[cmd]}"
 }
 
-# pkg_skip_reason TYPE FULL_NAME — 0 when the mise backend will not install it
+# pkg_skip_reason TYPE FULL_NAME — 0 when this backend will not install it
 # (status display shows – rather than +). Prints the reason for the status line.
 pkg_skip_reason() {
   local -A __p=()
@@ -32,9 +34,11 @@ pkg_skip_reason() {
   return 1
 }
 
-# pkg_install_one TYPE FULL_NAME — installs one manifest entry via mise, or
-# reports why this backend will not. macos-only and git are skips (return 0);
-# a missing system package or a failed mise install is a failure (return 1).
+# pkg_install_one TYPE FULL_NAME — installs one manifest entry through
+# install_package, or reports why this backend will not. macos-only and git are
+# skips (return 0). A failed install is a failure (return 1), and so is an entry
+# with nothing to install it — a system package on a machine without Homebrew,
+# reported with the distro hint.
 pkg_install_one() {
   local -A __p=()
   if ! package_lookup "$2" __p; then
@@ -50,25 +54,14 @@ pkg_install_one() {
       echo -e "  ${DIM}– ${__p[name]}: installed by the zsh component${NC}"
       return 0
       ;;
-    system)
-      if _cmd_runnable "${__p[cmd]}"; then
-        return 0
-      fi
-      _warn_no_linux_install "${__p[name]}" "${__p[disposition]}"
-      return 1
-      ;;
-    mise)
-      install_package "${__p[formula]}"
-      ;;
     *)
-      _warn_no_linux_install "${__p[name]}" "${__p[disposition]:-none}"
-      return 1
+      install_package "${__p[formula]}"
       ;;
   esac
 }
 
-# pkg_install_file FILE LABEL — installs every entry in FILE. Returns 1 when a
-# mise install failed or a system entry is missing; macos-only and git skips
+# pkg_install_file FILE LABEL — installs every entry in FILE. Returns 1 when an
+# install failed or a system entry is missing; macos-only and git skips
 # are not failures.
 pkg_install_file() {
   local file="$1"

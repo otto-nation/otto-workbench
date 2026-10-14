@@ -235,7 +235,7 @@ _warn_no_linux_install() {
     warn "$label is a system package — install it with your distro's package manager"
     return 0
   fi
-  warn "$label has no Linux install ($disposition)"
+  warn "$label has no Linux install (${disposition:-no linux annotation in its manifest})"
 }
 
 # _install_brew_or_mise CMD FORMULA MISE_SPEC LABEL [DISPOSITION] — private

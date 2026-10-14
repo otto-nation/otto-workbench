@@ -102,8 +102,33 @@ class TestSettleTargets:
     def test_the_error_names_the_threads_still_waiting_on_a_person(self, capsys):
         pr.settlement.settle_targets(self._record(), ["typo"])
         err = capsys.readouterr().err
-        assert "t1, t3" in err
-        assert "t2" not in err
+        assert "t1  needs_human" in err
+        assert "t3  deferred" in err
+        assert "t2  fixed" not in err
+
+    def test_an_unknown_id_lists_each_settleable_item_with_its_finding(self, capsys):
+        record = FixRecord(items=[
+            ItemOutcome(
+                id="t1", outcome=FixOutcome.NEEDS_HUMAN,
+                summary="rename the guard",
+            ),
+            ItemOutcome(
+                id="t2", outcome=FixOutcome.FIXED,
+                summary="already done",
+            ),
+            ItemOutcome(
+                id="rb-4100200300-3", outcome=FixOutcome.DEFERRED,
+                summary="Merge order with the sibling PR before landing",
+            ),
+        ])
+        pr.settlement.settle_targets(record, ["typo"])
+        err = capsys.readouterr().err
+        assert 't1  needs_human  "rename the guard"' in err
+        assert (
+            'rb-4100200300-3  deferred  '
+            '"Merge order with the sibling PR before landing"'
+        ) in err
+        assert "already done" not in err
 
     def test_a_snapshot_with_nothing_left_to_settle_says_so(self, capsys):
         record = FixRecord(items=[ItemOutcome(id="t2", outcome=FixOutcome.FIXED)])

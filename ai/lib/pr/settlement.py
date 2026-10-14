@@ -521,6 +521,41 @@ def resolve_settled_commit(
     return SettledCommit()
 
 
+_FINDING_WIDTH = 80
+
+
+def quoted_finding(summary: str) -> str:
+    """The finding as one quoted line, or empty when there is none.
+
+    First line of `summary`, cut at `_FINDING_WIDTH` with a trailing ellipsis.
+    Every surface that names an item for the operator goes through this so a
+    missing finding omits the quotes rather than printing empty ones.
+    """
+    if not summary:
+        return ""
+    line = summary.splitlines()[0]
+    if not line:
+        return ""
+    if len(line) > _FINDING_WIDTH:
+        line = line[:_FINDING_WIDTH - 1] + "…"
+    return f'"{line}"'
+
+
+def format_item_line(item: ItemOutcome) -> str:
+    """`<id>  <outcome>  "<finding>"`, plus the commit SHA when the item has one.
+
+    `settle_targets` and a draft `--finish` print this when they ask the
+    operator to name an item. The quoted finding comes from `quoted_finding`.
+    """
+    parts = [item.id, item.outcome.value]
+    finding = quoted_finding(item.summary)
+    if finding:
+        parts.append(finding)
+    if item.commit_sha:
+        parts.append(item.commit_sha)
+    return "  ".join(parts)
+
+
 def settle_targets(record: FixRecord, targets: list[str]) -> list[ItemOutcome] | None:
     """The recorded outcomes `--settle` named, or None once it has said what is missing.
 
@@ -539,11 +574,16 @@ def settle_targets(record: FixRecord, targets: list[str]) -> list[ItemOutcome] |
     if not unknown:
         return [by_id[t] for t in targets]
     core.log.error(f"--settle named threads the fix pass never recorded: {unknown}")
-    settleable = sorted(o.id for o in record.items if o.outcome in UNSETTLED_OUTCOMES)
-    core.log.info(
-        f"Threads a person still owes an answer: {', '.join(settleable)}"
-        if settleable else "No thread in the fix snapshot is waiting on a person."
+    settleable = sorted(
+        (o for o in record.items if o.outcome in UNSETTLED_OUTCOMES),
+        key=lambda o: o.id,
     )
+    if not settleable:
+        core.log.info("No thread in the fix snapshot is waiting on a person.")
+        return None
+    core.log.info("Threads a person still owes an answer:")
+    for item in settleable:
+        core.log.info(format_item_line(item))
     return None
 
 
@@ -609,7 +649,9 @@ def report_settlement(
     """
     replaced = f" (was {was.value})" if was != kind else ""
     cited = f", fixed in {sha}" if sha else ""
-    core.log.info(f"{outcome.id}: recorded as {kind.value}{replaced}{cited}")
+    finding = quoted_finding(outcome.summary)
+    quoted = f" — {finding}" if finding else ""
+    core.log.info(f"{outcome.id}: recorded as {kind.value}{replaced}{cited}{quoted}")
     if kind.may_cite_a_commit and not sha:
         core.log.info(
             f"{outcome.id}: no pushed commit found for {outcome.file}:"

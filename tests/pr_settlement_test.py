@@ -669,7 +669,49 @@ class TestOneCitationPerSettlement:
         assert "named no commit" in err.call_args[0][0]
 
 
-# ── report_settlement: what the operator is told ──────────────────────────
+# ── format_item_line: the shape every surface that names an item uses ─────
+
+
+class TestFormatItemLine:
+    """One owner for the quoted finding so --settle, --finish and report agree."""
+
+    def test_the_id_sits_beside_the_outcome_and_the_finding(self):
+        item = ItemOutcome(
+            id="rb-4100200300-3", outcome=FixOutcome.DEFERRED,
+            summary="Merge order with the sibling PR before landing",
+        )
+        assert pr.settlement.format_item_line(item) == (
+            'rb-4100200300-3  deferred  "Merge order with the sibling PR before landing"'
+        )
+
+    def test_a_multiline_finding_uses_only_the_first_line(self):
+        item = ItemOutcome(
+            id="t1", outcome=FixOutcome.NEEDS_HUMAN,
+            summary="first line of the finding\nsecond line",
+        )
+        line = pr.settlement.format_item_line(item)
+        assert '"first line of the finding"' in line
+        assert "second line" not in line
+
+    def test_a_long_finding_is_cut_at_eighty_characters(self):
+        item = ItemOutcome(id="t1", outcome=FixOutcome.DEFERRED, summary="x" * 100)
+        quoted = pr.settlement.format_item_line(item).rsplit("  ", 1)[-1]
+        inner = quoted[1:-1]
+        assert inner.endswith("…")
+        assert len(inner) == 80
+
+    def test_a_missing_finding_omits_the_quotes(self):
+        item = ItemOutcome(id="t1", outcome=FixOutcome.DEFERRED)
+        assert pr.settlement.format_item_line(item) == "t1  deferred"
+
+    def test_a_commit_is_named_when_the_item_has_one(self):
+        item = ItemOutcome(
+            id="t1", outcome=FixOutcome.FIXED,
+            summary="renamed the guard", commit_sha="abc1234",
+        )
+        assert pr.settlement.format_item_line(item) == (
+            't1  fixed  "renamed the guard"  abc1234'
+        )
 
 
 class TestWhatTheOperatorIsToldTheyRecorded:
@@ -719,6 +761,16 @@ class TestWhatTheOperatorIsToldTheyRecorded:
                 outcome, FixOutcome.DISMISSED, FixOutcome.DEFERRED, "",
             )
         assert len(info.call_args_list) == 1
+
+    def test_the_recorded_line_carries_the_finding(self, outcome):
+        outcome.summary = "Merge order with the sibling PR before landing"
+        with patch("core.log.info") as info:
+            pr.settlement.report_settlement(
+                outcome, FixOutcome.FIXED, FixOutcome.DEFERRED, "abc1234",
+            )
+        line = info.call_args_list[0][0][0]
+        assert "recorded as fixed" in line
+        assert '"Merge order with the sibling PR before landing"' in line
 
 
 class TestSettleRearmsThroughTheOwner:

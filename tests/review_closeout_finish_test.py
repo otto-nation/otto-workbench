@@ -149,6 +149,35 @@ class TestFinishDeferredWork:
             with pytest.raises(RuntimeError):
                 review.closeout.finish_deferred_work(self._ctx(worktree), PRReport())
 
+    def test_a_draft_run_lists_each_snapshot_item_before_the_summary(self, worktree):
+        """Publishing is off: the operator has to name items without a posted table."""
+        self._save(worktree, items=[
+            ItemOutcome(
+                id="rb-4100200300-3",
+                outcome=FixOutcome.NEEDS_HUMAN,
+                summary="Merge order with the sibling PR before landing",
+                commit_sha="abc1234",
+            ),
+        ])
+        order = []
+
+        def note_summary(*_a, **_k):
+            order.append("summary")
+
+        with patch.object(core.log, "info", side_effect=order.append), \
+                patch.object(review.closeout, "post_pending_fix_replies"), \
+                patch.object(review.deferred_issue, "finalize_deferred",
+                             return_value=True), \
+                patch.object(pr.summary_publish, "render_deferred_summary",
+                             side_effect=note_summary):
+            review.closeout.finish_deferred_work(self._ctx(worktree), PRReport())
+        line = (
+            'rb-4100200300-3  needs_human  '
+            '"Merge order with the sibling PR before landing"  abc1234'
+        )
+        assert line in order
+        assert order.index(line) < order.index("summary")
+
 
 class TestReconcileRunsBeforeTheWrites:
     """Within one invocation the two must not disagree about the same thread."""

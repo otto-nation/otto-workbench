@@ -13,20 +13,32 @@
 
 from __future__ import annotations
 
+import contextlib
+import enum
 import json
 import secrets
 import shutil
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Protocol
 
+import batch.plan
+import batch.requests
 import core.run_lock
 import core.serde
 import core.workbench_paths
-from batch.model import Run
+from batch.model import FINISHED_RUN, CancelState, Run
+from batch.requests import Cancel, Decide, Envelope, Malformed, Outcome, Request
 
 STATE_FILE = "state.json"
-CANCEL_FILE = "cancel"
+# The cancel sidecar older `pr batch cancel` wrote. `session()` folds it into
+# `run.cancel`; see `_fold_legacy_cancel`.
+LEGACY_CANCEL_FILE = "cancel"
+CANCEL_FILE = LEGACY_CANCEL_FILE
+REQUESTS_DIR = "requests"
+REJECTED_DIR = "rejected"
 
 # The machine-wide lock every `pr batch run` and `resume` holds from before it
 # asks whether a run is active until it finishes, so two batches cannot both
@@ -43,6 +55,90 @@ class RunNotFound(LookupError):
 class CancelRequest:
     requested: bool
     kill: bool
+
+
+class Role(enum.Enum):
+    """Why a process holds a run's lock; written into its holder record."""
+
+    # A scheduler: `pr batch run` or `resume`.
+    DRIVER = "driver"
+    # Draining requests with no scheduler: resolve, cancel, the hand-off.
+    APPLIER = "applier"
+    # `pr gc` deciding whether to remove a finished run.
+    GC = "gc"
+
+
+_DOING: dict[Role | None, str] = {
+    Role.DRIVER: "driving it",
+    Role.APPLIER: "applying a decision",
+    Role.GC: "removing it",
+    None: "holding it",
+}
+
+
+@dataclass(frozen=True)
+class Holder:
+    """A live process holding a run's lock, as its holder record names it.
+
+    `role` is None for a record with no role this code knows, which is what
+    a holder written before roles existed leaves. Such a holder is treated
+    as a driver, since that is what a held run lock meant then.
+    """
+
+    role: Role | None
+    pid: int
+    command: str
+    started: str
+
+    @property
+    def drains(self) -> bool:
+        """Whether this holder applies what is in the inbox before it releases."""
+        return self.role in (Role.DRIVER, Role.APPLIER, None)
+
+    def describe(self) -> str:
+        """What the holder is doing to the run, as a refusal names it."""
+        return _DOING[self.role]
+
+
+class RunBusy(RuntimeError):
+    """A live process holds the run's lock; `holder` is who, when its record says."""
+
+    def __init__(self, run_id: str, holder: Holder | None):
+        self.run_id = run_id
+        self.holder = holder
+        detail = ""
+        if holder is not None:
+            detail = (f": {holder.describe()} ({holder.command}, pid {holder.pid}, "
+                      f"started {holder.started})")
+        super().__init__(f"run {run_id} is busy{detail}")
+
+
+class RunUnreachable(RuntimeError):
+    """The run's lock stayed held past the retry budget while its record named no live holder."""
+
+    def __init__(self, run_id: str):
+        self.run_id = run_id
+        super().__init__(
+            f"run {run_id} is unreachable: its lock is held but its holder record says "
+            f"released or names a dead process, and it did not free within the retry budget")
+
+
+class InboxPolicy(Protocol):
+    """What a session drains with: how to apply one request, settle an idle run, report."""
+
+    def apply(self, run: Run, envelope: Envelope) -> Outcome: ...
+
+    def settle(self, run: Run) -> bool: ...
+
+    def report(self, run: Run, outcome: Outcome) -> None: ...
+
+
+@dataclass(frozen=True)
+class FailedRequest:
+    """A request a drain rejected, and why."""
+
+    name: str
+    error: str
 
 
 def now_iso() -> str:
@@ -125,18 +221,115 @@ def remove(run_id: str) -> None:
     shutil.rmtree(run_dir(run_id))
 
 
-def write_request(run_id: str, request: dict) -> Path:
-    reqs = run_dir(run_id) / "requests"
-    reqs.mkdir(parents=True, exist_ok=True)
+def _requests_dir(run_id: str) -> Path:
+    return run_dir(run_id) / REQUESTS_DIR
+
+
+def write_request(run_id: str, request: Decide | Cancel) -> str:
+    """Queue *request* in *run_id*'s inbox and return the file name it was written under.
+
+    Names sort by write time, which is the order a drain applies them in, after
+    every cancel. Raises RunNotFound when the run directory is gone, including
+    when it is removed between the inbox `mkdir` and the write: neither step
+    creates a missing parent, so a removed run is never brought back as an
+    orphan `<run-id>/requests/`. `reap`'s tombstone check relies on this.
+    """
+    directory = run_dir(run_id)
+    if not directory.is_dir():
+        raise RunNotFound(run_id)
+    reqs = directory / REQUESTS_DIR
     stamp = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%S%f}"
     path = reqs / f"{stamp}-{secrets.token_hex(2)}.json"
-    core.serde.write_json(path, request)
-    return path
+    try:
+        reqs.mkdir(exist_ok=True)
+        core.serde.write_json(path, batch.requests.to_dict(request), create_parents=False)
+    except FileNotFoundError as exc:
+        raise RunNotFound(run_id) from exc
+    return path.name
 
 
 def has_requests(run_id: str) -> bool:
     reqs = run_dir(run_id) / "requests"
     return reqs.is_dir() and any(reqs.glob("*.json"))
+
+
+def _read_request(path: Path) -> Request:
+    """The request in *path*; an unreadable file or a non-object is Malformed."""
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        return Malformed(f"malformed request {path.name}: {exc}")
+    if not isinstance(raw, dict):
+        return Malformed(f"malformed request {path.name}: not an object")
+    return batch.requests.parse(raw)
+
+
+def peek_requests(run_id: str) -> list[Envelope]:
+    """Every queued request of *run_id*, by file name, read without being taken.
+
+    A file that cannot be read or parsed comes back Malformed instead of
+    raising, so one bad file never stops the requests behind it. A
+    half-written request is never seen: `write_json`'s temp files do not
+    match `*.json`.
+    """
+    reqs = _requests_dir(run_id)
+    if not reqs.is_dir():
+        return []
+    return [Envelope(path.name, _read_request(path)) for path in sorted(reqs.glob("*.json"))]
+
+
+def pending_requests(run_id: str) -> int:
+    """How many requests wait in *run_id*'s inbox."""
+    reqs = _requests_dir(run_id)
+    return len(list(reqs.glob("*.json"))) if reqs.is_dir() else 0
+
+
+def _rejection_error(path: Path) -> str:
+    """The error a rejected request was recorded with; "malformed" when none was."""
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return "malformed"
+    # Older code moved the raw request here with no error beside it.
+    error = data.get("error") if isinstance(data, dict) and "request" in data else None
+    return error if isinstance(error, str) and error else "malformed"
+
+
+def failed_requests(run_id: str) -> list[FailedRequest]:
+    """Requests a drain rejected, by file name, each with the error it was rejected for.
+
+    A file older code left in `rejected/` holds only the raw request and
+    reads as "malformed".
+    """
+    rejected = _requests_dir(run_id) / REJECTED_DIR
+    if not rejected.is_dir():
+        return []
+    return [FailedRequest(path.name, _rejection_error(path))
+            for path in sorted(rejected.glob("*.json"))]
+
+
+def _raw_body(path: Path) -> object:
+    """*path*'s JSON as written, or None when it cannot be read as JSON."""
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _retire(run_id: str, name: str, outcome: Outcome) -> None:
+    """Take request *name* out of the inbox once its outcome is committed.
+
+    A request that applied is unlinked. One that failed is moved to
+    `requests/rejected/<name>` as `{"request": <raw body or null>, "error": …}`,
+    where `failed_requests` and its submitter can find it.
+    """
+    path = _requests_dir(run_id) / name
+    if outcome.ok:
+        path.unlink(missing_ok=True)
+        return
+    record = {"request": _raw_body(path), "error": outcome.error}
+    core.serde.write_json(path.parent / REJECTED_DIR / name, record)
+    path.unlink(missing_ok=True)
 
 
 def _reject_request(path: Path) -> None:
@@ -179,3 +372,260 @@ def cancel_requested(run_id: str) -> CancelRequest:
 
 def clear_cancel(run_id: str) -> None:
     (run_dir(run_id) / CANCEL_FILE).unlink(missing_ok=True)
+
+
+def run_lock(run_id: str) -> core.run_lock.Resource:
+    """*run_id*'s own lock, `run_dir/run.lock`, held by whichever session has the run open."""
+    return core.run_lock.Resource(run_dir(run_id) / core.run_lock.LOCK_FILE,
+                                  f"batch run {run_id}")
+
+
+def _role(value: object) -> Role | None:
+    """The Role a holder record names, or None for a missing or unknown one."""
+    try:
+        return Role(value)
+    except ValueError:
+        return None
+
+
+def _holder_from(record: dict) -> Holder | None:
+    """The Holder a lock record describes, or None when it names no pid."""
+    pid = record.get("pid")
+    if not isinstance(pid, int):
+        return None
+    return Holder(role=_role(record.get("role")), pid=pid,
+                  command=str(record.get("command", "unknown command")),
+                  started=str(record.get("started", "unknown time")))
+
+
+def holder(run_id: str) -> Holder | None:
+    """Who holds *run_id*'s lock, read from its record; None when nobody live does.
+
+    Never takes the lock, so a status poll cannot refuse a real take. The cost
+    is a moment after a new holder's flock and before its record write, when
+    the run reads as unheld. That is acceptable for a status view; every
+    decision that matters goes through a take.
+    """
+    # ceiling: liveness is `os.kill(pid, 0)`, so a SIGKILLed holder whose pid
+    # the kernel reuses reads as a ghost holder. Upgrade to recording and
+    # comparing the process start time if a ghost holder is ever observed.
+    record = core.run_lock.read_holder(run_lock(run_id).path)
+    if not core.run_lock.is_live(record, allow_self=True):
+        return None
+    return _holder_from(record)
+
+
+def _refusal(run_id: str, exc: core.run_lock.LockBusy) -> RuntimeError:
+    """RunBusy for a live holder; RunUnreachable once core gave up on a vacated one."""
+    if core.run_lock.classify_busy(exc) is core.run_lock.Busy.LIVE:
+        return RunBusy(run_id, _holder_from(exc.holder))
+    return RunUnreachable(run_id)
+
+
+def _enter_lock(stack: contextlib.ExitStack, run_id: str, role: Role, *,
+                command: str, create: bool) -> None:
+    """Take *run_id*'s lock as *role* onto *stack*, or raise what the refusal means.
+
+    A missing run directory is RunNotFound: without *create* the take never
+    makes it, so a late taker cannot resurrect a removed run.
+    """
+    held = core.run_lock.hold_resource(run_lock(run_id), command=command, started=now_iso(),
+                                       fields={"role": role.value, "run": run_id},
+                                       create=create)
+    try:
+        stack.enter_context(held)
+    except core.run_lock.LockBusy as exc:
+        raise _refusal(run_id, exc) from exc
+    except FileNotFoundError as exc:
+        raise RunNotFound(run_id) from exc
+
+
+class Session:
+    """One open run: its state, loaded under its lock, and the only route back to disk.
+
+    Built only by `session()` and `create()`. `run` is the object loaded after
+    the lock was taken, and `commit()` writes that object and nothing else, so
+    a `load()` snapshot has no way back to disk.
+    """
+
+    def __init__(self, run: Run, role: Role, inbox: InboxPolicy) -> None:
+        self._run = run
+        self._role = role
+        self._inbox = inbox
+        # Whether finish() has run, so a normal exit does not finish twice.
+        self._finished = False
+        # Whether anything was ever written, so create() knows to clean up.
+        self._committed = False
+
+    @property
+    def run(self) -> Run:
+        """The run as loaded under the lock, with every change made since."""
+        return self._run
+
+    @property
+    def role(self) -> Role:
+        """The role this session holds the run's lock as."""
+        return self._role
+
+    def drain(self, *, settle: bool) -> list[Outcome]:
+        """Apply every queued request, cancels first, committing after each one.
+
+        A request's file is unlinked, or moved to `requests/rejected/` with its
+        error, only after the commit that records its effect. A crash in
+        between therefore replays the request instead of losing it. With
+        *settle*, idle settlement runs last and is committed when it changes
+        the status. Each outcome goes to the inbox's `report`, the only
+        emitter, and is also returned, for tests and for `deliver`'s own/others
+        split. Callers must not emit from the returned list.
+        """
+        envelopes = batch.requests.drain_order(peek_requests(self._run.id))
+        outcomes = [self._drain_one(envelope) for envelope in envelopes]
+        if settle and self._inbox.settle(self._run):
+            self.commit()
+        return outcomes
+
+    def _drain_one(self, envelope: Envelope) -> Outcome:
+        request = envelope.request
+        if isinstance(request, Malformed):
+            outcome = Outcome(name=envelope.name, request=request, error=request.reason)
+        else:
+            outcome = self._inbox.apply(self._run, envelope)
+        self.commit()
+        _retire(self._run.id, envelope.name, outcome)
+        self._inbox.report(self._run, outcome)
+        return outcome
+
+    def apply(self, request: Decide | Cancel) -> Outcome:
+        """Apply a request that never sat in the inbox, and report it as a drained one is.
+
+        For a holder that synthesizes requests (the scheduler's auto-publish
+        and stacked retry). Nothing is committed: the holder's next `commit()`
+        persists the effect, as it does for any other change to `run`.
+        """
+        outcome = self._inbox.apply(self._run, Envelope("", request))
+        self._inbox.report(self._run, outcome)
+        return outcome
+
+    def commit(self) -> None:
+        """Write `run` to `state.json`; refused unless this process holds the run's lock.
+
+        Raises RuntimeError when the lock is not held, for example after the
+        session closed. A commit that saves DONE or CANCELLED then drops the
+        plan's refs. Saving first means a failed cleanup never leaves the
+        stored run short of its terminal status. The drop is idempotent and is
+        retried on every terminal commit.
+        """
+        lock_file = run_lock(self._run.id).path
+        if not core.run_lock.holds(lock_file):
+            raise RuntimeError(f"batch run {self._run.id}: commit without holding its run lock; "
+                               f"open the run with batch.store.session()")
+        core.serde.write_json(run_dir(self._run.id) / STATE_FILE, core.serde.to_dict(self._run))
+        self._committed = True
+        if self._run.status in FINISHED_RUN:
+            batch.plan.drop_refs(self._run.ref_dirs, self._run.ref_namespace)
+
+    def finish(self) -> None:
+        """Drain with settlement, then commit.
+
+        A normal exit calls this unless the holder already did. A driver calls
+        it itself, inside its item hold, so its final publishes stay narrowed.
+        """
+        self.drain(settle=True)
+        self.commit()
+        self._finished = True
+
+
+def _upgraded_cancel(current: CancelState | None, kill: bool) -> CancelState:
+    """*current* with *kill* folded in: kill only goes False to True, the first time is kept."""
+    if current is None:
+        return CancelState(kill=kill, requested_at=now_iso())
+    return CancelState(kill=current.kill or kill, requested_at=current.requested_at)
+
+
+def _legacy_kill(path: Path) -> bool:
+    """The `kill` flag a legacy cancel sidecar asked for; False when it cannot be read."""
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and bool(data.get("kill"))
+
+
+# ceiling: read-compat for the `cancel` sidecar older `pr batch cancel` wrote.
+# Delete LEGACY_CANCEL_FILE and this fold once no run directory written before
+# run sessions can still be resumed.
+def _fold_legacy_cancel(opened: Session) -> None:
+    """Record a legacy cancel sidecar in `run.cancel` and commit it, then delete the file.
+
+    A finished run keeps its status and only loses the file.
+    """
+    path = run_dir(opened.run.id) / LEGACY_CANCEL_FILE
+    if not path.is_file():
+        return
+    if opened.run.status not in FINISHED_RUN:
+        opened.run.cancel = _upgraded_cancel(opened.run.cancel, _legacy_kill(path))
+        opened.commit()
+    path.unlink(missing_ok=True)
+
+
+@contextlib.contextmanager
+def session(run_id: str, role: Role, *, inbox: InboxPolicy, command: str) -> Iterator[Session]:
+    """Open *run_id* as *role*: take its lock, load, fold the legacy sidecar, drain, yield.
+
+    Raises:
+    - RunNotFound when the run has no saved state.
+    - RunBusy when a live process holds its lock.
+    - RunUnreachable when a released or dead holder record kept it locked past
+      core.run_lock's retry budget.
+    - core.run_lock.LockReentry when this process already holds the run: two
+      sessions on one run in one process is a programming error, not contention.
+
+    The entry drain settles, so a pending cancel is CANCELLED before the block
+    sees the run. A normal exit calls `finish()` unless the block already did.
+    An exceptional exit only releases, so nothing half-applied is committed
+    and anything unapplied stays in the inbox.
+    """
+    if not (run_dir(run_id) / STATE_FILE).is_file():
+        raise RunNotFound(run_id)
+    with contextlib.ExitStack() as stack:
+        _enter_lock(stack, run_id, role, command=command, create=False)
+        opened = Session(load(run_id), role, inbox)
+        _fold_legacy_cancel(opened)
+        opened.drain(settle=True)
+        yield opened
+        if not opened._finished:
+            opened.finish()
+
+
+def _discard_uncommitted(opened: Session) -> None:
+    """Remove a created run's directory if nothing was ever committed to it."""
+    if not opened._committed:
+        shutil.rmtree(run_dir(opened.run.id))
+
+
+@contextlib.contextmanager
+def create(run: Run, *, inbox: InboxPolicy, command: str) -> Iterator[Session]:
+    """Make *run*'s directory and hold its lock as DRIVER. Nothing is saved until the caller commits.
+
+    Raises FileExistsError when the run id is already on disk. If the block
+    ends, normally or not, with no commit made, the directory (which holds
+    only its lock file) is removed while the lock is still held. A refused or
+    failed start therefore leaves no orphan run. After a commit, a normal exit
+    calls `finish()` as `session()` does. A new run has no inbox, so there is
+    no entry drain.
+    """
+    directory = run_dir(run.id)
+    directory.mkdir(parents=True, exist_ok=False)
+    with contextlib.ExitStack() as stack:
+        _enter_lock(stack, run.id, Role.DRIVER, command=command, create=True)
+        opened = Session(run, Role.DRIVER, inbox)
+        try:
+            yield opened
+        except BaseException:
+            _discard_uncommitted(opened)
+            raise
+        if not opened._committed:
+            shutil.rmtree(directory)
+            return
+        if not opened._finished:
+            opened.finish()

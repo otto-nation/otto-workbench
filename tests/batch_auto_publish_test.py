@@ -20,6 +20,7 @@ import batch.admission  # noqa: E402
 import batch.outcomes  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
+from batch.requests import Decide  # noqa: E402
 from batch.model import DecisionKind, ItemStatus, RunStatus, Step  # noqa: E402
 from batch.plan import PlanRow, StepNeed  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
@@ -97,7 +98,7 @@ def test_a_skipped_step_that_committed_is_left_for_the_operator_to_publish(tmp_p
     failed = run.open_decisions(run.items[0].key)[0]
     assert failed.kind is DecisionKind.FAILED
     batch.store.save(run)
-    batch.store.write_request(run.id, {"decision": failed.id, "action": "skip-step"})
+    batch.store.write_request(run.id, Decide(failed.id, "skip-step"))
     assert sched.run_until_blocked() is RunStatus.WAITING
     assert [d.kind for d in run.open_decisions(run.items[0].key)] == [DecisionKind.PUBLISH]
     assert remote_tip(pair.origin, "feat") == head

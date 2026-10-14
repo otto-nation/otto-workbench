@@ -59,6 +59,7 @@ ALLOWED: dict[str, frozenset[str]] = {
     "ai/lib/core/run_lock.py": TAKING,
     "ai/lib/cli/locks.py": frozenset({"hold", "claim_for_process"}),
     "ai/lib/cli/pr_batch.py": frozenset({"acquire", "hold"}),
+    "ai/lib/batch/store.py": frozenset({"hold_resource"}),
     "ai/lib/batch/gc.py": frozenset({"acquire"}),
     "ai/lib/review/gc.py": frozenset({"acquire"}),
     "ai/lib/cli/review_entry.py": frozenset({"lock_checkout"}),

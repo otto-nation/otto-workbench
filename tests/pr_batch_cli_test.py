@@ -13,6 +13,7 @@ import batch.model  # noqa: E402
 import batch.outcomes  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
+from batch.requests import Decide  # noqa: E402
 import cli.pr  # noqa: E402
 import core.run_lock  # noqa: E402
 import core.tool_parser  # noqa: E402
@@ -283,7 +284,7 @@ def test_resume_emits_interrupted_for_a_running_step(monkeypatch, capsys):
 
 def test_idle_resolve_drains_other_pending_requests():
     run = _saved_run_with_decisions(2)
-    batch.store.write_request(run.id, {"decision": "d1", "action": "accept"})
+    batch.store.write_request(run.id, Decide("d1", "accept"))
     assert _main(["batch", "resolve", run.id, "d2", "--action", "accept"]) == 0
     saved = batch.store.load(run.id)
     assert saved.decision("d1").resolution == "accept"
@@ -293,7 +294,7 @@ def test_idle_resolve_drains_other_pending_requests():
 
 def test_apply_pending_reports_each_error_and_keeps_earlier_applies(capsys):
     run = _saved_run_with_decisions(2)
-    batch.store.write_request(run.id, {"decision": "d1", "action": "accept"})
+    batch.store.write_request(run.id, Decide("d1", "accept"))
     assert _main(["batch", "resolve", run.id, "d2", "--action", "abort"]) == 1
     captured = capsys.readouterr()
     err_json = json.loads(captured.out)
@@ -502,7 +503,7 @@ def test_resume_ends_with_a_run_summary(monkeypatch, capsys):
 
 def test_a_run_summary_after_apply_errors_hints_the_real_exit_code(monkeypatch, capsys):
     run = _saved_run_with_decision()
-    batch.store.write_request(run.id, {"decision": "nope", "action": "accept"})
+    batch.store.write_request(run.id, Decide("nope", "accept"))
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         lambda self: batch.model.RunStatus.WAITING)
     assert _main(["batch", "resume", run.id]) == 1

@@ -14,6 +14,7 @@ import batch.events  # noqa: E402
 import batch.model  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
+from batch.requests import Decide  # noqa: E402
 from batch.plan import PlanError  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
 from batch_scheduler_support import (ALL, GiB, HEALTHY, NEED, NO, Harness,  # noqa: F401,E402
@@ -156,7 +157,7 @@ def test_mid_loop_drains_a_queued_request_written_to_disk():
     assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
     d = h.run.open_decisions()[0]
     batch.store.save(h.run)
-    batch.store.write_request(h.run.id, {"decision": d.id, "action": "retry"})
+    batch.store.write_request(h.run.id, Decide(d.id, "retry"))
     h.codes.clear()
     h.sched.run_until_blocked()
     assert [a[1] for a in h.spawned] == ["rebase", "rebase"]
@@ -260,7 +261,7 @@ def test_unreadable_request_file_does_not_crash_the_run():
     reqs = batch.store.run_dir(h.run.id) / "requests"
     reqs.mkdir(parents=True, exist_ok=True)
     (reqs / "20261001T000000000000-bad.json").write_text("not json")
-    batch.store.write_request(h.run.id, {"decision": d.id, "action": "retry"})
+    batch.store.write_request(h.run.id, Decide(d.id, "retry"))
     h.codes.clear()
     assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
     assert [a[1] for a in h.spawned] == ["rebase", "rebase", "review"]
@@ -274,8 +275,10 @@ def test_malformed_request_is_reported_and_the_rest_apply():
     assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
     d = h.run.open_decisions()[0]
     batch.store.save(h.run)
-    batch.store.write_request(h.run.id, {"decision": d.id})
-    batch.store.write_request(h.run.id, {"decision": d.id, "action": "retry"})
+    reqs = batch.store.run_dir(h.run.id) / "requests"
+    reqs.mkdir(parents=True, exist_ok=True)
+    (reqs / "20261001T000000000000-noaction.json").write_text(json.dumps({"decision": d.id}))
+    batch.store.write_request(h.run.id, Decide(d.id, "retry"))
     h.codes.clear()
     h.sched.run_until_blocked()
     assert [a[1] for a in h.spawned] == ["rebase", "rebase"]
@@ -337,7 +340,7 @@ def test_failed_publish_via_request_emits_decision_created():
     h.sched.run_until_blocked()
     d = next(x for x in h.run.open_decisions() if x.kind is batch.model.DecisionKind.PUBLISH)
     batch.store.save(h.run)
-    batch.store.write_request(h.run.id, {"decision": d.id, "action": "publish"})
+    batch.store.write_request(h.run.id, Decide(d.id, "publish"))
     h.publish_code = 1
     h.sched.run_until_blocked()
     created = [f for k, f in h.events if k == "decision_created"]
@@ -413,7 +416,7 @@ def test_drop_via_resolve_emits_item_finished():
     h.sched.run_until_blocked()
     d = h.run.open_decisions()[0]
     batch.store.save(h.run)
-    batch.store.write_request(h.run.id, {"decision": d.id, "action": "drop-pr"})
+    batch.store.write_request(h.run.id, Decide(d.id, "drop-pr"))
     h.sched.run_until_blocked()
     finished = [f for k, f in h.events if k == "item_finished"]
     assert any(f["item"] == "o/r#1" and f["status"] == "dropped" for f in finished)

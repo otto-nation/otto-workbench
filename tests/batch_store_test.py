@@ -12,6 +12,7 @@ if str(LIB_DIR) not in sys.path:
 
 import batch.model  # noqa: E402
 import batch.store  # noqa: E402
+from batch.requests import Decide  # noqa: E402
 
 RID = "20261001T120000-abcd"
 
@@ -82,8 +83,8 @@ def test_latest_run_id_is_the_newest():
 
 def test_requests_are_taken_in_order_and_once():
     batch.store.save(_run())
-    batch.store.write_request(RID, {"decision": "d1", "action": "retry"})
-    batch.store.write_request(RID, {"decision": "d2", "action": "abort"})
+    batch.store.write_request(RID, Decide("d1", "retry"))
+    batch.store.write_request(RID, Decide("d2", "abort"))
     assert batch.store.has_requests(RID) is True
     assert [r["decision"] for r in batch.store.take_requests(RID)] == ["d1", "d2"]
     assert batch.store.take_requests(RID) == []
@@ -96,7 +97,7 @@ def test_take_requests_rejects_malformed_files_without_raising():
     reqs.mkdir(parents=True, exist_ok=True)
     (reqs / "20261001T000000000000-aa.json").write_text("not json")
     (reqs / "20261001T000000000001-bb.json").write_text("[]")
-    batch.store.write_request(RID, {"decision": "d1", "action": "retry"})
+    batch.store.write_request(RID, Decide("d1", "retry"))
     taken = batch.store.take_requests(RID)
     errors = [r for r in taken if r.get("error")]
     goods = [r for r in taken if not r.get("error")]

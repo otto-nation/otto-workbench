@@ -22,6 +22,7 @@ import batch.resolve  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
 import batch.targets  # noqa: E402
+from batch.requests import Decide  # noqa: E402
 import cli.pr  # noqa: E402
 import core.run_lock  # noqa: E402
 import pr.target  # noqa: E402
@@ -207,7 +208,7 @@ def test_resolve_apply_is_no_longer_passed_env_for(monkeypatch):
     monkeypatch.setattr(batch.resolve, "apply", spy)
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         lambda self: batch.model.RunStatus.WAITING)
-    batch.store.write_request(run.id, {"decision": "d1", "action": "accept"})
+    batch.store.write_request(run.id, Decide("d1", "accept"))
     _main(["batch", "resume", run.id])
     _main(["batch", "resolve", run.id, "d1", "--action", "accept"])
     assert seen == [False, False]

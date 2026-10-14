@@ -40,6 +40,7 @@ import core.report
 import core.run_lock
 import core.serde
 from batch.model import STEP_ORDER, Run, RunStatus, Step
+from batch.requests import Decide
 from core.trail import TRAIL_ROOT_ENV, Trail
 
 EXIT_OK = batch.report.EXIT_OK
@@ -407,8 +408,8 @@ def _cmd_resolve(args, bin_dir: Path) -> int:
         batch.store.load(args.run_id)
     except batch.store.RunNotFound:
         return _err(f"no run {args.run_id}")
-    request = {"decision": args.decision_id, "action": args.action, "reason": args.reason,
-               "body_file": args.body_file, "commit": args.commit}
+    request = Decide(decision=args.decision_id, action=args.action, reason=args.reason,
+                     body_file=args.body_file, commit=args.commit)
     batch.store.write_request(args.run_id, request)
     held = batch.store.run_dir(args.run_id)
     # A request queued while a scheduler holds the lock is applied by that

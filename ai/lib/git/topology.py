@@ -285,24 +285,30 @@ def _rank_ancestor(ref: str, head: str, cwd: str | None) -> tuple[int, int, str]
 
     *head* is passed in rather than read here: it is the same commit for every
     candidate, and resolving it per ref spends a subprocess per branch to learn
-    one answer.
+    one answer. Git commands take that SHA rather than the literal ``HEAD`` so
+    a caller measuring a named ref does not inherit the process checkout.
     """
-    merge_base = _git_out(["merge-base", ref, "HEAD"], cwd)
+    merge_base = _git_out(["merge-base", ref, head], cwd)
     if not merge_base:
         return None
-    # A candidate containing HEAD is a descendant, not a parent: the branch
+    # A candidate containing the tip is a descendant, not a parent: the branch
     # stacked on *this* one, or this one's own ref under another name. Diffing
     # against it yields nothing, which reads as a review with no changes.
     if merge_base == head:
         return None
-    distance = _git_out(["rev-list", "--count", f"{merge_base}..HEAD"], cwd)
+    distance = _git_out(["rev-list", "--count", f"{merge_base}..{head}"], cwd)
     if not distance:
         return None
     return (int(distance), 0 if ref.startswith(REMOTE_REF_PREFIX) else 1, ref)
 
 
-def stack_parent(cwd: str | None = None, default: str = "") -> str:
-    """The branch HEAD is stacked on, or "" when it is stacked on the trunk.
+def stack_parent(cwd: str | None = None, default: str = "", ref: str = "HEAD") -> str:
+    """The branch *ref* is stacked on, or "" when it is stacked on the trunk.
+
+    *ref* defaults to ``HEAD``, which is the process checkout. A caller that
+    already knows the branch it is measuring — a treeless context naming
+    ``refs/heads/<branch>`` — passes that instead of inheriting some other
+    checkout's HEAD.
 
     For a branch whose parent is another feature branch, which the trunk-shaped
     default is wrong about: a review, a rebase or a diff measured against the
@@ -331,7 +337,7 @@ def stack_parent(cwd: str | None = None, default: str = "") -> str:
     trunk = f"{REMOTE_REF_PREFIX}{default}"
 
     listing = _git_out(
-        ["for-each-ref", "--merged", "HEAD", "--no-merged", trunk,
+        ["for-each-ref", "--merged", ref, "--no-merged", trunk,
          "--format=%(refname)", "refs/heads", REMOTE_REF_PREFIX.rstrip("/")],
         cwd,
     )
@@ -350,17 +356,17 @@ def stack_parent(cwd: str | None = None, default: str = "") -> str:
     # attached HEAD has, minus the one guard that usually hides it. `--base` is
     # the remedy in both cases; a distance floor here would reject the
     # one-commit parent a real stack legitimately has.
-    current = current_branch_quiet(cwd)
-    head = _git_out(["rev-parse", "HEAD"], cwd)
+    current = current_branch_quiet(cwd) if ref == "HEAD" else _short_ref(ref)
+    head = _git_out(["rev-parse", ref], cwd)
     if not head:
         return ""
 
     ranked = []
-    for ref in listing.splitlines():
-        short = _short_ref(ref)
+    for candidate in listing.splitlines():
+        short = _short_ref(candidate)
         if not short or short == current:
             continue
-        rank = _rank_ancestor(ref, head, cwd)
+        rank = _rank_ancestor(candidate, head, cwd)
         if rank:
             ranked.append((rank, short))
     if not ranked:

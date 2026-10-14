@@ -848,3 +848,15 @@ def test_stack_parent_reports_a_bare_branch_name_for_a_remote_only_parent(tmp_pa
     git_in(repo, "branch", "-q", "-D", "parent")
 
     assert git.topology.stack_parent(str(repo)) == "parent"
+
+
+def test_stack_parent_measures_a_named_ref_not_head(tmp_path):
+    """A caller that names a branch must not inherit the process HEAD.
+
+    HEAD sits on main, which is not stacked: a walk of HEAD returns "" and
+    the caller would keep the trunk. Measuring child must still name parent.
+    """
+    repo = _stack_repo(tmp_path / "repo")
+    git_in(repo, "checkout", "-q", "main")
+
+    assert git.topology.stack_parent(str(repo), ref="refs/heads/child") == "parent"

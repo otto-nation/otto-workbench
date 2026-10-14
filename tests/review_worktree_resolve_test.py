@@ -13,6 +13,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+from conftest import remote_repo  # noqa: E402
 from review.worktree import find_repo_root, resolve_branch_input, resolve_wt_path
 
 
@@ -261,3 +262,23 @@ def test_find_repo_root_walk_is_case_insensitive(monkeypatch):
 
     assert find_repo_root("acme/myproject") == "/home/dev/git/MyProject"
     assert "-iname" in seen["cmd"]
+
+
+def test_find_repo_root_origin_match_skips_the_home_git_walk(
+        tmp_path, monkeypatch):
+    """A checkout whose origin is the slug is the repo, even when its
+    directory name is not."""
+    repo = remote_repo(
+        tmp_path / "checkout",
+        "https://github.com/acme/MyProject.git",
+    )
+    monkeypatch.chdir(repo)
+    real_run = subprocess.run
+
+    def fail_find(cmd, **kw):
+        if cmd and cmd[0] == "find":
+            pytest.fail("find_repo_root must not walk ~/git when origin matches")
+        return real_run(cmd, **kw)
+
+    monkeypatch.setattr("review.worktree.subprocess.run", fail_find)
+    assert Path(find_repo_root("acme/myproject")).resolve() == repo.resolve()

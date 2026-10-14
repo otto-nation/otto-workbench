@@ -536,7 +536,16 @@ def base_branch(
 
     where = cwd or (str(ctx.worktree_root) if ctx.worktree_root else None)
     default = git.topology.default_branch(where)
-    parent = git.topology.stack_parent(where, default=default)
+    stack_kw: dict[str, str] = {}
+    if ctx.worktree_root is None:
+        tip = _stack_tip_ref(where, ctx.branch)
+        if not tip:
+            return decide(
+                default,
+                "no stack parent and no PR base — the repo's default branch",
+            )
+        stack_kw["ref"] = tip
+    parent = git.topology.stack_parent(where, default=default, **stack_kw)
     if parent:
         return decide(parent, "nearest local ancestor of HEAD — this branch is stacked")
     return decide(default, "no stack parent and no PR base — the repo's default branch")
@@ -766,6 +775,18 @@ def _head_sha(cwd: str | None = None) -> str:
         capture_output=True, text=True, cwd=cwd, timeout=core.timeouts.LOCAL,
     )
     return r.stdout.strip()
+
+
+def _stack_tip_ref(cwd: str | None, branch: str) -> str:
+    """Local or origin ref for *branch* that names a commit, or "".
+
+    Reuses :func:`_branch_ref_sha` so a treeless stack walk and a treeless
+    head SHA agree on which spelling of the branch exists.
+    """
+    for ref in (f"refs/heads/{branch}", f"refs/remotes/origin/{branch}"):
+        if _branch_ref_sha(cwd, (ref,)):
+            return ref
+    return ""
 
 
 def _branch_ref_sha(cwd: str | None, refs: Sequence[str]) -> str:

@@ -52,9 +52,8 @@ class CommandSpec:
       instead of a constant; `need_for` reads both shapes, so nothing
       downstream has to know which kind a spec carries. No default: a command
       silent about the four axes is exactly what `validate_needs` refuses, and
-      a default would answer for it before the check ever ran. CREATE is
-      refused at LOCAL and NONE: those depths never fetch, and creating a
-      worktree is a write that starts from the remote tip.
+      a default would answer for it before the check ever ran. (`Need` itself
+      refuses CREATE at LOCAL and NONE, so no declaration can carry it.)
     * ``handler`` — ``"<module>:<attr>"`` naming the in-process callable, or
       None when the wrapper is still binary-local. A string, not a callable:
       dispatch imports it at call time so `pr --help` does not. Defaulted to
@@ -104,6 +103,9 @@ class CommandSpec:
     parser: str | None = None
 
 
+# `ci_need`, `comments_need` and `rebase_need` live in `cli.needs` because the
+# delegates import them to pass `worktree=` to `pr.context.resolve`. These two
+# are read only by this table, so they stay beside it.
 def _create_need(argv: Sequence[str]) -> Need:
     """`create`'s need: a `--dry-run` pushes and creates nothing, so it takes no lock."""
     locks = NO_LOCK if has_flag(argv, "--dry-run") else TARGET_AND_CHECKOUT
@@ -208,40 +210,23 @@ def validate_needs(commands: dict[str, CommandSpec]) -> None:
 
     A callable declaration is resolved over an empty argv and its answer
     checked, so a resolver that returns something other than a Need for the
-    plain invocation fails here too rather than at the first dispatch. The
-    constant itself is checked as well as that answer, so a CREATE at LOCAL or
-    NONE cannot hide behind a callable that only looks safe over ``[]``.
+    plain invocation fails here too rather than at the first dispatch. That
+    resolves one argv only, so it checks the shape and nothing flag-specific:
+    the CREATE-needs-REMOTE invariant is `Need.__post_init__`'s, which holds
+    for every flag a resolver is ever called with.
 
     Run at this module's import rather than at the entry point's, so a consumer
     that imports COMMANDS and never runs `pr` — the MCP server, once its
     discovery reads the registry — cannot be handed a registry nothing checked.
     """
-    undeclared = []
-    creates_too_shallow = []
-    shallow = (pr.context.ContextDepth.LOCAL, pr.context.ContextDepth.NONE)
-    for name, spec in commands.items():
-        resolved = need_for(spec, [])
-        if not isinstance(resolved, Need):
-            undeclared.append(name)
-            continue
-        candidates = [resolved]
-        if isinstance(spec.need, Need) and spec.need is not resolved:
-            candidates.append(spec.need)
-        if any(
-            need.worktree is pr.context.WorktreeNeed.CREATE
-            and need.depth in shallow
-            for need in candidates
-        ):
-            creates_too_shallow.append(name)
+    undeclared = [
+        name for name, spec in commands.items()
+        if not isinstance(need_for(spec, []), Need)
+    ]
     if undeclared:
         raise RuntimeError(
             "pr: commands declare no dispatch need: " + ", ".join(undeclared)
             + " — add a Need(depth, update=…, locks=…) to each CommandSpec"
-        )
-    if creates_too_shallow:
-        raise RuntimeError(
-            "pr: CREATE is not valid at LOCAL or NONE: "
-            + ", ".join(creates_too_shallow)
         )
 
 

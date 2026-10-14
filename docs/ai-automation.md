@@ -618,9 +618,9 @@ tree. What happens instead depends on the command:
 | Outcome | Commands |
 |---|---|
 | Create `<b>`'s worktree | `rebase`, `ci --fix`, `comments --fix`, `fix` |
-| Refuse with the `require_worktree` message | `push`, `create`, `describe`, `comments` (dashboard), `comments --triage/--settle/--finish`, `comments --fix --finish`, `rebase --abort/--push-only` |
+| Refuse with the `require_worktree` message | `push`, `create`, `describe`, `comments` (dashboard), `comments --triage/--settle/--finish`, `comments --fix --finish`, `comments --reply` to a review body, `rebase --abort/--push-only` |
 | Degrade to cached state with a dim note | `status` |
-| Work, create nothing | `ci` (dashboard), `review` (the context resolver creates nothing; `review --self` and `review N` still make their own checkouts through review/worktree.py), `gc`, `comments --reply` |
+| Work, create nothing | `ci` (dashboard), `review` (the context resolver creates nothing; `review --self` and `review N` still make their own checkouts through review/worktree.py), `gc`, `comments --reply` to a thread |
 
 A related hazard exists one level down, for the AI subprocess: a backend CLI
 inherits the launching process's working directory unless it is told otherwise.

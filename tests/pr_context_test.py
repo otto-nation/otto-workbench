@@ -18,7 +18,8 @@ import pr.context
 import pr.target
 from pr.context import _parse_pr_input, PRHead, ResolvedContext
 
-from conftest import commit_all, git_in, git_out, init_repo, make_ctx, run_checked  # noqa: E402
+from conftest import git_in, git_out, make_ctx, run_checked  # noqa: E402
+from git_topology_support import _stack_repo  # noqa: E402
 import gh.client
 
 
@@ -937,22 +938,7 @@ def test_base_branch_derives_against_the_worktree_when_given_no_cwd(monkeypatch)
 def test_base_branch_without_a_worktree_uses_the_branch_ref_not_head(
         tmp_path, monkeypatch):
     """No checkout means HEAD belongs to some other branch — measure this one."""
-    repo = init_repo(tmp_path / "repo")
-    (repo / "m.txt").write_text("m")
-    commit_all(repo, "m")
-    git_in(repo, "checkout", "-qb", "parent")
-    (repo / "p.txt").write_text("p")
-    commit_all(repo, "p")
-    git_in(repo, "checkout", "-qb", "child")
-    (repo / "c.txt").write_text("c")
-    commit_all(repo, "c")
-    git_in(repo, "checkout", "-q", "main")
-    (repo / "m2.txt").write_text("m2")
-    commit_all(repo, "m2")
-    git_in(repo, "update-ref", "refs/remotes/origin/main", "refs/heads/main")
-    git_in(repo, "symbolic-ref", "refs/remotes/origin/HEAD",
-           "refs/remotes/origin/main")
-    git_in(repo, "update-ref", "refs/remotes/origin/parent", "refs/heads/parent")
+    repo = _stack_repo(tmp_path / "repo")
     git_in(repo, "checkout", "-q", "main")
     monkeypatch.chdir(repo)
     ctx = make_ctx(base="", worktree_root=None, branch="child")

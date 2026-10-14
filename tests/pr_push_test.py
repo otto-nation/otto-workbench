@@ -116,7 +116,9 @@ def test_pr_push_branch_from_another_checkout_does_not_touch_the_remote(
         ["--repo-dir", str(pair.work), "--branch", "feat", "--expect", tip],
     )
 
-    assert git_out(pair.work, "ls-remote", "origin") == before
+    after = git_out(pair.work, "ls-remote", "origin")
+    assert after == before
+    assert "refs/heads/other" not in after
 
 
 def test_pr_push_refuses_a_moved_remote_with_exit_1(tmp_path):

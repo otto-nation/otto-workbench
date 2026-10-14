@@ -109,10 +109,10 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from collections.abc import Sequence
 from typing import NoReturn
 
 import gh.client
@@ -265,8 +265,10 @@ class ResolvedContext:
         reaching ``git -C`` several frames later.
 
         Consumers that can degrade (ci-check without --fix, pr review, pr gc,
-        comments --reply, pr status) read the field directly and are visibly
-        opted out.
+        a thread `comments --reply`, pr status) read the field directly and are
+        visibly opted out. A review-body `comments --reply` is not one of them:
+        it records the answer in the state file and publishes the summary, so it
+        refuses here like any state writer.
         """
         if self.worktree_root is None:
             core.log.error(
@@ -409,8 +411,10 @@ def resolve(
             head_sha = _head_sha(cwd)
         else:
             # No checkout HEAD to read. Prefer the PR's head, then the refs
-            # GitHub would have, so CI lookup and state stamping name this
-            # branch rather than coming back empty.
+            # GitHub would have (remote first: an unpushed local commit is
+            # one it does not), so CI lookup and state stamping name this
+            # branch rather than coming back empty. `resolve_local` and
+            # `_stack_tip_ref` prefer the local ref, and say why.
             head_sha = found.head_sha or _branch_ref_sha(cwd, (
                 f"refs/remotes/origin/{branch_name}",
                 f"refs/heads/{branch_name}",
@@ -476,6 +480,10 @@ def resolve_local(
         pr_number=None,
         branch=branch_name,
         worktree_root=worktree_root,
+        # Local ref first, unlike `resolve`: this path never asks GitHub, and a
+        # self-review's subject is the local branch, often unpushed, where
+        # `origin/<b>` is absent or stale and the local tip is the commit under
+        # review. Same order as `_stack_tip_ref`, which walks that local history.
         head_sha=(
             _head_sha(cwd) if worktree_root
             else _branch_ref_sha(cwd, (
@@ -782,7 +790,9 @@ def _stack_tip_ref(cwd: str | None, branch: str) -> str:
     """Local or origin ref for *branch* that names a commit, or "".
 
     Reuses :func:`_branch_ref_sha` so a treeless stack walk and a treeless
-    head SHA agree on which spelling of the branch exists.
+    head SHA agree on which spelling of the branch exists. Local first, as in
+    `resolve_local`: the stack is measured along the history the user has, and
+    an unpushed branch has no `origin/<b>` to measure.
     """
     for ref in (f"refs/heads/{branch}", f"refs/remotes/origin/{branch}"):
         if _branch_ref_sha(cwd, (ref,)):

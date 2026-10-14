@@ -141,15 +141,19 @@ def find_worktree_for_branch(
     for entry in entries:
         if entry.branch == branch:
             return entry.path
+    # One `rev-parse --git-dir` per detached entry, kept for the name pass below.
+    rebasing: dict[Path, str | None] = {}
     for entry in entries:
-        if entry.branch is None and rebasing_branch(str(entry.path)) == branch:
-            return entry.path
+        if entry.branch is None:
+            rebasing[entry.path] = rebasing_branch(str(entry.path))
+            if rebasing[entry.path] == branch:
+                return entry.path
     sanitized = branch.replace("/", "-")
     for entry in entries:
         if (
             entry.branch is None
             and entry.path.name == sanitized
-            and rebasing_branch(str(entry.path)) is None
+            and rebasing[entry.path] is None
         ):
             return entry.path
     return None

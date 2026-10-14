@@ -49,6 +49,10 @@ class Need:
     * ``worktree`` — whether dispatch may create a checkout of the requested
       branch. FIND never creates; CREATE will, from any checkout. Defaults to
       FIND so an undeclared command refuses rather than leaving a stray tree.
+      CREATE is refused at any depth but REMOTE, at construction: LOCAL and
+      NONE never fetch, and creating a worktree is a write that starts from the
+      remote tip. Enforced here rather than in a registry check, so it covers
+      every resolver output whatever flags produced it.
     """
 
     depth: pr.context.ContextDepth
@@ -57,6 +61,14 @@ class Need:
     worktree: pr.context.WorktreeNeed = pr.context.WorktreeNeed.FIND
 
     def __post_init__(self) -> None:
+        if (
+            self.worktree is pr.context.WorktreeNeed.CREATE
+            and self.depth is not pr.context.ContextDepth.REMOTE
+        ):
+            raise ValueError(
+                f"CREATE is not valid at {self.depth.name}: only REMOTE "
+                "resolves the remote tip a new worktree starts from"
+            )
         # Frozen, so equality and hashing hold whatever set literal a caller wrote.
         object.__setattr__(self, "locks", frozenset(self.locks))
 

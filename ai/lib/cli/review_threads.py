@@ -227,7 +227,9 @@ def main(argv: list[str] | None = None) -> int:
             return _github_only(ctx, args, route, body)
         branch = ctx.branch
         # Called for its raise: a bare-repo run must fail here, before the lock
-        # and the trail.
+        # and the trail. A review-body reply lands here too — it writes the state
+        # file, so with no checkout of the branch it refuses rather than creating
+        # one, though its lock is the target alone.
         ctx.require_worktree()
 
         # Target and checkout — this run's --fix pass commits in that checkout.

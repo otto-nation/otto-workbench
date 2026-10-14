@@ -251,3 +251,18 @@ def test_an_abbreviated_self_is_still_a_self_review():
 ])
 def test_a_flag_is_found_the_way_argparse_would_accept_it(argv, expected):
     assert has_flag(argv, "--dry-run") is expected
+
+
+@pytest.mark.parametrize("depth", [LOCAL, NONE])
+def test_need_rejects_create_below_remote(depth):
+    """CREATE starts from the remote tip, so LOCAL and NONE cannot carry it.
+
+    Enforced at construction: a resolver that creates only for some flag is
+    refused the moment it builds that Need, not only when called over `[]`.
+    """
+    with pytest.raises(ValueError, match="CREATE"):
+        Need(depth, update=False, locks=NO_LOCK, worktree=CREATE)
+
+
+def test_need_allows_create_at_remote():
+    assert Need(REMOTE, update=True, locks=TARGET_ONLY, worktree=CREATE).worktree is CREATE

@@ -42,3 +42,31 @@ def _paused_rebase(
     )
     assert result.returncode != 0, "fixture expected the rebase to stop on a conflict"
     return where
+
+
+def _commit(repo, name: str) -> None:
+    (Path(repo) / f"{name}.txt").write_text(name)
+    commit_all(repo, name)
+
+
+def _stack_repo(path) -> Path:
+    """`main -> parent -> child`, with origin refs for main and parent.
+
+    The trunk is deliberately *ahead* of the fork point, which is the ordinary
+    state of a stack that has sat for a day and the one where a naive "nearest
+    branch" walk goes wrong.
+    """
+    repo = init_repo(path)
+    _commit(repo, "m1")
+    git_in(repo, "checkout", "-qb", "parent")
+    _commit(repo, "p1")
+    _commit(repo, "p2")
+    git_in(repo, "checkout", "-qb", "child")
+    _commit(repo, "c1")
+    git_in(repo, "checkout", "-q", "main")
+    _commit(repo, "m2")
+    git_in(repo, "update-ref", "refs/remotes/origin/main", "refs/heads/main")
+    git_in(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+    git_in(repo, "update-ref", "refs/remotes/origin/parent", "refs/heads/parent")
+    git_in(repo, "checkout", "-q", "child")
+    return repo

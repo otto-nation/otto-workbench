@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 import git.topology  # noqa: E402
 
 from conftest import commit_all, git_in, init_repo  # noqa: E402
-from git_topology_support import _paused_rebase  # noqa: E402
+from git_topology_support import _commit, _paused_rebase, _stack_repo  # noqa: E402
 
 
 def _porcelain(*entries: tuple[str, str | None], bare: str | None = None) -> str:
@@ -100,6 +100,19 @@ def test_find_worktree_for_branch_detached_head_fallback(mock_sub):
     ))
     result = git.topology.find_worktree_for_branch("isaac/feat/auth")
     assert result == Path("/home/user/repo/isaac-feat-auth")
+
+
+@patch.object(git.topology, "rebasing_branch", return_value=None)
+@patch.object(git.topology, "subprocess")
+def test_find_worktree_for_branch_reads_each_detached_rebase_state_once(mock_sub, mock_rebasing):
+    """The rebasing pass and the name pass share one lookup per detached worktree."""
+    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
+        ("/home/user/repo/isaac-feat-auth", None),
+        ("/home/user/repo/main", "main"),
+    ))
+    result = git.topology.find_worktree_for_branch("isaac/feat/auth")
+    assert result == Path("/home/user/repo/isaac-feat-auth")
+    assert mock_rebasing.call_count == 1
 
 
 @patch.object(git.topology, "subprocess")
@@ -720,34 +733,6 @@ def test_wt_switch_leaves_a_pr_ref_to_worktrunk(monkeypatch):
 # Against real repos rather than a mocked `for-each-ref`: the question is what
 # git's ancestry actually reports for a given shape, so a fixture that returns
 # a hand-written ref listing would be asserting this test's idea of git.
-
-
-def _stack_repo(path) -> Path:
-    """`main -> parent -> child`, with origin refs for main and parent.
-
-    The trunk is deliberately *ahead* of the fork point, which is the ordinary
-    state of a stack that has sat for a day and the one where a naive "nearest
-    branch" walk goes wrong.
-    """
-    repo = init_repo(path)
-    _commit(repo, "m1")
-    git_in(repo, "checkout", "-qb", "parent")
-    _commit(repo, "p1")
-    _commit(repo, "p2")
-    git_in(repo, "checkout", "-qb", "child")
-    _commit(repo, "c1")
-    git_in(repo, "checkout", "-q", "main")
-    _commit(repo, "m2")
-    git_in(repo, "update-ref", "refs/remotes/origin/main", "refs/heads/main")
-    git_in(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
-    git_in(repo, "update-ref", "refs/remotes/origin/parent", "refs/heads/parent")
-    git_in(repo, "checkout", "-q", "child")
-    return repo
-
-
-def _commit(repo, name: str) -> None:
-    (Path(repo) / f"{name}.txt").write_text(name)
-    commit_all(repo, name)
 
 
 def test_stack_parent_names_the_branch_this_one_is_stacked_on(tmp_path):

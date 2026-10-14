@@ -414,28 +414,6 @@ def test_a_need_of_the_wrong_shape_is_rejected():
         validate_needs({"listing": command_spec(name="listing", need=True)})
 
 
-def test_validate_needs_rejects_create_at_local():
-    with pytest.raises(RuntimeError, match="CREATE"):
-        validate_needs({
-            "probe": command_spec(
-                name="probe",
-                need=Need(LOCAL, update=False, locks=NO_LOCK, worktree=CREATE),
-            ),
-        })
-
-
-def test_validate_needs_rejects_a_resolver_that_creates_at_none():
-    with pytest.raises(RuntimeError, match="CREATE"):
-        validate_needs({
-            "probe": command_spec(
-                name="probe",
-                need=lambda argv: Need(
-                    NONE, update=False, locks=NO_LOCK, worktree=CREATE,
-                ),
-            ),
-        })
-
-
 def test_ci_creates_a_worktree_only_with_fix():
     assert need_for(COMMANDS["ci"], []).worktree is FIND
     assert need_for(COMMANDS["ci"], ["--fix"]).worktree is CREATE

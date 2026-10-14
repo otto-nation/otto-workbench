@@ -21,14 +21,21 @@ This module is the one place they are taken for a command:
 | `comments` | target + checkout; `--reply` / `--settle` the target only |
 | `create` | target + checkout; `--dry-run` nothing |
 | `ci` | target; `--fix` adds the checkout |
-| `review --self` (and a bare `review` on a branch with no PR) | target + checkout |
+| `review --self` / `--self --fix` | target + checkout |
 | `review` of a PR, `--branch` | target; the checkout once the run knows its tree (`core.run_lock.lock_checkout`) |
-| `review --post`, `--repair`, `--summary`, `--recover` | target (`--self --recover` adds the checkout) |
+| `review --post`, `--repair`, `--summary` | target (also with `--self`) |
+| `review --recover` | target (`--self --recover` adds the checkout) |
 | `review --list`, `status` | nothing |
 | `gc` | target, plus each pruned target's own lock |
 
-A direct `review --self --post` (no `--fix`) declares TARGET only — `--post`
-is a handler mode, so it does not lock the checkout.
+A bare `review` on a branch with no PR is not declared as `--self`: the
+dispatcher injects `--self` through `_review_argv` once the context is known,
+and `_held_scopes` then reads the `--self` need, so it holds target+checkout.
+`review <pr>` stays TARGET and takes the checkout later through `lock_checkout`.
+
+`--self --post` / `--summary` / `--repair` (no `--fix`) stay REVIEW_MODE_NEED —
+REMOTE, no fetch, TARGET only. Those flags are handler modes, so they do not
+lock the checkout.
 
 The table is pinned against the registry by `tests/pr_cli_dispatch_test.py`,
 and `bin/local/validate-run-locks` refuses a lock taken anywhere this module

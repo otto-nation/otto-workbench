@@ -220,7 +220,7 @@ Messages that report the *repository's shape* rather than a command's exit — `
 
 ## "another pr run already owns this target"
 
-A second `pr` run refused to start because one is already in flight against the same target — the same `(origin repo, branch)`, regardless of which directory either run was launched from. The message names the scope that was refused: `global batch`, `target <repo>@<branch>`, or `checkout <path>`. The message names the holder:
+A second `pr` run refused to start because one is already in flight against the same target — the same `(origin repo, branch)`, regardless of which directory either run was launched from. The message names the scope that was refused (`global batch`, `target <repo>@<branch>`, or `checkout <path>`) and the holder:
 
 ```
 ✗ another pr run already owns this target acme/widget@feat/x: pr review --self --fix (pid 15461, started 2026-08-12T07:21:19+00:00)
@@ -234,9 +234,15 @@ Which locks a command holds is declared once, on its entry in `ai/lib/cli/regist
 
 A refusal naming a `checkout` means two different targets met in one working tree. Wait for the holder, or run the second one from its branch's own worktree.
 
-The lock is an advisory `flock` on the target's `run.lock`, so the kernel releases it whenever the holder exits — including `kill -9`. There is no stale lock to clear by hand; if the message names a pid that is gone, the next run will take the lock regardless.
+The lock is an advisory `flock`, so the kernel releases it whenever the holder exits — including `kill -9`. There is no stale lock to clear by hand; if the message names a pid that is gone, the next run will take the lock regardless.
 
-Both files live outside every checkout, in the target's own directory: `~/.local/state/workbench/pr/<repo-key>-<branch-slug>/` (rooted at `WORKBENCH_STATE_DIR` when you set it). The two components come from `git remote get-url origin` and the branch, so every worktree of one PR resolves the same directory — that is what lets the lock reach across checkouts. Nothing is written into the working tree, so there is no `.gitignore` entry to maintain, and `wt remove` leaves the target's state alone; `pr gc` prunes it once the PR is merged or closed.
+Three scopes, three paths (rooted at `WORKBENCH_STATE_DIR` when you set it):
+
+- **target** — `~/.local/state/workbench/pr/<repo-key>-<branch-slug>/run.lock`, beside that target's `state.json`. The two path components come from `git remote get-url origin` and the branch, so every worktree of one PR resolves the same directory — that is what lets the target lock reach across checkouts. `wt remove` leaves the target's state alone; `pr gc` prunes it once the PR is merged or closed.
+- **checkout** — `<git-dir>/workbench-run-tree.lock`, keyed on the checkout's `--absolute-git-dir`.
+- **global** — `~/.local/state/workbench/locks/<name>.lock` (the live batch is `batch.lock`).
+
+None of these is a file in the working tree, so there is no `.gitignore` entry to maintain.
 
 A `pr batch run` or `pr batch resume` refused with `owns this global batch` met another batch that is still live. Only one batch runs on a machine at a time: the lock is `~/.local/state/workbench/locks/batch.lock`, taken before the run looks for an active run and held until it settles, so two sessions starting a batch together cannot both get past planning. Once the live run has an id the message names it (`run <id>`); `pr batch status RUN_ID` shows it and `pr batch cancel RUN_ID` stops it.
 

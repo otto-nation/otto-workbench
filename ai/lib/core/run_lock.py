@@ -58,8 +58,9 @@ scopes on its ``Need`` in ``cli.registry``, and ``cli.locks`` takes them:
 the five entry points that can be run without ``pr`` — ``review``,
 ``ci-check``, ``review-threads``, ``pr-rebase`` and ``pr-describe`` — so
 bypassing ``pr`` does not bypass the lock. Under ``pr`` a delegate's claim
-finds the lock already in this process's registry, or in ``WORKBENCH_RUN_LOCK``
-when it is a child, and passes through. ``bin/local/validate-run-locks``
+finds the lock already in this process's registry, or in
+``WORKBENCH_RUN_LOCK``, ``WORKBENCH_RUN_LOCK_TREE`` or
+``WORKBENCH_RUN_LOCK_GLOBAL`` when it is a child, and passes through. ``bin/local/validate-run-locks``
 refuses a lock taken anywhere else.
 
 The one late acquisition is ``lock_checkout``, for a review that learns which

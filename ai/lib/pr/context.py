@@ -20,8 +20,9 @@ routinely disagree:
 | `status` | local | no | **none** |
 | `ci` | remote | yes | target (`--fix`: + checkout) |
 | `review` | remote | yes | target; its own tree once known |
-| `review --self` | local | yes | target + checkout |
-| `pr review --summary` / `--post` / `--repair` / `--recover` | remote | **no** | target |
+| `review --self` / `--self --fix` | local | yes | target + checkout |
+| `pr review --summary` / `--post` / `--repair` | remote | **no** | target (also with `--self`) |
+| `pr review --recover` | remote | **no** | target (`--self --recover` adds checkout) |
 | `pr review --list` | **none** | no | **none** |
 | `comments` | remote | yes | target + checkout (`--reply`/`--settle`: target) |
 | `fix` | remote | yes | target + checkout |
@@ -33,6 +34,8 @@ routinely disagree:
 | `gc` | remote | no | target |
 
 `cli.locks` takes the locks and documents why each command holds what it holds.
+`batch resolve`'s per-run lock and `gc`'s lock on each pruned target are taken
+in the handler, not declared on the Need — they are in that table.
 
 `review` is the one command whose depth and fetch its arguments decide, which
 is why its `CommandSpec` holds a resolver rather than a `Need`. The fetch is the
@@ -51,26 +54,32 @@ A command that declares nothing fails at import rather than silently picking up
 a default — `cli.registry.validate_needs` is the check, and it is what makes
 adding a command a one-line edit in one place.
 
-`status` is the only local one. It reads `state.json` and the worktree's push
+`status` is the only read-only local one. `review --self` and `push` are local
+too, but they hold locks. It reads `state.json` and the worktree's push
 state, and needs neither `gh repo view` nor `gh pr view` to do it: with no
 `state.json` yet, the header names the repo from the origin-derived label
 behind the repo key (`acme/widget`) rather than from `gh`. An explicit
 `--pr <n>` escalates it to remote anyway — a PR number names a branch only `gh`
 can report, and the branch is half the target key.
 
-`pr review --list` is the only `NONE` one, and that is not "resolve less" — it is
-"there is nothing to resolve". The listing answers from the user's own state
+`pr review --list` is `NONE` because there is nothing to resolve, not because it
+is the only such command — every `batch` subcommand is `NONE` too, as it names
+no target of its own. The listing answers from the user's own state
 root, so it has no repo, no branch, and no target, and unlike `LOCAL` it works
 from a directory that is not a git repository at all. `--pr` does not escalate
 it: there is no target for a PR number to name at that depth, so honouring one
 would spend a `gh` call on a value the handler never reads.
 
-`pr review --list` is also the one invocation that writes no trail at all.
-Resolving nothing and holding no lock is the shape of a query rather than of an
-action, and the listing exists to be polled: the two records a dispatch writes
-cost more than the query itself, and they land in the file every `otto-log`
-query then reads. The exemption is read off these same three axes — `Need`
-carries no trail flag of its own for a command to add itself to.
+Every `NONE` need that holds no target lock writes no dispatch trail
+(`Need.records_a_trail`): `--list`, and every `batch` subcommand. A global lock
+alone does not count — it names no repo, PR or branch to record against — so
+`batch run` / `resume` skip the dispatch trail too and keep one of their own
+(`pr-batch`). Resolving nothing and holding no target lock is the shape of a
+query rather than of an action, and the listing exists to be polled: the two
+records a dispatch writes cost more than the query itself, and they land in the
+file every `otto-log` query then reads. The exemption is read off these same
+three axes — `Need` carries no trail flag of its own for a command to add
+itself to.
 
 `base_branch` is the other thing this module resolves once per run: the branch
 every range a review (or rebase, or supersession check) measures against, most

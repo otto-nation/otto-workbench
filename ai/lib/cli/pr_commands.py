@@ -97,9 +97,10 @@ def cmd_status(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
     The identity's head SHA is refreshed on the same grounds, and it reaches
     stdout the same way `push` does: both are written onto the loaded object
     before `state_to_dict` dumps it, so the JSON agrees with the dashboard
-    rendered from it. A consumer reading `identity.head_sha` out of that dump
-    gets the commit the checkout is on now, which is the one the staleness
-    markers above were computed against.
+    rendered from it. With a checkout, a consumer reading `identity.head_sha`
+    out of that dump gets the commit the checkout is on now, which is the one
+    the staleness markers above were computed against. Without one it is the
+    last recorded commit, matching the cached push.
     """
     state = pr.state.load_state(ctx.target_dir)
 

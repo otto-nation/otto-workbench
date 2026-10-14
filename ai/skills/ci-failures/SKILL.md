@@ -131,7 +131,7 @@ say so rather than reporting the branch as current.
 ### 6. Apply fixes and push
 
 **Worktree switch:** If CWD is not the branch's worktree, switch immediately
-using `wt switch -c <branch>` — do not ask, just switch and proceed with fixes.
+using `wt switch <branch>` — do not ask, just switch and proceed with fixes.
 
 For each diagnosis:
 1. Edit the files to address the failure

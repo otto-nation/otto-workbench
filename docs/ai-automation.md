@@ -4,7 +4,7 @@ description: Claude Code integration for coding guidelines, intelligent skills, 
 ---
 <!-- Generated from docs/ai-automation.src.md by bin/local/compose-docs — do not edit. -->
 
-<!-- doc-budget: 587 -->
+<!-- doc-budget: 597 -->
 
 # AI Automation
 
@@ -611,6 +611,16 @@ When your CWD is not the target repo (e.g., running from a Claude Code session r
 ```bash
 pr create --draft --closes 941 --repo-dir /path/to/worktree
 ```
+
+`--branch <b>` from a checkout that is not on `<b>` does not switch the current
+tree. What happens instead depends on the command:
+
+| Outcome | Commands |
+|---|---|
+| Create `<b>`'s worktree | `rebase`, `ci --fix`, `comments --fix`, `fix` |
+| Refuse with the `require_worktree` message | `push`, `create`, `describe`, `comments --triage/--settle/--finish`, `rebase --abort/--push-only` |
+| Degrade to cached state with a dim note | `status` |
+| Work, create nothing | `ci` (dashboard), `review` (all modes), `gc`, `comments --reply` |
 
 A related hazard exists one level down, for the AI subprocess: a backend CLI
 inherits the launching process's working directory unless it is told otherwise.

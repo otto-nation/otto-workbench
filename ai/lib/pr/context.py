@@ -41,10 +41,11 @@ routinely disagree:
 `batch resolve`'s per-run lock and `gc`'s lock on each pruned target are taken
 in the handler, not declared on the Need — they are in that table.
 
-`review` is the one command whose depth and fetch its arguments decide, which
-is why its `CommandSpec` holds a resolver rather than a `Need`. The fetch is the
-line between its two halves: a bare `pr review` is about to review the branch, so
-it wants the branch current, while every mode flag acts on a review that already
+`review`, `create`, `ci`, `comments`, `rebase` and `batch` are the commands
+whose need their arguments decide, which is why those `CommandSpec`s hold a
+resolver rather than a `Need`. For `review`, the fetch is the line between its
+two halves: a bare `pr review` is about to review the branch, so it
+wants the branch current, while every mode flag acts on a review that already
 exists at the commit that review describes. Fast-forwarding under one of those
 would leave `--summary` and `--post` reporting a review of a commit the
 worktree no longer sits on, and would push `--recover` off the SHA it then has
@@ -87,7 +88,7 @@ axes — `Need` carries no trail flag of its own for a command to add itself to.
 `base_branch` is the other thing this module resolves once per run: the branch
 every range a review (or rebase, or supersession check) measures against, most
 authoritative source first — operator `--base`/`--onto`, the PR's `baseRefName`,
-`git.topology.stack_parent` (nearest local ancestor of HEAD that is not the
+`git.topology.stack_parent` (nearest local ancestor of the tip that is not the
 trunk), then the repo's default branch. It returns a *name*; callers spell
 `origin/<name>` themselves, so a local ref sitting at a stale position can
 nominate a base without being the commit anything is measured against. The run
@@ -547,7 +548,7 @@ def base_branch(
         stack_kw["ref"] = tip
     parent = git.topology.stack_parent(where, default=default, **stack_kw)
     if parent:
-        return decide(parent, "nearest local ancestor of HEAD — this branch is stacked")
+        return decide(parent, "nearest local ancestor of the tip — this branch is stacked")
     return decide(default, "no stack parent and no PR base — the repo's default branch")
 
 

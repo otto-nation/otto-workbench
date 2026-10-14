@@ -11,8 +11,9 @@ one unbounded call is `wt switch`, which creates a checkout. The one network cal
 the fetch ahead of `wt switch`, goes through `git.client` for its `TRANSFER` bound.
 
 `stack_parent` is the name a stacked branch should be measured against. It asks
-git for the branches that are ancestors of HEAD but not of the trunk, and takes
-the nearest. An ordinary branch off trunk has none. The answer is a *name*;
+git for the branches that are ancestors of the measured tip (`ref`, defaulting
+to HEAD) but not of the trunk, and takes the nearest. An ordinary branch off
+trunk has none. The answer is a *name*;
 callers resolve it as `origin/<name>`, so a local ref sitting at a stale
 position can nominate a base without being the commit anything is measured
 against. A stale neighbour — a `wip`, a backup, a bisect leftover — that is
@@ -275,8 +276,9 @@ def default_branch(cwd: str | Path | None = None) -> str:
 def _rank_ancestor(ref: str, head: str, cwd: str | None) -> tuple[int, int, str] | None:
     """Sort key for one stack-parent candidate, or None when it cannot be one.
 
-    The first element is the distance from the fork point to HEAD, so the
-    nearest ancestor sorts first. The other two break a tie that the distance
+    The first element is the distance from the fork point to *head* (the
+    measured tip — HEAD, or the SHA of a named ``ref``), so the nearest
+    ancestor sorts first. The other two break a tie that the distance
     cannot: two refs at the same commit describe the same diff, so which one is
     named is cosmetic — but it has to be the *same* cosmetic answer on every
     machine, and ``for-each-ref`` order is not that. A remote-tracking ref wins

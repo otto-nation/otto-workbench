@@ -4826,6 +4826,15 @@ be the only one of its kind running. Every holder takes its scopes through
 ``hold``, in one order — globals by name, then the target, then the checkout —
 so with every take non-blocking no two ``pr`` processes can deadlock.
 
+A fourth kind sits outside those scopes. ``Resource`` is a lock on a path
+the caller names, with no env marker: a child neither inherits it nor
+passes through it. ``hold_resource`` takes it. ``create=False`` (the default)
+refuses a missing parent directory rather than creating it, so a late
+taker cannot resurrect a directory that ``gc`` has removed. A resource never
+nests: a second ``hold_resource`` on a lock this process already holds raises
+``LockReentry``, because two holders of one resource in one process is a
+programming error, not contention.
+
 Uses ``fcntl.flock`` on ``<target_dir>/run.lock`` and on
 ``<git-dir>/workbench-run-tree.lock``. The kernel drops both when the holder
 exits for any reason, including SIGKILL, so there is no stale-lock state to

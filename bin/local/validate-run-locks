@@ -53,7 +53,7 @@ MODULE = "core.run_lock"
 # How a call names the module: the import form every file is held to, and the
 # bare name `from core import run_lock` would bind.
 RECEIVERS = frozenset({"core.run_lock", "run_lock"})
-TAKING = frozenset({"acquire", "claim_for_process", "hold", "lock_checkout"})
+TAKING = frozenset({"acquire", "claim_for_process", "hold", "hold_resource", "lock_checkout"})
 
 ALLOWED: dict[str, frozenset[str]] = {
     "ai/lib/core/run_lock.py": TAKING,

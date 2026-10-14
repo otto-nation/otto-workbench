@@ -34,6 +34,15 @@ be the only one of its kind running. Every holder takes its scopes through
 ``hold``, in one order — globals by name, then the target, then the checkout —
 so with every take non-blocking no two ``pr`` processes can deadlock.
 
+A fourth kind sits outside those scopes. ``Resource`` is a lock on a path
+the caller names, with no env marker: a child neither inherits it nor
+passes through it. ``hold_resource`` takes it. ``create=False`` (the default)
+refuses a missing parent directory rather than creating it, so a late
+taker cannot resurrect a directory that ``gc`` has removed. A resource never
+nests: a second ``hold_resource`` on a lock this process already holds raises
+``LockReentry``, because two holders of one resource in one process is a
+programming error, not contention.
+
 Uses ``fcntl.flock`` on ``<target_dir>/run.lock`` and on
 ``<git-dir>/workbench-run-tree.lock``. The kernel drops both when the holder
 exits for any reason, including SIGKILL, so there is no stale-lock state to
@@ -117,7 +126,7 @@ import os
 import subprocess
 import sys
 from collections import OrderedDict
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -178,6 +187,19 @@ LockScope = Global | Scope
 # The explicit spelling of "takes nothing", so a declaration reads as a decision.
 NO_LOCK: frozenset[LockScope] = frozenset()
 
+
+@dataclasses.dataclass(frozen=True)
+class Resource:
+    """A lock no child inherits, keyed on the lock file itself.
+
+    ``path`` is the lock file. ``subject`` is what a refusal calls it, e.g.
+    ``batch run <id>``.
+    """
+
+    path: Path
+    subject: str
+
+
 @dataclasses.dataclass
 class _Held:
     """One flock this process holds, and how many takers are counted on it.
@@ -191,7 +213,7 @@ class _Held:
     handle: object
     path: Path
     value: str
-    var: str
+    var: str | None
     depth: int = 1
 
 
@@ -213,7 +235,7 @@ _ATEXIT_REGISTERED = False
 
 
 class LockBusy(RuntimeError):
-    """Raised when another process already holds one of the three scopes.
+    """Raised when another process already holds a lock.
 
     ``subject`` names which, because the remedies differ: a contended target is
     the same work twice and the answer is to wait, while a contended checkout is
@@ -221,13 +243,12 @@ class LockBusy(RuntimeError):
     second somewhere else.
     """
 
-    def __init__(self, holder: dict, path: Path, subject: str = "target"):
+    def __init__(self, holder: dict, path: Path, subject: str = "target", *,
+                 kind: str = "target"):
         self.holder = holder
         self.path = path
         self.subject = subject
-        # The scope's kind — "global", "target" or "checkout" — without the
-        # name or label a subject may carry after it.
-        self.kind = subject.split(" ", 1)[0]
+        self.kind = kind
         super().__init__(f"another pr run already owns this {subject}: {self.holder_text}")
 
     @property
@@ -243,6 +264,16 @@ class LockBusy(RuntimeError):
         return f"{command} (pid {pid}, started {started}{tail})"
 
 
+class LockReentry(RuntimeError):
+    """A resource this process already holds was taken again.
+
+    Resources never nest: two holders of one run in one process would each
+    carry their own state, and whichever wrote second would overwrite the
+    other. It is not a ``LockBusy``, so a refusal handler never reads it as
+    contention.
+    """
+
+
 def _read_holder(path: Path) -> dict:
     """Best-effort read of the holder record written by the lock owner.
 
@@ -256,20 +287,21 @@ def _read_holder(path: Path) -> dict:
         return {}
 
 
-def _claim(handle, path: Path, command: str, started: str,
-           subject: str = "target") -> None:
+def _claim(handle, path: Path, command: str, started: str, spec: _LockSpec) -> None:
     """Take the flock and record who owns it, or raise LockBusy."""
     try:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as exc:
-        raise LockBusy(_read_holder(path), path, subject) from exc
-    _write_record(handle, {
+        raise LockBusy(_read_holder(path), path, spec.subject, kind=spec.kind) from exc
+    record = {
         "pid": os.getpid(), "command": command, "started": started,
         # Overwritten with a timestamp on release. Present and null while held,
         # so a reader can tell "still running" from "finished" — rather than
         # having to guess from a pid that is dead either way.
         "released": None,
-    })
+    }
+    record.update(spec.fields)
+    _write_record(handle, record)
 
 
 def _write_record(handle, record: dict) -> None:
@@ -319,8 +351,11 @@ class _LockSpec:
 
     value: str
     path: Path
-    var: str
+    var: str | None
     subject: str
+    kind: str
+    fields: Mapping[str, str] = dataclasses.field(default_factory=dict)
+    create_parent: bool = True
 
 
 def _target_spec(target_dir: Path, label: str = "") -> _LockSpec:
@@ -331,7 +366,7 @@ def _target_spec(target_dir: Path, label: str = "") -> _LockSpec:
     """
     root = Path(target_dir)
     subject = f"target {label}" if label else "target"
-    return _LockSpec(str(root), root / LOCK_FILE, LOCK_ENV, subject)
+    return _LockSpec(str(root), root / LOCK_FILE, LOCK_ENV, subject, "target")
 
 
 def _split_marker(raw: str) -> list[str]:
@@ -386,32 +421,37 @@ def _take(spec: _LockSpec, command: str, started: str) -> bool:
     the registry first means such a value can no longer shadow a real entry.
 
     Returns False only for the marker pass-through — a lock some other process
-    in our tree holds, which is not ours to release.
+    in our tree holds, which is not ours to release. A spec with ``var is None``
+    has no marker, so that arm is skipped.
     """
     key = str(spec.path)
     held = _HELD.get(key)
     if held is not None:
         held.depth += 1
         _HELD.move_to_end(key)
-        _sync_marker(spec.var)
+        if spec.var is not None:
+            _sync_marker(spec.var)
         return True
-    if spec.value in _marker_values(spec.var):
+    if spec.var is not None and spec.value in _marker_values(spec.var):
         return False
-    spec.path.parent.mkdir(parents=True, exist_ok=True)
+    if spec.create_parent:
+        spec.path.parent.mkdir(parents=True, exist_ok=True)
     # "a+" rather than "w": opening must not destroy the current holder's
     # record before we know whether we can take the lock away from them.
     handle = open(spec.path, "a+")
     try:
-        _claim(handle, spec.path, command, started, spec.subject)
+        _claim(handle, spec.path, command, started, spec)
     except BaseException:
         # Closed without a release stamp: we never held this flock, and
         # annotating it would write "released" onto the live holder's record.
         handle.close()
         raise
-    _INHERITED.setdefault(spec.var, os.environ.get(spec.var))
+    if spec.var is not None:
+        _INHERITED.setdefault(spec.var, os.environ.get(spec.var))
     _HELD[key] = _Held(handle, spec.path, spec.value, spec.var)
     _register_atexit()
-    _sync_marker(spec.var)
+    if spec.var is not None:
+        _sync_marker(spec.var)
     return True
 
 
@@ -424,7 +464,8 @@ def _drop(key: str) -> None:
     if held.depth > 0:
         return
     del _HELD[key]
-    _sync_marker(held.var)
+    if held.var is not None:
+        _sync_marker(held.var)
     # The record stays on disk: flock releases on close, and the text is what
     # makes the next contender's error message readable. Stamped as released
     # first, so what stays is not mistaken for a live holder by anyone reading
@@ -496,6 +537,7 @@ def _tree_spec(worktree: Path | None) -> _LockSpec | None:
         return None
     return _LockSpec(
         str(git_dir), git_dir / TREE_LOCK_FILE, TREE_LOCK_ENV, f"checkout {worktree}",
+        "checkout",
     )
 
 
@@ -546,7 +588,7 @@ def global_lock_path(name: str) -> Path:
 
 def _global_spec(scope: Global) -> _LockSpec:
     path = global_lock_path(scope.name)
-    return _LockSpec(str(path), path, GLOBAL_LOCK_ENV, f"global {scope.name}")
+    return _LockSpec(str(path), path, GLOBAL_LOCK_ENV, f"global {scope.name}", "global")
 
 
 def _rank(scope: LockScope) -> tuple[int, str]:
@@ -622,6 +664,38 @@ def note_holder(scope: Global, **fields: str) -> None:
     _write_record(held.handle, record)
 
 
+@contextlib.contextmanager
+def hold_resource(lock: Resource, *, command: str, started: str,
+                  fields: Mapping[str, str] | None = None,
+                  create: bool = False):
+    """Hold *lock* for the block. No marker is exported.
+
+    ``fields`` are written into the holder record at claim time beside
+    pid/command/started/released. ``create`` makes the lock file's parent
+    directory; without it a missing parent raises FileNotFoundError and
+    creates nothing. Raises LockReentry when this process already holds
+    *lock*; the existing hold is left as it was.
+    """
+    if str(lock.path) in _HELD:
+        raise LockReentry(f"{lock.subject} is already held by this process")
+    spec = _LockSpec(
+        str(lock.path), lock.path, None, lock.subject, "resource",
+        fields=dict(fields or {}), create_parent=create,
+    )
+    with _holding(spec, command, started):
+        yield
+
+
+def holds(lock_file: Path) -> bool:
+    """Whether this process holds *lock_file*, asked of the registry only."""
+    return str(Path(lock_file)) in _HELD
+
+
+def read_holder(lock_file: Path) -> dict:
+    """The holder record at *lock_file*, unlocked. ``{}`` on failure."""
+    return _read_holder(Path(lock_file))
+
+
 def claim_for_process(target_dir: Path, command: str, started: str, *,
                       worktree: Path | None = None, target_label: str = "") -> None:
     """Take the locks for the rest of this process's life, or exit 1.
@@ -669,8 +743,13 @@ def _owns(spec: _LockSpec) -> bool:
 
     The registry answers for this process; the marker for a parent — a batch,
     or the `pr` that spawned this delegate — which no flock of ours can prove.
+    A resource has no marker, so only the registry can answer.
     """
-    return str(spec.path) in _HELD or spec.value in _marker_values(spec.var)
+    if str(spec.path) in _HELD:
+        return True
+    if spec.var is None:
+        return False
+    return spec.value in _marker_values(spec.var)
 
 
 def lock_checkout(target_dir: Path, worktree: Path, *, command: str, started: str) -> None:

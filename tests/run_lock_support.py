@@ -8,6 +8,7 @@ file descriptions inside a single process too — is said once, here.
 
 import fcntl
 import json
+import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -36,6 +37,22 @@ def held_elsewhere(path, record):
         json.dump(record, handle)
         handle.flush()
         yield
+
+
+@contextmanager
+def live_pid():
+    """A pid that is alive and not this process, then reaped.
+
+    Holder records that should classify as a live foreign holder need a pid
+    ``os.kill(pid, 0)`` accepts and that is not ``os.getpid()`` — this
+    process's own pid is treated as vacated (see ``is_live(allow_self=False)``).
+    """
+    proc = subprocess.Popen(["sleep", "30"])
+    try:
+        yield proc.pid
+    finally:
+        proc.kill()
+        proc.wait()
 
 
 def flocked(path) -> bool:

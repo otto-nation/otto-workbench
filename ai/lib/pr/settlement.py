@@ -524,21 +524,28 @@ def resolve_settled_commit(
 _FINDING_WIDTH = 80
 
 
+def finding_line(summary: str) -> str:
+    """The finding as one line, or empty when there is none.
+
+    First line of `summary`, cut at `_FINDING_WIDTH` with a trailing ellipsis.
+    The one owner of that cut: `quoted_finding` quotes it for the operator, and
+    a review-body reply block names a dismissed item with it unquoted.
+    """
+    line = summary.splitlines()[0] if summary else ""
+    if len(line) > _FINDING_WIDTH:
+        line = line[:_FINDING_WIDTH - 1] + "…"
+    return line
+
+
 def quoted_finding(summary: str) -> str:
     """The finding as one quoted line, or empty when there is none.
 
-    First line of `summary`, cut at `_FINDING_WIDTH` with a trailing ellipsis.
-    Every surface that names an item for the operator goes through this so a
-    missing finding omits the quotes rather than printing empty ones.
+    `finding_line`, in quotes. Every surface that names an item for the operator
+    goes through this so a missing finding omits the quotes rather than printing
+    empty ones.
     """
-    if not summary:
-        return ""
-    line = summary.splitlines()[0]
-    if not line:
-        return ""
-    if len(line) > _FINDING_WIDTH:
-        line = line[:_FINDING_WIDTH - 1] + "…"
-    return f'"{line}"'
+    line = finding_line(summary)
+    return f'"{line}"' if line else ""
 
 
 def format_item_line(item: ItemOutcome) -> str:

@@ -2257,7 +2257,10 @@ GitHub has no reply API for a review body, and the summary comment is already
 the surface reporting what became of the items cut out of one, so the answer
 an operator gives with `pr comments --reply rb-<reviewId>` is published there:
 one marked block per review, in a `### Replies to review comments` section
-under the table. The marker format is `pr.published_record`'s.
+under the table. The marker format is `pr.published_record`'s. A review whose
+cut items were dismissed with a reason gets a block too, one
+`Dismissed: <finding> — <reason>` line per item under the reply (or alone), so
+the argument against a finding reaches the reviewer who raised it.
 
 Which blocks a round writes is decided the way rows are — from the markers on
 the published comments, through `summary_rounds.RoundScope.covers_reply` — and

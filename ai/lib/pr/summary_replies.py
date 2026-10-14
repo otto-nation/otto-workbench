@@ -4,7 +4,10 @@ GitHub has no reply API for a review body, and the summary comment is already
 the surface reporting what became of the items cut out of one, so the answer
 an operator gives with `pr comments --reply rb-<reviewId>` is published there:
 one marked block per review, in a `### Replies to review comments` section
-under the table. The marker format is `pr.published_record`'s.
+under the table. The marker format is `pr.published_record`'s. A review whose
+cut items were dismissed with a reason gets a block too, one
+`Dismissed: <finding> — <reason>` line per item under the reply (or alone), so
+the argument against a finding reaches the reviewer who raised it.
 
 Which blocks a round writes is decided the way rows are — from the markers on
 the published comments, through `summary_rounds.RoundScope.covers_reply` — and
@@ -27,9 +30,11 @@ from dataclasses import dataclass
 
 import pr.permalinks
 import pr.published_record
+import pr.settlement
 import pr.summary_model
 import pr.summary_rounds
-from pr.thread_models import CommentSourceKind
+from pr.fix import FixOutcome
+from pr.thread_models import CommentItem, CommentSourceKind
 
 REPLIES_HEADING = "### Replies to review comments"
 
@@ -43,10 +48,41 @@ def reply_block_keys(content: pr.summary_model.RoundContent) -> frozenset[str]:
     The one owner of the set. The render, `RoundScope.covers_reply` through it,
     and the carry-forward rule all ask this rather than reading
     `source_replies` themselves, so a source that gains a block for another
-    reason is added here once and reaches all three.
+    reason is added here once and reaches all three. A review has a block when
+    the operator answered it, or when an item cut from it was dismissed with a
+    reason (`_dismissals`).
     """
     ids = (pr.permalinks.review_id_of(key) for key in content.source_replies)
-    return frozenset(review_id for review_id in ids if review_id)
+    return frozenset(review_id for review_id in ids if review_id) | set(_dismissals(content))
+
+
+def _item_index(entry: CommentItem) -> int:
+    """Where `entry` sits in its review: `index`, else the id's trailing `-<n>`."""
+    tail = entry.id.rsplit("-", 1)[-1]
+    return entry.index or (int(tail) if tail.isdigit() else 0)
+
+
+def _dismissals(content: pr.summary_model.RoundContent) -> dict[str, list[CommentItem]]:
+    """Each review's dismissed items that carry a reason, in item order.
+
+    Read off the round's `DISMISSED` bucket, so an operator's `--settle --as
+    dismissed --reason` and the fix pass's own justification both count: either
+    is an argument the reviewer may answer. A dismissal with no reason has
+    nothing to say beyond the table's Action cell, and adds no line.
+    """
+    found: dict[str, list[CommentItem]] = {}
+    for entry in content.of(FixOutcome.DISMISSED):
+        source = pr.permalinks.comment_item_source(entry)
+        if (source.type is CommentSourceKind.REVIEW_BODY and source.id.isdigit()
+                and entry.reason.strip()):
+            found.setdefault(source.id, []).append(entry)
+    return {key: sorted(items, key=_item_index) for key, items in found.items()}
+
+
+def _dismissal_line(entry: CommentItem) -> str:
+    """`Dismissed: <finding> — <reason>`, the reason folded onto the one line."""
+    finding = pr.settlement.finding_line(entry.summary) or entry.id
+    return f"Dismissed: {finding} — {' '.join(entry.reason.split())}"
 
 
 def _reviewer(content: pr.summary_model.RoundContent, review_id: str) -> str:
@@ -72,13 +108,16 @@ def reply_block_text(
     content: pr.summary_model.RoundContent, review_id: str,
     repo: str, pr_number: int, host: str = "",
 ) -> str:
-    """The text inside review `review_id`'s block: who and where, then the reply.
+    """The text inside review `review_id`'s block: who and where, reply, dismissals.
+
+    One `_dismissal_line` per item `_dismissals` names, under the reply.
 
     The digest the marker declares, and the one `covers_reply` compares, is of
     exactly this text — the generated header included, by design. So a change
     in how the reviewer resolves (a login found or lost) or in the forge host
     the permalink is built on reads as a revised block, and re-states a reply
-    whose text did not change.
+    whose text did not change. The dismissal lines are inside it too, so a new
+    or changed dismissal revises the block exactly as an edited reply does.
     """
     source = pr.permalinks.CommentSource(CommentSourceKind.REVIEW_BODY, review_id)
     reviewer = _reviewer(content, review_id)
@@ -87,7 +126,9 @@ def reply_block_text(
         f"[review]({source.permalink(repo, pr_number, host)})",
     ) if part)
     reply = content.source_replies.get(pr.permalinks.review_source_key(review_id), "")
-    return pr.published_record.normalise(f"{header}\n\n{reply}")
+    dismissed = "\n".join(map(_dismissal_line, _dismissals(content).get(review_id, [])))
+    body = "\n\n".join(part for part in (reply, dismissed) if part)
+    return pr.published_record.normalise(f"{header}\n\n{body}")
 
 
 def render_reply_section(

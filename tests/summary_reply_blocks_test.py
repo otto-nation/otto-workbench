@@ -186,3 +186,62 @@ class TestWhatAnEditKeeps:
         body = _publish(content(), _marker(_published_summary() + "\n" + theirs, cid=10),
                         _marker(_published_summary() + "\n" + theirs, cid=11))
         assert theirs not in body
+
+
+def _dismissed(item_id, summary, reason, reviewer="kgn"):
+    return CommentItem(id=item_id, summary=summary, reason=reason, reviewer=reviewer)
+
+
+class TestDismissalReasons:
+    """A dismissed review-body item's reason reaches the reviewer in its block."""
+
+    def test_each_reason_renders_under_the_reply_in_item_order(self, content):
+        items = [_dismissed("rb-88-2", "Rename the flag\nbecause...", "It is public API"),
+                 _dismissed("rb-88-1", "Drop the cache", "The cache is the fix")]
+        body = _render(content(source_replies={"rb-88": "Done."},
+                               review_body_comments=_REVIEWS, dismissed=items))
+        reply = ("Done.\n\nDismissed: Drop the cache — The cache is the fix\n"
+                 "Dismissed: Rename the flag — It is public API")
+        assert _block(reply=reply) in body
+
+    def test_a_dismissal_without_a_reason_adds_no_line(self, content):
+        body = _render(content(source_replies={"rb-88": "Done."},
+                               review_body_comments=_REVIEWS,
+                               dismissed=[_dismissed("rb-88-1", "Drop the cache", "")]))
+        assert _block() in body
+        assert "Dismissed:" not in body
+
+    def test_only_a_review_body_items_reason_reaches_a_block(self, content):
+        items = [_dismissed("PRRT_1", "Inline nit", "Not ours"),
+                 _dismissed("ic-5-1", "Issue comment", "Not ours"),
+                 _dismissed("rb-90-1", "Other review", "Out of scope", "amp")]
+        body = _render(content(source_replies={"rb-88": "Done."},
+                               review_body_comments=_REVIEWS, dismissed=items))
+        assert _block() in body
+        assert _block("90", "amp", "Dismissed: Other review — Out of scope") in body
+        assert "Dismissed: Inline nit" not in body
+        assert "Dismissed: Issue comment" not in body
+
+    def test_a_dismissal_alone_renders_a_block_with_no_reply(self, content):
+        round_content = content(review_body_comments=_REVIEWS, dismissed=[
+            _dismissed("rb-88-1", "Drop the cache", "The cache is the fix")])
+        alone = _block(reply="Dismissed: Drop the cache — The cache is the fix")
+        assert pr.summary_replies.reply_block_keys(round_content) == {"88"}
+        assert alone in _render(round_content)
+
+    def test_an_in_place_edit_does_not_carry_a_dismissal_block_twice(self, content):
+        round_content = content(review_body_comments=_REVIEWS, dismissed=[
+            _dismissed("rb-88-1", "Drop the cache", "The cache is the fix")])
+        alone = _block(reply="Dismissed: Drop the cache — The cache is the fix")
+        body = _publish(round_content, _marker(_published_summary() + "\n" + alone))
+        assert body.count("pr-comments:review-reply k=88 ") == 1
+        assert alone in body
+
+    def test_a_new_dismissal_is_restated_on_a_fresh_comment(self, content):
+        round_content = content(source_replies={"rb-88": "Done."},
+                                review_body_comments=_REVIEWS, dismissed=[
+                                    _dismissed("rb-88-1", "Drop the cache", "Needed")])
+        answered = _marker(_published_summary() + "\n" + _block(),
+                           newest_other_at="2026-01-04T00:00:00Z")
+        restated = _block(reply="Done.\n\nDismissed: Drop the cache — Needed")
+        assert restated in _publish(round_content, answered)

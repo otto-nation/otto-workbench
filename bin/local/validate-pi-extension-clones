@@ -145,6 +145,13 @@ _VERSION_IN_RANGE = re.compile(r'(?:[~^=]|>=?)?v?(\d+)\.(\d+)(?:\.(\d+))?')
 USER_PACKAGE_ROOT = Path.home() / '.pi' / 'agent' / 'git'
 PROJECT_PACKAGE_GLOB = '.pi/git'
 
+# The launcher `pi update` maintains. Same path as PI_BIN_DIR in lib/constants.sh.
+# PATH-first is the launching process's copy, not this one: a pi background job
+# prepends its own node_modules/.bin, and a project mise pin of
+# npm:@earendil-works/pi-coding-agent does the same. Neither is the host that
+# loads ~/.pi/agent/git clones in an interactive session.
+HOST_PI = Path.home() / '.pi' / 'agent' / 'bin' / 'pi'
+
 
 def _run(cmd: list[str], cwd: str | None = None) -> str | None:
     """Stdout of a command, or None when it cannot be run or fails."""
@@ -157,9 +164,8 @@ def _run(cmd: list[str], cwd: str | None = None) -> str | None:
     return out.stdout.strip()
 
 
-def installed_pi_version() -> tuple[int, ...] | None:
-    """The version of the pi on PATH, or None when there is none to ask."""
-    raw = _run(['pi', '--version'])
+def _parse_pi_version(raw: str | None) -> tuple[int, ...] | None:
+    """A dotted pi version, or None when the string is missing or not one."""
     if not raw:
         return None
     match = re.match(r'(\d+)\.(\d+)(?:\.(\d+))?', raw)
@@ -168,12 +174,89 @@ def installed_pi_version() -> tuple[int, ...] | None:
     return tuple(int(p) for p in match.groups() if p is not None)
 
 
+def host_pi() -> Path | None:
+    """The pi that loads user-scope clones, or None when there is none.
+
+    Prefer the self-managed launcher at HOST_PI. The first `pi` on PATH is
+    whichever process launched this one: a background job prepends the copy
+    it was started from, and a project mise pin sits ahead of everything
+    else. Clones under ~/.pi/agent/git were refreshed against the managed
+    install, so that is the host they must match.
+    """
+    if os.access(HOST_PI, os.X_OK) and not Path(HOST_PI).is_dir():
+        return Path(HOST_PI)
+    found = shutil.which('pi')
+    return Path(found) if found else None
+
+
+def path_pi_binaries() -> list[Path]:
+    """Each executable named `pi` on PATH, first occurrence of each realpath.
+
+    The PATH entry is kept, not the realpath, so a mise shim still runs as
+    `pi` rather than as `mise --version`.
+    """
+    seen: set[str] = set()
+    found: list[Path] = []
+    for directory in os.environ.get('PATH', '').split(os.pathsep):
+        if not directory:
+            continue
+        candidate = Path(directory) / 'pi'
+        try:
+            if not os.access(candidate, os.X_OK) or candidate.is_dir():
+                continue
+        except OSError:
+            continue
+        resolved = os.path.realpath(candidate)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        found.append(candidate)
+    return found
+
+
+def path_pi_conflict(host: Path, host_version: tuple[int, ...]) -> str | None:
+    """Name every other pi on PATH whose version disagrees with the host.
+
+    Two installs of the same version are not a conflict — ~/.local/bin/pi is
+    a link to HOST_PI on a managed install. A different version is: the
+    validator used to pick whichever came first and fail clones that match
+    the host the user actually runs.
+    """
+    host_resolved = os.path.realpath(host)
+    others: list[tuple[Path, tuple[int, ...]]] = []
+    for binary in path_pi_binaries():
+        if os.path.realpath(binary) == host_resolved:
+            continue
+        version = _parse_pi_version(_run([str(binary), '--version']))
+        if version is None or version == host_version:
+            continue
+        others.append((binary, version))
+    if not others:
+        return None
+    listed = ', '.join(
+        f'{path} ({_version_str(ver)})' for path, ver in others)
+    return (f'PATH also has pi at {listed}; comparing clones against {host} '
+            f'({_version_str(host_version)}), the install pi update maintains')
+
+
+def installed_pi_version(binary: Path | None = None) -> tuple[int, ...] | None:
+    """The version of the host pi, or None when there is none to ask.
+
+    `binary` is the launcher to ask; omitted, it is host_pi(). A missing
+    host still calls `pi --version` so a test that stubs `_run` keeps working
+    on a machine that has not installed pi.
+    """
+    host = binary if binary is not None else host_pi()
+    raw = _run([str(host), '--version'] if host is not None else ['pi', '--version'])
+    return _parse_pi_version(raw)
+
+
 # The cure for a host below a clone's floor, when the host is pi's own install.
 PI_UPDATE_REMEDY = 'update the host with: pi update'
 
 
-def pi_pin_source() -> str | None:
-    """The mise config that pins the pi on PATH, or None when mise does not supply it.
+def pi_pin_source(binary: Path | str | None = None) -> str | None:
+    """The mise config that pins `binary`, or None when mise does not supply it.
 
     `pi update` moves pi's own install. A pi supplied by a mise pin is not that
     install — mise re-resolves the pinned version on every invocation, so the
@@ -181,12 +264,14 @@ def pi_pin_source() -> str | None:
     Telling that reader to run `pi update` sends them to a command that
     cannot work, which is how a project pin read as a stale host.
 
-    The pi actually run is the first on PATH. A mise shim there resolves
-    through mise, so it is followed with `mise which`; a tool directory that
+    `binary` is the launcher under consideration (the host, when the
+    validator calls this). Omitted, it is the first `pi` on PATH, which is
+    what the unit tests of this helper pin. A mise shim resolves through
+    mise, so it is followed with `mise which`; a tool directory that
     `mise activate` put on PATH is matched against each active tool's
     install_path.
     """
-    on_path = shutil.which('pi')
+    on_path = str(binary) if binary is not None else shutil.which('pi')
     if not on_path:
         return None
     resolved = os.path.realpath(on_path)
@@ -219,7 +304,7 @@ def _pin_supplying(entry, resolved: str) -> str | None:
 
 
 def host_remedy(pin_source: str | None) -> str:
-    """How to move the host, given where the pi on PATH comes from."""
+    """How to move the host, given where that binary comes from."""
     if pin_source is None:
         return PI_UPDATE_REMEDY
     return (f'this pi is pinned by mise in {pin_source} — raise the pin there '
@@ -477,7 +562,8 @@ def main() -> None:
     parser.add_argument('--json', action='store_true', help='Emit findings as JSON')
     args = parser.parse_args()
 
-    pi_version = installed_pi_version()
+    host = host_pi()
+    pi_version = installed_pi_version(host)
     if pi_version is None:
         if args.json:
             print(json.dumps({'pi_version': None, 'clones_checked': 0, 'findings': []},
@@ -496,7 +582,8 @@ def main() -> None:
         return
 
     findings = []
-    update_remedy = host_remedy(pi_pin_source())
+    update_remedy = host_remedy(pi_pin_source(host))
+    conflict = path_pi_conflict(host, pi_version) if host is not None else None
     for scope, clone in clones:
         skew = check_clone(clone, pi_version, update_remedy)
         sha = _clone_sha(clone)
@@ -505,6 +592,9 @@ def main() -> None:
                              'problem': skew.problem, 'remedy': skew.remedy})
         elif not args.quiet and not args.json:
             print(f'  {GREEN}✓{NC} {clone} ({scope}, {sha})')
+
+    if conflict is not None:
+        print(f'{YELLOW}⚠{NC} {conflict}', file=sys.stderr)
 
     if args.json:
         print(json.dumps({'pi_version': _version_str(pi_version),

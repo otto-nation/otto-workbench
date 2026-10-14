@@ -342,7 +342,7 @@ fi
 
 # Change-based test selection: only run bats tests affected by the diff.
 # Falls back to the full suite when the selector is unavailable or when
-# shared infra (test_helper.bash, run-tests, workflows) changed.
+# tests/test_helper.bash, which every suite loads, changed.
 _bats_selected=""
 _bats_label="tests"
 if [[ -x "$REPO_ROOT/bin/local/select-tests" ]]; then

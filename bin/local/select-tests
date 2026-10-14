@@ -86,20 +86,13 @@ NO_REFS_TESTS=(
   test_helper_isolation
 )
 
-# Fallback triggers — changes to these run the full suite.
+# Fallback triggers — changes to these run the full suite. Only the helper
+# every suite loads belongs here. A per-area helper selects the suites that
+# load it (_loads_helper). run-tests and select-tests are selected by their own
+# suites' refs — the pre-push hook runs both on every push, so a break in either
+# shows there — and a workflow file is CI's, which runs the whole suite anyway.
 FULL_SUITE_TRIGGERS=(
   tests/test_helper.bash
-  tests/migrations_helper.bash
-  tests/validate_registries_helper.bash
-  tests/validate_skills_helper.bash
-  tests/projects_helper.bash
-  tests/review_orchestrate_helper.bash
-  tests/wt_cleanup_helper.bash
-  tests/claude_settings_helper.bash
-  tests/conftest.py
-  tests/validate_migrations_helper.bash
-  bin/local/run-tests
-  bin/local/select-tests
 )
 
 # ── Transitive dependency graph ────────────────────────────────────────────────
@@ -305,9 +298,21 @@ _is_in_array() {
 
 # _is_full_suite_trigger CHANGED_FILE — returns 0 if this file triggers a full run.
 _is_full_suite_trigger() {
-  local changed="$1"
-  [[ "$changed" == .github/workflows/* ]] && return 0
-  _is_in_array "$changed" "${FULL_SUITE_TRIGGERS[@]}"
+  _is_in_array "$1" "${FULL_SUITE_TRIGGERS[@]}"
+}
+
+# _loads_helper TEST_FILE CHANGED_FILE — returns 0 when CHANGED_FILE is a
+# tests/*.bash helper that TEST_FILE loads with bats' `load NAME`, quoted or
+# not, on an uncommented line. Helpers load no other helper, so one level is
+# the whole graph.
+_loads_helper() {
+  local test_file="$1" changed="$2" name
+  [[ "$changed" == tests/*.bash ]] || return 1
+  name="${changed#tests/}"
+  name="${name%.bash}"
+  [[ "$name" != */* ]] || return 1
+  name="$(printf '%s' "$name" | sed 's/[][\.*+?^$(){}|/]/\\&/g')"
+  grep -qE "^[[:space:]]*load[[:space:]]+['\"]?${name}['\"]?[[:space:]]*(\$|#)" "$test_file" 2>/dev/null
 }
 
 # _ref_matches_any REF CHANGED_FILES... — returns 0 if any changed file matches REF.
@@ -330,9 +335,13 @@ _test_matches_changes() {
   local test_name
   test_name="$(basename "$test_file" .bats)"
 
-  # A changed .bats file always selects itself
+  # A changed .bats file always selects itself, and a changed helper selects
+  # every suite that loads it
   for changed in "${changed_files[@]}"; do
     if [[ "$changed" == "tests/${test_name}.bats" ]]; then
+      return 0
+    fi
+    if _loads_helper "$test_file" "$changed"; then
       return 0
     fi
   done

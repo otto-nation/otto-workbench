@@ -345,14 +345,34 @@ _pi_setup() {
   printf -- 'GENERAL RULE BODY\n' > "$CLAUDE_RULES_DIR/general.md"
 }
 
+# _pi_sync — runs sync_pi in its own bash, carrying the stubs _pi_setup and
+# _source_with defined. A subshell of the test inherits bats' DEBUG trap, which
+# makes every command the settings step's registry scan runs pay for a trap
+# call: one sync measured ~45s that way against ~10s in its own process.
+_pi_sync() {
+  local stubs
+  stubs="$(declare -f install_package _pi_repo_reachable)"
+  local out rc=0
+  out="$(bash -e -c '
+    . "$1/lib/ui.sh"
+    . "$1/ai/pi/steps.sh"
+    eval "$2"
+    sync_pi
+  ' _ "$REPO_ROOT" "$stubs" 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    printf 'sync_pi failed (exit %s):\n%s\n' "$rc" "$out" >&2
+    return "$rc"
+  fi
+}
+
 @test "sync_pi: second run produces identical settings and context file" {
   _pi_setup
 
-  sync_pi >/dev/null 2>&1
+  _pi_sync
   settings1=$(cat "$PI_SETTINGS_FILE")
   context1=$(_checksum "$PI_CONTEXT_FILE")
 
-  sync_pi >/dev/null 2>&1
+  _pi_sync
   settings2=$(cat "$PI_SETTINGS_FILE")
   context2=$(_checksum "$PI_CONTEXT_FILE")
 
@@ -362,8 +382,10 @@ _pi_setup() {
 
 @test "sync_pi: leaves no temp file behind" {
   _pi_setup
-  sync_pi >/dev/null 2>&1
+  _pi_sync
 
+  # The context file proves the sync ran; without it the next line holds nothing.
+  [ -f "$PI_CONTEXT_FILE" ]
   [ ! -e "$PI_CONTEXT_FILE.tmp" ]
 }
 

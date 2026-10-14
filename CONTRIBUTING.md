@@ -70,10 +70,11 @@ where there is a status to check.
 
 `task test` runs only what your branch can reach, through `bin/local/select-tests` and
 `bin/local/select-pytest`. On this repo's recent history that is a median of 45 of 154
-bats files and 28 of 187 pytest files. A change to shared infrastructure — `conftest.py`,
-`test_helper.bash`, `run-tests` itself — selects everything, and so does a selector that
-fails or cannot narrow: failing towards the whole suite is the only safe direction, since
-a selection that silently narrowed to nothing would report green having run no tests.
+bats files and 28 of 187 pytest files. A per-area bats helper selects the suites that
+`load` it. A change to the fixtures every suite shares — `test_helper.bash` for bats,
+`conftest.py` for pytest — selects everything, and so does a selector that fails or cannot
+narrow: failing towards the whole suite is the only safe direction, since a selection that
+silently narrowed to nothing would report green having run no tests.
 Reach for `task test:all` when you suspect the map rather than the code.
 
 Every test target goes through `bin/local/run-tests`, which owns the parallelism settings
@@ -127,6 +128,13 @@ Tests live in `tests/`. Each file targets a single library function or script be
   hooks path, everything in `~/.gitconfig` — so no test needs a guard of its own. A test
   that wants a global config with content in it re-exports `GIT_CONFIG_GLOBAL` afterwards,
   pointing at a file it wrote; `tests/test_helper_isolation.bats` pins both halves.
+- Run a sync step, a registry scan, or anything else that executes thousands of shell
+  commands in its own `bash -c`, not in the test process or a `( ... )` subshell of it. bats
+  installs a DEBUG trap for its stack traces and a subshell inherits it, so each command pays
+  for a trap call: one settings sync measured ~25s that way against ~3s in its own process.
+  `_fresh_bash` in `tests/claude_settings_helper.bash` and `_pi_sync` in
+  `tests/sync_idempotency.bats` are worked examples; exported variables cross, functions
+  must be passed in (`declare -f`).
 - Name tests in plain English describing the expected behaviour, e.g. `"omits a chunk that would exceed the budget"`.
 
 When adding a new library function, add a corresponding test file `tests/<function_name>.bats`.

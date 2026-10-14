@@ -11,7 +11,7 @@ still the head the batch planned from (`Item.remote_sha`):
 | refs not comparable | refuse: `not_comparable` |
 | local == origin, or only behind | nothing to push |
 | local is a fast-forward of origin | `pr push --expect <remote_sha>` |
-| diverged, from a batch rebase that started without `remote_sha` | refuse: `not_incorporated` |
+| diverged, from a batch rebase whose start holds neither `remote_sha` nor a patch-equivalent of each of its commits | refuse: `not_incorporated` |
 | diverged, a remote commit has no patch-equivalent locally | refuse: `not_incorporated_remote` |
 | diverged | `pr rebase --push-only --expect <remote_sha>` |
 
@@ -59,10 +59,13 @@ class TreeState:
     """The local branch against origin's, read after a fetch of that branch.
 
     ``incorporated`` is False only when a batch rebase started from a tip that
-    does not contain the planned remote head, so force-pushing its result would
-    drop remote commits the replay never saw. ``unincorporated`` names the
-    remote commits (``"<sha> <subject>"``) with no patch-equivalent in the local
-    branch — what a force-push of a diverged branch would throw away.
+    holds neither the planned remote head nor a patch-equivalent of each remote
+    commit, so force-pushing its result would drop remote commits the replay
+    never saw. A start tip an earlier, unpushed rebase rewrote holds the remote's
+    commits as equivalents rather than ancestors, and counts as incorporated.
+    ``unincorporated`` names the remote commits (``"<sha> <subject>"``) with no
+    patch-equivalent in the local branch — what a force-push of a diverged
+    branch would throw away.
     """
 
     local: str
@@ -87,15 +90,26 @@ class PublishPlan:
         return self.refusal is None
 
 
-def _unincorporated(item: Item, cwd: str) -> tuple[str, ...] | None:
-    """Remote commits since the base with no patch-equivalent locally; None when unreadable."""
+def _unincorporated(item: Item, cwd: str, upstream: str = "") -> tuple[str, ...] | None:
+    """Remote commits since the base with no patch-equivalent in *upstream*; None when unreadable.
+
+    *upstream* defaults to the local branch.
+    """
     limit = git.client.out("merge-base", f"refs/remotes/origin/{item.base_ref}",
                            item.remote_sha, cwd=cwd) if item.base_ref else ""
-    r = git.client.run("cherry", "-v", f"refs/heads/{item.branch}", item.remote_sha,
+    r = git.client.run("cherry", "-v", upstream or f"refs/heads/{item.branch}", item.remote_sha,
                        *([limit] if limit else []), cwd=cwd)
     if not r.ok:
         return None
     return tuple(line[2:] for line in r.stdout.splitlines() if line.startswith("+ "))
+
+
+def _start_incorporated(item: Item, cwd: str) -> bool:
+    """Whether the batch rebase's start tip held every commit of the planned remote head."""
+    if git.client.ok("merge-base", "--is-ancestor", item.remote_sha, item.pre_rebase_head, cwd=cwd):
+        return True
+    # An unreadable comparison yields None, which is not (), so it fails closed.
+    return _unincorporated(item, cwd, item.pre_rebase_head) == ()
 
 
 def read_tree(item: Item) -> TreeState:
@@ -111,8 +125,7 @@ def read_tree(item: Item) -> TreeState:
     divergence = rebase.target.local_vs_remote(wt, branch)
     incorporated = True
     if item.pre_rebase_head and item.remote_sha:
-        incorporated = git.client.ok("merge-base", "--is-ancestor", item.remote_sha,
-                                     item.pre_rebase_head, cwd=wt)
+        incorporated = _start_incorporated(item, wt)
     unincorporated: tuple[str, ...] = ()
     if divergence.diverged and item.remote_sha:
         found = _unincorporated(item, wt)
@@ -167,7 +180,7 @@ def plan(item: Item, pr_bin: str, tree: TreeState, *,
         if not tree.incorporated:
             return _refuse(Refusal.NOT_INCORPORATED,
                            f"the rebase started from {git.client.abbrev(item.pre_rebase_head)}, "
-                           f"which does not contain {git.client.abbrev(item.remote_sha)}")
+                           f"which lacks {git.client.abbrev(item.remote_sha)}")
         if set(tree.unincorporated) - set(confirmed):
             return _refuse(Refusal.NOT_INCORPORATED_REMOTE,
                            f"{len(tree.unincorporated)} remote commit(s) have no equivalent "

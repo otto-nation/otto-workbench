@@ -11,7 +11,7 @@
 | `rebase_refused` | `drop-pr` / `force` | item → `dropped` / forced draft rebase: rebase `done` and drafted (needs payload `override`) |
 | `open_findings` | `accept` | from runs saved before `step_review`; review step `done` |
 | `dirty_worktree` | `retry` / `drop-pr` | re-checked when the item is next admitted (the payload names a stash command) / item → `dropped` |
-| `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped`; item → `dropped` |
+| `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped`; item → `dropped`. A `retry` on step `publish` first re-reads the branch: a remote the operator moved to exactly the local branch becomes the lease |
 | `failed` | `force-publish` | only `reason: not_incorporated_remote`; same as `publish` past exactly the commits listed in the refusal (a newly appeared remote commit refuses again) |
 | `publish` | `publish` | see `batch.publish`; success → item `done`, or reopened once for `--watch-ci`; a refusal or failed command → `failed` on step `publish`, `reason` set; every command's output goes to `logs/<slug>-<pr>-publish-<n>.log`, which a failure names |
 | | `discard` | item → `done`; local commits stay and nothing is pushed |
@@ -364,16 +364,19 @@ def _publish(run: Run, item: Item, pr_bin: str, run_cmd: Callable[..., int],
     return []
 
 
-def _adopt_own_push(item: Item, after: batch.publish.TreeState) -> bool:
-    """Lease on the head `--finish` pushed; leave a head somebody else pushed alone.
+def _moved_to_local(item: Item, after: batch.publish.TreeState) -> bool:
+    """Whether the remote left the lease for exactly what the local branch holds.
 
-    Ours is a remote that moved to exactly what the local branch holds. Any
-    other move keeps the old lease, so the next publish refuses `remote_moved`
-    instead of force-pushing over a colleague's commit.
+    Any other move is somebody else's, so the lease stays and the next publish
+    refuses `remote_moved` instead of force-pushing over a colleague's commit.
     """
-    if not after.fetched or not after.remote or after.remote == item.remote_sha:
-        return False
-    if after.remote != after.local:
+    return (after.fetched and bool(after.remote) and after.remote != item.remote_sha
+            and after.remote == after.local)
+
+
+def _adopt_own_push(item: Item, after: batch.publish.TreeState) -> bool:
+    """Lease on the head `--finish` pushed; leave a head somebody else pushed alone."""
+    if not _moved_to_local(item, after):
         return False
     item.remote_sha = item.published_sha = after.remote
     item.ci_rechecked = False
@@ -388,6 +391,14 @@ def apply(run: Run, request: Request, *, pr_bin: str,
     decision = run.decision(request.decision)
     item = run.item(decision.item)
     _validate(decision, request, item)
+    if request.action == "retry" and decision.step == "publish":
+        # A publish refusal has no step to re-run, so a retry re-plans against
+        # the same lease. Re-read the branch first: once the operator has pushed
+        # the local branch by hand, that head is the lease, not a remote_moved
+        # refusal on every retry. It is not published_sha: the batch pushed nothing.
+        after = (tree or batch.publish.read_tree)(item)
+        if _moved_to_local(item, after):
+            item.remote_sha = after.remote
     run_cmd = command_runner(item, runner, env_for)
     if request.action in ("publish", "force-publish"):
         created = _publish(run, item, pr_bin, run_cmd, tree or batch.publish.read_tree,

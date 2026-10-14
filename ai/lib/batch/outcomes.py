@@ -105,7 +105,7 @@ FAILURE_WHY: dict[str, str] = {
     batch.publish.Refusal.REMOTE_MOVED.value: "someone pushed to the PR branch since the batch planned it",
     batch.publish.Refusal.NOT_COMPARABLE.value: "the local and remote branches could not be compared",
     batch.publish.Refusal.NOT_INCORPORATED.value:
-        "the rebase started from a tip that does not contain the PR's remote head",
+        "the rebase started from a tip missing commits of the PR's remote head",
     batch.publish.Refusal.NOT_INCORPORATED_REMOTE.value:
         "the remote has commits a push of the local branch would drop",
     batch.publish.Refusal.FETCH_FAILED.value: "the PR branch could not be fetched",

@@ -141,6 +141,35 @@ def test_a_rebase_that_did_not_start_from_the_remote_is_not_incorporated(tmp_pat
     assert batch.publish.read_tree(item).incorporated is False
 
 
+def test_a_rebase_from_a_tip_an_earlier_rebase_rewrote_is_incorporated(tmp_path):
+    # An earlier run rebased the branch without pushing: its tip holds the remote's
+    # commits as patch-equivalents, not ancestors, and this run's rebase starts there.
+    pair = remote_and_clone(tmp_path)
+    planned = remote_tip(pair.origin, "feat")
+    advance(pair.seed, "main", "upstream")
+    git_in(pair.work, "fetch", "-q", "origin")
+    git_in(pair.work, "rebase", "-q", "origin/main")
+    start = git_out(pair.work, "rev-parse", "HEAD").strip()
+    (pair.work / "fix.txt").write_text("fix\n")
+    commit_all(pair.work, "fix: x")
+    item = _item(worktree=str(pair.work), remote=planned, base_ref="main", pre_rebase_head=start)
+    tree = batch.publish.read_tree(item)
+    assert tree.incorporated is True
+    assert batch.publish.plan(item, "pr", tree).commands == [
+        ["pr", "rebase", "--push-only", "--expect", planned, "--repo-dir", str(pair.work)]]
+
+
+def test_a_rewritten_start_tip_missing_a_remote_commit_is_not_incorporated(tmp_path):
+    pair = remote_and_clone(tmp_path)
+    advance(pair.seed, "main", "upstream")
+    git_in(pair.work, "fetch", "-q", "origin")
+    git_in(pair.work, "rebase", "-q", "origin/main")
+    start = git_out(pair.work, "rev-parse", "HEAD").strip()
+    planned = advance(pair.seed, "feat", "elsewhere")
+    item = _item(worktree=str(pair.work), remote=planned, base_ref="main", pre_rebase_head=start)
+    assert batch.publish.read_tree(item).incorporated is False
+
+
 def _publish_run(pair):
     run = batch.model.Run(id="r1", started_at="t", steps=list(batch.model.STEP_ORDER), pool=1,
                           auto_publish=[], items=[_item(worktree=str(pair.work),
@@ -149,6 +178,43 @@ def _publish_run(pair):
     run.decisions.append(batch.model.Decision(id="d1", item="o/r#1", step="publish",
                                               kind=batch.model.DecisionKind.PUBLISH))
     return run
+
+
+def _remote_moved_run(pair):
+    run = _publish_run(pair)
+    run.decisions = [batch.model.Decision(
+        id="d1", item="o/r#1", step="publish", kind=batch.model.DecisionKind.FAILED,
+        payload={"reason": Refusal.REMOTE_MOVED.value})]
+    run.items[0].status = batch.model.ItemStatus.AWAITING_DECISION
+    return run
+
+
+def test_a_publish_retry_leases_on_the_branch_the_operator_pushed(tmp_path):
+    # Regression: the retry re-planned against the old lease, so every publish
+    # after a hand push refused remote_moved and the item could only be dropped.
+    pair = remote_and_clone(tmp_path)
+    run = _remote_moved_run(pair)
+    (pair.work / "fix.txt").write_text("fix\n")
+    commit_all(pair.work, "fix: x")
+    git_in(pair.work, "push", "-q", "origin", "feat")
+    item = run.items[0]
+    batch.resolve.apply(run, batch.resolve.Request("d1", "retry"), pr_bin="pr")
+    assert item.remote_sha == remote_tip(pair.origin, "feat")
+    assert item.published_sha == ""
+    assert item.status is batch.model.ItemStatus.QUEUED
+    assert batch.publish.plan(item, "pr", batch.publish.read_tree(item)).ok
+
+
+def test_a_publish_retry_keeps_the_lease_when_somebody_else_pushed(tmp_path):
+    pair = remote_and_clone(tmp_path)
+    run = _remote_moved_run(pair)
+    item = run.items[0]
+    planned = item.remote_sha
+    advance(pair.seed, "feat", "colleague")
+    batch.resolve.apply(run, batch.resolve.Request("d1", "retry"), pr_bin="pr")
+    assert item.remote_sha == planned
+    assert batch.publish.plan(item, "pr", batch.publish.read_tree(item)).refusal is \
+        Refusal.REMOTE_MOVED
 
 
 def test_publishing_a_fast_forward_moves_the_remote_and_the_lease(tmp_path):

@@ -241,7 +241,7 @@ def test_a_landed_push_moves_the_lease_even_when_the_replies_fail():
     assert failed.payload["reason"] == "error"
     # A retry re-queues the item; the scheduler then asks for the publish again.
     batch.resolve.apply(run, batch.resolve.Request(failed.id, "retry"), pr_bin="pr",
-                        runner=Recorder())
+                        runner=Recorder(), tree=tree)
     run.decisions.append(_d(batch.model.DecisionKind.PUBLISH, "publish", id="d2"))
     rec = Recorder()
     batch.resolve.apply(run, batch.resolve.Request("d2", "publish"), pr_bin="pr",

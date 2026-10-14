@@ -3537,7 +3537,7 @@ still the head the batch planned from (`Item.remote_sha`):
 | refs not comparable | refuse: `not_comparable` |
 | local == origin, or only behind | nothing to push |
 | local is a fast-forward of origin | `pr push --expect <remote_sha>` |
-| diverged, from a batch rebase that started without `remote_sha` | refuse: `not_incorporated` |
+| diverged, from a batch rebase whose start holds neither `remote_sha` nor a patch-equivalent of each of its commits | refuse: `not_incorporated` |
 | diverged, a remote commit has no patch-equivalent locally | refuse: `not_incorporated_remote` |
 | diverged | `pr rebase --push-only --expect <remote_sha>` |
 
@@ -3599,7 +3599,7 @@ Apply an operator's answer to one decision, then move the item on.
 | `rebase_refused` | `drop-pr` / `force` | item → `dropped` / forced draft rebase: rebase `done` and drafted (needs payload `override`) |
 | `open_findings` | `accept` | from runs saved before `step_review`; review step `done` |
 | `dirty_worktree` | `retry` / `drop-pr` | re-checked when the item is next admitted (the payload names a stash command) / item → `dropped` |
-| `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped`; item → `dropped` |
+| `failed` / `interrupted` | `retry` / `skip-step` / `drop-pr` | step → `pending` / `skipped`; item → `dropped`. A `retry` on step `publish` first re-reads the branch: a remote the operator moved to exactly the local branch becomes the lease |
 | `failed` | `force-publish` | only `reason: not_incorporated_remote`; same as `publish` past exactly the commits listed in the refusal (a newly appeared remote commit refuses again) |
 | `publish` | `publish` | see `batch.publish`; success → item `done`, or reopened once for `--watch-ci`; a refusal or failed command → `failed` on step `publish`, `reason` set; every command's output goes to `logs/<slug>-<pr>-publish-<n>.log`, which a failure names |
 | | `discard` | item → `done`; local commits stay and nothing is pushed |

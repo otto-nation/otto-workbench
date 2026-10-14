@@ -23,9 +23,13 @@ from review_threads_support import _no_published_summary  # noqa: E402
 from conftest import make_ctx
 import core.log
 import core.publishing
+import cli.review_threads
+import core.run_lock
 import pr.comments
+import pr.context
 import pr.state
 import review.review_body_reply
+from pr.fix import ItemOutcome
 from gh.pr_data import PRData
 from git.land import CommitStatus
 
@@ -81,6 +85,33 @@ class TestRouting:
         assert (route.thread, route.source) == (False, "")
         assert route.review_body_ids == ("88",)
 
+    def test_a_mistyped_review_id_is_refused_and_nothing_is_stored(
+        self, ctx, tmp_path, capsys,
+    ):
+        """A stored reply publishes permanently, and nothing retracts one."""
+        (tmp_path / "f").write_text("Done.")
+        with patch.object(pr.context, "resolve", return_value=ctx), \
+                patch.object(review.review_body_reply, "fetch_pr_data",
+                             return_value=_pr_data()), \
+                patch.object(core.run_lock, "claim_for_process"), \
+                patch.object(pr.comments, "post_issue_comment", return_value="u") as post:
+            code = cli.review_threads.main(
+                ["--reply", "rb-404", "--body-file", str(tmp_path / "f"), "--post"])
+        assert code == 1
+        post.assert_not_called()
+        assert pr.state.load_state(ctx.target_dir) is None
+        assert "review bodies on PR #1: rb-88" in capsys.readouterr().err
+
+    def test_a_triaged_review_outside_the_fetch_window_is_accepted(self, ctx):
+        """The snapshot holds an item cut from it, so the review is real."""
+        state = pr.state.load_or_init(
+            target_dir=ctx.target_dir, repo=ctx.repo, branch=ctx.branch,
+            pr_number=ctx.pr_number, head_sha=ctx.head_sha,
+            worktree_root=str(ctx.require_worktree()))
+        state.fix.fix.items.append(ItemOutcome(id="rb-404-1", summary="Old point"))
+        pr.state.save_state(ctx.target_dir, state)
+        assert self._route(ctx, "rb-404").source == "rb-404"
+
 
 def _run(ctx, reply_body, *, post_url="https://github.com/owner/repo/pull/1#issuecomment-5"):
     route = review.review_body_reply.ReplyRoute(pr_data=_pr_data(), source="rb-88")
@@ -116,6 +147,16 @@ class TestPublishing:
         assert state.fix.source_replies["rb-88"].startswith("Tightened")
         assert state.fix.summary_deferred is False
         assert state.fix.summary_url.endswith("#issuecomment-5")
+
+    def test_a_reply_citing_no_line_of_code_is_warned_about(self, ctx):
+        with core.publishing.run(post=True), patch.object(core.log, "warn") as warn:
+            _run(ctx, "Tightened it.")
+        assert any("cites no permalink" in c[0][0] for c in warn.call_args_list)
+
+    def test_a_cited_reply_draws_no_warning(self, ctx, reply_body):
+        with core.publishing.run(post=True), patch.object(core.log, "warn") as warn:
+            _run(ctx, reply_body)
+        assert not any("cites no permalink" in c[0][0] for c in warn.call_args_list)
 
     def test_a_post_that_fails_leaves_the_reply_owed(self, ctx, reply_body):
         """`--finish --post` then publishes it — the scope still finds it unpublished."""

@@ -295,9 +295,17 @@ class TestReplySource:
         """A bare comment id from a thread on another page must not be taken for one."""
         assert pr.thread_replies.reply_source("404", ["88"]) is None
 
-    def test_an_explicit_review_id_is_taken_at_its_word(self):
+    def test_a_review_the_snapshot_triaged_counts_outside_the_fetch(self):
         """A review outside the fetched window still has an `rb-` id an operator can paste."""
-        assert pr.thread_replies.reply_source("rb-404-1", ["88"]) == "rb-404"
+        assert pr.thread_replies.reply_source("rb-404-1", ["88"], ["rb-404-2"]) == "rb-404"
+
+    @pytest.mark.parametrize("target", ["rb-404", "rb-404-1"])
+    def test_an_rb_id_for_a_review_the_pr_does_not_have_is_refused(self, target):
+        """A typo would store a reply nothing can retract."""
+        assert pr.thread_replies.reply_source(target, ["88"], ["rb-90-1", "PRRT_x"]) is None
+
+    def test_a_bare_number_does_not_count_on_the_snapshot_alone(self):
+        assert pr.thread_replies.reply_source("404", ["88"], ["rb-404-1"]) is None
 
     @pytest.mark.parametrize("target", ["ic-88-0", "rb-", "rb-x", "PRRT_abc", ""])
     def test_anything_else_is_not_a_review_body(self, target):

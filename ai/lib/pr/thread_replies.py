@@ -665,20 +665,29 @@ _REVIEW_SOURCE_RE = re.compile(
     re.escape(CommentSourceKind.REVIEW_BODY.id_prefix) + r"-(\d+)(?:-\d+)?")
 
 
-def reply_source(target: str, review_body_ids: Iterable[str]) -> str | None:
+def reply_source(
+    target: str, review_body_ids: Iterable[str], triaged_item_ids: Iterable[str] = (),
+) -> str | None:
     """The review body a `--reply` target names, as its source key, or None.
 
     `<reviewId>`, `rb-<reviewId>` and `rb-<reviewId>-<n>` all name the same
-    review's one reply. The `rb-` forms are taken at their word: they say they
-    are a review, and a review outside the fetched window still has one. A bare
-    number is only a review when ``review_body_ids`` lists it, because a comment
-    id from a thread on a page the fetch could not read is a bare number too.
+    review's one reply, but only a review the PR is known to have: one
+    ``review_body_ids`` lists (the fetched review bodies), or, for an `rb-`
+    form, one an item in ``triaged_item_ids`` (the fix snapshot's item ids)
+    was cut from — a review outside the fetched window that triage reached.
+    A reply once stored is published and nothing retracts it, so a mistyped
+    id is refused rather than taken at its word. A bare number counts only
+    against ``review_body_ids``, because a comment id from a thread on a page
+    the fetch could not read is a bare number too.
     """
     wanted = target.strip()
+    fetched = {str(i) for i in review_body_ids}
     match = _REVIEW_SOURCE_RE.fullmatch(wanted)
     if match:
-        return pr.permalinks.review_source_key(match.group(1))
-    if wanted.isdigit() and wanted in {str(i) for i in review_body_ids}:
+        triaged = {m.group(1) for m in map(_REVIEW_SOURCE_RE.fullmatch, triaged_item_ids) if m}
+        known = match.group(1) in fetched | triaged
+        return pr.permalinks.review_source_key(match.group(1)) if known else None
+    if wanted.isdigit() and wanted in fetched:
         return pr.permalinks.review_source_key(wanted)
     return None
 

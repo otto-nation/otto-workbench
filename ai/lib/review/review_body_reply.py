@@ -53,7 +53,11 @@ class ReplyRoute:
 
 
 def route_reply(ctx: pr.context.ResolvedContext, target: str) -> ReplyRoute:
-    """Read the PR once and say whether `target` is a thread or a review body."""
+    """Read the PR once and say whether `target` is a thread or a review body.
+
+    A review body is one the PR lists, or one the fix snapshot holds an item
+    from — see `pr.thread_replies.reply_source`.
+    """
     owner, repo_name = ctx.repo.split("/", 1)
     pr_data = fetch_pr_data(ctx.repo, str(ctx.pr_number))
     fetched = pr.comments.fetch_threads(owner, repo_name, ctx.pr_number, pr_data)
@@ -63,7 +67,9 @@ def route_reply(ctx: pr.context.ResolvedContext, target: str) -> ReplyRoute:
         str(c["id"]) for c in pr_data.review_body_comments(pr_data.viewer_login)
         if c.get("id") is not None
     )
-    source = pr.thread_replies.reply_source(target, ids) or ""
+    state = pr.state.load_state(ctx.target_dir)
+    triaged = [item.id for item in state.fix.fix.items] if state else []
+    source = pr.thread_replies.reply_source(target, ids, triaged) or ""
     return ReplyRoute(pr_data, source=source, review_body_ids=ids)
 
 

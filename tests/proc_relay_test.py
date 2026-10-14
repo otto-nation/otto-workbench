@@ -107,6 +107,12 @@ class TestRunRelay:
         assert "boom" in dest.text
 
 
+# A background grandchild that keeps the child's stdin open without reading it.
+# POSIX gives an async list /dev/null as stdin before its own redirections run,
+# so `cmd <&0 &` reads /dev/null; the pipe has to be saved on fd 3 first.
+_HOLD_STDIN = "exec 3<&0; sleep {seconds} <&3 >/dev/null 2>&1 3<&- &"
+
+
 class TestRelayTeardown:
     """What happens after the child is gone, while something it started is not."""
 
@@ -121,7 +127,7 @@ class TestRelayTeardown:
         monkeypatch.setattr(core.timeouts, "QUICK", 0.5)
         start = time.monotonic()
         result = core.proc.run(
-            ["sh", "-c", "sleep 8 <&0 & sleep 8"],
+            ["sh", "-c", _HOLD_STDIN.format(seconds=8) + " sleep 8"],
             timeout=0.3, relay=_ListDest(), input_text="x" * 1_000_000,
         )
         assert result.returncode == core.proc.TIMEOUT_RETURNCODE
@@ -156,6 +162,21 @@ class TestRelayTeardown:
         )
         assert result.ok
         assert "still arriving" in result.stderr
+
+    def test_a_held_stdin_feeder_is_not_late_output(self, monkeypatch):
+        """Only the output pumps decide the note; a feeder stuck on stdin loses no output.
+
+        The grandchild holds stdin without reading it, so the feeder is still
+        blocked at the deadline, but stdout and stderr were complete.
+        """
+        monkeypatch.setattr(core.timeouts, "QUICK", 0.5)
+        result = core.proc.run(
+            ["sh", "-c", _HOLD_STDIN.format(seconds=3) + " echo done"],
+            timeout=10, relay=_ListDest(), input_text="x" * 1_000_000,
+        )
+        assert result.ok
+        assert result.stdout == "done\n"
+        assert "still arriving" not in result.stderr
 
     def test_a_complete_result_carries_no_late_note(self):
         result = core.proc.run(["echo", "done"], timeout=core.timeouts.QUICK,

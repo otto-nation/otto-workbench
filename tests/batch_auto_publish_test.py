@@ -20,11 +20,12 @@ import batch.admission  # noqa: E402
 import batch.outcomes  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
-from batch.requests import Decide  # noqa: E402
-from batch_scheduler_support import _close_open_sessions, attach_scheduler  # noqa: F401
 from batch.model import DecisionKind, ItemStatus, RunStatus, Step  # noqa: E402
 from batch.plan import PlanRow, StepNeed  # noqa: E402
+from batch.requests import Decide  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
+# `_close_open_sessions` is an autouse fixture; imported only so pytest registers it here.
+from batch_scheduler_support import _close_open_sessions, attach_scheduler  # noqa: E402,F401
 from config.workbench_config import BatchConfig  # noqa: E402
 
 

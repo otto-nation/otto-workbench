@@ -42,8 +42,8 @@ import batch.resolve
 import review.paths
 from batch.model import (FINISHED_RUN, Decision, DecisionKind, DirtyReason, EvidenceKind, Item,
                          ItemStatus, Run, RunStatus, Step, stacked_on_items)
-from pr.comments_fix import CloseoutDebt
 from batch.store import FailedRequest
+from pr.comments_fix import CloseoutDebt
 from review.types import SEVERITY_MUST, SEVERITY_NIT, SEVERITY_SHOULD, severity_by_key
 
 SCHEMA_VERSION = 1

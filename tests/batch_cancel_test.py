@@ -236,6 +236,6 @@ def test_a_resolve_that_cannot_reach_the_run_says_where_the_request_is(monkeypat
     assert code == 1
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert (f"the request is in run {run.id}'s inbox and will be applied by the next "
+    assert (f"the request is in its inbox and will be applied by the next "
             f"session to open it") in captured.err
     assert batch.store.pending_requests(run.id) == 1

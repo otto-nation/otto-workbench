@@ -774,4 +774,3 @@ def _tombstone_has_requests(tombstone: Path) -> bool:
     """
     reqs = tombstone / REQUESTS_DIR
     return reqs.is_dir() and any(reqs.glob("*.json"))
-

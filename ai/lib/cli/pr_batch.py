@@ -430,7 +430,7 @@ def _cmd_resume(args, bin_dir: Path) -> int:
 
 
 def _unreachable(run_id: str) -> str:
-    return (f"run {run_id} is unreachable; the request is in run {run_id}'s inbox and "
+    return (f"run {run_id} is unreachable; the request is in its inbox and "
             f"will be applied by the next session to open it")
 
 
@@ -569,4 +569,3 @@ def cmd_batch(argv: list[str], ctx, *, bin_dir: Path, schema_version: str | None
         return _cmd_status(args)
     except batch.plan.PlanError as exc:
         return _err(str(exc))
-

@@ -97,7 +97,7 @@ def test_outcome_ok_is_the_absence_of_error():
 def test_cancel_state_round_trips_through_the_state_file():
     run = _run()
     run.cancel = batch.model.CancelState(kill=True, requested_at="t0")
-    # Written directly: store.save is deleted in Task 8 and sessions arrive in Task 5.
+    # Written directly: no session is needed to exercise load.
     core.serde.write_json(batch.store.run_dir(RID) / batch.store.STATE_FILE,
                           core.serde.to_dict(run))
     back = batch.store.load(RID)
@@ -107,11 +107,9 @@ def test_cancel_state_round_trips_through_the_state_file():
 
 def test_state_file_saved_before_cancel_existed_still_loads():
     run = _run()
-    # Written directly: store.save is deleted in Task 8 and sessions arrive in Task 5.
-    core.serde.write_json(batch.store.run_dir(RID) / batch.store.STATE_FILE,
-                          core.serde.to_dict(run))
+    # Written directly: no session is needed to exercise load.
     path = batch.store.run_dir(RID) / batch.store.STATE_FILE
-    data = json.loads(path.read_text())
+    data = core.serde.to_dict(run)
     data.pop("cancel", None)
-    path.write_text(json.dumps(data))
+    core.serde.write_json(path, data)
     assert batch.store.load(RID).cancel is None

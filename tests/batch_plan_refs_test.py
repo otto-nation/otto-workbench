@@ -20,6 +20,7 @@ import core.proc  # noqa: E402
 import git.client  # noqa: E402
 from batch.model import STEP_ORDER, RunStatus, Step  # noqa: E402
 from batch.plan import PlanRow, StepNeed  # noqa: E402
+# `_close_open_sessions` is an autouse fixture; imported only so pytest registers it.
 from batch_scheduler_support import _close_open_sessions, attach_scheduler  # noqa: F401,E402
 from config.workbench_config import BatchConfig  # noqa: E402
 

@@ -126,7 +126,7 @@ def test_the_scheduler_never_calls_store_save(monkeypatch):
     def boom(run):
         raise AssertionError("scheduler called batch.store.save")
 
-    # raising=False: Task 8 deletes store.save, and a reintroduced call must
+    # raising=False: store.save may no longer exist, and a reintroduced call must
     # still land here rather than be an AttributeError somewhere else.
     monkeypatch.setattr(batch.store, "save", boom, raising=False)
     assert h.sched.run_until_blocked() is RunStatus.DONE

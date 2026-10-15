@@ -1,6 +1,5 @@
 """Typed request union, parser, drain order, and Run.cancel serde."""
 
-import json
 import sys
 from pathlib import Path
 

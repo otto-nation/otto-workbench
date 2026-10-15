@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import queue
+import shutil
 import signal
 import subprocess
 import threading
@@ -18,9 +19,12 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import core.log
+import core.proc
 import core.timeouts
 import core.trail
 import git.client
+import git.regenerate
 import git.topology
 import rebase.conflicts
 from batch.model import Step
@@ -101,11 +105,42 @@ def restore_generated_dirt(cwd: str) -> list[str] | None:
     return paths
 
 
+def trust_mise_config(worktree: str) -> None:
+    """Trust mise config files in *worktree* so a child hook can run tasks.
+
+    Safe because the batch only selects the calling user's own PRs
+    (``author:@me`` in ``batch.plan``): the file is theirs, not a stranger's.
+    A failed trust must not fail the item — the step still starts, and an
+    untrusted config surfaces as the hook's own error.
+    """
+    if not shutil.which("mise"):
+        return
+    root = Path(worktree)
+    for name in git.regenerate.MISE_CONFIG_NAMES:
+        if not name.endswith(".toml"):
+            continue
+        cfg = root / name
+        if not cfg.is_file():
+            continue
+        result = _mise_trust(cfg)
+        if not result.ok:
+            core.log.warn(core.proc.failure_message(
+                f"mise trust of {cfg} failed — continuing", result,
+            ))
+
+
+def _mise_trust(cfg: Path) -> core.proc.CmdResult:
+    return core.proc.run(
+        ["mise", "trust", "--quiet", str(cfg)], timeout=core.timeouts.QUICK,
+    )
+
+
 def ensure_worktree(repo_dir: str, branch: str) -> WorktreeResult:
     found = git.topology.find_worktree_for_branch(branch, cwd=repo_dir)
     path = str(found) if found else git.topology.wt_switch(branch, cwd=repo_dir)
     if not path:
         return WorktreeResult("", False, f"could not create a worktree for {branch}")
+    trust_mise_config(path)
     return WorktreeResult(path, git.client.is_dirty(cwd=path), "")
 
 

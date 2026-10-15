@@ -13,6 +13,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.steps  # noqa: E402
+import core.proc  # noqa: E402
 from batch.model import Step  # noqa: E402
 from conftest import commit_all, git_in, init_repo, seed_repo  # noqa: E402
 
@@ -225,6 +226,55 @@ def test_ensure_worktree_finds_the_checkout_and_reports_dirt(tmp_path):
     res = batch.steps.ensure_worktree(str(repo), branch)
     assert res.ok and res.dirty
     assert Path(res.path).resolve() == repo.resolve()
+
+
+def _branch(repo):
+    return subprocess.run(["git", "-C", str(repo), "branch", "--show-current"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+
+
+def test_ensure_worktree_trusts_mise_toml_files(tmp_path, monkeypatch):
+    repo = seed_repo(tmp_path / "r")
+    (repo / ".mise.toml").write_text("[tools]\n")
+    (repo / "mise.toml").write_text("[tools]\n")
+    (repo / ".mise.local.toml").write_text("[tools]\n")
+    seen = []
+    monkeypatch.setattr(batch.steps.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
+    monkeypatch.setattr(batch.steps, "_mise_trust",
+                        lambda cfg: seen.append(str(cfg)) or core.proc.CmdResult(0, "", ""))
+    res = batch.steps.ensure_worktree(str(repo), _branch(repo))
+    assert res.ok
+    assert set(seen) == {str(repo / n) for n in (".mise.toml", "mise.toml", ".mise.local.toml")}
+
+
+def test_ensure_worktree_skips_mise_trust_when_mise_is_absent(tmp_path, monkeypatch):
+    repo = seed_repo(tmp_path / "r")
+    (repo / ".mise.toml").write_text("[tools]\n")
+    seen = []
+    monkeypatch.setattr(batch.steps.shutil, "which", lambda n: None)
+    monkeypatch.setattr(batch.steps, "_mise_trust", lambda cfg: seen.append(str(cfg)))
+    batch.steps.ensure_worktree(str(repo), _branch(repo))
+    assert seen == []
+
+
+def test_mise_trust_invokes_quiet_trust(tmp_path, monkeypatch):
+    cfg = tmp_path / ".mise.toml"
+    cfg.write_text("[tools]\n")
+    seen = []
+    monkeypatch.setattr(batch.steps.core.proc, "run",
+                        lambda cmd, **kw: seen.append(cmd) or core.proc.CmdResult(0, "", ""))
+    batch.steps._mise_trust(cfg)
+    assert seen == [["mise", "trust", "--quiet", str(cfg)]]
+
+
+def test_a_failed_mise_trust_does_not_fail_the_worktree(tmp_path, monkeypatch):
+    repo = seed_repo(tmp_path / "r")
+    (repo / ".mise.toml").write_text("[tools]\n")
+    monkeypatch.setattr(batch.steps.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
+    monkeypatch.setattr(batch.steps, "_mise_trust",
+                        lambda cfg: core.proc.CmdResult(1, "", "not trusted"))
+    res = batch.steps.ensure_worktree(str(repo), _branch(repo))
+    assert res.ok and Path(res.path).resolve() == repo.resolve()
 
 
 def test_a_watch_run_reads_ci_for_the_pushed_head_without_fixing():

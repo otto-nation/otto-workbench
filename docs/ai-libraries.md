@@ -3476,6 +3476,7 @@ NDJSON progress events for live consumers of `pr batch run`.
 
 The state file is authoritative; events only save a consumer from polling it.
 `step_log` is emitted only under `--verbose`; `run_summary` is the last line of every `run`/`resume` that settles.
+`generated_dirt_restored` names tracked generated files the batch restored rather than raising `dirty_worktree`.
 
 ### batch/gc.py
 

@@ -22,6 +22,7 @@ import core.timeouts
 import core.trail
 import git.client
 import git.topology
+import rebase.conflicts
 from batch.model import Step
 
 
@@ -65,6 +66,39 @@ class WorktreeResult:
     @property
     def ok(self) -> bool:
         return not self.error
+
+
+def restore_generated_dirt(cwd: str) -> list[str] | None:
+    """Restore generated-only unstaged modifications in *cwd*.
+
+    Returns the restored paths (empty if the tree was already clean), or None
+    when the tree is dirty in any other way — untracked files, staged changes,
+    a non-generated path, a mix — including a ``status`` git could not read,
+    which is treated as dirty for the same reason as ``git.client.is_dirty``.
+    Only unstaged modifications of tracked generated files (porcelain `` M``)
+    are restored, via ``git restore``.
+    """
+    try:
+        status = git.client.run("status", "--porcelain", cwd=cwd)
+    except FileNotFoundError:
+        return None
+    if not status.ok:
+        return None
+    lines = [line for line in status.stdout.splitlines() if line.strip()]
+    if not lines:
+        return []
+    paths = []
+    for line in lines:
+        if not line.startswith(" M "):
+            return None
+        path = line[3:]
+        if rebase.conflicts.is_generated_file(path, Path(cwd) / path, cwd) is None:
+            return None
+        paths.append(path)
+    restored = git.client.run("restore", "--", *paths, cwd=cwd)
+    if not restored.ok:
+        return None
+    return paths
 
 
 def ensure_worktree(repo_dir: str, branch: str) -> WorktreeResult:

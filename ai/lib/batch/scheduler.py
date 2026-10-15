@@ -28,7 +28,7 @@ from batch.model import (STEP_ORDER, Decision, DecisionKind, DirtyReason, Eviden
                          ItemStatus, Run, RunStatus, Step, StepRecord, StepStatus,
                          stacked_on_items)
 from batch.plan import PlanRow
-from batch.steps import StepProcess, WorktreeResult, ensure_worktree, step_argv
+from batch.steps import StepProcess, WorktreeResult, ensure_worktree, restore_generated_dirt, step_argv
 from config.workbench_config import BatchConfig
 from pr.comments_fix import CloseoutDebt
 
@@ -272,6 +272,21 @@ class Scheduler:
     def _ready(self, item: Item) -> bool:
         return not (item.terminal or item.key in self._live or self.run.open_decisions(item.key))
 
+    def _discard_generated_dirt(self, path: str, item: Item) -> bool:
+        """Whether *path* is clean enough to proceed, restoring generated-only dirt.
+
+        True when the tree was already clean or only unstaged generated files
+        were dirty and ``git restore`` put them back. False leaves the caller
+        to raise ``dirty_worktree`` as before.
+        """
+        restored = restore_generated_dirt(path)
+        if restored is None:
+            return False
+        if restored:
+            self._emit("generated_dirt_restored", run=self.run.id, item=item.key,
+                       worktree=path, paths=restored)
+        return True
+
     def _ensure_worktree(self, item: Item) -> bool:
         if item.worktree:
             return True
@@ -281,7 +296,7 @@ class Scheduler:
                     {"reason": batch.outcomes.FailureReason.ERROR.value, "detail": res.error},
                     emit=self._emit)
             return False
-        if res.dirty:
+        if res.dirty and not self._discard_generated_dirt(res.path, item):
             _decide(self.run, item, "worktree", DecisionKind.DIRTY_WORKTREE, {"path": res.path},
                     emit=self._emit)
             return False
@@ -392,6 +407,8 @@ class Scheduler:
                 return False
             reason = DirtyReason.REBASE_IN_PROGRESS
         elif self._dirty(item.worktree):
+            if self._discard_generated_dirt(item.worktree, item):
+                return False
             reason = DirtyReason.DIRTY
         else:
             return False

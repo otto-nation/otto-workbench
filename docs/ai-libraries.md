@@ -7057,7 +7057,7 @@ Usage:
   review-threads --triage
   review-threads --fix
   review-threads --settle THREAD_ID [--as fixed|dismissed|already_addressed]
-  review-threads --finish
+  review-threads --finish [--no-push-verify]
   review-threads --reply THREAD_COMMENT_OR_REVIEW_ID --body-file PATH [--post]
 
 ### cli/rules_canary.py

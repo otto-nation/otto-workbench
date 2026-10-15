@@ -321,7 +321,9 @@ def run_threads(trail, args, ctx) -> int:
 
     if args.finish:
         track = TRACK_ALL if args.track_all else frozenset(args.track)
-        if not review.closeout.finish_deferred_work(ctx, report, trail=trail, track=track):
+        if not review.closeout.finish_deferred_work(
+                ctx, report, trail=trail, track=track,
+                no_push_verify=args.no_push_verify):
             return 1
 
     json.dump(output, sys.stdout, indent=2)

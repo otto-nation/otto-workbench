@@ -66,6 +66,11 @@ class TestFinishFlag:
     def test_it_is_off_by_default(self):
         assert not cli.review_threads.build_parser().parse_args([]).finish
 
+    def test_no_push_verify_is_off_by_default_and_parses(self):
+        parser = cli.review_threads.build_parser()
+        assert parser.parse_args([]).no_push_verify is False
+        assert parser.parse_args(["--finish", "--no-push-verify"]).no_push_verify is True
+
     @pytest.mark.parametrize("alias", ["--resolve", "--resolve-verified"])
     def test_the_old_aliases_are_rejected(self, alias):
         # Exit 2 specifically: argparse's unknown-flag code, not any SystemExit

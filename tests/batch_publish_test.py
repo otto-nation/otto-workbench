@@ -79,7 +79,17 @@ def test_no_verify_appends_to_push_commands_not_comments():
     item.step(batch.model.Step.COMMENTS).drafted = True
     got = batch.publish.plan(item, "pr", _tree(1, 0), no_verify=True)
     assert got.commands == [["pr", "push", "--expect", "r0", "--no-verify", *WT],
+                            ["pr", "comments", "--finish", "--post", "--track", "T1",
+                             "--no-push-verify", *WT]]
+
+
+def test_no_verify_is_not_passed_to_comments_when_unset():
+    item = _item(track=["T1"])
+    item.step(batch.model.Step.COMMENTS).drafted = True
+    got = batch.publish.plan(item, "pr", _tree(1, 0), no_verify=False)
+    assert got.commands == [["pr", "push", "--expect", "r0", *WT],
                             ["pr", "comments", "--finish", "--post", "--track", "T1", *WT]]
+    assert "--no-push-verify" not in got.commands[1]
 
 
 def test_no_verify_appends_to_a_diverged_rebase_push():

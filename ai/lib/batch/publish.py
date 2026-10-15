@@ -142,16 +142,21 @@ def _refuse(refusal: Refusal, detail: str, commits: list[str] | None = None) -> 
     return PublishPlan(refusal=refusal, detail=detail, commits=list(commits or []))
 
 
-def _comments_command(item: Item, pr_bin: str, closeout: CloseoutDebt) -> list[str]:
+def _comments_command(item: Item, pr_bin: str, closeout: CloseoutDebt,
+                      *, no_verify: bool = False) -> list[str]:
     """`pr comments --finish --post` as `pr` itself spells the closeout, plus the tracked ids.
 
     `CloseoutDebt.command` is the one statement of the flags; it adds
     `--track-all` when a tracking issue is owed, and that overrides any
     `--track` ids, so they are left off rather than passed and ignored.
+    `--no-push-verify` is the git-hook skip, not `--no-verify` (the fix
+    pass's verify gate).
     """
     _, *flags = shlex.split(closeout.command)
     if "--track-all" not in flags:
         flags += [arg for t in item.track for arg in ("--track", t)]
+    if no_verify:
+        flags.append("--no-push-verify")
     return [pr_bin, *flags]
 
 
@@ -194,5 +199,5 @@ def plan(item: Item, pr_bin: str, tree: TreeState, *,
     pushes = bool(commands)
     drafted = item.has(Step.COMMENTS) and item.step(Step.COMMENTS).drafted
     if drafted or item.track or closeout.owed:
-        commands.append(_comments_command(item, pr_bin, closeout) + wt)
+        commands.append(_comments_command(item, pr_bin, closeout, no_verify=no_verify) + wt)
     return PublishPlan(commands=commands, pushes=pushes)

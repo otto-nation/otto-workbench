@@ -94,7 +94,8 @@ def _porcelain_z_entries(stdout: str) -> list[tuple[str, str]] | None:
         has_second_path = "R" in xy or "C" in xy
         if has_second_path and i >= len(parts):
             return None
-        i += has_second_path
+        if has_second_path:
+            i += 1
         entries.append((xy, path))
     return entries
 

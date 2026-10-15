@@ -402,5 +402,7 @@ def test_restore_generated_dirt_treats_a_missing_tree_as_dirty(tmp_path):
 def test_porcelain_z_entries_rename_and_truncation():
     f = batch.steps._porcelain_z_entries
     assert f("R  new\0old\0 M a\0") == [("R ", "new"), (" M", "a")]
+    assert f("C  new\0old\0 M a\0") == [("C ", "new"), (" M", "a")]
+    assert f("C  new") is None
     assert f("R  new") is None
     assert f("bad") is None

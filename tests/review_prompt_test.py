@@ -89,7 +89,7 @@ class TestBuildPromptRefusesAnOversizedPrompt:
     # asserted against the refusal ceiling rather than the ladder's target:
     # those differ by the render-markup reserve, and a prompt between them is
     # over the ladder's plan but not over the line `build_prompt` refuses at.
-    CEILING = prompt_budget_bytes(TEST_MODEL)
+    CEILING = prompt_budget_bytes(TEST_MODEL, cwd=".")
     UNBUDGETABLE = "x" * (CEILING + 1000)
 
     @pytest.fixture(autouse=True)

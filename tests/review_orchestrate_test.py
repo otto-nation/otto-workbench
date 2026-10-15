@@ -54,7 +54,7 @@ class TestPromptBudgetsArePreflighted:
 
         trail = MagicMock()
         with contextlib.redirect_stderr(io.StringIO()) as err:
-            ok = ro._budgets_are_derivable({"sonnet": [ro.Phase.SCOUT]}, trail)
+            ok = ro._budgets_are_derivable({"sonnet": [ro.Phase.SCOUT]}, trail, ".")
         assert ok
         assert "tier alias" in err.getvalue()
         assert ModelAlias.SONNET.env_key in err.getvalue()
@@ -70,31 +70,31 @@ class TestPromptBudgetsArePreflighted:
         from agent.phases import ModelAlias
 
         with contextlib.redirect_stderr(io.StringIO()) as err:
-            ro._budgets_are_derivable({"haiku": [ro.Phase.SCOUT]}, MagicMock())
+            ro._budgets_are_derivable({"haiku": [ro.Phase.SCOUT]}, MagicMock(), ".")
         assert ModelAlias.HAIKU.env_key in err.getvalue()
 
     def test_a_resolved_model_warns_about_nothing(self, ro):
         trail = MagicMock()
         with contextlib.redirect_stderr(io.StringIO()) as err:
-            ro._budgets_are_derivable({"claude-sonnet-5": [ro.Phase.SCOUT]}, trail)
+            ro._budgets_are_derivable({"claude-sonnet-5": [ro.Phase.SCOUT]}, trail, ".")
         assert err.getvalue() == ""
         assert not trail.decision.called
 
     def test_an_unknown_concrete_model_still_aborts(self, ro):
         """A model nobody has measured is not a model to guess a window for."""
         with contextlib.redirect_stderr(io.StringIO()):
-            ok = ro._budgets_are_derivable({"gpt-5": [ro.Phase.SCOUT]}, MagicMock())
+            ok = ro._budgets_are_derivable({"gpt-5": [ro.Phase.SCOUT]}, MagicMock(), ".")
         assert not ok
 
     def test_a_known_model_passes(self, ro):
         assert ro._budgets_are_derivable(
-            {"claude-sonnet-5": [ro.Phase.SCOUT]}, MagicMock(),
+            {"claude-sonnet-5": [ro.Phase.SCOUT]}, MagicMock(), ".",
         )
 
     def test_the_failure_names_the_phases_it_blocks(self, ro):
         trail = MagicMock()
         with contextlib.redirect_stderr(io.StringIO()) as err:
-            ro._budgets_are_derivable({"gpt-5": [ro.Phase.SCOUT, ro.Phase.GROUP]}, trail)
+            ro._budgets_are_derivable({"gpt-5": [ro.Phase.SCOUT, ro.Phase.GROUP]}, trail, ".")
         assert "scout" in err.getvalue() and "group" in err.getvalue()
         assert trail.decision.called
 

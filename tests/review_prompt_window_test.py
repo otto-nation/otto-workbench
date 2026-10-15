@@ -11,10 +11,12 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import agent.pi_binary
+import agent.pi_models
 from review.budget import prompt_budget_bytes
 from core.phases import Phase
 
-from conftest import TEST_MODEL, _REAL_RUN_PI_LIST_MODELS
+from conftest import TEST_MODEL, _REAL_CATALOGUE_FOR, _REAL_CATALOGUE_TEXT
 
 from review_prompt_support import _make_preflight, _make_job
 
@@ -38,8 +40,8 @@ class TestTheBudgetComesFromTheModel:
         property of the design — a 200k model has to budget below it, and a
         single constant cannot say both.
         """
-        wide = prompt_budget_bytes("claude-sonnet-5")
-        narrow = prompt_budget_bytes("claude-sonnet-4-6")
+        wide = prompt_budget_bytes("claude-sonnet-5", cwd=".")
+        narrow = prompt_budget_bytes("claude-sonnet-4-6", cwd=".")
         assert narrow < wide
 
     def test_a_wide_window_is_capped_by_what_a_review_will_spend(self):
@@ -51,7 +53,7 @@ class TestTheBudgetComesFromTheModel:
         """
         from review.budget import MAX_SPEND_BYTES
 
-        assert prompt_budget_bytes("claude-sonnet-5") <= MAX_SPEND_BYTES
+        assert prompt_budget_bytes("claude-sonnet-5", cwd=".") <= MAX_SPEND_BYTES
 
     def test_the_budget_leaves_room_for_the_reply_and_the_unseen_overhead(self):
         """The window is not all the prompt's to spend.
@@ -66,7 +68,7 @@ class TestTheBudgetComesFromTheModel:
 
         model = "claude-sonnet-4-6"
         reserved = COMPLETION_RESERVE_TOKENS + OVERHEAD_RESERVE_TOKENS
-        assert prompt_budget_tokens(model) == MODEL_CONTEXT_TOKENS[model] - reserved
+        assert prompt_budget_tokens(model, cwd=".") == MODEL_CONTEXT_TOKENS[model] - reserved
 
     def test_pi_reserves_less_overhead_than_claude(self, monkeypatch):
         from core.phases import Backend
@@ -80,8 +82,8 @@ class TestTheBudgetComesFromTheModel:
         monkeypatch.setattr("agent.backend.selected_backend", lambda: None)
         assert overhead_reserve_tokens() == OVERHEAD_RESERVE_TOKENS
         model = "claude-sonnet-4-6"
-        assert prompt_budget_tokens(model, Backend.PI) > prompt_budget_tokens(
-            model, Backend.CLAUDE,
+        assert prompt_budget_tokens(model, Backend.PI, cwd=".") > prompt_budget_tokens(
+            model, Backend.CLAUDE, cwd=".",
         )
 
     def test_an_unresolved_alias_takes_its_tier_floor(self):
@@ -96,8 +98,8 @@ class TestTheBudgetComesFromTheModel:
         """
         from review.budget import ALIAS_FLOOR_TOKENS, model_window_tokens
 
-        assert model_window_tokens("sonnet") == ALIAS_FLOOR_TOKENS
-        assert prompt_budget_bytes("sonnet") == prompt_budget_bytes("claude-sonnet-4-6")
+        assert model_window_tokens("sonnet", cwd=".") == ALIAS_FLOOR_TOKENS
+        assert prompt_budget_bytes("sonnet", cwd=".") == prompt_budget_bytes("claude-sonnet-4-6", cwd=".")
 
     def test_the_ladder_plans_below_the_ceiling_it_is_refused_at(self):
         """The reserve only holds bytes back if the ladder never sees them.
@@ -111,7 +113,7 @@ class TestTheBudgetComesFromTheModel:
         from review.budget import RENDER_MARKUP_RESERVE_BYTES, ladder_target_bytes
 
         for model in ("claude-sonnet-5", "sonnet"):
-            gap = prompt_budget_bytes(model) - ladder_target_bytes(model)
+            gap = prompt_budget_bytes(model, cwd=".") - ladder_target_bytes(model, cwd=".")
             assert gap == RENDER_MARKUP_RESERVE_BYTES, model
 
     def test_a_window_its_reserves_exhaust_is_refused(self, monkeypatch):
@@ -127,7 +129,7 @@ class TestTheBudgetComesFromTheModel:
 
         monkeypatch.setitem(review.budget.MODEL_CONTEXT_TOKENS, "tiny", 50_000)
         with pytest.raises(UnknownModelWindow, match="exhaust"):
-            prompt_budget_bytes("tiny")
+            prompt_budget_bytes("tiny", cwd=".")
 
     def test_the_alias_floor_is_never_more_generous_than_a_real_window(self):
         """Guessing wide is the expensive direction.
@@ -143,7 +145,7 @@ class TestTheBudgetComesFromTheModel:
         from review.budget import UnknownModelWindow
 
         with pytest.raises(UnknownModelWindow, match="claude-sonnet-5") as caught:
-            prompt_budget_bytes("gpt-5")
+            prompt_budget_bytes("gpt-5", cwd=".")
         assert "catalogue" in str(caught.value)
 
     def test_the_record_says_which_model_the_budget_came_from(
@@ -169,7 +171,7 @@ class TestTheBudgetComesFromTheModel:
         record = json.loads((tmp_path / "prompt-stats.json").read_text())[-1]
         assert record["budget_model"] == TEST_MODEL
         assert record["budget_window_tokens"] == 1_000_000
-        assert record["budget_bytes"] == prompt_budget_bytes(TEST_MODEL)
+        assert record["budget_bytes"] == prompt_budget_bytes(TEST_MODEL, cwd=".")
 
     def test_an_alias_records_the_window_it_actually_budgeted_against(
         self, tmp_path, monkeypatch,
@@ -191,7 +193,7 @@ class TestTheBudgetComesFromTheModel:
         record = json.loads((tmp_path / "prompt-stats.json").read_text())[-1]
         assert record["budget_model"] == "sonnet"
         assert record["budget_window_tokens"] == ALIAS_FLOOR_TOKENS
-        assert record["budget_bytes"] == prompt_budget_bytes("sonnet")
+        assert record["budget_bytes"] == prompt_budget_bytes("sonnet", cwd=".")
 
     def test_the_refusal_names_the_budget_it_was_measured_against(self):
         """An over-budget phase is skipped, so its message is the whole report.
@@ -219,14 +221,6 @@ class TestTheWindowPrefersPisCatalogue:
     here before a review can budget against it.
     """
 
-    @pytest.fixture(autouse=True)
-    def _clear_catalogue_cache(self):
-        from review.budget import _pi_catalogue_windows
-
-        _pi_catalogue_windows.cache_clear()
-        yield
-        _pi_catalogue_windows.cache_clear()
-
     def test_the_parser_reads_k_and_m_and_rounds_down(self):
         """Overestimating a window is the expensive direction, so floor."""
         from review.budget import _parse_context_tokens
@@ -244,21 +238,21 @@ class TestTheWindowPrefersPisCatalogue:
         from review.budget import MODEL_CONTEXT_TOKENS, model_window_tokens
 
         assert MODEL_CONTEXT_TOKENS["claude-sonnet-5"] == 1_000_000
-        monkeypatch.setattr(review.budget, "_run_pi_list_models", lambda: (
+        monkeypatch.setattr(agent.pi_models, "catalogue_for", lambda _cwd: (
             "provider model context max-out thinking images\n"
             "google-vertex-claude claude-sonnet-5 500K 128K yes yes\n"
         ))
-        assert model_window_tokens("claude-sonnet-5") == 500_000
+        assert model_window_tokens("claude-sonnet-5", cwd=".") == 500_000
 
     def test_a_catalogue_miss_falls_back_to_the_table(self, monkeypatch):
         import review.budget
         from review.budget import MODEL_CONTEXT_TOKENS, model_window_tokens
 
-        monkeypatch.setattr(review.budget, "_run_pi_list_models", lambda: (
+        monkeypatch.setattr(agent.pi_models, "catalogue_for", lambda _cwd: (
             "provider model context max-out thinking images\n"
             "google-vertex gemini-2.5-flash 1.0M 65.5K yes yes\n"
         ))
-        assert model_window_tokens("claude-sonnet-4-6") == MODEL_CONTEXT_TOKENS[
+        assert model_window_tokens("claude-sonnet-4-6", cwd=".") == MODEL_CONTEXT_TOKENS[
             "claude-sonnet-4-6"
         ]
 
@@ -269,15 +263,13 @@ class TestTheWindowPrefersPisCatalogue:
         cannot be read; raising would make an optional lookup a hard dependency.
         """
         import core.proc
-        import review.budget
         from core.proc import CmdResult
         from review.budget import MODEL_CONTEXT_TOKENS, model_window_tokens
 
         model = "claude-sonnet-4-6"
         expected = MODEL_CONTEXT_TOKENS[model]
-        monkeypatch.setattr(
-            review.budget, "_run_pi_list_models", _REAL_RUN_PI_LIST_MODELS,
-        )
+        monkeypatch.setattr(agent.pi_models, "catalogue_for", _REAL_CATALOGUE_FOR)
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", _REAL_CATALOGUE_TEXT)
 
         def missing(*_a, **_k):
             raise FileNotFoundError("pi")
@@ -293,8 +285,47 @@ class TestTheWindowPrefersPisCatalogue:
             lambda *_a, **_k: CmdResult(returncode=0, stdout=""),
         ):
             monkeypatch.setattr(core.proc, "run", run)
-            review.budget._pi_catalogue_windows.cache_clear()
-            assert model_window_tokens(model) == expected
+            _REAL_CATALOGUE_TEXT.cache_clear()
+            assert model_window_tokens(model, cwd=".") == expected
+        _REAL_CATALOGUE_TEXT.cache_clear()
+
+    def test_no_choosable_pi_falls_back_to_the_table(self, monkeypatch):
+        """A pi that cannot be chosen is the spawn's error to report, not the budget's."""
+        from review.budget import MODEL_CONTEXT_TOKENS, model_window_tokens
+
+        def unresolvable(_cwd):
+            raise agent.pi_binary.PiUnresolvable("no pi")
+
+        monkeypatch.setattr(agent.pi_models, "catalogue_for", _REAL_CATALOGUE_FOR)
+        monkeypatch.setattr(agent.pi_binary, "resolve", unresolvable)
+        model = "claude-sonnet-4-6"
+        assert model_window_tokens(model, cwd=".") == MODEL_CONTEXT_TOKENS[model]
+
+    def test_the_window_comes_from_the_pi_chosen_for_the_reviewed_directory(
+        self, monkeypatch,
+    ):
+        """The budget lists models with the same binary the spawn will run.
+
+        Two pi versions serve different models: budgeting against whichever
+        `pi` is first on PATH is how a model the chosen binary serves was
+        refused as having no window.
+        """
+        from review.budget import model_window_tokens
+
+        binaries = {"/old": "/bin/pi-old", "/new": "/bin/pi-new"}
+        listings = {
+            "/bin/pi-old": "",
+            "/bin/pi-new": (
+                "provider model context max-out thinking images\n"
+                "google-vertex-claude claude-sonnet-5-5 700K 128K yes yes\n"
+            ),
+        }
+        monkeypatch.setattr(agent.pi_models, "catalogue_for", _REAL_CATALOGUE_FOR)
+        monkeypatch.setattr(agent.pi_binary, "resolve", lambda cwd: agent.pi_binary.PiBinary(
+            binaries[cwd], "1.0.0", agent.pi_binary.Source.MANAGED, "test",
+        ))
+        monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda pi: listings[pi])
+        assert model_window_tokens("claude-sonnet-5-5", cwd="/new") == 700_000
 
     def test_an_unknown_model_names_catalogue_models_too(self, monkeypatch):
         """A typo'd model's error should not undersell what's actually known.
@@ -305,12 +336,12 @@ class TestTheWindowPrefersPisCatalogue:
         import review.budget
         from review.budget import UnknownModelWindow, prompt_budget_bytes
 
-        monkeypatch.setattr(review.budget, "_run_pi_list_models", lambda: (
+        monkeypatch.setattr(agent.pi_models, "catalogue_for", lambda _cwd: (
             "provider model context max-out thinking images\n"
             "xai grok-4.6 120K 32K yes no\n"
         ))
         with pytest.raises(UnknownModelWindow) as caught:
-            prompt_budget_bytes("gpt-5")
+            prompt_budget_bytes("gpt-5", cwd=".")
         assert "grok-4.6" in str(caught.value)
 
     def test_an_unreadable_catalogue_is_not_blamed_on_the_model(self):
@@ -318,7 +349,7 @@ class TestTheWindowPrefersPisCatalogue:
         from review.budget import UnknownModelWindow, prompt_budget_bytes
 
         with pytest.raises(UnknownModelWindow) as caught:
-            prompt_budget_bytes("gpt-5")
+            prompt_budget_bytes("gpt-5", cwd=".")
         message = str(caught.value)
         assert "could not be read" in message
         assert "not in pi's provider catalogue" not in message
@@ -328,12 +359,12 @@ class TestTheWindowPrefersPisCatalogue:
         import review.budget
         from review.budget import model_window_tokens
 
-        monkeypatch.setattr(review.budget, "_run_pi_list_models", lambda: (
+        monkeypatch.setattr(agent.pi_models, "catalogue_for", lambda _cwd: (
             "provider model context max-out thinking images\n"
             "google-vertex-grok grok-4.6 120K 32K yes no\n"
             "xai grok-4.6 500K 500K yes yes\n"
         ))
-        assert model_window_tokens("grok-4.6") == 120_000
+        assert model_window_tokens("grok-4.6", cwd=".") == 120_000
 
 
 class TestCollectionBudgetsForEveryPhase:
@@ -356,8 +387,8 @@ class TestCollectionBudgetsForEveryPhase:
         )
         # The ladder's target, since collection is sizing what the ladder will
         # later be handed rather than the ceiling it is refused at.
-        assert review.budget.collection_budget_bytes() == (
-            review.budget.ladder_target_bytes("claude-sonnet-4-6")
+        assert review.budget.collection_budget_bytes(project_root=".") == (
+            review.budget.ladder_target_bytes("claude-sonnet-4-6", cwd=".")
         )
 
     def test_it_resolves_against_the_worktree_it_is_given(self, monkeypatch):
@@ -376,5 +407,5 @@ class TestCollectionBudgetsForEveryPhase:
             return {"claude-sonnet-5": []}
 
         monkeypatch.setattr(review.budget, "collect_phase_models", _record)
-        review.budget.collection_budget_bytes("m", "/wt")
+        review.budget.collection_budget_bytes("m", project_root="/wt")
         assert seen == {"explicit": "m", "root": "/wt"}

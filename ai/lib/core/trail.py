@@ -247,6 +247,14 @@ def oldest_kept_month(now: datetime, keep_months: int) -> str:
     return f"{months // 12:04d}-{months % 12 + 1:02d}"
 
 
+def script_name() -> str:
+    """The running script's file name, or "unknown" when argv carries none.
+
+    What a record written on this process's behalf names as its ``script``.
+    """
+    return Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "unknown"
+
+
 def inherited_root() -> str | None:
     """The invocation this process descends from, or None when it is the root.
 

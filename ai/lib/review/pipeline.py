@@ -253,7 +253,7 @@ def _group_merge_cap(job: ReviewJob) -> int:
             pf.instructions_md, pf.architecture_md, pf.review_checklists,
             pf.review_profiles,
         )
-    return max(MIN_DIFF_BYTES, ladder_target_bytes(model, selected_backend()) - fixed)
+    return max(MIN_DIFF_BYTES, ladder_target_bytes(model, selected_backend(), cwd=job.wt_path) - fixed)
 
 
 def run_multi_phase(

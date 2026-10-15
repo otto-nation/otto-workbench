@@ -31,12 +31,10 @@ budgets retries, not bytes.
 
 from __future__ import annotations
 
-import functools
 from dataclasses import dataclass
 from pathlib import Path
 
-import core.proc
-import core.timeouts
+import agent.pi_models
 from agent.phases import ModelAlias, collect_phase_models
 from agent.pi_models import listing_rows
 from core.phases import Backend
@@ -245,33 +243,16 @@ def _parse_pi_list_models(text: str) -> dict[str, int]:
     return windows
 
 
-def _run_pi_list_models() -> str:
-    """Stdout of ``pi --list-models``, or empty when the catalogue cannot be read.
+def _pi_catalogue_windows(cwd: Path | str) -> dict[str, int]:
+    """Context windows from the catalogue of the pi that would run in *cwd*.
 
-    The empty string is a silent fallback, not an error: a review must still
-    budget against the recorded table when pi is absent, hung, or speaking a
-    format we do not parse. Raising would turn an optional live lookup into a
-    hard dependency on a binary the table exists to replace.
+    Read through `agent.pi_models.catalogue_for`, the one place the workbench
+    lists models, so the budget and the spawn's model check consult the same
+    binary — two pi versions serve different models. An empty result is a
+    silent fallback, not an error: a review must still budget against the
+    recorded table when no pi can be chosen or its listing is unreadable.
     """
-    try:
-        result = core.proc.run(
-            ["pi", "--list-models"], timeout=core.timeouts.LOCAL,
-        )
-    except OSError:
-        # Not just FileNotFoundError: a `pi` present on disk but not
-        # executable raises PermissionError, another OSError subclass, and
-        # that must fall back the same way — the stated goal is that pi
-        # absent, hung, or unreadable is never a hard dependency.
-        return ""
-    if not result.ok:
-        return ""
-    return result.stdout
-
-
-@functools.cache
-def _pi_catalogue_windows() -> dict[str, int]:
-    """Parsed provider catalogue, populated at most once per process."""
-    return _parse_pi_list_models(_run_pi_list_models())
+    return _parse_pi_list_models(agent.pi_models.catalogue_for(cwd))
 
 
 class UnknownModelWindow(RuntimeError):
@@ -283,14 +264,16 @@ class UnknownModelWindow(RuntimeError):
     `ALIAS_FLOOR_TOKENS`.
     """
 
-    def __init__(self, model: str, detail: str = ""):
+    def __init__(
+        self, model: str, detail: str = "", *, catalogue: dict[str, int] | None = None,
+    ):
         self.model = model
         if not detail:
             # Both sources, not just the fallback table: when the catalogue is
             # readable it usually knows more models than MODEL_CONTEXT_TOKENS
             # ever will, and a reader chasing a typo'd model name wants the
             # full list this process could actually have resolved against.
-            catalogue = _pi_catalogue_windows()
+            catalogue = catalogue or {}
             known = ", ".join(sorted(set(MODEL_CONTEXT_TOKENS) | set(catalogue)))
             # An empty catalogue means pi was absent, failed, or unparsed — not
             # that it lacks the model — so the message must not claim it does.
@@ -328,13 +311,15 @@ class UnknownModelWindow(RuntimeError):
         ))
 
 
-def model_window_tokens(model: str) -> int:
-    """The context window ``model`` is budgeted against.
+def model_window_tokens(model: str, *, cwd: Path | str) -> int:
+    """The context window ``model`` is budgeted against, reviewing in *cwd*.
 
-    Order: pi's provider catalogue, then `MODEL_CONTEXT_TOKENS`, then the
-    unresolved-alias floor. Anything else raises `UnknownModelWindow`.
+    Order: the provider catalogue of the pi that would run in *cwd*, then
+    `MODEL_CONTEXT_TOKENS`, then the unresolved-alias floor. Anything else
+    raises `UnknownModelWindow`.
     """
-    window = _pi_catalogue_windows().get(model)
+    catalogue = _pi_catalogue_windows(cwd)
+    window = catalogue.get(model)
     if window is not None:
         return window
     window = MODEL_CONTEXT_TOKENS.get(model)
@@ -342,7 +327,7 @@ def model_window_tokens(model: str) -> int:
         return window
     if ModelAlias.parse(model) is not None:
         return ALIAS_FLOOR_TOKENS
-    raise UnknownModelWindow(model)
+    raise UnknownModelWindow(model, catalogue=catalogue)
 
 
 def overhead_reserve_tokens(backend: Backend | None = None) -> int:
@@ -361,14 +346,14 @@ def overhead_reserve_tokens(backend: Backend | None = None) -> int:
 
 
 def prompt_budget_tokens(
-    model: str, backend: Backend | None = None,
+    model: str, backend: Backend | None = None, *, cwd: Path | str,
 ) -> int:
     """What one prompt to ``model`` may cost, in tokens.
 
     The window less what the reply needs and less the system prompt and tool
     schemas the CLI adds out of sight, priced for ``backend``.
     """
-    window = model_window_tokens(model)
+    window = model_window_tokens(model, cwd=cwd)
     budget = window - COMPLETION_RESERVE_TOKENS - overhead_reserve_tokens(backend)
     if budget <= 0:
         raise UnknownModelWindow.too_narrow(model, window, backend)
@@ -376,7 +361,7 @@ def prompt_budget_tokens(
 
 
 def prompt_budget_bytes(
-    model: str, backend: Backend | None = None,
+    model: str, backend: Backend | None = None, *, cwd: Path | str,
 ) -> int:
     """What one prompt to ``model`` may cost, in bytes of rendered prompt.
 
@@ -391,13 +376,13 @@ def prompt_budget_bytes(
     `UnknownModelWindow` for a model with no recorded window.
     """
     capability = int(
-        prompt_budget_tokens(model, backend) * BYTES_PER_TOKEN_FLOOR
+        prompt_budget_tokens(model, backend, cwd=cwd) * BYTES_PER_TOKEN_FLOOR
     )
     return min(capability, MAX_SPEND_BYTES)
 
 
 def ladder_target_bytes(
-    model: str, backend: Backend | None = None,
+    model: str, backend: Backend | None = None, *, cwd: Path | str,
 ) -> int:
     """What the budget ladder may plan to spend, below the refusal ceiling.
 
@@ -409,12 +394,13 @@ def ladder_target_bytes(
     exactly the bytes the reserve exists to cover. Later renders ratchet from
     the measured overshoot rather than subtracting this prior again.
     """
-    return prompt_budget_bytes(model, backend) - RENDER_MARKUP_RESERVE_BYTES
+    return prompt_budget_bytes(model, backend, cwd=cwd) - RENDER_MARKUP_RESERVE_BYTES
 
 
 def collection_budget_bytes(
     explicit_model: str | None = None,
-    project_root: Path | str | None = None,
+    *,
+    project_root: Path | str,
     backend: Backend | None = None,
 ) -> int:
     """The ceiling collection may gather against, across every review phase.
@@ -428,10 +414,11 @@ def collection_budget_bytes(
     ``project_root`` is the worktree being reviewed, so a per-phase model set
     in its `.workbench.yml` is one of the models this minimum is taken over.
     Without it the phases resolve against the global scope alone and collection
-    can be sized against a ceiling no phase actually budgets to.
+    can be sized against a ceiling no phase actually budgets to. It is also
+    the directory whose pi supplies the context windows.
     """
     return min(
-        ladder_target_bytes(model, backend)
+        ladder_target_bytes(model, backend, cwd=project_root)
         for model in collect_phase_models(explicit_model, project_root)
     )
 

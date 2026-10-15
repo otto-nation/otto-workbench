@@ -54,6 +54,7 @@ def verify_prompt(
     phase: Phase | None,
     backend: Backend | None,
     budget_bytes: int,
+    cwd: str,
 ) -> PromptVerification:
     """Bytes always; tokens when countable; missing count is unverified."""
     prompt_bytes = len(prompt.encode())
@@ -74,7 +75,7 @@ def verify_prompt(
         )
     overhead = overhead_reserve_tokens(backend)
     charged = counted + overhead
-    limit = model_window_tokens(model) - COMPLETION_RESERVE_TOKENS
+    limit = model_window_tokens(model, cwd=cwd) - COMPLETION_RESERVE_TOKENS
     token_overshoot = max(0, charged - limit)
     return PromptVerification(
         prompt_bytes=prompt_bytes,
@@ -130,8 +131,8 @@ def fit_rendered_prompt(
     `prompt-stats.json` records, so a fit on the first try costs one round
     trip and a miss costs one per attempt.
     """
-    budget_bytes = prompt_budget_bytes(model, backend)
-    default_ladder = ladder_target_bytes(model, backend)
+    budget_bytes = prompt_budget_bytes(model, backend, cwd=job.wt_path)
+    default_ladder = ladder_target_bytes(model, backend, cwd=job.wt_path)
     target = default_ladder if ladder_bytes is None else min(ladder_bytes, default_ladder)
 
     last_verification: PromptVerification | None = None
@@ -144,7 +145,7 @@ def fit_rendered_prompt(
         prompt = prefix + rendered
         verification = verify_prompt(
             prompt, model=model, phase=phase, backend=backend,
-            budget_bytes=budget_bytes,
+            budget_bytes=budget_bytes, cwd=job.wt_path,
         )
         last_verification = verification
         log_prompt_size(

@@ -162,6 +162,17 @@ class TestBackendSelection:
         monkeypatch.delenv("AI_BACKEND", raising=False)
         assert agent.backend.is_available() is False
 
+    def test_pi_is_available_through_a_managed_install_off_path(self, monkeypatch, tmp_path):
+        """A background job has no ~/.pi/agent/bin on PATH, and pi still runs there."""
+        import agent.pi_binary
+        root = tmp_path / "install"
+        root.mkdir()
+        (root / "current-version").write_text("1.2.0\n")
+        monkeypatch.setenv(agent.pi_binary.MANAGED_ROOT_ENV, str(root))
+        monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+        monkeypatch.setenv("AI_BACKEND", "pi")
+        assert agent.backend.is_available() is True
+
     def test_or_claude_passes_through_a_real_selection(self, monkeypatch):
         """The fallback only applies when nothing is selected."""
         monkeypatch.setenv("AI_BACKEND", "pi")

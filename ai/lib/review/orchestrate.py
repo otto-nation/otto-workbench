@@ -98,7 +98,7 @@ def _log_ai_backend(trail) -> None:
     trail.info("ai_backend", "resolved AI backend configuration", data=data)
 
 
-def _budgets_are_derivable(phase_models, trail) -> bool:
+def _budgets_are_derivable(phase_models, trail, cwd: str) -> bool:
     """Whether every phase's model has a context window to budget against.
 
     Checked here, beside the backend preflight, because the alternative is
@@ -114,7 +114,7 @@ def _budgets_are_derivable(phase_models, trail) -> bool:
     for model, phases in sorted(phase_models.items()):
         named = ", ".join(str(p) for p in phases)
         try:
-            budget = prompt_budget_bytes(model)
+            budget = prompt_budget_bytes(model, cwd=cwd)
         except UnknownModelWindow as exc:
             core.log.error(f"Cannot budget prompts for {named}: {exc}")
             trail.decision(
@@ -421,7 +421,7 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
     phase_models = collect_phase_models(args.model, args.repo_dir)
     if not agent.backend.preflight(phase_models, trail):
         return 1
-    if not _budgets_are_derivable(phase_models, trail):
+    if not _budgets_are_derivable(phase_models, trail, args.repo_dir):
         return 1
     run_ctx = fetch_metadata(
         repo, args.pr, args.mode, args.repo_dir, args.recover_sha, base=args.base,

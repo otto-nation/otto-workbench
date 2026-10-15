@@ -173,7 +173,7 @@ EOF
 @test "pi _build_agent_cmd: uses --mode rpc" {
   result=$(_py '
 from agent import backend_pi as abp
-cmd = abp._build_agent_cmd(abp.AgentInvocation(prompt=""))
+cmd = abp._build_agent_cmd("pi", abp.AgentInvocation(prompt=""))
 print("--mode" in cmd, cmd[cmd.index("--mode") + 1] if "--mode" in cmd else "")
 ')
   [[ "$result" == *"True"* ]]
@@ -183,7 +183,7 @@ print("--mode" in cmd, cmd[cmd.index("--mode") + 1] if "--mode" in cmd else "")
 @test "pi _build_agent_cmd: includes --thinking when set" {
   result=$(_py '
 from agent import backend_pi as abp
-cmd = abp._build_agent_cmd(abp.AgentInvocation(prompt="", thinking="medium"))
+cmd = abp._build_agent_cmd("pi", abp.AgentInvocation(prompt="", thinking="medium"))
 print("--thinking" in cmd, cmd[cmd.index("--thinking") + 1] if "--thinking" in cmd else "")
 ')
   [[ "$result" == *"True"* ]]
@@ -193,7 +193,7 @@ print("--thinking" in cmd, cmd[cmd.index("--thinking") + 1] if "--thinking" in c
 @test "pi _build_agent_cmd: omits --thinking when None" {
   result=$(_py '
 from agent import backend_pi as abp
-cmd = abp._build_agent_cmd(abp.AgentInvocation(prompt=""))
+cmd = abp._build_agent_cmd("pi", abp.AgentInvocation(prompt=""))
 print("--thinking" not in cmd)
 ')
   [ "$result" = "True" ]
@@ -202,7 +202,7 @@ print("--thinking" not in cmd)
 @test "pi _build_fix_cmd: includes --thinking when set" {
   result=$(_py '
 from agent import backend_pi as abp
-cmd = abp._build_fix_cmd(abp.AgentInvocation(prompt="", thinking="low"))
+cmd = abp._build_fix_cmd("pi", abp.AgentInvocation(prompt="", thinking="low"))
 print("--thinking" in cmd, cmd[cmd.index("--thinking") + 1] if "--thinking" in cmd else "")
 ')
   [[ "$result" == *"True"* ]]

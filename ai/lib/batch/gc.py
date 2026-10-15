@@ -18,6 +18,7 @@ holds the flock on that directory's inode.
 
 from __future__ import annotations
 
+import functools
 import time
 
 import batch.store
@@ -90,7 +91,7 @@ def _reap(run: Run, now: float) -> bool:
     try:
         result = batch.store.reap(
             run.id,
-            expired=lambda fresh, t=now: _expired_run(fresh, t),
+            expired=functools.partial(_expired_run, now=now),
             command="gc",
         )
     except OSError as exc:

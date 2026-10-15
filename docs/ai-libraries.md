@@ -3674,7 +3674,7 @@ the order cannot deadlock. One exception: `pr gc`'s dispatcher takes its own
 TARGET before `reap` takes run resources.
 
 `reap` renames the run directory to the tombstone while still holding the
-flock. `os.replace` moves `run.lock` with the directory; the flock stays on
+flock. `os.rename` moves `run.lock` with the directory; the flock stays on
 the same inode, so the hold remains valid across the rename. `run_ids()`
 skips names ending in `.reaping` because a tombstone still contains
 `state.json`.

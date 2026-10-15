@@ -17,7 +17,7 @@ the order cannot deadlock. One exception: `pr gc`'s dispatcher takes its own
 TARGET before `reap` takes run resources.
 
 `reap` renames the run directory to the tombstone while still holding the
-flock. `os.replace` moves `run.lock` with the directory; the flock stays on
+flock. `os.rename` moves `run.lock` with the directory; the flock stays on
 the same inode, so the hold remains valid across the rename. `run_ids()`
 skips names ending in `.reaping` because a tombstone still contains
 `state.json`.
@@ -733,7 +733,7 @@ def reap(run_id: str, *, expired: Callable[[Run], bool], command: str) -> ReapRe
     ``LockBusy`` of any classification is ``BUSY`` — gc does not wait. Missing
     run dir or state is ``MISSING``. A request that lands in the tombstone
     window, or refs that would not delete, restore the original path and keep
-    the run. ``OSError`` from ``os.replace`` / ``shutil.rmtree`` (after the
+    the run. ``OSError`` from ``os.rename`` / ``shutil.rmtree`` (after the
     tombstone is moved back when it still exists) propagates for gc to log.
     A ``write_request`` racing the rename cannot recreate the run directory
     (it writes with ``create_parents=False``), so the tombstone check sees
@@ -764,18 +764,20 @@ def _reap_held(run_id: str, *, expired: Callable[[Run], bool]) -> ReapResult:
         return ReapResult.FRESH
     live = run_dir(run_id)
     tombstone = batch_root() / f"{run_id}.reaping"
-    os.replace(live, tombstone)
+    # os.rename, not os.replace: this moves a directory, and core.serde owns the
+    # only write-temp-then-replace for files.
+    os.rename(live, tombstone)
     if _tombstone_has_requests(tombstone):
-        os.replace(tombstone, live)
+        os.rename(tombstone, live)
         return ReapResult.PENDING
     if not batch.plan.drop_refs(run.ref_dirs, run.ref_namespace):
-        os.replace(tombstone, live)
+        os.rename(tombstone, live)
         return ReapResult.REFS_KEPT
     try:
         shutil.rmtree(tombstone)
     except OSError:
         if tombstone.exists():
-            os.replace(tombstone, live)
+            os.rename(tombstone, live)
         raise
     return ReapResult.REMOVED
 
@@ -784,7 +786,7 @@ def _tombstone_has_requests(tombstone: Path) -> bool:
     """Whether the renamed run dir still holds an inbox file.
 
     Must glob the tombstone path, not ``pending_requests(run_id)``: after
-    ``os.replace`` the original ``run_dir`` is gone, so a lookup there would
+    ``os.rename`` the original ``run_dir`` is gone, so a lookup there would
     miss every racing write.
     """
     reqs = tombstone / REQUESTS_DIR

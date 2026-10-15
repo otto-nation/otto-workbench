@@ -53,13 +53,13 @@ def test_pending_requests_keep_the_run(monkeypatch):
     _put("r1")
     batch.store.write_request("r1", Decide(decision="d1", action="retry"))
     moved = []
-    real = batch.store.os.replace
+    real = batch.store.os.rename
 
     def spy(src, dst):
         moved.append(dst)
         real(src, dst)
 
-    monkeypatch.setattr(batch.store.os, "replace", spy)
+    monkeypatch.setattr(batch.store.os, "rename", spy)
     assert batch.store.reap("r1", expired=_yes, command="gc") is batch.store.ReapResult.PENDING
     assert moved == []
     assert batch.store.run_dir("r1").is_dir()
@@ -85,12 +85,12 @@ def test_a_busy_lock_keeps_the_run():
 def test_a_request_written_during_the_tombstone_window_keeps_the_run(monkeypatch):
     """A write that lands after the pending check but before rmtree is seen.
 
-    `os.replace` is wrapped so the planted file appears in the tombstone
+    `os.rename` is wrapped so the planted file appears in the tombstone
     immediately after the rename — the same place a racing `write_request`
     that beat the rename would now live.
     """
     _put("r1")
-    real = os.replace
+    real = os.rename
 
     def plant(src, dst):
         real(src, dst)
@@ -101,7 +101,7 @@ def test_a_request_written_during_the_tombstone_window_keeps_the_run(monkeypatch
         reqs.mkdir(parents=True, exist_ok=True)
         (reqs / "late.json").write_text("{}")
 
-    monkeypatch.setattr(batch.store.os, "replace", plant)
+    monkeypatch.setattr(batch.store.os, "rename", plant)
     assert batch.store.reap("r1", expired=_yes, command="gc") is batch.store.ReapResult.PENDING
     assert batch.store.run_dir("r1").is_dir()
     assert (batch.store.run_dir("r1") / "requests" / "late.json").is_file()

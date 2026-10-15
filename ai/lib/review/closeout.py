@@ -76,6 +76,7 @@ def finish_deferred_work(
     trail: Trail | None = None,
     *,
     track=frozenset(),
+    no_push_verify: bool = False,
 ) -> bool:
     """Close out what the fix pass held back: replies, tracking issue, summary.
 
@@ -98,7 +99,7 @@ def finish_deferred_work(
         return True
     threads_by_id = {t.id: t for t in report.threads}
     pr.history_rewrite.follow_history_rewrite(state, wt_path)
-    push_held_commit(state, wt_path, trail)
+    push_held_commit(state, wt_path, trail, no_push_verify=no_push_verify)
     if state.fix.pr_body_pending:
         state.fix.pr_body_pending = pr.comments.deliver_pr_body(
             pr.comments.artifacts_dir(ctx.target_dir), ctx.repo, ctx.pr_number,
@@ -152,6 +153,8 @@ def _log_draft_snapshot_items(items: list[ItemOutcome]) -> None:
 
 def push_held_commit(
     state: pr.state.PRState, wt_path: Path, trail: Trail | None = None,
+    *,
+    no_push_verify: bool = False,
 ) -> None:
     """Send the commit the fix pass kept local, now that a run says publish.
 
@@ -174,7 +177,8 @@ def push_held_commit(
     # `ls-remote` answers in full SHAs, so comparing one against the abbreviation
     # this state file carries reports every push as lost. `report` names the
     # force-push remedy for a divergence, so nothing is added on top of it.
-    result = git.push.push(wt_path, gated=True, trail=trail)
+    nv = ("--no-verify",) if no_push_verify else ()
+    result = git.push.push(wt_path, gated=True, trail=trail, args=nv)
     git.push.report(result, wt_path)
     if result.status is git.push.PushStatus.HELD:
         return

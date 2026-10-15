@@ -689,8 +689,8 @@ namespace (GitHub merge state fallback; `UNKNOWN` and `DIRTY` count as needed).
 `pr ci`) when the rollup failed, with `--wait` if it was still running. Fork
 heads skip both. A stacked PR waits for its base's publish; `resume` retries
 `stacked_on` once that base is terminal. One fetching rebase or CI step per
-repo at a time (a waiting CI step excepted). No start in a dirty worktree
-(`dirty_worktree`), except a rebase resuming its own paused replay.
+repo at a time (a waiting CI step excepted). No start in a dirty worktree (`dirty_worktree`), except a rebase resuming
+its own paused replay or restoring unstaged generated files. A mise toml is trusted on assign only when its bytes match the default branch.
 
 An item that closes with drafted work, or whose saved `pr` state owes a
 closeout (`pr status`'s `⚠ closeout owed`), opens one `publish` decision.
@@ -708,7 +708,7 @@ pushed to exactly the local branch. `--auto-publish STEPS` resolves that
 decision when the item closes with no open decision and every drafted
 step is listed and `done`; an owed closeout counts as `comments`.
 `--watch-ci` re-checks CI once after a push and reopens on red;
-`run_finished` lists `ci_not_rechecked`.
+`run_finished` lists `ci_not_rechecked`. `--no-verify` skips the pre-push hook on the branch push (`pr push` / `pr rebase --push-only`) and the comments closeout push.
 
 A step that needs a person opens one `step_review` whose `evidence` is
 `open_findings`, `checks_unverified` (`Fix-Checks:` `red`/`timed_out`/`error`/`partial`,

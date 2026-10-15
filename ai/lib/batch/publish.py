@@ -142,21 +142,27 @@ def _refuse(refusal: Refusal, detail: str, commits: list[str] | None = None) -> 
     return PublishPlan(refusal=refusal, detail=detail, commits=list(commits or []))
 
 
-def _comments_command(item: Item, pr_bin: str, closeout: CloseoutDebt) -> list[str]:
+def _comments_command(item: Item, pr_bin: str, closeout: CloseoutDebt,
+                      *, no_verify: bool = False) -> list[str]:
     """`pr comments --finish --post` as `pr` itself spells the closeout, plus the tracked ids.
 
     `CloseoutDebt.command` is the one statement of the flags; it adds
     `--track-all` when a tracking issue is owed, and that overrides any
     `--track` ids, so they are left off rather than passed and ignored.
+    `--no-push-verify` is the git-hook skip, not `--no-verify` (the fix
+    pass's verify gate).
     """
     _, *flags = shlex.split(closeout.command)
     if "--track-all" not in flags:
         flags += [arg for t in item.track for arg in ("--track", t)]
+    if no_verify:
+        flags.append("--no-push-verify")
     return [pr_bin, *flags]
 
 
 def plan(item: Item, pr_bin: str, tree: TreeState, *,
-         confirmed: Sequence[str] = (), closeout: CloseoutDebt = CloseoutDebt()) -> PublishPlan:
+         confirmed: Sequence[str] = (), closeout: CloseoutDebt = CloseoutDebt(),
+         no_verify: bool = False) -> PublishPlan:
     """The commands that publish *item* given *tree*, or the refusal that stops it.
 
     *confirmed* is the operator's ``force-publish``: the remote commits listed
@@ -166,6 +172,7 @@ def plan(item: Item, pr_bin: str, tree: TreeState, *,
     comments command runs even with nothing drafted or to push.
     """
     wt = ["--repo-dir", item.worktree]
+    nv = ["--no-verify"] if no_verify else []
     if not tree.fetched:
         return _refuse(Refusal.FETCH_FAILED, f"could not fetch {item.branch}")
     if not item.remote_sha or tree.remote != item.remote_sha:
@@ -185,11 +192,12 @@ def plan(item: Item, pr_bin: str, tree: TreeState, *,
             return _refuse(Refusal.NOT_INCORPORATED_REMOTE,
                            f"{len(tree.unincorporated)} remote commit(s) have no equivalent "
                            f"in {item.branch}", list(tree.unincorporated))
-        commands.append([pr_bin, "rebase", "--push-only", "--expect", item.remote_sha] + wt)
+        commands.append(
+            [pr_bin, "rebase", "--push-only", "--expect", item.remote_sha] + nv + wt)
     elif div.ahead:
-        commands.append([pr_bin, "push", "--expect", item.remote_sha] + wt)
+        commands.append([pr_bin, "push", "--expect", item.remote_sha] + nv + wt)
     pushes = bool(commands)
     drafted = item.has(Step.COMMENTS) and item.step(Step.COMMENTS).drafted
     if drafted or item.track or closeout.owed:
-        commands.append(_comments_command(item, pr_bin, closeout) + wt)
+        commands.append(_comments_command(item, pr_bin, closeout, no_verify=no_verify) + wt)
     return PublishPlan(commands=commands, pushes=pushes)

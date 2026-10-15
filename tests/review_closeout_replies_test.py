@@ -63,6 +63,16 @@ class TestPushHeldCommit:
         assert state.fix.fix.commit_status == "pushed"
         assert ("push",) in [call.args for call in run.call_args_list]
 
+    def test_no_push_verify_skips_the_pre_push_hook(self, publishing_on):
+        state = self._state()
+        with patch.object(git.push, "holds", return_value=False), \
+             patch.object(git.client, "run",
+                          side_effect=_answering_the_owner(
+                              lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))) as run:
+            review.closeout.push_held_commit(state, Path("/fake"), no_push_verify=True)
+        pushes = [c.args for c in run.call_args_list if c.args[:1] == ("push",)]
+        assert pushes == [("push", "--no-verify")]
+
     def test_a_push_the_remote_never_took_is_push_lost_for_a_held_commit(
         self, publishing_on,
     ):

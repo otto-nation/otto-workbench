@@ -28,7 +28,7 @@ Usage:
   review-threads --triage
   review-threads --fix
   review-threads --settle THREAD_ID [--as fixed|dismissed|already_addressed]
-  review-threads --finish
+  review-threads --finish [--no-push-verify]
   review-threads --reply THREAD_COMMENT_OR_REVIEW_ID --body-file PATH [--post]
 """
 
@@ -81,6 +81,10 @@ def build_parser() -> argparse.ArgumentParser:
                              "project's own checks against each claimed fix and "
                              "demotes the ones that do not hold up; without it "
                              "every fix publishes as unverified")
+    parser.add_argument("--no-push-verify", action="store_true",
+                        help="Skip the pre-push hook when --finish --post pushes a "
+                             "held commit. Distinct from --no-verify, which skips "
+                             "the verify gate after --fix, not git hooks")
     parser.add_argument("--finish", action="store_true", dest="finish",
                         help="Phase: close out deferred work — replies, tracking "
                              "issue, summary. Drafts them unless --post is given")

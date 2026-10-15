@@ -422,6 +422,21 @@ def test_watch_ci_reaches_the_run(monkeypatch):
     assert seen["watch_ci"] is True
 
 
+def test_no_verify_reaches_the_run(monkeypatch):
+    rows = [PlanRow("o/r", "/r", 1, "t", "b1", "h", False,
+                    {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})]
+    seen = {}
+    monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", rows))
+
+    def fake_run(self):
+        seen["no_verify"] = self.run.no_verify
+        return batch.model.RunStatus.DONE
+
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    assert _main(["batch", "run", "--checkout", "/r", "--no-verify"]) == 0
+    assert seen["no_verify"] is True
+
+
 def test_run_ends_with_a_run_summary_naming_what_needs_action(monkeypatch, capsys):
     row = PlanRow("o/r", "/r", 1, "t", "b", "h", False,
                   {batch.model.Step.REVIEW: StepNeed(True, "x")})

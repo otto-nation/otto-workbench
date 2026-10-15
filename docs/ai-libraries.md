@@ -3476,6 +3476,7 @@ NDJSON progress events for live consumers of `pr batch run`.
 
 The state file is authoritative; events only save a consumer from polling it.
 `step_log` is emitted only under `--verbose`; `run_summary` is the last line of every `run`/`resume` that settles.
+`generated_dirt_restored` names tracked generated files the batch restored rather than raising `dirty_worktree`.
 
 ### batch/gc.py
 
@@ -6662,7 +6663,7 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
     pr batch status [RUN_ID] [--full | --decision ID]   the run report (JSON)
     pr batch next   [RUN_ID]                   only what needs action (JSON)
 
-Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish.
+Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish; --no-verify skips the pre-push hook on those publishes.
 
 Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed.
 
@@ -7056,7 +7057,7 @@ Usage:
   review-threads --triage
   review-threads --fix
   review-threads --settle THREAD_ID [--as fixed|dismissed|already_addressed]
-  review-threads --finish
+  review-threads --finish [--no-push-verify]
   review-threads --reply THREAD_COMMENT_OR_REVIEW_ID --body-file PATH [--post]
 
 ### cli/rules_canary.py

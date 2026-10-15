@@ -28,7 +28,7 @@ from batch.model import (STEP_ORDER, Decision, DecisionKind, DirtyReason, Eviden
                          ItemStatus, Run, RunStatus, Step, StepRecord, StepStatus,
                          stacked_on_items)
 from batch.plan import PlanRow
-from batch.steps import StepProcess, WorktreeResult, ensure_worktree, step_argv
+from batch.steps import StepProcess, WorktreeResult, ensure_worktree, restore_generated_dirt, step_argv
 from config.workbench_config import BatchConfig
 from pr.comments_fix import CloseoutDebt
 
@@ -50,7 +50,7 @@ def _contains_commit(worktree: str, sha: str) -> bool:
 def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[Step]] | None,
             pool: int, auto_publish: list[Step], now: datetime | None = None,
             ref_namespace: str = "", ref_dirs: list[str] | None = None,
-            watch_ci: bool = False) -> Run:
+            watch_ci: bool = False, no_verify: bool = False) -> Run:
     now = now or datetime.now(timezone.utc)
     items = []
     explicit = selected is not None
@@ -81,7 +81,8 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
             it.stacked_on = base
     return Run(id=batch.store.new_run_id(now), started_at=now.isoformat(timespec="seconds"),
                steps=list(steps), pool=pool, auto_publish=list(auto_publish), items=items,
-               ref_namespace=ref_namespace, ref_dirs=list(ref_dirs or []), watch_ci=watch_ci)
+               ref_namespace=ref_namespace, ref_dirs=list(ref_dirs or []), watch_ci=watch_ci,
+               no_verify=no_verify)
 
 
 def row_for(item: Item, local_head: str = "", ref_namespace: str = "") -> PlanRow:
@@ -272,6 +273,21 @@ class Scheduler:
     def _ready(self, item: Item) -> bool:
         return not (item.terminal or item.key in self._live or self.run.open_decisions(item.key))
 
+    def _discard_generated_dirt(self, path: str, item: Item) -> bool:
+        """Whether *path* is clean enough to proceed, restoring generated-only dirt.
+
+        True when the tree was already clean or only unstaged generated files
+        were dirty and ``git restore`` put them back. False leaves the caller
+        to raise ``dirty_worktree`` as before.
+        """
+        restored = restore_generated_dirt(path)
+        if restored is None:
+            return False
+        if restored:
+            self._emit("generated_dirt_restored", run=self.run.id, item=item.key,
+                       worktree=path, paths=restored)
+        return True
+
     def _ensure_worktree(self, item: Item) -> bool:
         if item.worktree:
             return True
@@ -281,7 +297,7 @@ class Scheduler:
                     {"reason": batch.outcomes.FailureReason.ERROR.value, "detail": res.error},
                     emit=self._emit)
             return False
-        if res.dirty:
+        if res.dirty and not self._discard_generated_dirt(res.path, item):
             _decide(self.run, item, "worktree", DecisionKind.DIRTY_WORKTREE, {"path": res.path},
                     emit=self._emit)
             return False
@@ -392,6 +408,8 @@ class Scheduler:
                 return False
             reason = DirtyReason.REBASE_IN_PROGRESS
         elif self._dirty(item.worktree):
+            if self._discard_generated_dirt(item.worktree, item):
+                return False
             reason = DirtyReason.DIRTY
         else:
             return False

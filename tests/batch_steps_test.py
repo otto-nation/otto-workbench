@@ -13,8 +13,9 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.steps  # noqa: E402
+import core.proc  # noqa: E402
 from batch.model import Step  # noqa: E402
-from conftest import seed_repo  # noqa: E402
+from conftest import add_self_origin, commit_all, git_in, init_repo, seed_repo  # noqa: E402
 
 
 def test_every_step_runs_drafted():
@@ -227,6 +228,181 @@ def test_ensure_worktree_finds_the_checkout_and_reports_dirt(tmp_path):
     assert Path(res.path).resolve() == repo.resolve()
 
 
+def _branch(repo):
+    return subprocess.run(["git", "-C", str(repo), "branch", "--show-current"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+
+
+def _commit_mise(repo, name=".mise.toml", content="[tools]\n"):
+    path = repo / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    git_in(repo, "add", name)
+    commit_all(repo, f"add {name}")
+    return path
+
+
+def test_ensure_worktree_trusts_mise_toml_identical_to_the_default_branch(tmp_path, monkeypatch):
+    repo = init_repo(tmp_path / "r")
+    cfg = _commit_mise(repo)
+    add_self_origin(repo)
+    seen = []
+    monkeypatch.setattr(batch.steps.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
+    monkeypatch.setattr(batch.steps, "_mise_trust",
+                        lambda c: seen.append(str(c)) or core.proc.CmdResult(0, "", ""))
+    res = batch.steps.ensure_worktree(str(repo), _branch(repo))
+    assert res.ok
+    assert seen == [str(cfg)]
+
+
+def test_ensure_worktree_does_not_trust_a_modified_mise_toml(tmp_path, monkeypatch):
+    repo = init_repo(tmp_path / "r")
+    cfg = _commit_mise(repo)
+    add_self_origin(repo)
+    cfg.write_text("[tools]\npython = \"3\"\n")
+    seen = []
+    monkeypatch.setattr(batch.steps.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
+    monkeypatch.setattr(batch.steps, "_mise_trust",
+                        lambda c: seen.append(str(c)) or core.proc.CmdResult(0, "", ""))
+    batch.steps.ensure_worktree(str(repo), _branch(repo))
+    assert seen == []
+
+
+def test_ensure_worktree_does_not_trust_mise_toml_absent_on_the_default_branch(
+        tmp_path, monkeypatch):
+    repo = init_repo(tmp_path / "r")
+    git_in(repo, "commit", "-q", "--allow-empty", "--no-verify", "-m", "init")
+    add_self_origin(repo)
+    (repo / ".mise.toml").write_text("[tools]\n")
+    seen = []
+    monkeypatch.setattr(batch.steps.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
+    monkeypatch.setattr(batch.steps, "_mise_trust",
+                        lambda c: seen.append(str(c)) or core.proc.CmdResult(0, "", ""))
+    batch.steps.ensure_worktree(str(repo), _branch(repo))
+    assert seen == []
+
+
+def test_ensure_worktree_does_not_trust_mise_toml_when_comparison_fails(
+        tmp_path, monkeypatch):
+    repo = init_repo(tmp_path / "r")
+    _commit_mise(repo)
+    add_self_origin(repo)
+    seen = []
+    monkeypatch.setattr(batch.steps.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
+
+    def boom(_cwd):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(batch.steps, "_default_rev", boom)
+    monkeypatch.setattr(batch.steps, "_mise_trust",
+                        lambda c: seen.append(str(c)) or core.proc.CmdResult(0, "", ""))
+    res = batch.steps.ensure_worktree(str(repo), _branch(repo))
+    assert res.ok
+    assert seen == []
+
+
+def test_ensure_worktree_skips_mise_trust_when_mise_is_absent(tmp_path, monkeypatch):
+    repo = seed_repo(tmp_path / "r")
+    (repo / ".mise.toml").write_text("[tools]\n")
+    seen = []
+    monkeypatch.setattr(batch.steps.shutil, "which", lambda n: None)
+    monkeypatch.setattr(batch.steps, "_mise_trust", lambda cfg: seen.append(str(cfg)))
+    batch.steps.ensure_worktree(str(repo), _branch(repo))
+    assert seen == []
+
+
+def test_mise_trust_invokes_quiet_trust(tmp_path, monkeypatch):
+    cfg = tmp_path / ".mise.toml"
+    cfg.write_text("[tools]\n")
+    seen = []
+    monkeypatch.setattr(batch.steps.core.proc, "run",
+                        lambda cmd, **kw: seen.append(cmd) or core.proc.CmdResult(0, "", ""))
+    batch.steps._mise_trust(cfg)
+    assert seen == [["mise", "trust", "--quiet", str(cfg)]]
+
+
+def test_a_failed_mise_trust_does_not_fail_the_worktree(tmp_path, monkeypatch):
+    repo = init_repo(tmp_path / "r")
+    _commit_mise(repo)
+    add_self_origin(repo)
+    monkeypatch.setattr(batch.steps.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
+    monkeypatch.setattr(batch.steps, "_mise_trust",
+                        lambda cfg: core.proc.CmdResult(1, "", "not trusted"))
+    res = batch.steps.ensure_worktree(str(repo), _branch(repo))
+    assert res.ok and Path(res.path).resolve() == repo.resolve()
+
+
 def test_a_watch_run_reads_ci_for_the_pushed_head_without_fixing():
     assert batch.steps.step_argv(Step.CI, "pr", "/wt", remote_sha="new", watch=True) == \
         ["ci-check", "--head-sha", "new", "--wait", "--repo-dir", "/wt"]
+
+
+GEN_HEADER = "// Code generated by protoc\n"
+
+
+def _tracked(repo, rel, content):
+    (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+    (repo / rel).write_text(content)
+    git_in(repo, "add", rel)
+    commit_all(repo, f"add {rel}")
+
+
+def test_restore_generated_dirt_puts_back_an_unstaged_generated_file(tmp_path):
+    repo = init_repo(tmp_path / "r")
+    _tracked(repo, "lib-proto/gen/ts/agent_orc_pb.ts", GEN_HEADER + "v1\n")
+    (repo / "lib-proto/gen/ts/agent_orc_pb.ts").write_text(GEN_HEADER + "v2\n")
+    assert batch.steps.restore_generated_dirt(str(repo)) == [
+        "lib-proto/gen/ts/agent_orc_pb.ts"]
+    assert (repo / "lib-proto/gen/ts/agent_orc_pb.ts").read_text() == GEN_HEADER + "v1\n"
+    assert batch.steps.restore_generated_dirt(str(repo)) == []
+
+
+def test_restore_generated_dirt_puts_back_a_generated_file_whose_name_has_a_space(tmp_path):
+    repo = init_repo(tmp_path / "r")
+    rel = "lib-proto/gen/ts/agent orc_pb.ts"
+    _tracked(repo, rel, GEN_HEADER + "v1\n")
+    (repo / rel).write_text(GEN_HEADER + "v2\n")
+    assert batch.steps.restore_generated_dirt(str(repo)) == [rel]
+    assert (repo / rel).read_text() == GEN_HEADER + "v1\n"
+
+
+def test_restore_generated_dirt_leaves_linguist_generated_unstaged_edits(tmp_path):
+    repo = init_repo(tmp_path / "r")
+    (repo / ".gitattributes").write_text("*.ts linguist-generated=true\n")
+    git_in(repo, "add", ".gitattributes")
+    commit_all(repo, "mark generated")
+    _tracked(repo, "agent_orc_pb.ts", "no header\nv1\n")
+    (repo / "agent_orc_pb.ts").write_text("no header\nv2\n")
+    assert batch.steps.restore_generated_dirt(str(repo)) == ["agent_orc_pb.ts"]
+    assert (repo / "agent_orc_pb.ts").read_text() == "no header\nv1\n"
+
+
+def test_restore_generated_dirt_refuses_untracked_or_staged_or_nongenerated(tmp_path):
+    repo = init_repo(tmp_path / "r")
+    _tracked(repo, "gen.ts", GEN_HEADER + "v1\n")
+    (repo / "gen.ts").write_text(GEN_HEADER + "v2\n")
+    (repo / "scratch.txt").write_text("untracked\n")
+    assert batch.steps.restore_generated_dirt(str(repo)) is None
+    assert (repo / "gen.ts").read_text() == GEN_HEADER + "v2\n"
+
+    git_in(repo, "clean", "-f")
+    git_in(repo, "add", "gen.ts")
+    assert batch.steps.restore_generated_dirt(str(repo)) is None
+
+    git_in(repo, "restore", "--staged", "--worktree", "--", "gen.ts")
+    _tracked(repo, "hand.ts", "not generated\nv1\n")
+    (repo / "hand.ts").write_text("not generated\nv2\n")
+    assert batch.steps.restore_generated_dirt(str(repo)) is None
+
+
+def test_restore_generated_dirt_treats_a_missing_tree_as_dirty(tmp_path):
+    assert batch.steps.restore_generated_dirt(str(tmp_path / "gone")) is None
+
+
+def test_porcelain_z_entries_rename_and_truncation():
+    f = batch.steps._porcelain_z_entries
+    assert f("R  new\0old\0 M a\0") == [("R ", "new"), (" M", "a")]
+    assert f("C  new\0old\0 M a\0") == [("C ", "new"), (" M", "a")]
+    assert f("C  new") is None
+    assert f("R  new") is None
+    assert f("bad") is None

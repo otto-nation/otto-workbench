@@ -831,6 +831,7 @@ Takes no flags.
 | `--triage` | Phase: classify threads via AI and auto-resolve verified. |
 | `--fix` | Phase: triage threads and apply mechanical fixes via Claude agent. |
 | `--no-verify` | Skip the verify gate after --fix. The gate runs the project's own checks against each claimed fix and demotes the ones that do not hold up; without it every fix publishes as unverified. |
+| `--no-push-verify` | Skip the pre-push hook when --finish --post pushes a held commit. Distinct from --no-verify, which skips the verify gate after --fix, not git hooks. |
 | `--finish` | Phase: close out deferred work — replies, tracking issue, summary. Drafts them unless --post is given. |
 | `--track` `<thread-id>` | File this deferred thread on the tracking issue (repeatable). Deferral is a per-thread decision, so --finish files nothing unless told which threads. |
 | `--track-all` | File every deferred thread. Only for a set the user has actually reviewed. |
@@ -900,6 +901,7 @@ Takes no flags.
 | `--prs` `<prs>` | Comma-separated repo#number keys to include. |
 | `--select` `<key=steps>` | Run exactly these steps for one PR. Repeatable. |
 | `--watch-ci` | After a publish pushes, re-check CI once (ci-check --wait, up to its 900s --wait-timeout per item) and reopen the item on red. |
+| `--no-verify` | Skip the pre-push hook on every publish push (CI still runs the gates). Persisted on the run so resume and resolve honor it. |
 | `--verbose` | Also stream each step's stderr as step_log events (it is always in the run's logs/). |
 
 **`pr batch resume`** — Continue a run

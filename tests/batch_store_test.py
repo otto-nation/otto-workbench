@@ -47,6 +47,16 @@ def test_state_file_saved_before_explicit_existed_still_loads():
     assert batch.store.load(RID).items[0].steps[1].explicit is False
 
 
+def test_state_file_saved_before_no_verify_existed_still_loads():
+    run = _run()
+    batch.store.save(run)
+    path = batch.store.run_dir(RID) / "state.json"
+    data = json.loads(path.read_text())
+    del data["no_verify"]
+    path.write_text(json.dumps(data))
+    assert batch.store.load(RID).no_verify is False
+
+
 def test_state_file_lives_under_state_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
     batch.store.save(_run())

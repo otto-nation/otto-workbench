@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import queue
+import shutil
 import signal
 import subprocess
 import threading
@@ -18,10 +19,14 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import core.log
+import core.proc
 import core.timeouts
 import core.trail
 import git.client
+import git.regenerate
 import git.topology
+import rebase.conflicts
 from batch.model import Step
 
 
@@ -67,11 +72,151 @@ class WorktreeResult:
         return not self.error
 
 
+def _porcelain_z_entries(stdout: str) -> list[tuple[str, str]] | None:
+    """Parse ``git status --porcelain -z`` into ``(xy, path)`` pairs.
+
+    Rename and copy entries carry a second path field after the first NUL.
+    Those still mean dirty — the pair is returned with ``xy`` containing
+    ``R`` or ``C`` so the caller can refuse, rather than dropping the entry.
+    Unparseable output is None (fail closed).
+    """
+    entries: list[tuple[str, str]] = []
+    parts = stdout.split("\0")
+    i = 0
+    while i < len(parts):
+        entry = parts[i]
+        i += 1
+        if not entry:
+            continue
+        if len(entry) < 3 or entry[2] != " ":
+            return None
+        xy, path = entry[:2], entry[3:]
+        has_second_path = "R" in xy or "C" in xy
+        if has_second_path and i >= len(parts):
+            return None
+        if has_second_path:
+            i += 1
+        entries.append((xy, path))
+    return entries
+
+
+def restore_generated_dirt(cwd: str) -> list[str] | None:
+    """Restore generated-only unstaged modifications in *cwd*.
+
+    Returns the restored paths (empty if the tree was already clean), or None
+    when the tree is dirty in any other way — untracked files, staged changes,
+    a non-generated path, a mix, a rename or copy — including a ``status`` git
+    could not read, which is treated as dirty for the same reason as
+    ``git.client.is_dirty``. Only unstaged modifications of tracked generated
+    files (porcelain `` M``) are restored, via ``git restore``.
+
+    Status is read with ``-z`` so a path that git would otherwise quote
+    (spaces, non-ASCII) is the real path, not a quoted string that fails the
+    generated check and is never restored.
+    """
+    try:
+        status = git.client.run("status", "--porcelain", "-z", cwd=cwd)
+    except FileNotFoundError:
+        return None
+    if not status.ok:
+        return None
+    parsed = _porcelain_z_entries(status.stdout)
+    if parsed is None:
+        return None
+    if not parsed:
+        return []
+    paths = []
+    for xy, path in parsed:
+        if xy != " M":
+            return None
+        if rebase.conflicts.is_generated_file(path, Path(cwd) / path, cwd) is None:
+            return None
+        paths.append(path)
+    restored = git.client.run("restore", "--", *paths, cwd=cwd)
+    if not restored.ok:
+        return None
+    return paths
+
+
+def _default_rev(cwd: str) -> str | None:
+    """The commit-ish to read default-branch content from, or None.
+
+    ``origin/<default>`` when that ref exists, else the local default branch.
+    Either missing is a comparison failure, not a reason to trust.
+    """
+    default = git.topology.default_branch(cwd)
+    for rev in (f"origin/{default}", default):
+        if git.client.ok("rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}", cwd=cwd):
+            return rev
+    return None
+
+
+def _same_bytes_as_default(cfg: Path, worktree: str) -> str | None:
+    """Empty if *cfg* matches the default branch; otherwise why it must not be trusted.
+
+    Never raises: a comparison that cannot be made is not a match.
+    """
+    try:
+        rel = cfg.resolve().relative_to(Path(worktree).resolve()).as_posix()
+        rev = _default_rev(worktree)
+        if rev is None:
+            return f"could not resolve the default branch in {worktree}"
+        tree = git.client.run("rev-parse", f"{rev}:{rel}", cwd=worktree)
+        if not tree.ok:
+            return f"{rel} is absent on {rev}"
+        work = git.client.run("hash-object", str(cfg), cwd=worktree)
+        if not work.ok:
+            return f"could not hash {cfg}"
+        if tree.stdout.strip() != work.stdout.strip():
+            return f"{rel} differs from {rev}"
+        return None
+    except Exception as exc:
+        return f"could not compare {cfg} to the default branch: {exc}"
+
+
+def trust_mise_config(worktree: str) -> None:
+    """Trust mise config files in *worktree* so a child hook can run tasks.
+
+    Only a file whose bytes match the same path on the repo's default branch
+    is trusted. ``author:@me`` is not enough: PR content can come from a fork
+    or a collaborator commit, and trusting lets mise run arbitrary tasks that
+    persist in the user's trust store. A file that differs, is absent on the
+    default branch, or whose comparison fails is left untrusted — the reason
+    is logged and the item still starts. A failed ``mise trust`` is the same:
+    logged, never fatal; an untrusted config surfaces as the hook's own error.
+    """
+    if not shutil.which("mise"):
+        return
+    root = Path(worktree)
+    for name in git.regenerate.MISE_CONFIG_NAMES:
+        if not name.endswith(".toml"):
+            continue
+        cfg = root / name
+        if not cfg.is_file():
+            continue
+        reason = _same_bytes_as_default(cfg, worktree)
+        if reason is not None:
+            core.log.warn(f"mise trust of {cfg} skipped — {reason}")
+            continue
+        result = _mise_trust(cfg)
+        if not result.ok:
+            core.log.warn(core.proc.failure_message(
+                f"mise trust of {cfg} failed — continuing", result,
+            ))
+
+
+def _mise_trust(cfg: Path) -> core.proc.CmdResult:
+    return core.proc.run(
+        ["mise", "trust", "--quiet", str(cfg)], timeout=core.timeouts.QUICK,
+    )
+
+
 def ensure_worktree(repo_dir: str, branch: str) -> WorktreeResult:
     found = git.topology.find_worktree_for_branch(branch, cwd=repo_dir)
     path = str(found) if found else git.topology.wt_switch(branch, cwd=repo_dir)
     if not path:
         return WorktreeResult("", False, f"could not create a worktree for {branch}")
+    trust_mise_config(path)
     return WorktreeResult(path, git.client.is_dirty(cwd=path), "")
 
 

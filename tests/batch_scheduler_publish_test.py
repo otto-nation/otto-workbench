@@ -50,6 +50,14 @@ def test_auto_publish_publishes_when_every_drafted_step_is_listed():
     assert h.run.items[0].status is ItemStatus.DONE
 
 
+def test_auto_publish_honors_no_verify_on_the_run():
+    h = Harness([row(1, ONLY_REVIEW)], moves={("review", "/wt/b1")},
+                auto_publish=[Step.REVIEW])
+    h.run.no_verify = True
+    h.sched.run_until_blocked()
+    assert h.published == [["pr", "push", "--expect", "h", "--no-verify", "--repo-dir", "/wt/b1"]]
+
+
 def test_an_auto_published_item_finishes_once():
     h = Harness([row(1, ONLY_REVIEW)], moves={("review", "/wt/b1")},
                 auto_publish=[Step.REVIEW])

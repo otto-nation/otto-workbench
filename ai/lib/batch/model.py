@@ -202,6 +202,8 @@ class Run:
     decisions: list[Decision] = field(default_factory=list)
     # Re-check CI once after a publish pushes (`pr batch run --watch-ci`).
     watch_ci: bool = False
+    # Skip the pre-push hook on publish pushes (`pr batch run --no-verify`).
+    no_verify: bool = False
     # The plan's private ref namespace and the repos it was fetched into;
     # dropped when the run reaches a terminal state.
     ref_namespace: str = ""

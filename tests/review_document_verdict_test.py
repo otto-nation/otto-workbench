@@ -202,6 +202,22 @@ class TestResolveVerdict:
         review that ran and had nothing to say."""
         assert resolve_review_verdict(ReviewDocument()) is ReviewVerdict.APPROVE
 
+    def test_a_review_where_nothing_ran_reaches_no_verdict(self):
+        """An empty tally under `status: error` is no agent reading anything.
+
+        Counted as a review that found nothing, it was reported as `approve`
+        by `--json-summary` and the listing alongside `status: error`.
+        """
+        document = ReviewDocument.parse("<!-- status: error -->\n\n## Summary\nNo group reported.\n")
+        assert resolve_review_verdict(document) is None
+
+    def test_a_partial_review_still_reaches_one(self):
+        """The findings the surviving groups reported are real and still count."""
+        document = ReviewDocument.parse(
+            "<!-- status: partial -->\n\n## Must fix\n- **[M1]** a.py:1 — bug\n",
+        )
+        assert resolve_review_verdict(document) is ReviewVerdict.CHANGES_REQUESTED
+
     def test_the_counts_come_from_the_document_it_was_handed(self, tmp_path):
         """One document, read once — the verdict cannot be resolved against
         counts from a file the caller re-read in between."""

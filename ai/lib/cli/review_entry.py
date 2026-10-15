@@ -180,6 +180,20 @@ def _emit_json_summary(fd: int | None, outcome: review.run.ReviewOutcome) -> Non
     os.write(fd, (summary + "\n").encode())
 
 
+def _exit_status(outcome: review.run.ReviewOutcome) -> int:
+    """1 when no part of the review ran, else 0.
+
+    Decided after the review is shown, summarised and recorded: the failures
+    table is the diagnosis, and a caller — a background job, `pr batch` — needs
+    the status to know the review step reviewed nothing. A partial run exits 0;
+    its verdict is already withheld and the surviving findings are real.
+    """
+    if not outcome.nothing_ran:
+        return 0
+    core.log.error("No part of the review ran — every agent failed. See Agent Failures above.")
+    return 1
+
+
 def _run_review(args, argv: list[str], ctx: pr.context.ResolvedContext,
                 generator_version: str) -> review.run.ReviewOutcome:
     """Review the PR *ctx* names.
@@ -464,7 +478,7 @@ def _main_body(parsed, argv: list[str], json_stdout_fd: int | None) -> int:
     if parsed.self_review:
         outcome = _run_self_review(parsed, argv, generator_version)
         _emit_json_summary(json_stdout_fd, outcome)
-        return 0
+        return _exit_status(outcome)
 
     command = parsed.positional[0] if parsed.positional else ""
     if not command:
@@ -483,4 +497,4 @@ def _main_body(parsed, argv: list[str], json_stdout_fd: int | None) -> int:
     cli.locks.claim_declared("review", argv, ctx, command=" ".join([SCRIPT] + argv))
     outcome = _run_review(parsed, argv, ctx, generator_version)
     _emit_json_summary(json_stdout_fd, outcome)
-    return 0
+    return _exit_status(outcome)

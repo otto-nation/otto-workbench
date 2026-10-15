@@ -417,6 +417,14 @@ Counts alone map to `Request changes` (any must-fix), `Needs discussion` (any
 should-fix), or `Approve`. Nits and idioms do not affect the verdict, and a review
 file that does not exist records no verdict rather than an approval.
 
+A review where no group reported — every agent failed, so its header says
+`status: error` — records no verdict either: its empty tally means nothing was
+read, not that nothing was found. The review states `No verdict — no part of this
+review ran` above its Agent Failures table, and `pr review` exits 1 once it has
+shown and recorded it. A partial run, where some groups reported, states `No
+verdict — part of this review did not run` and exits 0, since the surviving
+findings are real.
+
 Review, comments and CI fixes, and `already_addressed` verdicts, are checked by
 one verify gate before they land or post: [`fix/gate.py`](ai-libraries.md#fixgatepy).
 

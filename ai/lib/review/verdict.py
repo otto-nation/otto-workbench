@@ -14,7 +14,7 @@ a judgement — a review file parses the same way whatever this module decides.
 from __future__ import annotations
 
 from core.phases import Mode
-from pr.domains import ReviewVerdict
+from pr.domains import ReviewStatus, ReviewVerdict
 from review.document import SECTION_SUMMARY, SECTION_VERDICT, ReviewDocument
 from review.types import SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD
 from core.text import plural
@@ -92,9 +92,15 @@ def resolve_review_verdict(
 
     A review that was never written reaches no verdict at all, which is why
     this takes the document rather than a path: absent and empty are different
-    answers and only the caller that went looking can tell them apart.
+    answers and only the caller that went looking can tell them apart. Nor
+    does one whose header says `status: error`, where no group reported.
     """
     if doc is None:
+        return None
+    # `status: error` is a run where no group reported: its empty tally is no
+    # agent reading anything, and deriving Approve from it reports a clean
+    # review of a change nobody looked at.
+    if doc.header.status is ReviewStatus.ERROR:
         return None
     stated = doc.verdict
     if stated is ReviewVerdict.DISAPPROVE:
@@ -142,6 +148,16 @@ CLEAN_VERDICT = f"{ReviewVerdict.APPROVE.prose} — clean review.\n"
 PARTIAL_VERDICT = (
     "No verdict — part of this review did not run. "
     "See Agent Failures below for what was not assessed.\n"
+)
+
+# What a run where no group reported states. An empty tally there means no
+# agent read anything, not that nothing was found, so the Approve that
+# `mechanical_verdict` derives from it would be a clean bill of health for the
+# whole change. Distinct from `PARTIAL_VERDICT` because "part of this review"
+# understates a run with nothing in it.
+NO_RUN_VERDICT = (
+    "No verdict — no part of this review ran. "
+    "See Agent Failures below for why.\n"
 )
 
 

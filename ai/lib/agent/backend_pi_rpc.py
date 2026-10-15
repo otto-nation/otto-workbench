@@ -96,6 +96,14 @@ _PROMPT_UNDELIVERED = (
     "pi exited before the prompt could be sent — its stdin was already closed"
 )
 
+# The same failure when the child said why on its way out: followed by the
+# first line of its stderr, which names the cause where the closed stdin only
+# names the symptom.
+_PROMPT_UNDELIVERED_BECAUSE = "pi exited before the prompt could be sent: "
+
+# One stderr line, quoted into a failure reason a summary table renders.
+_STDERR_LINE_MAX_CHARS = 300
+
 # What a run Pi refused exits with when Pi's own status does not say so. A
 # clean RPC shutdown after a rejected prompt is exit 0, and a caller reading
 # only the status would take that for a successful run.

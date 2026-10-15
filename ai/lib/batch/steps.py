@@ -137,13 +137,52 @@ def restore_generated_dirt(cwd: str) -> list[str] | None:
     return paths
 
 
+def _default_rev(cwd: str) -> str | None:
+    """The commit-ish to read default-branch content from, or None.
+
+    ``origin/<default>`` when that ref exists, else the local default branch.
+    Either missing is a comparison failure, not a reason to trust.
+    """
+    default = git.topology.default_branch(cwd)
+    for rev in (f"origin/{default}", default):
+        if git.client.ok("rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}", cwd=cwd):
+            return rev
+    return None
+
+
+def _same_bytes_as_default(cfg: Path, worktree: str) -> str | None:
+    """Empty if *cfg* matches the default branch; otherwise why it must not be trusted.
+
+    Never raises: a comparison that cannot be made is not a match.
+    """
+    try:
+        rel = cfg.resolve().relative_to(Path(worktree).resolve()).as_posix()
+        rev = _default_rev(worktree)
+        if rev is None:
+            return f"could not resolve the default branch in {worktree}"
+        tree = git.client.run("rev-parse", f"{rev}:{rel}", cwd=worktree)
+        if not tree.ok:
+            return f"{rel} is absent on {rev}"
+        work = git.client.run("hash-object", str(cfg), cwd=worktree)
+        if not work.ok:
+            return f"could not hash {cfg}"
+        if tree.stdout.strip() != work.stdout.strip():
+            return f"{rel} differs from {rev}"
+        return None
+    except Exception as exc:
+        return f"could not compare {cfg} to the default branch: {exc}"
+
+
 def trust_mise_config(worktree: str) -> None:
     """Trust mise config files in *worktree* so a child hook can run tasks.
 
-    Safe because the batch only selects the calling user's own PRs
-    (``author:@me`` in ``batch.plan``): the file is theirs, not a stranger's.
-    A failed trust must not fail the item — the step still starts, and an
-    untrusted config surfaces as the hook's own error.
+    Only a file whose bytes match the same path on the repo's default branch
+    is trusted. ``author:@me`` is not enough: PR content can come from a fork
+    or a collaborator commit, and trusting lets mise run arbitrary tasks that
+    persist in the user's trust store. A file that differs, is absent on the
+    default branch, or whose comparison fails is left untrusted — the reason
+    is logged and the item still starts. A failed ``mise trust`` is the same:
+    logged, never fatal; an untrusted config surfaces as the hook's own error.
     """
     if not shutil.which("mise"):
         return
@@ -153,6 +192,10 @@ def trust_mise_config(worktree: str) -> None:
             continue
         cfg = root / name
         if not cfg.is_file():
+            continue
+        reason = _same_bytes_as_default(cfg, worktree)
+        if reason is not None:
+            core.log.warn(f"mise trust of {cfg} skipped — {reason}")
             continue
         result = _mise_trust(cfg)
         if not result.ok:

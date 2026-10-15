@@ -15,7 +15,7 @@ if str(LIB_DIR) not in sys.path:
 import batch.steps  # noqa: E402
 import core.proc  # noqa: E402
 from batch.model import Step  # noqa: E402
-from conftest import commit_all, git_in, init_repo, seed_repo  # noqa: E402
+from conftest import add_self_origin, commit_all, git_in, init_repo, seed_repo  # noqa: E402
 
 
 def test_every_step_runs_drafted():
@@ -233,18 +233,70 @@ def _branch(repo):
                           capture_output=True, text=True, check=True).stdout.strip()
 
 
-def test_ensure_worktree_trusts_mise_toml_files(tmp_path, monkeypatch):
-    repo = seed_repo(tmp_path / "r")
-    (repo / ".mise.toml").write_text("[tools]\n")
-    (repo / "mise.toml").write_text("[tools]\n")
-    (repo / ".mise.local.toml").write_text("[tools]\n")
+def _commit_mise(repo, name=".mise.toml", content="[tools]\n"):
+    path = repo / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    git_in(repo, "add", name)
+    commit_all(repo, f"add {name}")
+    return path
+
+
+def test_ensure_worktree_trusts_mise_toml_identical_to_the_default_branch(tmp_path, monkeypatch):
+    repo = init_repo(tmp_path / "r")
+    cfg = _commit_mise(repo)
+    add_self_origin(repo)
     seen = []
     monkeypatch.setattr(batch.steps.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
     monkeypatch.setattr(batch.steps, "_mise_trust",
-                        lambda cfg: seen.append(str(cfg)) or core.proc.CmdResult(0, "", ""))
+                        lambda c: seen.append(str(c)) or core.proc.CmdResult(0, "", ""))
     res = batch.steps.ensure_worktree(str(repo), _branch(repo))
     assert res.ok
-    assert set(seen) == {str(repo / n) for n in (".mise.toml", "mise.toml", ".mise.local.toml")}
+    assert seen == [str(cfg)]
+
+
+def test_ensure_worktree_does_not_trust_a_modified_mise_toml(tmp_path, monkeypatch):
+    repo = init_repo(tmp_path / "r")
+    cfg = _commit_mise(repo)
+    add_self_origin(repo)
+    cfg.write_text("[tools]\npython = \"3\"\n")
+    seen = []
+    monkeypatch.setattr(batch.steps.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
+    monkeypatch.setattr(batch.steps, "_mise_trust",
+                        lambda c: seen.append(str(c)) or core.proc.CmdResult(0, "", ""))
+    batch.steps.ensure_worktree(str(repo), _branch(repo))
+    assert seen == []
+
+
+def test_ensure_worktree_does_not_trust_mise_toml_absent_on_the_default_branch(
+        tmp_path, monkeypatch):
+    repo = init_repo(tmp_path / "r")
+    git_in(repo, "commit", "-q", "--allow-empty", "--no-verify", "-m", "init")
+    add_self_origin(repo)
+    (repo / ".mise.toml").write_text("[tools]\n")
+    seen = []
+    monkeypatch.setattr(batch.steps.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
+    monkeypatch.setattr(batch.steps, "_mise_trust",
+                        lambda c: seen.append(str(c)) or core.proc.CmdResult(0, "", ""))
+    batch.steps.ensure_worktree(str(repo), _branch(repo))
+    assert seen == []
+
+
+def test_ensure_worktree_does_not_trust_mise_toml_when_comparison_fails(
+        tmp_path, monkeypatch):
+    repo = init_repo(tmp_path / "r")
+    _commit_mise(repo)
+    add_self_origin(repo)
+    seen = []
+    monkeypatch.setattr(batch.steps.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
+    def boom(_cwd):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(batch.steps, "_default_rev", boom)
+    monkeypatch.setattr(batch.steps, "_mise_trust",
+                        lambda c: seen.append(str(c)) or core.proc.CmdResult(0, "", ""))
+    res = batch.steps.ensure_worktree(str(repo), _branch(repo))
+    assert res.ok
+    assert seen == []
 
 
 def test_ensure_worktree_skips_mise_trust_when_mise_is_absent(tmp_path, monkeypatch):
@@ -268,8 +320,9 @@ def test_mise_trust_invokes_quiet_trust(tmp_path, monkeypatch):
 
 
 def test_a_failed_mise_trust_does_not_fail_the_worktree(tmp_path, monkeypatch):
-    repo = seed_repo(tmp_path / "r")
-    (repo / ".mise.toml").write_text("[tools]\n")
+    repo = init_repo(tmp_path / "r")
+    _commit_mise(repo)
+    add_self_origin(repo)
     monkeypatch.setattr(batch.steps.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
     monkeypatch.setattr(batch.steps, "_mise_trust",
                         lambda cfg: core.proc.CmdResult(1, "", "not trusted"))

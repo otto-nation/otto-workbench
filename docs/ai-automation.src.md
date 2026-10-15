@@ -444,7 +444,7 @@ namespace (GitHub merge state fallback; `UNKNOWN` and `DIRTY` count as needed).
 heads skip both. A stacked PR waits for its base's publish; `resume` retries
 `stacked_on` once that base is terminal. One fetching rebase or CI step per
 repo at a time (a waiting CI step excepted). No start in a dirty worktree (`dirty_worktree`), except a rebase resuming
-its own paused replay or restoring unstaged generated files.
+its own paused replay or restoring unstaged generated files. A mise toml is trusted on assign only when its bytes match the default branch.
 
 An item that closes with drafted work, or whose saved `pr` state owes a
 closeout (`pr status`'s `⚠ closeout owed`), opens one `publish` decision.

@@ -289,8 +289,10 @@ def test_ensure_worktree_does_not_trust_mise_toml_when_comparison_fails(
     add_self_origin(repo)
     seen = []
     monkeypatch.setattr(batch.steps.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
+
     def boom(_cwd):
         raise RuntimeError("boom")
+
     monkeypatch.setattr(batch.steps, "_default_rev", boom)
     monkeypatch.setattr(batch.steps, "_mise_trust",
                         lambda c: seen.append(str(c)) or core.proc.CmdResult(0, "", ""))
@@ -395,3 +397,10 @@ def test_restore_generated_dirt_refuses_untracked_or_staged_or_nongenerated(tmp_
 
 def test_restore_generated_dirt_treats_a_missing_tree_as_dirty(tmp_path):
     assert batch.steps.restore_generated_dirt(str(tmp_path / "gone")) is None
+
+
+def test_porcelain_z_entries_rename_and_truncation():
+    f = batch.steps._porcelain_z_entries
+    assert f("R  new\0old\0 M a\0") == [("R ", "new"), (" M", "a")]
+    assert f("R  new") is None
+    assert f("bad") is None

@@ -232,7 +232,12 @@ def latest_run_id() -> str | None:
 
 
 def state_mtime(run_id: str) -> float:
-    """When *run_id*'s state was last saved, as a timestamp: its terminal transition once finished."""
+    """When *run_id*'s state was last written, as a timestamp of the last real change.
+
+    A no-op `Session.commit` does not rewrite the file, so this stays the last
+    real change — for a finished run, its terminal transition — which `batch.gc`
+    measures retention from.
+    """
     return (run_dir(run_id) / STATE_FILE).stat().st_mtime
 
 
@@ -416,7 +421,8 @@ class Session:
     a `load()` snapshot has no way back to disk.
     """
 
-    def __init__(self, run: Run, role: Role, inbox: InboxPolicy) -> None:
+    def __init__(self, run: Run, role: Role, inbox: InboxPolicy, *,
+                 snapshot: dict | None = None) -> None:
         self._run = run
         self._role = role
         self._inbox = inbox
@@ -424,6 +430,8 @@ class Session:
         self._finished = False
         # Whether anything was ever written, so create() knows to clean up.
         self._committed = False
+        # Last serialized run loaded or written; None until the first write.
+        self._snapshot = snapshot
 
     @property
     def run(self) -> Run:
@@ -475,20 +483,26 @@ class Session:
         return outcome
 
     def commit(self) -> None:
-        """Write `run` to `state.json`; refused unless this process holds the run's lock.
+        """Write `run` to `state.json` when it differs from the last load or write.
 
-        Raises RuntimeError when the lock is not held, for example after the
-        session closed. A commit that saves DONE or CANCELLED then drops the
-        plan's refs. Saving first means a failed cleanup never leaves the
-        stored run short of its terminal status. The drop is idempotent and is
-        retried on every terminal commit.
+        Refused unless this process holds the run's lock. Raises RuntimeError
+        when the lock is not held, for example after the session closed. A
+        commit whose serialized run equals the last snapshot skips the file
+        write so `state_mtime` stays the last real change. A commit that saves
+        DONE or CANCELLED then drops the plan's refs, even when the write is
+        skipped. Saving first means a failed cleanup never leaves the stored
+        run short of its terminal status. The drop is idempotent and is retried
+        on every terminal commit.
         """
         lock_file = run_lock(self._run.id).path
         if not core.run_lock.holds(lock_file):
             raise RuntimeError(f"batch run {self._run.id}: commit without holding its run lock; "
                                f"open the run with batch.store.session()")
-        core.serde.write_json(run_dir(self._run.id) / STATE_FILE, core.serde.to_dict(self._run))
-        self._committed = True
+        payload = core.serde.to_dict(self._run)
+        if payload != self._snapshot:
+            core.serde.write_json(run_dir(self._run.id) / STATE_FILE, payload)
+            self._snapshot = payload
+            self._committed = True
         if self._run.status in FINISHED_RUN:
             batch.plan.drop_refs(self._run.ref_dirs, self._run.ref_namespace)
 
@@ -547,7 +561,8 @@ def _open(run_id: str, role: Role, *, inbox: InboxPolicy, command: str) -> Itera
         raise RunNotFound(run_id)
     with contextlib.ExitStack() as stack:
         _enter_lock(stack, run_id, role, command=command, create=False)
-        opened = Session(load(run_id), role, inbox)
+        loaded = load(run_id)
+        opened = Session(loaded, role, inbox, snapshot=core.serde.to_dict(loaded))
         _fold_legacy_cancel(opened)
         opened.drain(settle=True)
         yield opened

@@ -306,6 +306,20 @@ def test_deliver_gives_up_on_a_gc_holder_that_stays(monkeypatch):
     assert batch.store.pending_requests(run.id) == 1
 
 
+def test_deliver_gives_up_on_an_unreadable_holder_record(monkeypatch):
+    run = seed(_run(_d(DecisionKind.DIRTY_WORKTREE, "worktree")))
+    monkeypatch.setattr(core.run_lock, "retry_delays", lambda: iter([0.0, 0.0]))
+    paused = []
+    monkeypatch.setattr(batch.inbox.time, "sleep", paused.append)
+    monkeypatch.setattr(batch.store, "_holder_from", lambda record: None)
+    with holding(run.id, Role.DRIVER), pytest.raises(batch.store.RunUnreachable) as exc:
+        batch.inbox.deliver(run.id, Cancel(), _ctx(), command="pr batch cancel")
+    assert paused == [0.0, 0.0]
+    assert "unreadable holder record" in str(exc.value)
+    assert "gc holder" not in str(exc.value)
+    assert batch.store.pending_requests(run.id) == 1
+
+
 def test_deliver_reports_a_cancel_that_reached_a_finished_run_as_its_error():
     run = seed(_run(status=RunStatus.DONE))
     delivery = batch.inbox.deliver(run.id, Cancel(), _ctx(), command="pr batch cancel")

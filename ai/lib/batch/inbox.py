@@ -165,10 +165,11 @@ def _collector(seen: dict[str, Outcome],
     return report
 
 
-def _attempt(run_id: str, name: str, ctx: ApplyContext, command: str) -> Delivery | None:
-    """Open *run_id* as an applier and say what its drains did; None while a GC holder has it.
+def _attempt(run_id: str, name: str, ctx: ApplyContext, command: str) -> Delivery:
+    """Open *run_id* as an applier and say what its drains did.
 
     A refusal by a live holder that drains means *name* is queued for that holder.
+    A GC holder or a RunBusy whose holder is None is re-raised for `deliver` to retry.
     """
     seen: dict[str, Outcome] = {}
     inbox = Inbox(replace(ctx, report=_collector(seen, ctx.report)))
@@ -177,9 +178,9 @@ def _attempt(run_id: str, name: str, ctx: ApplyContext, command: str) -> Deliver
             # The entry drain has applied the request; the normal exit finishes.
             pass
     except batch.store.RunBusy as exc:
-        if exc.holder is None or not exc.holder.drains:
-            return None
-        return Delivery(name=name, queued=True, own=None, others=(), holder=exc.holder)
+        if exc.holder is not None and exc.holder.drains:
+            return Delivery(name=name, queued=True, own=None, others=(), holder=exc.holder)
+        raise
     own = seen.pop(name, None)
     return Delivery(name=name, queued=False, own=own, others=tuple(seen.values()),
                     holder=None)
@@ -195,29 +196,32 @@ def deliver(run_id: str, request: Decide | Cancel, ctx: ApplyContext, *,
 
     Raises RunNotFound when the run directory is gone, including when the
     write succeeded and every later open still saw it missing past
-    `core.run_lock.retry_delays()`. Raises RunUnreachable in two cases:
-    `session()` gave up on a vacated holder record, or a GC holder kept the
-    run past that same budget. Either way the request is still in the inbox,
-    and it is never reported queued.
+    `core.run_lock.retry_delays()`. Raises RunUnreachable when `session()`
+    gave up on a vacated holder record, a GC holder kept the run past that
+    same budget, or an unreadable holder record did. Either way the request
+    is still in the inbox, and it is never reported queued.
     """
     name = batch.store.write_request(run_id, request)
     delays = core.run_lock.retry_delays()
     missing = False
+    unreadable = False
     while True:
         try:
-            delivery = _attempt(run_id, name, ctx, command)
+            return _attempt(run_id, name, ctx, command)
         except batch.store.RunNotFound:
-            delivery = None
             missing = True
-        else:
+            unreadable = False
+        except batch.store.RunBusy as exc:
             missing = False
-        if delivery is not None:
-            return delivery
+            unreadable = exc.holder is None
         delay = next(delays, None)
         if delay is None:
             break
         time.sleep(delay)
     if missing:
         raise batch.store.RunNotFound(run_id)
+    if unreadable:
+        raise batch.store.RunUnreachable(
+            run_id, "an unreadable holder record kept the run past the retry budget")
     raise batch.store.RunUnreachable(
         run_id, "a gc holder kept the run past the retry budget")

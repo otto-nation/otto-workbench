@@ -235,6 +235,68 @@ def test_refs_are_dropped_only_after_the_terminal_state_is_saved(monkeypatch):
     assert set(seen) == {(RunStatus.CANCELLED, ("/r",), "refs/workbench-batch/x")}
 
 
+def test_commit_with_no_change_does_not_rewrite_state(monkeypatch):
+    seed(_run())
+    path = batch.store.run_dir(RID) / batch.store.STATE_FILE
+    before = path.stat()
+    writes = []
+    real = core.serde.write_json
+
+    def counting(target, data, **kwargs):
+        writes.append(target)
+        return real(target, data, **kwargs)
+
+    monkeypatch.setattr(core.serde, "write_json", counting)
+    with open_session(RID) as session:
+        session.commit()
+    after = path.stat()
+    assert after.st_mtime_ns == before.st_mtime_ns
+    assert after.st_ino == before.st_ino
+    assert all(p.name != batch.store.STATE_FILE for p in writes)
+
+
+def test_commit_with_a_change_still_writes(monkeypatch):
+    seed(_run())
+    writes = []
+    real = core.serde.write_json
+
+    def counting(target, data, **kwargs):
+        writes.append(target)
+        return real(target, data, **kwargs)
+
+    monkeypatch.setattr(core.serde, "write_json", counting)
+    with open_session(RID) as session:
+        session.run.items[0].wait_reason = "changed"
+        session.commit()
+    assert any(p.name == batch.store.STATE_FILE for p in writes)
+    assert batch.store.load(RID).items[0].wait_reason == "changed"
+
+
+def test_a_terminal_no_op_commit_skips_the_write_and_still_drops_refs(monkeypatch):
+    seed(_run(status=RunStatus.DONE, ref_namespace="refs/workbench-batch/x",
+              ref_dirs=["/r"]))
+    path = batch.store.run_dir(RID) / batch.store.STATE_FILE
+    before = path.stat()
+    dropped = []
+    writes = []
+    real = core.serde.write_json
+
+    def counting(target, data, **kwargs):
+        writes.append(target)
+        return real(target, data, **kwargs)
+
+    monkeypatch.setattr(core.serde, "write_json", counting)
+    monkeypatch.setattr(batch.plan, "drop_refs", lambda dirs, namespace: dropped.append(
+        (tuple(dirs), namespace)))
+    with open_session(RID) as session:
+        session.commit()
+    after = path.stat()
+    assert after.st_mtime_ns == before.st_mtime_ns
+    assert after.st_ino == before.st_ino
+    assert all(p.name != batch.store.STATE_FILE for p in writes)
+    assert (("/r",), "refs/workbench-batch/x") in dropped
+
+
 # ── exits ─────────────────────────────────────────────────────────────────────
 
 def test_a_normal_exit_commits_what_the_block_changed():

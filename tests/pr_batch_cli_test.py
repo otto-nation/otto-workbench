@@ -244,6 +244,22 @@ def test_resolve_unknown_run_exits_1_without_creating_a_dir(capsys):
     assert not (batch.store.batch_root() / missing).exists()
 
 
+def test_a_refused_resume_of_a_done_run_does_not_touch_state_mtime(monkeypatch, capsys):
+    run = _run_with_decisions(1)
+    run.status = batch.model.RunStatus.DONE
+    seed(run)
+    path = batch.store.run_dir(run.id) / batch.store.STATE_FILE
+    before = path.stat()
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
+                        lambda self: batch.model.RunStatus.DONE)
+    assert _main(["batch", "resume", run.id]) == 1
+    assert f"run {run.id} is done" in capsys.readouterr().err
+    after = path.stat()
+    assert batch.store.state_mtime(run.id) == before.st_mtime
+    assert after.st_mtime_ns == before.st_mtime_ns
+    assert after.st_ino == before.st_ino
+
+
 def test_resume_after_a_queued_cancel_refuses_and_the_run_is_cancelled(monkeypatch, capsys):
     run = _saved_run_with_decision()
     batch.store.write_request(run.id, Cancel())

@@ -274,6 +274,38 @@ def test_a_refused_resume_hands_off_a_request_queued_against_it(monkeypatch, tmp
     assert batch.store.pending_requests(run.id) == 0
 
 
+def test_a_refused_resume_of_a_terminal_run_hands_off_a_request_queued_against_it(
+        monkeypatch):
+    run = batch.scheduler.new_run(
+        [PlanRow("o/r", "/r", 1, "t", "b", "h", False,
+                 {batch.model.Step.REVIEW: StepNeed(True, "x")})],
+        steps=[batch.model.Step.REVIEW], selected=None, pool=1, auto_publish=[])
+    item = run.items[0]
+    item.status = batch.model.ItemStatus.AWAITING_DECISION
+    item.step(batch.model.Step.REVIEW).status = batch.model.StepStatus.NEEDS_DECISION
+    run.decisions.append(batch.model.Decision(
+        id="d1", item=item.key, step="review", kind=batch.model.DecisionKind.FAILED))
+    run.status = batch.model.RunStatus.CANCELLED
+    seed(run)
+    real = batch.store.Session.drain
+    queued = []
+
+    def drain_then_queue(self, *, settle):
+        outcomes = real(self, settle=settle)
+        if not queued:
+            queued.append(batch.store.write_request(self.run.id, Decide("d1", "drop-pr")))
+        return outcomes
+
+    monkeypatch.setattr(batch.store.Session, "drain", drain_then_queue)
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
+                        lambda self: batch.model.RunStatus.CANCELLED)
+    code = _main(["batch", "resume", run.id])
+    assert code == 1
+    saved = batch.store.load(run.id)
+    assert saved.decision("d1").resolution == "drop-pr"
+    assert batch.store.pending_requests(run.id) == 0
+
+
 def test_an_item_with_no_origin_is_left_to_lock_itself(monkeypatch, capsys):
     row = PlanRow("o/r", "/r", 1, "t", "b", "h", False,
                   {batch.model.Step.REVIEW: StepNeed(True, "x")})

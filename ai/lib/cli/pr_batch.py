@@ -4,13 +4,13 @@
     pr batch run    --checkout DIR … [opts]    start a run; NDJSON events on stdout
     pr batch resume [RUN_ID]                   continue a waiting or interrupted run
     pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
-    pr batch cancel [RUN_ID] [--kill]
+    pr batch cancel [RUN_ID] [--kill]          stop the run; a recorded cancel is final
     pr batch status [RUN_ID] [--full | --decision ID]   the run report (JSON)
     pr batch next   [RUN_ID]                   only what needs action (JSON)
 
 Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish; --no-verify skips the pre-push hook on those publishes.
 
-Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed.
+Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve and cancel write the run's inbox; a live holder that drains applies a queued request.
 """
 
 # doc-group: cli
@@ -135,7 +135,7 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--body-file", default="", help="File holding a reply body, for actions that post one")
     v.add_argument("--commit", default="", help="Commit that settles the decision, for actions that cite one")
 
-    c = sub.add_parser("cancel", help="Stop starting new steps")
+    c = sub.add_parser("cancel", help="Stop the run; a recorded cancel is final")
     c.add_argument("run_id", nargs="?", help="Run to cancel (default: the latest)")
     c.add_argument("--kill", action="store_true", help="Also terminate running steps")
 

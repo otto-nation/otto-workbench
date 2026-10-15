@@ -1,20 +1,17 @@
 """Apply one inbound request to a loaded run, and settle a run that is idle.
 
-``apply_one`` is the policy: a ``Decide`` goes through ``batch.resolve.apply``
+`apply_one` is the policy: a `Decide` goes through `batch.resolve.apply`
 unless the decision already carries that action (an idempotent replay), and a
-``Cancel`` records ``Run.cancel`` — ``kill`` only upgrades, ``requested_at``
-is set the first time only. A cancel against ``DONE`` is an error; against
-``CANCELLED`` it is a no-op success. ``settle_idle`` turns a recorded cancel
-into ``CANCELLED``, or every item terminal into ``DONE``, and never promotes
-``CANCELLED``. ``Inbox`` is what a caller holds: apply, settle, report.
+`Cancel` records `Run.cancel` — `kill` only upgrades, `requested_at` is set
+the first time only. A cancel against `DONE` is an error; against `CANCELLED`
+it is a no-op success. `settle_idle` turns a recorded cancel into `CANCELLED`,
+or every item terminal into `DONE`, and never promotes `CANCELLED`. `Inbox` is
+what a caller holds: apply, settle, report.
 
-``deliver`` is how ``pr batch resolve`` and ``cancel`` hand a request to a run.
-It writes the request into the inbox, then opens the run as an applier, whose
-entry drain applies it together with everything queued before it. When a live
-holder that drains already has the run, the request is reported queued for
-that holder, which applies it before it lets go. A ``gc`` holder is waited out
-on ``core.run_lock.retry_delays()``. A run that stays out of reach is an
-error, never ``queued``, and the request is left in the inbox for the next
+`deliver` is the one path for `pr batch resolve` and `cancel`: it writes the
+request, then either applies it in an `APPLIER` session or returns `queued`
+when a live holder that drains will apply it. A request reported `queued` is
+applied by that holder or its hand-off, or, if the holder dies, by the next
 session to open the run.
 """
 

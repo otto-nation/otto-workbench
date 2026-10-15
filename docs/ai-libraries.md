@@ -3499,21 +3499,18 @@ holds the flock on that directory's inode.
 
 Apply one inbound request to a loaded run, and settle a run that is idle.
 
-``apply_one`` is the policy: a ``Decide`` goes through ``batch.resolve.apply``
+`apply_one` is the policy: a `Decide` goes through `batch.resolve.apply`
 unless the decision already carries that action (an idempotent replay), and a
-``Cancel`` records ``Run.cancel`` — ``kill`` only upgrades, ``requested_at``
-is set the first time only. A cancel against ``DONE`` is an error; against
-``CANCELLED`` it is a no-op success. ``settle_idle`` turns a recorded cancel
-into ``CANCELLED``, or every item terminal into ``DONE``, and never promotes
-``CANCELLED``. ``Inbox`` is what a caller holds: apply, settle, report.
+`Cancel` records `Run.cancel` — `kill` only upgrades, `requested_at` is set
+the first time only. A cancel against `DONE` is an error; against `CANCELLED`
+it is a no-op success. `settle_idle` turns a recorded cancel into `CANCELLED`,
+or every item terminal into `DONE`, and never promotes `CANCELLED`. `Inbox` is
+what a caller holds: apply, settle, report.
 
-``deliver`` is how ``pr batch resolve`` and ``cancel`` hand a request to a run.
-It writes the request into the inbox, then opens the run as an applier, whose
-entry drain applies it together with everything queued before it. When a live
-holder that drains already has the run, the request is reported queued for
-that holder, which applies it before it lets go. A ``gc`` holder is waited out
-on ``core.run_lock.retry_delays()``. A run that stays out of reach is an
-error, never ``queued``, and the request is left in the inbox for the next
+`deliver` is the one path for `pr batch resolve` and `cancel`: it writes the
+request, then either applies it in an `APPLIER` session or returns `queued`
+when a live holder that drains will apply it. A request reported `queued` is
+applied by that holder or its hand-off, or, if the holder dies, by the next
 session to open the run.
 
 ### batch/model.py
@@ -3663,17 +3660,24 @@ Where a `pr batch` run lives on disk; the only module that touches it.
     <state_dir>/batch/<run-id>/state.json       authoritative run state
     <state_dir>/batch/<run-id>/run.lock         the run's resource lock (holder record carries role)
     <state_dir>/locks/batch.lock                held by whichever `pr batch run`/`resume` is live
-    <state_dir>/batch/<run-id>/requests/*.json  decisions waiting to be applied
+    <state_dir>/batch/<run-id>/requests/*.json  the inbox: decisions and cancels waiting to be applied
+    <state_dir>/batch/<run-id>/requests/rejected/<name>  a request that failed to apply (<name> ends in .json)
     <state_dir>/batch/<run-id>.reaping          tombstone during reap; run_ids() ignores it
-    <state_dir>/batch/<run-id>/cancel           {"kill": bool} once cancel is asked
     <state_dir>/batch/<run-id>/logs/<slug>-<pr>-<step>-<n>.log     stderr of each step attempt
     <state_dir>/batch/<run-id>/logs/<slug>-<pr>-publish-<n>.log    output of each publish attempt
 
-``reap`` renames the run directory to the tombstone while still holding the
-flock. ``os.replace`` moves ``run.lock`` with the directory; the flock stays
-on the same inode, so the hold remains valid across the rename. ``run_ids()``
-skips names ending in ``.reaping`` because a tombstone still contains
-``state.json``.
+`state.json` is written only by a `Session` that loaded it under the run's
+resource. The resource has no `WORKBENCH_RUN_LOCK` marker: a child neither
+inherits it nor passes through it. Lock order is `Global("batch")`, then the
+run resource, then item TARGETs, then CHECKOUT. Every take is non-blocking, so
+the order cannot deadlock. One exception: `pr gc`'s dispatcher takes its own
+TARGET before `reap` takes run resources.
+
+`reap` renames the run directory to the tombstone while still holding the
+flock. `os.replace` moves `run.lock` with the directory; the flock stays on
+the same inode, so the hold remains valid across the rename. `run_ids()`
+skips names ending in `.reaping` because a tombstone still contains
+`state.json`.
 
 Hand-off. A request can land after a holder's last drain and before it
 releases. The submitter's take is refused, so it reports ``queued``. To
@@ -6639,8 +6643,8 @@ This module is the one place they are taken for a command:
 | Command / mode | Holds |
 |---|---|
 | `batch run`, `batch resume` | global `batch`; the handler then holds every item's target until the run settles |
-| `batch resolve` | its run's own lock, in the handler — never the global, so it reaches a live run |
-| `batch cancel`, `status`, `next`, `plan` | nothing |
+| `batch resolve`, `batch cancel` | nothing declared; the handler writes the run's inbox and takes the run resource as `applier` when it can — never the global, so it reaches a live run |
+| `batch status`, `next`, `plan` | nothing |
 | `rebase`, `push`, `describe`, `fix` | target + checkout |
 | `comments` | target + checkout; `--reply` / `--settle` the target only |
 | `create` | target + checkout; `--dry-run` nothing |
@@ -6734,13 +6738,13 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
     pr batch run    --checkout DIR … [opts]    start a run; NDJSON events on stdout
     pr batch resume [RUN_ID]                   continue a waiting or interrupted run
     pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
-    pr batch cancel [RUN_ID] [--kill]
+    pr batch cancel [RUN_ID] [--kill]          stop the run; a recorded cancel is final
     pr batch status [RUN_ID] [--full | --decision ID]   the run report (JSON)
     pr batch next   [RUN_ID]                   only what needs action (JSON)
 
 Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish; --no-verify skips the pre-push hook on those publishes.
 
-Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed.
+Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed. resume never clears a recorded cancel. resolve and cancel write the run's inbox; a live holder that drains applies a queued request.
 
 ### cli/pr_commands.py
 

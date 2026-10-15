@@ -119,9 +119,9 @@ _BATCH_EXCLUSIVE = frozenset({"run", "resume"})
 def _batch_need(argv: Sequence[str]) -> Need:
     """`batch`'s need: `run` and `resume` hold the machine-wide batch lock; the rest take nothing.
 
-    `resolve` takes its run's own lock in the handler, never the global, so it
-    can answer a decision while a run is live; `cancel` must reach a live run;
-    `status`, `next` and `plan` only read.
+    `resolve` and `cancel` declare nothing: they write the inbox and take the
+    run resource as `applier` only when no holder is draining, never the
+    global, so they reach a live run. `status`, `next` and `plan` only read.
     """
     sub = next((a for a in argv if not a.startswith("-")), "")
     locks = frozenset({batch.store.BATCH_LOCK}) if sub in _BATCH_EXCLUSIVE else NO_LOCK

@@ -244,9 +244,23 @@ Three scopes, three paths — target and global locks are rooted at `WORKBENCH_S
 
 None of these is a file in the working tree, so there is no `.gitignore` entry to maintain.
 
-A `pr batch run` or `pr batch resume` refused with `owns this global batch` met another batch that is still live. Only one batch runs on a machine at a time: the lock is `~/.local/state/workbench/locks/batch.lock`, taken before the run looks for an active run and held until it settles, so two sessions starting a batch together cannot both get past planning. Once the live run has an id the message names it (`run <id>`); `pr batch status RUN_ID` shows it and `pr batch cancel RUN_ID` stops it.
+A batch run's `run.lock` is a `core.run_lock.Resource`, not a target. It lives at `~/.local/state/workbench/batch/<run-id>/run.lock`, is taken only by `batch.store` (`session` / `create` / `reap`), and carries no `WORKBENCH_RUN_LOCK` marker — a child neither inherits it nor passes through it. A refusal is not `owns this target`; it is:
+
+```
+run 20261014T000000-abcd is busy: applying a decision (pr batch resolve, pid 4242, started 2026-10-14T12:00:00+00:00)
+```
+
+The clause after `busy:` is the holder's role: `driving it` (`pr batch run` / `resume`), `applying a decision` (`resolve`, `cancel`, or a hand-off), `removing it` (`pr gc`), or `holding it` (a record written before roles existed). Wait for that process, or stop it with the printed pid.
+
+A `pr batch run` or `pr batch resume` refused with `owns this global batch` met another batch that is still live. Only one batch runs on a machine at a time: the lock is `~/.local/state/workbench/locks/batch.lock`, taken for the life of `run`/`resume` and held until it settles, so two sessions starting a batch together cannot both get past planning. Once the live run has an id the message names it (`run <id>`); `pr batch status RUN_ID` shows it and `pr batch cancel RUN_ID` stops it.
 
 While a batch run or resume is live it also holds every item's target, so `pr fix`, `pr rebase`, or any other locking `pr` command on one of its PRs is refused, naming `pr batch run|resume RUN_ID` as the holder. The batch's own steps get through because each child is handed only its own item's target in `WORKBENCH_RUN_LOCK`. A batch that would start while one of its PRs is already being worked on is refused whole, naming that PR; leave it out with `pr batch run --prs`, or wait for the holder.
+
+`pr batch resolve` and `pr batch cancel` declare no run lock. They write the run's inbox and then try to take the resource as `applier`. A live holder that drains (`driver`, `applier`, or a role-less record) makes them return `queued: true` and exit 0: that holder, or the hand-off after it releases, applies the request. Do not retry a queued cancel; a second cancel is redundant, and a recorded cancel is final.
+
+`pr batch status` and `pr batch next` never take the run's resource. A non-zero `run.pending_requests` means the inbox still has files — the last holder died before its hand-off, or a vacated/GC retry exhausted. Clear it with `pr batch resume RUN_ID` (entry drain) or `pr batch resolve RUN_ID …` (another applier drain). `run.failed_requests` is `[{name, error}]` from `requests/rejected/`; those files are not retried.
+
+This machine can run `pr` from more than one workbench worktree, so old and new batch code can meet on one run. An old `cancel` against a new driver still writes the `cancel` sidecar, which is folded only at the next session entry. An old `resume` of a run the new code has touched drops `run.cancel` when it saves. Both are two versions of the protocol at once; they are not mitigated. Use one `pr` binary on a given run. The mitigation, a minimum-protocol field checked at session entry, is added once a cross-version batch run is ever reported.
 
 ## A tree is declared under validation
 

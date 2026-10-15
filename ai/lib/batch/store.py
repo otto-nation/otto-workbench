@@ -3,17 +3,24 @@
     <state_dir>/batch/<run-id>/state.json       authoritative run state
     <state_dir>/batch/<run-id>/run.lock         the run's resource lock (holder record carries role)
     <state_dir>/locks/batch.lock                held by whichever `pr batch run`/`resume` is live
-    <state_dir>/batch/<run-id>/requests/*.json  decisions waiting to be applied
+    <state_dir>/batch/<run-id>/requests/*.json  the inbox: decisions and cancels waiting to be applied
+    <state_dir>/batch/<run-id>/requests/rejected/<name>  a request that failed to apply (<name> ends in .json)
     <state_dir>/batch/<run-id>.reaping          tombstone during reap; run_ids() ignores it
-    <state_dir>/batch/<run-id>/cancel           {"kill": bool} once cancel is asked
     <state_dir>/batch/<run-id>/logs/<slug>-<pr>-<step>-<n>.log     stderr of each step attempt
     <state_dir>/batch/<run-id>/logs/<slug>-<pr>-publish-<n>.log    output of each publish attempt
 
-``reap`` renames the run directory to the tombstone while still holding the
-flock. ``os.replace`` moves ``run.lock`` with the directory; the flock stays
-on the same inode, so the hold remains valid across the rename. ``run_ids()``
-skips names ending in ``.reaping`` because a tombstone still contains
-``state.json``.
+`state.json` is written only by a `Session` that loaded it under the run's
+resource. The resource has no `WORKBENCH_RUN_LOCK` marker: a child neither
+inherits it nor passes through it. Lock order is `Global("batch")`, then the
+run resource, then item TARGETs, then CHECKOUT. Every take is non-blocking, so
+the order cannot deadlock. One exception: `pr gc`'s dispatcher takes its own
+TARGET before `reap` takes run resources.
+
+`reap` renames the run directory to the tombstone while still holding the
+flock. `os.replace` moves `run.lock` with the directory; the flock stays on
+the same inode, so the hold remains valid across the rename. `run_ids()`
+skips names ending in `.reaping` because a tombstone still contains
+`state.json`.
 
 Hand-off. A request can land after a holder's last drain and before it
 releases. The submitter's take is refused, so it reports ``queued``. To

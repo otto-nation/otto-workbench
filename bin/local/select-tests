@@ -306,10 +306,9 @@ _test_matches_changes() {
   local pattern
   while IFS= read -r pattern; do
     [[ "$pattern" == none ]] && continue
-    for changed in "${changed_files[@]}"; do
-      # shellcheck disable=SC2053  # the pattern is a glob on purpose
-      [[ "$changed" == $pattern ]] && return 0
-    done
+    if _pattern_matches_any "$pattern" "${changed_files[@]}"; then
+      return 0
+    fi
   done < <(_declared_patterns "$test_file")
   return 1
 }
@@ -427,7 +426,9 @@ _pattern_matches_any() {
   local pattern="$1" path; shift
   for path in "$@"; do
     # shellcheck disable=SC2053  # the pattern is a glob on purpose
-    [[ "$path" == $pattern ]] && return 0
+    if [[ "$path" == $pattern ]]; then
+      return 0
+    fi
   done
   return 1
 }

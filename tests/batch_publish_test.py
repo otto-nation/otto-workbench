@@ -222,7 +222,7 @@ def test_a_publish_retry_leases_on_the_branch_the_operator_pushed(tmp_path):
     commit_all(pair.work, "fix: x")
     git_in(pair.work, "push", "-q", "origin", "feat")
     item = run.items[0]
-    batch.resolve.apply(run, batch.resolve.Request("d1", "retry"), pr_bin="pr")
+    batch.resolve.apply(run, batch.requests.Decide("d1", "retry"), pr_bin="pr")
     assert item.remote_sha == remote_tip(pair.origin, "feat")
     assert item.published_sha == ""
     assert item.status is batch.model.ItemStatus.QUEUED
@@ -235,7 +235,7 @@ def test_a_publish_retry_keeps_the_lease_when_somebody_else_pushed(tmp_path):
     item = run.items[0]
     planned = item.remote_sha
     advance(pair.seed, "feat", "colleague")
-    batch.resolve.apply(run, batch.resolve.Request("d1", "retry"), pr_bin="pr")
+    batch.resolve.apply(run, batch.requests.Decide("d1", "retry"), pr_bin="pr")
     assert item.remote_sha == planned
     assert batch.publish.plan(item, "pr", batch.publish.read_tree(item)).refusal is \
         Refusal.REMOTE_MOVED

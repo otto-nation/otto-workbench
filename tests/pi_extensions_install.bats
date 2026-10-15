@@ -4,6 +4,7 @@
 # The subject is filesystem reconciliation, so this mirrors skills_install.bats
 # rather than pi_settings.bats: a fake workbench tree, the real libraries
 # sourced against it, and assertions about what survives a prune.
+# select-on: ai/pi/extensions/*
 setup() {
   load 'test_helper'
   common_setup

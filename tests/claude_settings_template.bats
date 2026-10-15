@@ -8,6 +8,7 @@
 # Grants for this repo's own scripts are neither: they live in the tracked
 # .claude/settings.json, which applies to this repo alone and travels with every
 # worktree. Those are asserted against that file.
+# select-on: *registry.yml *.env.yml .claude/*
 setup_file() {
   load 'test_helper'
   load 'claude_settings_helper'

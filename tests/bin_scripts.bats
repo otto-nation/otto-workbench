@@ -2,6 +2,7 @@
 # Tests for bin script conventions.
 # Dynamically discovers all bash scripts in */bin/ directories and validates
 # that they adhere to basic requirements: shebang, set -e, help flags.
+# select-on: bin/* */bin/*
 
 bats_require_minimum_version 1.5.0
 

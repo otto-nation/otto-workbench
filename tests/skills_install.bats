@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
 # Tests for step_skills — the cross-harness skill installer.
+# select-on: ai/skills/* ai/claude/agents/*
 bats_require_minimum_version 1.5.0
 
 setup() {

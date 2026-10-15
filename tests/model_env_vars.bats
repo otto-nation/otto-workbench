@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
 # Tests for collect_model_env_vars — the env vars the registries declare as
 # carrying model ids, which both harness syncs build their model config from.
+# select-on: *registry.yml *.env.yml
 
 setup() {
   load 'test_helper'

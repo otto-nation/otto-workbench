@@ -272,7 +272,7 @@ tools:
   - name: validate-test-deps
     permission: false
     visibility: brief
-    description: "Validates that every bats test has resolvable source refs or is in the always-run list"
+    description: "Validates that every bats test has resolvable source refs or a select-on declaration"
 
   - name: validate-pytest-deps
     permission: false

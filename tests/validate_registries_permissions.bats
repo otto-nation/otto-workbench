@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
 # Tests for validate-registries — the permission field.
+# select-on: bin/local/validate-registries
 setup_file() {
   load 'test_helper'
   export BATS_NO_PARALLELIZE_WITHIN_FILE=true

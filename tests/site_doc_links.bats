@@ -2,6 +2,7 @@
 # site/mdx/remark-doc-links.mjs rewrites two link shapes: a sibling *.md (which
 # becomes a route) and a single-level ../ path (which becomes a GitHub URL).
 # Any other relative form is passed through and 404s once published.
+# select-on: docs/*.md
 
 setup() {
   load 'test_helper'

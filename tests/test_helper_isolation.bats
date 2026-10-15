@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
 # The git sandbox proves itself: a repo a test creates reads none of the
 # machine's git configuration, and a hook the test itself plants still runs.
+# select-on: none
 
 bats_require_minimum_version 1.5.0
 

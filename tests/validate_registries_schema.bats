@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
 # Tests for validate-registries — schema, cross-file, reverse-bindir and work-registry validation.
+# select-on: bin/local/validate-registries
 setup_file() {
   load 'test_helper'
   export BATS_NO_PARALLELIZE_WITHIN_FILE=true

@@ -317,8 +317,8 @@ _scratch_repo() {
 #
 # A suite that hands the repo root to a collect_* scanner asserts over every
 # registry or env file the scan finds, none of which it names as a path
-# literal — so a change to one of them selects nothing unless the suite is
-# always run. --validate refuses that shape outside ALWAYS_RUN_TESTS.
+# literal — so a change to one of them selects nothing unless the suite
+# declares what it scans. --validate refuses that shape without a declaration.
 
 # _fake_suite NAME BODY — a one-file tests dir holding NAME.bats, with a path
 # literal so the zero-refs check is not what answers.
@@ -333,46 +333,140 @@ _fake_suite() {
   printf 'source "$REPO_ROOT/lib/registries.sh"\n%s\n' "$2" > "$TESTS_DIR/$1.bats"
 }
 
-@test "validate: a suite scanning the real tree must be always run" {
+@test "validate: a suite scanning the real tree must declare what it scans" {
   _fake_suite real_scan "  $_COLLECT perms \"\$repo_root\""
-  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
-  ALWAYS_RUN_TESTS=()
-  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
-  NO_REFS_TESTS=()
   run _validate_test_refs
   [ "$status" -eq 1 ]
   [[ "$output" == *"real_scan"* ]]
-  [[ "$output" == *"ALWAYS_RUN_TESTS"* ]]
+  [[ "$output" == *"select-on"* ]]
 }
 
-@test "validate: the same suite passes once it is always run" {
-  _fake_suite real_scan "  $_COLLECT perms \"\$REPO_ROOT\""
-  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
-  ALWAYS_RUN_TESTS=(real_scan)
-  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
-  NO_REFS_TESTS=()
+@test "validate: the same suite passes once it declares a select-on pattern" {
+  _fake_suite real_scan "# select-on: *registry.yml
+  $_COLLECT perms \"\$REPO_ROOT\""
   run _validate_test_refs
   [ "$status" -eq 0 ]
 }
 
+@test "validate: select-on none does not excuse a real-tree scan" {
+  _fake_suite real_scan "# select-on: none
+  $_COLLECT perms \"\$REPO_ROOT\""
+  run _validate_test_refs
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"real_scan"* ]]
+}
+
 @test "validate: a collector fed a fixture directory is not a real-tree scan" {
   _fake_suite fixture_scan "  $_COLLECT perms \"\$TMPDIR\""
-  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
-  ALWAYS_RUN_TESTS=()
-  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
-  NO_REFS_TESTS=()
   run _validate_test_refs
   [ "$status" -eq 0 ]
 }
 
 @test "validate: a commented-out real-tree scan is not counted" {
   _fake_suite commented "  # $_COLLECT perms \"\$REPO_ROOT\""
-  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
-  ALWAYS_RUN_TESTS=()
-  # shellcheck disable=SC2034  # read by _validate_test_refs in the sourced select-tests
-  NO_REFS_TESTS=()
   run _validate_test_refs
   [ "$status" -eq 0 ]
+}
+
+@test "validate: a suite with neither refs nor a declaration is unmapped" {
+  TESTS_DIR="$BATS_TEST_TMPDIR/tests"
+  mkdir -p "$TESTS_DIR"
+  printf '@test "x" { true; }\n' > "$TESTS_DIR/orphan.bats"
+  run _validate_test_refs
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Unmapped test: orphan"* ]]
+}
+
+@test "validate: select-on none maps a self-contained suite" {
+  TESTS_DIR="$BATS_TEST_TMPDIR/tests"
+  mkdir -p "$TESTS_DIR"
+  printf '# select-on: none\n@test "x" { true; }\n' > "$TESTS_DIR/selfcontained.bats"
+  run _validate_test_refs
+  [ "$status" -eq 0 ]
+}
+
+@test "validate: a declared pattern that matches no tracked file is stale" {
+  _fake_suite stale "# select-on: docs/*.md no-such-dir/*.zz"
+  run _validate_test_refs
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no-such-dir/*.zz"* ]]
+  [[ "$output" != *"docs/*.md matches"* ]]
+}
+
+# ── select-on declarations ──────────────────────────────────────────────────
+
+@test "declared_patterns: every pattern on every select-on line, one per line" {
+  local f="$BATS_TEST_TMPDIR/t.bats"
+  printf '#!/usr/bin/env bats\n# select-on: docs/*.md  tests/*.bats\n#select-on: lib/ui.sh\necho "# select-on: not-a-header"\n' > "$f"
+  run _declared_patterns "$f"
+  [ "$status" -eq 0 ]
+  [ "$output" = "docs/*.md
+tests/*.bats
+lib/ui.sh" ]
+}
+
+@test "a declared glob selects the suite when a matching file changes, and only then" {
+  local f="$BATS_TEST_TMPDIR/docs_suite.bats"
+  printf '# select-on: docs/*.md\n@test "x" { true; }\n' > "$f"
+  run _test_matches_changes "$f" "docs/getting-started.md"
+  [ "$status" -eq 0 ]
+  run _test_matches_changes "$f" "lib/ui.sh" "README.md"
+  [ "$status" -ne 0 ]
+}
+
+@test "select-on none selects the suite only when the suite itself changes" {
+  local dir="$BATS_TEST_TMPDIR/tests"
+  mkdir -p "$dir"
+  printf '# select-on: none\n@test "x" { true; }\n' > "$dir/alone.bats"
+  run _test_matches_changes "$dir/alone.bats" "lib/ui.sh"
+  [ "$status" -ne 0 ]
+  run _test_matches_changes "$dir/alone.bats" "tests/alone.bats"
+  [ "$status" -eq 0 ]
+}
+
+# ── extract_refs spellings ──────────────────────────────────────────────────
+
+@test "extract_refs: a quote before the slash is still a ref" {
+  local f="$BATS_TEST_TMPDIR/t.bats"
+  printf 'cat "$REPO_ROOT"/docs/tools.md\n' > "$f"
+  run _extract_refs "$f"
+  [ "$status" -eq 0 ]
+  [ "$output" = "docs/tools.md" ]
+}
+
+@test "extract_refs: a directory closed by its quote reads as the directory" {
+  local f="$BATS_TEST_TMPDIR/t.bats"
+  printf 'cp "$REPO_ROOT/lib/"*.sh "$dir/"\n' > "$f"
+  run _extract_refs "$f"
+  [ "$status" -eq 0 ]
+  [ "$output" = "lib" ]
+}
+
+@test "extract_refs: a file at the repo root is a ref" {
+  local f="$BATS_TEST_TMPDIR/t.bats"
+  printf 'yq . "$REPO_ROOT/Taskfile.yml"\nwhile read -r c; do :; done < "$REPO_ROOT/install.components"\n' > "$f"
+  run _extract_refs "$f"
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 2 ]
+  [[ " ${lines[*]} " == *" Taskfile.yml "* ]]
+  [[ " ${lines[*]} " == *" install.components "* ]]
+}
+
+# ── main: an empty selection ────────────────────────────────────────────────
+
+@test "a diff that reaches no suite prints nothing and succeeds" {
+  TESTS_DIR="$BATS_TEST_TMPDIR/tests"
+  mkdir -p "$TESTS_DIR"
+  printf 'source "$REPO_ROOT/lib/ui.sh"\n' > "$TESTS_DIR/ui_only.bats"
+  _changed_paths() { echo "docs/getting-started.md"; }
+  _expand_changed_files() { printf '%s\n' "$@"; }
+  # To a file, not through `run`: bats strips trailing newlines from $output,
+  # so a stray blank line would read as empty there. A file is what a caller
+  # counting lines (| wc -l) actually sees.
+  local out="$BATS_TEST_TMPDIR/selected" err="$BATS_TEST_TMPDIR/stderr"
+  main --base HEAD > "$out" 2> "$err"
+  [ ! -s "$out" ]
+  grep -q 'selected 0/1' "$err"
 }
 
 @test "validate: the real tests dir passes as a whole (zero-refs and real-tree checks)" {

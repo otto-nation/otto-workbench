@@ -66,3 +66,42 @@ _stub_selectors() {
   run main --changed --base
   [ "$status" -eq 2 ]
 }
+
+# _stub_select_tests BODY — a select-tests whose script is BODY, and a quiet
+# select-pytest, under a stub WORKBENCH_DIR.
+_stub_select_tests() {
+  local dir="$BATS_TEST_TMPDIR/wb"
+  mkdir -p "$dir/bin/local"
+  printf '#!/usr/bin/env bash\n%s\n' "$1" > "$dir/bin/local/select-tests"
+  printf '#!/usr/bin/env bash\necho tests/x_test.py\n' > "$dir/bin/local/select-pytest"
+  chmod +x "$dir/bin/local/select-tests" "$dir/bin/local/select-pytest"
+  # shellcheck disable=SC2034  # read by select_changed in bin/local/run-tests
+  WORKBENCH_DIR="$dir"
+}
+
+@test "a selector that succeeds and selects nothing marks bats as none affected" {
+  _stub_select_tests 'exit 0'
+  select_changed all
+  [ -z "$BATS_FILES" ]
+  [ "$BATS_NONE" = true ]
+}
+
+@test "a selector that fails leaves the whole bats suite selected" {
+  _stub_select_tests 'echo partial; exit 1'
+  select_changed all
+  [ -z "$BATS_FILES" ]
+  [ "$BATS_NONE" = false ]
+}
+
+@test "run_bats with nothing affected says so and runs no bats" {
+  # shellcheck disable=SC2034  # read by run_bats in bin/local/run-tests
+  BATS_NONE=true
+  local bin="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$bin"
+  printf '#!/bin/sh\necho RAN-BATS\n' > "$bin/bats"
+  chmod +x "$bin/bats"
+  PATH="$bin:$PATH" run --separate-stderr run_bats
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"no test file is affected by this diff"* ]]
+  [[ "$output" != *RAN-BATS* ]]
+}

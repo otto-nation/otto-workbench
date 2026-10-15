@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
 # Every doc rendered by the site needs title and description frontmatter —
 # without them the page tree, tab titles, and search index lose their labels.
+# select-on: docs/*.md
 
 setup() {
   load 'test_helper'

@@ -16,6 +16,7 @@
 # and every session silently gets upstream's `git worktree add` into .worktrees/
 # and its three-option completion menu back. Nothing else in the suite would
 # notice.
+# select-on: none
 
 setup() {
   load 'test_helper'

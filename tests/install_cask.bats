@@ -5,6 +5,7 @@
 # Ghostty stands in for both here: the helper takes the tool, the cask, the label
 # and the manual-install URL as arguments and does nothing else with them, so a
 # second set of arguments would exercise the same branches.
+# select-on: lib/ui.sh lib/setup.sh
 bats_require_minimum_version 1.5.0
 
 setup() {

@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# select-on: *registry.yml *.env.yml config.schema.json install.components */setup.conf ai/claude/agents/* ai/skills/*
 
 # A plain generator run costs ~1.7s and nine cases below do nothing but read
 # its output. Run once here; each of those copies the result rather than

@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
 # Tests for frontmatter_field — the one frontmatter reader lib/files.sh publishes.
+# select-on: lib/ui.sh lib/files.sh
 
 setup() {
   load 'test_helper'

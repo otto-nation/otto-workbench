@@ -3,6 +3,7 @@
 # the move off the Homebrew cask. The migration
 # (tests/migration_claude_native_install.bats) covers machines that already have
 # the cask; this covers machines that have nothing.
+# select-on: lib/ui.sh ai/claude/steps.sh
 bats_require_minimum_version 1.5.0
 
 setup() {

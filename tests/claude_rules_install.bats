@@ -2,6 +2,7 @@
 # Tests for step_claude_rules — the half of the rules pipeline that is Claude
 # Code's: which of the merged rules it is scoped to load, and the symlink layout
 # it wants them in.
+# select-on: lib/ui.sh ai/claude/steps.sh
 bats_require_minimum_version 1.5.0
 
 setup() {

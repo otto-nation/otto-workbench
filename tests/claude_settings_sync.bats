@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
 # Tests for step_claude_settings: the jq merge, additionalDirectories, the manifest, the env mirror, script paths, piped test runs.
+# select-on: *registry.yml *.env.yml ai/claude/bin/* ai/bin/* ai/skills/*
 setup_file() {
   load 'test_helper'
   load 'claude_settings_helper'

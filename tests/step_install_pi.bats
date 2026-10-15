@@ -4,6 +4,7 @@
 # nobody had installed. The shared branch logic lives in install_via_installer
 # and is exercised in full by tests/step_install_claude.bats; this covers the
 # wiring — the guard command, the URL, and the label Pi's messages carry.
+# select-on: lib/ui.sh ai/pi/steps.sh
 bats_require_minimum_version 1.5.0
 
 setup() {

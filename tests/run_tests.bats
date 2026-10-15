@@ -6,6 +6,7 @@
 # `cpu_count` is shadowed per test, which is the only way to ask what a given
 # core count would produce — the real one answers for whatever box the suite
 # happens to be running on.
+# select-on: tests/*.bats
 
 # `run --separate-stderr` is a 1.5.0 flag, and bats silently treats flags it
 # does not know as the command to run.

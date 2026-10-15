@@ -135,6 +135,14 @@ Tests live in `tests/`. Each file targets a single library function or script be
   `_fresh_bash` in `tests/claude_settings_helper.bash` and `_pi_sync` in
   `tests/sync_idempotency.bats` are worked examples; exported variables cross, functions
   must be passed in (`declare -f`).
+- A suite is selected by the `$REPO_ROOT/...` paths it names. When what it depends on is not
+  a path it can name — a directory it lists, a registry scan, a path built from `bash -c`'s
+  `$1` — declare it below the header with `# select-on: PATTERN...`: repo-relative globs
+  matched with bash `[[ == ]]`, where `*` also crosses `/` (`# select-on: docs/*.md`,
+  `# select-on: *registry.yml *.env.yml`). `# select-on: none` marks a suite that depends
+  on nothing but itself and the helpers it loads. Nothing runs on every push:
+  `bin/local/validate-test-deps` fails a suite with neither, a real-tree `collect_*` scan
+  with no declaration, and a pattern that matches no tracked file.
 - Name tests in plain English describing the expected behaviour, e.g. `"omits a chunk that would exceed the budget"`.
 
 When adding a new library function, add a corresponding test file `tests/<function_name>.bats`.

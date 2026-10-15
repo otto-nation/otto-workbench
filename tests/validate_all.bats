@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
 # Tests for bin/local/validate-all — the single validator entry point.
+# select-on: bin/validate-* bin/local/validate-*
 
 setup() {
   load 'test_helper'

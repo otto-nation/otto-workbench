@@ -340,66 +340,89 @@ fi
 
 # ── Bats tests ───────────────────────────────────────────────────────────────
 
-# Change-based test selection: only run bats tests affected by the diff.
-# Falls back to the full suite when the selector is unavailable or when
-# tests/test_helper.bash, which every suite loads, changed.
-_bats_selected=""
-_bats_label="tests"
-if [[ -x "$REPO_ROOT/bin/local/select-tests" ]]; then
-  _bats_selected=$("$REPO_ROOT/bin/local/select-tests" --base "$GIT_REMOTE/$_default_branch" 2>/dev/null) || _bats_selected=""
-  if [[ -n "$_bats_selected" ]]; then
-    _bats_file_count=$(echo "$_bats_selected" | wc -l | tr -d ' ')
-    _bats_total=$(find "$REPO_ROOT/tests" -maxdepth 1 -name '*.bats' | wc -l | tr -d ' ')
-    _bats_label="tests ($_bats_file_count/$_bats_total files)"
+# _select_bats — change-based test selection: sets _bats_selected to the bats
+# files the diff reaches and _bats_label to the step's label. Falls back to the
+# full suite (_bats_selected empty) when the selector is unavailable or fails,
+# or when tests/test_helper.bash, which every suite loads, changed. A selector
+# that succeeds and selects nothing sets _bats_none, and the step is skipped
+# with a line saying so rather than silently.
+_select_bats() {
+  _bats_selected=""
+  _bats_label="tests"
+  _bats_none=false
+  [[ -x "$REPO_ROOT/bin/local/select-tests" ]] || return 0
+  if ! _bats_selected=$("$REPO_ROOT/bin/local/select-tests" --base "$GIT_REMOTE/$_default_branch" 2>/dev/null); then
+    _bats_selected=""
+    return 0
   fi
-fi
-
-# One invocation, built from a conditionally-populated array — see the pytest
-# step below for why the two-copy form is worth avoiding.
-_bats_args=(--bats)
-if [[ -n "$_bats_selected" ]]; then
-  _bats_args+=(--files "$_bats_selected")
-fi
-
-_step "Running $_bats_label"
-# End the step line now: run-tests streams its parallelism report and
-# heartbeats on stderr while it runs, and they would otherwise be glued onto
-# this line. The ✓ or ✗ then closes the step on a line of its own.
-echo
-_bats_start=$SECONDS
-# stdout only: stderr carries the heartbeat and the parallelism report, which
-# have to stream or a slow suite still looks stuck. TAP stays on stdout.
-_bats_output=$("$REPO_ROOT/bin/local/run-tests" "${_bats_args[@]}") || {
-  printf "${RED}✗${NC}\n" >&2
-  echo "$_bats_output" | grep -E '^(not ok |# )'
-  err "Tests failed"
-  exit 1
+  if [[ -z "$_bats_selected" ]]; then
+    _bats_none=true
+    return 0
+  fi
+  local count total
+  count=$(echo "$_bats_selected" | wc -l | tr -d ' ')
+  total=$(find "$REPO_ROOT/tests" -maxdepth 1 -name '*.bats' | wc -l | tr -d ' ')
+  _bats_label="tests ($count/$total files)"
 }
-_bats_elapsed=$(( SECONDS - _bats_start ))
 
-# Extract test count from TAP plan line (1..N)
-_test_count=$(echo "$_bats_output" | grep -oE '^1\.\.[0-9]+' | head -1)
-_test_count="${_test_count#1..}"
-_pass "${_test_count:-?} tests, ${_bats_elapsed}s"
+# _run_bats_step — runs the selected bats files (all of them when nothing
+# narrowed the selection), reports the count, and warns about slow tests.
+_run_bats_step() {
+  # One invocation, built from a conditionally-populated array — see the pytest
+  # step below for why the two-copy form is worth avoiding.
+  _bats_args=(--bats)
+  if [[ -n "$_bats_selected" ]]; then
+    _bats_args+=(--files "$_bats_selected")
+  fi
 
-# Warn about slow tests (>2s) — surfaces performance regressions
-_slow_threshold_ms=2000
-_slow_tests=$(echo "$_bats_output" \
-  | grep -E '^ok .+ in [0-9]+ms$' \
-  | while IFS= read -r line; do
-      _ms="${line##* in }"
-      _ms="${_ms%ms}"
-      if [[ "$_ms" -gt "$_slow_threshold_ms" ]]; then
-        # Strip "ok N " prefix (N can be multi-digit) and " in Nms" suffix
-        _name="${line% in *}"
-        _name="${_name#ok }"
-        _name="${_name#* }"
-        printf '  %s (%ss)\n' "$_name" "$(( _ms / 1000 ))"
-      fi
-    done)
-if [[ -n "$_slow_tests" ]]; then
-  warn "Slow tests (>${_slow_threshold_ms}ms):"
-  echo "$_slow_tests"
+  _step "Running $_bats_label"
+  # End the step line now: run-tests streams its parallelism report and
+  # heartbeats on stderr while it runs, and they would otherwise be glued onto
+  # this line. The ✓ or ✗ then closes the step on a line of its own.
+  echo
+  _bats_start=$SECONDS
+  # stdout only: stderr carries the heartbeat and the parallelism report, which
+  # have to stream or a slow suite still looks stuck. TAP stays on stdout.
+  _bats_output=$("$REPO_ROOT/bin/local/run-tests" "${_bats_args[@]}") || {
+    printf "${RED}✗${NC}\n" >&2
+    echo "$_bats_output" | grep -E '^(not ok |# )'
+    err "Tests failed"
+    exit 1
+  }
+  _bats_elapsed=$(( SECONDS - _bats_start ))
+
+  # Extract test count from TAP plan line (1..N)
+  _test_count=$(echo "$_bats_output" | grep -oE '^1\.\.[0-9]+' | head -1)
+  _test_count="${_test_count#1..}"
+  _pass "${_test_count:-?} tests, ${_bats_elapsed}s"
+
+  # Warn about slow tests (>2s) — surfaces performance regressions
+  _slow_threshold_ms=2000
+  _slow_tests=$(echo "$_bats_output" \
+    | grep -E '^ok .+ in [0-9]+ms$' \
+    | while IFS= read -r line; do
+        _ms="${line##* in }"
+        _ms="${_ms%ms}"
+        if [[ "$_ms" -gt "$_slow_threshold_ms" ]]; then
+          # Strip "ok N " prefix (N can be multi-digit) and " in Nms" suffix
+          _name="${line% in *}"
+          _name="${_name#ok }"
+          _name="${_name#* }"
+          printf '  %s (%ss)\n' "$_name" "$(( _ms / 1000 ))"
+        fi
+      done)
+  if [[ -n "$_slow_tests" ]]; then
+    warn "Slow tests (>${_slow_threshold_ms}ms):"
+    echo "$_slow_tests"
+  fi
+}
+
+_select_bats
+if $_bats_none; then
+  _step "Running tests"
+  _pass "none affected by this diff"
+else
+  _run_bats_step
 fi
 
 # ── Pytest ──────────────────────────────────────────────────────────────────

@@ -308,6 +308,10 @@ shard_files() {
 #
 # When SHARD is set (N/M), only the files assigned to that shard are run.
 run_bats() {
+  if $BATS_NONE; then
+    info "bats: no test file is affected by this diff — skipped" >&2
+    return 0
+  fi
   # A test that swaps HOME changes what mise considers its global config, and
   # mise ignores `trusted_config_paths` in a config that is not the global one
   # — after which the file is untrusted, which mise treats as an error. Every
@@ -519,6 +523,8 @@ SHARD=""
 
 # BATS_FILES — when set, run only these bats files (newline-separated paths).
 BATS_FILES=""
+# BATS_NONE — set by --changed when select-tests ran and selected nothing.
+BATS_NONE=false
 
 # PYTEST_FILES — when set, run only these pytest files (newline-separated).
 PYTEST_FILES=""
@@ -533,10 +539,12 @@ CHANGED_BASE=""
 
 # select_changed — fill BATS_FILES and PYTEST_FILES from the selectors.
 #
-# A selector that is missing, fails, or prints nothing leaves its variable
-# empty, which run_bats and run_pytest read as "the whole suite". That is the
-# only safe direction to fail: a selection that silently narrowed to nothing
-# would report a green gate having run no tests.
+# A selector that is missing or fails leaves its variable empty, which run_bats
+# and run_pytest read as "the whole suite". That is the only safe direction to
+# fail: a selection that silently narrowed to nothing would report a green gate
+# having run no tests. select-tests succeeding with no output is the other
+# case — the diff reaches no bats file — and sets BATS_NONE, which run_bats
+# announces rather than passing silently.
 # The base defaults to origin/main (see CHANGED_BASE), and there is no
 # fetch either — unlike the pre-push hook, which passes the ref it has just
 # fetched. That divergence is deliberate and safe in this direction: both
@@ -548,7 +556,11 @@ CHANGED_BASE=""
 select_changed() {
   local selected base="${CHANGED_BASE:-${WORKBENCH_FIX_BASE:-origin/main}}"
   if [[ "$1" != pytest ]] && [[ -x "$WORKBENCH_DIR/bin/local/select-tests" ]]; then
-    selected=$("$WORKBENCH_DIR/bin/local/select-tests" --base "$base" 2>/dev/null) || selected=""
+    if selected=$("$WORKBENCH_DIR/bin/local/select-tests" --base "$base" 2>/dev/null); then
+      [[ -n "$selected" ]] || BATS_NONE=true
+    else
+      selected=""
+    fi
     BATS_FILES="$selected"
   fi
   if [[ "$1" != bats ]] && [[ -x "$WORKBENCH_DIR/bin/local/select-pytest" ]]; then

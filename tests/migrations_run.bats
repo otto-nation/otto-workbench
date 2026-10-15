@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
 # Tests for lib/migrations.sh — execution, ordering, pruning, failure isolation — and the validator against the framework.
+# select-on: */migrations/*.sh
 bats_require_minimum_version 1.5.0
 
 setup() {

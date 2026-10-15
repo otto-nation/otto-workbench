@@ -3,6 +3,7 @@
 # Tests run in both directions:
 #   - registered → filesystem (every entry has a matching directory + setup.conf)
 #   - filesystem → registry  (every directory with setup.conf is registered)
+# select-on: install.components */setup.conf
 
 setup() {
   load 'test_helper'

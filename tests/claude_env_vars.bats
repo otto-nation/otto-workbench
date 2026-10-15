@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
 # Tests for collect_claude_env_vars — the allowlist of env vars that
 # ai/claude/steps.sh mirrors from ~/.env.local into ~/.claude/settings.json.
+# select-on: *registry.yml *.env.yml
 
 # The six cases below assert against the real registry tree, and a scan of it
 # costs ~1.9s — the same 1.9s six times, for one read-only answer that cannot

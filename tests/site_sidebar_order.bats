@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
 # The sidebar order lives in site/lib/source.ts, not a docs/meta.json. That keeps
 # site config out of docs/ but means nothing links the two — this test is the link.
+# select-on: docs/*.md
 
 setup() {
   load 'test_helper'

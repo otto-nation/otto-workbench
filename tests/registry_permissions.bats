@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
 # Tests for collect_registry_permissions — extracts Bash(...) permission
 # patterns from registry permission fields.
+# select-on: *registry.yml *.env.yml
 
 setup_file() {
   load 'test_helper'

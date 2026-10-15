@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
 # Tests for the Claude bash guard: redirects, backgrounding, sleeping, variable expansion, and the guard-rules contract.
+# select-on: *registry.yml *.env.yml
 setup_file() {
   load 'test_helper'
   load 'claude_settings_helper'

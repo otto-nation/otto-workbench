@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
 # Tests for _export_claude_config(), _profile_excludes_skill(), and workbench-export.
+# select-on: *registry.yml *.env.yml ai/guidelines/rules/* ai/claude/agents/* ai/skills/*
 
 bats_require_minimum_version 1.5.0
 

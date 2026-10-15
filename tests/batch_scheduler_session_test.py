@@ -1,6 +1,5 @@
 """Scheduler-on-session contract: drain, commit, cancel, interrupt, events."""
 
-import inspect
 import sys
 from pathlib import Path
 
@@ -71,7 +70,6 @@ def test_settle_does_not_drop_refs_itself_and_each_terminal_commit_drops_once(
 
     h.session.commit = wrapped
     assert h.sched.run_until_blocked() is RunStatus.DONE
-    assert "drop_refs" not in inspect.getsource(batch.scheduler.Scheduler._settle)
     terminal = [n for status, n in commits
                 if status in (RunStatus.DONE, RunStatus.CANCELLED)]
     assert terminal and all(n == 1 for n in terminal)

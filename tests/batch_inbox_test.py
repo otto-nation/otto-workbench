@@ -13,18 +13,16 @@ if str(LIB_DIR) not in sys.path:
 
 import batch.inbox  # noqa: E402
 import batch.model  # noqa: E402
-import batch.resolve  # noqa: E402
 import batch.store  # noqa: E402
+import core.run_lock  # noqa: E402
 from batch.inbox import ApplyContext, Inbox  # noqa: E402
 from batch.model import (  # noqa: E402
     Decision, DecisionKind, Item, ItemStatus, Run, RunStatus, Step, StepRecord,
-    StepStatus,
 )
+from batch.publish import TreeState  # noqa: E402
 from batch.requests import Cancel, Decide, Envelope, Malformed, Outcome  # noqa: E402
-import core.run_lock  # noqa: E402
 from batch.store import Role  # noqa: E402
 from batch_session_support import holding, open_session, seed  # noqa: E402
-from batch.publish import TreeState  # noqa: E402
 from pr.comments_fix import CloseoutDebt  # noqa: E402
 from rebase.types import RefDivergence  # noqa: E402
 

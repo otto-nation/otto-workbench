@@ -15,8 +15,11 @@ import batch.outcomes  # noqa: E402
 import batch.store  # noqa: E402
 from batch.requests import Decide  # noqa: E402
 from batch.model import STEP_ORDER, DecisionKind, ItemStatus, RunStatus, Step  # noqa: E402
-# `_close_open_sessions`, `_quiet_outcomes` are autouse fixtures; imported only so pytest registers them.
-from batch_scheduler_support import ALL, NEED, NO, Harness, _close_open_sessions, _quiet_outcomes, row  # noqa: F401
+# `_close_open_sessions` and `_quiet_outcomes` are autouse fixtures, imported only so
+# pytest registers them.
+from batch_scheduler_support import (  # noqa: F401
+    ALL, NEED, NO, Harness, _close_open_sessions, _quiet_outcomes, row,
+)
 
 ONLY_REVIEW = {Step.REBASE: NO, Step.COMMENTS: NO, Step.REVIEW: NEED}
 REBASE_AND_REVIEW = {Step.REBASE: NEED, Step.COMMENTS: NO, Step.REVIEW: NEED}

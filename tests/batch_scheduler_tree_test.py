@@ -19,7 +19,9 @@ from batch.model import DecisionKind, RunStatus, Step, StepStatus  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
 from conftest import commit_all, git_in, init_repo  # noqa: E402
 
-from batch_scheduler_support import ALL, NEED, NO, Harness, _close_open_sessions, _quiet_outcomes, row, step_name  # noqa: F401
+from batch_scheduler_support import (  # noqa: F401
+    ALL, NEED, NO, Harness, _close_open_sessions, _quiet_outcomes, row, step_name,
+)
 
 ONLY_REVIEW = {Step.REBASE: NO, Step.COMMENTS: NO, Step.REVIEW: NEED}
 ONLY_REBASE = {Step.REBASE: NEED, Step.COMMENTS: NO, Step.REVIEW: NO}

@@ -3680,19 +3680,19 @@ skips names ending in `.reaping` because a tombstone still contains
 `state.json`.
 
 Hand-off. A request can land after a holder's last drain and before it
-releases. The submitter's take is refused, so it reports ``queued``. To
-close that window, ``session()`` and ``create()`` check the inbox once the
+releases. The submitter's take is refused, so it reports `queued`. To
+close that window, `session()` and `create()` check the inbox once the
 lock is released, after a normal exit only. While requests wait, they open
 the run again as an APPLIER whose own entry drain and finish apply them.
 
 - A live holder that drains ends the loop. It held the lock when the request
   was written, so its own post-release check sees the request.
-- A GC holder is retried along ``core.run_lock.retry_delays``. A vacated
+- A GC holder is retried along `core.run_lock.retry_delays`. A vacated
   record that already exhausted that budget inside the take is not: the
   hand-off warns at once. Once the outer delays are spent, the run and its
   pending count are named on stderr.
 
-A submitter reports ``queued`` only when a live drainer refused it. So a
+A submitter reports `queued` only when a live drainer refused it. So a
 request reported queued is applied by that holder or a successor, unless the
 holder dies. A dead holder leaves the request in the inbox for the next
 session's entry drain. Each pass applies or rejects every request it saw, so

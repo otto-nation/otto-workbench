@@ -302,6 +302,15 @@ def test_restore_generated_dirt_puts_back_an_unstaged_generated_file(tmp_path):
     assert batch.steps.restore_generated_dirt(str(repo)) == []
 
 
+def test_restore_generated_dirt_puts_back_a_generated_file_whose_name_has_a_space(tmp_path):
+    repo = init_repo(tmp_path / "r")
+    rel = "lib-proto/gen/ts/agent orc_pb.ts"
+    _tracked(repo, rel, GEN_HEADER + "v1\n")
+    (repo / rel).write_text(GEN_HEADER + "v2\n")
+    assert batch.steps.restore_generated_dirt(str(repo)) == [rel]
+    assert (repo / rel).read_text() == GEN_HEADER + "v1\n"
+
+
 def test_restore_generated_dirt_leaves_linguist_generated_unstaged_edits(tmp_path):
     repo = init_repo(tmp_path / "r")
     (repo / ".gitattributes").write_text("*.ts linguist-generated=true\n")

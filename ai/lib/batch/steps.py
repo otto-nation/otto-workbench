@@ -72,30 +72,62 @@ class WorktreeResult:
         return not self.error
 
 
+def _porcelain_z_entries(stdout: str) -> list[tuple[str, str]] | None:
+    """Parse ``git status --porcelain -z`` into ``(xy, path)`` pairs.
+
+    Rename and copy entries carry a second path field after the first NUL.
+    Those still mean dirty — the pair is returned with ``xy`` containing
+    ``R`` or ``C`` so the caller can refuse, rather than dropping the entry.
+    Unparseable output is None (fail closed).
+    """
+    entries: list[tuple[str, str]] = []
+    parts = stdout.split("\0")
+    i = 0
+    while i < len(parts):
+        entry = parts[i]
+        i += 1
+        if not entry:
+            continue
+        if len(entry) < 3 or entry[2] != " ":
+            return None
+        xy, path = entry[:2], entry[3:]
+        if "R" in xy or "C" in xy:
+            if i >= len(parts):
+                return None
+            i += 1
+        entries.append((xy, path))
+    return entries
+
+
 def restore_generated_dirt(cwd: str) -> list[str] | None:
     """Restore generated-only unstaged modifications in *cwd*.
 
     Returns the restored paths (empty if the tree was already clean), or None
     when the tree is dirty in any other way — untracked files, staged changes,
-    a non-generated path, a mix — including a ``status`` git could not read,
-    which is treated as dirty for the same reason as ``git.client.is_dirty``.
-    Only unstaged modifications of tracked generated files (porcelain `` M``)
-    are restored, via ``git restore``.
+    a non-generated path, a mix, a rename or copy — including a ``status`` git
+    could not read, which is treated as dirty for the same reason as
+    ``git.client.is_dirty``. Only unstaged modifications of tracked generated
+    files (porcelain `` M``) are restored, via ``git restore``.
+
+    Status is read with ``-z`` so a path that git would otherwise quote
+    (spaces, non-ASCII) is the real path, not a quoted string that fails the
+    generated check and is never restored.
     """
     try:
-        status = git.client.run("status", "--porcelain", cwd=cwd)
+        status = git.client.run("status", "--porcelain", "-z", cwd=cwd)
     except FileNotFoundError:
         return None
     if not status.ok:
         return None
-    lines = [line for line in status.stdout.splitlines() if line.strip()]
-    if not lines:
+    parsed = _porcelain_z_entries(status.stdout)
+    if parsed is None:
+        return None
+    if not parsed:
         return []
     paths = []
-    for line in lines:
-        if not line.startswith(" M "):
+    for xy, path in parsed:
+        if xy != " M":
             return None
-        path = line[3:]
         if rebase.conflicts.is_generated_file(path, Path(cwd) / path, cwd) is None:
             return None
         paths.append(path)

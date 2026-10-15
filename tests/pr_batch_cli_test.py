@@ -442,9 +442,11 @@ def test_no_verify_reaches_the_run(monkeypatch):
     seen = {}
     monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", rows))
 
+    settle = stops_at(batch.model.RunStatus.DONE)
+
     def fake_run(self):
         seen["no_verify"] = self.run.no_verify
-        return batch.model.RunStatus.DONE
+        return settle(self)
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
     assert _main(["batch", "run", "--checkout", "/r", "--no-verify"]) == 0

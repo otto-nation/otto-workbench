@@ -50,7 +50,7 @@ def test_state_file_saved_before_explicit_existed_still_loads():
 
 def test_state_file_saved_before_no_verify_existed_still_loads():
     run = _run()
-    batch.store.save(run)
+    seed(run)
     path = batch.store.run_dir(RID) / "state.json"
     data = json.loads(path.read_text())
     del data["no_verify"]

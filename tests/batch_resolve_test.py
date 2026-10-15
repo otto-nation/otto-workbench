@@ -561,6 +561,6 @@ def test_a_no_verify_run_appends_the_flag_to_the_publish_push():
 
     tree = lambda it: TreeState(local="new", remote="s",
                                 divergence=RefDivergence(ahead=1, behind=0, comparable=True))
-    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr",
+    batch.resolve.apply(run, batch.requests.Decide("d1", "publish"), pr_bin="pr",
                         runner=runner, tree=tree, closeout=lambda d, b: CloseoutDebt())
     assert seen == [["pr", "push", "--expect", "s", "--no-verify", "--repo-dir", "/wt"]]

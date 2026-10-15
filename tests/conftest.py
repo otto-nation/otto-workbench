@@ -349,6 +349,11 @@ def _empty_pi_catalogue(monkeypatch):
     monkeypatch.setattr(agent.pi_binary, "resolve", lambda _cwd: stub)
     monkeypatch.setattr(agent.pi_models, "catalogue_for", lambda _cwd: "")
     monkeypatch.setattr(agent.pi_models, "catalogue_text", lambda _pi: "")
+    # Clear the real function's cache on both sides, so a failing test cannot
+    # leave a listing behind for the next one.
+    _REAL_CATALOGUE_TEXT.cache_clear()
+    yield
+    _REAL_CATALOGUE_TEXT.cache_clear()
 
 
 @pytest.fixture(autouse=True)

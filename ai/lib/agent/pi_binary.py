@@ -117,7 +117,10 @@ def version_key(raw: str, origin: str) -> tuple:
         raise PiUnresolvable(f"cannot read a pi version from {origin}: {raw.strip()!r}")
     major, minor, patch = (int(part or 0) for part in match.group(1, 2, 3))
     pre = match.group(4)
-    return (major, minor, patch, 0 if pre else 1, pre or "")
+    # Numeric prerelease identifiers compare as numbers (rc.9 < rc.10) and sort
+    # below alphanumeric ones, as semver orders them.
+    ident = tuple((0, int(i), "") if i.isdigit() else (1, 0, i) for i in (pre or "").split("."))
+    return (major, minor, patch, 0 if pre else 1, ident)
 
 
 def managed_root() -> Path:
@@ -149,7 +152,7 @@ def _managed() -> _Managed | None:
     try:
         version = version_file.read_text().strip()
     except OSError as exc:
-        raise PiUnresolvable(f"cannot read the managed pi version from {version_file}: {exc}")
+        raise PiUnresolvable(f"cannot read the managed pi version from {version_file}: {exc}") from exc
     version_key(version, str(version_file))
     launcher = root.parent / "bin" / "pi"
     release = root / "releases" / version / "node_modules" / ".bin" / "pi"
@@ -168,7 +171,7 @@ def _mise_current(cwd: str) -> dict:
             ["mise", "ls", "--current", "--json"], cwd=cwd, timeout=core.timeouts.LOCAL,
         )
     except OSError as exc:
-        raise PiUnresolvable(f"cannot run mise to read the repo's pi pin: {exc}")
+        raise PiUnresolvable(f"cannot run mise to read the repo's pi pin: {exc}") from exc
     if not result.ok:
         raise PiUnresolvable(core.proc.failure_message(
             f"mise could not report the tools pinned in {cwd}", result,
@@ -176,7 +179,7 @@ def _mise_current(cwd: str) -> dict:
     try:
         data = json.loads(result.stdout or "{}")
     except json.JSONDecodeError as exc:
-        raise PiUnresolvable(f"mise ls --current --json in {cwd} printed unreadable JSON: {exc}")
+        raise PiUnresolvable(f"mise ls --current --json in {cwd} printed unreadable JSON: {exc}") from exc
     if not isinstance(data, dict):
         raise PiUnresolvable(f"mise ls --current --json in {cwd} printed {type(data).__name__}, not a map")
     return data
@@ -232,7 +235,10 @@ def _pin_binary(pin: _Pin, cwd: str) -> str:
             f"the repo pins pi {pin.version} ({pin.source}) but it is not installed — "
             f"run `mise install` in {cwd}"
         )
-    result = core.proc.run(["mise", "which", "pi"], cwd=cwd, timeout=core.timeouts.LOCAL)
+    try:
+        result = core.proc.run(["mise", "which", "pi"], cwd=cwd, timeout=core.timeouts.LOCAL)
+    except OSError as exc:
+        raise PiUnresolvable(f"cannot run mise to find the pinned pi binary: {exc}") from exc
     path = result.stdout.strip() if result.ok else ""
     if not path or not pin.install_path or not _inside(path, Path(pin.install_path)):
         raise PiUnresolvable(
@@ -252,7 +258,7 @@ def _path_binary(note: str, root: Path) -> PiBinary:
     try:
         result = core.proc.run([path, "--version"], timeout=core.timeouts.LOCAL)
     except OSError as exc:
-        raise PiUnresolvable(f"cannot run {path} --version: {exc}")
+        raise PiUnresolvable(f"cannot run {path} --version: {exc}") from exc
     lines = [line for line in result.stdout.splitlines() if line.strip()]
     if not result.ok or not lines:
         raise PiUnresolvable(core.proc.failure_message(f"{path} --version gave no version", result))

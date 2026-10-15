@@ -209,6 +209,27 @@ class TestUnreadable:
             _resolve(machine)
 
 
+class TestVersionKey:
+    def test_numeric_prerelease_identifiers_compare_numerically(self):
+        key = agent.pi_binary.version_key
+        assert key("1.0.0-rc.9", "t") < key("1.0.0-rc.10", "t") < key("1.0.0", "t")
+
+
+class TestMiseWhichFails:
+    def test_an_oserror_from_mise_which_is_unresolvable(self, machine, monkeypatch):
+        machine.pin("0.87.1")
+        real = agent.pi_binary.core.proc.run
+
+        def run(cmd, *a, **k):
+            if cmd[:2] == ["mise", "which"]:
+                raise OSError("gone")
+            return real(cmd, *a, **k)
+
+        monkeypatch.setattr(agent.pi_binary.core.proc, "run", run)
+        with pytest.raises(PiUnresolvable, match="cannot run mise"):
+            _resolve(machine)
+
+
 class TestOncePerDirectory:
     def test_a_second_call_reuses_the_choice(self, machine):
         machine.managed("1.2.0")

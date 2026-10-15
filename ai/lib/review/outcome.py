@@ -184,7 +184,7 @@ def _build_mechanical_fallback(
         include_verdict=states_verdict(job.mode),
         verdict=verdict,
         file_count=job.pr.changed_files,
-        groups_reported=None if failed == 0 else reported,
+        groups_reported=0 if nothing_ran else (None if failed == 0 else reported),
     )
     if pipeline_state:
         body = set_failures_section(body, pipeline_state)

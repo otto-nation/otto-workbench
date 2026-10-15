@@ -50,6 +50,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import time
@@ -76,8 +77,8 @@ from agent.backend_events import (
 from agent.backend_pi_rpc import (
     _PROMPT_UNDELIVERED,
     _PROMPT_UNDELIVERED_BECAUSE,
-    _STDERR_LINE_MAX_CHARS,
     _RPC_ERROR_EXIT_CODE,
+    _STDERR_LINE_MAX_CHARS,
     _get_stats_after_agent_end,
     _rpc_process,
     _rpc_response_error,
@@ -629,6 +630,8 @@ def _undelivered_prompt(
     """
     stderr = _exited_stderr(proc)
     first_line = next((line.strip() for line in stderr.splitlines() if line.strip()), "")
+    # Quoted into a markdown table cell: ANSI codes and `|` would break the row.
+    first_line = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", first_line).replace("|", "\\|")
     error = (
         not_served_message(model, stderr, provider, pi=pi)
         or (f"{_PROMPT_UNDELIVERED_BECAUSE}{first_line[:_STDERR_LINE_MAX_CHARS]}"

@@ -137,7 +137,7 @@ def test_main_refuses_contradictory_flags(cr, reviews_dir, monkeypatch, argv, re
     assert cr.main(argv) == 1, reason
 
 
-# ── the exit status ─────────────────────────────────────────────────────────────────
+# ── the exit status ──────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize("status,expected", [

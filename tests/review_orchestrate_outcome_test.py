@@ -256,6 +256,8 @@ class TestBuildMechanicalFallback:
 
         assert NO_RUN_VERDICT.strip() in result.body
         assert "Approve" not in result.body
+        assert "No findings" not in result.body
+        assert "No group reported" in result.body
 
 
 # ── 33. _write_clean_review ─────────────────────────────────────────────────

@@ -175,6 +175,21 @@ class TestTriageThrashGuard:
         assert trail.failure.call_args.kwargs["output"] == "sorry, I cannot do that"
         assert "output_preview" not in trail.failure.call_args.kwargs.get("data", {})
 
+    def test_a_failed_prompt_records_the_backend_s_reason(self, tmp_path):
+        """A provider error used to reach the trail as an exit code and nothing else."""
+        trail = MagicMock()
+        report = PRReport(threads=[ReportThread(id="t1", reviewer="kgn")])
+        reason = "429 RESOURCE_EXHAUSTED: quota exceeded"
+
+        with (
+            patch.object(agent.backend, "prompt", return_value=(reason, 1)),
+            patch.object(pr.thread_context, "branch_commit_log", return_value=""),
+        ):
+            result, rc = pr.triage.run_triage(report, tmp_path, {}, trail)
+
+        assert (result, rc) == (None, 1)
+        assert trail.error.call_args.kwargs["data"]["error"] == reason
+
 
 # ── permalink-backed claims ─────────────────────────────────────────────────
 

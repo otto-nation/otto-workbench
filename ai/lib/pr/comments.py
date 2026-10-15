@@ -50,8 +50,9 @@ closes out what `--fix` held back: replies on threads whose commit had not yet
 been pushed, a tracking issue for the threads named by `--track`, and the
 summary comment. See `review.closeout` and `review.deferred_issue`.
 
-An edited comment is read again. A comment this pass has already read is dropped
-from triage decomposition, keyed on the comment id *and* the time its body was
+An edited comment is read again. A comment an earlier triage already read is
+dropped from triage decomposition — recorded only once that triage succeeded, so
+a failed triage leaves it to the next run — keyed on the comment id *and* the time its body was
 last edited — an edit keeps the id and does not move the comment, so a reviewer
 who rewrites a comment to add a demand would otherwise have it silently discarded
 as already handled. The stamp is GitHub's `lastEditedAt`, null until the first

@@ -193,10 +193,13 @@ def run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
         retry_hint=agent.retry.JSON_RESPONSE_HINT,
     )
     if answer.exit_code != 0:
+        # On a failed call the backend's reply is its reason — a provider error,
+        # an unserved model — and the trail is where it has to survive.
+        reason = (answer.text or "")[:core.proc.DETAIL_LIMIT]
         if trail:
             trail.error("triage", "AI prompt failed",
-                        data={"exit_code": answer.exit_code})
-        core.log.error("ai prompt failed")
+                        data={"exit_code": answer.exit_code, "error": reason})
+        core.log.error(f"ai prompt failed: {reason}" if reason else "ai prompt failed")
         return None, 1
 
     stdout = answer.text

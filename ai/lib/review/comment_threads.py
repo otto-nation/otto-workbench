@@ -1,10 +1,12 @@
 """A PR's comment threads: read them, reconcile them with the state file, and triage, fix, or settle them.
 
 `run_threads` is the flow `pr comments` runs over a resolved target: fetch the
-PR's threads and conversation, carry the state file's records forward, mark
-what has been seen, and hand off to triage, the fix pass, or settlement as the
-arguments ask. `cli.review_threads` is the command over this — the parser, the
-run lock, the trail. Thread state is `pr.comments_state`; triage is
+PR's threads and conversation, carry the state file's records forward, flag
+what an earlier triage already read, and hand off to triage, the fix pass, or
+settlement as the arguments ask. A top-level comment is recorded as seen only
+once a triage has succeeded over it — see `record_triaged_seen`.
+`cli.review_threads` is the command over this — the parser, the run lock, the
+trail. Thread state is `pr.comments_state`; triage is
 `pr.triage`; the fix pass is `pr.comments_fix`. This is also where the
 fix-engine and GitHub-read dependency moved: `fix.comments` and
 `gh.pr_data` used to be pulled in by `cli.review_threads` directly, and now
@@ -96,6 +98,33 @@ def seen_record(comments: list[dict]) -> dict[int, str]:
     verdict, round and outcome the PR had accumulated.
     """
     return {c["id"]: edit_stamp(c) for c in comments if c.get("id") is not None}
+
+
+def record_triaged_seen(ctx_args: dict, report: PRReport, trail) -> None:
+    """Record the report's top-level comments as read, after triage succeeded.
+
+    Only a triage that returned a parsed answer reaches this. Every comment in
+    the report was either flagged seen from the prior record or sent to that
+    triage, so the whole set is what has now been read.
+
+    Recording before triage, as this once was, made a failed triage — an
+    empty reply, a provider error — mark a review body read that no model had
+    decomposed, and the next run dropped it from triage for good. Best-effort
+    in the safe direction: a save that fails leaves the comments unseen, which
+    re-reports them once.
+    """
+    try:
+        st = pr.state.load_or_init(**ctx_args)
+        st.comments = dataclasses.replace(
+            st.comments,
+            seen_issue_comments=seen_record(report.issue_comments),
+            seen_review_body_comments=seen_record(report.review_body_comments),
+            updated_at=pr.state.now_iso(),
+        )
+        pr.state.save_state(ctx_args["target_dir"], st)
+    except Exception as exc:
+        trail.error("state_update", f"seen record update failed: {exc}")
+        core.log.error(f"seen record update failed: {exc}")
 
 
 def build_report(
@@ -239,13 +268,16 @@ def run_threads(trail, args, ctx) -> int:
         )
         st = pr.state.load_or_init(**ctx_args)
         mark_report_seen(report, st.comments)
+        # The seen record is carried forward, not advanced: nothing has read
+        # these comments yet. `record_triaged_seen` advances it once a triage
+        # has.
         pr.state.apply(st, pr.domains.CommentsSummary(
             total_threads=len(report.threads),
             by_state=thread_states,
             blocking_reviewers=blocking,
             has_approvals=has_approvals,
-            seen_issue_comments=seen_record(issue_comments),
-            seen_review_body_comments=seen_record(review_body_comments),
+            seen_issue_comments=st.comments.seen_issue_comments,
+            seen_review_body_comments=st.comments.seen_review_body_comments,
             complete=fetched.complete,
             updated_at=pr.state.now_iso(),
         ))
@@ -264,6 +296,7 @@ def run_threads(trail, args, ctx) -> int:
         triage_result, rc = pr.triage.run_triage(report, toplevel, ctx_args, trail=trail)
         if rc != 0:
             return rc
+        record_triaged_seen(ctx_args, report, trail)
 
         if args.fix and triage_result:
             fixable_count = len(

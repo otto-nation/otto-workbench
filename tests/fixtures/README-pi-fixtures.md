@@ -33,3 +33,20 @@ printf '%s\n' '{"type":"prompt","message":"hi"}' '{"type":"get_session_stats"}' 
   | pi --mode rpc --provider google-vertex-claude --model haiku \
   | grep get_session_stats
 ```
+
+## `pi_prompt_error_session.jsonl`
+
+`pi -p --mode json` output for a prompt the provider refused — a model id
+Vertex does not serve, which returns the same 404 shape as a real outage. Pi
+exits 0; the run ends on an assistant message with empty `content`,
+`stopReason: "error"` and an `errorMessage`. That empty success is the shape
+`pi_prompt_result` must report as a failure.
+
+The system message is elided and the GCP project id replaced: the capture
+carries the machine's whole context otherwise, and neither affects the shape.
+
+```sh
+mkdir -p /tmp/picap && cd /tmp/picap
+pi -p --mode json --provider google-vertex-claude --model claude-nonexistent-9 \
+  "hi" > pi_prompt_error_session.jsonl
+```

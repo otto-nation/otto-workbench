@@ -142,7 +142,7 @@ class TestSessionStatsEnvelope:
         )
         parsed = agent.usage.parse_session_log(str(log))
 
-        _, prompt_usage = pi_prompt_result(_prompt_stream())
+        prompt_usage = pi_prompt_result(_prompt_stream()).usage
 
         assert stream.model == "claude-haiku-4-5@20251001"
         assert set(parsed.cost_by_model) == set(prompt_usage.cost_by_model)
@@ -161,7 +161,7 @@ class TestPromptUsage:
     def test_reply_is_the_final_assistant_text(self):
         from agent.backend_events import pi_prompt_result
 
-        text, _ = pi_prompt_result(_prompt_stream())
+        text = pi_prompt_result(_prompt_stream()).text
         assert text == "The contents of `f.txt` are:\n\n```\nhello\n```"
 
     def test_an_earlier_assistant_turn_does_not_win(self):
@@ -181,7 +181,7 @@ class TestPromptUsage:
             ],
         })
 
-        text, _ = pi_prompt_result(stream)
+        text = pi_prompt_result(stream).text
         assert text == "It says hello."
 
     def test_cost_sums_every_message_not_just_the_last(self):
@@ -189,14 +189,14 @@ class TestPromptUsage:
         # (0.0075423 and 0.00470015). Taking the last would report 38% of it.
         from agent.backend_events import pi_prompt_result
 
-        _, usage = pi_prompt_result(_prompt_stream())
+        usage = pi_prompt_result(_prompt_stream()).usage
         assert usage.cost == pytest.approx(EXPECTED_PROMPT_COST)
         assert usage.cost > 0.0075423, "only the last message_end was counted"
 
     def test_every_token_column_is_populated(self):
         from agent.backend_events import pi_prompt_result
 
-        _, usage = pi_prompt_result(_prompt_stream())
+        usage = pi_prompt_result(_prompt_stream()).usage
         assert usage.input_tokens == 23
         assert usage.output_tokens == 382
         assert usage.cache_read_tokens == 78282
@@ -206,7 +206,8 @@ class TestPromptUsage:
         # A Pi output-format change should cost the measurement, not the call.
         from agent.backend_events import pi_prompt_result
 
-        text, usage = pi_prompt_result("just the answer, no JSON here")
+        result = pi_prompt_result("just the answer, no JSON here")
+        text, usage = result.text, result.usage
         assert text == "just the answer, no JSON here"
         assert usage is None
 
@@ -216,7 +217,8 @@ class TestPromptUsage:
         from agent.backend_events import pi_prompt_result
 
         stream = '{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"hi"}]}]}'
-        text, usage = pi_prompt_result(stream)
+        result = pi_prompt_result(stream)
+        text, usage = result.text, result.usage
         assert text == "hi"
         assert usage is None
 

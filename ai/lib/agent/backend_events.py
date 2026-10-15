@@ -66,6 +66,10 @@ PI_RPC_EVENT_TYPES = frozenset({"tool_execution_start", "turn_end", "agent_end"}
 # `result` record already reports as `max_turns`.
 _PI_ERROR_STOP_REASON = "error"
 
+# What a failed turn reports when Pi recorded no message for it. Still an
+# error: an empty string here would read as a run that ended cleanly.
+_PI_ERROR_WITHOUT_MESSAGE = "pi reported a provider error with no message"
+
 
 def is_write_tool(name: str) -> bool:
     """Whether a tool can put content into a file.
@@ -90,6 +94,12 @@ def pi_run_error(records: list[dict]) -> str:
     The last message of the last `agent_end` is the one that ended the run.
     Earlier turns can carry their own recovered errors, and a run that failed
     at turn three and then finished is not a failed run.
+
+    The same question is asked live, not only after the fact: the RPC loop
+    asks it of each final `agent_end`, and `pi_prompt_result` of a prompt's
+    whole stream, where Pi exits 0 on a provider error it could not retry
+    past. A failed turn with no message still answers non-empty, so a caller
+    testing the result for truth cannot read it as a clean ending.
     """
     ends = [r for r in records if r.get("type") == "agent_end"]
     if not ends:
@@ -100,7 +110,7 @@ def pi_run_error(records: list[dict]) -> str:
     last = messages[-1]
     if last.get("stopReason") != _PI_ERROR_STOP_REASON:
         return ""
-    return str(last.get("errorMessage") or "")
+    return str(last.get("errorMessage") or _PI_ERROR_WITHOUT_MESSAGE)
 
 
 # ── Claude Code parser ────────────────────────────────────────────────────────
@@ -368,6 +378,25 @@ def _pi_final_assistant_text(events: list[dict]) -> str:
     return next((reply for reply in reversed(replies) if reply), "")
 
 
+@dataclass(frozen=True)
+class PiPromptResult:
+    """What one `pi -p --mode json` run answered.
+
+    ``error`` is the provider error the run ended on, None when it ended with a
+    reply. ``text`` is the reply, empty on an error; ``usage`` is measured
+    either way, because a failed call still belongs in the ledger beside its
+    non-zero exit.
+    """
+
+    text: str
+    usage: agent.usage.SessionUsage | None
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+
 def _fold_pi_tokens(usage: dict, totals: dict[str, int]) -> None:
     """Add one message's token counts into `totals`, in place.
 
@@ -380,8 +409,8 @@ def _fold_pi_tokens(usage: dict, totals: dict[str, int]) -> None:
             totals[key] += int(value)
 
 
-def pi_prompt_result(stdout: str) -> tuple[str, agent.usage.SessionUsage | None]:
-    """The reply text and the usage from one `pi -p --mode json` run.
+def pi_prompt_result(stdout: str) -> PiPromptResult:
+    """The reply text, the usage and any provider error from one `pi -p --mode json` run.
 
     Print mode without `--mode json` emits the assistant's prose and nothing
     else, so a prompt call measured that way reaches the ledger as no row at
@@ -399,9 +428,13 @@ def pi_prompt_result(stdout: str) -> tuple[str, agent.usage.SessionUsage | None]
     tests/fixtures/pi_prompt_session.jsonl is exactly that shape, so a
     last-one-wins reading loses a turn's spend.
 
-    Stdout that is not the JSON stream comes back as `(stdout, None)`: a Pi
-    output-format change should cost the measurement, not the call. This mirrors
-    the Claude backend's raw-stdout fallback.
+    **A provider error is an error, not an empty reply.** The run's ending is
+    the last `agent_end` — see `pi_run_error` — and when it ended on an error
+    the result carries that error's text.
+
+    Stdout that is not the JSON stream comes back as its own text with no
+    usage: a Pi output-format change should cost the measurement, not the call.
+    This mirrors the Claude backend's raw-stdout fallback.
     """
     import agent.usage
 
@@ -416,9 +449,10 @@ def pi_prompt_result(stdout: str) -> tuple[str, agent.usage.SessionUsage | None]
             continue
 
     if not events:
-        return stdout, None
+        return PiPromptResult(stdout, None)
 
     text = _pi_final_assistant_text(events)
+    error = pi_run_error(events) or None
 
     totals = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
     cost = 0.0
@@ -440,13 +474,13 @@ def pi_prompt_result(stdout: str) -> tuple[str, agent.usage.SessionUsage | None]
         # Parseable JSON that carries no message_end is a stream shape this does
         # not understand. Report the text and no usage rather than a zero row,
         # which would read as a call that genuinely cost nothing.
-        return (text or stdout), None
+        return PiPromptResult(text or ("" if error else stdout), None, error)
 
-    return text, agent.usage.SessionUsage(
+    return PiPromptResult("" if error else text, agent.usage.SessionUsage(
         cost=cost,
         input_tokens=totals["input"],
         output_tokens=totals["output"],
         cache_read_tokens=totals["cacheRead"],
         cache_write_tokens=totals["cacheWrite"],
         cost_by_model=cost_by_model,
-    )
+    ), error)

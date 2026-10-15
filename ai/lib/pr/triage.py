@@ -63,7 +63,24 @@ def extract_json(text: str) -> str:
     return stripped
 
 
-def parses_as_json(text: str) -> bool:
+_MISSING_ITEMS_HINT = (
+    "IMPORTANT: A previous attempt returned JSON with no \"comment_items\" "
+    "list, but this prompt includes top-level PR comments. Every reply must "
+    "carry \"comment_items\" — an empty list when no comment has an "
+    "actionable point — beside \"threads\". Emit the JSON object alone.\n\n"
+)
+
+
+def _parsed_object(text: str) -> dict | None:
+    """The reply's JSON object, or None when there is none to read."""
+    try:
+        parsed = json.loads(extract_json(text))
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def parses_as_json(text: str, *, require_comment_items: bool = False) -> bool:
     """Whether triage output can be consumed. Drives the retry-once guard.
 
     Shape, not just syntax. `extract_json` slices from the first brace to the
@@ -81,15 +98,27 @@ def parses_as_json(text: str) -> bool:
     Requiring one of the contract's own keys costs nothing on a real reply —
     the schema always carries `threads` — and turns that silent empty result
     back into a retry and then a loud parse failure.
+
+    ``require_comment_items`` is set when the prompt carried top-level
+    comments. A reply with `threads` and no `comment_items` list then has not
+    decomposed them, and accepting it would record those comments as read with
+    nothing taken from them — the same silent loss one key over. An empty list
+    is an answer (no actionable point); an absent key is not.
     """
-    try:
-        parsed = json.loads(extract_json(text))
-    except (json.JSONDecodeError, TypeError):
+    parsed = _parsed_object(text)
+    if parsed is None:
         return False
-    if not isinstance(parsed, dict):
-        return False
+    if require_comment_items:
+        return isinstance(parsed.get("comment_items"), list)
     return any(isinstance(parsed.get(key), list)
                for key in ("threads", "comment_items"))
+
+
+def _triage_retry_hint(response: str) -> str:
+    """Name what the unusable reply got wrong: no JSON, or no `comment_items`."""
+    if _parsed_object(response) is not None:
+        return _MISSING_ITEMS_HINT
+    return agent.retry.JSON_RESPONSE_HINT
 
 
 def collect_unseen_comments(report: PRReport) -> list[dict]:
@@ -184,31 +213,40 @@ def run_triage(report: PRReport, repo_dir: Path, ctx_args: dict,
     )
 
     pr_number = ctx_args.get("pr_number")
+    needs_items = bool(unseen_comments)
     answer = agent.invoke.run_prompt(
         Phase.COMMENTS_TRIAGE, prompt,
-        cwd=repo_dir, usable=parses_as_json, task="comment-triage",
+        cwd=repo_dir, task="comment-triage",
+        usable=lambda text: parses_as_json(text, require_comment_items=needs_items),
         repo=ctx_args.get("repo"), pr=str(pr_number) if pr_number else None,
         # This prompt asks for a bare JSON object, so the default retry hint —
         # which asks for markers — would name a format it never mentioned.
-        retry_hint=agent.retry.JSON_RESPONSE_HINT,
+        retry_hint=_triage_retry_hint,
     )
     if answer.exit_code != 0:
+        # On a failed call the backend's reply is its reason — a provider error,
+        # an unserved model — and the trail is where it has to survive.
+        reason = (answer.text or "")[:core.proc.DETAIL_LIMIT]
         if trail:
             trail.error("triage", "AI prompt failed",
-                        data={"exit_code": answer.exit_code})
-        core.log.error("ai prompt failed")
+                        data={"exit_code": answer.exit_code, "error": reason})
+        core.log.error(f"ai prompt failed: {reason}" if reason else "ai prompt failed")
         return None, 1
 
+    # Gated on the same predicate the retry used, not on whether the text
+    # parses: any JSON object anywhere in a reply parses, and a reply of the
+    # wrong shape read as a triage reports nothing to do on a PR full of
+    # feedback — and marks its comments read.
     stdout = answer.text
-    try:
-        raw = json.loads(extract_json(stdout))
-    except (json.JSONDecodeError, TypeError):
+    if not answer.usable:
         preview = (stdout or "")[:core.proc.DETAIL_LIMIT]
+        what = ("JSON without comment_items" if _parsed_object(stdout or "") is not None
+                else "non-JSON output")
         if trail:
-            trail.failure("triage", "AI returned non-JSON output",
-                          output=stdout or "")
-        core.log.error(f"ai returned non-JSON output ({len(stdout or '')} chars): {preview}")
+            trail.failure("triage", f"AI returned {what}", output=stdout or "")
+        core.log.error(f"ai returned {what} ({len(stdout or '')} chars): {preview}")
         return None, 1
+    raw = json.loads(extract_json(stdout))
 
     triage_result = triage_result_from_dict(raw)
     assign_item_ids(triage_result.comment_items)

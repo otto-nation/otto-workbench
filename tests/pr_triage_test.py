@@ -113,6 +113,68 @@ class TestTriageThrashGuard:
     def test_parses_as_json_rejects_both_keys_null(self):
         assert not pr.triage.parses_as_json('{"threads": null, "comment_items": null}')
 
+    def test_a_reply_owing_comment_items_must_carry_them(self):
+        # Top-level comments were in the prompt: threads alone has not
+        # decomposed them, and accepting it would mark them read.
+        assert not pr.triage.parses_as_json('{"threads": []}', require_comment_items=True)
+        assert not pr.triage.parses_as_json(
+            '{"threads": [], "comment_items": null}', require_comment_items=True)
+
+    def test_an_empty_comment_items_list_is_an_answer(self):
+        # A comment with no actionable point decomposes to nothing.
+        assert pr.triage.parses_as_json(
+            '{"threads": [], "comment_items": []}', require_comment_items=True)
+
+    def test_a_reply_without_comments_owed_needs_no_comment_items(self):
+        assert pr.triage.parses_as_json('{"threads": []}')
+
+    def _comment_report(self):
+        return PRReport(review_body_comments=[
+            {"id": 7, "user": "bob", "body": "nit: rename x", "seen": False}])
+
+    def test_threads_only_twice_fails_triage_rather_than_dropping_comments(self, tmp_path):
+        prompts = []
+
+        def prompt(text, **kw):
+            prompts.append(text)
+            return ('{"threads": []}', 0)
+
+        trail = MagicMock()
+        with (
+            patch.object(agent.backend, "prompt", side_effect=prompt),
+            patch.object(pr.thread_context, "branch_commit_log", return_value=""),
+        ):
+            result, rc = pr.triage.run_triage(self._comment_report(), tmp_path, {}, trail)
+
+        assert (result, rc) == (None, 1)
+        assert len(prompts) == 2
+        # The retry names the missing key, not "you replied with prose".
+        assert "comment_items" in prompts[1].replace(prompts[0], "")
+        assert "comment_items" in trail.failure.call_args.args[1]
+
+    def test_the_retry_can_supply_the_missing_comment_items(self, tmp_path):
+        replies = iter([('{"threads": []}', 0),
+                        ('{"threads": [], "comment_items": []}', 0)])
+        with (
+            patch.object(agent.backend, "prompt", side_effect=lambda t, **kw: next(replies)),
+            patch.object(pr.thread_context, "branch_commit_log", return_value=""),
+        ):
+            result, rc = pr.triage.run_triage(self._comment_report(), tmp_path, {})
+        assert rc == 0
+        assert result is not None
+
+    def test_a_wrong_shape_reply_twice_is_a_failure_not_an_empty_triage(self, tmp_path):
+        # Both attempts narrate a tool call. The retry guard caught the first;
+        # the second used to pass a bare json.loads and read as "0 threads".
+        report = PRReport(threads=[ReportThread(id="t1", reviewer="kgn")])
+        narrated = '{"cmd": "cat -n lib/registries.sh"}'
+        with (
+            patch.object(agent.backend, "prompt", return_value=(narrated, 0)),
+            patch.object(pr.thread_context, "branch_commit_log", return_value=""),
+        ):
+            result, rc = pr.triage.run_triage(report, tmp_path, {})
+        assert (result, rc) == (None, 1)
+
     def test_unparseable_triage_output_earns_one_retry(self, tmp_path):
         report = PRReport(threads=[ReportThread(id="t1", reviewer="kgn")])
         prompts = []
@@ -174,6 +236,21 @@ class TestTriageThrashGuard:
         assert rc == 1
         assert trail.failure.call_args.kwargs["output"] == "sorry, I cannot do that"
         assert "output_preview" not in trail.failure.call_args.kwargs.get("data", {})
+
+    def test_a_failed_prompt_records_the_backend_s_reason(self, tmp_path):
+        """A provider error used to reach the trail as an exit code and nothing else."""
+        trail = MagicMock()
+        report = PRReport(threads=[ReportThread(id="t1", reviewer="kgn")])
+        reason = "429 RESOURCE_EXHAUSTED: quota exceeded"
+
+        with (
+            patch.object(agent.backend, "prompt", return_value=(reason, 1)),
+            patch.object(pr.thread_context, "branch_commit_log", return_value=""),
+        ):
+            result, rc = pr.triage.run_triage(report, tmp_path, {}, trail)
+
+        assert (result, rc) == (None, 1)
+        assert trail.error.call_args.kwargs["data"]["error"] == reason
 
 
 # ── permalink-backed claims ─────────────────────────────────────────────────

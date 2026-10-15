@@ -71,7 +71,7 @@ from agent.rule_prefix import (
 )
 from agent.backend_events import (
     _log_stderr_on_failure, parse_pi_cost, parse_pi_event, pi_prompt_result,
-    pi_tool_signature, pi_wrote_output,
+    pi_run_error, pi_tool_signature, pi_wrote_output,
 )
 from agent.backend_pi_rpc import (
     _PROMPT_UNDELIVERED,
@@ -563,12 +563,24 @@ class StreamResult:
     a run that ended any other way. It is the only evidence a rejected prompt
     leaves: Pi answers the command and then waits, so nothing downstream can
     infer the failure from the events or from the exit status.
+
+    ``provider_error`` is the provider failure a run that *did* start ended on
+    (see `pi_run_error`). Kept apart from ``error`` because the two runs are
+    shut down differently: a refused run is abandoned with a bounded wait and
+    no stats query, while a run that reached `agent_end` is waited for and may
+    have spent real money in the turns before the error.
     """
     turn_count: int
     accumulated_cost: float
     stop_reason: str
     model: str | None = None
     error: str | None = None
+    provider_error: str | None = None
+
+    @property
+    def failure(self) -> str | None:
+        """Why this run failed, whichever way it did, or None."""
+        return self.error or self.provider_error
 
 
 def _exited_stderr(proc: subprocess.Popen | None) -> str:
@@ -685,6 +697,7 @@ def _consume_events(
     wrote_output = False
     model = None
     error = None
+    provider_error = None
     tool_repeats: dict[str, int] = {}
     nudged_no_progress = False
     # Two flags, not one: `pending_ask` is the gap between agent_end and the
@@ -784,9 +797,24 @@ def _consume_events(
         # survive into the next iteration — the settle that makes a new prompt
         # legal is a separate event — so it is only assigned here, never reset
         # by an unrelated event in between.
-        ended = event_type == "agent_end"
+        # An agent_end carrying willRetry is Pi about to retry a provider
+        # error itself; the run ends at the agent_end after that retry.
+        ended = event_type == "agent_end" and not data.get("willRetry")
+        run_error = pi_run_error([data]) if ended else ""
+        if run_error and asked_for_output:
+            # The salvage run failed; the run it salvages ended on its own
+            # terms, as with a refused deliverable prompt above.
+            core.log.warn(f"{prefix}pi's deliverable prompt failed: {run_error}")
+        elif run_error:
+            core.log.error(f"{prefix}pi run ended on a provider error: {run_error}")
+            provider_error = run_error
+            # An abort's follow-up turn can end on an error; the cap that
+            # caused the abort is the more specific reason, so keep it.
+            stop_reason = stop_reason if aborted else "error"
         if ended:
-            pending_ask = _should_ask_for_deliverable(
+            # A run that ended on a provider error is not asked again: Pi has
+            # already retried, and the ask would meet the same provider.
+            pending_ask = not run_error and _should_ask_for_deliverable(
                 output_path, wrote_output=wrote_output,
                 aborted=aborted, asked=asked_for_output,
             )
@@ -805,7 +833,8 @@ def _consume_events(
         if not _ask_for_deliverable(process, prefix, due=due_now):
             break
 
-    return StreamResult(turn_count, accumulated_cost, stop_reason, model, error)
+    return StreamResult(turn_count, accumulated_cost, stop_reason, model, error,
+                        provider_error)
 
 
 # ── Result record generation ─────────────────────────────────────────────────
@@ -830,10 +859,11 @@ def _write_result_record(
     ``stats`` is the ``data`` of a get_session_stats response, which is what
     _get_stats_after_agent_end returns — not the response envelope.
 
-    ``error`` is the RPC error that ended the run, and is what makes the record
-    an error record: `agent.session._diagnose_result_type` reads ``is_error``
-    first and the text second, so without both an auth failure reads as a clean
-    run that happened to write nothing.
+    ``error`` is what ended the run — an RPC refusal or a provider error —
+    and is what makes the record an error record:
+    `agent.session._diagnose_result_type` reads ``is_error`` first and the text
+    second, so without both an auth failure reads as a clean run that happened
+    to write nothing.
     """
     tokens = stats.get("tokens", {})
     total_cost = stats.get("cost", cost)
@@ -916,10 +946,11 @@ def _exit_code(proc: subprocess.Popen, stream: StreamResult) -> int:
     """The status a caller should see for this run.
 
     Pi shuts down cleanly after refusing a prompt, so its own status is 0 for a
-    run that never started. Its status still wins when it reported one — that
-    is the more specific answer — and the substitute only covers the zero.
+    run that never started — and likewise for one that ended on a provider
+    error. Its status still wins when it reported one — that is the more
+    specific answer — and the substitute only covers the zero.
     """
-    if stream.error and not proc.returncode:
+    if stream.failure and not proc.returncode:
         return _RPC_ERROR_EXIT_CODE
     return proc.returncode
 
@@ -976,13 +1007,21 @@ def prompt(
     cmd = _build_prompt_cmd(binary.path, model=model, provider=provider, thinking=thinking)
     result = subprocess.run(cmd, input=text, capture_output=True, text=True, cwd=cwd,
                             timeout=core.timeouts.UNBOUNDED)
-    reply, usage = pi_prompt_result(result.stdout)
-    if result.returncode:
+    parsed = pi_prompt_result(result.stdout)
+    reply, code = parsed.text, result.returncode
+    if code:
         msg = not_served_message(model or "", result.stderr or "", provider, pi=binary.path)
         if msg:
             core.log.error(msg)
             reply = msg
-    return reply, result.returncode, usage
+    # Pi exits 0 on a provider error it could not retry past. The reply is the
+    # reason, as it is for an unserved model above, so a caller logging what
+    # came back logs why rather than an empty string.
+    if not parsed.ok:
+        core.log.error(f"pi prompt ended on a provider error: {parsed.error}")
+        reply = reply if code else parsed.error
+        code = code or _RPC_ERROR_EXIT_CODE
+    return reply, code, parsed.usage
 
 
 def invoke_agent(inv: AgentInvocation) -> int:
@@ -1045,7 +1084,7 @@ def _drive_agent(inv: AgentInvocation, proc: subprocess.Popen, pi: str) -> int:
     _write_result_record(
         inv.session_log, stream.stop_reason, stream.turn_count,
         stream.accumulated_cost, duration_ms, stats, stream.model or inv.model,
-        error=stream.error,
+        error=stream.failure,
     )
 
     return _finish(proc, stream, inv.session_log)
@@ -1114,7 +1153,7 @@ def _drive_fix(inv: AgentInvocation, proc: subprocess.Popen, pi: str) -> int:
         _write_result_record(
             inv.session_log, stream.stop_reason, stream.turn_count,
             stream.accumulated_cost, duration_ms, stats, stream.model or inv.model,
-            error=stream.error,
+            error=stream.failure,
         )
 
     return _finish(proc, stream, inv.session_log)

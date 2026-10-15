@@ -2016,23 +2016,25 @@ closes out what `--fix` held back: replies on threads whose commit had not yet
 been pushed, a tracking issue for the threads named by `--track`, and the
 summary comment. See `review.closeout` and `review.deferred_issue`.
 
-An edited comment is read again. A comment this pass has already read is dropped
-from triage decomposition, keyed on the comment id *and* the time its body was
-last edited — an edit keeps the id and does not move the comment, so a reviewer
-who rewrites a comment to add a demand would otherwise have it silently discarded
-as already handled. The stamp is GitHub's `lastEditedAt`, null until the first
-edit. The issue-comment REST path has no such field and reconstructs it from
-`updated_at`, collapsing `updated_at == created_at` to the same empty stamp so
-the two fetch paths agree about an untouched comment. `fetch_review_body_comments`
-takes `PRData` as required: the reviews REST payload carries no edit stamp at
-all, and a path that silently degrades a correctness check is gone rather than
-kept as a fallback. A state file written before the stamps existed reads as
-"nothing seen" and re-reports one round's comments — a false unseen is noise
-once, a false seen loses a reviewer's words for good. The same edit reopens a
-*thread*: `_rewritten_since_my_reply` turns an `addressed` thread into
-`ambiguous` when anyone other than us rewrote after our last word, compared
-against the time we last spoke (our own later edit does not reopen; a resolved
-thread stays resolved).
+An edited comment is read again. A comment an earlier triage already read is
+dropped from triage decomposition. It is recorded only once that triage
+succeeded, so a failed triage leaves it to the next run, and it is keyed on the
+comment id *and* the time its body was last edited: an edit keeps the id and
+does not move the comment, so a reviewer who rewrites a comment to add a demand
+would otherwise have it silently discarded as already handled. The stamp is
+GitHub's `lastEditedAt`, null until the first edit. The issue-comment REST path
+has no such field and reconstructs it from `updated_at`, collapsing
+`updated_at == created_at` to the same empty stamp so the two fetch paths agree
+about an untouched comment. `fetch_review_body_comments` takes `PRData` as
+required: the reviews REST payload carries no edit stamp at all, and a path
+that silently degrades a correctness check is gone rather than kept as a
+fallback. A state file written before the stamps existed reads as "nothing
+seen" and re-reports one round's comments — a false unseen is noise once, a
+false seen loses a reviewer's words for good. The same edit reopens a *thread*:
+`_rewritten_since_my_reply` turns an `addressed` thread into `ambiguous` when
+anyone other than us rewrote after our last word, compared against the time we
+last spoke (our own later edit does not reopen; a resolved thread stays
+resolved).
 
 ### pr/create.py
 
@@ -2492,10 +2494,12 @@ was written.
 A PR's comment threads: read them, reconcile them with the state file, and triage, fix, or settle them.
 
 `run_threads` is the flow `pr comments` runs over a resolved target: fetch the
-PR's threads and conversation, carry the state file's records forward, mark
-what has been seen, and hand off to triage, the fix pass, or settlement as the
-arguments ask. `cli.review_threads` is the command over this — the parser, the
-run lock, the trail. Thread state is `pr.comments_state`; triage is
+PR's threads and conversation, carry the state file's records forward, flag
+what an earlier triage already read, and hand off to triage, the fix pass, or
+settlement as the arguments ask. A top-level comment is recorded as seen only
+once a triage has succeeded over it — see `record_triaged_seen`.
+`cli.review_threads` is the command over this — the parser, the run lock, the
+trail. Thread state is `pr.comments_state`; triage is
 `pr.triage`; the fix pass is `pr.comments_fix`. This is also where the
 fix-engine and GitHub-read dependency moved: `fix.comments` and
 `gh.pr_data` used to be pulled in by `cli.review_threads` directly, and now

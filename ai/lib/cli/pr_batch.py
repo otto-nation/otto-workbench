@@ -8,7 +8,7 @@
     pr batch status [RUN_ID] [--full | --decision ID]   the run report (JSON)
     pr batch next   [RUN_ID]                   only what needs action (JSON)
 
-Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish.
+Every step runs drafted; the batch alone publishes (see batch.publish). --auto-publish answers an item's publish decision when it closes clean; --watch-ci re-checks CI once after a publish; --no-verify skips the pre-push hook on those publishes.
 
 Exit 0 when a run is done or cancelled, 10 when it is waiting on decisions — waiting, not failed.
 """
@@ -113,6 +113,9 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--watch-ci", action="store_true",
                    help="After a publish pushes, re-check CI once (ci-check --wait, up to "
                         "its 900s --wait-timeout per item) and reopen the item on red")
+    r.add_argument("--no-verify", action="store_true",
+                   help="Skip the pre-push hook on every publish push (CI still runs the "
+                        "gates). Persisted on the run so resume and resolve honor it")
     r.add_argument("--verbose", action="store_true",
                    help="Also stream each step's stderr as step_log events "
                         "(it is always in the run's logs/)")
@@ -306,7 +309,7 @@ def _start_run(held: contextlib.ExitStack, args, plan) -> _Started:
                                       auto_publish=args.auto_publish,
                                       now=datetime.now(timezone.utc),
                                       ref_namespace=plan.ref_namespace, ref_dirs=plan.ref_dirs,
-                                      watch_ci=args.watch_ci)
+                                      watch_ci=args.watch_ci, no_verify=args.no_verify)
         # The id exists only now. From here a batch refused the lock is told
         # which run to wait for or cancel, not only a pid.
         core.run_lock.note_holder(batch.store.BATCH_LOCK, run=run.id)

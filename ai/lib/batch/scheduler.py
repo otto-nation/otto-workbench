@@ -50,7 +50,7 @@ def _contains_commit(worktree: str, sha: str) -> bool:
 def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[Step]] | None,
             pool: int, auto_publish: list[Step], now: datetime | None = None,
             ref_namespace: str = "", ref_dirs: list[str] | None = None,
-            watch_ci: bool = False) -> Run:
+            watch_ci: bool = False, no_verify: bool = False) -> Run:
     now = now or datetime.now(timezone.utc)
     items = []
     explicit = selected is not None
@@ -81,7 +81,8 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
             it.stacked_on = base
     return Run(id=batch.store.new_run_id(now), started_at=now.isoformat(timespec="seconds"),
                steps=list(steps), pool=pool, auto_publish=list(auto_publish), items=items,
-               ref_namespace=ref_namespace, ref_dirs=list(ref_dirs or []), watch_ci=watch_ci)
+               ref_namespace=ref_namespace, ref_dirs=list(ref_dirs or []), watch_ci=watch_ci,
+               no_verify=no_verify)
 
 
 def row_for(item: Item, local_head: str = "", ref_namespace: str = "") -> PlanRow:

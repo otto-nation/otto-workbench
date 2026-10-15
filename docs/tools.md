@@ -900,6 +900,7 @@ Takes no flags.
 | `--prs` `<prs>` | Comma-separated repo#number keys to include. |
 | `--select` `<key=steps>` | Run exactly these steps for one PR. Repeatable. |
 | `--watch-ci` | After a publish pushes, re-check CI once (ci-check --wait, up to its 900s --wait-timeout per item) and reopen the item on red. |
+| `--no-verify` | Skip the pre-push hook on every publish push (CI still runs the gates). Persisted on the run so resume and resolve honor it. |
 | `--verbose` | Also stream each step's stderr as step_log events (it is always in the run's logs/). |
 
 **`pr batch resume`** — Continue a run

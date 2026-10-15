@@ -327,7 +327,8 @@ def _publish(run: Run, item: Item, pr_bin: str, run_cmd: Callable[..., int],
     """
     tree = read(item)
     debt = closeout(item.repo_dir, item.branch)
-    plan = batch.publish.plan(item, pr_bin, tree, confirmed=confirmed, closeout=debt)
+    plan = batch.publish.plan(item, pr_bin, tree, confirmed=confirmed, closeout=debt,
+                              no_verify=run.no_verify)
     if not plan.ok:
         extra = {"commits": plan.commits} if plan.commits else None
         return [_fail(run, item, "publish", reason=plan.refusal.value, detail=plan.detail,

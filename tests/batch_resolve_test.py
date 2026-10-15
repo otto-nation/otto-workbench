@@ -545,3 +545,21 @@ def test_a_fast_forward_publish_is_a_logged_pr_push():
     [(argv, log)] = seen
     assert argv == ["pr", "push", "--expect", "s", "--repo-dir", "/wt"]
     assert log is not None
+
+
+def test_a_no_verify_run_appends_the_flag_to_the_publish_push():
+    run = _run(_d(batch.model.DecisionKind.PUBLISH, "publish"))
+    run.no_verify = True
+    item = run.items[0]
+    item.remote_sha = "s"
+    seen = []
+
+    def runner(argv, log_path=None):
+        seen.append(argv)
+        return 0
+
+    tree = lambda it: TreeState(local="new", remote="s",
+                                divergence=RefDivergence(ahead=1, behind=0, comparable=True))
+    batch.resolve.apply(run, batch.resolve.Request("d1", "publish"), pr_bin="pr",
+                        runner=runner, tree=tree, closeout=lambda d, b: CloseoutDebt())
+    assert seen == [["pr", "push", "--expect", "s", "--no-verify", "--repo-dir", "/wt"]]

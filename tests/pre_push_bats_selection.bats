@@ -23,7 +23,10 @@ setup() {
   # shellcheck disable=SC2034  # read by the sourced _select_bats
   _default_branch=main
 
-  eval "$(sed -n '/^_select_bats()/,/^}/p' "$HOOK")"
+  local fn
+  fn="$(sed -n '/^_select_bats()/,/^}/p' "$HOOK")"
+  [[ -n "$fn" ]] || { echo "_select_bats not found in $HOOK" >&2; return 1; }
+  eval "$fn"
 }
 
 teardown() {

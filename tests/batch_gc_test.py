@@ -1,4 +1,3 @@
-import fcntl
 import os
 import sys
 import time
@@ -15,6 +14,7 @@ if str(LIB_DIR) not in sys.path:
 import batch.gc  # noqa: E402
 import batch.store  # noqa: E402
 import core.run_lock  # noqa: E402
+import core.serde  # noqa: E402
 import review.gc  # noqa: E402
 from batch.model import (  # noqa: E402
     Decision,
@@ -27,6 +27,7 @@ from batch.model import (  # noqa: E402
     StepRecord,
     StepStatus,
 )
+from run_lock_support import held_elsewhere  # noqa: E402
 
 DAY = 86400
 NOW = 2_000_000_000.0
@@ -43,7 +44,8 @@ def _save(run_id, status=RunStatus.DONE, item=None, decisions=(), age_days=10.0,
     run = Run(id=run_id, started_at="t", steps=[Step.REBASE], pool=1, auto_publish=[],
               status=status, items=[item or _item()], decisions=list(decisions),
               ref_namespace=namespace, ref_dirs=list(ref_dirs))
-    batch.store.save(run)
+    core.serde.write_json(batch.store.run_dir(run.id) / batch.store.STATE_FILE,
+                          core.serde.to_dict(run))
     stamp = NOW - age_days * DAY
     os.utime(batch.store.run_dir(run_id) / batch.store.STATE_FILE, (stamp, stamp))
     return run
@@ -110,33 +112,35 @@ def test_published_drafts_and_settled_failures_count_as_clean(dropped_refs):
 
 def test_a_held_lock_keeps_the_run(dropped_refs):
     _save("held", age_days=365)
-    # A second open file description conflicts with gc's own, as another
-    # process's scheduler would.
-    with open(batch.store.run_dir("held") / core.run_lock.LOCK_FILE, "a+") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
+    record = {"pid": os.getppid(), "command": "pr batch run", "started": "t0",
+              "released": None, "role": "driver"}
+    lock = batch.store.run_dir("held") / core.run_lock.LOCK_FILE
+    with held_elsewhere(lock, record):
         assert batch.gc.gc_runs(now=NOW) == 0
     assert _remaining() == ["held"]
     dropped_refs.assert_not_called()
 
 
-def test_a_run_that_changes_before_the_lock_is_kept(dropped_refs):
+def test_a_run_that_changes_before_the_lock_is_kept(dropped_refs, monkeypatch):
     _save("racy", age_days=365)
-    real = core.run_lock.acquire
+    real = core.run_lock.hold_resource
 
-    def revive(*args, **kwargs):
+    def revive(lock, **kwargs):
         _save("racy", status=RunStatus.RUNNING, age_days=365)
-        return real(*args, **kwargs)
+        return real(lock, **kwargs)
 
-    with mock.patch("core.run_lock.acquire", side_effect=revive):
-        assert batch.gc.gc_runs(now=NOW) == 0
+    monkeypatch.setattr(core.run_lock, "hold_resource", revive)
+    assert batch.gc.gc_runs(now=NOW) == 0
     assert _remaining() == ["racy"]
     dropped_refs.assert_not_called()
 
 
 def test_refs_are_dropped_before_the_run_is_removed(dropped_refs):
     seen = []
+
     def record(dirs, ns):
-        seen.append((dirs, ns, (batch.store.run_dir("r1") / batch.store.STATE_FILE).is_file()))
+        tomb = batch.store.batch_root() / "r1.reaping" / batch.store.STATE_FILE
+        seen.append((dirs, ns, tomb.is_file()))
         return True
 
     dropped_refs.side_effect = record
@@ -169,10 +173,26 @@ def test_an_unreadable_state_file_is_kept(dropped_refs):
     assert _remaining() == ["bad"]
 
 
-def test_a_run_that_cannot_be_removed_is_reported_not_counted(dropped_refs):
+def test_a_run_that_cannot_be_removed_is_reported_not_counted(dropped_refs, monkeypatch):
     _save("r1", age_days=365)
-    with mock.patch("batch.store.remove", side_effect=OSError("busy")):
-        assert batch.gc.gc_runs(now=NOW) == 0
+
+    def boom(*_a, **_k):
+        raise OSError("busy")
+
+    monkeypatch.setattr(batch.store.shutil, "rmtree", boom)
+    assert batch.gc.gc_runs(now=NOW) == 0
+    assert _remaining() == ["r1"]
+
+
+def test_a_leftover_tombstone_is_warned_not_removed(dropped_refs, capsys):
+    leftover = batch.store.batch_root() / "old.reaping"
+    leftover.mkdir(parents=True)
+    (leftover / batch.store.STATE_FILE).write_text("{}")
+    assert batch.gc.gc_runs(now=NOW) == 0
+    err = capsys.readouterr().err
+    assert leftover.is_dir()
+    assert "old.reaping" in err
+    assert "leaving in place" in err
 
 
 def test_no_batch_directory_is_nothing_to_clean():

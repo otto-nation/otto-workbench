@@ -423,13 +423,13 @@ closed, and every step runs drafted — the batch is the only thing that pushes.
 pr batch plan --checkout DIR …           # which PRs need which steps (JSON)
 pr batch run --checkout DIR … [opts]     # start; NDJSON events, last line run_summary
 pr batch run --plan FILE …               # start from a saved plan
-pr batch resume [RUN_ID]                 # continue waiting or interrupted
+pr batch resume [RUN_ID]                 # continue waiting or interrupted; a cancel is final
 pr batch next [RUN_ID]                   # only what needs action (JSON)
 pr batch status [RUN_ID]                 # the run report (JSON)
 pr batch status [RUN_ID] --full          # the raw run state
 pr batch status [RUN_ID] --decision ID   # one decision: full payload and log tail
 pr batch resolve RUN_ID DECISION_ID --action A [--reason/--body-file/--commit]
-pr batch cancel [RUN_ID] [--kill]
+pr batch cancel [RUN_ID] [--kill]        # final; JSON `queued` if a holder will apply it
 ```
 
 Steps run in the order `rebase`, `ci`, `comments`, `review`, each only where
@@ -474,7 +474,7 @@ Actions: `accept`, `retry`, `skip-step`, `undo` (rebase:
 
 `pr batch status` prints one compact report:
 
-- `run`: `id`, `status`, `active` (a scheduler holds the run's lock), `exit_hint` and a one-line `hint`. `exit_hint` is what `run`/`resume` exit with: 0 once the run is finished (`done` or `cancelled`), 10 while it waits on you, 1 when it stopped without settling (resume it), and null while a scheduler holds the run.
+- `run`: `id`, `status`, `active` (a driver holds the run's resource), `exit_hint`, a one-line `hint`, `pending_requests` (inbox count) and `failed_requests` (`[{name, error}]` from `rejected/`). `exit_hint` is what `run`/`resume` exit with: 0 once the run is finished (`done` or `cancelled`), 10 while it waits on you, 1 when it stopped without settling (resume it), and null while a driver holds the run.
 - `counts`: items by status, and open decisions.
 - `items`: non-terminal items only — worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, and step statuses.
 - `next`: one entry per open decision — or, once the run is finished, one `closeout_owed` entry per PR that `pr` still owes a closeout, whose `commands` is the `pr comments --finish --post …` that pays it.
@@ -499,14 +499,14 @@ A failed step names its `log`, plus `session_log` when a review left one. A fail
 
 Step stderr stays in the run's `logs/`; `run --verbose` and `resume --verbose` also stream it as `step_log` events. `decision_created` carries only `run`, `item`, `decision`, `decision_kind`, `why` and `commands`. `item` is the same value as `next[].pr`; the kind is `decision_kind` because the event wrapper's own `kind` is the event type. The last line of every `run` or `resume` that settles is `run_summary`, holding the same `run`, `counts` and `next` as `pr batch next`.
 
-A run with open decisions exits **10**. That means it is waiting on you, not that it failed: a job runner reports it as a failure, so read the `run_summary` line rather than the exit status. `resume` continues the run and clears a pending cancel. `open-chat` is UI-only.
+A run with open decisions exits **10**. That means it is waiting on you, not that it failed: a job runner reports it as a failure, so read the `run_summary` line rather than the exit status. `resume` continues a waiting or interrupted run; a recorded cancel is final and resume refuses it. `open-chat` is UI-only.
 
 Admission starts a step when free memory
 minus `batch.mem_reserve` covers its observed peak and CPU/memory pressure stay
 under `batch.cpu_pressure_max` / `batch.mem_pressure_max`, always admitting
 one. `--pool` and `batch.pool_max` (default 2) cap concurrency; hosts with no
 pressure metrics (macOS) use `batch.pool_default` (1). State lives under
-`~/.local/state/workbench/batch/<run-id>/` (`state.json` is authoritative); `pr gc` removes finished runs ([`batch/gc.py`](ai-libraries.md#batchgcpy)).
+`~/.local/state/workbench/batch/<run-id>/` (`state.json` is authoritative; `requests/` is the inbox); `pr gc` removes finished runs ([`batch/gc.py`](ai-libraries.md#batchgcpy)).
 
 ### The Pi package the sync declares, and who gets it
 

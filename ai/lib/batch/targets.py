@@ -52,15 +52,14 @@ def item_target_dir(item: Item) -> Path | None:
 def child_env(item: Item) -> dict[str, str]:
     """The environment for a child working on *item* alone.
 
-    This process's environment with every run-lock marker replaced: the target
-    marker names *item*'s target only, so the child passes through the lock the
-    batch holds for it and is refused on any other; the checkout and global
-    markers are dropped, so the child takes those itself. Only for a caller
-    that holds *item*'s target — handed to the child of a process that does
-    not, the marker would wave it past a lock nobody holds.
+    This process's environment with every run-lock marker stripped. The target
+    marker is then set to *item*'s target only when this process holds that
+    target's lock, so the child passes through a lock we actually hold and
+    takes its own locks otherwise — including an idle resolve, which holds
+    nothing.
     """
     env = {k: v for k, v in os.environ.items() if k not in _MARKERS}
     target = item_target_dir(item)
-    if target is not None:
+    if target is not None and core.run_lock.holds(target / core.run_lock.LOCK_FILE):
         env[core.run_lock.LOCK_ENV] = str(target)
     return env

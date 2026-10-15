@@ -37,7 +37,7 @@ import cli.review_modes  # noqa: E402
 import core.tool_parser  # noqa: E402
 import pr.context  # noqa: E402
 from core.run_lock import CHECKOUT, TARGET  # noqa: E402
-from run_lock_support import flocked, git_dir, held_elsewhere  # noqa: E402
+from run_lock_support import flocked, git_dir, held_elsewhere, live_pid  # noqa: E402
 
 from pr_cli_support import _cmd_fix, _TEST_PR, _run_main, _lock_file, _dispatch_stage
 
@@ -550,8 +550,9 @@ def test_help_skips_locks_so_a_live_batch_still_prints_it(capsys):
 
 def test_help_as_a_flag_value_does_not_skip_the_batch_lock(capsys):
     """`--prs --help` is not help: argparse consumes it as a value, or errors."""
-    record = {"pid": 7, "command": "pr batch run --checkout /x", "started": "t0"}
-    with held_elsewhere(core.run_lock.global_lock_path("batch"), record), \
+    with live_pid() as pid, \
+         held_elsewhere(core.run_lock.global_lock_path("batch"),
+                        {"pid": pid, "command": "pr batch run --checkout /x", "started": "t0"}), \
          patch("cli.pr_batch._cmd_run") as run:
         code = _run_main("batch", "run", "--checkout", "/r", "--prs", "--help")
     assert code == 1
@@ -561,8 +562,9 @@ def test_help_as_a_flag_value_does_not_skip_the_batch_lock(capsys):
 
 def test_end_of_options_help_does_not_skip_the_batch_lock(capsys):
     """`pr batch run -- --help` is not the parser answering help."""
-    record = {"pid": 7, "command": "pr batch run --checkout /x", "started": "t0"}
-    with held_elsewhere(core.run_lock.global_lock_path("batch"), record), \
+    with live_pid() as pid, \
+         held_elsewhere(core.run_lock.global_lock_path("batch"),
+                        {"pid": pid, "command": "pr batch run --checkout /x", "started": "t0"}), \
          patch("cli.pr_batch._cmd_run") as run:
         code = _run_main("batch", "run", "--", "--help")
     assert code == 1
@@ -572,8 +574,9 @@ def test_end_of_options_help_does_not_skip_the_batch_lock(capsys):
 
 def test_end_of_options_help_does_not_skip_the_batch_lock_on_resume(capsys):
     """`pr batch resume -- --help` is not the parser answering help."""
-    record = {"pid": 7, "command": "pr batch run --checkout /x", "started": "t0"}
-    with held_elsewhere(core.run_lock.global_lock_path("batch"), record), \
+    with live_pid() as pid, \
+         held_elsewhere(core.run_lock.global_lock_path("batch"),
+                        {"pid": pid, "command": "pr batch run --checkout /x", "started": "t0"}), \
          patch("cli.pr_batch._cmd_resume") as resume:
         code = _run_main("batch", "resume", "--", "--help")
     assert code == 1

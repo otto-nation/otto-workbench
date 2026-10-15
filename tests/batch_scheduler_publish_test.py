@@ -13,8 +13,10 @@ if str(LIB_DIR) not in sys.path:
 import batch.model  # noqa: E402
 import batch.outcomes  # noqa: E402
 import batch.store  # noqa: E402
+from batch.requests import Decide  # noqa: E402
 from batch.model import STEP_ORDER, DecisionKind, ItemStatus, RunStatus, Step  # noqa: E402
-from batch_scheduler_support import ALL, NEED, NO, Harness, _quiet_outcomes, row  # noqa: F401
+# `_close_open_sessions`, `_quiet_outcomes` are autouse fixtures; imported only so pytest registers them.
+from batch_scheduler_support import ALL, NEED, NO, Harness, _close_open_sessions, _quiet_outcomes, row  # noqa: F401
 
 ONLY_REVIEW = {Step.REBASE: NO, Step.COMMENTS: NO, Step.REVIEW: NEED}
 REBASE_AND_REVIEW = {Step.REBASE: NEED, Step.COMMENTS: NO, Step.REVIEW: NEED}
@@ -78,8 +80,7 @@ def test_a_retry_that_commits_nothing_keeps_what_the_failed_attempt_drafted():
                 moves={("review", "/wt/b1")})
     assert h.sched.run_until_blocked() is RunStatus.WAITING
     d = h.run.open_decisions()[0]
-    batch.store.save(h.run)
-    batch.store.write_request(h.run.id, {"decision": d.id, "action": "retry"})
+    batch.store.write_request(h.run.id, Decide(d.id, "retry"))
     h.codes.clear()
     h.moves.clear()
     assert h.sched.run_until_blocked() is RunStatus.WAITING
@@ -97,8 +98,7 @@ def test_a_retry_that_commits_nothing_still_sees_the_first_attempts_red_trailer(
     assert h.sched.run_until_blocked() is RunStatus.WAITING
     d = h.run.open_decisions()[0]
     assert d.kind is DecisionKind.STEP_REVIEW
-    batch.store.save(h.run)
-    batch.store.write_request(h.run.id, {"decision": d.id, "action": "retry"})
+    batch.store.write_request(h.run.id, Decide(d.id, "retry"))
     h.moves.clear()
     assert h.sched.run_until_blocked() is RunStatus.WAITING
     assert [x[1] for x in h.spawned] == ["review", "review"]
@@ -113,8 +113,7 @@ def test_a_retry_keeps_the_draft_in_state_written_before_start_head_existed():
     h.sched.run_until_blocked()
     h.run.items[0].step(Step.REVIEW).start_head = ""
     d = h.run.open_decisions()[0]
-    batch.store.save(h.run)
-    batch.store.write_request(h.run.id, {"decision": d.id, "action": "retry"})
+    batch.store.write_request(h.run.id, Decide(d.id, "retry"))
     h.codes.clear()
     h.moves.clear()
     assert h.sched.run_until_blocked() is RunStatus.WAITING
@@ -128,9 +127,8 @@ def test_a_retry_after_an_interrupt_keeps_what_the_interrupted_attempt_committed
         h.sched.run_until_blocked()
     d = h.run.open_decisions()[0]
     assert d.kind is DecisionKind.INTERRUPTED
-    h.run = batch.store.load(h.run.id)
     h.resume()
-    batch.store.write_request(h.run.id, {"decision": d.id, "action": "retry"})
+    batch.store.write_request(h.run.id, Decide(d.id, "retry"))
     h.moves.clear()
     assert h.sched.run_until_blocked() is RunStatus.WAITING
     assert [x[1] for x in h.spawned] == ["review", "review"]

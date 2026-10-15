@@ -922,7 +922,7 @@ Takes no flags.
 | `--body-file` `<body-file>` | File holding a reply body, for actions that post one. |
 | `--commit` `<commit>` | Commit that settles the decision, for actions that cite one. |
 
-**`pr batch cancel`** — Stop starting new steps
+**`pr batch cancel`** — Stop the run; a recorded cancel is final
 
 | Flag | Description |
 |------|-------------|

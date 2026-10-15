@@ -39,7 +39,7 @@ import pr.supersession
 
 # cr and reviews_dir are pytest fixtures: imported by name so tests here can request them.
 from review_entry_support import cr, reviews_dir, _self_flags, _stub_pr_flow
-from run_lock_support import flocked, git_dir, held_elsewhere
+from run_lock_support import flocked, git_dir, held_elsewhere, live_pid
 
 
 # ── the run lock on the --self path ──────────────────────────────────────────
@@ -528,11 +528,11 @@ def test_a_pr_review_never_resets_a_tree_another_run_holds(tmp_path, monkeypatch
     resets = []
     worktree, review_file, ctx = _drive_a_pr_review_to_its_tree(
         tmp_path, monkeypatch, resets, record=str)
-    other = {"pid": 4242, "command": "pr rebase", "started": "t0"}
-
-    with core.run_lock.hold({core.run_lock.TARGET}, command="review 42", started="t0",
+    with live_pid() as pid, \
+         core.run_lock.hold({core.run_lock.TARGET}, command="review 42", started="t0",
                             target_dir=ctx.target_dir), \
-         held_elsewhere(git_dir(worktree) / core.run_lock.TREE_LOCK_FILE, other), \
+         held_elsewhere(git_dir(worktree) / core.run_lock.TREE_LOCK_FILE,
+                        {"pid": pid, "command": "pr rebase", "started": "t0"}), \
          pytest.raises(SystemExit) as exc:
         review.run.run_pr_review(
             ctx,

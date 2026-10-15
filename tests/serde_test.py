@@ -595,6 +595,15 @@ class TestWriteJson:
 
         assert json.loads(path.read_text()) == {"k": "v"}
 
+    def test_create_parents_false_refuses_a_missing_parent_and_leaves_nothing(self, tmp_path):
+        """A caller that must not resurrect a directory someone removed asks for this."""
+        path = tmp_path / "gone" / "state.json"
+
+        with pytest.raises(FileNotFoundError):
+            write_json(path, {"k": "v"}, create_parents=False)
+
+        assert list(tmp_path.iterdir()) == []
+
     def test_it_does_not_coerce_a_path_from_what_it_is_handed(self, tmp_path, monkeypatch):
         """A `MagicMock` satisfies `os.PathLike`, so a `Path(path)` here would
         turn a test's stubbed state directory into real directories under the

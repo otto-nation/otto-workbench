@@ -41,8 +41,10 @@ import batch.outcomes
 import batch.plan
 import batch.publish
 import batch.store
+import batch.targets
 import core.timeouts
 from batch.model import Decision, DecisionKind, Item, ItemStatus, Run, Step, StepStatus
+from batch.requests import Decide
 from batch.store import now_iso
 from pr.comments_fix import CloseoutDebt
 
@@ -66,7 +68,7 @@ _COMMAND_HEADER = "$ "
 
 @dataclass(frozen=True)
 class ActionInput:
-    """One flag an action reads off its request; `attr` is the `Request` field it fills."""
+    """One flag an action reads off its request; `attr` is the `Decide` field it fills."""
 
     flag: str
     attr: str
@@ -85,20 +87,6 @@ ACTION_INPUTS: dict[str, tuple[ActionInput, ...]] = {
 
 class ResolveError(ValueError):
     pass
-
-
-@dataclass(frozen=True)
-class Request:
-    decision: str
-    action: str
-    reason: str = ""
-    body_file: str = ""
-    commit: str = ""
-
-    @classmethod
-    def from_dict(cls, d: dict) -> Request:
-        return cls(decision=d["decision"], action=d["action"], reason=d.get("reason", ""),
-                   body_file=d.get("body_file", ""), commit=d.get("commit", ""))
 
 
 def default_runner(argv: list[str], log_path: Path | None = None, *,
@@ -120,20 +108,16 @@ def default_runner(argv: list[str], log_path: Path | None = None, *,
                               timeout=core.timeouts.UNBOUNDED, env=env).returncode
 
 
-def command_runner(item: Item, runner: Callable[..., int] | None,
-                   env_for: Callable[[Item], dict[str, str]] | None) -> Callable[..., int]:
+def command_runner(item: Item, runner: Callable[..., int] | None) -> Callable[..., int]:
     """What runs *item*'s resolve commands.
 
     *runner* when one is given (a test's, or the scheduler's seam); otherwise
-    `default_runner` in the environment *env_for* builds for *item*. A live
-    run passes `batch.targets.child_env`, so the commands it spawns get through
-    the target lock it holds for *item* and no other; with no *env_for* the
-    commands inherit this process's environment and take their own locks.
+    `default_runner` in `batch.targets.child_env(item)`, which names the
+    item's target only when this process holds it.
     """
     if runner is not None:
         return runner
-    env = env_for(item) if env_for is not None else None
-    return functools.partial(default_runner, env=env)
+    return functools.partial(default_runner, env=batch.targets.child_env(item))
 
 
 def _unavailable(decision: Decision, action: str, item: Item) -> str:
@@ -156,7 +140,7 @@ def _unavailable(decision: Decision, action: str, item: Item) -> str:
     return ""
 
 
-def _validate(decision: Decision, request: Request, item: Item) -> None:
+def _validate(decision: Decision, request: Decide, item: Item) -> None:
     if not decision.open:
         raise ResolveError(f"{decision.id} is already resolved ({decision.resolution})")
     if refusal := _unavailable(decision, request.action, item):
@@ -183,7 +167,7 @@ def resolve_command(run_id: str, decision_id: str, action: str) -> str:
     return " ".join(parts)
 
 
-def command_for(decision: Decision, item: Item, request: Request,
+def command_for(decision: Decision, item: Item, request: Decide,
                 pr_bin: str) -> list[list[str]]:
     wt = ["--repo-dir", item.worktree]
     a = request.action
@@ -384,11 +368,10 @@ def _adopt_own_push(item: Item, after: batch.publish.TreeState) -> bool:
     return True
 
 
-def apply(run: Run, request: Request, *, pr_bin: str,
+def apply(run: Run, request: Decide, *, pr_bin: str,
           runner: Callable[..., int] | None = None,
           tree: Callable[[Item], batch.publish.TreeState] | None = None,
-          closeout: Callable[[str, str], CloseoutDebt] | None = None,
-          env_for: Callable[[Item], dict[str, str]] | None = None) -> list[Decision]:
+          closeout: Callable[[str, str], CloseoutDebt] | None = None) -> list[Decision]:
     decision = run.decision(request.decision)
     item = run.item(decision.item)
     _validate(decision, request, item)
@@ -400,7 +383,7 @@ def apply(run: Run, request: Request, *, pr_bin: str,
         after = (tree or batch.publish.read_tree)(item)
         if _moved_to_local(item, after):
             item.remote_sha = after.remote
-    run_cmd = command_runner(item, runner, env_for)
+    run_cmd = command_runner(item, runner)
     if request.action in ("publish", "force-publish"):
         created = _publish(run, item, pr_bin, run_cmd, tree or batch.publish.read_tree,
                            confirmed=decision.payload.get("commits", [])
@@ -413,7 +396,7 @@ def apply(run: Run, request: Request, *, pr_bin: str,
     return _effect(run, item, decision, request.action, ok)
 
 
-def _run_commands(decision: Decision, item: Item, request: Request, pr_bin: str,
+def _run_commands(decision: Decision, item: Item, request: Decide, pr_bin: str,
                    run_cmd: Callable[..., int]) -> bool:
     for argv in command_for(decision, item, request, pr_bin):
         if run_cmd(argv) == 0:

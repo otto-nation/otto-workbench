@@ -14,10 +14,11 @@ import batch.events  # noqa: E402
 import batch.model  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
+from batch.requests import Cancel, Decide, Envelope, Malformed  # noqa: E402
 from batch.plan import PlanError  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
 from batch_scheduler_support import (ALL, GiB, HEALTHY, NEED, NO, Harness,  # noqa: F401,E402
-                                     _even, _quiet_outcomes, row)
+                                     _close_open_sessions, _even, _quiet_outcomes, row)
 from pr.comments_fix import CloseoutDebt  # noqa: E402
 
 
@@ -119,8 +120,7 @@ def test_dirty_worktree_becomes_a_decision():
 
 def test_cancel_before_start_runs_nothing():
     h = Harness([row(1)])
-    batch.store.save(h.run)
-    batch.store.request_cancel(h.run.id, kill=False)
+    batch.store.write_request(h.run.id, Cancel())
     assert h.sched.run_until_blocked() is batch.model.RunStatus.CANCELLED
     assert h.spawned == []
 
@@ -155,8 +155,7 @@ def test_mid_loop_drains_a_queued_request_written_to_disk():
                 codes={("rebase", "/wt/b1"): 3})
     assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
     d = h.run.open_decisions()[0]
-    batch.store.save(h.run)
-    batch.store.write_request(h.run.id, {"decision": d.id, "action": "retry"})
+    batch.store.write_request(h.run.id, Decide(d.id, "retry"))
     h.codes.clear()
     h.sched.run_until_blocked()
     assert [a[1] for a in h.spawned] == ["rebase", "rebase"]
@@ -256,11 +255,10 @@ def test_unreadable_request_file_does_not_crash_the_run():
                 codes={("rebase", "/wt/b1"): 3}, moves={("rebase", "/wt/b1")})
     assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
     d = h.run.open_decisions()[0]
-    batch.store.save(h.run)
     reqs = batch.store.run_dir(h.run.id) / "requests"
     reqs.mkdir(parents=True, exist_ok=True)
     (reqs / "20261001T000000000000-bad.json").write_text("not json")
-    batch.store.write_request(h.run.id, {"decision": d.id, "action": "retry"})
+    batch.store.write_request(h.run.id, Decide(d.id, "retry"))
     h.codes.clear()
     assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
     assert [a[1] for a in h.spawned] == ["rebase", "rebase", "review"]
@@ -273,9 +271,10 @@ def test_malformed_request_is_reported_and_the_rest_apply():
                 codes={("rebase", "/wt/b1"): 3})
     assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
     d = h.run.open_decisions()[0]
-    batch.store.save(h.run)
-    batch.store.write_request(h.run.id, {"decision": d.id})
-    batch.store.write_request(h.run.id, {"decision": d.id, "action": "retry"})
+    reqs = batch.store.run_dir(h.run.id) / "requests"
+    reqs.mkdir(parents=True, exist_ok=True)
+    (reqs / "20261001T000000000000-noaction.json").write_text(json.dumps({"decision": d.id}))
+    batch.store.write_request(h.run.id, Decide(d.id, "retry"))
     h.codes.clear()
     h.sched.run_until_blocked()
     assert [a[1] for a in h.spawned] == ["rebase", "rebase"]
@@ -336,8 +335,7 @@ def test_failed_publish_via_request_emits_decision_created():
     h = Harness([row(1)])
     h.sched.run_until_blocked()
     d = next(x for x in h.run.open_decisions() if x.kind is batch.model.DecisionKind.PUBLISH)
-    batch.store.save(h.run)
-    batch.store.write_request(h.run.id, {"decision": d.id, "action": "publish"})
+    batch.store.write_request(h.run.id, Decide(d.id, "publish"))
     h.publish_code = 1
     h.sched.run_until_blocked()
     created = [f for k, f in h.events if k == "decision_created"]
@@ -371,10 +369,9 @@ def test_cancel_kill_force_kills_what_the_tracked_step_already_outlived():
         return proc
 
     h.sched._spawn = spawn
-    batch.store.save(h.run)
     h.sched._admit()
     assert h.spawned
-    batch.store.request_cancel(h.run.id, kill=True)
+    batch.store.write_request(h.run.id, Cancel(kill=True))
     h.sched._once()
     assert calls == [False, True]
 
@@ -412,8 +409,7 @@ def test_drop_via_resolve_emits_item_finished():
     h = Harness([row(1)], worktrees=lambda d, b: WorktreeResult("/wt/b1", True, ""))
     h.sched.run_until_blocked()
     d = h.run.open_decisions()[0]
-    batch.store.save(h.run)
-    batch.store.write_request(h.run.id, {"decision": d.id, "action": "drop-pr"})
+    batch.store.write_request(h.run.id, Decide(d.id, "drop-pr"))
     h.sched.run_until_blocked()
     finished = [f for k, f in h.events if k == "item_finished"]
     assert any(f["item"] == "o/r#1" and f["status"] == "dropped" for f in finished)
@@ -459,8 +455,9 @@ def test_settle_emit_failure_does_not_mark_interrupted():
 def test_non_dict_request_is_reported_and_does_not_crash(monkeypatch):
     h = Harness([row(1)], worktrees=lambda d, b: WorktreeResult("/wt/b1", True, ""))
     h.sched.run_until_blocked()
-    monkeypatch.setattr(batch.store, "take_requests", lambda run_id: [["not", "a", "dict"]])
-    monkeypatch.setattr(batch.store, "has_requests", lambda run_id: False)
+    monkeypatch.setattr(batch.store, "peek_requests", lambda run_id: [
+        Envelope("x.json", Malformed("not an object"))])
+    monkeypatch.setattr(batch.store, "pending_requests", lambda run_id: 0)
     assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
     errors = [f for k, f in h.events if k == "decision_resolved" and "error" in f]
     assert errors
@@ -470,11 +467,11 @@ def test_does_not_settle_while_requests_are_pending(monkeypatch):
     h = Harness([row(1)], worktrees=lambda d, b: WorktreeResult("/wt/b1", True, ""))
     checks = {"n": 0}
 
-    def has(run_id):
+    def pending(run_id):
         checks["n"] += 1
-        return checks["n"] == 1
+        return 1 if checks["n"] == 1 else 0
 
-    monkeypatch.setattr(batch.store, "has_requests", has)
+    monkeypatch.setattr(batch.store, "pending_requests", pending)
     assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
     assert checks["n"] >= 2
 
@@ -564,7 +561,7 @@ def test_a_skipped_failed_comments_step_does_not_auto_publish_owed_closeout():
                 closeout=_owes_summary, tree=_even, auto_publish=[batch.model.Step.COMMENTS])
     assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
     failed = next(d for d in h.run.decisions if d.kind is batch.model.DecisionKind.FAILED)
-    h.sched._apply_one({"decision": failed.id, "action": "skip-step"})
+    h.session.apply(Decide(failed.id, "skip-step"))
     assert h.sched.run_until_blocked() is batch.model.RunStatus.WAITING
     pubs = [d for d in h.run.open_decisions() if d.kind is batch.model.DecisionKind.PUBLISH]
     assert len(pubs) == 1

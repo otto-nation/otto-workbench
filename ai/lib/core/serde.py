@@ -159,7 +159,7 @@ def replace_file(tmp: Path, path: Path) -> None:
     os.replace(tmp, path)
 
 
-def write_json(path: Path, data) -> None:
+def write_json(path: Path, data, *, create_parents: bool = True) -> None:
     """Write `data` to `path` as JSON, atomically, creating parent directories.
 
     The single owner of "put this JSON on disk without a reader ever seeing it
@@ -184,11 +184,17 @@ def write_json(path: Path, data) -> None:
     turns a test's stubbed state directory into a real one under the working
     directory, silently, at the bottom of a call stack that never meant to
     touch the disk.
+
+    *create_parents* makes a missing parent directory first. With it False a
+    missing parent raises FileNotFoundError from the temp-file create and
+    nothing is written, so a caller can refuse to bring back a directory
+    another process removed.
     """
     # ceiling: no fsync — os.replace orders the rename against a concurrent
     # reader, which is what these files need; surviving a machine crash
     # mid-write is not. Add one if a caller ever stores something unrebuildable.
-    path.parent.mkdir(parents=True, exist_ok=True)
+    if create_parents:
+        path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as f:

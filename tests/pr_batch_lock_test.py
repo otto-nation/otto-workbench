@@ -1,4 +1,4 @@
-"""`pr batch run` and `resume` hold the machine-wide batch lock from before they look for an active run,
+"""`pr batch run` and `resume` hold the machine-wide batch lock for their whole life,
 and every item's target for as long as the run lasts."""
 
 import json
@@ -18,16 +18,17 @@ if str(LIB_DIR) not in sys.path:
 
 import batch.model  # noqa: E402
 import batch.plan  # noqa: E402
-import batch.resolve  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
-import batch.targets  # noqa: E402
 import cli.pr  # noqa: E402
+import cli.pr_batch  # noqa: E402
 import core.run_lock  # noqa: E402
 import pr.target  # noqa: E402
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
+from batch.requests import Decide  # noqa: E402
+from batch_session_support import seed, stops_at  # noqa: E402
 from conftest import make_ctx  # noqa: E402
-from run_lock_support import held_elsewhere, repo_with_origin  # noqa: E402
+from run_lock_support import held_elsewhere, live_pid, repo_with_origin  # noqa: E402
 
 # Bounds every process a test here starts; generous, because a loaded runner
 # schedules a fresh interpreter slowly and a flake here reads as a lock bug.
@@ -52,21 +53,7 @@ def _saved_run(rows=None):
     run = batch.scheduler.new_run(rows, steps=[batch.model.Step.REVIEW], selected=None,
                                   pool=1, auto_publish=[])
     run.status = batch.model.RunStatus.WAITING
-    batch.store.save(run)
-    return run
-
-
-def test_run_asks_for_an_active_run_only_under_the_batch_lock(monkeypatch):
-    """The reported race: the question and the run it guards were seconds apart."""
-    seen = {}
-
-    def active():
-        seen["held"] = _batch_held()
-        return "20261001T000000-aaaa"
-
-    monkeypatch.setattr(batch.store, "active_run_id", active)
-    assert _main(["batch", "run", "--checkout", "/r"]) == 1
-    assert seen["held"] is True
+    return seed(run)
 
 
 def test_run_plans_under_the_batch_lock_and_releases_it(monkeypatch):
@@ -86,15 +73,17 @@ def test_run_is_refused_while_another_run_holds_the_batch_lock(monkeypatch, caps
     planned = []
     monkeypatch.setattr(batch.plan, "build_plan",
                         lambda dirs: planned.append(dirs) or Plan("me", []))
-    record = {"pid": 4242, "command": "pr batch run --checkout /x", "started": "t0",
-              "run": "20261013T000000-abcd"}
-    with held_elsewhere(core.run_lock.global_lock_path("batch"), record):
+    with live_pid() as pid, held_elsewhere(
+            core.run_lock.global_lock_path("batch"),
+            {"pid": pid, "command": "pr batch run --checkout /x", "started": "t0",
+             "run": "20261013T000000-abcd"}):
         code = _main(["batch", "run", "--checkout", "/r"])
     assert code == 1
     assert planned == []
     err = capsys.readouterr().err
     assert "owns this global batch" in err
     assert "run 20261013T000000-abcd" in err
+    assert f"pid {pid}" in err
 
 
 def test_resume_is_refused_while_another_run_holds_the_batch_lock(monkeypatch, capsys):
@@ -102,8 +91,8 @@ def test_resume_is_refused_while_another_run_holds_the_batch_lock(monkeypatch, c
     driven = []
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         lambda self: driven.append(1) or batch.model.RunStatus.WAITING)
-    with held_elsewhere(core.run_lock.global_lock_path("batch"),
-                        {"pid": 4242, "command": "pr batch run"}):
+    with live_pid() as pid, held_elsewhere(core.run_lock.global_lock_path("batch"),
+                                           {"pid": pid, "command": "pr batch run"}):
         code = _main(["batch", "resume", run.id])
     assert code == 1
     assert driven == []
@@ -193,19 +182,6 @@ def test_two_concurrent_runs_exactly_one_proceeds(tmp_path):
     assert first.returncode == 0, first_err
 
 
-def test_requests_a_live_run_drains_get_item_markers_and_an_idle_resolve_does_not(monkeypatch):
-    run = _saved_run()
-    seen = []
-    monkeypatch.setattr(batch.resolve, "apply",
-                        lambda run, req, **kw: seen.append(kw.get("env_for")) or [])
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
-                        lambda self: batch.model.RunStatus.WAITING)
-    batch.store.write_request(run.id, {"decision": "d1", "action": "accept"})
-    _main(["batch", "resume", run.id])
-    _main(["batch", "resolve", run.id, "d1", "--action", "accept"])
-    assert seen == [batch.targets.child_env, None]
-
-
 # ── every item's target, for the life of the run ─────────────────────────────
 
 
@@ -226,6 +202,7 @@ def test_run_holds_every_items_target_until_it_settles(monkeypatch, tmp_path):
 
     def fake_run(self):
         seen["held"] = [core.run_lock.is_held(_target(repo, b)) for b in ("feat/a", "feat/b")]
+        self.run.status = batch.model.RunStatus.DONE
         return batch.model.RunStatus.DONE
 
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
@@ -241,15 +218,15 @@ def test_run_is_refused_whole_when_one_item_is_being_worked_on(monkeypatch, tmp_
     driven = []
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         lambda self: driven.append(1) or batch.model.RunStatus.DONE)
-    record = {"pid": 4242, "command": "pr fix", "started": "t0"}
-    with held_elsewhere(_target(repo, "feat/b") / core.run_lock.LOCK_FILE, record):
+    with live_pid() as pid, held_elsewhere(
+            _target(repo, "feat/b") / core.run_lock.LOCK_FILE,
+            {"pid": pid, "command": "pr fix", "started": "t0"}):
         code = _main(["batch", "run", "--checkout", str(repo)])
     assert code == 1
     assert driven == []
     assert batch.store.latest_run_id() is None
-    # Taken before the refusal (sorted first), and released with it.
     assert not core.run_lock.is_held(_target(repo, "feat/a"))
-    assert "acme/widget#2 is held by pr fix (pid 4242" in capsys.readouterr().err
+    assert f"acme/widget#2 is held by pr fix (pid {pid}" in capsys.readouterr().err
 
 
 def test_resume_is_refused_when_an_item_is_held(monkeypatch, tmp_path, capsys):
@@ -258,12 +235,75 @@ def test_resume_is_refused_when_an_item_is_held(monkeypatch, tmp_path, capsys):
     driven = []
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
                         lambda self: driven.append(1) or batch.model.RunStatus.WAITING)
-    record = {"pid": 4242, "command": "pr fix", "started": "t0"}
-    with held_elsewhere(_target(repo, "feat/a") / core.run_lock.LOCK_FILE, record):
+    with live_pid() as pid, held_elsewhere(
+            _target(repo, "feat/a") / core.run_lock.LOCK_FILE,
+            {"pid": pid, "command": "pr fix", "started": "t0"}):
         code = _main(["batch", "resume", run.id])
     assert code == 1
     assert driven == []
     assert f"run {run.id} not resumed: acme/widget#1 is held by pr fix" in capsys.readouterr().err
+
+
+def test_a_refused_resume_hands_off_a_request_queued_against_it(monkeypatch, tmp_path):
+    repo = repo_with_origin(tmp_path / "repo")
+    run = batch.scheduler.new_run([_row(repo, 1, "feat/a")], steps=[batch.model.Step.REVIEW],
+                                  selected=None, pool=1, auto_publish=[])
+    item = run.items[0]
+    item.status = batch.model.ItemStatus.AWAITING_DECISION
+    item.step(batch.model.Step.REVIEW).status = batch.model.StepStatus.NEEDS_DECISION
+    run.decisions.append(batch.model.Decision(
+        id="d1", item=item.key, step="review", kind=batch.model.DecisionKind.FAILED))
+    run.status = batch.model.RunStatus.WAITING
+    seed(run)
+    real = cli.pr_batch._hold_items
+
+    def queue_then_hold(held, opened, verb):
+        batch.store.write_request(opened.id, Decide("d1", "drop-pr"))
+        real(held, opened, verb)
+
+    monkeypatch.setattr(cli.pr_batch, "_hold_items", queue_then_hold)
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
+                        lambda self: batch.model.RunStatus.WAITING)
+    with live_pid() as pid, held_elsewhere(
+            _target(repo, "feat/a") / core.run_lock.LOCK_FILE,
+            {"pid": pid, "command": "pr fix", "started": "t0"}):
+        code = _main(["batch", "resume", run.id])
+    assert code == 1
+    saved = batch.store.load(run.id)
+    assert saved.decision("d1").resolution == "drop-pr"
+    assert batch.store.pending_requests(run.id) == 0
+
+
+def test_a_refused_resume_of_a_terminal_run_hands_off_a_request_queued_against_it(
+        monkeypatch):
+    run = batch.scheduler.new_run(
+        [PlanRow("o/r", "/r", 1, "t", "b", "h", False,
+                 {batch.model.Step.REVIEW: StepNeed(True, "x")})],
+        steps=[batch.model.Step.REVIEW], selected=None, pool=1, auto_publish=[])
+    item = run.items[0]
+    item.status = batch.model.ItemStatus.AWAITING_DECISION
+    item.step(batch.model.Step.REVIEW).status = batch.model.StepStatus.NEEDS_DECISION
+    run.decisions.append(batch.model.Decision(
+        id="d1", item=item.key, step="review", kind=batch.model.DecisionKind.FAILED))
+    run.status = batch.model.RunStatus.CANCELLED
+    seed(run)
+    real = batch.store.Session.drain
+    queued = []
+
+    def drain_then_queue(self, *, settle):
+        outcomes = real(self, settle=settle)
+        if not queued:
+            queued.append(batch.store.write_request(self.run.id, Decide("d1", "drop-pr")))
+        return outcomes
+
+    monkeypatch.setattr(batch.store.Session, "drain", drain_then_queue)
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
+                        lambda self: batch.model.RunStatus.CANCELLED)
+    code = _main(["batch", "resume", run.id])
+    assert code == 1
+    saved = batch.store.load(run.id)
+    assert saved.decision("d1").resolution == "drop-pr"
+    assert batch.store.pending_requests(run.id) == 0
 
 
 def test_an_item_with_no_origin_is_left_to_lock_itself(monkeypatch, capsys):
@@ -271,7 +311,7 @@ def test_an_item_with_no_origin_is_left_to_lock_itself(monkeypatch, capsys):
                   {batch.model.Step.REVIEW: StepNeed(True, "x")})
     monkeypatch.setattr(batch.plan, "build_plan", lambda dirs: Plan("me", [row]))
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
-                        lambda self: batch.model.RunStatus.DONE)
+                        stops_at(batch.model.RunStatus.DONE))
     assert _main(["batch", "run", "--checkout", "/r"]) == 0
     assert "cannot name the pr target of o/r#1" in capsys.readouterr().err
 
@@ -294,6 +334,7 @@ _HOLDING_HARNESS = textwrap.dedent("""\
         deadline = time.monotonic() + 30
         while not (signals / "release").exists() and time.monotonic() < deadline:
             time.sleep(0.05)
+        self.run.status = batch.model.RunStatus.DONE
         return batch.model.RunStatus.DONE
 
     batch.scheduler.Scheduler.run_until_blocked = run_until_blocked

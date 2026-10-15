@@ -14,7 +14,7 @@ import pytest  # noqa: E402
 import core.run_lock  # noqa: E402
 import core.workbench_paths  # noqa: E402
 from core.run_lock import CHECKOUT, NO_LOCK, TARGET, Global, LockBusy  # noqa: E402
-from run_lock_support import flocked, git_dir, held_elsewhere  # noqa: E402
+from run_lock_support import flocked, git_dir, held_elsewhere, live_pid  # noqa: E402
 
 BATCH = Global("batch")
 
@@ -80,13 +80,16 @@ def test_the_global_lock_is_held_for_the_block_and_released_after():
 
 
 def test_a_refused_global_says_which_and_names_the_holder():
-    record = {"pid": 4242, "command": "pr batch run --checkout /r", "started": "t0"}
-    with held_elsewhere(core.run_lock.global_lock_path("batch"), record), \
+    with live_pid() as pid, \
+         held_elsewhere(core.run_lock.global_lock_path("batch"), {
+             "pid": pid, "command": "pr batch run --checkout /r", "started": "t0",
+         }), \
          pytest.raises(LockBusy) as exc:
+        seen = pid
         with core.run_lock.hold({BATCH}, command="pr batch run", started="t"):
             pytest.fail("a held global lock must refuse the block")
     assert exc.value.kind == "global"
-    assert ("owns this global batch: pr batch run --checkout /r (pid 4242, started t0)"
+    assert (f"owns this global batch: pr batch run --checkout /r (pid {seen}, started t0)"
             in str(exc.value))
 
 
@@ -147,7 +150,9 @@ def test_lock_checkout_accepts_a_target_its_parent_holds(worktree, tmp_path, mon
 
 def test_a_refused_target_names_the_repo_and_branch(tmp_path):
     target = tmp_path / "t"
-    with held_elsewhere(target / core.run_lock.LOCK_FILE, {"pid": 7, "command": "pr fix"}), \
+    with live_pid() as pid, \
+         held_elsewhere(target / core.run_lock.LOCK_FILE,
+                        {"pid": pid, "command": "pr fix"}), \
          pytest.raises(LockBusy) as exc:
         with core.run_lock.hold({TARGET}, target_dir=target, target_label="acme/widget@feat/x",
                                 command="pr rebase", started="t"):
@@ -158,7 +163,8 @@ def test_a_refused_target_names_the_repo_and_branch(tmp_path):
 
 def test_a_refused_checkout_names_the_tree(worktree, tmp_path):
     tree_lock = git_dir(worktree) / core.run_lock.TREE_LOCK_FILE
-    with held_elsewhere(tree_lock, {"pid": 7, "command": "pr rebase"}), \
+    with live_pid() as pid, \
+         held_elsewhere(tree_lock, {"pid": pid, "command": "pr rebase"}), \
          pytest.raises(LockBusy) as exc:
         with core.run_lock.hold({TARGET, CHECKOUT}, target_dir=tmp_path / "t",
                                 worktree=worktree, command="pr comments", started="t"):

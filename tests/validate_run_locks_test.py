@@ -56,3 +56,25 @@ def test_the_allowlist_admits_only_the_functions_it_names():
 
 def test_the_repo_passes():
     assert vrl.main(["--quiet"]) == 0
+
+
+def test_the_batch_store_may_take_a_resource():
+    source = ("import core.run_lock\n"
+              "core.run_lock.hold_resource(lock, command='x', started='t')\n")
+    assert _reasons(source, "ai/lib/batch/store.py") == []
+
+
+def test_batch_gc_may_not_take_a_lock():
+    source = "import core.run_lock\ncore.run_lock.acquire(t, 'x', 't')\n"
+    reasons = _reasons(source, "ai/lib/batch/gc.py")
+    assert len(reasons) == 1
+    assert "core.run_lock.acquire" in reasons[0]
+
+
+def test_pr_batch_holds_item_targets_but_takes_no_run_lock_of_its_own():
+    source = ("import core.run_lock\n"
+              "core.run_lock.hold(s, command='x', started='t')\n"
+              "core.run_lock.acquire(t, 'x', 't')\n")
+    reasons = _reasons(source, "ai/lib/cli/pr_batch.py")
+    assert len(reasons) == 1
+    assert "core.run_lock.acquire" in reasons[0]

@@ -2,8 +2,11 @@
 
 A Scheduler whose spawn, replan, worktrees, head, publish runner and tree reads
 are all fakes, so a run can be driven tick by tick with no git and no network.
+Each Harness seeds the run, then holds a DRIVER session open for its lifetime;
+`resume()` builds a new Scheduler on that same session.
 """
 
+import contextlib
 import sys
 from pathlib import Path
 
@@ -15,12 +18,17 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.admission  # noqa: E402
+import batch.events  # noqa: E402
+import batch.inbox  # noqa: E402
 import batch.model  # noqa: E402
 import batch.outcomes  # noqa: E402
 import batch.scheduler  # noqa: E402
+import batch.store  # noqa: E402
 from batch.plan import PlanRow, StepNeed  # noqa: E402
 from batch.publish import TreeState  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
+from batch.store import Role  # noqa: E402
+from batch_session_support import open_session, seed  # noqa: E402
 from config.workbench_config import BatchConfig  # noqa: E402
 from pr.comments_fix import CloseoutDebt  # noqa: E402
 from rebase.types import RefDivergence  # noqa: E402
@@ -30,6 +38,8 @@ NEED = StepNeed(True, "x")
 NO = StepNeed(False, "y")
 ALL = {batch.model.Step.REBASE: NEED, batch.model.Step.COMMENTS: NEED, batch.model.Step.REVIEW: NEED}
 HEALTHY = batch.admission.HostSample(8 * GiB, 1.0, 0.0)
+
+_OPEN = []
 
 
 def row(n, needs=ALL, *, repo="o/r", repo_dir="/r", **extra):
@@ -53,12 +63,56 @@ def _even(item):
                      divergence=RefDivergence(ahead=0, behind=0, comparable=True))
 
 
+def _inbox(pr_bin, *, runner, tree, closeout, emit):
+    """The session Inbox a scheduler test drives with: the fakes as apply seams, events to *emit*.
+
+    It is the only place a drained or synthesized request is applied and
+    reported, so event assertions see every outcome through `emit_outcome`.
+    """
+    return batch.inbox.Inbox(batch.inbox.ApplyContext(
+        pr_bin, runner=runner, tree=tree, closeout=closeout,
+        report=lambda run, outcome: batch.scheduler.emit_outcome(run, outcome, emit=emit)))
+
+
+def attach_scheduler(run, *, runner=None, tree=None, closeout=None, **kw):
+    """Open a DRIVER session for *run* (creating it when needed) and return a Scheduler on it.
+
+    *runner*, *tree* and *closeout* are apply seams, so they go to the session
+    inbox's ApplyContext; the Scheduler also gets *closeout*, which `_close`
+    reads for auto-publish. Outcomes are emitted to `kw["emit"]` when given.
+    The session stays open until `_close_open_sessions` tears the stack down.
+    `create` + first `commit` is used when the run is not on disk yet, so
+    `finish` has not settled an empty run to DONE before the scheduler starts.
+    """
+    stack = contextlib.ExitStack()
+    inbox = _inbox(kw.get("pr_bin", "pr"), runner=runner, tree=tree, closeout=closeout,
+                   emit=kw.get("emit", batch.events.emit))
+    state = batch.store.run_dir(run.id) / batch.store.STATE_FILE
+    if state.is_file():
+        session = stack.enter_context(
+            batch.store.session(run.id, Role.DRIVER, inbox=inbox, command="test scheduler"))
+    else:
+        session = stack.enter_context(
+            batch.store.create(run, inbox=inbox, command="test scheduler"))
+        session.commit()
+    _OPEN.append(stack)
+    return batch.scheduler.Scheduler(session, closeout=closeout, **kw)
+
+
 @pytest.fixture(autouse=True)
 def _quiet_outcomes(monkeypatch):
     monkeypatch.setattr(batch.outcomes, "comment_items", lambda item: [])
     monkeypatch.setattr(batch.outcomes, "open_findings", lambda item: [])
     monkeypatch.setattr(batch.outcomes, "fix_checks", lambda wt, hb: [])
     monkeypatch.setattr(batch.outcomes, "ci_unfixed", lambda stdout: None)
+
+
+@pytest.fixture(autouse=True)
+def _close_open_sessions():
+    """Close every Harness / attach_scheduler session this test opened."""
+    yield
+    while _OPEN:
+        _OPEN.pop().close()
 
 
 class Harness:
@@ -71,26 +125,50 @@ class Harness:
         self.moves, self.stdouts = set(moves), stdouts or {}
         self.spawned, self.events, self.live, self.max_live = [], [], 0, 0
         self.published, self.publish_code = [], 0
-        self.run = batch.scheduler.new_run(rows, steps=list(batch.model.STEP_ORDER), selected=selected, pool=pool,
-                               auto_publish=list(auto_publish), watch_ci=watch_ci)
+        run = batch.scheduler.new_run(rows, steps=list(batch.model.STEP_ORDER),
+                                      selected=selected, pool=pool,
+                                      auto_publish=list(auto_publish), watch_ci=watch_ci)
         self.heads = heads or {}
+        publish = runner or self._publish
+        tree_fn = tree or ff_tree
+        close = closeout or (lambda d, b: CloseoutDebt())
+        seed(run)
+        self._stack = contextlib.ExitStack()
+        _OPEN.append(self._stack)
+        # The publish runner and tree read are apply seams: they reach the
+        # session inbox, which applies every request. closeout also goes to
+        # the Scheduler, whose _close reads it for auto-publish.
+        self.session = self._stack.enter_context(open_session(
+            run.id, inbox=_inbox("pr", runner=publish, tree=tree_fn, closeout=close,
+                                 emit=self._record)))
         self._make = lambda: batch.scheduler.Scheduler(
-            self.run, pr_bin="pr", cfg=cfg or BatchConfig(pool_max=4),
+            self.session, pr_bin="pr", cfg=cfg or BatchConfig(pool_max=4),
             host=lambda: host, spawn=self._spawn,
             replan=replan or (lambda r: r),
             worktrees=worktrees or (lambda d, b: WorktreeResult(f"/wt/{b}", False, "")),
             head=lambda wt: self.heads.get(wt, "h0"), rss=lambda pid: 0,
-            emit=lambda kind, **f: self.events.append((kind, f)), sleep=lambda s: None,
-            estimates=batch.admission.Estimates({}),
-            runner=runner or self._publish, tree=tree or ff_tree,
-            closeout=closeout or (lambda d, b: CloseoutDebt()),
+            emit=self._record, sleep=lambda s: None,
+            estimates=batch.admission.Estimates({}), closeout=close,
             contains=contains or (lambda wt, sha: True),
             dirty=dirty or (lambda wt: False), rebasing=rebasing or (lambda wt: False),
             verbose=verbose)
         self.sched = self._make()
 
+    @property
+    def run(self):
+        """The session's run: the object the Scheduler mutates."""
+        return self.session.run
+
+    def close(self):
+        """Release the DRIVER session. The autouse fixture also calls this."""
+        self._stack.close()
+
+    def _record(self, kind, **fields):
+        """The one event sink: the Scheduler's own events and every reported outcome."""
+        self.events.append((kind, fields))
+
     def resume(self):
-        """A fresh Scheduler over the same run, as `pr batch resume` builds after an interrupt."""
+        """A fresh Scheduler over the same session, as `pr batch resume` after an interrupt."""
         self.sched = self._make()
         return self.sched
 
@@ -100,9 +178,6 @@ class Harness:
 
     def _spawn(self, argv, *, log_path, trail_root, env=None):
         h = self
-        # One past the number of processes spawned so far, not a constant: a
-        # test asserting on which pid got killed needs spawns to be
-        # distinguishable from each other.
         next_pid = len(self.spawned) + 1
         key = (step_name(argv), argv[-1])
         if key in self.moves:

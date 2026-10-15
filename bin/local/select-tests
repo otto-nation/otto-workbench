@@ -392,7 +392,13 @@ _scans_real_tree() {
 _validate_test_refs() {
   local problems=0 test_file test_name pattern
   local -a tracked=()
-  mapfile -t tracked < <(git -C "$WORKBENCH_DIR" ls-files 2>/dev/null)
+  # An inherited GIT_DIR outranks -C, so a caller's (or a hook's) git
+  # environment would list another repo's files; clear it in the subshell.
+  mapfile -t tracked < <(git_env_clear; git -C "$WORKBENCH_DIR" ls-files 2>/dev/null)
+  if [[ ${#tracked[@]} -eq 0 ]]; then
+    err "Could not list tracked files in $WORKBENCH_DIR — cannot check select-on patterns"
+    return 1
+  fi
   while IFS= read -r test_file; do
     test_name="$(basename "$test_file" .bats)"
     local -a declared=()

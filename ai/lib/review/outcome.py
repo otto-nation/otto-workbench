@@ -33,7 +33,7 @@ from review.state import PipelineState, pipeline_status, set_failures_section
 from review.types import ReviewJob, ReviewMeta, ReviewType
 from review.verdict import (
     CLEAN_SUMMARY, CLEAN_VERDICT, FALLBACK_SUMMARY, NO_CHANGES_SUMMARY,
-    PARTIAL_VERDICT, build_mechanical_body, states_verdict,
+    NO_RUN_VERDICT, PARTIAL_VERDICT, build_mechanical_body, states_verdict,
 )
 from review.verify import post_process_findings
 
@@ -168,14 +168,23 @@ def _build_mechanical_fallback(
     # the summary derives from the tally alone, so the count cannot tell them
     # apart; the scope is the only place the difference can be stated.
     reported = group_count - failed
+    # Every group gone — counted here or diagnosed by synthesis — leaves an
+    # empty tally that `mechanical_verdict` would read as Approve.
+    nothing_ran = bool(pipeline_state and pipeline_state.all_groups_failed)
+    if nothing_ran:
+        verdict = NO_RUN_VERDICT
+    elif partial:
+        verdict = PARTIAL_VERDICT
+    else:
+        verdict = ""
     body = build_mechanical_body(
         merged_content,
         group_count=group_count,
         summary_note=FALLBACK_SUMMARY,
         include_verdict=states_verdict(job.mode),
-        verdict=PARTIAL_VERDICT if partial else "",
+        verdict=verdict,
         file_count=job.pr.changed_files,
-        groups_reported=None if failed == 0 else reported,
+        groups_reported=0 if nothing_ran else (None if failed == 0 else reported),
     )
     if pipeline_state:
         body = set_failures_section(body, pipeline_state)

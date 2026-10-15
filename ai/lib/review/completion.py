@@ -23,9 +23,11 @@ import core.prompt
 from core.trail import Trail
 import gh.client
 import pr.context
+from pr.domains import ReviewStatus
 from pr.review_sync import sync_review_domain
 import review.invoke
 import review.publish
+from review.document import ReviewDocument
 from review.paths import FILENAME_PIPELINE_STATE, FILENAME_PRIOR, archive_review
 from review.summary import build_review_summary, print_summary
 
@@ -37,6 +39,18 @@ class ReviewOutcome:
     repo: str
     pr_number: str
     review_file: Path
+
+    @property
+    def nothing_ran(self) -> bool:
+        """Whether the review's header says no group reported (`status: error`).
+
+        Read from the file this run wrote rather than the pipeline sidecar, so
+        the answer is about this review and not whatever state a prior run
+        left in the directory. A missing file is not this case — the flow
+        exits before returning an outcome for one.
+        """
+        doc = ReviewDocument.read(self.review_file)
+        return bool(doc and doc.header.status is ReviewStatus.ERROR)
 
 
 def _display(path: Path) -> None:

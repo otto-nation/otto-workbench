@@ -126,6 +126,18 @@ class TestBuildFailuresBody:
         )
         assert build_failures_body(state) == ""
 
+    def test_a_pipe_in_a_reason_cannot_break_its_row(self):
+        """A quoted stderr line is free text; one `|` shifted the Status cell."""
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+        from review.state import PipelineState, build_failures_body
+        state = PipelineState(
+            group_names=["a"],
+            groups_failed={1: Diagnosis(DiagnosisKind.AGENT_ERROR, detail="error: a | b")},
+        )
+        row = build_failures_body(state).splitlines()[2]
+        assert "a \\| b" in row
+        assert row.endswith("| failed |")
+
     def test_group_failures_produce_table(self):
         from agent.diagnosis import Diagnosis, DiagnosisKind
         from review.state import PipelineState

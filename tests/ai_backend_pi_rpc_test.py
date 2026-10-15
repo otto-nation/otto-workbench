@@ -551,6 +551,85 @@ class TestWritingToADeadPi:
         assert code != 0
         assert "exited before the prompt" in log.read_text()
 
+    _MISE_UNTRUSTED = (
+        "mise ERROR Config files in ~/src/repo/.mise.toml are not trusted.\n"
+        "Trust them with `mise trust`. See https://mise.jdx.dev/cli/trust.html\n"
+    )
+
+    def _undelivered(self, monkeypatch, tmp_path, proc):
+        import agent.session
+
+        proc.stdin = self._DeadStdin()
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: proc)
+        log = tmp_path / "s.jsonl"
+        agent.backend_pi.invoke_agent(agent.backend_pi.AgentInvocation(
+            prompt="p", cwd=str(tmp_path), session_log=str(log),
+        ))
+        return agent.session.diagnose_missing_output(str(log))
+
+    def test_the_undelivered_prompt_names_the_first_stderr_line(self, monkeypatch, tmp_path):
+        """The cause is in stderr; the closed stdin is only its symptom.
+
+        A mise shim refusing an untrusted config exits before pi starts, and
+        the summary table said "its stdin was already closed" — the cause was
+        only in the raw stderr inside the group's jsonl.
+        """
+        proc = _RefusingProc([])
+        proc.stderr = io.StringIO("\n" + self._MISE_UNTRUSTED)
+        diagnosis = self._undelivered(monkeypatch, tmp_path, proc)
+        assert "mise ERROR Config files in ~/src/repo/.mise.toml are not trusted." in diagnosis.message
+        assert "stdin was already closed" not in diagnosis.message
+        assert "Trust them" not in diagnosis.message, "one line, not the whole stderr"
+
+    def test_the_quoted_stderr_line_carries_no_colour_codes(self, monkeypatch, tmp_path):
+        """Stripped at the source; the pipe is left for the table to escape."""
+        proc = _RefusingProc([])
+        proc.stderr = io.StringIO("\x1b[31merror: a | b\x1b[0m\n")
+        diagnosis = self._undelivered(monkeypatch, tmp_path, proc)
+        assert "\x1b" not in diagnosis.message
+        assert "error: a | b" in diagnosis.message
+
+    def test_an_empty_stderr_keeps_the_stdin_symptom(self, monkeypatch, tmp_path):
+        diagnosis = self._undelivered(monkeypatch, tmp_path, _RefusingProc([]))
+        assert "stdin was already closed" in diagnosis.message
+
+    def test_a_child_still_exiting_has_its_stderr_read(self):
+        """The send fails the moment the pipe closes; the exit lands just after.
+
+        Checking `poll()` once lost that race and reported an empty stderr
+        for a child that was a few milliseconds from leaving.
+        """
+        class _Exiting:
+            def __init__(self, text):
+                self.stderr = io.StringIO(text)
+                self.exited = False
+
+            def poll(self):
+                return 0 if self.exited else None
+
+            def wait(self, timeout=None):
+                self.exited = True
+                return 0
+
+        assert agent.backend_pi._exited_stderr(_Exiting(self._MISE_UNTRUSTED)) == self._MISE_UNTRUSTED
+
+    def test_a_child_that_does_not_exit_is_not_read(self):
+        """Reading a live child's stderr blocks until it closes the pipe."""
+        class _Alive:
+            class _Unreadable:
+                def read(self):
+                    raise AssertionError("read the stderr of a process still alive")
+
+            stderr = _Unreadable()
+
+            def poll(self):
+                return None
+
+            def wait(self, timeout=None):
+                raise subprocess.TimeoutExpired("pi", timeout)
+
+        assert agent.backend_pi._exited_stderr(_Alive()) == ""
+
     def test_the_undelivered_prompt_diagnoses_as_an_error(self, monkeypatch, tmp_path):
         import agent.session
         from agent.diagnosis import DiagnosisKind

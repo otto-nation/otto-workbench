@@ -137,6 +137,36 @@ def test_main_refuses_contradictory_flags(cr, reviews_dir, monkeypatch, argv, re
     assert cr.main(argv) == 1, reason
 
 
+# ── the exit status ──────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("status,expected", [
+    ("error", 1),
+    ("partial", 0),
+    ("completed", 0),
+])
+@pytest.mark.parametrize("argv", [["--self"], ["42"]])
+def test_main_exits_nonzero_only_when_no_part_of_the_review_ran(
+    cr, reviews_dir, monkeypatch, tmp_path, argv, status, expected,
+):
+    """A run whose every agent died must not read as success to its caller.
+
+    It exited 0, so a background job reported "succeeded" and `pr batch`
+    recorded a review step that reviewed nothing. A partial run keeps 0: its
+    verdict is already withheld and the surviving findings are real.
+    """
+    review_file = tmp_path / "review.md"
+    review_file.write_text(f"<!-- status: {status} -->\n\n## Summary\nx\n")
+    outcome = review.run.ReviewOutcome("owner/repo", "42", review_file)
+    monkeypatch.setattr(cr, "_run_self_review", lambda *a, **kw: outcome)
+    monkeypatch.setattr(cr, "_run_review", lambda *a, **kw: outcome)
+    monkeypatch.setattr(pr.context, "classify_target", lambda c: (c, None))
+    monkeypatch.setattr(pr.context, "resolve", lambda **kw: make_ctx())
+    monkeypatch.setattr(core.run_lock, "claim_for_process", lambda *a, **kw: None)
+
+    assert cr.main(argv) == expected
+
+
 # ── the PR path, composed ────────────────────────────────────────────────────
 
 

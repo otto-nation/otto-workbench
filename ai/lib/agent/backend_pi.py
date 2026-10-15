@@ -50,6 +50,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import time
@@ -75,7 +76,9 @@ from agent.backend_events import (
 )
 from agent.backend_pi_rpc import (
     _PROMPT_UNDELIVERED,
+    _PROMPT_UNDELIVERED_BECAUSE,
     _RPC_ERROR_EXIT_CODE,
+    _STDERR_LINE_MAX_CHARS,
     _get_stats_after_agent_end,
     _rpc_process,
     _rpc_response_error,
@@ -583,18 +586,29 @@ class StreamResult:
         return self.error or self.provider_error
 
 
+# How long a child whose stdin just closed is given to finish exiting before
+# its stderr is read. The write fails the moment the pipe closes, and the exit
+# lands a few milliseconds later; one `poll()` lost that race and reported an
+# empty stderr for a child that was about to leave with the cause in it.
+_EXIT_GRACE_S = 2.0
+
+
 def _exited_stderr(proc: subprocess.Popen | None) -> str:
-    """stderr of a child that has already left, else empty.
+    """stderr of a child that has left, or leaves within `_EXIT_GRACE_S`, else empty.
 
     Reading a live child's stderr pipe blocks until it closes the fd, so a
-    process still running is skipped. A stub without ``poll`` is treated as
-    already gone — the tests' dead-stdin Pi has already refused the write.
+    process still running after the grace is skipped. A stub without ``poll``
+    is treated as already gone — the tests' dead-stdin Pi has already refused
+    the write.
     """
     if proc is None or proc.stderr is None:
         return ""
     poll = getattr(proc, "poll", None)
     if callable(poll) and poll() is None:
-        return ""
+        try:
+            proc.wait(timeout=_EXIT_GRACE_S)
+        except subprocess.TimeoutExpired:
+            return ""
     try:
         return proc.stderr.read() or ""
     except (OSError, ValueError):
@@ -610,10 +624,20 @@ def _undelivered_prompt(
     Logged into the session file in Pi's own response shape, so the record that
     explains the failure is where every other refusal leaves one. When Pi's
     stderr names a missing model, that is the error — not the closed-stdin
-    symptom of the same exit.
+    symptom of the same exit. Any other stderr contributes its first line,
+    which is where a wrapper that refused to start pi — a mise shim over an
+    untrusted config — says why; the whole of it follows in the log.
     """
     stderr = _exited_stderr(proc)
-    error = not_served_message(model, stderr, provider, pi=pi) or _PROMPT_UNDELIVERED
+    first_line = next((line.strip() for line in stderr.splitlines() if line.strip()), "")
+    # A colour code is noise in every place the reason is read — the log, the
+    # session file, the Agent Failures table. Table escaping is the table's.
+    first_line = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", first_line)
+    error = (
+        not_served_message(model, stderr, provider, pi=pi)
+        or (f"{_PROMPT_UNDELIVERED_BECAUSE}{first_line[:_STDERR_LINE_MAX_CHARS]}"
+            if first_line else _PROMPT_UNDELIVERED)
+    )
     core.log.error(f"pi refused the run: {error}")
     log_file.write(json.dumps({
         "type": "response", "command": "prompt", "success": False,

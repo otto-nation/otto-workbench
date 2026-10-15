@@ -219,6 +219,46 @@ class TestBuildMechanicalFallback:
         assert "No findings" not in result.body
         assert "No group reported" in result.body
 
+    def test_a_run_where_every_group_failed_states_no_verdict(self, ro, tmp_path):
+        """The summary said nothing reported; the verdict said Approve.
+
+        Three agents dead before a prompt reached them, 0 tokens, and the
+        review still closed on "Approve — no findings" — the one line a
+        reader acts on without opening the failures table.
+        """
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+        from review.document import ReviewDocument
+        from review.state import PipelineState
+        from review.verdict import NO_RUN_VERDICT
+
+        state = PipelineState(group_names=["a", "b", "c"])
+        for n in range(3):
+            state.groups_failed[n] = Diagnosis(DiagnosisKind.AGENT_ERROR, detail="boom")
+        result = ro._build_mechanical_fallback(
+            self._partial_job(ro, tmp_path), 3, "", pipeline_state=state,
+        )
+
+        assert ReviewDocument(body=result.body).section("Verdict").strip() == NO_RUN_VERDICT.strip()
+        assert "Approve" not in result.body
+
+    def test_a_run_synthesis_diagnosed_as_all_failed_states_no_verdict(self, ro, tmp_path):
+        """`all_groups_failed` has a second source: synthesis's own diagnosis."""
+        from agent.diagnosis import Diagnosis, DiagnosisKind
+        from core.phases import Phase
+        from review.state import PipelineState
+        from review.verdict import NO_RUN_VERDICT
+
+        state = PipelineState(group_names=["a", "b"])
+        state.failed[Phase.SYNTHESIS] = Diagnosis(DiagnosisKind.ALL_GROUPS_FAILED)
+        result = ro._build_mechanical_fallback(
+            self._partial_job(ro, tmp_path), 2, "", pipeline_state=state,
+        )
+
+        assert NO_RUN_VERDICT.strip() in result.body
+        assert "Approve" not in result.body
+        assert "No findings" not in result.body
+        assert "No group reported" in result.body
+
 
 # ── 33. _write_clean_review ─────────────────────────────────────────────────
 

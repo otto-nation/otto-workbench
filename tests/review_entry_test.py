@@ -35,6 +35,11 @@ import gh.client
 from review_entry_support import cr, reviews_dir, _self_flags, _stub_pr_flow
 
 
+def _outcome(_ignored=None):
+    """A finished review for a stubbed flow to hand back; no file, so it ran."""
+    return review.run.ReviewOutcome("owner/repo", "", Path("/nonexistent/review.md"))
+
+
 # ── is_pr_ref ─────────────────────────────────────────────────────────────────
 
 
@@ -71,7 +76,7 @@ def test_the_generator_version_is_resolved_not_injected(cr, reviews_dir, monkeyp
     """
     seen = {}
     monkeypatch.setattr(cr, "_run_self_review",
-                        lambda args, argv, gv: seen.setdefault("gv", gv))
+                        lambda args, argv, gv: _outcome(seen.setdefault("gv", gv)))
     monkeypatch.setattr(core.version, "tool_version", lambda: "9.9.9")
     monkeypatch.setattr(core.version, "workbench_version", lambda: "1.0 (abc)")
 
@@ -94,7 +99,7 @@ def test_the_generator_version_names_the_tool_even_with_no_workbench_manifest(
     """
     seen = {}
     monkeypatch.setattr(cr, "_run_self_review",
-                        lambda args, argv, gv: seen.setdefault("gv", gv))
+                        lambda args, argv, gv: _outcome(seen.setdefault("gv", gv)))
     monkeypatch.setattr(core.version, "tool_version", lambda: "9.9.9")
     monkeypatch.setattr(core.version, "workbench_version", lambda: "")
 

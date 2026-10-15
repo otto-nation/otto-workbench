@@ -7,6 +7,12 @@ merged review carries when no synthesis agent produced one.
 
 Kept apart from the document itself because the document is a shape and this is
 a judgement — a review file parses the same way whatever this module decides.
+
+A review where no group reported — every agent failed, so its header says
+`status: error` — records no verdict: its empty tally means nothing was read,
+not that nothing was found. It states `NO_RUN_VERDICT` above its Agent Failures
+table, and `pr review` exits 1 once it has shown and recorded it. A partial run
+states `PARTIAL_VERDICT` and exits 0, since the surviving findings are real.
 """
 
 # doc-group: pipeline

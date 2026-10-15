@@ -630,8 +630,9 @@ def _undelivered_prompt(
     """
     stderr = _exited_stderr(proc)
     first_line = next((line.strip() for line in stderr.splitlines() if line.strip()), "")
-    # Quoted into a markdown table cell: ANSI codes and `|` would break the row.
-    first_line = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", first_line).replace("|", "\\|")
+    # A colour code is noise in every place the reason is read — the log, the
+    # session file, the Agent Failures table. Table escaping is the table's.
+    first_line = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", first_line)
     error = (
         not_served_message(model, stderr, provider, pi=pi)
         or (f"{_PROMPT_UNDELIVERED_BECAUSE}{first_line[:_STDERR_LINE_MAX_CHARS]}"

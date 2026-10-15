@@ -581,12 +581,13 @@ class TestWritingToADeadPi:
         assert "stdin was already closed" not in diagnosis.message
         assert "Trust them" not in diagnosis.message, "one line, not the whole stderr"
 
-    def test_the_quoted_stderr_line_cannot_break_the_failures_table(self, monkeypatch, tmp_path):
+    def test_the_quoted_stderr_line_carries_no_colour_codes(self, monkeypatch, tmp_path):
+        """Stripped at the source; the pipe is left for the table to escape."""
         proc = _RefusingProc([])
         proc.stderr = io.StringIO("\x1b[31merror: a | b\x1b[0m\n")
         diagnosis = self._undelivered(monkeypatch, tmp_path, proc)
         assert "\x1b" not in diagnosis.message
-        assert "a \\| b" in diagnosis.message
+        assert "error: a | b" in diagnosis.message
 
     def test_an_empty_stderr_keeps_the_stdin_symptom(self, monkeypatch, tmp_path):
         diagnosis = self._undelivered(monkeypatch, tmp_path, _RefusingProc([]))

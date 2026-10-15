@@ -23,6 +23,7 @@ from pathlib import Path
 
 import core.log
 import core.serde
+from core.markdown import escape_cell
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import SCAN_PHASES
 from core.phases import Phase
@@ -327,7 +328,9 @@ def build_failures_body(state: "PipelineState") -> str:
         "|-------|--------|--------|",
     ]
     for agent, reason, status in rows:
-        lines.append(f"| {agent} | {reason} | {status} |")
+        # A reason is free text — an RPC error, a quoted stderr line — and one
+        # literal pipe in it shifts every later cell in the row.
+        lines.append(f"| {agent} | {escape_cell(reason)} | {status} |")
 
     if _any_recoverable(state):
         lines.append("")

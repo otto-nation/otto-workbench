@@ -16,7 +16,7 @@ import batch.store  # noqa: E402
 from batch.requests import Decide  # noqa: E402
 from batch.model import STEP_ORDER, DecisionKind, ItemStatus, RunStatus, Step  # noqa: E402
 # `_close_open_sessions` and `_quiet_outcomes` are autouse fixtures, imported only so
-# pytest registers them.
+# pytest registers them (the `noqa: F401` covers them); the other names are used directly.
 from batch_scheduler_support import (  # noqa: F401
     ALL, NEED, NO, Harness, _close_open_sessions, _quiet_outcomes, row,
 )

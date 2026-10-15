@@ -142,6 +142,8 @@ def test_is_live_table(monkeypatch):
         monkeypatch.setattr(core.run_lock.os, "kill", deny)
         assert core.run_lock.is_live({"released": None, "pid": 1}) is True
     finally:
+        # Undo before kill: patching core.run_lock.os.kill patches os.kill for the
+        # whole process, and Popen.kill() goes through it.
         monkeypatch.undo()
         live_proc.kill()
         live_proc.wait()

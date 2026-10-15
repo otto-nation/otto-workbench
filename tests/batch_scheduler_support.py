@@ -178,6 +178,8 @@ class Harness:
 
     def _spawn(self, argv, *, log_path, trail_root, env=None):
         h = self
+        # One past the number spawned so far, not a constant: each fake step gets
+        # its own pid, so a kill or an RSS read aimed at one step cannot land on another.
         next_pid = len(self.spawned) + 1
         key = (step_name(argv), argv[-1])
         if key in self.moves:

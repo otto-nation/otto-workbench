@@ -1,7 +1,6 @@
 """apply_one, settle_idle, Inbox, and deliver."""
 
 import contextlib
-import os
 import sys
 from pathlib import Path
 
@@ -24,8 +23,7 @@ from batch.model import (  # noqa: E402
 from batch.requests import Cancel, Decide, Envelope, Malformed, Outcome  # noqa: E402
 import core.run_lock  # noqa: E402
 from batch.store import Role  # noqa: E402
-from batch_session_support import seed  # noqa: E402
-from run_lock_support import held_elsewhere  # noqa: E402
+from batch_session_support import holding, open_session, seed  # noqa: E402
 from batch.publish import TreeState  # noqa: E402
 from pr.comments_fix import CloseoutDebt  # noqa: E402
 from rebase.types import RefDivergence  # noqa: E402
@@ -121,6 +119,19 @@ def test_apply_one_unknown_decision_is_an_error_outcome():
         run, Decide("nope", "retry"), ApplyContext(pr_bin="pr", runner=Recorder()))
     assert not out.ok
     assert "nope" in out.error
+
+
+def test_apply_one_file_not_found_is_an_error_naming_the_exception(monkeypatch):
+    run = _run(_d(DecisionKind.DIRTY_WORKTREE, "worktree"))
+
+    def boom(*args, **kwargs):
+        raise FileNotFoundError("/missing")
+
+    monkeypatch.setattr(batch.resolve, "apply", boom)
+    out = batch.inbox.apply_one(run, Decide("d1", "drop-pr"), ApplyContext(pr_bin="pr"))
+    assert not out.ok
+    assert "FileNotFoundError" in out.error
+    assert run.decision("d1").open
 
 
 def test_apply_one_cancel_records_run_cancel():
@@ -242,13 +253,6 @@ def _ctx():
     return ApplyContext(pr_bin="pr", runner=Recorder())
 
 
-def _holding(run_id, role):
-    """Hold *run_id*'s lock on a descriptor of our own, as a live *role* in another process."""
-    record = {"pid": os.getppid(), "command": "pr batch x", "started": "t0",
-              "role": role.value, "run": run_id}
-    return held_elsewhere(batch.store.run_lock(run_id).path, record)
-
-
 def test_deliver_applies_its_own_request_and_returns_the_earlier_ones_apart():
     run = seed(_run(_d(DecisionKind.DIRTY_WORKTREE, "worktree")))
     earlier = batch.store.write_request(run.id, Decide("nope", "retry"))
@@ -263,7 +267,7 @@ def test_deliver_applies_its_own_request_and_returns_the_earlier_ones_apart():
 
 def test_deliver_queues_for_a_live_holder_that_drains():
     run = seed(_run(_d(DecisionKind.DIRTY_WORKTREE, "worktree")))
-    with _holding(run.id, Role.DRIVER):
+    with holding(run.id, Role.DRIVER):
         delivery = batch.inbox.deliver(run.id, Decide("d1", "drop-pr"), _ctx(),
                                        command="pr batch resolve")
     assert delivery.queued is True and delivery.own is None and delivery.others == ()
@@ -277,7 +281,7 @@ def test_deliver_waits_out_a_gc_holder_and_then_applies(monkeypatch):
     monkeypatch.setattr(core.run_lock, "retry_delays", lambda: iter([0.0, 0.0, 0.0]))
     paused = []
     with contextlib.ExitStack() as gc:
-        gc.enter_context(_holding(run.id, Role.GC))
+        gc.enter_context(holding(run.id, Role.GC))
 
         def pause(seconds):
             paused.append(seconds)
@@ -295,9 +299,10 @@ def test_deliver_gives_up_on_a_gc_holder_that_stays(monkeypatch):
     monkeypatch.setattr(core.run_lock, "retry_delays", lambda: iter([0.0, 0.0]))
     paused = []
     monkeypatch.setattr(batch.inbox.time, "sleep", paused.append)
-    with _holding(run.id, Role.GC), pytest.raises(batch.store.RunUnreachable):
+    with holding(run.id, Role.GC), pytest.raises(batch.store.RunUnreachable) as exc:
         batch.inbox.deliver(run.id, Cancel(), _ctx(), command="pr batch cancel")
     assert paused == [0.0, 0.0]
+    assert "gc holder" in str(exc.value)
     assert batch.store.pending_requests(run.id) == 1
 
 
@@ -314,3 +319,63 @@ def test_deliver_to_a_removed_run_is_not_found_and_recreates_nothing():
     with pytest.raises(batch.store.RunNotFound):
         batch.inbox.deliver(missing, Cancel(), _ctx(), command="pr batch cancel")
     assert not batch.store.run_dir(missing).exists()
+
+
+def test_an_apply_oserror_is_rejected_and_the_next_session_opens(monkeypatch):
+    run = seed(_run(_d(DecisionKind.DIRTY_WORKTREE, "worktree")))
+
+    def boom(*args, **kwargs):
+        raise FileNotFoundError("/missing")
+
+    monkeypatch.setattr(batch.resolve, "apply", boom)
+    name = batch.store.write_request(run.id, Decide("d1", "drop-pr"))
+    with open_session(run.id):
+        pass
+    failed = batch.store.failed_requests(run.id)
+    assert [f.name for f in failed] == [name]
+    assert "FileNotFoundError" in failed[0].error
+    assert batch.store.pending_requests(run.id) == 0
+    with open_session(run.id):
+        pass
+    assert batch.store.load(run.id).decision("d1").open
+
+
+def test_deliver_retries_run_not_found_after_a_successful_write(monkeypatch):
+    run = seed(_run(_d(DecisionKind.DIRTY_WORKTREE, "worktree")))
+    monkeypatch.setattr(core.run_lock, "retry_delays", lambda: iter([0.0]))
+    paused = []
+    real = batch.store.session
+    calls = {"n": 0}
+
+    @contextlib.contextmanager
+    def once_missing(run_id, role, *, inbox, command):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise batch.store.RunNotFound(run_id)
+        with real(run_id, role, inbox=inbox, command=command) as opened:
+            yield opened
+
+    monkeypatch.setattr(batch.store, "session", once_missing)
+    monkeypatch.setattr(batch.inbox.time, "sleep", paused.append)
+    delivery = batch.inbox.deliver(run.id, Decide("d1", "drop-pr"), _ctx(),
+                                   command="pr batch resolve")
+    assert paused == [0.0]
+    assert delivery.queued is False and delivery.own.ok
+    assert batch.store.load(run.id).items[0].status is ItemStatus.DROPPED
+
+
+def test_deliver_exhausted_run_not_found_stays_not_found(monkeypatch):
+    run = seed(_run(_d(DecisionKind.DIRTY_WORKTREE, "worktree")))
+    monkeypatch.setattr(core.run_lock, "retry_delays", lambda: iter([0.0]))
+    monkeypatch.setattr(batch.inbox.time, "sleep", lambda seconds: None)
+
+    @contextlib.contextmanager
+    def gone(run_id, role, *, inbox, command):
+        raise batch.store.RunNotFound(run_id)
+        yield
+
+    monkeypatch.setattr(batch.store, "session", gone)
+    with pytest.raises(batch.store.RunNotFound):
+        batch.inbox.deliver(run.id, Decide("d1", "drop-pr"), _ctx(),
+                            command="pr batch resolve")
+    assert batch.store.pending_requests(run.id) == 1

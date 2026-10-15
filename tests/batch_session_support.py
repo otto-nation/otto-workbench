@@ -9,6 +9,7 @@ minus the children. `seed_raw` is the one exception to "only through a
 session", for fixtures a session would settle.
 """
 
+import os
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -23,6 +24,13 @@ import batch.store  # noqa: E402
 import core.serde  # noqa: E402
 from batch.model import RunStatus  # noqa: E402
 from batch.store import Role  # noqa: E402
+from run_lock_support import held_elsewhere  # noqa: E402
+
+_HOLDING_COMMANDS = {
+    "driver": "pr batch resume",
+    "applier": "pr batch resolve",
+    "gc": "pr gc",
+}
 
 
 def _no_command(*args, **kwargs) -> int:
@@ -78,6 +86,22 @@ def open_session(run_id, role=Role.DRIVER, inbox=None):
     policy = inbox if inbox is not None else NullInbox()
     with batch.store.session(run_id, role, inbox=policy, command="test session") as session:
         yield session
+
+
+def holding(run_id, role, command=None):
+    """Hold *run_id*'s lock as a live *role* in another process.
+
+    *role* is a `Role` or its value. The parent's pid is alive and is not
+    ours, which is what makes the record a live holder rather than a vacated
+    one. The record is left behind when the block ends, so a test that reads
+    `holder()` afterwards must first let a session overwrite it.
+    """
+    value = role.value if isinstance(role, Role) else role
+    if command is None:
+        command = _HOLDING_COMMANDS.get(value, "pr batch x")
+    record = {"pid": os.getppid(), "command": command, "started": "t0",
+              "role": value, "run": run_id}
+    return held_elsewhere(batch.store.run_lock(run_id).path, record)
 
 
 def stops_at(status: RunStatus):

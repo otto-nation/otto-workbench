@@ -21,9 +21,11 @@ import batch.plan  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
 import cli.pr  # noqa: E402
+import cli.pr_batch  # noqa: E402
 import core.run_lock  # noqa: E402
 import pr.target  # noqa: E402
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
+from batch.requests import Decide  # noqa: E402
 from batch_session_support import seed, stops_at  # noqa: E402
 from conftest import make_ctx  # noqa: E402
 from run_lock_support import held_elsewhere, live_pid, repo_with_origin  # noqa: E402
@@ -242,6 +244,36 @@ def test_resume_is_refused_when_an_item_is_held(monkeypatch, tmp_path, capsys):
     assert code == 1
     assert driven == []
     assert f"run {run.id} not resumed: acme/widget#1 is held by pr fix" in capsys.readouterr().err
+
+
+def test_a_refused_resume_hands_off_a_request_queued_against_it(monkeypatch, tmp_path):
+    repo = repo_with_origin(tmp_path / "repo")
+    run = batch.scheduler.new_run([_row(repo, 1, "feat/a")], steps=[batch.model.Step.REVIEW],
+                                  selected=None, pool=1, auto_publish=[])
+    item = run.items[0]
+    item.status = batch.model.ItemStatus.AWAITING_DECISION
+    item.step(batch.model.Step.REVIEW).status = batch.model.StepStatus.NEEDS_DECISION
+    run.decisions.append(batch.model.Decision(
+        id="d1", item=item.key, step="review", kind=batch.model.DecisionKind.FAILED))
+    run.status = batch.model.RunStatus.WAITING
+    seed(run)
+    real = cli.pr_batch._hold_items
+
+    def queue_then_hold(held, opened, verb):
+        batch.store.write_request(opened.id, Decide("d1", "drop-pr"))
+        real(held, opened, verb)
+
+    monkeypatch.setattr(cli.pr_batch, "_hold_items", queue_then_hold)
+    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
+                        lambda self: batch.model.RunStatus.WAITING)
+    with live_pid() as pid, held_elsewhere(
+            _target(repo, "feat/a") / core.run_lock.LOCK_FILE,
+            {"pid": pid, "command": "pr fix", "started": "t0"}):
+        code = _main(["batch", "resume", run.id])
+    assert code == 1
+    saved = batch.store.load(run.id)
+    assert saved.decision("d1").resolution == "drop-pr"
+    assert batch.store.pending_requests(run.id) == 0
 
 
 def test_an_item_with_no_origin_is_left_to_lock_itself(monkeypatch, capsys):

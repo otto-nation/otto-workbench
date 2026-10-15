@@ -75,10 +75,9 @@ LEGACY_CANCEL_FILE = "cancel"
 REQUESTS_DIR = "requests"
 REJECTED_DIR = "rejected"
 
-# The machine-wide lock every `pr batch run` and `resume` holds from before it
-# asks whether a run is active until it finishes, so two batches cannot both
-# pass that question while planning. Outside run_dir: it guards the choice of
-# run, not one run's files.
+# The machine-wide lock every `pr batch run` and `resume` holds for its life.
+# The lock itself refuses a second batch; there is no separate active-run
+# check. Outside run_dir: it guards the choice of run, not one run's files.
 BATCH_LOCK = core.run_lock.Global("batch")
 
 
@@ -145,11 +144,12 @@ class RunBusy(RuntimeError):
 class RunUnreachable(RuntimeError):
     """The run's lock stayed held past the retry budget while its record named no live holder."""
 
-    def __init__(self, run_id: str):
+    def __init__(self, run_id: str, reason: str = ""):
         self.run_id = run_id
-        super().__init__(
-            f"run {run_id} is unreachable: its lock is held but its holder record says "
-            f"released or names a dead process, and it did not free within the retry budget")
+        detail = reason or (
+            "its lock is held but its holder record says released or names a dead "
+            "process, and it did not free within the retry budget")
+        super().__init__(f"run {run_id} is unreachable: {detail}")
 
 
 class InboxPolicy(Protocol):
@@ -738,7 +738,7 @@ def reap(run_id: str, *, expired: Callable[[Run], bool], command: str) -> ReapRe
 
 
 def _reap_held(run_id: str, *, expired: Callable[[Run], bool]) -> ReapResult:
-    """Body of ``reap`` once the resource is held. Split to keep nesting at 1."""
+    """Body of ``reap`` once the resource is held. Split so ``reap``'s take stays flat."""
     try:
         run = load(run_id)
     except RunNotFound:

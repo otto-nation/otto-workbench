@@ -343,6 +343,7 @@ def test_folding_a_sidecar_only_ever_upgrades_kill(recorded, sidecar_kill):
     with open_session(RID) as session:
         folded = session.run.cancel
     assert folded == CancelState(kill=True, requested_at="t0")
+    assert not sidecar.exists()
 
 
 def test_a_sidecar_on_a_finished_run_is_deleted_and_changes_nothing():

@@ -24,10 +24,8 @@ from batch.model import (Decision, DecisionKind, ItemStatus, RunStatus, Step,  #
                          StepStatus)
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
 from batch.requests import Cancel  # noqa: E402
-from batch_session_support import seed, stops_at  # noqa: E402
+from batch_session_support import holding, seed, stops_at  # noqa: E402
 from run_lock_support import held_elsewhere, repo_with_origin  # noqa: E402
-
-_COMMANDS = {"driver": "pr batch resume", "applier": "pr batch resolve", "gc": "pr gc"}
 
 
 def _main(argv):
@@ -53,19 +51,6 @@ def _run():
                                   kind=DecisionKind.FAILED))
     run.status = RunStatus.WAITING
     return run
-
-
-def _holding(run_id, role):
-    """Hold *run_id*'s lock on a descriptor of our own, as a live *role* in another process.
-
-    The parent's pid is alive and is not ours, which is what makes the record
-    a live holder rather than a vacated one. The record is left behind when
-    the block ends, so a test that reads `holder()` afterwards must first let
-    a session overwrite it.
-    """
-    record = {"pid": os.getppid(), "command": _COMMANDS[role], "started": "t0",
-              "role": role, "run": run_id}
-    return held_elsewhere(batch.store.run_lock(run_id).path, record)
 
 
 def _requests(run_id):
@@ -108,7 +93,7 @@ def test_resume_drives_only_a_run_it_loaded_under_the_run_lock(monkeypatch):
 
 def test_a_cancel_queued_during_an_applier_hold_is_applied_by_the_next_session(capsys):
     run = seed(_run())
-    with _holding(run.id, "applier"):
+    with holding(run.id, "applier"):
         assert _main(["batch", "cancel", run.id]) == 0
     assert json.loads(capsys.readouterr().out) == {"cancelled": True, "run": run.id,
                                                     "queued": True}
@@ -132,7 +117,7 @@ def test_a_busy_resume_emits_nothing_and_deletes_nothing(monkeypatch, capsys):
     queued = _requests(run.id)
     emitted = []
     monkeypatch.setattr(batch.events, "emit", lambda kind, **fields: emitted.append(kind))
-    with _holding(run.id, "applier"):
+    with holding(run.id, "applier"):
         code = _main(["batch", "resume", run.id])
     assert code == 1
     assert emitted == []
@@ -220,7 +205,7 @@ def test_a_cancel_queued_during_the_drive_ends_the_run_cancelled(monkeypatch, ca
 
 def test_an_applier_hold_is_not_a_live_scheduler_and_its_queue_is_reported(capsys):
     run = seed(_run())
-    with _holding(run.id, "applier"):
+    with holding(run.id, "applier"):
         assert _main(["batch", "resolve", run.id, "d1", "--action", "drop-pr"]) == 0
         capsys.readouterr()
         assert _main(["batch", "status", run.id]) == 0

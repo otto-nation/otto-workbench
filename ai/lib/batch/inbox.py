@@ -19,6 +19,7 @@ session to open the run.
 
 from __future__ import annotations
 
+import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -52,9 +53,10 @@ def apply_one(run: Run, request: Decide | Cancel, ctx: ApplyContext, *,
     """Apply *request* to *run* and return the outcome.
 
     Replay of a ``Decide`` whose decision already carries ``request.action``
-    is success without invoking the runner. ``ResolveError``, ``KeyError`` and
-    ``TypeError`` become ``Outcome.error``. ``finished`` names the decision's
-    item when that item became terminal during this apply.
+    is success without invoking the runner. ``ResolveError``, ``KeyError``,
+    ``TypeError``, ``OSError`` and ``subprocess.SubprocessError`` become
+    ``Outcome.error``. ``finished`` names the decision's item when that item
+    became terminal during this apply.
     """
     if isinstance(request, Cancel):
         return _apply_cancel(run, request, name)
@@ -77,6 +79,9 @@ def _apply_decide(run: Run, request: Decide, ctx: ApplyContext,
                        finished=finished)
     except (batch.resolve.ResolveError, KeyError, TypeError) as exc:
         return Outcome(name=name, request=request, error=str(exc))
+    except (OSError, subprocess.SubprocessError) as exc:
+        return Outcome(name=name, request=request,
+                       error=f"{type(exc).__name__}: {exc}")
 
 
 def _apply_cancel(run: Run, request: Cancel, name: str) -> Outcome:
@@ -188,18 +193,31 @@ def deliver(run_id: str, request: Decide | Cancel, ctx: ApplyContext, *,
     this process's holder record names. Every outcome the drain produces also
     goes to `ctx.report`.
 
-    Raises RunNotFound when the run directory is gone. Raises RunUnreachable
-    in two cases: `session()` gave up on a vacated holder record, or a GC
-    holder kept the run past `core.run_lock.retry_delays()`. Either way the
-    request is still in the inbox, and it is never reported queued.
+    Raises RunNotFound when the run directory is gone, including when the
+    write succeeded and every later open still saw it missing past
+    `core.run_lock.retry_delays()`. Raises RunUnreachable in two cases:
+    `session()` gave up on a vacated holder record, or a GC holder kept the
+    run past that same budget. Either way the request is still in the inbox,
+    and it is never reported queued.
     """
     name = batch.store.write_request(run_id, request)
-    delivery = _attempt(run_id, name, ctx, command)
     delays = core.run_lock.retry_delays()
-    while delivery is None:
+    missing = False
+    while True:
+        try:
+            delivery = _attempt(run_id, name, ctx, command)
+        except batch.store.RunNotFound:
+            delivery = None
+            missing = True
+        else:
+            missing = False
+        if delivery is not None:
+            return delivery
         delay = next(delays, None)
         if delay is None:
-            raise batch.store.RunUnreachable(run_id)
+            break
         time.sleep(delay)
-        delivery = _attempt(run_id, name, ctx, command)
-    return delivery
+    if missing:
+        raise batch.store.RunNotFound(run_id)
+    raise batch.store.RunUnreachable(
+        run_id, "a gc holder kept the run past the retry budget")

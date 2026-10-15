@@ -1,5 +1,4 @@
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -19,9 +18,8 @@ import cli.pr  # noqa: E402
 import core.tool_parser  # noqa: E402
 import cli.pr_batch  # noqa: E402
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
-from batch_session_support import open_session, seed, stops_at  # noqa: E402
+from batch_session_support import holding, open_session, seed, stops_at  # noqa: E402
 from cli.registry import COMMANDS  # noqa: E402
-from run_lock_support import held_elsewhere  # noqa: E402
 
 BIN_DIR = REPO_ROOT / "ai" / "bin"
 GLOBAL_FLAGS = ("--repo-dir", "--worktree", "--branch", "--pr", "--schema-version", "--debug")
@@ -108,13 +106,6 @@ def _saved_run_with_decisions(n=1, *, kind=batch.model.DecisionKind.OPEN_FINDING
     return seed(_run_with_decisions(n, kind=kind))
 
 
-def _holding(run_id, role, command):
-    """Hold *run_id*'s lock on a descriptor of our own, as a live *role* in another process."""
-    record = {"pid": os.getppid(), "command": command, "started": "t0", "role": role,
-              "run": run_id}
-    return held_elsewhere(batch.store.run_lock(run_id).path, record)
-
-
 def _saved_run_with_decision():
     return _saved_run_with_decisions(1)
 
@@ -128,7 +119,7 @@ def test_resolve_applies_directly_when_no_scheduler_holds_the_run(capsys):
 
 def test_resolve_queues_when_a_draining_holder_has_the_run(capsys):
     run = _saved_run_with_decision()
-    with _holding(run.id, "applier", "pr batch resolve"):
+    with holding(run.id, "applier", "pr batch resolve"):
         assert _main(["batch", "resolve", run.id, "d1", "--action", "accept"]) == 0
     assert json.loads(capsys.readouterr().out) == {"queued": True, "decision": "d1"}
     assert batch.store.load(run.id).decision("d1").open
@@ -189,7 +180,7 @@ def test_next_prints_only_what_needs_action(capsys):
 
 def test_next_lists_nothing_while_a_scheduler_holds_the_run(capsys):
     run = _saved_run_with_decisions(1, kind=batch.model.DecisionKind.FAILED)
-    with _holding(run.id, "driver", "pr batch resume"):
+    with holding(run.id, "driver", "pr batch resume"):
         assert _main(["batch", "next", run.id]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["next"] == [] and out["run"]["active"] is True
@@ -297,7 +288,7 @@ def test_idle_resolve_drains_other_pending_requests():
     assert batch.store.pending_requests(run.id) == 0
 
 
-def test_apply_pending_reports_each_error_and_keeps_earlier_applies(capsys):
+def test_resolve_reports_its_own_error_and_keeps_earlier_applies(capsys):
     run = _saved_run_with_decisions(2)
     batch.store.write_request(run.id, Decide("d1", "accept"))
     assert _main(["batch", "resolve", run.id, "d2", "--action", "abort"]) == 1

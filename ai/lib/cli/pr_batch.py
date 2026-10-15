@@ -177,7 +177,9 @@ class _Reporter:
     Called with `(run, outcome)` for every request the session applies, so it
     emits at once with no buffering. `counting` is off while the scheduler
     loop runs: a request the loop applies is reported as an event, as it
-    always was, but only the entry drain and `finish` decide the exit code.
+    always was, but only the entry drain, `finish`, and this process's
+    hand-off decide the exit code — hand-off drains count because this
+    process applied them.
     """
 
     def __init__(self) -> None:
@@ -248,8 +250,9 @@ def _conclude(run_id: str, stopped: RunStatus, reporter: _Reporter) -> int:
     `finish` or the hand-off can move the run past where the scheduler
     stopped: a cancel queued during the last tick turns WAITING into
     CANCELLED. The driver then emits `run_finished` for the new status before
-    the summary. A request that failed in the session's own drains makes the
-    code 1.
+    the summary. A request that failed in the session's own drains, including
+    drains this process's hand-off ran, makes the code 1: those are applied
+    by this process.
     """
     run = batch.store.load(run_id)
     if run.status is not stopped:
@@ -374,6 +377,23 @@ def _cmd_run(args, bin_dir: Path) -> int:
     return _conclude(started.session.run.id, stopped, reporter)
 
 
+def _try_resume(held: contextlib.ExitStack, session: batch.store.Session,
+                reporter: _Reporter, bin_dir: Path, verbose: bool) -> RunStatus | _Refused:
+    """Drive *session* or return the refusal; the caller raises after the session exits."""
+    run = session.run
+    if run.status in FINISHED_RUN:
+        return _Refused(f"run {run.id} is {run.status.value}")
+    try:
+        core.run_lock.note_holder(batch.store.BATCH_LOCK, run=run.id)
+        _hold_items(held, run, "resume")
+    except _Refused as exc:
+        return exc
+    batch.scheduler.mark_interrupted(run, emit=batch.events.emit)
+    os.environ.setdefault(TRAIL_ROOT_ENV, run.trail_root)
+    return _drive(session, reporter, bin_dir=bin_dir,
+                  cfg=_cfg([i.repo_dir for i in run.items]), verbose=verbose)
+
+
 def _resume(run_id: str, reporter: _Reporter, bin_dir: Path, verbose: bool) -> RunStatus:
     """Open *run_id* as its driver and drive it: the body of `pr batch resume`.
 
@@ -381,21 +401,18 @@ def _resume(run_id: str, reporter: _Reporter, bin_dir: Path, verbose: bool) -> R
     before anything here looks at the run. So a queued cancel has already
     made the run CANCELLED, and the resume is refused. Nothing is emitted
     before the run is open. A refusal (finished, or an item held elsewhere)
-    leaves the run as the entry drain committed it.
+    leaves the run as the entry drain committed it. Events the entry drain
+    already emitted describe that committed work. The refusal is raised after
+    the session exits, so `finish` and the hand-off still run.
     """
     with contextlib.ExitStack() as held:
         session = held.enter_context(batch.store.session(
             run_id, Role.DRIVER, inbox=_driver_inbox(bin_dir, reporter),
             command=f"pr batch resume {run_id}"))
-        run = session.run
-        if run.status in FINISHED_RUN:
-            raise _Refused(f"run {run_id} is {run.status.value}")
-        core.run_lock.note_holder(batch.store.BATCH_LOCK, run=run_id)
-        _hold_items(held, run, "resume")
-        batch.scheduler.mark_interrupted(run, emit=batch.events.emit)
-        os.environ.setdefault(TRAIL_ROOT_ENV, run.trail_root)
-        return _drive(session, reporter, bin_dir=bin_dir,
-                      cfg=_cfg([i.repo_dir for i in run.items]), verbose=verbose)
+        result = _try_resume(held, session, reporter, bin_dir, verbose)
+    if isinstance(result, _Refused):
+        raise result
+    return result
 
 
 def _cmd_resume(args, bin_dir: Path) -> int:
@@ -552,5 +569,4 @@ def cmd_batch(argv: list[str], ctx, *, bin_dir: Path, schema_version: str | None
         return _cmd_status(args)
     except batch.plan.PlanError as exc:
         return _err(str(exc))
-
 

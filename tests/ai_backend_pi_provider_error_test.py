@@ -166,6 +166,18 @@ class TestRpcProviderError:
         stream = agent.backend_pi._consume_stream(proc, io.StringIO(), "")
         assert stream.provider_error == "429 after retry"
 
+    def test_a_cap_stop_keeps_its_reason_when_the_follow_up_errors(self):
+        # The abort's follow-up turn meeting a provider error does not turn a
+        # max_turns stop into a crash; the cap is the more specific answer.
+        proc = _RefusingProc([
+            json.dumps({"type": "turn_end"}) + "\n",
+            json.dumps({"type": "turn_end"}) + "\n",
+            _agent_end([_assistant(stop="error", error="429")]),
+        ])
+        stream = agent.backend_pi._consume_stream(proc, io.StringIO(), "", max_turns=2)
+        assert stream.stop_reason == "max_turns"
+        assert stream.provider_error == "429"
+
     def test_a_retry_that_succeeds_completes_the_run(self):
         proc = _RefusingProc([
             _agent_end([_assistant(stop="error", error="429")], will_retry=True),

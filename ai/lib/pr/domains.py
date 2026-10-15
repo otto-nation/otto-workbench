@@ -535,10 +535,11 @@ class CommentsSummary(Domain):
     blocking_reviewers: list[str] = field(default_factory=list)
     has_approvals: bool = False
     # What the last successful triage read, as {comment id: the edit stamp it
-    # carried}. Advanced only after triage returns a parsed answer — a run
-    # that merely fetched, or whose triage failed, carries it forward
-    # unchanged, because a comment marked read that no model decomposed is
-    # dropped from every later triage.
+    # carried}. Advanced only after triage returns a usable answer — one that
+    # carries `comment_items` when comments were sent — and, under `--fix`,
+    # after the fix pass has recorded what triage decomposed. Any other run
+    # carries it forward unchanged, because a comment marked read that nothing
+    # took items from is dropped from every later triage.
     #
     # Keyed by id *and* dated, because an edit keeps the id: a reviewer who
     # rewrites a comment to add a demand produces the same id with a new

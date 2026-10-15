@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -20,11 +22,14 @@ if str(LIB_DIR) not in sys.path:
 from review_threads_support import _no_published_summary  # noqa: E402,F401
 from conftest import make_ctx
 from gh.pr_data import PRData
+import agent.backend
 import agent.invoke
+import fix.comments
 import cli.review_threads
 import pr.comments
 import pr.state
 import pr.thread_context
+from pr.thread_models import CommentFixResult
 import review.comment_threads
 
 REVIEW_ID = 5506752759
@@ -47,9 +52,12 @@ def _ctx(tmp_path):
                     target_dir=tmp_path / "target")
 
 
-def _run(tmp_path, argv, answer):
+def _run(tmp_path, argv, answer, *, fix_pass=None):
     """One `pr comments` run whose triage prompt answers `answer`.
 
+    `answer` is a `PromptResult` handed back by `run_prompt`, or a backend
+    `(text, exit_code)` pair, which runs the real retry and usable predicate.
+    `fix_pass` stands in for `fix.comments.run_pass` on a `--fix` run.
     Returns the exit code, the prompt mock and the persisted seen record.
     """
     ctx = _ctx(tmp_path)
@@ -64,11 +72,19 @@ def _run(tmp_path, argv, answer):
          patch.object(pr.comments, "fetch_issue_comments", return_value=[]), \
          patch.object(pr.comments, "fetch_reviewer_verdicts", return_value=[]), \
          patch.object(pr.thread_context, "branch_commit_log", return_value=""), \
-         patch.object(agent.invoke, "run_prompt", prompt):
+         patch.object(*_prompt_seam(answer), prompt), \
+         patch.object(fix.comments, "run_pass",
+                      fix_pass or MagicMock(return_value=CommentFixResult())):
         code = review.comment_threads.run_threads(MagicMock(), args, ctx)
     st = pr.state.load_state(ctx.target_dir)
     seen = st.comments.seen_review_body_comments if st else {}
     return code, prompt, seen
+
+
+def _prompt_seam(answer):
+    if isinstance(answer, tuple):
+        return agent.backend, "prompt"
+    return agent.invoke, "run_prompt"
 
 
 def _failed():
@@ -116,3 +132,25 @@ class TestSeenFollowsTriage:
         # And the triage after it still gets the comment.
         _code, prompt, _seen = _run(tmp_path, ["--triage"], _decomposed())
         assert str(REVIEW_ID) in prompt.call_args.args[1]
+
+    def test_threads_without_comment_items_leaves_the_comment_unseen(self, tmp_path):
+        # Real retry, real predicate: a reply that never decomposed the review
+        # body is not a triage of it.
+        code, prompt, seen = _run(tmp_path, ["--triage"], ('{"threads": []}', 0))
+        assert code == 1
+        assert prompt.call_count == 2
+        assert REVIEW_ID not in seen
+
+    def test_a_fix_pass_that_raises_leaves_the_comment_unseen(self, tmp_path):
+        # Triage decomposed the review body, but the items exist only in
+        # memory until the fix pass records them; losing the pass loses them.
+        with pytest.raises(RuntimeError):
+            _run(tmp_path, ["--triage", "--fix"], _decomposed(),
+                 fix_pass=MagicMock(side_effect=RuntimeError("agent crashed")))
+        st = pr.state.load_state(_ctx(tmp_path).target_dir)
+        assert REVIEW_ID not in st.comments.seen_review_body_comments
+
+    def test_a_fix_pass_that_returns_marks_the_comment_seen(self, tmp_path):
+        code, _prompt, seen = _run(tmp_path, ["--triage", "--fix"], _decomposed())
+        assert code == 0
+        assert seen == {REVIEW_ID: ""}

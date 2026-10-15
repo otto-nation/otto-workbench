@@ -103,9 +103,11 @@ def seen_record(comments: list[dict]) -> dict[int, str]:
 def record_triaged_seen(ctx_args: dict, report: PRReport, trail) -> None:
     """Record the report's top-level comments as read, after triage succeeded.
 
-    Only a triage that returned a parsed answer reaches this. Every comment in
-    the report was either flagged seen from the prior record or sent to that
-    triage, so the whole set is what has now been read.
+    Only a triage that returned a usable answer reaches this, and under `--fix`
+    only once the fix pass has returned and recorded the outcome of every item
+    triage decomposed. Every comment in the report was either flagged seen from
+    the prior record or sent to that triage, so the whole set is what has now
+    been read.
 
     Recording before triage, as this once was, made a failed triage — an
     empty reply, a provider error — mark a review body read that no model had
@@ -297,7 +299,6 @@ def run_threads(trail, args, ctx) -> int:
         triage_result, rc = pr.triage.run_triage(report, toplevel, ctx_args, trail=trail)
         if rc != 0:
             return rc
-        record_triaged_seen(ctx_args, report, trail)
 
         if args.fix and triage_result:
             fixable_count = len(
@@ -334,6 +335,10 @@ def run_threads(trail, args, ctx) -> int:
             output = dataclasses.asdict(triage_result) if triage_result else {}
             output["issue_comments"] = report.issue_comments
             output["review_body_comments"] = report.review_body_comments
+        # After the fix pass as well as triage: a fix pass that raises has
+        # recorded none of the items triage decomposed, and they exist nowhere
+        # else, so the comments they came from must be read again next run.
+        record_triaged_seen(ctx_args, report, trail)
     else:
         output = dataclasses.asdict(report)
 

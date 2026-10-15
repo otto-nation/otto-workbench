@@ -123,7 +123,8 @@ def record_triaged_seen(ctx_args: dict, report: PRReport, trail) -> None:
         )
         pr.state.save_state(ctx_args["target_dir"], st)
     except Exception as exc:
-        trail.error("state_update", f"seen record update failed: {exc}")
+        if trail is not None:
+            trail.error("state_update", f"seen record update failed: {exc}")
         core.log.error(f"seen record update failed: {exc}")
 
 

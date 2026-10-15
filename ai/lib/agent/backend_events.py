@@ -476,11 +476,12 @@ def pi_prompt_result(stdout: str) -> PiPromptResult:
         # which would read as a call that genuinely cost nothing.
         return PiPromptResult(text or ("" if error else stdout), None, error)
 
-    return PiPromptResult("" if error else text, agent.usage.SessionUsage(
+    usage = agent.usage.SessionUsage(
         cost=cost,
         input_tokens=totals["input"],
         output_tokens=totals["output"],
         cache_read_tokens=totals["cacheRead"],
         cache_write_tokens=totals["cacheWrite"],
         cost_by_model=cost_by_model,
-    ), error)
+    )
+    return PiPromptResult("" if error else text, usage, error)

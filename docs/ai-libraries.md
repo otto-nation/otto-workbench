@@ -2018,8 +2018,8 @@ summary comment. See `review.closeout` and `review.deferred_issue`.
 
 An edited comment is read again. A comment an earlier triage already read is
 dropped from triage decomposition — recorded only once that triage succeeded, so
-a failed triage leaves it to the next run — keyed on the comment id *and* the time its body was
-last edited — an edit keeps the id and does not move the comment, so a reviewer
+a failed triage leaves it to the next run — keyed on the comment id *and* the
+time its body was last edited — an edit keeps the id and does not move the comment, so a reviewer
 who rewrites a comment to add a demand would otherwise have it silently discarded
 as already handled. The stamp is GitHub's `lastEditedAt`, null until the first
 edit. The issue-comment REST path has no such field and reconstructs it from

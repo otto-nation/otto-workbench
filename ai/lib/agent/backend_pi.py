@@ -807,7 +807,11 @@ def _consume_events(
             core.log.warn(f"{prefix}pi's deliverable prompt failed: {run_error}")
         elif run_error:
             core.log.error(f"{prefix}pi run ended on a provider error: {run_error}")
-            stop_reason, provider_error = "error", run_error
+            provider_error = run_error
+            # An abort's follow-up turn can end on an error; the cap that
+            # caused the abort is the more specific reason, so keep it.
+            if not aborted:
+                stop_reason = "error"
         if ended:
             # A run that ended on a provider error is not asked again: Pi has
             # already retried, and the ask would meet the same provider.

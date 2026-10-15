@@ -335,9 +335,16 @@ def resolve(cwd: str | Path) -> PiBinary:
     — the catalogue, the budget, every spawn — agrees, and the choice is logged
     once. Mise resolves per directory, so a process touching two repos gets an
     answer for each. A failure is not cached: the next caller sees it again.
+
+    A *cwd* that is not a directory is refused here rather than left to the
+    git and mise subprocesses, which would raise `FileNotFoundError` for the
+    working directory — an error the optional budget lookup does not expect.
     """
+    real = os.path.realpath(cwd)
+    if not os.path.isdir(real):
+        raise PiUnresolvable(f"cannot choose a pi for {cwd}: it is not a directory")
     with _lock:
-        return _resolved(os.path.realpath(cwd))
+        return _resolved(real)
 
 
 def any_installed() -> bool:

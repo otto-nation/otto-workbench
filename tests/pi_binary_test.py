@@ -230,6 +230,15 @@ class TestMiseWhichFails:
             _resolve(machine)
 
 
+class TestMissingDirectory:
+    def test_a_directory_that_does_not_exist_is_unresolvable(self, machine):
+        """The budget's optional lookup catches only PiUnresolvable, so a missing
+        review directory must not surface as FileNotFoundError from git."""
+        machine.managed("1.2.0")
+        with pytest.raises(PiUnresolvable, match="not a directory"):
+            agent.pi_binary.resolve(str(machine.tmp / "gone"))
+
+
 class TestOncePerDirectory:
     def test_a_second_call_reuses_the_choice(self, machine):
         machine.managed("1.2.0")

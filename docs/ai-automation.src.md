@@ -462,7 +462,7 @@ pushed to exactly the local branch. `--auto-publish STEPS` resolves that
 decision when the item closes with no open decision and every drafted
 step is listed and `done`; an owed closeout counts as `comments`.
 `--watch-ci` re-checks CI once after a push and reopens on red;
-`run_finished` lists `ci_not_rechecked`. `--no-verify` skips publish hooks.
+`run_finished` lists `ci_not_rechecked`. `--no-verify` skips the pre-push hook on the branch push (`pr push` / `pr rebase --push-only`) and the comments closeout push.
 
 A step that needs a person opens one `step_review` whose `evidence` is
 `open_findings`, `checks_unverified` (`Fix-Checks:` `red`/`timed_out`/`error`/`partial`,
